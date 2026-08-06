@@ -1,10 +1,10 @@
 # France and Slovakia national procurement sources
 
 Status: **implemented as Dagster assets**. TED awards remain enabled for France
-and Slovakia. DECP is ready to materialize; UVO is implemented but its network
-boundary remains disabled until the machine-reuse licence prerequisite is met.
-This document records the source boundaries, grains, value semantics, and
-operational go/no-go conditions.
+and Slovakia. DECP and UVO are ready to materialize. UVO machine-reuse approval
+is managed as source governance rather than repeated through runtime
+configuration. This document records the source boundaries, grains, value
+semantics, and operational conditions.
 
 The company signal remains award-focused. Open competition notices may be kept
 in a source's own tables, but they do not enter government-contract summaries
@@ -98,7 +98,7 @@ modification, or subcontract amount is coalesced into another value.
 
 ## Slovakia: UVO bulletin
 
-### Selected source and prerequisite
+### Selected source and reuse governance
 
 - Register: Vestník verejného obstarávania, operated by Úrad pre verejné
   obstarávanie (UVO).
@@ -114,13 +114,10 @@ Result forms publish organizations, IČO, lots, CPV, estimated/tender values, an
 winner linkage in structured eForms-like sections. UVO is procurement-specific
 and includes national notices that do not reach TED.
 
-Production operation has a **licence prerequisite**: confirm the current
-machine-reuse licence in the Slovak national open-data catalogue, or locate the
-official XML/open-data artifact previously advertised by UVO. Public HTML
-availability alone is not sufficient authority for a scheduled bulk ingest.
-Record the verified licence or permission before setting
-`SLOVAKIA_UVO_MACHINE_REUSE_CONFIRMED=true`. The downloader raises before any
-request while that gate is false.
+Machine-reuse approval remains an operational source-governance responsibility.
+Record the applicable licence or written permission in the source inventory.
+The downloader does not use a runtime environment gate because that approval
+does not vary between runs or deployments.
 
 ### Ingest and asset shape
 

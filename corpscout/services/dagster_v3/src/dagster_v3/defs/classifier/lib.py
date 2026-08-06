@@ -85,7 +85,13 @@ def load_corpus(client):
     return codes, labels, matrix / norms
 
 
-def build_scan_sql(table: str, column: str) -> str:
+def build_scan_sql(
+    table: str,
+    column: str,
+    *,
+    source_lang: str,
+    target_lang: str = "en",
+) -> str:
     """Distinct unclassified texts with their preferred classification input.
 
     Trusted, developer-authored table/column values (same trust boundary as
@@ -104,7 +110,10 @@ FROM (
 LEFT JOIN (
     SELECT source_text_hash, argMax(translated_text, version) AS translated_text
     FROM corpscout.text_translations
-    WHERE source_table = '{table}' AND source_column = '{column}' AND target_lang = 'en'
+    WHERE source_table = '{table}'
+      AND source_column = '{column}'
+      AND source_lang = '{source_lang}'
+      AND target_lang = '{target_lang}'
     GROUP BY source_text_hash
 ) AS tr ON tr.source_text_hash = cityHash64(src.source_text)
 LEFT ANTI JOIN (
@@ -262,6 +271,8 @@ def classify_source(
     *,
     table,
     column,
+    source_lang,
+    target_lang="en",
     embedder=None,
     llm_call=None,
     llm_model=None,
@@ -285,7 +296,14 @@ def classify_source(
                 "for embedding_model=qwen3-embedding-8b / NACE_REV_2_1"
             )
         labels_by_code = dict(zip(codes, labels))
-        pending = client.execute(build_scan_sql(table, column))
+        pending = client.execute(
+            build_scan_sql(
+                table,
+                column,
+                source_lang=source_lang,
+                target_lang=target_lang,
+            )
+        )
         context.log.info("classifying %d distinct texts for %s.%s", len(pending), table, column)
 
         buffer = []

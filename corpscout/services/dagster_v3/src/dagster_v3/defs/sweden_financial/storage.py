@@ -29,12 +29,33 @@ def sweden_financial_year_duckdb_connection(
     backfill partition, or the current active year for a weekly current
     partition.
     """
-    db_path = sweden_financial_source_duckdb_path(year, root=root)
-    if not db_path.exists():
-        raise ValueError(
-            f"Sweden financial DuckDB file not found for partition {year}: "
-            f"{db_path}. This host may not hold this partition's data -- "
-            "each host exports only the partitions whose year files it has."
-        )
+    db_path = _require_sweden_financial_year_duckdb_path(year, root=root)
     with read_only_duckdb_connection(duckdb_resource(db_path)) as connection:
         yield connection
+
+
+@contextmanager
+def sweden_financial_year_duckdb_write_connection(
+    year: str | int,
+    *,
+    root: str | Path = SWEDEN_FINANCIAL_DUCKDB_ROOT,
+) -> Iterator[Any]:
+    """Open one existing partition-year file for an in-place transform."""
+    db_path = _require_sweden_financial_year_duckdb_path(year, root=root)
+    with duckdb_resource(db_path).get_connection() as connection:
+        yield connection
+
+
+def _require_sweden_financial_year_duckdb_path(
+    year: str | int,
+    *,
+    root: str | Path,
+) -> Path:
+    db_path = sweden_financial_source_duckdb_path(year, root=root)
+    if db_path.exists():
+        return db_path
+    raise ValueError(
+        f"Sweden financial DuckDB file not found for partition {year}: "
+        f"{db_path}. This host may not hold this partition's data -- "
+        "each host operates only on the partitions whose year files it has."
+    )

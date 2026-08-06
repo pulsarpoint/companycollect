@@ -132,9 +132,9 @@ def export_esef_filings_clickhouse(
 ) -> int:
     """Full-replace corpscout.esef_filings from DuckDB esef_filings.filings_index.
 
-    Full replace is correct here: the index crawl is itself a full sweep of
-    filings.xbrl.org each run (see assets.py's esef_filings_index_duckdb), so
-    the DuckDB table always holds the complete current index.
+    Full replace is correct here: one canonical DuckDB table holds the complete
+    filings.xbrl.org index plus official-source filings preserved across API
+    reconciliation and merged by report-package hash.
 
     Guarded against a replace that would shrink the table by more than half
     (Finding M1) -- see the module docstring for why this reads counts

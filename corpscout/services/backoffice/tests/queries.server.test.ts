@@ -1,6 +1,9 @@
 import { describe, expect, it } from "vitest";
 import { chQuery } from "~/lib/clickhouse.server";
-import { placedKeys, restKeys } from "~/components/detail/countries/no-financials";
+import {
+  placedKeys,
+  restKeys,
+} from "~/components/detail/countries/no-financials";
 import { isLineageKey } from "~/components/detail/fields";
 import { COUNTRIES, getCountry } from "~/lib/countries";
 import { getFacetOptions } from "~/lib/facets.server";
@@ -47,7 +50,10 @@ describe("searchCompanies", () => {
   });
 
   it("falls back to sane defaults on non-finite page inputs", async () => {
-    const result = await searchCompanies(ee, { page: Number("abc"), pageSize: Number.POSITIVE_INFINITY });
+    const result = await searchCompanies(ee, {
+      page: Number("abc"),
+      pageSize: Number.POSITIVE_INFINITY,
+    });
     expect(result.page).toBe(1);
     expect(result.pageSize).toBe(50);
     expect(result.rows.length).toBeGreaterThan(0);
@@ -61,7 +67,10 @@ describe("searchCompanies", () => {
   });
 
   it("clamps out-of-range pages to the last page", async () => {
-    const result = await searchCompanies(ee, { page: Number.MAX_SAFE_INTEGER, pageSize: 25 });
+    const result = await searchCompanies(ee, {
+      page: Number.MAX_SAFE_INTEGER,
+      pageSize: 25,
+    });
     const lastPage = Math.max(1, Math.ceil(result.total / result.pageSize));
     expect(result.page).toBe(lastPage);
     expect(result.rows.length).toBeGreaterThan(0);
@@ -90,8 +99,16 @@ describe("searchCompanies sorting and columns", () => {
   });
 
   it("sorts by a whitelisted column in both directions", async () => {
-    const asc = await searchCompanies(ee, { sort: "id", dir: "asc", pageSize: 25 });
-    const desc = await searchCompanies(ee, { sort: "id", dir: "desc", pageSize: 25 });
+    const asc = await searchCompanies(ee, {
+      sort: "id",
+      dir: "asc",
+      pageSize: 25,
+    });
+    const desc = await searchCompanies(ee, {
+      sort: "id",
+      dir: "desc",
+      pageSize: 25,
+    });
     expect(asc.sort).toBe("id");
     expect(asc.dir).toBe("asc");
     expect(desc.dir).toBe("desc");
@@ -151,7 +168,9 @@ describe("searchCompanies across all countries", () => {
   );
 
   it.each(
-    COUNTRIES.filter((c) => c.industryFilterExpr).map((c) => [c.code, c] as const),
+    COUNTRIES.filter((c) => c.industryFilterExpr).map(
+      (c) => [c.code, c] as const,
+    ),
   )(
     "%s: industry facet loads and filters companies",
     async (_code, country) => {
@@ -196,7 +215,9 @@ describe("searchCompanies across all countries", () => {
   );
 
   it.each(
-    COUNTRIES.filter((c) => c.detail?.financialsQuery).map((c) => [c.code, c] as const),
+    COUNTRIES.filter((c) => c.detail?.financialsQuery).map(
+      (c) => [c.code, c] as const,
+    ),
   )(
     "%s: financials registry SQL is valid against live schema",
     async (_code, country) => {
@@ -208,14 +229,32 @@ describe("searchCompanies across all countries", () => {
     60_000,
   );
 
+  it("Sweden financial facts join the versioned taxonomy dictionary exactly", () => {
+    const query = getCountry("se")!.detail!.factsQuery!;
+
+    expect(query).toContain(
+      "labels.taxonomy_entrypoint = ifNull(report.taxonomy_entrypoint, '')",
+    );
+    expect(query).toContain("labels.concept_namespace = f.concept_namespace");
+    expect(query).toContain("labels.label_sv, fallback_labels.label_sv");
+    expect(query).toContain(
+      "labels.description_en, fallback_labels.description_en",
+    );
+    expect(query).toContain("concept_description_en_source");
+    expect(query).toContain("concept_taxonomy_entrypoint");
+  });
+
   it.each(
-    COUNTRIES.filter((c) => c.detail?.contactsQuery || c.detail?.domainsQuery).map(
-      (c) => [c.code, c] as const,
-    ),
+    COUNTRIES.filter(
+      (c) => c.detail?.contactsQuery || c.detail?.domainsQuery,
+    ).map((c) => [c.code, c] as const),
   )(
     "%s: contacts/domains registry SQL is valid against live schema",
     async (_code, country) => {
-      for (const q of [country.detail?.contactsQuery, country.detail?.domainsQuery]) {
+      for (const q of [
+        country.detail?.contactsQuery,
+        country.detail?.domainsQuery,
+      ]) {
         if (!q) continue;
         const rows = await chQuery(q, { id: "0" });
         expect(Array.isArray(rows)).toBe(true);
@@ -225,7 +264,9 @@ describe("searchCompanies across all countries", () => {
   );
 
   it.each(
-    COUNTRIES.filter((c) => c.detail?.industriesQuery).map((c) => [c.code, c] as const),
+    COUNTRIES.filter((c) => c.detail?.industriesQuery).map(
+      (c) => [c.code, c] as const,
+    ),
   )(
     "%s: industriesQuery SQL is valid against live schema",
     async (_code, country) => {
@@ -236,7 +277,9 @@ describe("searchCompanies across all countries", () => {
   );
 
   it.each(
-    COUNTRIES.filter((c) => c.detail?.addressQuery).map((c) => [c.code, c] as const),
+    COUNTRIES.filter((c) => c.detail?.addressQuery).map(
+      (c) => [c.code, c] as const,
+    ),
   )(
     "%s: addressQuery SQL is valid against live schema",
     async (_code, country) => {
@@ -260,7 +303,9 @@ describe("searchCompanies across all countries", () => {
   );
 
   it.each(
-    COUNTRIES.filter((c) => c.financialsLatest).map((c) => [c.code, c] as const),
+    COUNTRIES.filter((c) => c.financialsLatest).map(
+      (c) => [c.code, c] as const,
+    ),
   )(
     "%s: financialsLatest summary table exists and companyKeyExpr joins to it",
     async (_code, country) => {
@@ -511,7 +556,9 @@ describe("getCompanyDetail (Brazil)", () => {
     const second = await getCompanyDetail(br, row.id);
     expect(first!.financials.length).toBeGreaterThan(0);
     expect(first!.financials).toEqual(second!.financials); // deterministic across calls
-    expect(first!.financials.some((f) => typeof f.revenue_amount_usd === "number")).toBe(true);
+    expect(
+      first!.financials.some((f) => typeof f.revenue_amount_usd === "number"),
+    ).toBe(true);
   }, 120_000);
 });
 
@@ -615,7 +662,11 @@ describe("empties-last sorting (Finland has 1,205 nameless registry stubs)", () 
   }, 30_000);
 
   it("empties stay last under desc too", async () => {
-    const result = await searchCompanies(fi, { sort: "name", dir: "desc", pageSize: 25 });
+    const result = await searchCompanies(fi, {
+      sort: "name",
+      dir: "desc",
+      pageSize: 25,
+    });
     for (const row of result.rows) {
       expect(String(row.name)).not.toBe("");
     }

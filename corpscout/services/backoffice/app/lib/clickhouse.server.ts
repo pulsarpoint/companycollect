@@ -1,31 +1,48 @@
 import "dotenv/config";
 import { createClient, type ClickHouseClient } from "@clickhouse/client";
 
-let client: ClickHouseClient | undefined;
+let readClient: ClickHouseClient | undefined;
+let writeClient: ClickHouseClient | undefined;
 
-function getClient(): ClickHouseClient {
-  if (!client) {
-    client = createClient({
+function getReadClient(): ClickHouseClient {
+  if (!readClient) {
+    readClient = createClient({
       url: process.env.CLICKHOUSE_URL ?? "http://localhost:8123",
       username: process.env.CLICKHOUSE_USER ?? "default",
       password: process.env.CLICKHOUSE_PASSWORD ?? "",
       database: process.env.CLICKHOUSE_DATABASE ?? "corpscout",
       request_timeout: 30_000,
-      // readonly=2: server rejects INSERT/ALTER/DDL/any write, while still
-      // allowing named query params over HTTP (readonly=1 would reject them,
-      // as query params count as settings changes).
-      //
-      // use_top_k_dynamic_filtering=0: ClickHouse 26.5.1's dynamic top-K
-      // filter (__topKFilter, from ORDER BY <col> LIMIT n pushdown) grabs the
-      // wrong constant when the query carries bound parameters — observed
-      // live on the procurement register pages as "Cannot parse date: while
-      // converting 'SE' to Date" and "Expected: Date. Got: Decimal128" inside
-      // __topKFilter(publication_date), flaky across identical requests.
-      // Re-evaluate after a server upgrade.
-      clickhouse_settings: { readonly: "2", use_top_k_dynamic_filtering: 0 },
+      // readonly=2 rejects writes while allowing named query parameters.
+      // Dynamic top-K filtering is disabled because ClickHouse 26.5.1 can
+      // bind the wrong query parameter inside its generated filter.
+      clickhouse_settings: {
+        readonly: "2",
+        use_top_k_dynamic_filtering: 0,
+      },
     });
   }
-  return client;
+  return readClient;
+}
+
+function getWriteClient(): ClickHouseClient {
+  if (!writeClient) {
+    const username = process.env.CLICKHOUSE_WRITE_USER?.trim() ?? "";
+    const password = process.env.CLICKHOUSE_WRITE_PASSWORD ?? "";
+    if (!username || !password) {
+      throw new Error(
+        "Person correction writes require dedicated ClickHouse writer credentials.",
+      );
+    }
+    writeClient = createClient({
+      url: process.env.CLICKHOUSE_URL ?? "http://localhost:8123",
+      username,
+      password,
+      database: process.env.CLICKHOUSE_DATABASE ?? "corpscout",
+      request_timeout: 30_000,
+      clickhouse_settings: { use_top_k_dynamic_filtering: 0 },
+    });
+  }
+  return writeClient;
 }
 
 /**
@@ -41,10 +58,22 @@ export async function chQuery<T>(
   sql: string,
   params?: Record<string, unknown>,
 ): Promise<T[]> {
-  const result = await getClient().query({
+  const result = await getReadClient().query({
     query: sql,
     query_params: params,
     format: "JSONEachRow",
   });
   return result.json<T>();
+}
+
+/** Append reviewed decisions to the immutable person-correction ledger. */
+export async function chInsertPersonCorrections<T extends object>(
+  values: T[],
+): Promise<void> {
+  if (values.length === 0) return;
+  await getWriteClient().insert({
+    table: "country_person_correction",
+    values,
+    format: "JSONEachRow",
+  });
 }

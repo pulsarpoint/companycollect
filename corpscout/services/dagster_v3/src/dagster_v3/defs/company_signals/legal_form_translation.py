@@ -55,6 +55,16 @@ COUNTRY_LANGUAGES: tuple[tuple[str, str, str], ...] = (
     ("FI", "fi", "Finnish"),
     ("BR", "pt", "Portuguese"),
 )
+TRANSLATION_FIELDS = tuple(
+    TranslationField(
+        SOURCE_TABLE,
+        SOURCE_COLUMN,
+        source_lang,
+        TARGET_LANG,
+        f"country_code = '{country_code}'",
+    )
+    for country_code, source_lang, _source_language_name in COUNTRY_LANGUAGES
+)
 
 
 @dg.asset(
@@ -83,6 +93,8 @@ def company_entity_types_translation_load(
                 build_scan_sql(
                     SOURCE_TABLE,
                     SOURCE_COLUMN,
+                    source_lang=source_lang,
+                    target_lang=TARGET_LANG,
                     extra_where=f"country_code = '{country_code}'",
                 )
             )
@@ -187,6 +199,8 @@ def company_entity_types_curated_english(
                     SOURCE_TABLE,
                     SOURCE_COLUMN,
                     "legal_form_code",
+                    source_lang=source_lang,
+                    target_lang=TARGET_LANG,
                     extra_where=f"country_code = '{country_code}'",
                 )
             )
@@ -209,4 +223,4 @@ def company_entity_types_curated_english(
 @dg.asset_check(asset=company_entity_types_translation_load, name="translations_present")
 def company_entity_types_translation_coverage(clickhouse: ClickhouseResource) -> dg.AssetCheckResult:
     """How many legal-form labels exist, and how many are translated."""
-    return translation_coverage_result(clickhouse, (TranslationField(SOURCE_TABLE, SOURCE_COLUMN),))
+    return translation_coverage_result(clickhouse, TRANSLATION_FIELDS)

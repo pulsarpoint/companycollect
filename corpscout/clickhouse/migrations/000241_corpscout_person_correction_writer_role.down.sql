@@ -1,0 +1,4 @@
+REVOKE INSERT ON corpscout.country_person_correction
+FROM corpscout_person_correction_writer;
+
+DROP ROLE IF EXISTS corpscout_person_correction_writer;

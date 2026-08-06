@@ -55,7 +55,12 @@ def test_it_scans_the_table_not_the_view() -> None:
     drops 3,283 contracts. Scanning the view would leave those objects
     permanently untranslated -- including every award to a natural person."""
     field = TRANSLATION_FIELDS[0]
-    sql = build_scan_sql(field.table, field.column)
+    sql = build_scan_sql(
+        field.table,
+        field.column,
+        source_lang=field.source_lang,
+        target_lang=field.target_lang,
+    )
 
     assert "br_pncp_contracts" in sql
     assert "br_government_contracts" not in sql
@@ -65,7 +70,12 @@ def test_the_scan_only_asks_for_texts_it_does_not_already_have() -> None:
     """Dedup is the whole economics: 116,226 rows carry 57,229 distinct objects,
     and one object repeats 6,979 times."""
     field = TRANSLATION_FIELDS[0]
-    sql = build_scan_sql(field.table, field.column)
+    sql = build_scan_sql(
+        field.table,
+        field.column,
+        source_lang=field.source_lang,
+        target_lang=field.target_lang,
+    )
 
     assert "DISTINCT" in sql
     assert "LEFT ANTI JOIN" in sql

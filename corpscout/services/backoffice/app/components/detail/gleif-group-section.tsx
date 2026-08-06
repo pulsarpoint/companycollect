@@ -1,7 +1,12 @@
 import { Link } from "react-router";
-import type { GleifEntityRow, GleifRelationshipRow } from "~/lib/queries.server";
+import type {
+  CompanyRelationshipObservation,
+  GleifEntityRow,
+  GleifRelationshipRow,
+} from "~/lib/queries.server";
 import { Badge } from "~/components/ui/badge";
 import { Card, CardContent, CardHeader, CardTitle } from "~/components/ui/card";
+import { EvidencePanel } from "~/components/detail/evidence";
 
 /** GLEIF no-parent exception reasons → human text. */
 const OWNERSHIP_EXCEPTION_LABELS: Record<string, string> = {
@@ -81,12 +86,16 @@ export function GleifGroupSection({
   relationships,
   entity,
   countryCode,
+  sourceRelationships = [],
 }: {
   relationships: GleifRelationshipRow[];
   entity: GleifEntityRow | null;
   countryCode: string;
+  sourceRelationships?: CompanyRelationshipObservation[];
 }) {
-  if (relationships.length === 0 && entity === null) return null;
+  if (relationships.length === 0 && entity === null && sourceRelationships.length === 0) {
+    return null;
+  }
   // A subsidiary usually appears under BOTH direct and ultimate
   // consolidation; keep one line per entity, preferring the direct link.
   const seen = new Set<string>();
@@ -107,7 +116,7 @@ export function GleifGroupSection({
     <Card>
       <CardHeader>
         <CardTitle className="flex flex-wrap items-baseline gap-x-2 text-base">
-          Corporate group{" "}
+          Relationships{" "}
           <span className="text-muted-foreground text-sm font-normal">
             GLEIF consolidation links
           </span>
@@ -159,6 +168,37 @@ export function GleifGroupSection({
             <ul className="divide-y">
               {subsidiaries.map((row) => (
                 <EntityLine key={`s-${row.other_lei}`} row={row} countryCode={countryCode} />
+              ))}
+            </ul>
+          </div>
+        ) : null}
+        {sourceRelationships.length > 0 ? (
+          <div>
+            <div className="text-muted-foreground mb-1 text-xs font-medium uppercase">
+              ESEF annual-report observations
+            </div>
+            <ul className="divide-y">
+              {sourceRelationships.map((row) => (
+                <li key={row.candidateUid} className="flex flex-col gap-1 py-1.5">
+                  <div className="flex flex-wrap items-center gap-2">
+                    <span className="font-medium">{row.relatedCompanyName}</span>
+                    <Badge variant="outline">
+                      {row.relationshipType.replaceAll("_", " ")}
+                    </Badge>
+                    {row.ownershipPercentage !== null ? (
+                      <span className="text-muted-foreground text-xs">
+                        {row.ownershipPercentage}%
+                      </span>
+                    ) : null}
+                    {row.jurisdiction ? (
+                      <span className="text-muted-foreground text-xs">
+                        {row.jurisdiction}
+                      </span>
+                    ) : null}
+                    <Badge variant="outline">fiscal {row.fiscalYear}</Badge>
+                  </div>
+                  <EvidencePanel evidence={row.evidence} />
+                </li>
               ))}
             </ul>
           </div>

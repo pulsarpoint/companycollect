@@ -18,7 +18,10 @@ from dagster_v3.defs.clickhouse.resolved import (
 )
 from dagster_v3.defs.common.resources import ObjectStoreResource
 from dagster_v3.defs.eodhd import tables
-from dagster_v3.defs.eodhd.resources import EodhdResource
+from dagster_v3.defs.eodhd.resources import (
+    EodhdResource,
+    EodhdTickerNotFoundError,
+)
 from dagster_v3.defs.eodhd.source import (
     EODHD_RAW_BUCKET,
     EodhdPriceBackfillConfig,
@@ -851,6 +854,7 @@ def write_price_envelope(
     prices: list[dict[str, Any]],
     retrieved_at: str,
     source_object_keys: list[str],
+    ticker_not_found: bool,
 ) -> bytes:
     return write_json_gzip(
         {
@@ -862,6 +866,7 @@ def write_price_envelope(
             "prices": sorted(prices, key=lambda row: str(row["date"])),
             "retrieved_at": retrieved_at,
             "source_object_keys": sorted(set(source_object_keys)),
+            "ticker_not_found": ticker_not_found,
         }
     )
 
@@ -872,6 +877,8 @@ def read_price_envelope(content: bytes) -> dict[str, Any]:
         raise ValueError("Invalid EODHD history price envelope")
     if not isinstance(envelope.get("prices"), list):
         raise ValueError("EODHD history price envelope has no price list")
+    if not isinstance(envelope.get("ticker_not_found", False), bool):
+        raise ValueError("EODHD history price envelope has invalid ticker status")
     return envelope
 
 
@@ -926,6 +933,7 @@ def download_eodhd_history_year(
     total_price_rows = 0
     reused_symbol_count = 0
     downloaded_request_count = 0
+    ticker_not_found_symbol_count = 0
 
     log(
         "Starting EODHD history year: year=%s symbols=%s from=%s to=%s",
@@ -941,6 +949,7 @@ def download_eodhd_history_year(
         covered_ranges: list[tuple[str, str]] = []
         source_object_keys: list[str] = []
         retrieved_at = utc_now_iso()
+        ticker_not_found = False
         if object_store.exists(object_key, bucket=EODHD_RAW_BUCKET):
             envelope = read_price_envelope(
                 object_store.read_bytes(object_key, bucket=EODHD_RAW_BUCKET)
@@ -951,6 +960,7 @@ def download_eodhd_history_year(
             source_object_keys = [
                 str(key) for key in envelope.get("source_object_keys", [])
             ]
+            ticker_not_found = bool(envelope.get("ticker_not_found", False))
         missing_ranges = _missing_ranges(
             requested=(start_date, end_date),
             covered=covered_ranges,
@@ -958,7 +968,9 @@ def download_eodhd_history_year(
         if not missing_ranges:
             reused_symbol_count += 1
         merged_ranges = _merge_ranges(covered_ranges)
-        for missing_start, missing_end in missing_ranges:
+        for missing_range_number, (missing_start, missing_end) in enumerate(
+            missing_ranges
+        ):
             if downloaded_request_count >= max_requests:
                 raise dg.Failure(
                     description=(
@@ -977,11 +989,39 @@ def download_eodhd_history_year(
                 )
             if downloaded_request_count > 0 and request_delay_seconds > 0:
                 time.sleep(request_delay_seconds)
-            payload = client.prices(
-                symbol_key,
-                start_date=missing_start,
-                end_date=missing_end,
-            )
+            try:
+                payload = client.prices(
+                    symbol_key,
+                    start_date=missing_start,
+                    end_date=missing_end,
+                )
+            except EodhdTickerNotFoundError:
+                ticker_not_found = True
+                covered_ranges.extend(missing_ranges[missing_range_number:])
+                downloaded_request_count += 1
+                merged_ranges = _merge_ranges(covered_ranges)
+                retrieved_at = utc_now_iso()
+                object_store.write_bytes(
+                    object_key,
+                    write_price_envelope(
+                        symbol_key=symbol_key,
+                        covered_ranges=merged_ranges,
+                        prices=list(prices_by_date.values()),
+                        retrieved_at=retrieved_at,
+                        source_object_keys=source_object_keys,
+                        ticker_not_found=True,
+                    ),
+                    bucket=EODHD_RAW_BUCKET,
+                )
+                log(
+                    "Quarantined EODHD history ticker not found: "
+                    "year=%s symbol=%s requested_from=%s requested_to=%s",
+                    year,
+                    symbol_key,
+                    start_date,
+                    end_date,
+                )
+                break
             for row in payload:
                 row_date = str(row.get("date", ""))
                 if missing_start <= row_date <= missing_end:
@@ -998,9 +1038,12 @@ def download_eodhd_history_year(
                     prices=list(prices_by_date.values()),
                     retrieved_at=retrieved_at,
                     source_object_keys=source_object_keys,
+                    ticker_not_found=False,
                 ),
                 bucket=EODHD_RAW_BUCKET,
             )
+        if ticker_not_found:
+            ticker_not_found_symbol_count += 1
         catalog.append(
             {
                 **symbol,
@@ -1010,6 +1053,7 @@ def download_eodhd_history_year(
                     {"start": start, "end": end} for start, end in merged_ranges
                 ],
                 "retrieved_at": retrieved_at,
+                "ticker_not_found": ticker_not_found,
             }
         )
         total_price_rows += len(prices_by_date)
@@ -1054,6 +1098,7 @@ def download_eodhd_history_year(
         "symbol_count": len(symbols),
         "reused_symbol_count": reused_symbol_count,
         "downloaded_request_count": downloaded_request_count,
+        "ticker_not_found_symbol_count": ticker_not_found_symbol_count,
         "price_row_count": total_price_rows,
         "catalog_object_key": catalog_key,
         "elapsed_seconds": round(time.monotonic() - started_at, 3),

@@ -20,10 +20,11 @@ https://vardefulla-datamangder.bolagsverket.se/arsredovisningar-bulkfiler/arsred
 ```
 
 One downloaded outer ZIP contains many nested ZIPs. Each nested ZIP name carries
-the company id and report-period end date, while the XHTML filename inside the
-nested ZIP is a UUID. Because the outer ZIP is the upstream audit artifact, the
-pipeline stores the outer ZIP files first, then extracts each nested report XHTML
-into deterministic object keys and catalogs them in DuckDB.
+the company id and report-period end date. Most contain a standalone Swedish-
+taxonomy XHTML document; public issuers can instead contain a certification XHTML
+plus an inner ESEF report-package ZIP. Because the outer ZIP is the upstream audit
+artifact, the pipeline stores it first, then catalogs standalone XHTML and ESEF
+packages separately.
 
 ## Resource
 
@@ -118,6 +119,12 @@ extracted report XHTML with the partition year, company id, report-period end,
 source archive object key, nested ZIP name, report object key, content length,
 content hash, and `source_run_id`.
 
+Nested ESEF report-package ZIPs are ignored by this source. The same issuer reports
+are processed once by the shared filings.xbrl.org ESEF document flow, which owns raw
+package archival, deterministic contact/domain extraction, and LLM company
+information. The Bolagsverket certification XHTML remains auditable in the Sweden
+catalog, but this pipeline neither archives nor parses the nested ESEF package.
+
 The DuckDB table `sweden_financial.archive_sync_catalog` stores one row per
 archive sync manifest consumed by the catalog assets, including the upstream
 key, `LastModified`, ETag, source size, object-storage key, and whether the
@@ -190,6 +197,35 @@ and the exact extracted XHTML URI under
 queryable and traceable without duplicating long document paths across hundreds
 of millions of physical fact rows.
 
+`se_financial_facts_concepts` retains the distinct QName vocabulary observed in
+facts. It is an inventory and humanized-label fallback, not the authoritative
+label source. `se_financial_taxonomy_concepts` resolves each referenced report
+taxonomy entrypoint with Arelle and preserves the official Swedish and English
+standard labels, documentation labels, type metadata, and source URL. The
+`se_financial_taxonomy_concepts_current` view exposes the latest official row
+per entrypoint and concept.
+
+`sweden_financial_taxonomy_translation_load` translates only official Swedish
+labels or descriptions for which that same taxonomy concept has no official
+English text. Generated English stays in the shared `text_translations` table.
+The `se_financial_taxonomy_concept_labels` view resolves text in this order:
+official English, cached Swedish-to-English translation, and—for labels only—a
+humanized local-name fallback. Facts join this dictionary through their
+statement's exact taxonomy entrypoint, namespace, and local name, so a label
+from another taxonomy version is not silently substituted. The compatibility
+view `se_financial_concept_labels` remains for consumers that do not yet carry a
+statement key and exposes the same translation provenance.
+
+Currency conversion is a separate, re-runnable DuckDB step after parsing.
+`sweden_financial_backfill_facts_usd_duckdb` and
+`sweden_financial_current_facts_usd_duckdb` request one shared rate per distinct
+`(currency, report_period_end)` pair, then populate `amount_usd`,
+`fx_rate_to_usd`, `fx_rate_date`, and `fx_source` for every currency-bearing
+numeric fact with one set-based update. Unitless numeric facts, dates, and text
+remain native-only. The scoped facts exporters run after this step, so both the
+lossless facts table and the canonical metrics projection carry USD values and
+rate provenance.
+
 `sweden_financial_metrics_clickhouse` builds one canonical row per filing in
 `corpscout.se_financial_metrics`. It selects undimensioned current-period facts,
 prefers the highest declared XBRL precision when a document repeats rounded and
@@ -206,15 +242,21 @@ in the stable cross-country metric projection.
 `sweden_financial_backfill_job` selects both
 `sweden_financial_backfill_raw_archives_s3` and
 `sweden_financial_backfill_report_xhtml_catalog_duckdb`, then
-`sweden_financial_backfill_parsed_reports_duckdb`. Backfill should
-materialize the 2020-2026 partitions.
+`sweden_financial_backfill_parsed_reports_duckdb` and
+`sweden_financial_backfill_facts_usd_duckdb`. Backfill should materialize the
+2020-2026 partitions.
 
 `sweden_financial_current_year_job` selects the full weekly chain as separate
 non-partitioned assets in one run: `sweden_financial_current_raw_archives_s3`,
 `sweden_financial_current_report_xhtml_catalog_duckdb`,
-`sweden_financial_current_parsed_reports_duckdb`, then the
+`sweden_financial_current_parsed_reports_duckdb`,
+`sweden_financial_current_facts_usd_duckdb`, then the
 `sweden_financial_current_reports_clickhouse` /
 `sweden_financial_current_facts_clickhouse` export pair.
+
+The current-year facts reconciler compares both total fact count and populated
+USD count per archive. This makes a currency-enrichment rollout republish an
+archive even when its pre-existing raw fact count already matched ClickHouse.
 
 The weekly chain is deliberately unpartitioned (2026-07-20 design): weekly
 partition identities existed only to give each week's export a bookkeeping
@@ -237,6 +279,13 @@ corruption guard: a local year file with zero report rows refuses to export.
 `Europe/Belgrade` and is enabled by default. Each weekly run discovers
 upstream `LastModified` changes, downloads only changed archives, parses
 them, and reconciles ClickHouse.
+
+**ESEF enrichment-package rollout note (one-time):** materialize the
+`sweden_financial_backfill_job` partitions for 2020-2026 once after deploying
+this integration. Existing outer archives predate the package-manifest feature,
+and an unchanged current-year archive is intentionally not re-extracted by the
+weekly changed-only path. After the backfill, the manifests and content-addressed
+packages are available to the report-segment and company-enrichment assets.
 
 **Deploy note (one-time, 2026-07-20):** before deploying the de-partitioned
 current chain, cancel any in-flight/queued backfills or runs targeting the

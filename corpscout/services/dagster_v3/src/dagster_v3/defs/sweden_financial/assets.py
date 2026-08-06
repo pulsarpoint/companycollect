@@ -2,6 +2,7 @@ from datetime import UTC, datetime
 
 import dagster as dg
 from dagster_clickhouse import ClickhouseResource
+from exchange_rates import ExchangeRateClient
 
 from dagster_v3.defs.common.duckdb_resources import duckdb_resource
 from dagster_v3.defs.common.resources import ObjectStoreResource
@@ -42,12 +43,18 @@ from dagster_v3.defs.sweden_financial.audits import (
 )
 from dagster_v3.defs.sweden_financial.concepts import (
     se_financial_facts_concepts,
-    sweden_financial_concepts_translation_load,
-    sweden_financial_concepts_translator_queue_health_check,
+    se_financial_taxonomy_concepts,
+    se_financial_taxonomy_official_translations,
+    sweden_financial_taxonomy_translation_coverage,
+    sweden_financial_taxonomy_translation_load,
 )
 from dagster_v3.defs.sweden_financial.resources import SwedenFinancialReportsResource
 from dagster_v3.defs.sweden_financial.storage import (
     sweden_financial_year_duckdb_connection,
+    sweden_financial_year_duckdb_write_connection,
+)
+from dagster_v3.defs.sweden_financial.usd_conversion import (
+    apply_sweden_financial_facts_usd_conversion,
 )
 
 GROUP_NAME = "sweden_financial"
@@ -313,6 +320,73 @@ def sweden_financial_current_parsed_reports_duckdb(
     )
 
 
+def _sweden_financial_facts_usd_result(
+    *,
+    context: dg.AssetExecutionContext,
+    year: str,
+) -> dg.MaterializeResult:
+    duckdb_path = sweden_financial_source_duckdb_path(year)
+    with sweden_financial_year_duckdb_write_connection(year) as connection:
+        counts = apply_sweden_financial_facts_usd_conversion(
+            duckdb_connection=connection,
+            exchange_rates=ExchangeRateClient.from_env(),
+            log=context.log.info,
+        )
+    return dg.MaterializeResult(
+        metadata={
+            **counts,
+            "duckdb_table": "sweden_financial.facts",
+            "duckdb_path": str(duckdb_path),
+        }
+    )
+
+
+@dg.asset(
+    deps=[
+        "sweden_financial_backfill_parsed_reports_duckdb",
+        "exchange_rates_v2_clickhouse",
+    ],
+    group_name=GROUP_NAME,
+    kinds={"python", "duckdb", "clickhouse", "xbrl", "currency", "fx"},
+    partitions_def=SWEDEN_FINANCIAL_BACKFILL_PARTITIONS,
+    backfill_policy=dg.BackfillPolicy.multi_run(max_partitions_per_run=1),
+    pool=SWEDEN_FINANCIAL_DUCKDB_POOL,
+    description=(
+        "Converts every currency-bearing Sweden backfill fact to USD in the "
+        "year DuckDB file, using the filing report-period end date."
+    ),
+)
+def sweden_financial_backfill_facts_usd_duckdb(
+    context: dg.AssetExecutionContext,
+) -> dg.MaterializeResult:
+    return _sweden_financial_facts_usd_result(
+        context=context,
+        year=context.partition_key,
+    )
+
+
+@dg.asset(
+    deps=[
+        "sweden_financial_current_parsed_reports_duckdb",
+        "exchange_rates_v2_clickhouse",
+    ],
+    group_name=GROUP_NAME,
+    kinds={"python", "duckdb", "clickhouse", "xbrl", "currency", "fx"},
+    pool=SWEDEN_FINANCIAL_DUCKDB_POOL,
+    description=(
+        "Converts every currency-bearing Sweden current-year fact to USD in "
+        "the active-year DuckDB file, using the filing report-period end date."
+    ),
+)
+def sweden_financial_current_facts_usd_duckdb(
+    context: dg.AssetExecutionContext,
+) -> dg.MaterializeResult:
+    return _sweden_financial_facts_usd_result(
+        context=context,
+        year=SWEDEN_FINANCIAL_CURRENT_YEAR,
+    )
+
+
 class SwedenFinancialClickhouseExportConfig(dg.Config):
     # Shrink-guard override (see clickhouse.py's
     # guard_against_clickhouse_table_shrink) -- MUST stay False by default.
@@ -437,7 +511,7 @@ def sweden_financial_current_reports_clickhouse(
 
 
 @dg.asset(
-    deps=["sweden_financial_backfill_parsed_reports_duckdb"],
+    deps=["sweden_financial_backfill_facts_usd_duckdb"],
     group_name=GROUP_NAME,
     kinds={"python", "duckdb", "clickhouse", "xbrl"},
     partitions_def=SWEDEN_FINANCIAL_BACKFILL_PARTITIONS,
@@ -462,7 +536,7 @@ def sweden_financial_backfill_facts_clickhouse(
 
 
 @dg.asset(
-    deps=["sweden_financial_current_parsed_reports_duckdb"],
+    deps=["sweden_financial_current_facts_usd_duckdb"],
     group_name=GROUP_NAME,
     kinds={"python", "duckdb", "clickhouse", "xbrl"},
     pool=SWEDEN_FINANCIAL_DUCKDB_POOL,
@@ -728,36 +802,55 @@ SWEDEN_FINANCIAL_BACKFILL_SELECTION = dg.AssetSelection.assets(
     "sweden_financial_backfill_raw_archives_s3",
     "sweden_financial_backfill_report_xhtml_catalog_duckdb",
     "sweden_financial_backfill_parsed_reports_duckdb",
+    "sweden_financial_backfill_facts_usd_duckdb",
 )
 # The weekly current selection is the FULL chain -- sync, catalog, parse,
-# and both ClickHouse exports -- as separate unpartitioned assets in one
-# job/run. The exports are stateless reconcilers (diff local year file vs
-# ClickHouse), so weekly and yearly materializations are order-independent
-# by construction (the 2026-07-20 design closing the 2026-07-18 incident).
+# fact FX enrichment, and both ClickHouse exports -- as separate
+# unpartitioned assets in one job/run. The exports are stateless reconcilers
+# (diff local year file vs ClickHouse), so weekly and yearly materializations
+# are order-independent by construction (the 2026-07-20 design closing the
+# 2026-07-18 incident).
 SWEDEN_FINANCIAL_CURRENT_SELECTION = dg.AssetSelection.assets(
     "sweden_financial_current_raw_archives_s3",
     "sweden_financial_current_report_xhtml_catalog_duckdb",
     "sweden_financial_current_parsed_reports_duckdb",
+    "sweden_financial_current_facts_usd_duckdb",
     "sweden_financial_current_reports_clickhouse",
     "sweden_financial_current_facts_clickhouse",
+    "sweden_financial_company_source_records_clickhouse",
+    "se_financial_facts_concepts",
+    "se_financial_taxonomy_concepts",
+    "se_financial_taxonomy_official_translations",
+    "sweden_financial_taxonomy_translation_load",
 )
-# The ClickHouse layer is three jobs: the year-partitioned backfill export
-# pair, the unpartitioned current (reconciling) export pair for manual
+# The ClickHouse layer is three jobs: the year-partitioned backfill FX/export
+# chain, the unpartitioned current FX/reconciling export chain for manual
 # re-runs, and the derived (unpartitioned) rebuild wave which keeps the
 # historical job name.
 SWEDEN_FINANCIAL_BACKFILL_CLICKHOUSE_SELECTION = dg.AssetSelection.assets(
+    "sweden_financial_backfill_facts_usd_duckdb",
     "sweden_financial_backfill_reports_clickhouse",
     "sweden_financial_backfill_facts_clickhouse",
+    "sweden_financial_company_source_records_clickhouse",
 )
 SWEDEN_FINANCIAL_CURRENT_CLICKHOUSE_SELECTION = dg.AssetSelection.assets(
+    "sweden_financial_current_facts_usd_duckdb",
     "sweden_financial_current_reports_clickhouse",
     "sweden_financial_current_facts_clickhouse",
+    "sweden_financial_company_source_records_clickhouse",
 )
 SWEDEN_FINANCIAL_CLICKHOUSE_SELECTION = dg.AssetSelection.assets(
     "sweden_financial_metrics_clickhouse",
     "se_financial_history_clickhouse",
     "se_company_officers_clickhouse",
     "se_company_audits_clickhouse",
+    "sweden_financial_company_source_records_clickhouse",
+)
+SWEDEN_FINANCIAL_CONCEPTS_SELECTION = dg.AssetSelection.assets(
+    "se_financial_facts_concepts",
+    "se_financial_taxonomy_concepts",
+    "se_financial_taxonomy_official_translations",
+    "sweden_financial_taxonomy_translation_load",
 )
 
 
@@ -786,6 +879,11 @@ sweden_financial_clickhouse_job = dg.define_asset_job(
     selection=SWEDEN_FINANCIAL_CLICKHOUSE_SELECTION,
 )
 
+sweden_financial_concepts_job = dg.define_asset_job(
+    "sweden_financial_concepts_job",
+    selection=SWEDEN_FINANCIAL_CONCEPTS_SELECTION,
+)
+
 
 sweden_financial_current_year_weekly = dg.ScheduleDefinition(
     name="sweden_financial_current_year_weekly",
@@ -804,6 +902,8 @@ defs = dg.Definitions(
         sweden_financial_current_raw_archives_s3,
         sweden_financial_current_report_xhtml_catalog_duckdb,
         sweden_financial_current_parsed_reports_duckdb,
+        sweden_financial_backfill_facts_usd_duckdb,
+        sweden_financial_current_facts_usd_duckdb,
         sweden_financial_backfill_reports_clickhouse,
         sweden_financial_current_reports_clickhouse,
         sweden_financial_backfill_facts_clickhouse,
@@ -813,11 +913,13 @@ defs = dg.Definitions(
         se_company_officers_clickhouse,
         se_company_audits_clickhouse,
         se_financial_facts_concepts,
-        sweden_financial_concepts_translation_load,
+        se_financial_taxonomy_concepts,
+        se_financial_taxonomy_official_translations,
+        sweden_financial_taxonomy_translation_load,
     ],
     asset_checks=[
         archive_ingest_complete,
-        sweden_financial_concepts_translator_queue_health_check,
+        sweden_financial_taxonomy_translation_coverage,
     ],
     jobs=[
         sweden_financial_backfill_job,
@@ -825,6 +927,7 @@ defs = dg.Definitions(
         sweden_financial_backfill_clickhouse_job,
         sweden_financial_current_clickhouse_job,
         sweden_financial_clickhouse_job,
+        sweden_financial_concepts_job,
     ],
     schedules=[sweden_financial_current_year_weekly],
     resources={

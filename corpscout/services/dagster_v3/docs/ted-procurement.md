@@ -119,7 +119,7 @@ Nothing about steps 1–3 is Finland-specific; that is the whole point of the pa
 de-duplicated (on Hilma's `ted_number` reference) in the backoffice public-contracts
 section. France and Latvia now complement TED with the national DECP and IUB
 Dagster assets. Slovakia's UVO assets and company views are implemented, but
-collection stays disabled until machine-reuse permission is confirmed. Denmark
-still relies on TED pending `denmark-national-source.md`.
+machine-reuse approval is managed outside runtime configuration. Denmark still
+relies on TED pending `denmark-national-source.md`.
 Denmark's company-level signal also requires the existing CVR DuckDB spine to be
 exported to ClickHouse first.

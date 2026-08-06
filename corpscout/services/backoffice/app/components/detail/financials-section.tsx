@@ -1,9 +1,14 @@
+import type { ReactNode } from "react";
 import { Link } from "react-router";
+import { ChevronRight, Info } from "lucide-react";
 import { Bar, BarChart, CartesianGrid, XAxis } from "recharts";
 import type { FinancialYearRow } from "~/lib/queries.server";
+import { Alert, AlertDescription, AlertTitle } from "~/components/ui/alert";
+import { Button } from "~/components/ui/button";
 import {
   Card,
   CardContent,
+  CardDescription,
   CardHeader,
   CardTitle,
 } from "~/components/ui/card";
@@ -21,15 +26,26 @@ import {
   TableHeader,
   TableRow,
 } from "~/components/ui/table";
+import { EvidencePanel } from "~/components/detail/evidence";
 
 const nf = new Intl.NumberFormat("en-US", { maximumFractionDigits: 0 });
 
 function money(v: number | null) {
-  return v == null ? <span className="text-muted-foreground">—</span> : nf.format(v);
+  return v == null ? (
+    <span className="text-muted-foreground">—</span>
+  ) : (
+    nf.format(v)
+  );
 }
 
 /** Original value on top, USD equivalent muted beneath — both or whichever exists. */
-function MoneyPair({ original, usd }: { original: number | null; usd: number | null }) {
+function MoneyPair({
+  original,
+  usd,
+}: {
+  original: number | null;
+  usd: number | null;
+}) {
   if (original == null && usd == null) {
     return <span className="text-muted-foreground">—</span>;
   }
@@ -43,16 +59,67 @@ function MoneyPair({ original, usd }: { original: number | null; usd: number | n
   );
 }
 
-/** True when no year carries a single money value (e.g. Swedish credit
- * institutions, whose digital filings are metadata envelopes referencing an
- * external statements package — the figures are not in the source). */
-function allMoneyNull(financials: FinancialYearRow[]): boolean {
-  return financials.every(
-    (f) =>
-      f.revenue_amount_original == null && f.revenue_amount_usd == null &&
-      f.net_result_amount_original == null && f.net_result_amount_usd == null &&
-      f.total_assets_amount_original == null && f.total_assets_amount_usd == null &&
-      f.equity_amount_original == null && f.equity_amount_usd == null,
+function hasFinancialData(financial: FinancialYearRow): boolean {
+  return [
+    financial.revenue_amount_original,
+    financial.revenue_amount_usd,
+    financial.net_result_amount_original,
+    financial.net_result_amount_usd,
+    financial.total_assets_amount_original,
+    financial.total_assets_amount_usd,
+    financial.equity_amount_original,
+    financial.equity_amount_usd,
+    financial.employees,
+  ].some((value) => value !== null);
+}
+
+function hasChartData(financial: FinancialYearRow): boolean {
+  return [
+    financial.revenue_amount_original,
+    financial.revenue_amount_usd,
+    financial.net_result_amount_original,
+    financial.net_result_amount_usd,
+  ].some((value) => value !== null);
+}
+
+function UnavailableFinancialYears({
+  financials,
+  factsHref,
+}: {
+  financials: FinancialYearRow[];
+  factsHref?: (fiscalYear: string) => string;
+}) {
+  if (financials.length === 0) return null;
+
+  return (
+    <Alert>
+      <Info />
+      <AlertTitle>Filed documents without financial data</AlertTitle>
+      <AlertDescription className="flex flex-col gap-2">
+        <p>
+          These filings do not contain machine-readable financial values. They
+          remain available as source evidence.
+        </p>
+        <ul className="flex flex-col gap-1">
+          {financials.map((financial) => (
+            <li
+              key={financial.fiscal_year}
+              className="flex flex-wrap items-center gap-2"
+            >
+              <span>
+                No financial data available for {financial.fiscal_year}.
+              </span>
+              {factsHref && financial.observation !== "comparative" ? (
+                <Link to={factsHref(financial.fiscal_year)}>
+                  View filing facts
+                </Link>
+              ) : null}
+              <EvidencePanel evidence={financial.evidence ?? []} />
+            </li>
+          ))}
+        </ul>
+      </AlertDescription>
+    </Alert>
   );
 }
 
@@ -60,109 +127,148 @@ export function FinancialsSection({
   financials,
   factsHref,
   title = "Financials",
+  description,
+  children,
 }: {
   financials: FinancialYearRow[];
   /** When set, year cells link to the raw source facts for that filing. */
   factsHref?: (fiscalYear: string) => string;
   title?: string;
+  description?: string;
+  children?: ReactNode;
 }) {
-  if (financials.length === 0) return null;
-  const noFigures = allMoneyNull(financials);
-  const chartUsesUsd = financials.some(
-    (row) => row.revenue_amount_usd !== null || row.net_result_amount_usd !== null,
+  if (financials.length === 0 && children == null) return null;
+  const financialRows = financials.filter(hasFinancialData);
+  const unavailableRows = financials.filter(
+    (financial) => !hasFinancialData(financial),
   );
-  const chartCurrency = chartUsesUsd ? "USD" : financials[0]?.currency || "original currency";
+  const chartRows = financialRows.filter(hasChartData);
+  const chartUsesUsd = chartRows.some(
+    (row) =>
+      row.revenue_amount_usd !== null || row.net_result_amount_usd !== null,
+  );
+  const chartCurrency = chartUsesUsd
+    ? "USD"
+    : chartRows[0]?.currency || "original currency";
   const chartConfig = {
     revenue: { label: `Revenue (${chartCurrency})`, color: "var(--chart-1)" },
     result: { label: `Net result (${chartCurrency})`, color: "var(--chart-2)" },
   } satisfies ChartConfig;
   // Chart wants oldest → newest, left to right.
-  const chartData = [...financials]
-    .reverse()
-    .map((f) => ({
-      year: f.fiscal_year,
-      revenue: chartUsesUsd ? f.revenue_amount_usd : f.revenue_amount_original,
-      result: chartUsesUsd ? f.net_result_amount_usd : f.net_result_amount_original,
-    }));
+  const chartData = [...chartRows].reverse().map((f) => ({
+    year: f.fiscal_year,
+    revenue: chartUsesUsd ? f.revenue_amount_usd : f.revenue_amount_original,
+    result: chartUsesUsd
+      ? f.net_result_amount_usd
+      : f.net_result_amount_original,
+  }));
 
   return (
     <Card>
       <CardHeader>
         <CardTitle className="text-base">{title}</CardTitle>
+        {description ? <CardDescription>{description}</CardDescription> : null}
       </CardHeader>
       <CardContent className="flex flex-col gap-4">
-        {noFigures ? (
-          <p className="text-muted-foreground text-sm">
-            Filings exist for the years below, but the digital submissions carry
-            no machine-readable figures (the statements live in an external
-            package the source does not inline — common for banks and other
-            credit institutions).
-          </p>
-        ) : null}
-        {noFigures || financials.length < 2 ? null : (
-        <ChartContainer config={chartConfig} className="h-56 w-full">
-          <BarChart data={chartData}>
-            <CartesianGrid vertical={false} />
-            <XAxis dataKey="year" tickLine={false} axisLine={false} />
-            <ChartTooltip content={<ChartTooltipContent />} />
-            <Bar dataKey="revenue" fill="var(--color-revenue)" radius={3} />
-            <Bar dataKey="result" fill="var(--color-result)" radius={3} />
-          </BarChart>
-        </ChartContainer>
+        <UnavailableFinancialYears
+          financials={unavailableRows}
+          factsHref={factsHref}
+        />
+        {chartRows.length < 2 ? null : (
+          <ChartContainer config={chartConfig} className="h-56 w-full">
+            <BarChart data={chartData}>
+              <CartesianGrid vertical={false} />
+              <XAxis dataKey="year" tickLine={false} axisLine={false} />
+              <ChartTooltip content={<ChartTooltipContent />} />
+              <Bar dataKey="revenue" fill="var(--color-revenue)" radius={3} />
+              <Bar dataKey="result" fill="var(--color-result)" radius={3} />
+            </BarChart>
+          </ChartContainer>
         )}
 
-        <div className="overflow-x-auto">
-          <Table className="min-w-[40rem]">
-            <TableHeader>
-              <TableRow>
-                <TableHead>Year</TableHead>
-                <TableHead>Currency</TableHead>
-                <TableHead className="text-right">Revenue</TableHead>
-                <TableHead className="text-right">Net result</TableHead>
-                <TableHead className="text-right">Total assets</TableHead>
-                <TableHead className="text-right">Equity</TableHead>
-                <TableHead className="text-right">Employees</TableHead>
-              </TableRow>
-            </TableHeader>
-            <TableBody>
-              {financials.map((f) => (
-                <TableRow key={f.fiscal_year}>
-                  <TableCell className="tabular-nums align-top">
-                    {factsHref && f.observation !== "comparative" ? (
-                      <Link
-                        to={factsHref(f.fiscal_year)}
-                        className="text-primary underline-offset-4 hover:underline"
-                      >
-                        {f.fiscal_year}
-                      </Link>
-                    ) : (
-                      f.fiscal_year
-                    )}
-                    {f.observation === "comparative" ? (
-                      <div className="text-muted-foreground text-xs whitespace-nowrap">
-                        from {f.source_fiscal_year} filing
-                      </div>
-                    ) : null}
-                  </TableCell>
-                  <TableCell className="align-top">{f.currency}</TableCell>
-                  <TableCell className="text-right tabular-nums">
-                    <MoneyPair original={f.revenue_amount_original} usd={f.revenue_amount_usd} />
-                  </TableCell>
-                  <TableCell className="text-right tabular-nums">
-                    <MoneyPair original={f.net_result_amount_original} usd={f.net_result_amount_usd} />
-                  </TableCell>
-                  <TableCell className="text-right tabular-nums">
-                    <MoneyPair original={f.total_assets_amount_original} usd={f.total_assets_amount_usd} />
-                  </TableCell>
-                  <TableCell className="text-right tabular-nums">
-                    <MoneyPair original={f.equity_amount_original} usd={f.equity_amount_usd} />
-                  </TableCell>
-                  <TableCell className="text-right tabular-nums align-top">{money(f.employees)}</TableCell>
+        {financialRows.length === 0 ? null : (
+          <div className="overflow-x-auto">
+            <Table className="min-w-[40rem]">
+              <TableHeader>
+                <TableRow>
+                  <TableHead>Year</TableHead>
+                  <TableHead>Currency</TableHead>
+                  <TableHead className="text-right">Revenue</TableHead>
+                  <TableHead className="text-right">Net result</TableHead>
+                  <TableHead className="text-right">Total assets</TableHead>
+                  <TableHead className="text-right">Equity</TableHead>
+                  <TableHead className="text-right">Employees</TableHead>
+                  {factsHref ? (
+                    <TableHead className="text-right">Report</TableHead>
+                  ) : null}
                 </TableRow>
-              ))}
-            </TableBody>
-          </Table>
-        </div>
+              </TableHeader>
+              <TableBody>
+                {financialRows.map((f) => (
+                  <TableRow key={f.fiscal_year}>
+                    <TableCell className="tabular-nums align-top">
+                      {f.fiscal_year}
+                      {f.observation === "comparative" ? (
+                        <div className="text-muted-foreground text-xs whitespace-nowrap">
+                          from {f.source_fiscal_year} filing
+                        </div>
+                      ) : null}
+                      <EvidencePanel evidence={f.evidence ?? []} />
+                    </TableCell>
+                    <TableCell className="align-top">{f.currency}</TableCell>
+                    <TableCell className="text-right tabular-nums">
+                      <MoneyPair
+                        original={f.revenue_amount_original}
+                        usd={f.revenue_amount_usd}
+                      />
+                    </TableCell>
+                    <TableCell className="text-right tabular-nums">
+                      <MoneyPair
+                        original={f.net_result_amount_original}
+                        usd={f.net_result_amount_usd}
+                      />
+                    </TableCell>
+                    <TableCell className="text-right tabular-nums">
+                      <MoneyPair
+                        original={f.total_assets_amount_original}
+                        usd={f.total_assets_amount_usd}
+                      />
+                    </TableCell>
+                    <TableCell className="text-right tabular-nums">
+                      <MoneyPair
+                        original={f.equity_amount_original}
+                        usd={f.equity_amount_usd}
+                      />
+                    </TableCell>
+                    <TableCell className="text-right tabular-nums align-top">
+                      {money(f.employees)}
+                    </TableCell>
+                    {factsHref ? (
+                      <TableCell className="text-right align-top">
+                        {f.observation === "comparative" ? (
+                          <span className="text-muted-foreground text-xs">
+                            Carried forward
+                          </span>
+                        ) : (
+                          <Button
+                            variant="outline"
+                            size="sm"
+                            nativeButton={false}
+                            render={<Link to={factsHref(f.fiscal_year)} />}
+                          >
+                            All facts
+                            <ChevronRight data-icon="inline-end" />
+                          </Button>
+                        )}
+                      </TableCell>
+                    ) : null}
+                  </TableRow>
+                ))}
+              </TableBody>
+            </Table>
+          </div>
+        )}
+        {children}
       </CardContent>
     </Card>
   );

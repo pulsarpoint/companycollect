@@ -13,6 +13,8 @@ import json
 from pathlib import Path
 from typing import Any
 
+import pytest
+
 from dagster_v3.defs.esef_filings import facts
 from dagster_v3.defs.esef_filings import tables
 
@@ -84,6 +86,73 @@ def test_iter_oim_facts_consumes_fact_entries_lazily() -> None:
     first_row = next(rows)
     assert consumed_fact_ids == [first_row.fact_id]
     assert len(list(rows)) == 5
+
+
+def test_iter_artifact_facts_reuses_oim_row_contract_with_deterministic_ids() -> None:
+    artifact = {
+        "schema_version": 4,
+        "facts": {
+            "fact-key-a": {
+                "report_member": "reports/report.xhtml",
+                "ordinal": 1,
+                "source_fact_id": "revenue",
+                "canonical_value": "325100000",
+                "decimals": -5,
+                "oim_dimensions": {
+                    "concept": "ifrs-full:Revenue",
+                    "entity": "lei:549300SAMPLE000000001",
+                    "period": "2024-01-01T00:00:00/2025-01-01T00:00:00",
+                    "unit": "iso4217:SEK",
+                },
+            },
+            "fact-key-b": {
+                "report_member": "reports/report.xhtml",
+                "ordinal": 2,
+                "source_fact_id": "revenue",
+                "canonical_value": "310000000",
+                "decimals": -5,
+                "oim_dimensions": {
+                    "concept": "ifrs-full:Revenue",
+                    "entity": "lei:549300SAMPLE000000001",
+                    "period": "2023-01-01T00:00:00/2024-01-01T00:00:00",
+                    "unit": "iso4217:SEK",
+                },
+            },
+        },
+    }
+
+    rows = list(
+        facts.iter_artifact_facts(
+            artifact,
+            lei=LEI,
+            fxo_id=FXO_ID,
+            period_end="2024-12-31",
+        )
+    )
+
+    assert [row.fact_id for row in rows] == ["revenue", "revenue#fact-key-b"]
+    assert [row.amount_original for row in rows] == [
+        decimal.Decimal("325100000"),
+        decimal.Decimal("310000000"),
+    ]
+    assert [row.period_duration_end for row in rows] == [
+        "2024-12-31",
+        "2023-12-31",
+    ]
+    assert all(row.currency == "SEK" for row in rows)
+    assert all(row.decimals == -5 for row in rows)
+
+
+def test_iter_artifact_facts_rejects_unknown_artifact_schema() -> None:
+    with pytest.raises(ValueError, match="unsupported schema version"):
+        list(
+            facts.iter_artifact_facts(
+                {"schema_version": 3, "facts": {}},
+                lei=LEI,
+                fxo_id=FXO_ID,
+                period_end=PERIOD_END,
+            )
+        )
 
 
 def test_monetary_fact_value_currency_decimals() -> None:

@@ -1136,6 +1136,70 @@ def test_extract_sweden_financial_report_xhtml_catalog_skips_nested_zip_without_
     assert catalog_count == 0
 
 
+def test_sweden_financial_catalog_does_not_duplicate_nested_esef_package(
+    tmp_path: Path,
+) -> None:
+    object_store = FakeObjectStore()
+    report_xhtml = b"<html xmlns='http://www.w3.org/1999/xhtml'>ESEF report</html>"
+    report_package_buffer = BytesIO()
+    with zipfile.ZipFile(
+        report_package_buffer, "w", compression=zipfile.ZIP_DEFLATED
+    ) as report_package:
+        report_package.writestr(
+            "aak-2025/META-INF/reportPackage.json",
+            b'{"documentInfo":{"documentType":"https://xbrl.org/report-package/2023"}}',
+        )
+        report_package.writestr(
+            "aak-2025/reports/aak-2025.xhtml",
+            report_xhtml,
+        )
+    report_package_body = report_package_buffer.getvalue()
+    company_zip_buffer = BytesIO()
+    with zipfile.ZipFile(
+        company_zip_buffer, "w", compression=zipfile.ZIP_DEFLATED
+    ) as company_zip:
+        company_zip.writestr(
+            "certification.xhtml",
+            b"<html xmlns='http://www.w3.org/1999/xhtml'>Certification</html>",
+        )
+        company_zip.writestr("official-esef-package.zip", report_package_body)
+
+    outer_buffer = BytesIO()
+    with zipfile.ZipFile(
+        outer_buffer, "w", compression=zipfile.ZIP_DEFLATED
+    ) as outer_zip:
+        outer_zip.writestr(
+            "5566692850_2025-12-31.zip",
+            company_zip_buffer.getvalue(),
+        )
+    raw_archive_key = archive_object_key(
+        upstream_key="arsredovisningar/2026/22_5.zip",
+        source_last_modified="2026-06-02T09:13:53.713Z",
+    )
+    object_store.objects[(SWEDEN_FINANCIAL_RAW_BUCKET, raw_archive_key)] = (
+        outer_buffer.getvalue()
+    )
+
+    with duckdb.connect(str(tmp_path / "sweden_financial_source.duckdb")) as connection:
+        counts = extract_sweden_financial_report_xhtml_catalog(
+            connection=connection,
+            object_store=object_store,
+            source_run_id="run-1",
+            partition_year="2026",
+        )
+        catalog_members = connection.execute(
+            "select xhtml_member from sweden_financial.report_xhtml_catalog"
+        ).fetchall()
+
+    assert counts["report_xhtml_count"] == 1
+    assert catalog_members == [("certification.xhtml",)]
+    assert not any(
+        "esef_report_packages" in key or "esef_package_manifests" in key
+        for bucket, key in object_store.objects
+        if bucket == SWEDEN_FINANCIAL_RAW_BUCKET
+    )
+
+
 def test_extract_sweden_financial_report_xhtml_catalog_logs_archive_progress(
     tmp_path: Path,
 ) -> None:

@@ -78,17 +78,21 @@ export function CompanyRecordSection({
   company,
   record,
   lang,
+  hiddenFieldKeys = new Set<string>(),
 }: {
   company: CompanyListRow;
   record: Record<string, unknown>;
   lang: Lang;
+  hiddenFieldKeys?: Set<string>;
 }) {
   const { fields, longTexts } = resolveRecordFields(record, lang);
   const { lineage } = splitFields(record);
   const facts = keyFacts(record, lang);
   const usedKeys = keyFactKeys(record, lang);
   const markerSuffix = lang === "en" ? "(original)" : "(english)";
-  const gridFieldEntries = fields.filter((f) => !usedKeys.has(f.key));
+  const gridFieldEntries = fields.filter(
+    (field) => !usedKeys.has(field.key) && !hiddenFieldKeys.has(field.key),
+  );
   const gridFields: [string, unknown][] = [
     ...gridFieldEntries.map((f): [string, unknown] => [f.key, f.value]),
     ["industry", [company.industry_code, company.industry_label].filter(Boolean).join(" ") || null],
@@ -105,7 +109,12 @@ export function CompanyRecordSection({
       <CardContent className="space-y-4">
         <KeyFactsStrip facts={facts} lang={lang} />
         {facts.length > 0 ? <Separator /> : null}
-        <ProseSections longTexts={longTexts.filter((f) => !usedKeys.has(f.key))} lang={lang} />
+        <ProseSections
+          longTexts={longTexts.filter(
+            (field) => !usedKeys.has(field.key) && !hiddenFieldKeys.has(field.key),
+          )}
+          lang={lang}
+        />
         <FieldGrid fields={gridFields} markers={gridMarkers} />
         {lineage.length > 0 ? (
           <details>

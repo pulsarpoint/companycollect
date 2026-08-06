@@ -20,7 +20,11 @@ from dagster_v3.defs.classifier.lib import (
 
 
 def test_build_scan_sql_shape():
-    sql = build_scan_sql("corpscout.lv_companies", "activity_text_original")
+    sql = build_scan_sql(
+        "corpscout.lv_companies",
+        "activity_text_original",
+        source_lang="lv",
+    )
     for fragment in (
         "SELECT DISTINCT ifNull(activity_text_original, '') AS source_text",
         "FROM corpscout.lv_companies",
@@ -28,6 +32,7 @@ def test_build_scan_sql_shape():
         "coalesce(nullif(tr.translated_text, ''), src.source_text) AS input_text",
         "FROM corpscout.text_translations",
         "argMax(translated_text, version)",
+        "AND source_lang = 'lv'",
         "AND target_lang = 'en'",
         "LEFT ANTI JOIN",
         "FROM corpscout.text_classifications",
@@ -232,6 +237,7 @@ def test_classify_source_raises_on_systematic_unknown_after_flushing():
             clickhouse,
             table="corpscout.lv_companies",
             column="activity_text_original",
+            source_lang="lv",
             embedder=_FakeEmbedder(),
             llm_call=garbage_llm_call,
             llm_model="fake-model",
@@ -270,6 +276,7 @@ def test_classify_source_embeds_single_line_text_once():
         clickhouse,
         table="corpscout.lv_companies",
         column="activity_text_original",
+        source_lang="lv",
         embedder=_RecordingEmbedder(),
         llm_call=llm_call,
         llm_model="fake-model",

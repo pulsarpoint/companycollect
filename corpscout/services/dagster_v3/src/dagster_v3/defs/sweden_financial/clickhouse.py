@@ -184,16 +184,23 @@ def _local_report_counts_by_archive(duckdb_connection: Any) -> dict[str, int]:
     return {str(key): int(count) for key, count in rows}
 
 
-def _local_facts_counts_by_archive(duckdb_connection: Any) -> dict[str, int]:
+def _local_facts_counts_by_archive(
+    duckdb_connection: Any,
+) -> dict[str, tuple[int, int]]:
     rows = duckdb_connection.execute(
         f"""
-        select r.source_archive_key, count(*)
+        select r.source_archive_key,
+               count(*),
+               count(f.amount_usd)
         from {SWEDEN_FINANCIAL_DATASET_NAME}.facts f
         join {SWEDEN_FINANCIAL_DATASET_NAME}.reports r using (statement_key)
         group by 1
         """
     ).fetchall()
-    return {str(key): int(count) for key, count in rows}
+    return {
+        str(key): (int(fact_count), int(usd_count))
+        for key, fact_count, usd_count in rows
+    }
 
 
 def _diff_against_clickhouse_counts(
@@ -206,6 +213,22 @@ def _diff_against_clickhouse_counts(
         key
         for key, count in local_counts.items()
         if clickhouse_counts.get(key, 0) != count
+    )
+
+
+def _diff_facts_against_clickhouse_counts(
+    *,
+    local_counts: dict[str, tuple[int, int]],
+    clickhouse_rows: Sequence[tuple[Any, Any, Any]],
+) -> list[str]:
+    clickhouse_counts = {
+        str(key): (int(fact_count), int(usd_count))
+        for key, fact_count, usd_count in clickhouse_rows
+    }
+    return sorted(
+        key
+        for key, counts in local_counts.items()
+        if clickhouse_counts.get(key, (0, 0)) != counts
     )
 
 
@@ -259,10 +282,12 @@ def resolve_unreconciled_facts_archive_keys(
     *,
     log: Callable[..., object] | None = None,
 ) -> list[str]:
-    """Archives whose per-archive FACTS count (via the ``statement_key`` ->
-    ``reports`` join on both sides) differs from ClickHouse. Computed
-    independently of the reports diff so a facts-only gap (e.g. a reports
-    export that succeeded while the facts export failed) is still found.
+    """Archives whose per-archive fact count or USD-populated count differs
+    from ClickHouse, joined through ``statement_key`` on both sides. The USD
+    count makes the first currency-enrichment rollout republish active-year
+    rows whose raw fact count already matched but whose FX columns were null.
+    This is computed independently of the reports diff so a facts-only gap
+    is still found.
 
     Diffs over the full local REPORT archive universe with the facts count
     defaulted to 0: an archive with reports but zero extracted facts is a
@@ -277,11 +302,10 @@ def resolve_unreconciled_facts_archive_keys(
     report_counts = _local_report_counts_by_archive(duckdb_connection)
     _require_nonempty_local_reports(report_counts)
     facts_counts = _local_facts_counts_by_archive(duckdb_connection)
-    local_counts = {
-        key: facts_counts.get(key, 0) for key in report_counts
-    }
+    local_counts = {key: facts_counts.get(key, (0, 0)) for key in report_counts}
     clickhouse_rows = clickhouse_client.execute(
-        f"SELECT r.source_archive_key, count() "
+        f"SELECT r.source_archive_key, count(), "
+        f"countIf(f.amount_usd IS NOT NULL) "
         f"FROM {QUALIFIED_SE_FINANCIAL_FACTS_TABLE} AS f "
         f"INNER JOIN {QUALIFIED_SE_FINANCIAL_REPORTS_TABLE} AS r "
         f"ON f.statement_key = r.statement_key "
@@ -289,7 +313,7 @@ def resolve_unreconciled_facts_archive_keys(
         f"GROUP BY r.source_archive_key",
         {"keys": tuple(sorted(report_counts))},
     )
-    keys = _diff_against_clickhouse_counts(
+    keys = _diff_facts_against_clickhouse_counts(
         local_counts=local_counts, clickhouse_rows=clickhouse_rows
     )
     if log is not None:
@@ -713,9 +737,9 @@ def reconcile_sweden_financial_facts_clickhouse(
     log: Callable[..., object] | None = None,
 ) -> dict[str, str | int]:
     """Facts twin of ``reconcile_sweden_financial_reports_clickhouse``,
-    diffing facts counts per archive (via ``statement_key``) and deleting
-    through the Memory stage-table mechanism (statement-key scopes can
-    exceed ``max_query_size`` as Array params)."""
+    diffing fact and USD-populated counts per archive (via ``statement_key``)
+    and deleting through the Memory stage-table mechanism (statement-key
+    scopes can exceed ``max_query_size`` as Array params)."""
     assert_clickhouse_tables_exist(
         clickhouse,
         database=SWEDEN_FINANCIAL_DATABASE,

@@ -16,8 +16,8 @@ which must run against the staged data AFTER the INSERT but BEFORE the
 EXCHANGE.
 
 One row per ``fxo_id`` (a filing *version*, not a (lei, period_end) pair):
-filings.xbrl.org keeps every amendment of a filing under its own ``fxo_id``
-(suffix ``-0``, ``-1``, ...), and this table deliberately does NOT dedup
+repository and official-source amendments each receive a version suffix, and
+this table deliberately does NOT dedup
 down to one row per (lei, period_end) -- consumers that only want the latest
 version should prefer the highest ``fxo_id`` suffix themselves. Facts join
 by ``fxo_id`` too, so a given row's facts are already scoped to exactly that

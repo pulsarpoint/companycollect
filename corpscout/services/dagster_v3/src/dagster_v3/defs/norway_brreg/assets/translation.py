@@ -74,12 +74,24 @@ TARGET_LANG = "en"
 SOURCE_LANGUAGE_NAME = "Norwegian"
 TARGET_LANGUAGE_NAME = "English"
 TRANSLATION_FIELDS = (
-    TranslationField("corpscout.no_companies", "articles_purpose_original"),
-    TranslationField("corpscout.no_companies", "activity_text_original"),
+    TranslationField(
+        "corpscout.no_companies",
+        "articles_purpose_original",
+        SOURCE_LANG,
+        TARGET_LANG,
+    ),
+    TranslationField(
+        "corpscout.no_companies",
+        "activity_text_original",
+        SOURCE_LANG,
+        TARGET_LANG,
+    ),
 )
 LEGAL_FORM_FIELD = TranslationField(
     "corpscout.no_companies",
     "legal_form_description_original",
+    SOURCE_LANG,
+    TARGET_LANG,
 )
 
 
@@ -111,7 +123,12 @@ def norway_brreg_translation_load(
     with clickhouse.get_connection() as client:
         for field in TRANSLATION_FIELDS:
             untranslated_rows = client.execute(
-                build_scan_sql(field.table, field.column)
+                build_scan_sql(
+                    field.table,
+                    field.column,
+                    source_lang=field.source_lang,
+                    target_lang=field.target_lang,
+                )
             )
             context.log.info(
                 "scanned %d untranslated texts for %s.%s",
@@ -139,6 +156,8 @@ def norway_brreg_translation_load(
                 LEGAL_FORM_FIELD.table,
                 LEGAL_FORM_FIELD.column,
                 "legal_form_code",
+                source_lang=LEGAL_FORM_FIELD.source_lang,
+                target_lang=LEGAL_FORM_FIELD.target_lang,
             )
         )
         static_inserted = insert_static_translations(

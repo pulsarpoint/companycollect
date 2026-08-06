@@ -1,10 +1,11 @@
 """Contracts for the ESEF filings source (filings.xbrl.org).
 
-Column orders below are load-bearing against migration
-000149_corpscout_esef_filings.up.sql — each *_EXPORT_COLUMNS tuple must match
-that migration's column order exactly, minus `resolved_at` (ClickHouse
-defaults it via `DEFAULT now64(3)`). See tests/test_esef_filings_client.py for
-the contract test that greps the migration file and asserts this.
+Column orders below are load-bearing against migrations
+000149_corpscout_esef_filings.up.sql and
+000243_corpscout_esef_source_documents.up.sql. Each *_EXPORT_COLUMNS tuple
+must match its migration's column order exactly, minus `resolved_at`
+(ClickHouse defaults it via `DEFAULT now64(3)`). See
+tests/test_esef_filings_client.py for the contract tests.
 
 `esef_financial_metrics` (the fourth table in the migration) is the derived
 IFRS metrics table built entirely in ClickHouse by
@@ -27,6 +28,12 @@ ESEF_FILINGS_TABLE = "esef_filings"
 ESEF_FACTS_TABLE = "esef_facts"
 ESEF_ENTITY_REGISTRY_MAP_TABLE = "esef_entity_registry_map"
 ESEF_FINANCIAL_METRICS_TABLE = "esef_financial_metrics"
+ESEF_SOURCE_DOCUMENTS_TABLE = "esef_source_documents"
+ESEF_DOCUMENT_CONTACT_CANDIDATES_TABLE = "esef_document_contact_candidates"
+ESEF_DOCUMENT_CONCEPT_LABELS_TABLE = "esef_document_concept_labels"
+ESEF_DOCUMENT_COMPANY_INFORMATION_TABLE = "esef_document_company_information"
+ESEF_FACT_DISCLOSURES_TABLE = "esef_fact_disclosures"
+QUALIFIED_FACT_DISCLOSURES_TABLE = f"{DLT_DATASET_NAME}.{ESEF_FACT_DISCLOSURES_TABLE}"
 
 QUALIFIED_ESEF_FILINGS_TABLE = f"{ESEF_DATABASE}.{ESEF_FILINGS_TABLE}"
 QUALIFIED_ESEF_FACTS_TABLE = f"{ESEF_DATABASE}.{ESEF_FACTS_TABLE}"
@@ -36,6 +43,17 @@ QUALIFIED_ESEF_ENTITY_REGISTRY_MAP_TABLE = (
 QUALIFIED_ESEF_FINANCIAL_METRICS_TABLE = (
     f"{ESEF_DATABASE}.{ESEF_FINANCIAL_METRICS_TABLE}"
 )
+QUALIFIED_ESEF_SOURCE_DOCUMENTS_TABLE = f"{ESEF_DATABASE}.{ESEF_SOURCE_DOCUMENTS_TABLE}"
+QUALIFIED_ESEF_DOCUMENT_CONTACT_CANDIDATES_TABLE = (
+    f"{ESEF_DATABASE}.{ESEF_DOCUMENT_CONTACT_CANDIDATES_TABLE}"
+)
+QUALIFIED_ESEF_DOCUMENT_CONCEPT_LABELS_TABLE = (
+    f"{ESEF_DATABASE}.{ESEF_DOCUMENT_CONCEPT_LABELS_TABLE}"
+)
+QUALIFIED_ESEF_DOCUMENT_COMPANY_INFORMATION_TABLE = (
+    f"{ESEF_DATABASE}.{ESEF_DOCUMENT_COMPANY_INFORMATION_TABLE}"
+)
+QUALIFIED_ESEF_FACT_DISCLOSURES_TABLE = f"{ESEF_DATABASE}.{ESEF_FACT_DISCLOSURES_TABLE}"
 
 # corpscout.esef_filings column order minus resolved_at (CH default).
 ESEF_FILINGS_EXPORT_COLUMNS = (
@@ -128,4 +146,151 @@ ESEF_FINANCIAL_METRICS_EXPORT_COLUMNS = (
     "fx_source",
     "viewer_url",
     "source_run_id",
+)
+
+# One row per filings.xbrl.org report package. The stable source_document_id is
+# the upstream fxo_id and is also the join key used by esef_facts.
+ESEF_SOURCE_DOCUMENTS_EXPORT_COLUMNS = (
+    "source_document_id",
+    "document_type",
+    "lei",
+    "entity_name",
+    "country_iso2",
+    "company_id",
+    "period_end",
+    "fiscal_year",
+    "package_url",
+    "report_url",
+    "viewer_url",
+    "package_sha256",
+    "package_object_key",
+    "package_size_bytes",
+    "parsed_artifact_object_key",
+    "artifact_schema_version",
+    "parser_name",
+    "parser_version",
+    "archive_status",
+    "extraction_status",
+    "fact_count",
+    "text_fact_count",
+    "numeric_fact_count",
+    "contact_candidate_count",
+    "website_candidate_count",
+    "validation_error_count",
+    "validation_warning_count",
+    "source_processed_at",
+    "source_run_id",
+    "extracted_at",
+)
+
+# Queryable deterministic values. Evidence remains attached to each value so a
+# later resolver can rank candidates without losing the source document.
+ESEF_DOCUMENT_CONTACT_CANDIDATES_EXPORT_COLUMNS = (
+    "candidate_id",
+    "source_document_id",
+    "package_sha256",
+    "lei",
+    "country_iso2",
+    "company_id",
+    "period_end",
+    "fiscal_year",
+    "candidate_kind",
+    "normalized_value",
+    "country_code",
+    "registrable_domain",
+    "hosts_json",
+    "normalized_urls_json",
+    "suggested_roles_json",
+    "evidence_json",
+    "evidence_count",
+    "extractor_versions_json",
+    "source_run_id",
+    "extracted_at",
+)
+
+# Taxonomy labels for concepts actually referenced by an ESEF source document.
+# The full taxonomy graph remains in the parsed artifact; these rows are the
+# document-scoped serving projection used for authoritative multilingual names.
+ESEF_DOCUMENT_CONCEPT_LABELS_EXPORT_COLUMNS = (
+    "label_id",
+    "source_document_id",
+    "package_sha256",
+    "lei",
+    "country_iso2",
+    "company_id",
+    "period_end",
+    "fiscal_year",
+    "concept_qname",
+    "concept_namespace_uri",
+    "concept_local_name",
+    "is_extension",
+    "label_role",
+    "language",
+    "label",
+    "is_report_language",
+    "source_run_id",
+    "extracted_at",
+)
+
+# One evidence-linked LLM result per source document and model/prompt version.
+ESEF_DOCUMENT_COMPANY_INFORMATION_EXPORT_COLUMNS = (
+    "source_document_id",
+    "package_sha256",
+    "lei",
+    "country_iso2",
+    "company_id",
+    "period_end",
+    "fiscal_year",
+    "extraction_status",
+    "company_description",
+    "description_language",
+    "description_confidence",
+    "description_evidence_ids_json",
+    "people_json",
+    "products_and_services_json",
+    "customer_markets_json",
+    "operating_geographies_json",
+    "business_segments_json",
+    "material_group_relationships_json",
+    "enrichment_artifact_object_key",
+    "input_artifact_object_key",
+    "llm_request_object_key",
+    "llm_request_sha256",
+    "llm_response_text",
+    "llm_response_sha256",
+    "model_provider",
+    "model_name",
+    "prompt_version",
+    "prompt_tokens",
+    "completion_tokens",
+    "input_character_count",
+    "source_run_id",
+    "extracted_at",
+)
+
+# Deterministically parsed structure for one narrative fact. The raw source
+# value remains in esef_facts and is verified through raw_value_sha256.
+ESEF_FACT_DISCLOSURES_EXPORT_COLUMNS = (
+    "disclosure_id",
+    "source_document_id",
+    "source_record_uid",
+    "source_fact_id",
+    "package_sha256",
+    "lei",
+    "country_iso2",
+    "company_id",
+    "period_end",
+    "fiscal_year",
+    "concept_qname",
+    "concept_local_name",
+    "language",
+    "raw_value_sha256",
+    "parser_name",
+    "parser_version",
+    "blocks_json",
+    "plain_text",
+    "block_count",
+    "table_count",
+    "source_run_id",
+    "extracted_at",
 )

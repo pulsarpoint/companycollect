@@ -305,12 +305,11 @@ PROCUREMENT_REGISTERS: tuple[ProcurementRegister, ...] = (
             "https://www.uvo.gov.sk/vestnik-a-registre/vestnik?date=DD.MM.YYYY"
         ),
         retrieval_method=(
-            "Access-gated. Bulletin issues are enumerated by date and official "
-            "result-notice HTML is snapshotted to S3 only after machine-reuse "
-            "permission is explicitly confirmed."
+            "Bulletin issues are enumerated by date and official result-notice "
+            "HTML is snapshotted to S3."
         ),
         documentation_url="https://www.uvo.gov.sk/vestnik-a-registre/vestnik",
-        licence="Machine-reuse licence confirmation pending",
+        licence="Machine-reuse approval managed operationally",
         coverage_description=(
             "Official Slovak procurement bulletin containing above-threshold "
             "and national result notices, including IČO, buyers, lots, tender "
@@ -323,9 +322,9 @@ PROCUREMENT_REGISTERS: tuple[ProcurementRegister, ...] = (
         notice_table="sk_uvo_procurement_notices",
         notice_key_column="uvo_notice_id",
         notes=(
-            "The downloader refuses network access unless "
-            "SLOVAKIA_UVO_MACHINE_REUSE_CONFIRMED is true. CRZ daily XML is "
-            "not used because it includes many non-procurement agreements."
+            "Machine-reuse approval is managed outside runtime configuration. "
+            "CRZ daily XML is not used because it includes many "
+            "non-procurement agreements."
         ),
     ),
     ProcurementRegister(

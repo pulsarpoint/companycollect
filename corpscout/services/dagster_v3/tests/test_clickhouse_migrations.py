@@ -6,6 +6,7 @@ from dagster_v3.defs.brazil_companies.pgfn import tables as brazil_pgfn_tables
 from dagster_v3.defs.brazil_companies.rfb import tables as brazil_rfb_tables
 from dagster_v3.defs.brazil_financial.cvm import tables as brazil_fin_cvm_tables
 from dagster_v3.defs.company_contracts import tables as company_contracts_tables
+from dagster_v3.defs.company_source_records import tables as source_record_tables
 from dagster_v3.defs.company_signals import tables as company_signals_tables
 from dagster_v3.defs.domains import tables as domain_tables
 from dagster_v3.defs.exchange_rates_v2 import tables as exchange_rate_tables
@@ -254,7 +255,21 @@ EXPECTED_MIGRATIONS = (
     "000236_corpscout_company_contract_award_facts",
     "000237_corpscout_awards_read_from_facts",
     "000238_corpscout_company_contract_rollup",
+    "000239_corpscout_country_people_identity",
+    "000240_corpscout_country_person_corrections",
+    "000243_corpscout_esef_source_documents",
+    "000244_corpscout_company_source_records",
+    "000245_corpscout_esef_fact_disclosures",
+    "000246_corpscout_esef_document_concept_labels",
+    "000247_corpscout_esef_llm_provenance",
+    "000248_corpscout_esef_source_record_uid_cast",
+    "000249_corpscout_esef_concept_label_source_record_uid_cast",
+    "000250_corpscout_se_financial_concept_labels_readable",
+    "000251_corpscout_se_financial_taxonomy_translations",
+    "000252_corpscout_text_translations_multilingual",
 )
+
+EXPECTED_ACCESS_MIGRATIONS = ("000241_corpscout_person_correction_writer_role",)
 
 OBSOLETE_CLICKHOUSE_DATABASE_REFERENCES = (
     "reference.",
@@ -570,11 +585,29 @@ def test_clickhouse_migration_files_are_explicit() -> None:
     migration_files = tuple(path.name for path in sorted(MIGRATIONS_DIR.glob("*.sql")))
     expected_files = tuple(
         file_name
-        for migration_name in EXPECTED_MIGRATIONS
+        for migration_name in sorted(
+            (*EXPECTED_MIGRATIONS, *EXPECTED_ACCESS_MIGRATIONS)
+        )
         for file_name in (f"{migration_name}.down.sql", f"{migration_name}.up.sql")
     )
 
     assert migration_files == expected_files
+
+
+def test_person_correction_writer_role_is_least_privileged() -> None:
+    migration = EXPECTED_ACCESS_MIGRATIONS[0]
+    up_sql = _migration_sql(f"{migration}.up.sql")
+    down_sql = _migration_sql(f"{migration}.down.sql")
+
+    assert "CREATE ROLE IF NOT EXISTS corpscout_person_correction_writer" in up_sql
+    assert (
+        "GRANT INSERT ON corpscout.country_person_correction\n"
+        "TO corpscout_person_correction_writer"
+    ) in up_sql
+    assert "CREATE USER" not in up_sql
+    assert "GRANT SELECT" not in up_sql
+    assert "GRANT ALL" not in up_sql
+    assert "DROP ROLE IF EXISTS corpscout_person_correction_writer" in down_sql
 
 
 def test_clickhouse_migrations_create_databases_and_tables() -> None:
@@ -641,9 +674,7 @@ def test_br_company_relations_history_migration_covers_columns() -> None:
     their union, the same pattern as
     test_sweden_uhm_migration_covers_export_columns below."""
     sql = _migration_sql("000210_corpscout_br_company_relations_history.up.sql")
-    down_sql = _migration_sql(
-        "000210_corpscout_br_company_relations_history.down.sql"
-    )
+    down_sql = _migration_sql("000210_corpscout_br_company_relations_history.down.sql")
     added_later = _migration_sql(
         "000211_corpscout_br_company_relations_socios_part_count.up.sql"
     )
@@ -678,9 +709,7 @@ def test_br_company_relations_history_migration_covers_columns() -> None:
         "    related_tax_id,\n    relation_code,\n    relation_since_key\n)"
     ) in sql
 
-    assert (
-        "CREATE TABLE IF NOT EXISTS corpscout.br_company_relations_snapshots" in sql
-    )
+    assert "CREATE TABLE IF NOT EXISTS corpscout.br_company_relations_snapshots" in sql
     for column in brazil_rfb_tables.BR_COMPANY_RELATIONS_SNAPSHOT_COLUMNS:
         assert (
             f"    {column} " in sql
@@ -2282,9 +2311,7 @@ def test_brazil_comp_rfb_registry_dates_are_date32_for_historical_rows() -> None
 
 def test_brazil_comp_pgfn_company_debts_migration_covers_exported_columns() -> None:
     sql = _migration_sql("000212_corpscout_br_pgfn_uint128_row_identity.up.sql")
-    down_sql = _migration_sql(
-        "000212_corpscout_br_pgfn_uint128_row_identity.down.sql"
-    )
+    down_sql = _migration_sql("000212_corpscout_br_pgfn_uint128_row_identity.down.sql")
 
     assert (
         f"CREATE TABLE IF NOT EXISTS "
@@ -2299,7 +2326,8 @@ def test_brazil_comp_pgfn_company_debts_migration_covers_exported_columns() -> N
     assert "    source_record_id UInt128," in sql
     assert "    cnpj_basico " not in sql
     assert "ENGINE = ReplacingMergeTree(resolved_at)" in sql
-    assert """ORDER BY (
+    assert (
+        """ORDER BY (
     snapshot_year,
     snapshot_quarter,
     source_system,
@@ -2308,7 +2336,9 @@ def test_brazil_comp_pgfn_company_debts_migration_covers_exported_columns() -> N
     debtor_role,
     responsible_unit,
     source_record_id
-)""" in sql
+)"""
+        in sql
+    )
     assert "reinterpretAsUInt128(MD5(" in sql
     assert (
         "EXCHANGE TABLES corpscout.br_pgfn_company_debts__uint128_row_identity "
@@ -2903,6 +2933,69 @@ def test_company_contract_rollup_migration_matches_the_column_contract() -> None
     # One row per (country, contract), ordered by the column the list sorts on
     # by default, so the common page is an ordered read rather than a sort.
     assert "ORDER BY (country_code, contract_date, contract_ref);" in sql
+
+
+def test_company_source_record_migration_covers_shared_contracts() -> None:
+    sql = _migration_sql("000244_corpscout_company_source_records.up.sql")
+    down_sql = _migration_sql("000244_corpscout_company_source_records.down.sql")
+    columns_by_table = {
+        source_record_tables.SOURCE_RECORDS_TABLE: (
+            source_record_tables.SOURCE_RECORD_COLUMNS
+        ),
+        source_record_tables.SOURCE_RECORD_ORIGINS_TABLE: (
+            source_record_tables.SOURCE_RECORD_ORIGIN_COLUMNS
+        ),
+        source_record_tables.SOURCE_RECORD_LINKS_TABLE: (
+            source_record_tables.SOURCE_RECORD_LINK_COLUMNS
+        ),
+        source_record_tables.DESCRIPTION_OBSERVATIONS_TABLE: (
+            source_record_tables.DESCRIPTION_OBSERVATION_COLUMNS
+        ),
+    }
+
+    for table_name, columns in columns_by_table.items():
+        create_marker = f"CREATE TABLE IF NOT EXISTS corpscout.{table_name}"
+        assert create_marker in sql
+        assert f"DROP TABLE IF EXISTS corpscout.{table_name}" in down_sql
+        table_sql = sql[sql.index(create_marker) :]
+        table_sql = table_sql[: table_sql.index(";")]
+        positions = [table_sql.index(f"\n    {column} ") for column in columns]
+        assert positions == sorted(positions)
+
+    assert "CREATE TABLE IF NOT EXISTS corpscout.esef_document_people" in sql
+    assert "CREATE TABLE IF NOT EXISTS corpscout.esef_document_business_items" in sql
+    assert (
+        "CREATE TABLE IF NOT EXISTS corpscout.esef_document_group_relationships" in sql
+    )
+    assert (
+        "CREATE TABLE IF NOT EXISTS corpscout.wikidata_company_source_snapshots" in sql
+    )
+    assert "company-source-record-v1\\nfile\\nesef_report_package" in sql
+    assert "bolagsverket_source_record_uid" in sql
+    assert "scb_source_record_uid" in sql
+
+
+def test_esef_source_record_uid_repair_casts_fixed_string_hashes() -> None:
+    sql = _migration_sql("000248_corpscout_esef_source_record_uid_cast.up.sql")
+
+    for table in (
+        "esef_source_documents",
+        "esef_document_contact_candidates",
+        "esef_document_company_information",
+    ):
+        assert f"ALTER TABLE corpscout.{table}" in sql
+    assert sql.count("lowerUTF8(toString(package_sha256))") == 3
+    assert "lowerUTF8(package_sha256)" not in sql
+
+
+def test_esef_concept_label_source_record_uid_casts_fixed_string_hash() -> None:
+    sql = _migration_sql(
+        "000249_corpscout_esef_concept_label_source_record_uid_cast.up.sql"
+    )
+
+    assert "ALTER TABLE corpscout.esef_document_concept_labels" in sql
+    assert "lowerUTF8(toString(package_sha256))" in sql
+    assert "lowerUTF8(package_sha256)" not in sql
 
 
 def _migration_sql(file_name: str) -> str:

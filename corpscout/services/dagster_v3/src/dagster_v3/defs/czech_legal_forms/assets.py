@@ -6,7 +6,7 @@ is the publisher's revision schedule, not the register's daily refresh.
 Scheduled yearly -- 151 rows that change when a law does.
 """
 
-from datetime import UTC, date, datetime
+from datetime import UTC, datetime
 from pathlib import Path
 
 import dagster as dg
@@ -50,6 +50,12 @@ SOURCE_TABLE = f"{RESOLVED_DATABASE}.{tables.CZ_LEGAL_FORMS_TABLE}"
 SOURCE_COLUMN = "label_cs"
 SOURCE_LANG = "cs"
 TARGET_LANG = "en"
+TRANSLATION_FIELD = TranslationField(
+    SOURCE_TABLE,
+    SOURCE_COLUMN,
+    SOURCE_LANG,
+    TARGET_LANG,
+)
 
 
 @dg.asset(
@@ -222,7 +228,14 @@ def czech_legal_forms_translation_load(
     with clickhouse.get_connection() as client:
         # The anti-join inside build_scan_sql is what keeps the curated terms
         # untouched: they already carry a row, so they are not rescanned.
-        untranslated_rows = client.execute(build_scan_sql(SOURCE_TABLE, SOURCE_COLUMN))
+        untranslated_rows = client.execute(
+            build_scan_sql(
+                SOURCE_TABLE,
+                SOURCE_COLUMN,
+                source_lang=SOURCE_LANG,
+                target_lang=TARGET_LANG,
+            )
+        )
         context.log.info("scanned %d untranslated labels", len(untranslated_rows))
         enqueue_result = translator.enqueue_translation_rows(
             source_table=SOURCE_TABLE,
@@ -283,7 +296,7 @@ def czech_legal_forms_translation_coverage(
 ) -> dg.AssetCheckResult:
     """How many Czech legal-form labels exist, and how many are translated."""
     return translation_coverage_result(
-        clickhouse, (TranslationField(SOURCE_TABLE, SOURCE_COLUMN),)
+        clickhouse, (TRANSLATION_FIELD,)
     )
 
 
@@ -312,7 +325,7 @@ TRANSLATION_LOAD_ASSETS = (
     "latvia_ur_translation_load",
     "norway_brreg_translation_load",
     "sweden_company_translation_load",
-    "sweden_financial_concepts_translation_load",
+    "sweden_financial_taxonomy_translation_load",
 )
 
 # Checks only -- no asset is materialised, so this cannot re-download or

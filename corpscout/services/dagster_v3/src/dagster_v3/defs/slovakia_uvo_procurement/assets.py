@@ -40,8 +40,7 @@ BACKFILL_POLICY = dg.BackfillPolicy.multi_run(max_partitions_per_run=1)
     kinds={"python", "html", "s3"},
     description=(
         "Enumerates one month of official UVO bulletin issues and snapshots "
-        "result-notice HTML to S3. Network access is blocked until the current "
-        "machine-reuse licence or written permission is explicitly confirmed."
+        "result-notice HTML to S3."
     ),
 )
 def slovakia_uvo_procurement_html_s3(

@@ -1,4 +1,4 @@
-"""Tests for the ESEF filings index crawl and processed-month download assets.
+"""Tests for the ESEF filings index crawl and processed-week download assets.
 
 Index-crawl tests: no network -- EsefFilingsClient is monkeypatched on the
 assets module to a stub returning canned EsefFilingRecord instances,
@@ -17,7 +17,7 @@ import json
 from collections.abc import Iterator
 from contextlib import contextmanager
 from dataclasses import replace as dataclass_replace
-from datetime import datetime
+from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Any
 from zoneinfo import ZoneInfo
@@ -225,9 +225,7 @@ def test_replace_filings_index_arrow_load_preserves_exact_row_shape(
             source_url="https://example.test/index",
             source_run_id="exact-run",
         )
-        result = connection.execute(
-            "select * from esef_filings.filings_index"
-        )
+        result = connection.execute("select * from esef_filings.filings_index")
         columns = tuple(column[0] for column in result.description)
         row = result.fetchone()
 
@@ -760,31 +758,26 @@ def _run_facts_partition(
     }
 
 
-def test_facts_asset_wiring_partitions_by_processed_month() -> None:
+def test_facts_asset_wiring_partitions_by_processed_week() -> None:
     raw_asset_def = assets.esef_filing_facts_json_s3
     asset_def = assets.esef_filing_facts_duckdb
-    assert isinstance(asset_def.partitions_def, dg.MonthlyPartitionsDefinition)
-    assert asset_def.partitions_def is assets.ESEF_FILINGS_DISCOVERY_PARTITIONS
-    assert raw_asset_def.partitions_def is assets.ESEF_FILINGS_DISCOVERY_PARTITIONS
+    assert isinstance(asset_def.partitions_def, dg.TimeWindowPartitionsDefinition)
+    assert asset_def.partitions_def is assets.ESEF_PROCESSED_WEEK_PARTITIONS
+    assert raw_asset_def.partitions_def is assets.ESEF_PROCESSED_WEEK_PARTITIONS
     assert asset_def.partitions_def.start == datetime(
         2023, 1, 1, tzinfo=ZoneInfo("UTC")
     )
-    raw_dep_keys = {
-        dep.asset_key for spec in raw_asset_def.specs for dep in spec.deps
-    }
+    raw_dep_keys = {dep.asset_key for spec in raw_asset_def.specs for dep in spec.deps}
     assert dg.AssetKey("esef_filings_index_duckdb") in raw_dep_keys
     dep_keys = {dep.asset_key for spec in asset_def.specs for dep in spec.deps}
-    assert dep_keys == {
-        dg.AssetKey("esef_filings_index_duckdb"),
-        dg.AssetKey("esef_filing_facts_json_s3"),
-    }
+    assert dep_keys == {dg.AssetKey("esef_document_artifacts_s3")}
     assert asset_def.backfill_policy == dg.BackfillPolicy.multi_run(
         max_partitions_per_run=1
     )
     assert asset_def.op.pool == assets.ESEF_FILINGS_DUCKDB_POOL
 
 
-def test_incremental_index_upsert_preserves_other_processed_months(
+def test_incremental_index_upsert_preserves_other_processed_weeks(
     tmp_path: Path,
 ) -> None:
     january = _record(fxo_id="JAN-1", processed_at="2023-01-15 12:00:00")
@@ -811,7 +804,7 @@ def test_incremental_index_upsert_preserves_other_processed_months(
     assert [row[0] for row in _fetch_filings_index(tmp_path)] == ["JAN-1", "JUL-1"]
 
 
-def test_facts_partition_downloads_filings_discovered_in_processed_month(
+def test_facts_partition_downloads_filings_discovered_in_processed_week(
     tmp_path: Path,
 ) -> None:
     _seed_filings_index(
@@ -823,7 +816,7 @@ def test_facts_partition_downloads_filings_discovered_in_processed_month(
             _record(
                 fxo_id="B-1", period_end="2022-06-30", json_url=_facts_json_url("B-1")
             ),
-            # Same fiscal-year family, but discovered in the next month.
+            # Same fiscal-year family, but discovered in a later week.
             _record(
                 fxo_id="G-1",
                 period_end="2021-12-31",
@@ -851,7 +844,7 @@ def test_facts_partition_downloads_filings_discovered_in_processed_month(
     assert metadata["skipped_no_json"] == 0
     assert metadata["partition_key"] == "2023-01-01"
     assert metadata["processed_window_start"] == "2023-01-01 00:00:00"
-    assert metadata["processed_window_end"] == "2023-02-01 00:00:00"
+    assert metadata["processed_window_end"] == "2023-01-08 00:00:00"
     assert metadata["parse_failed_count"] == 0
     assert metadata["fact_row_count"] == 8  # 6 (fixture) + 2 (small payload)
     assert object_store.created_buckets == [assets.ESEF_FILINGS_FACTS_BUCKET]
@@ -960,10 +953,7 @@ def test_invalid_period_end_values_are_skipped_without_crashing(
     )
     object_store = FakeObjectStore()
     client = _StubFactsDownloadClient(
-        {
-            filing_id: _FIXTURE_FACTS_BYTES
-            for filing_id in ("A-1", "D-1", "E-1", "F-1")
-        }
+        {filing_id: _FIXTURE_FACTS_BYTES for filing_id in ("A-1", "D-1", "E-1", "F-1")}
     )
 
     metadata = _run_facts_partition(
@@ -977,8 +967,7 @@ def test_invalid_period_end_values_are_skipped_without_crashing(
     # rejected only at the parsed-DuckDB boundary.
     assert metadata["raw_downloaded_count"] == 4
     assert client.download_calls == [
-        _facts_json_url(filing_id)
-        for filing_id in ("A-1", "D-1", "E-1", "F-1")
+        _facts_json_url(filing_id) for filing_id in ("A-1", "D-1", "E-1", "F-1")
     ]
 
 
@@ -1014,7 +1003,7 @@ def test_malformed_json_increments_parse_failed_count_without_crashing(
     assert {row[0] for row in rows} == {"A-1"}
 
 
-def test_partition_scoped_replace_does_not_touch_other_processed_months(
+def test_partition_scoped_replace_does_not_touch_other_processed_weeks(
     tmp_path: Path,
 ) -> None:
     _seed_filings_index(
@@ -1036,7 +1025,7 @@ def test_partition_scoped_replace_does_not_touch_other_processed_months(
         {"A-1": _FIXTURE_FACTS_BYTES, "G-1": _SMALL_PAYLOAD_BYTES}
     )
 
-    _run_facts_partition(tmp_path, object_store, client, partition_key="2023-02-01")
+    _run_facts_partition(tmp_path, object_store, client, partition_key="2023-01-29")
     _run_facts_partition(tmp_path, object_store, client, partition_key="2023-01-01")
 
     rows = _fetch_facts_rows(tmp_path)
@@ -1173,6 +1162,7 @@ def test_replace_facts_partition_chunked_insert_lands_all_rows(
             fact_batches=fact_batches,
             completed_filing_fact_counts={"fxo-2022": 7},
             source_run_id="test-run",
+            parser_contract=assets.OIM_FACTS_PARSER_CONTRACT,
             log_info=lambda *a, **k: log_lines.append(a),
         )
         exact_result = connection.execute(
@@ -1216,6 +1206,7 @@ def test_replace_facts_partition_rerun_replaces_not_duplicates(
             fact_batches=first_batches,
             completed_filing_fact_counts={"fxo-2022": 5},
             source_run_id="test-run",
+            parser_contract=assets.OIM_FACTS_PARSER_CONTRACT,
             log_info=lambda *a, **k: None,
         )
     assert len(_fetch_facts_rows(tmp_path)) == 5
@@ -1236,6 +1227,7 @@ def test_replace_facts_partition_rerun_replaces_not_duplicates(
             fact_batches=second_batches,
             completed_filing_fact_counts={"fxo-2022": 4},
             source_run_id="test-run",
+            parser_contract=assets.OIM_FACTS_PARSER_CONTRACT,
             log_info=lambda *a, **k: None,
         )
 
@@ -1303,14 +1295,14 @@ def test_replace_facts_spools_and_inserts_500k_rows_in_50k_batches(
             fact_batches=fact_batches,
             completed_filing_fact_counts={"fxo-2022": 500_000},
             source_run_id="bulk-run",
+            parser_contract=assets.OIM_FACTS_PARSER_CONTRACT,
             log_info=lambda *a, **k: None,
         )
         fact_row_count = connection.execute(
             "select count(*) from esef_filings.facts"
         ).fetchone()[0]
         state_row = connection.execute(
-            "select fact_count, source_run_id "
-            "from esef_filings.facts_ingestion_state"
+            "select fact_count, source_run_id from esef_filings.facts_ingestion_state"
         ).fetchone()
 
     assert [row_count for _, row_count in fact_batches] == [50_000] * 10
@@ -1347,6 +1339,7 @@ def test_replace_facts_retry_deletes_a_partially_committed_batch_run(
             fact_batches=seed_batches,
             completed_filing_fact_counts={"fxo-2022": 1},
             source_run_id="seed-run",
+            parser_contract=assets.OIM_FACTS_PARSER_CONTRACT,
             log_info=lambda *a, **k: None,
         )
 
@@ -1362,6 +1355,7 @@ def test_replace_facts_retry_deletes_a_partially_committed_batch_run(
             fact_batches=retry_batches,
             completed_filing_fact_counts={"fxo-2022": 7},
             source_run_id="retry-run",
+            parser_contract=assets.OIM_FACTS_PARSER_CONTRACT,
             log_info=lambda *a, **k: None,
         )
     assert failing_connection.closed is True
@@ -1383,6 +1377,7 @@ def test_replace_facts_retry_deletes_a_partially_committed_batch_run(
             fact_batches=retry_batches,
             completed_filing_fact_counts={"fxo-2022": 7},
             source_run_id="retry-run",
+            parser_contract=assets.OIM_FACTS_PARSER_CONTRACT,
             log_info=lambda *a, **k: None,
         )
         final_fact_ids = [
@@ -1392,8 +1387,7 @@ def test_replace_facts_retry_deletes_a_partially_committed_batch_run(
             ).fetchall()
         ]
         final_state = connection.execute(
-            "select fact_count, source_run_id "
-            "from esef_filings.facts_ingestion_state"
+            "select fact_count, source_run_id from esef_filings.facts_ingestion_state"
         ).fetchone()
 
     assert partial_fact_ids == ["retry-0", "retry-1", "retry-2"]
@@ -1601,14 +1595,14 @@ def test_facts_partition_logs_progress_every_100_processed_filings(
 
 
 # ==========================================================================
-# esef_report_xhtml_s3: processed-month report XHTML archive to S3
+# esef_report_xhtml_s3: processed-week report XHTML archive to S3
 #
 # `run_esef_report_xhtml_partition` (the plain function the asset delegates
 # to) is called DIRECTLY here, for the same reason as
 # `run_esef_filing_facts_partition` above -- see that section's docstring.
 # Unlike the facts asset, this one never writes DuckDB at all: the local
 # index is read once, read-only, purely to resolve which filings are in
-# scope for the processed-month partition; the archive itself is pure S3 I/O.
+# scope for the processed-week partition; the archive itself is pure S3 I/O.
 # ==========================================================================
 
 
@@ -1643,9 +1637,7 @@ class _StubReportXhtmlDownloadClient:
 
 def test_archive_report_xhtml_removes_local_file_after_upload(tmp_path: Path) -> None:
     object_store = FakeObjectStore()
-    client = _StubReportXhtmlDownloadClient(
-        {"A-1": b"<html>A-1 report</html>"}
-    )
+    client = _StubReportXhtmlDownloadClient({"A-1": b"<html>A-1 report</html>"})
 
     downloaded = assets._archive_filing_report_xhtml(
         client=client,
@@ -1657,12 +1649,15 @@ def test_archive_report_xhtml_removes_local_file_after_upload(tmp_path: Path) ->
 
     assert downloaded is True
     assert list(tmp_path.iterdir()) == []
-    assert object_store.objects[
-        (
-            assets.ESEF_FILINGS_FACTS_BUCKET,
-            "esef_filings/report_xhtml/fxo_id=A-1/report.xhtml",
-        )
-    ] == b"<html>A-1 report</html>"
+    assert (
+        object_store.objects[
+            (
+                assets.ESEF_FILINGS_FACTS_BUCKET,
+                "esef_filings/report_xhtml/fxo_id=A-1/report.xhtml",
+            )
+        ]
+        == b"<html>A-1 report</html>"
+    )
 
 
 def _run_report_xhtml_partition(
@@ -1685,7 +1680,7 @@ def _run_report_xhtml_partition(
 
 def test_report_xhtml_asset_wiring_partitions_deps_backfill_policy_and_pool() -> None:
     asset_def = assets.esef_report_xhtml_s3
-    assert asset_def.partitions_def is assets.ESEF_FILINGS_DISCOVERY_PARTITIONS
+    assert asset_def.partitions_def is assets.ESEF_PROCESSED_WEEK_PARTITIONS
     dep_keys = {dep.asset_key for spec in asset_def.specs for dep in spec.deps}
     assert dg.AssetKey("esef_filings_index_duckdb") in dep_keys
     assert asset_def.backfill_policy == dg.BackfillPolicy.multi_run(
@@ -1694,7 +1689,7 @@ def test_report_xhtml_asset_wiring_partitions_deps_backfill_policy_and_pool() ->
     assert asset_def.op.pool == assets.ESEF_FILINGS_DUCKDB_POOL
 
 
-def test_report_xhtml_partition_archives_filings_discovered_in_processed_month(
+def test_report_xhtml_partition_archives_filings_discovered_in_processed_week(
     tmp_path: Path,
 ) -> None:
     _seed_filings_index(
@@ -1706,7 +1701,7 @@ def test_report_xhtml_partition_archives_filings_discovered_in_processed_month(
             _record(
                 fxo_id="B-1", period_end="2022-06-30", report_url=_report_url("B-1")
             ),
-            # Discovered in the next month, irrespective of its fiscal year.
+            # Discovered in a later week, irrespective of its fiscal year.
             _record(
                 fxo_id="G-1",
                 period_end="2021-12-31",
@@ -1732,7 +1727,7 @@ def test_report_xhtml_partition_archives_filings_discovered_in_processed_month(
         "skipped_upstream_missing": 0,
         "partition_key": "2023-01-01",
         "processed_window_start": "2023-01-01 00:00:00",
-        "processed_window_end": "2023-02-01 00:00:00",
+        "processed_window_end": "2023-01-08 00:00:00",
     }
     assert object_store.created_buckets == [assets.ESEF_FILINGS_FACTS_BUCKET]
 
@@ -1994,7 +1989,7 @@ def test_report_xhtml_partition_skips_404_increments_counter_no_s3_object(
         "skipped_upstream_missing": 1,
         "partition_key": "2023-01-01",
         "processed_window_start": "2023-01-01 00:00:00",
-        "processed_window_end": "2023-02-01 00:00:00",
+        "processed_window_end": "2023-01-08 00:00:00",
     }
     # Both filings were attempted (the 404 didn't abort the loop early).
     assert client.download_calls == [_report_url("A-1"), _report_url("B-1")]
@@ -2072,28 +2067,83 @@ def test_report_xhtml_partition_5xx_http_error_propagates_and_fails_partition_lo
 # selection, partitions_def, cron/timezone/status).
 
 
-def test_esef_filings_refresh_job_selects_monthly_ingest_and_exports() -> None:
+def test_esef_filings_refresh_job_selects_weekly_ingest_evidence_and_exports() -> None:
     repo = load_project_defs().get_repository_def()
     job = repo.get_job("esef_filings_refresh_job")
     asset_keys = {key.path[-1] for key in job.asset_layer.executable_asset_keys}
 
     assert asset_keys == {
         "esef_filings_index_duckdb",
-        "esef_filing_facts_json_s3",
         "esef_filing_facts_duckdb",
         "esef_report_xhtml_s3",
         "esef_filings_clickhouse",
         "esef_facts_clickhouse",
         "esef_entity_registry_map_clickhouse",
         "esef_financial_metrics_clickhouse",
+        "esef_document_extraction_manifest_s3",
+        "esef_document_artifacts_s3",
+        "esef_source_documents_duckdb",
+        "esef_document_contact_candidates_duckdb",
+        "esef_document_concept_labels_duckdb",
+        "esef_fact_disclosure_inputs_s3",
+        "esef_fact_disclosure_artifacts_s3",
+        "esef_fact_disclosures_duckdb",
+        "esef_source_documents_clickhouse",
+        "esef_document_contact_candidates_clickhouse",
+        "esef_document_concept_labels_clickhouse",
+        "esef_document_concept_official_translations_clickhouse",
+        "esef_document_concept_translation_load",
+        "esef_fact_disclosures_clickhouse",
+        "esef_company_source_records_clickhouse",
     }
 
 
-def test_esef_filings_refresh_job_uses_shared_discovery_month_partitions() -> None:
+def test_esef_filings_refresh_job_uses_shared_processed_week_partitions() -> None:
     repo = load_project_defs().get_repository_def()
     job = repo.get_job("esef_filings_refresh_job")
 
-    assert job.partitions_def is assets.ESEF_FILINGS_DISCOVERY_PARTITIONS
+    assert job.partitions_def is assets.ESEF_PROCESSED_WEEK_PARTITIONS
+
+
+def test_esef_official_concept_pairs_are_written_to_text_translations() -> None:
+    from dagster_v3.defs.esef_filings.document_publish import (
+        _esef_official_translation_insert_sql,
+    )
+
+    sql = _esef_official_translation_insert_sql()
+
+    assert "INSERT INTO corpscout.text_translations" in sql
+    assert "cityHash64(source.label)" in sql
+    assert "source.is_report_language" in sql
+    assert "target.language = 'en'" in sql
+    assert "target.label_role = source.label_role" in sql
+    assert "'taxonomy'" in sql
+    assert "'esef-official-taxonomy'" in sql
+    assert "current.translated_text != candidates.translated_text" in sql
+
+
+def test_esef_machine_translation_scan_uses_the_complete_language_pair_key() -> None:
+    from dagster_v3.defs.esef_filings.document_publish import (
+        _esef_missing_concept_translation_scan_sql,
+    )
+
+    sql = _esef_missing_concept_translation_scan_sql()
+
+    assert "source.is_report_language" in sql
+    assert "source.language != 'en'" in sql
+    assert "source.language = translation.source_lang" in sql
+    assert "translation.target_lang = 'en'" in sql
+    assert "translation.source_text_hash = cityHash64(source.label)" in sql
+    assert "length(source.label) <= 8000" in sql
+
+
+def test_esef_translation_language_names_support_regional_tags() -> None:
+    from dagster_v3.defs.esef_filings.document_publish import _esef_language_name
+
+    assert _esef_language_name("fr") == "French"
+    assert _esef_language_name("nl-BE") == "Dutch"
+    assert _esef_language_name("sv-SE") == "Swedish"
+    assert _esef_language_name("zz") is None
 
 
 def test_esef_filings_backfill_job_selects_partitioned_assets_only() -> None:
@@ -2105,11 +2155,18 @@ def test_esef_filings_backfill_job_selects_partitioned_assets_only() -> None:
     # individual export assets) once after all backfill partitions land.
     assert asset_keys == {
         "esef_filings_index_duckdb",
-        "esef_filing_facts_json_s3",
         "esef_filing_facts_duckdb",
         "esef_report_xhtml_s3",
+        "esef_document_extraction_manifest_s3",
+        "esef_document_artifacts_s3",
+        "esef_source_documents_duckdb",
+        "esef_document_contact_candidates_duckdb",
+        "esef_document_concept_labels_duckdb",
+        "esef_fact_disclosure_inputs_s3",
+        "esef_fact_disclosure_artifacts_s3",
+        "esef_fact_disclosures_duckdb",
     }
-    assert job.partitions_def is assets.ESEF_FILINGS_DISCOVERY_PARTITIONS
+    assert job.partitions_def is assets.ESEF_PROCESSED_WEEK_PARTITIONS
 
 
 def test_esef_filings_refresh_weekly_schedule_registered() -> None:
@@ -2122,7 +2179,7 @@ def test_esef_filings_refresh_weekly_schedule_registered() -> None:
     assert schedule.default_status == dg.DefaultScheduleStatus.STOPPED
 
 
-def test_esef_filings_refresh_weekly_schedule_emits_both_overlap_runs() -> None:
+def test_esef_filings_refresh_weekly_schedule_emits_last_closed_week() -> None:
     context = dg.build_schedule_context(
         scheduled_execution_time=datetime(2026, 7, 5, tzinfo=ZoneInfo("UTC")),
         repository_def=load_project_defs().get_repository_def(),
@@ -2131,12 +2188,10 @@ def test_esef_filings_refresh_weekly_schedule_emits_both_overlap_runs() -> None:
     execution_data = assets.esef_filings_refresh_weekly.evaluate_tick(context)
 
     assert [request.partition_key for request in execution_data.run_requests] == [
-        "2026-06-01",
-        "2026-07-01",
+        "2026-06-28",
     ]
     assert [request.run_key for request in execution_data.run_requests] == [
-        "2026-07-05T00:00:00Z:2026-06-01",
-        "2026-07-05T00:00:00Z:2026-07-01",
+        "2026-07-05T00:00:00Z:2026-06-28",
     ]
 
 
@@ -2160,7 +2215,7 @@ def test_esef_filings_reconciliation_job_and_schedule_are_registered() -> None:
 # unpartitioned selection, not just resolving its static shape (the tests
 # above only inspect job.asset_layer/partitions_def -- they never run a
 # single step). This is the one test in the whole module that proves the
-# weekly schedule's processed-month partition key genuinely drives all
+# weekly schedule's processed-week partition key genuinely drives all
 # 7 assets end to end for that partition.
 #
 # KNOWN GOTCHA (see the facts-download test section's docstring above): a
@@ -2177,8 +2232,8 @@ def test_esef_filings_reconciliation_job_and_schedule_are_registered() -> None:
 class _MixedJobEsefFilingsClient:
     """Stand-in for EsefFilingsClient() supporting both `iter_filings()`
     (used by esef_filings_index_duckdb) and `download_json_facts()` (used by
-    both processed-month assets, for the fact-JSON and, reused url/content
-    agnostic, the report-XHTML download). `_StubEsefFilingsClient` above
+    the report-XHTML archive). The facts asset reads a preseeded Arelle
+    artifact in this focused ingest-job test. `_StubEsefFilingsClient` above
     only implements `iter_filings` -- every other test in this file only
     exercises the index asset in isolation."""
 
@@ -2263,6 +2318,49 @@ def test_refresh_job_executes_all_assets_for_partition(
         assets, "EsefFilingsClient", lambda: _MixedJobEsefFilingsClient([record])
     )
 
+    def fake_run_esef_artifact_facts_partition(
+        *,
+        esef_filings_duckdb: DuckDBResource,
+        partition_key: str,
+        source_run_id: str,
+        **_: Any,
+    ) -> dict[str, int | str]:
+        fact_row = list(
+            _synthetic_fact_row(
+                fact_id="f1",
+                period_end_year=2021,
+                source_run_id=source_run_id,
+            )
+        )
+        fact_row[0] = record.lei
+        fact_row[1] = record.fxo_id
+        with esef_filings_duckdb.get_connection() as connection:
+            connection.execute(
+                f"create schema if not exists {assets.tables.DLT_DATASET_NAME}"
+            )
+            connection.execute(
+                f"create table if not exists {assets.QUALIFIED_FACTS_TABLE} "
+                f"({assets._FACTS_COLUMNS_SQL})"
+            )
+            placeholders = ", ".join("?" for _value in fact_row)
+            connection.execute(
+                f"insert into {assets.QUALIFIED_FACTS_TABLE} values "
+                f"({placeholders})",
+                fact_row,
+            )
+        return {
+            "filings_in_scope": 1,
+            "partition_key": partition_key,
+            "inserted_fact_row_count": 1,
+            "fact_row_count": 1,
+        }
+
+    monkeypatch.setattr(
+        assets,
+        "run_esef_artifact_facts_partition",
+        fake_run_esef_artifact_facts_partition,
+    )
+
     ch_client = _MixedJobFakeClickHouseClient()
     stored_objects: dict[tuple[str | None, str], bytes] = {}
 
@@ -2312,6 +2410,10 @@ def test_refresh_job_executes_all_assets_for_partition(
     )
     clickhouse = ClickhouseResource(host="unused")
 
+    local_ingest_job = dg.define_asset_job(
+        "test_esef_filings_ingest_job",
+        selection=assets.ESEF_FILINGS_INGEST_SELECTION,
+    )
     local_defs = dg.Definitions(
         assets=[
             assets.esef_filings_index_duckdb,
@@ -2323,16 +2425,16 @@ def test_refresh_job_executes_all_assets_for_partition(
             assets.esef_entity_registry_map_clickhouse,
             assets.esef_financial_metrics_clickhouse,
         ],
-        jobs=[assets.esef_filings_refresh_job],
+        jobs=[local_ingest_job],
         resources={
             "esef_filings_duckdb": _db_resource(tmp_path),
             "object_store": object_store,
             "clickhouse": clickhouse,
         },
     )
-    job = local_defs.get_repository_def().get_job("esef_filings_refresh_job")
+    job = local_defs.get_repository_def().get_job("test_esef_filings_ingest_job")
 
-    result = job.execute_in_process(partition_key="2026-07-01")
+    result = job.execute_in_process(partition_key="2026-07-19")
 
     assert result.success
     materialized_keys = {
@@ -2342,7 +2444,6 @@ def test_refresh_job_executes_all_assets_for_partition(
     }
     assert materialized_keys == {
         "esef_filings_index_duckdb",
-        "esef_filing_facts_json_s3",
         "esef_filing_facts_duckdb",
         "esef_report_xhtml_s3",
         "esef_filings_clickhouse",
@@ -2357,13 +2458,13 @@ def test_refresh_job_executes_all_assets_for_partition(
         -1
     ].metadata
     assert facts_metadata["filings_in_scope"].value == 1
-    assert facts_metadata["partition_key"].value == "2026-07-01"
+    assert facts_metadata["partition_key"].value == "2026-07-19"
 
     xhtml_metadata = result.asset_materializations_for_node("esef_report_xhtml_s3")[
         -1
     ].metadata
     assert xhtml_metadata["filings_in_scope"].value == 1
-    assert xhtml_metadata["partition_key"].value == "2026-07-01"
+    assert xhtml_metadata["partition_key"].value == "2026-07-19"
 
     rows = _fetch_filings_index(tmp_path)
     assert [row[0] for row in rows] == ["A-1"]
@@ -2378,17 +2479,17 @@ class _FakeScheduleEvaluationContext:
         self.scheduled_execution_time = scheduled_execution_time
 
 
-def test_refresh_run_request_after_first_week_covers_current_utc_month_only() -> None:
+def test_refresh_run_request_uses_last_closed_utc_week() -> None:
     scheduled_time = datetime(2026, 7, 19, 5, 50, tzinfo=ZoneInfo("UTC"))
     result = list(
         assets._esef_filings_refresh_run_request(
             _FakeScheduleEvaluationContext(scheduled_time)
         )
     )
-    assert [request.partition_key for request in result] == ["2026-07-01"]
+    assert [request.partition_key for request in result] == ["2026-07-12"]
 
 
-def test_refresh_run_requests_use_source_utc_clock_at_month_boundary() -> None:
+def test_refresh_run_requests_use_source_utc_clock_at_year_boundary() -> None:
     # It is already January in Belgrade, but still December in the source's
     # UTC processed-time clock.
     scheduled_time = datetime(2025, 12, 31, 23, 30, tzinfo=ZoneInfo("UTC"))
@@ -2397,7 +2498,7 @@ def test_refresh_run_requests_use_source_utc_clock_at_month_boundary() -> None:
             _FakeScheduleEvaluationContext(scheduled_time)
         )
     )
-    assert [request.partition_key for request in result] == ["2025-12-01"]
+    assert [request.partition_key for request in result] == ["2025-12-21"]
 
 
 def test_refresh_run_request_has_no_manually_maintained_end_year_ceiling() -> None:
@@ -2407,16 +2508,20 @@ def test_refresh_run_request_has_no_manually_maintained_end_year_ceiling() -> No
             _FakeScheduleEvaluationContext(scheduled_time)
         )
     )
-    assert [request.partition_key for request in result] == [
-        "2029-12-01",
-        "2030-01-01",
-    ]
+    assert [request.partition_key for request in result] == ["2029-12-23"]
 
 
 def test_refresh_run_request_falls_back_to_now_when_no_scheduled_time() -> None:
     result = list(
         assets._esef_filings_refresh_run_request(_FakeScheduleEvaluationContext(None))
     )
-    current_month = datetime.now(tz=ZoneInfo("UTC")).strftime("%Y-%m-01")
-    assert len(result) in {1, 2}
-    assert result[-1].partition_key == current_month
+    now = datetime.now(tz=ZoneInfo("UTC"))
+    current_sunday = (now - timedelta(days=(now.weekday() + 1) % 7)).replace(
+        hour=0,
+        minute=0,
+        second=0,
+        microsecond=0,
+    )
+    assert [request.partition_key for request in result] == [
+        (current_sunday - timedelta(days=7)).strftime("%Y-%m-%d")
+    ]

@@ -45,7 +45,12 @@ TARGET_LANGUAGE_NAME = "English"
 # The base table, not the translated view -- scanning the view would anti-join
 # against its own output.
 TRANSLATION_FIELDS = (
-    TranslationField("corpscout.br_cnae_categories", "description_pt"),
+    TranslationField(
+        "corpscout.br_cnae_categories",
+        "description_pt",
+        SOURCE_LANG,
+        TARGET_LANG,
+    ),
 )
 
 
@@ -73,7 +78,12 @@ def brazil_comp_cnae_translation_load(
     with clickhouse.get_connection() as client:
         for field in TRANSLATION_FIELDS:
             untranslated_rows = client.execute(
-                build_scan_sql(field.table, field.column)
+                build_scan_sql(
+                    field.table,
+                    field.column,
+                    source_lang=field.source_lang,
+                    target_lang=field.target_lang,
+                )
             )
             scanned += len(untranslated_rows)
             context.log.info(

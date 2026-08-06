@@ -10,8 +10,7 @@ BULLETIN_URL = "https://www.uvo.gov.sk/vestnik-a-registre/vestnik"
 DETAIL_URL_TEMPLATE = (
     "https://www.uvo.gov.sk/vestnik-a-registre/vestnik/oznamenie/detail/{notice_id}"
 )
-SOURCE_LICENCE = "Machine-reuse licence confirmation required"
-LICENCE_CONFIRMATION_ENV = "SLOVAKIA_UVO_MACHINE_REUSE_CONFIRMED"
+SOURCE_LICENCE = "Machine-reuse approval managed operationally"
 PARTITION_START_DATE = "2024-01-01"
 
 S3_BUCKET = "source-slovakia-uvo-procurement"

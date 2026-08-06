@@ -1,16 +1,8 @@
-import { Link } from "react-router";
-import { ChevronRight, ExternalLink, FileText } from "lucide-react";
+import { FileText } from "lucide-react";
 import type { Route } from "./+types/company-financials";
+import { FinancialReportDocuments } from "~/components/detail/financial-report-documents";
 import { FinancialsSection } from "~/components/detail/financials-section";
-import { Badge } from "~/components/ui/badge";
-import { Button } from "~/components/ui/button";
-import {
-  Card,
-  CardContent,
-  CardDescription,
-  CardHeader,
-  CardTitle,
-} from "~/components/ui/card";
+import { EsefSection } from "~/components/detail/esef-section";
 import {
   Empty,
   EmptyDescription,
@@ -18,49 +10,27 @@ import {
   EmptyMedia,
   EmptyTitle,
 } from "~/components/ui/empty";
-import {
-  Table,
-  TableBody,
-  TableCell,
-  TableHead,
-  TableHeader,
-  TableRow,
-} from "~/components/ui/table";
 import { getCountry } from "~/lib/countries";
-import {
-  formatFileSize,
-  parseWarnings,
-  type NorwayFinancialReportSummary,
-} from "~/lib/norway-financial-reports";
-import { getNorwayFinancialReports } from "~/lib/norway-financial-reports.server";
-import { getCompanyFinancials } from "~/lib/queries.server";
+import { getCompanyFinancialDetail } from "~/lib/queries.server";
 
 export async function loader({ params }: Route.LoaderArgs) {
   const country = getCountry(params.country);
-  if (!country?.detail?.financialReports || country.code !== "no") {
+  if (!country?.detail?.financialSources?.length) {
     throw new Response("Not found", { status: 404 });
   }
-  const [financials, reports] = await Promise.all([
-    getCompanyFinancials(country, params.id),
-    getNorwayFinancialReports(params.id),
-  ]);
-  return { financials, reports };
+  return getCompanyFinancialDetail(country, params.id);
 }
 
 export function meta({ params }: Route.MetaArgs) {
   return [{ title: `Financials · ${params.id} – CompanyCollect Backoffice` }];
 }
 
-function processingLabel(report: NorwayFinancialReportSummary): string {
-  if (!report.hasReportMetadata) return "Facts loaded";
-  if (report.ocrPageCount > 0 && report.nativeTextPageCount > 0) return "Text + OCR";
-  if (report.ocrPageCount > 0) return "OCR processed";
-  if (report.nativeTextPageCount > 0) return "Text extracted";
-  return report.parseStatus === "loaded" ? "Processed" : report.parseStatus;
-}
-
-export default function CompanyFinancials({ loaderData, params }: Route.ComponentProps) {
-  const { financials, reports } = loaderData;
+export default function CompanyFinancials({
+  loaderData,
+  params,
+}: Route.ComponentProps) {
+  const { financialSources } = loaderData;
+  const country = getCountry(params.country)!;
   const basePath = `/company/${params.country}/${params.id}/financials`;
 
   return (
@@ -68,122 +38,62 @@ export default function CompanyFinancials({ loaderData, params }: Route.Componen
       <div>
         <h2 className="text-xl font-semibold tracking-tight">Financials</h2>
         <p className="text-muted-foreground mt-1 max-w-3xl text-sm">
-          Registry figures and the official annual-account PDFs used to extract detailed report
-          facts.
+          Financial observations remain grouped by source and accounting scope.
+          Open a report for its complete tagged facts and evidence.
         </p>
       </div>
 
-      <FinancialsSection financials={financials} title="Financial history" />
+      {financialSources.length > 0 ? null : (
+        <Empty className="border">
+          <EmptyHeader>
+            <EmptyMedia variant="icon">
+              <FileText />
+            </EmptyMedia>
+            <EmptyTitle>No financial sources loaded</EmptyTitle>
+            <EmptyDescription>
+              No registry financial statement or ESEF report is connected to
+              this company yet.
+            </EmptyDescription>
+          </EmptyHeader>
+        </Empty>
+      )}
 
-      <Card>
-        <CardHeader>
-          <CardTitle>Annual reports</CardTitle>
-          <CardDescription>
-            Official PDFs from the Brønnøysund Register Centre, with extraction coverage and direct
-            source access.
-          </CardDescription>
-        </CardHeader>
-        <CardContent>
-          {reports.length === 0 ? (
-            <Empty className="border">
-              <EmptyHeader>
-                <EmptyMedia variant="icon">
-                  <FileText />
-                </EmptyMedia>
-                <EmptyTitle>No annual reports loaded</EmptyTitle>
-                <EmptyDescription>
-                  This company does not have a parsed Brønnøysund annual-account PDF yet.
-                </EmptyDescription>
-              </EmptyHeader>
-            </Empty>
-          ) : (
-            <Table className="min-w-[54rem]">
-              <TableHeader>
-                <TableRow>
-                  <TableHead>Filing</TableHead>
-                  <TableHead>Source document</TableHead>
-                  <TableHead>Extraction</TableHead>
-                  <TableHead className="text-right">Pages</TableHead>
-                  <TableHead className="text-right">Facts</TableHead>
-                  <TableHead className="text-right">Actions</TableHead>
-                </TableRow>
-              </TableHeader>
-              <TableBody>
-                {reports.map((report) => {
-                  const warnings = parseWarnings(report.parseWarnings);
-                  const detailsHref = `${basePath}/${encodeURIComponent(report.documentId)}`;
-                  return (
-                    <TableRow key={report.documentId}>
-                      <TableCell className="align-top">
-                        <div className="flex flex-col gap-1">
-                          <span className="font-medium tabular-nums">{report.filingYear}</span>
-                          <span className="text-muted-foreground text-xs">Annual accounts</span>
-                        </div>
-                      </TableCell>
-                      <TableCell className="max-w-md align-top whitespace-normal">
-                        <Link
-                          to={detailsHref}
-                          className="group inline-flex items-start gap-2 font-medium underline-offset-4 hover:underline"
-                        >
-                          <FileText className="mt-0.5 size-4 shrink-0 text-muted-foreground" />
-                          <span className="break-all">{report.sourceFileName}</span>
-                        </Link>
-                        {formatFileSize(report.pdfSizeBytes) ? (
-                          <div className="text-muted-foreground mt-1 text-xs">
-                            {formatFileSize(report.pdfSizeBytes)}
-                          </div>
-                        ) : null}
-                      </TableCell>
-                      <TableCell className="align-top">
-                        <div className="flex flex-wrap items-center gap-1.5">
-                          <Badge variant={report.hasReportMetadata ? "secondary" : "outline"}>
-                            {processingLabel(report)}
-                          </Badge>
-                          {warnings.length > 0 ? (
-                            <Badge variant="outline">
-                              {warnings.length} {warnings.length === 1 ? "warning" : "warnings"}
-                            </Badge>
-                          ) : null}
-                        </div>
-                      </TableCell>
-                      <TableCell className="text-right align-top tabular-nums">
-                        {report.pageCount || "—"}
-                      </TableCell>
-                      <TableCell className="text-right align-top tabular-nums">
-                        {report.factCount.toLocaleString("en-US")}
-                      </TableCell>
-                      <TableCell className="align-top">
-                        <div className="flex justify-end gap-1">
-                          <Button
-                            variant="ghost"
-                            size="sm"
-                            nativeButton={false}
-                            render={
-                              <a href={report.sourceUrl} target="_blank" rel="noreferrer" />
-                            }
-                          >
-                            PDF
-                            <ExternalLink data-icon="inline-end" />
-                          </Button>
-                          <Button
-                            variant="outline"
-                            size="sm"
-                            nativeButton={false}
-                            render={<Link to={detailsHref} />}
-                          >
-                            Details
-                            <ChevronRight data-icon="inline-end" />
-                          </Button>
-                        </div>
-                      </TableCell>
-                    </TableRow>
-                  );
-                })}
-              </TableBody>
-            </Table>
-          )}
-        </CardContent>
-      </Card>
+      {financialSources.map((source) => {
+        if (source.kind === "esef") {
+          return (
+            <EsefSection
+              key={source.id}
+              filings={source.filings}
+              title={source.title}
+              description={source.description}
+              detailsHref={(filing) =>
+                `${basePath}/esef/${encodeURIComponent(filing.primary_fxo_id)}`
+              }
+            />
+          );
+        }
+        const factsHref =
+          source.yearFacts && country.detail?.factsQuery
+            ? (year: string) =>
+                `/company/${country.code}/${params.id}/facts/${year}`
+            : undefined;
+        return (
+          <FinancialsSection
+            key={source.id}
+            financials={source.financials}
+            title={source.title}
+            description={source.description}
+            factsHref={factsHref}
+          >
+            <FinancialReportDocuments
+              reports={source.documents}
+              detailsHref={(report) =>
+                `${basePath}/${encodeURIComponent(report.documentId)}`
+              }
+            />
+          </FinancialsSection>
+        );
+      })}
     </div>
   );
 }

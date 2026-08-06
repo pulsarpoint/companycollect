@@ -3316,7 +3316,10 @@ _wikidata_raw_assets = dg.AssetSelection.assets(
 wikidata_publish_selection = (
     (
         dg.AssetSelection.assets("wikidata_snapshot_complete").upstream()
-        | dg.AssetSelection.assets("wikidata_clickhouse_canonical_contacts")
+        | dg.AssetSelection.assets(
+            "wikidata_clickhouse_canonical_contacts",
+            "wikidata_company_source_records_clickhouse",
+        )
     )
     - _wikidata_registry_seed_spine_exclusion
     - _wikidata_raw_assets

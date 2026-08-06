@@ -28,6 +28,7 @@ from dagster_v3.defs.sweden_financial.clickhouse import (
 from dagster_v3.defs.sweden_financial.parsing import SWEDEN_FINANCIAL_DATASET_NAME
 from dagster_v3.defs.sweden_financial.storage import (
     sweden_financial_year_duckdb_connection,
+    sweden_financial_year_duckdb_write_connection,
 )
 
 _ARCHIVE_KEY_2025_A = "sweden_financial/raw_archives/year=2025/archive=a.zip"
@@ -70,7 +71,8 @@ _REPORTS_ARCHIVE_COUNT_SQL_RE = re.compile(
     r"WHERE source_archive_key IN %\(keys\)s GROUP BY source_archive_key$"
 )
 _FACTS_ARCHIVE_COUNT_SQL_RE = re.compile(
-    r"^SELECT r\.source_archive_key, count\(\) FROM (\S+) AS f "
+    r"^SELECT r\.source_archive_key, count\(\), "
+    r"countIf\(f\.amount_usd IS NOT NULL\) FROM (\S+) AS f "
     r"INNER JOIN (\S+) AS r ON f\.statement_key = r\.statement_key "
     r"WHERE r\.source_archive_key IN %\(keys\)s GROUP BY r\.source_archive_key$"
 )
@@ -184,12 +186,20 @@ class StatefulFakeClickHouseClient:
                 if row[archive_index] in params["keys"]
             }
             fact_statement_index = self.columns[facts_table].index("statement_key")
-            counts = {}
+            amount_usd_index = self.columns[facts_table].index("amount_usd")
+            counts: dict[str, tuple[int, int]] = {}
             for row in self.rows[facts_table]:
                 archive = statement_to_archive.get(row[fact_statement_index])
                 if archive is not None:
-                    counts[archive] = counts.get(archive, 0) + 1
-            return sorted(counts.items())
+                    fact_count, usd_count = counts.get(archive, (0, 0))
+                    counts[archive] = (
+                        fact_count + 1,
+                        usd_count + int(row[amount_usd_index] is not None),
+                    )
+            return sorted(
+                (archive, fact_count, usd_count)
+                for archive, (fact_count, usd_count) in counts.items()
+            )
         raise AssertionError(normalized)
 
     def _stage_keys(self, stage_table: str, stage_column: str) -> set[Any]:
@@ -366,6 +376,44 @@ def test_reconcile_facts_scope_counts_facts_per_archive(
         keys = resolve_unreconciled_facts_archive_keys(connection, client)
 
     assert keys == [_ARCHIVE_KEY_2026_W2]
+
+
+def test_reconcile_facts_scope_republishes_matching_counts_with_missing_usd(
+    tmp_path: Path,
+) -> None:
+    database_path = _seed_year_file(
+        tmp_path,
+        "2026",
+        reports=(("5560000001", _ARCHIVE_KEY_2026_W1),),
+        facts=("5560000001",),
+    )
+    client = _reports_facts_fake_client()
+    client.rows[QUALIFIED_SE_FINANCIAL_REPORTS_TABLE].append(
+        _clickhouse_report_row(
+            company_id="5560000001",
+            year="2026",
+            archive_key=_ARCHIVE_KEY_2026_W1,
+        )
+    )
+    client.rows[QUALIFIED_SE_FINANCIAL_FACTS_TABLE].append(
+        _clickhouse_fact_row(company_id="5560000001", year="2026")
+    )
+
+    with duckdb.connect(str(database_path)) as connection:
+        connection.execute(
+            f"""
+            update {SWEDEN_FINANCIAL_DATASET_NAME}.facts
+            set amount_usd = 100,
+                fx_rate_to_usd = 0.1,
+                fx_rate_date = date '2026-12-31',
+                fx_source = 'TEST'
+            """
+        )
+
+    with sweden_financial_year_duckdb_connection("2026", root=tmp_path) as connection:
+        keys = resolve_unreconciled_facts_archive_keys(connection, client)
+
+    assert keys == [_ARCHIVE_KEY_2026_W1]
 
 
 # --- reconciling exports ----------------------------------------------------
@@ -1064,6 +1112,29 @@ def test_sweden_financial_year_duckdb_connection_is_read_only(
             connection.execute(
                 f"delete from {SWEDEN_FINANCIAL_DATASET_NAME}.reports"
             )
+
+
+def test_sweden_financial_year_duckdb_write_connection_persists_transform(
+    tmp_path: Path,
+) -> None:
+    _seed_year_file(
+        tmp_path, "2025", reports=(("5560000001", _ARCHIVE_KEY_2025_A),)
+    )
+
+    with sweden_financial_year_duckdb_write_connection(
+        "2025", root=tmp_path
+    ) as connection:
+        connection.execute(
+            f"update {SWEDEN_FINANCIAL_DATASET_NAME}.reports "
+            "set reported_company_name = 'Updated AB'"
+        )
+
+    with sweden_financial_year_duckdb_connection("2025", root=tmp_path) as connection:
+        company_name = connection.execute(
+            f"select reported_company_name from {SWEDEN_FINANCIAL_DATASET_NAME}.reports"
+        ).fetchone()[0]
+
+    assert company_name == "Updated AB"
 
 
 # --- fixtures ---------------------------------------------------------------

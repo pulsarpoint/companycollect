@@ -23,6 +23,7 @@ def test_sweden_financial_backfill_and_current_assets_are_separate() -> None:
         "sweden_financial_backfill_raw_archives_s3",
         "sweden_financial_backfill_report_xhtml_catalog_duckdb",
         "sweden_financial_backfill_parsed_reports_duckdb",
+        "sweden_financial_backfill_facts_usd_duckdb",
     }
 
     current_job_asset_keys = {
@@ -31,16 +32,18 @@ def test_sweden_financial_backfill_and_current_assets_are_separate() -> None:
             "sweden_financial_current_year_job"
         ).asset_layer.executable_asset_keys
     }
-    # The weekly job runs the full chain end-to-end -- sync, catalog, parse,
-    # and both ClickHouse exports as separate unpartitioned assets in ONE
-    # run. The exports are stateless reconcilers (diff vs ClickHouse), so
-    # no later year-file rebuild can orphan them (the 2026-07-18 incident).
+    # The weekly job runs the Sweden chain end-to-end -- sync, catalog, parse,
+    # and both standalone ClickHouse exports. The exports are stateless
+    # reconcilers, so no later year-file rebuild can orphan them (the
+    # 2026-07-18 incident).
     assert current_job_asset_keys == {
         "sweden_financial_current_raw_archives_s3",
         "sweden_financial_current_report_xhtml_catalog_duckdb",
         "sweden_financial_current_parsed_reports_duckdb",
+        "sweden_financial_current_facts_usd_duckdb",
         "sweden_financial_current_reports_clickhouse",
         "sweden_financial_current_facts_clickhouse",
+        "sweden_financial_company_source_records_clickhouse",
     }
 
     backfill_raw_node = repo.asset_graph.get(
@@ -112,6 +115,28 @@ def test_sweden_financial_backfill_and_current_assets_are_separate() -> None:
     }
     assert current_parsed_node.partitions_def is None
 
+    backfill_usd_node = repo.asset_graph.get(
+        dg.AssetKey("sweden_financial_backfill_facts_usd_duckdb")
+    )
+    assert backfill_usd_node.group_name == "sweden_financial"
+    assert backfill_usd_node.pools == {"sweden_financial_duckdb"}
+    assert backfill_usd_node.partitions_def is backfill_raw_node.partitions_def
+    assert backfill_usd_node.parent_keys == {
+        dg.AssetKey("exchange_rates_v2_clickhouse"),
+        dg.AssetKey("sweden_financial_backfill_parsed_reports_duckdb"),
+    }
+
+    current_usd_node = repo.asset_graph.get(
+        dg.AssetKey("sweden_financial_current_facts_usd_duckdb")
+    )
+    assert current_usd_node.group_name == "sweden_financial"
+    assert current_usd_node.pools == {"sweden_financial_duckdb"}
+    assert current_usd_node.partitions_def is None
+    assert current_usd_node.parent_keys == {
+        dg.AssetKey("exchange_rates_v2_clickhouse"),
+        dg.AssetKey("sweden_financial_current_parsed_reports_duckdb"),
+    }
+
     clickhouse_job_asset_keys = {
         key.path[-1]
         for key in repo.get_job(
@@ -123,6 +148,7 @@ def test_sweden_financial_backfill_and_current_assets_are_separate() -> None:
         "se_financial_history_clickhouse",
         "se_company_officers_clickhouse",
         "se_company_audits_clickhouse",
+        "sweden_financial_company_source_records_clickhouse",
     }
 
     backfill_clickhouse_job_asset_keys = {
@@ -132,8 +158,10 @@ def test_sweden_financial_backfill_and_current_assets_are_separate() -> None:
         ).asset_layer.executable_asset_keys
     }
     assert backfill_clickhouse_job_asset_keys == {
+        "sweden_financial_backfill_facts_usd_duckdb",
         "sweden_financial_backfill_reports_clickhouse",
         "sweden_financial_backfill_facts_clickhouse",
+        "sweden_financial_company_source_records_clickhouse",
     }
 
     current_clickhouse_job_asset_keys = {
@@ -143,8 +171,10 @@ def test_sweden_financial_backfill_and_current_assets_are_separate() -> None:
         ).asset_layer.executable_asset_keys
     }
     assert current_clickhouse_job_asset_keys == {
+        "sweden_financial_current_facts_usd_duckdb",
         "sweden_financial_current_reports_clickhouse",
         "sweden_financial_current_facts_clickhouse",
+        "sweden_financial_company_source_records_clickhouse",
     }
 
     # The backfill exports are partition-scoped upserts mirroring their
@@ -161,9 +191,16 @@ def test_sweden_financial_backfill_and_current_assets_are_separate() -> None:
         # safe to launch in ANY order AND in parallel.
         assert clickhouse_node.pools == {"sweden_financial_duckdb"}
         assert clickhouse_node.partitions_def is backfill_raw_node.partitions_def
-        assert clickhouse_node.parent_keys == {
-            dg.AssetKey("sweden_financial_backfill_parsed_reports_duckdb"),
-        }
+    assert repo.asset_graph.get(
+        dg.AssetKey("sweden_financial_backfill_reports_clickhouse")
+    ).parent_keys == {
+        dg.AssetKey("sweden_financial_backfill_parsed_reports_duckdb"),
+    }
+    assert repo.asset_graph.get(
+        dg.AssetKey("sweden_financial_backfill_facts_clickhouse")
+    ).parent_keys == {
+        dg.AssetKey("sweden_financial_backfill_facts_usd_duckdb"),
+    }
 
     for asset_key in (
         "sweden_financial_current_reports_clickhouse",
@@ -173,9 +210,16 @@ def test_sweden_financial_backfill_and_current_assets_are_separate() -> None:
         assert clickhouse_node.group_name == "sweden_financial"
         assert clickhouse_node.pools == {"sweden_financial_duckdb"}
         assert clickhouse_node.partitions_def is None
-        assert clickhouse_node.parent_keys == {
-            dg.AssetKey("sweden_financial_current_parsed_reports_duckdb"),
-        }
+    assert repo.asset_graph.get(
+        dg.AssetKey("sweden_financial_current_reports_clickhouse")
+    ).parent_keys == {
+        dg.AssetKey("sweden_financial_current_parsed_reports_duckdb"),
+    }
+    assert repo.asset_graph.get(
+        dg.AssetKey("sweden_financial_current_facts_clickhouse")
+    ).parent_keys == {
+        dg.AssetKey("sweden_financial_current_facts_usd_duckdb"),
+    }
 
     metrics_node = repo.asset_graph.get(
         dg.AssetKey("sweden_financial_metrics_clickhouse")

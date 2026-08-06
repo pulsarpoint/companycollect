@@ -1,15 +1,29 @@
-import { type RouteConfig, index, layout, route } from "@react-router/dev/routes";
+import {
+  type RouteConfig,
+  index,
+  layout,
+  route,
+} from "@react-router/dev/routes";
 
 export default [
   layout("routes/shell.tsx", [
     index("routes/home.tsx"),
     route("countries", "routes/countries.tsx"),
     route("countries/:country/companies", "routes/country-companies.tsx"),
-    route("countries/:country/contracts/:ref", "routes/country-contract-detail.tsx"),
-    route("countries/:country/facet-options", "routes/country-facet-options.ts"),
+    route(
+      "countries/:country/contracts/:ref",
+      "routes/country-contract-detail.tsx",
+    ),
+    route(
+      "countries/:country/facet-options",
+      "routes/country-facet-options.ts",
+    ),
     // One level of the CPV tree at a time; see the route for why it is not
     // loader data.
-    route("countries/:country/contracts-cpv", "routes/country-contracts-cpv.ts"),
+    route(
+      "countries/:country/contracts-cpv",
+      "routes/country-contracts-cpv.ts",
+    ),
     route("countries/:country", "routes/country-layout.tsx", [
       index("routes/country-overview.tsx"),
       route("economy", "routes/country-economy.tsx"),
@@ -21,10 +35,17 @@ export default [
     route("company/:country/:id", "routes/company-layout.tsx", [
       index("routes/country-company-detail.tsx"),
       route("financials", "routes/company-financials.tsx"),
+      route(
+        "financials/esef/:documentId",
+        "routes/company-esef-financial-report.tsx",
+      ),
       route("financials/:documentId", "routes/company-financial-report.tsx"),
     ]),
     route("company/:country/:id/facts/:year", "routes/company-facts.tsx"),
-    route("company/:country/:id/facts/:year/document", "routes/company-facts-document.ts"),
+    route(
+      "company/:country/:id/facts/:year/document",
+      "routes/company-facts-document.ts",
+    ),
     route("company/:country/geocode", "routes/country-geocode.ts"),
     // Deliberately not nested under a country: a source page shows the whole
     // register, including the winners no country view will ever carry.
@@ -32,6 +53,11 @@ export default [
     route("procurements/:source", "routes/procurement-source.tsx"),
     route("procurements/:source/:key", "routes/procurement-record.tsx"),
     route("people", "routes/people.tsx"),
+    route(
+      "country/:country/person-targets",
+      "routes/country-person-targets.ts",
+    ),
+    route("country/:country/person/:id", "routes/country-person.tsx"),
     route("person/:name", "routes/person.tsx"),
     // Old bookmarks: /financials/country/:c still lands on the country page.
     route("financials/country/:country", "routes/financials-country.tsx"),

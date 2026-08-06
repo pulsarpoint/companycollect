@@ -1,10 +1,7 @@
 import type { Route } from "./+types/country-company-detail";
 import { getCountry } from "~/lib/countries";
 import { getCompanyDetail } from "~/lib/queries.server";
-import {
-  CompanyRecordSection,
-  DomainsSection,
-} from "~/components/detail/detail-sections";
+import { CompanyRecordSection } from "~/components/detail/detail-sections";
 import { ContactLocationCard } from "~/components/detail/contact-location-card";
 import { GleifGroupSection } from "~/components/detail/gleif-group-section";
 import { WikidataSection } from "~/components/detail/wikidata-section";
@@ -22,6 +19,12 @@ import { FiTaxRecordsSection } from "~/components/detail/countries/fi-tax-record
 import { PublicContractsSection } from "~/components/detail/public-contracts-section";
 import type { Lang } from "~/components/detail/language";
 import { useEffectiveSearchParams } from "~/components/data-table/use-effective-search";
+import {
+  ContactsDomainsSection,
+  DescriptionsSection,
+  ProductsMarketsSection,
+  SourcesSection,
+} from "~/components/detail/source-information-sections";
 
 export async function loader({ params }: Route.LoaderArgs) {
   const country = getCountry(params.country);
@@ -33,17 +36,30 @@ export async function loader({ params }: Route.LoaderArgs) {
 
 export function meta({ loaderData, params }: Route.MetaArgs) {
   const name = loaderData?.detail.company.name;
-  return [{ title: name ? `${name} – CompanyCollect Backoffice` : `Company ${params.id}` }];
+  return [
+    {
+      title: name
+        ? `${name} – CompanyCollect Backoffice`
+        : `Company ${params.id}`,
+    },
+  ];
 }
 
-export default function CompanyDetail({ loaderData, params }: Route.ComponentProps) {
+export default function CompanyDetail({
+  loaderData,
+  params,
+}: Route.ComponentProps) {
   const { detail } = loaderData;
   const country = getCountry(params.country)!;
   const { company } = detail;
   const searchParams = useEffectiveSearchParams();
-  const lang: Lang = searchParams.get("lang") === "original" ? "original" : "en";
+  const lang: Lang =
+    searchParams.get("lang") === "original" ? "original" : "en";
   // One per-country seam: each register decides how its own record reads.
-  const DECORATORS: Record<string, (r: Record<string, unknown>) => Record<string, unknown>> = {
+  const DECORATORS: Record<
+    string,
+    (r: Record<string, unknown>) => Record<string, unknown>
+  > = {
     fi: decorateFiRecord,
     br: decorateBrRecord,
   };
@@ -51,39 +67,70 @@ export default function CompanyDetail({ loaderData, params }: Route.ComponentPro
 
   return (
     <div className="flex w-full max-w-5xl flex-col gap-4">
-      <CompanyRecordSection company={company} record={record} lang={lang} />
-      <GleifGroupSection
-        relationships={detail.gleifRelationships}
-        entity={detail.gleifEntity}
-        countryCode={country.code}
+      <CompanyRecordSection
+        company={company}
+        record={record}
+        lang={lang}
+        hiddenFieldKeys={
+          detail.descriptions.length > 0
+            ? new Set(["activity_description", "company_description"])
+            : undefined
+        }
       />
-      <WikidataSection wikidata={detail.wikidata} people={detail.wikidataPeople} />
+      <DescriptionsSection descriptions={detail.descriptions} />
+      <WikidataSection wikidata={detail.wikidata} />
       <SecondaryNamesSection names={detail.secondaryNames} />
-      <ManagementSection officers={detail.officers} peopleMatches={detail.peopleMatches} audit={detail.audit} />
-      <IndustriesSection industries={detail.industries} />
       {(() => {
-        if (country.detail?.financialReports) {
+        if (country.detail?.financialSources?.length) {
           return (
             <FinancialSnapshot
-              financials={detail.financials}
+              sources={detail.financialSources}
               href={`/company/${country.code}/${params.id}/financials`}
             />
           );
         }
-        if (detail.statements.length > 0) return <StatementsFallback statements={detail.statements} />;
+        if (detail.statements.length > 0)
+          return <StatementsFallback statements={detail.statements} />;
         return (
           <FinancialsSection
             financials={detail.financials}
             factsHref={
               country.detail?.factsQuery
-                ? (year) => `/company/${country.code}/${params.id}/facts/${year}`
+                ? (year) =>
+                    `/company/${country.code}/${params.id}/facts/${year}`
                 : undefined
             }
           />
         );
       })()}
       <FrFinancialsSection financials={detail.frFinancials} />
-      <EsefSection filings={detail.esefFilings} />
+      {country.detail?.financialSources?.length ? null : (
+        <EsefSection filings={detail.esefFilings} />
+      )}
+      <ManagementSection
+        officers={detail.officers}
+        peopleMatches={detail.peopleMatches}
+        audit={detail.audit}
+        wikidataPeople={detail.wikidataPeople}
+        esefPeople={detail.esefPeople}
+      />
+      <ContactsDomainsSection
+        contacts={detail.contacts}
+        domains={detail.domains}
+        sourceContacts={detail.sourceContacts}
+        wikidata={detail.wikidata}
+      />
+      <IndustriesSection
+        industries={detail.industries}
+        wikidata={detail.wikidata}
+      />
+      <GleifGroupSection
+        relationships={detail.gleifRelationships}
+        entity={detail.gleifEntity}
+        countryCode={country.code}
+        sourceRelationships={detail.sourceRelationships}
+      />
+      <ProductsMarketsSection items={detail.businessItems} />
       <FiTaxRecordsSection taxRecords={detail.taxRecords} />
       <PublicContractsSection
         contracts={detail.publicContracts}
@@ -91,11 +138,11 @@ export default function CompanyDetail({ loaderData, params }: Route.ComponentPro
       />
       <ContactLocationCard
         country={country}
-        contacts={detail.contacts}
+        contacts={[]}
         addresses={detail.addresses}
         record={detail.record}
       />
-      <DomainsSection domains={detail.domains} />
+      <SourcesSection records={detail.sourceRecords} />
     </div>
   );
 }

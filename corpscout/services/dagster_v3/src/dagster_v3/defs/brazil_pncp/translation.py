@@ -44,7 +44,12 @@ TARGET_LANGUAGE_NAME = "English"
 # every award to a natural person; scanning it would leave those objects
 # permanently untranslated.
 TRANSLATION_FIELDS = (
-    TranslationField("corpscout.br_pncp_contracts", "objeto_contrato"),
+    TranslationField(
+        "corpscout.br_pncp_contracts",
+        "objeto_contrato",
+        SOURCE_LANG,
+        TARGET_LANG,
+    ),
 )
 
 
@@ -87,7 +92,12 @@ def brazil_pncp_translation_load(
     with clickhouse.get_connection() as client:
         for field in TRANSLATION_FIELDS:
             untranslated_rows = client.execute(
-                build_scan_sql(field.table, field.column)
+                build_scan_sql(
+                    field.table,
+                    field.column,
+                    source_lang=field.source_lang,
+                    target_lang=field.target_lang,
+                )
             )
             scanned += len(untranslated_rows)
             context.log.info(

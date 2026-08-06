@@ -251,7 +251,10 @@ FROM corpscout.no_companies AS c
 LEFT ANTI JOIN (
     SELECT source_text_hash
     FROM corpscout.text_translations
-    WHERE source_table = 'corpscout.no_companies' AND source_column = 'activity_text_original'
+    WHERE source_table = 'corpscout.no_companies'
+      AND source_column = 'activity_text_original'
+      AND source_lang = 'no'
+      AND target_lang = 'en'
     GROUP BY source_text_hash
 ) AS t ON t.source_text_hash = cityHash64(c.activity_text_original)
 WHERE c.activity_text_original <> ''
@@ -270,7 +273,10 @@ FROM corpscout.no_companies AS c
 LEFT ANTI JOIN (
     SELECT source_text_hash
     FROM corpscout.text_translations
-    WHERE source_table = 'corpscout.no_companies' AND source_column = 'legal_form_description_original'
+    WHERE source_table = 'corpscout.no_companies'
+      AND source_column = 'legal_form_description_original'
+      AND source_lang = 'no'
+      AND target_lang = 'en'
     GROUP BY source_text_hash
 ) AS t ON t.source_text_hash = cityHash64(c.legal_form_description_original)
 WHERE c.legal_form_description_original <> ''

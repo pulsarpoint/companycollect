@@ -16,6 +16,20 @@ DEFAULT_EODHD_USER_AGENT = "corpscout-dagster-v3-eodhd/0.1"
 class EodhdApiError(RuntimeError):
     """Provider error that never includes the authenticated request URL."""
 
+    path: str
+    status_code: int
+    detail: str
+
+    def __init__(self, *, path: str, status_code: int, detail: str) -> None:
+        self.path = path
+        self.status_code = status_code
+        self.detail = detail
+        super().__init__(f"EODHD endpoint {path} returned HTTP {status_code}: {detail}")
+
+
+class EodhdTickerNotFoundError(EodhdApiError):
+    """EODHD does not recognize a ticker returned by its reference catalog."""
+
 
 class EodhdResource(dg.ConfigurableResource):
     """Authenticated EODHD HTTP boundary used by reference and price assets."""
@@ -101,10 +115,18 @@ class EodhdResource(dg.ConfigurableResource):
         try:
             response.raise_for_status()
         except requests.HTTPError:
-            status_code = getattr(response, "status_code", "unknown")
+            status_code = int(response.status_code)
             detail = _safe_eodhd_error_detail(response, api_token=api_token)
-            raise EodhdApiError(
-                f"EODHD endpoint {path} returned HTTP {status_code}: {detail}"
+            error_class = (
+                EodhdTickerNotFoundError
+                if status_code == 404
+                and detail.removesuffix(".").casefold() == "ticker not found"
+                else EodhdApiError
+            )
+            raise error_class(
+                path=path,
+                status_code=status_code,
+                detail=detail,
             ) from None
         payload = response.json()
         if not isinstance(payload, list):

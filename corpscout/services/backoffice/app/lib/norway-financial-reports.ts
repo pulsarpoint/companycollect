@@ -1,4 +1,4 @@
-export interface NorwayFinancialReportSummary {
+export interface FinancialReportDocumentSummary {
   documentId: string;
   filingYear: number;
   sourceFileName: string;
@@ -14,6 +14,8 @@ export interface NorwayFinancialReportSummary {
   resolvedAt: string;
   hasReportMetadata: boolean;
 }
+
+export type NorwayFinancialReportSummary = FinancialReportDocumentSummary;
 
 export interface NorwayFinancialFact {
   factOrdinal: number;
@@ -37,7 +39,7 @@ export interface NorwayFinancialFact {
 }
 
 export interface NorwayFinancialReport {
-  summary: NorwayFinancialReportSummary;
+  summary: FinancialReportDocumentSummary;
   facts: NorwayFinancialFact[];
 }
 
@@ -80,7 +82,9 @@ export function parseWarnings(value: string): string[] {
   try {
     const parsed: unknown = JSON.parse(value);
     if (Array.isArray(parsed)) {
-      return parsed.filter((warning): warning is string => typeof warning === "string");
+      return parsed.filter(
+        (warning): warning is string => typeof warning === "string",
+      );
     }
   } catch {
     // Older pipeline rows may carry one plain-text warning instead of JSON.

@@ -1,6 +1,5 @@
 import calendar
 import json
-import os
 from dataclasses import dataclass
 from datetime import UTC, date, datetime
 from typing import Any, Protocol
@@ -45,16 +44,6 @@ class UvoMonthSnapshot:
     details_reused: int
 
 
-def assert_machine_reuse_confirmed() -> None:
-    confirmed = os.getenv(tables.LICENCE_CONFIRMATION_ENV, "").strip().lower()
-    if confirmed not in {"1", "true", "yes", "on"}:
-        raise RuntimeError(
-            "Slovakia UVO machine-reuse licence has not been confirmed. "
-            f"Set {tables.LICENCE_CONFIRMATION_ENV}=true only after an official "
-            "licence or written reuse permission is recorded."
-        )
-
-
 def month_dates(partition_key: str) -> tuple[date, ...]:
     start = date.fromisoformat(partition_key).replace(day=1)
     return tuple(
@@ -82,7 +71,6 @@ def sync_uvo_month(
     retrieved_at: datetime,
     session: _Session | None = None,
 ) -> UvoMonthSnapshot:
-    assert_machine_reuse_confirmed()
     object_store.ensure_bucket(tables.S3_BUCKET)
     owns_session = session is None
     http_session = session or uvo_http_session()

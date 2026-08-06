@@ -5,50 +5,99 @@
 
 ## 1. Source overview
 
-- **Source / scope**: filings.xbrl.org (XBRL International's public repository of ESEF
-  filings) — **cross-country**, not a single national register. Closes the "listed
+- **Source / scope**: filings.xbrl.org (XBRL International's public repository) is the
+  canonical source for cross-country ESEF filings, facts, source documents, and
+  company-information extraction. Duplicate copies embedded in Bolagsverket annual-
+  report archives are not processed by the ESEF flow. This source closes the "listed
   company" blind spot every per-country source shares (0 of 298 Finnish listed companies
   have financials in `fi_financial_statements`; the same gap exists everywhere, since
   listed issuers file ESEF to national OAMs, not to company registers).
 - **Module**: `defs/esef_filings/` · DuckDB `data/esef_filings_source.duckdb` (dataset
   `esef_filings`) · pool `esef_filings_duckdb`.
-- **ClickHouse tables** (migration `000149_corpscout_esef_filings`, **UNAPPLIED as of this
-  writing — ledger at 148**; amended in place during Task 6, not a fresh migration):
+- **ClickHouse financial tables** (migration `000149_corpscout_esef_filings`):
   `corpscout.esef_filings`, `corpscout.esef_facts`, `corpscout.esef_financial_metrics`,
   `corpscout.esef_entity_registry_map`.
+- **ClickHouse source-document tables** (migration
+  `000243_corpscout_esef_source_documents`): `corpscout.esef_source_documents`,
+  `corpscout.esef_document_contact_candidates`, and
+  `corpscout.esef_document_company_information`. Migration
+  `000246_corpscout_esef_document_concept_labels` adds the document-scoped
+  taxonomy-label projection used by the UI.
 - **Datasets used**:
 
   | dataset | url | format | size | cadence | auth? |
   |---|---|---|---|---|---|
   | filing index | `https://filings.xbrl.org/api/filings` | JSON:API, paginated (`page[size]=200`) | `meta.count` = 25,061 filings (2026-07-19 snapshot; FI = 1,168) | rolling (new filings added continuously) | none |
-  | per-filing facts | `json_url` (per filing, from the index) | OIM xBRL-JSON | varies/filing | fetched once, S3-cached | none |
+  | legacy per-filing facts | `json_url` (per filing, from the index) | OIM xBRL-JSON | varies/filing | registered comparison/fallback archive; not selected by routine jobs | none |
   | per-filing rendered report | `report_url` (per filing) | XHTML | ~2-8 MB/filing | fetched once, S3-cached | none |
+| per-filing report package | `package_url` (per filing) | ESEF report-package ZIP containing iXBRL and taxonomy | varies/filing | processed-week extraction, fetched once by SHA-256 | none |
 
 - **Entity key**: **LEI** (`lei`) everywhere in `esef_*` tables — national registry ids
   appear only in the match layer (`esef_entity_registry_map`), never as an ingestion
   filter. **`fxo_id`** is the filing-*version* key (see §9.3) — every table's `ORDER BY`
   includes it for exactly that reason.
 
-## 2. Ingest mode — source-processed monthly increments + reconciliation
+## 2. Ingest mode — source-processed weekly increments + reconciliation
 
-- **Shared partition clock**: all three ingest assets use
-  `ESEF_FILINGS_DISCOVERY_PARTITIONS`, a UTC `MonthlyPartitionsDefinition` starting at
-  `2023-01-01`. The key is the source's `processed` timestamp, which describes when a
-  filing version became available. It is deliberately independent of fiscal
-  `period_end`: a 2021 report first processed in July 2026 belongs to `2026-07-01`.
+### Refactor target
+
+```mermaid
+flowchart LR
+    API["filings.xbrl.org index"] --> Catalog["ESEF document catalog<br/>DuckDB"]
+    Catalog --> Archive["Archive immutable package<br/>S3"]
+    Archive --> Parser["Parse once<br/>Arelle workers"]
+    Parser --> Parsed["Normalized XBRL model<br/>DuckDB + parsed artifact in S3"]
+
+    Parsed --> Financials["Financial observations<br/>ClickHouse"]
+    Parsed --> Contacts["Contacts and domains<br/>ClickHouse"]
+    Parsed --> Labels["Taxonomy concept labels<br/>ClickHouse"]
+    Parsed --> Documents["Source-document metadata<br/>ClickHouse"]
+
+    Documents --> Selector["Select latest unprocessed<br/>report per company"]
+    Selector --> LLM["Explicit LLM enrichment"]
+    Parsed --> LLM
+    LLM --> Descriptions["Description observations<br/>ClickHouse"]
+```
+
+The immutable package is archived before parsing. The parsed artifact is the
+single deterministic contract: facts, taxonomy labels, contacts, disclosures,
+and financial observations derive from it. The production
+`esef_filing_facts_duckdb` asset was cut over to schema-v4 Arelle artifacts while
+retaining its asset key and DuckDB/ClickHouse table contracts. The historical OIM
+JSON archive remains registered for explicit comparison or fallback, but routine
+refresh and backfill jobs do not select it. Arelle-to-OIM validation completed on
+2026-08-04 across five multilingual,
+multi-country packages: all 4,582 facts matched semantically and at the current
+storage-value contract, and all standardized metric snapshots matched. Exact
+lexical differences were limited to equivalent integral decimal spellings and
+OIM-generated IDs for source facts without XHTML IDs. The detailed corpus table
+and validator contract are in `docs/esef-ixbrl-segment-parser.md`.
+
+- **Shared partition clock**: ingestion and deterministic document-evidence assets use
+  `ESEF_PROCESSED_WEEK_PARTITIONS`, a UTC `TimeWindowPartitionsDefinition` with Sunday
+  boundaries starting at `2023-01-01`. The key is the beginning of the source
+  `processed` week, which describes when a filing version became available. It is
+  deliberately independent of fiscal `period_end`: a 2021 report first processed on
+  2026-07-22 belongs to the `2026-07-19` partition.
 - **Index** (`esef_filings_index_duckdb`): fetches only its processed-time window through
   the API's JSON filter, ordered by `(processed, fxo_id)`, then upserts the cumulative
-  DuckDB index by stable filing-version key `fxo_id`. An empty monthly window is valid and
-  does not erase earlier months.
+  DuckDB index by stable filing-version key `fxo_id`. An empty weekly window is valid and
+  does not erase earlier weeks.
 - **Facts + report-XHTML archive** (`esef_filing_facts_duckdb`,
-  `esef_report_xhtml_s3`): read the same processed-month slice from the cumulative local
-  index. The facts writer replaces rows only for the filing ids in that slice; the archive
-  remains skip-existing in object storage. Both use
+  `esef_report_xhtml_s3`): the facts asset consumes the processed-week result from
+  `esef_document_artifacts_s3`, downloads each content-addressed artifact once, and emits
+  source-linked rows for every filing version represented by that artifact. Artifact reads
+  use bounded threads; JSON normalization and independent Parquet spooling use four worker
+  processes; the main process performs filing-scoped, bounded DuckDB inserts. Checkpoints
+  include the parser contract (`arelle-artifact-v4`), so legacy OIM checkpoints cannot
+  suppress the one-time cutover rewrite. The XHTML archive still reads the processed-week
+  index directly and remains skip-existing in object storage. Both use
   `BackfillPolicy.multi_run(max_partitions_per_run=1)`.
 - **Reconciliation** (`esef_filings_index_reconciliation_duckdb`): an intentionally
   unpartitioned full API sweep and atomic index replacement, isolated from the weekly
   incremental path. It reports new/removed ids and affected processed months and runs via
-  a separate stopped-by-default monthly schedule.
+  a separate stopped-by-default monthly schedule. Its `affected_processed_months`
+  metadata is a reconciliation summary, not an asset partition definition.
 
 ## 3. Loading
 
@@ -57,7 +106,7 @@
   JSON:API trick: entities arrive once per page in `included` (deduplicated by the API),
   each filing references its entity via `relationships.entity.data.id` — joined through a
   page-local `{entity_id: attributes}` map, **never by array position**.
-  `download_json_facts(json_url, target)` streams to a local path with a whole-download
+  The legacy/fallback `download_json_facts(json_url, target)` path streams to a local path with a whole-download
   retry loop (mirrors `latvia_ur/resources.py:_download_to_path`: truncates `target`
   before every attempt, verifies `Content-Length` when present, retries
   `ChunkedEncodingError`/`ConnectionError`/`Timeout`). This same method is reused, URL and
@@ -66,7 +115,8 @@
   S3 upload attempt, so a partition never accumulates all downloaded reports locally.
 - **Staging shape**: `esef_filings.filings_index` (one row per `EsefFilingRecord`,
   cumulative upsert by `fxo_id` in the active path) and `esef_filings.facts` (one row per
-  parsed OIM fact, filing-id-scoped delete+insert per processed-month partition). Both
+  parsed Arelle-artifact fact, filing-id-scoped delete+insert per processed-week partition).
+  Both
   stage loosely-typed text
   columns (see `assets.py`'s `_FILINGS_INDEX_COLUMN_TYPES` / `_FACTS_COLUMN_TYPES`
   docstrings) — real typing/casting happens at ClickHouse export time (§5).
@@ -79,11 +129,10 @@
 
 ## 4. Transform
 
-- No SQL pivot/transform stage in DuckDB. The "transform" is Python parsing of OIM
-  xBRL-JSON straight into a flat EAV-shaped fact table (`facts.py:parse_oim_facts`) — this
-  is Level 1 of the XBRL ingest hierarchy (§5b): the source already publishes
-  Arelle-extracted facts as JSON, so **no XBRL parser is needed in v1 at all** (unlike
-  `sweden_financial`, which parses raw inline-XBRL XHTML itself).
+- No SQL pivot/transform stage in DuckDB. Arelle parses the complete iXBRL report package
+  once into a schema-versioned artifact. `facts.py:iter_artifact_facts` projects its
+  OIM-shaped dimensions into the existing flat `EsefFact` contract; the same artifact
+  supplies deterministic contacts, taxonomy labels, disclosures, and LLM evidence.
 - The only real "transform" logic lives in ClickHouse: `esef_financial_metrics` is
   derived entirely from `esef_facts` + `esef_filings` + `exchange_rates` via one
   CTE-chained `SELECT` (`metrics.py`) — see §9 for the selection rules.
@@ -124,16 +173,59 @@ identifiers, not translatable free text — and this source carries no legal-for
 field at all (it's a financial-report index, not a company register). No translation
 loader is wired for this module.
 
-## 6b. Contacts (§8b) — N/A
+## 6b. Source documents and company-information candidates
 
-filings.xbrl.org carries no contact fields (website/email/phone) for filers — this is a
-scope boundary inherent to the source shape (a report index, not a register), not a gap
-to close later. No contact-extraction asset exists for this module.
+The filings.xbrl.org index carries no filer contact fields, but some underlying ESEF
+report XHTML documents contain tagged contact facts, `mailto:`/`tel:` links, or visible
+email, phone, URL, and domain text. The processed-week flow has three stages:
+`esef_document_extraction_manifest_s3` snapshots the compact index/company-link worklist
+under the single-writer DuckDB pool; `esef_document_artifacts_s3` deduplicates packages by
+SHA-256 and parses them with four Arelle worker processes outside that pool; and the
+`esef_document_extraction_duckdb` multi-asset performs only the short final publication of
+`esef_source_documents`, normalized `esef_document_contact_candidates`, and
+document-scoped `esef_document_concept_labels` rows. Website
+hosts must resolve to a Public Suffix List eTLD+1; invalid/file-like hosts are rejected,
+and legitimate external domains remain explicitly classified candidates.
+
+`source_document_id` is the upstream `fxo_id`. It joins directly to `esef_facts.fxo_id`
+and carries the GLEIF-derived `(country_iso2, company_id)` relation, so financial facts,
+deterministic contacts, and all later enrichments retain the exact same source document.
+Concept-label rows preserve the taxonomy namespace URI, local name, QName,
+label role, submitted/report language, English label when present, extension
+status, and exact source document. Raw packages and full parsed
+fact/concept/segment artifacts remain in content-addressed
+S3; the queryable tables retain their object keys and hashes rather than duplicating the
+large artifact JSON in ClickHouse.
+
+The paid, unpartitioned `esef_document_company_information_duckdb` asset reads
+`corpscout.esef_source_documents FINAL` and ranks reports inside each resolved
+`(country_iso2, company_id)`, selecting only the latest parsed XBRL report. Optional
+country, company-ID, source-document-ID, and row-limit filters bound manual runs; a
+source-document filter is applied after latest-report ranking. The asset skips a report
+when the same parsed artifact already has output for the active model and prompt unless
+refresh is explicitly requested.
+
+Only selected narrative evidence is sent to DeepSeek to extract a company description,
+people/roles, products/services, customer markets, operating geographies, business
+segments, and material group relationships. The exact canonical API request is hashed
+and written to a content-addressed S3 object before the call. The complete result
+artifact is keyed by both package and request hashes. DuckDB retains the parsed
+observations, request key/hash, and exact response text/hash against the specific
+`source_document_id`.
+
+The asset is never included in a routine refresh or backfill. A separate
+`esef_document_company_information_clickhouse` asset publishes its cumulative DuckDB
+rows, while `esef_document_observations_clickhouse` publishes normalized child rows for
+descriptions, people, products and markets, geographies, segments, and group
+relationships. The routine `esef_document_information_clickhouse` multi-asset remains
+independent and publishes only deterministic document/contact/taxonomy/disclosure
+tables. None of these assets updates a canonical company field; cross-source preferences
+belong to a later resolver/UI layer.
 
 ## 7. Currency
 
 - Native currency is preserved end-to-end: every fact carries `amount_original` +
-  `currency` (raw OIM `iso4217:<CCY>` unit), and `esef_facts` is never converted — only
+  `currency` (the artifact's OIM-shaped `iso4217:<CCY>` unit), and `esef_facts` is never converted — only
   the derived `esef_financial_metrics` layer carries `_usd` columns.
 - Unlike most sources, USD conversion is **not** a separate asset/pass over a DuckDB
   table — it's inlined directly into `metrics.py`'s single ClickHouse `SELECT`, because
@@ -154,27 +246,26 @@ to close later. No contact-extraction asset exists for this module.
 
 | job | selection | partitioned? |
 |---|---|---|
-| `esef_filings_refresh_job` | monthly index, facts, XHTML, then all ClickHouse/derived assets | yes — `ESEF_FILINGS_DISCOVERY_PARTITIONS`; downstream unpartitioned assets rebuild from the cumulative DuckDB state |
-| `esef_filings_backfill_job` | monthly index, facts, XHTML only | yes — same processed-month definition; exports excluded |
+| `esef_filings_refresh_job` | weekly index, facts, XHTML, deterministic document/contact/disclosure evidence, then all cumulative ClickHouse/derived assets | yes — `ESEF_PROCESSED_WEEK_PARTITIONS`; downstream unpartitioned assets rebuild from cumulative DuckDB state |
+| `esef_filings_backfill_job` | weekly ingestion and deterministic document/contact/disclosure evidence | yes — same processed-week definition; cumulative ClickHouse exports excluded |
 | `esef_filings_reconciliation_job` | full-sweep reconciliation index only | no |
+| `esef_document_company_information_job` | latest unprocessed final-ClickHouse XBRL per resolved company, optionally bounded by country/company/document/limit | no — explicit paid job only |
 
 `esef_filings_refresh_weekly` runs at `10 5 * * 0`, timezone `Europe/Belgrade`, and is
-stopped by default. Its resolver uses the source's UTC clock and always emits the open
-processed month (`YYYY-MM-01`). On the first weekly tick of a new month it also emits the
-previous month, preventing the days between the prior tick and month boundary from being
-stranded without doubling the full downstream rebuild on every later tick. Each request
-has a tick-specific run key, as Dagster requires for a multi-run schedule evaluation. The
-monthly definition has no manually maintained end-year ceiling, and `end_offset=1` makes
-the open month selectable.
+stopped by default. Its resolver uses the source's UTC clock and emits exactly the last
+fully closed Sunday-to-Sunday UTC week. A tick on 2026-07-26 therefore materializes
+partition `2026-07-19`; the currently open week is never scheduled.
 
 `esef_filings_reconciliation_monthly` runs at `25 5 2 * *`, timezone
 `Europe/Belgrade`, and is also stopped by default. Keeping reconciliation in a separate
 job prevents a full sweep from being an accidental prerequisite of every weekly refresh.
 
-All monthly ingest assets share one partitions definition. The ClickHouse exports remain
+All weekly ingestion and deterministic-evidence assets share one partitions definition.
+Each document still retains its own fiscal year and reporting period as data. The
+ClickHouse exports remain
 unpartitioned and full-replace from the cumulative local tables, so a weekly run exports
-all months materialized so far, including the just-upserted month. Backfills exclude
-exports; run the refresh job or individual exports once after the monthly ingest backfill
+all weeks materialized so far, including the just-upserted week. Backfills exclude
+exports; run the refresh job or individual exports once after the weekly ingest backfill
 finishes.
 
 ## 9. Correctness decisions
@@ -391,10 +482,10 @@ other two before this finding.
 
 **Crawl-completeness guard on index queries (Finding M1).** The client surfaces the
 API's reported result count for the selected query (`EsefFilingsClient.last_reported_total`,
-JSON:API `meta.count`, captured from the first page). Both a processed-month fetch and the
+JSON:API `meta.count`, captured from the first page). Both a processed-week fetch and the
 full reconciliation refuse before opening DuckDB when the crawled count falls below
 `CRAWL_COMPLETENESS_MIN_RATIO` (90%) of that reported result count. This catches nonempty
-but truncated pagination. A genuinely empty monthly query (`meta.count = 0`) is valid and
+but truncated pagination. A genuinely empty weekly query (`meta.count = 0`) is valid and
 preserves the cumulative index; an empty full reconciliation is refused separately.
 When the API does not report a count, the ratio guard is a no-op and metadata records the
 missing baseline.
@@ -409,11 +500,10 @@ of this task, tracked for a future pass:
   generation on the existing Qwen3-Embedding-8B infra, vector search + LLM answering over
   annual-report content). `esef_report_xhtml_s3` (Task 9) is this pass's data
   prerequisite, built now specifically so the corpus exists when that plan starts.
-- **Arelle/package fallback** for filings without a usable `json_url` — decided after
-  Task 8's real coverage numbers (what fraction of the ~25k filings actually ship
-  `json_url`); until then those filings are skipped and counted
-  (`has_json_facts = false`, `skipped_no_json` in materialization metadata), never
-  silently dropped.
+- **Removal of the legacy OIM archive assets** — the registered
+  `esef_filing_facts_json_s3` path is deliberately retained as an explicit comparison or
+  emergency fallback until the Arelle artifact cutover has completed a production
+  backfill and operational observation period. It is not selected by routine jobs.
 - **`company_financials_latest` consuming ESEF rows** — blocked on agreeing the
   scope-preference rule first (§9.5: ESEF is consolidated-group IFRS, national-register
   statements are usually standalone statutory, and the two can legitimately disagree for
@@ -524,14 +614,16 @@ of this task, tracked for a future pass:
   404/410 were never in that set, so the dlt wrapper was already not retrying them; the
   incident's cost was one wasted attempt per dead link, not five, and no retry-config
   change was needed alongside the asset-loop fix.
-- **Fiscal-year partitions miss late discoveries** (correctness redesign, 2026-07-22):
-  the weekly job previously materialized only the current fiscal `period_end` year. Live
-  API rows processed in 2026 included filings whose fiscal period ended in 2021, so those
-  filing versions could enter the full-replaced index but never reach facts/XHTML during
-  the normal weekly path. Fixed end to end by using the API's source `processed` month for
-  index, facts, and XHTML; incrementally upserting the cumulative index by `fxo_id`; and
-  isolating the full sweep as an explicit reconciliation asset. `period_end_year` remains
-  a fact attribute, never an orchestration clock. Both download loops retain progress
+- **Fiscal-year partitions miss late discoveries** (correctness redesign, 2026-07-22;
+  weekly refinement, 2026-08-03): the job previously materialized only the current fiscal
+  `period_end` year. Live API rows processed in 2026 included filings whose fiscal period
+  ended in 2021, so those filing versions could enter the full-replaced index but never
+  reach facts/XHTML during the normal path. The first correction used source-processed
+  months; the current graph uses smaller source-processed weeks for ingestion, facts,
+  XHTML, and deterministic document evidence. `period_end_year` remains a document/fact
+  attribute, never an orchestration clock. The cumulative index is still upserted by
+  `fxo_id`, and the full sweep remains an explicit reconciliation asset. Both download
+  loops retain progress
   logging every 100 filings plus completion metadata keyed by `partition_key` and the UTC
   processed window.
 
@@ -543,11 +635,12 @@ of this task, tracked for a future pass:
   `tests/test_esef_filings_assets.py`, `tests/test_esef_filings_publish.py`,
   `tests/test_esef_filings_metrics.py` (mapping/pivot/export/migration-column-order/
   job+schedule contracts). `uv run pytest tests/test_esef_filings_assets.py -q` →
-  passing (job/schedule assertions cover asset-key coverage, the shared monthly
-  partitions definition, schedule cron/timezone/status, UTC month resolution, and the
+  passing (job/schedule assertions cover asset-key coverage, the shared weekly
+  partitions definition, schedule cron/timezone/status, last-closed UTC week resolution,
+  and the
   lack of a static end-year ceiling; a code-review fix pass added
   `test_refresh_job_executes_all_assets_for_partition`, which actually EXECUTES
-  `esef_filings_refresh_job` for `partition_key="2026-07-01"` rather than only inspecting its
+  core ingestion graph for `partition_key="2026-07-19"` rather than only inspecting its
   static definition — see §11). A later fix pass (2026-07-21, dead-upstream-links
   incident) added the `skipped_upstream_missing` coverage to both partitioned assets:
   404/410 skipped-and-counted with no S3 object/facts row for that filing, other filings
@@ -555,17 +648,12 @@ of this task, tracked for a future pass:
   and failing the partition loudly — see §11. `uv run dg check defs` passes.
 - **Cron slot**: `esef_filings_refresh_weekly` moved from `50 5 * * 0` (drafted) to
   `10 5 * * 0` (shipped) after a code-review fix pass caught a `(minute, hour)` collision
-  with `finland_verotax_schedule`; `uv run pytest tests/test_schedule_cron_contracts.py -q`
-  confirms no ESEF collision remains (2 unrelated pre-existing collisions —
-  `companies_all`/`france_sirene` at `15 7`, `company_people`/`czech_ares` at `45 7` — are
-  untouched, out of scope for this module).
-- **Not yet done (Task 8, pending)**: migration 000149 has not been applied to live
-  ClickHouse (ledger at 148); nothing in this module has been materialized against a real
-  server. Task 8's plan (server backfill + validation) covers: confirming the migration
-  applied cleanly, a live index materialization (compare `meta.count` vs stored rows,
-  per-country distribution, `json_url` coverage fraction — the number the Arelle-fallback
-  decision in §10 depends on), a UI-launched processed-month backfill of the index +
-  `esef_filing_facts_duckdb` + `esef_report_xhtml_s3` from 2023 onward, running the
-  exports + entity map + metrics, and
-  spot-checking real figures (e.g. Nokia, Ericsson) against published annual reports
-  before flipping `esef_filings_refresh_weekly` on in the UI.
+  with `finland_verotax_schedule`. The ESEF `05:10` slot is unique. The repository-wide
+  cron-uniqueness test currently reports unrelated collisions in other source schedules;
+  they are untouched and out of scope for this module.
+- **Deployment note for the weekly conversion**: changing the partition definition does
+  not remove cumulative DuckDB, object-store, or ClickHouse data. Backfill the processed
+  weeks from `2023-01-01`, then run the cumulative ClickHouse publications once and
+  validate source-document/fact counts before enabling the stopped-by-default schedule.
+  Existing hashes and document-scoped replacement make retries idempotent. The paid LLM
+  job remains a separate, manually selected operation throughout this backfill.

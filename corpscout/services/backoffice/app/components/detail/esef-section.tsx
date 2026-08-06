@@ -1,6 +1,8 @@
-import { ExternalLink } from "lucide-react";
+import { Link } from "react-router";
+import { ChevronRight, ExternalLink } from "lucide-react";
 import type { EsefFilingRow } from "~/lib/queries.server";
 import { Badge } from "~/components/ui/badge";
+import { Button } from "~/components/ui/button";
 import {
   Card,
   CardContent,
@@ -16,6 +18,7 @@ import {
   TableHeader,
   TableRow,
 } from "~/components/ui/table";
+import { EvidencePanel } from "~/components/detail/evidence";
 
 const compactUsd = new Intl.NumberFormat("en-US", {
   style: "currency",
@@ -23,12 +26,47 @@ const compactUsd = new Intl.NumberFormat("en-US", {
   notation: "compact",
   maximumFractionDigits: 2,
 });
+const compactNumber = new Intl.NumberFormat("en-US", {
+  notation: "compact",
+  maximumFractionDigits: 2,
+});
 
-function Amount({ value }: { value: number | null }) {
-  if (value === null || value === undefined) {
+function Amount({
+  original,
+  usd,
+  currency,
+}: {
+  original: number | null;
+  usd: number | null;
+  currency: string;
+}) {
+  if (original == null && usd == null) {
     return <span className="text-muted-foreground">—</span>;
   }
-  return <span className="font-mono tabular-nums">{compactUsd.format(value)}</span>;
+  return (
+    <div className="flex flex-col items-end">
+      {original == null ? null : (
+        <span className="font-mono tabular-nums">
+          {compactNumber.format(original)} {currency}
+        </span>
+      )}
+      {usd == null ? null : (
+        <span className="text-muted-foreground font-mono text-xs tabular-nums">
+          {compactUsd.format(usd)}
+        </span>
+      )}
+    </div>
+  );
+}
+
+function EmployeeCount({ value }: { value: number | null }) {
+  return value == null ? (
+    <span className="text-muted-foreground">—</span>
+  ) : (
+    <span className="font-mono tabular-nums">
+      {compactNumber.format(value)}
+    </span>
+  );
 }
 
 /**
@@ -39,22 +77,37 @@ function Amount({ value }: { value: number | null }) {
  * the registry financials section — the two answer different questions and are
  * deliberately not merged.
  */
-export function EsefSection({ filings }: { filings: EsefFilingRow[] }) {
+export function EsefSection({
+  filings,
+  detailsHref,
+  title = "Financials · consolidated IFRS",
+  description = "Consolidated IFRS figures extracted from the company's filed ESEF reports. Group accounts remain distinct from standalone legal-entity filings.",
+}: {
+  filings: EsefFilingRow[];
+  detailsHref?: (filing: EsefFilingRow) => string;
+  title?: string;
+  description?: string;
+}) {
   if (filings.length === 0) return null;
+  const hasOfficialSwedenSource = filings.some((filing) =>
+    filing.source_url.toLowerCase().includes("bolagsverket.se"),
+  );
 
   return (
     <Card>
       <CardHeader>
-        <CardTitle>ESEF annual reports</CardTitle>
+        <CardTitle>{title}</CardTitle>
         <CardDescription>
-          Consolidated IFRS figures extracted from the company&apos;s filed ESEF
-          reports. Group accounts, distinct from the standalone registry
-          filings above. Amounts converted to USD at each period-end rate.
+          {description} Source currency is shown first, with the period-end USD
+          conversion below.
+          {hasOfficialSwedenSource
+            ? " Bolagsverket is the preferred source; the xbrl.org viewer is retained when available."
+            : ""}
         </CardDescription>
       </CardHeader>
       <CardContent>
         <div className="overflow-x-auto">
-          <Table>
+          <Table className="min-w-[78rem]">
             <TableHeader>
               <TableRow>
                 <TableHead>Year</TableHead>
@@ -63,6 +116,9 @@ export function EsefSection({ filings }: { filings: EsefFilingRow[] }) {
                 <TableHead className="text-right">Profit / loss</TableHead>
                 <TableHead className="text-right">Total assets</TableHead>
                 <TableHead className="text-right">Equity</TableHead>
+                <TableHead className="text-right">Liabilities</TableHead>
+                <TableHead className="text-right">Cash</TableHead>
+                <TableHead className="text-right">Employees</TableHead>
                 <TableHead>Source</TableHead>
               </TableRow>
             </TableHeader>
@@ -85,36 +141,120 @@ export function EsefSection({ filings }: { filings: EsefFilingRow[] }) {
                       to {filing.period_end}
                       {filing.currency ? ` · ${filing.currency}` : ""}
                     </div>
+                    <div className="text-muted-foreground mt-1 text-xs tabular-nums">
+                      {filing.source_fact_count.toLocaleString("en-US")} current
+                      facts · {filing.mapped_fact_count.toLocaleString("en-US")}{" "}
+                      standardized
+                    </div>
                   </TableCell>
                   <TableCell className="text-right">
-                    <Amount value={filing.revenue_amount_usd} />
+                    <Amount
+                      original={filing.revenue_amount_original}
+                      usd={filing.revenue_amount_usd}
+                      currency={filing.currency}
+                    />
                   </TableCell>
                   <TableCell className="text-right">
-                    <Amount value={filing.operating_profit_amount_usd} />
+                    <Amount
+                      original={filing.operating_profit_amount_original}
+                      usd={filing.operating_profit_amount_usd}
+                      currency={filing.currency}
+                    />
                   </TableCell>
                   <TableCell className="text-right">
-                    <Amount value={filing.profit_loss_amount_usd} />
+                    <Amount
+                      original={filing.profit_loss_amount_original}
+                      usd={filing.profit_loss_amount_usd}
+                      currency={filing.currency}
+                    />
                   </TableCell>
                   <TableCell className="text-right">
-                    <Amount value={filing.total_assets_amount_usd} />
+                    <Amount
+                      original={filing.total_assets_amount_original}
+                      usd={filing.total_assets_amount_usd}
+                      currency={filing.currency}
+                    />
                   </TableCell>
                   <TableCell className="text-right">
-                    <Amount value={filing.equity_amount_usd} />
+                    <Amount
+                      original={filing.equity_amount_original}
+                      usd={filing.equity_amount_usd}
+                      currency={filing.currency}
+                    />
+                  </TableCell>
+                  <TableCell className="text-right">
+                    <Amount
+                      original={filing.liabilities_amount_original}
+                      usd={filing.liabilities_amount_usd}
+                      currency={filing.currency}
+                    />
+                  </TableCell>
+                  <TableCell className="text-right">
+                    <Amount
+                      original={filing.cash_amount_original}
+                      usd={filing.cash_amount_usd}
+                      currency={filing.currency}
+                    />
+                  </TableCell>
+                  <TableCell className="text-right">
+                    <EmployeeCount value={filing.employees} />
                   </TableCell>
                   <TableCell>
-                    {filing.viewer_url ? (
-                      <a
-                        href={filing.viewer_url}
-                        target="_blank"
-                        rel="noreferrer"
-                        className="inline-flex items-center gap-1 text-sm underline underline-offset-4"
-                      >
-                        Report
-                        <ExternalLink className="size-3" />
-                      </a>
-                    ) : (
-                      <span className="text-muted-foreground">—</span>
-                    )}
+                    <div className="flex flex-col items-start gap-1">
+                      {(() => {
+                        const isBolagsverket = filing.source_url
+                          .toLowerCase()
+                          .includes("bolagsverket.se");
+                        const primaryUrl = isBolagsverket
+                          ? filing.source_url
+                          : filing.viewer_url ||
+                            filing.package_url ||
+                            filing.source_url;
+                        if (!primaryUrl) {
+                          return (
+                            <span className="text-muted-foreground">—</span>
+                          );
+                        }
+                        return (
+                          <a
+                            href={primaryUrl}
+                            target="_blank"
+                            rel="noreferrer"
+                            className="inline-flex items-center gap-1 text-sm underline underline-offset-4"
+                          >
+                            {isBolagsverket ? "Bolagsverket" : "xbrl.org"}
+                            <ExternalLink className="size-3" />
+                          </a>
+                        );
+                      })()}
+                      {filing.viewer_url &&
+                      filing.source_url
+                        .toLowerCase()
+                        .includes("bolagsverket.se") &&
+                      filing.source_url !== filing.viewer_url ? (
+                        <a
+                          href={filing.viewer_url}
+                          target="_blank"
+                          rel="noreferrer"
+                          className="text-muted-foreground inline-flex items-center gap-1 text-xs underline underline-offset-4"
+                        >
+                          Viewer
+                          <ExternalLink className="size-3" />
+                        </a>
+                      ) : null}
+                      {detailsHref && filing.primary_fxo_id ? (
+                        <Button
+                          variant="outline"
+                          size="sm"
+                          nativeButton={false}
+                          render={<Link to={detailsHref(filing)} />}
+                        >
+                          All facts
+                          <ChevronRight data-icon="inline-end" />
+                        </Button>
+                      ) : null}
+                      <EvidencePanel evidence={filing.evidence ?? []} />
+                    </div>
                   </TableCell>
                 </TableRow>
               ))}

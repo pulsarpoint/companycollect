@@ -23,6 +23,18 @@ FIXTURES_DIR = Path(__file__).resolve().parent / "fixtures" / "esef_filings"
 # (this file lives in the same tests/ directory): tests -> dagster_v3 -> services -> corpscout.
 MIGRATIONS_DIR = Path(__file__).resolve().parents[3] / "clickhouse" / "migrations"
 MIGRATION_FILE = MIGRATIONS_DIR / "000149_corpscout_esef_filings.up.sql"
+DOCUMENT_MIGRATION_FILE = (
+    MIGRATIONS_DIR / "000243_corpscout_esef_source_documents.up.sql"
+)
+DISCLOSURE_MIGRATION_FILE = (
+    MIGRATIONS_DIR / "000245_corpscout_esef_fact_disclosures.up.sql"
+)
+CONCEPT_LABEL_MIGRATION_FILE = (
+    MIGRATIONS_DIR / "000246_corpscout_esef_document_concept_labels.up.sql"
+)
+LLM_PROVENANCE_MIGRATION_FILE = (
+    MIGRATIONS_DIR / "000247_corpscout_esef_llm_provenance.up.sql"
+)
 assert MIGRATION_FILE.exists(), (
     f"migration file not found at {MIGRATION_FILE} — check the parents[] depth "
     "(tests/ -> dagster_v3 -> services -> corpscout -> clickhouse/migrations)"
@@ -505,3 +517,78 @@ def test_export_columns_match_migration_000149_column_order() -> None:
             f"{table_name}: export columns {export_columns} do not match "
             f"migration column order {migration_columns[:-1]}"
         )
+
+
+def test_document_export_columns_match_migration_000243_column_order() -> None:
+    sql = DOCUMENT_MIGRATION_FILE.read_text(encoding="utf-8")
+    expected_by_table = {
+        tables.ESEF_SOURCE_DOCUMENTS_TABLE: (
+            tables.ESEF_SOURCE_DOCUMENTS_EXPORT_COLUMNS
+        ),
+        tables.ESEF_DOCUMENT_CONTACT_CANDIDATES_TABLE: (
+            tables.ESEF_DOCUMENT_CONTACT_CANDIDATES_EXPORT_COLUMNS
+        ),
+        tables.ESEF_DOCUMENT_COMPANY_INFORMATION_TABLE: (
+            tables.ESEF_DOCUMENT_COMPANY_INFORMATION_EXPORT_COLUMNS
+        ),
+    }
+
+    for table_name, export_columns in expected_by_table.items():
+        migration_columns = _migration_table_columns(sql, table_name)
+        assert migration_columns[-1] == "resolved_at"
+        if table_name == tables.ESEF_DOCUMENT_COMPANY_INFORMATION_TABLE:
+            provenance_columns = {
+                "llm_request_object_key",
+                "llm_request_sha256",
+                "llm_response_text",
+                "llm_response_sha256",
+            }
+            assert tuple(
+                column
+                for column in export_columns
+                if column not in provenance_columns
+            ) == tuple(migration_columns[:-1])
+        else:
+            assert tuple(migration_columns[:-1]) == export_columns
+
+
+def test_llm_provenance_migration_adds_request_and_response_columns() -> None:
+    sql = LLM_PROVENANCE_MIGRATION_FILE.read_text(encoding="utf-8")
+
+    assert "ALTER TABLE corpscout.esef_document_company_information" in sql
+    for column in (
+        "llm_request_object_key",
+        "llm_request_sha256",
+        "llm_response_text",
+        "llm_response_sha256",
+    ):
+        assert f"ADD COLUMN IF NOT EXISTS {column} String" in sql
+
+
+def test_disclosure_export_columns_match_migration_000245_column_order() -> None:
+    sql = DISCLOSURE_MIGRATION_FILE.read_text(encoding="utf-8")
+    migration_columns = _migration_table_columns(
+        sql,
+        tables.ESEF_FACT_DISCLOSURES_TABLE,
+    )
+
+    assert migration_columns[-1] == "resolved_at"
+    assert tuple(migration_columns[:-1]) == (
+        tables.ESEF_FACT_DISCLOSURES_EXPORT_COLUMNS
+    )
+
+
+def test_concept_label_export_columns_match_migration_000246_column_order() -> None:
+    sql = CONCEPT_LABEL_MIGRATION_FILE.read_text(encoding="utf-8")
+    migration_columns = _migration_table_columns(
+        sql,
+        tables.ESEF_DOCUMENT_CONCEPT_LABELS_TABLE,
+    )
+
+    assert migration_columns[-1] == "resolved_at"
+    assert (
+        tuple(
+            column for column in migration_columns[:-1] if column != "source_record_uid"
+        )
+        == tables.ESEF_DOCUMENT_CONCEPT_LABELS_EXPORT_COLUMNS
+    )

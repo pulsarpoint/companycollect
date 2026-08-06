@@ -184,11 +184,9 @@ COUNTRY_PROCUREMENT_RULES: dict[str, CountryProcurementRule] = {
             "UVO national and below-threshold result notices plus TED eForms "
             "awards. The company view reads only UVO notices identified as "
             "national-law awards, avoiding directive-level duplication with "
-            "TED. UVO collection remains operationally blocked until "
-            "machine-reuse permission is confirmed. VAT identifiers cannot "
-            "be converted to IČO, malformed IČO values remain unmatched, and "
-            "contracts won by foreign companies are absent from company "
-            "summaries."
+            "TED. VAT identifiers cannot be converted to IČO, malformed IČO "
+            "values remain unmatched, and contracts won by foreign companies "
+            "are absent from company summaries."
         ),
         sources=(TED, UVO),
     ),

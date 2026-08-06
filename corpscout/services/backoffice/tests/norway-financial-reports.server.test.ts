@@ -1,9 +1,11 @@
 import { describe, expect, it } from "vitest";
 import { chQuery } from "~/lib/clickhouse.server";
+import { getCountry } from "~/lib/countries";
 import {
   getNorwayFinancialReport,
   getNorwayFinancialReports,
 } from "~/lib/norway-financial-reports.server";
+import { getCompanyFinancialDetail } from "~/lib/queries.server";
 
 describe("Norway annual account PDFs", () => {
   it("lists every fact-backed document with its real filename and source URL", async () => {
@@ -27,6 +29,31 @@ describe("Norway annual account PDFs", () => {
     }
   });
 
+  it("keeps standardized rows and source PDFs in one Brønnøysund source", async () => {
+    const [seed] = await chQuery<{ org_number: string }>(
+      `SELECT org_number
+       FROM no_financial_facts
+       GROUP BY org_number
+       ORDER BY org_number
+       LIMIT 1`,
+    );
+
+    const detail = await getCompanyFinancialDetail(
+      getCountry("no")!,
+      seed.org_number,
+    );
+    const source = detail.financialSources.find(
+      (candidate) => candidate.kind === "registry",
+    );
+
+    expect(source?.id).toBe("brreg-annual-accounts");
+    expect(source?.kind).toBe("registry");
+    if (source?.kind !== "registry") {
+      throw new Error("expected the Brønnøysund registry source");
+    }
+    expect(source.documents.length).toBeGreaterThan(0);
+  });
+
   it("keeps fact-backed PDFs visible when the report metadata row is absent", async () => {
     const [seed] = await chQuery<{ org_number: string; document_id: string }>(
       `SELECT any(f.org_number) AS org_number, f.document_id AS document_id
@@ -44,7 +71,9 @@ describe("Norway annual account PDFs", () => {
     if (!seed) return;
 
     const reports = await getNorwayFinancialReports(seed.org_number);
-    const report = reports.find((candidate) => candidate.documentId === seed.document_id);
+    const report = reports.find(
+      (candidate) => candidate.documentId === seed.document_id,
+    );
 
     expect(report).toBeDefined();
     expect(report?.parseStatus).toBe("facts_loaded");
@@ -60,8 +89,14 @@ describe("Norway annual account PDFs", () => {
        LIMIT 1`,
     );
 
-    const report = await getNorwayFinancialReport(seed.org_number, seed.document_id);
-    const wrongCompany = await getNorwayFinancialReport("000000000", seed.document_id);
+    const report = await getNorwayFinancialReport(
+      seed.org_number,
+      seed.document_id,
+    );
+    const wrongCompany = await getNorwayFinancialReport(
+      "000000000",
+      seed.document_id,
+    );
 
     expect(report?.facts.length).toBeGreaterThan(0);
     expect(report?.summary.documentId).toBe(seed.document_id);

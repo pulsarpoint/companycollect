@@ -44,6 +44,12 @@ SOURCE_LANG = "fr"
 TARGET_LANG = "en"
 SOURCE_LANGUAGE_NAME = "French"
 TARGET_LANGUAGE_NAME = "English"
+TRANSLATION_FIELD = TranslationField(
+    SOURCE_TABLE,
+    SOURCE_COLUMN,
+    SOURCE_LANG,
+    TARGET_LANG,
+)
 
 
 @dg.asset(
@@ -61,7 +67,13 @@ def france_legal_forms_curated_english(
 ) -> dg.MaterializeResult:
     with clickhouse.get_connection() as client:
         static_rows = client.execute(
-            build_static_scan_sql(SOURCE_TABLE, SOURCE_COLUMN, KEY_COLUMN)
+            build_static_scan_sql(
+                SOURCE_TABLE,
+                SOURCE_COLUMN,
+                KEY_COLUMN,
+                source_lang=SOURCE_LANG,
+                target_lang=TARGET_LANG,
+            )
         )
         inserted = insert_static_translations(
             client,
@@ -97,7 +109,14 @@ def france_legal_forms_translation_load(
     with clickhouse.get_connection() as client:
         # The anti-join inside build_scan_sql is what keeps the curated terms
         # untouched: they already carry a row, so they are not rescanned.
-        untranslated_rows = client.execute(build_scan_sql(SOURCE_TABLE, SOURCE_COLUMN))
+        untranslated_rows = client.execute(
+            build_scan_sql(
+                SOURCE_TABLE,
+                SOURCE_COLUMN,
+                source_lang=SOURCE_LANG,
+                target_lang=TARGET_LANG,
+            )
+        )
         context.log.info(
             "scanned %d untranslated labels for %s.%s",
             len(untranslated_rows),
@@ -164,5 +183,5 @@ def france_legal_forms_translation_coverage(
 ) -> dg.AssetCheckResult:
     """How many INSEE labels exist, and how many are translated."""
     return translation_coverage_result(
-        clickhouse, (TranslationField(SOURCE_TABLE, SOURCE_COLUMN),)
+        clickhouse, (TRANSLATION_FIELD,)
     )

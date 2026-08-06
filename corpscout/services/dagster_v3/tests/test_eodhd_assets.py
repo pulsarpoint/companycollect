@@ -183,9 +183,7 @@ def test_history_backfill_defaults_are_gentle_and_manual() -> None:
     config = EodhdPriceBackfillConfig()
     repository = eodhd_repository()
     history_job = repository.get_job("eodhd_price_history_backfill_job")
-    schedule_names = {
-        schedule.name for schedule in repository.schedule_defs
-    }
+    schedule_names = {schedule.name for schedule in repository.schedule_defs}
 
     assert config.request_delay_seconds == 0.25
     assert config.max_history_requests_per_run == 90_000
@@ -459,6 +457,7 @@ def test_history_year_download_reuses_s3_and_materializes_duckdb_table(
             ],
             retrieved_at="2026-07-21T10:00:00+00:00",
             source_object_keys=["legacy/CDR.WAR.json.gz"],
+            ticker_not_found=False,
         ),
         bucket=EODHD_RAW_BUCKET,
     )
@@ -771,6 +770,7 @@ def test_history_request_budget_checkpoints_each_missing_range() -> None:
             prices=[],
             retrieved_at="2026-07-21T10:00:00+00:00",
             source_object_keys=[],
+            ticker_not_found=False,
         ),
         bucket=EODHD_RAW_BUCKET,
     )
@@ -790,9 +790,7 @@ def test_history_request_budget_checkpoints_each_missing_range() -> None:
     checkpoint = assets.read_price_envelope(
         object_store.read_bytes(object_key, bucket=EODHD_RAW_BUCKET)
     )
-    assert assets._envelope_ranges(checkpoint) == [
-        ("2026-01-01", "2026-03-31")
-    ]
+    assert assets._envelope_ranges(checkpoint) == [("2026-01-01", "2026-03-31")]
     assert client.price_calls == [
         ("AAA.WAR", "2026-01-01", "2026-02-28"),
     ]
@@ -813,6 +811,174 @@ def test_history_request_budget_checkpoints_each_missing_range() -> None:
         ("AAA.WAR", "2026-04-01", "2026-06-30"),
     ]
     assert metadata["downloaded_request_count"] == 1
+
+
+def test_history_ticker_not_found_is_quarantined_and_reused(
+    monkeypatch,
+    tmp_path: Path,
+) -> None:
+    from dagster_v3.defs.common.resources import ObjectStoreResource
+    from dagster_v3.defs.eodhd import assets
+    from dagster_v3.defs.eodhd.resources import EodhdTickerNotFoundError
+    from dagster_v3.defs.eodhd.source import EODHD_RAW_BUCKET
+
+    object_store = ObjectStoreResource(
+        s3_client=FakeS3Client(),
+        bucket=EODHD_RAW_BUCKET,
+    )
+    client = FakeEodhdClient()
+    symbols = [
+        {
+            "eodhd_symbol_key": symbol_key,
+            "exchange_code": "TO",
+            "ticker": symbol_key.split(".", maxsplit=1)[0],
+            "currency": "CAD",
+        }
+        for symbol_key in ("AAA.TO", "CHEV.TO", "ZZZ.TO")
+    ]
+    available_prices = client.prices
+
+    def prices_with_missing_ticker(
+        symbol_key: str,
+        *,
+        start_date: str,
+        end_date: str,
+    ) -> list[dict[str, Any]]:
+        if symbol_key == "CHEV.TO":
+            client.price_calls.append((symbol_key, start_date, end_date))
+            raise EodhdTickerNotFoundError(
+                path=f"eod/{symbol_key}",
+                status_code=404,
+                detail="Ticker Not Found.",
+            )
+        return available_prices(
+            symbol_key,
+            start_date=start_date,
+            end_date=end_date,
+        )
+
+    monkeypatch.setattr(client, "prices", prices_with_missing_ticker)
+    messages: list[str] = []
+    metadata = assets.download_eodhd_history_year(
+        client=client,
+        object_store=object_store,
+        symbols=symbols,
+        year="2026",
+        request_delay_seconds=0,
+        max_requests=90_000,
+        progress_interval=1,
+        log=lambda message, *args: messages.append(message % args),
+    )
+
+    assert [call[0] for call in client.price_calls] == [
+        "AAA.TO",
+        "CHEV.TO",
+        "ZZZ.TO",
+    ]
+    assert metadata["downloaded_request_count"] == 3
+    assert metadata["ticker_not_found_symbol_count"] == 1
+    assert (
+        sum("Quarantined EODHD history ticker not found" in msg for msg in messages)
+        == 1
+    )
+
+    chev_object_key = assets.history_symbol_object_key("2026", "CHEV.TO")
+    chev_envelope = assets.read_price_envelope(
+        object_store.read_bytes(chev_object_key, bucket=EODHD_RAW_BUCKET)
+    )
+    assert chev_envelope["ticker_not_found"] is True
+    assert assets._envelope_ranges(chev_envelope) == [("2026-01-01", "2026-06-30")]
+    assert chev_envelope["prices"] == []
+
+    catalog = assets.read_json_gzip(
+        object_store.read_bytes(
+            assets.history_catalog_object_key("2026"),
+            bucket=EODHD_RAW_BUCKET,
+        )
+    )
+    catalog_by_symbol = {item["eodhd_symbol_key"]: item for item in catalog["objects"]}
+    assert catalog["completed"] is True
+    assert catalog_by_symbol["CHEV.TO"]["ticker_not_found"] is True
+
+    materialized = assets.materialize_eodhd_history_year(
+        database_path=tmp_path / "eodhd_eod_prices.duckdb",
+        object_store=object_store,
+        symbols=symbols,
+        year="2026",
+        progress_interval=1,
+        log=lambda *_args: None,
+    )
+    assert materialized["row_count"] == 0
+
+    monkeypatch.setattr(
+        client,
+        "prices",
+        lambda *_args, **_kwargs: pytest.fail("quarantined symbol was requested again"),
+    )
+    reused_metadata = assets.download_eodhd_history_year(
+        client=client,
+        object_store=object_store,
+        symbols=symbols,
+        year="2026",
+        request_delay_seconds=0,
+        max_requests=90_000,
+        progress_interval=1,
+        log=lambda *_args: None,
+    )
+
+    assert reused_metadata["reused_symbol_count"] == 3
+    assert reused_metadata["downloaded_request_count"] == 0
+    assert reused_metadata["ticker_not_found_symbol_count"] == 1
+
+
+def test_history_non_404_eodhd_error_still_fails(monkeypatch) -> None:
+    from dagster_v3.defs.common.resources import ObjectStoreResource
+    from dagster_v3.defs.eodhd import assets
+    from dagster_v3.defs.eodhd.resources import EodhdApiError
+    from dagster_v3.defs.eodhd.source import EODHD_RAW_BUCKET
+
+    object_store = ObjectStoreResource(
+        s3_client=FakeS3Client(),
+        bucket=EODHD_RAW_BUCKET,
+    )
+    client = FakeEodhdClient()
+    symbol = {
+        "eodhd_symbol_key": "AAA.WAR",
+        "exchange_code": "WAR",
+        "ticker": "AAA",
+        "currency": "PLN",
+    }
+
+    def quota_error(
+        symbol_key: str,
+        *,
+        start_date: str,
+        end_date: str,
+    ) -> list[dict[str, Any]]:
+        raise EodhdApiError(
+            path=f"eod/{symbol_key}",
+            status_code=402,
+            detail="Daily API request limit reached.",
+        )
+
+    monkeypatch.setattr(client, "prices", quota_error)
+
+    with pytest.raises(EodhdApiError, match="HTTP 402"):
+        assets.download_eodhd_history_year(
+            client=client,
+            object_store=object_store,
+            symbols=[symbol],
+            year="2026",
+            request_delay_seconds=0,
+            max_requests=90_000,
+            progress_interval=1,
+            log=lambda *_args: None,
+        )
+
+    assert not object_store.exists(
+        assets.history_symbol_object_key("2026", "AAA.WAR"),
+        bucket=EODHD_RAW_BUCKET,
+    )
 
 
 def test_history_interruption_resumes_from_durable_symbol_objects(
@@ -1022,10 +1188,7 @@ def test_eodhd_http_errors_do_not_expose_api_token() -> None:
     api_token = "secret-token"
     response = FakeHttpResponse(
         status_code=402,
-        text=(
-            "You exceeded your daily API requests limit. "
-            f"Do not echo {api_token}."
-        ),
+        text=(f"You exceeded your daily API requests limit. Do not echo {api_token}."),
     )
     resource = EodhdResource(
         api_token=api_token,
@@ -1042,6 +1205,59 @@ def test_eodhd_http_errors_do_not_expose_api_token() -> None:
     assert "HTTP 402" in str(error.value)
     assert "daily API requests limit" in str(error.value)
     assert api_token not in str(error.value)
+    assert error.value.path == "eod/AAA.WAR"
+    assert error.value.status_code == 402
+    assert api_token not in error.value.detail
+
+
+def test_eodhd_ticker_not_found_error_is_classified() -> None:
+    from dagster_v3.defs.eodhd.resources import (
+        EodhdResource,
+        EodhdTickerNotFoundError,
+    )
+
+    resource = EodhdResource(
+        api_token="token",
+        session=FakeHttpSession(
+            response=FakeHttpResponse(
+                status_code=404,
+                text="Ticker Not Found.",
+            )
+        ),
+    )
+
+    with pytest.raises(EodhdTickerNotFoundError) as error:
+        resource.prices(
+            "CHEV.TO",
+            start_date="2026-01-01",
+            end_date="2026-06-30",
+        )
+
+    assert error.value.path == "eod/CHEV.TO"
+    assert error.value.status_code == 404
+
+
+def test_eodhd_other_404_remains_generic_api_error() -> None:
+    from dagster_v3.defs.eodhd.resources import EodhdApiError, EodhdResource
+
+    resource = EodhdResource(
+        api_token="token",
+        session=FakeHttpSession(
+            response=FakeHttpResponse(
+                status_code=404,
+                text="Endpoint route not found.",
+            )
+        ),
+    )
+
+    with pytest.raises(EodhdApiError) as error:
+        resource.prices(
+            "CHEV.TO",
+            start_date="2026-01-01",
+            end_date="2026-06-30",
+        )
+
+    assert type(error.value) is EodhdApiError
 
 
 def test_duckdb_reference_table_materialization_writes_expected_contract(

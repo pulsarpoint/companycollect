@@ -29,6 +29,6 @@ def test_slovakia_follow_up_selects_uvo_and_keeps_crz_research_only() -> None:
     assert "ajaxCalendar" in text
     assert "one row per (notice, lot, winner)" in text
     assert "IČO" in text
-    assert "licence prerequisite" in text
+    assert "does not use a runtime environment gate" in text
     assert "export/rrrr-mm-dd.zip" in text
     assert "research-only" in text

@@ -96,21 +96,25 @@ The service needs no per-source configuration — it only ever sees
 
 ```sql
 -- coverage per column (incl. provider: model / static)
-SELECT source_column, provider, count() AS terms
+SELECT source_column, source_lang, target_lang, provider, count() AS terms
 FROM corpscout.text_translations
 WHERE source_table = 'corpscout.no_companies'
-GROUP BY source_column, provider;
+GROUP BY source_column, source_lang, target_lang, provider;
 
 -- look up one source string
 SELECT source_column, translated_text, provider, model
 FROM corpscout.text_translations
-WHERE source_table = 'corpscout.no_companies' AND source_text_hash = cityHash64('Holdingselskap');
+WHERE source_table = 'corpscout.no_companies'
+  AND source_text_hash = cityHash64('Holdingselskap')
+  AND source_lang = 'no'
+  AND target_lang = 'en';
 ```
 
 Schema is owned by golang-migrate migrations in `corpscout/clickhouse/migrations/`:
 `000056` (`text_translations` table), `000059`–`000062` (the `no_companies` `*_original` columns +
 the `no_companies_translated` view), and `000069` (re-keyed `text_translations` to
-`(source_table, source_column, source_text_hash)`).
+physical table/column identity), plus `000252` (the complete multilingual key:
+`(source_table, source_column, source_text_hash, source_lang, target_lang)`).
 
 ## Tests
 

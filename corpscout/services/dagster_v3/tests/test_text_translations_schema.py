@@ -253,6 +253,12 @@ TABLE_COLUMN_UP = (
 TABLE_COLUMN_DOWN = (
     MIGRATIONS_DIR / "000069_corpscout_text_translations_table_column.down.sql"
 )
+MULTILINGUAL_UP = (
+    MIGRATIONS_DIR / "000252_corpscout_text_translations_multilingual.up.sql"
+)
+MULTILINGUAL_DOWN = (
+    MIGRATIONS_DIR / "000252_corpscout_text_translations_multilingual.down.sql"
+)
 
 TABLE_COLUMN_FIELDS = (
     ("articles_purpose_original", "articles_purpose_en"),
@@ -295,6 +301,32 @@ def test_000069_down_restores_slug_field_schema_and_view():
     assert "CREATE OR REPLACE VIEW corpscout.no_companies_translated" in sql
     for field in ("articles_purpose", "activity_text", "company_description", "legal_form_description"):
         assert f"field = '{field}'" in sql
+
+
+def test_000252_preserves_rows_while_rebuilding_the_complete_identity() -> None:
+    sql = MULTILINGUAL_UP.read_text(encoding="utf-8")
+
+    assert "INSERT INTO corpscout.text_translations_multilingual" in sql
+    assert "FROM corpscout.text_translations" in sql
+    assert "DROP TABLE IF EXISTS corpscout.text_translations;" not in sql
+    assert (
+        "ORDER BY (source_table, source_column, source_text_hash, source_lang, target_lang)"
+        in sql
+    )
+
+
+def test_000252_has_no_translation_current_view() -> None:
+    sql = MULTILINGUAL_UP.read_text(encoding="utf-8")
+
+    assert "text_translations_current" not in sql
+
+
+def test_000252_down_restores_the_previous_table_without_dropping_it_first() -> None:
+    sql = MULTILINGUAL_DOWN.read_text(encoding="utf-8")
+
+    assert "RENAME TABLE" in sql
+    assert "text_translations_before_multilingual" in sql
+    assert "DROP TABLE IF EXISTS corpscout.text_translations;" not in sql
 
 
 DROP_COMPANY_DESC_UP = (

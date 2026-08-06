@@ -67,6 +67,7 @@ def latvia_ur_nace_classification(
         context, clickhouse,
         table="corpscout.lv_companies",
         column="activity_text_original",
+        source_lang="lv",
         embedder=embedder,
         llm_call=llm_call,
         llm_model=llm_model,

@@ -32,9 +32,19 @@ type StaticTranslationRows = Sequence[tuple[str, int, str]]
 class TranslationField:
     table: str
     column: str
+    source_lang: str
+    target_lang: str
+    extra_where: str | None = None
 
 
-def build_scan_sql(table: str, column: str, extra_where: str | None = None) -> str:
+def build_scan_sql(
+    table: str,
+    column: str,
+    *,
+    source_lang: str,
+    target_lang: str,
+    extra_where: str | None = None,
+) -> str:
     """Untranslated texts for one column.
 
     `extra_where` scopes the scan, for a table whose rows are not all in one
@@ -52,13 +62,22 @@ LEFT ANTI JOIN (
     SELECT source_text_hash
     FROM corpscout.text_translations
     WHERE source_table = '{table}' AND source_column = '{column}'
+      AND source_lang = '{source_lang}'
+      AND target_lang = '{target_lang}'
     GROUP BY source_text_hash
 ) AS t ON t.source_text_hash = cityHash64(c.{column})
 WHERE trim(BOTH ' \\t\\r\\n' FROM c.{column}) != ''
   AND length(c.{column}) <= 8000{scope}"""
 
 
-def build_coverage_sql(table: str, column: str, extra_where: str | None = None) -> str:
+def build_coverage_sql(
+    table: str,
+    column: str,
+    *,
+    source_lang: str,
+    target_lang: str,
+    extra_where: str | None = None,
+) -> str:
     """How many distinct texts this column has, and how many are translated.
 
     The WHERE clauses mirror build_scan_sql exactly, and must keep doing so: a
@@ -79,6 +98,8 @@ have AS (
     SELECT DISTINCT source_text_hash AS h
     FROM corpscout.text_translations
     WHERE source_table = '{table}' AND source_column = '{column}'
+      AND source_lang = '{source_lang}'
+      AND target_lang = '{target_lang}'
 )
 SELECT
     count() AS source_texts,
@@ -87,7 +108,13 @@ FROM texts"""
 
 
 def build_static_scan_sql(
-    table: str, column: str, key_column: str, extra_where: str | None = None
+    table: str,
+    column: str,
+    key_column: str,
+    *,
+    source_lang: str,
+    target_lang: str,
+    extra_where: str | None = None,
 ) -> str:
     """As build_scan_sql, but carrying the key a static map is looked up by."""
     scope = "" if extra_where is None else f"\n  AND ({extra_where})"
@@ -101,6 +128,8 @@ LEFT ANTI JOIN (
     SELECT source_text_hash
     FROM corpscout.text_translations
     WHERE source_table = '{table}' AND source_column = '{column}'
+      AND source_lang = '{source_lang}'
+      AND target_lang = '{target_lang}'
     GROUP BY source_text_hash
 ) AS t ON t.source_text_hash = cityHash64(c.{column})
 WHERE trim(BOTH ' \\t\\r\\n' FROM c.{column}) != ''

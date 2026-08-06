@@ -38,7 +38,12 @@ import { getNorwayFinancialReport } from "~/lib/norway-financial-reports.server"
 
 export async function loader({ params }: Route.LoaderArgs) {
   const country = getCountry(params.country);
-  if (!country?.detail?.financialReports || country.code !== "no") {
+  const hasNorwayReports = country?.detail?.financialSources?.some(
+    (source) =>
+      source.kind === "registry" &&
+      source.documentProvider === "norway_annual_reports",
+  );
+  if (!hasNorwayReports || country?.code !== "no") {
     throw new Response("Not found", { status: 404 });
   }
   const report = await getNorwayFinancialReport(params.id, params.documentId);
@@ -76,19 +81,26 @@ function FactValue({ fact }: { fact: NorwayFinancialFact }) {
     return (
       <details className="text-left">
         <summary className="text-muted-foreground cursor-pointer select-none">
-          {fact.rawValue.slice(0, 160)}… <span className="text-primary">more</span>
+          {fact.rawValue.slice(0, 160)}…{" "}
+          <span className="text-primary">more</span>
         </summary>
         <p className="mt-2 break-words whitespace-pre-wrap">{fact.rawValue}</p>
       </details>
     );
   }
   const showCurrency =
-    fact.currency && fact.valueKind === "monetary" && fact.statementType !== "other";
+    fact.currency &&
+    fact.valueKind === "monetary" &&
+    fact.statementType !== "other";
   return (
     <>
-      <span className="block break-words whitespace-pre-wrap">{fact.rawValue || "—"}</span>
+      <span className="block break-words whitespace-pre-wrap">
+        {fact.rawValue || "—"}
+      </span>
       {showCurrency ? (
-        <span className="text-muted-foreground mt-1 block text-xs">{fact.currency}</span>
+        <span className="text-muted-foreground mt-1 block text-xs">
+          {fact.currency}
+        </span>
       ) : null}
     </>
   );
@@ -144,12 +156,15 @@ export default function CompanyFinancialReport({
             <Badge variant="outline">{summary.filingYear}</Badge>
           </div>
           <p className="text-muted-foreground mt-1 text-sm">
-            Official annual accounts · {facts.length.toLocaleString("en-US")} extracted facts
+            Official annual accounts · {facts.length.toLocaleString("en-US")}{" "}
+            extracted facts
           </p>
         </div>
         <Button
           nativeButton={false}
-          render={<a href={summary.sourceUrl} target="_blank" rel="noreferrer" />}
+          render={
+            <a href={summary.sourceUrl} target="_blank" rel="noreferrer" />
+          }
         >
           <FileText data-icon="inline-start" />
           Open source PDF
@@ -160,7 +175,9 @@ export default function CompanyFinancialReport({
       <dl className="grid grid-cols-2 rounded-xl bg-muted/35 px-4 ring-1 ring-foreground/10 lg:grid-cols-5">
         <div className="border-b py-3 lg:border-r lg:border-b-0 lg:pr-4">
           <dt className="text-muted-foreground text-xs">Pages</dt>
-          <dd className="mt-1 font-medium tabular-nums">{summary.pageCount || "Unavailable"}</dd>
+          <dd className="mt-1 font-medium tabular-nums">
+            {summary.pageCount || "Unavailable"}
+          </dd>
         </div>
         <div className="border-b py-3 lg:border-r lg:border-b-0 lg:px-4">
           <dt className="text-muted-foreground text-xs">Extraction</dt>
@@ -171,16 +188,21 @@ export default function CompanyFinancialReport({
         <div className="border-b py-3 lg:border-r lg:border-b-0 lg:px-4">
           <dt className="text-muted-foreground text-xs">Mapped facts</dt>
           <dd className="mt-1 font-medium tabular-nums">
-            {mappedCount.toLocaleString("en-US")} / {facts.length.toLocaleString("en-US")}
+            {mappedCount.toLocaleString("en-US")} /{" "}
+            {facts.length.toLocaleString("en-US")}
           </dd>
         </div>
         <div className="py-3 lg:border-r lg:px-4">
           <dt className="text-muted-foreground text-xs">PDF size</dt>
-          <dd className="mt-1 font-medium">{formatFileSize(summary.pdfSizeBytes) ?? "Unavailable"}</dd>
+          <dd className="mt-1 font-medium">
+            {formatFileSize(summary.pdfSizeBytes) ?? "Unavailable"}
+          </dd>
         </div>
         <div className="py-3 lg:pl-4">
           <dt className="text-muted-foreground text-xs">Processed</dt>
-          <dd className="mt-1 font-medium tabular-nums">{dateOnly(summary.resolvedAt)}</dd>
+          <dd className="mt-1 font-medium tabular-nums">
+            {dateOnly(summary.resolvedAt)}
+          </dd>
         </div>
       </dl>
 
@@ -199,7 +221,8 @@ export default function CompanyFinancialReport({
             <div>
               <CardTitle>Extracted facts</CardTitle>
               <CardDescription>
-                Values are shown exactly as read from the PDF; canonical mappings are secondary.
+                Values are shown exactly as read from the PDF; canonical
+                mappings are secondary.
               </CardDescription>
             </div>
             <Input
@@ -242,7 +265,9 @@ export default function CompanyFinancialReport({
                   {visibleFacts.map((fact) => (
                     <TableRow key={fact.factOrdinal}>
                       <TableCell className="align-top whitespace-normal">
-                        <div className="font-medium break-words">{fact.rawLabel || "Unlabelled fact"}</div>
+                        <div className="font-medium break-words">
+                          {fact.rawLabel || "Unlabelled fact"}
+                        </div>
                         {fact.canonicalConcept ? (
                           <div className="text-muted-foreground mt-1 break-words font-mono text-[11px]">
                             {fact.canonicalConcept}
@@ -254,14 +279,18 @@ export default function CompanyFinancialReport({
                           {fact.columnLabel || fact.fiscalYear || "—"}
                         </div>
                         {fact.isComparative ? (
-                          <div className="text-muted-foreground mt-1 text-xs">Comparative</div>
+                          <div className="text-muted-foreground mt-1 text-xs">
+                            Comparative
+                          </div>
                         ) : null}
                       </TableCell>
                       <TableCell className="align-top whitespace-normal">
                         <FactValue fact={fact} />
                       </TableCell>
                       <TableCell className="align-top whitespace-normal">
-                        <Badge variant="outline">{statementTypeLabel(fact.statementType)}</Badge>
+                        <Badge variant="outline">
+                          {statementTypeLabel(fact.statementType)}
+                        </Badge>
                         <div className="text-muted-foreground mt-2 text-xs">
                           Page {fact.pageNumber || "—"}
                           {fact.tableTitle ? ` · ${fact.tableTitle}` : ""}
@@ -275,15 +304,25 @@ export default function CompanyFinancialReport({
                 <p className="text-muted-foreground text-xs">
                   Showing {visibleFacts.length.toLocaleString("en-US")} of{" "}
                   {matchingFacts.length.toLocaleString("en-US")} matching facts
-                  {needle ? ` · ${facts.length.toLocaleString("en-US")} in report` : ""}.
+                  {needle
+                    ? ` · ${facts.length.toLocaleString("en-US")} in report`
+                    : ""}
+                  .
                 </p>
                 {visibleFacts.length < matchingFacts.length ? (
                   <Button
                     variant="outline"
                     size="sm"
-                    onClick={() => setVisibleLimit((limit) => limit + FACT_BATCH_SIZE)}
+                    onClick={() =>
+                      setVisibleLimit((limit) => limit + FACT_BATCH_SIZE)
+                    }
                   >
-                    Show {Math.min(FACT_BATCH_SIZE, matchingFacts.length - visibleFacts.length)} more
+                    Show{" "}
+                    {Math.min(
+                      FACT_BATCH_SIZE,
+                      matchingFacts.length - visibleFacts.length,
+                    )}{" "}
+                    more
                   </Button>
                 ) : null}
               </div>

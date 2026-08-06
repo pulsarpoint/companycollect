@@ -24,6 +24,7 @@ def test_sweden_company_refresh_job_and_schedule_registered() -> None:
         "sweden_company_companies_clickhouse",
         "sweden_company_addresses_clickhouse",
         "sweden_company_industries_clickhouse",
+        "sweden_registry_company_source_records_clickhouse",
     }
     assert "sweden_company_clickhouse" not in asset_keys
 

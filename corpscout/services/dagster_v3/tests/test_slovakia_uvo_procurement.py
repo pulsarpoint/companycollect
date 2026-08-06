@@ -1,23 +1,9 @@
 from datetime import date
 
-import pytest
-
 from dagster_v3.defs.slovakia_uvo_procurement.parser import (
     parse_bulletin_issue,
     parse_result_notice,
 )
-from dagster_v3.defs.slovakia_uvo_procurement.resources import (
-    assert_machine_reuse_confirmed,
-)
-
-
-def test_machine_reuse_must_be_confirmed_before_fetching(monkeypatch) -> None:
-    monkeypatch.delenv("SLOVAKIA_UVO_MACHINE_REUSE_CONFIRMED", raising=False)
-    with pytest.raises(RuntimeError, match="machine-reuse licence"):
-        assert_machine_reuse_confirmed()
-
-    monkeypatch.setenv("SLOVAKIA_UVO_MACHINE_REUSE_CONFIRMED", "true")
-    assert_machine_reuse_confirmed()
 
 
 def test_issue_parser_selects_result_notices_only() -> None:

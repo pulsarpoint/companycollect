@@ -174,8 +174,20 @@ Operational notes:
   spine (name/status/industry), refreshed daily.
 - **`company_people_all`** — country-tagged person layer built from
   `PEOPLE_SOURCES` (currently SE officers only): 5.26M SE rows, ~550k distinct
-  normalized names. Daily schedule 07:45 UTC, RUNNING. Backs `/people` search
-  and `/person/:name` pages.
+  normalized names. Daily schedule 07:45 UTC, RUNNING. This remains an
+  observation/search table; names are not identities.
+- **Country people identity** — `country_person`,
+  `country_person_observation`, `country_person_identifier`, and
+  `country_person_match` are all partitioned and keyed within `country_iso2`.
+  The current SE resolver preserves 5.43M source observations and produces
+  1.51M country-person profiles. Published identifiers are exact evidence;
+  otherwise, same-company/name groups are explicitly provisional and
+  ambiguous duplicates remain separate. Reviewed reassign, split, merge, and
+  undo decisions are appended to the country-partitioned
+  `country_person_correction` ledger. The resolver applies the latest decision
+  after automatic matching and keeps merged IDs as redirect tombstones. A
+  running sensor starts a refresh when the ledger advances; the daily 08:00
+  UTC schedule remains the reconciliation fallback.
 - **`se_company_financials_latest`** — latest-filing projection per company
   (570k rows) feeding the cross-country latest-financials layer.
 - **Backoffice surfaces** (`corpscout/services/backoffice`): company detail at
@@ -183,8 +195,9 @@ Operational notes:
   links + audit line with modified-opinion badge, industries, financials table
   combining metrics with comparative history), facts drill-down at
   `/company/se/:id/facts/:year` with per-fact source-document links (SigV4
-  proxy to the object store), `/person/:name`, and `/people` search in the
-  sidebar.
+  proxy to the object store), `/people` identity search, and
+  `/country/:country/person/:id` combined/raw person evidence pages. Legacy
+  `/person/:name` bookmarks redirect to a search because a name is not an ID.
 
 ## Storage map
 
@@ -267,8 +280,10 @@ Ordered roughly by value-for-effort:
    (SE normalizer: digits-only org number) — but only for companies that also
    file ESEF (listed issuers). This item is still open for `se_companies`
    broadly (unlisted companies have no ESEF filing to match through).
-10. **Cross-country identity linkage for people** — `company_people_all` is
-    name-keyed per country; a person appearing in SE and NO is only a string
-    match today. A real identity-linkage layer is deliberately deferred.
+10. **Stronger same-country identity evidence** — the reviewed correction
+    workflow is now in place, while the automatic resolver still deliberately
+    refuses to merge same-name people across companies without a source
+    identifier. Evaluate additional evidence only against the reviewed ledger;
+    do not introduce cross-country automatic linkage.
 11. **Full role registry** — if signature-block officers prove too narrow,
     Bolagsverket's näringslivsregistret (paid) is the upgrade path.

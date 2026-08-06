@@ -21,7 +21,12 @@ from dagster_v3.defs.translator_load.resource import (
 
 
 def test_build_scan_sql_is_anti_join_with_cityhash():
-    sql = build_scan_sql("corpscout.no_companies", "activity_text_original")
+    sql = build_scan_sql(
+        "corpscout.no_companies",
+        "activity_text_original",
+        source_lang="no",
+        target_lang="en",
+    )
     for fragment in (
         "SELECT DISTINCT",
         "c.activity_text_original AS source_text",
@@ -30,6 +35,8 @@ def test_build_scan_sql_is_anti_join_with_cityhash():
         "LEFT ANTI JOIN",
         "FROM corpscout.text_translations",
         "WHERE source_table = 'corpscout.no_companies' AND source_column = 'activity_text_original'",
+        "AND source_lang = 'no'",
+        "AND target_lang = 'en'",
         # Whitespace-only texts are excluded: the model returns an empty
         # translation for them, which becomes a PERMANENT failed queue item.
         "WHERE trim(BOTH ' \\t\\r\\n' FROM c.activity_text_original) != ''",
@@ -42,7 +49,11 @@ def test_build_scan_sql_is_anti_join_with_cityhash():
 
 def test_build_static_scan_sql_selects_key_column():
     sql = build_static_scan_sql(
-        "corpscout.no_companies", "legal_form_description_original", "legal_form_code"
+        "corpscout.no_companies",
+        "legal_form_description_original",
+        "legal_form_code",
+        source_lang="no",
+        target_lang="en",
     )
     assert "c.legal_form_code AS legal_form_code" in sql
     assert "cityHash64(c.legal_form_description_original)" in sql
@@ -361,10 +372,14 @@ def test_scan_sql_executes_against_real_clickhouse():
         ("corpscout.no_companies", "activity_text_original"),
         ("corpscout.lv_companies", "activity_text_original"),
     ):
-        sql = build_scan_sql(table, column)
+        sql = build_scan_sql(table, column, source_lang="no", target_lang="en")
         count = client.query(f"SELECT count() FROM ({sql})").result_rows[0][0]
         assert count >= 0  # proves the anti-join shape is valid against the real schema
     static_sql = build_static_scan_sql(
-        "corpscout.no_companies", "legal_form_description_original", "legal_form_code"
+        "corpscout.no_companies",
+        "legal_form_description_original",
+        "legal_form_code",
+        source_lang="no",
+        target_lang="en",
     )
     assert client.query(f"SELECT count() FROM ({static_sql})").result_rows[0][0] >= 0

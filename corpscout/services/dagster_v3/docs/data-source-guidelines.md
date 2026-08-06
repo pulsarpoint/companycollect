@@ -193,14 +193,17 @@ dbt/SQL; only the thin loader asset lives in the graph (full detail in `dagster_
 
 The base ClickHouse table carries only `<field>_original` — **do not add `<field>_en` (or
 `_translated_at`/`_provider`/`_model`) columns to it.** English values live in the shared
-`corpscout.text_translations` cache, **keyed by `(source_table, source_column, source_text_hash)`** — a
-cache row names its exact table and column. Results are exposed by a per-source `<source>_translated` join
-view. The cache survives the wipe-and-replace export, so a refresh only translates genuinely new/changed text.
+`corpscout.text_translations` cache, **keyed by `(source_table, source_column,
+source_text_hash, source_lang, target_lang)`** — a cache row names its exact
+table, column, and language pair. Results are exposed by a per-source
+`<source>_translated` join view. The cache survives the wipe-and-replace export,
+so a refresh only translates genuinely new/changed text for that pair.
 
 The loader pattern contract (translator HTTP resource in
 `src/dagster_v3/defs/translator_load/resource.py`, ClickHouse SQL helpers in
 `translator_load/loader.py`, and explicit per-source assets in `defs/<source>/translation.py`):
-- **Anti-join scan**: `SELECT DISTINCT` untranslated texts per `(table, column)` by LEFT ANTI JOIN
+- **Anti-join scan**: `SELECT DISTINCT` untranslated texts per `(table, column,
+  source_lang, target_lang)` by LEFT ANTI JOIN
   against `text_translations` — **loaders own dedup**, the service does not.
 - **Hash in SQL**: `cityHash64(col)` computed in ClickHouse, never in Python, so hashes always
   agree with past runs and the join view.

@@ -24,7 +24,12 @@ TARGET_LANG = "en"
 SOURCE_LANGUAGE_NAME = "Latvian"
 TARGET_LANGUAGE_NAME = "English"
 TRANSLATION_FIELDS = (
-    TranslationField("corpscout.lv_companies", "activity_text_original"),
+    TranslationField(
+        "corpscout.lv_companies",
+        "activity_text_original",
+        SOURCE_LANG,
+        TARGET_LANG,
+    ),
 )
 
 
@@ -50,7 +55,12 @@ def latvia_ur_translation_load(
     with clickhouse.get_connection() as client:
         for field in TRANSLATION_FIELDS:
             untranslated_rows = client.execute(
-                build_scan_sql(field.table, field.column)
+                build_scan_sql(
+                    field.table,
+                    field.column,
+                    source_lang=field.source_lang,
+                    target_lang=field.target_lang,
+                )
             )
             context.log.info(
                 "scanned %d untranslated texts for %s.%s",

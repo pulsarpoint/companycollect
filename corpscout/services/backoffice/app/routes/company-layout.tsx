@@ -31,7 +31,13 @@ export async function loader({ params }: Route.LoaderArgs) {
 
 export function meta({ loaderData, params }: Route.MetaArgs) {
   const name = loaderData?.shell.company.name;
-  return [{ title: name ? `${name} – CompanyCollect Backoffice` : `Company ${params.id}` }];
+  return [
+    {
+      title: name
+        ? `${name} – CompanyCollect Backoffice`
+        : `Company ${params.id}`,
+    },
+  ];
 }
 
 export function HydrateFallback() {
@@ -51,14 +57,20 @@ function activeTab(pathname: string): CompanyTab {
   return pathname.includes("/financials") ? "financials" : "overview";
 }
 
-export default function CompanyLayout({ loaderData, params }: Route.ComponentProps) {
+export default function CompanyLayout({
+  loaderData,
+  params,
+}: Route.ComponentProps) {
   const { shell, entityType } = loaderData;
   const country = getCountry(params.country)!;
   const { company } = shell;
   const tab = activeTab(useLocation().pathname);
-  const statusColumn = country.columns.find((column) => column.kind === "status");
+  const statusColumn = country.columns.find(
+    (column) => column.kind === "status",
+  );
   const searchParams = useEffectiveSearchParams();
-  const lang: Lang = searchParams.get("lang") === "original" ? "original" : "en";
+  const lang: Lang =
+    searchParams.get("lang") === "original" ? "original" : "en";
   const decorators: Record<
     string,
     (record: Record<string, unknown>) => Record<string, unknown>
@@ -66,7 +78,9 @@ export default function CompanyLayout({ loaderData, params }: Route.ComponentPro
     fi: decorateFiRecord,
     br: decorateBrRecord,
   };
-  const decoratedRecord = (decorators[country.code] ?? ((record) => record))(shell.record);
+  const decoratedRecord = (decorators[country.code] ?? ((record) => record))(
+    shell.record,
+  );
   const { pairCount } = resolveRecordFields(decoratedRecord, lang);
 
   const statusValue = statusColumn ? company[statusColumn.key] : null;
@@ -99,14 +113,22 @@ export default function CompanyLayout({ loaderData, params }: Route.ComponentPro
               {String(company.name ?? "")}
             </h1>
             {statusColumn ? (
-              <Badge variant={company.active ? "default" : "outline"}>{statusLabel}</Badge>
+              <Badge variant={company.active ? "default" : "outline"}>
+                {statusLabel}
+              </Badge>
             ) : null}
           </div>
           <div className="flex flex-wrap items-center gap-2 text-sm">
-            <span className="text-muted-foreground font-mono">{String(company.id)}</span>
+            <span className="text-muted-foreground font-mono">
+              {String(company.id)}
+            </span>
             {entityType ? (
               <span className="inline-flex items-center gap-1.5">
-                <Badge variant={entityType.is_public_sector ? "secondary" : "outline"}>
+                <Badge
+                  variant={
+                    entityType.is_public_sector ? "secondary" : "outline"
+                  }
+                >
                   {entityType.entity_type_label}
                 </Badge>
                 {entityType.source_label ? (
@@ -116,25 +138,35 @@ export default function CompanyLayout({ loaderData, params }: Route.ComponentPro
                 ) : null}
               </span>
             ) : null}
-            {country.code === "fi" ? <FiRegistryBadges record={shell.record} /> : null}
+            {country.code === "fi" ? (
+              <FiRegistryBadges record={shell.record} />
+            ) : null}
           </div>
         </div>
-        {tab === "overview" ? <LangToggle lang={lang} pairCount={pairCount} /> : null}
+        {tab === "overview" ? (
+          <LangToggle lang={lang} pairCount={pairCount} />
+        ) : null}
       </header>
 
       <Tabs value={tab}>
         <TabsList variant="line">
           <TabsTrigger
             value="overview"
-            render={<NavLink to={`/company/${country.code}/${params.id}`} end />}
+            render={
+              <NavLink to={`/company/${country.code}/${params.id}`} end />
+            }
             nativeButton={false}
           >
             Overview
           </TabsTrigger>
-          {country.detail?.financialReports ? (
+          {country.detail?.financialSources?.length ? (
             <TabsTrigger
               value="financials"
-              render={<NavLink to={`/company/${country.code}/${params.id}/financials`} />}
+              render={
+                <NavLink
+                  to={`/company/${country.code}/${params.id}/financials`}
+                />
+              }
               nativeButton={false}
             >
               Financials

@@ -47,7 +47,15 @@ def load_curated_legal_forms(
     defaulted, so a form nobody has curated stays untranslated. That is the
     point -- a wrong legal form reads exactly like a right one.
     """
-    rows = client.execute(build_static_scan_sql(table, label_column, key_column))
+    rows = client.execute(
+        build_static_scan_sql(
+            table,
+            label_column,
+            key_column,
+            source_lang=source_lang,
+            target_lang=target_lang,
+        )
+    )
     return insert_static_translations(
         client,
         table,

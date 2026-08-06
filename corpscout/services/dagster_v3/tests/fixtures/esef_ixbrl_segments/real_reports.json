@@ -1,0 +1,102 @@
+{
+  "reports": [
+    {
+      "name": "AAK AB 2024 Swedish",
+      "country": "SE",
+      "fxo_id": "549300GK4LGIDDWJWL07-2024-12-31-ESEF-SE-0",
+      "package_url": "https://filings.xbrl.org/549300GK4LGIDDWJWL07/2024-12-31/ESEF/SE/0/aakab-2024-12-31-0-sv.zip",
+      "reference_oim_url": "https://filings.xbrl.org/549300GK4LGIDDWJWL07/2024-12-31/ESEF/SE/0/aakab-2024-12-31-0-sv.json",
+      "package_sha256": "0b0f7d2be2a348b27bed441782394b55cec9084eec8b9190837bc6250347e0d1",
+      "expected_contact_candidates": [
+        "+46406278300",
+        "+46706810734",
+        "carl.ahlgren@aak.com",
+        "info@aak.com"
+      ],
+      "expected_website_domains": [
+        "aak.com",
+        "johnjohns.se"
+      ]
+    },
+    {
+      "name": "AB Volvo 2023 English",
+      "country": "SE",
+      "fxo_id": "549300HGV012CNC8JD22-2023-12-31-ESEF-SE-0",
+      "package_url": "https://filings.xbrl.org/549300HGV012CNC8JD22/2023-12-31/ESEF/SE/0/abvolvo-2023-12-31-en.zip",
+      "reference_oim_url": "https://filings.xbrl.org/549300HGV012CNC8JD22/2023-12-31/ESEF/SE/0/abvolvo-2023-12-31-en.json",
+      "package_sha256": "d97583d970e5f2485cb163648cc54ba77b7c47646cc96d27e42aa8e72bbdd818",
+      "expected_contact_candidates": [
+        "+4631660000",
+        "+46739022193",
+        "+46739026380",
+        "+46765535966",
+        "csr@volvo.com",
+        "investorrelations@volvo.com"
+      ],
+      "expected_website_domains": [
+        "corporate-governanceboard.se",
+        "csreurope.org",
+        "revisorsinspektionen.se",
+        "volvogroup.com",
+        "volvogroup.se",
+        "worldofvolvo.com"
+      ]
+    },
+    {
+      "name": "AB Volvo 2023 Swedish",
+      "country": "SE",
+      "fxo_id": "549300HGV012CNC8JD22-2023-12-31-ESEF-SE-1",
+      "package_url": "https://filings.xbrl.org/549300HGV012CNC8JD22/2023-12-31/ESEF/SE/1/abvolvo-2023-12-31-sv.zip",
+      "reference_oim_url": "https://filings.xbrl.org/549300HGV012CNC8JD22/2023-12-31/ESEF/SE/1/abvolvo-2023-12-31-sv.json",
+      "package_sha256": "dfaeda04e5f44b1393aea344ca62289f73cd81a8b330a25d06d41bdc284732b5",
+      "expected_contact_candidates": [
+        "+4631660000",
+        "+46739022193",
+        "+46739026380",
+        "+46765535966",
+        "csr@volvo.com",
+        "investorrelations@volvo.com"
+      ],
+      "expected_website_domains": [
+        "bolagsstyrning.se",
+        "csreurope.org",
+        "revisorsinspektionen.se",
+        "volvogroup.com",
+        "volvogroup.se",
+        "worldofvolvo.com"
+      ]
+    },
+    {
+      "name": "Finnvera 2024 Finnish",
+      "country": "FI",
+      "fxo_id": "743700T69OBBJO7TCA15-2024-12-31-ESEF-FI-1",
+      "package_url": "https://filings.xbrl.org/743700T69OBBJO7TCA15/2024-12-31/ESEF/FI/1/743700T69OBBJO7TCA15-2024-12-31-0-fi.zip",
+      "reference_oim_url": "https://filings.xbrl.org/743700T69OBBJO7TCA15/2024-12-31/ESEF/FI/1/743700T69OBBJO7TCA15-2024-12-31-0-fi.json",
+      "package_sha256": "e5edcc17e23d4701ae6ad2f0d8580baee9c3b3071f0cea391303a170197ab1ae",
+      "expected_contact_candidates": [],
+      "expected_website_domains": [
+        "finnvera.fi"
+      ]
+    },
+    {
+      "name": "Credit Agricole SA 2023 French",
+      "country": "FR",
+      "fxo_id": "969500TJ5KRTCJQWXH05-2023-12-31-ESEF-FR-0",
+      "package_url": "https://filings.xbrl.org/969500TJ5KRTCJQWXH05/2023-12-31/ESEF/FR/0/969500TJ5KRTCJQWXH05-2023-12-31-fr.zip",
+      "reference_oim_url": "https://filings.xbrl.org/969500TJ5KRTCJQWXH05/2023-12-31/ESEF/FR/0/969500TJ5KRTCJQWXH05-2023-12-31-fr.json",
+      "package_sha256": "a2e9f5fa46a04be9f039ebbb831dc1b7928b9d42a3ef52985965ff4f4d5d94c8",
+      "expected_contact_candidates": [
+        "+33143230431",
+        "+33143235202",
+        "+33157728679",
+        "+33800000777",
+        "assemblee.generale@credit-agricole-sa.fr",
+        "investor.relations@credit-agricole-sa.fr",
+        "relation@actionnaires.credit-agricole.com"
+      ],
+      "expected_website_domains": [
+        "credit-agricole.com"
+      ]
+    }
+  ]
+}

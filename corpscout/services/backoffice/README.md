@@ -1,13 +1,14 @@
 # backoffice
 
 Internal explorer for CompanyCollect data. React Router v8 (SSR) + shadcn/ui,
-reading directly from ClickHouse (read-only).
+reading source observations and resolved projections from ClickHouse.
 
 ## Setup
 
 ```bash
 pnpm install
 cp .env.example .env   # fill CLICKHOUSE_PASSWORD from corpscout/.env
+pnpm provision:clickhouse-writer # once, after ClickHouse migration 241
 pnpm dev               # http://localhost:5183
 ```
 
@@ -17,12 +18,15 @@ pnpm dev               # http://localhost:5183
 - `pnpm build` / `pnpm start` — production build / serve (port 3000)
 - `pnpm typecheck` — react-router typegen + tsc
 - `pnpm test` — vitest (integration tests hit the real ClickHouse from .env)
+- `pnpm provision:clickhouse-writer` — create/update the dedicated ClickHouse
+  user named by `CLICKHOUSE_WRITE_USER` and grant only the correction-writer role
 
 ## Structure
 
 - `app/lib/countries.ts` — static registry: one entry per country, maps URL
   code → ClickHouse table/columns/features. Add new countries here.
-- `app/lib/clickhouse.server.ts` — server-only ClickHouse client (`chQuery`).
+- `app/lib/clickhouse.server.ts` — server-only read and correction-write
+  ClickHouse clients. Writer credentials never fall back to the read account.
 - `app/lib/queries.server.ts` — per-country stats, company search, and the
   company detail query. Still the engine for `/company/{country_code}/{id}`
   and the live-schema test sweeps (see below).
@@ -32,6 +36,28 @@ pnpm dev               # http://localhost:5183
   `companies_all`.
 - `app/routes.ts` — `/` redirects to `/companies` (unified list); the
   company detail page is `/company/{country_code}/{id}`.
+
+## Person identities and corrections
+
+Person URLs use the stable country-scoped `person_id`, not a name. Names remain
+search/display fields because two people can share a name and one person can
+have multiple observed names. A profile shows both the combined identity and
+the immutable source observations that produced it.
+
+Reassign and merge forms search only active target people in the same ISO2
+partition, while the submitted value is the selected person's UUID. Decisions
+are appended to `country_person_correction`; raw observations are not edited or
+deleted. There is no generated review queue: corrections are initiated from the
+person and source evidence being inspected. This backoffice currently has no
+user-authentication layer, so new correction rows use `backoffice` as their
+`decided_by` source. Before enabling writes:
+
+1. Apply ClickHouse migration 241.
+2. Put a unique writer username and a random password of at least 16 characters
+   in `CLICKHOUSE_WRITE_USER` and `CLICKHOUSE_WRITE_PASSWORD`.
+3. Run `pnpm provision:clickhouse-writer` with an administrative
+   `CLICKHOUSE_USER`/`CLICKHOUSE_PASSWORD`.
+4. Restart the backoffice with the writer variables configured.
 
 ## companies_all
 
@@ -83,7 +109,7 @@ Several source registers rebuild on a schedule that can land AFTER the
 companies_all 07:15 Europe/Oslo cron — sk's Monday 07:00 swap landing
 later, se's Monday 06:15 overrunning, fr's 6th 07:15, gb's 7th 07:30, cz's
 17th 07:45. When that happens, today's `companies_all` leg for that
-country was built from *yesterday's* source snapshot, so the source table
+country was built from _yesterday's_ source snapshot, so the source table
 has since grown/changed while `companies_all` hasn't caught up yet —
 exact-count and field parity then fail with **zero spec drift**, purely
 from the calendar race between the two schedules.
@@ -140,7 +166,7 @@ few behaviors on purpose:
   `companies_all`'s per-country `industry_subquery` picks one row per
   company (`LIMIT 1 BY`, preferring the primary row but falling back to a
   non-primary one), so filtering by industry now selects exactly the
-  companies whose *displayed* `industry_code`/`industry_label` matches —
+  companies whose _displayed_ `industry_code`/`industry_label` matches —
   instead of the old per-country `industryFilterExpr` semi-join, which
   matched on ANY primary industry row for the company, independent of what
   the list actually showed. Measured impact: single-digit companies per
@@ -261,6 +287,7 @@ in the field grid. Translation provenance keys (`_language`, `_translated_at`,
 "Source & lineage" details block, which carries no markers.
 
 **Rendering structure:**
+
 1. Key-facts strip — identity facts (legal form, status, registered date,
    website), each with fallback markers if applicable.
 2. Prose sections — articles purpose, activity text, and any field >240 chars,

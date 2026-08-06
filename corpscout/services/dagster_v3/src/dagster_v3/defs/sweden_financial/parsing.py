@@ -730,8 +730,7 @@ def _flush_report_xhtml_catalog_rows(
     )
     registered_name = f"_sweden_financial_report_xhtml_catalog_{uuid.uuid4().hex}"
     column_list = ", ".join(
-        _quote_duckdb_identifier(column)
-        for column in _REPORT_XHTML_CATALOG_COLUMNS
+        _quote_duckdb_identifier(column) for column in _REPORT_XHTML_CATALOG_COLUMNS
     )
     connection.register(registered_name, arrow_table)
     try:

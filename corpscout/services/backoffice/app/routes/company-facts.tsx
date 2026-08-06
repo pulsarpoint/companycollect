@@ -1,26 +1,42 @@
 import { useState } from "react";
 import { Link } from "react-router";
-import { ArrowLeft, ExternalLink, FileText } from "lucide-react";
+import { ArrowLeft, ExternalLink, FileSearch, FileText } from "lucide-react";
 import type { Route } from "./+types/company-facts";
-import { getCountry } from "~/lib/countries";
-import { chQuery } from "~/lib/clickhouse.server";
-import { getCompanyFacts, getFactsDocument, type FactRow } from "~/lib/queries.server";
+import { XbrlFactsAccordion } from "~/components/detail/xbrl-facts-accordion";
 import { Badge } from "~/components/ui/badge";
 import { Button } from "~/components/ui/button";
-import { Card, CardContent, CardHeader, CardTitle } from "~/components/ui/card";
-import { Input } from "~/components/ui/input";
 import {
-  Table,
-  TableBody,
-  TableCell,
-  TableHead,
-  TableHeader,
-  TableRow,
-} from "~/components/ui/table";
+  Card,
+  CardContent,
+  CardDescription,
+  CardHeader,
+  CardTitle,
+} from "~/components/ui/card";
+import {
+  Empty,
+  EmptyDescription,
+  EmptyHeader,
+  EmptyMedia,
+  EmptyTitle,
+} from "~/components/ui/empty";
+import { Input } from "~/components/ui/input";
+import { chQuery } from "~/lib/clickhouse.server";
+import { getCountry } from "~/lib/countries";
+import type {
+  XbrlConceptTextSource,
+  XbrlFact,
+} from "~/lib/xbrl-facts";
+import {
+  getCompanyFacts,
+  getFactsDocument,
+  type FactRow,
+} from "~/lib/queries.server";
 
 export async function loader({ params }: Route.LoaderArgs) {
   const country = getCountry(params.country);
-  if (!country?.detail?.factsQuery) throw new Response("Not found", { status: 404 });
+  if (!country?.detail?.factsQuery) {
+    throw new Response("Not found", { status: 404 });
+  }
   const year = Number(params.year);
   if (!Number.isInteger(year) || year < 1900 || year > 2200) {
     throw new Response("Not found", { status: 404 });
@@ -34,14 +50,17 @@ export async function loader({ params }: Route.LoaderArgs) {
     getCompanyFacts(country, params.id, year),
     getFactsDocument(country, params.id, year),
   ]);
-  if (names.length === 0) throw new Response("Company not found", { status: 404 });
+  if (names.length === 0) {
+    throw new Response("Company not found", { status: 404 });
+  }
   return {
     name: names[0].name,
     facts,
     year,
     doc: doc
       ? {
-          hasObject: doc.object_key !== "" && doc.source_uri.startsWith("s3://"),
+          hasObject:
+            doc.object_key !== "" && doc.source_uri.startsWith("s3://"),
           archiveUrl: doc.archive_url,
           archiveName: doc.archive_name,
           nestedZipName: doc.nested_zip_name,
@@ -52,108 +71,257 @@ export async function loader({ params }: Route.LoaderArgs) {
 
 export function meta({ loaderData, params }: Route.MetaArgs) {
   const name = loaderData?.name ?? params.id;
-  return [{ title: `${name} – ${params.year} facts – CompanyCollect Backoffice` }];
+  return [
+    { title: `${name} – ${params.year} facts – CompanyCollect Backoffice` },
+  ];
 }
 
-const nf = new Intl.NumberFormat("en-US", { maximumFractionDigits: 0 });
-
-function FactValue({ fact }: { fact: FactRow }) {
-  if (fact.amount_original != null || fact.amount_usd != null) {
-    return (
-      <div className="flex flex-col items-end">
-        <span className="tabular-nums">
-          {fact.amount_original == null ? "—" : nf.format(fact.amount_original)}
-          {fact.currency ? ` ${fact.currency}` : ""}
-        </span>
-        <span className="text-muted-foreground text-xs tabular-nums">
-          {fact.amount_usd == null ? "—" : `$${nf.format(fact.amount_usd)}`}
-        </span>
-      </div>
-    );
-  }
-  if (fact.value_kind === "date" && fact.date_value) {
-    return <span className="tabular-nums">{fact.date_value}</span>;
-  }
-  const text = fact.text_value ?? fact.raw_value;
-  // Narrative facts (accounting-principle notes etc.) run to a few KB —
-  // collapse them so they don't dominate the table.
-  if (text.length > 200) {
-    return (
-      <details className="text-left">
-        <summary className="text-muted-foreground cursor-pointer select-none">
-          {text.slice(0, 160)}… <span className="text-primary">more</span>
-        </summary>
-        <p className="mt-1 break-words whitespace-pre-wrap">{text}</p>
-      </details>
-    );
-  }
-  return <span className="block break-words whitespace-pre-wrap text-left">{text}</span>;
-}
+const FACT_BATCH_SIZE = 200;
 
 /** period0/balans0 is the filing's own year; periodN/balansN is N years back. */
 function contextLabel(contextId: string, year: number): string {
-  const m = /^(period|balans)(\d+)$/.exec(contextId.toLowerCase());
-  if (!m) return contextId;
-  const offset = Number(m[2]);
-  const point = m[1] === "balans" ? "balance" : "period";
+  const match = /^(period|balans)(\d+)$/.exec(contextId.toLowerCase());
+  if (!match) return contextId;
+  const offset = Number(match[2]);
+  const point = match[1] === "balans" ? "balance" : "period";
   return offset === 0 ? `${year} ${point}` : `${year - offset} ${point}`;
 }
 
-/** Compact rendering of the XBRL dimensions JSON: member local names only. */
-function dimensionSummary(dimensions: string): string {
-  if (!dimensions || dimensions === "{}") return "";
-  try {
-    const parsed = JSON.parse(dimensions) as Record<string, string>;
-    return Object.values(parsed)
-      .map((v) => v.split(":").pop() ?? v)
-      .join(", ");
-  } catch {
-    return dimensions;
-  }
+function hasDimensions(dimensions: string): boolean {
+  return dimensions !== "" && dimensions !== "{}";
 }
 
-export default function CompanyFacts({ loaderData, params }: Route.ComponentProps) {
+function reportPeriodEnd(nestedZipName: string, year: number): string {
+  return (
+    /_(\d{4}-\d{2}-\d{2})(?:\.zip)?$/.exec(nestedZipName)?.[1] ?? `${year}`
+  );
+}
+
+function readerValueKind(fact: FactRow): string {
+  if (fact.value_kind === "numeric" && fact.currency) return "monetary";
+  return fact.value_kind;
+}
+
+function readerDecimals(fact: FactRow): number | null {
+  if (!fact.decimals || fact.decimals.toUpperCase() === "INF") return null;
+  const decimals = Number(fact.decimals);
+  return Number.isInteger(decimals) ? decimals : null;
+}
+
+function conceptTextSource(
+  value: string | null | undefined,
+): XbrlConceptTextSource | undefined {
+  if (
+    value === "taxonomy" ||
+    value === "translation" ||
+    value === "identifier"
+  ) {
+    return value;
+  }
+  return undefined;
+}
+
+function readerFact(
+  fact: FactRow,
+  factIndex: number,
+  year: number,
+): XbrlFact {
+  const conceptLabelEnglish = fact.concept_label_en?.trim() ?? "";
+  const conceptLabelSwedish = fact.concept_label_sv?.trim() ?? "";
+  const conceptDescriptionEnglish = fact.concept_description_en?.trim() ?? "";
+  const conceptDescriptionSwedish = fact.concept_description_sv?.trim() ?? "";
+  return {
+    factId: `${factIndex}:${fact.context_id}:${fact.concept}`,
+    conceptQname: fact.concept,
+    conceptLocalName:
+      fact.concept_local_name ??
+      fact.concept.split(":").pop() ??
+      fact.concept,
+    valueKind: readerValueKind(fact),
+    rawValue: fact.raw_value,
+    amountOriginal: fact.amount_original,
+    amountUsd: fact.amount_usd,
+    fxRateDate: fact.fx_rate_date ?? "",
+    fxSource: fact.fx_source ?? "",
+    decimals: readerDecimals(fact),
+    periodStart: "",
+    periodInstant: "",
+    periodDurationEnd: contextLabel(fact.context_id, year),
+    unit: fact.unit_id ?? fact.currency ?? "",
+    currency: fact.currency ?? "",
+    dimensions: fact.dimensions,
+    language: "sv",
+    conceptLabels: [
+      ...(conceptLabelSwedish
+        ? [
+            {
+              language: "sv",
+              label: conceptLabelSwedish,
+              isReportLanguage: true,
+              source: "taxonomy" as const,
+            },
+          ]
+        : []),
+      ...(conceptLabelEnglish
+        ? [
+            {
+              language: "en",
+              label: conceptLabelEnglish,
+              isReportLanguage: false,
+              source: conceptTextSource(fact.concept_label_en_source),
+              translationProvider:
+                fact.concept_label_translation_provider ?? undefined,
+              translationModel:
+                fact.concept_label_translation_model ?? undefined,
+              translationVersion:
+                fact.concept_label_translation_version ?? undefined,
+            },
+          ]
+        : []),
+    ],
+    conceptDocumentation: [
+      ...(conceptDescriptionSwedish
+        ? [
+            {
+              language: "sv",
+              label: conceptDescriptionSwedish,
+              isReportLanguage: true,
+              source: "taxonomy" as const,
+            },
+          ]
+        : []),
+      ...(conceptDescriptionEnglish
+        ? [
+            {
+              language: "en",
+              label: conceptDescriptionEnglish,
+              isReportLanguage: false,
+              source: conceptTextSource(fact.concept_description_en_source),
+              translationProvider:
+                fact.concept_description_translation_provider ?? undefined,
+              translationModel:
+                fact.concept_description_translation_model ?? undefined,
+              translationVersion:
+                fact.concept_description_translation_version ?? undefined,
+            },
+          ]
+        : []),
+    ],
+    conceptTaxonomy:
+      fact.concept_taxonomy_entrypoint || fact.concept_source_url
+        ? {
+            entrypoint: fact.concept_taxonomy_entrypoint ?? "",
+            sourceUrl: fact.concept_source_url ?? "",
+          }
+        : undefined,
+    structuredDisclosure: null,
+    disclosureEvidence: null,
+  };
+}
+
+function matchesFilter(fact: XbrlFact, needle: string): boolean {
+  if (!needle) return true;
+  return [
+    fact.conceptQname,
+    fact.conceptLocalName,
+    fact.conceptLabels?.map((label) => label.label).join(" ") ?? "",
+    fact.conceptDocumentation?.map((entry) => entry.label).join(" ") ?? "",
+    fact.rawValue,
+    fact.currency,
+    fact.periodDurationEnd,
+    fact.dimensions,
+  ].some((value) => value.toLowerCase().includes(needle));
+}
+
+export default function CompanyFacts({
+  loaderData,
+  params,
+}: Route.ComponentProps) {
   const { name, facts, year, doc } = loaderData;
+  const country = getCountry(params.country)!;
+  const hasFinancialSources = Boolean(country.detail?.financialSources?.length);
+  const backHref = hasFinancialSources
+    ? `/company/${params.country}/${params.id}/financials`
+    : `/company/${params.country}/${params.id}`;
   const [filter, setFilter] = useState("");
+  const [visibleLimit, setVisibleLimit] = useState(FACT_BATCH_SIZE);
   const needle = filter.trim().toLowerCase();
-  const visible = needle
-    ? facts.filter(
-        (f) =>
-          f.concept.toLowerCase().includes(needle) ||
-          (f.concept_label_en ?? "").toLowerCase().includes(needle) ||
-          f.raw_value.toLowerCase().includes(needle) ||
-          (f.text_value ?? "").toLowerCase().includes(needle),
-      )
-    : facts;
-  const moneyCount = facts.filter((f) => f.amount_original != null || f.amount_usd != null).length;
-  // Almost all K2/K3 filings carry no dimensioned facts — drop the column
-  // entirely instead of rendering an all-empty one.
-  const hasDimensions = facts.some((f) => dimensionSummary(f.dimensions) !== "");
+  const readerFacts = facts.map((fact, factIndex) =>
+    readerFact(fact, factIndex, year),
+  );
+  const matchingFacts = readerFacts.filter((fact) =>
+    matchesFilter(fact, needle),
+  );
+  const visibleFacts = matchingFacts.slice(0, visibleLimit);
+  const monetaryCount = readerFacts.filter(
+    (fact) => fact.valueKind === "monetary",
+  ).length;
+  const currentPeriodCount = facts.filter((fact) =>
+    /^(period|balans)0$/i.test(fact.context_id),
+  ).length;
+  const dimensionedFactCount = facts.filter((fact) =>
+    hasDimensions(fact.dimensions),
+  ).length;
+  const currencies = [
+    ...new Set(facts.map((fact) => fact.currency).filter(Boolean)),
+  ];
+  const reportCurrency =
+    currencies.length === 1
+      ? currencies[0]
+      : currencies.length > 1
+        ? "Mixed"
+        : "Unavailable";
+  const periodEnd = reportPeriodEnd(doc?.nestedZipName ?? "", year);
 
   return (
-    <div className="mx-auto flex w-full max-w-5xl flex-col gap-4">
+    <div className="flex w-full flex-col gap-5">
       <div>
         <Button
           variant="ghost"
           size="sm"
           className="-ml-2"
           nativeButton={false}
-          render={<Link to={`/company/${params.country}/${params.id}`} />}
+          render={<Link to={backHref} />}
         >
-          <ArrowLeft className="size-4" />
-          {name}
+          <ArrowLeft data-icon="inline-start" />
+          {hasFinancialSources ? "All financial sources" : name}
         </Button>
       </div>
 
-      <div className="flex flex-wrap items-center gap-3">
-        <h2 className="text-2xl font-semibold">Filing facts · {year}</h2>
-        <Badge variant="outline">{facts.length} facts</Badge>
-        {facts.length > 0 ? <Badge variant="outline">{moneyCount} monetary</Badge> : null}
-        <div className="ml-auto flex items-center gap-2">
-          {doc?.hasObject ? (
+      <div className="flex flex-wrap items-start justify-between gap-4">
+        <div className="flex min-w-0 flex-col gap-2">
+          <div className="flex flex-wrap items-center gap-2">
+            <h2 className="text-xl font-semibold tracking-tight">
+              Bolagsverket report · {year}
+            </h2>
+            <Badge variant="outline">Standalone annual account</Badge>
+          </div>
+          <p className="text-muted-foreground text-sm">
+            {name} · period ending {periodEnd} ·{" "}
+            {facts.length.toLocaleString("en-US")} tagged facts
+          </p>
+          {doc?.nestedZipName ? (
+            <p className="text-muted-foreground break-all font-mono text-xs">
+              {doc.nestedZipName}
+              {doc.archiveName ? ` inside ${doc.archiveName}` : ""}
+            </p>
+          ) : null}
+        </div>
+        <div className="flex flex-wrap gap-2">
+          {doc?.archiveUrl ? (
             <Button
               variant="outline"
-              size="sm"
+              nativeButton={false}
+              render={
+                <a href={doc.archiveUrl} target="_blank" rel="noreferrer" />
+              }
+            >
+              Source archive
+              <ExternalLink data-icon="inline-end" />
+            </Button>
+          ) : null}
+          {doc?.hasObject ? (
+            <Button
               nativeButton={false}
               render={
                 <a
@@ -163,102 +331,119 @@ export default function CompanyFacts({ loaderData, params }: Route.ComponentProp
                 />
               }
             >
-              <FileText className="size-4" />
-              Original document
-            </Button>
-          ) : null}
-          {doc?.archiveUrl ? (
-            <Button
-              variant="ghost"
-              size="sm"
-              nativeButton={false}
-              render={<a href={doc.archiveUrl} target="_blank" rel="noreferrer" />}
-            >
-              <ExternalLink className="size-4" />
-              Source archive
+              <FileText data-icon="inline-start" />
+              Open report
+              <ExternalLink data-icon="inline-end" />
             </Button>
           ) : null}
         </div>
       </div>
-      {doc ? (
-        <p className="text-muted-foreground -mt-2 text-xs">
-          Extracted from {doc.nestedZipName || "the filing package"} inside{" "}
-          {doc.archiveName || "the upstream bulk archive"}.
-        </p>
-      ) : null}
 
-      <Card>
-        <CardHeader className="flex flex-row items-center justify-between gap-4">
-          <CardTitle className="text-base">
-            Every value tagged in the source annual report, in document order
-          </CardTitle>
-          <Input
-            value={filter}
-            onChange={(e) => setFilter(e.target.value)}
-            placeholder="Filter concepts and values…"
-            className="max-w-56"
-          />
-        </CardHeader>
-        <CardContent>
-          {facts.length === 0 ? (
-            <p className="text-muted-foreground text-sm">
-              No facts are loaded for this filing year yet. Facts for older
-              filing years are being restored from the source archive — they
-              appear here as soon as that load completes.
-            </p>
-          ) : (
-            <div className="overflow-x-auto">
-              <Table className="min-w-[48rem] table-fixed">
-                <TableHeader>
-                  <TableRow>
-                    <TableHead className="w-[26%]">Concept</TableHead>
-                    <TableHead className="w-[8%]">Kind</TableHead>
-                    <TableHead className={hasDimensions ? "w-[36%] text-right" : "w-[52%] text-right"}>
-                      Value
-                    </TableHead>
-                    <TableHead className="w-[14%]">Context</TableHead>
-                    {hasDimensions ? <TableHead className="w-[16%]">Dimensions</TableHead> : null}
-                  </TableRow>
-                </TableHeader>
-                <TableBody>
-                  {visible.map((f, i) => (
-                    <TableRow key={i}>
-                      <TableCell className="break-words align-top whitespace-normal">
-                        {f.concept_label_en ? (
-                          <>
-                            <div className="text-xs">{f.concept_label_en}</div>
-                            <div className="font-mono text-[11px] text-muted-foreground">
-                              {f.concept}
-                            </div>
-                          </>
-                        ) : (
-                          <span className="font-mono text-xs">{f.concept}</span>
-                        )}
-                      </TableCell>
-                      <TableCell className="text-muted-foreground align-top text-xs">
-                        {f.value_kind}
-                      </TableCell>
-                      <TableCell className="text-right align-top break-words whitespace-normal">
-                        <FactValue fact={f} />
-                      </TableCell>
-                      <TableCell className="text-muted-foreground align-top text-xs">
-                        {contextLabel(f.context_id, year)}
-                      </TableCell>
-                      {hasDimensions ? (
-                        <TableCell className="text-muted-foreground break-words align-top text-xs whitespace-normal">
-                          {dimensionSummary(f.dimensions)}
-                        </TableCell>
-                      ) : null}
-                    </TableRow>
-                  ))}
-                </TableBody>
-              </Table>
-              {needle && visible.length !== facts.length ? (
-                <p className="text-muted-foreground mt-2 text-xs">
-                  Showing {visible.length} of {facts.length} facts.
-                </p>
-              ) : null}
+      <dl className="grid grid-cols-2 rounded-xl bg-muted/35 px-4 ring-1 ring-foreground/10 lg:grid-cols-5">
+        <div className="border-b py-3 lg:border-r lg:border-b-0 lg:pr-4">
+          <dt className="text-muted-foreground text-xs">Tagged facts</dt>
+          <dd className="mt-1 font-medium tabular-nums">
+            {facts.length.toLocaleString("en-US")}
+          </dd>
+        </div>
+        <div className="border-b py-3 lg:border-r lg:border-b-0 lg:px-4">
+          <dt className="text-muted-foreground text-xs">
+            Current-period facts
+          </dt>
+          <dd className="mt-1 font-medium tabular-nums">
+            {currentPeriodCount.toLocaleString("en-US")}
+          </dd>
+        </div>
+        <div className="border-b py-3 lg:border-r lg:border-b-0 lg:px-4">
+          <dt className="text-muted-foreground text-xs">Monetary facts</dt>
+          <dd className="mt-1 font-medium tabular-nums">
+            {monetaryCount.toLocaleString("en-US")}
+          </dd>
+        </div>
+        <div className="py-3 lg:border-r lg:px-4">
+          <dt className="text-muted-foreground text-xs">Report currency</dt>
+          <dd className="mt-1 font-medium">{reportCurrency}</dd>
+        </div>
+        <div className="py-3 lg:pl-4">
+          <dt className="text-muted-foreground text-xs">Dimensions</dt>
+          <dd className="mt-1 font-medium tabular-nums">
+            {dimensionedFactCount.toLocaleString("en-US")} facts
+          </dd>
+        </div>
+      </dl>
+
+      <Card className="min-w-0">
+        <CardHeader className="border-b">
+          <div className="flex flex-wrap items-end justify-between gap-3">
+            <div>
+              <CardTitle>Tagged source facts</CardTitle>
+              <CardDescription>
+                Exact Bolagsverket XBRL values before standardized metric
+                mapping.
+              </CardDescription>
             </div>
+            <Input
+              value={filter}
+              onChange={(event) => {
+                setFilter(event.target.value);
+                setVisibleLimit(FACT_BATCH_SIZE);
+              }}
+              placeholder="Search concepts, values, currency, or dimensions…"
+              aria-label="Search Bolagsverket report facts"
+              className="w-full sm:w-96"
+            />
+          </div>
+        </CardHeader>
+        <CardContent className="min-w-0">
+          {visibleFacts.length === 0 ? (
+            <Empty className="border">
+              <EmptyHeader>
+                <EmptyMedia variant="icon">
+                  <FileSearch />
+                </EmptyMedia>
+                <EmptyTitle>
+                  {facts.length === 0 ? "No facts loaded" : "No matching facts"}
+                </EmptyTitle>
+                <EmptyDescription>
+                  {facts.length === 0
+                    ? "Tagged facts will appear here after this filing is loaded from the source archive."
+                    : "Try a concept label, source value, currency, context, or dimension member."}
+                </EmptyDescription>
+              </EmptyHeader>
+            </Empty>
+          ) : (
+            <>
+              <XbrlFactsAccordion
+                facts={visibleFacts}
+                ariaLabel="Bolagsverket report facts"
+              />
+              <div className="mt-3 flex flex-wrap items-center justify-between gap-3">
+                <p className="text-muted-foreground text-xs">
+                  Showing {visibleFacts.length.toLocaleString("en-US")} of{" "}
+                  {matchingFacts.length.toLocaleString("en-US")} matching facts
+                  {needle
+                    ? ` · ${facts.length.toLocaleString("en-US")} in report`
+                    : ""}
+                  .
+                </p>
+                {visibleFacts.length < matchingFacts.length ? (
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    onClick={() =>
+                      setVisibleLimit((limit) => limit + FACT_BATCH_SIZE)
+                    }
+                  >
+                    Show{" "}
+                    {Math.min(
+                      FACT_BATCH_SIZE,
+                      matchingFacts.length - visibleFacts.length,
+                    )}{" "}
+                    more
+                  </Button>
+                ) : null}
+              </div>
+            </>
           )}
         </CardContent>
       </Card>

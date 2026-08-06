@@ -37,7 +37,7 @@ class FakeClickhouse:
 def test_reports_both_numbers_and_the_shortfall() -> None:
     result = translation_coverage_result(
         FakeClickhouse((296, 49)),
-        (TranslationField("corpscout.fr_legal_forms", "label_fr"),),
+        (TranslationField("corpscout.fr_legal_forms", "label_fr", "fr", "en"),),
     )
     assert value(result.metadata, "source_texts") == 296
     assert value(result.metadata, "translated") == 49
@@ -52,7 +52,11 @@ def test_a_shortfall_warns_rather_than_fails() -> None:
     check nobody believes is worse than no check."""
     result = translation_coverage_result(
         FakeClickhouse((209, 185)),
-        (TranslationField("corpscout.company_entity_types", "source_label"),),
+        (
+            TranslationField(
+                "corpscout.company_entity_types", "source_label", "sv", "en"
+            ),
+        ),
     )
     assert result.passed is False
     assert result.severity == dg.AssetCheckSeverity.WARN
@@ -61,7 +65,7 @@ def test_a_shortfall_warns_rather_than_fails() -> None:
 def test_full_coverage_passes() -> None:
     result = translation_coverage_result(
         FakeClickhouse((151, 151)),
-        (TranslationField("corpscout.cz_legal_forms", "label_cs"),),
+        (TranslationField("corpscout.cz_legal_forms", "label_cs", "cs", "en"),),
     )
     assert result.passed is True
     assert value(result.metadata, "untranslated") == 0
@@ -70,7 +74,8 @@ def test_full_coverage_passes() -> None:
 
 def test_a_source_with_no_text_is_complete_not_divided_by_zero() -> None:
     result = translation_coverage_result(
-        FakeClickhouse((0, 0)), (TranslationField("corpscout.empty", "col"),)
+        FakeClickhouse((0, 0)),
+        (TranslationField("corpscout.empty", "col", "sv", "en"),),
     )
     assert result.passed is True
     assert value(result.metadata, "coverage_pct") == 100.0
@@ -82,18 +87,23 @@ def test_several_scopes_are_summed_and_also_reported_separately() -> None:
     result = translation_coverage_result(
         FakeClickhouse((100, 90), (10, 1)),
         (
-            TranslationField("corpscout.lv_companies", "activity_text_original"),
-            TranslationField("corpscout.lv_companies", "other_text"),
+            TranslationField(
+                "corpscout.lv_companies", "activity_text_original", "lv", "en"
+            ),
+            TranslationField("corpscout.lv_companies", "other_text", "lv", "en"),
         ),
     )
     assert value(result.metadata, "source_texts") == 110
     assert value(result.metadata, "translated") == 91
     assert value(result.metadata, "untranslated") == 19
     assert "90/100 translated, 10 missing" in str(
-        value(result.metadata, "corpscout.lv_companies.activity_text_original")
+        value(
+            result.metadata,
+            "corpscout.lv_companies.activity_text_original[lv->en]",
+        )
     )
     assert "1/10 translated, 9 missing" in str(
-        value(result.metadata, "corpscout.lv_companies.other_text")
+        value(result.metadata, "corpscout.lv_companies.other_text[lv->en]")
     )
 
 
@@ -102,16 +112,65 @@ def test_counts_exactly_the_population_the_loader_enqueues() -> None:
     loader skips reports a shortfall no run can ever close -- and the loader
     skips whitespace-only and >8,000-char texts for reasons that cost this
     project two frozen queues."""
-    coverage = build_coverage_sql("corpscout.t", "c")
-    scan = build_scan_sql("corpscout.t", "c")
+    coverage = build_coverage_sql(
+        "corpscout.t", "c", source_lang="sv", target_lang="en"
+    )
+    scan = build_scan_sql("corpscout.t", "c", source_lang="sv", target_lang="en")
     for clause in ("trim(BOTH ' \\t\\r\\n' FROM c.c) != ''", "length(c.c) <= 8000"):
         assert clause in coverage, clause
         assert clause in scan, clause
 
 
 def test_extra_where_scopes_both_the_count_and_the_scan() -> None:
-    coverage = build_coverage_sql("corpscout.t", "c", "country_code = 'SE'")
+    coverage = build_coverage_sql(
+        "corpscout.t",
+        "c",
+        source_lang="sv",
+        target_lang="en",
+        extra_where="country_code = 'SE'",
+    )
     assert "country_code = 'SE'" in coverage
+
+
+def test_scan_and_coverage_match_only_the_requested_language_pair() -> None:
+    scan = build_scan_sql(
+        "corpscout.taxonomy", "label_sv", source_lang="sv", target_lang="en"
+    )
+    coverage = build_coverage_sql(
+        "corpscout.taxonomy", "label_sv", source_lang="sv", target_lang="en"
+    )
+
+    for sql in (scan, coverage):
+        assert "source_lang = 'sv'" in sql
+        assert "target_lang = 'en'" in sql
+
+
+def test_each_translation_field_can_own_its_coverage_scope() -> None:
+    clickhouse = FakeClickhouse((1, 1), (1, 1))
+    translation_coverage_result(
+        clickhouse,
+        (
+            TranslationField(
+                "corpscout.taxonomy",
+                "label_sv",
+                "sv",
+                "en",
+                "label_en = ''",
+            ),
+            TranslationField(
+                "corpscout.taxonomy",
+                "description_sv",
+                "sv",
+                "en",
+                "description_en = ''",
+            ),
+        ),
+        extra_where="should_not_be_used = 1",
+    )
+
+    assert "label_en = ''" in clickhouse.queries[0]
+    assert "description_en = ''" in clickhouse.queries[1]
+    assert all("should_not_be_used" not in query for query in clickhouse.queries)
 
 
 def test_translation_coverage_job_covers_every_loader() -> None:
@@ -129,7 +188,8 @@ def test_translation_coverage_job_covers_every_loader() -> None:
     }
     job = repo.get_job("translation_coverage_job")
     selected = {
-        key for key in job.asset_layer.asset_graph.asset_check_keys
+        key
+        for key in job.asset_layer.asset_graph.asset_check_keys
         if key.name == "translations_present"
     }
     missing = sorted(k.to_user_string() for k in declared - selected)

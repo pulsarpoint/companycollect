@@ -42,11 +42,27 @@ def translation_coverage_result(
 
     with clickhouse.get_connection() as client:
         for field in fields:
-            rows = client.execute(build_coverage_sql(field.table, field.column, extra_where))
+            rows = client.execute(
+                build_coverage_sql(
+                    field.table,
+                    field.column,
+                    source_lang=field.source_lang,
+                    target_lang=field.target_lang,
+                    extra_where=(
+                        field.extra_where
+                        if field.extra_where is not None
+                        else extra_where
+                    ),
+                )
+            )
             found, done = (int(rows[0][0]), int(rows[0][1])) if rows else (0, 0)
             source_texts += found
             translated += done
-            per_field[f"{field.table}.{field.column}"] = (
+            field_key = (
+                f"{field.table}.{field.column}"
+                f"[{field.source_lang}->{field.target_lang}]"
+            )
+            per_field[field_key] = (
                 f"{done}/{found} translated, {found - done} missing"
             )
 

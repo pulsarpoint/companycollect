@@ -20,12 +20,17 @@ const NAV_ITEMS = [
 /**
  * An item is active on an exact match or any of its sub-paths. Countries
  * additionally activates for `/company/:country/:id` detail pages, and
- * People for `/person/:name` pages — both live outside their list prefix.
+ * People for country-scoped person detail pages — both live outside their
+ * list prefix. Legacy `/person/:name` routes redirect back to People search.
  */
 function isNavItemActive(pathname: string, to: string): boolean {
   if (pathname === to || pathname.startsWith(`${to}/`)) return true;
   if (to === "/countries" && pathname.startsWith("/company/")) return true;
-  return to === "/people" && pathname.startsWith("/person/");
+  return (
+    to === "/people" &&
+    (pathname.startsWith("/person/") ||
+      (pathname.startsWith("/country/") && pathname.includes("/person/")))
+  );
 }
 
 export function AppSidebar() {

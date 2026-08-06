@@ -36,6 +36,12 @@ SOURCE_LANG = "sv"
 TARGET_LANG = "en"
 SOURCE_LANGUAGE_NAME = "Swedish"
 TARGET_LANGUAGE_NAME = "English"
+ACTIVITY_DESCRIPTION_FIELD = TranslationField(
+    "corpscout.se_companies",
+    "activity_description",
+    SOURCE_LANG,
+    TARGET_LANG,
+)
 
 LEGAL_FORM_LABEL_EN_BY_CODE: dict[str, str] = {
     # Bolagsverket organisation forms (…-ORGFO)
@@ -194,7 +200,12 @@ def sweden_company_translation_load(
     baseline_failed = translator.queue_stats().failed
     with clickhouse.get_connection() as client:
         untranslated_rows = client.execute(
-            build_scan_sql("corpscout.se_companies", "activity_description")
+            build_scan_sql(
+                ACTIVITY_DESCRIPTION_FIELD.table,
+                ACTIVITY_DESCRIPTION_FIELD.column,
+                source_lang=ACTIVITY_DESCRIPTION_FIELD.source_lang,
+                target_lang=ACTIVITY_DESCRIPTION_FIELD.target_lang,
+            )
         )
     context.log.info(
         "scanned %d untranslated activity descriptions", len(untranslated_rows)
@@ -252,4 +263,4 @@ def sweden_company_translator_queue_health_check(
 @dg.asset_check(asset=sweden_company_translation_load, name="translations_present")
 def sweden_company_translation_coverage(clickhouse: ClickhouseResource) -> dg.AssetCheckResult:
     """How many Swedish activity descriptions exist, and how many are translated."""
-    return translation_coverage_result(clickhouse, (TranslationField("corpscout.se_companies", "activity_description"),))
+    return translation_coverage_result(clickhouse, (ACTIVITY_DESCRIPTION_FIELD,))

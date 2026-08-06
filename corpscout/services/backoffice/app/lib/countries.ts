@@ -6,12 +6,31 @@ import {
   FR_CONTRACT_SUMMARY_QUERY,
 } from "~/lib/detail-queries/fr";
 
-export type CountryFeature = "financials" | "industries" | "contacts" | "domains";
+export type CountryFeature =
+  "financials" | "industries" | "contacts" | "domains";
 
 export type ColumnKind = "id" | "text" | "date" | "status";
 export type SortDir = "asc" | "desc";
 
 export const PAGE_SIZES = [25, 50, 100] as const;
+
+export type FinancialSourceDefinition =
+  | {
+      id: string;
+      kind: "registry";
+      title: string;
+      description: string;
+      /** Raw tagged facts can be opened by fiscal year. */
+      yearFacts?: boolean;
+      /** Optional document set loaded alongside the standardized rows. */
+      documentProvider?: "norway_annual_reports";
+    }
+  | {
+      id: string;
+      kind: "esef";
+      title: string;
+      description: string;
+    };
 
 export interface CompanyColumn {
   /** Stable key: row field name, ?sort= value, and SQL alias. [a-z_]+ only. */
@@ -30,11 +49,11 @@ export interface CompanyColumn {
 
 export interface CountryDetailConfig {
   /**
-   * The company page exposes a dedicated Financials tab with source report
-   * documents and extracted facts. The route owns the source-specific query;
-   * this flag is the navigation capability, not a source identifier.
+   * Source cards shown on the dedicated Financials tab. Their order is the UI
+   * order. The definition identifies accounting scope and presentation; raw
+   * observations remain in the source-native tables below.
    */
-  financialReports?: boolean;
+  financialSources?: readonly FinancialSourceDefinition[];
   /** {id:String} → canonical financial rows (see FinancialYearRow in queries.server). */
   financialsQuery?: string;
   /**
@@ -101,19 +120,20 @@ export interface CountryDetailConfig {
   secondaryNamesQuery?: string;
   /**
    * {id:String} → officer/signatory rows for the latest fiscal year that
-   * has people: first_name, last_name, role_original, role_kind,
-   * signatory_kind, fiscal_year. Board and certification signatures for
-   * the same person are pre-merged per signatory_kind server-side; the UI
-   * does a final merge across signatory kinds (see ManagementSection).
+   * has people: country_iso2, person_id, first_name, last_name,
+   * role_original, role_kind, signatory_kind, fiscal_year. Board and
+   * certification signatures for the same resolved country person are
+   * pre-merged per signatory_kind server-side; the UI does a final merge
+   * across signatory kinds (see ManagementSection).
    */
   officersQuery?: string;
   /**
    * {names:Array(String)} + {id:String} → same-name matches for the
    * displayed officers, from the cross-country people table, excluding the
-   * current company: full_name_normalized, country_iso2, company_id,
-   * company_name, role_kind, fiscal_year. Names are lowercase trimmed
-   * "first last" pairs matching full_name_normalized. Run once per page
-   * load (batched), after officersQuery resolves.
+   * current company: full_name_normalized, country_iso2, person_id,
+   * company_id, company_name, role_kind, fiscal_year. Names are lowercase
+   * trimmed "first last" pairs matching full_name_normalized. Run once per
+   * page load (batched), after officersQuery resolves.
    */
   peopleMatchesQuery?: string;
   /**
@@ -281,25 +301,71 @@ export type CountryFinancialsAggregates = {
 
 export const COUNTRIES: CountryConfig[] = [
   {
-    code: "no", iso3: "NOR", eurostatGeoCode: "NO", name: "Norway", flag: "🇳🇴", companiesTable: "no_companies",
-    idColumn: "org_number", nameColumn: "name", activeExpr: "is_active = 1",
-    approxCompanies: "1.2M", features: ["financials", "industries", "contacts", "domains"],
+    code: "no",
+    iso3: "NOR",
+    eurostatGeoCode: "NO",
+    name: "Norway",
+    flag: "🇳🇴",
+    companiesTable: "no_companies",
+    idColumn: "org_number",
+    nameColumn: "name",
+    activeExpr: "is_active = 1",
+    approxCompanies: "1.2M",
+    features: ["financials", "industries", "contacts", "domains"],
     placeQuery: `SELECT toString(registry_id) AS company_id,
             argMax(coalesce(nullIf(city, ''), municipality), address_type = 'business') AS place
      FROM no_company_addresses
      WHERE registry_id IN {ids:Array(String)}
      GROUP BY company_id`,
     columns: [
-      { key: "id", label: "ID", expr: "org_number", sortable: true, kind: "id" },
-      { key: "name", label: "Name", expr: "name", sortable: true, kind: "text" },
+      {
+        key: "id",
+        label: "ID",
+        expr: "org_number",
+        sortable: true,
+        kind: "id",
+      },
+      {
+        key: "name",
+        label: "Name",
+        expr: "name",
+        sortable: true,
+        kind: "text",
+      },
       // The CODE, so the shared decoder names it — English once translated,
       // the register's own term until then. Reading
       // legal_form_description_original directly showed Norwegian only, and
       // left the filter listing values no decoder could label.
-      { key: "legal_form", label: "Legal form", expr: "legal_form_code", sortable: true, kind: "text", filterable: true },
-      { key: "status", label: "Status", expr: "lifecycle_status", sortable: true, kind: "status", filterable: true },
-      { key: "registered", label: "Registered", expr: "toString(registration_date)", sortable: true, kind: "date" },
-      { key: "website", label: "Website", expr: "primary_website_host", sortable: false, kind: "text" },
+      {
+        key: "legal_form",
+        label: "Legal form",
+        expr: "legal_form_code",
+        sortable: true,
+        kind: "text",
+        filterable: true,
+      },
+      {
+        key: "status",
+        label: "Status",
+        expr: "lifecycle_status",
+        sortable: true,
+        kind: "status",
+        filterable: true,
+      },
+      {
+        key: "registered",
+        label: "Registered",
+        expr: "toString(registration_date)",
+        sortable: true,
+        kind: "date",
+      },
+      {
+        key: "website",
+        label: "Website",
+        expr: "primary_website_host",
+        sortable: false,
+        kind: "text",
+      },
     ],
     industryQuery: `SELECT i.org_number AS company_id,
   i.nace_normalized_code AS industry_code,
@@ -322,7 +388,23 @@ ORDER BY cnt DESC
 LIMIT 50000`,
     industryFilterExpr: `org_number IN (SELECT org_number FROM no_industries WHERE is_primary = 1 AND nace_normalized_code IN {f_industry:Array(String)})`,
     detail: {
-      financialReports: true,
+      financialSources: [
+        {
+          id: "brreg-annual-accounts",
+          kind: "registry",
+          title: "Brønnøysund annual accounts",
+          description:
+            "Standalone legal-entity figures and annual-account documents from the Brønnøysund Register Centre.",
+          documentProvider: "norway_annual_reports",
+        },
+        {
+          id: "esef",
+          kind: "esef",
+          title: "ESEF consolidated IFRS",
+          description:
+            "Consolidated IFRS figures extracted from filed ESEF reports. Group accounts remain distinct from standalone legal-entity filings.",
+        },
+      ],
       financialsQuery: `SELECT toString(fiscal_year) AS fiscal_year, currency AS currency,
   toFloat64(operating_revenue_amount_original) AS revenue_amount_original,
   toFloat64(operating_revenue_amount_usd) AS revenue_amount_usd,
@@ -378,7 +460,10 @@ WHERE registry_id = {id:String} AND is_current = 1
 ORDER BY address_type
 LIMIT 10`,
     },
-    financialsLatest: { table: "no_company_financials_latest", companyKeyExpr: "org_number" },
+    financialsLatest: {
+      table: "no_company_financials_latest",
+      companyKeyExpr: "org_number",
+    },
     financialsAggregates: {
       nace: {
         industriesTable: "no_industries",
@@ -388,25 +473,72 @@ LIMIT 10`,
       },
       // NUF branches file the foreign parent's full accounts (AWS EMEA €19.4bn);
       // real data, not Norway-earned — excluded from sums, kept in lists.
-      sumExclusionExpr: "f.company_id NOT IN (SELECT toString(org_number) FROM no_companies WHERE legal_form_code = 'NUF')",
+      sumExclusionExpr:
+        "f.company_id NOT IN (SELECT toString(org_number) FROM no_companies WHERE legal_form_code = 'NUF')",
     },
   },
   {
-    code: "fi", iso3: "FIN", eurostatGeoCode: "FI", name: "Finland", flag: "🇫🇮", companiesTable: "fi_companies",
-    idColumn: "business_id", nameColumn: "name", activeExpr: "is_active = 1",
-    approxCompanies: "460k", features: ["financials", "industries", "contacts", "domains"],
+    code: "fi",
+    iso3: "FIN",
+    eurostatGeoCode: "FI",
+    name: "Finland",
+    flag: "🇫🇮",
+    companiesTable: "fi_companies",
+    idColumn: "business_id",
+    nameColumn: "name",
+    activeExpr: "is_active = 1",
+    approxCompanies: "460k",
+    features: ["financials", "industries", "contacts", "domains"],
     placeQuery: `SELECT toString(registry_id) AS company_id,
             argMax(coalesce(nullIf(city, ''), municipality), address_type = 'postal') AS place
      FROM fi_company_addresses
      WHERE registry_id IN {ids:Array(String)}
      GROUP BY company_id`,
     columns: [
-      { key: "id", label: "ID", expr: "business_id", sortable: true, kind: "id" },
-      { key: "name", label: "Name", expr: "name", sortable: true, kind: "text" },
-      { key: "legal_form", label: "Legal form", expr: "coalesce(legal_form_description_en, legal_form_description_original, legal_form_code)", sortable: true, kind: "text", filterable: true }, // populated from YTJ companyForms since 2026-07-17
-      { key: "status", label: "Status", expr: "lifecycle_status", sortable: true, kind: "status", filterable: true },
-      { key: "registered", label: "Registered", expr: "toString(registration_date)", sortable: true, kind: "date" },
-      { key: "website", label: "Website", expr: "primary_website_url", sortable: false, kind: "text" },
+      {
+        key: "id",
+        label: "ID",
+        expr: "business_id",
+        sortable: true,
+        kind: "id",
+      },
+      {
+        key: "name",
+        label: "Name",
+        expr: "name",
+        sortable: true,
+        kind: "text",
+      },
+      {
+        key: "legal_form",
+        label: "Legal form",
+        expr: "coalesce(legal_form_description_en, legal_form_description_original, legal_form_code)",
+        sortable: true,
+        kind: "text",
+        filterable: true,
+      }, // populated from YTJ companyForms since 2026-07-17
+      {
+        key: "status",
+        label: "Status",
+        expr: "lifecycle_status",
+        sortable: true,
+        kind: "status",
+        filterable: true,
+      },
+      {
+        key: "registered",
+        label: "Registered",
+        expr: "toString(registration_date)",
+        sortable: true,
+        kind: "date",
+      },
+      {
+        key: "website",
+        label: "Website",
+        expr: "primary_website_url",
+        sortable: false,
+        kind: "text",
+      },
     ],
     industryQuery: `SELECT i.business_id AS company_id,
   coalesce(i.source_industry_code, '') AS industry_code,
@@ -509,16 +641,27 @@ WHERE company_id = {id:String}
 ORDER BY publication_date DESC NULLS LAST, contract_id
 LIMIT 100`,
     },
-    financialsLatest: { table: "fi_company_financials_latest", companyKeyExpr: "business_id" },
+    financialsLatest: {
+      table: "fi_company_financials_latest",
+      companyKeyExpr: "business_id",
+    },
   },
   {
-    code: "se", iso3: "SWE", eurostatGeoCode: "SE", name: "Sweden", flag: "🇸🇪", companiesTable: "se_companies",
-    idColumn: "registration_number", nameColumn: "legal_name", activeExpr: "status = 'active'",
+    code: "se",
+    iso3: "SWE",
+    eurostatGeoCode: "SE",
+    name: "Sweden",
+    flag: "🇸🇪",
+    companiesTable: "se_companies",
+    idColumn: "registration_number",
+    nameColumn: "legal_name",
+    activeExpr: "status = 'active'",
     // Bolagsverket registers formal legal-form words; users type the
     // abbreviations ("Investor AB" vs registered "Investor Aktiebolag").
     searchColumnExpr:
       "concat(coalesce(legal_name, ''), ' ', replaceRegexpAll(replaceRegexpAll(coalesce(legal_name, ''), '(?i)aktiebolag', 'AB'), '(?i)handelsbolag', 'HB'))",
-    approxCompanies: "3.4M", features: ["financials", "industries"],
+    approxCompanies: "3.4M",
+    features: ["financials", "industries"],
     industryJoinKeyExpr: "company_id",
     placeQuery: `SELECT toString(company_id) AS company_id,
             argMax(post_town, address_type = 'postal') AS place
@@ -526,11 +669,43 @@ LIMIT 100`,
      WHERE company_id IN {ids:Array(String)}
      GROUP BY company_id`,
     columns: [
-      { key: "id", label: "ID", expr: "registration_number", sortable: true, kind: "id" },
-      { key: "name", label: "Name", expr: "legal_name", sortable: true, kind: "text" },
-      { key: "legal_form", label: "Legal form", expr: "legal_form_code", sortable: true, kind: "text", filterable: true },
-      { key: "status", label: "Status", expr: "status", sortable: true, kind: "status", filterable: true },
-      { key: "registered", label: "Incorporated", expr: "toString(incorporation_date)", sortable: true, kind: "date" },
+      {
+        key: "id",
+        label: "ID",
+        expr: "registration_number",
+        sortable: true,
+        kind: "id",
+      },
+      {
+        key: "name",
+        label: "Name",
+        expr: "legal_name",
+        sortable: true,
+        kind: "text",
+      },
+      {
+        key: "legal_form",
+        label: "Legal form",
+        expr: "legal_form_code",
+        sortable: true,
+        kind: "text",
+        filterable: true,
+      },
+      {
+        key: "status",
+        label: "Status",
+        expr: "status",
+        sortable: true,
+        kind: "status",
+        filterable: true,
+      },
+      {
+        key: "registered",
+        label: "Incorporated",
+        expr: "toString(incorporation_date)",
+        sortable: true,
+        kind: "date",
+      },
     ],
     industryQuery: `SELECT i.company_id AS company_id,
   i.nace_rev2_class_code AS industry_code,
@@ -553,6 +728,23 @@ ORDER BY cnt DESC
 LIMIT 50000`,
     industryFilterExpr: `company_id IN (SELECT company_id FROM se_industries WHERE is_primary = 1 AND nace_rev2_class_code IN {f_industry:Array(String)})`,
     detail: {
+      financialSources: [
+        {
+          id: "bolagsverket-annual-accounts",
+          kind: "registry",
+          title: "Bolagsverket annual-account XBRL",
+          description:
+            "Standalone legal-entity accounts filed with Bolagsverket. Standardized figures and every tagged source fact remain connected to the filing.",
+          yearFacts: true,
+        },
+        {
+          id: "esef",
+          kind: "esef",
+          title: "ESEF consolidated IFRS",
+          description:
+            "Consolidated IFRS figures extracted from filed ESEF reports. Group accounts remain distinct from standalone legal-entity filings.",
+        },
+      ],
       // activity_description is aliased to _original so the language
       // toggle's pairing rule (needs BOTH <base>_en and <base>_original)
       // collapses it with activity_description_en from the translated
@@ -601,7 +793,11 @@ LIMIT 1`,
     toFloat64(equity_amount_usd) AS equity_amount_usd,
     toFloat64(employees) AS employees,
     'filed' AS observation,
-    '' AS source_fiscal_year
+    '' AS source_fiscal_year,
+    lower(hex(SHA256(concat(
+      'company-source-record-v1\\nstructured\\nsweden_financial\\nannual_report_xhtml\\n',
+      statement_key, '\\n', statement_key
+    )))) AS source_record_uid
   FROM se_financial_metrics
   WHERE company_id = {id:String}
   ORDER BY fiscal_year DESC, isNull(revenue_amount_original) ASC, source_record_id DESC
@@ -616,7 +812,11 @@ LIMIT 1`,
     NULL, NULL,
     NULL,
     'comparative',
-    toString(source_fiscal_year)
+    toString(source_fiscal_year),
+    lower(hex(SHA256(concat(
+      'company-source-record-v1\\nstructured\\nsweden_financial\\nannual_report_xhtml\\n',
+      source_statement_key, '\\n', source_statement_key
+    ))))
   FROM se_financial_history
   WHERE company_id = {id:String} AND observation = 'comparative'
     AND fiscal_year NOT IN (
@@ -628,19 +828,44 @@ LIMIT 25`,
       // Same filing the metrics row shows (metrics statement_key first);
       // falls back to the newest filing seen in facts for years whose
       // metrics row hasn't been rebuilt yet.
-      factsQuery: `SELECT f.concept_local_name AS concept,
-  l.label_en AS concept_label_en,
+      factsQuery: `SELECT f.concept_qname AS concept,
+  f.concept_local_name AS concept_local_name,
+  if(labels.concept_local_name != '', labels.label_en, fallback_labels.label_en) AS concept_label_en,
+  if(labels.concept_local_name != '', labels.label_sv, fallback_labels.label_sv) AS concept_label_sv,
+  if(labels.concept_local_name != '', labels.description_en, fallback_labels.description_en) AS concept_description_en,
+  if(labels.concept_local_name != '', labels.description_sv, fallback_labels.description_sv) AS concept_description_sv,
+  if(labels.concept_local_name != '', labels.label_en_source, fallback_labels.label_source) AS concept_label_en_source,
+  if(labels.concept_local_name != '', labels.label_translation_provider, fallback_labels.label_translation_provider) AS concept_label_translation_provider,
+  if(labels.concept_local_name != '', labels.label_translation_model, fallback_labels.label_translation_model) AS concept_label_translation_model,
+  if(labels.concept_local_name != '', labels.label_translation_version, fallback_labels.label_translation_version) AS concept_label_translation_version,
+  if(labels.concept_local_name != '', labels.description_en_source, fallback_labels.description_source) AS concept_description_en_source,
+  if(labels.concept_local_name != '', labels.description_translation_provider, fallback_labels.description_translation_provider) AS concept_description_translation_provider,
+  if(labels.concept_local_name != '', labels.description_translation_model, fallback_labels.description_translation_model) AS concept_description_translation_model,
+  if(labels.concept_local_name != '', labels.description_translation_version, fallback_labels.description_translation_version) AS concept_description_translation_version,
+  if(labels.concept_local_name != '', labels.taxonomy_entrypoint, fallback_labels.taxonomy_entrypoint) AS concept_taxonomy_entrypoint,
+  if(labels.concept_local_name != '', labels.concept_source_url, fallback_labels.concept_source_url) AS concept_source_url,
   f.value_kind AS value_kind, f.raw_value AS raw_value,
   toFloat64(f.amount_original) AS amount_original,
   toFloat64(f.amount_usd) AS amount_usd,
+  toString(f.fx_rate_date) AS fx_rate_date,
+  f.fx_source AS fx_source,
+  f.unit_id AS unit_id,
+  f.decimals AS decimals,
   f.currency AS currency,
   toString(f.date_value) AS date_value,
   f.text_value AS text_value,
   f.dimensions AS dimensions,
   f.context_id AS context_id
 FROM se_financial_facts AS f
-LEFT JOIN se_financial_concept_labels AS l
-  ON l.concept_local_name = f.concept_local_name
+LEFT ANY JOIN se_financial_reports AS report
+  ON report.statement_key = f.statement_key
+LEFT ANY JOIN se_financial_taxonomy_concept_labels AS labels
+  ON labels.taxonomy_entrypoint = ifNull(report.taxonomy_entrypoint, '')
+ AND labels.concept_local_name = f.concept_local_name
+ AND labels.concept_namespace = f.concept_namespace
+LEFT ANY JOIN se_financial_concept_labels AS fallback_labels
+  ON fallback_labels.concept_local_name = f.concept_local_name
+ AND fallback_labels.concept_namespace = f.concept_namespace
 WHERE f.company_id = {id:String} AND f.statement_key IN (
   SELECT statement_key FROM (
     SELECT statement_key, 0 AS pri
@@ -682,16 +907,34 @@ LIMIT 200`,
       // resolution treats that as a self-referential expansion and throws
       // ILLEGAL_AGGREGATION, so the inner subquery uses `_out` aliases and
       // the outer SELECT renames them back to the plan's field names.
-      officersQuery: `SELECT first_name, last_name, role_original, role_kind_out AS role_kind, signatory_kind, fiscal_year
+      officersQuery: `SELECT country_iso2, toString(person_id) AS person_id,
+  first_name, last_name, role_original, role_kind_out AS role_kind,
+  signatory_kind, fiscal_year,
+  lower(hex(SHA256(concat(
+    'company-source-record-v1\\nstructured\\nsweden_financial\\nannual_report_xhtml\\n',
+    source_statement_key_out, '\\n', source_statement_key_out
+  )))) AS source_record_uid
 FROM (
-  SELECT first_name, last_name,
-    argMax(role_original, role_kind != 'unknown') AS role_original,
-    argMax(role_kind, role_kind != 'unknown') AS role_kind_out,
-    signatory_kind, fiscal_year
-  FROM se_company_officers
-  WHERE company_id = {id:String}
-    AND fiscal_year = (SELECT max(fiscal_year) FROM se_company_officers WHERE company_id = {id:String})
-  GROUP BY first_name, last_name, signatory_kind, fiscal_year
+  SELECT o.country_iso2, m.person_id,
+    o.observed_first_name AS first_name,
+    o.observed_last_name AS last_name,
+    argMax(o.role_original, (o.role_kind != 'unknown', o.source_statement_key)) AS role_original,
+    argMax(o.role_kind, (o.role_kind != 'unknown', o.source_statement_key)) AS role_kind_out,
+    argMax(o.source_statement_key, (o.role_kind != 'unknown', o.source_statement_key)) AS source_statement_key_out,
+    o.signatory_kind, o.fiscal_year
+  FROM country_person_observation AS o
+  INNER JOIN country_person_match AS m
+    ON m.country_iso2 = o.country_iso2
+   AND m.observation_id = o.observation_id
+  WHERE o.country_iso2 = 'SE'
+    AND o.company_id = {id:String}
+    AND o.fiscal_year = (
+      SELECT max(fiscal_year)
+      FROM country_person_observation
+      WHERE country_iso2 = 'SE' AND company_id = {id:String}
+    )
+  GROUP BY o.country_iso2, m.person_id, o.observed_first_name,
+    o.observed_last_name, o.signatory_kind, o.fiscal_year
 )
 ORDER BY signatory_kind = 'auditor', role_kind != 'chairman', role_kind != 'ceo', last_name
 LIMIT 100`,
@@ -699,16 +942,24 @@ LIMIT 100`,
       // (batched: {names} carries every displayed person in one round trip).
       // Same self-alias pitfall as officersQuery — max(fiscal_year) can't be
       // AS fiscal_year — hence the inner _out alias.
-      peopleMatchesQuery: `SELECT full_name_normalized, country_iso2, company_id, company_name, role_kind, fiscal_year_out AS fiscal_year
+      peopleMatchesQuery: `SELECT full_name_normalized, country_iso2,
+  toString(person_id) AS person_id, company_id, company_name,
+  role_kind_out AS role_kind, fiscal_year_out AS fiscal_year
 FROM (
-  SELECT full_name_normalized, country_iso2, company_id,
-    any(company_name) AS company_name,
-    argMax(role_kind, fiscal_year) AS role_kind,
-    max(fiscal_year) AS fiscal_year_out
-  FROM company_people_all
-  WHERE full_name_normalized IN {names:Array(String)}
-    AND NOT (country_iso2 = 'SE' AND company_id = {id:String})
-  GROUP BY full_name_normalized, country_iso2, company_id
+  SELECT o.observed_name_normalized AS full_name_normalized,
+    o.country_iso2 AS country_iso2,
+    m.person_id AS person_id,
+    o.company_id AS company_id,
+    any(o.company_name) AS company_name,
+    argMax(o.role_kind, (o.fiscal_year, o.source_statement_key)) AS role_kind_out,
+    max(o.fiscal_year) AS fiscal_year_out
+  FROM country_person_observation AS o
+  INNER JOIN country_person_match AS m
+    ON o.country_iso2 = m.country_iso2
+   AND o.observation_id = m.observation_id
+  WHERE o.observed_name_normalized IN {names:Array(String)}
+    AND NOT (o.country_iso2 = 'SE' AND o.company_id = {id:String})
+  GROUP BY o.observed_name_normalized, o.country_iso2, m.person_id, o.company_id
 )
 ORDER BY full_name_normalized, fiscal_year DESC
 LIMIT 10 BY full_name_normalized
@@ -864,7 +1115,11 @@ LIMIT 100`,
       industriesQuery: `SELECT i.nace_rev2_class_code AS industry_code,
   '' AS description_original,
   coalesce(nullIf(n.description_en, ''), i.nace_rev2_class_code) AS industry_label,
-  i.is_primary AS is_primary
+  i.is_primary AS is_primary,
+  lower(hex(SHA256(concat(
+    'company-source-record-v1\\nstructured\\nsweden_scb\\nregistry_company\\n',
+    i.source_record_id, '\\n', lowerUTF8(i.source_payload_hash)
+  )))) AS source_record_uid
 FROM se_industries AS i
 LEFT JOIN nace_categories AS n ON n.normalized_code = i.nace_rev2_class_code AND n.is_current = 1
 WHERE i.company_id IN (SELECT company_id FROM se_companies WHERE registration_number = {id:String})
@@ -898,7 +1153,10 @@ WHERE company_id = {id:String}
 ORDER BY publication_date DESC NULLS LAST, contract_id
 LIMIT 100`,
     },
-    financialsLatest: { table: "se_company_financials_latest", companyKeyExpr: "company_id" },
+    financialsLatest: {
+      table: "se_company_financials_latest",
+      companyKeyExpr: "company_id",
+    },
     financialsByYear: { table: "se_financial_metrics", idColumn: "company_id" },
     financialsAggregates: {
       // Company ids normalized at the dagster layer since 2026-07-18 (16-prefix stripped); no workaround needed.
@@ -911,18 +1169,64 @@ LIMIT 100`,
     },
   },
   {
-    code: "ee", iso3: "EST", eurostatGeoCode: "EE", name: "Estonia", flag: "🇪🇪", companiesTable: "ee_companies",
-    idColumn: "reg_code", nameColumn: "name", activeExpr: "is_active = 1",
-    approxCompanies: "373k", features: ["financials", "industries", "contacts", "domains"],
-    legalFormLookup: { table: "ee_legal_forms_translated", codeColumn: "code", labelColumn: "label", enColumn: "label_en" },
+    code: "ee",
+    iso3: "EST",
+    eurostatGeoCode: "EE",
+    name: "Estonia",
+    flag: "🇪🇪",
+    companiesTable: "ee_companies",
+    idColumn: "reg_code",
+    nameColumn: "name",
+    activeExpr: "is_active = 1",
+    approxCompanies: "373k",
+    features: ["financials", "industries", "contacts", "domains"],
+    legalFormLookup: {
+      table: "ee_legal_forms_translated",
+      codeColumn: "code",
+      labelColumn: "label",
+      enColumn: "label_en",
+    },
     columns: [
       { key: "id", label: "ID", expr: "reg_code", sortable: true, kind: "id" },
-      { key: "name", label: "Name", expr: "name", sortable: true, kind: "text" },
+      {
+        key: "name",
+        label: "Name",
+        expr: "name",
+        sortable: true,
+        kind: "text",
+      },
       // Estonia's register publishes no code, so the Estonian term is its own key.
-      { key: "legal_form", label: "Legal form", expr: "legal_form_original", sortable: true, kind: "text", filterable: true },
-      { key: "status", label: "Status", expr: "coalesce(nullIf(status_en, ''), status_original)", sortable: true, kind: "status", filterable: true },
-      { key: "registered", label: "First entry", expr: "toString(first_entry_date)", sortable: true, kind: "date" },
-      { key: "place", label: "Location", expr: "location", sortable: false, kind: "text", filterable: true },
+      {
+        key: "legal_form",
+        label: "Legal form",
+        expr: "legal_form_original",
+        sortable: true,
+        kind: "text",
+        filterable: true,
+      },
+      {
+        key: "status",
+        label: "Status",
+        expr: "coalesce(nullIf(status_en, ''), status_original)",
+        sortable: true,
+        kind: "status",
+        filterable: true,
+      },
+      {
+        key: "registered",
+        label: "First entry",
+        expr: "toString(first_entry_date)",
+        sortable: true,
+        kind: "date",
+      },
+      {
+        key: "place",
+        label: "Location",
+        expr: "location",
+        sortable: false,
+        kind: "text",
+        filterable: true,
+      },
     ],
     industryQuery: `SELECT i.reg_code AS company_id,
   i.nace_normalized_code AS industry_code,
@@ -989,7 +1293,10 @@ FROM ee_companies
 WHERE reg_code = {id:String}
 LIMIT 1`,
     },
-    financialsLatest: { table: "ee_company_financials_latest", companyKeyExpr: "reg_code" },
+    financialsLatest: {
+      table: "ee_company_financials_latest",
+      companyKeyExpr: "reg_code",
+    },
     financialsAggregates: {
       nace: {
         industriesTable: "ee_industries",
@@ -1000,20 +1307,66 @@ LIMIT 1`,
     },
   },
   {
-    code: "lv", iso3: "LVA", eurostatGeoCode: "LV", name: "Latvia", flag: "🇱🇻", companiesTable: "lv_companies",
-    idColumn: "regcode", nameColumn: "legal_name", activeExpr: "is_active = 1",
-    approxCompanies: "485k", features: ["financials", "contacts", "domains"],
-    legalFormLookup: { table: "lv_legal_forms_translated", codeColumn: "code", labelColumn: "label", enColumn: "label_en" },
+    code: "lv",
+    iso3: "LVA",
+    eurostatGeoCode: "LV",
+    name: "Latvia",
+    flag: "🇱🇻",
+    companiesTable: "lv_companies",
+    idColumn: "regcode",
+    nameColumn: "legal_name",
+    activeExpr: "is_active = 1",
+    approxCompanies: "485k",
+    features: ["financials", "contacts", "domains"],
+    legalFormLookup: {
+      table: "lv_legal_forms_translated",
+      codeColumn: "code",
+      labelColumn: "label",
+      enColumn: "label_en",
+    },
     columns: [
       { key: "id", label: "ID", expr: "regcode", sortable: true, kind: "id" },
-      { key: "name", label: "Name", expr: "legal_name", sortable: true, kind: "text" },
+      {
+        key: "name",
+        label: "Name",
+        expr: "legal_name",
+        sortable: true,
+        kind: "text",
+      },
       // Read from text_translations, not lv_companies.legal_form_description_en:
       // that column was stamped in at load time and held June's pre-correction
       // wording on 118,008 rows until the register was downloaded again.
-      { key: "legal_form", label: "Legal form", expr: "legal_form_code", sortable: true, kind: "text", filterable: true },
-      { key: "status", label: "Status", expr: "status", sortable: true, kind: "status", filterable: true },
-      { key: "registered", label: "Registered", expr: "registered_date", sortable: true, kind: "date" },
-      { key: "place", label: "City", expr: "coalesce(address_city_name, '')", sortable: false, kind: "text", filterable: true },
+      {
+        key: "legal_form",
+        label: "Legal form",
+        expr: "legal_form_code",
+        sortable: true,
+        kind: "text",
+        filterable: true,
+      },
+      {
+        key: "status",
+        label: "Status",
+        expr: "status",
+        sortable: true,
+        kind: "status",
+        filterable: true,
+      },
+      {
+        key: "registered",
+        label: "Registered",
+        expr: "registered_date",
+        sortable: true,
+        kind: "date",
+      },
+      {
+        key: "place",
+        label: "City",
+        expr: "coalesce(address_city_name, '')",
+        sortable: false,
+        kind: "text",
+        filterable: true,
+      },
     ],
     industryQuery: `SELECT regcode AS company_id,
   nace_code AS industry_code,
@@ -1061,19 +1414,69 @@ FROM lv_companies
 WHERE regcode = {id:String}
 LIMIT 1`,
     },
-    financialsLatest: { table: "lv_company_financials_latest", companyKeyExpr: "regcode" },
+    financialsLatest: {
+      table: "lv_company_financials_latest",
+      companyKeyExpr: "regcode",
+    },
   },
   {
-    code: "gb", iso3: "GBR", eurostatGeoCode: "UK", name: "United Kingdom", flag: "🇬🇧", companiesTable: "gb_companies",
-    idColumn: "company_number", nameColumn: "name", activeExpr: "is_active = 1",
-    approxCompanies: "5.7M", features: ["financials", "industries"],
+    code: "gb",
+    iso3: "GBR",
+    eurostatGeoCode: "UK",
+    name: "United Kingdom",
+    flag: "🇬🇧",
+    companiesTable: "gb_companies",
+    idColumn: "company_number",
+    nameColumn: "name",
+    activeExpr: "is_active = 1",
+    approxCompanies: "5.7M",
+    features: ["financials", "industries"],
     columns: [
-      { key: "id", label: "ID", expr: "company_number", sortable: true, kind: "id" },
-      { key: "name", label: "Name", expr: "name", sortable: true, kind: "text" },
-      { key: "legal_form", label: "Category", expr: "company_category", sortable: true, kind: "text", filterable: true },
-      { key: "status", label: "Status", expr: "company_status", sortable: true, kind: "status", filterable: true },
-      { key: "registered", label: "Incorporated", expr: "toString(incorporation_date)", sortable: true, kind: "date" },
-      { key: "place", label: "City", expr: "city", sortable: false, kind: "text", filterable: true },
+      {
+        key: "id",
+        label: "ID",
+        expr: "company_number",
+        sortable: true,
+        kind: "id",
+      },
+      {
+        key: "name",
+        label: "Name",
+        expr: "name",
+        sortable: true,
+        kind: "text",
+      },
+      {
+        key: "legal_form",
+        label: "Category",
+        expr: "company_category",
+        sortable: true,
+        kind: "text",
+        filterable: true,
+      },
+      {
+        key: "status",
+        label: "Status",
+        expr: "company_status",
+        sortable: true,
+        kind: "status",
+        filterable: true,
+      },
+      {
+        key: "registered",
+        label: "Incorporated",
+        expr: "toString(incorporation_date)",
+        sortable: true,
+        kind: "date",
+      },
+      {
+        key: "place",
+        label: "City",
+        expr: "city",
+        sortable: false,
+        kind: "text",
+        filterable: true,
+      },
     ],
     industryQuery: `SELECT i.company_number AS company_id,
   i.nace_normalized_code AS industry_code,
@@ -1132,7 +1535,10 @@ FROM gb_companies
 WHERE company_number = {id:String}
 LIMIT 1`,
     },
-    financialsLatest: { table: "gb_company_financials_latest", companyKeyExpr: "company_number" },
+    financialsLatest: {
+      table: "gb_company_financials_latest",
+      companyKeyExpr: "company_number",
+    },
     financialsAggregates: {
       nace: {
         industriesTable: "gb_industries",
@@ -1143,9 +1549,17 @@ LIMIT 1`,
     },
   },
   {
-    code: "fr", iso3: "FRA", eurostatGeoCode: "FR", name: "France", flag: "🇫🇷", companiesTable: "fr_companies",
-    idColumn: "siren", nameColumn: "name", activeExpr: "is_active = 1",
-    approxCompanies: "29.7M", features: ["industries"],
+    code: "fr",
+    iso3: "FRA",
+    eurostatGeoCode: "FR",
+    name: "France",
+    flag: "🇫🇷",
+    companiesTable: "fr_companies",
+    idColumn: "siren",
+    nameColumn: "name",
+    activeExpr: "is_active = 1",
+    approxCompanies: "29.7M",
+    features: ["industries"],
     legalFormLookup: {
       table: "fr_legal_forms_translated",
       codeColumn: "code",
@@ -1155,14 +1569,47 @@ LIMIT 1`,
     },
     columns: [
       { key: "id", label: "ID", expr: "siren", sortable: true, kind: "id" },
-      { key: "name", label: "Name", expr: "name", sortable: true, kind: "text" },
+      {
+        key: "name",
+        label: "Name",
+        expr: "name",
+        sortable: true,
+        kind: "text",
+      },
       // The raw INSEE code, decoded through fr_legal_forms_translated. The
       // baked legal_form_en named 93.5% of rows and left 1.93M showing a bare
       // number, because fr_companies carries no label column to fall back to.
-      { key: "legal_form", label: "Legal form", expr: "legal_form_code", sortable: true, kind: "text", filterable: true },
-      { key: "status", label: "Status", expr: "status_en", sortable: true, kind: "status", filterable: true },
-      { key: "registered", label: "Created", expr: "toString(creation_date)", sortable: true, kind: "date" },
-      { key: "place", label: "City", expr: "city", sortable: false, kind: "text", filterable: true },
+      {
+        key: "legal_form",
+        label: "Legal form",
+        expr: "legal_form_code",
+        sortable: true,
+        kind: "text",
+        filterable: true,
+      },
+      {
+        key: "status",
+        label: "Status",
+        expr: "status_en",
+        sortable: true,
+        kind: "status",
+        filterable: true,
+      },
+      {
+        key: "registered",
+        label: "Created",
+        expr: "toString(creation_date)",
+        sortable: true,
+        kind: "date",
+      },
+      {
+        key: "place",
+        label: "City",
+        expr: "city",
+        sortable: false,
+        kind: "text",
+        filterable: true,
+      },
     ],
     industryQuery: `SELECT i.siren AS company_id,
   i.nace_normalized_code AS industry_code,
@@ -1211,22 +1658,81 @@ LIMIT 1`,
     },
   },
   {
-    code: "br", iso3: "BRA", name: "Brazil", flag: "🇧🇷", companiesTable: "br_companies",
-    idColumn: "cnpj_basico", nameColumn: "legal_name", activeExpr: "is_active = 1",
-    approxCompanies: "68.6M", features: ["financials", "contacts", "domains"],
+    code: "br",
+    iso3: "BRA",
+    name: "Brazil",
+    flag: "🇧🇷",
+    companiesTable: "br_companies",
+    idColumn: "cnpj_basico",
+    nameColumn: "legal_name",
+    activeExpr: "is_active = 1",
+    approxCompanies: "68.6M",
+    features: ["financials", "contacts", "domains"],
     columns: [
-      { key: "id", label: "ID", expr: "cnpj_basico", sortable: true, kind: "id" },
-      { key: "name", label: "Legal name", expr: "legal_name", sortable: true, kind: "text" },
-      { key: "trade_name", label: "Trade name", expr: "trade_name", sortable: false, kind: "text" },
-      { key: "size", label: "Size", expr: "company_size_en", sortable: true, kind: "text", filterable: true },
-      { key: "status", label: "Status", expr: "status_en", sortable: true, kind: "status", filterable: true },
+      {
+        key: "id",
+        label: "ID",
+        expr: "cnpj_basico",
+        sortable: true,
+        kind: "id",
+      },
+      {
+        key: "name",
+        label: "Legal name",
+        expr: "legal_name",
+        sortable: true,
+        kind: "text",
+      },
+      {
+        key: "trade_name",
+        label: "Trade name",
+        expr: "trade_name",
+        sortable: false,
+        kind: "text",
+      },
+      {
+        key: "size",
+        label: "Size",
+        expr: "company_size_en",
+        sortable: true,
+        kind: "text",
+        filterable: true,
+      },
+      {
+        key: "status",
+        label: "Status",
+        expr: "status_en",
+        sortable: true,
+        kind: "status",
+        filterable: true,
+      },
       // The bare code, decoded through company_entity_types like Sweden and
       // Norway. legal_nature_description_pt sits beside it in br_companies but
       // is Portuguese only; the decoder carries the curated English and keeps
       // the register's own wording in the tooltip.
-      { key: "legal_form", label: "Legal form", expr: "legal_nature_code", sortable: true, kind: "text", filterable: true },
-      { key: "registered", label: "Activity start", expr: "toString(activity_start_date)", sortable: true, kind: "date" },
-      { key: "place", label: "Municipality", expr: "concat(municipality_name, ' / ', state)", sortable: false, kind: "text", filterable: true },
+      {
+        key: "legal_form",
+        label: "Legal form",
+        expr: "legal_nature_code",
+        sortable: true,
+        kind: "text",
+        filterable: true,
+      },
+      {
+        key: "registered",
+        label: "Activity start",
+        expr: "toString(activity_start_date)",
+        sortable: true,
+        kind: "date",
+      },
+      {
+        key: "place",
+        label: "Municipality",
+        expr: "concat(municipality_name, ' / ', state)",
+        sortable: false,
+        kind: "text",
+        filterable: true,
+      },
     ],
     // CNAE's OWN name first, the NACE division only as a fallback.
     //
@@ -1360,23 +1866,72 @@ FROM br_companies
 WHERE cnpj_basico = {id:String}
 LIMIT 1`,
     },
-    financialsLatest: { table: "br_company_financials_latest", companyKeyExpr: "cnpj_basico" },
+    financialsLatest: {
+      table: "br_company_financials_latest",
+      companyKeyExpr: "cnpj_basico",
+    },
   },
   {
-    code: "cz", iso3: "CZE", eurostatGeoCode: "CZ", name: "Czechia", flag: "🇨🇿", companiesTable: "cz_companies",
-    idColumn: "ico", nameColumn: "name", activeExpr: "is_active = 1",
-    approxCompanies: "3.5M", features: ["industries", "contacts", "domains"],
-    legalFormLookup: { table: "cz_legal_forms_translated", codeColumn: "code", labelColumn: "label_cs", enColumn: "label_en" },
+    code: "cz",
+    iso3: "CZE",
+    eurostatGeoCode: "CZ",
+    name: "Czechia",
+    flag: "🇨🇿",
+    companiesTable: "cz_companies",
+    idColumn: "ico",
+    nameColumn: "name",
+    activeExpr: "is_active = 1",
+    approxCompanies: "3.5M",
+    features: ["industries", "contacts", "domains"],
+    legalFormLookup: {
+      table: "cz_legal_forms_translated",
+      codeColumn: "code",
+      labelColumn: "label_cs",
+      enColumn: "label_en",
+    },
     columns: [
       { key: "id", label: "ID", expr: "ico", sortable: true, kind: "id" },
-      { key: "name", label: "Name", expr: "name", sortable: true, kind: "text" },
+      {
+        key: "name",
+        label: "Name",
+        expr: "name",
+        sortable: true,
+        kind: "text",
+      },
       // The raw ARES code, decoded through cz_legal_forms_translated. The baked
       // legal_form_en left 108,341 companies on 38 codes showing a bare
       // number, because cz_companies carries no label column to fall back to.
-      { key: "legal_form", label: "Legal form", expr: "legal_form_code", sortable: true, kind: "text", filterable: true },
-      { key: "status", label: "Status", expr: "if(is_active = 1, 'active', 'inactive')", sortable: true, kind: "status", filterable: true },
-      { key: "registered", label: "Established", expr: "toString(established_date)", sortable: true, kind: "date" },
-      { key: "place", label: "City", expr: "city", sortable: false, kind: "text", filterable: true },
+      {
+        key: "legal_form",
+        label: "Legal form",
+        expr: "legal_form_code",
+        sortable: true,
+        kind: "text",
+        filterable: true,
+      },
+      {
+        key: "status",
+        label: "Status",
+        expr: "if(is_active = 1, 'active', 'inactive')",
+        sortable: true,
+        kind: "status",
+        filterable: true,
+      },
+      {
+        key: "registered",
+        label: "Established",
+        expr: "toString(established_date)",
+        sortable: true,
+        kind: "date",
+      },
+      {
+        key: "place",
+        label: "City",
+        expr: "city",
+        sortable: false,
+        kind: "text",
+        filterable: true,
+      },
     ],
     industryQuery: `SELECT i.ico AS company_id,
   i.nace_normalized_code AS industry_code,
@@ -1430,18 +1985,64 @@ LIMIT 1`,
     },
   },
   {
-    code: "sk", iso3: "SVK", eurostatGeoCode: "SK", name: "Slovakia", flag: "🇸🇰", companiesTable: "sk_companies",
-    idColumn: "ico", nameColumn: "name", activeExpr: "is_active = 1",
-    approxCompanies: "2.2M", features: ["financials", "industries"],
-    legalFormLookup: { table: "sk_legal_forms_translated", codeColumn: "code", labelColumn: "label", enColumn: "label_en" },
+    code: "sk",
+    iso3: "SVK",
+    eurostatGeoCode: "SK",
+    name: "Slovakia",
+    flag: "🇸🇰",
+    companiesTable: "sk_companies",
+    idColumn: "ico",
+    nameColumn: "name",
+    activeExpr: "is_active = 1",
+    approxCompanies: "2.2M",
+    features: ["financials", "industries"],
+    legalFormLookup: {
+      table: "sk_legal_forms_translated",
+      codeColumn: "code",
+      labelColumn: "label",
+      enColumn: "label_en",
+    },
     columns: [
       { key: "id", label: "ID", expr: "ico", sortable: true, kind: "id" },
-      { key: "name", label: "Name", expr: "name", sortable: true, kind: "text" },
+      {
+        key: "name",
+        label: "Name",
+        expr: "name",
+        sortable: true,
+        kind: "text",
+      },
       // Read from text_translations rather than the column baked at ingest.
-      { key: "legal_form", label: "Legal form", expr: "legal_form_code", sortable: true, kind: "text", filterable: true },
-      { key: "status", label: "Status", expr: "if(is_active = 1, 'active', 'inactive')", sortable: true, kind: "status", filterable: true },
-      { key: "registered", label: "Established", expr: "toString(established_date)", sortable: true, kind: "date" },
-      { key: "place", label: "City", expr: "city", sortable: false, kind: "text", filterable: true },
+      {
+        key: "legal_form",
+        label: "Legal form",
+        expr: "legal_form_code",
+        sortable: true,
+        kind: "text",
+        filterable: true,
+      },
+      {
+        key: "status",
+        label: "Status",
+        expr: "if(is_active = 1, 'active', 'inactive')",
+        sortable: true,
+        kind: "status",
+        filterable: true,
+      },
+      {
+        key: "registered",
+        label: "Established",
+        expr: "toString(established_date)",
+        sortable: true,
+        kind: "date",
+      },
+      {
+        key: "place",
+        label: "City",
+        expr: "city",
+        sortable: false,
+        kind: "text",
+        filterable: true,
+      },
     ],
     industryQuery: `SELECT i.ico AS company_id,
   i.nace_normalized_code AS industry_code,
@@ -1482,7 +2083,10 @@ FROM sk_companies
 WHERE ico = {id:String}
 LIMIT 1`,
     },
-    financialsLatest: { table: "sk_company_financials_latest", companyKeyExpr: "ico" },
+    financialsLatest: {
+      table: "sk_company_financials_latest",
+      companyKeyExpr: "ico",
+    },
     financialsAggregates: {
       nace: {
         industriesTable: "sk_industries",
