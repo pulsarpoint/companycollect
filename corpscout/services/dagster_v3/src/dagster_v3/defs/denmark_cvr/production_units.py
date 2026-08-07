@@ -128,10 +128,22 @@ class DenmarkCvrProductionUnitRawSummary:
     partition_key: str
     selected_company_count: int
     already_captured_company_count: int
+    skipped_company_count: int
+    already_skipped_company_count: int
+    skipped_request_attempt_count: int
     downloaded_company_count: int
     written_object_count: int
     downloaded_size_bytes: int
     stored_size_bytes: int
+
+    @property
+    def resolved_company_count(self) -> int:
+        return (
+            self.already_captured_company_count
+            + self.downloaded_company_count
+            + self.skipped_company_count
+            + self.already_skipped_company_count
+        )
 
 
 @dataclass(frozen=True)
@@ -170,12 +182,31 @@ def production_unit_object_key(partition_key: str, cvr: str) -> str:
     )
 
 
+def production_unit_failure_object_key(partition_key: str, cvr: str) -> str:
+    _validate_cvr(cvr)
+    if company_detail_bucket_key(cvr) != partition_key:
+        raise ValueError(f"CVR {cvr} does not belong to partition {partition_key}")
+    return (
+        f"{DENMARK_CVR_PRODUCTION_UNIT_PREFIX}/{partition_key}/"
+        f"cvr={cvr}/production_units_error.json"
+    )
+
+
 def production_unit_update_object_key(update_date: str, cvr: str) -> str:
     _validate_date_partition(update_date)
     _validate_cvr(cvr)
     return (
         f"{DENMARK_CVR_PRODUCTION_UNIT_PREFIX}/updates/date={update_date}/"
         f"{company_detail_bucket_key(cvr)}/cvr={cvr}/production_units.json"
+    )
+
+
+def production_unit_update_failure_object_key(update_date: str, cvr: str) -> str:
+    _validate_date_partition(update_date)
+    _validate_cvr(cvr)
+    return (
+        f"{DENMARK_CVR_PRODUCTION_UNIT_PREFIX}/updates/date={update_date}/"
+        f"{company_detail_bucket_key(cvr)}/cvr={cvr}/production_units_error.json"
     )
 
 
@@ -188,11 +219,15 @@ def write_production_unit_partition(
     run_id: str,
     retrieved_at: datetime,
     log_info: Callable[..., object] | None = None,
+    log_warning: Callable[..., object] | None = None,
 ) -> DenmarkCvrProductionUnitRawSummary:
     selected_cvrs = tuple(cvrs)
-    object_keys: dict[str, str] = {}
+    object_keys: dict[str, tuple[str, str]] = {}
     for cvr in selected_cvrs:
-        object_keys[cvr] = production_unit_object_key(partition_key, cvr)
+        object_keys[cvr] = (
+            production_unit_object_key(partition_key, cvr),
+            production_unit_failure_object_key(partition_key, cvr),
+        )
     return _write_production_unit_captures(
         object_store=object_store,
         details=details,
@@ -203,6 +238,7 @@ def write_production_unit_partition(
         run_id=run_id,
         retrieved_at=retrieved_at,
         log_info=log_info,
+        log_warning=log_warning,
     )
 
 
@@ -215,10 +251,15 @@ def write_production_unit_updates(
     run_id: str,
     retrieved_at: datetime,
     log_info: Callable[..., object] | None = None,
+    log_warning: Callable[..., object] | None = None,
 ) -> DenmarkCvrProductionUnitRawSummary:
     _validate_date_partition(update_date)
     object_keys = {
-        cvr: production_unit_update_object_key(update_date, cvr) for cvr in cvrs
+        cvr: (
+            production_unit_update_object_key(update_date, cvr),
+            production_unit_update_failure_object_key(update_date, cvr),
+        )
+        for cvr in cvrs
     }
     return _write_production_unit_captures(
         object_store=object_store,
@@ -232,6 +273,7 @@ def write_production_unit_updates(
         run_id=run_id,
         retrieved_at=retrieved_at,
         log_info=log_info,
+        log_warning=log_warning,
     )
 
 
@@ -242,10 +284,11 @@ def _write_production_unit_captures(
     partition_key: str,
     capture_type: DenmarkCvrProductionUnitCaptureType,
     object_prefix: str,
-    object_keys: Mapping[str, str],
+    object_keys: Mapping[str, tuple[str, str]],
     run_id: str,
     retrieved_at: datetime,
     log_info: Callable[..., object] | None,
+    log_warning: Callable[..., object] | None,
 ) -> DenmarkCvrProductionUnitRawSummary:
     if run_id.strip() == "":
         raise ValueError("Production-unit capture run ID must not be blank")
@@ -255,26 +298,62 @@ def _write_production_unit_captures(
     existing_keys = set(
         object_store.list_keys(object_prefix, bucket=DENMARK_CVR_BUCKET)
     )
-    pending_cvrs = tuple(
-        cvr
-        for cvr, object_key in object_keys.items()
-        if object_key not in existing_keys
-    )
+    already_captured_count = 0
+    already_skipped_count = 0
+    pending_cvrs: list[str] = []
+    for cvr, (capture_key, failure_key) in object_keys.items():
+        if capture_key in existing_keys:
+            already_captured_count += 1
+        elif failure_key in existing_keys:
+            already_skipped_count += 1
+        else:
+            pending_cvrs.append(cvr)
+
     downloaded_count = 0
+    skipped_count = 0
+    skipped_request_attempt_count = 0
+    written_object_count = 0
     downloaded_size_bytes = 0
     stored_size_bytes = 0
     returned_cvrs: set[str] = set()
-    for download in details.iter_company_details(pending_cvrs):
-        if isinstance(download, DenmarkCvrCompanyDetailHttpFailure):
-            raise DenmarkCvrProductionUnitCaptureError(
-                "DataCVR production-unit capture returned HTTP "
-                f"{download.status} for CVR {download.cvr}"
-            )
-        if download.cvr not in object_keys or download.cvr in returned_cvrs:
+    for result in details.iter_company_details(tuple(pending_cvrs)):
+        if result.cvr not in object_keys or result.cvr in returned_cvrs:
             raise DenmarkCvrProductionUnitCaptureError(
                 "DataCVR production-unit capture returned an unexpected company"
             )
-        returned_cvrs.add(download.cvr)
+        returned_cvrs.add(result.cvr)
+        capture_key, failure_key = object_keys[result.cvr]
+        if isinstance(result, DenmarkCvrCompanyDetailHttpFailure):
+            marker_body = _production_unit_failure_marker_bytes(
+                failure=result,
+                capture_type=capture_type,
+                partition_key=partition_key,
+                failed_at=retrieved_at,
+                run_id=run_id,
+            )
+            object_store.write_bytes(
+                failure_key,
+                marker_body,
+                bucket=DENMARK_CVR_BUCKET,
+            )
+            skipped_count += 1
+            skipped_request_attempt_count += result.attempt_count
+            written_object_count += 1
+            stored_size_bytes += len(marker_body)
+            if log_warning is not None:
+                log_warning(
+                    "Skipping DataCVR production-unit capture after exhausted "
+                    "retries: partition=%s cvr=%s http_status=%s "
+                    "request_attempts=%s marker=%s",
+                    partition_key,
+                    result.cvr,
+                    result.status,
+                    result.attempt_count,
+                    failure_key,
+                )
+            continue
+
+        download = result
         production_units = _production_units_from_detail(
             download.payload,
             cvr=download.cvr,
@@ -289,24 +368,28 @@ def _write_production_unit_captures(
             production_units=production_units,
         )
         object_store.write_bytes(
-            object_keys[download.cvr],
+            capture_key,
             stored_body,
             bucket=DENMARK_CVR_BUCKET,
         )
         downloaded_count += 1
+        written_object_count += 1
         downloaded_size_bytes += download.downloaded_size_bytes
         stored_size_bytes += len(stored_body)
+        resolved_count = len(returned_cvrs)
         if log_info is not None and (
-            downloaded_count == 1
-            or downloaded_count % 100 == 0
-            or downloaded_count == len(pending_cvrs)
+            resolved_count == 1
+            or resolved_count % 100 == 0
+            or resolved_count == len(pending_cvrs)
         ):
             log_info(
                 "DataCVR production-unit capture progress: partition=%s "
-                "downloaded=%s/%s downloaded_bytes=%s",
+                "resolved=%s/%s downloaded=%s skipped=%s downloaded_bytes=%s",
                 partition_key,
-                downloaded_count,
+                resolved_count,
                 len(pending_cvrs),
+                downloaded_count,
+                skipped_count,
                 downloaded_size_bytes,
             )
     if returned_cvrs != set(pending_cvrs):
@@ -316,9 +399,12 @@ def _write_production_unit_captures(
     return DenmarkCvrProductionUnitRawSummary(
         partition_key=partition_key,
         selected_company_count=len(object_keys),
-        already_captured_company_count=len(object_keys) - len(pending_cvrs),
+        already_captured_company_count=already_captured_count,
+        skipped_company_count=skipped_count,
+        already_skipped_company_count=already_skipped_count,
+        skipped_request_attempt_count=skipped_request_attempt_count,
         downloaded_company_count=downloaded_count,
-        written_object_count=downloaded_count,
+        written_object_count=written_object_count,
         downloaded_size_bytes=downloaded_size_bytes,
         stored_size_bytes=stored_size_bytes,
     )
@@ -341,7 +427,8 @@ def _write_production_unit_captures(
     description=(
         "Reads one stable CVR hash bucket directly from the company DuckDB table, "
         "downloads each company's production-unit section in one browser session, "
-        "and checkpoints one Danish-key JSON capture per company."
+        "and checkpoints one Danish-key JSON capture per company. Company-specific "
+        "server errors are skipped and checkpointed after three failed attempts."
     ),
 )
 def denmark_cvr_production_units_s3(
@@ -359,6 +446,7 @@ def denmark_cvr_production_units_s3(
         run_id=context.run_id,
         retrieved_at=datetime.now(UTC),
         log_info=context.log.info,
+        log_warning=context.log.warning,
     )
     return dg.MaterializeResult(metadata=_raw_summary_metadata(summary))
 
@@ -379,7 +467,9 @@ def denmark_cvr_production_units_s3(
     pool=DENMARK_CVR_PRODUCTION_UNIT_DOWNLOAD_POOL,
     description=(
         "Reads CVRs assigned to one active company DuckDB date, downloads their "
-        "production-unit sections, and writes date-versioned raw JSON captures."
+        "production-unit sections, and writes date-versioned raw JSON captures. "
+        "Company-specific server errors are skipped and checkpointed after three "
+        "failed attempts."
     ),
 )
 def denmark_cvr_production_unit_updates_s3(
@@ -397,6 +487,7 @@ def denmark_cvr_production_unit_updates_s3(
         run_id=context.run_id,
         retrieved_at=datetime.now(UTC),
         log_info=context.log.info,
+        log_warning=context.log.warning,
     )
     return dg.MaterializeResult(metadata=_raw_summary_metadata(summary))
 
@@ -605,6 +696,34 @@ def _production_units_from_detail(
     production_units = payload.get("produktionsenheder")
     _validate_production_unit_collection(production_units, object_key=f"CVR {cvr}")
     return production_units
+
+
+def _production_unit_failure_marker_bytes(
+    *,
+    failure: DenmarkCvrCompanyDetailHttpFailure,
+    capture_type: DenmarkCvrProductionUnitCaptureType,
+    partition_key: str,
+    failed_at: datetime,
+    run_id: str,
+) -> bytes:
+    return json.dumps(
+        {
+            "schema_version": 1,
+            "source": "denmark_cvr",
+            "source_capture_type": capture_type,
+            "source_partition_key": partition_key,
+            "failed_at": failed_at.astimezone(UTC).isoformat(),
+            "source_run_id": run_id,
+            "cvr": failure.cvr,
+            "source_url": failure.source_url,
+            "http_status": failure.status,
+            "request_attempt_count": failure.attempt_count,
+            "decision": "ignore_company",
+        },
+        ensure_ascii=False,
+        separators=(",", ":"),
+        sort_keys=True,
+    ).encode("utf-8")
 
 
 def _capture_bytes(
@@ -998,7 +1117,11 @@ def _raw_summary_metadata(
     return {
         "partition_key": summary.partition_key,
         "selected_company_count": summary.selected_company_count,
+        "resolved_company_count": summary.resolved_company_count,
         "already_captured_company_count": summary.already_captured_company_count,
+        "skipped_company_count": summary.skipped_company_count,
+        "already_skipped_company_count": summary.already_skipped_company_count,
+        "skipped_request_attempt_count": summary.skipped_request_attempt_count,
         "downloaded_company_count": summary.downloaded_company_count,
         "written_object_count": summary.written_object_count,
         "downloaded_size_bytes": summary.downloaded_size_bytes,

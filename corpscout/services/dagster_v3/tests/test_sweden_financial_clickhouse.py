@@ -62,9 +62,7 @@ _STAGE_DELETE_SQL_RE = re.compile(
 )
 _DROP_TABLE_SQL_RE = re.compile(r"^DROP TABLE IF EXISTS (corpscout\._tmp_\S+)$")
 
-_STAGE_TABLE_NAME_RE = re.compile(
-    r"^corpscout\._tmp_se_facts_scope_[0-9a-f]{32}$"
-)
+_STAGE_TABLE_NAME_RE = re.compile(r"^corpscout\._tmp_se_facts_scope_[0-9a-f]{32}$")
 
 _REPORTS_ARCHIVE_COUNT_SQL_RE = re.compile(
     r"^SELECT source_archive_key, count\(\) FROM (\S+) "
@@ -72,7 +70,8 @@ _REPORTS_ARCHIVE_COUNT_SQL_RE = re.compile(
 )
 _FACTS_ARCHIVE_COUNT_SQL_RE = re.compile(
     r"^SELECT r\.source_archive_key, count\(\), "
-    r"countIf\(f\.amount_usd IS NOT NULL\) FROM (\S+) AS f "
+    r"countIf\(f\.amount_usd IS NOT NULL\), "
+    r"countIf\(f\.context_period_end IS NOT NULL\) FROM (\S+) AS f "
     r"INNER JOIN (\S+) AS r ON f\.statement_key = r\.statement_key "
     r"WHERE r\.source_archive_key IN %\(keys\)s GROUP BY r\.source_archive_key$"
 )
@@ -130,9 +129,7 @@ class StatefulFakeClickHouseClient:
             table, column = count_match.groups()
             index = self.columns[table].index(column)
             keys = set(params["keys"])
-            return [
-                (sum(1 for row in self.rows[table] if row[index] in keys),)
-            ]
+            return [(sum(1 for row in self.rows[table] if row[index] in keys),)]
         delete_match = _DELETE_SQL_RE.match(normalized)
         if delete_match is not None:
             table, column = delete_match.groups()
@@ -148,9 +145,7 @@ class StatefulFakeClickHouseClient:
             assert params is None, "stage-scoped count must not carry params"
             keys = self._stage_keys(stage_table, stage_column)
             index = self.columns[table].index(column)
-            return [
-                (sum(1 for row in self.rows[table] if row[index] in keys),)
-            ]
+            return [(sum(1 for row in self.rows[table] if row[index] in keys),)]
         stage_delete_match = _STAGE_DELETE_SQL_RE.match(normalized)
         if stage_delete_match is not None:
             table, column, stage_column, stage_table = stage_delete_match.groups()
@@ -187,18 +182,29 @@ class StatefulFakeClickHouseClient:
             }
             fact_statement_index = self.columns[facts_table].index("statement_key")
             amount_usd_index = self.columns[facts_table].index("amount_usd")
-            counts: dict[str, tuple[int, int]] = {}
+            context_period_end_index = self.columns[facts_table].index(
+                "context_period_end"
+            )
+            counts: dict[str, tuple[int, int, int]] = {}
             for row in self.rows[facts_table]:
                 archive = statement_to_archive.get(row[fact_statement_index])
                 if archive is not None:
-                    fact_count, usd_count = counts.get(archive, (0, 0))
+                    fact_count, usd_count, context_period_count = counts.get(
+                        archive, (0, 0, 0)
+                    )
                     counts[archive] = (
                         fact_count + 1,
                         usd_count + int(row[amount_usd_index] is not None),
+                        context_period_count
+                        + int(row[context_period_end_index] is not None),
                     )
             return sorted(
-                (archive, fact_count, usd_count)
-                for archive, (fact_count, usd_count) in counts.items()
+                (archive, fact_count, usd_count, context_period_count)
+                for archive, (
+                    fact_count,
+                    usd_count,
+                    context_period_count,
+                ) in counts.items()
             )
         raise AssertionError(normalized)
 
@@ -314,9 +320,7 @@ def test_reconcile_reports_scope_is_missing_and_mismatched_archives(
 def test_reconcile_reports_scope_empty_when_clickhouse_matches(
     tmp_path: Path,
 ) -> None:
-    _seed_year_file(
-        tmp_path, "2026", reports=(("5560000001", _ARCHIVE_KEY_2026_W1),)
-    )
+    _seed_year_file(tmp_path, "2026", reports=(("5560000001", _ARCHIVE_KEY_2026_W1),))
     client = _reports_facts_fake_client()
     client.rows[QUALIFIED_SE_FINANCIAL_REPORTS_TABLE].append(
         _clickhouse_report_row(
@@ -451,18 +455,14 @@ def test_reconcile_reports_upserts_only_the_diff(
     assert len(client.rows[QUALIFIED_SE_FINANCIAL_REPORTS_TABLE]) == 2
     assert w1_row in client.rows[QUALIFIED_SE_FINANCIAL_REPORTS_TABLE]
     # W2 was absent -> pre-count 0 -> pure insert, no delete mutation.
-    assert not any(
-        sql.startswith("ALTER TABLE") for sql in client.statements()
-    )
+    assert not any(sql.startswith("ALTER TABLE") for sql in client.statements())
 
 
 def test_reconcile_reports_noop_when_clickhouse_matches(
     tmp_path: Path,
     monkeypatch,
 ) -> None:
-    _seed_year_file(
-        tmp_path, "2026", reports=(("5560000001", _ARCHIVE_KEY_2026_W1),)
-    )
+    _seed_year_file(tmp_path, "2026", reports=(("5560000001", _ARCHIVE_KEY_2026_W1),))
     client = _reports_facts_fake_client()
     client.rows[QUALIFIED_SE_FINANCIAL_REPORTS_TABLE].append(
         _clickhouse_report_row(
@@ -486,8 +486,7 @@ def test_reconcile_reports_noop_when_clickhouse_matches(
         "skipped_reason": "clickhouse already matches the local year file",
     }
     assert not any(
-        sql.startswith(("ALTER TABLE", "INSERT INTO"))
-        for sql in client.statements()
+        sql.startswith(("ALTER TABLE", "INSERT INTO")) for sql in client.statements()
     )
 
 
@@ -529,6 +528,45 @@ def test_reconcile_facts_upserts_only_the_diff(
     assert metadata == {"archives": 1, "deleted": 0, "inserted": 1}
     assert w1_fact in client.rows[QUALIFIED_SE_FINANCIAL_FACTS_TABLE]
     assert len(client.rows[QUALIFIED_SE_FINANCIAL_FACTS_TABLE]) == 2
+
+
+def test_reconcile_facts_republishes_missing_context_periods(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    _seed_year_file(
+        tmp_path,
+        "2026",
+        reports=(("5560000001", _ARCHIVE_KEY_2026_W1),),
+        facts=("5560000001",),
+    )
+    client = _reports_facts_fake_client()
+    client.rows[QUALIFIED_SE_FINANCIAL_REPORTS_TABLE].append(
+        _clickhouse_report_row(
+            company_id="5560000001",
+            year="2026",
+            archive_key=_ARCHIVE_KEY_2026_W1,
+        )
+    )
+    stale_fact = list(_clickhouse_fact_row(company_id="5560000001", year="2026"))
+    stale_fact[SE_FINANCIAL_FACTS_EXPORT_COLUMNS.index("context_period_start")] = None
+    stale_fact[SE_FINANCIAL_FACTS_EXPORT_COLUMNS.index("context_period_end")] = None
+    client.rows[QUALIFIED_SE_FINANCIAL_FACTS_TABLE].append(tuple(stale_fact))
+
+    with _patched_clickhouse(monkeypatch, client) as resource:
+        with sweden_financial_year_duckdb_connection(
+            "2026", root=tmp_path
+        ) as connection:
+            metadata = reconcile_sweden_financial_facts_clickhouse(
+                duckdb_connection=connection,
+                clickhouse=resource,
+            )
+
+    assert metadata == {"archives": 1, "deleted": 1, "inserted": 1}
+    stored = client.rows[QUALIFIED_SE_FINANCIAL_FACTS_TABLE][0]
+    assert stored[
+        SE_FINANCIAL_FACTS_EXPORT_COLUMNS.index("context_period_end")
+    ] == date(2026, 12, 31)
 
 
 def test_reconcile_facts_deletes_stale_clickhouse_facts_for_factless_archive(
@@ -584,9 +622,7 @@ def test_reconcile_is_idempotent(
     tmp_path: Path,
     monkeypatch,
 ) -> None:
-    _seed_year_file(
-        tmp_path, "2026", reports=(("5560000001", _ARCHIVE_KEY_2026_W1),)
-    )
+    _seed_year_file(tmp_path, "2026", reports=(("5560000001", _ARCHIVE_KEY_2026_W1),))
     client = _reports_facts_fake_client()
 
     with _patched_clickhouse(monkeypatch, client) as resource:
@@ -655,14 +691,10 @@ def test_upsert_reports_partition_deletes_own_scope_then_inserts(
 
     statements = client.statements()
     delete_index = next(
-        index
-        for index, sql in enumerate(statements)
-        if sql.startswith("ALTER TABLE")
+        index for index, sql in enumerate(statements) if sql.startswith("ALTER TABLE")
     )
     insert_index = next(
-        index
-        for index, sql in enumerate(statements)
-        if sql.startswith("INSERT INTO")
+        index for index, sql in enumerate(statements) if sql.startswith("INSERT INTO")
     )
     assert delete_index < insert_index
 
@@ -691,9 +723,7 @@ def test_upsert_reports_partition_skips_delete_mutation_when_precount_zero(
     # The steady-state new-archive case: nothing in scope exists in
     # ClickHouse yet, so no ALTER DELETE mutation is issued at all -- the
     # run is a pure insert, still reporting deleted=0.
-    _seed_year_file(
-        tmp_path, "2025", reports=(("5560000001", _ARCHIVE_KEY_2025_A),)
-    )
+    _seed_year_file(tmp_path, "2025", reports=(("5560000001", _ARCHIVE_KEY_2025_A),))
     client = _reports_facts_fake_client()
 
     with _patched_clickhouse(monkeypatch, client) as resource:
@@ -708,18 +738,14 @@ def test_upsert_reports_partition_skips_delete_mutation_when_precount_zero(
 
     assert metadata["deleted"] == 0
     assert metadata["inserted"] == 1
-    assert not any(
-        sql.startswith("ALTER TABLE") for sql in client.statements()
-    )
+    assert not any(sql.startswith("ALTER TABLE") for sql in client.statements())
 
 
 def test_upsert_reports_partition_insert_uses_explicit_export_columns(
     tmp_path: Path,
     monkeypatch,
 ) -> None:
-    _seed_year_file(
-        tmp_path, "2025", reports=(("5560000001", _ARCHIVE_KEY_2025_A),)
-    )
+    _seed_year_file(tmp_path, "2025", reports=(("5560000001", _ARCHIVE_KEY_2025_A),))
     client = _reports_facts_fake_client()
 
     with _patched_clickhouse(monkeypatch, client) as resource:
@@ -739,8 +765,7 @@ def test_upsert_reports_partition_insert_uses_explicit_export_columns(
         f"`{column}`" for column in SE_FINANCIAL_REPORTS_EXPORT_COLUMNS
     )
     assert insert_sql == (
-        f"INSERT INTO `corpscout`.`se_financial_reports` "
-        f"({expected_columns}) VALUES"
+        f"INSERT INTO `corpscout`.`se_financial_reports` ({expected_columns}) VALUES"
     )
 
 
@@ -793,9 +818,7 @@ def test_upsert_reports_partition_never_touches_other_partitions(
     # ClickHouse already holds rows from ANOTHER partition (e.g. exported by
     # a different host) -- the 2026-07-19 incident scenario. This host's
     # local DuckDB only has 2025.
-    _seed_year_file(
-        tmp_path, "2025", reports=(("5560000001", _ARCHIVE_KEY_2025_A),)
-    )
+    _seed_year_file(tmp_path, "2025", reports=(("5560000001", _ARCHIVE_KEY_2025_A),))
     client = _reports_facts_fake_client()
     foreign_row = _clickhouse_report_row(
         company_id="5569990000",
@@ -832,9 +855,7 @@ def test_upsert_reports_partition_fails_loudly_before_any_clickhouse_write(
         with sweden_financial_year_duckdb_connection(
             "2025", root=tmp_path
         ) as connection:
-            with pytest.raises(
-                ValueError, match="No Sweden financial archive keys"
-            ):
+            with pytest.raises(ValueError, match="No Sweden financial archive keys"):
                 upsert_sweden_financial_reports_partition(
                     duckdb_connection=connection,
                     clickhouse=resource,
@@ -842,8 +863,7 @@ def test_upsert_reports_partition_fails_loudly_before_any_clickhouse_write(
                 )
 
     assert not any(
-        sql.startswith(("ALTER TABLE", "INSERT INTO"))
-        for sql in client.statements()
+        sql.startswith(("ALTER TABLE", "INSERT INTO")) for sql in client.statements()
     )
 
 
@@ -892,9 +912,7 @@ def test_upsert_facts_partition_scopes_by_statement_key_via_stage_table(
     # the facts scope is the partition's statement_key set, staged in a
     # per-run Memory table (a backfill year holds up to ~500k keys, which
     # would blow max_query_size if bound as a client-substituted param).
-    create_sql = next(
-        sql for sql in statements if sql.startswith("CREATE TABLE")
-    )
+    create_sql = next(sql for sql in statements if sql.startswith("CREATE TABLE"))
     create_match = _STAGE_CREATE_SQL_RE.match(create_sql)
     assert create_match is not None
     stage_table = create_match.group(1)
@@ -935,16 +953,13 @@ def test_upsert_facts_partition_scopes_by_statement_key_via_stage_table(
         assert not any(key in sql for sql in statements)
 
     insert_sql = next(
-        sql
-        for sql in statements
-        if sql.startswith("INSERT INTO `corpscout`.`")
+        sql for sql in statements if sql.startswith("INSERT INTO `corpscout`.`")
     )
     expected_columns = ", ".join(
         f"`{column}`" for column in SE_FINANCIAL_FACTS_EXPORT_COLUMNS
     )
     assert insert_sql == (
-        f"INSERT INTO `corpscout`.`se_financial_facts` "
-        f"({expected_columns}) VALUES"
+        f"INSERT INTO `corpscout`.`se_financial_facts` ({expected_columns}) VALUES"
     )
 
 
@@ -1003,8 +1018,7 @@ def test_upsert_facts_partition_is_idempotent_and_leaves_other_partitions(
     assert _STAGE_DELETE_SQL_RE.match(delete_sql)
     assert delete_params is None
     assert not any(
-        _statement_key("5560000001", "2025") in sql
-        for sql in client.statements()
+        _statement_key("5560000001", "2025") in sql for sql in client.statements()
     )
     assert client.remaining_stage_tables() == []
 
@@ -1049,7 +1063,9 @@ def test_guard_against_clickhouse_table_shrink_allows_at_51_percent() -> None:
     )
 
 
-def test_guard_against_clickhouse_table_shrink_allows_exact_50_percent_boundary() -> None:
+def test_guard_against_clickhouse_table_shrink_allows_exact_50_percent_boundary() -> (
+    None
+):
     # SHRINK_GUARD_MIN_RATIO is inclusive: staged == exactly half of existing
     # is allowed, only strictly-below-half refuses.
     assert SHRINK_GUARD_MIN_RATIO == 0.5
@@ -1099,9 +1115,7 @@ def test_sweden_financial_year_duckdb_connection_raises_when_file_missing(
 def test_sweden_financial_year_duckdb_connection_is_read_only(
     tmp_path: Path,
 ) -> None:
-    _seed_year_file(
-        tmp_path, "2025", reports=(("5560000001", _ARCHIVE_KEY_2025_A),)
-    )
+    _seed_year_file(tmp_path, "2025", reports=(("5560000001", _ARCHIVE_KEY_2025_A),))
 
     with sweden_financial_year_duckdb_connection("2025", root=tmp_path) as connection:
         rows = connection.execute(
@@ -1109,17 +1123,13 @@ def test_sweden_financial_year_duckdb_connection_is_read_only(
         ).fetchone()
         assert rows[0] == 1
         with pytest.raises(duckdb.Error):
-            connection.execute(
-                f"delete from {SWEDEN_FINANCIAL_DATASET_NAME}.reports"
-            )
+            connection.execute(f"delete from {SWEDEN_FINANCIAL_DATASET_NAME}.reports")
 
 
 def test_sweden_financial_year_duckdb_write_connection_persists_transform(
     tmp_path: Path,
 ) -> None:
-    _seed_year_file(
-        tmp_path, "2025", reports=(("5560000001", _ARCHIVE_KEY_2025_A),)
-    )
+    _seed_year_file(tmp_path, "2025", reports=(("5560000001", _ARCHIVE_KEY_2025_A),))
 
     with sweden_financial_year_duckdb_write_connection(
         "2025", root=tmp_path
@@ -1220,6 +1230,8 @@ def _create_sweden_financial_tables(connection: duckdb.DuckDBPyConnection) -> No
             concept_namespace varchar,
             concept_local_name varchar,
             context_id varchar,
+            context_period_start date,
+            context_period_end date,
             unit_id varchar,
             decimals varchar,
             precision varchar,
@@ -1339,6 +1351,8 @@ def _insert_fact(
             'se',
             'Revenue',
             'ctx-1',
+            ?,
+            ?,
             'SEK',
             '0',
             null,
@@ -1362,6 +1376,8 @@ def _insert_fact(
             source_record_id,
             _statement_key(company_id, year),
             company_id,
+            period_end,
+            date(int(year), 1, 1),
             period_end,
             Decimal("1000.0000000000"),
             datetime(2026, 1, 2, 3, 4, 5),
@@ -1403,6 +1419,8 @@ def _clickhouse_fact_row(*, company_id: str, year: str) -> tuple[Any, ...]:
         statement_key=_statement_key(company_id, year),
         company_id=company_id,
         report_period_end=period_end,
+        context_period_start=date(int(year), 1, 1),
+        context_period_end=period_end,
         fact_ordinal=1,
     )
     return tuple(values[column] for column in SE_FINANCIAL_FACTS_EXPORT_COLUMNS)

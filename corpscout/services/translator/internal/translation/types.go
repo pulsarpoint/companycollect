@@ -12,6 +12,11 @@ import (
 // the same invalid response.
 var ErrModelOutput = errors.New("translation model output is invalid")
 
+// ErrOutputTruncated identifies model output stopped by a provider limit or
+// watchdog. It remains a model-output error, but callers may recover by making
+// smaller requests instead of repeating the same prompt.
+var ErrOutputTruncated = errors.New("translation model output is truncated")
+
 type TranslationInput struct {
 	ItemID     string
 	SourceText string

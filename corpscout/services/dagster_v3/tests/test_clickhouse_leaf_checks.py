@@ -43,6 +43,7 @@ def test_registry_covers_the_known_scheduled_leaves() -> None:
         "sweden_financial_backfill_reports_clickhouse",
         "sweden_financial_current_facts_clickhouse",
         "sweden_financial_metrics_clickhouse",
+        "se_bolagsverket_financial_observations_clickhouse",
         "uk_companies_house_clickhouse_companies",
         "wikidata_snapshot_complete",
     ):

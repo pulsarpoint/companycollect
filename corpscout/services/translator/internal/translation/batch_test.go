@@ -5,7 +5,9 @@ import (
 	"errors"
 	"fmt"
 	"slices"
+	"strings"
 	"testing"
+	"unicode/utf8"
 
 	"github.com/pulsarpoint/corpscout/translator/internal/queue"
 	"github.com/pulsarpoint/corpscout/translator/internal/translation"
@@ -117,6 +119,69 @@ func TestTranslateItemsReturnsTransientProviderError(t *testing.T) {
 	}
 }
 
+func TestTranslateItemsRecoversTruncatedSingleItemWithValidatedFragments(t *testing.T) {
+	ctx := context.Background()
+	sourceText := "Att äga och förvalta samfälld mark för fastigheterna Gastorp 2:184, 2:171, 2:182, 2:186, 2:199, 2:202, 9:4, 2:35, 2:40 och 2:42 jämte gemensamhetsanordningarna."
+	items := testQueueItems(1)
+	items[0].SourceText = sourceText
+	translator := &truncateLongOutputTranslator{maxSourceRunes: 32}
+
+	output, failed, err := translation.TranslateItems(
+		ctx,
+		translator,
+		items,
+		30,
+		"local",
+		"qwen3:6b",
+		testPromptData(),
+	)
+	if err != nil {
+		t.Fatalf("TranslateItems() error = %v, want nil", err)
+	}
+	if len(output) != 1 || len(failed) != 0 {
+		t.Fatalf("TranslateItems() returned %d output and %d failed rows, want 1 output and 0 failed", len(output), len(failed))
+	}
+	if output[0].SourceText != sourceText {
+		t.Fatalf("output source text = %q, want original source text", output[0].SourceText)
+	}
+	if output[0].TranslatedText != sourceText {
+		t.Fatalf("reassembled translation = %q, want %q", output[0].TranslatedText, sourceText)
+	}
+	if translator.truncatedCalls < 2 {
+		t.Fatalf("truncated calls = %d, want recursive fragment recovery", translator.truncatedCalls)
+	}
+	if translator.successfulCalls < 2 {
+		t.Fatalf("successful fragment calls = %d, want multiple validated fragments", translator.successfulCalls)
+	}
+}
+
+func TestTranslateItemsSplitsOversizedPunctuationDelimitedToken(t *testing.T) {
+	ctx := context.Background()
+	sourceText := "gruppnummer: 6,11,14,16,18,20,21,24,25,28,29,30,31,32."
+	items := testQueueItems(1)
+	items[0].SourceText = sourceText
+	translator := &truncateLongOutputTranslator{maxSourceRunes: 12}
+
+	output, failed, err := translation.TranslateItems(
+		ctx,
+		translator,
+		items,
+		30,
+		"local",
+		"qwen3:6b",
+		testPromptData(),
+	)
+	if err != nil {
+		t.Fatalf("TranslateItems() error = %v, want nil", err)
+	}
+	if len(output) != 1 || len(failed) != 0 {
+		t.Fatalf("TranslateItems() returned %d output and %d failed rows, want 1 output and 0 failed", len(output), len(failed))
+	}
+	if strings.ReplaceAll(output[0].TranslatedText, " ", "") != strings.ReplaceAll(sourceText, " ", "") {
+		t.Fatalf("reassembled translation = %q, want punctuation-delimited values preserved from %q", output[0].TranslatedText, sourceText)
+	}
+}
+
 func testPromptData() translation.PromptData {
 	return translation.PromptData{
 		SourceLanguage: "Norwegian",
@@ -190,6 +255,30 @@ func (alwaysModelOutputFailureTranslator) Translate(
 
 type transientFailureTranslator struct {
 	err error
+}
+
+type truncateLongOutputTranslator struct {
+	maxSourceRunes  int
+	truncatedCalls  int
+	successfulCalls int
+}
+
+func (t *truncateLongOutputTranslator) Translate(
+	ctx context.Context,
+	items []translation.TranslationInput,
+	timeoutSeconds int,
+	promptData translation.PromptData,
+) ([]translation.TranslationResult, error) {
+	if len(items) != 1 || utf8.RuneCountInString(items[0].SourceText) > t.maxSourceRunes {
+		t.truncatedCalls++
+		return nil, fmt.Errorf("fake truncated output: %w: %w", translation.ErrModelOutput, translation.ErrOutputTruncated)
+	}
+
+	t.successfulCalls++
+	return []translation.TranslationResult{{
+		ItemID:         items[0].ItemID,
+		TranslatedText: strings.TrimSpace(items[0].SourceText),
+	}}, nil
 }
 
 func (t transientFailureTranslator) Translate(

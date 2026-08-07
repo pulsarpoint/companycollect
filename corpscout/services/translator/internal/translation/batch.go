@@ -5,8 +5,15 @@ import (
 	"errors"
 	"fmt"
 	"slices"
+	"strings"
+	"unicode/utf8"
 
 	"github.com/pulsarpoint/corpscout/translator/internal/queue"
+)
+
+const (
+	truncatedOutputChunkRuneLimit = 48
+	minimumOutputChunkRuneLimit   = 8
 )
 
 // TranslateItems translates queue items and applies the deterministic-output
@@ -51,6 +58,9 @@ func TranslateItems(
 	if !errors.Is(err, ErrModelOutput) {
 		return nil, nil, err
 	}
+	if errors.Is(err, ErrOutputTruncated) {
+		return recoverTruncatedItems(ctx, translator, items, timeoutSeconds, provider, model, promptData)
+	}
 
 	shuffled := shuffledItems(items)
 	output, shuffledErr := translateItemsOnce(ctx, translator, shuffled, timeoutSeconds, provider, model, promptData)
@@ -87,6 +97,217 @@ func TranslateItems(
 	combinedFailed = append(combinedFailed, rightFailed...)
 
 	return combinedOutput, combinedFailed, nil
+}
+
+func recoverTruncatedItems(
+	ctx context.Context,
+	translator Translator,
+	items []queue.Item,
+	timeoutSeconds int,
+	provider string,
+	model string,
+	promptData PromptData,
+) ([]queue.TranslatedItem, []queue.FailedItem, error) {
+	output := make([]queue.TranslatedItem, 0, len(items))
+	failed := make([]queue.FailedItem, 0)
+
+	for _, item := range items {
+		singleOutput, err := translateItemsOnce(
+			ctx,
+			translator,
+			[]queue.Item{item},
+			timeoutSeconds,
+			provider,
+			model,
+			promptData,
+		)
+		if errors.Is(err, ErrOutputTruncated) {
+			translatedItem, recoveryErr := translateItemInFragments(
+				ctx,
+				translator,
+				item,
+				timeoutSeconds,
+				provider,
+				model,
+				promptData,
+				truncatedOutputChunkRuneLimit,
+			)
+			if recoveryErr == nil {
+				output = append(output, translatedItem)
+				continue
+			}
+			err = recoveryErr
+		} else if errors.Is(err, ErrModelOutput) {
+			singleOutput, err = translateItemsOnce(
+				ctx,
+				translator,
+				[]queue.Item{item},
+				timeoutSeconds,
+				provider,
+				model,
+				promptData,
+			)
+		}
+
+		if err == nil {
+			output = append(output, singleOutput[0])
+			continue
+		}
+		if !errors.Is(err, ErrModelOutput) {
+			return nil, nil, err
+		}
+		failed = append(failed, queue.FailedItem{
+			Item:         item,
+			ErrorMessage: err.Error(),
+		})
+	}
+
+	return output, failed, nil
+}
+
+func translateItemInFragments(
+	ctx context.Context,
+	translator Translator,
+	item queue.Item,
+	timeoutSeconds int,
+	provider string,
+	model string,
+	promptData PromptData,
+	chunkRuneLimit int,
+) (queue.TranslatedItem, error) {
+	fragments := splitTranslationText(item.SourceText, chunkRuneLimit)
+	if len(fragments) < 2 {
+		nextLimit := smallerChunkRuneLimit(item.SourceText, chunkRuneLimit)
+		if nextLimit == 0 {
+			return queue.TranslatedItem{}, fmt.Errorf(
+				"%w: %w after fragmenting source text to %d runes",
+				ErrModelOutput,
+				ErrOutputTruncated,
+				chunkRuneLimit,
+			)
+		}
+		fragments = splitTranslationText(item.SourceText, nextLimit)
+		chunkRuneLimit = nextLimit
+	}
+
+	translatedFragments := make([]string, 0, len(fragments))
+	for _, fragment := range fragments {
+		fragmentItem := item
+		fragmentItem.SourceText = fragment
+
+		fragmentOutput, err := translateItemsOnce(
+			ctx,
+			translator,
+			[]queue.Item{fragmentItem},
+			timeoutSeconds,
+			provider,
+			model,
+			promptData,
+		)
+		if errors.Is(err, ErrOutputTruncated) {
+			nextLimit := smallerChunkRuneLimit(fragment, chunkRuneLimit)
+			if nextLimit == 0 {
+				return queue.TranslatedItem{}, err
+			}
+			recoveredFragment, recoveryErr := translateItemInFragments(
+				ctx,
+				translator,
+				fragmentItem,
+				timeoutSeconds,
+				provider,
+				model,
+				promptData,
+				nextLimit,
+			)
+			if recoveryErr != nil {
+				return queue.TranslatedItem{}, recoveryErr
+			}
+			translatedFragments = append(translatedFragments, recoveredFragment.TranslatedText)
+			continue
+		}
+		if err != nil {
+			return queue.TranslatedItem{}, err
+		}
+		translatedFragments = append(translatedFragments, fragmentOutput[0].TranslatedText)
+	}
+
+	return queue.TranslatedItem{
+		Item:           item,
+		TranslatedText: strings.Join(translatedFragments, " "),
+		Provider:       provider,
+		Model:          model,
+	}, nil
+}
+
+func splitTranslationText(sourceText string, chunkRuneLimit int) []string {
+	rawWords := strings.Fields(sourceText)
+	if len(rawWords) == 0 || chunkRuneLimit <= 0 {
+		return nil
+	}
+	words := make([]string, 0, len(rawWords))
+	for _, word := range rawWords {
+		words = append(words, splitOversizedTranslationToken(word, chunkRuneLimit)...)
+	}
+
+	fragments := make([]string, 0, (utf8.RuneCountInString(sourceText)/chunkRuneLimit)+1)
+	currentWords := make([]string, 0)
+	currentRunes := 0
+	for _, word := range words {
+		wordRunes := utf8.RuneCountInString(word)
+		separatorRunes := 0
+		if len(currentWords) > 0 {
+			separatorRunes = 1
+		}
+		if len(currentWords) > 0 && currentRunes+separatorRunes+wordRunes > chunkRuneLimit {
+			fragments = append(fragments, strings.Join(currentWords, " "))
+			currentWords = currentWords[:0]
+			currentRunes = 0
+			separatorRunes = 0
+		}
+		currentWords = append(currentWords, word)
+		currentRunes += separatorRunes + wordRunes
+	}
+	if len(currentWords) > 0 {
+		fragments = append(fragments, strings.Join(currentWords, " "))
+	}
+	return fragments
+}
+
+func splitOversizedTranslationToken(token string, chunkRuneLimit int) []string {
+	remaining := []rune(token)
+	if len(remaining) <= chunkRuneLimit {
+		return []string{token}
+	}
+
+	parts := make([]string, 0)
+	for len(remaining) > chunkRuneLimit {
+		splitAt := 0
+		for index := chunkRuneLimit; index >= 1; index-- {
+			if strings.ContainsRune(",;|/\\", remaining[index-1]) {
+				splitAt = index
+				break
+			}
+		}
+		if splitAt == 0 {
+			return []string{token}
+		}
+		parts = append(parts, string(remaining[:splitAt]))
+		remaining = remaining[splitAt:]
+	}
+	if len(remaining) > 0 {
+		parts = append(parts, string(remaining))
+	}
+	return parts
+}
+
+func smallerChunkRuneLimit(sourceText string, currentLimit int) int {
+	sourceRunes := utf8.RuneCountInString(strings.TrimSpace(sourceText))
+	if sourceRunes <= 1 || currentLimit <= minimumOutputChunkRuneLimit {
+		return 0
+	}
+
+	nextLimit := min(currentLimit/2, sourceRunes/2)
+	return max(minimumOutputChunkRuneLimit, nextLimit)
 }
 
 // translateItemsOnce performs exactly one translator request and validates that

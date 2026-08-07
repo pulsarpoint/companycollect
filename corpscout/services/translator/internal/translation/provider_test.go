@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
@@ -187,6 +188,45 @@ func TestParseTranslationResponseAcceptsJsonFenceAndRequiresEveryExpectedItem(t 
 	}
 	if !strings.Contains(err.Error(), "unexpected item_id") {
 		t.Fatalf("expected unexpected item_id error, got %v", err)
+	}
+}
+
+func TestLocalOpenAICompatibleProviderClassifiesTruncatedOutput(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{
+			"choices": [
+				{
+					"finish_reason": "length",
+					"message": {
+						"content": "{\"translations\":[{\"item_id\":\"1\",\"translated_text\":\"truncated"
+					}
+				}
+			]
+		}`))
+	}))
+	defer server.Close()
+
+	provider, err := translation.Init(translation.Config{
+		BaseURL: server.URL + "/v1",
+		Model:   "qwen3:6b",
+		APIKey:  "test-key",
+	})
+	if err != nil {
+		t.Fatalf("new provider: %v", err)
+	}
+
+	_, err = provider.Translate(context.Background(), []translation.TranslationInput{
+		{ItemID: "item-1", SourceText: "lang text", SourceLang: "sv", TargetLang: "en"},
+	}, 30, translation.PromptData{
+		SourceLanguage: "Swedish",
+		TargetLanguage: "English",
+	})
+	if !errors.Is(err, translation.ErrModelOutput) {
+		t.Fatalf("Translate() error = %v, want ErrModelOutput", err)
+	}
+	if !errors.Is(err, translation.ErrOutputTruncated) {
+		t.Fatalf("Translate() error = %v, want ErrOutputTruncated", err)
 	}
 }
 

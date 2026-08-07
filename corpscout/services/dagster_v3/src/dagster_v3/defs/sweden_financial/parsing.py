@@ -81,6 +81,8 @@ _FACT_COLUMNS = (
     "concept_namespace",
     "concept_local_name",
     "context_id",
+    "context_period_start",
+    "context_period_end",
     "unit_id",
     "decimals",
     "precision",
@@ -170,6 +172,8 @@ _FACT_ARROW_TYPES = (
     _STRING,
     _STRING,
     _STRING,
+    _DATE32,
+    _DATE32,
     _STRING,
     _STRING,
     _STRING,
@@ -862,6 +866,8 @@ def _ensure_parsed_report_tables(connection: Any) -> None:
             concept_namespace varchar,
             concept_local_name varchar,
             context_id varchar,
+            context_period_start date,
+            context_period_end date,
             unit_id varchar,
             decimals varchar,
             precision varchar,
@@ -880,6 +886,21 @@ def _ensure_parsed_report_tables(connection: Any) -> None:
             source_payload_hash varchar,
             resolved_at timestamp
         )
+        """
+    )
+    # Existing per-year DuckDB files predate context-period persistence. Keep
+    # them forward-compatible so a changed-archive parse can add the new values
+    # without requiring operators to delete and rebuild the whole local file.
+    connection.execute(
+        f"""
+        alter table {SWEDEN_FINANCIAL_DATASET_NAME}.facts
+            add column if not exists context_period_start date
+        """
+    )
+    connection.execute(
+        f"""
+        alter table {SWEDEN_FINANCIAL_DATASET_NAME}.facts
+            add column if not exists context_period_end date
         """
     )
     connection.execute(
@@ -1291,7 +1312,10 @@ def _parsed_fact_row(
     concept_qname = fact.get("name", "")
     concept_namespace, concept_local_name = _resolve_qname(concept_qname, fact.nsmap)
     context_id = fact.get("contextRef", "")
-    context = contexts.get(context_id, {"dimensions": {}})
+    context = contexts.get(
+        context_id,
+        {"period_start": None, "period_end": None, "dimensions": {}},
+    )
     unit_id = fact.get("unitRef")
     raw_value = " ".join("".join(fact.itertext()).split())
     amount_original = None
@@ -1328,6 +1352,8 @@ def _parsed_fact_row(
         concept_namespace,
         concept_local_name,
         context_id,
+        context.get("period_start"),
+        context.get("period_end"),
         unit_id,
         fact.get("decimals"),
         fact.get("precision"),

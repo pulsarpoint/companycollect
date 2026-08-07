@@ -267,6 +267,7 @@ EXPECTED_MIGRATIONS = (
     "000250_corpscout_se_financial_concept_labels_readable",
     "000251_corpscout_se_financial_taxonomy_translations",
     "000252_corpscout_text_translations_multilingual",
+    "000253_corpscout_se_bolagsverket_financial_observations",
 )
 
 EXPECTED_ACCESS_MIGRATIONS = ("000241_corpscout_person_correction_writer_role",)

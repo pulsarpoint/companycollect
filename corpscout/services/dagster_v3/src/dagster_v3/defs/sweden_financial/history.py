@@ -20,7 +20,7 @@ alongside its SQL builders -- the same placement as
 ``assets.py`` is a thin wrapper that just calls it and returns a
 ``MaterializeResult``. ``build_history_guard_metadata_sql`` reuses the
 exact same trust-guard CTEs as ``build_history_insert_sql`` (via the
-shared ``_history_guard_ctes`` helper) so the per-run quality metadata can
+shared ``build_history_guard_ctes`` helper) so the per-run quality metadata can
 never silently drift from what the INSERT itself actually did.
 
 Concept discovery (read-only ClickHouse, 2026-07-18): frequency of
@@ -165,7 +165,7 @@ _CONTEXT_YEAR_PATTERN = r"(?i)^(period|balans)([0-9]+)$"
 _CONTEXT_YEAR_EXTRACT_PATTERN = r"^(?:period|balans)([0-9]+)$"
 
 
-def _history_guard_ctes() -> str:
+def build_history_guard_ctes() -> str:
     """Return the WITH-body CTEs shared, verbatim, by ``build_history_insert_sql``
     and ``build_history_guard_metadata_sql``: FX-rate resolution through the
     trust guard's ``disqualified_statements`` result (no trailing comma --
@@ -190,7 +190,8 @@ exchange_rate_pairs AS (
     SELECT
         rate_date,
         maxIf(rate, quote_currency = 'USD')
-            / maxIf(rate, quote_currency = 'SEK') AS fx_rate_to_usd
+            / maxIf(rate, quote_currency = 'SEK') AS fx_rate_to_usd,
+        anyIf(source, quote_currency = 'SEK') AS fx_source
     FROM latest_exchange_rates
     GROUP BY rate_date
     HAVING countDistinct(quote_currency) = 2
@@ -378,7 +379,7 @@ def build_history_insert_sql(qualified_stage_table: str) -> str:
     {columns}
 )
 WITH
-{_history_guard_ctes()},
+{build_history_guard_ctes()},
 ranked_history_rows AS (
     SELECT
         company_id,
@@ -423,7 +424,7 @@ def build_history_guard_metadata_sql() -> str:
     """Return a read-only aggregate over the trust-guard CTEs, for per-run
     ``MaterializeResult`` metadata.
 
-    Reuses ``_history_guard_ctes`` verbatim -- the same eligibility, overlap,
+    Reuses ``build_history_guard_ctes`` verbatim -- the same eligibility, overlap,
     and disqualification logic ``build_history_insert_sql`` actually applied
     -- so these numbers can never silently drift from what the INSERT did.
     Not part of the INSERT's own execution: the caller issues this as a
@@ -439,7 +440,7 @@ def build_history_guard_metadata_sql() -> str:
     guard-logic bug, not merely a data-quality signal.
     """
     return f"""WITH
-{_history_guard_ctes()}
+{build_history_guard_ctes()}
 SELECT
     (SELECT count() FROM overlap_checks) AS overlap_pair_count,
     (SELECT countIf(max_relative_diff <= {OVERLAP_AGREEMENT_TOLERANCE}) FROM overlap_checks)
@@ -484,8 +485,7 @@ _GUARD_COLUMNS = (
 
 def _history_quality_metadata(row: tuple[Any, ...]) -> dict[str, int]:
     return {
-        column: int(value)
-        for column, value in zip(_QUALITY_COLUMNS, row, strict=True)
+        column: int(value) for column, value in zip(_QUALITY_COLUMNS, row, strict=True)
     }
 
 
@@ -503,8 +503,7 @@ def _agreement_rate(agree_count: int, pair_count: int) -> float | None:
 
 def _history_guard_metadata(row: tuple[Any, ...]) -> dict[str, int | float | None]:
     raw = {
-        column: int(value)
-        for column, value in zip(_GUARD_COLUMNS, row, strict=True)
+        column: int(value) for column, value in zip(_GUARD_COLUMNS, row, strict=True)
     }
     return {
         "overlap_pair_count": raw["overlap_pair_count"],

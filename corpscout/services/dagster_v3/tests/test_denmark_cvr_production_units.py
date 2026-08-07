@@ -10,6 +10,7 @@ from dagster_duckdb import DuckDBResource
 from dagster_v3.defs.denmark_cvr.company_details import (
     DENMARK_CVR_COMPANY_DETAIL_PARTITIONS,
     DenmarkCvrCompanyDetailDownload,
+    DenmarkCvrCompanyDetailHttpFailure,
     company_detail_bucket_key,
 )
 from dagster_v3.defs.denmark_cvr.duckdb_asset import (
@@ -23,7 +24,9 @@ from dagster_v3.defs.denmark_cvr.production_units import (
     denmark_cvr_production_unit_updates_s3,
     denmark_cvr_production_units_duckdb,
     denmark_cvr_production_units_s3,
+    production_unit_failure_object_key,
     production_unit_object_key,
+    production_unit_update_failure_object_key,
     production_unit_update_object_key,
     replace_production_units_from_captures,
     write_production_unit_partition,
@@ -64,7 +67,13 @@ class FakeObjectStore:
 
 
 class FakeDetailResource:
-    def __init__(self, downloads: dict[str, DenmarkCvrCompanyDetailDownload]) -> None:
+    def __init__(
+        self,
+        downloads: dict[
+            str,
+            DenmarkCvrCompanyDetailDownload | DenmarkCvrCompanyDetailHttpFailure,
+        ],
+    ) -> None:
         self.downloads = downloads
         self.calls: list[tuple[str, ...]] = []
 
@@ -146,6 +155,19 @@ def _download(
     )
 
 
+def _http_failure(cvr: str) -> DenmarkCvrCompanyDetailHttpFailure:
+    return DenmarkCvrCompanyDetailHttpFailure(
+        cvr=cvr,
+        source_url=(
+            "https://datacvr.virk.dk/gateway/virksomhed/"
+            f"hentVirksomhed?cvrnummer={cvr}&locale=en"
+        ),
+        status=500,
+        attempt_count=3,
+        response_headers={"content-type": "application/json"},
+    )
+
+
 def _capture(
     cvr: str,
     *,
@@ -212,7 +234,9 @@ def test_raw_partition_uses_company_bucket_and_one_detail_session() -> None:
     assert summary.selected_company_count == 2
     assert summary.downloaded_company_count == 2
     assert summary.written_object_count == 2
-    stored = json.loads(store.objects[production_unit_object_key(partition_key, first_cvr)])
+    stored = json.loads(
+        store.objects[production_unit_object_key(partition_key, first_cvr)]
+    )
     assert stored["cvrnummer"] == first_cvr
     assert stored["source_capture_type"] == "production_unit_snapshot"
     assert set(stored["produktionsenheder"]) == {
@@ -220,6 +244,86 @@ def test_raw_partition_uses_company_bucket_and_one_detail_session() -> None:
         "ophoerteProduktionsenheder",
     }
     assert "stamdata" not in stored
+
+
+def test_raw_partition_skips_exhausted_500_and_continues() -> None:
+    failed_cvr = "10000218"
+    successful_cvr = "10000356"
+    partition_key = company_detail_bucket_key(failed_cvr)
+    assert company_detail_bucket_key(successful_cvr) == partition_key
+    details = FakeDetailResource(
+        {
+            failed_cvr: _http_failure(failed_cvr),
+            successful_cvr: _download(
+                successful_cvr,
+                active_units=[
+                    _unit(successful_cvr, "1000000001", name="Successful unit")
+                ],
+                ceased_units=[],
+            ),
+        }
+    )
+    store = FakeObjectStore()
+    warning_calls: list[tuple[object, ...]] = []
+
+    summary = write_production_unit_partition(
+        object_store=store,
+        details=details,
+        partition_key=partition_key,
+        cvrs=(failed_cvr, successful_cvr),
+        run_id="raw-run",
+        retrieved_at=datetime(2026, 7, 18, 12, 0, tzinfo=UTC),
+        log_warning=lambda *args: warning_calls.append(args),
+    )
+
+    failure_key = production_unit_failure_object_key(partition_key, failed_cvr)
+    marker = json.loads(store.objects[failure_key])
+    assert details.calls == [(failed_cvr, successful_cvr)]
+    assert summary.selected_company_count == 2
+    assert summary.resolved_company_count == 2
+    assert summary.skipped_company_count == 1
+    assert summary.skipped_request_attempt_count == 3
+    assert summary.downloaded_company_count == 1
+    assert summary.written_object_count == 2
+    assert marker["cvr"] == failed_cvr
+    assert marker["http_status"] == 500
+    assert marker["request_attempt_count"] == 3
+    assert marker["decision"] == "ignore_company"
+    assert "body" not in marker
+    assert production_unit_object_key(partition_key, successful_cvr) in store.objects
+    assert len(warning_calls) == 1
+
+
+def test_raw_partition_reuses_checkpointed_failure_marker() -> None:
+    cvr = "10000218"
+    partition_key = company_detail_bucket_key(cvr)
+    failure_key = production_unit_failure_object_key(partition_key, cvr)
+    store = FakeObjectStore({failure_key: b"{}"})
+    details = FakeDetailResource({})
+
+    summary = write_production_unit_partition(
+        object_store=store,
+        details=details,
+        partition_key=partition_key,
+        cvrs=(cvr,),
+        run_id="rerun",
+        retrieved_at=datetime(2026, 7, 19, 12, 0, tzinfo=UTC),
+    )
+
+    assert details.calls == [()]
+    assert summary.resolved_company_count == 1
+    assert summary.already_skipped_company_count == 1
+    assert summary.skipped_company_count == 0
+    assert summary.downloaded_company_count == 0
+    assert summary.written_object_count == 0
+
+
+def test_update_failure_marker_uses_date_partition_path() -> None:
+    cvr = "45448037"
+    assert production_unit_update_failure_object_key("2026-07-19", cvr) == (
+        "denmark_cvr/production_units/updates/date=2026-07-19/"
+        f"{company_detail_bucket_key(cvr)}/cvr={cvr}/production_units_error.json"
+    )
 
 
 def test_capture_load_extracts_active_and_ceased_units_into_duckdb(

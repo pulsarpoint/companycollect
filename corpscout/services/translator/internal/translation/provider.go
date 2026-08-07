@@ -310,7 +310,8 @@ func (p *LocalOpenAICompatibleProvider) Translate(
 
 	var providerResponse struct {
 		Choices []struct {
-			Message struct {
+			FinishReason string `json:"finish_reason"`
+			Message      struct {
 				Content *string `json:"content"`
 			} `json:"message"`
 		} `json:"choices"`
@@ -343,10 +344,21 @@ func (p *LocalOpenAICompatibleProvider) Translate(
 	}
 	results, err := ParseTranslationResponse(*providerResponse.Choices[0].Message.Content, expectedPromptIDs)
 	if err != nil {
+		finishReason := strings.TrimSpace(providerResponse.Choices[0].FinishReason)
+		if strings.EqualFold(finishReason, "length") {
+			err = fmt.Errorf(
+				"%w: provider returned finish_reason=%q: %w: %v",
+				ErrModelOutput,
+				finishReason,
+				ErrOutputTruncated,
+				err,
+			)
+		}
 		p.logger.Error(
 			"translation provider request failed",
 			"err", err,
 			"status_code", resp.StatusCode,
+			"finish_reason", finishReason,
 			"item_count", len(items),
 			"duration_ms", time.Since(start).Milliseconds(),
 		)

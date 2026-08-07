@@ -33,9 +33,9 @@ def test_sweden_financial_backfill_and_current_assets_are_separate() -> None:
         ).asset_layer.executable_asset_keys
     }
     # The weekly job runs the Sweden chain end-to-end -- sync, catalog, parse,
-    # and both standalone ClickHouse exports. The exports are stateless
-    # reconcilers, so no later year-file rebuild can orphan them (the
-    # 2026-07-18 incident).
+    # the standalone ClickHouse exports, and taxonomy/concept enrichment. The
+    # exports are stateless reconcilers, so no later year-file rebuild can
+    # orphan them (the 2026-07-18 incident).
     assert current_job_asset_keys == {
         "sweden_financial_current_raw_archives_s3",
         "sweden_financial_current_report_xhtml_catalog_duckdb",
@@ -44,6 +44,10 @@ def test_sweden_financial_backfill_and_current_assets_are_separate() -> None:
         "sweden_financial_current_reports_clickhouse",
         "sweden_financial_current_facts_clickhouse",
         "sweden_financial_company_source_records_clickhouse",
+        "se_financial_facts_concepts",
+        "se_financial_taxonomy_concepts",
+        "se_financial_taxonomy_official_translations",
+        "sweden_financial_taxonomy_translation_load",
     }
 
     backfill_raw_node = repo.asset_graph.get(
@@ -146,6 +150,7 @@ def test_sweden_financial_backfill_and_current_assets_are_separate() -> None:
     assert clickhouse_job_asset_keys == {
         "sweden_financial_metrics_clickhouse",
         "se_financial_history_clickhouse",
+        "se_bolagsverket_financial_observations_clickhouse",
         "se_company_officers_clickhouse",
         "se_company_audits_clickhouse",
         "sweden_financial_company_source_records_clickhouse",
@@ -162,6 +167,19 @@ def test_sweden_financial_backfill_and_current_assets_are_separate() -> None:
         "sweden_financial_backfill_reports_clickhouse",
         "sweden_financial_backfill_facts_clickhouse",
         "sweden_financial_company_source_records_clickhouse",
+    }
+
+    context_period_backfill_job_asset_keys = {
+        key.path[-1]
+        for key in repo.get_job(
+            "sweden_financial_context_period_backfill_job"
+        ).asset_layer.executable_asset_keys
+    }
+    assert context_period_backfill_job_asset_keys == {
+        "sweden_financial_backfill_parsed_reports_duckdb",
+        "sweden_financial_backfill_facts_usd_duckdb",
+        "sweden_financial_backfill_reports_clickhouse",
+        "sweden_financial_backfill_facts_clickhouse",
     }
 
     current_clickhouse_job_asset_keys = {
@@ -262,6 +280,26 @@ def test_se_financial_history_clickhouse_asset_is_wired_correctly() -> None:
         ).asset_layer.executable_asset_keys
     }
     assert "se_financial_history_clickhouse" in clickhouse_job_asset_keys
+
+
+def test_se_bolagsverket_financial_observations_asset_is_wired_correctly() -> None:
+    from dagster_v3.definitions import defs as load_defs
+
+    repo = load_defs().get_repository_def()
+    node = repo.asset_graph.get(
+        dg.AssetKey("se_bolagsverket_financial_observations_clickhouse")
+    )
+
+    assert node.group_name == "sweden_financial"
+    assert node.pools == set()
+    assert node.partitions_def is None
+    assert node.parent_keys == {
+        dg.AssetKey("exchange_rates_v2_clickhouse"),
+        dg.AssetKey("sweden_financial_backfill_reports_clickhouse"),
+        dg.AssetKey("sweden_financial_current_reports_clickhouse"),
+        dg.AssetKey("sweden_financial_backfill_facts_clickhouse"),
+        dg.AssetKey("sweden_financial_current_facts_clickhouse"),
+    }
 
 
 def test_sweden_financial_raw_assets_do_not_require_duckdb_resource() -> None:
@@ -438,9 +476,7 @@ def test_sweden_financial_processed_archive_counts_by_year_groups_rows() -> None
         sweden_financial_processed_archive_counts_by_year,
     )
 
-    clickhouse = _FakeArchiveCheckClickHouseResource(
-        [("2020", 12), ("2026", 25)]
-    )
+    clickhouse = _FakeArchiveCheckClickHouseResource([("2020", 12), ("2026", 25)])
 
     counts = sweden_financial_processed_archive_counts_by_year(clickhouse)
 

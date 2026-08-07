@@ -118,6 +118,12 @@ Chain (year-partitioned backfill + non-partitioned weekly current refresh):
    touch rows outside its own scope.
 5. **Derived wave** (full rebuilds from ClickHouse facts, stage + exchange with
    shrink guard):
+   - **`se_bolagsverket_financial_observations`** — source-owned observations,
+     one row per mapped fact and represented fiscal year. Filing/context/concept
+     identity, original value, dimensions, precision and FX provenance are
+     preserved; reported and comparative assertions coexist. Conflicts are
+     quality flags, not filters, and no canonical or cross-source value is
+     selected here.
    - **`se_financial_metrics`** — one canonical row per filing: undimensioned
      current-period facts, highest-declared-precision preference, standard
      Swedish concept mapping (revenue, operating profit, profit/loss, assets,
@@ -154,8 +160,9 @@ the backoffice facts drill-down.
 | `sweden_financial_backfill_job` | raw + catalog + parse, year partitions | manual backfill |
 | `sweden_financial_current_year_job` | full weekly chain: sync + catalog + parse + reconciling reports/facts exports (non-partitioned) | `sweden_financial_current_year_weekly`, Sat 06:45 Europe/Belgrade, RUNNING |
 | `sweden_financial_backfill_clickhouse_job` | backfill reports+facts export pair | manual, after parse |
+| `sweden_financial_context_period_backfill_job` | cached XHTML reparse + FX + scoped reports/facts exports, one archive-year partition per run | manual schema/data rollout |
 | `sweden_financial_current_clickhouse_job` | reconciling current export pair (manual; safe any time -- stateless diff vs ClickHouse) | manual |
-| `sweden_financial_clickhouse_job` | derived wave: metrics, history, officers, audits | after exports |
+| `sweden_financial_clickhouse_job` | derived wave: source observations, metrics, history, officers, audits | after exports |
 
 Operational notes:
 

@@ -153,7 +153,9 @@ The parsed DuckDB tables are:
 - `sweden_financial.reports` - one row per parsed XHTML report, aligned with the
   ClickHouse `corpscout.se_financial_reports` shape.
 - `sweden_financial.facts` - one row per parsed inline XBRL fact, aligned with
-  the ClickHouse `corpscout.se_financial_facts` shape.
+  the ClickHouse `corpscout.se_financial_facts` shape. Context start/end dates
+  are retained independently from the filing period so a comparative fact can
+  be assigned to the financial year it actually represents.
 - `sweden_financial.parse_errors` - one row per XHTML document that failed
   parsing, so a bad report does not block the rest of the partition.
 
@@ -196,6 +198,24 @@ and the exact extracted XHTML URI under
 `s3://source-sweden-financial/...`. This keeps every unmapped taxonomy concept
 queryable and traceable without duplicating long document paths across hundreds
 of millions of physical fact rows.
+
+`se_bolagsverket_financial_observations_clickhouse` builds the source-owned
+semantic layer `corpscout.se_bolagsverket_financial_observations`. It stores one
+row per mapped Bolagsverket fact and represented financial year. Reported facts,
+comparative columns, duplicate concepts, and later filings of the same year all
+remain separate observations identified by source record, statement, context,
+concept, and fact ordinal. The table does **not** choose a canonical company-year
+value and does not merge Bolagsverket evidence with another source.
+
+The observation uses the XBRL context period when available. Existing parsed
+rows without context dates fall back to the filing-period shift encoded by
+`periodN` / `balansN` and receive the `represented_period_approximated` quality
+flag. Conflicting comparative revenue is retained and marked
+`revenue_overlap_disagreement`; ambiguous solidity scale is likewise annotated,
+not filtered. Each row carries the original value, dimensions, unit, precision,
+currency, represented-year USD conversion and FX provenance. Raw facts remain
+the exhaustive layer for concepts not yet mapped into observations. Cross-source
+resolution belongs in a later table that reads source-owned observations.
 
 `se_financial_facts_concepts` retains the distinct QName vocabulary observed in
 facts. It is an inventory and humanized-label fallback, not the authoritative
@@ -300,7 +320,15 @@ The ClickHouse layer is three jobs:
 reports/facts export pair), `sweden_financial_current_clickhouse_job` (the
 current-weekly export pair), and `sweden_financial_clickhouse_job` (the derived
 wave: `sweden_financial_metrics_clickhouse`, `se_financial_history_clickhouse`,
-`se_company_officers_clickhouse`, `se_company_audits_clickhouse` — full
-rebuilds from ClickHouse facts, which stays correct for derivations and keeps
-the shrink guard). Run exports after the matching parsed DuckDB partitions are
-materialized, then the derived wave.
+`se_bolagsverket_financial_observations_clickhouse`,
+`se_company_officers_clickhouse`, `se_company_audits_clickhouse` — full rebuilds
+from ClickHouse facts, which stays correct for derivations and keeps the shrink
+guard). Run exports after the matching parsed DuckDB partitions are materialized,
+then the derived wave.
+
+For schema changes that require exact XBRL context periods to be recovered from
+the cached XHTML, `sweden_financial_context_period_backfill_job` starts at the
+existing per-year XHTML catalog and executes parse, FX enrichment, and scoped
+reports/facts exports in one partition run. This operational job avoids raw
+archive downloads and prevents a year from being exported unless its full
+reparse succeeded.

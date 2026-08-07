@@ -61,6 +61,8 @@ SE_FINANCIAL_FACTS_EXPORT_COLUMNS = (
     "concept_namespace",
     "concept_local_name",
     "context_id",
+    "context_period_start",
+    "context_period_end",
     "unit_id",
     "decimals",
     "precision",
@@ -186,20 +188,21 @@ def _local_report_counts_by_archive(duckdb_connection: Any) -> dict[str, int]:
 
 def _local_facts_counts_by_archive(
     duckdb_connection: Any,
-) -> dict[str, tuple[int, int]]:
+) -> dict[str, tuple[int, int, int]]:
     rows = duckdb_connection.execute(
         f"""
         select r.source_archive_key,
                count(*),
-               count(f.amount_usd)
+               count(f.amount_usd),
+               count(f.context_period_end)
         from {SWEDEN_FINANCIAL_DATASET_NAME}.facts f
         join {SWEDEN_FINANCIAL_DATASET_NAME}.reports r using (statement_key)
         group by 1
         """
     ).fetchall()
     return {
-        str(key): (int(fact_count), int(usd_count))
-        for key, fact_count, usd_count in rows
+        str(key): (int(fact_count), int(usd_count), int(context_period_count))
+        for key, fact_count, usd_count, context_period_count in rows
     }
 
 
@@ -218,17 +221,21 @@ def _diff_against_clickhouse_counts(
 
 def _diff_facts_against_clickhouse_counts(
     *,
-    local_counts: dict[str, tuple[int, int]],
-    clickhouse_rows: Sequence[tuple[Any, Any, Any]],
+    local_counts: dict[str, tuple[int, int, int]],
+    clickhouse_rows: Sequence[tuple[Any, Any, Any, Any]],
 ) -> list[str]:
     clickhouse_counts = {
-        str(key): (int(fact_count), int(usd_count))
-        for key, fact_count, usd_count in clickhouse_rows
+        str(key): (
+            int(fact_count),
+            int(usd_count),
+            int(context_period_count),
+        )
+        for key, fact_count, usd_count, context_period_count in clickhouse_rows
     }
     return sorted(
         key
         for key, counts in local_counts.items()
-        if clickhouse_counts.get(key, (0, 0)) != counts
+        if clickhouse_counts.get(key, (0, 0, 0)) != counts
     )
 
 
@@ -302,10 +309,11 @@ def resolve_unreconciled_facts_archive_keys(
     report_counts = _local_report_counts_by_archive(duckdb_connection)
     _require_nonempty_local_reports(report_counts)
     facts_counts = _local_facts_counts_by_archive(duckdb_connection)
-    local_counts = {key: facts_counts.get(key, (0, 0)) for key in report_counts}
+    local_counts = {key: facts_counts.get(key, (0, 0, 0)) for key in report_counts}
     clickhouse_rows = clickhouse_client.execute(
         f"SELECT r.source_archive_key, count(), "
-        f"countIf(f.amount_usd IS NOT NULL) "
+        f"countIf(f.amount_usd IS NOT NULL), "
+        f"countIf(f.context_period_end IS NOT NULL) "
         f"FROM {QUALIFIED_SE_FINANCIAL_FACTS_TABLE} AS f "
         f"INNER JOIN {QUALIFIED_SE_FINANCIAL_REPORTS_TABLE} AS r "
         f"ON f.statement_key = r.statement_key "
@@ -423,8 +431,7 @@ def _count_and_delete_facts_rows_via_scope_stage(
     stage_table = f"_tmp_se_facts_scope_{uuid.uuid4().hex}"
     qualified_stage_table = f"{SWEDEN_FINANCIAL_DATABASE}.{stage_table}"
     client.execute(
-        f"CREATE TABLE {qualified_stage_table} (statement_key String) "
-        "ENGINE = Memory"
+        f"CREATE TABLE {qualified_stage_table} (statement_key String) ENGINE = Memory"
     )
     primary_error: Exception | None = None
     try:
@@ -721,8 +728,7 @@ def reconcile_sweden_financial_reports_clickhouse(
         )
     if log is not None:
         log(
-            "Reconciled Sweden financial reports: archives=%s deleted=%s "
-            "inserted=%s",
+            "Reconciled Sweden financial reports: archives=%s deleted=%s inserted=%s",
             len(archive_keys),
             deleted,
             inserted,
@@ -769,8 +775,7 @@ def reconcile_sweden_financial_facts_clickhouse(
         )
     if log is not None:
         log(
-            "Reconciled Sweden financial facts: archives=%s deleted=%s "
-            "inserted=%s",
+            "Reconciled Sweden financial facts: archives=%s deleted=%s inserted=%s",
             len(archive_keys),
             deleted,
             inserted,

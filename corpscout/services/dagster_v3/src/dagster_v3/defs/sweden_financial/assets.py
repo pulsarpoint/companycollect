@@ -24,6 +24,10 @@ from dagster_v3.defs.sweden_financial.history import (
     QUALIFIED_SE_FINANCIAL_HISTORY_TABLE,
     replace_se_financial_history_clickhouse,
 )
+from dagster_v3.defs.sweden_financial.observations import (
+    QUALIFIED_SE_BOLAGSVERKET_FINANCIAL_OBSERVATIONS_TABLE,
+    replace_se_bolagsverket_financial_observations_clickhouse,
+)
 from dagster_v3.defs.sweden_financial.parsing import (
     extract_sweden_financial_report_xhtml_catalog,
     parse_sweden_financial_report_xhtml_catalog,
@@ -391,7 +395,7 @@ class SwedenFinancialClickhouseExportConfig(dg.Config):
     # Shrink-guard override (see clickhouse.py's
     # guard_against_clickhouse_table_shrink) -- MUST stay False by default.
     # Only set True via explicit run config for a confirmed-intentional
-    # shrink of a populated se_financial_metrics/officers/audits table (e.g.
+    # shrink of a populated metrics/observations/officers/audits table (e.g.
     # a deliberate upstream data retirement), never as a standing default.
     # The reports/facts exports no longer take it: they are partition-scoped
     # upserts that structurally cannot shrink the table beyond their own
@@ -634,6 +638,36 @@ def sweden_financial_metrics_clickhouse(
 @dg.asset(
     deps=[
         *SWEDEN_FINANCIAL_EXPORT_DEPS,
+        dg.AssetDep(
+            dg.AssetKey("exchange_rates_v2_clickhouse"),
+            partition_mapping=dg.AllPartitionMapping(),
+        ),
+    ],
+    group_name=GROUP_NAME,
+    kinds={"python", "clickhouse", "xbrl", "fx"},
+    metadata={"table": QUALIFIED_SE_BOLAGSVERKET_FINANCIAL_OBSERVATIONS_TABLE},
+    description=(
+        "Preserves every mapped Bolagsverket financial fact as a source-owned "
+        "reported, comparative, or other period observation. Conflicts are "
+        "annotated with quality flags and never resolved or discarded here."
+    ),
+)
+def se_bolagsverket_financial_observations_clickhouse(
+    context: dg.AssetExecutionContext,
+    config: SwedenFinancialClickhouseExportConfig,
+    clickhouse: ClickhouseResource,
+) -> dg.MaterializeResult:
+    metadata = replace_se_bolagsverket_financial_observations_clickhouse(
+        clickhouse=clickhouse,
+        log=context.log.info,
+        allow_shrink=config.allow_shrink,
+    )
+    return dg.MaterializeResult(metadata=metadata)
+
+
+@dg.asset(
+    deps=[
+        *SWEDEN_FINANCIAL_EXPORT_DEPS,
         # Not a data dependency (the history build reads reports/facts/
         # exchange_rates directly, not se_financial_metrics) -- an ordering
         # dependency so history rebuilds land in the same wave as metrics
@@ -833,6 +867,16 @@ SWEDEN_FINANCIAL_BACKFILL_CLICKHOUSE_SELECTION = dg.AssetSelection.assets(
     "sweden_financial_backfill_facts_clickhouse",
     "sweden_financial_company_source_records_clickhouse",
 )
+# One operational chain for migrations that require reparsing every filing.
+# It deliberately starts at the existing XHTML catalog boundary, then keeps
+# parse, FX enrichment, and the two scoped ClickHouse exports in the same
+# partition run so a year can never be exported before its reparse succeeds.
+SWEDEN_FINANCIAL_CONTEXT_PERIOD_BACKFILL_SELECTION = dg.AssetSelection.assets(
+    "sweden_financial_backfill_parsed_reports_duckdb",
+    "sweden_financial_backfill_facts_usd_duckdb",
+    "sweden_financial_backfill_reports_clickhouse",
+    "sweden_financial_backfill_facts_clickhouse",
+)
 SWEDEN_FINANCIAL_CURRENT_CLICKHOUSE_SELECTION = dg.AssetSelection.assets(
     "sweden_financial_current_facts_usd_duckdb",
     "sweden_financial_current_reports_clickhouse",
@@ -841,6 +885,7 @@ SWEDEN_FINANCIAL_CURRENT_CLICKHOUSE_SELECTION = dg.AssetSelection.assets(
 )
 SWEDEN_FINANCIAL_CLICKHOUSE_SELECTION = dg.AssetSelection.assets(
     "sweden_financial_metrics_clickhouse",
+    "se_bolagsverket_financial_observations_clickhouse",
     "se_financial_history_clickhouse",
     "se_company_officers_clickhouse",
     "se_company_audits_clickhouse",
@@ -867,6 +912,11 @@ sweden_financial_current_year_job = dg.define_asset_job(
 sweden_financial_backfill_clickhouse_job = dg.define_asset_job(
     "sweden_financial_backfill_clickhouse_job",
     selection=SWEDEN_FINANCIAL_BACKFILL_CLICKHOUSE_SELECTION,
+)
+
+sweden_financial_context_period_backfill_job = dg.define_asset_job(
+    "sweden_financial_context_period_backfill_job",
+    selection=SWEDEN_FINANCIAL_CONTEXT_PERIOD_BACKFILL_SELECTION,
 )
 
 sweden_financial_current_clickhouse_job = dg.define_asset_job(
@@ -909,6 +959,7 @@ defs = dg.Definitions(
         sweden_financial_backfill_facts_clickhouse,
         sweden_financial_current_facts_clickhouse,
         sweden_financial_metrics_clickhouse,
+        se_bolagsverket_financial_observations_clickhouse,
         se_financial_history_clickhouse,
         se_company_officers_clickhouse,
         se_company_audits_clickhouse,
@@ -925,6 +976,7 @@ defs = dg.Definitions(
         sweden_financial_backfill_job,
         sweden_financial_current_year_job,
         sweden_financial_backfill_clickhouse_job,
+        sweden_financial_context_period_backfill_job,
         sweden_financial_current_clickhouse_job,
         sweden_financial_clickhouse_job,
         sweden_financial_concepts_job,

@@ -1,0 +1,459 @@
+"""Source-owned Bolagsverket financial observations.
+
+The table built here deliberately does not choose a canonical value for a
+company and year. Each mapped XBRL fact remains tied to its source statement,
+context, and fact ordinal. Reported and comparative assertions can therefore
+coexist, and quality checks annotate observations instead of deleting them.
+"""
+
+import uuid
+from collections.abc import Callable
+from typing import Any
+
+from dagster_clickhouse import ClickhouseResource
+
+from dagster_v3.defs.clickhouse.resolved import assert_clickhouse_tables_exist
+from dagster_v3.defs.sweden_financial.clickhouse import (
+    clickhouse_table_row_count,
+    guard_against_clickhouse_table_shrink,
+)
+from dagster_v3.defs.sweden_financial.history import (
+    EXCHANGE_RATES_TABLE,
+    MAX_COMPARATIVE_YEARS_BACK,
+    OVERLAP_AGREEMENT_TOLERANCE,
+    SE_FINANCIAL_FACTS_TABLE,
+    SE_FINANCIAL_REPORTS_TABLE,
+    SWEDEN_FINANCIAL_DATABASE,
+    build_history_guard_ctes,
+)
+
+SE_BOLAGSVERKET_FINANCIAL_OBSERVATIONS_TABLE = "se_bolagsverket_financial_observations"
+QUALIFIED_SE_BOLAGSVERKET_FINANCIAL_OBSERVATIONS_TABLE = (
+    f"{SWEDEN_FINANCIAL_DATABASE}.{SE_BOLAGSVERKET_FINANCIAL_OBSERVATIONS_TABLE}"
+)
+BOLAGSVERKET_FINANCIAL_OBSERVATIONS_MAPPING_VERSION = (
+    "se-bolagsverket-financial-observations-v1"
+)
+
+SE_BOLAGSVERKET_FINANCIAL_OBSERVATIONS_COLUMNS = (
+    "country_iso2",
+    "source_slug",
+    "source_run_id",
+    "source_record_id",
+    "source_statement_key",
+    "company_id",
+    "source_fiscal_year",
+    "source_report_period_start",
+    "source_report_period_end",
+    "represented_fiscal_year",
+    "represented_period_start",
+    "represented_period_end",
+    "observation_kind",
+    "source_context_id",
+    "source_fact_ordinal",
+    "source_concept_qname",
+    "source_concept_namespace",
+    "source_concept_local_name",
+    "metric_code",
+    "unit_id",
+    "decimals",
+    "precision",
+    "source_raw_value",
+    "value_original",
+    "currency",
+    "value_usd",
+    "fx_rate_to_usd",
+    "fx_rate_date",
+    "fx_source",
+    "dimensions",
+    "mapping_version",
+    "revenue_overlap_relative_diff",
+    "quality_flags",
+    "parser_version",
+    "resolved_at",
+)
+
+# Source concept -> semantic label. Concepts that can act as fallbacks share a
+# metric code but remain separate rows with their original concept and ordinal;
+# choosing between them belongs to a later resolution layer.
+BOLAGSVERKET_FINANCIAL_CONCEPTS: dict[str, str] = {
+    "Nettoomsattning": "revenue",
+    "Rorelseresultat": "operating_profit_loss",
+    "AretsResultat": "profit_loss",
+    "ResultatEfterFinansiellaPoster": "result_after_financial_items",
+    "Soliditet": "solidity",
+    "Tillgangar": "total_assets",
+    "Balansomslutning": "total_assets",
+    "EgetKapital": "equity",
+    "EgetKapitalSkulder": "equity_liabilities",
+    "KassaBank": "cash_and_bank",
+    "KassaBankExklRedovisningsmedel": "cash_and_bank",
+    "Omsattningstillgangar": "current_assets",
+    "KortfristigaFordringar": "current_receivables",
+    "KortfristigaSkulder": "current_liabilities",
+    "Personalkostnader": "personnel_expenses",
+    "LonerAndraErsattningar": "wages_and_salaries",
+    "MedelantaletAnstallda": "employees",
+}
+
+_CONTEXT_YEAR_EXTRACT_PATTERN = r"^(?:period|balans)([0-9]+)$"
+
+
+def _metric_code_sql() -> str:
+    branches = ",\n            ".join(
+        f"facts.concept_local_name = '{concept}', '{metric}'"
+        for concept, metric in BOLAGSVERKET_FINANCIAL_CONCEPTS.items()
+    )
+    return f"multiIf(\n            {branches},\n            ''\n        )"
+
+
+def build_bolagsverket_financial_observations_insert_sql(
+    qualified_stage_table: str,
+) -> str:
+    """Build all mapped source observations without cross-record resolution."""
+    columns = ",\n    ".join(SE_BOLAGSVERKET_FINANCIAL_OBSERVATIONS_COLUMNS)
+    return f"""INSERT INTO {qualified_stage_table} (
+    {columns}
+)
+WITH
+{build_history_guard_ctes()},
+statement_revenue_overlap AS (
+    SELECT
+        statement_key,
+        maxOrNull(max_relative_diff) AS revenue_overlap_relative_diff
+    FROM overlap_checks
+    GROUP BY statement_key
+),
+mapped_source_facts AS (
+    SELECT *
+    FROM (
+        SELECT
+            facts.country_iso2 AS country_iso2,
+            facts.source_slug AS source_slug,
+            facts.source_run_id AS source_run_id,
+            facts.source_record_id AS source_record_id,
+            facts.statement_key AS source_statement_key,
+            facts.company_id AS company_id,
+            toInt32(reports.fiscal_year) AS source_fiscal_year,
+            reports.report_period_start AS source_report_period_start,
+            reports.report_period_end AS source_report_period_end,
+            facts.context_id AS source_context_id,
+            facts.context_period_start AS context_period_start,
+            facts.context_period_end AS context_period_end,
+            toInt32OrNull(
+                extract(
+                    lowerUTF8(facts.context_id),
+                    '{_CONTEXT_YEAR_EXTRACT_PATTERN}'
+                )
+            ) AS context_years_back,
+            facts.fact_ordinal AS source_fact_ordinal,
+            facts.concept_qname AS source_concept_qname,
+            facts.concept_namespace AS source_concept_namespace,
+            facts.concept_local_name AS source_concept_local_name,
+            {_metric_code_sql()} AS metric_code,
+            facts.unit_id AS unit_id,
+            facts.decimals AS decimals,
+            facts.precision AS precision,
+            facts.raw_value AS source_raw_value,
+            facts.amount_original AS value_original,
+            facts.currency AS currency,
+            facts.dimensions AS dimensions,
+            facts.parser_version AS parser_version
+        FROM corpscout.se_financial_facts AS facts
+        INNER JOIN corpscout.se_financial_reports AS reports
+            ON reports.statement_key = facts.statement_key
+        PREWHERE facts.amount_original IS NOT NULL
+    )
+    WHERE metric_code != ''
+),
+dated_observations AS (
+    SELECT
+        *,
+        coalesce(
+            context_period_start,
+            if(
+                context_years_back >= 0
+                AND context_years_back <= {MAX_COMPARATIVE_YEARS_BACK},
+                addYears(source_report_period_start, -context_years_back),
+                NULL
+            )
+        ) AS represented_period_start,
+        coalesce(
+            context_period_end,
+            if(
+                context_years_back >= 0
+                AND context_years_back <= {MAX_COMPARATIVE_YEARS_BACK},
+                addYears(source_report_period_end, -context_years_back),
+                NULL
+            )
+        ) AS represented_period_end
+    FROM mapped_source_facts
+),
+classified_observations AS (
+    SELECT
+        *,
+        multiIf(
+            context_period_end IS NOT NULL
+                AND source_report_period_end IS NOT NULL
+                AND context_period_end = source_report_period_end,
+            'reported',
+            context_period_end IS NOT NULL
+                AND source_report_period_end IS NOT NULL
+                AND context_period_end < source_report_period_end,
+            'comparative',
+            context_years_back = 0,
+            'reported',
+            context_years_back >= 1
+                AND context_years_back <= {MAX_COMPARATIVE_YEARS_BACK},
+            'comparative',
+            'other'
+        ) AS observation_kind
+    FROM dated_observations
+    WHERE represented_period_end IS NOT NULL
+),
+observation_rate_dates AS (
+    SELECT DISTINCT represented_period_end AS requested_rate_date
+    FROM classified_observations
+    WHERE upperUTF8(ifNull(currency, '')) = 'SEK'
+),
+observation_rates AS (
+    SELECT
+        requested_rate_date,
+        if(
+            countIf(rate_date <= requested_rate_date) > 0,
+            argMaxIf(fx_rate_to_usd, rate_date, rate_date <= requested_rate_date),
+            argMinIf(fx_rate_to_usd, rate_date, rate_date > requested_rate_date)
+        ) AS fx_rate_to_usd,
+        if(
+            countIf(rate_date <= requested_rate_date) > 0,
+            maxIf(rate_date, rate_date <= requested_rate_date),
+            minIf(rate_date, rate_date > requested_rate_date)
+        ) AS fx_rate_date,
+        if(
+            countIf(rate_date <= requested_rate_date) > 0,
+            argMaxIf(fx_source, rate_date, rate_date <= requested_rate_date),
+            argMinIf(fx_source, rate_date, rate_date > requested_rate_date)
+        ) AS fx_source
+    FROM observation_rate_dates
+    CROSS JOIN exchange_rate_pairs
+    GROUP BY requested_rate_date
+)
+SELECT
+    observations.country_iso2,
+    observations.source_slug,
+    observations.source_run_id,
+    observations.source_record_id,
+    observations.source_statement_key,
+    observations.company_id,
+    observations.source_fiscal_year,
+    observations.source_report_period_start,
+    observations.source_report_period_end,
+    toInt32(toYear(observations.represented_period_end)) AS represented_fiscal_year,
+    observations.represented_period_start,
+    observations.represented_period_end,
+    observations.observation_kind,
+    observations.source_context_id,
+    observations.source_fact_ordinal,
+    observations.source_concept_qname,
+    observations.source_concept_namespace,
+    observations.source_concept_local_name,
+    observations.metric_code,
+    observations.unit_id,
+    observations.decimals,
+    observations.precision,
+    observations.source_raw_value,
+    cast(observations.value_original AS Nullable(Decimal(38, 10))) AS value_original,
+    observations.currency,
+    cast(
+        if(
+            upperUTF8(ifNull(observations.currency, '')) = 'SEK',
+            observations.value_original * rates.fx_rate_to_usd,
+            NULL
+        ) AS Nullable(Decimal(38, 10))
+    ) AS value_usd,
+    cast(
+        if(
+            upperUTF8(ifNull(observations.currency, '')) = 'SEK',
+            rates.fx_rate_to_usd,
+            NULL
+        ) AS Nullable(Decimal(38, 12))
+    ) AS fx_rate_to_usd,
+    if(
+        upperUTF8(ifNull(observations.currency, '')) = 'SEK',
+        rates.fx_rate_date,
+        NULL
+    ) AS fx_rate_date,
+    if(
+        upperUTF8(ifNull(observations.currency, '')) = 'SEK',
+        ifNull(rates.fx_source, ''),
+        ''
+    ) AS fx_source,
+    observations.dimensions,
+    '{BOLAGSVERKET_FINANCIAL_OBSERVATIONS_MAPPING_VERSION}' AS mapping_version,
+    if(
+        observations.observation_kind = 'comparative',
+        overlap.revenue_overlap_relative_diff,
+        NULL
+    ) AS revenue_overlap_relative_diff,
+    arrayFilter(
+        flag -> flag != '',
+        [
+            if(
+                observations.observation_kind = 'comparative'
+                    AND overlap.revenue_overlap_relative_diff
+                        > {OVERLAP_AGREEMENT_TOLERANCE},
+                'revenue_overlap_disagreement',
+                ''
+            ),
+            if(
+                observations.metric_code = 'solidity',
+                'ambiguous_solidity_scale',
+                ''
+            ),
+            if(
+                observations.context_period_end IS NULL,
+                'represented_period_approximated',
+                ''
+            )
+        ]
+    ) AS quality_flags,
+    observations.parser_version,
+    now64(3) AS resolved_at
+FROM classified_observations AS observations
+LEFT JOIN observation_rates AS rates
+    ON rates.requested_rate_date = observations.represented_period_end
+LEFT JOIN statement_revenue_overlap AS overlap
+    ON overlap.statement_key = observations.source_statement_key"""
+
+
+def build_bolagsverket_financial_observations_quality_sql(
+    qualified_stage_table: str,
+) -> str:
+    return f"""SELECT
+    count() AS row_count,
+    uniqExact(company_id) AS company_count,
+    uniqExact(source_statement_key) AS statement_count,
+    countIf(observation_kind = 'reported') AS reported_count,
+    countIf(observation_kind = 'comparative') AS comparative_count,
+    countIf(observation_kind = 'other') AS other_count,
+    countIf(notEmpty(quality_flags)) AS flagged_count,
+    min(represented_fiscal_year) AS min_fiscal_year,
+    max(represented_fiscal_year) AS max_fiscal_year
+FROM {qualified_stage_table}"""
+
+
+_QUALITY_COLUMNS = (
+    "row_count",
+    "company_count",
+    "statement_count",
+    "reported_count",
+    "comparative_count",
+    "other_count",
+    "flagged_count",
+    "min_fiscal_year",
+    "max_fiscal_year",
+)
+
+
+def _quality_metadata(row: tuple[Any, ...]) -> dict[str, int | None]:
+    return {
+        column: None if value is None else int(value)
+        for column, value in zip(_QUALITY_COLUMNS, row, strict=True)
+    }
+
+
+def _validate_quality(quality: dict[str, int | None]) -> None:
+    if quality["row_count"] == 0:
+        raise ValueError(
+            "Bolagsverket financial observations build produced no rows; "
+            f"refusing to replace "
+            f"{QUALIFIED_SE_BOLAGSVERKET_FINANCIAL_OBSERVATIONS_TABLE}"
+        )
+
+
+def replace_se_bolagsverket_financial_observations_clickhouse(
+    *,
+    clickhouse: ClickhouseResource,
+    log: Callable[..., object] | None = None,
+    allow_shrink: bool = False,
+) -> dict[str, int | str | None]:
+    """Atomically rebuild all source-owned Bolagsverket observations."""
+    assert_clickhouse_tables_exist(
+        clickhouse,
+        database=SWEDEN_FINANCIAL_DATABASE,
+        tables=(
+            SE_BOLAGSVERKET_FINANCIAL_OBSERVATIONS_TABLE,
+            SE_FINANCIAL_REPORTS_TABLE,
+            SE_FINANCIAL_FACTS_TABLE,
+            EXCHANGE_RATES_TABLE,
+        ),
+    )
+    stage_table = (
+        f"_tmp_{SE_BOLAGSVERKET_FINANCIAL_OBSERVATIONS_TABLE}_{uuid.uuid4().hex}"
+    )
+    qualified_stage_table = f"`{SWEDEN_FINANCIAL_DATABASE}`.`{stage_table}`"
+    qualified_target_table = (
+        f"`{SWEDEN_FINANCIAL_DATABASE}`."
+        f"`{SE_BOLAGSVERKET_FINANCIAL_OBSERVATIONS_TABLE}`"
+    )
+    if log is not None:
+        log(
+            "Building source-owned Bolagsverket financial observations: target=%s",
+            QUALIFIED_SE_BOLAGSVERKET_FINANCIAL_OBSERVATIONS_TABLE,
+        )
+
+    with clickhouse.get_connection() as client:
+        client.execute(
+            f"CREATE TABLE {qualified_stage_table} AS {qualified_target_table}"
+        )
+        primary_error: Exception | None = None
+        try:
+            client.execute(
+                build_bolagsverket_financial_observations_insert_sql(
+                    qualified_stage_table
+                )
+            )
+            quality_row = client.execute(
+                build_bolagsverket_financial_observations_quality_sql(
+                    qualified_stage_table
+                )
+            )[0]
+            metadata: dict[str, int | str | None] = dict(_quality_metadata(quality_row))
+            _validate_quality(metadata)
+            existing_row_count = clickhouse_table_row_count(
+                client, qualified_target_table
+            )
+            guard_against_clickhouse_table_shrink(
+                qualified_table=(
+                    QUALIFIED_SE_BOLAGSVERKET_FINANCIAL_OBSERVATIONS_TABLE
+                ),
+                existing_row_count=existing_row_count,
+                staged_row_count=int(metadata["row_count"] or 0),
+                allow_shrink=allow_shrink,
+            )
+            client.execute(
+                f"EXCHANGE TABLES {qualified_stage_table} AND {qualified_target_table}"
+            )
+        except Exception as exc:
+            primary_error = exc
+            raise
+        finally:
+            try:
+                client.execute(f"DROP TABLE IF EXISTS {qualified_stage_table}")
+            except Exception:
+                if primary_error is None:
+                    raise
+
+    metadata["table"] = QUALIFIED_SE_BOLAGSVERKET_FINANCIAL_OBSERVATIONS_TABLE
+    if log is not None:
+        log(
+            "Finished Bolagsverket financial observations: rows=%s companies=%s "
+            "statements=%s reported=%s comparative=%s flagged=%s",
+            metadata["row_count"],
+            metadata["company_count"],
+            metadata["statement_count"],
+            metadata["reported_count"],
+            metadata["comparative_count"],
+            metadata["flagged_count"],
+        )
+    return metadata

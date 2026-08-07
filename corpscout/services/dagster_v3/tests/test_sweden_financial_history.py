@@ -224,7 +224,7 @@ def test_build_history_quality_sql_counts_stage_rows_by_observation() -> None:
 
 def test_build_history_guard_metadata_sql_reuses_the_insert_sqls_shared_ctes() -> None:
     # The guard-metadata query must reuse the EXACT same eligibility/overlap
-    # CTEs as the INSERT (via the shared _history_guard_ctes helper) so the
+    # CTEs as the INSERT (via the shared build_history_guard_ctes helper) so the
     # reported numbers can never silently drift from what the INSERT itself
     # did -- confirm by checking both SQL strings share the disqualifying
     # trust-guard clause verbatim.
