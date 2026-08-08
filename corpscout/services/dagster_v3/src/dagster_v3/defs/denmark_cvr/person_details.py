@@ -22,6 +22,7 @@ from dagster_v3.defs.common.duckdb_resources import (
 from dagster_v3.defs.common.resources import ObjectStoreResource
 from dagster_v3.defs.denmark_cvr.assets import DENMARK_CVR_BUCKET
 from dagster_v3.defs.denmark_cvr.company_details import (
+    DENMARK_CVR_COMPANY_DETAIL_BUCKET_COUNT,
     DENMARK_CVR_COMPANY_DETAIL_KEY_MAP,
     DENMARK_CVR_COMPANY_DETAIL_PARTITIONS,
     DENMARK_CVR_COMPANY_DETAIL_PREFIX,
@@ -52,6 +53,7 @@ DENMARK_CVR_PERSON_DETAIL_POOL = "denmark_cvr_person_details"
 DENMARK_CVR_PERSON_DETAIL_MAPPING_VERSION = 1
 DENMARK_CVR_PERSON_IDS_TABLE = "person_ids"
 DENMARK_CVR_PERSON_ID_INSERT_BATCH_ROWS = 50_000
+DENMARK_CVR_PERSON_ID_PROGRESS_INTERVAL_SECONDS = 60.0
 
 DATACVR_PERSON_DETAIL_SCRIPT = """
 async ({ url }) => {
@@ -347,10 +349,27 @@ def rebuild_company_detail_person_ids(
                 "Denmark CVR person IDs require a non-empty company DuckDB table"
             )
 
+        if log_info is not None:
+            log_info(
+                "DataCVR person-ID catalog started: companies_total=%s "
+                "company_buckets_total=%s",
+                company_count,
+                DENMARK_CVR_COMPANY_DETAIL_BUCKET_COUNT,
+            )
         ignored_company_cvrs = _require_complete_company_details(
             object_store,
             connection,
+            company_count=company_count,
+            log_info=log_info,
         )
+        companies_to_process = company_count - len(ignored_company_cvrs)
+        if log_info is not None:
+            log_info(
+                "DataCVR person-ID catalog progress: phase=identity_extraction "
+                "companies_processed=0/%s companies_ignored=%s relations=0",
+                companies_to_process,
+                len(ignored_company_cvrs),
+            )
         connection.execute(
             "create or replace temporary table denmark_cvr_staged_person_ids "
             "(person_id varchar, person_type varchar, company_cvr varchar)"
@@ -358,6 +377,7 @@ def rebuild_company_detail_person_ids(
         source_object_count = 0
         source_relation_count = 0
         rows: list[tuple[str, str, str]] = []
+        last_progress_at = time.monotonic()
         for partition_index, partition_key in enumerate(
             DENMARK_CVR_COMPANY_DETAIL_PARTITIONS.get_partition_keys(),
             start=1,
@@ -379,19 +399,25 @@ def rebuild_company_detail_person_ids(
                         _insert_staged_person_id_batch(connection, rows)
                         rows.clear()
                 source_object_count += 1
-            if log_info is not None and (
-                partition_index == 1
-                or partition_index % 8 == 0
-                or partition_index == DENMARK_CVR_PERSON_DETAIL_BUCKET_COUNT
-            ):
-                log_info(
-                    "DataCVR person-ID catalog progress: company_bucket=%s/%s "
-                    "companies=%s relations=%s",
-                    partition_index,
-                    DENMARK_CVR_PERSON_DETAIL_BUCKET_COUNT,
-                    source_object_count,
-                    source_relation_count,
-                )
+                progress_at = time.monotonic()
+                if log_info is not None and (
+                    source_object_count == 1
+                    or source_object_count == companies_to_process
+                    or progress_at - last_progress_at
+                    >= DENMARK_CVR_PERSON_ID_PROGRESS_INTERVAL_SECONDS
+                ):
+                    log_info(
+                        "DataCVR person-ID catalog progress: "
+                        "phase=identity_extraction companies_processed=%s/%s "
+                        "company_buckets=%s/%s companies_ignored=%s relations=%s",
+                        source_object_count,
+                        companies_to_process,
+                        partition_index,
+                        DENMARK_CVR_COMPANY_DETAIL_BUCKET_COUNT,
+                        len(ignored_company_cvrs),
+                        source_relation_count,
+                    )
+                    last_progress_at = progress_at
 
         if rows:
             _insert_staged_person_id_batch(connection, rows)
@@ -457,6 +483,16 @@ def rebuild_company_detail_person_ids(
             connection.execute("rollback")
             raise
 
+    if log_info is not None:
+        log_info(
+            "DataCVR person-ID catalog completed: companies_processed=%s/%s "
+            "companies_ignored=%s relations=%s persons=%s",
+            source_object_count,
+            companies_to_process,
+            len(ignored_company_cvrs),
+            source_relation_count,
+            person_count,
+        )
     database_size_bytes = (
         database_path.stat().st_size
         if str(database_path) != ":memory:" and database_path.exists()
@@ -601,6 +637,12 @@ def write_person_detail_partition(
     if len(object_keys) != len(selected_identities):
         raise ValueError("DataCVR person-detail identities contain duplicate IDs")
 
+    if log_info is not None:
+        log_info(
+            "DataCVR person-detail started: partition=%s persons_total=%s",
+            partition_key,
+            len(selected_identities),
+        )
     object_store.ensure_bucket(DENMARK_CVR_BUCKET)
     existing_keys = set(
         object_store.list_keys(
@@ -632,6 +674,18 @@ def write_person_detail_partition(
             continue
         pending.append(identity)
 
+    if log_info is not None:
+        log_info(
+            "DataCVR person-detail progress: phase=snapshot_scan partition=%s "
+            "persons_checked=%s/%s already_complete=%s translated_existing=%s "
+            "persons_to_download=%s",
+            partition_key,
+            len(selected_identities),
+            len(selected_identities),
+            already_complete_count,
+            translated_existing_count,
+            len(pending),
+        )
     downloaded_count = 0
     downloaded_size_bytes = 0
     returned_ids: set[str] = set()
@@ -662,8 +716,8 @@ def write_person_detail_partition(
             or downloaded_count == len(pending)
         ):
             log_info(
-                "DataCVR person-detail progress: partition=%s downloaded=%s/%s "
-                "downloaded_bytes=%s",
+                "DataCVR person-detail progress: phase=download partition=%s "
+                "persons_downloaded=%s/%s downloaded_bytes=%s",
                 partition_key,
                 downloaded_count,
                 len(pending),
@@ -677,6 +731,18 @@ def write_person_detail_partition(
     complete_count = (
         already_complete_count + translated_existing_count + downloaded_count
     )
+    if log_info is not None:
+        log_info(
+            "DataCVR person-detail completed: partition=%s "
+            "persons_completed=%s/%s already_complete=%s translated_existing=%s "
+            "downloaded=%s",
+            partition_key,
+            complete_count,
+            len(selected_identities),
+            already_complete_count,
+            translated_existing_count,
+            downloaded_count,
+        )
     return DenmarkCvrPersonDetailSummary(
         partition_key=partition_key,
         selected_person_count=len(selected_identities),
@@ -804,12 +870,18 @@ def denmark_cvr_person_details_s3(
 def _require_complete_company_details(
     object_store: ObjectStoreResource,
     connection: duckdb.DuckDBPyConnection,
+    *,
+    company_count: int,
+    log_info: Callable[..., object] | None,
 ) -> set[str]:
     missing_original_count = 0
     missing_english_count = 0
     expected_count = 0
     ignored_cvrs: set[str] = set()
-    for partition_key in DENMARK_CVR_COMPANY_DETAIL_PARTITIONS.get_partition_keys():
+    for partition_index, partition_key in enumerate(
+        DENMARK_CVR_COMPANY_DETAIL_PARTITIONS.get_partition_keys(),
+        start=1,
+    ):
         cvrs = _company_partition_cvrs(connection, partition_key)
         expected_count += len(cvrs)
         existing_keys = set(
@@ -841,6 +913,19 @@ def _require_complete_company_details(
                 missing_original_count += 1
             if english_key not in existing_keys:
                 missing_english_count += 1
+        if log_info is not None:
+            log_info(
+                "DataCVR person-ID catalog progress: phase=snapshot_validation "
+                "company_buckets=%s/%s companies_checked=%s/%s "
+                "companies_ignored=%s missing_original=%s missing_english=%s",
+                partition_index,
+                DENMARK_CVR_COMPANY_DETAIL_BUCKET_COUNT,
+                expected_count,
+                company_count,
+                len(ignored_cvrs),
+                missing_original_count,
+                missing_english_count,
+            )
     if missing_original_count or missing_english_count:
         raise RuntimeError(
             "Denmark CVR company details are not fully materialized: "

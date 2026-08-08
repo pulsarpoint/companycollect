@@ -334,14 +334,40 @@ def test_person_id_catalog_builds_deduplicated_duckdb_input(
         )
         objects[company_detail_object_key(partition, cvr, english_keys=True)] = b"{}"
 
+    progress_messages: list[str] = []
+
+    def record_progress(message: str, *args: object) -> None:
+        progress_messages.append(message % args)
+
     summary = rebuild_company_detail_person_ids(
         object_store=FakeObjectStore(objects),
         denmark_cvr_duckdb=_duckdb_resource(database),
         rebuilt_at=datetime(2026, 7, 19, tzinfo=UTC),
+        log_info=record_progress,
     )
 
     assert summary.company_count == 2
     assert summary.person_count == 1
+    assert progress_messages[0] == (
+        "DataCVR person-ID catalog started: companies_total=2 company_buckets_total=128"
+    )
+    assert any(
+        "phase=snapshot_validation company_buckets=128/128 "
+        "companies_checked=2/2" in message
+        for message in progress_messages
+    )
+    assert any(
+        "phase=identity_extraction companies_processed=1/2" in message
+        for message in progress_messages
+    )
+    assert any(
+        "phase=identity_extraction companies_processed=2/2" in message
+        for message in progress_messages
+    )
+    assert progress_messages[-1] == (
+        "DataCVR person-ID catalog completed: companies_processed=2/2 "
+        "companies_ignored=0 relations=2 persons=1"
+    )
     with duckdb.connect(str(database), read_only=True) as connection:
         row = connection.execute(
             f"select person_id, person_type, source_company_count "
@@ -440,12 +466,17 @@ def test_person_detail_writer_checkpoints_original_and_english_json() -> None:
         response_headers={"content-type": "application/json"},
     )
     details = FakePersonDetailResource({second.person_id: download})
+    progress_messages: list[str] = []
+
+    def record_progress(message: str, *args: object) -> None:
+        progress_messages.append(message % args)
 
     summary = write_person_detail_partition(
         object_store=store,
         details=details,
         partition_key=partition,
         identities=(first, second),
+        log_info=record_progress,
     )
 
     assert details.requested == [second]
@@ -459,6 +490,17 @@ def test_person_detail_writer_checkpoints_original_and_english_json() -> None:
         person_detail_object_key(partition, second.person_id, english_keys=True)
         in store.objects
     )
+    assert progress_messages == [
+        f"DataCVR person-detail started: partition={partition} persons_total=2",
+        f"DataCVR person-detail progress: phase=snapshot_scan partition={partition} "
+        "persons_checked=2/2 already_complete=1 translated_existing=0 "
+        "persons_to_download=1",
+        f"DataCVR person-detail progress: phase=download partition={partition} "
+        "persons_downloaded=1/1 downloaded_bytes=33",
+        f"DataCVR person-detail completed: partition={partition} "
+        "persons_completed=2/2 already_complete=1 translated_existing=0 "
+        "downloaded=1",
+    ]
 
 
 def test_person_detail_assets_have_catalog_dependency_and_id_partitions() -> None:
