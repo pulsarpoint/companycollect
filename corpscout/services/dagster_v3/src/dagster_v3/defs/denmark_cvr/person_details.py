@@ -878,6 +878,14 @@ def _require_complete_company_details(
     missing_english_count = 0
     expected_count = 0
     ignored_cvrs: set[str] = set()
+    if log_info is not None:
+        log_info(
+            "DataCVR person-ID catalog progress: phase=snapshot_validation "
+            "company_buckets=0/%s companies_checked=0/%s companies_ignored=0 "
+            "missing_original=0 missing_english=0",
+            DENMARK_CVR_COMPANY_DETAIL_BUCKET_COUNT,
+            company_count,
+        )
     for partition_index, partition_key in enumerate(
         DENMARK_CVR_COMPANY_DETAIL_PARTITIONS.get_partition_keys(),
         start=1,

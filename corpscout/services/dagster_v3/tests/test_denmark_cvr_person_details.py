@@ -351,6 +351,11 @@ def test_person_id_catalog_builds_deduplicated_duckdb_input(
     assert progress_messages[0] == (
         "DataCVR person-ID catalog started: companies_total=2 company_buckets_total=128"
     )
+    assert progress_messages[1] == (
+        "DataCVR person-ID catalog progress: phase=snapshot_validation "
+        "company_buckets=0/128 companies_checked=0/2 companies_ignored=0 "
+        "missing_original=0 missing_english=0"
+    )
     assert any(
         "phase=snapshot_validation company_buckets=128/128 "
         "companies_checked=2/2" in message
