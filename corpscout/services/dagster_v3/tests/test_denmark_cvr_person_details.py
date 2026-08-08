@@ -142,6 +142,29 @@ def test_company_detail_person_identities_include_active_and_ceased_people() -> 
     )
 
 
+def test_company_detail_person_identities_accept_variable_length_numeric_ids() -> None:
+    payload = {
+        "personkreds": {
+            "personkredser": [
+                {
+                    "personRoller": [
+                        {
+                            "id": "4082628",
+                            "enhedstype": "person",
+                            "personType": "deltager",
+                        }
+                    ]
+                }
+            ],
+            "ophoerteFad": [],
+        }
+    }
+
+    assert company_detail_person_identities(payload) == (
+        DenmarkCvrPersonDetailIdentity("4082628", "deltager"),
+    )
+
+
 def test_person_detail_hash_partitions_are_stable_and_bounded() -> None:
     assert person_detail_bucket_key("4000000001") == person_detail_bucket_key(
         "4000000001"

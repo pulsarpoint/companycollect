@@ -1068,8 +1068,8 @@ def _person_search_page_url(base_url: str) -> str:
 
 
 def _validate_person_id(person_id: str) -> None:
-    if len(person_id) != 10 or not person_id.isascii() or not person_id.isdigit():
-        raise ValueError("DataCVR person entity number must contain ten digits")
+    if person_id == "" or not person_id.isascii() or not person_id.isdigit():
+        raise ValueError("DataCVR person entity number must contain ASCII digits")
 
 
 def _person_detail_bucket_index(partition_key: str) -> int:
