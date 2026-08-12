@@ -1,0 +1,21 @@
+company_serving:
+  target: dev
+  outputs:
+    dev:
+      type: clickhouse
+      driver: http
+      host: "{{ env_var('CLICKHOUSE_HOST', 'localhost') }}"
+      port: "{{ env_var('CLICKHOUSE_HTTP_PORT', '8123') | int }}"
+      user: "{{ env_var('CLICKHOUSE_USER', 'default') }}"
+      password: "{{ env_var('CLICKHOUSE_PASSWORD', '') }}"
+      schema: "{{ env_var('CLICKHOUSE_DATABASE', 'corpscout') }}"
+      secure: "{{ env_var('CLICKHOUSE_SECURE', 'false') | lower == 'true' }}"
+      connect_timeout: 30
+      send_receive_timeout: 3600
+      # Serving models are large ClickHouse transformations. Building and
+      # validating them sequentially keeps peak memory bounded.
+      threads: 1
+      custom_settings:
+        max_threads: 1
+        max_bytes_before_external_group_by: 268435456
+        optimize_aggregation_in_order: 1

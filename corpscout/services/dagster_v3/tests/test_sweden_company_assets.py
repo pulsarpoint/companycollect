@@ -21,10 +21,12 @@ def test_sweden_company_refresh_job_and_schedule_registered() -> None:
         "sweden_company_raw_snapshot_s3",
         "sweden_company_raw_duckdb",
         "sweden_company_normalized_duckdb",
-        "sweden_company_companies_clickhouse",
-        "sweden_company_addresses_clickhouse",
-        "sweden_company_industries_clickhouse",
-        "sweden_registry_company_source_records_clickhouse",
+            "sweden_company_companies_clickhouse",
+            "sweden_company_profile_history_clickhouse",
+            "sweden_company_addresses_clickhouse",
+            "sweden_company_industries_clickhouse",
+            "sweden_company_industry_history_clickhouse",
+            "sweden_registry_company_source_records_clickhouse",
     }
     assert "sweden_company_clickhouse" not in asset_keys
 

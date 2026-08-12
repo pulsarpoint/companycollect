@@ -96,6 +96,10 @@ class NormalizedRdapNetwork:
     segments: tuple[RdapNetworkSegment, ...]
 
 
+def is_registry_catch_all(network: NormalizedRdapNetwork) -> bool:
+    return any(segment.prefix_length == 0 for segment in network.segments)
+
+
 @dataclass(frozen=True)
 class RdapIpLookupResult:
     bucket: int

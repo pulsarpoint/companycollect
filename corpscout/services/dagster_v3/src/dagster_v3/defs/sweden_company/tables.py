@@ -7,12 +7,38 @@ DLT_DATASET_NAME = "sweden_company"
 SWEDEN_DATABASE = "corpscout"
 COMPANIES_TABLE_CH = "se_companies"
 COMPANY_ADDRESSES_TABLE_CH = "se_company_addresses"
+COMPANY_ADDRESSES_CURRENT_TABLE_CH = "se_company_addresses_current"
 INDUSTRIES_TABLE_CH = "se_industries"
+COMPANY_REGISTRY_OBSERVATIONS_TABLE_CH = "se_company_registry_observations"
+COMPANY_REGISTRY_CURRENT_TABLE_CH = "se_company_registry_current"
+COMPANY_PROCEEDING_OBSERVATIONS_TABLE_CH = "se_company_proceeding_observations"
+COMPANY_PROCEEDINGS_CURRENT_TABLE_CH = "se_company_proceedings_current"
+COMPANY_INDUSTRY_OBSERVATIONS_TABLE_CH = "se_company_industry_observations"
+COMPANY_INDUSTRY_CURRENT_TABLE_CH = "se_company_industry_current"
 QUALIFIED_COMPANIES_TABLE = f"{SWEDEN_DATABASE}.{COMPANIES_TABLE_CH}"
-QUALIFIED_COMPANY_ADDRESSES_TABLE = (
-    f"{SWEDEN_DATABASE}.{COMPANY_ADDRESSES_TABLE_CH}"
+QUALIFIED_COMPANY_ADDRESSES_TABLE = f"{SWEDEN_DATABASE}.{COMPANY_ADDRESSES_TABLE_CH}"
+QUALIFIED_COMPANY_ADDRESSES_CURRENT_TABLE = (
+    f"{SWEDEN_DATABASE}.{COMPANY_ADDRESSES_CURRENT_TABLE_CH}"
 )
 QUALIFIED_INDUSTRIES_TABLE = f"{SWEDEN_DATABASE}.{INDUSTRIES_TABLE_CH}"
+QUALIFIED_COMPANY_REGISTRY_OBSERVATIONS_TABLE = (
+    f"{SWEDEN_DATABASE}.{COMPANY_REGISTRY_OBSERVATIONS_TABLE_CH}"
+)
+QUALIFIED_COMPANY_REGISTRY_CURRENT_TABLE = (
+    f"{SWEDEN_DATABASE}.{COMPANY_REGISTRY_CURRENT_TABLE_CH}"
+)
+QUALIFIED_COMPANY_PROCEEDING_OBSERVATIONS_TABLE = (
+    f"{SWEDEN_DATABASE}.{COMPANY_PROCEEDING_OBSERVATIONS_TABLE_CH}"
+)
+QUALIFIED_COMPANY_PROCEEDINGS_CURRENT_TABLE = (
+    f"{SWEDEN_DATABASE}.{COMPANY_PROCEEDINGS_CURRENT_TABLE_CH}"
+)
+QUALIFIED_COMPANY_INDUSTRY_OBSERVATIONS_TABLE = (
+    f"{SWEDEN_DATABASE}.{COMPANY_INDUSTRY_OBSERVATIONS_TABLE_CH}"
+)
+QUALIFIED_COMPANY_INDUSTRY_CURRENT_TABLE = (
+    f"{SWEDEN_DATABASE}.{COMPANY_INDUSTRY_CURRENT_TABLE_CH}"
+)
 
 SWEDEN_COMPANY_DUCKDB_PATH = Path("data/sweden_company_source.duckdb")
 
@@ -106,7 +132,7 @@ SE_COMPANIES_EXPORT_COLUMNS = (
     "updated_from_raw_at",
 )
 
-SE_COMPANY_ADDRESSES_EXPORT_COLUMNS = (
+SE_COMPANY_ADDRESS_BASE_COLUMNS = (
     "company_id",
     "address_type",
     "source",
@@ -120,6 +146,78 @@ SE_COMPANY_ADDRESSES_EXPORT_COLUMNS = (
     "source_record_id",
     "source_payload_hash",
     "updated_from_raw_at",
+)
+
+SE_COMPANY_ADDRESS_OBSERVATION_COLUMNS = (
+    *SE_COMPANY_ADDRESS_BASE_COLUMNS,
+    "has_address",
+    "address_fingerprint",
+    "observation_fingerprint",
+    "observed_at",
+)
+
+SE_COMPANY_REGISTRY_OBSERVATION_COLUMNS = (
+    "company_id",
+    "source",
+    "company_id_raw",
+    "legal_name",
+    "legal_name_raw",
+    "alternate_name",
+    "legal_form_code",
+    "source_status_code",
+    "source_secondary_status_code",
+    "derived_status",
+    "status_reason",
+    "incorporation_date",
+    "dissolution_date",
+    "activity_description",
+    "name_protection_sequence",
+    "registration_country_code",
+    "marketing_block_code",
+    "proceedings_raw",
+    "source_run_id",
+    "source_record_id",
+    "source_payload_hash",
+    "updated_from_raw_at",
+    "has_company",
+    "state_fingerprint",
+    "observation_fingerprint",
+    "observed_at",
+)
+
+SE_COMPANY_PROCEEDING_OBSERVATION_COLUMNS = (
+    "company_id",
+    "source",
+    "proceeding_code",
+    "effective_date",
+    "raw_proceeding",
+    "proceeding_identity",
+    "source_run_id",
+    "source_record_id",
+    "source_payload_hash",
+    "updated_from_raw_at",
+    "has_proceeding",
+    "proceeding_fingerprint",
+    "observation_fingerprint",
+    "observed_at",
+)
+
+SE_COMPANY_INDUSTRY_OBSERVATION_COLUMNS = (
+    "company_id",
+    "source",
+    "ng1_code",
+    "ng2_code",
+    "ng3_code",
+    "ng4_code",
+    "ng5_code",
+    "source_run_id",
+    "source_record_id",
+    "source_payload_hash",
+    "updated_from_raw_at",
+    "has_industry",
+    "state_fingerprint",
+    "observation_fingerprint",
+    "observed_at",
 )
 
 SE_INDUSTRIES_EXPORT_COLUMNS = (

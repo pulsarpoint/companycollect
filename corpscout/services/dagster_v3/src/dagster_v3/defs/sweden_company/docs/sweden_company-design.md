@@ -9,7 +9,7 @@ Sweden company data is available from Bolagsverket's public high-value-dataset h
 | SCB/FDB company bulk file | `https://vardefulla-datamangder.bolagsverket.se/scb/scb_bulkfil.zip` | ZIP containing tab-separated text | about every 7 days | no |
 | Bolagsverket legal-register bulk file | `https://vardefulla-datamangder.bolagsverket.se/bolagsverket/bolagsverket_bulkfil.zip` | ZIP containing semicolon-separated text | about every 7 days | no |
 
-The implementation captures each raw ZIP company file, rebuilds a raw DuckDB database from those ZIPs, materializes deterministic normalized DuckDB tables from the raw staging tables, and publishes those tables to migrated ClickHouse tables. Contact/domain candidates and financial annual-report processing are separate later slices.
+The implementation captures each raw ZIP company file, rebuilds a raw DuckDB database from those ZIPs, materializes deterministic normalized DuckDB tables from the raw staging tables, and publishes those tables to migrated ClickHouse tables. Evidence-backed domain suggestions now live in the separate `company_domain_suggestions` pipeline; financial annual-report processing remains a separate source pipeline.
 
 ## Resource
 
@@ -94,31 +94,74 @@ It creates:
 | table | purpose |
 |---|---|
 | `companies` | one row per normalized organization identifier, with Bolagsverket preferred over SCB for legal identity |
-| `company_addresses` | parsed Bolagsverket postal addresses and SCB fallback/enrichment addresses |
+| `company_addresses` | one current candidate per company/source, including explicit empty-address observations |
+| `company_registry_states` | one source-specific legal/profile state per company and source, with raw SCB status codes and Bolagsverket legal fields |
+| `company_proceedings` | one typed currently reported Bolagsverket liquidation, bankruptcy, or restructuring procedure, with its raw value retained |
+| `company_industry_states` | one complete SCB `Ng1`..`Ng5` classification state per company |
 | `company_industry_codes` | one row per valid non-empty SCB `Ng1`..`Ng5` SNI code |
 
 The industry-code table stores the raw 5-digit SNI code and derives `nace_rev2_class_code` from the first four digits. It does not label the 5-digit SNI value as NACE because the fifth digit is Sweden-specific detail.
 
-Contact extraction is intentionally separate. Domains, emails, and phone numbers in these sources are unstructured text candidates, not canonical registry fields, and should be handled later by `sweden_company_contact_candidates_duckdb`.
+SCB uses `PostOrt = Utlandet` and `PostNr = 00000` as foreign-address
+placeholders. Those rows must not be labeled with `country_code = SE`. The
+normalizer preserves a specific country only when the address carries an
+unambiguous marker, currently including SCB's `PL  ` separator for Poland; an
+otherwise unknown foreign country remains `NULL` rather than being guessed.
+
+Contact extraction is intentionally separate. Domains, emails, and phone numbers in these sources are unstructured text candidates, not canonical registry fields. The `company_domain_suggestions` pipeline now matches registry identity/name/officer features to Common Crawl evidence without treating a suggestion as a registry fact; direct source contact extraction remains separate.
 
 The table-specific ClickHouse assets publish the normalized DuckDB tables to ClickHouse.
 
-It asserts that migrations have already created the target tables and then full-replaces each table through a staging-table swap:
+It asserts that migrations have already created the target tables. Company and
+industry facts are full-replaced through staging-table swaps because the source
+files are full snapshots. Addresses, source registry states, proceedings, and
+complete SNI states use historical storage semantics: each snapshot is compared
+with its physical `*_current` table and only a changed state is appended to the
+observation table. Unchanged reruns append nothing. A disappearing record or
+procedure appends a typed tombstone, and an A → B → A sequence preserves all
+three observations. The fully rebuilt candidates then atomically replace the
+physical current snapshot so normal reads never aggregate the complete history.
 
 | asset | DuckDB table | ClickHouse table | purpose |
 |---|---|---|
 | `sweden_company_companies_clickhouse` | `sweden_company.companies` | `corpscout.se_companies` | one row per normalized organization identifier |
-| `sweden_company_addresses_clickhouse` | `sweden_company.company_addresses` | `corpscout.se_company_addresses` | source-specific postal/visiting address observations |
+| `sweden_company_profile_history_clickhouse` | `sweden_company.company_registry_states`, `company_proceedings` | `corpscout.se_company_registry_observations`, `se_company_proceeding_observations` | append-only legal/profile and proceeding history |
+| `sweden_company_addresses_clickhouse` | `sweden_company.company_addresses` | `corpscout.se_company_addresses` | append-only source-specific address observations |
 | `sweden_company_industries_clickhouse` | `sweden_company.company_industry_codes` | `corpscout.se_industries` | SCB SNI activity codes with derived 4-digit NACE Rev. 2 class code |
+| `sweden_company_industry_history_clickhouse` | `sweden_company.company_industry_states` | `corpscout.se_company_industry_observations` | append-only complete SCB SNI states |
 
-The ClickHouse tables are created only by migrations. Dagster does not run DDL beyond temporary stage-table creation during export.
+`corpscout.se_company_addresses_current` stores one current candidate per
+`(company_id, address_type, source)`. Current-address consumers filter it to
+`has_address = 1`; history and provenance consumers read the append-only base
+table. The initial migration resolves the newest historical observation with
+`(observed_at, source_run_id)` as its deterministic order before creating the
+physical snapshot.
+
+The same split applies to company profiles and classifications:
+
+- `se_company_registry_observations` / `se_company_registry_current` use the
+  `(company_id, source)` grain;
+- `se_company_proceeding_observations` / `se_company_proceedings_current` use
+  `(company_id, source, proceeding_identity)`;
+- `se_company_industry_observations` / `se_company_industry_current` use
+  `(company_id, source)` and retain all five ordered SNI slots together.
+
+`observed_at` records when the full snapshot was processed. Explicit dates from
+the source, such as incorporation, dissolution, and proceeding effective dates,
+remain separate; the pipeline does not invent source-validity dates.
+
+The ClickHouse tables are created only by migrations. Dagster uses temporary
+stage tables and an atomic rename to refresh the current snapshot.
 
 ## Job And Schedule
 
-`sweden_company_refresh_job` selects the three ClickHouse publish assets with their upstream dependencies, so the job runs raw S3 download/reuse, raw DuckDB rebuild, normalized DuckDB rebuild, and table-specific ClickHouse publish.
+`sweden_company_refresh_job` selects the five ClickHouse publish assets with
+their upstream dependencies, so the job runs raw S3 download/reuse, raw DuckDB
+rebuild, normalized DuckDB rebuild, current exports, and change-aware history
+publishes.
 
 `sweden_company_refresh_weekly` runs at `15 6 * * 1` in `Europe/Belgrade`, matching the observed roughly weekly source refresh and staggering it from other country jobs. The schedule is `STOPPED` by default until the first live materialization is validated.
 
 ## Out Of Scope
 
-No contact/domain extraction, financial annual-report processing, translation, or external NACE label enrichment is included here. Those belong in later Sweden company and Sweden financial slices after the registry pipeline is validated.
+Canonical contact/domain extraction, financial annual-report processing, translation, and external NACE label enrichment are not owned by this source package. Domain review candidates are produced separately by `company_domain_suggestions`.

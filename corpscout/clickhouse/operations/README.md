@@ -4,6 +4,38 @@ These SQL files preserve explicit recovery operations that are too large or too 
 sensitive for the non-transactional ClickHouse migration ledger. No service, Dagster job, Make
 target, or schedule executes them. Schema remains owned by `clickhouse/migrations`.
 
+## Segment-first domain-IP index
+
+Migration 259 attaches two materialized views to the DNS ingest fan-out. New A and AAAA evidence
+maintains a standalone network-segment catalog and a fully denormalized domain-IP relationship
+table. IPv4 addresses use stable `/24` segments and IPv6 addresses use stable `/48` segments. The
+tables use 64 bounded hash partitions while retaining the complete CIDR in their sorting keys.
+
+Existing DNS history is replayed into both tables one domain-hash partition at a time; this keeps
+each read aligned with the source table's partitioning and avoids placing a multi-billion-row scan
+inside the schema migration.
+
+After applying migration 259, run and validate every bucket with an authenticated ClickHouse
+client. Live ingest can remain active, and repeated runs are safe because all target aggregates are
+idempotent.
+
+Validation scans each source bucket once to compare unique domain-IP keys, then verifies that every
+target relationship for that bucket references a row in the standalone segment catalog. A bucket
+is recorded as complete only after both checks pass.
+
+Run buckets serially unless the ClickHouse server has substantially more than 30 GiB of free query
+memory. A single production-sized bucket can use more than 10 GiB while grouping DNS history, so
+unbounded parallel replay can trigger the server overcommit guard.
+
+```bash
+for bucket in {0..15}; do
+  clickhouse-client --param_bucket="$bucket" \
+    < clickhouse/operations/domain_ip_connections_backfill_bucket.sql
+  clickhouse-client --param_bucket="$bucket" \
+    < clickhouse/operations/domain_ip_connections_validate_bucket.sql
+done
+```
+
 ## `domain_hostnames` state recovery
 
 The production rollout completed on 2026-07-14:

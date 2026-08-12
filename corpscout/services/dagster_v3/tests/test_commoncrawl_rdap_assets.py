@@ -47,6 +47,7 @@ from dagster_v3.defs.commoncrawl_rdap.rdap import (
 MIGRATIONS_DIR = Path(__file__).resolve().parents[3] / "clickhouse" / "migrations"
 MIGRATION_NAME = "000124_corpscout_rdap_networks"
 DICTIONARY_READER_MIGRATION_NAME = "000126_corpscout_rdap_dictionary_reader"
+CATCH_ALL_FILTER_MIGRATION_NAME = "000258_corpscout_rdap_filter_catch_all"
 FIXTURES_DIR = Path(__file__).parent / "fixtures" / "rdap"
 FETCHED_AT = datetime(2026, 7, 12, 10, 30, tzinfo=UTC)
 
@@ -275,6 +276,17 @@ def test_rdap_dictionary_reader_down_migration_restores_previous_source() -> Non
     assert migration.index("DROP USER") < migration.index("CREATE DICTIONARY")
     restored_dictionary = migration.split("CREATE DICTIONARY", 1)[1]
     assert "USER 'corpscout_rdap_dictionary'" not in restored_dictionary
+
+
+def test_rdap_catch_all_migration_excludes_universal_routes_from_the_trie() -> None:
+    migration = (
+        MIGRATIONS_DIR / f"{CATCH_ALL_FILTER_MIGRATION_NAME}.up.sql"
+    ).read_text(encoding="utf-8")
+
+    assert "prefix_length > 0" in migration
+    assert migration.index("DROP DICTIONARY") < migration.index("DROP VIEW")
+    assert migration.index("CREATE VIEW") < migration.index("CREATE DICTIONARY")
+    assert "USER 'corpscout_rdap_dictionary'" in migration
 
 
 def test_rdap_asset_rejects_the_pre_reader_dictionary_definition() -> None:
@@ -516,6 +528,42 @@ def test_rdap_bucket_caches_terminal_and_retryable_failures() -> None:
     ]
     assert lookup_rows[0][retry_index] is None
     assert lookup_rows[1][retry_index] == datetime(2026, 7, 12, 11, 30, tzinfo=UTC)
+
+
+def test_rdap_bucket_quarantines_a_registry_catch_all_response() -> None:
+    read_client = FakeRdapReadClient([("34.51.197.182", 4)])
+    write_client = FakeRdapWriteClient()
+    rdap_client = FakeRdapClient([_catch_all_lookup_response()])
+
+    with dg.build_asset_context(partition_key="bucket_007") as context:
+        result = _enrich_rdap_bucket(
+            context=context,
+            clickhouse=FakeRdapClickhouseResource(read_client, write_client),
+            bucket_index=7,
+            config=CommoncrawlRdapConfig(
+                candidate_scan_limit=10,
+                max_requests=1,
+                insert_batch_size=10,
+                request_delay_seconds=0,
+                parent_depth=0,
+                rate_limit_retry_seconds=3600,
+                transient_retry_seconds=900,
+            ),
+            rdap_client=rdap_client,
+            queried_at=FETCHED_AT,
+            sleep=lambda _seconds: None,
+        )
+
+    assert result["registry_catch_all_responses"] == 1
+    assert result["direct_networks"] == 0
+    assert [query for query, _rows in write_client.inserts] == [
+        RDAP_LOOKUP_INSERT_SQL
+    ]
+    lookup_row = write_client.inserts[0][1][0]
+    assert lookup_row[RDAP_LOOKUP_COLUMNS.index("lookup_status")] == "unsupported"
+    assert lookup_row[RDAP_LOOKUP_COLUMNS.index("error_code")] == (
+        "registry_catch_all"
+    )
 
 
 def test_rdap_bucket_with_no_candidates_makes_no_remote_requests() -> None:
@@ -875,6 +923,21 @@ def _parent_lookup_response() -> RdapLookupResponse:
         }
     )
     return RdapLookupResponse(rir="arin", raw_response=raw)
+
+
+def _catch_all_lookup_response() -> RdapLookupResponse:
+    fixture = _load_fixture("aligned_ipv4.json")
+    raw = dict(fixture["raw"])
+    raw.update(
+        {
+            "handle": "0.0.0.0 - 255.255.255.255",
+            "startAddress": "0.0.0.0",
+            "endAddress": "255.255.255.255",
+            "name": "IANA-BLOCK",
+            "parentHandle": None,
+        }
+    )
+    return RdapLookupResponse(rir="idnic", raw_response=raw)
 
 
 def _load_fixture(fixture_name: str) -> dict[str, object]:

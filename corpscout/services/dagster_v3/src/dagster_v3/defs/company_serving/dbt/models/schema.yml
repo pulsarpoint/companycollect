@@ -1,0 +1,123 @@
+version: 2
+
+models:
+  - name: company_external_identifier_current_build
+    data_tests:
+      - company_serving_unique_key:
+          key_columns: [country_code, company_id, identifier_scheme, is_primary, identifier_value]
+      - company_serving_sweden_anchor
+    columns:
+      - name: country_code
+        data_tests: [not_null]
+      - name: company_id
+        data_tests: [not_null]
+      - name: identifier_scheme
+        data_tests: [not_null]
+      - name: identifier_value
+        data_tests: [not_null]
+
+  - name: company_gleif_current_build
+    data_tests:
+      - company_serving_unique_key:
+          key_columns: [country_code, company_id, is_primary, lei]
+      - company_serving_sweden_anchor
+    columns:
+      - name: company_id
+        data_tests: [not_null]
+      - name: lei
+        data_tests: [not_null]
+
+  - name: company_gleif_relationship_current_build
+    data_tests:
+      - company_serving_unique_key:
+          key_columns: [country_code, company_id, direction, relationship_type, relationship_id]
+      - company_serving_sweden_anchor
+
+  - name: company_wikidata_current_build
+    data_tests:
+      - company_serving_unique_key:
+          key_columns: [country_code, company_id, is_primary, wikidata_id]
+      - company_serving_sweden_anchor
+    columns:
+      - name: company_id
+        data_tests: [not_null]
+      - name: wikidata_id
+        data_tests: [not_null]
+
+  - name: company_management_current_build
+    data_tests:
+      - company_serving_unique_key:
+          key_columns: [country_code, company_id, is_current, role_kind, management_id]
+      - company_serving_sweden_anchor
+    columns:
+      - name: company_id
+        data_tests: [not_null]
+      - name: management_id
+        data_tests: [not_null]
+
+  - name: company_description_current_build
+    data_tests:
+      - company_serving_unique_key:
+          key_columns: [country_code, company_id, description_kind, description_id]
+      - company_serving_sweden_anchor
+
+  - name: company_contact_current_build
+    data_tests:
+      - company_serving_unique_key:
+          key_columns: [country_code, company_id, contact_type, contact_id]
+      - company_serving_sweden_anchor
+
+  - name: company_domains_build
+    data_tests:
+      - company_serving_unique_key:
+          key_columns: [country_code, company_id, root_domain]
+      - company_serving_sweden_anchor
+    columns:
+      - name: company_id
+        data_tests: [not_null]
+      - name: root_domain
+        data_tests: [not_null]
+
+  - name: company_domain_current_build
+    description: Compatibility projection of non-rejected unified company domains.
+
+  - name: company_contract_current_build
+    data_tests:
+      - company_serving_unique_key:
+          key_columns: [country_code, company_id, contract_date, contract_ref]
+      - company_serving_sweden_anchor
+
+  - name: company_contract_summary_current_build
+    data_tests:
+      - company_serving_unique_key:
+          key_columns: [country_code, company_id]
+      - company_serving_sweden_anchor
+
+  - name: se_company_industry_display_current_build
+    data_tests:
+      - company_serving_unique_key:
+          key_columns: [company_id, is_primary, classification_system, classification_code]
+      - company_serving_sweden_anchor
+
+  - name: se_company_address_display_current_build
+    data_tests:
+      - company_serving_unique_key:
+          key_columns: [company_id, address_type, source, address_key]
+      - company_serving_sweden_anchor
+
+  - name: company_section_item_source_links_build
+    data_tests:
+      - company_serving_unique_key:
+          key_columns: [country_code, company_id, section, item_key, source_record_uid]
+      - company_serving_sweden_anchor
+
+  - name: company_section_presence_current_build
+    data_tests:
+      - company_serving_unique_key:
+          key_columns: [country_code, company_id, section]
+      - company_serving_sweden_anchor
+    columns:
+      - name: company_id
+        data_tests: [not_null]
+      - name: section
+        data_tests: [not_null]

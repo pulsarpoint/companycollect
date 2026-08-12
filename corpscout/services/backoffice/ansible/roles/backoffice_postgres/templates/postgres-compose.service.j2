@@ -1,0 +1,18 @@
+[Unit]
+Description=Corpscout backoffice PostgreSQL (Docker Compose)
+Requires=docker.service
+After=docker.service network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+WorkingDirectory={{ backoffice_postgres_dir }}
+ExecStart=/usr/bin/docker compose up -d --remove-orphans
+ExecReload=/usr/bin/docker compose up -d --remove-orphans
+ExecStop=/usr/bin/docker compose stop
+TimeoutStartSec=0
+TimeoutStopSec=90
+
+[Install]
+WantedBy=multi-user.target

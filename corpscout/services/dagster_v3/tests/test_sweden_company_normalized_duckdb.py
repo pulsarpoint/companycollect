@@ -107,6 +107,9 @@ def test_replace_sweden_company_normalized_tables_creates_company_address_and_in
         # 12-digit '16' collision pair (5565258888) to the fixtures:
         "companies": 6,  # old 3
         "company_addresses": 8,  # old 4
+        "company_registry_states": 8,
+        "company_proceedings": 0,
+        "company_industry_states": 4,
         "company_industry_codes": 6,  # old 4
         "bolagsverket_company_count": 4,  # old 2
         "scb_company_count": 4,  # old 2
@@ -327,6 +330,153 @@ def test_replace_sweden_company_normalized_tables_creates_company_address_and_in
     assert industry_provenance == ("run-1", "5560000000", "scb-hash-1")
 
 
+def test_normalized_snapshot_preserves_registry_proceeding_and_industry_states(
+    tmp_path: Path,
+) -> None:
+    database_path = tmp_path / "sweden_company_source.duckdb"
+    loaded_at = datetime(2026, 8, 8, 12, 0, tzinfo=UTC)
+
+    with duckdb.connect(str(database_path)) as connection:
+        _create_raw_tables(connection)
+        connection.execute(
+            f"""
+            update {tables.DLT_DATASET_NAME}.bolagsverket_raw
+            set pagandeAvvecklingsEllerOmstruktureringsforfarande =
+                '|LI-AVOMFO$2024-05-21|KK-AVOMFO$2024-06-01'
+            where organisationsidentitet = '5560000000$ORGNR-IDORG'
+            """
+        )
+
+        replace_sweden_company_normalized_tables(
+            connection=connection,
+            loaded_at=loaded_at,
+        )
+
+        registry_states = connection.execute(
+            f"""
+            select
+                source,
+                company_id_raw,
+                legal_name,
+                alternate_name,
+                legal_form_code,
+                source_status_code,
+                source_secondary_status_code,
+                derived_status,
+                status_reason,
+                incorporation_date::varchar,
+                dissolution_date::varchar,
+                activity_description,
+                name_protection_sequence,
+                registration_country_code,
+                marketing_block_code,
+                proceedings_raw,
+                has_company,
+                length(state_fingerprint),
+                length(observation_fingerprint),
+                observed_at
+            from {tables.DLT_DATASET_NAME}.company_registry_states
+            where company_id = '5560000000'
+            order by source
+            """
+        ).fetchall()
+        proceedings = connection.execute(
+            f"""
+            select
+                proceeding_code,
+                effective_date::varchar,
+                raw_proceeding,
+                length(proceeding_identity),
+                length(proceeding_fingerprint),
+                has_proceeding,
+                observed_at
+            from {tables.DLT_DATASET_NAME}.company_proceedings
+            where company_id = '5560000000'
+            order by proceeding_code
+            """
+        ).fetchall()
+        industry_state = connection.execute(
+            f"""
+            select
+                source,
+                ng1_code,
+                ng2_code,
+                ng3_code,
+                ng4_code,
+                ng5_code,
+                has_industry,
+                length(state_fingerprint),
+                length(observation_fingerprint),
+                observed_at
+            from {tables.DLT_DATASET_NAME}.company_industry_states
+            where company_id = '5560000000'
+            """
+        ).fetchone()
+
+    assert registry_states == [
+        (
+            "bolagsverket",
+            "5560000000$ORGNR-IDORG",
+            "Acme AB",
+            None,
+            "AB-ORGFO",
+            None,
+            None,
+            "active",
+            None,
+            "2020-01-01",
+            None,
+            "Runs acme.se",
+            "1",
+            "SE-LAND",
+            None,
+            "|LI-AVOMFO$2024-05-21|KK-AVOMFO$2024-06-01",
+            1,
+            64,
+            64,
+            loaded_at,
+        ),
+        (
+            "scb",
+            "5560000000",
+            "ACME SCB",
+            None,
+            "49",
+            "0",
+            "1",
+            None,
+            None,
+            "2020-01-01",
+            None,
+            None,
+            None,
+            None,
+            "1",
+            None,
+            1,
+            64,
+            64,
+            loaded_at,
+        ),
+    ]
+    assert proceedings == [
+        ("KK-AVOMFO", "2024-06-01", "KK-AVOMFO$2024-06-01", 64, 64, 1, loaded_at),
+        ("LI-AVOMFO", "2024-05-21", "LI-AVOMFO$2024-05-21", 64, 64, 1, loaded_at),
+    ]
+    assert industry_state == (
+        "scb",
+        "62010",
+        "70220",
+        None,
+        None,
+        None,
+        1,
+        64,
+        64,
+        loaded_at,
+    )
+
+
 def test_replace_sweden_company_normalized_tables_rolls_back_partial_rebuild(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -429,6 +579,89 @@ def test_replace_sweden_company_normalized_tables_uses_source_line_number_for_du
         ).fetchone()
 
     assert company == ("SCB LOWER LINE", "9999999999", "scb-hash-lower-line")
+
+
+def test_scb_foreign_addresses_are_not_labeled_as_swedish(
+    tmp_path: Path,
+) -> None:
+    database_path = tmp_path / "sweden_company_source.duckdb"
+
+    with duckdb.connect(str(database_path)) as connection:
+        _create_raw_tables(connection)
+        connection.execute(
+            f"""
+            insert into {tables.DLT_DATASET_NAME}.scb_raw
+            values
+            (
+                'run-1', 5, '165020640487', 'scb-hash-polish-address',
+                'scb-key', '{{}}', '1', '', '', '0',
+                'UL. GLINKI 146 PL  BYDGOSZCZ', '1', '96',
+                'PITBUD SP.Z. O. O', '41000', '', '', '', '',
+                '165020640487', '00000', 'Utlandet', '20060801', '1'
+            ),
+            (
+                'run-1', 6, '165020640488', 'scb-hash-unknown-foreign-address',
+                'scb-key', '{{}}', '1', '', '', '0',
+                '7 BELL YARD LONDON WC2A 2JR', '1', '96',
+                'UNKNOWN FOREIGN COMPANY', '69100', '', '', '', '',
+                '165020640488', '00000', 'Utlandet', '20060801', '1'
+            )
+            """
+        )
+
+        replace_sweden_company_normalized_tables(
+            connection=connection,
+            loaded_at=datetime(2026, 7, 3, 12, 0, tzinfo=UTC),
+        )
+
+        addresses = connection.execute(
+            f"""
+            select company_id, country_code
+            from {tables.DLT_DATASET_NAME}.company_addresses
+            where company_id in ('5020640487', '5020640488')
+            order by company_id
+            """
+        ).fetchall()
+
+    assert addresses == [
+        ("5020640487", "PL"),
+        ("5020640488", None),
+    ]
+
+
+def test_normalized_snapshot_emits_an_empty_address_tombstone_candidate(
+    tmp_path: Path,
+) -> None:
+    database_path = tmp_path / "sweden_company_source.duckdb"
+    loaded_at = datetime(2026, 8, 8, 12, 0, tzinfo=UTC)
+
+    with duckdb.connect(str(database_path)) as connection:
+        _create_raw_tables(connection)
+        connection.execute(
+            f"""
+            update {tables.DLT_DATASET_NAME}.scb_raw
+            set COAdress = '', Gatuadress = '', PostNr = '', PostOrt = ''
+            where PeOrgNr = '9999999999'
+            """
+        )
+
+        replace_sweden_company_normalized_tables(
+            connection=connection,
+            loaded_at=loaded_at,
+        )
+        candidate = connection.execute(
+            f"""
+            select
+                has_address,
+                length(address_fingerprint),
+                length(observation_fingerprint),
+                observed_at
+            from {tables.DLT_DATASET_NAME}.company_addresses
+            where company_id = '9999999999' and source = 'scb'
+            """
+        ).fetchone()
+
+    assert candidate == (0, 64, 64, loaded_at)
 
 
 def test_replace_sweden_company_normalized_tables_fails_when_raw_table_is_missing(

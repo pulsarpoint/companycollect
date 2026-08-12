@@ -20,8 +20,12 @@ describe("country registry", () => {
   it("maps Sweden to its status-based active expression", () => {
     const se = getCountry("se");
     expect(se?.companiesTable).toBe("se_companies");
+    expect(se?.idColumn).toBe("company_id");
     expect(se?.nameColumn).toBe("legal_name");
     expect(se?.activeExpr).toBe("status = 'active'");
+    expect(
+      se?.columns.find((column) => column.key === "registered")?.label,
+    ).toBe("Registered");
   });
 });
 
@@ -42,7 +46,10 @@ describe("company columns", () => {
       const status = c.columns.find((col) => col.kind === "status");
       expect(status, c.code).toBeDefined();
       expect(status?.sortable, c.code).toBe(true);
-      expect(c.columns.find((col) => col.key === "name")?.sortable, c.code).toBe(true);
+      expect(
+        c.columns.find((col) => col.key === "name")?.sortable,
+        c.code,
+      ).toBe(true);
     }
   });
 
@@ -101,7 +108,9 @@ describe("industry facet and filter", () => {
       expect(c.industryFacetQuery, c.code).toContain(" AS value");
       expect(c.industryFacetQuery, c.code).toContain(" AS label");
       expect(c.industryFacetQuery, c.code).toContain(" AS cnt");
-      expect(c.industryFilterExpr, c.code).toContain("{f_industry:Array(String)}");
+      expect(c.industryFilterExpr, c.code).toContain(
+        "{f_industry:Array(String)}",
+      );
     }
   });
 
@@ -118,7 +127,7 @@ describe("detail config", () => {
   // se joined 2026-07-18: sweden_financial (XBRL) landed after the detail pages were built.
   const FIN = ["no", "fi", "ee", "lv", "gb", "br", "se"];
   const CONTACTS = ["no", "fi", "ee", "lv", "cz", "br"];
-  const DOMAINS = ["no", "fi", "ee", "lv", "cz", "br"];
+  const DOMAINS = ["no", "fi", "se", "ee", "lv", "cz", "br"];
   const NONE = ["sk", "fr"];
 
   it("declares detail sections exactly per data availability", () => {
@@ -139,17 +148,27 @@ describe("detail config", () => {
 
   it("every detail query is parameterized and canonical", () => {
     for (const c of COUNTRIES) {
-      for (const q of [c.detail?.financialsQuery, c.detail?.contactsQuery, c.detail?.domainsQuery]) {
+      for (const q of [
+        c.detail?.financialsQuery,
+        c.detail?.contactsQuery,
+        c.detail?.domainsQuery,
+      ]) {
         if (!q) continue;
         expect(q, c.code).toContain("{id:String}");
       }
       if (c.detail?.financialsQuery) {
         for (const col of [
-          "AS fiscal_year", "AS currency",
-          "AS revenue_amount_original", "AS revenue_amount_usd",
-          "AS net_result_amount_original", "AS net_result_amount_usd",
-          "AS total_assets_amount_original", "AS total_assets_amount_usd",
-          "AS equity_amount_original", "AS equity_amount_usd", "AS employees",
+          "AS fiscal_year",
+          "AS currency",
+          "AS revenue_amount_original",
+          "AS revenue_amount_usd",
+          "AS net_result_amount_original",
+          "AS net_result_amount_usd",
+          "AS total_assets_amount_original",
+          "AS total_assets_amount_usd",
+          "AS equity_amount_original",
+          "AS equity_amount_usd",
+          "AS employees",
         ]) {
           expect(c.detail.financialsQuery, `${c.code}: ${col}`).toContain(col);
         }
@@ -159,7 +178,13 @@ describe("detail config", () => {
         expect(c.detail.contactsQuery, c.code).toContain("AS contact_value");
       }
       if (c.detail?.domainsQuery) {
-        for (const col of ["AS domain", "AS website_url", "AS domain_source", "AS confidence", "AS is_primary"]) {
+        for (const col of [
+          "AS domain",
+          "AS website_url",
+          "AS domain_source",
+          "AS confidence",
+          "AS is_primary",
+        ]) {
           expect(c.detail.domainsQuery, `${c.code}: ${col}`).toContain(col);
         }
       }
@@ -177,7 +202,7 @@ describe("detail config", () => {
     }
   });
 
-  it("no and lv join their translated tables in recordQuery", () => {
+  it("country record queries keep source translation work bounded", () => {
     for (const c of COUNTRIES) {
       if (c.code === "no") {
         expect(c.detail?.recordQuery).toContain("no_companies_translated");
@@ -188,19 +213,27 @@ describe("detail config", () => {
         expect(c.detail?.recordQuery).toContain("{id:String}");
         expect(c.detail?.recordQuery).toContain("c.*");
       } else if (c.code === "se") {
-        expect(c.detail?.recordQuery).toContain("se_companies_translated");
-        expect(c.detail?.recordQuery).toContain("{id:String}");
-        // activity_description must be re-aliased to _original so the
-        // language toggle pairs it with activity_description_en.
-        expect(c.detail?.recordQuery).toContain(
+        expect(c.detail?.companyShellQuery).toContain("FROM se_companies AS c");
+        expect(c.detail?.companyShellQuery).toContain("{id:String}");
+        expect(c.detail?.companyShellQuery).toContain(
           "activity_description AS activity_description_original",
         );
-        expect(c.detail?.recordQuery).toContain("legal_form_label_en");
-        // LEI via GLEIF, matched on the digits-only orgnr (registered_as
-        // carries both '5569427692' and '559352-2948' formats upstream).
-        expect(c.detail?.recordQuery).toContain("gleif_lei_records");
-        expect(c.detail?.recordQuery).toContain(
-          "replaceRegexpAll(registered_as, '[^0-9]', '')",
+        expect(c.detail?.companyShellQuery).toContain(
+          "incorporation_date AS registration_date",
+        );
+        expect(c.detail?.companyShellQuery).not.toContain("vat_number");
+        expect(c.detail?.companyShellQuery).not.toContain(
+          "se_companies_translated",
+        );
+        // Enrichment identity resolution belongs to the offline serving build,
+        // never to the shell request.
+        expect(c.detail?.companyShellQuery).not.toContain("gleif_lei_records");
+        expect(c.detail?.companyShellQuery).not.toContain("replaceRegexpAll");
+        expect(c.detail?.companyShellQuery).toContain(
+          "PREWHERE c.company_id = {id:String}",
+        );
+        expect(c.detail?.companyShellQuery).not.toContain(
+          "WHERE c.registration_number = {id:String}",
         );
       } else {
         expect(c.detail?.recordQuery, c.code).toBeUndefined();
@@ -214,8 +247,15 @@ describe("detail config", () => {
         expect(c.detail?.industriesQuery).toBeUndefined();
         continue;
       }
-      for (const alias of ["AS industry_code", "AS description_original", "AS industry_label", "AS is_primary"]) {
-        expect(c.detail?.industriesQuery, `${c.code}: ${alias}`).toContain(alias);
+      for (const alias of [
+        "AS industry_code",
+        "AS description_original",
+        "AS industry_label",
+        "AS is_primary",
+      ]) {
+        expect(c.detail?.industriesQuery, `${c.code}: ${alias}`).toContain(
+          alias,
+        );
       }
       expect(c.detail?.industriesQuery, c.code).toContain("{id:String}");
     }
@@ -227,6 +267,25 @@ describe("detail config", () => {
       expect(c.detail?.addressQuery, c.code).toContain("AS full_address");
       expect(c.detail?.addressQuery, c.code).toContain("{id:String}");
     }
+  });
+
+  it("sweden address query exposes foreign-country geocoding metadata", () => {
+    const se = getCountry("se")!;
+    expect(se.placeQuery).toContain("se_company_addresses_current");
+    expect(se.detail?.addressQuery).toContain("se_company_addresses_current");
+    expect(se.detail?.addressQuery).toContain("has_address = 1");
+    expect(se.detail?.addressQuery).toContain("AS geocode_address");
+    expect(se.detail?.addressQuery).toContain("AS geocode_street");
+    expect(se.detail?.addressQuery).toContain("AS geocode_postal_code");
+    expect(se.detail?.addressQuery).toContain("AS address_country_code");
+    expect(se.detail?.addressQuery).toContain("AS address_is_foreign");
+  });
+
+  it("latvia reads current addresses from the history-backed views", () => {
+    const lv = getCountry("lv")!;
+    expect(lv.companiesTable).toBe("lv_companies_current");
+    expect(lv.detail?.recordQuery).toContain("lv_companies_current AS c");
+    expect(lv.detail?.addressQuery).toContain("lv_company_addresses_current");
   });
 });
 
@@ -258,6 +317,8 @@ describe("Brazil industry labels prefer CNAE over the NACE division", () => {
     // CONCLA publishes Portuguese only, so the English is a translation and the
     // original has to stay visible beside it.
     expect(br.detail?.industriesQuery).toContain("c.description_pt");
-    expect(br.detail?.industriesQuery).not.toContain("'' AS description_original");
+    expect(br.detail?.industriesQuery).not.toContain(
+      "'' AS description_original",
+    );
   });
 });

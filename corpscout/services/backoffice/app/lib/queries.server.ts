@@ -1,4 +1,6 @@
+import { isIP } from "node:net";
 import { chQuery } from "~/lib/clickhouse.server";
+import { getUnifiedCompanyDomains } from "~/lib/company-domains.server";
 import {
   COMPANY_FLAG_SOURCES,
   availableCompanyFlags,
@@ -15,6 +17,12 @@ import {
 import type { CompanyFilters } from "~/lib/filters";
 import type { FinancialReportDocumentSummary } from "~/lib/norway-financial-reports";
 import { getNorwayFinancialReports } from "~/lib/norway-financial-reports.server";
+import {
+  buildWebTechnologyHistory,
+  type CompanyWebTechnologyHistory,
+  type WebTechnologyCrawlCoverage,
+  type WebTechnologyCrawlDetection,
+} from "~/lib/web-technology-history";
 
 export interface CountryStats {
   total: number;
@@ -70,6 +78,7 @@ export interface CompanySearchResult {
 export interface CompanyShell {
   company: CompanyListRow;
   record: Record<string, unknown>;
+  industryKey: string;
 }
 
 interface IndustryRow {
@@ -112,11 +121,50 @@ function flagFilterCondition(
 
   const id = `toString(${country.idColumn})`;
   const subquery =
-    "market" in source
-      ? `SELECT toString(company_id) FROM company_market_summary
+    "idQuery" in source
+      ? source.idQuery
+      : "market" in source
+        ? `SELECT toString(company_id) FROM company_market_summary
          WHERE country_code = '${country.code.toUpperCase()}'`
-      : `SELECT toString(${source.idColumn}) FROM ${source.table}`;
+        : `SELECT toString(${source.idColumn}) FROM ${source.table}`;
   return want ? `${id} IN (${subquery})` : `${id} NOT IN (${subquery})`;
+}
+
+export async function companyHasFlag(
+  country: CountryConfig,
+  id: string,
+  flagId: CompanyFlagId,
+): Promise<boolean> {
+  const source = COMPANY_FLAG_SOURCES[country.code.toLowerCase()]?.[flagId];
+  if (!source) return false;
+
+  let query: string;
+  if ("expr" in source) {
+    query = `SELECT 1 AS found
+      FROM ${country.companiesTable}
+      WHERE ${country.idColumn} = {id:String}
+        AND coalesce(toString(${source.expr}), '') != ''
+      LIMIT 1`;
+  } else if ("idQuery" in source) {
+    query = `SELECT 1 AS found
+      FROM (${source.idQuery})
+      WHERE toString(company_id) = {id:String}
+      LIMIT 1`;
+  } else if ("market" in source) {
+    query = `SELECT 1 AS found
+      FROM company_market_summary
+      WHERE country_code = '${country.code.toUpperCase()}'
+        AND toString(company_id) = {id:String}
+      LIMIT 1`;
+  } else {
+    query = `SELECT 1 AS found
+      FROM ${source.table}
+      WHERE toString(${source.idColumn}) = {id:String}
+      LIMIT 1`;
+  }
+
+  const rows = await chQuery<{ found: number }>(query, { id });
+  return rows.length > 0;
 }
 
 function flagSelectList(country: CountryConfig): string[] {
@@ -171,6 +219,13 @@ async function attachCompanyFlags(
          WHERE toString(${source.idColumn}) IN {ids:Array(String)}`,
       ];
     }
+    if ("idQuery" in source) {
+      return [
+        `SELECT toString(company_id) AS company_id, '${id}' AS flag
+         FROM (${source.idQuery})
+         WHERE toString(company_id) IN {ids:Array(String)}`,
+      ];
+    }
     if ("market" in source) {
       return [
         `SELECT toString(company_id) AS company_id, '${id}' AS flag
@@ -221,6 +276,28 @@ export async function getCompanyShell(
   country: CountryConfig,
   id: string,
 ): Promise<CompanyShell | null> {
+  const companyShellQuery = country.detail?.companyShellQuery;
+  if (companyShellQuery) {
+    const [shellRecord] = await chQuery<Record<string, unknown>>(
+      companyShellQuery,
+      { id },
+    );
+    if (!shellRecord) return null;
+
+    const company: CompanyListRow = {
+      active: Number(shellRecord.__shell_active) === 1 ? 1 : 0,
+    };
+    for (const column of country.columns) {
+      company[column.key] = shellRecord[`__shell_${column.key}`] as
+        string | number | null;
+    }
+    const industryKey = String(shellRecord.__shell_industry_key ?? "");
+    for (const key of Object.keys(shellRecord)) {
+      if (key.startsWith("__shell_")) delete shellRecord[key];
+    }
+    return { company, record: shellRecord, industryKey };
+  }
+
   const selectList = buildCompanySelectList(country);
   const [companies, records] = await Promise.all([
     chQuery<CompanyListRow & { __industry_key?: string }>(
@@ -240,8 +317,9 @@ export async function getCompanyShell(
   ]);
   const company = companies[0];
   if (!company) return null;
+  const industryKey = String(company.__industry_key ?? "");
   delete company.__industry_key;
-  return { company, record: records[0] ?? {} };
+  return { company, record: records[0] ?? {}, industryKey };
 }
 
 export async function searchCompanies(
@@ -562,7 +640,1229 @@ export interface DomainRow {
   domain_source: string;
   confidence: number | null;
   is_primary: 0 | 1;
+  source_names?: string[];
+  review_status?: string;
+  evidence_changed?: boolean;
   evidence?: EvidenceRef[];
+}
+
+export interface CompanyTechnologyDetail {
+  domains: DomainRow[];
+  selectedDomain: string;
+  webTechnologyHistory: CompanyWebTechnologyHistory | null;
+}
+
+export async function getCompanyDomains(
+  country: CountryConfig,
+  id: string,
+): Promise<DomainRow[]> {
+  if (country.code === "se") {
+    const domains = (await getUnifiedCompanyDomains(country.code, id)).filter(
+      (domain) => domain.active && domain.reviewStatus !== "rejected",
+    );
+    const hasConfirmedPrimary = domains.some(
+      (domain) => domain.reviewStatus === "confirmed_primary",
+    );
+    return domains.map((domain) => ({
+      domain: domain.rootDomain,
+      website_url: domain.websiteUrl || null,
+      domain_source: domain.sources.map((source) => source.name).join(" + "),
+      confidence: domain.suggestedConfidence,
+      is_primary:
+        domain.reviewStatus === "confirmed_primary" ||
+        (!hasConfirmedPrimary && domain.suggestedPrimary)
+          ? 1
+          : 0,
+      source_names: domain.sources.map((source) => source.name),
+      review_status: domain.reviewStatus,
+      evidence_changed: domain.evidenceChanged,
+    }));
+  }
+  return country.detail?.domainsQuery
+    ? chQuery<DomainRow>(country.detail.domainsQuery, { id })
+    : [];
+}
+
+function selectedCompanyDomain(
+  domains: DomainRow[],
+  requestedDomain?: string,
+): DomainRow | undefined {
+  const normalized = requestedDomain?.trim().toLowerCase().replace(/\.$/, "");
+  return (
+    domains.find((domain) => domain.domain === normalized) ??
+    domains.find((domain) => domain.is_primary === 1) ??
+    domains[0]
+  );
+}
+
+interface WebTechnologyCoverageRow {
+  crawl_id: string;
+  observed_pages: string;
+  processed_at: string;
+}
+
+interface WebTechnologyDetectionRow {
+  crawl_id: string;
+  technology: string;
+  categories: string[];
+  detected_versions: string[];
+  confidence: number;
+  detected_pages: string;
+  sample_urls: string[];
+}
+
+export async function getCompanyWebTechnologyHistory(
+  domain: string,
+): Promise<CompanyWebTechnologyHistory | null> {
+  const [coverageRows, detectionRows] = await Promise.all([
+    chQuery<WebTechnologyCoverageRow>(
+      `SELECT
+        crawl_id,
+        toString(uniqExact(source_url)) AS observed_pages,
+        toString(max(resolved_at)) AS processed_at
+      FROM commoncrawl_domains
+      WHERE root_domain = {domain:String}
+      GROUP BY crawl_id
+      ORDER BY crawl_id`,
+      { domain },
+    ),
+    chQuery<WebTechnologyDetectionRow>(
+      `SELECT
+        crawl_id,
+        toString(technology) AS technology,
+        arraySort(groupUniqArray(toString(category))) AS categories,
+        arraySort(arrayFilter(value -> notEmpty(value),
+          groupUniqArray(toString(version)))) AS detected_versions,
+        toUInt8(max(confidence)) AS confidence,
+        toString(uniqExact(page_url)) AS detected_pages,
+        arraySlice(arraySort(groupUniqArray(page_url)), 1, 5) AS sample_urls
+      FROM commoncrawl_page_technologies
+      WHERE root_domain = {domain:String}
+      GROUP BY crawl_id, technology
+      ORDER BY crawl_id, technology`,
+      { domain },
+    ),
+  ]);
+  if (coverageRows.length === 0 && detectionRows.length === 0) return null;
+
+  const coverage = coverageRows.map<WebTechnologyCrawlCoverage>((row) => ({
+    crawlId: row.crawl_id,
+    observedPages: Number(row.observed_pages),
+    processedAt: row.processed_at,
+  }));
+  const detections = detectionRows.map<WebTechnologyCrawlDetection>((row) => ({
+    crawlId: row.crawl_id,
+    name: row.technology,
+    categories: row.categories,
+    versions: row.detected_versions,
+    confidence: row.confidence,
+    detectedPages: Number(row.detected_pages),
+    sampleUrls: row.sample_urls,
+  }));
+  return buildWebTechnologyHistory(domain, coverage, detections);
+}
+
+export async function getCompanyTechnologyDetail(
+  country: CountryConfig,
+  id: string,
+  requestedDomain?: string,
+): Promise<CompanyTechnologyDetail> {
+  const domains = await getCompanyDomains(country, id);
+  const selectedDomain = selectedCompanyDomain(domains, requestedDomain);
+  const webTechnologyHistory = selectedDomain
+    ? await getCompanyWebTechnologyHistory(selectedDomain.domain)
+    : null;
+  return {
+    domains,
+    selectedDomain: selectedDomain?.domain ?? "",
+    webTechnologyHistory,
+  };
+}
+
+export type TechnologyHostnameEvidence = "certificate" | "dns";
+
+export interface TechnologyDnsRecord {
+  type: string;
+  value: string;
+  priority: number;
+  sources: string[];
+  discoveries: string[];
+  seenDates: string[];
+  firstSeen: string;
+  lastSeen: string;
+}
+
+export interface TechnologyIpAddress {
+  ip: string;
+  version: 4 | 6;
+  networkSegment: string;
+  firstSeen: string;
+  lastSeen: string;
+  countryCode: string | null;
+  countryName: string | null;
+  cityName: string | null;
+  asn: number | null;
+  asnOrganization: string | null;
+  rdapRegistration: TechnologyIpRdapRegistration | null;
+}
+
+export interface TechnologyIpRdapRegistration {
+  networkKey: string;
+  matchedCidr: string;
+  rir: string;
+  handle: string;
+  name: string | null;
+  registrationType: string | null;
+  countryCode: string | null;
+  statuses: string[];
+  registrantNames: string[];
+  startAddress: string;
+  endAddress: string;
+  registrationDate: string | null;
+  lastChangedAt: string | null;
+  fetchedAt: string;
+  sourceUrl: string | null;
+}
+
+export interface TechnologyHostname {
+  hostname: string;
+  label: string;
+  isApex: boolean;
+  isWildcard: boolean;
+  evidence: TechnologyHostnameEvidence[];
+  certificateFirstSeen: string | null;
+  certificateLastSeen: string | null;
+  certificateExpiresAt: string | null;
+  certificateSourceLogs: string[];
+  dnsFirstSeen: string | null;
+  dnsLastSeen: string | null;
+  dnsDiscoverySource: string | null;
+  hasIpv4: boolean;
+  hasIpv6: boolean;
+  hasCname: boolean;
+  records: TechnologyDnsRecord[];
+  ipAddresses: TechnologyIpAddress[];
+}
+
+export interface TechnologyDnsScan {
+  status: string;
+  resolvedAt: string;
+  nameservers: string[];
+  nameserverIps: string[];
+  queriesTotal: number;
+  queriesOk: number;
+  dnssecSigned: boolean;
+  dsOutcome: string;
+  dnskeyOutcome: string;
+  zoneTransferOpen: boolean;
+}
+
+export interface CompanyTechnologyInfrastructure {
+  domain: string;
+  page: number;
+  pageSize: number;
+  summary: {
+    totalHostnames: number;
+    certificateHostnames: number;
+    dnsHostnames: number;
+    resolvedIpAddressesOnPage: number;
+    rdapRegisteredIpAddressesOnPage: number;
+  };
+  scan: TechnologyDnsScan | null;
+  hostnames: TechnologyHostname[];
+}
+
+export interface CompanyTechnologyIpInventoryAddress extends TechnologyIpAddress {
+  hostnames: string[];
+}
+
+export interface CompanyTechnologyIpInventory {
+  domain: string;
+  page: number;
+  pageSize: number;
+  summary: {
+    totalAddresses: number;
+    ipv4Addresses: number;
+    ipv6Addresses: number;
+    rdapRegisteredAddressesOnPage: number;
+  };
+  addresses: CompanyTechnologyIpInventoryAddress[];
+}
+
+export interface TechnologyIpDomainConnection {
+  ip: string;
+  version: 4 | 6;
+  domain: string;
+  hostnames: string[];
+  sources: string[];
+  discoveries: string[];
+  firstSeen: string;
+  lastSeen: string;
+}
+
+export interface TechnologyIpDomainConnectionPage {
+  page: number;
+  pageSize: number;
+  total: number | null;
+  hasMore: boolean;
+  connections: TechnologyIpDomainConnection[];
+}
+
+export interface TechnologyIpDetail {
+  address: TechnologyIpAddress;
+  historyIndexCoverage: {
+    completedPartitions: number;
+    totalPartitions: number;
+  };
+  exactConnections: TechnologyIpDomainConnectionPage;
+  segmentConnections: TechnologyIpDomainConnectionPage;
+}
+
+export interface CompanyTechnologyIpDetail extends TechnologyIpDetail {
+  companyDomain: string;
+  companyHostnames: string[];
+}
+
+interface TechnologyHostnameRow {
+  hostname: string;
+  label: string;
+  has_certificate: 0 | 1;
+  has_dns: 0 | 1;
+  is_wildcard: 0 | 1;
+  certificate_first_seen: string;
+  certificate_last_seen: string;
+  certificate_expires_at: string;
+  certificate_source_logs: string[];
+  dns_first_seen: string;
+  dns_last_seen: string;
+  dns_discovery_source: string;
+  has_ipv4: 0 | 1;
+  has_ipv6: 0 | 1;
+  has_cname: 0 | 1;
+  total_hostnames: string;
+  certificate_hostnames: string;
+  dns_hostnames: string;
+}
+
+interface TechnologyDnsRecordRow {
+  hostname: string;
+  type: string;
+  value: string;
+  priority: number;
+  sources: string[];
+  discoveries: string[];
+  seen_dates: string[];
+  first_seen: string;
+  last_seen: string;
+}
+
+interface TechnologyIpEnrichmentRow {
+  ip: string;
+  country_code: string | null;
+  country_name: string | null;
+  city_name: string | null;
+  asn: number | null;
+  asn_organization: string | null;
+}
+
+interface TechnologyIpRdapRow {
+  ip: string;
+  network_key: string;
+  matched_cidr: string;
+  rir: string;
+  handle: string;
+  name: string | null;
+  registration_type: string | null;
+  country_code: string | null;
+  statuses: string[];
+  registrant_names: string[];
+  start_address: string;
+  end_address: string;
+  registration_date: string | null;
+  last_changed_at: string | null;
+  fetched_at: string;
+  source_url: string | null;
+}
+
+interface TechnologyIpMetadata {
+  networkSegment: string;
+  countryCode: string | null;
+  countryName: string | null;
+  cityName: string | null;
+  asn: number | null;
+  asnOrganization: string | null;
+  rdapRegistration: TechnologyIpRdapRegistration | null;
+}
+
+interface TechnologyIpInventoryRow {
+  ip: string;
+  version: 4 | 6;
+  hostnames: string[];
+  first_seen: string;
+  last_seen: string;
+  total_addresses: string;
+  ipv4_addresses: string;
+  ipv6_addresses: string;
+}
+
+interface TechnologyIpDomainConnectionRow {
+  ip: string;
+  version: 4 | 6;
+  domain: string;
+  hostnames: string[];
+  sources: string[];
+  discoveries: string[];
+  first_seen: string;
+  last_seen: string;
+  address_first_seen?: string;
+  address_last_seen?: string;
+  total_connections?: string;
+}
+
+interface TechnologyDnsScanRow {
+  status: string;
+  resolved_at: string;
+  nameservers: string[];
+  nameserver_ips: string[];
+  queries_total: number;
+  queries_ok: number;
+  dnssec_signed: 0 | 1;
+  ds_outcome: string;
+  dnskey_outcome: string;
+  zone_transfer_open: 0 | 1;
+}
+
+const technologyHostnameInventorySql = `WITH evidence AS (
+  SELECT
+    fqdn AS hostname,
+    if(fqdn = {domain:String}, '',
+      substring(fqdn, 1, length(fqdn) - length({domain:String}) - 1)
+    ) AS label,
+    toUInt8(1) AS has_certificate,
+    toUInt8(0) AS has_dns,
+    toUInt8(max(is_wildcard)) AS is_wildcard,
+    toString(min(first_seen)) AS certificate_first_seen,
+    toString(max(last_seen)) AS certificate_last_seen,
+    toString(max(last_not_after)) AS certificate_expires_at,
+    arraySort(arrayDistinct(arrayFlatten(groupArray(source_logs)))) AS certificate_source_logs,
+    '' AS dns_first_seen,
+    '' AS dns_last_seen,
+    '' AS dns_discovery_source,
+    toUInt8(0) AS has_ipv4,
+    toUInt8(0) AS has_ipv6,
+    toUInt8(0) AS has_cname
+  FROM ctlogs.hostnames
+  WHERE registered_domain = {domain:String}
+  GROUP BY fqdn
+  UNION ALL
+  SELECT
+    hostname,
+    substring(
+      hostname,
+      1,
+      greatest(
+        toInt64(length(hostname)) - toInt64(length({domain:String})) - 1,
+        0
+      )
+    ),
+    toUInt8(0),
+    toUInt8(1),
+    toUInt8(0),
+    '',
+    '',
+    '',
+    CAST([], 'Array(String)'),
+    toString(min(first_seen)),
+    toString(max(last_seen)),
+    multiIf(
+      max(discovery_rank) = 3, 'axfr',
+      max(discovery_rank) = 2, 'ct',
+      max(discovery_rank) = 1, 'static',
+      'unknown'
+    ),
+    toUInt8(max(has_ipv4)),
+    toUInt8(max(has_ipv6)),
+    toUInt8(max(has_cname))
+  FROM domain_hostnames_state
+  WHERE root_domain = {domain:String}
+  GROUP BY hostname
+), inventory AS (
+  SELECT
+    hostname,
+    any(label) AS label,
+    max(evidence.has_certificate) AS has_certificate,
+    max(evidence.has_dns) AS has_dns,
+    max(evidence.is_wildcard) AS is_wildcard,
+    anyIf(evidence.certificate_first_seen, evidence.has_certificate = 1) AS certificate_first_seen,
+    anyIf(evidence.certificate_last_seen, evidence.has_certificate = 1) AS certificate_last_seen,
+    anyIf(evidence.certificate_expires_at, evidence.has_certificate = 1) AS certificate_expires_at,
+    anyIf(evidence.certificate_source_logs, evidence.has_certificate = 1) AS certificate_source_logs,
+    anyIf(evidence.dns_first_seen, evidence.has_dns = 1) AS dns_first_seen,
+    anyIf(evidence.dns_last_seen, evidence.has_dns = 1) AS dns_last_seen,
+    anyIf(evidence.dns_discovery_source, evidence.has_dns = 1) AS dns_discovery_source,
+    max(evidence.has_ipv4) AS has_ipv4,
+    max(evidence.has_ipv6) AS has_ipv6,
+    max(evidence.has_cname) AS has_cname
+  FROM evidence
+  GROUP BY hostname
+)
+SELECT
+  inventory.*,
+  toString(count() OVER ()) AS total_hostnames,
+  toString(countIf(has_certificate = 1) OVER ()) AS certificate_hostnames,
+  toString(countIf(has_dns = 1) OVER ()) AS dns_hostnames
+FROM inventory
+ORDER BY hostname != {domain:String}, hostname
+LIMIT {limit:UInt32} OFFSET {offset:UInt64}`;
+
+const technologyDnsRecordsSql = `SELECT
+  name AS hostname,
+  toString(record_type) AS type,
+  toString(value) AS value,
+  toUInt16(priority) AS priority,
+  arraySort(arrayDistinct(arrayFlatten(groupArray(sources)))) AS sources,
+  arraySort(arrayDistinct(arrayFlatten(groupArray(discoveries)))) AS discoveries,
+  arrayMap(date -> toString(date),
+    arraySort(arrayDistinct(arrayFlatten(groupArray(seen_dates))))) AS seen_dates,
+  toString(min(first_seen)) AS first_seen,
+  toString(max(last_seen)) AS last_seen
+FROM commoncrawl_domain_dns_records
+WHERE root_domain = {domain:String}
+  AND name IN {hostnames:Array(String)}
+  AND record_type != 'RRSIG'
+GROUP BY name, record_type, value, priority
+ORDER BY hostname, type, priority, value`;
+
+const technologyIpEnrichmentSql = `SELECT
+  ip,
+  argMax(country_iso_code, enriched_at) AS country_code,
+  argMax(country_name, enriched_at) AS country_name,
+  argMax(city_name, enriched_at) AS city_name,
+  argMax(asn, enriched_at) AS asn,
+  argMax(asn_organization, enriched_at) AS asn_organization
+FROM commoncrawl_ip_geoip
+PREWHERE (bucket, ip) IN arrayZip(
+  {buckets:Array(UInt16)},
+  {ips:Array(String)}
+)
+GROUP BY ip`;
+
+const technologyIpRdapSql = `WITH matched AS (
+  SELECT
+    ip,
+    dictGetOrDefault(
+      'corpscout.rdap_network_trie',
+      'network_key',
+      tuple(toIPv4(ip)),
+      ''
+    ) AS network_key,
+    dictGetOrDefault(
+      'corpscout.rdap_network_trie',
+      'matched_cidr',
+      tuple(toIPv4(ip)),
+      ''
+    ) AS matched_cidr
+  FROM (SELECT arrayJoin({ipv4s:Array(String)}) AS ip)
+  UNION ALL
+  SELECT
+    ip,
+    dictGetOrDefault(
+      'corpscout.rdap_network_trie',
+      'network_key',
+      tuple(toIPv6(ip)),
+      ''
+    ) AS network_key,
+    dictGetOrDefault(
+      'corpscout.rdap_network_trie',
+      'matched_cidr',
+      tuple(toIPv6(ip)),
+      ''
+    ) AS matched_cidr
+  FROM (SELECT arrayJoin({ipv6s:Array(String)}) AS ip)
+)
+SELECT
+  matched.ip,
+  registration.network_key,
+  matched.matched_cidr,
+  toString(registration.rir) AS rir,
+  registration.handle,
+  registration.name,
+  registration.registration_type,
+  registration.country_code,
+  registration.status AS statuses,
+  registration.registrant_names,
+  registration.start_address,
+  registration.end_address,
+  toString(registration.registration_date) AS registration_date,
+  toString(registration.last_changed_at) AS last_changed_at,
+  toString(registration.fetched_at) AS fetched_at,
+  registration.self_url AS source_url
+FROM matched
+INNER JOIN rdap_networks_current AS registration
+  ON matched.network_key = registration.network_key
+WHERE matched.network_key != ''
+  AND matched.matched_cidr NOT IN ('0.0.0.0/0', '::/0')`;
+
+function mapTechnologyIpRdapRegistration(
+  row: TechnologyIpRdapRow | undefined,
+): TechnologyIpRdapRegistration | null {
+  if (!row) return null;
+  return {
+    networkKey: row.network_key,
+    matchedCidr: row.matched_cidr,
+    rir: row.rir,
+    handle: row.handle,
+    name: row.name,
+    registrationType: row.registration_type,
+    countryCode: row.country_code,
+    statuses: row.statuses,
+    registrantNames: row.registrant_names,
+    startAddress: row.start_address,
+    endAddress: row.end_address,
+    registrationDate: row.registration_date,
+    lastChangedAt: row.last_changed_at,
+    fetchedAt: row.fetched_at,
+    sourceUrl: row.source_url,
+  };
+}
+
+async function getTechnologyIpMetadata(
+  addresses: Array<{ ip: string; version: 4 | 6 }>,
+): Promise<Map<string, TechnologyIpMetadata>> {
+  const validAddresses = Array.from(
+    new Map(
+      addresses
+        .filter((address) => isIP(address.ip) === address.version)
+        .map((address) => [address.ip, address]),
+    ).values(),
+  );
+  if (validAddresses.length === 0) return new Map();
+
+  const ips = validAddresses.map((address) => address.ip);
+  const [addressRows, rdapRows] = await Promise.all([
+    chQuery<{ ip: string; bucket: number; network_segment: string }>(
+      `SELECT
+         ip,
+         toUInt16(cityHash64(ip) % 256) AS bucket,
+         if(
+           isIPv4String(ip),
+           concat(toString(tupleElement(IPv4CIDRToRange(toIPv4(ip), 24), 1)), '/24'),
+           concat(toString(tupleElement(IPv6CIDRToRange(toIPv6(ip), 48), 1)), '/48')
+         ) AS network_segment
+       FROM (SELECT arrayJoin({ips:Array(String)}) AS ip)`,
+      { ips },
+    ),
+    chQuery<TechnologyIpRdapRow>(technologyIpRdapSql, {
+      ipv4s: validAddresses
+        .filter((address) => address.version === 4)
+        .map((address) => address.ip),
+      ipv6s: validAddresses
+        .filter((address) => address.version === 6)
+        .map((address) => address.ip),
+    }),
+  ]);
+  const enrichmentRows = await chQuery<TechnologyIpEnrichmentRow>(
+    technologyIpEnrichmentSql,
+    {
+      ips: addressRows.map((row) => row.ip),
+      buckets: addressRows.map((row) => row.bucket),
+    },
+  );
+  const enrichmentByIp = new Map(
+    enrichmentRows.map((enrichment) => [enrichment.ip, enrichment]),
+  );
+  const rdapByIp = new Map(rdapRows.map((row) => [row.ip, row]));
+  const addressByIp = new Map(addressRows.map((row) => [row.ip, row]));
+
+  return new Map(
+    validAddresses.map((address) => {
+      const enrichment = enrichmentByIp.get(address.ip);
+      return [
+        address.ip,
+        {
+          networkSegment:
+            addressByIp.get(address.ip)?.network_segment ?? address.ip,
+          countryCode: enrichment?.country_code ?? null,
+          countryName: enrichment?.country_name ?? null,
+          cityName: enrichment?.city_name ?? null,
+          asn: enrichment?.asn ?? null,
+          asnOrganization: enrichment?.asn_organization ?? null,
+          rdapRegistration: mapTechnologyIpRdapRegistration(
+            rdapByIp.get(address.ip),
+          ),
+        },
+      ];
+    }),
+  );
+}
+
+function groupTechnologyRows<T extends { hostname: string }>(
+  rows: T[],
+): Map<string, T[]> {
+  const grouped = new Map<string, T[]>();
+  for (const row of rows) {
+    const values = grouped.get(row.hostname) ?? [];
+    values.push(row);
+    grouped.set(row.hostname, values);
+  }
+  return grouped;
+}
+
+/** Combines CT observations with DNS-confirmed names for the selected domain. */
+export async function getCompanyTechnologyInfrastructure(
+  country: CountryConfig,
+  id: string,
+  opts: { domain?: string; page?: number; pageSize?: number } = {},
+): Promise<CompanyTechnologyInfrastructure | null> {
+  const domains = await getCompanyDomains(country, id);
+  const selectedDomain = selectedCompanyDomain(domains, opts.domain);
+  if (!selectedDomain) return null;
+
+  const domain = selectedDomain.domain;
+  const pageSize = PAGE_SIZES.includes(opts.pageSize as 25 | 50 | 100)
+    ? (opts.pageSize as number)
+    : 50;
+  const requestedPage = clampInt(opts.page, 1, Number.MAX_SAFE_INTEGER, 1);
+  const loadHostnamePage = (page: number) =>
+    chQuery<TechnologyHostnameRow>(technologyHostnameInventorySql, {
+      domain,
+      limit: pageSize,
+      offset: (page - 1) * pageSize,
+    });
+  let page = requestedPage;
+  let [hostnameRows, scanRows] = await Promise.all([
+    loadHostnamePage(page),
+    chQuery<TechnologyDnsScanRow>(
+      `SELECT
+        toString(status) AS status,
+        toString(resolved_at) AS resolved_at,
+        nameservers,
+        ns_ips AS nameserver_ips,
+        queries_total,
+        queries_ok,
+        dnssec_signed,
+        toString(ds_outcome) AS ds_outcome,
+        toString(dnskey_outcome) AS dnskey_outcome,
+        axfr_open AS zone_transfer_open
+      FROM commoncrawl_domain_dns_scan FINAL
+      WHERE root_domain = {domain:String}
+      LIMIT 1`,
+      { domain },
+    ),
+  ]);
+  if (hostnameRows.length === 0 && requestedPage > 1) {
+    const firstPageRows = await loadHostnamePage(1);
+    const total = Number(firstPageRows[0]?.total_hostnames ?? 0);
+    page = Math.max(1, Math.ceil(total / pageSize));
+    hostnameRows = page === 1 ? firstPageRows : await loadHostnamePage(page);
+  }
+  const summaryRow = hostnameRows[0];
+  const totalHostnames = Number(summaryRow?.total_hostnames ?? 0);
+  const hostnameNames = hostnameRows.map((row) => row.hostname);
+  const recordRows = hostnameNames.length
+    ? await chQuery<TechnologyDnsRecordRow>(technologyDnsRecordsSql, {
+        domain,
+        hostnames: hostnameNames,
+      })
+    : [];
+  const resolvedIpRecords = recordRows.filter(
+    (record) => record.type === "A" || record.type === "AAAA",
+  );
+  const resolvedIps = Array.from(
+    new Set(resolvedIpRecords.map((record) => record.value)),
+  );
+  const metadataByIp = await getTechnologyIpMetadata(
+    resolvedIpRecords.map((record) => ({
+      ip: record.value,
+      version: record.type === "A" ? 4 : 6,
+    })),
+  );
+  const ipRows = resolvedIpRecords.map((record) => {
+    const metadata = metadataByIp.get(record.value);
+    return {
+      hostname: record.hostname,
+      ip: record.value,
+      version: (record.type === "A" ? 4 : 6) as 4 | 6,
+      first_seen: record.first_seen,
+      last_seen: record.last_seen,
+      metadata,
+    };
+  });
+  const recordsByHostname = groupTechnologyRows(recordRows);
+  const ipsByHostname = groupTechnologyRows(ipRows);
+
+  const hostnames = hostnameRows.map<TechnologyHostname>((row) => ({
+    hostname: row.hostname,
+    label: row.label,
+    isApex: row.hostname === domain,
+    isWildcard: row.is_wildcard === 1,
+    evidence: [
+      ...(row.has_certificate === 1
+        ? (["certificate"] as TechnologyHostnameEvidence[])
+        : []),
+      ...(row.has_dns === 1 ? (["dns"] as TechnologyHostnameEvidence[]) : []),
+    ],
+    certificateFirstSeen: row.certificate_first_seen || null,
+    certificateLastSeen: row.certificate_last_seen || null,
+    certificateExpiresAt: row.certificate_expires_at || null,
+    certificateSourceLogs: row.certificate_source_logs,
+    dnsFirstSeen: row.dns_first_seen || null,
+    dnsLastSeen: row.dns_last_seen || null,
+    dnsDiscoverySource: row.dns_discovery_source || null,
+    hasIpv4: row.has_ipv4 === 1,
+    hasIpv6: row.has_ipv6 === 1,
+    hasCname: row.has_cname === 1,
+    records: (recordsByHostname.get(row.hostname) ?? []).map((record) => ({
+      type: record.type,
+      value: record.value,
+      priority: record.priority,
+      sources: record.sources,
+      discoveries: record.discoveries,
+      seenDates: record.seen_dates,
+      firstSeen: record.first_seen,
+      lastSeen: record.last_seen,
+    })),
+    ipAddresses: (ipsByHostname.get(row.hostname) ?? []).map((ip) => ({
+      ip: ip.ip,
+      version: ip.version,
+      firstSeen: ip.first_seen,
+      lastSeen: ip.last_seen,
+      networkSegment: ip.metadata?.networkSegment ?? ip.ip,
+      countryCode: ip.metadata?.countryCode ?? null,
+      countryName: ip.metadata?.countryName ?? null,
+      cityName: ip.metadata?.cityName ?? null,
+      asn: ip.metadata?.asn ?? null,
+      asnOrganization: ip.metadata?.asnOrganization ?? null,
+      rdapRegistration: ip.metadata?.rdapRegistration ?? null,
+    })),
+  }));
+  const scanRow = scanRows[0];
+
+  return {
+    domain,
+    page,
+    pageSize,
+    summary: {
+      totalHostnames,
+      certificateHostnames: Number(summaryRow?.certificate_hostnames ?? 0),
+      dnsHostnames: Number(summaryRow?.dns_hostnames ?? 0),
+      resolvedIpAddressesOnPage: resolvedIps.length,
+      rdapRegisteredIpAddressesOnPage: Array.from(metadataByIp.values()).filter(
+        (metadata) => metadata.rdapRegistration,
+      ).length,
+    },
+    scan: scanRow
+      ? {
+          status: scanRow.status,
+          resolvedAt: scanRow.resolved_at,
+          nameservers: scanRow.nameservers,
+          nameserverIps: scanRow.nameserver_ips,
+          queriesTotal: scanRow.queries_total,
+          queriesOk: scanRow.queries_ok,
+          dnssecSigned: scanRow.dnssec_signed === 1,
+          dsOutcome: scanRow.ds_outcome,
+          dnskeyOutcome: scanRow.dnskey_outcome,
+          zoneTransferOpen: scanRow.zone_transfer_open === 1,
+        }
+      : null,
+    hostnames,
+  };
+}
+
+const technologyIpInventorySql = `WITH inventory AS (
+  SELECT
+    toString(value) AS ip,
+    toUInt8(if(record_type = 'A', 4, 6)) AS version,
+    arraySort(groupUniqArray(name)) AS hostnames,
+    toString(min(first_seen)) AS first_seen,
+    toString(max(last_seen)) AS last_seen
+  FROM commoncrawl_domain_dns_records
+  WHERE root_domain = {domain:String}
+    AND record_type IN ('A', 'AAAA')
+  GROUP BY record_type, value
+)
+SELECT
+  inventory.*,
+  toString(count() OVER ()) AS total_addresses,
+  toString(countIf(version = 4) OVER ()) AS ipv4_addresses,
+  toString(countIf(version = 6) OVER ()) AS ipv6_addresses
+FROM inventory
+ORDER BY version, ip
+LIMIT {limit:UInt32} OFFSET {offset:UInt64}`;
+
+/** Lists every distinct address resolved by the selected company domain. */
+export async function getCompanyTechnologyIpInventory(
+  country: CountryConfig,
+  id: string,
+  opts: { domain?: string; page?: number; pageSize?: number } = {},
+): Promise<CompanyTechnologyIpInventory | null> {
+  const domains = await getCompanyDomains(country, id);
+  const selectedDomain = selectedCompanyDomain(domains, opts.domain);
+  if (!selectedDomain) return null;
+
+  const domain = selectedDomain.domain;
+  const pageSize = PAGE_SIZES.includes(opts.pageSize as 25 | 50 | 100)
+    ? (opts.pageSize as number)
+    : 25;
+  const requestedPage = clampInt(opts.page, 1, Number.MAX_SAFE_INTEGER, 1);
+  const loadPage = (page: number) =>
+    chQuery<TechnologyIpInventoryRow>(technologyIpInventorySql, {
+      domain,
+      limit: pageSize,
+      offset: (page - 1) * pageSize,
+    });
+  let page = requestedPage;
+  let rows = await loadPage(page);
+  if (rows.length === 0 && requestedPage > 1) {
+    const firstPageRows = await loadPage(1);
+    const total = Number(firstPageRows[0]?.total_addresses ?? 0);
+    page = Math.max(1, Math.ceil(total / pageSize));
+    rows = page === 1 ? firstPageRows : await loadPage(page);
+  }
+
+  const metadataByIp = await getTechnologyIpMetadata(rows);
+  const summaryRow = rows[0];
+  return {
+    domain,
+    page,
+    pageSize,
+    summary: {
+      totalAddresses: Number(summaryRow?.total_addresses ?? 0),
+      ipv4Addresses: Number(summaryRow?.ipv4_addresses ?? 0),
+      ipv6Addresses: Number(summaryRow?.ipv6_addresses ?? 0),
+      rdapRegisteredAddressesOnPage: Array.from(metadataByIp.values()).filter(
+        (metadata) => metadata.rdapRegistration,
+      ).length,
+    },
+    addresses: rows.map((row) => {
+      const metadata = metadataByIp.get(row.ip);
+      return {
+        ip: row.ip,
+        version: row.version,
+        networkSegment: metadata?.networkSegment ?? row.ip,
+        hostnames: row.hostnames,
+        firstSeen: row.first_seen,
+        lastSeen: row.last_seen,
+        countryCode: metadata?.countryCode ?? null,
+        countryName: metadata?.countryName ?? null,
+        cityName: metadata?.cityName ?? null,
+        asn: metadata?.asn ?? null,
+        asnOrganization: metadata?.asnOrganization ?? null,
+        rdapRegistration: metadata?.rdapRegistration ?? null,
+      };
+    }),
+  };
+}
+
+const technologyExactIpConnectionsSql = `WITH connections AS (
+  SELECT
+    ip,
+    toUInt8(ip_version) AS version,
+    root_domain AS domain,
+    hostnames,
+    sources,
+    discoveries,
+    toString(first_seen) AS first_seen,
+    toString(last_seen) AS last_seen
+  FROM commoncrawl_domain_ip_connections FINAL
+  PREWHERE segment_bucket = toUInt8(cityHash64({networkSegment:String}) % 64)
+    AND segment_cidr = {networkSegment:String}
+    AND ip_version = {version:UInt8}
+    AND address = toIPv6({ip:String})
+)
+SELECT
+  connections.*,
+  toString(min(first_seen) OVER ()) AS address_first_seen,
+  toString(max(last_seen) OVER ()) AS address_last_seen,
+  toString(count() OVER ()) AS total_connections
+FROM connections
+ORDER BY domain != {companyDomain:String}, domain
+LIMIT {limit:UInt32} OFFSET {offset:UInt64}`;
+
+const technologySegmentIpConnectionsSql = `SELECT
+  ip,
+  toUInt8(ip_version) AS version,
+  root_domain AS domain,
+  hostnames,
+  sources,
+  discoveries,
+  toString(first_seen) AS first_seen,
+  toString(last_seen) AS last_seen
+FROM commoncrawl_domain_ip_connections FINAL
+PREWHERE segment_bucket = toUInt8(cityHash64({networkSegment:String}) % 64)
+  AND segment_cidr = {networkSegment:String}
+  AND ip_version = {version:UInt8}
+WHERE address != toIPv6({ip:String})
+ORDER BY address, domain
+LIMIT {limit:UInt32} OFFSET {offset:UInt64}`;
+
+const technologyIpHistoryCoverageSql = `SELECT
+  toString(count()) AS completed_partitions
+FROM commoncrawl_domain_ip_backfill_status FINAL
+WHERE bucket < 16`;
+
+function mapTechnologyIpDomainConnection(
+  row: TechnologyIpDomainConnectionRow,
+): TechnologyIpDomainConnection {
+  return {
+    ip: row.ip,
+    version: row.version,
+    domain: row.domain,
+    hostnames: row.hostnames,
+    sources: row.sources,
+    discoveries: row.discoveries,
+    firstSeen: row.first_seen,
+    lastSeen: row.last_seen,
+  };
+}
+
+/** Loads the canonical technical view of an address across every observed domain. */
+export async function getTechnologyIpDetail(
+  address: string,
+  opts: { exactPage?: number; segmentPage?: number } = {},
+): Promise<TechnologyIpDetail | null> {
+  const version = isIP(address);
+  if (version !== 4 && version !== 6) return null;
+
+  const [metadata, coverageRows] = await Promise.all([
+    getTechnologyIpMetadata([{ ip: address, version }]).then((rows) =>
+      rows.get(address),
+    ),
+    chQuery<{ completed_partitions: string }>(technologyIpHistoryCoverageSql),
+  ]);
+  const networkSegment = metadata?.networkSegment ?? address;
+  const pageSize = 25;
+  const requestedExactPage = clampInt(
+    opts.exactPage,
+    1,
+    Number.MAX_SAFE_INTEGER,
+    1,
+  );
+  const loadExactPage = (page: number) =>
+    chQuery<TechnologyIpDomainConnectionRow>(technologyExactIpConnectionsSql, {
+      ip: address,
+      version,
+      networkSegment,
+      companyDomain: "",
+      limit: pageSize,
+      offset: (page - 1) * pageSize,
+    });
+  let exactPage = requestedExactPage;
+  let exactRows = await loadExactPage(exactPage);
+  if (exactRows.length === 0 && requestedExactPage > 1) {
+    const firstPageRows = await loadExactPage(1);
+    const total = Number(firstPageRows[0]?.total_connections ?? 0);
+    exactPage = Math.max(1, Math.ceil(total / pageSize));
+    exactRows =
+      exactPage === 1 ? firstPageRows : await loadExactPage(exactPage);
+  }
+  const observation = exactRows[0];
+  if (!observation) return null;
+
+  const requestedSegmentPage = clampInt(
+    opts.segmentPage,
+    1,
+    Number.MAX_SAFE_INTEGER,
+    1,
+  );
+  const segmentRows = await chQuery<TechnologyIpDomainConnectionRow>(
+    technologySegmentIpConnectionsSql,
+    {
+      ip: address,
+      version,
+      networkSegment,
+      limit: pageSize + 1,
+      offset: (requestedSegmentPage - 1) * pageSize,
+    },
+  );
+  const exactTotal = Number(observation.total_connections ?? 0);
+
+  return {
+    historyIndexCoverage: {
+      completedPartitions: Number(coverageRows[0]?.completed_partitions ?? 0),
+      totalPartitions: 16,
+    },
+    address: {
+      ip: address,
+      version,
+      networkSegment,
+      firstSeen: observation.address_first_seen ?? observation.first_seen,
+      lastSeen: observation.address_last_seen ?? observation.last_seen,
+      countryCode: metadata?.countryCode ?? null,
+      countryName: metadata?.countryName ?? null,
+      cityName: metadata?.cityName ?? null,
+      asn: metadata?.asn ?? null,
+      asnOrganization: metadata?.asnOrganization ?? null,
+      rdapRegistration: metadata?.rdapRegistration ?? null,
+    },
+    exactConnections: {
+      page: exactPage,
+      pageSize,
+      total: exactTotal,
+      hasMore: exactPage * pageSize < exactTotal,
+      connections: exactRows.map(mapTechnologyIpDomainConnection),
+    },
+    segmentConnections: {
+      page: requestedSegmentPage,
+      pageSize,
+      total: null,
+      hasMore: segmentRows.length > pageSize,
+      connections: segmentRows
+        .slice(0, pageSize)
+        .map(mapTechnologyIpDomainConnection),
+    },
+  };
+}
+
+/**
+ * Loads reverse DNS evidence for one address already associated with the company.
+ * Exact-IP sharing is kept separate from the broader and weaker network-segment association.
+ */
+export async function getCompanyTechnologyIpDetail(
+  country: CountryConfig,
+  id: string,
+  address: string,
+  opts: { domain?: string; exactPage?: number; segmentPage?: number } = {},
+): Promise<CompanyTechnologyIpDetail | null> {
+  const version = isIP(address);
+  if (version !== 4 && version !== 6) return null;
+
+  const domains = await getCompanyDomains(country, id);
+  const selectedDomain = selectedCompanyDomain(domains, opts.domain);
+  if (!selectedDomain) return null;
+
+  const [companyRows, coverageRows] = await Promise.all([
+    chQuery<{
+      hostnames: string[];
+      first_seen: string;
+      last_seen: string;
+    }>(
+      `SELECT
+        arraySort(groupUniqArray(name)) AS hostnames,
+        toString(min(first_seen)) AS first_seen,
+        toString(max(last_seen)) AS last_seen
+      FROM commoncrawl_domain_dns_records
+      WHERE root_domain = {domain:String}
+        AND record_type = {recordType:String}
+        AND if(
+          record_type = 'A',
+          toIPv6(toString(assumeNotNull(toIPv4OrNull(value)))),
+          assumeNotNull(toIPv6OrNull(value))
+        ) = toIPv6({ip:String})
+      HAVING length(hostnames) > 0`,
+      {
+        domain: selectedDomain.domain,
+        recordType: version === 4 ? "A" : "AAAA",
+        ip: address,
+      },
+    ),
+    chQuery<{ completed_partitions: string }>(technologyIpHistoryCoverageSql),
+  ]);
+  const companyObservation = companyRows[0];
+  if (!companyObservation) return null;
+
+  const metadata = (
+    await getTechnologyIpMetadata([{ ip: address, version }])
+  ).get(address);
+  const pageSize = 25;
+  const requestedExactPage = clampInt(
+    opts.exactPage,
+    1,
+    Number.MAX_SAFE_INTEGER,
+    1,
+  );
+  const loadExactPage = (page: number) =>
+    chQuery<TechnologyIpDomainConnectionRow>(technologyExactIpConnectionsSql, {
+      ip: address,
+      version,
+      networkSegment: metadata?.networkSegment ?? address,
+      companyDomain: selectedDomain.domain,
+      limit: pageSize,
+      offset: (page - 1) * pageSize,
+    });
+  let exactPage = requestedExactPage;
+  let exactRows = await loadExactPage(exactPage);
+  if (exactRows.length === 0 && requestedExactPage > 1) {
+    const firstPageRows = await loadExactPage(1);
+    const total = Number(firstPageRows[0]?.total_connections ?? 0);
+    exactPage = Math.max(1, Math.ceil(total / pageSize));
+    exactRows =
+      exactPage === 1 ? firstPageRows : await loadExactPage(exactPage);
+  }
+  let exactTotal = Number(exactRows[0]?.total_connections ?? 0);
+  if (
+    exactPage === 1 &&
+    !exactRows.some((row) => row.domain === selectedDomain.domain)
+  ) {
+    exactRows.unshift({
+      ip: address,
+      version,
+      domain: selectedDomain.domain,
+      hostnames: companyObservation.hostnames,
+      sources: [],
+      discoveries: [],
+      first_seen: companyObservation.first_seen,
+      last_seen: companyObservation.last_seen,
+    });
+    exactTotal += 1;
+  }
+
+  const registration = metadata?.rdapRegistration ?? null;
+  const networkSegment = metadata?.networkSegment ?? address;
+  const requestedSegmentPage = clampInt(
+    opts.segmentPage,
+    1,
+    Number.MAX_SAFE_INTEGER,
+    1,
+  );
+  const segmentRows = await chQuery<TechnologyIpDomainConnectionRow>(
+    technologySegmentIpConnectionsSql,
+    {
+      ip: address,
+      version,
+      networkSegment,
+      limit: pageSize + 1,
+      offset: (requestedSegmentPage - 1) * pageSize,
+    },
+  );
+  const hasMoreSegmentConnections = segmentRows.length > pageSize;
+  const visibleSegmentRows = segmentRows.slice(0, pageSize);
+
+  return {
+    companyDomain: selectedDomain.domain,
+    companyHostnames: companyObservation.hostnames,
+    historyIndexCoverage: {
+      completedPartitions: Number(coverageRows[0]?.completed_partitions ?? 0),
+      totalPartitions: 16,
+    },
+    address: {
+      ip: address,
+      version,
+      networkSegment,
+      firstSeen: companyObservation.first_seen,
+      lastSeen: companyObservation.last_seen,
+      countryCode: metadata?.countryCode ?? null,
+      countryName: metadata?.countryName ?? null,
+      cityName: metadata?.cityName ?? null,
+      asn: metadata?.asn ?? null,
+      asnOrganization: metadata?.asnOrganization ?? null,
+      rdapRegistration: registration,
+    },
+    exactConnections: {
+      page: exactPage,
+      pageSize,
+      total: exactTotal,
+      hasMore: exactPage * pageSize < exactTotal,
+      connections: exactRows.map(mapTechnologyIpDomainConnection),
+    },
+    segmentConnections: {
+      page: requestedSegmentPage,
+      pageSize,
+      total: null,
+      hasMore: hasMoreSegmentConnections,
+      connections: visibleSegmentRows.map(mapTechnologyIpDomainConnection),
+    },
+  };
 }
 
 export interface EvidenceOrigin {
@@ -669,12 +1969,22 @@ export interface IndustryDetailRow {
 export interface AddressRow {
   address_type: string;
   full_address: string;
+  /** ISO 3166-1 alpha-2 country when the source identifies the address country. */
+  address_country_code?: string;
+  /** Separate from country code because SCB marks foreign addresses without always naming a country. */
+  address_is_foreign?: boolean | 0 | 1;
   /**
    * A geocoder-friendly rendering of the same address, where the display form is
    * too noisy to resolve. Optional: most registers publish an address Nominatim
    * handles as-is, and those omit it.
    */
   geocode_address?: string;
+  /** Structured fallback fields used when the exact address is absent from the map provider. */
+  geocode_street?: string;
+  geocode_postal_code?: string;
+  /** Offline geocode from the company-keyed address serving table. */
+  latitude?: number | null;
+  longitude?: number | null;
 }
 
 export interface SecondaryNameRow {
@@ -877,6 +2187,29 @@ interface CompanySourceRecordQueryRow {
   source_run_id: string;
 }
 
+interface CompanySourceRecordUidRow {
+  source_record_uid: string;
+}
+
+interface CompanySourceRecordMetadataRow {
+  source_record_uid: string;
+  record_kind: string;
+  content_sha256: string;
+  first_seen_at: string;
+  last_seen_at: string;
+}
+
+interface CompanySourceRecordOriginRow {
+  source_record_uid: string;
+  source_slug: string;
+  source_record_key: string;
+  source_url: string;
+  source_object_key: string;
+  payload_sha256: string;
+  retrieved_at: string;
+  source_run_id: string;
+}
+
 interface DescriptionObservationQueryRow {
   observation_uid: string;
   source_record_uid: string;
@@ -956,28 +2289,94 @@ interface SourceContactQueryRow {
   extracted_at: string;
 }
 
-export const COMPANY_SOURCE_RECORDS_QUERY = `
+export const COMPANY_SOURCE_RECORD_UIDS_QUERY = `
+SELECT DISTINCT toString(source_record_uid) AS source_record_uid
+FROM corpscout.company_source_record_links
+PREWHERE country_code = {country:String} AND company_id = {id:String}`;
+
+export const COMPANY_SOURCE_RECORD_METADATA_QUERY = `
 SELECT
-  toString(links.source_record_uid) AS source_record_uid,
-  records.record_kind AS record_kind,
-  records.content_sha256 AS content_sha256,
-  toString(records.first_seen_at) AS first_seen_at,
-  toString(records.last_seen_at) AS last_seen_at,
-  coalesce(origins.source_slug, '') AS source_slug,
-  coalesce(origins.source_record_key, '') AS source_record_key,
-  coalesce(origins.source_url, '') AS source_url,
-  coalesce(origins.source_object_key, '') AS source_object_key,
-  coalesce(origins.payload_sha256, '') AS payload_sha256,
-  coalesce(toString(origins.retrieved_at), '') AS retrieved_at,
-  coalesce(origins.source_run_id, '') AS source_run_id
-FROM corpscout.company_source_record_links AS links FINAL
-INNER JOIN corpscout.company_source_records AS records FINAL
-  ON records.source_record_uid = links.source_record_uid
-LEFT JOIN corpscout.company_source_record_origins AS origins FINAL
-  ON origins.source_record_uid = links.source_record_uid
-WHERE links.country_code = {country:String}
-  AND links.company_id = {id:String}
-ORDER BY records.last_seen_at DESC, source_slug, source_record_key`;
+  toString(source_record_uid) AS source_record_uid,
+  argMax(record_kind, company_source_records.last_seen_at) AS record_kind,
+  argMax(content_sha256, company_source_records.last_seen_at) AS content_sha256,
+  toString(min(first_seen_at)) AS first_seen_at,
+  toString(max(company_source_records.last_seen_at)) AS last_seen_at
+FROM corpscout.company_source_records
+PREWHERE source_record_uid IN {sourceRecordUids:Array(String)}
+GROUP BY source_record_uid`;
+
+export const COMPANY_SOURCE_RECORD_ORIGINS_QUERY = `
+SELECT
+  toString(source_record_uid) AS source_record_uid,
+  source_slug,
+  source_record_key,
+  source_url,
+  source_object_key,
+  argMax(payload_sha256, company_source_record_origins.retrieved_at) AS payload_sha256,
+  toString(max(company_source_record_origins.retrieved_at)) AS retrieved_at,
+  argMax(source_run_id, company_source_record_origins.retrieved_at) AS source_run_id
+FROM corpscout.company_source_record_origins
+PREWHERE source_record_uid IN {sourceRecordUids:Array(String)}
+GROUP BY
+  source_record_uid,
+  source_slug,
+  source_record_key,
+  source_url,
+  source_object_key`;
+
+async function getCompanySourceRecordRows(params: {
+  country: string;
+  id: string;
+}): Promise<CompanySourceRecordQueryRow[]> {
+  const linkedRows = await chQuery<CompanySourceRecordUidRow>(
+    COMPANY_SOURCE_RECORD_UIDS_QUERY,
+    params,
+  );
+  const sourceRecordUids = linkedRows.map((row) => row.source_record_uid);
+  if (sourceRecordUids.length === 0) return [];
+
+  const [records, origins] = await Promise.all([
+    chQuery<CompanySourceRecordMetadataRow>(
+      COMPANY_SOURCE_RECORD_METADATA_QUERY,
+      { sourceRecordUids },
+    ),
+    chQuery<CompanySourceRecordOriginRow>(COMPANY_SOURCE_RECORD_ORIGINS_QUERY, {
+      sourceRecordUids,
+    }),
+  ]);
+  const originsByUid = new Map<string, CompanySourceRecordOriginRow[]>();
+  for (const origin of origins) {
+    const existing = originsByUid.get(origin.source_record_uid) ?? [];
+    existing.push(origin);
+    originsByUid.set(origin.source_record_uid, existing);
+  }
+
+  return records
+    .flatMap((record) => {
+      const recordOrigins = originsByUid.get(record.source_record_uid);
+      if (!recordOrigins || recordOrigins.length === 0) {
+        return [
+          {
+            ...record,
+            source_slug: "",
+            source_record_key: "",
+            source_url: "",
+            source_object_key: "",
+            payload_sha256: "",
+            retrieved_at: "",
+            source_run_id: "",
+          },
+        ];
+      }
+      return recordOrigins.map((origin) => ({ ...record, ...origin }));
+    })
+    .sort(
+      (left, right) =>
+        right.last_seen_at.localeCompare(left.last_seen_at) ||
+        left.source_slug.localeCompare(right.source_slug) ||
+        left.source_record_key.localeCompare(right.source_record_key),
+    );
+}
 
 export const COMPANY_DESCRIPTION_OBSERVATIONS_QUERY = `
 SELECT
@@ -1357,10 +2756,7 @@ export async function getCompanyFinancialDetail(
         ? getNorwayFinancialReports(id)
         : Promise.resolve([]),
       evidenceQueryWhenReady(evidenceSchemaReadyPromise, () =>
-        chQuery<CompanySourceRecordQueryRow>(
-          COMPANY_SOURCE_RECORDS_QUERY,
-          evidenceParams,
-        ),
+        getCompanySourceRecordRows(evidenceParams),
       ),
     ]);
   const { byUid } = buildEvidenceRefs(sourceRecordRows);
@@ -1378,27 +2774,15 @@ export async function getCompanyFinancialDetail(
 export async function getCompanyDetail(
   country: CountryConfig,
   id: string,
+  existingShell?: CompanyShell | null,
 ): Promise<CompanyDetail | null> {
-  const selectList = buildCompanySelectList(country);
+  const shell =
+    existingShell === undefined
+      ? await getCompanyShell(country, id)
+      : existingShell;
+  if (!shell) return null;
+  const company = { ...shell.company };
 
-  const rows = await chQuery<CompanyListRow & { __industry_key?: string }>(
-    `SELECT ${selectList}
-     FROM ${country.companiesTable}
-     WHERE ${country.idColumn} = {id:String}
-     LIMIT 1`,
-    { id },
-  );
-  if (rows.length === 0) return null;
-  const company = rows[0];
-
-  // Kick off the record + section queries immediately — they only depend on
-  // `id` — so they run concurrently with the industry round-trip below
-  // instead of after it.
-  const recordPromise = chQuery<Record<string, unknown>>(
-    country.detail?.recordQuery ??
-      `SELECT * FROM ${country.companiesTable} WHERE ${country.idColumn} = {id:String} LIMIT 1`,
-    { id },
-  );
   const sectionsPromise = Promise.all([
     country.detail?.financialsQuery
       ? chQuery<FinancialYearRow>(country.detail.financialsQuery, { id })
@@ -1471,11 +2855,7 @@ export async function getCompanyDetail(
   const evidenceSchemaReadyPromise = companyEvidenceSchemaReady();
   const sourceRecordRowsPromise = evidenceQueryWhenReady(
     evidenceSchemaReadyPromise,
-    () =>
-      chQuery<CompanySourceRecordQueryRow>(
-        COMPANY_SOURCE_RECORDS_QUERY,
-        evidenceParams,
-      ),
+    () => getCompanySourceRecordRows(evidenceParams),
   );
   const descriptionRowsPromise = evidenceQueryWhenReady(
     evidenceSchemaReadyPromise,
@@ -1516,7 +2896,6 @@ export async function getCompanyDetail(
   );
   // No-op guards close the unhandled-rejection window between promise
   // construction and the `await` below — the await still surfaces real errors.
-  recordPromise.catch(() => {});
   sectionsPromise.catch(() => {});
   statementsPromise.catch(() => {});
   industriesPromise.catch(() => {});
@@ -1542,17 +2921,15 @@ export async function getCompanyDetail(
   sourceContactRowsPromise.catch(() => {});
 
   if (country.industryQuery) {
-    const key = company.__industry_key ?? "";
+    const key = shell.industryKey;
     const industries = key
       ? await chQuery<IndustryRow>(country.industryQuery, { ids: [key] })
       : [];
     company.industry_code = industries[0]?.industry_code ?? null;
     company.industry_label = industries[0]?.industry_label ?? null;
-    delete company.__industry_key;
   }
 
   const [
-    records,
     [financials, contacts, domains],
     statements,
     industries,
@@ -1577,7 +2954,6 @@ export async function getCompanyDetail(
     sourceRelationshipRows,
     sourceContactRows,
   ] = await Promise.all([
-    recordPromise,
     sectionsPromise,
     statementsPromise,
     industriesPromise,
@@ -1756,7 +3132,7 @@ export async function getCompanyDetail(
 
   return {
     company,
-    record: records[0] ?? {},
+    record: shell.record,
     financials,
     frFinancials,
     contacts,

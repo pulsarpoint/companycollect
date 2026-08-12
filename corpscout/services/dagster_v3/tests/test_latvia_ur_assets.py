@@ -1,8 +1,7 @@
-from contextlib import contextmanager
+from datetime import UTC, datetime
 from pathlib import Path
 
 import duckdb
-from dagster_clickhouse import ClickhouseResource
 
 from dagster_v3.defs.latvia_ur import assets, resources, tables
 from dagster_v3.defs.latvia_ur import clickhouse as latvia_ur_clickhouse
@@ -11,12 +10,12 @@ SAMPLE_CSV = (
     "regcode;sepa;name;name_before_quotes;name_in_quotes;name_after_quotes;"
     "without_quotes;regtype;regtype_text;type;type_text;registered;terminated;"
     "closed;address;index;addressid;region;city;atvk;reregistration_term\n"
-    "40103550818;LV95ZZZ40103550818;\"SIA \"\"Psihologs\"\"\";SIA;Psihologs;\"\";0;"
+    '40103550818;LV95ZZZ40103550818;"SIA ""Psihologs""";SIA;Psihologs;"";0;'
     "K;Komercreģistrs;SIA;Sabiedrība ar ierobežotu atbildību;2012-05-31;;;"
-    "\"Valmiera\";4201;103045133;100015821;0;0885162;\n"
-    "41202013815;LV53ZZZ41202013815;\"IK \"\"KRASTNIEKI\"\"\";IK;KRASTNIEKI;\"\";0;"
+    '"Valmiera";4201;103045133;100015821;0;0885162;\n'
+    '41202013815;LV53ZZZ41202013815;"IK ""KRASTNIEKI""";IK;KRASTNIEKI;"";0;'
     "K;Komercreģistrs;IK;Individuālais komersants;1998-02-26;2014-04-10;L;"
-    "\"Dundaga\";3275;103045134;100015821;0;0885162;\n"
+    '"Dundaga";3275;103045134;100015821;0;0885162;\n'
 )
 ACTIVITY_CSV = (
     '"legal_entity_registration_number";"name";"legal_form_code";'
@@ -28,7 +27,7 @@ VZD_BUILDINGS_CSV = (
     "KODS,TIPS_CD,STATUSS,APSTIPR,APST_PAK,VKUR_CD,VKUR_TIPS,NOSAUKUMS,SORT_NOS,"
     "ATRIB,PNOD_CD,DAT_SAK,DAT_MOD,DAT_BEIG,FOR_BUILD,PLAN_ADR,STD,KOORD_X,KOORD_Y,DD_N,DD_E\n"
     "103045133,108,EKS,Y,101,0885162,113,Building 1,Building 1,LV-4201,,2020.01.01,"
-    "2026.01.01,,N,N,\"Valmiera, Building 1\",1,2,57.5380,25.4260\n"
+    '2026.01.01,,N,N,"Valmiera, Building 1",1,2,57.5380,25.4260\n'
 )
 VZD_CITIES_CSV = (
     "KODS,TIPS_CD,NOSAUKUMS,VKUR_CD,VKUR_TIPS,APSTIPR,APST_PAK,STATUSS,SORT_NOS,"
@@ -61,21 +60,6 @@ class _FakeSession:
 
     def get(self, url: str, *, timeout: int, stream: bool = False) -> _FakeResponse:
         return _FakeResponse(self._body)
-
-
-class _FakeClickHouse:
-    def __init__(self) -> None:
-        self.statements: list[str] = []
-        self.inserts: list[tuple[str, list]] = []
-
-    def execute(self, sql, params=None):
-        if "system.tables" in sql:
-            return [(tables.LV_COMPANIES_TABLE,)]
-        if isinstance(params, (list, tuple)):
-            self.inserts.append((sql, list(params)))
-            return None
-        self.statements.append(sql)
-        return None
 
 
 def _load_latvia_address_fixtures(conn) -> None:
@@ -112,7 +96,9 @@ def test_schedules_registered_and_jobs_cover_full_chains():
 
     register_keys = {
         k.path[-1]
-        for k in repo.get_job("latvia_ur_register_job").asset_layer.executable_asset_keys
+        for k in repo.get_job(
+            "latvia_ur_register_job"
+        ).asset_layer.executable_asset_keys
     }
     assert register_keys == {
         "latvia_ur_entities_duckdb",
@@ -121,6 +107,7 @@ def test_schedules_registered_and_jobs_cover_full_chains():
         "latvia_address_cities_duckdb",
         "latvia_address_municipalities_duckdb",
         "latvia_ur_clickhouse_companies",
+        "latvia_ur_clickhouse_company_addresses",
         # Curated legal forms run with the register, so a refreshed snapshot
         # carrying a new form gets its English on the same run -- and a
         # correction to the map no longer waits for a full re-ingest.
@@ -136,6 +123,11 @@ def test_schedules_registered_and_jobs_cover_full_chains():
         # domains/emails.
         "latvia_ur_clickhouse_company_contacts",
     }
+    assert any(
+        key.asset_key.path[-1] == "latvia_ur_clickhouse_company_addresses"
+        and key.name == "current_address_coverage"
+        for key in repo.asset_checks_defs_by_key
+    )
 
     # full transitive chain: 4 raw multi-asset outputs + pivot + metrics + usd + 2 exports = 9
     financials_keys = {
@@ -148,20 +140,26 @@ def test_schedules_registered_and_jobs_cover_full_chains():
     assert "latvia_ur_financial_statements_raw_duckdb" not in financials_keys
 
     asset_graph = repo.asset_graph
-    assert asset_graph.get(
-        next(
-            k
-            for k in asset_graph.get_all_asset_keys()
-            if k.path[-1] == assets.ENTITIES_ASSET_KEY
-        )
-    ).group_name == "latvia"
-    assert asset_graph.get(
-        next(
-            k
-            for k in asset_graph.get_all_asset_keys()
-            if k.path[-1] == "latvia_financial_statements_raw_duckdb"
-        )
-    ).group_name == "latvia_financial"
+    assert (
+        asset_graph.get(
+            next(
+                k
+                for k in asset_graph.get_all_asset_keys()
+                if k.path[-1] == assets.ENTITIES_ASSET_KEY
+            )
+        ).group_name
+        == "latvia"
+    )
+    assert (
+        asset_graph.get(
+            next(
+                k
+                for k in asset_graph.get_all_asset_keys()
+                if k.path[-1] == "latvia_financial_statements_raw_duckdb"
+            )
+        ).group_name
+        == "latvia_financial"
+    )
 
 
 def test_nace_classification_asset_deps_and_group():
@@ -240,7 +238,10 @@ def test_duckdb_table_count_helper(tmp_path: Path):
     )
     qualified = f"{resources.DLT_DATASET_NAME}.{resources.ENTITIES_TABLE}"
     with duckdb.connect(str(db_path), read_only=True) as conn:
-        assert assets._duckdb_table_count(duckdb_connection=conn, table_name=qualified) == 2
+        assert (
+            assets._duckdb_table_count(duckdb_connection=conn, table_name=qualified)
+            == 2
+        )
 
 
 def test_load_company_activity_rows_into_duckdb(tmp_path: Path):
@@ -301,25 +302,26 @@ def test_load_latvia_address_reference_rows_into_duckdb(tmp_path: Path):
     assert municipality == ("0885162", "Valmieras novads", "0885162")
 
 
-def test_lv_companies_export_columns_include_vzd_address_fields():
-    for column in (
-        "vzd_address_text",
-        "vzd_address_postal_code",
-        "vzd_address_status",
-        "address_city_name",
-        "address_municipality_name",
-        "address_latitude",
-        "address_longitude",
-    ):
-        assert column in tables.LV_COMPANIES_EXPORT_COLUMNS
+def test_lv_companies_export_columns_exclude_address_history_fields():
+    assert not (
+        set(tables.LV_COMPANIES_EXPORT_COLUMNS)
+        & set(tables.LV_COMPANY_ADDRESS_SOURCE_COLUMNS)
+    )
+    assert not (
+        set(tables.LV_COMPANIES_EXPORT_COLUMNS) & set(tables.LATVIA_VZD_ADDRESS_COLUMNS)
+    )
 
 
 def test_lv_companies_columns_match_entities_schema_and_migration():
-    # Published companies are register entities plus enriched activity text.
+    # Published companies keep one row per company. Address values are exported
+    # through lv_company_addresses instead of being duplicated here.
     assert tables.LV_COMPANIES_COLUMNS == (
-        *tuple(tables.LATVIA_UR_ENTITIES_COLUMNS),
+        *(
+            column
+            for column in tables.LATVIA_UR_ENTITIES_COLUMNS
+            if column not in tables.LV_COMPANY_ADDRESS_SOURCE_COLUMNS
+        ),
         "activity_text_original",
-        *tables.LATVIA_VZD_ADDRESS_COLUMNS,
     )
     # ...and register columns must exist in the 000015 migration that owns the base schema.
     migration = (
@@ -328,7 +330,9 @@ def test_lv_companies_columns_match_entities_schema_and_migration():
         / "migrations"
         / "000015_corpscout_lv_companies.up.sql"
     ).read_text()
-    assert f"CREATE TABLE IF NOT EXISTS {tables.QUALIFIED_LV_COMPANIES_TABLE}" in migration
+    assert (
+        f"CREATE TABLE IF NOT EXISTS {tables.QUALIFIED_LV_COMPANIES_TABLE}" in migration
+    )
     for column in tables.LATVIA_UR_ENTITIES_COLUMNS:
         assert f"    {column} " in migration
 
@@ -338,8 +342,13 @@ def test_lv_companies_columns_match_entities_schema_and_migration():
         / "migrations"
         / "000081_corpscout_lv_companies_activity_translation.up.sql"
     ).read_text()
-    assert "ADD COLUMN IF NOT EXISTS activity_text_original Nullable(String)" in activity_migration
-    assert "CREATE OR REPLACE VIEW corpscout.lv_companies_translated" in activity_migration
+    assert (
+        "ADD COLUMN IF NOT EXISTS activity_text_original Nullable(String)"
+        in activity_migration
+    )
+    assert (
+        "CREATE OR REPLACE VIEW corpscout.lv_companies_translated" in activity_migration
+    )
 
 
 def test_lv_companies_vzd_address_migration_adds_columns():
@@ -361,44 +370,7 @@ def test_lv_companies_vzd_address_migration_adds_columns():
         assert ddl in migration
 
 
-def test_export_companies_replaces_clickhouse_table(tmp_path: Path, monkeypatch):
-    db_path = tmp_path / "latvia_ur_source.duckdb"
-    assets.run_latvia_ur_dlt_pipeline(
-        database_path=db_path,
-        run_id="run-1",
-        session=_FakeSession(SAMPLE_CSV.encode("utf-8")),
-        pipelines_dir=tmp_path / "dlt",
-    )
-
-    fake = _FakeClickHouse()
-
-    @contextmanager
-    def fake_get_connection(self):
-        yield fake
-
-    monkeypatch.setattr(ClickhouseResource, "get_connection", fake_get_connection)
-
-    with duckdb.connect(str(db_path)) as conn:
-        assets.load_latvia_company_activity_csv(
-            duckdb_connection=conn,
-            session=_FakeSession(ACTIVITY_CSV.encode("utf-8")),
-        )
-        _load_latvia_address_fixtures(conn)
-        rows = latvia_ur_clickhouse.export_latvia_ur_clickhouse_companies(
-            duckdb_connection=conn,
-            clickhouse=ClickhouseResource(host="localhost"),
-        )
-
-    assert rows == 2
-    # the staged table is created and atomically exchanged into corpscout.lv_companies
-    assert any("EXCHANGE TABLES" in stmt for stmt in fake.statements)
-    assert fake.inserts, "expected a batched INSERT of the register rows"
-    _, inserted_rows = fake.inserts[0]
-    assert len(inserted_rows) == 2
-    assert len(inserted_rows[0]) == len(tables.LV_COMPANIES_EXPORT_COLUMNS)
-
-
-def test_export_companies_includes_activity_text(tmp_path: Path, monkeypatch):
+def test_company_export_view_includes_activity_but_not_address_fields(tmp_path: Path):
     db_path = tmp_path / "latvia_ur_source.duckdb"
     assets.run_latvia_ur_dlt_pipeline(
         database_path=db_path,
@@ -413,26 +385,31 @@ def test_export_companies_includes_activity_text(tmp_path: Path, monkeypatch):
         )
         _load_latvia_address_fixtures(conn)
 
-    fake = _FakeClickHouse()
-
-    @contextmanager
-    def fake_get_connection(self):
-        yield fake
-
-    monkeypatch.setattr(ClickhouseResource, "get_connection", fake_get_connection)
-
     with duckdb.connect(str(db_path)) as conn:
-        latvia_ur_clickhouse.export_latvia_ur_clickhouse_companies(
+        latvia_ur_clickhouse.create_latvia_ur_export_views(
             duckdb_connection=conn,
-            clickhouse=ClickhouseResource(host="localhost"),
+            source_run_id="run-1",
+            observed_at=datetime(2026, 8, 7, tzinfo=UTC),
         )
+        row = conn.execute(
+            f"select activity_text_original from "
+            f"{tables.DLT_DATASET_NAME}.{latvia_ur_clickhouse.LV_COMPANIES_EXPORT_VIEW} "
+            "where regcode = '40103550818'"
+        ).fetchone()
+        columns = {
+            description[0]
+            for description in conn.execute(
+                f"select * from {tables.DLT_DATASET_NAME}."
+                f"{latvia_ur_clickhouse.LV_COMPANIES_EXPORT_VIEW} limit 0"
+            ).description
+        }
 
-    _, inserted_rows = fake.inserts[0]
-    activity_index = tables.LV_COMPANIES_EXPORT_COLUMNS.index("activity_text_original")
-    assert inserted_rows[0][activity_index] == "psiholoģiskie pakalpojumi"
+    assert row == ("psiholoģiskie pakalpojumi",)
+    assert not (columns & set(tables.LV_COMPANY_ADDRESS_SOURCE_COLUMNS))
+    assert not (columns & set(tables.LATVIA_VZD_ADDRESS_COLUMNS))
 
 
-def test_export_companies_includes_vzd_address_enrichment(tmp_path: Path, monkeypatch):
+def test_address_export_view_includes_vzd_enrichment(tmp_path: Path):
     db_path = tmp_path / "latvia_ur_source.duckdb"
     assets.run_latvia_ur_dlt_pipeline(
         database_path=db_path,
@@ -446,27 +423,24 @@ def test_export_companies_includes_vzd_address_enrichment(tmp_path: Path, monkey
             session=_FakeSession(ACTIVITY_CSV.encode("utf-8")),
         )
         _load_latvia_address_fixtures(conn)
-
-    fake = _FakeClickHouse()
-
-    @contextmanager
-    def fake_get_connection(self):
-        yield fake
-
-    monkeypatch.setattr(ClickhouseResource, "get_connection", fake_get_connection)
-
-    with duckdb.connect(str(db_path)) as conn:
-        latvia_ur_clickhouse.export_latvia_ur_clickhouse_companies(
+        latvia_ur_clickhouse.create_latvia_ur_export_views(
             duckdb_connection=conn,
-            clickhouse=ClickhouseResource(host="localhost"),
+            source_run_id="run-1",
+            observed_at=datetime(2026, 8, 7, tzinfo=UTC),
         )
+        row = conn.execute(
+            f"select {', '.join(tables.LATVIA_VZD_ADDRESS_COLUMNS)} "
+            f"from {tables.DLT_DATASET_NAME}."
+            f"{latvia_ur_clickhouse.LV_COMPANY_ADDRESSES_EXPORT_VIEW} "
+            "where regcode = '40103550818'"
+        ).fetchone()
 
-    _, inserted_rows = fake.inserts[0]
-    row = inserted_rows[0]
-    assert row[tables.LV_COMPANIES_EXPORT_COLUMNS.index("vzd_address_text")] == "Valmiera, Building 1"
-    assert row[tables.LV_COMPANIES_EXPORT_COLUMNS.index("vzd_address_postal_code")] == "LV-4201"
-    assert row[tables.LV_COMPANIES_EXPORT_COLUMNS.index("vzd_address_status")] == "EKS"
-    assert row[tables.LV_COMPANIES_EXPORT_COLUMNS.index("address_city_name")] == "Valmiera"
-    assert row[tables.LV_COMPANIES_EXPORT_COLUMNS.index("address_municipality_name")] == "Valmieras novads"
-    assert row[tables.LV_COMPANIES_EXPORT_COLUMNS.index("address_latitude")] == 57.5380
-    assert row[tables.LV_COMPANIES_EXPORT_COLUMNS.index("address_longitude")] == 25.4260
+    assert row == (
+        "Valmiera, Building 1",
+        "LV-4201",
+        "EKS",
+        "Valmiera",
+        "Valmieras novads",
+        57.5380,
+        25.4260,
+    )

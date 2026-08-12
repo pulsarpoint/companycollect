@@ -1,0 +1,22 @@
+---
+backoffice_postgres_service_name: corpscout-backoffice-postgres
+backoffice_postgres_container_name: corpscout-backoffice-postgres
+backoffice_postgres_dir: /opt/corpscout-backoffice-postgres
+backoffice_postgres_data_dir: /opt/corpscout-backoffice-postgres/data
+
+# Keep the image immutable between deployments. Renovating this tag is an
+# explicit PostgreSQL upgrade, not an incidental `latest` pull.
+backoffice_postgres_image: postgres:17.10-bookworm
+backoffice_postgres_database: corpscout_backoffice
+backoffice_postgres_owner: corpscout_backoffice_owner
+backoffice_postgres_app_user: corpscout_backoffice_app
+backoffice_postgres_dagster_user: corpscout_backoffice_dagster
+
+# This is a separate host from Dagster's primary PostgreSQL. Publish only on
+# the server's LAN address and accept clients only from the local /24.
+backoffice_postgres_bind_address: 192.168.88.169
+backoffice_postgres_port: 5432
+backoffice_postgres_allowed_ipv4_cidr: 192.168.88.0/24
+
+backoffice_postgres_max_connections: 100
+backoffice_postgres_shared_buffers: 512MB

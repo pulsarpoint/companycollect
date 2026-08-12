@@ -1,0 +1,11 @@
+# Unix-socket administration is available only through root-controlled docker exec.
+local   all                              all                                      trust
+
+# Application clients are restricted by database, role, LAN, and SCRAM password.
+host    {{ backoffice_postgres_database }}    {{ backoffice_postgres_owner }}          {{ backoffice_postgres_allowed_ipv4_cidr }}    scram-sha-256
+host    {{ backoffice_postgres_database }}    {{ backoffice_postgres_app_user }}       {{ backoffice_postgres_allowed_ipv4_cidr }}    scram-sha-256
+host    {{ backoffice_postgres_database }}    {{ backoffice_postgres_dagster_user }}   {{ backoffice_postgres_allowed_ipv4_cidr }}    scram-sha-256
+
+# The PostgreSQL superuser and every other network connection are rejected.
+host    all                              all                                      0.0.0.0/0    reject
+host    all                              all                                      ::/0         reject

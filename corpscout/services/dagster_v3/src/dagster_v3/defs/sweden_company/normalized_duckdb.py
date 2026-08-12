@@ -12,8 +12,11 @@ BOLAGSVERKET_REQUIRED_COLUMNS = (
     "organisationsidentitet",
     "organisationsnamn",
     "organisationsform",
+    "namnskyddslopnummer",
+    "registreringsland",
     "avregistreringsdatum",
     "avregistreringsorsak",
+    "pagandeAvvecklingsEllerOmstruktureringsforfarande",
     "registreringsdatum",
     "verksamhetsbeskrivning",
     "postadress",
@@ -27,12 +30,16 @@ SCB_REQUIRED_COLUMNS = (
     "source_payload_hash",
     "PeOrgNr",
     "Namn",
+    "Foretagsnamn",
+    "FtgStat",
+    "JEStat",
     "JurForm",
     "COAdress",
     "Gatuadress",
     "PostNr",
     "PostOrt",
     "RegDatKtid",
+    "Reklamsparrtyp",
     "Ng1",
     "Ng2",
     "Ng3",
@@ -50,8 +57,15 @@ def replace_sweden_company_normalized_tables(
     try:
         connection.execute(f"create schema if not exists {tables.DLT_DATASET_NAME}")
         _validate_required_columns(connection)
+        _replace_company_registry_states_table(
+            connection=connection, loaded_at=loaded_at
+        )
+        _replace_company_proceedings_table(connection=connection, loaded_at=loaded_at)
         _replace_companies_table(connection=connection, loaded_at=loaded_at)
         _replace_company_addresses_table(connection=connection, loaded_at=loaded_at)
+        _replace_company_industry_states_table(
+            connection=connection, loaded_at=loaded_at
+        )
         _replace_company_industry_codes_table(
             connection=connection, loaded_at=loaded_at
         )
@@ -59,6 +73,13 @@ def replace_sweden_company_normalized_tables(
         counts = {
             "companies": _table_count(connection, "companies"),
             "company_addresses": _table_count(connection, "company_addresses"),
+            "company_registry_states": _table_count(
+                connection, "company_registry_states"
+            ),
+            "company_proceedings": _table_count(connection, "company_proceedings"),
+            "company_industry_states": _table_count(
+                connection, "company_industry_states"
+            ),
             "company_industry_codes": _table_count(
                 connection, "company_industry_codes"
             ),
@@ -74,30 +95,24 @@ def replace_sweden_company_normalized_tables(
     return counts
 
 
-def _replace_companies_table(*, connection: Any, loaded_at: datetime) -> None:
+def _replace_company_registry_states_table(
+    *, connection: Any, loaded_at: datetime
+) -> None:
     bolagsverket_identity = sweden_identity_sql("organisationsidentitet")
     scb_identity = sweden_identity_sql("PeOrgNr")
     connection.execute(
         f"""
-        create or replace table sweden_company.companies as
+        create or replace table sweden_company.company_registry_states as
         with bolagsverket_source as (
             select
                 *,
                 {bolagsverket_identity} as company_id,
                 row_number() over (
                     partition by {bolagsverket_identity}
-                    order by
-                        source_record_id,
-                        source_line_number,
-                        source_payload_hash
+                    order by source_record_id, source_line_number, source_payload_hash
                 ) as company_rank
             from sweden_company.bolagsverket_raw
             where {bolagsverket_identity} != ''
-        ),
-        bolagsverket as (
-            select * exclude (company_rank)
-            from bolagsverket_source
-            where company_rank = 1
         ),
         scb_source as (
             select
@@ -105,18 +120,201 @@ def _replace_companies_table(*, connection: Any, loaded_at: datetime) -> None:
                 {scb_identity} as company_id,
                 row_number() over (
                     partition by {scb_identity}
-                    order by
-                        source_record_id,
-                        source_line_number,
-                        source_payload_hash
+                    order by source_record_id, source_line_number, source_payload_hash
                 ) as company_rank
             from sweden_company.scb_raw
             where {scb_identity} != ''
         ),
-        scb as (
-            select * exclude (company_rank)
+        candidates as (
+            select
+                company_id,
+                'bolagsverket' as source,
+                organisationsidentitet as company_id_raw,
+                nullif(trim(split_part(organisationsnamn, '$', 1)), '') as legal_name,
+                organisationsnamn as legal_name_raw,
+                null::varchar as alternate_name,
+                nullif(trim(organisationsform), '') as legal_form_code,
+                null::varchar as source_status_code,
+                null::varchar as source_secondary_status_code,
+                case
+                    when nullif(trim(avregistreringsdatum), '') is not null
+                        then 'inactive'
+                    else 'active'
+                end as derived_status,
+                nullif(trim(avregistreringsorsak), '') as status_reason,
+                try_strptime(
+                    nullif(trim(registreringsdatum), ''), '%Y-%m-%d'
+                )::date as incorporation_date,
+                try_strptime(
+                    nullif(trim(avregistreringsdatum), ''), '%Y-%m-%d'
+                )::date as dissolution_date,
+                nullif(trim(verksamhetsbeskrivning), '') as activity_description,
+                nullif(trim(namnskyddslopnummer), '') as name_protection_sequence,
+                nullif(trim(registreringsland), '') as registration_country_code,
+                null::varchar as marketing_block_code,
+                nullif(
+                    trim(pagandeAvvecklingsEllerOmstruktureringsforfarande), ''
+                ) as proceedings_raw,
+                source_run_id,
+                source_record_id,
+                source_payload_hash
+            from bolagsverket_source
+            where company_rank = 1
+
+            union all
+
+            select
+                company_id,
+                'scb' as source,
+                PeOrgNr as company_id_raw,
+                nullif(trim(Namn), '') as legal_name,
+                null::varchar as legal_name_raw,
+                nullif(trim(Foretagsnamn), '') as alternate_name,
+                nullif(trim(JurForm), '') as legal_form_code,
+                nullif(trim(FtgStat), '') as source_status_code,
+                nullif(trim(JEStat), '') as source_secondary_status_code,
+                null::varchar as derived_status,
+                null::varchar as status_reason,
+                try_strptime(nullif(trim(RegDatKtid), ''), '%Y%m%d')::date
+                    as incorporation_date,
+                null::date as dissolution_date,
+                null::varchar as activity_description,
+                null::varchar as name_protection_sequence,
+                null::varchar as registration_country_code,
+                nullif(trim(Reklamsparrtyp), '') as marketing_block_code,
+                null::varchar as proceedings_raw,
+                source_run_id,
+                source_record_id,
+                source_payload_hash
             from scb_source
             where company_rank = 1
+        ),
+        states as (
+            select
+                *,
+                cast(1 as utinyint) as has_company,
+                sha256(concat_ws(
+                    chr(31),
+                    coalesce(company_id_raw, ''),
+                    coalesce(legal_name, ''),
+                    coalesce(legal_name_raw, ''),
+                    coalesce(alternate_name, ''),
+                    coalesce(legal_form_code, ''),
+                    coalesce(source_status_code, ''),
+                    coalesce(source_secondary_status_code, ''),
+                    coalesce(derived_status, ''),
+                    coalesce(status_reason, ''),
+                    coalesce(cast(incorporation_date as varchar), ''),
+                    coalesce(cast(dissolution_date as varchar), ''),
+                    coalesce(activity_description, ''),
+                    coalesce(name_protection_sequence, ''),
+                    coalesce(registration_country_code, ''),
+                    coalesce(marketing_block_code, ''),
+                    coalesce(proceedings_raw, ''),
+                    '1'
+                )) as state_fingerprint
+            from candidates
+        )
+        select
+            * exclude (state_fingerprint),
+            ? as updated_from_raw_at,
+            has_company,
+            state_fingerprint,
+            state_fingerprint as observation_fingerprint,
+            ? as observed_at
+        from states
+        """,
+        [loaded_at, loaded_at],
+    )
+
+
+def _replace_company_proceedings_table(*, connection: Any, loaded_at: datetime) -> None:
+    connection.execute(
+        """
+        create or replace table sweden_company.company_proceedings as
+        with expanded as (
+            select
+                company_id,
+                source,
+                nullif(trim(proceeding), '') as raw_proceeding,
+                source_run_id,
+                source_record_id,
+                source_payload_hash
+            from sweden_company.company_registry_states,
+                unnest(string_split(coalesce(proceedings_raw, ''), '|'))
+                    as proceedings(proceeding)
+            where source = 'bolagsverket'
+        ),
+        parsed as (
+            select
+                company_id,
+                source,
+                nullif(trim(split_part(raw_proceeding, '$', 1)), '')
+                    as proceeding_code,
+                try_strptime(
+                    nullif(trim(split_part(raw_proceeding, '$', 2)), ''),
+                    '%Y-%m-%d'
+                )::date as effective_date,
+                raw_proceeding,
+                source_run_id,
+                source_record_id,
+                source_payload_hash
+            from expanded
+            where raw_proceeding is not null
+        ),
+        identified as (
+            select
+                *,
+                sha256(concat_ws(
+                    chr(31),
+                    coalesce(proceeding_code, ''),
+                    coalesce(cast(effective_date as varchar), ''),
+                    coalesce(raw_proceeding, '')
+                )) as proceeding_identity
+            from parsed
+        ),
+        deduplicated as (
+            select *
+            from identified
+            qualify row_number() over (
+                partition by company_id, source, proceeding_identity
+                order by source_record_id, source_payload_hash
+            ) = 1
+        )
+        select
+            company_id,
+            source,
+            proceeding_code,
+            effective_date,
+            raw_proceeding,
+            proceeding_identity,
+            source_run_id,
+            source_record_id,
+            source_payload_hash,
+            ? as updated_from_raw_at,
+            cast(1 as utinyint) as has_proceeding,
+            proceeding_identity as proceeding_fingerprint,
+            proceeding_identity as observation_fingerprint,
+            ? as observed_at
+        from deduplicated
+        """,
+        [loaded_at, loaded_at],
+    )
+
+
+def _replace_companies_table(*, connection: Any, loaded_at: datetime) -> None:
+    connection.execute(
+        """
+        create or replace table sweden_company.companies as
+        with bolagsverket as (
+            select *
+            from sweden_company.company_registry_states
+            where source = 'bolagsverket'
+        ),
+        scb as (
+            select *
+            from sweden_company.company_registry_states
+            where source = 'scb'
         ),
         company_ids as (
             select company_id from bolagsverket
@@ -126,37 +324,22 @@ def _replace_companies_table(*, connection: Any, loaded_at: datetime) -> None:
         select
             ids.company_id,
             ids.company_id as registration_number,
-            b.organisationsidentitet as bolagsverket_company_id_raw,
-            s.PeOrgNr as scb_company_id_raw,
+            b.company_id_raw as bolagsverket_company_id_raw,
+            s.company_id_raw as scb_company_id_raw,
             coalesce(
-                nullif(trim(split_part(b.organisationsnamn, '$', 1)), ''),
-                nullif(trim(s.Namn), '')
+                b.legal_name,
+                s.legal_name
             ) as legal_name,
-            b.organisationsnamn as legal_name_raw,
+            b.legal_name_raw,
             coalesce(
-                nullif(trim(b.organisationsform), ''),
-                nullif(trim(s.JurForm), '')
+                b.legal_form_code,
+                s.legal_form_code
             ) as legal_form_code,
-            case
-                when b.company_id is not null
-                    and nullif(trim(b.avregistreringsdatum), '') is not null
-                    then 'inactive'
-                else 'active'
-            end as status,
-            case
-                when b.company_id is not null then nullif(trim(b.avregistreringsorsak), '')
-                else null
-            end as status_reason,
-            coalesce(
-                try_strptime(nullif(trim(b.registreringsdatum), ''), '%Y-%m-%d')::date,
-                try_strptime(nullif(trim(s.RegDatKtid), ''), '%Y%m%d')::date
-            ) as incorporation_date,
-            try_strptime(nullif(trim(b.avregistreringsdatum), ''), '%Y-%m-%d')::date
-                as dissolution_date,
-            case
-                when b.company_id is not null then nullif(trim(b.verksamhetsbeskrivning), '')
-                else null
-            end as activity_description,
+            coalesce(b.derived_status, 'active') as status,
+            b.status_reason,
+            coalesce(b.incorporation_date, s.incorporation_date) as incorporation_date,
+            b.dissolution_date,
+            b.activity_description,
             coalesce(b.source_run_id, s.source_run_id) as source_run_id,
             b.source_record_id as bolagsverket_source_record_id,
             s.source_record_id as scb_source_record_id,
@@ -177,9 +360,20 @@ def _replace_company_addresses_table(*, connection: Any, loaded_at: datetime) ->
     connection.execute(
         f"""
         create or replace table sweden_company.company_addresses as
-        with bolagsverket_addresses as (
+        with bolagsverket_source as (
             select
+                *,
                 {bolagsverket_identity} as company_id,
+                row_number() over (
+                    partition by {bolagsverket_identity}
+                    order by source_record_id, source_line_number, source_payload_hash
+                ) as address_rank
+            from sweden_company.bolagsverket_raw
+            where {bolagsverket_identity} != ''
+        ),
+        bolagsverket_addresses as (
+            select
+                company_id,
                 'postal' as address_type,
                 'bolagsverket' as source,
                 postadress as raw_address,
@@ -193,15 +387,24 @@ def _replace_company_addresses_table(*, connection: Any, loaded_at: datetime) ->
                 end as country_code,
                 source_run_id,
                 source_record_id,
-                source_payload_hash,
-                ? as updated_from_raw_at
-            from sweden_company.bolagsverket_raw
-            where nullif(trim(postadress), '') is not null
-                and {bolagsverket_identity} != ''
+                source_payload_hash
+            from bolagsverket_source
+            where address_rank = 1
+        ),
+        scb_source as (
+            select
+                *,
+                {scb_identity} as company_id,
+                row_number() over (
+                    partition by {scb_identity}
+                    order by source_record_id, source_line_number, source_payload_hash
+                ) as address_rank
+            from sweden_company.scb_raw
+            where {scb_identity} != ''
         ),
         scb_addresses as (
             select
-                {scb_identity} as company_id,
+                company_id,
                 'visiting_or_postal' as address_type,
                 'scb' as source,
                 case
@@ -226,23 +429,152 @@ def _replace_company_addresses_table(*, connection: Any, loaded_at: datetime) ->
                 nullif(trim(COAdress), '') as care_of,
                 nullif(trim(PostNr), '') as postal_code,
                 nullif(trim(PostOrt), '') as post_town,
-                'SE' as country_code,
+                case
+                    when lower(trim(PostOrt)) != 'utlandet' then 'SE'
+                    when regexp_matches(
+                        coalesce(Gatuadress, ''),
+                        '(^| )PL {{2,}}'
+                    ) then 'PL'
+                    else null
+                end as country_code,
                 source_run_id,
                 source_record_id,
-                source_payload_hash,
-                ? as updated_from_raw_at
+                source_payload_hash
+            from scb_source
+            where address_rank = 1
+        ),
+        candidates as (
+            select * from bolagsverket_addresses
+            union all
+            select * from scb_addresses
+        ),
+        address_states as (
+            select
+                *,
+                cast(
+                    coalesce(trim(raw_address), '') != ''
+                    or coalesce(trim(street_address), '') != ''
+                    or coalesce(trim(care_of), '') != ''
+                    or coalesce(trim(postal_code), '') != ''
+                    or coalesce(trim(post_town), '') != ''
+                    as utinyint
+                ) as has_address
+            from candidates
+        )
+        select
+            company_id,
+            address_type,
+            source,
+            raw_address,
+            street_address,
+            care_of,
+            postal_code,
+            post_town,
+            country_code,
+            source_run_id,
+            source_record_id,
+            source_payload_hash,
+            ? as updated_from_raw_at,
+            has_address,
+            sha256(concat_ws(
+                chr(31),
+                coalesce(raw_address, ''),
+                coalesce(street_address, ''),
+                coalesce(care_of, ''),
+                coalesce(postal_code, ''),
+                coalesce(post_town, ''),
+                coalesce(country_code, ''),
+                cast(has_address as varchar)
+            )) as address_fingerprint,
+            sha256(concat_ws(
+                chr(31),
+                coalesce(raw_address, ''),
+                coalesce(street_address, ''),
+                coalesce(care_of, ''),
+                coalesce(postal_code, ''),
+                coalesce(post_town, ''),
+                coalesce(country_code, ''),
+                cast(has_address as varchar)
+            )) as observation_fingerprint,
+            ? as observed_at
+        from address_states
+        """,
+        [loaded_at, loaded_at],
+    )
+
+
+def _replace_company_industry_states_table(
+    *,
+    connection: Any,
+    loaded_at: datetime,
+) -> None:
+    scb_identity = sweden_identity_sql("PeOrgNr")
+    connection.execute(
+        f"""
+        create or replace table sweden_company.company_industry_states as
+        with scb_source as (
+            select
+                *,
+                {scb_identity} as company_id,
+                row_number() over (
+                    partition by {scb_identity}
+                    order by source_record_id, source_line_number, source_payload_hash
+                ) as company_rank
             from sweden_company.scb_raw
             where {scb_identity} != ''
-                and (
-                    nullif(trim(COAdress), '') is not null
-                    or nullif(trim(Gatuadress), '') is not null
-                    or nullif(trim(PostNr), '') is not null
-                    or nullif(trim(PostOrt), '') is not null
-                )
+        ),
+        candidates as (
+            select
+                company_id,
+                'scb' as source,
+                nullif(trim(Ng1), '') as ng1_code,
+                nullif(trim(Ng2), '') as ng2_code,
+                nullif(trim(Ng3), '') as ng3_code,
+                nullif(trim(Ng4), '') as ng4_code,
+                nullif(trim(Ng5), '') as ng5_code,
+                source_run_id,
+                source_record_id,
+                source_payload_hash
+            from scb_source
+            where company_rank = 1
+        ),
+        states as (
+            select
+                *,
+                cast(
+                    ng1_code is not null
+                    or ng2_code is not null
+                    or ng3_code is not null
+                    or ng4_code is not null
+                    or ng5_code is not null
+                    as utinyint
+                ) as has_industry,
+                sha256(concat_ws(
+                    chr(31),
+                    coalesce(ng1_code, ''),
+                    coalesce(ng2_code, ''),
+                    coalesce(ng3_code, ''),
+                    coalesce(ng4_code, ''),
+                    coalesce(ng5_code, ''),
+                    cast(
+                        ng1_code is not null
+                        or ng2_code is not null
+                        or ng3_code is not null
+                        or ng4_code is not null
+                        or ng5_code is not null
+                        as varchar
+                    )
+                )) as state_fingerprint
+            from candidates
         )
-        select * from bolagsverket_addresses
-        union all
-        select * from scb_addresses
+        select
+            * exclude (state_fingerprint),
+            ? as updated_from_raw_at,
+            has_industry,
+            state_fingerprint,
+            state_fingerprint as observation_fingerprint,
+            ? as observed_at
+        from states
         """,
         [loaded_at, loaded_at],
     )
@@ -253,65 +585,64 @@ def _replace_company_industry_codes_table(
     connection: Any,
     loaded_at: datetime,
 ) -> None:
-    scb_identity = sweden_identity_sql("PeOrgNr")
     connection.execute(
-        f"""
+        """
         create or replace table sweden_company.company_industry_codes as
         with candidates as (
             select
-                {scb_identity} as company_id,
+                company_id,
                 1 as sequence,
                 true as is_primary,
-                nullif(trim(Ng1), '') as sni_code,
+                ng1_code as sni_code,
                 'Ng1' as source_field,
                 source_run_id,
                 source_record_id,
                 source_payload_hash
-            from sweden_company.scb_raw
+            from sweden_company.company_industry_states
             union all
             select
-                {scb_identity} as company_id,
+                company_id,
                 2 as sequence,
                 false as is_primary,
-                nullif(trim(Ng2), '') as sni_code,
+                ng2_code as sni_code,
                 'Ng2' as source_field,
                 source_run_id,
                 source_record_id,
                 source_payload_hash
-            from sweden_company.scb_raw
+            from sweden_company.company_industry_states
             union all
             select
-                {scb_identity} as company_id,
+                company_id,
                 3 as sequence,
                 false as is_primary,
-                nullif(trim(Ng3), '') as sni_code,
+                ng3_code as sni_code,
                 'Ng3' as source_field,
                 source_run_id,
                 source_record_id,
                 source_payload_hash
-            from sweden_company.scb_raw
+            from sweden_company.company_industry_states
             union all
             select
-                {scb_identity} as company_id,
+                company_id,
                 4 as sequence,
                 false as is_primary,
-                nullif(trim(Ng4), '') as sni_code,
+                ng4_code as sni_code,
                 'Ng4' as source_field,
                 source_run_id,
                 source_record_id,
                 source_payload_hash
-            from sweden_company.scb_raw
+            from sweden_company.company_industry_states
             union all
             select
-                {scb_identity} as company_id,
+                company_id,
                 5 as sequence,
                 false as is_primary,
-                nullif(trim(Ng5), '') as sni_code,
+                ng5_code as sni_code,
                 'Ng5' as source_field,
                 source_run_id,
                 source_record_id,
                 source_payload_hash
-            from sweden_company.scb_raw
+            from sweden_company.company_industry_states
         )
         select
             company_id,
@@ -326,7 +657,7 @@ def _replace_company_industry_codes_table(
             ? as updated_from_raw_at
         from candidates
         where company_id != ''
-            and sni_code ~ '^[0-9]{{5}}$'
+            and sni_code ~ '^[0-9]{5}$'
             and sni_code != '00000'
         """,
         [loaded_at],

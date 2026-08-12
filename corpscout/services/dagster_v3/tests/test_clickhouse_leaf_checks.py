@@ -35,6 +35,7 @@ def test_registry_covers_the_known_scheduled_leaves() -> None:
         "gleif_reference_clickhouse",
         "latvia_financial_metrics_clickhouse",
         "latvia_ur_clickhouse_companies",
+        "latvia_ur_clickhouse_company_addresses",
         "nace_categories_clickhouse",
         "open_page_rank_domains_clickhouse",
         "slovakia_financials_metrics_clickhouse",

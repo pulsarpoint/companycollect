@@ -32,10 +32,10 @@ try {
     query_params: { writerPassword: password },
   });
   await client.command({
-    query: `GRANT corpscout_person_correction_writer TO ${username}`,
+    query: `GRANT corpscout_person_correction_writer, corpscout_company_domain_writer TO ${username}`,
   });
   await client.command({
-    query: `SET DEFAULT ROLE corpscout_person_correction_writer TO ${username}`,
+    query: `SET DEFAULT ROLE corpscout_person_correction_writer, corpscout_company_domain_writer TO ${username}`,
   });
   process.stdout.write(
     `Provisioned ClickHouse correction writer ${username}.\n`,

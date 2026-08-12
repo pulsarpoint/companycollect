@@ -1,6 +1,10 @@
 import type { Route } from "./+types/country-company-detail";
 import { getCountry } from "~/lib/countries";
 import { getCompanyDetail } from "~/lib/queries.server";
+import {
+  companySectionPresencePromiseContext,
+  companyShellPromiseContext,
+} from "~/lib/company-shell-context.server";
 import { CompanyRecordSection } from "~/components/detail/detail-sections";
 import { ContactLocationCard } from "~/components/detail/contact-location-card";
 import { GleifGroupSection } from "~/components/detail/gleif-group-section";
@@ -25,17 +29,31 @@ import {
   ProductsMarketsSection,
   SourcesSection,
 } from "~/components/detail/source-information-sections";
+import { LazyCompanySection } from "~/components/detail/lazy-company-section";
 
-export async function loader({ params }: Route.LoaderArgs) {
+export async function loader({ context, params }: Route.LoaderArgs) {
   const country = getCountry(params.country);
   if (!country) throw new Response("Not found", { status: 404 });
-  const detail = await getCompanyDetail(country, params.id);
+  const shell = await context.get(companyShellPromiseContext);
+  if (country.code === "se") {
+    if (!shell) throw new Response("Company not found", { status: 404 });
+    return {
+      mode: "serving" as const,
+      shell,
+      presence: await context.get(companySectionPresencePromiseContext),
+    };
+  }
+  const detail = await getCompanyDetail(country, params.id, shell);
   if (!detail) throw new Response("Company not found", { status: 404 });
-  return { detail };
+  return { mode: "legacy" as const, detail };
 }
 
 export function meta({ loaderData, params }: Route.MetaArgs) {
-  const name = loaderData?.detail.company.name;
+  const name = loaderData
+    ? loaderData.mode === "serving"
+      ? loaderData.shell.company.name
+      : loaderData.detail.company.name
+    : undefined;
   return [
     {
       title: name
@@ -49,12 +67,53 @@ export default function CompanyDetail({
   loaderData,
   params,
 }: Route.ComponentProps) {
-  const { detail } = loaderData;
   const country = getCountry(params.country)!;
-  const { company } = detail;
   const searchParams = useEffectiveSearchParams();
   const lang: Lang =
     searchParams.get("lang") === "original" ? "original" : "en";
+  if (loaderData.mode === "serving") {
+    const { shell, presence } = loaderData;
+    const availableSections = new Set(presence.map((row) => row.section));
+    const sectionOrder = [
+      "descriptions",
+      "wikidata",
+      "financials",
+      "management",
+      "domains",
+      "industries",
+      "gleif",
+      "contracts",
+      "addresses",
+      "sources",
+    ] as const;
+    return (
+      <div className="flex w-full max-w-5xl flex-col gap-4">
+        <CompanyRecordSection
+          company={shell.company}
+          record={shell.record}
+          lang={lang}
+          hiddenFieldKeys={
+            availableSections.has("descriptions")
+              ? new Set(["activity_description", "company_description"])
+              : undefined
+          }
+        />
+        {sectionOrder
+          .filter((section) => availableSections.has(section))
+          .map((section) => (
+            <LazyCompanySection
+              key={section}
+              section={section}
+              country={country}
+              companyId={params.id}
+              record={shell.record}
+            />
+          ))}
+      </div>
+    );
+  }
+  const { detail } = loaderData;
+  const { company } = detail;
   // One per-country seam: each register decides how its own record reads.
   const DECORATORS: Record<
     string,
@@ -138,6 +197,7 @@ export default function CompanyDetail({
       />
       <ContactLocationCard
         country={country}
+        companyId={String(company.id)}
         contacts={[]}
         addresses={detail.addresses}
         record={detail.record}

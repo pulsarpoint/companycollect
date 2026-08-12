@@ -1,4 +1,5 @@
 from collections.abc import Iterator
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
@@ -16,7 +17,7 @@ from dagster_v3.defs.common.duckdb_resources import (
 )
 from dagster_v3.defs.latvia_ur import resources, tables
 from dagster_v3.defs.latvia_ur.classification import latvia_ur_nace_classification
-from dagster_v3.defs.latvia_ur.clickhouse import export_latvia_ur_clickhouse_companies
+from dagster_v3.defs.latvia_ur.clickhouse import publish_latvia_ur_clickhouse
 from dagster_v3.defs.latvia_ur.contacts import latvia_ur_clickhouse_company_contacts
 from dagster_v3.defs.latvia_ur.translation import (
     latvia_ur_translation_load,
@@ -401,39 +402,141 @@ def latvia_address_municipalities_duckdb(
     )
 
 
-@dg.asset(
-    deps=[
-        dg.AssetKey(ENTITIES_ASSET_KEY),
-        dg.AssetKey(COMPANY_ACTIVITY_ASSET_KEY),
-        dg.AssetKey("latvia_address_buildings_duckdb"),
-        dg.AssetKey("latvia_address_cities_duckdb"),
-        dg.AssetKey("latvia_address_municipalities_duckdb"),
+LATVIA_UR_CLICKHOUSE_DEPS = [
+    dg.AssetKey(ENTITIES_ASSET_KEY),
+    dg.AssetKey(COMPANY_ACTIVITY_ASSET_KEY),
+    dg.AssetKey("latvia_address_buildings_duckdb"),
+    dg.AssetKey("latvia_address_cities_duckdb"),
+    dg.AssetKey("latvia_address_municipalities_duckdb"),
+]
+
+
+@dg.multi_asset(
+    specs=[
+        dg.AssetSpec(
+            key="latvia_ur_clickhouse_companies",
+            deps=LATVIA_UR_CLICKHOUSE_DEPS,
+            group_name=GROUP_NAME,
+            kinds={"python", "duckdb", "clickhouse"},
+            metadata={"table": tables.QUALIFIED_LV_COMPANIES_TABLE},
+            description=(
+                "Current Latvia UR company facts exported to ClickHouse "
+                "corpscout.lv_companies."
+            ),
+        ),
+        dg.AssetSpec(
+            key="latvia_ur_clickhouse_company_addresses",
+            deps=LATVIA_UR_CLICKHOUSE_DEPS,
+            group_name=GROUP_NAME,
+            kinds={"python", "duckdb", "clickhouse"},
+            metadata={"table": tables.QUALIFIED_LV_COMPANY_ADDRESSES_TABLE},
+            description=(
+                "Changed Latvia UR address observations appended to ClickHouse "
+                "corpscout.lv_company_addresses."
+            ),
+        ),
     ],
-    group_name=GROUP_NAME,
-    kinds={"python", "duckdb", "clickhouse"},
     pool=LATVIA_UR_DUCKDB_POOL,
-    metadata={"table": tables.QUALIFIED_LV_COMPANIES_TABLE},
-    description="Latvia UR register companies exported to ClickHouse corpscout.lv_companies.",
 )
-def latvia_ur_clickhouse_companies(
+def latvia_ur_clickhouse(
     context: AssetExecutionContext,
     clickhouse: ClickhouseResource,
     latvia_ur_duckdb: DuckDBResource,
-) -> dg.MaterializeResult:
+) -> Iterator[dg.MaterializeResult]:
+    observed_at = datetime.now(UTC)
     context.log.info(
-        "Starting Latvia UR companies ClickHouse export: duckdb_path=%s, table=%s",
+        "Starting Latvia UR ClickHouse publish: duckdb_path=%s "
+        "companies_table=%s addresses_table=%s observed_at=%s",
         LATVIA_UR_DUCKDB_PATH,
         tables.QUALIFIED_LV_COMPANIES_TABLE,
+        tables.QUALIFIED_LV_COMPANY_ADDRESSES_TABLE,
+        observed_at.isoformat(),
     )
     with latvia_ur_duckdb.get_connection() as connection:
-        rows = export_latvia_ur_clickhouse_companies(
+        result = publish_latvia_ur_clickhouse(
             duckdb_connection=connection,
             clickhouse=clickhouse,
+            source_run_id=context.run_id,
+            observed_at=observed_at,
             log=context.log.info,
         )
-    context.log.info("Completed Latvia UR companies ClickHouse export: rows=%s", rows)
-    return dg.MaterializeResult(
-        metadata={"rows": rows, "table": tables.QUALIFIED_LV_COMPANIES_TABLE},
+    yield dg.MaterializeResult(
+        asset_key="latvia_ur_clickhouse_companies",
+        metadata={
+            "rows": result.company_rows,
+            "table": tables.QUALIFIED_LV_COMPANIES_TABLE,
+            "observed_at": observed_at.isoformat(),
+        },
+    )
+    yield dg.MaterializeResult(
+        asset_key="latvia_ur_clickhouse_company_addresses",
+        metadata={
+            "candidate_rows": result.address_candidates,
+            "inserted_rows": result.address_observations_inserted,
+            "first_observations": result.first_address_observations,
+            "source_address_changes": result.source_address_changes,
+            "enrichment_only_changes": result.enrichment_only_changes,
+            "empty_address_candidates": result.empty_address_candidates,
+            "table": tables.QUALIFIED_LV_COMPANY_ADDRESSES_TABLE,
+            "observed_at": observed_at.isoformat(),
+        },
+    )
+
+
+@dg.asset_check(
+    asset="latvia_ur_clickhouse_company_addresses",
+    name="current_address_coverage",
+    description=(
+        "Every Latvia company must have exactly one current address state, including "
+        "an explicit empty state when the source has no address."
+    ),
+)
+def current_address_coverage(
+    clickhouse: ClickhouseResource,
+) -> dg.AssetCheckResult:
+    with clickhouse.get_connection() as client:
+        [
+            (
+                company_rows,
+                distinct_companies,
+                address_rows,
+                distinct_addresses,
+                missing,
+            )
+        ] = client.execute(
+            f"""
+                SELECT
+                    (SELECT count() FROM {tables.QUALIFIED_LV_COMPANIES_TABLE}),
+                    (SELECT uniqExact(regcode) FROM {tables.QUALIFIED_LV_COMPANIES_TABLE}),
+                    (SELECT count() FROM corpscout.{tables.LV_COMPANY_ADDRESSES_CURRENT_VIEW}),
+                    (
+                        SELECT uniqExact(regcode)
+                        FROM corpscout.{tables.LV_COMPANY_ADDRESSES_CURRENT_VIEW}
+                    ),
+                    (
+                        SELECT count()
+                        FROM {tables.QUALIFIED_LV_COMPANIES_TABLE} AS c
+                        LEFT JOIN corpscout.{tables.LV_COMPANY_ADDRESSES_CURRENT_VIEW} AS a
+                            ON a.regcode = c.regcode
+                        WHERE a.has_observation = 0
+                    )
+                """
+        )
+    passed = (
+        company_rows == distinct_companies
+        and address_rows == distinct_addresses
+        and company_rows == address_rows
+        and missing == 0
+    )
+    return dg.AssetCheckResult(
+        passed=passed,
+        metadata={
+            "company_rows": int(company_rows),
+            "distinct_companies": int(distinct_companies),
+            "current_address_rows": int(address_rows),
+            "distinct_current_addresses": int(distinct_addresses),
+            "companies_missing_current_address": int(missing),
+        },
     )
 
 
@@ -460,7 +563,9 @@ latvia_ur_register_job = dg.define_asset_job(
         # Curated legal forms follow the export, so a refreshed register that
         # carries a new form picks up its English on the same run.
         "latvia_ur_curated_legal_forms",
-    ).upstream(),
+    )
+    .upstream()
+    .required_multi_asset_neighbors(),
 )
 latvia_ur_register_schedule = dg.ScheduleDefinition(
     name="latvia_ur_register_schedule",
@@ -477,12 +582,13 @@ defs = dg.Definitions(
         latvia_address_buildings_duckdb,
         latvia_address_cities_duckdb,
         latvia_address_municipalities_duckdb,
-        latvia_ur_clickhouse_companies,
+        latvia_ur_clickhouse,
         latvia_ur_translation_load,
         latvia_ur_nace_classification,
         latvia_ur_clickhouse_company_contacts,
     ],
     asset_checks=[
+        current_address_coverage,
         latvia_ur_translator_queue_health_check,
     ],
     jobs=[

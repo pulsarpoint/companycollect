@@ -8,7 +8,7 @@ reading source observations and resolved projections from ClickHouse.
 ```bash
 pnpm install
 cp .env.example .env   # fill CLICKHOUSE_PASSWORD from corpscout/.env
-pnpm provision:clickhouse-writer # once, after ClickHouse migration 241
+pnpm provision:clickhouse-writer # once, after ClickHouse migrations 241 and 269
 pnpm dev               # http://localhost:5183
 ```
 
@@ -58,6 +58,19 @@ user-authentication layer, so new correction rows use `backoffice` as their
 3. Run `pnpm provision:clickhouse-writer` with an administrative
    `CLICKHOUSE_USER`/`CLICKHOUSE_PASSWORD`.
 4. Restart the backoffice with the writer variables configured.
+
+## Domain-suggestion reviews
+
+`corpscout.company_domains` is the Sweden-only product projection for every
+company/domain association proposed by Wikidata, ESEF filings, or Common Crawl
+identity matching. Each row keeps aligned source, confidence, source-record,
+URL, and confidence-basis arrays. Automated confidence and human review state
+are separate fields.
+
+The company Domains tab writes `confirmed_primary`, `confirmed_related`,
+`rejected`, or `unreviewed` decisions back to the same ClickHouse row. Set
+`COMPANY_DOMAIN_REVIEWER` to record a reviewer identifier. The Technology tab
+can inspect every proposed domain and keeps the selected `domain` in its URL.
 
 ## companies_all
 

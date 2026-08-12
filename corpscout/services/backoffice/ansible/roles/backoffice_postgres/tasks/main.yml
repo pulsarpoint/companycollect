@@ -1,0 +1,205 @@
+---
+- name: Validate PostgreSQL deployment variables
+  ansible.builtin.assert:
+    that:
+      - backoffice_postgres_dir.startswith('/opt/')
+      - backoffice_postgres_data_dir.startswith(backoffice_postgres_dir + '/')
+      - backoffice_postgres_database is match('^[a-z][a-z0-9_]+$')
+      - backoffice_postgres_owner is match('^[a-z][a-z0-9_]+$')
+      - backoffice_postgres_app_user is match('^[a-z][a-z0-9_]+$')
+      - backoffice_postgres_dagster_user is match('^[a-z][a-z0-9_]+$')
+      - backoffice_postgres_port | int > 0
+      - backoffice_postgres_port | int < 65536
+    fail_msg: Backoffice PostgreSQL variables contain an unsafe path, identifier, or port.
+
+- name: Check Docker daemon availability
+  ansible.builtin.command: docker info
+  changed_when: false
+
+- name: Check Docker Compose availability
+  ansible.builtin.command: docker compose version
+  changed_when: false
+
+- name: Inspect the deployment path
+  ansible.builtin.stat:
+    path: "{{ backoffice_postgres_dir }}"
+    follow: false
+  register: backoffice_postgres_deploy_path
+
+- name: Refuse a non-directory or symlink deployment path
+  ansible.builtin.assert:
+    that:
+      - not backoffice_postgres_deploy_path.stat.exists or backoffice_postgres_deploy_path.stat.isdir
+      - not backoffice_postgres_deploy_path.stat.exists or not backoffice_postgres_deploy_path.stat.islnk
+    fail_msg: "{{ backoffice_postgres_dir }} must be a real directory, not a file or symlink."
+
+- name: Create PostgreSQL deployment directory
+  ansible.builtin.file:
+    path: "{{ backoffice_postgres_dir }}"
+    state: directory
+    owner: root
+    group: root
+    mode: "0750"
+
+- name: Inspect the server-side secrets file
+  ansible.builtin.stat:
+    path: "{{ backoffice_postgres_dir }}/.env"
+    follow: false
+  register: backoffice_postgres_env
+
+- name: Refuse a symlinked secrets file
+  ansible.builtin.assert:
+    that:
+      - not backoffice_postgres_env.stat.exists or not backoffice_postgres_env.stat.islnk
+      - not backoffice_postgres_env.stat.exists or backoffice_postgres_env.stat.isreg
+    fail_msg: "{{ backoffice_postgres_dir }}/.env must be a regular file."
+
+- name: Generate initial PostgreSQL superuser password
+  ansible.builtin.command: openssl rand -hex 32
+  register: backoffice_postgres_admin_password
+  changed_when: false
+  when: not backoffice_postgres_env.stat.exists
+  no_log: true
+
+- name: Generate initial migration-owner password
+  ansible.builtin.command: openssl rand -hex 32
+  register: backoffice_postgres_owner_password
+  changed_when: false
+  when: not backoffice_postgres_env.stat.exists
+  no_log: true
+
+- name: Generate initial application password
+  ansible.builtin.command: openssl rand -hex 32
+  register: backoffice_postgres_app_password
+  changed_when: false
+  when: not backoffice_postgres_env.stat.exists
+  no_log: true
+
+- name: Generate initial Dagster reader password
+  ansible.builtin.command: openssl rand -hex 32
+  register: backoffice_postgres_dagster_password
+  changed_when: false
+  when: not backoffice_postgres_env.stat.exists
+  no_log: true
+
+- name: Create the server-side secrets file once
+  ansible.builtin.template:
+    src: postgres.env.j2
+    dest: "{{ backoffice_postgres_dir }}/.env"
+    owner: root
+    group: root
+    mode: "0600"
+  when: not backoffice_postgres_env.stat.exists
+  no_log: true
+
+- name: Restrict existing server-side secrets file permissions
+  ansible.builtin.file:
+    path: "{{ backoffice_postgres_dir }}/.env"
+    owner: root
+    group: root
+    mode: "0600"
+
+- name: Install PostgreSQL access policy
+  ansible.builtin.template:
+    src: pg_hba.conf.j2
+    dest: "{{ backoffice_postgres_dir }}/pg_hba.conf"
+    owner: root
+    group: root
+    mode: "0644"
+  notify: Apply backoffice postgres compose
+
+- name: Install PostgreSQL compose definition
+  ansible.builtin.template:
+    src: docker-compose.yml.j2
+    dest: "{{ backoffice_postgres_dir }}/docker-compose.yml"
+    owner: root
+    group: root
+    mode: "0644"
+  notify: Apply backoffice postgres compose
+
+- name: Install role and grant bootstrap SQL
+  ansible.builtin.template:
+    src: bootstrap.sql.j2
+    dest: "{{ backoffice_postgres_dir }}/bootstrap.sql"
+    owner: root
+    group: root
+    mode: "0600"
+
+- name: Install role and grant bootstrap command
+  ansible.builtin.template:
+    src: bootstrap.sh.j2
+    dest: "{{ backoffice_postgres_dir }}/bootstrap.sh"
+    owner: root
+    group: root
+    mode: "0700"
+
+- name: Install access verification command
+  ansible.builtin.template:
+    src: verify.sh.j2
+    dest: "{{ backoffice_postgres_dir }}/verify.sh"
+    owner: root
+    group: root
+    mode: "0700"
+
+- name: Install systemd unit
+  ansible.builtin.template:
+    src: postgres-compose.service.j2
+    dest: "/etc/systemd/system/{{ backoffice_postgres_service_name }}.service"
+    owner: root
+    group: root
+    mode: "0644"
+  register: backoffice_postgres_systemd_unit
+
+- name: Enable and start PostgreSQL compose service
+  ansible.builtin.systemd_service:
+    name: "{{ backoffice_postgres_service_name }}"
+    enabled: true
+    state: started
+    daemon_reload: "{{ backoffice_postgres_systemd_unit.changed }}"
+
+- name: Apply configuration changes before bootstrap
+  ansible.builtin.meta: flush_handlers
+
+- name: Wait for published PostgreSQL port
+  ansible.builtin.wait_for:
+    host: "{{ backoffice_postgres_bind_address }}"
+    port: "{{ backoffice_postgres_port }}"
+    timeout: 180
+
+- name: Wait for PostgreSQL health check
+  ansible.builtin.command:
+    cmd: >-
+      docker inspect --format={% raw %}{{.State.Health.Status}}{% endraw %}
+      {{ backoffice_postgres_container_name }}
+  register: backoffice_postgres_health
+  until: backoffice_postgres_health.stdout == 'healthy'
+  retries: 36
+  delay: 5
+  changed_when: false
+
+- name: Reconcile backoffice roles, ownership, and grants
+  ansible.builtin.command:
+    cmd: "{{ backoffice_postgres_dir }}/bootstrap.sh"
+  changed_when: false
+  no_log: true
+
+- name: Verify network access and least-privilege grants
+  ansible.builtin.command:
+    cmd: "{{ backoffice_postgres_dir }}/verify.sh"
+  register: backoffice_postgres_verification
+  changed_when: false
+  no_log: true
+
+- name: Read systemd service state
+  ansible.builtin.command:
+    cmd: "systemctl is-active {{ backoffice_postgres_service_name }}"
+  register: backoffice_postgres_service_state
+  changed_when: false
+
+- name: Report PostgreSQL deployment result
+  ansible.builtin.debug:
+    msg: >-
+      {{ backoffice_postgres_service_name }} is {{ backoffice_postgres_service_state.stdout }};
+      PostgreSQL {{ backoffice_postgres_image }} is healthy at
+      {{ backoffice_postgres_bind_address }}:{{ backoffice_postgres_port }}/{{ backoffice_postgres_database }};
+      owner, application writer, Dagster reader, and isolation checks passed.

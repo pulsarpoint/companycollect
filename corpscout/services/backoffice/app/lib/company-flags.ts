@@ -15,7 +15,8 @@
  * Client-safe: no `.server` imports, so the table and legend can use it.
  */
 
-export type CompanyFlagId = "financials" | "contacts" | "domain" | "trading";
+export type CompanyFlagId =
+  "financials" | "contacts" | "domain" | "domain_suggestion" | "trading";
 
 export type CompanyFlag = {
   id: CompanyFlagId;
@@ -47,6 +48,12 @@ export const COMPANY_FLAGS: CompanyFlag[] = [
     meaning: "A website matched to the company and validated",
   },
   {
+    id: "domain_suggestion",
+    char: "S",
+    label: "Unreviewed domains",
+    meaning: "At least one associated domain still needs human review",
+  },
+  {
     id: "trading",
     char: "T",
     label: "Traded",
@@ -62,13 +69,21 @@ export const COMPANY_FLAGS: CompanyFlag[] = [
  * easier to check when they are written down together.
  *
  * `table` is an existence check keyed on `idColumn`. `expr` is a column on the
- * companies table that is non-empty when the fact is held — used where a
- * register keeps the address on the company row rather than beside it.
+ * companies table that is non-empty when the fact is held. `idQuery` handles
+ * sources whose company match spans several shared datasets and must return a
+ * single `company_id` column.
  */
 export type FlagSource =
   | { table: string; idColumn: string }
   | { expr: string }
+  | { idQuery: string }
   | { market: true };
+
+function swedenSectionCompanyIds(section: string): string {
+  return `SELECT company_id
+    FROM company_section_presence_current
+    PREWHERE country_code = 'SE' AND section = '${section}'`;
+}
 
 export const COMPANY_FLAG_SOURCES: Record<
   string,
@@ -101,7 +116,7 @@ export const COMPANY_FLAG_SOURCES: Record<
   //        F       C       D       T
   //  no   36.45   41.04    9.70   0.021
   //  fi    4.47   25.80   25.79   0.038
-  //  se   16.44      --      --   0.023
+  //  se   16.44      --    0.05   0.023
   //  ee   74.57   97.85   17.91     --
   //  lv   52.32    0.53    0.32     --
   //  gb    0.42      --      --     --
@@ -110,7 +125,10 @@ export const COMPANY_FLAG_SOURCES: Record<
   //  cz      --    0.19    0.13     --
   //  sk    0.00      --      --     --
   no: {
-    financials: { table: "no_company_financials_latest", idColumn: "company_id" },
+    financials: {
+      table: "no_company_financials_latest",
+      idColumn: "company_id",
+    },
     // Contacts and domains are keyed on registry_id, not company_id, in every
     // register that has them.
     contacts: { table: "no_company_contacts", idColumn: "registry_id" },
@@ -118,33 +136,66 @@ export const COMPANY_FLAG_SOURCES: Record<
     trading: { market: true },
   },
   fi: {
-    financials: { table: "fi_company_financials_latest", idColumn: "company_id" },
+    financials: {
+      table: "fi_company_financials_latest",
+      idColumn: "company_id",
+    },
     contacts: { table: "fi_company_contacts", idColumn: "registry_id" },
     domain: { table: "fi_company_domains", idColumn: "registry_id" },
     trading: { market: true },
   },
   se: {
-    financials: { table: "se_company_financials_latest", idColumn: "company_id" },
+    financials: { idQuery: swedenSectionCompanyIds("financials") },
+    contacts: { idQuery: swedenSectionCompanyIds("domains") },
+    domain: {
+      idQuery: `SELECT company_id
+        FROM company_domains FINAL
+        WHERE country_code = 'SE'
+          AND is_active = 1
+          AND review_status != 'rejected'`,
+    },
+    domain_suggestion: {
+      idQuery: `SELECT company_id
+        FROM company_domains FINAL
+        WHERE country_code = 'SE'
+          AND is_active = 1
+          AND review_status = 'unreviewed'`,
+    },
     trading: { market: true },
   },
   ee: {
-    financials: { table: "ee_company_financials_latest", idColumn: "company_id" },
+    financials: {
+      table: "ee_company_financials_latest",
+      idColumn: "company_id",
+    },
     contacts: { table: "ee_company_contacts", idColumn: "registry_id" },
     domain: { table: "ee_company_domains", idColumn: "registry_id" },
   },
   lv: {
-    financials: { table: "lv_company_financials_latest", idColumn: "company_id" },
+    financials: {
+      table: "lv_company_financials_latest",
+      idColumn: "company_id",
+    },
     contacts: { table: "lv_company_contacts", idColumn: "registry_id" },
     domain: { table: "lv_company_domains", idColumn: "registry_id" },
   },
   gb: {
-    financials: { table: "gb_company_financials_latest", idColumn: "company_id" },
+    financials: {
+      table: "gb_company_financials_latest",
+      idColumn: "company_id",
+    },
   },
   fr: {
-    financials: { table: "fr_company_financials_latest", idColumn: "company_id" },
+    financials: {
+      table: "fr_company_financials_latest",
+      idColumn: "company_id",
+    },
   },
   br: {
-    financials: { table: "br_company_financials_latest", idColumn: "company_id" },
+    financials: {
+      table: "br_company_financials_latest",
+      idColumn: "company_id",
+    },
     contacts: { table: "br_company_contacts", idColumn: "registry_id" },
     domain: { table: "br_company_domains", idColumn: "registry_id" },
     trading: { market: true },
@@ -154,7 +205,10 @@ export const COMPANY_FLAG_SOURCES: Record<
     domain: { table: "cz_company_domains", idColumn: "registry_id" },
   },
   sk: {
-    financials: { table: "sk_company_financials_latest", idColumn: "company_id" },
+    financials: {
+      table: "sk_company_financials_latest",
+      idColumn: "company_id",
+    },
   },
 };
 
@@ -182,5 +236,7 @@ export type FlagFilterValue = (typeof FLAG_FILTER_VALUES)[number];
 
 /** Filter keys this country offers, one per flag it can fill. */
 export function flagFilterKeys(countryCode: string): string[] {
-  return availableCompanyFlags(countryCode).map((flag) => flagFilterKey(flag.id));
+  return availableCompanyFlags(countryCode).map((flag) =>
+    flagFilterKey(flag.id),
+  );
 }

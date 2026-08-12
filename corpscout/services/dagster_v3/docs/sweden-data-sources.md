@@ -1,6 +1,6 @@
 # Sweden data sources — overview and state of processing
 
-Last updated: 2026-07-20. This is the map of everything we ingest for Sweden:
+Last updated: 2026-08-09. This is the map of everything we ingest for Sweden:
 what we download, how each pipeline processes it, what is live in ClickHouse
 today, the known gaps, and what should be done next. Deep detail lives in each
 module's own design doc — this is the map, not the spec:
@@ -38,9 +38,10 @@ Chain: `sweden_company_raw_snapshot_s3` (HEAD-based skip on unchanged
 date-latest manifests) → `sweden_company_raw_duckdb` (raw tables with exact
 source columns as varchar + provenance: `source_run_id`, line number,
 `source_payload_hash`, `raw_record`) → `sweden_company_normalized_duckdb`
-(companies / addresses / industry codes; Bolagsverket preferred over SCB for
-legal identity) → three ClickHouse publish assets (migration-owned tables,
-stage + `EXCHANGE TABLES` atomic replace, refuse-on-empty).
+(companies / source-specific registry states / typed proceedings / addresses /
+complete SNI states / industry codes; Bolagsverket preferred over SCB for legal
+identity) → five ClickHouse publish assets (migration-owned tables, atomic
+current-snapshot swaps, and change-aware historical observations).
 
 DuckDB file: `data/sweden_company_source.duckdb`, schema `sweden_company`.
 
@@ -50,18 +51,35 @@ What it provides:
   `legal_name_raw` (the packed source string — see caveats), legal form code,
   status + status reason, incorporation/dissolution dates,
   `activity_description` (Swedish free text from SCB).
-- **`se_company_addresses`** — parsed Bolagsverket postal addresses plus SCB
+- **`se_company_addresses`** — append-only parsed Bolagsverket and SCB address observations; current rows are served from the atomically refreshed `se_company_addresses_current` snapshot
   fallback/enrichment addresses.
 - **`se_industries`** — SCB `Ng1`..`Ng5` 5-digit SNI codes with derived 4-digit
   `nace_rev2_class_code` (the 5th digit is Sweden-specific detail, so we do not
   call the 5-digit value NACE).
+- **`se_company_registry_observations`** — append-only source-specific legal
+  and profile states, including raw SCB `FtgStat` / `JEStat`, legal form,
+  names, explicit dates, marketing block, and Bolagsverket activity/status
+  fields. `se_company_registry_current` is the fast current projection.
+- **`se_company_proceeding_observations`** — typed Bolagsverket liquidation,
+  bankruptcy, and restructuring procedures with raw values retained;
+  `se_company_proceedings_current` contains the currently reported set.
+- **`se_company_industry_observations`** — append-only full `Ng1`..`Ng5` SNI
+  state, with `se_company_industry_current` as the current projection.
+
+The history publishers compare stable logical fingerprints. Unchanged weekly
+snapshots append nothing; changes append observations; and removed records,
+procedures, or classifications append tombstones before the physical current
+snapshot is swapped. Source ZIP archives remain the lossless recovery layer for
+snapshots captured before these typed history tables were introduced.
 
 Known gaps in this module:
 
-- **No contacts/domains.** The sources carry only unstructured contact
-  candidates; `sweden_company_contact_candidates_duckdb` is designed but not
-  built. SE companies therefore have no website/email/phone in the backoffice,
-  unlike Finland.
+- **No canonical registry contacts/domains.** The source carries only
+  unstructured contact candidates. The separate `company_domain_suggestions`
+  pipeline now builds reviewable Sweden domain candidates from Common Crawl
+  identifiers, organization/domain names, and distinctive officers, with
+  country/industry/web-presence boosts. Those suggestions are intentionally not
+  canonical website/email/phone facts until a later review boundary accepts one.
 - **`legal_name_raw` is a packed multi-name string** (name records concatenated
   with type markers). The normalized `legal_name` is what the UI shows; human-
   readable secondary names are extracted and shown in the detail page's
@@ -260,10 +278,10 @@ Ordered roughly by value-for-effort:
    translation via the Go translator service (sole writer of
    `text_translations`, keyed on `cityHash64(text)`), plus `<table>_translated`
    views. Task 1 needs the Go-side source registration (user involvement).
-2. **Liquidation/restructuring flag** — the facts already carry
-   `pagandeAvvecklingEllerOmstruktureringsforfarande`; extract it into a
-   per-company distress flag and surface it next to status. Quick win on data
-   we already have.
+2. **Surface proceedings in the UI** — typed liquidation, bankruptcy, and
+   restructuring procedures are now stored historically in
+   `se_company_proceeding_observations`; add the current procedure set and its
+   effective dates to the company detail status area.
 3. **Dividends** — proposed/decided dividend concepts are in the facts;
    extract into metrics or a small dedicated table.
 4. **Wider metrics concepts** — the long-form facts hold many mappable

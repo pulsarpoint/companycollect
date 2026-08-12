@@ -6,16 +6,21 @@
 - **Country / registry**: Latvia — Uzņēmumu Reģistrs (UR), open data on `data.gov.lv`.
 - **Modules**: `defs/latvia_ur/` for register/company data, `defs/latvia_financial/` for
   financial statements/metrics · DuckDB `data/latvia_ur_source.duckdb` · pool `latvia_ur_duckdb`
-- **ClickHouse**: `corpscout.lv_companies` (000015), `lv_financial_statements` (000016),
-  `lv_financial_metrics` (000019); repair 000020; provenance drop 000021.
+- **ClickHouse**: `corpscout.lv_companies` (000015), append-only address changes in
+  `lv_company_addresses` plus `lv_company_addresses_current` / `lv_companies_current` views
+  (000254), `lv_financial_statements` (000016), `lv_financial_metrics` (000019); repair 000020;
+  provenance drop 000021.
 - **Datasets** (free bulk CSV, no auth): `register.csv` (register) + 4 financial CSVs linked by
   `statement_id` — `financial_statements`, `balance_sheets`, `income_statements`,
   `cash_flow_statements`. Plain (unzipped) `;`-delimited CSV; the financials file is ~140 MB.
 - **Entity key**: `regcode` · **counts**: 485,380 companies; 1,971,834 statements/metrics.
 
-## 2. Ingest mode — bulk file, non-partitioned full-refresh
+## 2. Ingest mode — current full refresh plus address change history
 - **Why**: full-snapshot CSVs published openly → simplest path. Register URL stable; financial CSV
   URLs are stable `data.gov.lv` resource links.
+- Register entities remain a non-partitioned current snapshot. The ClickHouse address writer compares
+  each enriched address candidate with `lv_company_addresses_current` and appends only a changed
+  observation fingerprint. Unchanged daily snapshots add no history rows.
 
 ## 3. Loading
 - Register: narrow **dlt row-resource** (`iter_latvia_ur_entity_rows`) — applies the static legal-form
@@ -32,18 +37,28 @@
 - `raw_entity`/`raw_financial_record` + `source_payload_hash` kept in DuckDB only.
 
 ## 4. Transform
-- **Register → tier 1 (enriched copy)**: `entities` + company activity + VZD address reference
-  tables → `lv_companies`.
+- **Register → tier 1 (split by grain)**: `entities` + company activity + VZD address reference
+  tables → one-row-per-company facts in `lv_companies` and changed address observations in
+  `lv_company_addresses`.
   The ClickHouse export joins UR `address_id`, `city_code`/`region_code`, and `atvk_code` against
-  VZD address objects to populate `vzd_address_text`, `vzd_address_postal_code`,
+  VZD address objects to populate address-history fields `vzd_address_text`, `vzd_address_postal_code`,
   `address_city_name`, `address_municipality_name`, `address_latitude`, and `address_longitude`.
+  `address_fingerprint` identifies changes in UR-owned address fields;
+  `observation_fingerprint` also covers VZD enrichment changes. `observed_at` is the UTC time when
+  Corpscout saw the state, not a legal move date.
 - **Financials → tier 2 (set-based SQL)**: pivot the 4 raw tables on `statement_id` into the wide
   `financial_statements` (16 balance + 26 income + 35 cashflow numeric columns); native metrics
   build (scaled by `rounded_to_nearest`); separate USD step.
 
 ## 5. ClickHouse schema — deviations
-- `lv_companies` 1/company (`ORDER BY regcode`); statements/metrics 1/statement
+- `lv_companies` 1/company (`ORDER BY regcode`); `lv_company_addresses` 1/observed change
+  (`ORDER BY (regcode, observed_at, observation_fingerprint)`); statements/metrics 1/statement
   (`ORDER BY (regcode, statement_id)`).
+- Current address reads use `lv_company_addresses_current`; the backoffice reads
+  `lv_companies_current`, which joins current facts to the current address without duplicating
+  stored address values. Legacy physical address columns remain temporarily for migration fallback
+  but are no longer populated by new company exports; a later contract migration can drop them after
+  rollout soak.
 - **Deviations**: `source_type LowCardinality(String)` (see issue below); **`rounded_to_nearest`
   scaling** (`ONES`/`THOUSANDS`/`MILLIONS`) applied before FX — Latvia reports are scaled, unlike
   Estonia's full EUR. `raw_*`/`source_payload_hash` created in the original DDL then **dropped**
@@ -68,7 +83,10 @@
   `period_end_date`, via the batched `apply_latvia_ur_usd_conversion`.
 
 ## 8. Scheduling
-- `latvia_ur_register_job` daily **04:30**.
+- `latvia_ur_register_job` daily **04:30**. Its non-subsettable ClickHouse multi-asset publishes
+  `latvia_ur_clickhouse_company_addresses` before replacing
+  `latvia_ur_clickhouse_companies`, so the first cutover cannot erase the legacy current address
+  before the authoritative history row exists.
 - `latvia_financials_job` weekly Monday **05:00**. It is a full-refresh chain because Latvia
   publishes complete financial CSV snapshots and re-pulling them every 7 days is acceptable.
   Staggered; default STOPPED.
@@ -93,5 +111,6 @@
   empty, then can be re-run).
 
 ## 10. Verification
-- Tests `tests/test_latvia_ur_*.py`; live: `lv_companies` 485,380; statements/metrics 1,971,834;
+- Tests `tests/test_latvia_ur_*.py`, including initial/unchanged/change address publication and the
+  current views; live: `lv_companies` 485,380; statements/metrics 1,971,834;
   EUR rows USD-filled (sample `42103111054/2023`: 27788 × 1.105 = 30705.74), LVL native-only.

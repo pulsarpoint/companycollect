@@ -1,0 +1,116 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+cd {{ backoffice_postgres_dir | quote }}
+set -a
+source ./.env
+set +a
+
+verification_table=backoffice_ansible_verification
+verification_value="$(openssl rand -hex 16)"
+restart_requested="${1:-}"
+
+psql_as() {
+  local role="$1"
+  local password="$2"
+  shift 2
+  docker run --rm --network host \
+    -e PGPASSWORD="$password" \
+    {{ backoffice_postgres_image | quote }} \
+    psql -X -v ON_ERROR_STOP=1 \
+      -h {{ backoffice_postgres_bind_address | quote }} \
+      -p {{ backoffice_postgres_port }} \
+      -U "$role" \
+      -d {{ backoffice_postgres_database | quote }} \
+      "$@"
+}
+
+owner_psql() {
+  psql_as {{ backoffice_postgres_owner | quote }} "$BACKOFFICE_OWNER_PASSWORD" "$@"
+}
+
+cleanup() {
+  owner_psql -qAtc "DROP TABLE IF EXISTS public.$verification_table" >/dev/null 2>&1 || true
+}
+trap cleanup EXIT
+
+server_version="$(owner_psql -qAtc "SELECT current_setting('server_version_num')::integer")"
+if [[ "$server_version" -lt 170000 || "$server_version" -ge 180000 ]]; then
+  echo "Expected PostgreSQL 17, got server_version_num=$server_version" >&2
+  exit 1
+fi
+
+if psql_as postgres "$POSTGRES_PASSWORD" -qAtc "SELECT 1" >/dev/null 2>&1; then
+  echo "PostgreSQL superuser unexpectedly accepted a network connection" >&2
+  exit 1
+fi
+
+for forbidden_database in corpscout dagster temporal temporal_visibility; do
+  if owner_psql -qAtc "SELECT 1 FROM pg_database WHERE datname = '$forbidden_database'" | grep -qx 1; then
+    echo "Unexpected shared-service database found: $forbidden_database" >&2
+    exit 1
+  fi
+done
+
+owner_psql -qAtc "
+  DROP TABLE IF EXISTS public.$verification_table;
+  CREATE TABLE public.$verification_table (value text PRIMARY KEY);
+"
+psql_as {{ backoffice_postgres_app_user | quote }} "$BACKOFFICE_APP_PASSWORD" \
+  -qAtc "INSERT INTO public.$verification_table (value) VALUES ('$verification_value')"
+
+observed_value="$(psql_as {{ backoffice_postgres_dagster_user | quote }} "$BACKOFFICE_DAGSTER_PASSWORD" \
+  -qAtc "SELECT value FROM public.$verification_table")"
+if [[ "$observed_value" != "$verification_value" ]]; then
+  echo "Dagster reader did not observe the application record" >&2
+  exit 1
+fi
+
+if psql_as {{ backoffice_postgres_dagster_user | quote }} "$BACKOFFICE_DAGSTER_PASSWORD" \
+  -qAtc "INSERT INTO public.$verification_table (value) VALUES ('must-not-write')" \
+  >/dev/null 2>&1; then
+  echo "Dagster reader unexpectedly wrote to the backoffice database" >&2
+  exit 1
+fi
+
+if [[ "$restart_requested" == "--restart" ]]; then
+  docker compose restart postgres >/dev/null
+  for _ in $(seq 1 36); do
+    health="$(docker inspect --format='{% raw %}{{.State.Health.Status}}{% endraw %}' {{ backoffice_postgres_container_name | quote }} 2>/dev/null || true)"
+    if [[ "$health" == "healthy" ]]; then
+      break
+    fi
+    sleep 5
+  done
+  if [[ "${health:-}" != "healthy" ]]; then
+    echo "PostgreSQL did not become healthy after persistence restart" >&2
+    exit 1
+  fi
+  observed_value="$(psql_as {{ backoffice_postgres_dagster_user | quote }} "$BACKOFFICE_DAGSTER_PASSWORD" \
+    -qAtc "SELECT value FROM public.$verification_table")"
+  if [[ "$observed_value" != "$verification_value" ]]; then
+    echo "Verification record did not persist across container restart" >&2
+    exit 1
+  fi
+fi
+
+role_count="$(owner_psql -qAtc "
+  SELECT count(*)
+  FROM pg_roles
+  WHERE rolname IN (
+    '{{ backoffice_postgres_owner }}',
+    '{{ backoffice_postgres_app_user }}',
+    '{{ backoffice_postgres_dagster_user }}'
+  )
+    AND NOT rolsuper
+    AND NOT rolcreatedb
+    AND NOT rolcreaterole
+    AND NOT rolreplication
+    AND NOT rolbypassrls
+")"
+if [[ "$role_count" != "3" ]]; then
+  echo "One or more backoffice roles has excessive cluster privileges" >&2
+  exit 1
+fi
+
+echo "verified PostgreSQL 17, isolated database, durable storage, writer access, and read-only Dagster access"

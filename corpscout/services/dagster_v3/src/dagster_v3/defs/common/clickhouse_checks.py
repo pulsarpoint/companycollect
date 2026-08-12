@@ -158,6 +158,11 @@ CLICKHOUSE_LEAVES: tuple[ClickhouseLeaf, ...] = (
     # latvia_ur — daily 04:30
     ClickhouseLeaf("latvia_ur_clickhouse_companies", ("lv_companies",), DAILY),
     ClickhouseLeaf(
+        "latvia_ur_clickhouse_company_addresses",
+        ("lv_company_addresses",),
+        DAILY,
+    ),
+    ClickhouseLeaf(
         "latvia_ur_clickhouse_company_contacts",
         ("lv_company_contacts", "lv_company_domains"),
         DAILY,

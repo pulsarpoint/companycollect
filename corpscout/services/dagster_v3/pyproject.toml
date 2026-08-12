@@ -14,6 +14,7 @@ dependencies = [
     "dagster-dlt>=0.29.9",
     "dagster-duckdb>=0.29.9",
     "dagster-postgres>=0.29.9",
+    "dbt-clickhouse>=1.8,<1.9",
     "dbt-duckdb>=1.8,<1.9",
     "dlt[duckdb,s3]>=1.28.0",
     "dnspython>=2.8.0",

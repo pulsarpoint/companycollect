@@ -13,20 +13,74 @@ import { Button } from "~/components/ui/button";
 import { Skeleton } from "~/components/ui/skeleton";
 import { Tabs, TabsList, TabsTrigger } from "~/components/ui/tabs";
 import { getCountry } from "~/lib/countries";
+import {
+  companyTabFromPath,
+  domainSuggestionsTabAvailable,
+  domainSuggestionsTabSupported,
+  technologyTabAvailable,
+  technologyTabSupported,
+} from "~/lib/company-tabs";
 import { getEntityType, legalFormCodeOf } from "~/lib/entity-type.server";
-import { getCompanyShell } from "~/lib/queries.server";
+import { getUnifiedCompanyDomains } from "~/lib/company-domains.server";
+import { companyHasFlag, getCompanyShell } from "~/lib/queries.server";
+import {
+  companySectionPresencePromiseContext,
+  companyShellPromiseContext,
+} from "~/lib/company-shell-context.server";
+import { getCompanySectionPresence } from "~/lib/company-sections.server";
 import { useEffectiveSearchParams } from "~/components/data-table/use-effective-search";
 
-export async function loader({ params }: Route.LoaderArgs) {
+export const middleware: Route.MiddlewareFunction[] = [
+  async ({ context, params }, next) => {
+    const country = getCountry(params.country);
+    if (country) {
+      context.set(
+        companyShellPromiseContext,
+        getCompanyShell(country, params.id),
+      );
+      if (country.code === "se") {
+        context.set(
+          companySectionPresencePromiseContext,
+          getCompanySectionPresence("SE", params.id),
+        );
+      }
+    }
+    return next();
+  },
+];
+
+export async function loader({ context, params }: Route.LoaderArgs) {
   const country = getCountry(params.country);
   if (!country) throw new Response("Not found", { status: 404 });
-  const shell = await getCompanyShell(country, params.id);
+  const suggestionsSupported = domainSuggestionsTabSupported(country.code);
+  const [shell, hasLegacyDomain, unifiedDomains] = await Promise.all([
+    context.get(companyShellPromiseContext),
+    country.code !== "se" && technologyTabSupported(country.code)
+      ? companyHasFlag(country, params.id, "domain")
+      : Promise.resolve(false),
+    suggestionsSupported
+      ? getUnifiedCompanyDomains(country.code, params.id)
+      : Promise.resolve([]),
+  ]);
   if (!shell) throw new Response("Company not found", { status: 404 });
   const entityType = await getEntityType(
     country.code,
     legalFormCodeOf(country.code, shell.record),
   );
-  return { shell, entityType };
+  const hasDomain =
+    hasLegacyDomain ||
+    unifiedDomains.some(
+      (domain) => domain.active && domain.reviewStatus !== "rejected",
+    );
+  return {
+    shell: { company: shell.company, record: shell.record },
+    entityType,
+    technologyAvailable: technologyTabAvailable(country.code, hasDomain),
+    domainSuggestionsAvailable: domainSuggestionsTabAvailable(
+      country.code,
+      unifiedDomains.length > 0,
+    ),
+  };
 }
 
 export function meta({ loaderData, params }: Route.MetaArgs) {
@@ -51,20 +105,17 @@ export function HydrateFallback() {
   );
 }
 
-type CompanyTab = "overview" | "financials";
-
-function activeTab(pathname: string): CompanyTab {
-  return pathname.includes("/financials") ? "financials" : "overview";
-}
-
 export default function CompanyLayout({
   loaderData,
   params,
 }: Route.ComponentProps) {
-  const { shell, entityType } = loaderData;
+  const { shell, entityType, technologyAvailable, domainSuggestionsAvailable } =
+    loaderData;
   const country = getCountry(params.country)!;
   const { company } = shell;
-  const tab = activeTab(useLocation().pathname);
+  const tab = companyTabFromPath(useLocation().pathname);
+  const technologySupported = technologyTabSupported(country.code);
+  const suggestionsSupported = domainSuggestionsTabSupported(country.code);
   const statusColumn = country.columns.find(
     (column) => column.kind === "status",
   );
@@ -141,6 +192,15 @@ export default function CompanyLayout({
             {country.code === "fi" ? (
               <FiRegistryBadges record={shell.record} />
             ) : null}
+            {suggestionsSupported ? (
+              <Badge
+                variant={domainSuggestionsAvailable ? "secondary" : "outline"}
+              >
+                {domainSuggestionsAvailable
+                  ? "Company domains available"
+                  : "No company domains"}
+              </Badge>
+            ) : null}
           </div>
         </div>
         {tab === "overview" ? (
@@ -170,6 +230,42 @@ export default function CompanyLayout({
               nativeButton={false}
             >
               Financials
+            </TabsTrigger>
+          ) : null}
+          {suggestionsSupported ? (
+            <TabsTrigger
+              value="suggestions"
+              disabled={!domainSuggestionsAvailable}
+              render={
+                domainSuggestionsAvailable ? (
+                  <NavLink
+                    to={`/company/${country.code}/${params.id}/suggestions`}
+                  />
+                ) : (
+                  <span title="No company domains available" />
+                )
+              }
+              nativeButton={false}
+            >
+              Domains
+            </TabsTrigger>
+          ) : null}
+          {technologySupported ? (
+            <TabsTrigger
+              value="technology"
+              disabled={!technologyAvailable}
+              render={
+                technologyAvailable ? (
+                  <NavLink
+                    to={`/company/${country.code}/${params.id}/technology`}
+                  />
+                ) : (
+                  <span title="No technology information available" />
+                )
+              }
+              nativeButton={false}
+            >
+              Technology
             </TabsTrigger>
           ) : null}
         </TabsList>

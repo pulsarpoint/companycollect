@@ -21,6 +21,7 @@ from dagster_v3.defs.denmark_cvr.person_details import (
     DENMARK_CVR_PERSON_DETAIL_PARTITIONS,
     DENMARK_CVR_PERSON_IDS_TABLE,
     DenmarkCvrPersonDetailDownload,
+    DenmarkCvrPersonDetailHttpFailure,
     DenmarkCvrPersonDetailIdentity,
     DenmarkCvrPersonDetailResource,
     company_detail_person_identities,
@@ -28,6 +29,7 @@ from dagster_v3.defs.denmark_cvr.person_details import (
     denmark_cvr_person_details_s3,
     person_detail_api_url,
     person_detail_bucket_key,
+    person_detail_failure_object_key,
     person_detail_object_key,
     person_detail_partition_identities,
     rebuild_company_detail_person_ids,
@@ -64,7 +66,10 @@ class FakeObjectStore:
 class FakePersonDetailResource:
     def __init__(
         self,
-        downloads: dict[str, DenmarkCvrPersonDetailDownload],
+        downloads: dict[
+            str,
+            DenmarkCvrPersonDetailDownload | DenmarkCvrPersonDetailHttpFailure,
+        ],
     ) -> None:
         self.downloads = downloads
         self.requested: list[DenmarkCvrPersonDetailIdentity] = []
@@ -72,7 +77,10 @@ class FakePersonDetailResource:
     def iter_person_details(
         self,
         identities: tuple[DenmarkCvrPersonDetailIdentity, ...],
-    ) -> tuple[DenmarkCvrPersonDetailDownload, ...]:
+    ) -> tuple[
+        DenmarkCvrPersonDetailDownload | DenmarkCvrPersonDetailHttpFailure,
+        ...,
+    ]:
         self.requested.extend(identities)
         return tuple(self.downloads[identity.person_id] for identity in identities)
 
@@ -234,6 +242,87 @@ def test_person_detail_resource_retries_rate_limits_in_one_browser() -> None:
     assert [download.payload for download in downloads] == [payload]
     assert len(page.evaluate_calls) == 2
     assert sleeps == [2.0]
+    assert browser.closed is True
+
+
+def test_person_detail_resource_returns_404_and_continues_batch() -> None:
+    missing = DenmarkCvrPersonDetailIdentity("4010858579", "deltager")
+    available = DenmarkCvrPersonDetailIdentity("4000000001", "deltager")
+    payload = {"stamdata": {}, "personRelationer": {}}
+    page = FakePage(
+        [
+            {
+                "ok": False,
+                "status": 404,
+                "headers": {"content-type": "application/json"},
+                "body": '{"message":"not found"}',
+            },
+            {
+                "ok": True,
+                "status": 200,
+                "headers": {"content-type": "application/json"},
+                "body": json.dumps(payload),
+            },
+        ]
+    )
+    browser = FakeBrowser(page)
+    sleeps: list[float] = []
+
+    results = list(
+        DenmarkCvrPersonDetailResource(
+            min_delay_ms=0,
+            max_delay_ms=0,
+        ).iter_person_details(
+            (missing, available),
+            launcher=lambda: browser,
+            sleep=sleeps.append,
+        )
+    )
+
+    assert results[0] == DenmarkCvrPersonDetailHttpFailure(
+        identity=missing,
+        source_url=person_detail_api_url("https://datacvr.virk.dk", missing),
+        status=404,
+        attempt_count=1,
+        response_headers={"content-type": "application/json"},
+    )
+    assert isinstance(results[1], DenmarkCvrPersonDetailDownload)
+    assert results[1].payload == payload
+    assert len(page.evaluate_calls) == 2
+    assert sleeps == [0.0]
+    assert browser.closed is True
+
+
+def test_person_detail_resource_does_not_suppress_server_failure() -> None:
+    identity = DenmarkCvrPersonDetailIdentity("4000000001", "deltager")
+    browser = FakeBrowser(
+        FakePage(
+            [
+                {
+                    "ok": False,
+                    "status": 500,
+                    "headers": {"content-type": "application/json"},
+                    "body": "{}",
+                }
+            ]
+        )
+    )
+
+    with pytest.raises(RuntimeError, match="HTTP 500"):
+        list(
+            DenmarkCvrPersonDetailResource(
+                min_delay_ms=0,
+                max_delay_ms=0,
+                max_attempts=1,
+                retry_base_delay_seconds=0,
+                retry_max_delay_seconds=0,
+            ).iter_person_details(
+                (identity,),
+                launcher=lambda: browser,
+                sleep=lambda _: None,
+            )
+        )
+
     assert browser.closed is True
 
 
@@ -481,6 +570,8 @@ def test_person_detail_writer_checkpoints_original_and_english_json() -> None:
         details=details,
         partition_key=partition,
         identities=(first, second),
+        observed_at=datetime(2026, 8, 11, tzinfo=UTC),
+        source_run_id="run-1",
         log_info=record_progress,
     )
 
@@ -498,14 +589,96 @@ def test_person_detail_writer_checkpoints_original_and_english_json() -> None:
     assert progress_messages == [
         f"DataCVR person-detail started: partition={partition} persons_total=2",
         f"DataCVR person-detail progress: phase=snapshot_scan partition={partition} "
-        "persons_checked=2/2 already_complete=1 translated_existing=0 "
-        "persons_to_download=1",
+        "persons_checked=2/2 already_complete=1 already_skipped=0 "
+        "translated_existing=0 persons_to_download=1",
         f"DataCVR person-detail progress: phase=download partition={partition} "
         "persons_downloaded=1/1 downloaded_bytes=33",
         f"DataCVR person-detail completed: partition={partition} "
-        "persons_completed=2/2 already_complete=1 translated_existing=0 "
-        "downloaded=1",
+        "persons_resolved=2/2 persons_completed=2 already_complete=1 "
+        "already_skipped=0 translated_existing=0 downloaded=1 skipped=0",
     ]
+
+
+def test_person_detail_writer_checkpoints_404_and_reuses_marker() -> None:
+    missing = DenmarkCvrPersonDetailIdentity("4010858579", "deltager")
+    partition = person_detail_bucket_key(missing.person_id)
+    available = _identity_in_partition(partition, start=1)
+    failure = DenmarkCvrPersonDetailHttpFailure(
+        identity=missing,
+        source_url=person_detail_api_url("https://datacvr.virk.dk", missing),
+        status=404,
+        attempt_count=1,
+        response_headers={"content-type": "application/json"},
+    )
+    payload = {"stamdata": {"navn": "Available"}}
+    download = DenmarkCvrPersonDetailDownload(
+        identity=available,
+        source_url=person_detail_api_url("https://datacvr.virk.dk", available),
+        raw_body=json.dumps(payload),
+        payload=payload,
+        status=200,
+        response_headers={"content-type": "application/json"},
+    )
+    store = FakeObjectStore()
+    details = FakePersonDetailResource(
+        {
+            missing.person_id: failure,
+            available.person_id: download,
+        }
+    )
+    warnings: list[str] = []
+
+    summary = write_person_detail_partition(
+        object_store=store,
+        details=details,
+        partition_key=partition,
+        identities=(missing, available),
+        observed_at=datetime(2026, 8, 11, 9, tzinfo=UTC),
+        source_run_id="run-404",
+        log_warning=lambda message, *args: warnings.append(message % args),
+    )
+
+    marker_key = person_detail_failure_object_key(partition, missing.person_id)
+    marker = json.loads(store.objects[marker_key])
+    assert details.requested == [missing, available]
+    assert summary.complete_person_count == 1
+    assert summary.skipped_person_count == 1
+    assert summary.already_skipped_person_count == 0
+    assert summary.skipped_request_attempt_count == 1
+    assert summary.resolved_person_count == 2
+    assert marker == {
+        "decision": "ignore_person",
+        "failed_at": "2026-08-11T09:00:00+00:00",
+        "http_status": 404,
+        "person_id": missing.person_id,
+        "person_type": missing.person_type,
+        "request_attempt_count": 1,
+        "source_asset": "denmark_cvr_person_details_s3",
+        "source_partition_key": partition,
+        "source_run_id": "run-404",
+        "source_url": failure.source_url,
+    }
+    assert "not found" not in store.objects[marker_key].decode("utf-8")
+    assert warnings == [
+        "Skipping DataCVR person detail after terminal response: "
+        f"partition={partition} person_id={missing.person_id} http_status=404 "
+        f"request_attempts=1 marker={marker_key}"
+    ]
+
+    rerun_details = FakePersonDetailResource({})
+    rerun = write_person_detail_partition(
+        object_store=store,
+        details=rerun_details,
+        partition_key=partition,
+        identities=(missing, available),
+        observed_at=datetime(2026, 8, 11, 10, tzinfo=UTC),
+        source_run_id="run-rerun",
+    )
+
+    assert rerun_details.requested == []
+    assert rerun.already_complete_person_count == 1
+    assert rerun.already_skipped_person_count == 1
+    assert rerun.resolved_person_count == 2
 
 
 def test_person_detail_assets_have_catalog_dependency_and_id_partitions() -> None:

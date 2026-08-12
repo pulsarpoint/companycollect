@@ -804,6 +804,7 @@ dependencies = [
     { name = "dagster-dlt" },
     { name = "dagster-duckdb" },
     { name = "dagster-postgres" },
+    { name = "dbt-clickhouse" },
     { name = "dbt-duckdb" },
     { name = "dlt", extra = ["duckdb", "s3"] },
     { name = "dnspython" },
@@ -850,6 +851,7 @@ requires-dist = [
     { name = "dagster-dlt", specifier = ">=0.29.9" },
     { name = "dagster-duckdb", specifier = ">=0.29.9" },
     { name = "dagster-postgres", specifier = ">=0.29.9" },
+    { name = "dbt-clickhouse", specifier = ">=1.8,<1.9" },
     { name = "dbt-duckdb", specifier = ">=1.8,<1.9" },
     { name = "dlt", extras = ["duckdb", "s3"], specifier = ">=1.28.0" },
     { name = "dnspython", specifier = ">=2.8.0" },
@@ -914,6 +916,21 @@ dependencies = [
 sdist = { url = "https://files.pythonhosted.org/packages/99/b1/cfc6f7edef6007b4cd7f4d32e290d456d981e33623eea325988ba929e9dc/dbt_adapters-1.10.2.tar.gz", hash = "sha256:c85a782e1ffa1f8571331b5e5e4e466e4742d0e4e97708881151e7b5c5ade860", size = 106084, upload-time = "2024-11-23T00:16:58.018Z" }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/f6/4a/fa63f354d0ed1cee5792dba0359b68c446f4dea556662b7d2dc649ff74cf/dbt_adapters-1.10.2-py3-none-any.whl", hash = "sha256:e08ccc54661c2fa2021ef2cbc3105a6d7552d5aa5eb6e505ffb3dc534d45023c", size = 164399, upload-time = "2024-11-23T00:16:56.593Z" },
+]
+
+[[package]]
+name = "dbt-clickhouse"
+version = "1.8.9"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "clickhouse-connect" },
+    { name = "clickhouse-driver" },
+    { name = "dbt-core" },
+    { name = "setuptools" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/9c/4c/af581516020db1e6acde1aad69b48b79f8e328ed60cf2784dc09bb6ee8b8/dbt_clickhouse-1.8.9.tar.gz", hash = "sha256:0efe5a000c1d2588713d90169f4e915de240f0c4bcf93f89635c853114cd13a1", size = 69917, upload-time = "2025-02-16T16:03:58.001Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/4f/6a/e230083df84319d273de5a45f9ce1a1de645e23ef855bfb2849c1f5bcd8b/dbt_clickhouse-1.8.9-py2.py3-none-any.whl", hash = "sha256:bf40225e720da7d86e7d0c7df6a562d4647bff2cb34517dab08262ae9dcf737e", size = 67636, upload-time = "2025-02-16T16:03:56.477Z" },
 ]
 
 [[package]]

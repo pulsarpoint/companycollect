@@ -1,0 +1,20 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+cd {{ backoffice_postgres_dir | quote }}
+set -a
+# This root-only file is generated once by Ansible and retained across deploys.
+source ./.env
+set +a
+
+docker compose exec -T \
+  -e BACKOFFICE_OWNER_PASSWORD="$BACKOFFICE_OWNER_PASSWORD" \
+  -e BACKOFFICE_APP_PASSWORD="$BACKOFFICE_APP_PASSWORD" \
+  -e BACKOFFICE_DAGSTER_PASSWORD="$BACKOFFICE_DAGSTER_PASSWORD" \
+  postgres sh -ceu '
+    psql -X -U postgres -d postgres \
+      -v owner_password="$BACKOFFICE_OWNER_PASSWORD" \
+      -v app_password="$BACKOFFICE_APP_PASSWORD" \
+      -v dagster_password="$BACKOFFICE_DAGSTER_PASSWORD" \
+      -f /dev/stdin
+  ' < ./bootstrap.sql

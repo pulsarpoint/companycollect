@@ -1,0 +1,19 @@
+---
+- name: Verify backoffice PostgreSQL access and durable storage
+  hosts: backoffice_postgres_hosts
+  become: true
+  vars:
+    backoffice_postgres_verify_restart: true
+  tasks:
+    - name: Run destructive-safe persistence and permission verification
+      ansible.builtin.command:
+        cmd: "{{ backoffice_postgres_dir }}/verify.sh --restart"
+      register: backoffice_postgres_persistence_verification
+      changed_when: true
+      no_log: true
+
+    - name: Report persistence verification
+      ansible.builtin.debug:
+        msg: >-
+          Backoffice PostgreSQL persisted its verification record across a
+          container restart; owner, application, and Dagster access checks passed.

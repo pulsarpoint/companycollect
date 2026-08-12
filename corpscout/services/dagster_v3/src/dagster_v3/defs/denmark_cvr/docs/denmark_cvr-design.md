@@ -174,6 +174,15 @@ backoff. Successful responses are checkpointed as:
 The original object preserves Danish keys and values. The companion object uses
 a versioned static English-key mapping and leaves every value unchanged.
 
+An HTTP 404 for one person is treated as a terminal entity-level result rather
+than a partition failure. The asset writes
+`denmark_cvr/person_details/bucket_NNN/enhedsnummer=<ID>/person_error.json`,
+counts the person as resolved, and continues through the bucket. The marker
+contains safe request metadata but never the response body, cookies, or browser
+state. Later materializations reuse the marker instead of requesting the same
+missing person again. Rate-limit and server failures remain materialization
+errors after their configured retries.
+
 ## Independent production-unit capture and normalization
 
 Production-unit capture assets are peers of the company-detail assets. They

@@ -49,6 +49,15 @@ export interface CompanyColumn {
 
 export interface CountryDetailConfig {
   /**
+   * {id:String} → one full detail record plus reserved `__shell_*` fields.
+   *
+   * Countries that provide this query let the company layout read the anchor
+   * once instead of issuing separate list-projection and detail-record
+   * queries. The query must return `__shell_<column key>`, `__shell_active`,
+   * and, when applicable, `__shell_industry_key`.
+   */
+  companyShellQuery?: string;
+  /**
    * Source cards shown on the dedicated Financials tab. Their order is the UI
    * order. The definition identifies accounting scope and presentation; raw
    * observations remain in the source-native tables below.
@@ -653,7 +662,9 @@ LIMIT 100`,
     name: "Sweden",
     flag: "🇸🇪",
     companiesTable: "se_companies",
-    idColumn: "registration_number",
+    // The canonical company_id is the same normalized 10-digit organization
+    // number exposed as registration_number, and is the table's sorting key.
+    idColumn: "company_id",
     nameColumn: "legal_name",
     activeExpr: "status = 'active'",
     // Bolagsverket registers formal legal-form words; users type the
@@ -665,8 +676,8 @@ LIMIT 100`,
     industryJoinKeyExpr: "company_id",
     placeQuery: `SELECT toString(company_id) AS company_id,
             argMax(post_town, address_type = 'postal') AS place
-     FROM se_company_addresses
-     WHERE company_id IN {ids:Array(String)}
+     FROM se_company_addresses_current
+     WHERE company_id IN {ids:Array(String)} AND has_address = 1
      GROUP BY company_id`,
     columns: [
       {
@@ -701,7 +712,7 @@ LIMIT 100`,
       },
       {
         key: "registered",
-        label: "Incorporated",
+        label: "Registered",
         expr: "toString(incorporation_date)",
         sortable: true,
         kind: "date",
@@ -745,30 +756,33 @@ LIMIT 50000`,
             "Consolidated IFRS figures extracted from filed ESEF reports. Group accounts remain distinct from standalone legal-entity filings.",
         },
       ],
-      // activity_description is aliased to _original so the language
-      // toggle's pairing rule (needs BOTH <base>_en and <base>_original)
-      // collapses it with activity_description_en from the translated
-      // view; the code-label columns are deliberately unpaired singles.
-      // vat_number is DERIVED (SE + orgnr + 01, the standard momsreg.nr
-      // format) — the source carries no VAT registration flag, so this is
-      // the number IF the company is VAT-registered, not proof that it is.
-      recordQuery: `SELECT c.* EXCEPT (activity_description),
+      domainsQuery: `SELECT root_domain AS domain, website_url AS website_url,
+  arrayStringConcat(source_names, ' + ') AS domain_source,
+  suggested_confidence AS confidence,
+  toUInt8(review_status = 'confirmed_primary' OR suggested_primary = 1) AS is_primary
+FROM company_domains FINAL
+PREWHERE country_code = 'SE' AND company_id = {id:String}
+WHERE is_active = 1 AND review_status != 'rejected'
+ORDER BY is_primary DESC, suggested_confidence DESC, root_domain
+LIMIT 50`,
+      // The shell deliberately reads only the keyed company anchor. The
+      // translated registered activity is already served lazily through
+      // company_description_current, so joining se_companies_translated here
+      // would scan its source-wide translation aggregates on every page open.
+      // The source field is a registration date, despite the normalized
+      // column's historical incorporation_date name.
+      companyShellQuery: `SELECT c.* EXCEPT (activity_description, incorporation_date),
   c.activity_description AS activity_description_original,
-  t.activity_description_en AS activity_description_en,
-  t.legal_form_label_en AS legal_form_label_en,
-  t.status_reason_label_en AS status_reason_label_en,
-  g.lei AS lei,
-  concat('SE', c.registration_number, '01') AS vat_number
+  c.incorporation_date AS registration_date,
+  c.registration_number AS __shell_id,
+  c.legal_name AS __shell_name,
+  c.legal_form_code AS __shell_legal_form,
+  c.status AS __shell_status,
+  toString(c.incorporation_date) AS __shell_registered,
+  toUInt8(c.status = 'active') AS __shell_active,
+  c.company_id AS __shell_industry_key
 FROM se_companies AS c
-LEFT JOIN se_companies_translated AS t ON t.company_id = c.company_id
-LEFT JOIN (
-  SELECT replaceRegexpAll(registered_as, '[^0-9]', '') AS orgnr,
-    argMax(lei, (registration_status = 'ISSUED', entity_status = 'ACTIVE')) AS lei
-  FROM gleif_lei_records
-  WHERE jurisdiction = 'SE' AND registered_as != ''
-  GROUP BY orgnr
-) AS g ON g.orgnr = c.registration_number
-WHERE c.registration_number = {id:String}
+PREWHERE c.company_id = {id:String}
 LIMIT 1`,
       // se_financial_metrics is keyed on the normalized 10-digit orgnr
       // (= registration_number since the 2026-07-18 identity fix). Some
@@ -1122,17 +1136,79 @@ LIMIT 100`,
   )))) AS source_record_uid
 FROM se_industries AS i
 LEFT JOIN nace_categories AS n ON n.normalized_code = i.nace_rev2_class_code AND n.is_current = 1
-WHERE i.company_id IN (SELECT company_id FROM se_companies WHERE registration_number = {id:String})
+WHERE i.company_id = {id:String}
 ORDER BY i.is_primary DESC, i.sequence
 LIMIT 100`,
-      addressQuery: `SELECT address_type AS address_type,
-  arrayStringConcat(arrayFilter(x -> x != '', [
+      addressQuery: `WITH
+  lowerUTF8(trim(coalesce(post_town, ''))) = 'utlandet' AS source_address_is_foreign,
+  coalesce(nullIf(street_address, ''), raw_address, '') AS source_street_address,
+  if(
+    source_address_is_foreign,
+    if(
+      upperUTF8(coalesce(country_code, '')) NOT IN ('', 'SE'),
+      upperUTF8(country_code),
+      if(match(coalesce(street_address, ''), '(^| )PL {2,}'), 'PL', '')
+    ),
+    coalesce(country_code, 'SE')
+  ) AS resolved_address_country_code,
+  if(
+    resolved_address_country_code = 'PL',
+    replaceRegexpAll(
+      replaceRegexpAll(source_street_address, '^UL[.] +', ''),
+      ' +PL {2,}',
+      ', '
+    ),
+    if(
+      source_address_is_foreign,
+      source_street_address,
+      replaceRegexpAll(source_street_address, ' +[0-9]+ +TR$', '')
+    )
+  ) AS normalized_street_address,
+  if(
+    source_address_is_foreign,
+    '',
+    extract(source_street_address, '([0-9]+ +TR)$')
+  ) AS normalized_address_unit,
+  if(
+    NOT source_address_is_foreign AND match(coalesce(postal_code, ''), '^[0-9]{5}$'),
+    concat(substring(postal_code, 1, 3), ' ', substring(postal_code, 4, 2)),
+    if(source_address_is_foreign AND postal_code = '00000', '', coalesce(postal_code, ''))
+  ) AS normalized_postal_code,
+  if(
+    coalesce(care_of, '') = '' OR startsWith(lowerUTF8(coalesce(care_of, '')), 'c/o'),
     coalesce(care_of, ''),
-    coalesce(nullIf(street_address, ''), raw_address, ''),
-    trim(concat(coalesce(postal_code, ''), ' ', coalesce(post_town, '')))
-  ]), ', ') AS full_address
-FROM se_company_addresses
-WHERE company_id IN (SELECT company_id FROM se_companies WHERE registration_number = {id:String})
+    concat('c/o ', care_of)
+  ) AS normalized_care_of
+SELECT address_type AS address_type,
+  if(
+    source_address_is_foreign,
+    arrayStringConcat(arrayFilter(x -> x != '', [
+      normalized_care_of,
+      normalized_street_address,
+      resolved_address_country_code
+    ]), ', '),
+    arrayStringConcat(arrayFilter(x -> x != '', [
+      normalized_care_of,
+      normalized_street_address,
+      normalized_address_unit,
+      trim(concat(normalized_postal_code, ' ', coalesce(post_town, '')))
+    ]), ', ')
+  ) AS full_address,
+  arrayStringConcat(arrayFilter(x -> x != '', [
+    normalized_street_address,
+    if(
+      source_address_is_foreign,
+      '',
+      trim(concat(normalized_postal_code, ' ', coalesce(post_town, '')))
+    )
+  ]), ', ') AS geocode_address,
+  if(source_address_is_foreign, '', normalized_street_address) AS geocode_street,
+  if(source_address_is_foreign, '', coalesce(postal_code, '')) AS geocode_postal_code,
+  resolved_address_country_code AS address_country_code,
+  toUInt8(source_address_is_foreign) AS address_is_foreign
+FROM se_company_addresses_current
+WHERE company_id = {id:String}
+  AND has_address = 1
 ORDER BY address_type
 LIMIT 10`,
       publicContractsQuery: `SELECT
@@ -1312,7 +1388,7 @@ LIMIT 1`,
     eurostatGeoCode: "LV",
     name: "Latvia",
     flag: "🇱🇻",
-    companiesTable: "lv_companies",
+    companiesTable: "lv_companies_current",
     idColumn: "regcode",
     nameColumn: "legal_name",
     activeExpr: "is_active = 1",
@@ -1401,7 +1477,7 @@ WHERE registry_id = {id:String} AND is_current = 1
 ORDER BY is_primary DESC, confidence DESC
 LIMIT 50`,
       recordQuery: `SELECT c.*, t.activity_text_en
-FROM lv_companies AS c
+FROM lv_companies_current AS c
 LEFT JOIN lv_companies_translated AS t ON t.regcode = c.regcode
 WHERE c.regcode = {id:String}
 LIMIT 1`,
@@ -1410,8 +1486,8 @@ LIMIT 1`,
     coalesce(address, ''),
     coalesce(postal_code, '')
   ]), ', ') AS full_address
-FROM lv_companies
-WHERE regcode = {id:String}
+FROM lv_company_addresses_current
+WHERE regcode = {id:String} AND has_address = 1
 LIMIT 1`,
     },
     financialsLatest: {

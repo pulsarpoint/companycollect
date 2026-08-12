@@ -11,9 +11,11 @@ from dagster_v3.defs.common.duckdb_resources import (
 from dagster_v3.defs.common.resources import ObjectStoreResource
 from dagster_v3.defs.sweden_company import tables
 from dagster_v3.defs.sweden_company.clickhouse import (
-    export_sweden_company_clickhouse_addresses,
     export_sweden_company_clickhouse_companies,
     export_sweden_company_clickhouse_industries,
+    publish_sweden_company_clickhouse_addresses,
+    publish_sweden_company_industry_history,
+    publish_sweden_company_profile_history,
 )
 from dagster_v3.defs.sweden_company.normalized_duckdb import (
     replace_sweden_company_normalized_tables,
@@ -117,6 +119,9 @@ def sweden_company_normalized_duckdb(
             "duckdb_path": str(tables.SWEDEN_COMPANY_DUCKDB_PATH),
             "company_count": counts["companies"],
             "address_count": counts["company_addresses"],
+            "registry_state_count": counts["company_registry_states"],
+            "proceeding_count": counts["company_proceedings"],
+            "industry_state_count": counts["company_industry_states"],
             "industry_code_count": counts["company_industry_codes"],
             "bolagsverket_company_count": counts["bolagsverket_company_count"],
             "scb_company_count": counts["scb_company_count"],
@@ -156,9 +161,53 @@ def sweden_company_companies_clickhouse(
     group_name=GROUP_NAME,
     kinds={"python", "duckdb", "clickhouse", "bolagsverket", "scb"},
     pool=SWEDEN_COMPANY_DUCKDB_POOL,
+    metadata={"table": tables.QUALIFIED_COMPANY_REGISTRY_OBSERVATIONS_TABLE},
+    description=(
+        "Appends changed source-specific Sweden registry states and typed "
+        "Bolagsverket proceeding observations to ClickHouse."
+    ),
+)
+def sweden_company_profile_history_clickhouse(
+    context: dg.AssetExecutionContext,
+    sweden_company_duckdb: DuckDBResource,
+    clickhouse: ClickhouseResource,
+) -> dg.MaterializeResult:
+    with read_only_duckdb_connection(sweden_company_duckdb) as connection:
+        result = publish_sweden_company_profile_history(
+            duckdb_connection=connection,
+            clickhouse=clickhouse,
+            log=context.log.info,
+        )
+    return dg.MaterializeResult(
+        metadata={
+            "registry_table": tables.QUALIFIED_COMPANY_REGISTRY_OBSERVATIONS_TABLE,
+            "registry_candidates": result.registry.candidates,
+            "registry_observations_inserted": (result.registry.observations_inserted),
+            "registry_first_observations": result.registry.first_observations,
+            "registry_changes": result.registry.changes,
+            "registry_removals": result.registry.removals,
+            "proceeding_table": (
+                tables.QUALIFIED_COMPANY_PROCEEDING_OBSERVATIONS_TABLE
+            ),
+            "proceeding_candidates": result.proceedings.candidates,
+            "proceeding_observations_inserted": (
+                result.proceedings.observations_inserted
+            ),
+            "proceeding_first_observations": (result.proceedings.first_observations),
+            "proceeding_changes": result.proceedings.changes,
+            "proceeding_removals": result.proceedings.removals,
+        }
+    )
+
+
+@dg.asset(
+    deps=["sweden_company_normalized_duckdb"],
+    group_name=GROUP_NAME,
+    kinds={"python", "duckdb", "clickhouse", "bolagsverket", "scb"},
+    pool=SWEDEN_COMPANY_DUCKDB_POOL,
     metadata={"table": tables.QUALIFIED_COMPANY_ADDRESSES_TABLE},
     description=(
-        "Exports normalized Sweden company addresses to ClickHouse "
+        "Appends changed Sweden company address observations to ClickHouse "
         "corpscout.se_company_addresses."
     ),
 )
@@ -168,13 +217,20 @@ def sweden_company_addresses_clickhouse(
     clickhouse: ClickhouseResource,
 ) -> dg.MaterializeResult:
     with read_only_duckdb_connection(sweden_company_duckdb) as connection:
-        rows = export_sweden_company_clickhouse_addresses(
+        result = publish_sweden_company_clickhouse_addresses(
             duckdb_connection=connection,
             clickhouse=clickhouse,
             log=context.log.info,
         )
     return dg.MaterializeResult(
-        metadata={"rows": rows, "table": tables.QUALIFIED_COMPANY_ADDRESSES_TABLE}
+        metadata={
+            "table": tables.QUALIFIED_COMPANY_ADDRESSES_TABLE,
+            "address_candidates": result.address_candidates,
+            "address_observations_inserted": result.address_observations_inserted,
+            "first_address_observations": result.first_address_observations,
+            "address_changes": result.address_changes,
+            "address_removals": result.address_removals,
+        }
     )
 
 
@@ -199,6 +255,37 @@ def sweden_company_industries_clickhouse(
         )
     return dg.MaterializeResult(
         metadata={"rows": rows, "table": tables.QUALIFIED_INDUSTRIES_TABLE}
+    )
+
+
+@dg.asset(
+    deps=["sweden_company_normalized_duckdb"],
+    group_name=GROUP_NAME,
+    kinds={"python", "duckdb", "clickhouse", "scb"},
+    pool=SWEDEN_COMPANY_DUCKDB_POOL,
+    metadata={"table": tables.QUALIFIED_COMPANY_INDUSTRY_OBSERVATIONS_TABLE},
+    description="Appends changed complete SCB SNI states to ClickHouse.",
+)
+def sweden_company_industry_history_clickhouse(
+    context: dg.AssetExecutionContext,
+    sweden_company_duckdb: DuckDBResource,
+    clickhouse: ClickhouseResource,
+) -> dg.MaterializeResult:
+    with read_only_duckdb_connection(sweden_company_duckdb) as connection:
+        result = publish_sweden_company_industry_history(
+            duckdb_connection=connection,
+            clickhouse=clickhouse,
+            log=context.log.info,
+        )
+    return dg.MaterializeResult(
+        metadata={
+            "table": tables.QUALIFIED_COMPANY_INDUSTRY_OBSERVATIONS_TABLE,
+            "industry_candidates": result.candidates,
+            "industry_observations_inserted": result.observations_inserted,
+            "industry_first_observations": result.first_observations,
+            "industry_changes": result.changes,
+            "industry_removals": result.removals,
+        }
     )
 
 
@@ -233,8 +320,10 @@ sweden_company_refresh_job = dg.define_asset_job(
     "sweden_company_refresh_job",
     selection=dg.AssetSelection.assets(
         "sweden_company_companies_clickhouse",
+        "sweden_company_profile_history_clickhouse",
         "sweden_company_addresses_clickhouse",
         "sweden_company_industries_clickhouse",
+        "sweden_company_industry_history_clickhouse",
         "sweden_registry_company_source_records_clickhouse",
     ).upstream(),
 )
@@ -254,8 +343,10 @@ defs = dg.Definitions(
         sweden_company_raw_duckdb,
         sweden_company_normalized_duckdb,
         sweden_company_companies_clickhouse,
+        sweden_company_profile_history_clickhouse,
         sweden_company_addresses_clickhouse,
         sweden_company_industries_clickhouse,
+        sweden_company_industry_history_clickhouse,
         se_code_labels_clickhouse,
         sweden_company_translation_load,
     ],

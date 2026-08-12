@@ -75,6 +75,15 @@ export default function CountryCompanies({ loaderData, params }: Route.Component
           {country.flag} {country.name} companies
         </h2>
         <div className="flex gap-2">
+          {country.code === "se" ? (
+            <Button
+              variant="outline"
+              render={<Link to="/countries/se/domain-suggestions" />}
+              nativeButton={false}
+            >
+              Review domain suggestions
+            </Button>
+          ) : null}
           <Form method="get" className="flex gap-2">
             <Input
               type="search"

@@ -51,6 +51,12 @@ def copy_dlt_columns(columns: dict[str, dict[str, Any]]) -> dict[str, dict[str, 
 LATVIA_UR_DATABASE = "corpscout"
 LV_COMPANIES_TABLE = "lv_companies"
 QUALIFIED_LV_COMPANIES_TABLE = f"{LATVIA_UR_DATABASE}.{LV_COMPANIES_TABLE}"
+LV_COMPANY_ADDRESSES_TABLE = "lv_company_addresses"
+QUALIFIED_LV_COMPANY_ADDRESSES_TABLE = (
+    f"{LATVIA_UR_DATABASE}.{LV_COMPANY_ADDRESSES_TABLE}"
+)
+LV_COMPANY_ADDRESSES_CURRENT_VIEW = "lv_company_addresses_current"
+LV_COMPANIES_CURRENT_VIEW = "lv_companies_current"
 
 # Wikidata P8053 = Latvian unified registration number (LV). Aggregated by
 # defs/wikidata/registry_seed.py; see WikidataRegistrySeedSpec for why this lives here
@@ -71,11 +77,36 @@ LATVIA_VZD_ADDRESS_COLUMNS = (
     "address_longitude",
 )
 
-# Column order must match the DuckDB export view and ClickHouse migrations.
-LV_COMPANIES_COLUMNS = (
-    tuple(LATVIA_UR_ENTITIES_COLUMNS)
-    + ("activity_text_original",)
-    + LATVIA_VZD_ADDRESS_COLUMNS
+LV_COMPANY_ADDRESS_SOURCE_COLUMNS = (
+    "address",
+    "postal_code",
+    "address_id",
+    "region_code",
+    "city_code",
+    "atvk_code",
+)
+
+# Company identity remains one row per regcode. Address values are projected to
+# LV_COMPANY_ADDRESSES_COLUMNS and served through lv_companies_current.
+LV_COMPANIES_COLUMNS = tuple(
+    column
+    for column in LATVIA_UR_ENTITIES_COLUMNS
+    if column not in LV_COMPANY_ADDRESS_SOURCE_COLUMNS
+) + ("activity_text_original",)
+
+# Column order must match the DuckDB address export view and migration 000254.
+LV_COMPANY_ADDRESSES_COLUMNS = (
+    "country_iso2",
+    "source_slug",
+    "source_run_id",
+    "source_url",
+    "regcode",
+    *LV_COMPANY_ADDRESS_SOURCE_COLUMNS,
+    *LATVIA_VZD_ADDRESS_COLUMNS,
+    "has_address",
+    "address_fingerprint",
+    "observation_fingerprint",
+    "observed_at",
 )
 
 
@@ -83,18 +114,14 @@ LV_COMPANIES_COLUMNS = (
 
 FINANCIALS_DATASET_ID = "8d31b878-536a-44aa-a013-8bc6b669d477"
 _FIN_BASE = f"https://data.gov.lv/dati/dataset/{FINANCIALS_DATASET_ID}/resource"
-FINANCIAL_STATEMENTS_URL = (
-    f"{_FIN_BASE}/27fcc5ec-c63b-4bfd-bb08-01f073a52d04/download/financial_statements.csv"
-)
+FINANCIAL_STATEMENTS_URL = f"{_FIN_BASE}/27fcc5ec-c63b-4bfd-bb08-01f073a52d04/download/financial_statements.csv"
 BALANCE_SHEETS_URL = (
     f"{_FIN_BASE}/50ef4f26-f410-4007-b296-22043ca3dc43/download/balance_sheets.csv"
 )
 INCOME_STATEMENTS_URL = (
     f"{_FIN_BASE}/d5fd17ef-d32e-40cb-8399-82b780095af0/download/income_statements.csv"
 )
-CASH_FLOW_STATEMENTS_URL = (
-    f"{_FIN_BASE}/1a11fc29-ba7c-4e5a-8edc-7a28cea24988/download/cash_flow_statements.csv"
-)
+CASH_FLOW_STATEMENTS_URL = f"{_FIN_BASE}/1a11fc29-ba7c-4e5a-8edc-7a28cea24988/download/cash_flow_statements.csv"
 
 # DuckDB raw staging tables (one per CSV; each is an independent checkpoint).
 FINANCIAL_STATEMENTS_RAW_TABLE = "financial_statements_raw"
@@ -306,5 +333,7 @@ def _export_columns(columns: tuple[str, ...]) -> tuple[str, ...]:
 
 
 LV_COMPANIES_EXPORT_COLUMNS = _export_columns(LV_COMPANIES_COLUMNS)
-LV_FINANCIAL_STATEMENTS_EXPORT_COLUMNS = _export_columns(LV_FINANCIAL_STATEMENTS_COLUMNS)
+LV_FINANCIAL_STATEMENTS_EXPORT_COLUMNS = _export_columns(
+    LV_FINANCIAL_STATEMENTS_COLUMNS
+)
 LV_FINANCIAL_METRICS_EXPORT_COLUMNS = _export_columns(LV_FINANCIAL_METRICS_COLUMNS)

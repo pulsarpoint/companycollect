@@ -54,6 +54,7 @@ DENMARK_CVR_PERSON_DETAIL_MAPPING_VERSION = 1
 DENMARK_CVR_PERSON_IDS_TABLE = "person_ids"
 DENMARK_CVR_PERSON_ID_INSERT_BATCH_ROWS = 50_000
 DENMARK_CVR_PERSON_ID_PROGRESS_INTERVAL_SECONDS = 60.0
+DATACVR_PERSON_DETAIL_SUPPRESSIBLE_STATUSES = frozenset({404})
 
 DATACVR_PERSON_DETAIL_SCRIPT = """
 async ({ url }) => {
@@ -126,6 +127,15 @@ class DenmarkCvrPersonDetailDownload:
 
 
 @dataclass(frozen=True)
+class DenmarkCvrPersonDetailHttpFailure:
+    identity: DenmarkCvrPersonDetailIdentity
+    source_url: str
+    status: int
+    attempt_count: int
+    response_headers: dict[str, str]
+
+
+@dataclass(frozen=True)
 class DenmarkCvrPersonIdCatalogSummary:
     company_count: int
     source_object_count: int
@@ -140,11 +150,22 @@ class DenmarkCvrPersonDetailSummary:
     partition_key: str
     selected_person_count: int
     complete_person_count: int
+    skipped_person_count: int
+    already_skipped_person_count: int
+    skipped_request_attempt_count: int
     already_complete_person_count: int
     translated_existing_person_count: int
     downloaded_person_count: int
     written_object_count: int
     downloaded_size_bytes: int
+
+    @property
+    def resolved_person_count(self) -> int:
+        return (
+            self.complete_person_count
+            + self.skipped_person_count
+            + self.already_skipped_person_count
+        )
 
 
 class DenmarkCvrPersonDetailRequestError(RuntimeError):
@@ -193,7 +214,7 @@ class DenmarkCvrPersonDetailResource(dg.ConfigurableResource):
         *,
         launcher: Callable[[], Any] = launch,
         sleep: Callable[[float], None] = time.sleep,
-    ) -> Iterator[DenmarkCvrPersonDetailDownload]:
+    ) -> Iterator[DenmarkCvrPersonDetailDownload | DenmarkCvrPersonDetailHttpFailure]:
         selected_identities = tuple(identities)
         if not selected_identities:
             return
@@ -222,6 +243,14 @@ class DenmarkCvrPersonDetailResource(dg.ConfigurableResource):
                     source_url=source_url,
                     sleep=sleep,
                 )
+                if _is_suppressible_person_detail_result(result):
+                    yield _person_detail_http_failure(
+                        identity=identity,
+                        source_url=source_url,
+                        result=result,
+                        attempt_count=1,
+                    )
+                    continue
                 yield _validated_person_detail_download(
                     identity=identity,
                     source_url=source_url,
@@ -597,6 +626,21 @@ def person_detail_object_key(
     )
 
 
+def person_detail_failure_object_key(
+    partition_key: str,
+    person_id: str,
+) -> str:
+    _person_detail_bucket_index(partition_key)
+    if person_detail_bucket_key(person_id) != partition_key:
+        raise ValueError(
+            f"Person entity {person_id} does not belong to partition {partition_key}"
+        )
+    return (
+        f"{DENMARK_CVR_PERSON_DETAIL_PREFIX}/{partition_key}/"
+        f"enhedsnummer={person_id}/person_error.json"
+    )
+
+
 def translate_person_detail_keys(payload: Mapping[str, Any]) -> dict[str, Any]:
     unmapped_paths = tuple(_unmapped_person_key_paths(payload, path=()))
     if unmapped_paths:
@@ -615,9 +659,16 @@ def write_person_detail_partition(
     details: DenmarkCvrPersonDetailResource,
     partition_key: str,
     identities: Sequence[DenmarkCvrPersonDetailIdentity],
+    observed_at: datetime,
+    source_run_id: str,
     log_info: Callable[..., object] | None = None,
+    log_warning: Callable[..., object] | None = None,
 ) -> DenmarkCvrPersonDetailSummary:
     _person_detail_bucket_index(partition_key)
+    if observed_at.utcoffset() is None:
+        raise ValueError("Person-detail observation timestamp must include a timezone")
+    if source_run_id.strip() == "":
+        raise ValueError("Person-detail source run ID must not be blank")
     selected_identities = tuple(identities)
     object_keys = {
         identity.person_id: (
@@ -631,6 +682,7 @@ def write_person_detail_partition(
                 identity.person_id,
                 english_keys=True,
             ),
+            person_detail_failure_object_key(partition_key, identity.person_id),
         )
         for identity in selected_identities
     }
@@ -651,13 +703,21 @@ def write_person_detail_partition(
         )
     )
     already_complete_count = 0
+    already_skipped_count = 0
     translated_existing_count = 0
     written_object_count = 0
     pending: list[DenmarkCvrPersonDetailIdentity] = []
     for identity in selected_identities:
-        original_key, english_key = object_keys[identity.person_id]
+        original_key, english_key, failure_key = object_keys[identity.person_id]
         if original_key in existing_keys and english_key in existing_keys:
             already_complete_count += 1
+            continue
+        if (
+            failure_key in existing_keys
+            and original_key not in existing_keys
+            and english_key not in existing_keys
+        ):
+            already_skipped_count += 1
             continue
         if original_key in existing_keys:
             payload = _json_object(
@@ -677,26 +737,57 @@ def write_person_detail_partition(
     if log_info is not None:
         log_info(
             "DataCVR person-detail progress: phase=snapshot_scan partition=%s "
-            "persons_checked=%s/%s already_complete=%s translated_existing=%s "
-            "persons_to_download=%s",
+            "persons_checked=%s/%s already_complete=%s already_skipped=%s "
+            "translated_existing=%s persons_to_download=%s",
             partition_key,
             len(selected_identities),
             len(selected_identities),
             already_complete_count,
+            already_skipped_count,
             translated_existing_count,
             len(pending),
         )
     downloaded_count = 0
+    skipped_count = 0
+    skipped_request_attempt_count = 0
     downloaded_size_bytes = 0
     returned_ids: set[str] = set()
-    for download in details.iter_person_details(tuple(pending)):
-        person_id = download.identity.person_id
+    for result in details.iter_person_details(tuple(pending)):
+        person_id = result.identity.person_id
         if person_id not in object_keys or person_id in returned_ids:
             raise DenmarkCvrPersonDetailRequestError(
                 "DataCVR person-detail download returned an unexpected entity"
             )
         returned_ids.add(person_id)
-        original_key, english_key = object_keys[person_id]
+        original_key, english_key, failure_key = object_keys[person_id]
+        if isinstance(result, DenmarkCvrPersonDetailHttpFailure):
+            object_store.write_bytes(
+                failure_key,
+                _person_detail_failure_marker_bytes(
+                    result,
+                    partition_key=partition_key,
+                    failed_at=observed_at,
+                    source_run_id=source_run_id,
+                ),
+                bucket=DENMARK_CVR_BUCKET,
+            )
+            skipped_count += 1
+            skipped_request_attempt_count += result.attempt_count
+            written_object_count += 1
+            if log_warning is not None:
+                log_warning(
+                    "Skipping DataCVR person detail after terminal response: "
+                    "partition=%s person_id=%s http_status=%s "
+                    "request_attempts=%s marker=%s",
+                    partition_key,
+                    person_id,
+                    result.status,
+                    result.attempt_count,
+                    failure_key,
+                )
+            continue
+
+        download = result
         object_store.write_bytes(
             original_key,
             download.raw_body.encode("utf-8"),
@@ -731,22 +822,34 @@ def write_person_detail_partition(
     complete_count = (
         already_complete_count + translated_existing_count + downloaded_count
     )
+    resolved_count = complete_count + already_skipped_count + skipped_count
+    if resolved_count != len(selected_identities):
+        raise DenmarkCvrPersonDetailRequestError(
+            "DataCVR person-detail resource did not resolve every selected person: "
+            f"selected={len(selected_identities)} resolved={resolved_count}"
+        )
     if log_info is not None:
         log_info(
             "DataCVR person-detail completed: partition=%s "
-            "persons_completed=%s/%s already_complete=%s translated_existing=%s "
-            "downloaded=%s",
+            "persons_resolved=%s/%s persons_completed=%s already_complete=%s "
+            "already_skipped=%s translated_existing=%s downloaded=%s skipped=%s",
             partition_key,
-            complete_count,
+            resolved_count,
             len(selected_identities),
+            complete_count,
             already_complete_count,
+            already_skipped_count,
             translated_existing_count,
             downloaded_count,
+            skipped_count,
         )
     return DenmarkCvrPersonDetailSummary(
         partition_key=partition_key,
         selected_person_count=len(selected_identities),
         complete_person_count=complete_count,
+        skipped_person_count=skipped_count,
+        already_skipped_person_count=already_skipped_count,
+        skipped_request_attempt_count=skipped_request_attempt_count,
         already_complete_person_count=already_complete_count,
         translated_existing_person_count=translated_existing_count,
         downloaded_person_count=downloaded_count,
@@ -827,7 +930,8 @@ def denmark_cvr_company_detail_person_ids_duckdb(
     description=(
         "Reads one stable 128-way person-ID hash bucket from DuckDB, downloads "
         "each HTTPS DataCVR person detail in one browser session, and checkpoints "
-        "original and English-key JSON objects."
+        "original and English-key JSON objects. Missing people returned as HTTP "
+        "404 are skipped and checkpointed without failing the partition."
     ),
 )
 def denmark_cvr_person_details_s3(
@@ -845,13 +949,20 @@ def denmark_cvr_person_details_s3(
             denmark_cvr_duckdb,
             partition_key,
         ),
+        observed_at=datetime.now(UTC),
+        source_run_id=context.run_id,
         log_info=context.log.info,
+        log_warning=context.log.warning,
     )
     return dg.MaterializeResult(
         metadata={
             "partition_key": summary.partition_key,
             "selected_person_count": summary.selected_person_count,
             "complete_person_count": summary.complete_person_count,
+            "resolved_person_count": summary.resolved_person_count,
+            "skipped_person_count": summary.skipped_person_count,
+            "already_skipped_person_count": summary.already_skipped_person_count,
+            "skipped_request_attempt_count": (summary.skipped_request_attempt_count),
             "already_complete_person_count": (summary.already_complete_person_count),
             "translated_existing_person_count": (
                 summary.translated_existing_person_count
@@ -981,6 +1092,50 @@ def _read_company_detail_payload(
     return payload
 
 
+def _person_detail_http_failure(
+    *,
+    identity: DenmarkCvrPersonDetailIdentity,
+    source_url: str,
+    result: Any,
+    attempt_count: int,
+) -> DenmarkCvrPersonDetailHttpFailure:
+    if not isinstance(result, Mapping):
+        raise DenmarkCvrPersonDetailRequestError(
+            f"DataCVR person-detail response is invalid for {identity.person_id}"
+        )
+    status = result.get("status")
+    if (
+        not isinstance(status, int)
+        or status not in DATACVR_PERSON_DETAIL_SUPPRESSIBLE_STATUSES
+    ):
+        raise DenmarkCvrPersonDetailRequestError(
+            "DataCVR returned an invalid terminal person-detail response for "
+            f"{identity.person_id}"
+        )
+    if attempt_count <= 0:
+        raise DenmarkCvrPersonDetailRequestError(
+            "DataCVR returned an invalid person-detail attempt count for "
+            f"{identity.person_id}"
+        )
+    headers = result.get("headers")
+    response_headers = (
+        {
+            str(name).lower(): str(value)
+            for name, value in headers.items()
+            if str(name).lower() in SAFE_RESPONSE_HEADERS
+        }
+        if isinstance(headers, Mapping)
+        else {}
+    )
+    return DenmarkCvrPersonDetailHttpFailure(
+        identity=identity,
+        source_url=source_url,
+        status=status,
+        attempt_count=attempt_count,
+        response_headers=response_headers,
+    )
+
+
 def _validated_person_detail_download(
     *,
     identity: DenmarkCvrPersonDetailIdentity,
@@ -1047,6 +1202,13 @@ def _is_retryable_person_detail_result(result: Any) -> bool:
     }
 
 
+def _is_suppressible_person_detail_result(result: Any) -> bool:
+    return (
+        isinstance(result, Mapping)
+        and result.get("status") in DATACVR_PERSON_DETAIL_SUPPRESSIBLE_STATUSES
+    )
+
+
 def _person_detail_retry_delay_seconds(
     result: Mapping[str, Any],
     *,
@@ -1079,6 +1241,32 @@ def _translated_person_json_bytes(payload: Mapping[str, Any]) -> bytes:
         translate_person_detail_keys(payload),
         ensure_ascii=False,
         separators=(",", ":"),
+    ).encode("utf-8")
+
+
+def _person_detail_failure_marker_bytes(
+    failure: DenmarkCvrPersonDetailHttpFailure,
+    *,
+    partition_key: str,
+    failed_at: datetime,
+    source_run_id: str,
+) -> bytes:
+    return json.dumps(
+        {
+            "person_id": failure.identity.person_id,
+            "person_type": failure.identity.person_type,
+            "http_status": failure.status,
+            "failed_at": failed_at.isoformat(),
+            "request_attempt_count": failure.attempt_count,
+            "decision": "ignore_person",
+            "source_asset": "denmark_cvr_person_details_s3",
+            "source_partition_key": partition_key,
+            "source_url": failure.source_url,
+            "source_run_id": source_run_id,
+        },
+        ensure_ascii=False,
+        separators=(",", ":"),
+        sort_keys=True,
     ).encode("utf-8")
 
 

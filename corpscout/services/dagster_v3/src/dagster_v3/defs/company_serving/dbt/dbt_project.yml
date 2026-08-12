@@ -1,0 +1,16 @@
+name: company_serving
+version: "1.0"
+config-version: 2
+profile: company_serving
+
+model-paths: ["models"]
+macro-paths: ["macros"]
+test-paths: ["tests"]
+target-path: "target"
+clean-targets: ["target", "dbt_packages"]
+
+models:
+  company_serving:
+    +materialized: table
+    +engine: MergeTree()
+    +tags: ["company_serving", "clickhouse"]

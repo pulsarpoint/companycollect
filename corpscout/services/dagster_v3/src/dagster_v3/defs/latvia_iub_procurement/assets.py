@@ -200,7 +200,9 @@ def latvia_iub_procurement_clickhouse(
 
 latvia_iub_procurement_backfill_job = dg.define_asset_job(
     "latvia_iub_procurement_backfill_job",
-    selection=dg.AssetSelection.assets("latvia_iub_procurement_clickhouse").upstream(),
+    selection=dg.AssetSelection.assets("latvia_iub_procurement_clickhouse")
+    .upstream()
+    .required_multi_asset_neighbors(),
 )
 
 defs = dg.Definitions(

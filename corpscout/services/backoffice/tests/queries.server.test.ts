@@ -10,15 +10,22 @@ import { getFacetOptions } from "~/lib/facets.server";
 import { filterableFacetKeys } from "~/lib/filters";
 import {
   PAGE_SIZES,
+  companyHasFlag,
   getCompanyDetail,
   getCompanyShell,
+  getCompanyTechnologyIpDetail,
+  getCompanyTechnologyIpInventory,
+  getCompanyTechnologyInfrastructure,
+  getCompanyTechnologyDetail,
   getCountryStats,
+  getTechnologyIpDetail,
   searchCompanies,
 } from "~/lib/queries.server";
 
 // Integration tests against the real ClickHouse. Estonia is the smallest
 // dataset (~373k rows), so queries stay fast.
 const ee = getCountry("ee")!;
+const se = getCountry("se")!;
 
 describe("getCountryStats", () => {
   it("returns positive totals with active <= total", async () => {
@@ -380,6 +387,145 @@ describe("searchCompanies with filters", () => {
   });
 });
 
+describe("Sweden technical-information filter", () => {
+  it("returns only companies connected to a current website domain", async () => {
+    const result = await searchCompanies(se, {
+      pageSize: 25,
+      filters: { flag_domain: ["yes"] },
+    });
+
+    expect(result.total).toBeGreaterThan(0);
+    expect(result.total).toBeLessThan(10_000);
+    expect(result.rows).toHaveLength(25);
+    for (const row of result.rows) {
+      expect(row.flags).toContain("domain");
+    }
+  });
+
+  it("checks domain availability for company navigation", async () => {
+    const [withTechnology, withoutTechnology] = await Promise.all([
+      companyHasFlag(se, "5594643297", "domain"),
+      companyHasFlag(se, "8024123872", "domain"),
+    ]);
+
+    expect(withTechnology).toBe(true);
+    expect(withoutTechnology).toBe(false);
+  }, 30_000);
+
+  it("combines certificate and DNS evidence for a company's primary domain", async () => {
+    const infrastructure = await getCompanyTechnologyInfrastructure(
+      se,
+      "5594643297",
+      { page: 1, pageSize: 25 },
+    );
+
+    expect(infrastructure).not.toBeNull();
+    expect(infrastructure?.domain).toBe("100.se");
+    expect(infrastructure?.summary.totalHostnames).toBeGreaterThanOrEqual(10);
+    expect(infrastructure?.summary.certificateHostnames).toBeGreaterThan(0);
+    expect(infrastructure?.summary.dnsHostnames).toBeGreaterThan(0);
+    expect(infrastructure?.summary.resolvedIpAddressesOnPage).toBeGreaterThan(
+      0,
+    );
+
+    const api = infrastructure?.hostnames.find(
+      (hostname) => hostname.hostname === "api.100.se",
+    );
+    expect(api?.evidence).toEqual(
+      expect.arrayContaining(["certificate", "dns"]),
+    );
+    expect(api?.records.some((record) => record.type === "A")).toBe(true);
+    expect(api?.ipAddresses.length).toBeGreaterThan(0);
+    expect(
+      infrastructure?.summary.rdapRegisteredIpAddressesOnPage,
+    ).toBeGreaterThan(0);
+    expect(
+      infrastructure?.hostnames
+        .flatMap((hostname) => hostname.ipAddresses)
+        .some((address) => address.rdapRegistration !== null),
+    ).toBe(true);
+    expect(
+      infrastructure?.hostnames
+        .flatMap((hostname) => hostname.ipAddresses)
+        .some(
+          (address) =>
+            address.rdapRegistration?.matchedCidr === "0.0.0.0/0" ||
+            address.rdapRegistration?.matchedCidr === "::/0",
+        ),
+    ).toBe(false);
+    expect(api?.records[0]?.firstSeen).toBeTruthy();
+    expect(api?.records[0]?.lastSeen).toBeTruthy();
+    expect(infrastructure?.scan?.resolvedAt).toBeTruthy();
+  }, 30_000);
+
+  it("lists distinct company IPs and opens an address detail safely", async () => {
+    const inventory = await getCompanyTechnologyIpInventory(se, "5594643297", {
+      page: 1,
+      pageSize: 25,
+    });
+
+    expect(inventory?.domain).toBe("100.se");
+    expect(inventory?.summary.totalAddresses).toBeGreaterThan(0);
+    expect(inventory?.addresses.length).toBeGreaterThan(0);
+    expect(inventory?.addresses[0]?.networkSegment).toMatch(/\/(24|48)$/);
+    expect(
+      inventory?.addresses.every((address) => address.hostnames.length > 0),
+    ).toBe(true);
+
+    const selected = inventory!.addresses.find(
+      (address) => address.rdapRegistration,
+    )!;
+    expect(selected).toBeTruthy();
+    const detail = await getCompanyTechnologyIpDetail(
+      se,
+      "5594643297",
+      selected.ip,
+    );
+
+    expect(detail?.address.ip).toBe(selected.ip);
+    expect(detail?.companyDomain).toBe("100.se");
+    expect(detail?.companyHostnames.length).toBeGreaterThan(0);
+    expect(
+      detail?.exactConnections.connections.some(
+        (connection) => connection.domain === "100.se",
+      ),
+    ).toBe(true);
+    expect(detail?.segmentConnections).not.toBeNull();
+
+    const canonicalDetail = await getTechnologyIpDetail(selected.ip);
+    expect(canonicalDetail?.address.ip).toBe(selected.ip);
+    expect(canonicalDetail?.exactConnections.total).toBeGreaterThan(0);
+    expect(canonicalDetail?.address.networkSegment).toBe(
+      selected.networkSegment,
+    );
+  }, 30_000);
+
+  it("builds Common Crawl web-technology change history", async () => {
+    const technology = await getCompanyTechnologyDetail(se, "5594643297");
+
+    expect(technology.webTechnologyHistory?.domain).toBe("100.se");
+    expect(technology.webTechnologyHistory?.latestCrawlId).toBe(
+      "CC-MAIN-2026-30",
+    );
+    expect(
+      technology.webTechnologyHistory?.technologies.find(
+        (item) => item.name === "Next.js",
+      )?.state,
+    ).toBe("detected_latest");
+    expect(
+      technology.webTechnologyHistory?.technologies.find(
+        (item) => item.name === "C3.js",
+      )?.state,
+    ).toBe("not_detected_latest");
+    expect(technology.webTechnologyHistory?.snapshots[0]).toEqual(
+      expect.objectContaining({
+        crawlId: "CC-MAIN-2026-30",
+        noLongerDetected: ["YouTube"],
+      }),
+    );
+  }, 30_000);
+});
+
 describe("industry filter (Estonia)", () => {
   it("filters companies by primary industry code", async () => {
     const options = await getFacetOptions(ee, "industry");
@@ -578,7 +724,7 @@ describe("translated record cards", () => {
     expect(String(detail!.record.articles_purpose_en)).not.toBe("");
   }, 30_000);
 
-  it("latvia record carries activity_text_en AND base-only address fields", async () => {
+  it("latvia record carries activity_text_en and the history-backed current address", async () => {
     const lv = getCountry("lv")!;
     const [row] = await chQuery<{ id: string }>(
       `SELECT regcode AS id FROM lv_companies_translated
@@ -588,7 +734,7 @@ describe("translated record cards", () => {
     const detail = await getCompanyDetail(lv, row.id);
     expect(detail!.record).toHaveProperty("activity_text_en");
     expect(String(detail!.record.activity_text_en)).not.toBe("");
-    expect(detail!.record).toHaveProperty("address_city_name"); // base-only column survives
+    expect(detail!.record).toHaveProperty("address_city_name");
   }, 30_000);
 });
 
@@ -630,12 +776,75 @@ describe("addresses", () => {
     const se = getCountry("se")!;
     const [row] = await chQuery<{ id: string }>(
       `SELECT registration_number AS id FROM se_companies
-       WHERE company_id IN (SELECT company_id FROM se_company_addresses WHERE street_address != '')
+       WHERE company_id IN (
+         SELECT company_id
+         FROM se_company_addresses_current
+         WHERE has_address = 1 AND street_address != ''
+       )
        ORDER BY registration_number LIMIT 1`,
     );
     const detail = await getCompanyDetail(se, row.id);
     expect(detail!.addresses.length).toBeGreaterThan(0);
     expect(detail!.addresses[0].full_address).toBeTruthy();
+  }, 30_000);
+
+  it("sweden exposes a registration date and geocoder-safe address without an unverified VAT number", async () => {
+    const se = getCountry("se")!;
+    const detail = await getCompanyDetail(se, "8024887013");
+
+    expect(detail!.record.registration_date).toBe("2014-05-15");
+    expect(detail!.record).not.toHaveProperty("incorporation_date");
+    expect(detail!.record).not.toHaveProperty("vat_number");
+    expect(detail!.addresses[0].full_address).toBe(
+      "c/o AZIZ MANNANOV, PRÄSTGÅRDSLIDEN 4 C, 595 42 MJÖLBY",
+    );
+    expect(detail!.addresses[0].geocode_address).toBe(
+      "PRÄSTGÅRDSLIDEN 4 C, 595 42 MJÖLBY",
+    );
+    expect(detail!.addresses[0].geocode_street).toBe("PRÄSTGÅRDSLIDEN 4 C");
+    expect(detail!.addresses[0].geocode_postal_code).toBe("59542");
+    expect(detail!.addresses[0].address_country_code).toBe("SE");
+    expect(detail!.addresses[0].address_is_foreign).toBe(0);
+  }, 30_000);
+
+  it("sweden identifies and cleans a Polish address stored as foreign by SCB", async () => {
+    const se = getCountry("se")!;
+    const detail = await getCompanyDetail(se, "5020640487");
+
+    expect(detail!.addresses[0].full_address).toBe("GLINKI 146, BYDGOSZCZ, PL");
+    expect(detail!.addresses[0].geocode_address).toBe("GLINKI 146, BYDGOSZCZ");
+    expect(detail!.addresses[0].address_country_code).toBe("PL");
+    expect(detail!.addresses[0].address_is_foreign).toBe(1);
+  }, 30_000);
+
+  it("sweden separates care-of and floor details from its geocoding address", async () => {
+    const se = getCountry("se")!;
+    const detail = await getCompanyDetail(se, "8024123872");
+
+    expect(detail!.addresses[0].full_address).toBe(
+      "c/o R TORO, BERGENGATAN 13, 3 TR, 164 37 KISTA",
+    );
+    expect(detail!.addresses[0].geocode_address).toBe(
+      "BERGENGATAN 13, 164 37 KISTA",
+    );
+    expect(detail!.addresses[0].geocode_street).toBe("BERGENGATAN 13");
+    expect(detail!.addresses[0].geocode_postal_code).toBe("16437");
+    expect(detail!.addresses[0].address_country_code).toBe("SE");
+    expect(detail!.addresses[0].address_is_foreign).toBe(0);
+  }, 30_000);
+
+  it("sweden reconstructs company source records from keyed evidence lookups", async () => {
+    const detail = await getCompanyDetail(se, "5594643297");
+
+    expect(detail).not.toBeNull();
+    expect(detail!.sourceRecords.length).toBeGreaterThan(0);
+    expect(
+      detail!.sourceRecords.every(
+        (record) =>
+          record.sourceRecordUid.length === 64 &&
+          record.evidence.some((evidence) => evidence.origins.length > 0),
+      ),
+    ).toBe(true);
   }, 30_000);
 
   it("finland reads its YTJ address table", async () => {

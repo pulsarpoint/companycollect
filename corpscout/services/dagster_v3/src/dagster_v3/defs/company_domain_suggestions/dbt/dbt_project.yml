@@ -1,0 +1,23 @@
+name: company_domain_suggestions
+version: "1.0"
+config-version: 2
+profile: company_domain_suggestions
+
+model-paths: ["models"]
+macro-paths: ["macros"]
+test-paths: ["tests"]
+target-path: "target"
+clean-targets: ["target", "dbt_packages"]
+
+models:
+  company_domain_suggestions:
+    +tags: ["company_domain_suggestions", "clickhouse"]
+    staging:
+      +materialized: table
+      +engine: MergeTree()
+      +order_by: ["country_iso2", "company_id", "feature_type", "normalized_value"]
+    intermediate:
+      +materialized: table
+      +engine: MergeTree()
+      +order_by: ["country_iso2", "company_id", "root_domain"]
+

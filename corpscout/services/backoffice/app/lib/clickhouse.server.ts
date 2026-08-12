@@ -30,7 +30,7 @@ function getWriteClient(): ClickHouseClient {
     const password = process.env.CLICKHOUSE_WRITE_PASSWORD ?? "";
     if (!username || !password) {
       throw new Error(
-        "Person correction writes require dedicated ClickHouse writer credentials.",
+        "Backoffice writes require dedicated ClickHouse writer credentials.",
       );
     }
     writeClient = createClient({
@@ -73,6 +73,18 @@ export async function chInsertPersonCorrections<T extends object>(
   if (values.length === 0) return;
   await getWriteClient().insert({
     table: "country_person_correction",
+    values,
+    format: "JSONEachRow",
+  });
+}
+
+/** Append a replacement version of a reviewed company/domain association. */
+export async function chInsertCompanyDomains<T extends object>(
+  values: T[],
+): Promise<void> {
+  if (values.length === 0) return;
+  await getWriteClient().insert({
+    table: "company_domains",
     values,
     format: "JSONEachRow",
   });

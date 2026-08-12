@@ -22,6 +22,7 @@ from dagster_v3.defs.commoncrawl_rdap.client import RdapClient, RdapClientError
 from dagster_v3.defs.commoncrawl_rdap.rdap import (
     NormalizedRdapNetwork,
     RdapIpLookupResult,
+    is_registry_catch_all,
     normalize_rdap_network,
 )
 
@@ -422,6 +423,7 @@ def _enrich_rdap_bucket(
             "terminal_misses": 0,
             "retryable_errors": 0,
             "parent_lookup_failures": 0,
+            "registry_catch_all_responses": 0,
             "network_rows_written": 0,
             "segment_rows_written": 0,
             "lookup_rows_written": 0,
@@ -516,6 +518,31 @@ def _enrich_rdap_bucket(
                 fetched_at=queried_at,
                 segment_role="lookup_result",
             )
+            if is_registry_catch_all(direct):
+                lookup_rows.append(
+                    _lookup_result(
+                        bucket_index=bucket_index,
+                        address=str(address),
+                        ip_version=address.version,
+                        lookup_status="unsupported",
+                        network_key=None,
+                        error_code="registry_catch_all",
+                        retry_after=None,
+                        queried_at=queried_at,
+                    ).clickhouse_values()
+                )
+                counts["registry_catch_all_responses"] += 1
+                counts["lookup_rows_written"] += _flush_full_lookup_batches(
+                    write_client,
+                    lookup_rows,
+                    batch_size=config.insert_batch_size,
+                )
+                context.log.warning(
+                    "Ignored universal RDAP address-space response: ip=%s rir=%s",
+                    address,
+                    direct.network.rir,
+                )
+                continue
             normalized_networks = [direct]
             counts["direct_networks"] += 1
             rir_counts[direct.network.rir] += 1

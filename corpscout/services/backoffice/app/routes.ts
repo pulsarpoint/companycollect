@@ -11,6 +11,10 @@ export default [
     route("countries", "routes/countries.tsx"),
     route("countries/:country/companies", "routes/country-companies.tsx"),
     route(
+      "countries/:country/domain-suggestions",
+      "routes/country-domain-suggestions.tsx",
+    ),
+    route(
       "countries/:country/contracts/:ref",
       "routes/country-contract-detail.tsx",
     ),
@@ -34,7 +38,23 @@ export default [
     ]),
     route("company/:country/:id", "routes/company-layout.tsx", [
       index("routes/country-company-detail.tsx"),
+      route("section/:section", "routes/company-section.ts"),
+      route("same-address", "routes/company-same-address.ts"),
+      route("suggestions", "routes/company-domain-suggestions.tsx"),
       route("financials", "routes/company-financials.tsx"),
+      route("technology", "routes/company-technology-layout.tsx", [
+        index("routes/company-technology.tsx"),
+        route(
+          "web-intelligence",
+          "routes/company-technology-web-intelligence.tsx",
+        ),
+        route("infrastructure", "routes/company-technology-infrastructure.tsx"),
+        route("ip-addresses", "routes/company-technology-ip-addresses.tsx"),
+        route(
+          "ip-addresses/:address",
+          "routes/company-technology-ip-address.tsx",
+        ),
+      ]),
       route(
         "financials/esef/:documentId",
         "routes/company-esef-financial-report.tsx",
@@ -53,6 +73,7 @@ export default [
     route("procurements/:source", "routes/procurement-source.tsx"),
     route("procurements/:source/:key", "routes/procurement-record.tsx"),
     route("people", "routes/people.tsx"),
+    route("ip/:address", "routes/ip-address.tsx"),
     route(
       "country/:country/person-targets",
       "routes/country-person-targets.ts",

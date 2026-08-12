@@ -1,4 +1,6 @@
+import uuid
 from collections.abc import Callable
+from dataclasses import dataclass
 from typing import Any
 
 from dagster_clickhouse import ClickhouseResource
@@ -40,46 +42,522 @@ def export_sweden_company_clickhouse_companies(
             truncate=True,
         )
     if log is not None:
-        log("Finished Sweden company ClickHouse export: table=%s rows=%s", tables.QUALIFIED_COMPANIES_TABLE, rows)
+        log(
+            "Finished Sweden company ClickHouse export: table=%s rows=%s",
+            tables.QUALIFIED_COMPANIES_TABLE,
+            rows,
+        )
     return rows
 
 
-def export_sweden_company_clickhouse_addresses(
+@dataclass(frozen=True, slots=True)
+class SwedenAddressPublishResult:
+    address_candidates: int
+    address_observations_inserted: int
+    first_address_observations: int
+    address_changes: int
+    address_removals: int
+
+
+@dataclass(frozen=True, slots=True)
+class SnapshotPublishResult:
+    candidates: int
+    observations_inserted: int
+    first_observations: int
+    changes: int
+    removals: int
+
+
+@dataclass(frozen=True, slots=True)
+class SwedenProfilePublishResult:
+    registry: SnapshotPublishResult
+    proceedings: SnapshotPublishResult
+
+
+def publish_sweden_company_profile_history(
     *,
     duckdb_connection: Any,
     clickhouse: ClickhouseResource,
     log: Callable[..., object] | None = None,
-) -> int:
-    """Replace the Sweden company addresses ClickHouse table."""
+) -> SwedenProfilePublishResult:
+    """Publish source registry states and typed proceedings when they change."""
     assert_clickhouse_tables_exist(
         clickhouse,
         database=tables.SWEDEN_DATABASE,
-        tables=(tables.COMPANY_ADDRESSES_TABLE_CH,),
+        tables=(
+            tables.COMPANY_REGISTRY_OBSERVATIONS_TABLE_CH,
+            tables.COMPANY_REGISTRY_CURRENT_TABLE_CH,
+            tables.COMPANY_PROCEEDING_OBSERVATIONS_TABLE_CH,
+            tables.COMPANY_PROCEEDINGS_CURRENT_TABLE_CH,
+        ),
+    )
+    with clickhouse.get_connection() as client:
+        registry = _publish_changed_snapshot(
+            duckdb_connection=duckdb_connection,
+            clickhouse_client=client,
+            duckdb_table="company_registry_states",
+            history_table=tables.QUALIFIED_COMPANY_REGISTRY_OBSERVATIONS_TABLE,
+            current_table=tables.QUALIFIED_COMPANY_REGISTRY_CURRENT_TABLE,
+            current_table_name=tables.COMPANY_REGISTRY_CURRENT_TABLE_CH,
+            columns=tables.SE_COMPANY_REGISTRY_OBSERVATION_COLUMNS,
+            key_columns=("company_id", "source"),
+            state_fingerprint_column="state_fingerprint",
+            presence_column="has_company",
+            log=log,
+        )
+        proceedings = _publish_changed_snapshot(
+            duckdb_connection=duckdb_connection,
+            clickhouse_client=client,
+            duckdb_table="company_proceedings",
+            history_table=tables.QUALIFIED_COMPANY_PROCEEDING_OBSERVATIONS_TABLE,
+            current_table=tables.QUALIFIED_COMPANY_PROCEEDINGS_CURRENT_TABLE,
+            current_table_name=tables.COMPANY_PROCEEDINGS_CURRENT_TABLE_CH,
+            columns=tables.SE_COMPANY_PROCEEDING_OBSERVATION_COLUMNS,
+            key_columns=("company_id", "source", "proceeding_identity"),
+            state_fingerprint_column="proceeding_fingerprint",
+            presence_column="has_proceeding",
+            log=log,
+        )
+    return SwedenProfilePublishResult(registry=registry, proceedings=proceedings)
+
+
+def publish_sweden_company_industry_history(
+    *,
+    duckdb_connection: Any,
+    clickhouse: ClickhouseResource,
+    log: Callable[..., object] | None = None,
+) -> SnapshotPublishResult:
+    """Publish the complete SCB SNI state when it changes."""
+    assert_clickhouse_tables_exist(
+        clickhouse,
+        database=tables.SWEDEN_DATABASE,
+        tables=(
+            tables.COMPANY_INDUSTRY_OBSERVATIONS_TABLE_CH,
+            tables.COMPANY_INDUSTRY_CURRENT_TABLE_CH,
+        ),
+    )
+    with clickhouse.get_connection() as client:
+        return _publish_changed_snapshot(
+            duckdb_connection=duckdb_connection,
+            clickhouse_client=client,
+            duckdb_table="company_industry_states",
+            history_table=tables.QUALIFIED_COMPANY_INDUSTRY_OBSERVATIONS_TABLE,
+            current_table=tables.QUALIFIED_COMPANY_INDUSTRY_CURRENT_TABLE,
+            current_table_name=tables.COMPANY_INDUSTRY_CURRENT_TABLE_CH,
+            columns=tables.SE_COMPANY_INDUSTRY_OBSERVATION_COLUMNS,
+            key_columns=("company_id", "source"),
+            state_fingerprint_column="state_fingerprint",
+            presence_column="has_industry",
+            log=log,
+        )
+
+
+def _publish_changed_snapshot(
+    *,
+    duckdb_connection: Any,
+    clickhouse_client: Any,
+    duckdb_table: str,
+    history_table: str,
+    current_table: str,
+    current_table_name: str,
+    columns: tuple[str, ...],
+    key_columns: tuple[str, ...],
+    state_fingerprint_column: str,
+    presence_column: str,
+    log: Callable[..., object] | None,
+) -> SnapshotPublishResult:
+    stage_table = f"_tmp_{current_table_name}_{uuid.uuid4().hex}"
+    qualified_stage = f"{tables.SWEDEN_DATABASE}.{stage_table}"
+    previous_table = f"_tmp_{current_table_name}_previous_{uuid.uuid4().hex}"
+    qualified_previous = f"{tables.SWEDEN_DATABASE}.{previous_table}"
+    primary_error: BaseException | None = None
+    try:
+        clickhouse_client.execute(f"CREATE TABLE {qualified_stage} AS {current_table}")
+        candidates = export_duckdb_connection_table_to_clickhouse(
+            duckdb_connection=duckdb_connection,
+            clickhouse_client=clickhouse_client,
+            duckdb_schema=tables.DLT_DATASET_NAME,
+            duckdb_table=duckdb_table,
+            clickhouse_database=tables.SWEDEN_DATABASE,
+            clickhouse_table=stage_table,
+            columns=columns,
+            truncate=False,
+            log=log,
+        )
+        first, changes = _changed_snapshot_counts(
+            clickhouse_client=clickhouse_client,
+            qualified_stage=qualified_stage,
+            current_table=current_table,
+            key_columns=key_columns,
+        )
+        removals = _snapshot_removal_count(
+            clickhouse_client=clickhouse_client,
+            qualified_stage=qualified_stage,
+            current_table=current_table,
+            key_columns=key_columns,
+        )
+        if first + changes > 0:
+            _insert_changed_snapshot_candidates(
+                clickhouse_client=clickhouse_client,
+                qualified_stage=qualified_stage,
+                history_table=history_table,
+                current_table=current_table,
+                columns=columns,
+                key_columns=key_columns,
+            )
+        if removals > 0:
+            _insert_removed_snapshot_rows(
+                clickhouse_client=clickhouse_client,
+                qualified_stage=qualified_stage,
+                history_table=history_table,
+                current_table=current_table,
+                columns=columns,
+                key_columns=key_columns,
+                state_fingerprint_column=state_fingerprint_column,
+                presence_column=presence_column,
+            )
+        _replace_current_snapshot(
+            clickhouse_client=clickhouse_client,
+            qualified_stage=qualified_stage,
+            current_table=current_table,
+            qualified_previous=qualified_previous,
+        )
+        return SnapshotPublishResult(
+            candidates=candidates,
+            observations_inserted=first + changes + removals,
+            first_observations=first,
+            changes=changes,
+            removals=removals,
+        )
+    except BaseException as exc:
+        primary_error = exc
+        raise
+    finally:
+        cleanup_errors: list[Exception] = []
+        for temporary_table in (qualified_stage, qualified_previous):
+            try:
+                clickhouse_client.execute(f"DROP TABLE IF EXISTS {temporary_table}")
+            except Exception as cleanup_error:
+                cleanup_errors.append(cleanup_error)
+                if primary_error is not None:
+                    primary_error.add_note(
+                        f"Failed to drop temporary table {temporary_table}: "
+                        f"{cleanup_error}"
+                    )
+        if primary_error is None and cleanup_errors:
+            raise cleanup_errors[0]
+
+
+def _changed_snapshot_counts(
+    *,
+    clickhouse_client: Any,
+    qualified_stage: str,
+    current_table: str,
+    key_columns: tuple[str, ...],
+) -> tuple[int, int]:
+    join = _snapshot_join(key_columns)
+    rows = clickhouse_client.execute(
+        f"""
+        SELECT
+            countIf(current.has_observation = 0) AS first_observations,
+            countIf(
+                current.has_observation = 1
+                AND current.observation_fingerprint != candidate.observation_fingerprint
+            ) AS changed_observations
+        FROM {qualified_stage} AS candidate
+        LEFT JOIN {current_table} AS current ON {join}
+        """
+    )
+    if not rows:
+        return 0, 0
+    return int(rows[0][0]), int(rows[0][1])
+
+
+def _snapshot_removal_count(
+    *,
+    clickhouse_client: Any,
+    qualified_stage: str,
+    current_table: str,
+    key_columns: tuple[str, ...],
+) -> int:
+    join = _snapshot_join(key_columns)
+    rows = clickhouse_client.execute(
+        f"""
+        SELECT countIf(candidate.has_observation = 0) AS snapshot_removals
+        FROM {current_table} AS current
+        LEFT JOIN {qualified_stage} AS candidate ON {join}
+        """
+    )
+    return int(rows[0][0]) if rows else 0
+
+
+def _insert_changed_snapshot_candidates(
+    *,
+    clickhouse_client: Any,
+    qualified_stage: str,
+    history_table: str,
+    current_table: str,
+    columns: tuple[str, ...],
+    key_columns: tuple[str, ...],
+) -> None:
+    column_list = ", ".join(columns)
+    selected = ", ".join(f"candidate.{column}" for column in columns)
+    join = _snapshot_join(key_columns)
+    clickhouse_client.execute(
+        f"""
+        INSERT INTO {history_table} ({column_list})
+        SELECT {selected}
+        FROM {qualified_stage} AS candidate
+        LEFT JOIN {current_table} AS current ON {join}
+        WHERE current.has_observation = 0
+           OR current.observation_fingerprint != candidate.observation_fingerprint
+        """
+    )
+
+
+def _insert_removed_snapshot_rows(
+    *,
+    clickhouse_client: Any,
+    qualified_stage: str,
+    history_table: str,
+    current_table: str,
+    columns: tuple[str, ...],
+    key_columns: tuple[str, ...],
+    state_fingerprint_column: str,
+    presence_column: str,
+) -> None:
+    removed_fingerprint = (
+        f"lower(hex(SHA256(concat('removed\\n', current.{state_fingerprint_column}))))"
+    )
+    selected: list[str] = []
+    for column in columns:
+        expression = f"current.{column}"
+        if column == "updated_from_raw_at" or column == "observed_at":
+            expression = "now64(3, 'UTC')"
+        elif column == presence_column:
+            expression = "toUInt8(0)"
+        elif column in (state_fingerprint_column, "observation_fingerprint"):
+            expression = removed_fingerprint
+        selected.append(expression)
+    join = _snapshot_join(key_columns)
+    clickhouse_client.execute(
+        f"""
+        INSERT INTO {history_table} ({", ".join(columns)})
+        SELECT {", ".join(selected)}
+        FROM {current_table} AS current
+        LEFT JOIN {qualified_stage} AS candidate ON {join}
+        WHERE candidate.has_observation = 0
+        """
+    )
+
+
+def _replace_current_snapshot(
+    *,
+    clickhouse_client: Any,
+    qualified_stage: str,
+    current_table: str,
+    qualified_previous: str,
+) -> None:
+    clickhouse_client.execute(
+        f"""
+        RENAME TABLE
+            {current_table} TO {qualified_previous},
+            {qualified_stage} TO {current_table}
+        """
+    )
+
+
+def _snapshot_join(key_columns: tuple[str, ...]) -> str:
+    return " AND ".join(
+        f"current.{column} = candidate.{column}" for column in key_columns
+    )
+
+
+def publish_sweden_company_clickhouse_addresses(
+    *,
+    duckdb_connection: Any,
+    clickhouse: ClickhouseResource,
+    log: Callable[..., object] | None = None,
+) -> SwedenAddressPublishResult:
+    """Append address states that differ from each source's current observation."""
+    assert_clickhouse_tables_exist(
+        clickhouse,
+        database=tables.SWEDEN_DATABASE,
+        tables=(
+            tables.COMPANY_ADDRESSES_TABLE_CH,
+            tables.COMPANY_ADDRESSES_CURRENT_TABLE_CH,
+        ),
     )
 
     with clickhouse.get_connection() as client:
         if log is not None:
             log(
-                "Exporting Sweden company table to ClickHouse: table=%s",
+                "Publishing Sweden address observations to ClickHouse: table=%s",
                 tables.QUALIFIED_COMPANY_ADDRESSES_TABLE,
             )
-        rows = export_duckdb_connection_table_to_clickhouse(
+        counts = _append_changed_address_observations(
             duckdb_connection=duckdb_connection,
             clickhouse_client=client,
+            log=log,
+        )
+    result = SwedenAddressPublishResult(
+        address_candidates=counts[0],
+        address_observations_inserted=counts[1],
+        first_address_observations=counts[2],
+        address_changes=counts[3],
+        address_removals=counts[4],
+    )
+    if log is not None:
+        log(
+            "Finished Sweden address publish: table=%s candidates=%d inserted=%d "
+            "first=%d changes=%d removals=%d",
+            tables.QUALIFIED_COMPANY_ADDRESSES_TABLE,
+            result.address_candidates,
+            result.address_observations_inserted,
+            result.first_address_observations,
+            result.address_changes,
+            result.address_removals,
+        )
+    return result
+
+
+def _append_changed_address_observations(
+    *,
+    duckdb_connection: Any,
+    clickhouse_client: Any,
+    log: Callable[..., object] | None,
+) -> tuple[int, int, int, int, int]:
+    stage_table = f"_tmp_{tables.COMPANY_ADDRESSES_TABLE_CH}_{uuid.uuid4().hex}"
+    qualified_stage = f"{tables.SWEDEN_DATABASE}.{stage_table}"
+    previous_current_table = (
+        f"_tmp_{tables.COMPANY_ADDRESSES_CURRENT_TABLE_CH}_previous_{uuid.uuid4().hex}"
+    )
+    qualified_previous_current = f"{tables.SWEDEN_DATABASE}.{previous_current_table}"
+    primary_error: BaseException | None = None
+    try:
+        clickhouse_client.execute(
+            f"CREATE TABLE {qualified_stage} AS "
+            f"{tables.QUALIFIED_COMPANY_ADDRESSES_CURRENT_TABLE}"
+        )
+        candidates = export_duckdb_connection_table_to_clickhouse(
+            duckdb_connection=duckdb_connection,
+            clickhouse_client=clickhouse_client,
             duckdb_schema=tables.DLT_DATASET_NAME,
             duckdb_table="company_addresses",
             clickhouse_database=tables.SWEDEN_DATABASE,
-            clickhouse_table=tables.COMPANY_ADDRESSES_TABLE_CH,
-            columns=tables.SE_COMPANY_ADDRESSES_EXPORT_COLUMNS,
-            truncate=True,
+            clickhouse_table=stage_table,
+            columns=tables.SE_COMPANY_ADDRESS_OBSERVATION_COLUMNS,
+            truncate=False,
+            log=log,
         )
-    if log is not None:
-        log(
-            "Finished Sweden company ClickHouse export: table=%s rows=%s",
-            tables.QUALIFIED_COMPANY_ADDRESSES_TABLE,
-            rows,
+        inserted, first, changes, removals = _address_change_counts(
+            clickhouse_client=clickhouse_client,
+            qualified_stage=qualified_stage,
         )
-    return rows
+        if inserted > 0:
+            _insert_address_changes(
+                clickhouse_client=clickhouse_client,
+                qualified_stage=qualified_stage,
+            )
+        _replace_current_address_snapshot(
+            clickhouse_client=clickhouse_client,
+            qualified_stage=qualified_stage,
+            qualified_previous_current=qualified_previous_current,
+        )
+        return candidates, inserted, first, changes, removals
+    except BaseException as exc:
+        primary_error = exc
+        raise
+    finally:
+        cleanup_errors: list[Exception] = []
+        for temporary_table in (qualified_stage, qualified_previous_current):
+            try:
+                clickhouse_client.execute(f"DROP TABLE IF EXISTS {temporary_table}")
+            except Exception as cleanup_error:
+                cleanup_errors.append(cleanup_error)
+                if primary_error is not None:
+                    primary_error.add_note(
+                        "Failed to drop Sweden address temporary table "
+                        f"{temporary_table}: {cleanup_error}"
+                    )
+        if primary_error is None and cleanup_errors:
+            raise cleanup_errors[0]
+
+
+def _address_change_counts(
+    *,
+    clickhouse_client: Any,
+    qualified_stage: str,
+) -> tuple[int, int, int, int]:
+    rows = clickhouse_client.execute(
+        f"""
+        SELECT
+            countIf(
+                current.has_observation = 0
+                OR current.observation_fingerprint != candidate.observation_fingerprint
+            ) AS address_observations_inserted,
+            countIf(current.has_observation = 0) AS first_address_observations,
+            countIf(
+                current.has_observation = 1
+                AND current.observation_fingerprint != candidate.observation_fingerprint
+            ) AS address_changes,
+            countIf(
+                current.has_observation = 1
+                AND current.has_address = 1
+                AND candidate.has_address = 0
+            ) AS address_removals
+        FROM {qualified_stage} AS candidate
+        LEFT JOIN {tables.QUALIFIED_COMPANY_ADDRESSES_CURRENT_TABLE} AS current
+            ON current.company_id = candidate.company_id
+           AND current.address_type = candidate.address_type
+           AND current.source = candidate.source
+        """
+    )
+    if not rows:
+        return 0, 0, 0, 0
+    return tuple(int(value) for value in rows[0])
+
+
+def _insert_address_changes(
+    *,
+    clickhouse_client: Any,
+    qualified_stage: str,
+) -> None:
+    columns = ", ".join(tables.SE_COMPANY_ADDRESS_OBSERVATION_COLUMNS)
+    selected_columns = ", ".join(
+        f"candidate.{column}"
+        for column in tables.SE_COMPANY_ADDRESS_OBSERVATION_COLUMNS
+    )
+    clickhouse_client.execute(
+        f"""
+        INSERT INTO {tables.QUALIFIED_COMPANY_ADDRESSES_TABLE} ({columns})
+        SELECT {selected_columns}
+        FROM {qualified_stage} AS candidate
+        LEFT JOIN {tables.QUALIFIED_COMPANY_ADDRESSES_CURRENT_TABLE} AS current
+            ON current.company_id = candidate.company_id
+           AND current.address_type = candidate.address_type
+           AND current.source = candidate.source
+        WHERE current.has_observation = 0
+           OR current.observation_fingerprint != candidate.observation_fingerprint
+        """
+    )
+
+
+def _replace_current_address_snapshot(
+    *,
+    clickhouse_client: Any,
+    qualified_stage: str,
+    qualified_previous_current: str,
+) -> None:
+    clickhouse_client.execute(
+        f"""
+        RENAME TABLE
+            {tables.QUALIFIED_COMPANY_ADDRESSES_CURRENT_TABLE}
+                TO {qualified_previous_current},
+            {qualified_stage}
+                TO {tables.QUALIFIED_COMPANY_ADDRESSES_CURRENT_TABLE}
+        """
+    )
 
 
 def export_sweden_company_clickhouse_industries(

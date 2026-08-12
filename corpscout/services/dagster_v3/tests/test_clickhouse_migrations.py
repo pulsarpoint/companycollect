@@ -268,6 +268,22 @@ EXPECTED_MIGRATIONS = (
     "000251_corpscout_se_financial_taxonomy_translations",
     "000252_corpscout_text_translations_multilingual",
     "000253_corpscout_se_bolagsverket_financial_observations",
+    "000254_corpscout_lv_company_addresses",
+    "000255_corpscout_se_company_address_history",
+    "000256_corpscout_se_company_address_current_snapshot",
+    "000257_corpscout_se_company_profile_history",
+    "000258_corpscout_rdap_filter_catch_all",
+    "000259_corpscout_domain_ip_segments",
+    "000260_corpscout_domain_ip_backfill_status",
+    "000261_corpscout_company_domain_suggestions",
+    "000262_corpscout_company_domain_suggestions_dbt",
+    "000263_corpscout_company_domain_identifier_matches_dbt",
+    "000264_corpscout_company_domain_suggestions_active",
+    "000265_corpscout_se_company_address_normalization",
+    "000266_corpscout_company_domain_address_nace_matching",
+    "000267_corpscout_company_serving_tables",
+    "000268_corpscout_wikidata_person_source_uid_fixed_string",
+    "000269_corpscout_company_domains",
 )
 
 EXPECTED_ACCESS_MIGRATIONS = ("000241_corpscout_person_correction_writer_role",)
@@ -1280,7 +1296,7 @@ def test_sweden_company_registry_migration_covers_exported_columns() -> None:
     expected_columns_by_table = {
         sweden_company_tables.COMPANIES_TABLE_CH: sweden_company_tables.SE_COMPANIES_EXPORT_COLUMNS,
         sweden_company_tables.COMPANY_ADDRESSES_TABLE_CH: (
-            sweden_company_tables.SE_COMPANY_ADDRESSES_EXPORT_COLUMNS
+            sweden_company_tables.SE_COMPANY_ADDRESS_BASE_COLUMNS
         ),
         sweden_company_tables.INDUSTRIES_TABLE_CH: (
             sweden_company_tables.SE_INDUSTRIES_EXPORT_COLUMNS
@@ -2997,6 +3013,194 @@ def test_esef_concept_label_source_record_uid_casts_fixed_string_hash() -> None:
     assert "ALTER TABLE corpscout.esef_document_concept_labels" in sql
     assert "lowerUTF8(toString(package_sha256))" in sql
     assert "lowerUTF8(package_sha256)" not in sql
+
+
+def test_domain_ip_connections_are_segment_partitioned_and_retry_safe() -> None:
+    sql = _migration_sql("000259_corpscout_domain_ip_segments.up.sql")
+    down_sql = _migration_sql("000259_corpscout_domain_ip_segments.down.sql")
+    backfill = (
+        OPERATIONS_DIR / "domain_ip_connections_backfill_bucket.sql"
+    ).read_text()
+    validate = (
+        OPERATIONS_DIR / "domain_ip_connections_validate_bucket.sql"
+    ).read_text()
+
+    assert "CREATE TABLE IF NOT EXISTS corpscout.commoncrawl_ip_network_segments" in sql
+    assert (
+        "CREATE TABLE IF NOT EXISTS corpscout.commoncrawl_domain_ip_connections" in sql
+    )
+    assert sql.count("PARTITION BY segment_bucket") == 2
+    assert "toUInt8(cityHash64(segment_cidr) % 64)" in sql
+    assert "IPv4CIDRToRange" in sql
+    assert "IPv6CIDRToRange" in sql
+    assert "'/24'" in sql
+    assert "'/48'" in sql
+    assert "segment_cidr,\n    ip_version,\n    address,\n    root_domain" in sql
+    assert "hostnames       SimpleAggregateFunction" in sql
+    assert "SimpleAggregateFunction(groupUniqArrayArray, Array(Date))" in sql
+    assert "TO corpscout.commoncrawl_ip_network_segments" in sql
+    assert "TO corpscout.commoncrawl_domain_ip_connections" in sql
+    assert sql.count("FROM corpscout.commoncrawl_domain_dns_record_ingest") == 2
+    assert "groupUniqArray(source) AS sources" in sql
+    assert "groupUniqArray(discovery) AS discoveries" in sql
+    assert "min(observed_at) AS first_seen" in sql
+    assert "max(observed_at) AS last_seen" in sql
+    assert "POPULATE" not in sql
+
+    assert "INSERT INTO corpscout.commoncrawl_ip_network_segments" in backfill
+    assert "INSERT INTO corpscout.commoncrawl_domain_ip_connections" in backfill
+    assert "FROM corpscout.commoncrawl_domain_dns_records" in backfill
+    assert "cityHash64(root_domain) % 16 = {bucket:UInt8}" in backfill
+    assert "FROM corpscout.commoncrawl_domain_dns_records FINAL" in validate
+    assert "FROM corpscout.commoncrawl_domain_ip_connections FINAL" in validate
+    assert "FROM corpscout.commoncrawl_ip_network_segments FINAL" in validate
+    assert "throwIf(" in validate
+    assert "commoncrawl_domain_ip_backfill_status" in validate
+
+    drop_connections_view = (
+        "DROP VIEW IF EXISTS corpscout.commoncrawl_domain_ip_connections_ingest_mv"
+    )
+    drop_segments_view = (
+        "DROP VIEW IF EXISTS corpscout.commoncrawl_ip_network_segments_ingest_mv"
+    )
+    drop_connections_table = (
+        "DROP TABLE IF EXISTS corpscout.commoncrawl_domain_ip_connections"
+    )
+    drop_segments_table = (
+        "DROP TABLE IF EXISTS corpscout.commoncrawl_ip_network_segments"
+    )
+    for view in (drop_connections_view, drop_segments_view):
+        assert view in down_sql
+    for table in (drop_connections_table, drop_segments_table):
+        assert table in down_sql
+        assert down_sql.index(drop_connections_view) < down_sql.index(table)
+        assert down_sql.index(drop_segments_view) < down_sql.index(table)
+
+
+def test_domain_ip_backfill_status_tracks_validated_source_partitions() -> None:
+    sql = _migration_sql("000260_corpscout_domain_ip_backfill_status.up.sql")
+    down_sql = _migration_sql("000260_corpscout_domain_ip_backfill_status.down.sql")
+
+    assert (
+        "CREATE TABLE IF NOT EXISTS "
+        "corpscout.commoncrawl_domain_ip_backfill_status" in sql
+    )
+    assert "bucket       UInt8" in sql
+    assert "ENGINE = ReplacingMergeTree(completed_at)" in sql
+    assert "ORDER BY bucket" in sql
+    assert (
+        "DROP TABLE IF EXISTS corpscout.commoncrawl_domain_ip_backfill_status"
+        in down_sql
+    )
+
+
+def test_company_domain_suggestion_migration_separates_candidates_from_facts() -> None:
+    sql = _migration_sql("000261_corpscout_company_domain_suggestions.up.sql")
+    down_sql = _migration_sql("000261_corpscout_company_domain_suggestions.down.sql")
+
+    for table in (
+        "web_domain_identity_features",
+        "company_domain_suggestions",
+        "company_domain_suggestion_evidence",
+        "company_domain_discovery_runs",
+    ):
+        assert f"CREATE TABLE IF NOT EXISTS corpscout.{table}" in sql
+        assert f"DROP TABLE IF EXISTS corpscout.{table}" in down_sql
+
+    assert "PARTITION BY feature_type" in sql
+    assert "ORDER BY (feature_type, normalized_value, root_domain" in sql
+    assert sql.count("PARTITION BY country_iso2") == 3
+    assert "candidate_sources Array(LowCardinality(String))" in sql
+    assert "scoring_version LowCardinality(String)" in sql
+    assert "discovery_run_id String" in sql
+    assert "score_contribution Float32" in sql
+    assert "configuration_json String" in sql
+
+
+def test_company_domain_active_views_require_a_completed_dbt_run() -> None:
+    sql = _migration_sql("000264_corpscout_company_domain_suggestions_active.up.sql")
+    down_sql = _migration_sql(
+        "000264_corpscout_company_domain_suggestions_active.down.sql"
+    )
+
+    for view in (
+        "company_domain_suggestions_active",
+        "company_domain_suggestion_evidence_active",
+    ):
+        assert f"CREATE VIEW IF NOT EXISTS corpscout.{view}" in sql
+        assert f"DROP VIEW IF EXISTS corpscout.{view}" in down_sql
+
+    normalized_sql = _normalize_sql(sql)
+    assert "company_domain_dbt_discovery_runs FINAL" in normalized_sql
+    assert "argMax( discovery_run_id" in normalized_sql
+    assert sql.count("company_domain_dbt_discovery_runs FINAL") == 2
+
+
+def test_sweden_company_addresses_store_a_normalized_match_key() -> None:
+    sql = _migration_sql("000265_corpscout_se_company_address_normalization.up.sql")
+    down_sql = _migration_sql(
+        "000265_corpscout_se_company_address_normalization.down.sql"
+    )
+
+    for table in ("se_company_addresses", "se_company_addresses_current"):
+        assert f"ALTER TABLE corpscout.{table}" in sql
+        assert "ADD COLUMN IF NOT EXISTS normalized_address String" in sql
+        assert f"ALTER TABLE corpscout.{table}" in down_sql
+        assert "DROP COLUMN IF EXISTS normalized_address" in down_sql
+
+    assert sql.count("normalized_address String MATERIALIZED") == 2
+    assert "normalizeUTF8NFKC" in sql
+    assert r"[^\\p{L}\\p{N}]+" in sql
+    assert "= '00000'" in sql
+    assert "= 'utlandet'" in sql
+    assert "component -> component != ''" in sql
+    assert "care_of" not in sql
+
+
+def test_company_domain_address_nace_matching_has_an_explicit_score() -> None:
+    sql = _migration_sql("000266_corpscout_company_domain_address_nace_matching.up.sql")
+    down_sql = _migration_sql(
+        "000266_corpscout_company_domain_address_nace_matching.down.sql"
+    )
+
+    assert "ADD COLUMN IF NOT EXISTS address_score Float32 DEFAULT 0" in sql
+    assert "CREATE OR REPLACE VIEW corpscout.company_domain_suggestions_active" in sql
+    assert "DROP COLUMN IF EXISTS address_score" in down_sql
+    assert (
+        "CREATE OR REPLACE VIEW corpscout.company_domain_suggestions_active" in down_sql
+    )
+
+
+def test_wikidata_person_source_uid_casts_fixed_string_before_lowering() -> None:
+    sql = _migration_sql(
+        "000268_corpscout_wikidata_person_source_uid_fixed_string.up.sql"
+    )
+    down_sql = _migration_sql(
+        "000268_corpscout_wikidata_person_source_uid_fixed_string.down.sql"
+    )
+
+    assert "MODIFY COLUMN source_record_uid String DEFAULT" in sql
+    assert "lowerUTF8(toString(source_payload_hash))" in sql
+    assert "lowerUTF8(source_payload_hash)" in down_sql
+
+
+def test_unified_company_domains_owns_source_confidence_and_review_state() -> None:
+    sql = _migration_sql("000269_corpscout_company_domains.up.sql")
+    down_sql = _migration_sql("000269_corpscout_company_domains.down.sql")
+
+    assert "CREATE TABLE IF NOT EXISTS corpscout.company_domains" in sql
+    assert "ORDER BY (country_code, company_id, root_domain)" in sql
+    for column in (
+        "source_names Array(String)",
+        "source_confidences Array(Float32)",
+        "suggested_confidence Float32",
+        "review_status LowCardinality(String)",
+        "reviewed_evidence_fingerprint String",
+    ):
+        assert column in sql
+    assert "source_arrays_have_equal_lengths" in sql
+    assert "corpscout_company_domain_writer" in sql
+    assert "DROP TABLE IF EXISTS corpscout.company_domains" in down_sql
 
 
 def _migration_sql(file_name: str) -> str:

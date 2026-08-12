@@ -1,0 +1,22 @@
+type: dagster_v3.components.company_serving_dbt.CompanyServingDbtComponent
+
+attributes:
+  project: '{{ context.project_root }}/src/dagster_v3/defs/company_serving/dbt'
+  cli_args: [build]
+  include_metadata: [row_count]
+  op:
+    name: company_serving_dbt
+    pool: company_serving_clickhouse
+    backfill_policy:
+      type: multi_run
+      max_partitions_per_run: 1
+  translation:
+    group_name: company_serving_dbt
+    kinds: [dbt, clickhouse]
+    partitions_def:
+      type: static
+      partition_keys: [SE]
+  translation_settings:
+    enable_asset_checks: true
+    enable_source_tests_as_checks: true
+  prepare_if_dev: true

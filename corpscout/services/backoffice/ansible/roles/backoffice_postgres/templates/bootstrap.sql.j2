@@ -1,0 +1,46 @@
+\set ON_ERROR_STOP on
+
+SELECT 'CREATE ROLE {{ backoffice_postgres_owner }} LOGIN'
+WHERE NOT EXISTS (SELECT FROM pg_roles WHERE rolname = '{{ backoffice_postgres_owner }}')
+\gexec
+SELECT 'CREATE ROLE {{ backoffice_postgres_app_user }} LOGIN'
+WHERE NOT EXISTS (SELECT FROM pg_roles WHERE rolname = '{{ backoffice_postgres_app_user }}')
+\gexec
+SELECT 'CREATE ROLE {{ backoffice_postgres_dagster_user }} LOGIN'
+WHERE NOT EXISTS (SELECT FROM pg_roles WHERE rolname = '{{ backoffice_postgres_dagster_user }}')
+\gexec
+
+ALTER ROLE {{ backoffice_postgres_owner }}
+  WITH LOGIN PASSWORD :'owner_password' NOSUPERUSER NOCREATEDB NOCREATEROLE NOREPLICATION NOBYPASSRLS;
+ALTER ROLE {{ backoffice_postgres_app_user }}
+  WITH LOGIN PASSWORD :'app_password' NOSUPERUSER NOCREATEDB NOCREATEROLE NOREPLICATION NOBYPASSRLS;
+ALTER ROLE {{ backoffice_postgres_dagster_user }}
+  WITH LOGIN PASSWORD :'dagster_password' NOSUPERUSER NOCREATEDB NOCREATEROLE NOREPLICATION NOBYPASSRLS;
+ALTER ROLE {{ backoffice_postgres_dagster_user }} SET default_transaction_read_only = on;
+
+SELECT 'CREATE DATABASE {{ backoffice_postgres_database }} OWNER {{ backoffice_postgres_owner }}'
+WHERE NOT EXISTS (SELECT FROM pg_database WHERE datname = '{{ backoffice_postgres_database }}')
+\gexec
+ALTER DATABASE {{ backoffice_postgres_database }} OWNER TO {{ backoffice_postgres_owner }};
+
+REVOKE ALL ON DATABASE {{ backoffice_postgres_database }} FROM PUBLIC;
+GRANT CONNECT ON DATABASE {{ backoffice_postgres_database }} TO {{ backoffice_postgres_app_user }};
+GRANT CONNECT ON DATABASE {{ backoffice_postgres_database }} TO {{ backoffice_postgres_dagster_user }};
+
+\connect {{ backoffice_postgres_database }}
+
+ALTER SCHEMA public OWNER TO {{ backoffice_postgres_owner }};
+REVOKE CREATE ON SCHEMA public FROM PUBLIC;
+GRANT USAGE ON SCHEMA public TO {{ backoffice_postgres_app_user }};
+GRANT USAGE ON SCHEMA public TO {{ backoffice_postgres_dagster_user }};
+
+GRANT SELECT, INSERT, UPDATE, DELETE ON ALL TABLES IN SCHEMA public TO {{ backoffice_postgres_app_user }};
+GRANT USAGE, SELECT, UPDATE ON ALL SEQUENCES IN SCHEMA public TO {{ backoffice_postgres_app_user }};
+GRANT SELECT ON ALL TABLES IN SCHEMA public TO {{ backoffice_postgres_dagster_user }};
+
+ALTER DEFAULT PRIVILEGES FOR ROLE {{ backoffice_postgres_owner }} IN SCHEMA public
+  GRANT SELECT, INSERT, UPDATE, DELETE ON TABLES TO {{ backoffice_postgres_app_user }};
+ALTER DEFAULT PRIVILEGES FOR ROLE {{ backoffice_postgres_owner }} IN SCHEMA public
+  GRANT USAGE, SELECT, UPDATE ON SEQUENCES TO {{ backoffice_postgres_app_user }};
+ALTER DEFAULT PRIVILEGES FOR ROLE {{ backoffice_postgres_owner }} IN SCHEMA public
+  GRANT SELECT ON TABLES TO {{ backoffice_postgres_dagster_user }};

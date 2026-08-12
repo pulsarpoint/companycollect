@@ -1,0 +1,19 @@
+version: 2
+
+sources:
+  - name: corpscout
+    schema: corpscout
+    tables:
+      - name: se_companies
+      - name: se_company_registry_current
+      - name: se_company_addresses_current
+      - name: se_industries
+      - name: gleif_lei_records
+      - name: commoncrawl_domains
+      - name: commoncrawl_domain_identifiers
+      - name: commoncrawl_page_jsonld
+      - name: commoncrawl_industries
+      - name: web_domain_identity_features
+        meta:
+          dagster:
+            asset_key: [web_domain_identity_features_clickhouse]

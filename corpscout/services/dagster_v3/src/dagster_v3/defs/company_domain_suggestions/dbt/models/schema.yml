@@ -1,0 +1,125 @@
+version: 2
+
+models:
+  - name: stg_se_company_match_features
+    description: Technology-independent normalized Sweden company facts for domain matching.
+    columns:
+      - name: company_id
+        data_tests: [not_null]
+      - name: feature_type
+        data_tests:
+          - accepted_values:
+              values: [identifier, name, address, industry]
+      - name: feature_subtype
+        data_tests: [not_null]
+      - name: normalized_value
+        data_tests: [not_null]
+
+  - name: stg_se_company_domain_identifier_features
+    description: Valid Sweden VAT and LEI values eligible for deterministic matching.
+    columns:
+      - name: company_id
+        data_tests: [not_null]
+      - name: normalized_identifier
+        data_tests: [not_null]
+      - name: identifier_type
+        data_tests:
+          - accepted_values:
+              values: [vat, lei]
+
+  - name: stg_web_domain_match_features
+    description: Crawl-partitioned normalized web evidence used by company-domain matching.
+    columns:
+      - name: root_domain
+        data_tests: [not_null]
+      - name: crawl_id
+        data_tests: [not_null]
+      - name: source_crawl_id
+        description: Crawl where the evidence was observed; may lag the indexed crawl for carried-forward classifications.
+        data_tests: [not_null]
+      - name: feature_type
+        data_tests:
+          - accepted_values:
+              values: [identifier, name, address, industry, domain_name, country_tld]
+      - name: feature_subtype
+        data_tests: [not_null]
+      - name: normalized_value
+        data_tests: [not_null]
+      - name: observed_at
+        data_tests: [not_null]
+
+  - name: int_company_domain_identifier_matches
+    description: Exact VAT and LEI matches between Sweden companies and observed web domains.
+    columns:
+      - name: discovery_run_id
+        data_tests: [not_null]
+      - name: root_domain
+        data_tests: [not_null]
+
+  - name: int_company_domain_identifier_match_classification
+    description: Identifier matches enriched with all-web-identifier domain fan-out and matched-identifier fan-out counts.
+
+  - name: int_company_domain_identifier_candidates
+    description: Company/domain identifier candidates classified as unique, ambiguous or directory.
+
+  - name: int_company_domain_address_matches
+    description: Exact normalized postal-address matches with web-side address fan-out.
+    columns:
+      - name: discovery_run_id
+        data_tests: [not_null]
+      - name: normalized_address
+        data_tests: [not_null]
+      - name: address_domain_count
+        data_tests: [not_null]
+
+  - name: int_company_domain_address_nace_matches
+    description: Address-matched company/domain pairs that also share an exact four-digit NACE class.
+    columns:
+      - name: company_nace
+        data_tests: [not_null]
+      - name: domain_nace
+        data_tests: [not_null]
+
+  - name: int_company_domain_address_nace_candidates
+    description: Exact address and NACE candidates classified by address and company fan-out.
+    columns:
+      - name: match_status
+        data_tests:
+          - accepted_values:
+              values: [unique, ambiguous, directory]
+
+  - name: int_company_domain_candidates
+    description: Resolved deterministic candidates with identifier precedence over conflicting address evidence.
+    columns:
+      - name: company_id
+        data_tests: [not_null]
+      - name: root_domain
+        data_tests: [not_null]
+      - name: total_score
+        data_tests: [not_null]
+
+  - name: company_domain_identifier_matches_dbt
+    description: Append-only audit history of every exact VAT and LEI domain match.
+    columns:
+      - name: discovery_run_id
+        data_tests: [not_null]
+      - name: match_status
+        data_tests:
+          - accepted_values:
+              values: [unique, ambiguous, directory]
+
+  - name: company_domain_suggestions_dbt
+    description: Unique deterministic identifier or exact address-plus-NACE suggestions activated by a completed Dagster run.
+    columns:
+      - name: discovery_run_id
+        data_tests: [not_null]
+      - name: total_score
+        data_tests: [not_null]
+
+  - name: company_domain_suggestion_evidence_dbt
+    description: Identifier, normalized-address and exact-NACE evidence for deterministic suggestions.
+    columns:
+      - name: discovery_run_id
+        data_tests: [not_null]
+      - name: signal_type
+        data_tests: [not_null]

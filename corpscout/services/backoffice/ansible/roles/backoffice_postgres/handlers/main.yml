@@ -1,0 +1,6 @@
+---
+- name: Apply backoffice postgres compose
+  ansible.builtin.command:
+    cmd: docker compose up -d --remove-orphans
+    chdir: "{{ backoffice_postgres_dir }}"
+  listen: Apply backoffice postgres compose

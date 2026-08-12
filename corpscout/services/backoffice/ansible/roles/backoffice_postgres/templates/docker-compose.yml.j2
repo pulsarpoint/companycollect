@@ -1,0 +1,35 @@
+services:
+  postgres:
+    image: {{ backoffice_postgres_image }}
+    container_name: {{ backoffice_postgres_container_name }}
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: {{ backoffice_postgres_database }}
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+      POSTGRES_INITDB_ARGS: "--auth-host=scram-sha-256 --data-checksums"
+    volumes:
+      - {{ backoffice_postgres_data_dir }}:/var/lib/postgresql/data
+      - ./pg_hba.conf:/etc/postgresql/corpscout-pg_hba.conf:ro
+    ports:
+      - "{{ backoffice_postgres_bind_address }}:{{ backoffice_postgres_port }}:5432"
+    command:
+      - postgres
+      - -c
+      - hba_file=/etc/postgresql/corpscout-pg_hba.conf
+      - -c
+      - password_encryption=scram-sha-256
+      - -c
+      - max_connections={{ backoffice_postgres_max_connections }}
+      - -c
+      - shared_buffers={{ backoffice_postgres_shared_buffers }}
+      - -c
+      - track_io_timing=on
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres -d {{ backoffice_postgres_database }}"]
+      interval: 5s
+      timeout: 5s
+      retries: 24
+      start_period: 10s
+    shm_size: 256mb
+    stop_grace_period: 60s
