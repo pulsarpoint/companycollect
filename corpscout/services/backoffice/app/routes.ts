@@ -15,6 +15,10 @@ export default [
       "routes/country-domain-suggestions.tsx",
     ),
     route(
+      "countries/:country/address-quality",
+      "routes/country-address-quality.tsx",
+    ),
+    route(
       "countries/:country/contracts/:ref",
       "routes/country-contract-detail.tsx",
     ),

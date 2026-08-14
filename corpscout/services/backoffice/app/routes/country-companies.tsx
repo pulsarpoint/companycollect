@@ -76,13 +76,22 @@ export default function CountryCompanies({ loaderData, params }: Route.Component
         </h2>
         <div className="flex gap-2">
           {country.code === "se" ? (
-            <Button
-              variant="outline"
-              render={<Link to="/countries/se/domain-suggestions" />}
-              nativeButton={false}
-            >
-              Review domain suggestions
-            </Button>
+            <div className="flex gap-2">
+              <Button
+                variant="outline"
+                render={<Link to="/countries/se/address-quality" />}
+                nativeButton={false}
+              >
+                Review address quality
+              </Button>
+              <Button
+                variant="outline"
+                render={<Link to="/countries/se/domain-suggestions" />}
+                nativeButton={false}
+              >
+                Review domain suggestions
+              </Button>
+            </div>
           ) : null}
           <Form method="get" className="flex gap-2">
             <Input
