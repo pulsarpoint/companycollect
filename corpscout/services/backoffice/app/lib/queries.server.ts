@@ -1967,7 +1967,13 @@ export interface IndustryDetailRow {
 }
 
 export interface AddressRow {
+  address_id?: string;
+  canonical_address_key?: string;
   address_type: string;
+  address_types?: string[];
+  address_sources?: string[];
+  address_member_count?: number;
+  source_members?: AddressSourceMember[];
   full_address: string;
   /** ISO 3166-1 alpha-2 country when the source identifies the address country. */
   address_country_code?: string;
@@ -1982,9 +1988,38 @@ export interface AddressRow {
   /** Structured fallback fields used when the exact address is absent from the map provider. */
   geocode_street?: string;
   geocode_postal_code?: string;
-  /** Offline geocode from the company-keyed address serving table. */
+  /** Offline geocode from the address-owned geocoding table. */
   latitude?: number | null;
   longitude?: number | null;
+  geocode_status?: string;
+  geocode_provider?: string;
+  geocode_precision?: string;
+  geocode_match_method?: string;
+  geocode_match_confidence?: number;
+  geocode_candidate_count?: number;
+  geocode_candidate_record_urls?: string[];
+  geocode_coordinate_locality?: string;
+  geocode_coordinate_supporting_point_count?: number;
+  geocode_source_record_id?: string;
+  geocode_source_record_url?: string;
+  geocode_source_url?: string;
+  geocode_source_object_key?: string;
+  geocode_source_md5?: string;
+  geocode_source_snapshot_at?: string;
+  geocode_source_retrieved_at?: string;
+  geocode_source_run_id?: string;
+  geocode_matched_at?: string;
+}
+
+export interface AddressSourceMember {
+  address_key: string;
+  address_type: string;
+  address_source: string;
+  raw_address: string;
+  display_address: string;
+  registry_source_record_uid: string;
+  registry_source_run_id: string;
+  source_observed_at: string;
 }
 
 export interface SecondaryNameRow {

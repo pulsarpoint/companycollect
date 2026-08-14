@@ -498,16 +498,116 @@ async function getIndustriesSection(
 async function getAddressesSection(
   id: string,
 ): Promise<Extract<CompanySectionData, { section: "addresses" }>> {
-  const addresses = await chQuery<AddressRow>(
-    `SELECT address_type, display_address AS full_address,
-       resolved_country_code AS address_country_code, is_foreign AS address_is_foreign,
-       display_address AS geocode_address, street_address AS geocode_street,
-       postal_code AS geocode_postal_code, latitude, longitude
-     FROM corpscout.se_company_address_display_current
+  type AddressLinkRow = Pick<AddressRow, "address_type"> &
+    Partial<AddressRow> & {
+      address_id: string;
+      canonical_address_key: string;
+    };
+  type AddressOwnedRow = Pick<AddressRow, "full_address"> &
+    Partial<AddressRow> & { address_id: string };
+  type AddressGeocodeRow = Partial<AddressRow> & { address_id: string };
+  type AddressMemberRow = NonNullable<AddressRow["source_members"]>[number] & {
+    canonical_address_key: string;
+  };
+  const [links, members] = await Promise.all([
+    chQuery<AddressLinkRow>(
+      `SELECT
+       toString(address_id) AS address_id,
+       toString(canonical_address_key) AS canonical_address_key,
+       if(length(address_types) > 0, address_types[1], 'address') AS address_type,
+       address_types,
+       address_sources,
+       link_evidence_count AS address_member_count
+     FROM corpscout.se_company_addresses_serving_current
      PREWHERE company_id = {id:String}
-     ORDER BY address_type, source, address_key`,
-    { id },
-  );
+     ORDER BY address_type, address_id`,
+      { id },
+    ),
+    chQuery<AddressMemberRow>(
+      `SELECT
+         canonical_address_key,
+         address_key,
+         address_type,
+         address_source,
+         raw_address,
+         display_address,
+         registry_source_record_uid,
+         registry_source_run_id,
+         toString(source_observed_at) AS source_observed_at
+       FROM corpscout.se_company_address_members_current
+       PREWHERE company_id = {id:String}
+       ORDER BY canonical_address_key, address_source, address_type, address_key`,
+      { id },
+    ),
+  ]);
+  if (links.length === 0) return { section: "addresses", addresses: [] };
+
+  const addressIds = links.map((link) => link.address_id);
+  const [addressRows, geocodeRows] = await Promise.all([
+    chQuery<AddressOwnedRow>(
+      `SELECT
+         toString(address_id) AS address_id,
+         canonical_display_address AS full_address,
+         country_code AS address_country_code,
+         toUInt8(address_kind = 'foreign') AS address_is_foreign,
+         canonical_display_address AS geocode_address,
+         street_address AS geocode_street,
+         postal_code AS geocode_postal_code
+       FROM corpscout.se_addresses_current
+       PREWHERE address_id IN {address_ids:Array(String)}`,
+      { address_ids: addressIds },
+    ),
+    chQuery<AddressGeocodeRow>(
+      `SELECT
+         toString(address_id) AS address_id,
+         latitude,
+         longitude,
+         match_status AS geocode_status,
+         geocode_provider,
+         geocode_precision,
+         match_method AS geocode_match_method,
+         match_confidence AS geocode_match_confidence,
+         candidate_count AS geocode_candidate_count,
+         candidate_record_urls AS geocode_candidate_record_urls,
+         ifNull(coordinate_locality, '') AS geocode_coordinate_locality,
+         coordinate_supporting_point_count
+           AS geocode_coordinate_supporting_point_count,
+         ifNull(source_record_id, '') AS geocode_source_record_id,
+         ifNull(source_record_url, '') AS geocode_source_record_url,
+         ifNull(source_url, '') AS geocode_source_url,
+         ifNull(source_object_key, '') AS geocode_source_object_key,
+         ifNull(source_md5, '') AS geocode_source_md5,
+         ifNull(toString(source_snapshot_at), '') AS geocode_source_snapshot_at,
+         ifNull(toString(source_retrieved_at), '') AS geocode_source_retrieved_at,
+         geocode_run_id AS geocode_source_run_id,
+         toString(matched_at) AS geocode_matched_at
+       FROM corpscout.se_address_geocodes_current
+       PREWHERE address_id IN {address_ids:Array(String)}`,
+      { address_ids: addressIds },
+    ),
+  ]);
+  const addressById = new Map(addressRows.map((row) => [row.address_id, row]));
+  const geocodeById = new Map(geocodeRows.map((row) => [row.address_id, row]));
+  const membersByCanonicalAddress = new Map<string, AddressMemberRow[]>();
+  for (const member of members) {
+    const group = membersByCanonicalAddress.get(member.canonical_address_key);
+    if (group) group.push(member);
+    else membersByCanonicalAddress.set(member.canonical_address_key, [member]);
+  }
+  const addresses = links.map((link): AddressRow => {
+    const address = addressById.get(link.address_id);
+    const geocode = geocodeById.get(link.address_id);
+    if (!address || !geocode)
+      throw new Error(`Incomplete address-owned data for ${link.address_id}`);
+    return {
+      ...link,
+      ...address,
+      ...geocode,
+      source_members: (
+        membersByCanonicalAddress.get(link.canonical_address_key) ?? []
+      ).map(({ canonical_address_key: _, ...member }) => member),
+    };
+  });
   return { section: "addresses", addresses };
 }
 

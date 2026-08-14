@@ -14,13 +14,33 @@ const domain: CompanyDomain = {
   sources: [
     {
       name: "common_crawl_identity",
-      confidence: 1,
+      confidence: 0.7,
       sourceRecordId: "run-2026-08-09:5590000000:acme-security.se",
       sourceUrl: "https://acme-security.se/about",
-      confidenceBasis: "se-domain-suggestions-dbt-v5:vat+lei",
+      confidenceBasis: "se-domain-suggestions-dbt-v5:vat",
+      evidence: [
+        {
+          type: "common_crawl_match",
+          signalType: "identifier",
+          sourceField: "vat",
+          companyValue: "SE559000000001",
+          domainValue: "SE559000000001",
+          scoreContribution: 70,
+          sourceUrl: "https://acme-security.se/about",
+          crawlId: "CC-MAIN-2026-25",
+          extractionMethod: "text",
+          sourceObservedAt: "2026-07-20 17:48:38.778",
+          warcFilename:
+            "crawl-data/CC-MAIN-2026-25/segments/1780687572613.18/warc/CC-MAIN-20260611030515-20260611060515-00688.warc.gz",
+          warcRecordOffset: 56333578,
+          warcRecordLength: 11919,
+          discoveryRunId: "run-2026-08-09",
+          suggestedAt: "2026-08-09 12:00:00.000",
+        },
+      ],
     },
   ],
-  suggestedConfidence: 1,
+  suggestedConfidence: 0.7,
   suggestedPrimary: true,
   evidenceFingerprint: "a".repeat(64),
   reviewStatus: "unreviewed",
@@ -61,10 +81,58 @@ describe("CompanyDomainSuggestionsSection", () => {
 
     expect(html).toContain("Company domains");
     expect(html).toContain("acme-security.se");
-    expect(html).toContain("100% suggested confidence");
+    expect(html).toContain("70% suggested confidence");
     expect(html).toContain("Common Crawl identity");
     expect(html).toContain('href="https://acme-security.se/about"');
+    expect(html).toContain("Exact VAT match from archived website evidence");
+    expect(html).toContain("SE559000000001");
+    expect(html).toContain("+70 points");
+    expect(html).toContain("11 Jun 2026, 03:05–06:05 UTC");
+    expect(html).toContain("CC-MAIN-2026-25");
+    expect(html).not.toContain("se-domain-suggestions-dbt-v5:vat");
     expect(html).toContain("Inspect technology");
+  });
+
+  it("explains how a Wikidata website was linked to the Swedish company", () => {
+    const html = renderDomains([
+      {
+        ...domain,
+        rootDomain: "acme.se",
+        websiteUrl: "https://acme.se",
+        suggestedConfidence: 1,
+        sources: [
+          {
+            name: "wikidata",
+            confidence: 1,
+            sourceRecordId: "Q123:website:https://acme.se",
+            sourceUrl: "https://www.wikidata.org/entity/Q123",
+            confidenceBasis: "official_website_claim",
+            evidence: [
+              {
+                type: "wikidata_match",
+                wikidataId: "Q123",
+                matchMethod: "wikidata_registry_identifier",
+                matchConfidence: 1,
+                identifierType: "se_orgnr",
+                propertyId: "P6460",
+                companyValue: "5590000000",
+                wikidataValue: "559000-0000",
+                sourceRecordId: "Q123:P6460:559000-0000",
+                wikidataUrl: "https://www.wikidata.org/entity/Q123",
+                retrievedAt: "2026-07-22 23:49:43.536",
+              },
+            ],
+          },
+        ],
+      },
+    ]);
+
+    expect(html).toContain("exact Swedish organisation number");
+    expect(html).toContain("Exact Swedish organisation number match");
+    expect(html).toContain("5590000000");
+    expect(html).toContain("559000-0000");
+    expect(html).toContain("P6460");
+    expect(html).toContain("Official website claim: P856");
   });
 
   it("renders an explicit empty state", () => {
@@ -122,7 +190,7 @@ describe("CompanyDomainSuggestionReview", () => {
     expect(html).toContain("Acme Security AB");
     expect(html).toContain("acme-security.se");
     expect(html).toContain("common crawl identity");
-    expect(html).toContain("100%");
+    expect(html).toContain("70%");
     expect(html).toContain('href="/company/se/5590000000/suggestions"');
   });
 });

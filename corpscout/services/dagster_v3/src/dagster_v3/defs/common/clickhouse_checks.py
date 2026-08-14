@@ -192,6 +192,21 @@ CLICKHOUSE_LEAVES: tuple[ClickhouseLeaf, ...] = (
         "sweden_company_addresses_clickhouse", ("se_company_addresses",), WEEKLY
     ),
     ClickhouseLeaf("sweden_company_industries_clickhouse", ("se_industries",), WEEKLY),
+    ClickhouseLeaf(
+        "sweden_company_address_geocodes_clickhouse",
+        ("se_company_address_geocodes",),
+        WEEKLY,
+    ),
+    ClickhouseLeaf(
+        "sweden_company_address_geocode_results_clickhouse",
+        ("se_company_address_geocode_results",),
+        WEEKLY,
+    ),
+    ClickhouseLeaf(
+        "sweden_company_addresses_serving_clickhouse",
+        ("se_company_addresses_serving_current",),
+        WEEKLY,
+    ),
     # sweden_financial — reports/facts are scoped incremental exports. The
     # source-owned observation and other derived publishers are unscheduled
     # full rebuilds, so they receive row-count checks but no freshness check.

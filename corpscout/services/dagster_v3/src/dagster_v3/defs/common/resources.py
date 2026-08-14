@@ -6,6 +6,7 @@ from typing import Any, Protocol
 
 import boto3
 import dagster as dg
+from boto3.s3.transfer import TransferConfig
 from botocore.config import Config
 from pydantic import PrivateAttr
 
@@ -108,9 +109,24 @@ class ObjectStoreResource(dg.ConfigurableResource):
         target_bucket = bucket or self.bucket
         self.client().put_object(Bucket=target_bucket, Key=key, Body=body)
 
-    def upload_file(self, key: str, source_path: str | Path, bucket: str | None = None) -> None:
+    def upload_file(
+        self,
+        key: str,
+        source_path: str | Path,
+        bucket: str | None = None,
+        *,
+        transfer_config: TransferConfig | None = None,
+    ) -> None:
         target_bucket = bucket or self.bucket
-        self.client().upload_file(str(source_path), target_bucket, key)
+        if transfer_config is None:
+            self.client().upload_file(str(source_path), target_bucket, key)
+            return
+        self.client().upload_file(
+            str(source_path),
+            target_bucket,
+            key,
+            Config=transfer_config,
+        )
 
     def read_bytes(self, key: str, bucket: str | None = None) -> bytes:
         target_bucket = bucket or self.bucket

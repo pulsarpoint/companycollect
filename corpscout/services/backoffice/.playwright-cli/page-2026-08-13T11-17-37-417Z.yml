@@ -1,0 +1,82 @@
+- generic [ref=e2]:
+  - generic [ref=e5]:
+    - list [ref=e7]:
+      - listitem [ref=e8]:
+        - link "CompanyCollect" [ref=e9] [cursor=pointer]:
+          - /url: /countries
+    - list [ref=e14]:
+      - listitem [ref=e15]:
+        - link "Countries" [ref=e16] [cursor=pointer]:
+          - /url: /countries
+      - listitem [ref=e23]:
+        - link "Procurement" [ref=e24] [cursor=pointer]:
+          - /url: /procurements
+      - listitem [ref=e32]:
+        - link "People" [ref=e33] [cursor=pointer]:
+          - /url: /people
+  - main [ref=e40]:
+    - generic [ref=e41]:
+      - button "Toggle Sidebar" [ref=e42]
+      - separator [ref=e44]
+      - generic [ref=e45]: CompanyCollect Backoffice
+    - generic [ref=e47]:
+      - button "Sweden companies" [ref=e49] [cursor=pointer]
+      - generic [ref=e51]:
+        - generic [ref=e52]:
+          - heading "78 Elservice AB" [level=1] [ref=e53]
+          - generic [ref=e54]: active
+        - generic [ref=e55]:
+          - generic [ref=e56]: "5568182058"
+          - generic [ref=e57]:
+            - generic [ref=e58]: Company
+            - generic [ref=e59]: Aktiebolag
+          - generic [ref=e60]: Company domains available
+      - tablist [ref=e62]:
+        - tab "Overview" [selected] [ref=e63] [cursor=pointer]
+        - tab "Financials" [ref=e64] [cursor=pointer]
+        - tab "Domains" [ref=e65] [cursor=pointer]
+        - tab "Technology" [ref=e66] [cursor=pointer]
+      - generic [ref=e69]:
+        - generic [ref=e70]: Company record
+        - generic [ref=e72]:
+          - generic [ref=e73]:
+            - generic [ref=e74]:
+              - term [ref=e75]: Status
+              - definition [ref=e76]: active
+            - generic [ref=e77]:
+              - term [ref=e78]: Registered
+              - definition [ref=e79]: 2010-09-09
+          - separator [ref=e80]
+          - generic [ref=e81]:
+            - generic [ref=e82]:
+              - term [ref=e83]: Company ID
+              - definition [ref=e84]: "5568182058"
+            - generic [ref=e85]:
+              - term [ref=e86]: Registration number
+              - definition [ref=e87]: "5568182058"
+            - generic [ref=e88]:
+              - term [ref=e89]: Legal name
+              - definition [ref=e90]: 78 Elservice AB
+            - generic [ref=e91]:
+              - term [ref=e92]: Legal form code
+              - definition [ref=e93]: AB-ORGFO
+            - generic [ref=e94]:
+              - term [ref=e95]: Status reason
+              - definition [ref=e96]: —
+            - generic [ref=e97]:
+              - term [ref=e98]: Dissolution date
+              - definition [ref=e99]: —
+            - generic [ref=e100]:
+              - term [ref=e101]: Bolagsverket source record uid
+              - definition [ref=e102]: 972a065ca3ed046ccd2dea4f1d0e28bbc99c7a764c232a180c8c19a9a42f32a6
+            - generic [ref=e103]:
+              - term [ref=e104]: Scb source record uid
+              - definition [ref=e105]: 8f3b3cce6ae8f63986b4fc90127fc4765b891dde239cf67f403db819b1cc4e6c
+            - generic [ref=e106]:
+              - term [ref=e107]: Activity description original
+              - definition [ref=e108]: Föremålet för bolagets verksamhet är att bedriva elinstallationer, service av elinstallationer, otimering av elinstallationer, projektering, datastyrning samt därmed förenlig verksamhet.
+            - generic [ref=e109]:
+              - term [ref=e110]: Industry
+              - definition [ref=e111]: —
+          - group [ref=e112]:
+            - generic "Source & lineage" [ref=e113] [cursor=pointer]

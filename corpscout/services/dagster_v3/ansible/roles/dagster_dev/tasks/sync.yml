@@ -7,6 +7,8 @@
     - "{{ dagster_source_dir }}/uv.lock"
     - "{{ dagster_source_dir }}/src/dagster_v3/definitions.py"
     - "{{ dagster_source_dir }}/src/dagster_v3/defs"
+    - "{{ dagster_source_dir }}/src/dagster_v3/defs/.local_defs_state/DbtProjectComponent__dbt____company-serving/project/dbt_project.yml"
+    - "{{ dagster_source_dir }}/src/dagster_v3/defs/.local_defs_state/DbtProjectComponent__dbt____company-serving/project/target/manifest.json"
     - "{{ dagster_source_dir }}/exchange_rates"
   register: dagster_sync_local_content
   delegate_to: localhost
@@ -18,8 +20,8 @@
     that:
       - dagster_sync_local_content.results | map(attribute='stat.exists') | min
     fail_msg: >-
-      Run this playbook from services/dagster_v3/ansible; pyproject.toml,
-      definitions.py, or the definitions directory is missing.
+      Run this playbook from services/dagster_v3/ansible. The source tree or
+      generated company-serving dbt project state is incomplete.
   delegate_to: localhost
   become: false
   run_once: true
@@ -226,7 +228,34 @@
       service_restart_requested: false
       synchronized_trees: [src/dagster_v3, exchange_rates, pyproject.toml+uv.lock]
 
-- name: Synchronize Dagster content without restarting the service
+- name: Remove stale Dagster hot-sync release directories
+  ansible.builtin.file:
+    path: "{{ item }}"
+    state: absent
+  loop:
+    - "{{ dagster_hot_sync_staging_dir }}"
+    - "{{ dagster_hot_sync_previous_dir }}"
+  when:
+    - not ansible_check_mode
+    - dagster_hot_sync_changed
+
+- name: Create the isolated Dagster hot-sync release tree
+  ansible.builtin.file:
+    path: "{{ item }}"
+    state: directory
+    owner: root
+    group: root
+    mode: "0755"
+  loop:
+    - "{{ dagster_hot_sync_staging_dir }}"
+    - "{{ dagster_hot_sync_staging_dir }}/src"
+    - "{{ dagster_hot_sync_staging_dir }}/src/dagster_v3"
+    - "{{ dagster_hot_sync_staging_dir }}/exchange_rates"
+  when:
+    - not ansible_check_mode
+    - dagster_hot_sync_changed
+
+- name: Stage the complete Dagster definitions tree outside the watched checkout
   ansible.builtin.command:
     argv:
       - rsync
@@ -244,20 +273,16 @@
       - "{{ dagster_source_dir }}/src/dagster_v3/"
       - >-
         {{ ansible_user }}@{{ ansible_host }}:{{
-        dagster_deploy_dir }}/src/dagster_v3/
-  register: dagster_content_rsync
+        dagster_hot_sync_staging_dir }}/src/dagster_v3/
+  register: dagster_staged_content_rsync
   delegate_to: localhost
   become: false
-  changed_when: >-
-    dagster_content_rsync.stdout_lines
-    | reject('equalto', '')
-    | list
-    | length > 0
+  changed_when: true
   when:
     - not ansible_check_mode
-    - dagster_content_changed
+    - dagster_hot_sync_changed
 
-- name: Synchronize the exchange_rates package without restarting the service
+- name: Stage the complete exchange_rates package outside the watched checkout
   ansible.builtin.command:
     argv:
       - rsync
@@ -275,18 +300,53 @@
       - "{{ dagster_source_dir }}/exchange_rates/"
       - >-
         {{ ansible_user }}@{{ ansible_host }}:{{
-        dagster_deploy_dir }}/exchange_rates/
-  register: dagster_exchange_rsync
+        dagster_hot_sync_staging_dir }}/exchange_rates/
+  register: dagster_staged_exchange_rsync
   delegate_to: localhost
   become: false
-  changed_when: >-
-    dagster_exchange_rsync.stdout_lines
-    | reject('equalto', '')
-    | list
-    | length > 0
+  changed_when: true
   when:
     - not ansible_check_mode
-    - dagster_exchange_changed
+    - dagster_hot_sync_changed
+
+- name: Stage the Dagster dependency manifests
+  ansible.builtin.command:
+    argv:
+      - rsync
+      - --archive
+      - --no-owner
+      - --no-group
+      - --itemize-changes
+      - --rsync-path=sudo -n rsync
+      - "{{ dagster_source_dir }}/pyproject.toml"
+      - "{{ dagster_source_dir }}/uv.lock"
+      - >-
+        {{ ansible_user }}@{{ ansible_host }}:{{
+        dagster_hot_sync_staging_dir }}/
+  delegate_to: localhost
+  become: false
+  changed_when: true
+  when:
+    - not ansible_check_mode
+    - dagster_hot_sync_changed
+
+- name: Link server-owned runtime state into the isolated release tree
+  ansible.builtin.file:
+    src: "{{ item.src }}"
+    dest: "{{ item.dest }}"
+    state: link
+    force: true
+  loop:
+    - src: "{{ dagster_env_file }}"
+      dest: "{{ dagster_hot_sync_staging_dir }}/.env"
+    - src: "{{ dagster_deploy_dir }}/data"
+      dest: "{{ dagster_hot_sync_staging_dir }}/data"
+    - src: "{{ dagster_deploy_dir }}/storage"
+      dest: "{{ dagster_hot_sync_staging_dir }}/storage"
+  no_log: true
+  when:
+    - not ansible_check_mode
+    - dagster_hot_sync_changed
 
 - name: Synchronize the dependency manifests without restarting the service
   ansible.builtin.command:
@@ -332,23 +392,64 @@
     - not ansible_check_mode
     - dagster_env_files_changed
 
-- name: Validate hot-synchronized Dagster definitions on the target
+- name: Validate the isolated Dagster release on the target
   ansible.builtin.command:
     argv:
-      - "{{ dagster_uv_binary }}"
-      - run
-      - --frozen
-      - --no-sync
-      - dg
+      - "{{ dagster_dg_binary }}"
       - check
       - defs
-    chdir: "{{ dagster_deploy_dir }}"
+    chdir: "{{ dagster_hot_sync_staging_dir }}"
   environment:
     DAGSTER_HOME: "{{ dagster_deploy_dir }}"
     DAGSTER_DISABLE_TELEMETRY: "1"
     HOME: /root
+    PATH: >-
+      {{ dagster_deploy_dir }}/.venv/bin:{{ dagster_uv_binary | dirname
+      }}:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin
+    PYTHONPATH: >-
+      {{ dagster_hot_sync_staging_dir }}/src:{{
+      dagster_hot_sync_staging_dir }}
     PYTHONDONTWRITEBYTECODE: "1"
+    VIRTUAL_ENV: "{{ dagster_deploy_dir }}/.venv"
   changed_when: false
+  when:
+    - not ansible_check_mode
+    - dagster_hot_sync_changed
+
+- name: Atomically promote the validated Dagster source release
+  ansible.builtin.command:
+    argv:
+      - "{{ dagster_venv_python }}"
+      - -c
+      - |
+        from pathlib import Path
+
+        live_source = Path("{{ dagster_deploy_dir }}/src/dagster_v3")
+        staged_source = Path("{{ dagster_hot_sync_staging_dir }}/src/dagster_v3")
+        live_exchange = Path("{{ dagster_deploy_dir }}/exchange_rates")
+        staged_exchange = Path("{{ dagster_hot_sync_staging_dir }}/exchange_rates")
+        previous_root = Path("{{ dagster_hot_sync_previous_dir }}")
+        previous_source = previous_root / "dagster_v3"
+        previous_exchange = previous_root / "exchange_rates"
+
+        previous_root.mkdir(parents=True, exist_ok=False)
+        live_source.rename(previous_source)
+        try:
+            staged_source.rename(live_source)
+        except Exception:
+            previous_source.rename(live_source)
+            raise
+
+        try:
+            live_exchange.rename(previous_exchange)
+            staged_exchange.rename(live_exchange)
+        except Exception:
+            if previous_exchange.exists() and not live_exchange.exists():
+                previous_exchange.rename(live_exchange)
+            live_source.rename(staged_source)
+            previous_source.rename(live_source)
+            raise
+  changed_when: true
   when:
     - not ansible_check_mode
     - dagster_hot_sync_changed
@@ -420,6 +521,17 @@
   retries: 90
   delay: 2
   changed_when: false
+  when:
+    - not ansible_check_mode
+    - dagster_hot_sync_changed
+
+- name: Remove validated Dagster hot-sync release leftovers
+  ansible.builtin.file:
+    path: "{{ item }}"
+    state: absent
+  loop:
+    - "{{ dagster_hot_sync_staging_dir }}"
+    - "{{ dagster_hot_sync_previous_dir }}"
   when:
     - not ansible_check_mode
     - dagster_hot_sync_changed

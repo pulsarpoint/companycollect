@@ -284,6 +284,13 @@ EXPECTED_MIGRATIONS = (
     "000267_corpscout_company_serving_tables",
     "000268_corpscout_wikidata_person_source_uid_fixed_string",
     "000269_corpscout_company_domains",
+    "000270_corpscout_se_company_address_geocodes",
+    "000271_corpscout_se_company_address_geocode_results",
+    "000272_corpscout_se_company_address_city_fallback",
+    "000273_corpscout_se_company_canonical_addresses",
+    "000274_corpscout_se_shared_addresses",
+    "000275_corpscout_se_address_geocodes_current",
+    "000276_corpscout_se_company_addresses_serving_current",
 )
 
 EXPECTED_ACCESS_MIGRATIONS = ("000241_corpscout_person_correction_writer_role",)

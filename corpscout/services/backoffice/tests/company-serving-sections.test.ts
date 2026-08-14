@@ -40,6 +40,43 @@ describe("Sweden company serving cutover", () => {
     );
   });
 
+  it("composes company-address relationships with address-owned data", () => {
+    expect(sectionServer).toContain(
+      "if(length(address_types) > 0, address_types[1], 'address') AS address_type",
+    );
+    expect(sectionServer).toContain(
+      "FROM corpscout.se_company_addresses_serving_current",
+    );
+    expect(sectionServer).toContain(
+      "FROM corpscout.se_addresses_current",
+    );
+    expect(sectionServer).toContain(
+      "FROM corpscout.se_address_geocodes_current",
+    );
+    expect(sectionServer).toContain(
+      "PREWHERE address_id IN {address_ids:Array(String)}",
+    );
+    expect(sectionServer).toContain(
+      "FROM corpscout.se_company_address_members_current",
+    );
+    expect(sectionServer).not.toContain("ANY LEFT JOIN");
+    expect(sectionServer).not.toContain("se_company_address_geocode_results");
+    expect(sectionServer).not.toContain(
+      "se_company_addresses_canonical_current AS address",
+    );
+    expect(sectionServer).not.toContain(
+      "se_company_address_geocodes AS geocode",
+    );
+    expect(sectionServer).toContain("match_status AS geocode_status");
+    expect(sectionServer).toContain(
+      "candidate_record_urls AS geocode_candidate_record_urls",
+    );
+    expect(sectionServer).toContain("ifNull(coordinate_locality, '')");
+    expect(sectionServer).toContain(
+      "coordinate_supporting_point_count\n           AS geocode_coordinate_supporting_point_count",
+    );
+  });
+
   it("keeps aggregate output aliases distinct from their input columns", () => {
     // ClickHouse expands aliases throughout a SELECT. Reusing last_seen_at or
     // retrieved_at for max(...) makes argMax(..., <column>) a nested aggregate.

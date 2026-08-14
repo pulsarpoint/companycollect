@@ -5,7 +5,12 @@ import { defineConfig } from "vite";
 export default defineConfig({
   server: { port: 5183 },
   plugins: [tailwindcss(), reactRouter()],
+  optimizeDeps: {
+    exclude: ["react-leaflet", "@react-leaflet/core"],
+    include: ["leaflet"],
+  },
   resolve: {
+    dedupe: ["react", "react-dom"],
     tsconfigPaths: true,
   },
 });

@@ -1,0 +1,315 @@
+- generic [ref=e2]:
+  - generic [ref=e5]:
+    - list [ref=e7]:
+      - listitem [ref=e8]:
+        - link "CompanyCollect" [ref=e9] [cursor=pointer]:
+          - /url: /countries
+    - list [ref=e14]:
+      - listitem [ref=e15]:
+        - link "Countries" [ref=e16] [cursor=pointer]:
+          - /url: /countries
+      - listitem [ref=e23]:
+        - link "Procurement" [ref=e24] [cursor=pointer]:
+          - /url: /procurements
+      - listitem [ref=e32]:
+        - link "People" [ref=e33] [cursor=pointer]:
+          - /url: /people
+  - main [ref=e40]:
+    - generic [ref=e41]:
+      - button "Toggle Sidebar" [ref=e42]
+      - separator [ref=e44]
+      - generic [ref=e45]: CompanyCollect Backoffice
+    - generic [ref=e47]:
+      - button "Sweden companies" [ref=e49] [cursor=pointer]
+      - generic [ref=e51]:
+        - generic [ref=e52]:
+          - heading "78 Elservice AB" [level=1] [ref=e53]
+          - generic [ref=e54]: active
+        - generic [ref=e55]:
+          - generic [ref=e56]: "5568182058"
+          - generic [ref=e57]:
+            - generic [ref=e58]: Company
+            - generic [ref=e59]: Aktiebolag
+          - generic [ref=e60]: Company domains available
+      - tablist [ref=e62]:
+        - tab "Overview" [selected] [ref=e63] [cursor=pointer]
+        - tab "Financials" [ref=e64] [cursor=pointer]
+        - tab "Domains" [ref=e65] [cursor=pointer]
+        - tab "Technology" [ref=e66] [cursor=pointer]
+      - generic [ref=e68]:
+        - generic [ref=e69]:
+          - generic [ref=e70]: Company record
+          - generic [ref=e72]:
+            - generic [ref=e73]:
+              - generic [ref=e74]:
+                - term [ref=e75]: Status
+                - definition [ref=e76]: active
+              - generic [ref=e77]:
+                - term [ref=e78]: Registered
+                - definition [ref=e79]: 2010-09-09
+            - separator [ref=e80]
+            - generic [ref=e81]:
+              - generic [ref=e82]:
+                - term [ref=e83]: Company ID
+                - definition [ref=e84]: "5568182058"
+              - generic [ref=e85]:
+                - term [ref=e86]: Registration number
+                - definition [ref=e87]: "5568182058"
+              - generic [ref=e88]:
+                - term [ref=e89]: Legal name
+                - definition [ref=e90]: 78 Elservice AB
+              - generic [ref=e91]:
+                - term [ref=e92]: Legal form code
+                - definition [ref=e93]: AB-ORGFO
+              - generic [ref=e94]:
+                - term [ref=e95]: Status reason
+                - definition [ref=e96]: —
+              - generic [ref=e97]:
+                - term [ref=e98]: Dissolution date
+                - definition [ref=e99]: —
+              - generic [ref=e100]:
+                - term [ref=e101]: Bolagsverket source record uid
+                - definition [ref=e102]: 972a065ca3ed046ccd2dea4f1d0e28bbc99c7a764c232a180c8c19a9a42f32a6
+              - generic [ref=e103]:
+                - term [ref=e104]: Scb source record uid
+                - definition [ref=e105]: 8f3b3cce6ae8f63986b4fc90127fc4765b891dde239cf67f403db819b1cc4e6c
+              - generic [ref=e106]:
+                - term [ref=e107]: Activity description original
+                - definition [ref=e108]: Föremålet för bolagets verksamhet är att bedriva elinstallationer, service av elinstallationer, otimering av elinstallationer, projektering, datastyrning samt därmed förenlig verksamhet.
+              - generic [ref=e109]:
+                - term [ref=e110]: Industry
+                - definition [ref=e111]: —
+            - group [ref=e112]:
+              - generic "Source & lineage" [ref=e113] [cursor=pointer]
+        - generic [ref=e163]:
+          - generic [ref=e164]:
+            - generic [ref=e165]: Descriptions
+            - generic [ref=e166]: Each source remains separate. The newest version is shown first; older source versions remain expandable.
+          - generic [ref=e168]:
+            - generic [ref=e169]:
+              - generic [ref=e170]: registry company
+              - generic [ref=e171]: registered activity
+            - paragraph [ref=e172]: The object of the company's business is to conduct electrical installations, service of electrical installations, timing of electrical installations, design, data control, and compatible business.
+            - group [ref=e173]:
+              - generic "Original (sv)" [ref=e174] [cursor=pointer]
+            - group [ref=e175]:
+              - generic "Evidence (1)" [ref=e176] [cursor=pointer]
+        - generic [ref=e177]:
+          - generic [ref=e178]: Financial statements
+          - generic [ref=e180]:
+            - paragraph [ref=e181]: Filed company-keyed financial snapshots and yearly history are available.
+            - button "View financials" [ref=e182] [cursor=pointer]
+        - generic [ref=e183]:
+          - generic [ref=e184]: People and roles
+          - generic [ref=e186]:
+            - generic [ref=e188]:
+              - paragraph [ref=e189]: Annual-account signatures · fiscal 2025
+              - list [ref=e190]:
+                - listitem [ref=e191]:
+                  - generic [ref=e192]:
+                    - link "Marcin Gabrych" [ref=e193] [cursor=pointer]:
+                      - /url: /country/se/person/81cbf6d1-2942-6fd8-1d3c-44111f9fdd95
+                    - generic [ref=e194]: Board member
+                    - generic [ref=e195]: Styrelseledamot
+                  - group [ref=e196]:
+                    - generic "Evidence (1)" [ref=e197] [cursor=pointer]
+                - listitem [ref=e198]:
+                  - generic [ref=e199]:
+                    - link "Camilla Andersson" [ref=e200] [cursor=pointer]:
+                      - /url: /country/se/person/60fb2e46-68e4-eee6-e3b6-95d552232964
+                    - generic [ref=e201]: Signatory
+                  - group [ref=e202]:
+                    - generic "Evidence (1)" [ref=e203] [cursor=pointer]
+                - listitem [ref=e204]:
+                  - generic [ref=e205]:
+                    - link "Camilla Andersson" [ref=e206] [cursor=pointer]:
+                      - /url: /country/se/person/2497b076-6ab4-4f36-a45b-25e8f0ece561
+                    - generic [ref=e207]: Signatory
+                  - group [ref=e208]:
+                    - generic "Evidence (1)" [ref=e209] [cursor=pointer]
+                - listitem [ref=e210]:
+                  - generic [ref=e211]:
+                    - link "Marcin Gabrych" [ref=e212] [cursor=pointer]:
+                      - /url: /country/se/person/ff7da616-5cb0-f130-fced-1c03d65e38df
+                    - generic [ref=e213]: Signatory
+                  - group [ref=e214]:
+                    - generic "Evidence (1)" [ref=e215] [cursor=pointer]
+                - listitem [ref=e216]:
+                  - generic [ref=e217]:
+                    - link "Marcin Gabrych" [ref=e218] [cursor=pointer]:
+                      - /url: /country/se/person/bea641e0-42dc-ffc3-3e38-b49725ad704b
+                    - generic [ref=e219]: Board member
+                    - generic [ref=e220]: Styrelseledamot
+                  - group [ref=e221]:
+                    - generic "Evidence (1)" [ref=e222] [cursor=pointer]
+                - listitem [ref=e223]:
+                  - generic [ref=e224]:
+                    - link "Marcin Gabrych" [ref=e225] [cursor=pointer]:
+                      - /url: /country/se/person/0a75fa87-d1d4-f2a0-9619-926b4808f3af
+                    - generic [ref=e226]: Board member
+                    - generic [ref=e227]: Styrelseledamot
+                  - group [ref=e228]:
+                    - generic "Evidence (1)" [ref=e229] [cursor=pointer]
+                - listitem [ref=e230]:
+                  - generic [ref=e231]:
+                    - link "Camilla Andersson" [ref=e232] [cursor=pointer]:
+                      - /url: /country/se/person/84a3d7c9-d06a-6eea-50ec-fb7d4598ab6a
+                    - generic [ref=e233]: Signatory
+                  - group [ref=e234]:
+                    - generic "Evidence (1)" [ref=e235] [cursor=pointer]
+                - listitem [ref=e236]:
+                  - generic [ref=e237]:
+                    - link "Camilla Andersson" [ref=e238] [cursor=pointer]:
+                      - /url: /country/se/person/3fe0878b-be7f-bbb6-c33a-553a531b8d75
+                    - generic [ref=e239]: Signatory
+                  - group [ref=e240]:
+                    - generic "Evidence (1)" [ref=e241] [cursor=pointer]
+                - listitem [ref=e242]:
+                  - generic [ref=e243]:
+                    - link "Camilla Andersson" [ref=e244] [cursor=pointer]:
+                      - /url: /country/se/person/0a83de15-e932-15c9-1169-c6d9a8e90be1
+                    - generic [ref=e245]: Signatory
+                  - group [ref=e246]:
+                    - generic "Evidence (1)" [ref=e247] [cursor=pointer]
+                - listitem [ref=e248]:
+                  - generic [ref=e249]:
+                    - link "Camilla Andersson" [ref=e250] [cursor=pointer]:
+                      - /url: /country/se/person/0311a149-1907-88ea-438a-5e037dfae226
+                    - generic [ref=e251]: Signatory
+                  - group [ref=e252]:
+                    - generic "Evidence (1)" [ref=e253] [cursor=pointer]
+                - listitem [ref=e254]:
+                  - generic [ref=e255]:
+                    - link "Marcin Gabrych" [ref=e256] [cursor=pointer]:
+                      - /url: /country/se/person/b185f297-0589-9cc6-01a8-bf16df9b77df
+                    - generic [ref=e257]: Signatory
+                  - group [ref=e258]:
+                    - generic "Evidence (1)" [ref=e259] [cursor=pointer]
+                - listitem [ref=e260]:
+                  - generic [ref=e261]:
+                    - link "Marcin Gabrych" [ref=e262] [cursor=pointer]:
+                      - /url: /country/se/person/1003014b-7b59-62af-f771-7e578cfb96b5
+                    - generic [ref=e263]: Signatory
+                  - group [ref=e264]:
+                    - generic "Evidence (1)" [ref=e265] [cursor=pointer]
+            - generic [ref=e266]:
+              - separator [ref=e267]
+              - paragraph [ref=e268]: Auditor
+              - list [ref=e269]:
+                - listitem [ref=e270]:
+                  - generic [ref=e271]:
+                    - link "Camilla Andersson" [ref=e272] [cursor=pointer]:
+                      - /url: /country/se/person/10ad89ff-ce1a-f04d-30a1-cbaf97203791
+                    - generic [ref=e273]: Auditor
+                    - generic [ref=e274]: Auktoriserad revisor
+                  - group [ref=e275]:
+                    - generic "Evidence (1)" [ref=e276] [cursor=pointer]
+                - listitem [ref=e277]:
+                  - generic [ref=e278]:
+                    - link "Camilla Andersson" [ref=e279] [cursor=pointer]:
+                      - /url: /country/se/person/14ab1663-8bb4-3feb-a03f-288dd9daee67
+                    - generic [ref=e280]: Auditor
+                    - generic [ref=e281]: Auktoriserad revisor
+                  - group [ref=e282]:
+                    - generic "Evidence (1)" [ref=e283] [cursor=pointer]
+        - generic [ref=e284]:
+          - generic [ref=e285]:
+            - generic [ref=e286]: Contacts and domains
+            - generic [ref=e287]: Deterministic values and source observations are displayed independently.
+          - generic [ref=e290]:
+            - generic [ref=e291]: domain
+            - generic [ref=e292]: 78elservice.com
+            - generic [ref=e293]: primary
+        - generic [ref=e294]:
+          - generic [ref=e295]: Industries
+          - list [ref=e298]:
+            - listitem [ref=e299]:
+              - generic [ref=e300]:
+                - generic [ref=e301]: registry
+                - generic [ref=e302]: "4321"
+                - generic [ref=e303]: 43.21 Electrical installation
+                - generic [ref=e304]: primary
+              - group [ref=e305]:
+                - generic "Evidence (1)" [ref=e306] [cursor=pointer]
+        - generic [ref=e307]:
+          - generic [ref=e308]: Contact & location
+          - generic [ref=e310]:
+            - generic [ref=e311]:
+              - generic [ref=e312]:
+                - generic [ref=e313]: Postal
+                - generic [ref=e314]: Visiting or postal
+                - generic [ref=e315]: 2 sources
+              - paragraph [ref=e316]: Box 222, 14701 TUMBA
+              - generic [ref=e318]:
+                - heading [level=3] [ref=e319]:
+                  - button "Source records (2)" [expanded] [active] [ref=e320]
+                - region "Source records (2)" [ref=e382]:
+                  - list [ref=e384]:
+                    - listitem [ref=e385]:
+                      - generic [ref=e386]:
+                        - generic [ref=e387]: Bolagsverket
+                        - generic [ref=e388]: Postal
+                        - generic [ref=e389]: Observed Aug 8, 2026
+                      - paragraph [ref=e390]: Box 222, 14701 TUMBA
+                      - paragraph [ref=e391]: "Source value: Box 222$$TUMBA$14701$SE-LAND"
+                      - paragraph [ref=e392]: Record
+                    - listitem [ref=e393]:
+                      - generic [ref=e394]:
+                        - generic [ref=e395]: Scb
+                        - generic [ref=e396]: Visiting or postal
+                        - generic [ref=e397]: Observed Aug 8, 2026
+                      - paragraph [ref=e398]: BOX 222, 14701 TUMBA
+                      - paragraph [ref=e399]: Record
+            - separator [ref=e321]
+            - generic [ref=e323]:
+              - generic [ref=e324]:
+                - heading "Companies at this address" [level=3] [ref=e325]
+                - paragraph [ref=e326]: Find other registrations in the same building.
+              - button "Show companies" [ref=e327]
+        - generic [ref=e328]:
+          - generic [ref=e329]:
+            - generic [ref=e330]: Sources
+            - generic [ref=e331]: 7 versioned evidence records linked to this company.
+          - generic [ref=e332]:
+            - generic [ref=e333]:
+              - generic [ref=e334]:
+                - generic [ref=e335]: annual report xhtml
+                - generic [ref=e336]: sweden financial
+              - group [ref=e338]:
+                - generic "Evidence (1)" [ref=e339] [cursor=pointer]
+            - generic [ref=e340]:
+              - generic [ref=e341]:
+                - generic [ref=e342]: annual report xhtml
+                - generic [ref=e343]: sweden financial
+              - group [ref=e345]:
+                - generic "Evidence (1)" [ref=e346] [cursor=pointer]
+            - generic [ref=e347]:
+              - generic [ref=e348]:
+                - generic [ref=e349]: annual report xhtml
+                - generic [ref=e350]: sweden financial
+              - group [ref=e352]:
+                - generic "Evidence (1)" [ref=e353] [cursor=pointer]
+            - generic [ref=e354]:
+              - generic [ref=e355]:
+                - generic [ref=e356]: annual report xhtml
+                - generic [ref=e357]: sweden financial
+              - group [ref=e359]:
+                - generic "Evidence (1)" [ref=e360] [cursor=pointer]
+            - generic [ref=e361]:
+              - generic [ref=e362]:
+                - generic [ref=e363]: annual report xhtml
+                - generic [ref=e364]: sweden financial
+              - group [ref=e366]:
+                - generic "Evidence (1)" [ref=e367] [cursor=pointer]
+            - generic [ref=e368]:
+              - generic [ref=e369]:
+                - generic [ref=e370]: registry company
+                - generic [ref=e371]: sweden bolagsverket
+              - group [ref=e373]:
+                - generic "Evidence (1)" [ref=e374] [cursor=pointer]
+            - generic [ref=e375]:
+              - generic [ref=e376]:
+                - generic [ref=e377]: registry company
+                - generic [ref=e378]: sweden scb
+              - group [ref=e380]:
+                - generic "Evidence (1)" [ref=e381] [cursor=pointer]

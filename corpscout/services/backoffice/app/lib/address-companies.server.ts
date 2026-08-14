@@ -15,55 +15,48 @@ const SWEDEN_SAME_BUILDING_QUERY = `WITH
   target_address AS (
     SELECT
       replaceRegexpAll(
-        upperUTF8(trim(replaceRegexpAll(
-          coalesce(nullIf(street_address, ''), raw_address, ''),
-          '\\s+',
-          ' '
-        ))),
-        ' [0-9]+ TR$',
+        replaceRegexpAll(
+          lowerUTF8(address.street_address),
+          '[, ]+[0-9]+ +(tr|trappor?)$',
+          ''
+        ),
+        '[^\\p{L}\\p{N}]+',
         ''
-      ) AS street_key,
-      replaceRegexpAll(coalesce(postal_code, ''), '[^0-9]', '') AS postal_key,
-      upperUTF8(if(
-        coalesce(country_code, '') = '' AND lowerUTF8(trim(coalesce(post_town, ''))) != 'utlandet',
-        'SE',
-        coalesce(country_code, '')
-      )) AS country_key
-    FROM se_company_addresses_current
-    WHERE company_id IN (
-      SELECT company_id
-      FROM se_companies
-      WHERE registration_number = {id:String}
-    )
-      AND coalesce(nullIf(street_address, ''), raw_address, '') != ''
-      AND coalesce(postal_code, '') != ''
-      AND has_address = 1
+      ) AS building_street_key,
+      replaceRegexpAll(address.postal_code, '[^0-9]', '') AS postal_key,
+      CAST(address.country_code, 'Nullable(String)') AS country_code
+    FROM se_company_addresses_serving_current AS link
+    INNER JOIN se_addresses_current AS address USING (address_id)
+    INNER JOIN se_address_geocodes_current AS geocode USING (address_id)
+    PREWHERE link.company_id = {id:String}
+    WHERE address.address_kind = 'physical'
     ORDER BY
-      address_type = 'visiting_or_postal' DESC,
-      address_type = 'postal' DESC
+      has(link.address_types, 'visiting_or_postal') DESC,
+      has(link.address_types, 'visiting') DESC,
+      geocode.geocode_precision = 'building' DESC,
+      link.address_id
     LIMIT 1
   ),
-  matching_company_ids AS (
-    SELECT DISTINCT address.company_id
-    FROM se_company_addresses_current AS address
-    CROSS JOIN target_address AS target
+  matching_address_ids AS (
+    SELECT address_id
+    FROM se_addresses_current
     WHERE replaceRegexpAll(
-      upperUTF8(trim(replaceRegexpAll(
-        coalesce(nullIf(address.street_address, ''), address.raw_address, ''),
-        '\\s+',
-        ' '
-      ))),
-      ' [0-9]+ TR$',
+      replaceRegexpAll(
+        lowerUTF8(street_address),
+        '[, ]+[0-9]+ +(tr|trappor?)$',
+        ''
+      ),
+      '[^\\p{L}\\p{N}]+',
       ''
-    ) = target.street_key
-      AND replaceRegexpAll(coalesce(address.postal_code, ''), '[^0-9]', '') = target.postal_key
-      AND upperUTF8(if(
-        coalesce(address.country_code, '') = ''
-          AND lowerUTF8(trim(coalesce(address.post_town, ''))) != 'utlandet',
-        'SE',
-        coalesce(address.country_code, '')
-      )) = target.country_key
-      AND address.has_address = 1
+    ) = (SELECT building_street_key FROM target_address)
+      AND replaceRegexpAll(postal_code, '[^0-9]', '') =
+        (SELECT postal_key FROM target_address)
+      AND country_code = (SELECT country_code FROM target_address)
+  ),
+  matching_company_ids AS (
+    SELECT company_id
+    FROM se_company_address_links_current
+    PREWHERE address_id IN (SELECT address_id FROM matching_address_ids)
   )
 SELECT
   toString(registration_number) AS company_id,
