@@ -54,8 +54,6 @@ DENMARK_CVR_PERSON_DETAIL_MAPPING_VERSION = 1
 DENMARK_CVR_PERSON_IDS_TABLE = "person_ids"
 DENMARK_CVR_PERSON_ID_INSERT_BATCH_ROWS = 50_000
 DENMARK_CVR_PERSON_ID_PROGRESS_INTERVAL_SECONDS = 60.0
-DATACVR_PERSON_DETAIL_SUPPRESSIBLE_STATUSES = frozenset({404})
-
 DATACVR_PERSON_DETAIL_SCRIPT = """
 async ({ url }) => {
   const response = await fetch(
@@ -237,7 +235,7 @@ class DenmarkCvrPersonDetailResource(dg.ConfigurableResource):
                 if person_index > 0:
                     sleep(self._request_delay_seconds())
                 source_url = person_detail_api_url(self.detail_base_url, identity)
-                result = self._request_with_retry(
+                result, attempt_count = self._request_with_retry(
                     page,
                     identity=identity,
                     source_url=source_url,
@@ -248,7 +246,7 @@ class DenmarkCvrPersonDetailResource(dg.ConfigurableResource):
                         identity=identity,
                         source_url=source_url,
                         result=result,
-                        attempt_count=1,
+                        attempt_count=attempt_count,
                     )
                     continue
                 yield _validated_person_detail_download(
@@ -269,7 +267,7 @@ class DenmarkCvrPersonDetailResource(dg.ConfigurableResource):
         identity: DenmarkCvrPersonDetailIdentity,
         source_url: str,
         sleep: Callable[[float], None],
-    ) -> Any:
+    ) -> tuple[Any, int]:
         result: Any = None
         for attempt in range(1, self.max_attempts + 1):
             try:
@@ -283,7 +281,7 @@ class DenmarkCvrPersonDetailResource(dg.ConfigurableResource):
                     f"{identity.person_id}"
                 ) from None
             if not _is_retryable_person_detail_result(result):
-                return result
+                return result, attempt
             if attempt < self.max_attempts:
                 sleep(
                     _person_detail_retry_delay_seconds(
@@ -293,7 +291,7 @@ class DenmarkCvrPersonDetailResource(dg.ConfigurableResource):
                         max_delay_seconds=self.retry_max_delay_seconds,
                     )
                 )
-        return result
+        return result, self.max_attempts
 
 
 def company_detail_person_identities(
@@ -1104,10 +1102,7 @@ def _person_detail_http_failure(
             f"DataCVR person-detail response is invalid for {identity.person_id}"
         )
     status = result.get("status")
-    if (
-        not isinstance(status, int)
-        or status not in DATACVR_PERSON_DETAIL_SUPPRESSIBLE_STATUSES
-    ):
+    if not isinstance(status, int) or not 400 <= status < 600:
         raise DenmarkCvrPersonDetailRequestError(
             "DataCVR returned an invalid terminal person-detail response for "
             f"{identity.person_id}"
@@ -1203,10 +1198,10 @@ def _is_retryable_person_detail_result(result: Any) -> bool:
 
 
 def _is_suppressible_person_detail_result(result: Any) -> bool:
-    return (
-        isinstance(result, Mapping)
-        and result.get("status") in DATACVR_PERSON_DETAIL_SUPPRESSIBLE_STATUSES
-    )
+    if not isinstance(result, Mapping):
+        return False
+    status = result.get("status")
+    return isinstance(status, int) and 400 <= status < 600
 
 
 def _person_detail_retry_delay_seconds(
