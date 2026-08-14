@@ -1,1 +1,0 @@
-DROP TABLE IF EXISTS corpscout.se_company_addresses_serving_current;

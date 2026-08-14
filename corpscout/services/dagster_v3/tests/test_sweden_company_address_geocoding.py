@@ -512,20 +512,7 @@ def test_sweden_company_address_matching_only_accepts_unique_exact_osm_rows() ->
         "Tumba",
         3,
     )
-    from dagster_v3.defs.sweden_company.shared_address_serving import (
-        replace_sweden_company_addresses_serving,
-    )
-
-    serving_counts = replace_sweden_company_addresses_serving(
-        connection=connection,
-        serving_run_id="serving-run",
-        served_at=datetime(2026, 8, 12, 19, 59, tzinfo=UTC),
-    )
-    assert serving_counts == {
-        "company_addresses": 7,
-        "reviewed_links": 1,
-    }
-    serving_rows = connection.execute(
+    linked_rows = connection.execute(
         """
         select
             link.company_id,
@@ -534,7 +521,7 @@ def test_sweden_company_address_matching_only_accepts_unique_exact_osm_rows() ->
             link.review_status,
             geocode.coordinate_locality,
             geocode.source_url
-        from sweden_company_enrichment.se_company_addresses_serving_current link
+        from sweden_company_enrichment.se_company_address_links_current link
         join sweden_company_enrichment.se_addresses_current address
             using (address_id)
         join sweden_company_enrichment.se_address_geocodes_current geocode
@@ -547,7 +534,7 @@ def test_sweden_company_address_matching_only_accepts_unique_exact_osm_rows() ->
         order by company_id
         """
     ).fetchall()
-    assert serving_rows == [
+    assert linked_rows == [
         (
             "exact-company",
             "matched_exact",
@@ -714,19 +701,12 @@ def test_sweden_company_address_geocoding_assets_are_company_enhancements() -> N
     shared_geocode_clickhouse = repo.asset_graph.get(
         dg.AssetKey("sweden_address_geocodes_clickhouse")
     )
-    serving_duckdb = repo.asset_graph.get(
-        dg.AssetKey("sweden_company_addresses_serving_duckdb")
-    )
-    serving_clickhouse = repo.asset_graph.get(
-        dg.AssetKey("sweden_company_addresses_serving_clickhouse")
-    )
     published = repo.asset_graph.get(
         dg.AssetKey("sweden_company_address_geocodes_clickhouse")
     )
     job = repo.get_job("sweden_company_address_geocoding_job")
     shared_job = repo.get_job("sweden_shared_address_identity_job")
     shared_geocode_job = repo.get_job("sweden_shared_address_geocoding_job")
-    serving_job = repo.get_job("sweden_company_addresses_serving_job")
     weekly_job = repo.get_job("sweden_company_address_geocoding_weekly_job")
     schedule = repo.get_schedule_def("sweden_company_address_geocoding_weekly")
 
@@ -752,15 +732,6 @@ def test_sweden_company_address_geocoding_assets_are_company_enhancements() -> N
         dg.AssetKey("sweden_shared_address_osm_matches_duckdb")
     }
     assert shared_geocode_clickhouse.pools == {"sweden_address_osm_duckdb"}
-    assert serving_duckdb.parent_keys == {
-        dg.AssetKey("sweden_shared_addresses_clickhouse"),
-        dg.AssetKey("sweden_address_geocodes_clickhouse"),
-    }
-    assert serving_duckdb.pools == {"sweden_address_osm_duckdb"}
-    assert serving_clickhouse.parent_keys == {
-        dg.AssetKey("sweden_company_addresses_serving_duckdb")
-    }
-    assert serving_clickhouse.pools == {"sweden_address_osm_duckdb"}
     assert matches.group_name == "sweden_company"
     assert matches.parent_keys == {
         dg.AssetKey("sweden_company_canonical_addresses_clickhouse"),
@@ -779,8 +750,6 @@ def test_sweden_company_address_geocoding_assets_are_company_enhancements() -> N
         "sweden_shared_addresses_clickhouse",
         "sweden_shared_address_osm_matches_duckdb",
         "sweden_address_geocodes_clickhouse",
-        "sweden_company_addresses_serving_duckdb",
-        "sweden_company_addresses_serving_clickhouse",
         "sweden_company_address_osm_matches_duckdb",
         "sweden_company_address_geocodes_clickhouse",
         "sweden_company_address_geocode_results_clickhouse",
@@ -795,10 +764,6 @@ def test_sweden_company_address_geocoding_assets_are_company_enhancements() -> N
         "sweden_shared_address_osm_matches_duckdb",
         "sweden_address_geocodes_clickhouse",
     }
-    assert {key.path[-1] for key in serving_job.asset_layer.executable_asset_keys} == {
-        "sweden_company_addresses_serving_duckdb",
-        "sweden_company_addresses_serving_clickhouse",
-    }
     assert {key.path[-1] for key in weekly_job.asset_layer.executable_asset_keys} == {
         "sweden_osm_pbf_s3",
         "sweden_osm_addresses_duckdb",
@@ -808,8 +773,6 @@ def test_sweden_company_address_geocoding_assets_are_company_enhancements() -> N
         "sweden_shared_addresses_clickhouse",
         "sweden_shared_address_osm_matches_duckdb",
         "sweden_address_geocodes_clickhouse",
-        "sweden_company_addresses_serving_duckdb",
-        "sweden_company_addresses_serving_clickhouse",
         "sweden_company_address_osm_matches_duckdb",
         "sweden_company_address_geocodes_clickhouse",
         "sweden_company_address_geocode_results_clickhouse",
@@ -971,22 +934,27 @@ def test_sweden_shared_address_geocode_migration_keeps_complete_outcomes() -> No
         assert duplicated_address_column not in migration
 
 
-def test_sweden_company_address_serving_migration_is_company_ordered() -> None:
+def test_sweden_company_address_links_are_bidirectionally_ordered() -> None:
     migration = (
         Path(__file__).resolve().parents[3]
         / "clickhouse"
         / "migrations"
-        / "000276_corpscout_se_company_addresses_serving_current.up.sql"
+        / "000274_corpscout_se_shared_addresses.up.sql"
     ).read_text(encoding="utf-8")
+    link_table = migration.split(
+        "CREATE TABLE IF NOT EXISTS corpscout.se_company_address_links_current",
+        maxsplit=1,
+    )[1]
 
-    assert "corpscout.se_company_addresses_serving_current" in migration
-    assert "ORDER BY (company_id, address_id)" in migration
+    assert "ORDER BY (company_id, address_id)" in link_table
+    assert "PROJECTION by_address" in link_table
+    assert "ORDER BY (address_id, company_id)" in link_table
     for column in (
         "review_status LowCardinality(String)",
         "address_identity_run_id String",
-        "serving_run_id String",
+        "evidence_count UInt32",
     ):
-        assert column in migration
+        assert column in link_table
     for authoritative_column in (
         "canonical_display_address String",
         "street_address String",
@@ -1004,4 +972,4 @@ def test_sweden_company_address_serving_migration_is_company_ordered() -> None:
         "source_record_url Nullable(String)",
         "source_snapshot_at Nullable(DateTime64(3, 'UTC'))",
     ):
-        assert authoritative_column not in migration
+        assert authoritative_column not in link_table

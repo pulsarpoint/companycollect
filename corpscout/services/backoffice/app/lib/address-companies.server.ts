@@ -25,7 +25,7 @@ const SWEDEN_SAME_BUILDING_QUERY = `WITH
       ) AS building_street_key,
       replaceRegexpAll(address.postal_code, '[^0-9]', '') AS postal_key,
       CAST(address.country_code, 'Nullable(String)') AS country_code
-    FROM se_company_addresses_serving_current AS link
+    FROM se_company_address_links_current AS link
     INNER JOIN se_addresses_current AS address USING (address_id)
     INNER JOIN se_address_geocodes_current AS geocode USING (address_id)
     PREWHERE link.company_id = {id:String}

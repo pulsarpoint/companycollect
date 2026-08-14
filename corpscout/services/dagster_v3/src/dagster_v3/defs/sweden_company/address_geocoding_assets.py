@@ -16,7 +16,6 @@ from dagster_v3.defs.sweden_company import (
     address_canonicalization,
     address_geocoding,
     shared_address_geocoding,
-    shared_address_serving,
     shared_addresses,
 )
 
@@ -29,8 +28,6 @@ SHARED_ADDRESSES_DUCKDB_ASSET_KEY = "sweden_shared_addresses_duckdb"
 SHARED_ADDRESSES_CLICKHOUSE_ASSET_KEY = "sweden_shared_addresses_clickhouse"
 SHARED_GEOCODE_DUCKDB_ASSET_KEY = "sweden_shared_address_osm_matches_duckdb"
 SHARED_GEOCODE_CLICKHOUSE_ASSET_KEY = "sweden_address_geocodes_clickhouse"
-SERVING_DUCKDB_ASSET_KEY = "sweden_company_addresses_serving_duckdb"
-SERVING_CLICKHOUSE_ASSET_KEY = "sweden_company_addresses_serving_clickhouse"
 WEEKLY_CRON_SCHEDULE = "5 4 * * 2"
 WEEKLY_EXECUTION_TIMEZONE = "Europe/Stockholm"
 MAX_OSM_SNAPSHOT_AGE = timedelta(days=9)
@@ -487,91 +484,6 @@ def sweden_address_geocodes_clickhouse(
 
 @dg.asset(
     deps=[
-        dg.AssetKey(SHARED_ADDRESSES_CLICKHOUSE_ASSET_KEY),
-        dg.AssetKey(SHARED_GEOCODE_CLICKHOUSE_ASSET_KEY),
-    ],
-    group_name=GROUP_NAME,
-    kinds={"python", "duckdb", "clickhouse", "openstreetmap"},
-    pool=osm_tables.DUCKDB_POOL,
-    description=(
-        "Builds the company-keyed Sweden company-address relationship index. "
-        "Address and geocoding attributes remain in their authoritative tables."
-    ),
-)
-def sweden_company_addresses_serving_duckdb(
-    context: dg.AssetExecutionContext,
-    sweden_address_osm_duckdb: DuckDBResource,
-) -> dg.MaterializeResult:
-    served_at = datetime.now(UTC)
-    with sweden_address_osm_duckdb.get_connection() as connection:
-        counts = shared_address_serving.replace_sweden_company_addresses_serving(
-            connection=connection,
-            serving_run_id=context.run_id,
-            served_at=served_at,
-        )
-    return dg.MaterializeResult(
-        metadata={
-            **counts,
-            "duckdb_table": (
-                shared_address_serving.QUALIFIED_DUCKDB_COMPANY_ADDRESSES_SERVING_TABLE
-            ),
-            "served_at": served_at.isoformat(),
-        }
-    )
-
-
-@dg.asset(
-    deps=[dg.AssetKey(SERVING_DUCKDB_ASSET_KEY)],
-    group_name=GROUP_NAME,
-    kinds={"python", "duckdb", "clickhouse", "openstreetmap"},
-    pool=osm_tables.DUCKDB_POOL,
-    metadata={
-        "table": (
-            shared_address_serving.QUALIFIED_CLICKHOUSE_COMPANY_ADDRESSES_SERVING_TABLE
-        )
-    },
-    description=(
-        "Atomically publishes Sweden company-address relationships ordered by "
-        "company and address for low-latency backoffice lookups."
-    ),
-)
-def sweden_company_addresses_serving_clickhouse(
-    context: dg.AssetExecutionContext,
-    sweden_address_osm_duckdb: DuckDBResource,
-    clickhouse: ClickhouseResource,
-) -> dg.MaterializeResult:
-    assert_clickhouse_tables_exist(
-        clickhouse,
-        database=address_canonicalization.CLICKHOUSE_DATABASE,
-        tables=(shared_address_serving.COMPANY_ADDRESSES_SERVING_TABLE,),
-    )
-    with sweden_address_osm_duckdb.get_connection() as connection:
-        with clickhouse.get_connection() as clickhouse_client:
-            rows = export_duckdb_connection_table_to_clickhouse(
-                duckdb_connection=connection,
-                clickhouse_client=clickhouse_client,
-                duckdb_schema=address_canonicalization.ENRICHMENT_SCHEMA,
-                duckdb_table=(shared_address_serving.COMPANY_ADDRESSES_SERVING_TABLE),
-                clickhouse_database=address_canonicalization.CLICKHOUSE_DATABASE,
-                clickhouse_table=(
-                    shared_address_serving.COMPANY_ADDRESSES_SERVING_TABLE
-                ),
-                columns=(shared_address_serving.COMPANY_ADDRESSES_SERVING_COLUMNS),
-                truncate=True,
-                log=context.log.info,
-            )
-    return dg.MaterializeResult(
-        metadata={
-            "rows": rows,
-            "table": (
-                shared_address_serving.QUALIFIED_CLICKHOUSE_COMPANY_ADDRESSES_SERVING_TABLE
-            ),
-        }
-    )
-
-
-@dg.asset(
-    deps=[
         dg.AssetKey(CANONICAL_CLICKHOUSE_ASSET_KEY),
         dg.AssetKey("sweden_osm_addresses_duckdb"),
     ],
@@ -613,7 +525,7 @@ def sweden_company_address_osm_matches_duckdb(
     pool=osm_tables.DUCKDB_POOL,
     metadata={"table": address_geocoding.QUALIFIED_CLICKHOUSE_TABLE},
     description=(
-        "Atomically replaces the Sweden company address geocode serving table "
+        "Atomically replaces the Sweden company address geocode table "
         "with only unique exact OSM matches and their complete source provenance."
     ),
 )
@@ -1046,7 +958,7 @@ def sweden_shared_address_geocodes_complete_check(
     name="shared_geocoding_matches_company_baseline",
     description=(
         "Compares company-link coverage from shared geocodes with the existing "
-        "company-address outcome table before serving consumers are cut over."
+        "company-address outcome table."
     ),
 )
 def sweden_shared_address_geocodes_baseline_check(
@@ -1112,85 +1024,6 @@ def sweden_shared_address_geocodes_baseline_check(
             "shared_geolocated_company_links": int(shared_geolocated),
             "exact_difference": int(shared_exact) - int(baseline_exact),
             "geolocated_difference": int(shared_geolocated) - int(baseline_geolocated),
-        },
-    )
-
-
-@dg.asset_check(
-    asset=sweden_company_addresses_serving_clickhouse,
-    name="company_address_serving_snapshot_is_complete",
-    description=(
-        "Fails when the company-keyed relationship index is incomplete, "
-        "duplicated, invalid, or misaligned with address-owned data."
-    ),
-)
-def sweden_company_addresses_serving_complete_check(
-    clickhouse: ClickhouseResource,
-) -> dg.AssetCheckResult:
-    with clickhouse.get_connection() as client:
-        [(link_rows,)] = client.execute(
-            f"""
-            SELECT count()
-            FROM {
-                shared_addresses.QUALIFIED_CLICKHOUSE_COMPANY_ADDRESS_LINKS_TABLE
-            }
-            """
-        )
-        [
-            (
-                serving_rows,
-                unique_rows,
-                serving_runs,
-                address_identity_runs,
-                misaligned_addresses,
-                invalid_reviews,
-            )
-        ] = client.execute(
-            f"""
-            SELECT
-                count(),
-                uniqExact(tuple(company_id, address_id)),
-                uniqExact(serving.serving_run_id),
-                uniqExact(serving.address_identity_run_id),
-                countIf(
-                    serving.address_identity_run_id
-                        != address.address_identity_run_id
-                    OR serving.address_identity_run_id
-                        != geocode.address_identity_run_id
-                ),
-                countIf(
-                    serving.review_status NOT IN (
-                        'unreviewed', 'confirmed', 'rejected'
-                    )
-                )
-            FROM {
-                shared_address_serving.QUALIFIED_CLICKHOUSE_COMPANY_ADDRESSES_SERVING_TABLE
-            } serving
-            LEFT JOIN {
-                shared_addresses.QUALIFIED_CLICKHOUSE_SHARED_ADDRESSES_TABLE
-            } address USING (address_id)
-            LEFT JOIN {
-                shared_address_geocoding.QUALIFIED_CLICKHOUSE_ADDRESS_GEOCODES_TABLE
-            } geocode USING (address_id)
-            """
-        )
-    passed = (
-        int(link_rows) == int(serving_rows) == int(unique_rows)
-        and int(serving_runs) == 1
-        and int(address_identity_runs) == 1
-        and int(misaligned_addresses) == 0
-        and int(invalid_reviews) == 0
-    )
-    return dg.AssetCheckResult(
-        passed=passed,
-        metadata={
-            "company_address_links": int(link_rows),
-            "serving_rows": int(serving_rows),
-            "unique_serving_rows": int(unique_rows),
-            "serving_runs": int(serving_runs),
-            "address_identity_runs": int(address_identity_runs),
-            "misaligned_addresses": int(misaligned_addresses),
-            "invalid_reviews": int(invalid_reviews),
         },
     )
 
@@ -1282,8 +1115,6 @@ sweden_company_address_geocoding_job = dg.define_asset_job(
         SHARED_ADDRESSES_CLICKHOUSE_ASSET_KEY,
         SHARED_GEOCODE_DUCKDB_ASSET_KEY,
         SHARED_GEOCODE_CLICKHOUSE_ASSET_KEY,
-        SERVING_DUCKDB_ASSET_KEY,
-        SERVING_CLICKHOUSE_ASSET_KEY,
         "sweden_company_address_osm_matches_duckdb",
         GEOCODE_ASSET_KEY,
         GEOCODE_RESULT_ASSET_KEY,
@@ -1299,7 +1130,7 @@ sweden_shared_address_identity_job = dg.define_asset_job(
     tags={"country": "SE", "pipeline": "shared_address_identity"},
     description=(
         "Builds and publishes country-level Sweden address identities and "
-        "company-address links without changing geocoding or serving consumers."
+        "company-address links without changing geocoding consumers."
     ),
 )
 
@@ -1316,19 +1147,6 @@ sweden_shared_address_geocoding_job = dg.define_asset_job(
     ),
 )
 
-sweden_company_addresses_serving_job = dg.define_asset_job(
-    name="sweden_company_addresses_serving_job",
-    selection=dg.AssetSelection.assets(
-        SERVING_DUCKDB_ASSET_KEY,
-        SERVING_CLICKHOUSE_ASSET_KEY,
-    ),
-    tags={"country": "SE", "pipeline": "company_address_serving"},
-    description=(
-        "Builds and atomically publishes the company-keyed Sweden "
-        "company-address relationship index."
-    ),
-)
-
 sweden_company_address_geocoding_weekly_job = dg.define_asset_job(
     name="sweden_company_address_geocoding_weekly_job",
     selection=dg.AssetSelection.assets(
@@ -1340,8 +1158,6 @@ sweden_company_address_geocoding_weekly_job = dg.define_asset_job(
         SHARED_ADDRESSES_CLICKHOUSE_ASSET_KEY,
         SHARED_GEOCODE_DUCKDB_ASSET_KEY,
         SHARED_GEOCODE_CLICKHOUSE_ASSET_KEY,
-        SERVING_DUCKDB_ASSET_KEY,
-        SERVING_CLICKHOUSE_ASSET_KEY,
         "sweden_company_address_osm_matches_duckdb",
         GEOCODE_ASSET_KEY,
         GEOCODE_RESULT_ASSET_KEY,
@@ -1374,8 +1190,6 @@ defs = dg.Definitions(
         sweden_shared_addresses_clickhouse,
         sweden_shared_address_osm_matches_duckdb,
         sweden_address_geocodes_clickhouse,
-        sweden_company_addresses_serving_duckdb,
-        sweden_company_addresses_serving_clickhouse,
         sweden_company_address_osm_matches_duckdb,
         sweden_company_address_geocodes_clickhouse,
         sweden_company_address_geocode_results_clickhouse,
@@ -1385,7 +1199,6 @@ defs = dg.Definitions(
         sweden_shared_addresses_complete_check,
         sweden_shared_address_geocodes_complete_check,
         sweden_shared_address_geocodes_baseline_check,
-        sweden_company_addresses_serving_complete_check,
         sweden_company_address_exact_match_rate_check,
         sweden_company_address_osm_snapshot_freshness_check,
         sweden_company_address_geocode_results_complete_check,
@@ -1394,7 +1207,6 @@ defs = dg.Definitions(
         sweden_company_address_geocoding_job,
         sweden_shared_address_identity_job,
         sweden_shared_address_geocoding_job,
-        sweden_company_addresses_serving_job,
         sweden_company_address_geocoding_weekly_job,
     ],
     schedules=[sweden_company_address_geocoding_weekly],

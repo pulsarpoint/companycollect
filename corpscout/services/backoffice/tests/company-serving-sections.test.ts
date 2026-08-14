@@ -11,7 +11,7 @@ const companyDetailRoute = readFileSync(
   "utf8",
 );
 
-describe("Sweden company serving cutover", () => {
+describe("Sweden company sections", () => {
   it("keeps raw enrichment sources out of every section request", () => {
     for (const forbidden of [
       "gleif_lei_records",
@@ -45,7 +45,7 @@ describe("Sweden company serving cutover", () => {
       "if(length(address_types) > 0, address_types[1], 'address') AS address_type",
     );
     expect(sectionServer).toContain(
-      "FROM corpscout.se_company_addresses_serving_current",
+      "FROM corpscout.se_company_address_links_current",
     );
     expect(sectionServer).toContain(
       "FROM corpscout.se_addresses_current",

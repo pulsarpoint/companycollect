@@ -41,7 +41,13 @@ CREATE TABLE IF NOT EXISTS corpscout.se_company_address_links_current
     review_note String DEFAULT '',
     address_identity_run_id String,
     address_identity_built_at DateTime64(3, 'UTC'),
-    INDEX company_id_bloom company_id TYPE bloom_filter(0.01) GRANULARITY 4
+    PROJECTION by_address
+    (
+        SELECT
+            company_id,
+            address_id
+        ORDER BY (address_id, company_id)
+    )
 )
 ENGINE = MergeTree
-ORDER BY (address_id, company_id);
+ORDER BY (company_id, address_id);

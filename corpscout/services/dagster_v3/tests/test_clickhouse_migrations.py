@@ -290,8 +290,10 @@ EXPECTED_MIGRATIONS = (
     "000273_corpscout_se_company_canonical_addresses",
     "000274_corpscout_se_shared_addresses",
     "000275_corpscout_se_address_geocodes_current",
-    "000276_corpscout_se_company_addresses_serving_current",
+    "000276_noop",
 )
+
+NOOP_MIGRATIONS = {"000276_noop"}
 
 EXPECTED_ACCESS_MIGRATIONS = ("000241_corpscout_person_correction_writer_role",)
 
@@ -638,6 +640,10 @@ def test_clickhouse_migrations_create_databases_and_tables() -> None:
     for migration_file in EXPECTED_MIGRATIONS:
         sql = _migration_sql(f"{migration_file}.up.sql")
 
+        if migration_file in NOOP_MIGRATIONS:
+            assert sql.strip() == "SELECT 1;"
+            continue
+
         assert "CREATE DATABASE IF NOT EXISTS" in sql
         # Every migration creates, alters, or drops objects — never a no-op.
         # DROP-only up migrations (e.g. removing orphaned tables) are allowed.
@@ -673,6 +679,10 @@ def test_clickhouse_migration_line_comments_do_not_contain_semicolons() -> None:
 def test_clickhouse_migrations_have_down_files() -> None:
     for migration_file in EXPECTED_MIGRATIONS:
         sql = _migration_sql(f"{migration_file}.down.sql")
+
+        if migration_file in NOOP_MIGRATIONS:
+            assert sql.strip() == "SELECT 1;"
+            continue
 
         # Down migrations undo the up migration: DROP-up → CREATE-down and vice versa.
         assert (
@@ -1324,6 +1334,8 @@ def test_finland_resolved_migrations_use_corpscout_database() -> None:
         assert "corpscout_resolved" not in sql
 
     for migration_file in EXPECTED_MIGRATIONS:
+        if migration_file in NOOP_MIGRATIONS:
+            continue
         assert "CREATE DATABASE IF NOT EXISTS corpscout" in _migration_sql(
             f"{migration_file}.up.sql"
         )

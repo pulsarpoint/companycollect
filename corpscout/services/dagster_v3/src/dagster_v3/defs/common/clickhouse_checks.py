@@ -203,8 +203,8 @@ CLICKHOUSE_LEAVES: tuple[ClickhouseLeaf, ...] = (
         WEEKLY,
     ),
     ClickhouseLeaf(
-        "sweden_company_addresses_serving_clickhouse",
-        ("se_company_addresses_serving_current",),
+        "sweden_shared_addresses_clickhouse",
+        ("se_addresses_current", "se_company_address_links_current"),
         WEEKLY,
     ),
     # sweden_financial — reports/facts are scoped incremental exports. The

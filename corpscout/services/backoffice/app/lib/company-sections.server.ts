@@ -517,8 +517,8 @@ async function getAddressesSection(
        if(length(address_types) > 0, address_types[1], 'address') AS address_type,
        address_types,
        address_sources,
-       link_evidence_count AS address_member_count
-     FROM corpscout.se_company_addresses_serving_current
+       evidence_count AS address_member_count
+     FROM corpscout.se_company_address_links_current
      PREWHERE company_id = {id:String}
      ORDER BY address_type, address_id`,
       { id },
