@@ -2,6 +2,7 @@ import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it } from "vitest";
 import {
+  AddressGeocodeOutcomeNotice,
   AddressSourceEvidence,
   addressGeocodeEvidenceLink,
   addressGeocodeOutcomeCopy,
@@ -107,6 +108,19 @@ describe("stored address geocode evidence", () => {
 });
 
 describe("address geocoding outcome explanations", () => {
+  it("explains an exact city-address fallback", () => {
+    expect(
+      addressGeocodeOutcomeCopy({
+        address_type: "visiting_or_postal",
+        full_address: "Transportgatan 11, 26271 ÄNGELHOLM",
+        geocode_status: "matched_exact",
+        geocode_match_method: "city_street_house_exact_unique",
+      })?.description,
+    ).toBe(
+      "City, street, and house number matched one OpenStreetMap record.",
+    );
+  });
+
   it("links exact coordinates to the matched OSM record", () => {
     expect(
       addressGeocodeEvidenceLink({
@@ -172,6 +186,29 @@ describe("address geocoding outcome explanations", () => {
         geocode_candidate_count: 2,
       })?.description,
     ).toContain("2 OpenStreetMap records");
+  });
+
+  it("shows every candidate link for an ambiguous match", () => {
+    const candidateUrls = [
+      "https://www.openstreetmap.org/node/400",
+      "https://www.openstreetmap.org/node/401",
+      "https://www.openstreetmap.org/node/402",
+      "https://www.openstreetmap.org/node/403",
+    ];
+    const html = renderToStaticMarkup(
+      createElement(AddressGeocodeOutcomeNotice, {
+        address: {
+          address_type: "visiting",
+          full_address: "Hamngatan 7, 75320 UPPSALA",
+          geocode_status: "ambiguous",
+          geocode_candidate_count: candidateUrls.length,
+          geocode_candidate_record_urls: candidateUrls,
+        },
+      }),
+    );
+
+    expect(html).toContain("Candidate 4");
+    for (const url of candidateUrls) expect(html).toContain(url);
   });
 
   it("does not claim an outcome before an address has been processed", () => {

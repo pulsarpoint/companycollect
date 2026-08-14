@@ -116,7 +116,9 @@ export function addressGeocodeOutcomeCopy(
       return {
         title: "Exact building location found",
         description:
-          "Postal code, street, and house number matched one OpenStreetMap record.",
+          address.geocode_match_method === "city_street_house_exact_unique"
+            ? "City, street, and house number matched one OpenStreetMap record."
+            : "Postal code, street, and house number matched one OpenStreetMap record.",
         badge: "Exact match",
       };
     case "postal_box":
@@ -133,7 +135,7 @@ export function addressGeocodeOutcomeCopy(
       const candidates = address.geocode_candidate_count ?? 0;
       return {
         title: "Multiple possible building locations",
-        description: `${candidates} OpenStreetMap records share this postal code, street, and house number, so no coordinate was selected.`,
+        description: `${candidates} OpenStreetMap records match this address, so no coordinate was selected.`,
         badge: "Ambiguous",
       };
     }
@@ -141,7 +143,7 @@ export function addressGeocodeOutcomeCopy(
       return {
         title: "No exact building match",
         description:
-          "The Sweden OpenStreetMap extract has no building with the same postal code, street, and house number.",
+          "The Sweden OpenStreetMap extract has no building matching this street and house number within its postal code or city.",
         badge: "Unmatched",
       };
     case "invalid_address":
@@ -163,7 +165,11 @@ export function addressGeocodeOutcomeCopy(
   }
 }
 
-function AddressGeocodeOutcomeNotice({ address }: { address: AddressRow }) {
+export function AddressGeocodeOutcomeNotice({
+  address,
+}: {
+  address: AddressRow;
+}) {
   const copy = addressGeocodeOutcomeCopy(address);
   if (!copy) return null;
   const Icon =
@@ -176,7 +182,7 @@ function AddressGeocodeOutcomeNotice({ address }: { address: AddressRow }) {
           : MapPinOff;
   const candidateUrls =
     address.geocode_status === "ambiguous"
-      ? (address.geocode_candidate_record_urls ?? []).slice(0, 3)
+      ? (address.geocode_candidate_record_urls ?? [])
       : [];
   const evidenceLink = addressGeocodeEvidenceLink(address);
   const snapshotDate = address.geocode_source_snapshot_at

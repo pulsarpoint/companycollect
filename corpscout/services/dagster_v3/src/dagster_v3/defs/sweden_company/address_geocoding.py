@@ -18,9 +18,7 @@ CLICKHOUSE_DATABASE = "corpscout"
 CLICKHOUSE_TABLE = "se_company_address_geocodes"
 QUALIFIED_CLICKHOUSE_TABLE = f"{CLICKHOUSE_DATABASE}.{CLICKHOUSE_TABLE}"
 CLICKHOUSE_RESULTS_TABLE = "se_company_address_geocode_results"
-QUALIFIED_CLICKHOUSE_RESULTS_TABLE = (
-    f"{CLICKHOUSE_DATABASE}.{CLICKHOUSE_RESULTS_TABLE}"
-)
+QUALIFIED_CLICKHOUSE_RESULTS_TABLE = f"{CLICKHOUSE_DATABASE}.{CLICKHOUSE_RESULTS_TABLE}"
 
 ELIGIBLE_OSM_MATCH_KEY_SQL = """
 case
@@ -99,7 +97,7 @@ def replace_sweden_company_address_osm_matches(
     matched_at: datetime,
     log: Callable[..., object] | None = None,
 ) -> dict[str, int]:
-    """Replace strict canonical-address matches while retaining every outcome."""
+    """Replace exact postcode or city-address matches and retain every outcome."""
     _create_canonical_company_address_input(connection)
     connection.execute("BEGIN TRANSACTION")
     try:
@@ -146,10 +144,50 @@ def replace_sweden_company_address_osm_matches(
             group by normalized_match_key
             """
         )
+        connection.execute(
+            f"""
+            create or replace temporary table
+                _sweden_osm_city_address_match_candidates as
+            with normalized as (
+                select
+                    concat_ws(
+                        '|',
+                        normalized_city,
+                        regexp_replace(
+                            concat(normalized_street, normalized_house_number),
+                            '[^[:alnum:]]+',
+                            '',
+                            'g'
+                        )
+                    ) as normalized_match_key,
+                    *
+                from {osm_tables.QUALIFIED_ADDRESS_TABLE}
+                where normalized_postcode = ''
+                  and normalized_city != ''
+                  and normalized_street != ''
+                  and normalized_house_number != ''
+            )
+            select
+                normalized_match_key,
+                count(*)::usmallint as candidate_count,
+                first(latitude order by source_record_id) as latitude,
+                first(longitude order by source_record_id) as longitude,
+                first(coordinate_method order by source_record_id) as coordinate_method,
+                first(source_record_id order by source_record_id) as source_record_id,
+                first(source_record_url order by source_record_id) as source_record_url,
+                list(source_record_id order by source_record_id) as candidate_record_ids,
+                list(source_record_url order by source_record_id)
+                    as candidate_record_urls
+            from normalized
+            group by normalized_match_key
+            """
+        )
         _log(
             log,
-            "Built unique Sweden OSM address match keys: rows=%d elapsed_seconds=%.1f",
+            "Built Sweden OSM address match keys: postcode_candidates=%d "
+            "city_candidates=%d elapsed_seconds=%.1f",
             _count(connection, "_sweden_osm_match_candidates"),
+            _count(connection, "_sweden_osm_city_address_match_candidates"),
             time.monotonic() - stage_started_at,
         )
         connection.execute(
@@ -189,7 +227,9 @@ def replace_sweden_company_address_osm_matches(
                     *,
                     upper(trim(country_code)) as normalized_country_code,
                     normalized_street as normalized_street_house,
-                    normalized_postal_code as normalized_postcode
+                    normalized_postal_code as normalized_postcode,
+                    concat_ws('|', normalized_post_town, normalized_street)
+                        as normalized_city_address_match_key
                 from _sweden_company_addresses
             )
             select
@@ -222,16 +262,43 @@ def replace_sweden_company_address_osm_matches(
             with joined as (
                 select
                     company.*,
-                    coalesce(osm.candidate_count, 0)::usmallint as candidate_count,
-                    osm.latitude,
-                    osm.longitude,
-                    osm.coordinate_method,
-                    osm.source_record_id,
-                    osm.source_record_url,
-                    coalesce(osm.candidate_record_ids, []::varchar[])
+                    coalesce(
+                        postcode_osm.candidate_count,
+                        city_osm.candidate_count,
+                        0
+                    )::usmallint as candidate_count,
+                    coalesce(postcode_osm.latitude, city_osm.latitude) as latitude,
+                    coalesce(postcode_osm.longitude, city_osm.longitude) as longitude,
+                    coalesce(
+                        postcode_osm.coordinate_method,
+                        city_osm.coordinate_method
+                    ) as coordinate_method,
+                    coalesce(
+                        postcode_osm.source_record_id,
+                        city_osm.source_record_id
+                    ) as source_record_id,
+                    coalesce(
+                        postcode_osm.source_record_url,
+                        city_osm.source_record_url
+                    ) as source_record_url,
+                    coalesce(
+                        postcode_osm.candidate_record_ids,
+                        city_osm.candidate_record_ids,
+                        []::varchar[]
+                    )
                         as candidate_record_ids,
-                    coalesce(osm.candidate_record_urls, []::varchar[])
+                    coalesce(
+                        postcode_osm.candidate_record_urls,
+                        city_osm.candidate_record_urls,
+                        []::varchar[]
+                    )
                         as candidate_record_urls,
+                    case
+                        when postcode_osm.candidate_count is not null
+                            then 'postal_code'
+                        when city_osm.candidate_count is not null then 'city'
+                        else ''
+                    end as match_basis,
                     city.locality as coordinate_locality,
                     coalesce(city.supporting_point_count, 0)::uinteger
                         as coordinate_supporting_point_count,
@@ -243,8 +310,14 @@ def replace_sweden_company_address_osm_matches(
                     snapshot.source_snapshot_at,
                     snapshot.source_retrieved_at
                 from _sweden_company_address_keys company
-                left join _sweden_osm_match_candidates osm
-                    on osm.normalized_match_key = {ELIGIBLE_OSM_MATCH_KEY_SQL}
+                left join _sweden_osm_match_candidates postcode_osm
+                    on postcode_osm.normalized_match_key = {ELIGIBLE_OSM_MATCH_KEY_SQL}
+                left join _sweden_osm_city_address_match_candidates city_osm
+                    on city_osm.normalized_match_key = case
+                        when company.eligibility = 'eligible'
+                            then company.normalized_city_address_match_key
+                        else null
+                    end
                 left join _sweden_osm_city_centroids city
                     on city.normalized_city = case
                         when company.eligibility = 'postal_box'
@@ -277,8 +350,10 @@ def replace_sweden_company_address_osm_matches(
                 candidate_record_ids,
                 candidate_record_urls,
                 case
-                    when candidate_count = 1
+                    when candidate_count = 1 and match_basis = 'postal_code'
                         then 'postal_code_street_house_exact_unique'
+                    when candidate_count = 1 and match_basis = 'city'
+                        then 'city_street_house_exact_unique'
                     when eligibility = 'postal_box' and city_latitude is not null
                         then 'post_town_osm_address_point_median'
                     else ''

@@ -492,8 +492,9 @@ def sweden_address_geocodes_clickhouse(
     pool=osm_tables.DUCKDB_POOL,
     description=(
         "Matches canonical Swedish company addresses to the national OSM address "
-        "index by exact postal code, street, and house number. The DuckDB result "
-        "retains matched, ambiguous, unmatched, invalid, and foreign outcomes."
+        "index by exact postal code, street, and house number, with an exact city "
+        "fallback for OSM records without postcodes. The DuckDB result retains "
+        "matched, ambiguous, unmatched, invalid, and foreign outcomes."
     ),
 )
 def sweden_company_address_osm_matches_duckdb(

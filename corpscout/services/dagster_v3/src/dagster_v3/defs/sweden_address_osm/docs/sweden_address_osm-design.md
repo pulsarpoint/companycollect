@@ -58,12 +58,15 @@ extract boundary are counted and omitted for the same reason.
 
 OSM is the worldwide baseline, not Sweden's authoritative address register.
 When Lantmäteriet access is approved, an exact Lantmäteriet address-point match
-must outrank an OSM match. The future company-address resolver will apply:
+must outrank an OSM match. The current OSM resolver implements steps 2 and 3;
+the full company-address resolver will apply:
 
 1. Lantmäteriet exact address point;
 2. OSM exact normalized postcode, street and house number;
-3. controlled fuzzy OSM match; and
-4. postcode/locality centroid fallback.
+3. OSM exact normalized city, street and house number when the OSM record has no
+   postcode, returning every candidate when the key is ambiguous;
+4. controlled fuzzy OSM match; and
+5. postcode/locality centroid fallback.
 
 Every company match will retain source, source record ID, snapshot date,
 precision, method and confidence. This asset does not yet mutate company rows

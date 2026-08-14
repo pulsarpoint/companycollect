@@ -169,6 +169,43 @@ class _CareOfCollisionClickHouseClient:
         )
 
 
+class _CityAddressFallbackClickHouseClient:
+    def execute_iter(self, _sql: str, *, settings: dict[str, int]):
+        assert settings["max_block_size"] > 0
+        yield from (
+            (
+                "city-fallback-company",
+                "k" * 64,
+                "visiting_or_postal",
+                "scb",
+                "TRANSPORTGATAN 11, 26271 ÄNGELHOLM",
+                "TRANSPORTGATAN 11",
+                "",
+                "26271",
+                "ÄNGELHOLM",
+                "SE",
+                "registry-city-fallback",
+                "registry-run",
+                "2026-08-14 16:00:00.000",
+            ),
+            (
+                "city-ambiguous-company",
+                "l" * 64,
+                "visiting_or_postal",
+                "scb",
+                "HAMNGATAN 7, 75320 UPPSALA",
+                "HAMNGATAN 7",
+                "",
+                "75320",
+                "UPPSALA",
+                "SE",
+                "registry-city-ambiguous",
+                "registry-run",
+                "2026-08-14 16:00:00.000",
+            ),
+        )
+
+
 def _osm_connection() -> duckdb.DuckDBPyConnection:
     connection = duckdb.connect()
     connection.execute("create schema sweden_address_osm")
@@ -281,6 +318,74 @@ def _osm_connection() -> duckdb.DuckDBPyConnection:
         [(*row, source_snapshot_at, source_retrieved_at) for row in rows],
     )
     return connection
+
+
+def _add_postcode_less_osm_addresses(
+    connection: duckdb.DuckDBPyConnection,
+) -> None:
+    source_snapshot_at = datetime(2026, 8, 14, 3, 18, 7, tzinfo=UTC)
+    source_retrieved_at = datetime(2026, 8, 14, 15, 42, 51, tzinfo=UTC)
+    rows = [
+        (
+            "node/1406025093",
+            "transportgatan",
+            "11",
+            "",
+            "Ängelholm",
+            "ngelholm",
+            12.8953268,
+            56.2464248,
+            "osm_node",
+            "https://www.openstreetmap.org/node/1406025093",
+        ),
+        (
+            "node/400",
+            "hamngatan",
+            "7",
+            "",
+            "Uppsala",
+            "uppsala",
+            17.64,
+            59.86,
+            "osm_node",
+            "https://www.openstreetmap.org/node/400",
+        ),
+        (
+            "node/401",
+            "hamngatan",
+            "7",
+            "",
+            "Uppsala",
+            "uppsala",
+            17.65,
+            59.87,
+            "osm_node",
+            "https://www.openstreetmap.org/node/401",
+        ),
+        (
+            "node/402",
+            "transportgatan",
+            "11",
+            "",
+            "Göteborg",
+            "göteborg",
+            11.97,
+            57.70,
+            "osm_node",
+            "https://www.openstreetmap.org/node/402",
+        ),
+    ]
+    connection.executemany(
+        """
+        insert into sweden_address_osm.address_points values (
+            ?, ?, ?, ?, ?, ?, ?, ?, ?, ?,
+            'https://download.geofabrik.de/europe/sweden-latest.osm.pbf',
+            'raw/md5=city-fixture/sweden-latest.osm.pbf',
+            'city-fixture-md5', ?, ?
+        )
+        """,
+        [(*row, source_snapshot_at, source_retrieved_at) for row in rows],
+    )
 
 
 def test_shared_address_link_collapses_canonical_care_of_variants() -> None:
@@ -676,6 +781,143 @@ def test_sweden_company_address_matching_only_accepts_unique_exact_osm_rows() ->
     assert city_join_plan is not None
     assert "HASH_JOIN" in city_join_plan[1]
     assert "BLOCKWISE_NL_JOIN" not in city_join_plan[1]
+
+
+def test_osm_without_postcode_matches_exact_city_address() -> None:
+    from dagster_v3.defs.sweden_company.address_canonicalization import (
+        replace_sweden_company_canonical_addresses,
+    )
+    from dagster_v3.defs.sweden_company.address_geocoding import (
+        replace_sweden_company_address_osm_matches,
+    )
+    from dagster_v3.defs.sweden_company.shared_address_geocoding import (
+        replace_sweden_shared_address_osm_matches,
+    )
+    from dagster_v3.defs.sweden_company.shared_addresses import (
+        replace_sweden_shared_addresses,
+    )
+
+    connection = _osm_connection()
+    _add_postcode_less_osm_addresses(connection)
+    replace_sweden_company_canonical_addresses(
+        connection=connection,
+        clickhouse_client=_CityAddressFallbackClickHouseClient(),
+        normalization_run_id="canonical-city-run",
+        normalized_at=datetime(2026, 8, 14, 16, 30, tzinfo=UTC),
+    )
+    replace_sweden_shared_addresses(
+        connection=connection,
+        company_address_link_reviews=(),
+        address_identity_run_id="address-city-run",
+        address_identity_built_at=datetime(2026, 8, 14, 16, 45, tzinfo=UTC),
+    )
+
+    shared_counts = replace_sweden_shared_address_osm_matches(
+        connection=connection,
+        geocode_run_id="shared-city-geocode-run",
+        matched_at=datetime(2026, 8, 14, 17, 0, tzinfo=UTC),
+    )
+    assert shared_counts == {
+        "addresses": 2,
+        "geolocated": 1,
+        "matched_exact": 1,
+        "ambiguous": 1,
+        "unmatched": 0,
+        "invalid_address": 0,
+        "foreign_address": 0,
+        "postal_box": 0,
+    }
+    shared_results = connection.execute(
+        """
+        select
+            address.normalized_street,
+            geocode.match_status,
+            geocode.candidate_count,
+            geocode.match_method,
+            geocode.latitude,
+            geocode.longitude,
+            geocode.candidate_record_urls
+        from sweden_company_enrichment.se_address_geocodes_current geocode
+        join sweden_company_enrichment.se_addresses_current address
+            using (address_id)
+        order by address.normalized_street
+        """
+    ).fetchall()
+    assert shared_results == [
+        (
+            "hamngatan7",
+            "ambiguous",
+            2,
+            "",
+            None,
+            None,
+            [
+                "https://www.openstreetmap.org/node/400",
+                "https://www.openstreetmap.org/node/401",
+            ],
+        ),
+        (
+            "transportgatan11",
+            "matched_exact",
+            1,
+            "city_street_house_exact_unique",
+            56.2464248,
+            12.8953268,
+            ["https://www.openstreetmap.org/node/1406025093"],
+        ),
+    ]
+
+    company_counts = replace_sweden_company_address_osm_matches(
+        connection=connection,
+        source_run_id="company-city-geocode-run",
+        matched_at=datetime(2026, 8, 14, 17, 15, tzinfo=UTC),
+    )
+    assert company_counts == {
+        "addresses": 2,
+        "matched_exact": 1,
+        "ambiguous": 1,
+        "unmatched": 0,
+        "invalid_address": 0,
+        "foreign_address": 0,
+        "postal_box": 0,
+    }
+    company_results = connection.execute(
+        """
+        select
+            company_id,
+            match_status,
+            candidate_count,
+            match_method,
+            latitude,
+            longitude,
+            candidate_record_urls
+        from sweden_company_enrichment.address_osm_match_results
+        order by company_id
+        """
+    ).fetchall()
+    assert company_results == [
+        (
+            "city-ambiguous-company",
+            "ambiguous",
+            2,
+            "",
+            None,
+            None,
+            [
+                "https://www.openstreetmap.org/node/400",
+                "https://www.openstreetmap.org/node/401",
+            ],
+        ),
+        (
+            "city-fallback-company",
+            "matched_exact",
+            1,
+            "city_street_house_exact_unique",
+            56.2464248,
+            12.8953268,
+            ["https://www.openstreetmap.org/node/1406025093"],
+        ),
+    ]
 
 
 def test_sweden_company_address_geocoding_assets_are_company_enhancements() -> None:
