@@ -98,7 +98,9 @@ def test_serving_models_resolve_identity_and_evidence_offline() -> None:
     assert "ref('company_external_identifier_current_build')" in gleif
     assert "ref('company_external_identifier_current_build')" in wikidata
     assert "country_person_match" in management
-    assert "match_status IN ('accepted', 'reviewed')" in management
+    assert "GROUP BY country_code, company_id, identity_person_id" in management
+    assert "identity_person_id AS person_id" in management
+    assert "'registry-person|'" in management
     assert "observed_name_normalized" not in management
     assert "company_section_item_source_links" not in source_links
     assert "ref('company_serving_source_links_build')" in presence
@@ -106,6 +108,8 @@ def test_serving_models_resolve_identity_and_evidence_offline() -> None:
     assert "has(current.source_names, 'wikidata')" in source_links
     assert "has(current.source_names, 'esef_filing')" in source_links
     assert "annual_report_website" in source_links
+    assert "annual_report_signature" in source_links
+    assert "public_knowledge_graph_company_role" in source_links
     company_domains = (models / "company_domains_build.sql").read_text()
     assert "source('corpscout', 'wikidata_company_domains')" in company_domains
     assert "source('corpscout', 'esef_document_contact_candidates')" in company_domains

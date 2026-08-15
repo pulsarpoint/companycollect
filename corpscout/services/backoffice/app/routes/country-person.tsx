@@ -1,12 +1,15 @@
 import { Link, redirect } from "react-router";
-import { ArrowLeft, Users } from "lucide-react";
+import { ArrowLeft, Mail, Users } from "lucide-react";
 import type { Route } from "./+types/country-person";
 import { getCountry } from "~/lib/countries";
 import {
   applyCountryPersonCorrection,
+  findPossibleCountryPersonMatches,
   getCountryPerson,
   PersonCorrectionValidationError,
+  type CountryPersonContact,
   type CountryPersonObservation,
+  type CountryPersonSuggestion,
 } from "~/lib/people.server";
 import { PersonCorrectionWorkspace } from "~/components/person-correction-workspace";
 import { Badge } from "~/components/ui/badge";
@@ -18,6 +21,13 @@ import {
   CardHeader,
   CardTitle,
 } from "~/components/ui/card";
+import {
+  Empty,
+  EmptyDescription,
+  EmptyHeader,
+  EmptyMedia,
+  EmptyTitle,
+} from "~/components/ui/empty";
 
 const ROLE_LABELS: Record<string, string> = {
   chairman: "Chairman",
@@ -25,10 +35,12 @@ const ROLE_LABELS: Record<string, string> = {
   board_member: "Board member",
   deputy_board_member: "Deputy board member",
   liquidator: "Liquidator",
-  auditor: "Auditor",
+  auditor: "External auditor",
   other: "Other",
-  unknown: "Signatory",
+  unknown: "Report signatory",
 };
+
+const MAX_SUGGESTIONS_SHOWN = 12;
 
 const RESOLUTION_LABELS = {
   verified: "Verified identifier",
@@ -38,11 +50,15 @@ const RESOLUTION_LABELS = {
   merged: "Merged identity",
 } as const;
 
+interface CompanyRoleSummary {
+  role_kind: string;
+  role_original: string;
+}
+
 interface CompanySummary {
   company_id: string;
   company_name: string;
-  role_kind: string;
-  role_original: string;
+  roles: CompanyRoleSummary[];
   first_year: number;
   last_year: number;
   observation_count: number;
@@ -61,11 +77,16 @@ export async function loader({ params, request }: Route.LoaderArgs) {
       `/country/${country.code}/person/${detail.person.merged_into_person_id}`,
     );
   }
+  const possibleMatches = await findPossibleCountryPersonMatches(
+    detail.person,
+    detail.observations,
+  );
   const search = new URL(request.url).searchParams;
   const correctionId = search.get("correction");
   return {
     country,
     detail,
+    possibleMatches,
     correctionSubmitted: correctionId
       ? {
           correctionId,
@@ -151,15 +172,27 @@ function yearSpan(first: number, last: number): string {
 function summarizeCompanies(
   observations: CountryPersonObservation[],
 ): CompanySummary[] {
-  const companies = new Map<string, CompanySummary>();
+  const companies = new Map<
+    string,
+    Omit<CompanySummary, "roles"> & {
+      rolesByKind: Map<string, CompanyRoleSummary>;
+    }
+  >();
   for (const observation of observations) {
     const existing = companies.get(observation.company_id);
     if (!existing) {
       companies.set(observation.company_id, {
         company_id: observation.company_id,
         company_name: observation.company_name,
-        role_kind: observation.role_kind,
-        role_original: observation.role_original,
+        rolesByKind: new Map([
+          [
+            observation.role_kind,
+            {
+              role_kind: observation.role_kind,
+              role_original: observation.role_original,
+            },
+          ],
+        ]),
         first_year: observation.fiscal_year,
         last_year: observation.fiscal_year,
         observation_count: 1,
@@ -167,6 +200,13 @@ function summarizeCompanies(
       continue;
     }
     existing.observation_count += 1;
+    const existingRole = existing.rolesByKind.get(observation.role_kind);
+    if (!existingRole || existingRole.role_original === "") {
+      existing.rolesByKind.set(observation.role_kind, {
+        role_kind: observation.role_kind,
+        role_original: observation.role_original,
+      });
+    }
     if (observation.fiscal_year > 0) {
       existing.first_year =
         existing.first_year > 0
@@ -174,16 +214,25 @@ function summarizeCompanies(
           : observation.fiscal_year;
       if (observation.fiscal_year >= existing.last_year) {
         existing.last_year = observation.fiscal_year;
-        existing.role_kind = observation.role_kind;
-        existing.role_original = observation.role_original;
       }
     }
   }
-  return Array.from(companies.values()).sort(
-    (left, right) =>
-      right.last_year - left.last_year ||
-      left.company_name.localeCompare(right.company_name),
-  );
+  return Array.from(companies.values())
+    .map(({ rolesByKind, ...company }) => {
+      const roles = [...rolesByKind.values()];
+      const substantiveRoles = roles.filter(
+        (role) => role.role_kind !== "unknown",
+      );
+      return {
+        ...company,
+        roles: substantiveRoles.length > 0 ? substantiveRoles : roles,
+      };
+    })
+    .sort(
+      (left, right) =>
+        right.last_year - left.last_year ||
+        left.company_name.localeCompare(right.company_name),
+    );
 }
 
 function resolutionExplanation(status: keyof typeof RESOLUTION_LABELS): string {
@@ -202,14 +251,181 @@ function resolutionExplanation(status: keyof typeof RESOLUTION_LABELS): string {
   return "This observation was kept separate because the available evidence could not safely combine it with another record.";
 }
 
+const CONTACT_LABELS = {
+  email: "Email",
+  phone: "Phone",
+  website: "Website",
+  social: "Social profile",
+} as const;
+
+function contactHref(contact: CountryPersonContact): string | null {
+  if (contact.contact_kind === "email") {
+    return `mailto:${contact.contact_value}`;
+  }
+  if (contact.contact_kind === "phone") {
+    return `tel:${contact.contact_value.replace(/[^+\d]/g, "")}`;
+  }
+  try {
+    const url = new URL(contact.contact_value);
+    return url.protocol === "http:" || url.protocol === "https:"
+      ? url.toString()
+      : null;
+  } catch {
+    return null;
+  }
+}
+
+export function PersonContactCard({
+  contacts,
+}: {
+  contacts: CountryPersonContact[];
+}) {
+  return (
+    <Card>
+      <CardHeader>
+        <CardTitle>Contact information</CardTitle>
+        <CardDescription>
+          Only public contact details explicitly connected to this person by a
+          source are shown here.
+        </CardDescription>
+      </CardHeader>
+      <CardContent>
+        {contacts.length > 0 ? (
+          <ul className="divide-y">
+            {contacts.map((contact) => {
+              const href = contactHref(contact);
+              return (
+                <li
+                  key={`${contact.observation_id}-${contact.contact_kind}-${contact.contact_value}`}
+                  className="flex flex-wrap items-baseline gap-3 py-2"
+                >
+                  <Badge variant="outline">
+                    {CONTACT_LABELS[contact.contact_kind]}
+                  </Badge>
+                  {href ? (
+                    <a
+                      href={href}
+                      className="font-medium hover:underline"
+                      target={
+                        contact.contact_kind === "email" ? undefined : "_blank"
+                      }
+                      rel={
+                        contact.contact_kind === "email"
+                          ? undefined
+                          : "noreferrer"
+                      }
+                    >
+                      {contact.contact_value}
+                    </a>
+                  ) : (
+                    <span className="font-medium">{contact.contact_value}</span>
+                  )}
+                  <span className="text-muted-foreground text-xs">
+                    {contact.source}
+                  </span>
+                </li>
+              );
+            })}
+          </ul>
+        ) : (
+          <Empty className="border py-5">
+            <EmptyHeader>
+              <EmptyMedia variant="icon">
+                <Mail />
+              </EmptyMedia>
+              <EmptyTitle>No person-specific contact information</EmptyTitle>
+              <EmptyDescription>
+                Company email addresses and phone numbers are not attributed to
+                a person unless a source makes that connection explicit.
+              </EmptyDescription>
+            </EmptyHeader>
+          </Empty>
+        )}
+      </CardContent>
+    </Card>
+  );
+}
+
+export function PossiblePersonMatchesCard({
+  countryCode,
+  suggestions,
+}: {
+  countryCode: string;
+  suggestions: CountryPersonSuggestion[];
+}) {
+  if (suggestions.length === 0) return null;
+  const shownSuggestions = suggestions.slice(0, MAX_SUGGESTIONS_SHOWN);
+  const remainingSuggestions = suggestions.length - shownSuggestions.length;
+  return (
+    <Card>
+      <CardHeader>
+        <CardTitle>Possible same-person profiles</CardTitle>
+        <CardDescription>
+          These are separate country identities with the same normalized name
+          and a compatible relationship type. They are suggestions for review,
+          not confirmed connections.
+        </CardDescription>
+      </CardHeader>
+      <CardContent>
+        <ul className="divide-y">
+          {shownSuggestions.map((suggestion) => (
+            <li key={suggestion.person.person_id} className="grid gap-2 py-3">
+              <div className="flex flex-wrap items-center gap-2">
+                <Link
+                  to={`/country/${countryCode}/person/${suggestion.person.person_id}`}
+                  className="font-medium hover:underline"
+                >
+                  {suggestion.person.preferred_name}
+                </Link>
+                <Badge variant="outline">Possible match</Badge>
+              </div>
+              <ul className="text-muted-foreground grid gap-1 text-xs">
+                {suggestion.connections.map((connection) => (
+                  <li key={connection.company_id}>
+                    <span className="text-foreground font-medium">
+                      {ROLE_LABELS[connection.role_kind] ??
+                        connection.role_kind}
+                    </span>{" "}
+                    at{" "}
+                    <Link
+                      to={`/company/${countryCode}/${connection.company_id}`}
+                      className="text-foreground hover:underline"
+                    >
+                      {connection.company_name || connection.company_id}
+                    </Link>
+                    {connection.last_year > 0
+                      ? ` · ${yearSpan(connection.first_year, connection.last_year)}`
+                      : ""}
+                    {` · ${connection.observation_count} source ${connection.observation_count === 1 ? "observation" : "observations"}`}
+                  </li>
+                ))}
+              </ul>
+            </li>
+          ))}
+          {remainingSuggestions > 0 ? (
+            <li className="text-muted-foreground py-3 text-xs">
+              …and {remainingSuggestions} more compatible profiles. Use the
+              identity review search to inspect or merge a specific person.
+            </li>
+          ) : null}
+        </ul>
+      </CardContent>
+    </Card>
+  );
+}
+
 export default function CountryPersonPage({
   loaderData,
   actionData,
 }: Route.ComponentProps) {
   const { country, detail } = loaderData;
-  const { person, observations, identifiers } = detail;
+  const { person, observations, identifiers, contacts } = detail;
   const companies = summarizeCompanies(observations);
-  const roles = Array.from(new Set(observations.map((row) => row.role_kind)));
+  const allRoles = Array.from(
+    new Set(observations.map((row) => row.role_kind)),
+  );
+  const substantiveRoles = allRoles.filter((role) => role !== "unknown");
+  const roles = substantiveRoles.length > 0 ? substantiveRoles : allRoles;
 
   return (
     <div className="mx-auto flex w-full max-w-6xl flex-col gap-4">
@@ -248,7 +464,7 @@ export default function CountryPersonPage({
 
       <Card>
         <CardHeader>
-          <CardTitle>Combined profile</CardTitle>
+          <CardTitle>Company relationships</CardTitle>
           <CardDescription>
             {resolutionExplanation(person.resolution_status)}
           </CardDescription>
@@ -287,9 +503,11 @@ export default function CountryPersonPage({
                 >
                   {company.company_name || company.company_id}
                 </Link>
-                <Badge variant="outline">
-                  {ROLE_LABELS[company.role_kind] ?? company.role_kind}
-                </Badge>
+                {company.roles.map((role) => (
+                  <Badge key={role.role_kind} variant="outline">
+                    {ROLE_LABELS[role.role_kind] ?? role.role_kind}
+                  </Badge>
+                ))}
                 <span className="text-muted-foreground text-xs">
                   {yearSpan(company.first_year, company.last_year)} ·{" "}
                   {company.observation_count}{" "}
@@ -297,18 +515,24 @@ export default function CountryPersonPage({
                     ? "observation"
                     : "observations"}
                 </span>
-                {company.role_original &&
-                company.role_original !==
-                  (ROLE_LABELS[company.role_kind] ?? "") ? (
-                  <span className="text-muted-foreground text-xs">
-                    {company.role_original}
-                  </span>
-                ) : null}
+                {company.roles.map((role) =>
+                  role.role_original &&
+                  role.role_original !== (ROLE_LABELS[role.role_kind] ?? "") ? (
+                    <span
+                      key={`${role.role_kind}:${role.role_original}`}
+                      className="text-muted-foreground text-xs"
+                    >
+                      {role.role_original}
+                    </span>
+                  ) : null,
+                )}
               </li>
             ))}
           </ul>
         </CardContent>
       </Card>
+
+      <PersonContactCard contacts={contacts} />
 
       <Card>
         <CardHeader>
@@ -342,6 +566,11 @@ export default function CountryPersonPage({
           )}
         </CardContent>
       </Card>
+
+      <PossiblePersonMatchesCard
+        countryCode={country.code}
+        suggestions={loaderData.possibleMatches}
+      />
 
       <PersonCorrectionWorkspace
         countryCode={country.code}

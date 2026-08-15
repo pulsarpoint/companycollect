@@ -1,5 +1,11 @@
 import { chQuery } from "~/lib/clickhouse.server";
+import {
+  normalizeCountryPersonName,
+  resolveCountryPersonProfilesForCompany,
+} from "~/lib/people.server";
+import { COMPANY_SOURCE_RECORD_ORIGINS_QUERY } from "~/lib/queries.server";
 import type {
+  EvidenceOrigin,
   AddressRow,
   CompanyDescriptionObservation,
   CompanySourceRecord,
@@ -68,6 +74,14 @@ export async function getCompanySectionPresence(
   }));
 }
 
+interface SectionEvidenceLinkRow {
+  item_key: string;
+  source_record_uid: string;
+  relationship_kind: string;
+  match_method: string;
+  match_confidence: number | string;
+}
+
 interface SectionEvidenceRow {
   source_record_uid: string;
   record_kind: string;
@@ -76,13 +90,25 @@ interface SectionEvidenceRow {
   latest_seen_at: string;
 }
 
+interface SectionEvidenceOriginRow {
+  source_record_uid: string;
+  source_slug: string;
+  source_record_key: string;
+  source_url: string;
+  source_object_key: string;
+  payload_sha256: string;
+  retrieved_at: string;
+  source_run_id: string;
+}
+
 async function getSectionEvidence(
   countryCode: string,
   companyId: string,
   section: CompanySectionName,
 ): Promise<Map<string, EvidenceRef[]>> {
-  const links = await chQuery<{ item_key: string; source_record_uid: string }>(
-    `SELECT item_key, toString(source_record_uid) AS source_record_uid
+  const links = await chQuery<SectionEvidenceLinkRow>(
+    `SELECT item_key, toString(source_record_uid) AS source_record_uid,
+       relationship_kind, match_method, toFloat64(match_confidence) AS match_confidence
      FROM corpscout.company_section_item_source_links
      PREWHERE country_code = {country:String} AND company_id = {id:String}
      WHERE section = {section:String}`,
@@ -98,18 +124,37 @@ async function getSectionEvidence(
   const sourceRecordUids = [
     ...new Set(links.map((link) => link.source_record_uid)),
   ];
-  const rows = await chQuery<SectionEvidenceRow>(
-    `SELECT toString(source_record_uid) AS source_record_uid,
-       argMax(record_kind, last_seen_at) AS record_kind,
-       argMax(content_sha256, last_seen_at) AS content_sha256,
-       toString(min(first_seen_at)) AS earliest_seen_at,
-       toString(max(last_seen_at)) AS latest_seen_at
-     FROM corpscout.company_source_records
-     PREWHERE source_record_uid IN {source_record_uids:Array(String)}
-     GROUP BY source_record_uid`,
-    { source_record_uids: sourceRecordUids },
-  );
+  const [rows, originRows] = await Promise.all([
+    chQuery<SectionEvidenceRow>(
+      `SELECT toString(source_record_uid) AS source_record_uid,
+         argMax(record_kind, last_seen_at) AS record_kind,
+         argMax(content_sha256, last_seen_at) AS content_sha256,
+         toString(min(first_seen_at)) AS earliest_seen_at,
+         toString(max(last_seen_at)) AS latest_seen_at
+       FROM corpscout.company_source_records
+       PREWHERE source_record_uid IN {source_record_uids:Array(String)}
+       GROUP BY source_record_uid`,
+      { source_record_uids: sourceRecordUids },
+    ),
+    chQuery<SectionEvidenceOriginRow>(COMPANY_SOURCE_RECORD_ORIGINS_QUERY, {
+      sourceRecordUids,
+    }),
+  ]);
   const recordsByUid = new Map(rows.map((row) => [row.source_record_uid, row]));
+  const originsByUid = new Map<string, EvidenceOrigin[]>();
+  for (const origin of originRows) {
+    const origins = originsByUid.get(origin.source_record_uid) ?? [];
+    origins.push({
+      sourceSlug: origin.source_slug,
+      sourceRecordKey: origin.source_record_key,
+      sourceUrl: origin.source_url,
+      sourceObjectKey: origin.source_object_key,
+      payloadSha256: origin.payload_sha256,
+      retrievedAt: origin.retrieved_at,
+      sourceRunId: origin.source_run_id,
+    });
+    originsByUid.set(origin.source_record_uid, origins);
+  }
   const byItem = new Map<string, EvidenceRef[]>();
   for (const link of links) {
     const row = recordsByUid.get(link.source_record_uid);
@@ -120,7 +165,10 @@ async function getSectionEvidence(
       contentSha256: row.content_sha256,
       firstSeenAt: row.earliest_seen_at,
       lastSeenAt: row.latest_seen_at,
-      origins: [],
+      origins: originsByUid.get(row.source_record_uid) ?? [],
+      connectionKind: link.relationship_kind,
+      extractionMethod: link.match_method,
+      confidence: Number(link.match_confidence),
     };
     byItem.set(link.item_key, [...(byItem.get(link.item_key) ?? []), evidence]);
   }
@@ -252,6 +300,7 @@ async function getWikidataSection(
 interface ManagementServingRow {
   management_id: string;
   person_id: string;
+  person_profile_available: number;
   external_person_scheme: string;
   external_person_value: string;
   display_name: string;
@@ -277,34 +326,50 @@ async function getManagementSection(
 ): Promise<Extract<CompanySectionData, { section: "management" }>> {
   const [rows, evidence] = await Promise.all([
     chQuery<ManagementServingRow>(
-      `SELECT management_id,
-         ifNull(toString(person_id), concat(
-           substring(management_id, 1, 8), '-', substring(management_id, 9, 4), '-',
-           substring(management_id, 13, 4), '-', substring(management_id, 17, 4), '-',
-           substring(management_id, 21, 12)
-         )) AS person_id,
+      `SELECT current.management_id,
+         ifNull(toString(current.person_id), lower(hex(SHA256(concat(
+           'legacy-management-person|', current.country_code, '|', current.company_id, '|',
+           lowerUTF8(trim(current.display_name))
+         ))))) AS person_id,
+         toUInt8(isNotNull(current.person_id)) AS person_profile_available,
          external_person_scheme, external_person_value, display_name, first_name,
          last_name, person_description, birth_year, image_url, external_url,
          role_kind, role_label, signatory_kind,
          ifNull(toString(start_date), '') AS start_date,
          ifNull(toString(end_date), '') AS end_date,
          latest_fiscal_year, is_current, source_systems
-       FROM corpscout.company_management_current
-       PREWHERE country_code = {country:String} AND company_id = {id:String}
+       FROM corpscout.company_management_current AS current
+       PREWHERE current.country_code = {country:String} AND current.company_id = {id:String}
        ORDER BY is_current DESC, role_kind, display_name`,
       { country, id },
     ),
     getSectionEvidence(country, id, "management"),
   ]);
+  const legacyProfileIds = await resolveCountryPersonProfilesForCompany(
+    country,
+    id,
+    rows
+      .filter(
+        (row) =>
+          row.person_profile_available === 0 &&
+          row.source_systems.includes("se_xbrl_signatures"),
+      )
+      .map((row) => row.display_name),
+  );
   const officers: OfficerRow[] = [];
   const wikidataPeople: WikidataPersonRow[] = [];
   const esefPeople: EsefPersonObservation[] = [];
   for (const row of rows) {
     const rowEvidence = evidence.get(row.management_id) ?? [];
     if (row.source_systems.includes("se_xbrl_signatures")) {
+      const resolvedPersonId =
+        legacyProfileIds.get(normalizeCountryPersonName(row.display_name)) ??
+        null;
       officers.push({
         country_iso2: country,
-        person_id: row.person_id,
+        person_id: resolvedPersonId ?? row.person_id,
+        person_profile_available:
+          Boolean(row.person_profile_available) || resolvedPersonId !== null,
         first_name: row.first_name,
         last_name: row.last_name,
         role_original: row.role_label,

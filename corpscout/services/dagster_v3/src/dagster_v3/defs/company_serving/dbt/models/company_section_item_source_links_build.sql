@@ -82,13 +82,44 @@ contacts AS (
         ON candidates.candidate_id = current.contact_id
     WHERE candidates.source_record_uid != ''
 ),
-registry_management AS (
+registry_observations AS (
     SELECT
         '{{ var("country_code") }}' AS country_code,
         company_id,
-        lower(hex(SHA256(concat('registry|', statement_key, '|', signatory_kind, '|', toString(person_seq))))) AS item_key,
+        reinterpretAsUUID(unhex(substring(hex(SHA256(concat(
+            'country_person_observation|SE|se_xbrl_signatures|',
+            statement_key, '|', signatory_kind, '|', toString(person_seq)
+        ))), 1, 32))) AS observation_id,
         source_record_uid
     FROM {{ source('corpscout', 'se_company_officers') }}
+),
+registry_person_matches AS (
+    SELECT
+        source_matches.country_iso2,
+        source_matches.observation_id,
+        argMax(source_matches.person_id, (
+            source_matches.decided_at,
+            source_matches.resolver_version,
+            toString(source_matches.person_id)
+        )) AS person_id
+    FROM {{ source('corpscout', 'country_person_match') }} AS source_matches
+    WHERE source_matches.country_iso2 = '{{ var("country_code") }}'
+    GROUP BY source_matches.country_iso2, source_matches.observation_id
+),
+registry_management AS (
+    SELECT
+        observations.country_code,
+        observations.company_id,
+        lower(hex(SHA256(concat(
+            'registry-person|', observations.country_code, '|', observations.company_id, '|',
+            toString(ifNull(matches.person_id, observations.observation_id))
+        )))) AS item_key,
+        observations.source_record_uid
+    FROM registry_observations AS observations
+    LEFT JOIN registry_person_matches AS matches
+        ON matches.country_iso2 = observations.country_code
+       AND matches.observation_id = observations.observation_id
+    GROUP BY observations.country_code, observations.company_id, item_key, observations.source_record_uid
 ),
 management_candidates AS (
     SELECT
@@ -100,8 +131,16 @@ management_candidates AS (
             has(current.source_systems, 'se_xbrl_signatures'), registry_rows.source_record_uid,
             if(has(current.source_systems, 'wikidata'), people.source_record_uid, esef.source_record_uid)
         ) AS selected_source_record_uid,
-        'management_evidence' AS relationship_kind,
-        'source_person_anchor' AS match_method,
+        multiIf(
+            has(current.source_systems, 'se_xbrl_signatures'), 'annual_report_signature',
+            has(current.source_systems, 'wikidata'), 'public_knowledge_graph_company_role',
+            'annual_report_narrative_role'
+        ) AS relationship_kind,
+        multiIf(
+            has(current.source_systems, 'se_xbrl_signatures'), 'country_person_match',
+            has(current.source_systems, 'wikidata'), 'wikidata_company_claim',
+            'annual_report_extraction'
+        ) AS match_method,
         current.confidence AS match_confidence,
         '{{ var("source_run_id") }}' AS source_run_id,
         now64(3, 'UTC') AS linked_at

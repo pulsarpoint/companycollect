@@ -38,35 +38,70 @@ person_matches AS (
     WHERE source_matches.country_iso2 = '{{ var("country_code") }}'
     GROUP BY source_matches.country_iso2, source_matches.observation_id
 ),
-registry AS (
+registry_observations AS (
     SELECT
         '{{ var("country_code") }}' AS country_code,
         rows.company_id,
-        lower(hex(SHA256(concat('registry|', rows.statement_key, '|', rows.signatory_kind, '|', toString(rows.person_seq))))) AS management_id,
-        CAST(if(matches.match_status IN ('accepted', 'reviewed'), matches.person_id, NULL), 'Nullable(UUID)') AS person_id,
-        '' AS external_person_scheme,
-        '' AS external_person_value,
+        ifNull(matches.person_id, rows.observation_id) AS identity_person_id,
         trim(concat(rows.first_name, ' ', rows.last_name)) AS display_name,
         rows.first_name,
         rows.last_name,
-        '' AS person_description,
-        CAST(NULL, 'Nullable(UInt16)') AS birth_year,
-        '' AS image_url,
-        '' AS external_url,
         rows.role_kind,
         rows.role_original AS role_label,
         rows.signatory_kind,
-        CAST(NULL, 'Nullable(Date)') AS start_date,
-        CAST(NULL, 'Nullable(Date)') AS end_date,
-        toUInt16(rows.fiscal_year) AS latest_fiscal_year,
-        toUInt8(rows.fiscal_year = rows.company_latest_fiscal_year) AS is_current,
-        toFloat32(if(matches.match_status IN ('accepted', 'reviewed'), matches.confidence / 100, 0.75)) AS confidence,
-        ['se_xbrl_signatures'] AS source_systems,
-        now64(3, 'UTC') AS resolved_at
+        toUInt16(rows.fiscal_year) AS fiscal_year,
+        rows.company_latest_fiscal_year,
+        toFloat32(ifNull(matches.confidence / 100, 0.75)) AS confidence,
+        tuple(
+            multiIf(
+                rows.role_kind = 'chairman', 7,
+                rows.role_kind = 'ceo', 6,
+                rows.role_kind = 'board_member', 5,
+                rows.role_kind = 'deputy_board_member', 4,
+                rows.role_kind = 'liquidator', 3,
+                rows.role_kind = 'auditor', 2,
+                rows.role_kind = 'other', 1,
+                0
+            ),
+            rows.fiscal_year,
+            rows.statement_key,
+            rows.signatory_kind,
+            rows.person_seq
+        ) AS preferred_role_order
     FROM registry_rows AS rows
     LEFT JOIN person_matches AS matches
         ON matches.country_iso2 = '{{ var("country_code") }}'
        AND matches.observation_id = rows.observation_id
+),
+registry AS (
+    SELECT
+        country_code,
+        company_id,
+        lower(hex(SHA256(concat(
+            'registry-person|', country_code, '|', company_id, '|', toString(identity_person_id)
+        )))) AS management_id,
+        identity_person_id AS person_id,
+        '' AS external_person_scheme,
+        '' AS external_person_value,
+        argMax(display_name, preferred_role_order) AS display_name,
+        argMax(first_name, preferred_role_order) AS first_name,
+        argMax(last_name, preferred_role_order) AS last_name,
+        '' AS person_description,
+        CAST(NULL, 'Nullable(UInt16)') AS birth_year,
+        '' AS image_url,
+        '' AS external_url,
+        argMax(role_kind, preferred_role_order) AS role_kind,
+        argMax(role_label, preferred_role_order) AS role_label,
+        argMax(signatory_kind, preferred_role_order) AS signatory_kind,
+        CAST(NULL, 'Nullable(Date)') AS start_date,
+        CAST(NULL, 'Nullable(Date)') AS end_date,
+        max(fiscal_year) AS latest_fiscal_year,
+        toUInt8(max(fiscal_year) = any(company_latest_fiscal_year)) AS is_current,
+        max(confidence) AS confidence,
+        ['se_xbrl_signatures'] AS source_systems,
+        now64(3, 'UTC') AS resolved_at
+    FROM registry_observations
+    GROUP BY country_code, company_id, identity_person_id
 ),
 wikidata AS (
     SELECT

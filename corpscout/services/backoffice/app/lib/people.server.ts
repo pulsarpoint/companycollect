@@ -37,6 +37,9 @@ export interface CountryPersonObservation {
   confidence: number;
 }
 
+export type CountryPersonRelationshipKind =
+  "leadership" | "governance" | "external_audit" | "report_signature" | "other";
+
 export interface CountryPersonIdentifier {
   identifier_id: string;
   source: string;
@@ -46,10 +49,37 @@ export interface CountryPersonIdentifier {
   is_public: number;
 }
 
+export type CountryPersonContactKind = "email" | "phone" | "website" | "social";
+
+export interface CountryPersonContact {
+  contact_kind: CountryPersonContactKind;
+  contact_value: string;
+  source: string;
+  observation_id: string;
+}
+
+export interface CountryPersonCompanyConnection {
+  company_id: string;
+  company_name: string;
+  role_kind: string;
+  role_original: string;
+  relationship_kind: CountryPersonRelationshipKind;
+  first_year: number;
+  last_year: number;
+  observation_count: number;
+}
+
+export interface CountryPersonSuggestion {
+  person: CountryPersonSummary;
+  connections: CountryPersonCompanyConnection[];
+  reason: "compatible_relationship_and_name";
+}
+
 export interface CountryPersonDetail {
   person: CountryPersonSummary;
   observations: CountryPersonObservation[];
   identifiers: CountryPersonIdentifier[];
+  contacts: CountryPersonContact[];
   correction_reviews: CountryPersonCorrectionReview[];
 }
 
@@ -126,6 +156,17 @@ export interface CountryPeopleSearchResult {
 const UUID_PATTERN =
   /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 const CORRECTION_ACTOR = "backoffice";
+const CONTACT_KINDS: Readonly<Record<string, CountryPersonContactKind>> = {
+  email: "email",
+  e_mail: "email",
+  phone: "phone",
+  telephone: "phone",
+  mobile: "phone",
+  website: "website",
+  url: "website",
+  linkedin: "social",
+  social: "social",
+};
 
 const COUNTRY_PERSON_SUMMARY_SELECT = `SELECT
   p.country_iso2 AS country_iso2,
@@ -141,6 +182,116 @@ const COUNTRY_PERSON_SUMMARY_SELECT = `SELECT
   p.company_count AS company_count,
   toString(p.resolved_at) AS resolved_at
 FROM country_person AS p`;
+
+export function normalizeCountryPersonName(name: string): string {
+  return name.normalize("NFKC").trim().replace(/\s+/g, " ").toLowerCase();
+}
+
+export function countryPersonRelationshipKind(
+  roleKind: string,
+  signatoryKind: string,
+): CountryPersonRelationshipKind {
+  if (roleKind === "auditor" || signatoryKind === "auditor") {
+    return "external_audit";
+  }
+  if (roleKind === "ceo") return "leadership";
+  if (
+    ["chairman", "board_member", "deputy_board_member", "liquidator"].includes(
+      roleKind,
+    )
+  ) {
+    return "governance";
+  }
+  if (roleKind === "unknown") return "report_signature";
+  return "other";
+}
+
+function matchableRelationshipKinds(
+  observations: CountryPersonObservation[],
+): CountryPersonRelationshipKind[] {
+  const kinds = new Set(
+    observations.map((observation) =>
+      countryPersonRelationshipKind(
+        observation.role_kind,
+        observation.signatory_kind,
+      ),
+    ),
+  );
+  if (kinds.size > 1) kinds.delete("report_signature");
+  return [...kinds];
+}
+
+function separatePublicContacts(identifiers: CountryPersonIdentifier[]): {
+  identifiers: CountryPersonIdentifier[];
+  contacts: CountryPersonContact[];
+} {
+  const publicIdentifiers: CountryPersonIdentifier[] = [];
+  const contacts: CountryPersonContact[] = [];
+  for (const identifier of identifiers) {
+    if (identifier.is_public !== 1) continue;
+    const contactKind = CONTACT_KINDS[identifier.identifier_kind.toLowerCase()];
+    if (contactKind) {
+      contacts.push({
+        contact_kind: contactKind,
+        contact_value: identifier.identifier_value,
+        source: identifier.source,
+        observation_id: identifier.observation_id,
+      });
+    } else {
+      publicIdentifiers.push(identifier);
+    }
+  }
+  return { identifiers: publicIdentifiers, contacts };
+}
+
+/**
+ * Bridges company-management serving rows published before person IDs were
+ * added. Ambiguous names deliberately remain unlinked until the serving table
+ * is republished with an observation-level identity.
+ */
+export async function resolveCountryPersonProfilesForCompany(
+  countryIso2: string,
+  companyId: string,
+  names: string[],
+): Promise<Map<string, string>> {
+  const country = countryIso2.trim().toUpperCase();
+  const company = companyId.trim();
+  const normalizedNames = [
+    ...new Set(names.map(normalizeCountryPersonName).filter(Boolean)),
+  ];
+  if (
+    !/^[A-Z]{2}$/.test(country) ||
+    company === "" ||
+    normalizedNames.length === 0
+  ) {
+    return new Map();
+  }
+
+  const rows = await chQuery<{
+    observed_name_normalized: string;
+    person_id: string;
+  }>(
+    `SELECT
+       o.observed_name_normalized,
+       toString(any(m.person_id)) AS person_id
+     FROM country_person_observation AS o
+     INNER JOIN country_person_match AS m
+       ON m.country_iso2 = o.country_iso2
+      AND m.observation_id = o.observation_id
+     WHERE o.country_iso2 = {country:String}
+       AND o.company_id = {companyId:String}
+       AND o.observed_name_normalized IN {names:Array(String)}
+     GROUP BY o.observed_name_normalized
+     HAVING uniqExact(m.person_id) = 1`,
+    { country, companyId: company, names: normalizedNames },
+  );
+  return new Map(
+    rows.map((row) => [
+      normalizeCountryPersonName(row.observed_name_normalized),
+      row.person_id,
+    ]),
+  );
+}
 
 export async function searchCountryPeople(
   query: string,
@@ -277,7 +428,7 @@ export async function getCountryPerson(
       params,
     ),
     chQuery<CountryPersonCorrection>(
-       `WITH current_observation_corrections AS (
+      `WITH current_observation_corrections AS (
          SELECT c.country_iso2, c.observation_id,
            argMax(c.correction_id, (c.created_at, c.correction_id)) AS current_correction_id
          FROM country_person_correction AS c
@@ -320,15 +471,146 @@ export async function getCountryPerson(
       params,
     ),
   ]);
+  const publicProfileData = separatePublicContacts(identifiers);
   return {
     person: people[0],
     observations,
-    identifiers,
+    identifiers: publicProfileData.identifiers,
+    contacts: publicProfileData.contacts,
     correction_reviews: groupCorrectionReviews(
       corrections,
       people[0].resolved_at,
     ),
   };
+}
+
+interface CountryPersonSuggestionRow extends CountryPersonSummary {
+  company_id: string;
+  company_name: string;
+  role_kind: string;
+  role_original: string;
+  relationship_kind: CountryPersonRelationshipKind;
+  first_year: number;
+  last_year: number;
+  company_observation_count: number;
+}
+
+export async function findPossibleCountryPersonMatches(
+  person: CountryPersonSummary,
+  observations: CountryPersonObservation[],
+): Promise<CountryPersonSuggestion[]> {
+  const relationshipKinds = matchableRelationshipKinds(observations);
+  if (
+    !/^[A-Z]{2}$/.test(person.country_iso2) ||
+    !UUID_PATTERN.test(person.person_id) ||
+    person.preferred_name_normalized.trim() === "" ||
+    relationshipKinds.length === 0
+  ) {
+    return [];
+  }
+
+  const rows = await chQuery<CountryPersonSuggestionRow>(
+    `WITH candidate_observations AS (
+       SELECT
+         o.*,
+         multiIf(
+           o.role_kind = 'auditor' OR o.signatory_kind = 'auditor', 'external_audit',
+           o.role_kind = 'ceo', 'leadership',
+           o.role_kind IN ('chairman', 'board_member', 'deputy_board_member', 'liquidator'), 'governance',
+           o.role_kind = 'unknown', 'report_signature',
+           'other'
+         ) AS relationship_kind
+       FROM country_person_observation AS o
+       WHERE o.country_iso2 = {country:String}
+     )
+     SELECT
+       p.country_iso2 AS country_iso2,
+       toString(p.person_id) AS person_id,
+       p.preferred_name AS preferred_name,
+       p.preferred_name_normalized AS preferred_name_normalized,
+       p.resolution_status AS resolution_status,
+       p.resolution_method AS resolution_method,
+       toString(p.merged_into_person_id) AS merged_into_person_id,
+       p.first_observed_year AS first_observed_year,
+       p.last_observed_year AS last_observed_year,
+       p.observation_count AS observation_count,
+       p.company_count AS company_count,
+       toString(p.resolved_at) AS resolved_at,
+       o.company_id,
+       argMax(o.company_name, (o.fiscal_year, o.source_statement_key)) AS company_name,
+       argMax(o.role_kind, (o.fiscal_year, o.source_statement_key)) AS role_kind,
+       argMax(o.role_original, (o.fiscal_year, o.source_statement_key)) AS role_original,
+       o.relationship_kind,
+       toInt32(minIf(o.fiscal_year, o.fiscal_year > 0)) AS first_year,
+       toInt32(max(o.fiscal_year)) AS last_year,
+       toUInt32(count()) AS company_observation_count
+     FROM country_person AS p
+     INNER JOIN country_person_match AS m
+       ON m.country_iso2 = p.country_iso2
+      AND m.person_id = p.person_id
+     INNER JOIN candidate_observations AS o
+       ON o.country_iso2 = m.country_iso2
+      AND o.observation_id = m.observation_id
+     WHERE p.country_iso2 = {country:String}
+       AND p.person_id != {personId:UUID}
+       AND p.resolution_status != 'merged'
+       AND p.preferred_name_normalized = {normalizedName:String}
+       AND o.relationship_kind IN {relationshipKinds:Array(String)}
+     GROUP BY
+       p.country_iso2, p.person_id, p.preferred_name,
+       p.preferred_name_normalized, p.resolution_status,
+       p.resolution_method, p.merged_into_person_id,
+       p.first_observed_year, p.last_observed_year,
+       p.observation_count, p.company_count, p.resolved_at,
+       o.company_id, o.relationship_kind
+     ORDER BY p.company_count DESC, p.observation_count DESC,
+       last_year DESC, company_name
+     LIMIT 100`,
+    {
+      country: person.country_iso2,
+      personId: person.person_id,
+      normalizedName: person.preferred_name_normalized,
+      relationshipKinds,
+    },
+  );
+
+  const suggestions = new Map<string, CountryPersonSuggestion>();
+  for (const row of rows) {
+    const existing = suggestions.get(row.person_id);
+    const connection: CountryPersonCompanyConnection = {
+      company_id: row.company_id,
+      company_name: row.company_name,
+      role_kind: row.role_kind,
+      role_original: row.role_original,
+      relationship_kind: row.relationship_kind,
+      first_year: Number(row.first_year),
+      last_year: Number(row.last_year),
+      observation_count: Number(row.company_observation_count),
+    };
+    if (existing) {
+      existing.connections.push(connection);
+      continue;
+    }
+    suggestions.set(row.person_id, {
+      person: {
+        country_iso2: row.country_iso2,
+        person_id: row.person_id,
+        preferred_name: row.preferred_name,
+        preferred_name_normalized: row.preferred_name_normalized,
+        resolution_status: row.resolution_status,
+        resolution_method: row.resolution_method,
+        merged_into_person_id: row.merged_into_person_id,
+        first_observed_year: Number(row.first_observed_year),
+        last_observed_year: Number(row.last_observed_year),
+        observation_count: Number(row.observation_count),
+        company_count: Number(row.company_count),
+        resolved_at: row.resolved_at,
+      },
+      connections: [connection],
+      reason: "compatible_relationship_and_name",
+    });
+  }
+  return [...suggestions.values()];
 }
 
 function groupCorrectionReviews(

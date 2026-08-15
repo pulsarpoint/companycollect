@@ -1882,6 +1882,7 @@ export interface EvidenceRef {
   firstSeenAt: string;
   lastSeenAt: string;
   origins: EvidenceOrigin[];
+  connectionKind?: string;
   sourceDate?: string;
   extractionMethod?: string;
   confidence?: number;
@@ -2032,6 +2033,7 @@ export interface SecondaryNameRow {
 export interface OfficerRow {
   country_iso2: string;
   person_id: string;
+  person_profile_available?: boolean;
   first_name: string;
   last_name: string;
   role_original: string;

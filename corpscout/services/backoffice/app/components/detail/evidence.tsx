@@ -8,6 +8,10 @@ export function evidenceSourceLabel(evidence: EvidenceRef): string {
   );
 }
 
+function evidenceValueLabel(value: string): string {
+  return value.replaceAll("_", " ");
+}
+
 export function EvidenceBadges({ evidence }: { evidence: EvidenceRef[] }) {
   return (
     <div className="flex flex-wrap gap-1.5">
@@ -21,20 +25,34 @@ export function EvidenceBadges({ evidence }: { evidence: EvidenceRef[] }) {
   );
 }
 
-export function EvidencePanel({ evidence }: { evidence: EvidenceRef[] }) {
+export function EvidencePanel({
+  evidence,
+  summaryLabel = "Evidence",
+}: {
+  evidence: EvidenceRef[];
+  summaryLabel?: string;
+}) {
   if (evidence.length === 0) return null;
   return (
     <details>
       <summary className="text-muted-foreground cursor-pointer text-xs font-medium">
-        Evidence ({evidence.length})
+        {summaryLabel} ({evidence.length})
       </summary>
       <div className="flex flex-col gap-3 pt-2">
         {evidence.map((reference) => (
-          <div key={reference.sourceRecordUid} className="flex flex-col gap-1 text-xs">
+          <div
+            key={reference.sourceRecordUid}
+            className="flex flex-col gap-1 text-xs"
+          >
             <EvidenceBadges evidence={[reference]} />
             <div className="text-muted-foreground font-mono break-all">
               {reference.recordKind} · {reference.sourceRecordUid}
             </div>
+            {reference.connectionKind ? (
+              <div>
+                Connection: {evidenceValueLabel(reference.connectionKind)}
+              </div>
+            ) : null}
             {reference.extractionMethod ? (
               <div>
                 Method: {reference.extractionMethod}
@@ -45,7 +63,8 @@ export function EvidencePanel({ evidence }: { evidence: EvidenceRef[] }) {
             ) : null}
             {reference.modelName ? (
               <div>
-                Model: {[reference.modelProvider, reference.modelName]
+                Model:{" "}
+                {[reference.modelProvider, reference.modelName]
                   .filter(Boolean)
                   .join(" / ")}
                 {reference.promptVersion ? ` · ${reference.promptVersion}` : ""}
@@ -65,7 +84,8 @@ export function EvidencePanel({ evidence }: { evidence: EvidenceRef[] }) {
                 className="flex flex-col gap-0.5"
               >
                 <div>
-                  {origin.sourceSlug.replaceAll("_", " ")} · {origin.sourceRecordKey}
+                  {origin.sourceSlug.replaceAll("_", " ")} ·{" "}
+                  {origin.sourceRecordKey}
                   {origin.retrievedAt ? ` · ${origin.retrievedAt}` : ""}
                 </div>
                 {origin.sourceUrl ? (

@@ -70,9 +70,9 @@ const ROLE_LABELS: Record<string, string> = {
   board_member: "Board member",
   deputy_board_member: "Deputy board member",
   liquidator: "Liquidator",
-  auditor: "Auditor",
+  auditor: "External auditor",
   other: "Other",
-  unknown: "Signatory",
+  unknown: "Report signatory",
 };
 
 const CORRECTION_LABELS: Record<CountryPersonCorrectionKind, string> = {
