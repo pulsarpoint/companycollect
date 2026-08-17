@@ -294,6 +294,7 @@ EXPECTED_MIGRATIONS = (
     "000277_corpscout_se_address_geocode_spread",
     "000278_corpscout_se_address_components",
     "000279_corpscout_se_bolagsverket_vdm",
+    "000280_corpscout_se_bolagsverket_vdm_company_current",
 )
 
 NOOP_MIGRATIONS = {"000276_noop"}
@@ -3223,6 +3224,25 @@ def test_unified_company_domains_owns_source_confidence_and_review_state() -> No
     assert "source_arrays_have_equal_lengths" in sql
     assert "corpscout_company_domain_writer" in sql
     assert "DROP TABLE IF EXISTS corpscout.company_domains" in down_sql
+
+
+def test_bolagsverket_vdm_current_view_selects_one_latest_registration_state() -> None:
+    sql = _migration_sql("000280_corpscout_se_bolagsverket_vdm_company_current.up.sql")
+    down_sql = _migration_sql(
+        "000280_corpscout_se_bolagsverket_vdm_company_current.down.sql"
+    )
+
+    assert "CREATE OR REPLACE VIEW corpscout.se_bolagsverket_vdm_company_current" in sql
+    assert "argMax(" in sql
+    assert "tuple(observed_at, source_run_id)" in _normalize_sql(sql)
+    assert "GROUP BY company_id, name_protection_sequence" in _normalize_sql(sql)
+    assert "latest.1 AS identity_type_code" in sql
+    assert "latest.4 AS is_active" in sql
+    assert "latest.8 AS introduced_at_scb" in sql
+    assert "latest.10 AS digital_report_document_count" in sql
+    assert (
+        "DROP VIEW IF EXISTS corpscout.se_bolagsverket_vdm_company_current" in down_sql
+    )
 
 
 def _migration_sql(file_name: str) -> str:
