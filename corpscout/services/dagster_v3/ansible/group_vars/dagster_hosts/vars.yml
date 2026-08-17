@@ -10,6 +10,7 @@ dagster_deploy_dir: /opt/companycollect/corpscout/dagster_v3
 dagster_env_file: "{{ dagster_deploy_dir }}/.env"
 dagster_hot_sync_staging_dir: /opt/companycollect/corpscout/.dagster-v3-hot-sync-next
 dagster_hot_sync_previous_dir: /opt/companycollect/corpscout/.dagster-v3-hot-sync-previous
+dagster_deploy_lock_dir: /run/lock/corpscout-dagster-deploy
 dagster_uv_binary: /root/.local/bin/uv
 dagster_venv_python: "{{ dagster_deploy_dir }}/.venv/bin/python"
 dagster_dg_binary: "{{ dagster_deploy_dir }}/.venv/bin/dg"

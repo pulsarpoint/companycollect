@@ -3,5 +3,41 @@
   hosts: dagster_hosts
   become: true
   gather_facts: true
-  roles:
-    - dagster_dev
+  serial: 1
+  tasks:
+    - name: Run the serialized Dagster deployment
+      block:
+        - name: Try to acquire the Dagster deployment lock
+          ansible.builtin.command:
+            argv:
+              - /usr/bin/mkdir
+              - "{{ dagster_deploy_lock_dir }}"
+          register: dagster_deploy_lock_attempt
+          changed_when: dagster_deploy_lock_attempt.rc == 0
+          failed_when: false
+          when: not ansible_check_mode
+
+        - name: Record ownership of the Dagster deployment lock
+          ansible.builtin.set_fact:
+            dagster_deploy_lock_acquired: true
+          when:
+            - not ansible_check_mode
+            - dagster_deploy_lock_attempt.rc == 0
+
+        - name: Require exclusive Dagster deployment access
+          ansible.builtin.assert:
+            that: dagster_deploy_lock_attempt.rc == 0
+            fail_msg: >-
+              Another Dagster deployment owns {{ dagster_deploy_lock_dir }}.
+              Wait for it to finish instead of sharing the release staging paths.
+          when: not ansible_check_mode
+
+        - name: Run the Dagster deployment role
+          ansible.builtin.import_role:
+            name: dagster_dev
+      always:
+        - name: Release the Dagster deployment lock
+          ansible.builtin.file:
+            path: "{{ dagster_deploy_lock_dir }}"
+            state: absent
+          when: dagster_deploy_lock_acquired | default(false)

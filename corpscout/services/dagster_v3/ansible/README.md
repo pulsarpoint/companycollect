@@ -94,6 +94,13 @@ location. The playbook explicitly reloads only the `dagster_v3` code location,
 waits for it to become healthy, and asserts that the systemd `MainPID` and
 restart count stayed unchanged.
 
+Both deployment paths acquire the same remote directory lock at
+`/run/lock/corpscout-dagster-deploy` before touching release staging paths.
+A concurrent deployment fails fast and leaves the current owner alone. The
+lock is removed even when an Ansible task fails. If the control process is
+forcibly killed and leaves a stale lock, first verify that no deployment is
+running, then remove that exact empty directory before retrying.
+
 The Pythonic dbt definitions read build-time manifests from their project
 `target/manifest.json` files. The dbt components read generated projects from
 `src/dagster_v3/defs/.local_defs_state/`. Runtime definition loads never
