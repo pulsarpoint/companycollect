@@ -94,6 +94,30 @@ location. The playbook explicitly reloads only the `dagster_v3` code location,
 waits for it to become healthy, and asserts that the systemd `MainPID` and
 restart count stayed unchanged.
 
+The Pythonic dbt definitions read build-time manifests from their project
+`target/manifest.json` files. The dbt components read generated projects from
+`src/dagster_v3/defs/.local_defs_state/`. Runtime definition loads never
+generate or refresh these shared artifacts. After changing a dbt project,
+prepare every affected artifact in the local release tree before deployment:
+
+```bash
+cd services/dagster_v3
+uv run --frozen --no-sync dbt parse \
+  --project-dir src/dagster_v3/defs/finland_ytj/dbt \
+  --profiles-dir src/dagster_v3/defs/finland_ytj/dbt
+uv run --frozen --no-sync dbt parse \
+  --project-dir src/dagster_v3/defs/exchange_rates_v2/dbt \
+  --profiles-dir src/dagster_v3/defs/exchange_rates_v2/dbt
+uv run --frozen --no-sync dg utils refresh-defs-state
+```
+
+Run only the commands for projects whose dbt sources changed, plus the component
+refresh when a component project changed. Do not generate or refresh dbt state
+against the live server checkout. Both deploy paths require every generated dbt
+project and manifest before validation, then promote the complete definitions
+tree as one release. They ship the root manifests but omit dbt invocation
+directories and logs.
+
 Use the full `sync.yml` deployment whenever `pyproject.toml`, `uv.lock`, `.env`,
 the Ansible role, service configuration, or non-package runtime files changed.
 The hot-sync preserves already-running processes, but code loaded by a future

@@ -62,7 +62,6 @@ exchange_rates_v2_dbt_project = DbtProject(
     project_dir=EXCHANGE_RATES_V2_DBT_PROJECT_DIR,
     profiles_dir=EXCHANGE_RATES_V2_DBT_PROJECT_DIR,
 )
-exchange_rates_v2_dbt_project.prepare_if_dev()
 
 
 class ExchangeRatesV2DltTranslator(DagsterDltTranslator):
