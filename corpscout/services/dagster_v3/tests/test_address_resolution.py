@@ -9,13 +9,21 @@ from dagster_v3.defs.address_resolution.golden import (
 from dagster_v3.defs.address_resolution.search_documents import (
     replace_address_search_document_input_table,
     replace_address_search_documents,
+    replace_address_street_variants,
 )
 from dagster_v3.defs.sweden_company.address_resolution_policy import (
     SWEDEN_ADDRESS_RESOLUTION_POLICY,
+    SWEDEN_STREET_VARIANT_LANGUAGES,
+)
+from dagster_v3.defs.sweden_company.address_resolution_promotion import (
+    replace_current_geocodes_from_address_resolution_shadow,
 )
 from dagster_v3.defs.sweden_company.address_resolution_shadow import (
     QUALIFIED_SHADOW_COMPARISON_TABLE,
+    QUALIFIED_SHADOW_RESULTS_TABLE,
+    QUALIFIED_UNMATCHED_DIAGNOSTICS_TABLE,
     replace_sweden_address_resolution_shadow,
+    replace_sweden_address_resolution_unmatched_diagnostics,
 )
 
 
@@ -23,6 +31,7 @@ def test_sweden_golden_address_resolution_corpus() -> None:
     evaluation = evaluate_golden_address_resolution_corpus(
         corpus_path=_sweden_corpus_path(),
         policy=SWEDEN_ADDRESS_RESOLUTION_POLICY,
+        street_variant_languages_by_country=SWEDEN_STREET_VARIANT_LANGUAGES,
     )
 
     assert evaluation.failures == ()
@@ -93,6 +102,56 @@ def test_search_document_indexes_raw_and_parsed_representations() -> None:
     assert "vaxtorpsgran" in row[8]
 
 
+def test_street_variants_expand_only_libpostal_supported_abbreviations() -> None:
+    with duckdb.connect(":memory:") as connection:
+        replace_address_search_document_input_table(
+            connection,
+            table_name="input_documents",
+        )
+        connection.execute(
+            """
+            insert into input_documents values
+                (
+                    'test', 'punctuated', 'SE',
+                    'Karl Johansg. 80, 41455 Göteborg',
+                    'Karl Johansg. 80, 41455 Göteborg',
+                    'Karl Johansg.', '80', '', '41455', 'Göteborg',
+                    'physical', '', null, null, null, 0, 'punctuated', ''
+                ),
+                (
+                    'test', 'unmarked', 'SE',
+                    'Gregersg 2, 21465 Malmö',
+                    'Gregersg 2, 21465 Malmö',
+                    'Gregersg', '2', '', '21465', 'Malmö',
+                    'physical', '', null, null, null, 0, 'unmarked', ''
+                )
+            """
+        )
+        replace_address_search_documents(
+            connection,
+            source_sql="select * from input_documents",
+            table_name="search_documents",
+        )
+        replace_address_street_variants(
+            connection,
+            document_table="search_documents",
+            variant_table="street_variants",
+            languages_by_country=SWEDEN_STREET_VARIANT_LANGUAGES,
+        )
+        rows = connection.execute(
+            """
+            select document_id, normalized_street_variant, variant_kind
+            from street_variants
+            order by document_id, variant_rank, normalized_street_variant
+            """
+        ).fetchall()
+
+    assert ("punctuated", "karljohansgata", "libpostal_expansion") in rows
+    assert [row for row in rows if row[0] == "unmarked"] == [
+        ("unmarked", "gregersg", "parsed")
+    ]
+
+
 def test_sweden_shadow_adapter_builds_results_without_serving_changes() -> None:
     with duckdb.connect(":memory:") as connection:
         _create_sweden_shadow_fixture(connection)
@@ -104,9 +163,10 @@ def test_sweden_shadow_adapter_builds_results_without_serving_changes() -> None:
             log=None,
         )
 
-        assert counts["query_documents"] == 3
-        assert counts["results"] == 3
-        assert counts["changed_results"] == 3
+        assert counts["query_documents"] == 8
+        assert counts["query_street_variants"] > counts["query_documents"]
+        assert counts["results"] == 8
+        assert counts["changed_results"] == 5
         assert connection.execute(
             f"""
             select address_id, shadow_status, shadow_strategy
@@ -114,10 +174,285 @@ def test_sweden_shadow_adapter_builds_results_without_serving_changes() -> None:
             order by address_id
             """
         ).fetchall() == [
+            (
+                "abbreviation",
+                "matched_corrected",
+                "expanded_street_fuzzy_postcode_house",
+            ),
+            ("distance-two", "unmatched", ""),
             ("exact", "matched_exact", "parsed_full_exact"),
+            ("nonexistent", "unmatched", ""),
+            (
+                "postcode-conflict",
+                "matched_street",
+                "street_requested_house_missing_postcode_conflict",
+            ),
             ("road", "matched_street", "street_requested_house_missing"),
+            ("short-policy", "unmatched", ""),
             ("typo", "matched_corrected", "fuzzy_street_postcode_house"),
         ]
+        assert connection.execute(
+            f"""
+            select
+                resolution_status,
+                geocode_precision,
+                street_edit_distance,
+                corrections,
+                matched_street_name,
+                matched_house_number,
+                matched_postal_code,
+                matched_locality
+            from {QUALIFIED_SHADOW_RESULTS_TABLE}
+            where query_document_id = 'abbreviation'
+            """
+        ).fetchone() == (
+            "matched_corrected",
+            "building",
+            1,
+            ["street_abbreviation_expanded"],
+            "Karl Johansgatan",
+            "80",
+            "41455",
+            "Göteborg",
+        )
+        assert connection.execute(
+            f"""
+            select
+                resolution_status,
+                geocode_precision,
+                match_strategy,
+                corrections,
+                matched_street_name,
+                matched_postal_code,
+                matched_locality
+            from {QUALIFIED_SHADOW_RESULTS_TABLE}
+            where query_document_id = 'postcode-conflict'
+            """
+        ).fetchone() == (
+            "matched_street",
+            "street",
+            "street_requested_house_missing_postcode_conflict",
+            ["house_number_unavailable", "postal_code"],
+            "Furutunet",
+            "18147",
+            "Lidingö",
+        )
+        assert connection.execute(
+            """
+            select count(*)
+            from sweden_company_enrichment.se_address_resolution_candidates_shadow
+            where query_document_id = 'road'
+              and strategy in (
+                'street_without_house_postcode_conflict',
+                'street_requested_house_missing_postcode_conflict'
+              )
+            """
+        ).fetchone() == (0,)
+
+
+def test_sweden_shadow_results_are_promoted_to_live_geocodes() -> None:
+    with duckdb.connect(":memory:") as connection:
+        _create_sweden_shadow_fixture(connection)
+        replace_sweden_address_resolution_shadow(
+            connection=connection,
+            evaluation_run_id="shadow-test-run",
+            evaluated_at=datetime(2026, 8, 17, tzinfo=UTC),
+            log=None,
+        )
+
+        counts = replace_current_geocodes_from_address_resolution_shadow(
+            connection=connection,
+            geocode_run_id="promotion-test-run",
+            matched_at=datetime(2026, 8, 17, 1, tzinfo=UTC),
+            expected_policy_version=SWEDEN_ADDRESS_RESOLUTION_POLICY.version,
+        )
+
+        assert counts["rows"] == 8
+        assert counts["geolocated"] == 5
+        assert counts["status_counts"] == {
+            "matched_corrected": 2,
+            "matched_exact": 1,
+            "matched_street": 2,
+            "unmatched": 3,
+        }
+        assert connection.execute(
+            """
+            select
+                match_status,
+                match_method,
+                geocode_precision,
+                coordinate_method,
+                source_record_id,
+                source_md5,
+                geocode_run_id
+            from sweden_company_enrichment.se_address_geocodes_current
+            where address_id = 'abbreviation'
+            """
+        ).fetchone() == (
+            "matched_corrected",
+            "expanded_street_fuzzy_postcode_house",
+            "building",
+            "osm_record",
+            "osm/karl-johansgatan-80",
+            "osm-snapshot-md5",
+            "promotion-test-run",
+        )
+
+
+def test_sweden_shadow_promotion_rejects_postcode_conflict_match_override() -> None:
+    with duckdb.connect(":memory:") as connection:
+        _create_sweden_shadow_fixture(connection)
+        replace_sweden_address_resolution_shadow(
+            connection=connection,
+            evaluation_run_id="shadow-test-run",
+            evaluated_at=datetime(2026, 8, 17, tzinfo=UTC),
+            log=None,
+        )
+        connection.execute(
+            """
+            update sweden_company_enrichment.se_address_geocodes_current
+            set
+                match_status = 'matched_street',
+                match_method = 'street_requested_house_missing'
+            where address_id = 'postcode-conflict'
+            """
+        )
+
+        try:
+            replace_current_geocodes_from_address_resolution_shadow(
+                connection=connection,
+                geocode_run_id="promotion-test-run",
+                matched_at=datetime(2026, 8, 17, 1, tzinfo=UTC),
+                expected_policy_version=SWEDEN_ADDRESS_RESOLUTION_POLICY.version,
+            )
+        except ValueError as error:
+            assert "Postcode-conflict street fallbacks" in str(error)
+        else:
+            raise AssertionError(
+                "Promotion must reject a postcode-conflict fallback that "
+                "overrides an existing non-fallback match"
+            )
+
+
+def test_sweden_shadow_promotion_allows_postcode_conflict_refresh() -> None:
+    with duckdb.connect(":memory:") as connection:
+        _create_sweden_shadow_fixture(connection)
+        replace_sweden_address_resolution_shadow(
+            connection=connection,
+            evaluation_run_id="shadow-test-run",
+            evaluated_at=datetime(2026, 8, 17, tzinfo=UTC),
+            log=None,
+        )
+        replace_current_geocodes_from_address_resolution_shadow(
+            connection=connection,
+            geocode_run_id="first-promotion-test-run",
+            matched_at=datetime(2026, 8, 17, 1, tzinfo=UTC),
+            expected_policy_version=SWEDEN_ADDRESS_RESOLUTION_POLICY.version,
+        )
+
+        counts = replace_current_geocodes_from_address_resolution_shadow(
+            connection=connection,
+            geocode_run_id="refresh-promotion-test-run",
+            matched_at=datetime(2026, 8, 17, 2, tzinfo=UTC),
+            expected_policy_version=SWEDEN_ADDRESS_RESOLUTION_POLICY.version,
+        )
+
+        assert counts["rows"] == 8
+        assert connection.execute(
+            """
+            select match_status, match_method, geocode_run_id
+            from sweden_company_enrichment.se_address_geocodes_current
+            where address_id = 'postcode-conflict'
+            """
+        ).fetchone() == (
+            "matched_street",
+            "street_requested_house_missing_postcode_conflict",
+            "refresh-promotion-test-run",
+        )
+
+
+def test_sweden_unmatched_diagnostics_explain_typo_and_osm_coverage() -> None:
+    with duckdb.connect(":memory:") as connection:
+        _create_sweden_shadow_fixture(connection)
+        replace_sweden_address_resolution_shadow(
+            connection=connection,
+            evaluation_run_id="shadow-test-run",
+            evaluated_at=datetime(2026, 8, 17, tzinfo=UTC),
+            log=None,
+        )
+
+        counts = replace_sweden_address_resolution_unmatched_diagnostics(
+            connection=connection,
+            diagnosed_at=datetime(2026, 8, 17, 2, tzinfo=UTC),
+        )
+
+        assert counts["rows"] == 3
+        assert counts["reason_counts"] == {
+            "no_osm_street_candidate": 1,
+            "street_too_short_for_typo_policy": 1,
+            "street_typo_outside_policy": 1,
+        }
+        assert connection.execute(
+            f"""
+            select
+                reason_code,
+                nearest_reference_street_name,
+                nearest_reference_house_number,
+                street_edit_distance,
+                maximum_allowed_street_edit_distance
+            from {QUALIFIED_UNMATCHED_DIAGNOSTICS_TABLE}
+            where query_document_id = 'distance-two'
+            """
+        ).fetchone() == (
+            "street_typo_outside_policy",
+            "Borgaregatan",
+            "19 B",
+            2,
+            1,
+        )
+        assert connection.execute(
+            f"""
+            select
+                reason_code,
+                nearest_query_street_variant,
+                reference_normalized_street,
+                query_street_variant_length,
+                reference_street_length,
+                minimum_fuzzy_street_length
+            from {QUALIFIED_UNMATCHED_DIAGNOSTICS_TABLE}
+            where query_document_id = 'short-policy'
+            """
+        ).fetchone() == (
+            "street_too_short_for_typo_policy",
+            "ris",
+            "risa",
+            3,
+            4,
+            6,
+        )
+
+
+def test_sweden_shadow_promotion_rejects_wrong_policy_version() -> None:
+    with duckdb.connect(":memory:") as connection:
+        _create_sweden_shadow_fixture(connection)
+        replace_sweden_address_resolution_shadow(
+            connection=connection,
+            evaluation_run_id="shadow-test-run",
+            evaluated_at=datetime(2026, 8, 17, tzinfo=UTC),
+            log=None,
+        )
+
+        try:
+            replace_current_geocodes_from_address_resolution_shadow(
+                connection=connection,
+                geocode_run_id="promotion-test-run",
+                matched_at=datetime(2026, 8, 17, 1, tzinfo=UTC),
+                expected_policy_version="wrong-policy",
+            )
+        except ValueError as error:
+            assert "wrong-policy" in str(error)
+        else:
+            raise AssertionError("Promotion must reject a stale policy version")
 
 
 def _create_sweden_shadow_fixture(connection: duckdb.DuckDBPyConnection) -> None:
@@ -136,9 +471,21 @@ def _create_sweden_shadow_fixture(connection: duckdb.DuckDBPyConnection) -> None
             postal_code varchar,
             post_town varchar,
             country_code varchar,
-            address_kind varchar
+            address_kind varchar,
+            address_identity_run_id varchar default 'identity-test-run'
         );
-        insert into sweden_company_enrichment.se_addresses_current values
+        insert into sweden_company_enrichment.se_addresses_current (
+            address_id,
+            canonical_display_address,
+            street_address,
+            street_name,
+            house_number,
+            unit,
+            postal_code,
+            post_town,
+            country_code,
+            address_kind
+        ) values
             (
                 'exact',
                 'Våxtorpsgränd 26 lgh 1106, 12573 Älvsjö',
@@ -174,6 +521,66 @@ def _create_sweden_shadow_fixture(connection: duckdb.DuckDBPyConnection) -> None
                 'Älvsjö',
                 'SE',
                 'physical'
+            ),
+            (
+                'abbreviation',
+                'Karl Johansg. 80, 41455 Göteborg',
+                'Karl Johansg. 80',
+                'Karl Johansg.',
+                '80',
+                '',
+                '41455',
+                'Göteborg',
+                'SE',
+                'physical'
+            ),
+            (
+                'distance-two',
+                'Borgaregtn 19 B, 61131 Nyköping',
+                'Borgaregtn 19 B',
+                'Borgaregtn',
+                '19 B',
+                '',
+                '61131',
+                'Nyköping',
+                'SE',
+                'physical'
+            ),
+            (
+                'nonexistent',
+                'Okändgatan 1, 12345 Uppsala',
+                'Okändgatan 1',
+                'Okändgatan',
+                '1',
+                '',
+                '12345',
+                'Uppsala',
+                'SE',
+                'physical'
+            ),
+            (
+                'short-policy',
+                'RIS 12, 50492 HEDARED',
+                'RIS 12',
+                'RIS',
+                '12',
+                '',
+                '50492',
+                'HEDARED',
+                'SE',
+                'physical'
+            ),
+            (
+                'postcode-conflict',
+                'Furutunet 15, 18148 LIDINGÖ',
+                'Furutunet 15',
+                'Furutunet',
+                '15',
+                '',
+                '18148',
+                'LIDINGÖ',
+                'SE',
+                'physical'
             );
 
         create table sweden_address_osm.address_points (
@@ -188,9 +595,27 @@ def _create_sweden_shadow_fixture(connection: duckdb.DuckDBPyConnection) -> None
             city varchar,
             latitude double,
             longitude double,
-            source_record_url varchar
+            source_record_url varchar,
+            source_url varchar default 'https://download.geofabrik.de/europe/sweden-latest.osm.pbf',
+            source_object_key varchar default 'raw/sweden-test.osm.pbf',
+            source_md5 varchar default 'osm-snapshot-md5',
+            source_snapshot_at timestamptz default '2026-08-16 00:00:00+00',
+            source_retrieved_at timestamptz default '2026-08-16 01:00:00+00'
         );
-        insert into sweden_address_osm.address_points values
+        insert into sweden_address_osm.address_points (
+            source_record_id,
+            country_code,
+            full_address,
+            street,
+            place,
+            house_number,
+            unit,
+            postcode,
+            city,
+            latitude,
+            longitude,
+            source_record_url
+        ) values
             (
                 'osm/exact',
                 'SE',
@@ -218,6 +643,76 @@ def _create_sweden_shadow_fixture(connection: duckdb.DuckDBPyConnection) -> None
                 58.755,
                 16.998,
                 'https://www.openstreetmap.org/node/2'
+            ),
+            (
+                'osm/road-locality-only',
+                'SE',
+                'Saknadsvägen 1, Älvsjö',
+                'Saknadsvägen',
+                '',
+                '1',
+                '',
+                '',
+                'Älvsjö',
+                59.2782,
+                17.9972,
+                'https://www.openstreetmap.org/node/3'
+            ),
+            (
+                'osm/karl-johansgatan-80',
+                'SE',
+                'Karl Johansgatan 80, 41455 Göteborg',
+                'Karl Johansgatan',
+                '',
+                '80',
+                '',
+                '41455',
+                'Göteborg',
+                57.6943844,
+                11.92017,
+                'https://www.openstreetmap.org/node/1484851478'
+            ),
+            (
+                'osm/risa-12',
+                'SE',
+                'Risa 12, 50492 Hedared',
+                'Risa',
+                '',
+                '12',
+                '',
+                '50492',
+                'Hedared',
+                57.81,
+                12.75,
+                'https://www.openstreetmap.org/node/5'
+            ),
+            (
+                'osm/furutunet-1',
+                'SE',
+                'Furutunet 1, 18147 Lidingö',
+                'Furutunet',
+                '',
+                '1',
+                '',
+                '18147',
+                'Lidingö',
+                59.3648,
+                18.1467,
+                'https://www.openstreetmap.org/node/6'
+            ),
+            (
+                'osm/road-other-postcode',
+                'SE',
+                'Saknadsvägen 2, 12574 Älvsjö',
+                'Saknadsvägen',
+                '',
+                '2',
+                '',
+                '12574',
+                'Älvsjö',
+                59.2783,
+                17.9973,
+                'https://www.openstreetmap.org/node/7'
             );
 
         create table sweden_address_osm.street_segments (
@@ -230,16 +725,26 @@ def _create_sweden_shadow_fixture(connection: duckdb.DuckDBPyConnection) -> None
         insert into sweden_address_osm.street_segments values
             ('road/1', 'Våxtorpsgränd', 59.278, 17.997, ''),
             ('road/2', 'Borgaregatan', 58.755, 16.998, ''),
-            ('road/3', 'Saknadsvägen', 59.2781, 17.9971, '');
+            ('road/3', 'Saknadsvägen', 59.2781, 17.9971, ''),
+                ('road/4', 'Karl Johansgatan', 57.6944, 11.9202, '');
 
         create table sweden_company_enrichment.se_address_geocodes_current (
             address_id varchar,
-            match_status varchar
+            match_status varchar,
+            match_method varchar default ''
         );
-        insert into sweden_company_enrichment.se_address_geocodes_current values
+        insert into sweden_company_enrichment.se_address_geocodes_current (
+            address_id,
+            match_status
+        ) values
             ('exact', 'unmatched'),
             ('typo', 'unmatched'),
-            ('road', 'unmatched');
+            ('road', 'unmatched'),
+            ('abbreviation', 'unmatched'),
+            ('distance-two', 'unmatched'),
+            ('nonexistent', 'unmatched'),
+            ('short-policy', 'unmatched'),
+            ('postcode-conflict', 'unmatched');
         """
     )
 

@@ -136,6 +136,10 @@ function approximateStreetLocationDescription(
 ): string {
   const usesRoadGeometry =
     matchMethod === "nearby_postcode_street_road_segment_median";
+  const hasPostcodeConflict =
+    matchMethod ===
+      "street_requested_house_missing_postcode_conflict" ||
+    matchMethod === "street_without_house_postcode_conflict";
   const evidence = pointCount
     ? `${new Intl.NumberFormat("en").format(pointCount)} OpenStreetMap ${
         usesRoadGeometry ? "road segments" : "address points"
@@ -147,12 +151,17 @@ function approximateStreetLocationDescription(
           maximumFractionDigits: 0,
         }).format(spreadMeters)} metres`
       : "";
-  const postalContext = usesRoadGeometry
-    ? "near the supplied postal area"
-    : "in the supplied postal area";
+  const postalContext = hasPostcodeConflict
+    ? "in the same locality, but not in the supplied postal area"
+    : usesRoadGeometry
+      ? "near the supplied postal area"
+      : "in the supplied postal area";
+  const verification = hasPostcodeConflict
+    ? "Neither the requested house number nor postal code was verified,"
+    : "The requested house number was not found,";
   return (
     `${evidence} place this street ${postalContext}${spread}. ` +
-    "The requested house number was not found, so the marker represents the street area, not the building."
+    `${verification} so the marker represents the street area, not the building.`
   );
 }
 

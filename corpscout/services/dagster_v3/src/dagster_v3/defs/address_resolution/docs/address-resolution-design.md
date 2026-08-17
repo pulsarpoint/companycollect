@@ -74,6 +74,8 @@ both raw/search representations and parsed components:
 
 - normalized source text and normalized derived search text;
 - normalized street, house number, unit, postcode, and locality;
+- language-scoped libpostal street variants with their original value and
+  variant provenance;
 - raw and street tokens;
 - character trigrams for partial retrieval;
 - one-character deletion signatures for edit-distance candidate retrieval;
@@ -97,7 +99,17 @@ strategies are:
 5. fuzzy street with exact house number and strong postcode/locality context;
 6. exact street and postcode/locality without a query house number; and
 7. exact street context when the requested building is absent from the
-   reference source.
+   reference source;
+8. exact street and locality with a conflicting non-empty postcode, but only
+   when the query has no candidate from any stronger retrieval strategy.
+
+Street variants are generated from the parsed street component during index
+materialization, not written back to raw or parsed observations. The parsed
+street is always the rank-zero variant. Libpostal expansions are additional
+retrieval keys and remain corrections in the result contract. They may match a
+building only with an exact house number plus an agreeing postcode, or an
+agreeing locality when either postcode is absent. Conflicting non-empty
+postcodes and localities cannot use an expanded-street fallback.
 
 Fuzzy candidates are retrieved through normalized-street and one-character
 deletion-signature postings. Posting joins are blocked by country, exact
@@ -107,6 +119,21 @@ postcode; two conflicting non-empty postcodes never become fuzzy candidates.
 A fuzzy function is a feature, never an authority by itself.
 Exact raw and derived-text paths are separate equality joins so databases can
 use their normalized keys instead of evaluating a country-wide `OR` join.
+Street/postcode retrieval and missing-postcode locality retrieval are likewise
+separate keyed paths; locality never creates a same-street cross product across
+conflicting non-empty postcodes.
+When both paths produce candidates, exact-postcode street evidence has a
+decisive score margin over locality-only evidence. The outcome remains street
+precision; stronger context only resolves the textual tie.
+
+The postcode-conflict fallback groups all OSM street references for the same
+country, normalized street, and normalized locality into one logical target.
+It returns `matched_street` only when the evidence spans at most the policy's
+area threshold; geographically separated evidence remains `ambiguous`.
+Building-only address points do not synthesize a street target because sparse
+building coverage is not road geometry. Promotion rejects a postcode-conflict
+fallback that would override a result produced by another strategy, while
+allowing unmatched results and existing postcode-conflict fallbacks to refresh.
 
 ## Resolution contract
 

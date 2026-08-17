@@ -7,16 +7,33 @@ def replace_address_resolution_candidates(
     connection: Any,
     *,
     query_table: str,
+    query_street_variant_table: str,
     reference_table: str,
     candidate_table: str,
     policy: AddressResolutionPolicy,
 ) -> None:
     """Generate auditable candidates through explicit retrieval strategies."""
+    query_variant_documents_table = "_address_resolution_query_street_variant_documents"
+    connection.execute(
+        f"""
+        create or replace temporary table {query_variant_documents_table} as
+        select
+            query.* exclude (normalized_street, street_deletion_signatures),
+            variant.street_variant,
+            variant.normalized_street_variant as normalized_street,
+            variant.variant_kind as street_variant_kind,
+            variant.variant_rank as street_variant_rank,
+            variant.street_deletion_signatures
+        from {query_table} query
+        inner join {query_street_variant_table} variant
+            using (document_id, index_scope, country_code)
+        """
+    )
     query_postings_table = "_address_resolution_query_street_postings"
     reference_postings_table = "_address_resolution_reference_street_postings"
     _replace_fuzzy_street_postings(
         connection,
-        source_table=query_table,
+        source_table=query_variant_documents_table,
         postings_table=query_postings_table,
         policy=policy,
         reference_documents=False,
@@ -34,7 +51,10 @@ def replace_address_resolution_candidates(
         with fuzzy_pairs as (
             select distinct
                 query.document_id as query_document_id,
-                reference.document_id as reference_document_id
+                reference.document_id as reference_document_id,
+                query.normalized_street as query_street_variant,
+                query.street_variant_kind,
+                reference.normalized_street as reference_street
             from {query_postings_table} query
             inner join {reference_postings_table} reference
                 on query.index_scope = reference.index_scope
@@ -55,7 +75,94 @@ def replace_address_resolution_candidates(
                 and query.normalized_locality
                     = reference.normalized_locality
                )
-        ), candidate_pairs as (
+        ), expanded_building_pairs as (
+            select
+                query.document_id as query_document_id,
+                reference.document_id as reference_document_id,
+                'postcode'::varchar as context_basis
+            from {query_variant_documents_table} query
+            inner join {reference_table} reference
+                on query.index_scope = reference.index_scope
+               and query.country_code = reference.country_code
+               and query.normalized_street = reference.normalized_street
+               and query.normalized_house_number
+                    = reference.normalized_house_number
+               and query.normalized_postal_code
+                    = reference.normalized_postal_code
+            where query.street_variant_kind != 'parsed'
+              and query.address_kind = 'physical'
+              and reference.address_kind = 'physical'
+              and reference.reference_precision = 'building'
+              and query.normalized_street != ''
+              and query.normalized_house_number != ''
+              and query.normalized_postal_code != ''
+
+            union all
+
+            select
+                query.document_id,
+                reference.document_id,
+                'locality'::varchar as context_basis
+            from {query_variant_documents_table} query
+            inner join {reference_table} reference
+                on query.index_scope = reference.index_scope
+               and query.country_code = reference.country_code
+               and query.normalized_street = reference.normalized_street
+               and query.normalized_house_number
+                    = reference.normalized_house_number
+               and query.normalized_locality = reference.normalized_locality
+            where query.street_variant_kind != 'parsed'
+              and query.address_kind = 'physical'
+              and reference.address_kind = 'physical'
+              and reference.reference_precision = 'building'
+              and query.normalized_street != ''
+              and query.normalized_house_number != ''
+              and query.normalized_locality != ''
+              and (
+                    query.normalized_postal_code = ''
+                 or reference.normalized_postal_code = ''
+              )
+        ), street_pairs as (
+            select
+                query.document_id as query_document_id,
+                reference.document_id as reference_document_id,
+                'postcode'::varchar as context_basis
+            from {query_table} query
+            inner join {reference_table} reference
+                on query.index_scope = reference.index_scope
+               and query.country_code = reference.country_code
+               and query.normalized_street = reference.normalized_street
+               and query.normalized_postal_code
+                    = reference.normalized_postal_code
+            where query.address_kind = 'physical'
+              and reference.address_kind = 'physical'
+              and reference.reference_precision = 'street'
+              and query.normalized_street != ''
+              and query.normalized_postal_code != ''
+
+            union all
+
+            select
+                query.document_id,
+                reference.document_id,
+                'locality'::varchar as context_basis
+            from {query_table} query
+            inner join {reference_table} reference
+                on query.index_scope = reference.index_scope
+               and query.country_code = reference.country_code
+               and query.normalized_street = reference.normalized_street
+               and query.normalized_locality = reference.normalized_locality
+            where query.address_kind = 'physical'
+              and reference.address_kind = 'physical'
+              and reference.reference_precision = 'street'
+              and query.normalized_street != ''
+              and query.normalized_locality != ''
+              and (
+                    query.normalized_postal_code = ''
+                 or reference.normalized_postal_code = ''
+              )
+
+        ), base_candidate_pairs as materialized (
             select
                 query.document_id as query_document_id,
                 reference.document_id as reference_document_id,
@@ -198,6 +305,36 @@ def replace_address_resolution_candidates(
                 query.document_id,
                 reference.document_id,
                 case
+                    when pair.context_basis = 'postcode'
+                        then 'expanded_street_postcode_house'
+                    else 'expanded_street_locality_house'
+                end as strategy,
+                case
+                    when pair.context_basis = 'postcode'
+                        then {policy.fuzzy_postcode_score}
+                    else {policy.fuzzy_locality_score}
+                end::double as score,
+                0::usmallint as street_edit_distance,
+                ['street_abbreviation_expanded']::varchar[] as corrections
+            from expanded_building_pairs pair
+            inner join {query_table} query
+                on query.document_id = pair.query_document_id
+            inner join {reference_table} reference
+                on reference.document_id = pair.reference_document_id
+
+            union all
+
+            select
+                query.document_id,
+                reference.document_id,
+                case
+                    when pair.street_variant_kind != 'parsed'
+                     and query.normalized_postal_code != ''
+                     and query.normalized_postal_code
+                        = reference.normalized_postal_code
+                        then 'expanded_street_fuzzy_postcode_house'
+                    when pair.street_variant_kind != 'parsed'
+                        then 'expanded_street_fuzzy_locality_house'
                     when query.normalized_postal_code != ''
                      and query.normalized_postal_code
                         = reference.normalized_postal_code
@@ -212,10 +349,14 @@ def replace_address_resolution_candidates(
                     else {policy.fuzzy_locality_score}
                 end::double as score,
                 damerau_levenshtein(
-                    query.normalized_street,
-                    reference.normalized_street
+                    pair.query_street_variant,
+                    pair.reference_street
                 )::usmallint as street_edit_distance,
-                ['street_name']::varchar[] as corrections
+                case
+                    when pair.street_variant_kind != 'parsed'
+                        then ['street_abbreviation_expanded']::varchar[]
+                    else ['street_name']::varchar[]
+                end as corrections
             from fuzzy_pairs pair
             inner join {query_table} query
                 on query.document_id = pair.query_document_id
@@ -224,15 +365,15 @@ def replace_address_resolution_candidates(
             where query.address_kind = 'physical'
               and reference.address_kind = 'physical'
               and reference.reference_precision = 'building'
-              and query.normalized_street != reference.normalized_street
+              and pair.query_street_variant != pair.reference_street
               and query.normalized_house_number != ''
-              and length(query.normalized_street)
+              and length(pair.query_street_variant)
                     >= {policy.minimum_fuzzy_street_length}
-              and length(reference.normalized_street)
+              and length(pair.reference_street)
                     >= {policy.minimum_fuzzy_street_length}
               and damerau_levenshtein(
-                    query.normalized_street,
-                    reference.normalized_street
+                    pair.query_street_variant,
+                    pair.reference_street
                   ) between 1 and {policy.maximum_street_edit_distance}
 
             union all
@@ -242,13 +383,23 @@ def replace_address_resolution_candidates(
                 reference.document_id,
                 case
                     when query.normalized_house_number = ''
+                     and pair.context_basis = 'postcode'
                         then 'street_without_house'
-                    else 'street_requested_house_missing'
+                    when query.normalized_house_number = ''
+                        then 'street_without_house_locality'
+                    when pair.context_basis = 'postcode'
+                        then 'street_requested_house_missing'
+                    else 'street_requested_house_missing_locality'
                 end as strategy,
                 case
                     when query.normalized_house_number = ''
+                     and pair.context_basis = 'postcode'
                         then {policy.street_without_house_score}
-                    else {policy.street_missing_requested_house_score}
+                    when query.normalized_house_number = ''
+                        then {policy.street_without_house_locality_score}
+                    when pair.context_basis = 'postcode'
+                        then {policy.street_missing_requested_house_score}
+                    else {policy.street_missing_requested_house_locality_score}
                 end::double as score,
                 0::usmallint as street_edit_distance,
                 case
@@ -256,27 +407,74 @@ def replace_address_resolution_candidates(
                         then ['house_number_missing']::varchar[]
                     else ['house_number_unavailable']::varchar[]
                 end as corrections
-            from {query_table} query
+            from street_pairs pair
+            inner join {query_table} query
+                on query.document_id = pair.query_document_id
             inner join {reference_table} reference
-                on query.index_scope = reference.index_scope
-               and query.country_code = reference.country_code
-               and query.normalized_street = reference.normalized_street
-               and (
-                    query.normalized_postal_code != ''
-                and query.normalized_postal_code
-                    = reference.normalized_postal_code
-                    or (
-                        query.normalized_postal_code = ''
-                     or reference.normalized_postal_code = ''
-                    )
-                and query.normalized_locality != ''
-                and query.normalized_locality
-                    = reference.normalized_locality
-               )
+                on reference.document_id = pair.reference_document_id
             where query.address_kind = 'physical'
               and reference.address_kind = 'physical'
               and reference.reference_precision = 'street'
               and query.normalized_street != ''
+        ), base_candidate_queries as materialized (
+            select distinct query_document_id
+            from base_candidate_pairs
+        ), postcode_conflict_queries as materialized (
+            select query.*
+            from {query_table} query
+            left join base_candidate_queries existing
+                on existing.query_document_id = query.document_id
+            where existing.query_document_id is null
+              and query.address_kind = 'physical'
+              and query.normalized_street != ''
+              and query.normalized_locality != ''
+              and query.normalized_postal_code != ''
+        ), postcode_conflict_street_pairs as (
+            select
+                query.document_id as query_document_id,
+                reference.document_id as reference_document_id
+            from postcode_conflict_queries query
+            inner join {reference_table} reference
+                on query.index_scope = reference.index_scope
+               and query.country_code = reference.country_code
+               and query.normalized_street = reference.normalized_street
+               and query.normalized_locality = reference.normalized_locality
+            where reference.address_kind = 'physical'
+              and reference.reference_precision = 'street'
+              and reference.normalized_postal_code != ''
+              and query.normalized_postal_code
+                    != reference.normalized_postal_code
+        ), postcode_conflict_candidate_pairs as (
+            select
+                query.document_id as query_document_id,
+                reference.document_id as reference_document_id,
+                case
+                    when query.normalized_house_number = ''
+                        then 'street_without_house_postcode_conflict'
+                    else 'street_requested_house_missing_postcode_conflict'
+                end::varchar as strategy,
+                case
+                    when query.normalized_house_number = ''
+                        then {policy.street_without_house_postcode_conflict_score}
+                    else {
+            policy.street_missing_requested_house_postcode_conflict_score
+        }
+                end::double as score,
+                0::usmallint as street_edit_distance,
+                case
+                    when query.normalized_house_number = ''
+                        then ['house_number_missing', 'postal_code']::varchar[]
+                    else ['house_number_unavailable', 'postal_code']::varchar[]
+                end as corrections
+            from postcode_conflict_street_pairs pair
+            inner join {query_table} query
+                on query.document_id = pair.query_document_id
+            inner join {reference_table} reference
+                on reference.document_id = pair.reference_document_id
+        ), candidate_pairs as (
+            select * from base_candidate_pairs
+            union all
+            select * from postcode_conflict_candidate_pairs
         ), deduplicated_pairs as (
             select *
             from candidate_pairs
@@ -288,7 +486,19 @@ def replace_address_resolution_candidates(
         select
             candidate.query_document_id,
             candidate.reference_document_id,
-            reference.search_document_key as reference_address_key,
+            case
+                when candidate.strategy in (
+                    'street_without_house_postcode_conflict',
+                    'street_requested_house_missing_postcode_conflict'
+                ) then concat_ws(
+                    '|',
+                    'street_locality_postcode_conflict',
+                    reference.country_code,
+                    reference.normalized_street,
+                    reference.normalized_locality
+                )
+                else reference.search_document_key
+            end as reference_address_key,
             candidate.strategy,
             candidate.score,
             candidate.street_edit_distance,
@@ -356,6 +566,9 @@ def _replace_fuzzy_street_postings(
     reference_filter = (
         "and reference_precision = 'building'" if reference_documents else ""
     )
+    street_variant_kind = (
+        "'parsed'::varchar" if reference_documents else "street_variant_kind"
+    )
     connection.execute(
         f"""
         create or replace temporary table {postings_table} as
@@ -367,6 +580,7 @@ def _replace_fuzzy_street_postings(
             normalized_house_number,
             normalized_postal_code,
             normalized_locality,
+            {street_variant_kind} as street_variant_kind,
             signature.value as street_signature
         from {source_table}
         cross join unnest(

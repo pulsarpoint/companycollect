@@ -260,6 +260,26 @@ describe("address geocoding outcome explanations", () => {
     });
   });
 
+  it("flags a locality street fallback when the postcode conflicts", () => {
+    const copy = addressGeocodeOutcomeCopy({
+      address_type: "visiting_or_postal",
+      full_address: "Furutunet 15, 18148 Lidingö",
+      geocode_status: "matched_street",
+      geocode_precision: "street",
+      geocode_match_method:
+        "street_requested_house_missing_postcode_conflict",
+      geocode_coordinate_supporting_point_count: 7,
+      geocode_coordinate_spread_meters: 90,
+    });
+
+    expect(copy).toEqual({
+      title: "Approximate street location found",
+      description:
+        "7 OpenStreetMap address points place this street in the same locality, but not in the supplied postal area spanning roughly 90 metres. Neither the requested house number nor postal code was verified, so the marker represents the street area, not the building.",
+      badge: "Approximate street",
+    });
+  });
+
   it("links exact coordinates to the matched OSM record", () => {
     expect(
       addressGeocodeEvidenceLink({
