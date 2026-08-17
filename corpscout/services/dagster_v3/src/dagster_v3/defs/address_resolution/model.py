@@ -12,6 +12,7 @@ class AddressResolutionPolicy:
     exact_score: float
     locality_fallback_score: float
     postcode_mismatch_score: float
+    country_fallback_score: float
     fuzzy_postcode_score: float
     fuzzy_locality_score: float
     street_without_house_score: float

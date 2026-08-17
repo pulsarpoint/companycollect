@@ -21,12 +21,12 @@ from dagster_v3.defs.common.duckdb_resources import duckdb_resource
 from dagster_v3.defs.common.resources import ObjectStoreResource
 from dagster_v3.defs.denmark_cvr.assets import DENMARK_CVR_BUCKET
 from dagster_v3.defs.denmark_cvr.company_detail_catalog import (
-    DENMARK_CVR_COMPANY_DETAIL_CATALOG_PILOT_PARTITION,
     DenmarkCvrCompanyDetailCatalogEntry,
     DenmarkCvrCompanyDetailCatalogReference,
     DenmarkCvrCompanyDetailObjectKind,
     bootstrap_company_detail_catalog,
     catalog_entry_from_body,
+    company_detail_catalog_enabled,
     load_optional_company_detail_catalog,
     publish_company_detail_catalog,
 )
@@ -1291,8 +1291,8 @@ def _updated_company_detail_catalog_entries(
         "checkpoints an original Danish-key JSON object plus an _en object whose "
         "keys are translated to English without changing values. Company-specific "
         "server errors are skipped and checkpointed after three failed attempts. "
-        "The bucket_000 pilot uses an exact-key v2 Parquet catalog instead of "
-        "enumerating the object prefix."
+        "The first eight canary buckets use exact-key v2 Parquet catalogs "
+        "instead of enumerating object prefixes."
     ),
 )
 def denmark_cvr_company_details_s3(
@@ -1311,7 +1311,7 @@ def denmark_cvr_company_details_s3(
         len(cvrs),
     )
     catalog_result: DenmarkCvrCompanyDetailCatalogWriteResult | None = None
-    if partition_key == DENMARK_CVR_COMPANY_DETAIL_CATALOG_PILOT_PARTITION:
+    if company_detail_catalog_enabled(partition_key):
         catalog_result = write_company_detail_catalog_partition(
             object_store=object_store,
             details=denmark_cvr_company_details,

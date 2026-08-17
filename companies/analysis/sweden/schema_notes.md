@@ -133,6 +133,29 @@ raw_record              <- full raw row / raw iXBRL fact metadata
 - Store raw annual-report archive path, nested ZIP path, XHTML filename, and concept QName for every
   financial fact.
 
+## Authenticated API contract additions
+
+The public `VärdefullaDatamängder` OpenAPI v1 contract was inspected on
+2026-08-17. It adds important semantics even though the supplied OAuth client
+was rejected:
+
+- The registration key can be
+  `(identitetsbeteckning, namnskyddslopnummer)`. Identity alone is not unique
+  for sole traders with several protected business names/registrations.
+- `organisationsdatum.registreringsdatum` and
+  `organisationsdatum.infortHosScb` are distinct dates. Do not map the SCB date
+  to incorporation without retaining its source meaning.
+- `/dokumentlista` adds `dokumentId`, `filformat`,
+  `rapporteringsperiodTom`, and `registreringstidpunkt`.
+- Most response groups include both `dataproducent` and a nullable `fel`
+  object. A producer error means unknown/unavailable, not a confirmed negative.
+
+Detailed field catalog:
+
+```text
+data_model/sources/bolagsverket_vardefulla_datamangder_api/source_field_catalog.json
+```
+
 ## Cross-country company-signal projection
 
 The main list needs true tri-state values:

@@ -92,9 +92,11 @@ strategies are:
 2. exact street, house number, and postcode;
 3. exact street and house number with agreeing locality but conflicting or
    missing postcode;
-4. fuzzy street with exact house number and strong postcode/locality context;
-5. exact street and postcode/locality without a query house number; and
-6. exact street context when the requested building is absent from the
+4. exact street and house number within the country when stronger address
+   context disagrees, with ambiguity enforced across distinct targets;
+5. fuzzy street with exact house number and strong postcode/locality context;
+6. exact street and postcode/locality without a query house number; and
+7. exact street context when the requested building is absent from the
    reference source.
 
 Fuzzy candidates are retrieved through normalized-street and one-character
@@ -103,6 +105,8 @@ normalized house number, and postcode or locality before edit distance is
 evaluated. Locality is only a postcode fallback when either side has no
 postcode; two conflicting non-empty postcodes never become fuzzy candidates.
 A fuzzy function is a feature, never an authority by itself.
+Exact raw and derived-text paths are separate equality joins so databases can
+use their normalized keys instead of evaluating a country-wide `OR` join.
 
 ## Resolution contract
 
@@ -120,6 +124,8 @@ Hard precision rules take precedence over the score:
   building;
 - a postcode mismatch may still resolve to a building only when street, house,
   locality, and candidate uniqueness support it;
+- conflicting postcode and locality may fall back to a country-level exact
+  street/house key only when the resulting reference target is unique;
 - a spelling correction must remain visible and must not overwrite source
   text; and
 - tied textual candidates are ambiguous even when their coordinates are close.
@@ -156,7 +162,7 @@ introduced until multiple production implementations exist.
 ## Evaluation corpus and tuning
 
 Each country has a versioned golden corpus containing real reviewed cases and
-controlled perturbations of known matches. The Sweden v1 corpus covers:
+controlled perturbations of known matches. The Sweden v2 corpus covers:
 
 - exact structured and raw matches;
 - apartment details that do not change building precision;
@@ -187,6 +193,11 @@ Geofabrik reference snapshot, writes only shadow search/candidate/result tables
 inside the Sweden DuckDB file, and compares its results with the current OSM
 geocode table. It does not publish to ClickHouse and cannot change serving
 mappings.
+
+The Sweden reference adapter expands comma- or semicolon-separated OSM house
+number tags into auditable component documents and derives postcode context for
+road-only street references from nearby address-point centroids. Those are
+provider mappings; scoring and ambiguity remain in the shared engine.
 
 Promotion requires:
 

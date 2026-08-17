@@ -65,12 +65,12 @@ objects in one materialization are committed in one transaction.
 hash is validated in Python before an object is written.
 
 For legacy buckets, the asset lists existing keys once and opens one browser
-session only when an original response is missing. `bucket_000` is the v2
-object-catalog pilot: its first run probes only the deterministic per-CVR keys,
-writes an immutable Parquet catalog, and replaces the exact partition
-`commit.json` only after catalog verification. Later runs read that commit and
-catalog directly and never enumerate the legacy prefix. Every successful
-response produces:
+session only when an original response is missing. `bucket_000` through
+`bucket_007` are the v2 object-catalog canary: each first run probes only the
+deterministic per-CVR keys, writes an immutable Parquet catalog, and replaces the
+exact partition `commit.json` only after catalog verification. Later runs read
+that commit and catalog directly and never enumerate the legacy prefix. Every
+successful response produces:
 
 - `denmark_cvr/company_details/bucket_NNN/cvr=<CVR>/company.json`, containing the
   original source response with Danish object keys and unchanged values.
@@ -108,32 +108,33 @@ classified as unavailable. Materialization metadata reports
 `skipped_company_count`, `already_skipped_company_count`, and
 `skipped_request_attempt_count`.
 
-### Company-detail object-catalog and compaction pilot
+### Company-detail object-catalog and compaction canary
 
-The `bucket_000` catalog is stored under:
+Each canary catalog is stored under:
 
 ```text
-v2/source=denmark_cvr/dataset=company_details/partition/hash_bucket=bucket_000/
+v2/source=denmark_cvr/dataset=company_details/partition/hash_bucket=bucket_NNN/
 ```
 
 It records one row per active original, English-key, or terminal failure JSON
 object with CVR, kind, exact key, byte size, and SHA-256. The catalog is the
 steady-state inventory contract; unchanged runs reuse its existing commit and
-do not rewrite it. Other company-detail buckets and date-versioned updates keep
-their legacy listing behavior until the pilot is accepted.
+do not rewrite it. Buckets outside `bucket_000` through `bucket_007` and
+date-versioned updates keep their legacy listing behavior until the canary is
+accepted.
 
 `denmark_cvr_company_details_compacted_s3` shares the upstream asset's 128-bucket
 partition contract so Dagster can execute both assets in one run, but rejects
-every partition except the `bucket_000` pilot. It receives that partition's
-typed catalog reference through Dagster's IO manager, verifies every cataloged
-JSON body, groups source objects toward a 256 MiB target, and writes
+every partition outside the eight-bucket canary. It receives the selected
+partition's typed catalog reference through Dagster's IO manager, verifies every
+cataloged JSON body, groups source objects toward a 256 MiB target, and writes
 content-addressed Parquet shards plus a separate catalog under:
 
 ```text
-v2/source=denmark_cvr/dataset=company_details_compacted/partition/hash_bucket=bucket_000/
+v2/source=denmark_cvr/dataset=company_details_compacted/partition/hash_bucket=bucket_NNN/
 ```
 
-The pilot retains all original JSON objects. When the source catalog SHA-256 is
+The canary retains all original JSON objects. When the source catalog SHA-256 is
 unchanged, compaction reuses the existing commit without reading the JSON
 objects again.
 

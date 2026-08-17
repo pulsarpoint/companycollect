@@ -6,12 +6,15 @@ from typing import Any
 import dagster as dg
 import pyarrow as pa
 import pyarrow.parquet as pq
+import pytest
 
 from dagster_v3.defs.denmark_cvr.company_detail_catalog import (
-    DENMARK_CVR_COMPANY_DETAIL_CATALOG_PILOT_PARTITION,
+    DENMARK_CVR_COMPANY_DETAIL_CATALOG_CANARY_PARTITIONS,
+    company_detail_catalog_enabled,
     load_company_detail_catalog,
 )
 from dagster_v3.defs.denmark_cvr.company_detail_compaction import (
+    company_detail_compacted_catalog_location,
     compact_company_detail_partition,
     denmark_cvr_company_details_compacted_s3,
     load_company_detail_compacted_catalog,
@@ -27,6 +30,16 @@ from dagster_v3.defs.denmark_cvr.company_details import (
 
 DENMARK_CVR_BUCKET = "source-denmark-cvr"
 PILOT_PARTITION = "bucket_000"
+CANARY_PARTITIONS = (
+    "bucket_000",
+    "bucket_001",
+    "bucket_002",
+    "bucket_003",
+    "bucket_004",
+    "bucket_005",
+    "bucket_006",
+    "bucket_007",
+)
 COMPLETE_CVR = "10000286"
 ORIGINAL_ONLY_CVR = "10000312"
 DOWNLOAD_CVR = "10000322"
@@ -271,10 +284,10 @@ def test_compaction_writes_parquet_and_reuses_unchanged_source_catalog(
     assert store.write_keys == []
 
 
-def test_compacted_asset_is_a_typed_pilot_gated_downstream_asset() -> None:
+def test_compacted_asset_is_a_typed_canary_gated_downstream_asset() -> None:
     spec = denmark_cvr_company_details_compacted_s3.get_asset_spec()
 
-    assert DENMARK_CVR_COMPANY_DETAIL_CATALOG_PILOT_PARTITION == PILOT_PARTITION
+    assert DENMARK_CVR_COMPANY_DETAIL_CATALOG_CANARY_PARTITIONS == CANARY_PARTITIONS
     assert (
         denmark_cvr_company_details_compacted_s3.partitions_def
         == denmark_cvr_company_details_s3.partitions_def
@@ -292,3 +305,19 @@ def test_compacted_asset_is_a_typed_pilot_gated_downstream_asset() -> None:
         .asset_graph.get(dg.AssetKey("denmark_cvr_company_details_compacted_s3"))
     )
     assert node.parent_keys == {dg.AssetKey("denmark_cvr_company_details_s3")}
+
+
+@pytest.mark.parametrize("partition_key", CANARY_PARTITIONS)
+def test_company_detail_catalog_canary_scope_includes_first_eight_buckets(
+    partition_key: str,
+) -> None:
+    assert company_detail_catalog_enabled(partition_key) is True
+    assert company_detail_compacted_catalog_location(partition_key).partition == {
+        "hash_bucket": partition_key
+    }
+
+
+def test_company_detail_catalog_canary_scope_excludes_next_bucket() -> None:
+    assert company_detail_catalog_enabled("bucket_008") is False
+    with pytest.raises(ValueError, match="canary partitions"):
+        company_detail_compacted_catalog_location("bucket_008")

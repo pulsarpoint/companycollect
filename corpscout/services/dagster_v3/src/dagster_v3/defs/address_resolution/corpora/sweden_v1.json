@@ -1,5 +1,5 @@
 {
-  "version": "sweden-address-resolution-golden-v1",
+  "version": "sweden-address-resolution-golden-v2",
   "cases": [
     {
       "case_id": "exact_building_with_unit",
@@ -195,6 +195,55 @@
         "status": "matched_corrected",
         "precision": "building",
         "strategy": "postcode_mismatch_unique"
+      }
+    },
+    {
+      "case_id": "country_context_mismatch_unique_building",
+      "description": "An exact street and house can fall back across conflicting locality context only when the country-level target is unique.",
+      "query": {
+        "document_id": "query-country-context",
+        "country_code": "SE",
+        "raw_address": "Kontextgatan 7, 11111 Frågestad",
+        "search_text": "Kontextgatan 7, 11111 Frågestad",
+        "street_name": "Kontextgatan",
+        "house_number": "7",
+        "unit": "",
+        "postal_code": "11111",
+        "locality": "Frågestad",
+        "address_kind": "physical",
+        "reference_precision": "",
+        "latitude": null,
+        "longitude": null,
+        "coordinate_spread_meters": null,
+        "supporting_record_count": 0,
+        "source_record_id": "query-country-context",
+        "source_record_url": ""
+      },
+      "references": [
+        {
+          "document_id": "reference-country-context",
+          "country_code": "SE",
+          "raw_address": "",
+          "search_text": "Kontextgatan 7, 22222 Referensstad",
+          "street_name": "Kontextgatan",
+          "house_number": "7",
+          "unit": "",
+          "postal_code": "22222",
+          "locality": "Referensstad",
+          "address_kind": "physical",
+          "reference_precision": "building",
+          "latitude": 59.3,
+          "longitude": 18.0,
+          "coordinate_spread_meters": 0,
+          "supporting_record_count": 1,
+          "source_record_id": "reference-country-context",
+          "source_record_url": "https://www.openstreetmap.org/"
+        }
+      ],
+      "expected": {
+        "status": "matched_corrected",
+        "precision": "building",
+        "strategy": "country_street_house"
       }
     },
     {

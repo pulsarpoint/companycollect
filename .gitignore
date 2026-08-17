@@ -15,6 +15,9 @@
 !*.env.example
 !**/.env.example
 
+# Local Bolagsverket OAuth credentials must never be committed.
+corpscout/services/dagster_v3/docs/sweden-api/client_credentials*.txt
+
 # Local runtime data and generated artifacts.
 data/
 **/data/

@@ -293,6 +293,7 @@ EXPECTED_MIGRATIONS = (
     "000276_noop",
     "000277_corpscout_se_address_geocode_spread",
     "000278_corpscout_se_address_components",
+    "000279_corpscout_se_bolagsverket_vdm",
 )
 
 NOOP_MIGRATIONS = {"000276_noop"}

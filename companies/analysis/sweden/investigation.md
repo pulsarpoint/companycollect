@@ -196,7 +196,8 @@ This is the source for Swedish financial metrics. The parser should work from ra
 
 ## Authenticated API status
 
-The API should be documented as a fallback, not the initial ingestion path.
+The API should be documented as a targeted fallback/document-discovery source,
+not the initial full-universe ingestion path.
 
 Known API surface:
 
@@ -213,8 +214,31 @@ POST /dokumentlista
 GET  /dokument/{id}
 ```
 
-However, using the API requires registration/authentication. The current strategy is to avoid this
-dependency because the same key data is available as public bulk files.
+The official public OpenAPI specification was retrieved successfully on
+2026-08-17. It documents OAuth2 client credentials, read/ping scopes, field-level
+producer/error envelopes, and an unlimited portal throttling tier.
+
+The original client returned HTTP 401 `invalid_client`. A replacement client
+then authenticated successfully using HTTP Basic OAuth client authentication.
+Authenticated health, company, and document-list calls returned HTTP 200. No
+credential or token was persisted in the investigation artifacts.
+
+The contract and live responses identify two important modeling gaps:
+
+- `namnskyddslopnummer` is part of a business-registration identity when
+  several registrations share one personal identity. The current normalizer
+  partitions only by identity and collapses 108,745 extra registrations in the
+  inspected local bulk snapshot.
+- `/dokumentlista` supplies official `dokumentId` and
+  `registreringstidpunkt`; the current Sweden report table stores neither.
+
+For `5562434182`, the live response returned one active organisation and no
+digital annual reports. It also confirmed that organisation registration
+(`1984-05-03`), SCB introduction (`1984-08-19`), and name registration
+(`1984-11-08`) are separate dates. A positive-control company returned one
+digital report with a document ID and filing-registration date.
+
+See `bolagsverket-vdm-api-gap-analysis.md` for the field-by-field comparison.
 
 ## Recommended ingestion architecture
 

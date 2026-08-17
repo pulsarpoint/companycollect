@@ -104,9 +104,9 @@ def test_sweden_shadow_adapter_builds_results_without_serving_changes() -> None:
             log=None,
         )
 
-        assert counts["query_documents"] == 2
-        assert counts["results"] == 2
-        assert counts["changed_results"] == 2
+        assert counts["query_documents"] == 3
+        assert counts["results"] == 3
+        assert counts["changed_results"] == 3
         assert connection.execute(
             f"""
             select address_id, shadow_status, shadow_strategy
@@ -115,6 +115,7 @@ def test_sweden_shadow_adapter_builds_results_without_serving_changes() -> None:
             """
         ).fetchall() == [
             ("exact", "matched_exact", "parsed_full_exact"),
+            ("road", "matched_street", "street_requested_house_missing"),
             ("typo", "matched_corrected", "fuzzy_street_postcode_house"),
         ]
 
@@ -161,6 +162,18 @@ def _create_sweden_shadow_fixture(connection: duckdb.DuckDBPyConnection) -> None
                 'Nyköping',
                 'SE',
                 'physical'
+            ),
+            (
+                'road',
+                'Saknadsvägen 99, 12573 Älvsjö',
+                'Saknadsvägen 99',
+                'Saknadsvägen',
+                '99',
+                '',
+                '12573',
+                'Älvsjö',
+                'SE',
+                'physical'
             );
 
         create table sweden_address_osm.address_points (
@@ -195,10 +208,10 @@ def _create_sweden_shadow_fixture(connection: duckdb.DuckDBPyConnection) -> None
             (
                 'osm/typo-target',
                 'SE',
-                'Borgaregatan 19 B, 61131 Nyköping',
+                'Borgaregatan 19 B, 19 C, 61131 Nyköping',
                 'Borgaregatan',
                 '',
-                '19 B',
+                '19 B, 19 C',
                 '',
                 '61131',
                 'Nyköping',
@@ -216,7 +229,8 @@ def _create_sweden_shadow_fixture(connection: duckdb.DuckDBPyConnection) -> None
         );
         insert into sweden_address_osm.street_segments values
             ('road/1', 'Våxtorpsgränd', 59.278, 17.997, ''),
-            ('road/2', 'Borgaregatan', 58.755, 16.998, '');
+            ('road/2', 'Borgaregatan', 58.755, 16.998, ''),
+            ('road/3', 'Saknadsvägen', 59.2781, 17.9971, '');
 
         create table sweden_company_enrichment.se_address_geocodes_current (
             address_id varchar,
@@ -224,7 +238,8 @@ def _create_sweden_shadow_fixture(connection: duckdb.DuckDBPyConnection) -> None
         );
         insert into sweden_company_enrichment.se_address_geocodes_current values
             ('exact', 'unmatched'),
-            ('typo', 'unmatched');
+            ('typo', 'unmatched'),
+            ('road', 'unmatched');
         """
     )
 

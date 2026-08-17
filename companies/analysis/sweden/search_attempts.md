@@ -260,3 +260,43 @@
 - Decision: Keep both roles. EODHD is the operational vendor layer; FIRDS is
   the official EEA identity, classification, venue, lifecycle, and
   completeness layer required before a trustworthy scoped red state.
+
+## Attempt 17 — authenticated Bolagsverket Värdefulla datamängder API
+
+- Date/time: 2026-08-17T08:10:09Z
+- Source:
+  - supplied `sweden-api/data.txt` connection note
+  - supplied two-line OAuth client credential files (values not recorded)
+  - Bolagsverket public developer portal and OpenAPI v1 specification
+  - production gateway `https://gw.api.bolagsverket.se/vardefulla-datamangder/v1`
+- Why: Test the supplied access and identify API fields not represented in the
+  existing Sweden company and annual-report pipelines.
+- Calls:
+  - OAuth client credentials using HTTP Basic and form client authentication
+  - `GET /isalive`
+  - `POST /organisationer` for `5562434182`
+  - `POST /dokumentlista` for `5562434182`
+  - data-plane Basic and `ApiKey` header probes
+- Result:
+  - Public API metadata and the 74 KB OpenAPI specification returned HTTP 200.
+  - The original client returned HTTP 401 `invalid_client`; the replacement
+    client returned HTTP 200 and a one-hour token with read and ping scopes.
+  - Data-plane calls without a valid bearer token returned HTTP 401, WSO2 code
+    `900902`.
+  - Authenticated `GET /isalive`, `POST /organisationer`, and both bounded
+    `POST /dokumentlista` calls returned HTTP 200.
+  - `5562434182` returned one active organisation and zero digital annual
+    reports. Its organisation, SCB-introduction, and name dates were
+    `1984-05-03`, `1984-08-19`, and `1984-11-08`, respectively.
+  - Positive-control `5560187493` returned one digital report with an official
+    document ID and registration date `2025-12-29`.
+  - The contract documents four endpoints and 31 component schemas.
+  - It confirms the compound registration identity role of
+    `namnskyddslopnummer`, separate organisation/SCB dates, field-level
+    producer/error provenance, and annual-report document ID/registration date.
+- Decision:
+  - Keep bulk ingestion primary.
+  - Move the working credential to secret storage before integration.
+  - Fix compound registration identity and SCB date semantics independently of
+    API access.
+  - Use the API for bounded targeted refresh and document discovery.

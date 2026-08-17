@@ -38,13 +38,26 @@ the raw annual-report document files.
 
 ## Authenticated API
 
-The Bolagsverket API exists, but it is not the preferred ingestion path now:
+The Bolagsverket API exists, but it is not the preferred full-universe ingestion path:
 
 - requires authentication/registration,
 - appears to require EU identity documentation/eID,
 - adds operational complexity that the public bulk files avoid.
 
-Use the API only for future targeted enrichment if credentials are available.
+Working OAuth access was verified on 2026-08-17. Use the API for bounded
+targeted enrichment and digital-report discovery while keeping public bulk
+files as the universe source.
+
+The public developer portal describes the API as a high-value dataset and the
+API is not monetized, but the exact redistribution wording should still be
+archived before storing API responses for production reuse. The original client
+returned `invalid_client`, but its replacement authenticated successfully;
+bounded company and document payloads were collected as raw investigation
+evidence.
+
+Keep OAuth client credentials in environment/secret storage. Matching local
+credential filenames are ignored by Git; the plaintext files should be removed
+from the docs tree after the working secret is provisioned for deployment.
 
 ## Uncertainty / to confirm
 

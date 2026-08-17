@@ -145,9 +145,54 @@
     "access": "authenticated",
     "requires_authentication": true,
     "requires_payment": false,
-    "auth_notes": "Requires authenticated registration/EU identity documentation/eID; not used for the first ingestion path.",
-    "status": "fallback",
-    "notes": "Use only for targeted enrichment or when API credentials are available. Bulk files should be primary."
+  "auth_notes": "OAuth2 client credentials. The original client returned HTTP 401 invalid_client; a replacement client authenticated successfully on 2026-08-17 and issued a one-hour token with read and ping scopes.",
+    "openapi_url": "https://portal.api.bolagsverket.se/api/am/devportal/v3/apis/ff8f9a91-1fdd-4705-8836-c1906581162f/swagger",
+    "token_url": "https://portal.api.bolagsverket.se/oauth2/token",
+    "scopes": [
+      "vardefulla-datamangder:read",
+      "vardefulla-datamangder:ping"
+    ],
+    "endpoints": [
+      "GET /isalive",
+      "POST /organisationer",
+      "POST /dokumentlista",
+      "GET /dokument/{dokumentId}"
+    ],
+    "fields_observed": [
+      "organisationer[].organisationsidentitet",
+      "organisationer[].namnskyddslopnummer",
+      "organisationer[].organisationsnamn.organisationsnamnLista[]",
+      "organisationer[].registreringsland",
+      "organisationer[].organisationsform",
+      "organisationer[].juridiskForm",
+      "organisationer[].verksamOrganisation",
+      "organisationer[].reklamsparr",
+      "organisationer[].organisationsdatum.registreringsdatum",
+      "organisationer[].organisationsdatum.infortHosScb",
+      "organisationer[].verksamhetsbeskrivning",
+      "organisationer[].naringsgrenOrganisation.sni[]",
+      "organisationer[].postadressOrganisation",
+      "organisationer[].avregistreradOrganisation",
+      "organisationer[].avregistreringsorsak",
+      "organisationer[].pagaendeAvvecklingsEllerOmstruktureringsforfarande",
+      "dokument[].dokumentId",
+      "dokument[].filformat",
+      "dokument[].rapporteringsperiodTom",
+      "dokument[].registreringstidpunkt"
+    ],
+    "downloaded_files": [
+      "raw/api/bolagsverket_vardefulla_datamangder_openapi_20260817.json",
+      "raw/api/bolagsverket_vardefulla_datamangder_metadata_20260817.json",
+    "raw/api/bolagsverket_vdm_probe_20260817.json",
+    "raw/api/bolagsverket_vdm_authenticated_probe_metadata_20260817.json",
+    "raw/api/bolagsverket_vdm_organisation_5562434182_20260817.json",
+    "raw/api/bolagsverket_vdm_documents_5562434182_20260817.json",
+    "raw/api/bolagsverket_vdm_documents_5560187493_20260817.json",
+      "raw/pages/bolagsverket_vardefulla_datamangder_devportal_20260817.html"
+    ],
+  "status": "useful_targeted_source",
+    "recommended_registry_key": "sweden/bolagsverket_vardefulla_datamangder_api",
+  "notes": "Keep public bulk files primary. Working access is verified for targeted refresh and annual-report document discovery. The API contract confirms that (identitetsbeteckning, namnskyddslopnummer), not identity alone, identifies registrations that share one sole-trader identity. For 5562434182 the live API returned one organisation and zero digital annual reports; a positive control returned one document with its official ID and registration date."
   },
   {
     "country": "Sweden",

@@ -1,0 +1,2 @@
+DROP TABLE IF EXISTS corpscout.se_bolagsverket_vdm_financial_report_documents;
+DROP TABLE IF EXISTS corpscout.se_bolagsverket_vdm_company_observations;

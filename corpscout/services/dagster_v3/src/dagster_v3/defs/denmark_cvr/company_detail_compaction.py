@@ -17,9 +17,10 @@ from dagster_v3.defs.common.object_catalog import (
 from dagster_v3.defs.common.resources import ObjectStoreResource
 from dagster_v3.defs.denmark_cvr.company_detail_catalog import (
     DENMARK_CVR_BUCKET,
-    DENMARK_CVR_COMPANY_DETAIL_CATALOG_PILOT_PARTITION,
+    DENMARK_CVR_COMPANY_DETAIL_CATALOG_CANARY_PARTITIONS,
     DenmarkCvrCompanyDetailCatalogEntry,
     DenmarkCvrCompanyDetailCatalogReference,
+    company_detail_catalog_enabled,
     load_company_detail_catalog,
     read_company_detail_catalog_objects,
 )
@@ -108,10 +109,11 @@ class DenmarkCvrCompanyDetailCompactionResult:
 def company_detail_compacted_catalog_location(
     partition_key: str,
 ) -> ObjectCatalogLocation:
-    if partition_key != DENMARK_CVR_COMPANY_DETAIL_CATALOG_PILOT_PARTITION:
+    if not company_detail_catalog_enabled(partition_key):
         raise ValueError(
-            "Denmark CVR company-detail compaction is limited to the pilot partition: "
-            f"{partition_key}"
+            "Denmark CVR company-detail compaction is limited to the canary "
+            f"partitions: partition={partition_key} "
+            f"canary={DENMARK_CVR_COMPANY_DETAIL_CATALOG_CANARY_PARTITIONS}"
         )
     return ObjectCatalogLocation(
         source="denmark_cvr",
@@ -572,8 +574,9 @@ def _partition_json(location: ObjectCatalogLocation) -> str:
     backfill_policy=dg.BackfillPolicy.multi_run(max_partitions_per_run=1),
     pool=DENMARK_CVR_COMPANY_DETAIL_POOL,
     description=(
-        "Compacts the bucket_000 company-detail catalog into content-addressed "
-        "Parquet shards without enumerating the legacy JSON object prefix."
+        "Compacts the first eight canary company-detail catalogs into "
+        "content-addressed Parquet shards without enumerating legacy JSON "
+        "object prefixes."
     ),
 )
 def denmark_cvr_company_details_compacted_s3(
@@ -589,7 +592,7 @@ def denmark_cvr_company_details_compacted_s3(
         )
     if snapshot.catalog_reference is None:
         raise ValueError(
-            "Denmark CVR company-detail compaction requires the v2 pilot catalog"
+            "Denmark CVR company-detail compaction requires a v2 canary catalog"
         )
     result = compact_company_detail_partition(
         object_store=object_store,

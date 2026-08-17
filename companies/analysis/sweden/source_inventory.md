@@ -5,7 +5,7 @@
 | 1 | **Bolagsverket legal-register bulk file** | Official registry bulk | Public direct ZIP, refreshed about every 7 days | ZIP, CSV-like text | No | **recommended primary company source** |
 | 2 | **SCB/FDB bulk file via Bolagsverket high-value datasets** | Statistical business register bulk | Public direct ZIP, refreshed about every 7 days | ZIP, tab-separated text | No | **recommended secondary/company universe source** |
 | 3 | **Bolagsverket annual-report archives** | Official filings bulk | Public directory of ZIP archives | ZIP, nested ZIP, XHTML/iXBRL | **Yes** | **recommended primary financial source** |
-| 4 | Bolagsverket Värdefulla datamängder API | Official API | Authenticated; requires registration/EU identity documents/eID | JSON, ZIP, iXBRL | Yes | fallback/enrichment only |
+| 4 | Bolagsverket Värdefulla datamängder API | Official API | OAuth2 client credentials; replacement client verified on 2026-08-17 | JSON, ZIP, iXBRL | Yes | **useful targeted source**; company refresh and digital-report discovery |
 | 5 | dataportal.se / Bolagsverket source pages | Catalog/documentation | Public browser pages | HTML/DCAT metadata | No | useful_secondary_source |
 | 6 | Verklig huvudman (UBO) | Official registry | Restricted | unknown | No | out of scope |
 | 7 | Commercial aggregators | Third-party | Paid/keyed | JSON/PDF/iXBRL | sometimes | fallback/comparison only |
@@ -55,6 +55,7 @@ Build the Sweden ingestion from public bulk files:
 company bulk ZIPs + annual-report ZIPs -> raw object storage -> parser -> normalized tables -> ClickHouse
 ```
 
-Do not build the first version around the authenticated API. The API is useful later for targeted
-refresh/enrichment if credentials are available, but the public bulk files are simpler, cheaper, and
-better aligned with batch ingestion.
+Do not build the full-universe ingestion around the authenticated API. Working
+access is now verified, but the public bulk files remain simpler and better
+aligned with batch ingestion. Use the API for bounded targeted refresh,
+field-provenance checks, and digital-report discovery/retrieval.

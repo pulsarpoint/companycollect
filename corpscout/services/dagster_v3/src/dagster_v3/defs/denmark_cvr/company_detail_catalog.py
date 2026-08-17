@@ -21,7 +21,16 @@ from dagster_v3.defs.common.resources import ObjectStoreResource
 
 DENMARK_CVR_BUCKET = "source-denmark-cvr"
 DENMARK_CVR_COMPANY_DETAIL_CATALOG_DATASET = "company_details"
-DENMARK_CVR_COMPANY_DETAIL_CATALOG_PILOT_PARTITION = "bucket_000"
+DENMARK_CVR_COMPANY_DETAIL_CATALOG_CANARY_PARTITIONS = (
+    "bucket_000",
+    "bucket_001",
+    "bucket_002",
+    "bucket_003",
+    "bucket_004",
+    "bucket_005",
+    "bucket_006",
+    "bucket_007",
+)
 DENMARK_CVR_COMPANY_DETAIL_BOOTSTRAP_WORKERS = 16
 
 type DenmarkCvrCompanyDetailObjectKind = Literal["original", "english", "failure"]
@@ -81,6 +90,11 @@ class DenmarkCvrCompanyDetailCatalog:
 class DenmarkCvrCompanyDetailCatalogBootstrap:
     entries: tuple[DenmarkCvrCompanyDetailCatalogEntry, ...]
     object_read_count: int
+
+
+def company_detail_catalog_enabled(partition_key: str) -> bool:
+    _validate_partition_key(partition_key)
+    return partition_key in DENMARK_CVR_COMPANY_DETAIL_CATALOG_CANARY_PARTITIONS
 
 
 def company_detail_catalog_location(partition_key: str) -> ObjectCatalogLocation:

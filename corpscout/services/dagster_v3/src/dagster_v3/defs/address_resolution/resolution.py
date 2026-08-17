@@ -162,6 +162,41 @@ def replace_address_resolution_candidates(
             select
                 query.document_id,
                 reference.document_id,
+                'country_street_house'::varchar as strategy,
+                {policy.country_fallback_score}::double as score,
+                0::usmallint as street_edit_distance,
+                case
+                    when query.normalized_postal_code
+                            != reference.normalized_postal_code
+                     and query.normalized_locality
+                            != reference.normalized_locality
+                        then ['postal_code', 'locality']::varchar[]
+                    when query.normalized_postal_code
+                            != reference.normalized_postal_code
+                        then ['postal_code']::varchar[]
+                    when query.normalized_locality
+                            != reference.normalized_locality
+                        then ['locality']::varchar[]
+                    else ['address_context']::varchar[]
+                end as corrections
+            from {query_table} query
+            inner join {reference_table} reference
+                on query.index_scope = reference.index_scope
+               and query.country_code = reference.country_code
+               and query.normalized_street = reference.normalized_street
+               and query.normalized_house_number
+                    = reference.normalized_house_number
+            where query.address_kind = 'physical'
+              and reference.address_kind = 'physical'
+              and reference.reference_precision = 'building'
+              and query.normalized_street != ''
+              and query.normalized_house_number != ''
+
+            union all
+
+            select
+                query.document_id,
+                reference.document_id,
                 case
                     when query.normalized_postal_code != ''
                      and query.normalized_postal_code
@@ -230,7 +265,11 @@ def replace_address_resolution_candidates(
                     query.normalized_postal_code != ''
                 and query.normalized_postal_code
                     = reference.normalized_postal_code
-                    or query.normalized_locality != ''
+                    or (
+                        query.normalized_postal_code = ''
+                     or reference.normalized_postal_code = ''
+                    )
+                and query.normalized_locality != ''
                 and query.normalized_locality
                     = reference.normalized_locality
                )

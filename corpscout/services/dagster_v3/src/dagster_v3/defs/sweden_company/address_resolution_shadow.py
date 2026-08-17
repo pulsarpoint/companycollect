@@ -144,9 +144,38 @@ def _replace_building_reference_documents(connection: Any) -> None:
         connection,
         table_name="_sweden_shadow_building_reference_documents",
         source_sql=f"""
+            with expanded as (
+                select
+                    address.*,
+                    trim(component.value) as house_number_component
+                from {osm_tables.QUALIFIED_ADDRESS_TABLE} address
+                cross join unnest(regexp_split_to_array(
+                    coalesce(address.house_number, ''),
+                    '[,;]'
+                )) component(value)
+            ), deduplicated as (
+                select *
+                from expanded
+                where house_number_component != ''
+                qualify row_number() over (
+                    partition by
+                        source_record_id,
+                        regexp_replace(
+                            lower(house_number_component),
+                            '[^[:alnum:]]+',
+                            '',
+                            'g'
+                        )
+                    order by house_number_component
+                ) = 1
+            )
             select
                 '{INDEX_SCOPE}'::varchar as index_scope,
-                source_record_id as document_id,
+                concat(
+                    source_record_id,
+                    '/house/',
+                    md5(house_number_component)
+                ) as document_id,
                 country_code,
                 coalesce(full_address, '') as raw_address,
                 concat_ws(
@@ -154,7 +183,7 @@ def _replace_building_reference_documents(connection: Any) -> None:
                     concat_ws(
                         ' ',
                         coalesce(nullif(street, ''), place, ''),
-                        coalesce(house_number, '')
+                        house_number_component
                     ),
                     concat_ws(
                         ' ',
@@ -163,7 +192,7 @@ def _replace_building_reference_documents(connection: Any) -> None:
                     )
                 ) as search_text,
                 coalesce(nullif(street, ''), place, '') as street_name,
-                coalesce(house_number, '') as house_number,
+                house_number_component as house_number,
                 coalesce(unit, '') as unit,
                 coalesce(postcode, '') as postal_code,
                 coalesce(city, '') as locality,
@@ -175,9 +204,8 @@ def _replace_building_reference_documents(connection: Any) -> None:
                 1::uinteger as supporting_record_count,
                 source_record_id,
                 source_record_url
-            from {osm_tables.QUALIFIED_ADDRESS_TABLE}
+            from deduplicated
             where coalesce(nullif(street, ''), place, '') != ''
-              and coalesce(house_number, '') != ''
         """,
     )
 
@@ -374,9 +402,10 @@ def _replace_road_street_inputs(connection: Any) -> None:
         ), nearby as (
             select
                 road.*,
-                postcode.postal_code,
-                postcode.locality,
-                postcode.normalized_postal_code,
+                postcode.postal_code as context_postal_code,
+                postcode.locality as context_locality,
+                postcode.normalized_postal_code
+                    as context_normalized_postal_code,
                 2 * 6371000 * asin(least(1.0, sqrt(
                     pow(
                         sin(radians(road.latitude - postcode.latitude) / 2),
@@ -405,7 +434,7 @@ def _replace_road_street_inputs(connection: Any) -> None:
                     '|',
                     country_code,
                     normalized_street,
-                    normalized_postal_code
+                    context_normalized_postal_code
                 ))
             ) as document_id,
             country_code,
@@ -415,15 +444,15 @@ def _replace_road_street_inputs(connection: Any) -> None:
                 first(street_name order by document_id),
                 concat_ws(
                     ' ',
-                    first(postal_code order by document_id),
-                    first(locality order by document_id)
+                    first(context_postal_code order by document_id),
+                    first(context_locality order by document_id)
                 )
             ) as search_text,
             first(street_name order by document_id) as street_name,
             ''::varchar as house_number,
             ''::varchar as unit,
-            first(postal_code order by document_id) as postal_code,
-            first(locality order by document_id) as locality,
+            first(context_postal_code order by document_id) as postal_code,
+            first(context_locality order by document_id) as locality,
             'physical'::varchar as address_kind,
             'street'::varchar as reference_precision,
             median(latitude)::double as latitude,
@@ -437,7 +466,7 @@ def _replace_road_street_inputs(connection: Any) -> None:
                     '|',
                     country_code,
                     normalized_street,
-                    normalized_postal_code
+                    context_normalized_postal_code
                 ))
             ) as source_record_id,
             ''::varchar as source_record_url,
@@ -446,7 +475,10 @@ def _replace_road_street_inputs(connection: Any) -> None:
         from nearby
         where postcode_distance_meters
             <= {address_matching.ROAD_POSTCODE_CONTEXT_MAX_DISTANCE_METERS}
-        group by country_code, normalized_street, normalized_postal_code
+        group by
+            country_code,
+            normalized_street,
+            context_normalized_postal_code
         """
     )
 

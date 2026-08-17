@@ -17,8 +17,9 @@ The repository-level implementation plan is
 
 - Official bulk data: **found** — Bolagsverket publishes downloadable company bulk files directly on the
   public high-value-datasets host. The files are free and are refreshed roughly every **7 days**.
-- Official API: **found but not recommended for ingestion now** — the API exists, but access requires
-  authenticated registration with EU identity documentation/eID. Use public bulk files instead.
+- Official API: **found; working access verified** — a replacement OAuth client authenticated on
+  2026-08-17, and bounded company/document calls returned HTTP 200. Use public bulk files as the
+  universe source and the API for targeted enrichment and document discovery.
 - Financial data: **found** — annual reports are available as public ZIP files under the
   `arsredovisningar/` directory. The observed sample archive contains per-company ZIPs with XHTML/iXBRL
   annual-report documents.
@@ -144,6 +145,9 @@ parse XHTML/iXBRL, and map concepts to company financial metrics.
 4. Download annual-report ZIP batches from `arsredovisningar/`, store raw archives, then parse nested
    XHTML/iXBRL files for financial metrics.
 5. Treat the authenticated API as a fallback/enrichment path only after credentials are available.
+
+The 2026-08-17 API contract and implementation gap analysis is in
+[`bolagsverket-vdm-api-gap-analysis.md`](bolagsverket-vdm-api-gap-analysis.md).
 
 ## Next action
 
