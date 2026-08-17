@@ -65,6 +65,13 @@ The ClickHouse tables are source-specific. Targeted API refreshes do not mutate
 or replace the full bulk Sweden company snapshot, and a later bulk-table swap
 cannot erase these observations.
 
+`corpscout.se_bolagsverket_vdm_company_current` is the serving read contract. It
+uses `argMax` with `(observed_at, source_run_id)` as a deterministic version and
+returns one row per `(company_id, name_protection_sequence)`. The compound key is
+intentional: identities used by sole traders can own more than one protected
+registration. Consumers that only support organisation numbers can expect one
+row, but must not silently collapse registrations for personal identities.
+
 ## Operations
 
 Example launch configuration:
@@ -83,4 +90,5 @@ Before the first run, apply ClickHouse migration
 `000279_corpscout_se_bolagsverket_vdm`. The two destination tables are:
 
 - `corpscout.se_bolagsverket_vdm_company_observations`
+- `corpscout.se_bolagsverket_vdm_company_current`
 - `corpscout.se_bolagsverket_vdm_financial_report_documents`
