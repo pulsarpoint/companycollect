@@ -770,20 +770,11 @@ LIMIT 50`,
       // company_description_current, so joining se_companies_translated here
       // would scan its source-wide translation aggregates on every page open.
       // The source field is a registration date, despite the normalized
-      // column's historical incorporation_date name.
+      // column's historical incorporation_date name. The legal-name date and
+      // status provenance are normalized by the Sweden company asset.
       companyShellQuery: `SELECT c.* EXCEPT (activity_description, incorporation_date),
   c.activity_description AS activity_description_original,
   c.incorporation_date AS registration_date,
-  nullIf(
-    arrayElement(
-      splitByChar('$', arrayFirst(
-        entry -> position(entry, '$FORETAGSNAMN-ORGNAM$') > 0,
-        splitByChar('|', ifNull(c.legal_name_raw, ''))
-      )),
-      3
-    ),
-    ''
-  ) AS legal_name_registration_date,
   c.registration_number AS __shell_id,
   c.legal_name AS __shell_name,
   c.legal_form_code AS __shell_legal_form,

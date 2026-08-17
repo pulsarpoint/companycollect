@@ -5,9 +5,17 @@ import type { CountryConfig } from "~/lib/countries";
 import type { CompanyFilters } from "~/lib/filters";
 import { filterableFacetKeys } from "~/lib/filters";
 import { availableCompanyFlags, flagFilterKey } from "~/lib/company-flags";
+import {
+  FINANCIAL_FILING_FILTER_KEY,
+  isFinancialFilingStatus,
+} from "~/lib/financial-filing-status";
 import type { FacetOption } from "~/lib/facets.server";
-import { toggleFilterValue } from "~/components/data-table/url";
+import {
+  setFilterValues,
+  toggleFilterValue,
+} from "~/components/data-table/url";
 import { useEffectiveSearchParams } from "~/components/data-table/use-effective-search";
+import { FINANCIAL_FILING_STATUS_PRESENTATION } from "~/components/financial-filing-status";
 import { Badge } from "~/components/ui/badge";
 import { Button } from "~/components/ui/button";
 import {
@@ -29,11 +37,13 @@ import {
   SheetTitle,
   SheetTrigger,
 } from "~/components/ui/sheet";
+import { ToggleGroup, ToggleGroupItem } from "~/components/ui/toggle-group";
 
 const nf = new Intl.NumberFormat("en-US");
 
 export function facetLabel(country: CountryConfig, key: string): string {
   if (key === "industry") return "Industry";
+  if (key === FINANCIAL_FILING_FILTER_KEY) return "Annual report";
   // Flag filters are not columns, so the active-filter chip would otherwise
   // read "flag_financials: yes" -- the raw key, leaked to the reader.
   const flag = availableCompanyFlags(country.code).find(
@@ -41,6 +51,15 @@ export function facetLabel(country: CountryConfig, key: string): string {
   );
   if (flag) return flag.label;
   return country.columns.find((c) => c.key === key)?.label ?? key;
+}
+
+export function facetValueLabel(key: string, value: string): string {
+  if (key !== FINANCIAL_FILING_FILTER_KEY) return value;
+  return (
+    FINANCIAL_FILING_STATUS_PRESENTATION.find(
+      (definition) => definition.value === value,
+    )?.label ?? value
+  );
 }
 
 function FacetCombobox({
@@ -84,7 +103,11 @@ function FacetCombobox({
       <Popover open={open} onOpenChange={onOpenChange}>
         <PopoverTrigger
           render={
-            <Button variant="outline" size="sm" className="w-full justify-between font-normal" />
+            <Button
+              variant="outline"
+              size="sm"
+              className="w-full justify-between font-normal"
+            />
           }
         >
           {selected.length > 0 ? `${selected.length} selected` : "Any"}
@@ -108,7 +131,11 @@ function FacetCombobox({
                     value={option.value}
                     onSelect={() =>
                       navigate(
-                        toggleFilterValue(effectiveParams, facetKey, option.value),
+                        toggleFilterValue(
+                          effectiveParams,
+                          facetKey,
+                          option.value,
+                        ),
                         { preventScrollReset: true },
                       )
                     }
@@ -138,6 +165,57 @@ function FacetCombobox({
   );
 }
 
+function FinancialFilingFilters({ filters }: { filters: CompanyFilters }) {
+  const navigate = useNavigate();
+  const effectiveParams = useEffectiveSearchParams();
+  const selected = (filters[FINANCIAL_FILING_FILTER_KEY] ?? []).filter(
+    isFinancialFilingStatus,
+  );
+
+  return (
+    <div className="flex flex-col gap-2">
+      <div>
+        <p className="text-sm font-medium">Annual report</p>
+        <p className="text-muted-foreground text-xs">
+          Latest evidence-backed filing state
+        </p>
+      </div>
+      <ToggleGroup
+        multiple
+        value={selected}
+        onValueChange={(values) =>
+          navigate(
+            setFilterValues(
+              effectiveParams,
+              FINANCIAL_FILING_FILTER_KEY,
+              values,
+            ),
+            { preventScrollReset: true },
+          )
+        }
+        variant="outline"
+        size="sm"
+        className="w-full flex-wrap justify-start"
+        aria-label="Annual report filing status"
+      >
+        {FINANCIAL_FILING_STATUS_PRESENTATION.map((definition) => {
+          const Icon = definition.icon;
+          return (
+            <ToggleGroupItem
+              key={definition.value}
+              value={definition.value}
+              title={definition.meaning}
+              aria-label={definition.label}
+            >
+              <Icon data-icon="inline-start" />
+              {definition.shortLabel}
+            </ToggleGroupItem>
+          );
+        })}
+      </ToggleGroup>
+    </div>
+  );
+}
 
 /**
  * A switch per kind of data we hold.
@@ -160,7 +238,9 @@ function FlagFilters({
   filters: CompanyFilters;
 }) {
   const effectiveParams = useEffectiveSearchParams();
-  const flags = availableCompanyFlags(country.code);
+  const flags = availableCompanyFlags(country.code).filter(
+    (flag) => country.code !== "se" || flag.id !== "financials",
+  );
   if (flags.length === 0) return null;
 
   return (
@@ -181,7 +261,9 @@ function FlagFilters({
               className="flex items-center justify-between gap-2 py-0.5"
               title={flag.meaning}
             >
-              <span className="text-muted-foreground text-sm">{flag.label}</span>
+              <span className="text-muted-foreground text-sm">
+                {flag.label}
+              </span>
               <span
                 className={`relative inline-flex h-5 w-9 shrink-0 items-center rounded-full border transition-colors ${
                   on
@@ -216,13 +298,18 @@ export function FilterSidebar({
       <SheetTrigger render={<Button variant="outline" size="sm" />}>
         <ListFilter className="size-4" />
         Filters
-        {activeCount > 0 ? <Badge variant="secondary">{activeCount}</Badge> : null}
+        {activeCount > 0 ? (
+          <Badge variant="secondary">{activeCount}</Badge>
+        ) : null}
       </SheetTrigger>
       <SheetContent side="right" className="w-96 overflow-y-auto">
         <SheetHeader>
           <SheetTitle>Filter companies</SheetTitle>
         </SheetHeader>
-        <div className="space-y-4 px-4 pb-6">
+        <div className="flex flex-col gap-4 px-4 pb-6">
+          {country.code === "se" ? (
+            <FinancialFilingFilters filters={filters} />
+          ) : null}
           <FlagFilters country={country} filters={filters} />
           {filterableFacetKeys(country).map((key) => (
             <FacetCombobox

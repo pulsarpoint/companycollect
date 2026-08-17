@@ -34,8 +34,12 @@ def test_replace_sweden_company_normalized_tables_creates_company_address_and_in
                 scb_company_id_raw,
                 legal_name,
                 legal_name_raw,
+                legal_name_registration_date::varchar,
                 legal_form_code,
                 status,
+                status_source,
+                status_observed_at,
+                status_conflict,
                 status_reason,
                 incorporation_date::varchar,
                 dissolution_date::varchar,
@@ -124,8 +128,12 @@ def test_replace_sweden_company_normalized_tables_creates_company_address_and_in
             "195001011234",
             "ENSKILD FIRMA ANDERSSON",
             None,
+            None,
             "00",
-            "active",
+            "inactive",
+            "scb",
+            loaded_at,
+            0,
             None,
             "2010-01-01",
             None,
@@ -138,8 +146,12 @@ def test_replace_sweden_company_normalized_tables_creates_company_address_and_in
             "5560000000",
             "Acme AB",
             "Acme AB$FORETAGSNAMN-ORGNAM$2020-01-01",
+            "2020-01-01",
             "AB-ORGFO",
             "active",
+            "bolagsverket",
+            loaded_at,
+            1,
             None,
             "2020-01-01",
             None,
@@ -152,8 +164,12 @@ def test_replace_sweden_company_normalized_tables_creates_company_address_and_in
             None,
             "Closed AB",
             "Closed AB$FORETAGSNAMN-ORGNAM$2019-01-01",
+            "2019-01-01",
             "AB-ORGFO",
             "inactive",
+            "bolagsverket",
+            loaded_at,
+            0,
             "OVERK-AVORG",
             "2019-01-01",
             "2025-02-03",
@@ -172,8 +188,12 @@ def test_replace_sweden_company_normalized_tables_creates_company_address_and_in
             "165565257747",
             "Twin AB med firma Twin AB",
             "Twin AB med firma Twin AB$FORETAGSNAMN-ORGNAM$2021-01-01",
+            "2021-01-01",
             "AB-ORGFO",
             "active",
+            "bolagsverket",
+            loaded_at,
+            1,
             None,
             "2021-01-01",
             None,
@@ -191,8 +211,12 @@ def test_replace_sweden_company_normalized_tables_creates_company_address_and_in
             None,
             "Bv8888 AB",
             "Bv8888 AB$FORETAGSNAMN-ORGNAM$2017-07-01",
+            "2017-07-01",
             "AB-ORGFO",
             "active",
+            "bolagsverket",
+            loaded_at,
+            0,
             None,
             "2017-07-01",
             None,
@@ -205,8 +229,12 @@ def test_replace_sweden_company_normalized_tables_creates_company_address_and_in
             "9999999999",
             "SCB ONLY",
             None,
+            None,
             "49",
-            "active",
+            "inactive",
+            "scb",
+            loaded_at,
+            0,
             None,
             "2023-04-05",
             None,
@@ -444,7 +472,7 @@ def test_normalized_snapshot_preserves_registry_proceeding_and_industry_states(
             "49",
             "0",
             "1",
-            None,
+            "inactive",
             None,
             "2020-01-01",
             None,
@@ -475,6 +503,42 @@ def test_normalized_snapshot_preserves_registry_proceeding_and_industry_states(
         64,
         loaded_at,
     )
+
+
+def test_legal_name_registration_date_prefers_the_current_name_and_valid_date(
+    tmp_path: Path,
+) -> None:
+    database_path = tmp_path / "sweden_company_source.duckdb"
+
+    with duckdb.connect(str(database_path)) as connection:
+        _create_raw_tables(connection)
+        connection.execute(
+            f"""
+            update {tables.DLT_DATASET_NAME}.bolagsverket_raw
+            set organisationsnamn = concat(
+                'Acme AB$FORETAGSNAMN-ORGNAM$2020-01-01|',
+                'Previous Acme AB$FORETAGSNAMN-ORGNAM$2025-01-01|',
+                'Acme AB$FORETAGSNAMN-ORGNAM$not-a-date|',
+                'Acme Shop$SARS_FORNAMN-ORGNAM$2026-01-01'
+            )
+            where organisationsidentitet = '5560000000$ORGNR-IDORG'
+            """
+        )
+
+        replace_sweden_company_normalized_tables(
+            connection=connection,
+            loaded_at=datetime(2026, 8, 17, 12, 0, tzinfo=UTC),
+        )
+
+        company = connection.execute(
+            f"""
+            select legal_name, legal_name_registration_date::varchar
+            from {tables.DLT_DATASET_NAME}.companies
+            where company_id = '5560000000'
+            """
+        ).fetchone()
+
+    assert company == ("Acme AB", "2020-01-01")
 
 
 def test_replace_sweden_company_normalized_tables_rolls_back_partial_rebuild(

@@ -83,3 +83,11 @@ sudo systemctl disable --now cloakbrowser@9222.service
 Each endpoint is bound only to localhost. Do not expose a CDP endpoint directly
 to a public or untrusted network because it grants full control over the
 browser. Use an SSH tunnel when access from another machine is required.
+
+
+# how to obtain steps to repreduce
+
+npx playwright codegen \
+  --target=javascript \
+  --output=brave-search.js \
+  https://search.brave.com/

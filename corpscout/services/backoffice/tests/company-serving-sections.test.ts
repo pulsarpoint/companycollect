@@ -109,5 +109,6 @@ describe("Sweden company sections", () => {
     );
     expect(sweden.detail?.companyShellQuery).not.toContain("gleif_lei_records");
     expect(sweden.detail?.companyShellQuery).not.toContain("replaceRegexpAll");
+    expect(sweden.detail?.companyShellQuery).not.toContain("splitByChar");
   });
 });

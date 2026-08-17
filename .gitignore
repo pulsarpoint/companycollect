@@ -37,6 +37,7 @@ companies/data/*/countrydata/
 **/.dg/
 **/.dagster_home/
 **/.tmp_dagster_home*/
+**/.profile*/
 **/dist/
 **/build/
 corpscout/ui/.react-router/

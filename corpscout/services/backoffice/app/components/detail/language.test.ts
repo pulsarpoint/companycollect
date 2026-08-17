@@ -1,5 +1,10 @@
 import { describe, expect, it } from "vitest";
-import { keyFacts, keyFactKeys, resolveRecordFields } from "~/components/detail/language";
+import {
+  formatCompanyStatusLabel,
+  keyFacts,
+  keyFactKeys,
+  resolveRecordFields,
+} from "~/components/detail/language";
 
 // Realistic per-country fixtures, matching the live-audited paired-field
 // landscape: NO (articles_purpose/activity_text/legal_form_description
@@ -319,12 +324,19 @@ describe("keyFacts", () => {
 
   it("falls back through status candidates: lifecycle_status when status is absent", () => {
     const record = { lifecycle_status: "ACTIVE" };
-    expect(keyFacts(record, "en")).toEqual([{ label: "Status", value: "ACTIVE" }]);
+    expect(keyFacts(record, "en")).toEqual([{ label: "Status", value: "Active" }]);
   });
 
   it("falls back through status candidates: company_status (GB) when status/lifecycle_status are absent", () => {
     const record = { company_status: "active" };
-    expect(keyFacts(record, "en")).toEqual([{ label: "Status", value: "active" }]);
+    expect(keyFacts(record, "en")).toEqual([{ label: "Status", value: "Active" }]);
+  });
+
+  it("labels canonical activity states consistently", () => {
+    expect(formatCompanyStatusLabel("active")).toBe("Active");
+    expect(formatCompanyStatusLabel("INACTIVE")).toBe("Inactive");
+    expect(formatCompanyStatusLabel("unknown")).toBe("Unknown");
+    expect(formatCompanyStatusLabel("dissolved")).toBe("dissolved");
   });
 
   it("surfaces an unpaired status_en (BR/FR) when no other status candidate is present", () => {

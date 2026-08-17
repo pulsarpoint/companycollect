@@ -295,6 +295,8 @@ EXPECTED_MIGRATIONS = (
     "000278_corpscout_se_address_components",
     "000279_corpscout_se_bolagsverket_vdm",
     "000280_corpscout_se_bolagsverket_vdm_company_current",
+    "000281_corpscout_se_company_presentation_fields",
+    "000282_corpscout_se_annual_report_filing_status",
 )
 
 NOOP_MIGRATIONS = {"000276_noop"}
@@ -3242,6 +3244,62 @@ def test_bolagsverket_vdm_current_view_selects_one_latest_registration_state() -
     assert "latest.10 AS digital_report_document_count" in sql
     assert (
         "DROP VIEW IF EXISTS corpscout.se_bolagsverket_vdm_company_current" in down_sql
+    )
+
+
+def test_sweden_company_presentation_fields_are_migrated() -> None:
+    sql = _migration_sql("000281_corpscout_se_company_presentation_fields.up.sql")
+    down_sql = _migration_sql(
+        "000281_corpscout_se_company_presentation_fields.down.sql"
+    )
+
+    assert "ALTER TABLE corpscout.se_companies" in sql
+    for column in (
+        "legal_name_registration_date Nullable(Date32)",
+        "status_source LowCardinality(Nullable(String))",
+        "status_observed_at Nullable(DateTime64(3, 'UTC'))",
+        "status_conflict UInt8 DEFAULT 0",
+    ):
+        assert column in sql
+    for column in (
+        "status_conflict",
+        "status_observed_at",
+        "status_source",
+        "legal_name_registration_date",
+    ):
+        assert f"DROP COLUMN IF EXISTS {column}" in down_sql
+
+
+def test_sweden_annual_report_filing_status_is_evidence_gated() -> None:
+    sql = _migration_sql(
+        "000282_corpscout_se_annual_report_filing_status.up.sql"
+    )
+    down_sql = _migration_sql(
+        "000282_corpscout_se_annual_report_filing_status.down.sql"
+    )
+
+    assert (
+        "CREATE TABLE IF NOT EXISTS corpscout.se_annual_report_filing_observations"
+        in sql
+    )
+    assert "'filed_unstructured'" in sql
+    assert "'not_submitted'" in sql
+    assert "not_submitted_has_report_period" in sql
+    assert "'unknown'" not in sql
+    assert (
+        "CREATE OR REPLACE VIEW corpscout.se_annual_report_filing_status_current"
+        in sql
+    )
+    assert "FROM corpscout.se_company_financials_latest" in sql
+    assert "toUInt8(filing_status = 'data_available')" in sql
+    assert "argMax(" in sql
+    assert (
+        "DROP VIEW IF EXISTS corpscout.se_annual_report_filing_status_current"
+        in down_sql
+    )
+    assert (
+        "DROP TABLE IF EXISTS corpscout.se_annual_report_filing_observations"
+        in down_sql
     )
 
 

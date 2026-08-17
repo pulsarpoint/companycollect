@@ -15,6 +15,13 @@ import {
   type SortDir,
 } from "~/lib/countries";
 import type { CompanyFilters } from "~/lib/filters";
+import {
+  FINANCIAL_FILING_FILTER_KEY,
+  FINANCIAL_FILING_STATUSES,
+  isFinancialFilingStatus,
+  type CompanyFinancialFilingStatus,
+  type FinancialFilingStatus,
+} from "~/lib/financial-filing-status";
 import type { FinancialReportDocumentSummary } from "~/lib/norway-financial-reports";
 import { getNorwayFinancialReports } from "~/lib/norway-financial-reports.server";
 import {
@@ -59,11 +66,13 @@ export { PAGE_SIZES };
 
 export type CompanyListRow = Record<
   string,
-  string | number | null | CompanyFlagId[]
+  string | number | null | CompanyFlagId[] | FinancialFilingStatus
 > & {
   active: 0 | 1;
   /** Which kinds of data we hold for this company. See lib/company-flags. */
   flags?: CompanyFlagId[];
+  /** Sweden's evidence-backed latest annual-report state. */
+  financial_filing_status?: FinancialFilingStatus;
 };
 
 export interface CompanySearchResult {
@@ -254,6 +263,36 @@ async function attachCompanyFlags(
   }
 }
 
+async function attachSwedenFinancialFilingStatuses(
+  country: CountryConfig,
+  rows: CompanyListRow[],
+): Promise<void> {
+  if (country.code !== "se") return;
+  const ids = rows.map((row) => String(row.id ?? "")).filter(Boolean);
+  for (const row of rows) row.financial_filing_status = "unknown";
+  if (ids.length === 0) return;
+
+  const statuses = await chQuery<{
+    company_id: string;
+    filing_status: string;
+  }>(
+    `SELECT company_id, filing_status
+     FROM se_annual_report_filing_status_current
+     WHERE company_id IN {ids:Array(String)}`,
+    { ids },
+  );
+  const byCompany = new Map<string, FinancialFilingStatus>();
+  for (const row of statuses) {
+    if (isFinancialFilingStatus(row.filing_status)) {
+      byCompany.set(row.company_id, row.filing_status);
+    }
+  }
+  for (const row of rows) {
+    row.financial_filing_status =
+      byCompany.get(String(row.id ?? "")) ?? "unknown";
+  }
+}
+
 function buildCompanySelectList(country: CountryConfig): string {
   const joinKeyExpr = country.industryJoinKeyExpr ?? country.idColumn;
   return [
@@ -357,6 +396,37 @@ export async function searchCompanies(
     conds.push(`${column.expr} IN {f_${column.key}:Array(String)}`);
     params[`f_${column.key}`] = values;
   }
+  const filingStatuses = (
+    opts.filters?.[FINANCIAL_FILING_FILTER_KEY] ?? []
+  ).filter(isFinancialFilingStatus);
+  if (
+    country.code === "se" &&
+    filingStatuses.length > 0 &&
+    filingStatuses.length < FINANCIAL_FILING_STATUSES.length
+  ) {
+    const knownStatuses = filingStatuses.filter(
+      (status) => status !== "unknown",
+    );
+    const filingConditions: string[] = [];
+    if (knownStatuses.length > 0) {
+      filingConditions.push(
+        `toString(${country.idColumn}) IN (
+          SELECT company_id
+          FROM se_annual_report_filing_status_current
+          WHERE filing_status IN {f_financial_filing_status:Array(String)}
+        )`,
+      );
+      params.f_financial_filing_status = knownStatuses;
+    }
+    if (filingStatuses.includes("unknown")) {
+      filingConditions.push(
+        `toString(${country.idColumn}) NOT IN (
+          SELECT company_id FROM se_annual_report_filing_status_current
+        )`,
+      );
+    }
+    conds.push(`(${filingConditions.join(" OR ")})`);
+  }
   for (const flag of availableCompanyFlags(country.code)) {
     const values = opts.filters?.[flagFilterKey(flag.id)];
     if (!values || values.length === 0) continue;
@@ -428,6 +498,7 @@ export async function searchCompanies(
   }
 
   await attachCompanyFlags(country, rows);
+  await attachSwedenFinancialFilingStatuses(country, rows);
 
   return { rows, total, page, pageSize, sort: sortColumn.key, dir };
 }
@@ -2770,6 +2841,54 @@ function buildCompanyFinancialSources(
 
 export interface CompanyFinancialDetail {
   financialSources: CompanyFinancialSource[];
+  filingStatus: CompanyFinancialFilingStatus | null;
+}
+
+interface FinancialFilingStatusQueryRow {
+  filing_status: string;
+  report_period_end: string | null;
+  filing_registered_on: string | null;
+  source_file_format: string | null;
+  bolagsverket_document_id: string | null;
+  source_slug: string;
+  observed_at: string;
+}
+
+export async function getCompanyFinancialFilingStatus(
+  country: CountryConfig,
+  id: string,
+): Promise<CompanyFinancialFilingStatus | null> {
+  if (country.code !== "se") return null;
+  const [row] = await chQuery<FinancialFilingStatusQueryRow>(
+    `SELECT filing_status, toString(report_period_end) AS report_period_end,
+       toString(filing_registered_on) AS filing_registered_on,
+       source_file_format, bolagsverket_document_id, source_slug,
+       toString(observed_at) AS observed_at
+     FROM se_annual_report_filing_status_current
+     WHERE company_id = {id:String}
+     LIMIT 1`,
+    { id },
+  );
+  if (!row || !isFinancialFilingStatus(row.filing_status)) {
+    return {
+      status: "unknown",
+      reportPeriodEnd: null,
+      filingRegisteredOn: null,
+      sourceFileFormat: null,
+      bolagsverketDocumentId: null,
+      sourceSlug: null,
+      observedAt: null,
+    };
+  }
+  return {
+    status: row.filing_status,
+    reportPeriodEnd: row.report_period_end || null,
+    filingRegisteredOn: row.filing_registered_on || null,
+    sourceFileFormat: row.source_file_format,
+    bolagsverketDocumentId: row.bolagsverket_document_id,
+    sourceSlug: row.source_slug,
+    observedAt: row.observed_at,
+  };
 }
 
 /** Financial-tab data only. Unlike getCompanyDetail, this does not fetch
@@ -2788,7 +2907,7 @@ export async function getCompanyFinancialDetail(
   );
   const evidenceParams = { id, country: country.code.toUpperCase() };
   const evidenceSchemaReadyPromise = companyEvidenceSchemaReady();
-  const [financials, esefFilings, documents, sourceRecordRows] =
+  const [financials, esefFilings, documents, sourceRecordRows, filingStatus] =
     await Promise.all([
       includesRegistry
         ? getCompanyFinancials(country, id)
@@ -2803,6 +2922,7 @@ export async function getCompanyFinancialDetail(
       evidenceQueryWhenReady(evidenceSchemaReadyPromise, () =>
         getCompanySourceRecordRows(evidenceParams),
       ),
+      getCompanyFinancialFilingStatus(country, id),
     ]);
   const { byUid } = buildEvidenceRefs(sourceRecordRows);
   attachFinancialEvidence(financials, esefFilings, byUid);
@@ -2813,6 +2933,7 @@ export async function getCompanyFinancialDetail(
       esefFilings,
       documents,
     ),
+    filingStatus,
   };
 }
 

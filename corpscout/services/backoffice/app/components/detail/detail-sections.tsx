@@ -1,4 +1,6 @@
 import type { CompanyListRow, DomainRow } from "~/lib/queries.server";
+import { TriangleAlert } from "lucide-react";
+import { Alert, AlertDescription, AlertTitle } from "~/components/ui/alert";
 import { Badge } from "~/components/ui/badge";
 import {
   Card,
@@ -103,13 +105,30 @@ export function CompanyRecordSection({
   const gridMarkers = new Map<string, string>(
     gridFieldEntries.filter((f) => f.fromOtherLang).map((f): [string, string] => [f.key, markerSuffix]),
   );
+  const statusSourcesDisagree = Number(record.status_conflict) === 1;
+  const preferredStatusSource =
+    record.status_source === "bolagsverket"
+      ? "Bolagsverket"
+      : record.status_source === "scb"
+        ? "SCB"
+        : "the preferred registry source";
 
   return (
     <Card>
       <CardHeader>
         <CardTitle className="text-base">Company record</CardTitle>
       </CardHeader>
-      <CardContent className="space-y-4">
+      <CardContent className="flex flex-col gap-4">
+        {statusSourcesDisagree ? (
+          <Alert>
+            <TriangleAlert />
+            <AlertTitle>Status sources disagree</AlertTitle>
+            <AlertDescription>
+              Bolagsverket and SCB report different activity states. The displayed
+              status follows {preferredStatusSource}.
+            </AlertDescription>
+          </Alert>
+        ) : null}
         <KeyFactsStrip facts={facts} lang={lang} />
         {facts.length > 0 ? <Separator /> : null}
         <ProseSections

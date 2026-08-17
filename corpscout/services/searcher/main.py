@@ -4,9 +4,23 @@ from pathlib import Path
 
 import click
 from cloakbrowser import launch_persistent_context_async
+from ipaddress import IPv4Address, IPv6Address, ip_address
+
+
+def parse_ip_address(
+    ctx: click.Context,
+    param: click.Parameter,
+    value: str,
+) -> IPv4Address | IPv6Address:
+    try:
+        return ip_address(value)
+    except ValueError as error:
+        raise click.BadParameter(str(error)) from error
+
 
 
 async def serve_browser(
+    address: IPv4Address | IPv6Address,
     cdp_port: int,
     profile_dir: Path,
     headless: bool,
@@ -16,7 +30,7 @@ async def serve_browser(
         profile_dir,
         headless=headless,
         args=[
-            "--remote-debugging-address=127.0.0.1",
+            f"--remote-debugging-address={address}",
             f"--remote-debugging-port={cdp_port}",
         ],
     )
@@ -62,6 +76,16 @@ async def serve_browser(
     show_default=True,
     help="Localhost TCP port for the Chrome DevTools Protocol endpoint.",
 )
+
+@click.option(
+    "--address",
+    callback=parse_ip_address,
+    default="127.0.0.1",
+    show_default=True,
+    metavar="IP",
+    help="IP address on which to expose the CDP server.",
+)
+
 @click.option(
     "--profile-dir",
     type=click.Path(path_type=Path, file_okay=False),
@@ -74,9 +98,9 @@ async def serve_browser(
     show_default=True,
     help="Run without or with a graphical browser window.",
 )
-def main(cdp_port: int, profile_dir: Path, headless: bool) -> None:
+def main(cdp_port: int, profile_dir: Path, headless: bool, address: IPv4Address | IPv6Address) -> None:
     """Run one persistent CloakBrowser instance with a local CDP endpoint."""
-    asyncio.run(serve_browser(cdp_port, profile_dir, headless))
+    asyncio.run(serve_browser(address, cdp_port, profile_dir, headless))
 
 
 if __name__ == "__main__":

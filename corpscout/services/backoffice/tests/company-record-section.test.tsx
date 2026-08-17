@@ -41,4 +41,24 @@ describe("CompanyRecordSection", () => {
     expect(html).toContain(">Industry<");
     expect(html).toContain("4100 Construction");
   });
+
+  it("explains a registry status conflict and keeps its provenance out of the main grid", () => {
+    const html = renderToStaticMarkup(
+      <CompanyRecordSection
+        company={company()}
+        record={{
+          status: "active",
+          status_source: "bolagsverket",
+          status_observed_at: "2026-08-17T15:27:36.717Z",
+          status_conflict: 1,
+        }}
+        lang="en"
+      />,
+    );
+
+    expect(html).toContain("Status sources disagree");
+    expect(html).toContain("status follows Bolagsverket");
+    expect(html).toContain(">Active<");
+    expect(html).toContain("Source &amp; lineage");
+  });
 });

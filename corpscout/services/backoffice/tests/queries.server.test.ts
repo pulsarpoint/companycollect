@@ -8,6 +8,7 @@ import { isLineageKey } from "~/components/detail/fields";
 import { COUNTRIES, getCountry } from "~/lib/countries";
 import { getFacetOptions } from "~/lib/facets.server";
 import { filterableFacetKeys } from "~/lib/filters";
+import { getCompanySection } from "~/lib/company-sections.server";
 import {
   PAGE_SIZES,
   companyHasFlag,
@@ -809,9 +810,32 @@ describe("addresses", () => {
 
   it("sweden exposes the primary legal-name registration date", async () => {
     const se = getCountry("se")!;
-    const detail = await getCompanyDetail(se, "5562434182");
+    const [detail, industrySection, addressSection] = await Promise.all([
+      getCompanyDetail(se, "5562434182"),
+      getCompanySection("se", "5562434182", "industries"),
+      getCompanySection("se", "5562434182", "addresses"),
+    ]);
 
     expect(detail!.record.legal_name_registration_date).toBe("1984-11-08");
+    expect(detail!.record.status).toBe("active");
+    expect(detail!.record.status_source).toBe("bolagsverket");
+    expect(detail!.record.status_observed_at).toBeTruthy();
+    expect(detail!.record.status_conflict).toBe(0);
+    expect(industrySection).toMatchObject({
+      section: "industries",
+      industries: [
+        {
+          industry_code: "4100",
+          industry_label:
+            "41.00 Construction of residential and non-residential buildings",
+          is_primary: 1,
+        },
+      ],
+    });
+    expect(addressSection).toMatchObject({
+      section: "addresses",
+      addresses: [{ full_address: "Åbyvägen 215, 23173 ANDERSLÖV" }],
+    });
   }, 30_000);
 
   it("sweden identifies and cleans a Polish address stored as foreign by SCB", async () => {

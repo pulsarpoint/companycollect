@@ -2,6 +2,16 @@ import { formatFieldValue, humanizeFieldKey, splitFields } from "~/components/de
 
 export type Lang = "en" | "original";
 
+const CANONICAL_STATUS_LABELS: Record<string, string> = {
+  active: "Active",
+  inactive: "Inactive",
+  unknown: "Unknown",
+};
+
+export function formatCompanyStatusLabel(status: string): string {
+  return CANONICAL_STATUS_LABELS[status.trim().toLowerCase()] ?? status;
+}
+
 export type ResolvedField = {
   /** Base key for a collapsed pair (e.g. "articles_purpose"), original record key otherwise. */
   key: string;
@@ -203,7 +213,7 @@ function computeKeyFacts(record: Record<string, unknown>, lang: Lang): KeyFact[]
     facts.push({
       key: status.key,
       label: "Status",
-      value: status.text,
+      value: formatCompanyStatusLabel(status.text),
       ...(status.fromOtherLang ? { fromOtherLang: true } : {}),
     });
   }
