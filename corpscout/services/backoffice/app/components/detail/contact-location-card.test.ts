@@ -6,6 +6,7 @@ import {
   AddressSourceEvidence,
   addressGeocodeEvidenceLink,
   addressGeocodeOutcomeCopy,
+  canRequestInteractiveGeocode,
   foreignAddressBadgeText,
   geocodeCountryCodeForAddress,
   storedAddressGeocode,
@@ -26,6 +27,7 @@ describe("foreign address presentation", () => {
       "🇵🇱 Address in Poland",
     );
     expect(geocodeCountryCodeForAddress(polishAddress, "se")).toBe("pl");
+    expect(canRequestInteractiveGeocode(polishAddress, "se")).toBe(true);
   });
 
   it("marks an unknown foreign country without incorrectly using Sweden", () => {
@@ -39,6 +41,9 @@ describe("foreign address presentation", () => {
       "🌐 Address outside Sweden",
     );
     expect(geocodeCountryCodeForAddress(unknownForeignAddress, "se")).toBe("");
+    expect(canRequestInteractiveGeocode(unknownForeignAddress, "se")).toBe(
+      false,
+    );
   });
 
   it("keeps domestic addresses scoped to their register country", () => {
@@ -51,6 +56,7 @@ describe("foreign address presentation", () => {
 
     expect(foreignAddressBadgeText(swedishAddress, "Sweden")).toBeNull();
     expect(geocodeCountryCodeForAddress(swedishAddress, "se")).toBe("se");
+    expect(canRequestInteractiveGeocode(swedishAddress, "se")).toBe(false);
   });
 });
 
@@ -105,6 +111,56 @@ describe("stored address geocode evidence", () => {
       coordinateSupportingPointCount: 782,
     });
   });
+
+  it("keeps the spread evidence for an approximate address area", () => {
+    const geocode = storedAddressGeocode({}, [
+      {
+        address_type: "visiting",
+        full_address: "Campusgatan 2, 222 22 Uppsala",
+        latitude: 59.802,
+        longitude: 17.6025,
+        geocode_status: "matched_area",
+        geocode_provider: "openstreetmap",
+        geocode_precision: "area",
+        geocode_coordinate_supporting_point_count: 2,
+        geocode_coordinate_spread_meters: 521.4,
+      },
+    ]);
+
+    expect(geocode).toMatchObject({
+      lat: 59.802,
+      lon: 17.6025,
+      precision: "area",
+      coordinateSupportingPointCount: 2,
+      coordinateSpreadMeters: 521.4,
+    });
+  });
+
+  it("returns a stored street fallback without exact-house evidence", () => {
+    const geocode = storedAddressGeocode({}, [
+      {
+        address_type: "visiting_or_postal",
+        full_address: "DOKTOR LIBORIUS GATA 42 B, 41323 GÖTEBORG",
+        latitude: 57.6815,
+        longitude: 11.976175,
+        geocode_status: "matched_street",
+        geocode_provider: "openstreetmap",
+        geocode_precision: "street",
+        geocode_match_method: "postal_code_street_address_point_median",
+        geocode_coordinate_supporting_point_count: 6,
+        geocode_coordinate_spread_meters: 88.4,
+      },
+    ]);
+
+    expect(geocode).toMatchObject({
+      lat: 57.6815,
+      lon: 11.976175,
+      precision: "street",
+      matchMethod: "postal_code_street_address_point_median",
+      coordinateSupportingPointCount: 6,
+    });
+    expect(geocode?.sourceRecordUrl).toBeUndefined();
+  });
 });
 
 describe("address geocoding outcome explanations", () => {
@@ -116,9 +172,92 @@ describe("address geocoding outcome explanations", () => {
         geocode_status: "matched_exact",
         geocode_match_method: "city_street_house_exact_unique",
       })?.description,
+    ).toBe("City, street, and house number matched one OpenStreetMap record.");
+  });
+
+  it("explains a Sweden-wide unique street-address fallback", () => {
+    expect(
+      addressGeocodeOutcomeCopy({
+        address_type: "visiting_or_postal",
+        full_address: "Abrahamsbergsvägen 27, 16830 BROMMA",
+        geocode_status: "matched_exact",
+        geocode_match_method: "country_street_house_exact_unique",
+      })?.description,
     ).toBe(
-      "City, street, and house number matched one OpenStreetMap record.",
+      "Street and house number matched one OpenStreetMap record across Sweden.",
     );
+  });
+
+  it("labels a compact candidate cluster as an approximate site", () => {
+    expect(
+      addressGeocodeOutcomeCopy({
+        address_type: "visiting",
+        full_address: "Sitegatan 1, 111 11 Stockholm",
+        geocode_status: "matched_site",
+        geocode_candidate_count: 2,
+        geocode_coordinate_supporting_point_count: 2,
+        geocode_coordinate_spread_meters: 63.2,
+      }),
+    ).toEqual({
+      title: "Approximate address site found",
+      description:
+        "2 matching OpenStreetMap records form a compact address site across roughly 63 metres. The marker is their median location, not a verified building entrance.",
+      badge: "Approximate site",
+    });
+  });
+
+  it("labels a wider candidate cluster as an approximate area", () => {
+    const copy = addressGeocodeOutcomeCopy({
+      address_type: "visiting",
+      full_address: "Campusgatan 2, 222 22 Uppsala",
+      geocode_status: "matched_area",
+      geocode_candidate_count: 2,
+      geocode_coordinate_supporting_point_count: 2,
+      geocode_coordinate_spread_meters: 521.4,
+    });
+
+    expect(copy?.title).toBe("Approximate address area found");
+    expect(copy?.description).toContain("address area");
+    expect(copy?.description).toContain("roughly 521 metres");
+    expect(copy?.description).toContain("not a verified building entrance");
+  });
+
+  it("labels a missing house as a street approximation, never a building", () => {
+    const copy = addressGeocodeOutcomeCopy({
+      address_type: "visiting_or_postal",
+      full_address: "DOKTOR LIBORIUS GATA 42 B, 41323 GÖTEBORG",
+      geocode_status: "matched_street",
+      geocode_precision: "street",
+      geocode_coordinate_supporting_point_count: 6,
+      geocode_coordinate_spread_meters: 88.4,
+    });
+
+    expect(copy).toEqual({
+      title: "Approximate street location found",
+      description:
+        "6 OpenStreetMap address points place this street in the supplied postal area spanning roughly 88 metres. The requested house number was not found, so the marker represents the street area, not the building.",
+      badge: "Approximate street",
+    });
+    expect(copy?.description).not.toContain("exact building");
+  });
+
+  it("identifies a road-geometry fallback as approximate road evidence", () => {
+    const copy = addressGeocodeOutcomeCopy({
+      address_type: "visiting_or_postal",
+      full_address: "Borgaregatan 19 B, 61131 Nyköping",
+      geocode_status: "matched_street",
+      geocode_precision: "street",
+      geocode_match_method: "nearby_postcode_street_road_segment_median",
+      geocode_coordinate_supporting_point_count: 2,
+      geocode_coordinate_spread_meters: 28.1,
+    });
+
+    expect(copy).toEqual({
+      title: "Approximate street location found",
+      description:
+        "2 OpenStreetMap road segments place this street near the supplied postal area spanning roughly 28 metres. The requested house number was not found, so the marker represents the street area, not the building.",
+      badge: "Approximate street",
+    });
   });
 
   it("links exact coordinates to the matched OSM record", () => {

@@ -191,7 +191,7 @@ def test_person_detail_api_is_https_and_includes_person_type() -> None:
 
     assert person_detail_api_url("https://datacvr.virk.dk", identity) == (
         "https://datacvr.virk.dk/gateway/person/hentPerson?"
-        "enhedsnummer=4000000001&persontype=deltager&locale=en"
+        "identifikator=4000000001&persontype=deltager&locale=en"
     )
     with pytest.raises(ValueError, match="HTTPS"):
         person_detail_api_url("http://datacvr.virk.dk", identity)
@@ -245,20 +245,17 @@ def test_person_detail_resource_retries_rate_limits_in_one_browser() -> None:
     assert browser.closed is True
 
 
-@pytest.mark.parametrize("status", [400, 404, 429, 499, 500, 501, 599])
-def test_person_detail_resource_returns_http_error_and_continues_batch(
-    status: int,
-) -> None:
-    failed = DenmarkCvrPersonDetailIdentity("4010858579", "deltager")
+def test_person_detail_resource_returns_404_and_continues_batch() -> None:
+    missing = DenmarkCvrPersonDetailIdentity("4010858579", "deltager")
     available = DenmarkCvrPersonDetailIdentity("4000000001", "deltager")
     payload = {"stamdata": {}, "personRelationer": {}}
     page = FakePage(
         [
             {
                 "ok": False,
-                "status": status,
+                "status": 404,
                 "headers": {"content-type": "application/json"},
-                "body": '{"message":"request failed"}',
+                "body": '{"message":"not found"}',
             },
             {
                 "ok": True,
@@ -275,18 +272,17 @@ def test_person_detail_resource_returns_http_error_and_continues_batch(
         DenmarkCvrPersonDetailResource(
             min_delay_ms=0,
             max_delay_ms=0,
-            max_attempts=1,
         ).iter_person_details(
-            (failed, available),
+            (missing, available),
             launcher=lambda: browser,
             sleep=sleeps.append,
         )
     )
 
     assert results[0] == DenmarkCvrPersonDetailHttpFailure(
-        identity=failed,
-        source_url=person_detail_api_url("https://datacvr.virk.dk", failed),
-        status=status,
+        identity=missing,
+        source_url=person_detail_api_url("https://datacvr.virk.dk", missing),
+        status=404,
         attempt_count=1,
         response_headers={"content-type": "application/json"},
     )
@@ -297,10 +293,39 @@ def test_person_detail_resource_returns_http_error_and_continues_batch(
     assert browser.closed is True
 
 
-def test_person_detail_resource_returns_exhausted_500_and_continues_batch() -> None:
-    failed = DenmarkCvrPersonDetailIdentity("4000000001", "deltager")
-    available = DenmarkCvrPersonDetailIdentity("4000000002", "deltager")
-    payload = {"stamdata": {}, "personRelationer": {}}
+def test_person_detail_resource_rejects_bad_request() -> None:
+    identity = DenmarkCvrPersonDetailIdentity("4000000001", "deltager")
+    browser = FakeBrowser(
+        FakePage(
+            [
+                {
+                    "ok": False,
+                    "status": 400,
+                    "headers": {"content-type": "application/json"},
+                    "body": "{}",
+                }
+            ]
+        )
+    )
+
+    with pytest.raises(RuntimeError, match="HTTP 400"):
+        list(
+            DenmarkCvrPersonDetailResource(
+                min_delay_ms=0,
+                max_delay_ms=0,
+                max_attempts=1,
+            ).iter_person_details(
+                (identity,),
+                launcher=lambda: browser,
+                sleep=lambda _: None,
+            )
+        )
+
+    assert browser.closed is True
+
+
+def test_person_detail_resource_rejects_exhausted_server_failure() -> None:
+    identity = DenmarkCvrPersonDetailIdentity("4000000001", "deltager")
     page = FakePage(
         [
             {
@@ -321,42 +346,28 @@ def test_person_detail_resource_returns_exhausted_500_and_continues_batch() -> N
                 "headers": {"content-type": "application/json"},
                 "body": "{}",
             },
-            {
-                "ok": True,
-                "status": 200,
-                "headers": {"content-type": "application/json"},
-                "body": json.dumps(payload),
-            },
         ]
     )
     browser = FakeBrowser(page)
     sleeps: list[float] = []
 
-    results = list(
-        DenmarkCvrPersonDetailResource(
-            min_delay_ms=0,
-            max_delay_ms=0,
-            max_attempts=3,
-            retry_base_delay_seconds=1,
-            retry_max_delay_seconds=10,
-        ).iter_person_details(
-            (failed, available),
-            launcher=lambda: browser,
-            sleep=sleeps.append,
+    with pytest.raises(RuntimeError, match="HTTP 500"):
+        list(
+            DenmarkCvrPersonDetailResource(
+                min_delay_ms=0,
+                max_delay_ms=0,
+                max_attempts=3,
+                retry_base_delay_seconds=1,
+                retry_max_delay_seconds=10,
+            ).iter_person_details(
+                (identity,),
+                launcher=lambda: browser,
+                sleep=sleeps.append,
+            )
         )
-    )
 
-    assert results[0] == DenmarkCvrPersonDetailHttpFailure(
-        identity=failed,
-        source_url=person_detail_api_url("https://datacvr.virk.dk", failed),
-        status=500,
-        attempt_count=3,
-        response_headers={"content-type": "application/json"},
-    )
-    assert isinstance(results[1], DenmarkCvrPersonDetailDownload)
-    assert results[1].payload == payload
-    assert len(page.evaluate_calls) == 4
-    assert sleeps == [1, 2, 0]
+    assert len(page.evaluate_calls) == 3
+    assert sleeps == [1, 2]
     assert browser.closed is True
 
 

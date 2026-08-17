@@ -17,6 +17,8 @@ DUCKDB_PATH = Path("data") / "sweden_address_osm_source.duckdb"
 DUCKDB_SCHEMA = "sweden_address_osm"
 ADDRESS_TABLE = "address_points"
 QUALIFIED_ADDRESS_TABLE = f"{DUCKDB_SCHEMA}.{ADDRESS_TABLE}"
+STREET_SEGMENT_TABLE = "street_segments"
+QUALIFIED_STREET_SEGMENT_TABLE = f"{DUCKDB_SCHEMA}.{STREET_SEGMENT_TABLE}"
 DUCKDB_POOL = "sweden_address_osm_duckdb"
 
 MINIMUM_SNAPSHOT_BYTES = 500_000_000

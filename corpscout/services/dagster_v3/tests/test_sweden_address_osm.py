@@ -153,7 +153,9 @@ def test_sweden_osm_snapshot_retries_upload_without_redownloading(monkeypatch) -
     from dagster_v3.defs.sweden_address_osm import tables
     from dagster_v3.defs.sweden_address_osm.resources import sync_osm_snapshot
 
-    monkeypatch.setattr("dagster_v3.defs.sweden_address_osm.resources.time.sleep", lambda _: None)
+    monkeypatch.setattr(
+        "dagster_v3.defs.sweden_address_osm.resources.time.sleep", lambda _: None
+    )
     body = b"osm-pbf-fixture"
     session = _FakeSession(body)
     object_store = _FakeObjectStore(failed_uploads=2)
@@ -199,6 +201,8 @@ def test_sweden_osm_address_index_extracts_nodes_and_way_points() -> None:
         ("node", 1, None, None, 59.3300, 18.0600, None, None),
         ("node", 2, None, None, 59.3300, 18.0610, None, None),
         ("node", 3, None, None, 59.3310, 18.0610, None, None),
+        ("node", 4, None, None, 58.7549, 16.9971, None, None),
+        ("node", 5, None, None, 58.7555, 17.0005, None, None),
         (
             "way",
             100,
@@ -240,6 +244,16 @@ def test_sweden_osm_address_index_extracts_nodes_and_way_points() -> None:
             ["outer"],
             ["way"],
         ),
+        (
+            "way",
+            400,
+            {"name": "Borgaregatan", "highway": "residential"},
+            [4, 5],
+            None,
+            None,
+            None,
+            None,
+        ),
     ]
     for row in rows:
         connection.execute(
@@ -264,6 +278,9 @@ def test_sweden_osm_address_index_extracts_nodes_and_way_points() -> None:
         "relation_address_objects_omitted": 1,
         "incomplete_way_address_objects_omitted": 0,
         "address_points": 2,
+        "raw_street_objects": 1,
+        "incomplete_street_objects_omitted": 0,
+        "street_segments": 1,
     }
     records = connection.execute(
         """
@@ -299,6 +316,27 @@ def test_sweden_osm_address_index_extracts_nodes_and_way_points() -> None:
     )
     assert 18.06 <= records[1][6] <= 18.061
     assert 59.33 <= records[1][7] <= 59.331
+    street_segment = connection.execute(
+        """
+        select
+            source_record_id,
+            normalized_street,
+            highway,
+            coordinate_method,
+            longitude,
+            latitude
+        from sweden_address_osm.street_segments
+        """
+    ).fetchone()
+    assert street_segment is not None
+    assert street_segment[:4] == (
+        "way/400",
+        "borgaregatan",
+        "residential",
+        "osm_road_segment_midpoint",
+    )
+    assert 16.9971 <= street_segment[4] <= 17.0005
+    assert 58.7549 <= street_segment[5] <= 58.7555
 
 
 def test_sweden_address_osm_assets_are_registered_as_their_own_group() -> None:

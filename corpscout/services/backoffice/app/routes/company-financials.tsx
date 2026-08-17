@@ -49,7 +49,9 @@ export default function CompanyFinancials({
             <EmptyMedia variant="icon">
               <FileText />
             </EmptyMedia>
-            <EmptyTitle>No financial sources loaded</EmptyTitle>
+            <EmptyTitle>
+              No digitally filed annual report found in our sources.
+            </EmptyTitle>
             <EmptyDescription>
               No registry financial statement or ESEF report is connected to
               this company yet.

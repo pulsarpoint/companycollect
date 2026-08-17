@@ -819,6 +819,7 @@ dependencies = [
     { name = "openai" },
     { name = "phonenumbers" },
     { name = "polars", extra = ["rtcompat"] },
+    { name = "postal" },
     { name = "pyarrow" },
     { name = "pymupdf" },
     { name = "python-dotenv" },
@@ -866,6 +867,7 @@ requires-dist = [
     { name = "openai", specifier = ">=2.41.1" },
     { name = "phonenumbers", specifier = ">=9.0.26,<10" },
     { name = "polars", extras = ["rtcompat"], specifier = ">=1.41.2" },
+    { name = "postal", specifier = "==1.1.11" },
     { name = "pyarrow", specifier = ">=24.0.0" },
     { name = "pymupdf", specifier = ">=1.28.0" },
     { name = "python-dotenv", specifier = ">=1.0" },
@@ -2272,6 +2274,15 @@ wheels = [
     { url = "https://files.pythonhosted.org/packages/04/e6/7c64efd7ec8c39e9a7a6bee4798caac0bf46a5398278f1957c180f480c8e/polars_runtime_compat-1.41.2-cp310-abi3-win_amd64.whl", hash = "sha256:42c207b8319e85f861eb673c2ca18260a0159161a2aaa997ef2754af56a81586", size = 51852978, upload-time = "2026-05-29T17:39:07.83Z" },
     { url = "https://files.pythonhosted.org/packages/b5/d2/d13ff429824e9ec0c5d4cad9540b90b3c529f33e9f7004abd7eec9b987b8/polars_runtime_compat-1.41.2-cp310-abi3-win_arm64.whl", hash = "sha256:fb28837bec86a064ebe49907bbcbdc365919c80c99b920f2ad9ebc1ceed9ea3a", size = 45900408, upload-time = "2026-05-29T17:39:12.945Z" },
 ]
+
+[[package]]
+name = "postal"
+version = "1.1.11"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "six" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/d8/a0/9f6479ebf9f186060aef11a8530433bb07895da381cc42acfa8c4d615a8b/postal-1.1.11.tar.gz", hash = "sha256:2c1a5de42fcaf742c99b9f0230594b990f050ad7a7ab1223c1bc5e7db91200a6", size = 21958, upload-time = "2025-10-29T05:29:39.606Z" }
 
 [[package]]
 name = "prompt-toolkit"

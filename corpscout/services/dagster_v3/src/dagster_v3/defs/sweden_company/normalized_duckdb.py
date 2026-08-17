@@ -402,6 +402,30 @@ def _replace_company_addresses_table(*, connection: Any, loaded_at: datetime) ->
             from sweden_company.scb_raw
             where {scb_identity} != ''
         ),
+        scb_address_parts as (
+            select
+                *,
+                lower(trim(PostOrt)) = 'utlandet' as registry_marks_foreign,
+                regexp_matches(
+                    coalesce(Gatuadress, ''),
+                    '(^|[[:space:]])PL[[:space:]]{{2,}}'
+                ) as has_polish_country_marker,
+                regexp_matches(
+                    coalesce(Gatuadress, ''),
+                    '(^|[[:space:]])[0-9]{{2}}-[0-9]{{3}}[[:space:]]+.+$'
+                ) as has_embedded_polish_postcode,
+                regexp_extract(
+                    coalesce(Gatuadress, ''),
+                    '(^|[[:space:]])([0-9]{{2}}-[0-9]{{3}})[[:space:]]+.+$',
+                    2
+                ) as embedded_polish_postcode,
+                trim(regexp_extract(
+                    coalesce(Gatuadress, ''),
+                    '(^|[[:space:]])[0-9]{{2}}-[0-9]{{3}}[[:space:]]+(.+)$',
+                    2
+                )) as embedded_polish_post_town
+            from scb_source
+        ),
         scb_addresses as (
             select
                 company_id,
@@ -425,22 +449,36 @@ def _replace_company_addresses_table(*, connection: Any, loaded_at: datetime) ->
                         nullif(trim(PostOrt), '')
                     ))
                 end as raw_address,
-                nullif(trim(Gatuadress), '') as street_address,
-                nullif(trim(COAdress), '') as care_of,
-                nullif(trim(PostNr), '') as postal_code,
-                nullif(trim(PostOrt), '') as post_town,
                 case
-                    when lower(trim(PostOrt)) != 'utlandet' then 'SE'
-                    when regexp_matches(
-                        coalesce(Gatuadress, ''),
-                        '(^| )PL {{2,}}'
-                    ) then 'PL'
+                    when registry_marks_foreign and has_embedded_polish_postcode
+                        then nullif(trim(regexp_replace(
+                            Gatuadress,
+                            '[[:space:]]+(PL[[:space:]]+)?[0-9]{{2}}-[0-9]{{3}}[[:space:]]+.+$',
+                            ''
+                        )), '')
+                    else nullif(trim(Gatuadress), '')
+                end as street_address,
+                nullif(trim(COAdress), '') as care_of,
+                case
+                    when registry_marks_foreign and has_embedded_polish_postcode
+                        then nullif(embedded_polish_postcode, '')
+                    else nullif(trim(PostNr), '')
+                end as postal_code,
+                case
+                    when registry_marks_foreign and has_embedded_polish_postcode
+                        then nullif(embedded_polish_post_town, '')
+                    else nullif(trim(PostOrt), '')
+                end as post_town,
+                case
+                    when not registry_marks_foreign then 'SE'
+                    when has_polish_country_marker or has_embedded_polish_postcode
+                        then 'PL'
                     else null
                 end as country_code,
                 source_run_id,
                 source_record_id,
                 source_payload_hash
-            from scb_source
+            from scb_address_parts
             where address_rank = 1
         ),
         candidates as (

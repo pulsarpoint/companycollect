@@ -1,0 +1,14 @@
+The attached file contains connection details for the Valuable Datasets application with access to the following APIs:
+
+ValuableDatasets
+The content of the zipped file consists of two lines with client id and client secret respectively. Code to decrypt the zip file is sent separately.
+
+https://portal.api.bolagsverket.se/devportal/apis/ff8f9a91-1fdd-4705-8836-c1906581162f
+
+
+An access token can be requested with OAuth2 Client Credentials Grant .
+
+The token endpoint is https://portal.api. bolagsverket .se/oauth2/token .
+APIs are described on the Developer Portal .
+https://portal.api.bolagsverket.se/devportal/apis
+

@@ -5,6 +5,11 @@ from typing import Any
 
 import pyarrow as pa
 
+from dagster_v3.defs.sweden_company.address_parsing import (
+    ParsedStreetAddress,
+    parse_sweden_street_address,
+)
+
 ENRICHMENT_SCHEMA = "sweden_company_enrichment"
 CANONICAL_ADDRESSES_TABLE = "se_company_addresses_canonical_current"
 ADDRESS_MEMBERS_TABLE = "se_company_address_members_current"
@@ -25,7 +30,7 @@ QUERY_BATCH_SIZE = 25_000
 PROGRESS_LOG_ROW_INTERVAL = 500_000
 _ARROW_RELATION = "_sweden_company_address_observation_batch"
 
-SOURCE_ADDRESS_COLUMNS = (
+SOURCE_ADDRESS_INPUT_COLUMNS = (
     "company_id",
     "address_key",
     "address_type",
@@ -41,6 +46,14 @@ SOURCE_ADDRESS_COLUMNS = (
     "source_observed_at",
 )
 
+PARSED_ADDRESS_COLUMNS = (
+    "street_name",
+    "house_number",
+    "unit",
+)
+
+SOURCE_ADDRESS_COLUMNS = SOURCE_ADDRESS_INPUT_COLUMNS + PARSED_ADDRESS_COLUMNS
+
 CANONICAL_ADDRESS_COLUMNS = (
     "company_id",
     "canonical_address_key",
@@ -49,6 +62,9 @@ CANONICAL_ADDRESS_COLUMNS = (
     "representative_address_source",
     "representative_source_record_uid",
     "street_address",
+    "street_name",
+    "house_number",
+    "unit",
     "care_of",
     "postal_code",
     "post_town",
@@ -73,6 +89,9 @@ ADDRESS_MEMBER_COLUMNS = (
     "raw_address",
     "display_address",
     "street_address",
+    "street_name",
+    "house_number",
+    "unit",
     "care_of",
     "postal_code",
     "post_town",
@@ -218,6 +237,9 @@ def replace_sweden_company_canonical_addresses(
                 raw_address,
                 display_address,
                 street_address,
+                street_name,
+                house_number,
+                unit,
                 care_of,
                 postal_code,
                 post_town,
@@ -307,6 +329,9 @@ def replace_sweden_company_canonical_addresses(
                     first(registry_source_record_uid order by representative_rank)
                         as representative_source_record_uid,
                     first(street_address order by representative_rank) as street_address,
+                    first(street_name order by representative_rank) as street_name,
+                    first(house_number order by representative_rank) as house_number,
+                    first(unit order by representative_rank) as unit,
                     first(care_of order by representative_rank) as care_of,
                     first(postal_code order by representative_rank) as postal_code,
                     first(post_town order by representative_rank) as post_town,
@@ -334,6 +359,9 @@ def replace_sweden_company_canonical_addresses(
                 representative_address_source,
                 representative_source_record_uid,
                 street_address,
+                street_name,
+                house_number,
+                unit,
                 care_of,
                 postal_code,
                 post_town,
@@ -455,7 +483,10 @@ def _load_current_company_addresses(
             country_code varchar,
             registry_source_record_uid varchar,
             registry_source_run_id varchar,
-            source_observed_at varchar
+            source_observed_at varchar,
+            street_name varchar,
+            house_number varchar,
+            unit varchar
         )
         """
     )
@@ -505,10 +536,14 @@ def _insert_company_address_batch(
 ) -> None:
     if not rows:
         return
+    rows_with_components = _append_parsed_address_components(rows)
     arrow_table = pa.Table.from_arrays(
         [
             pa.array(
-                ["" if row[index] is None else str(row[index]) for row in rows],
+                [
+                    "" if row[index] is None else str(row[index])
+                    for row in rows_with_components
+                ],
                 type=pa.string(),
             )
             for index in range(len(SOURCE_ADDRESS_COLUMNS))
@@ -524,6 +559,38 @@ def _insert_company_address_batch(
         )
     finally:
         connection.unregister(_ARROW_RELATION)
+
+
+def _append_parsed_address_components(
+    rows: Sequence[Sequence[object]],
+) -> list[tuple[object, ...]]:
+    street_address_index = SOURCE_ADDRESS_INPUT_COLUMNS.index("street_address")
+    postal_code_index = SOURCE_ADDRESS_INPUT_COLUMNS.index("postal_code")
+    post_town_index = SOURCE_ADDRESS_INPUT_COLUMNS.index("post_town")
+    country_code_index = SOURCE_ADDRESS_INPUT_COLUMNS.index("country_code")
+    parsed_by_address: dict[tuple[str, str, str], ParsedStreetAddress] = {}
+    result: list[tuple[object, ...]] = []
+
+    for row in rows:
+        country_code = str(row[country_code_index] or "").strip().upper()
+        if country_code not in ("", "SE"):
+            parsed = ParsedStreetAddress(street_name="", house_number="", unit="")
+        else:
+            address = (
+                str(row[street_address_index] or ""),
+                str(row[postal_code_index] or ""),
+                str(row[post_town_index] or ""),
+            )
+            if address not in parsed_by_address:
+                parsed_by_address[address] = parse_sweden_street_address(
+                    street_address=address[0],
+                    postal_code=address[1],
+                    post_town=address[2],
+                )
+            parsed = parsed_by_address[address]
+        result.append((*row, parsed.street_name, parsed.house_number, parsed.unit))
+
+    return result
 
 
 def _count(connection: Any, qualified_table: str) -> int:

@@ -1,4 +1,5 @@
 import importlib
+import logging
 from collections.abc import Iterator
 from contextlib import contextmanager
 from pathlib import Path
@@ -6,11 +7,34 @@ from typing import Any
 
 import duckdb
 import pytest
+from boto3.s3.transfer import TransferConfig
 from botocore.exceptions import ClientError
 from dagster_clickhouse import ClickhouseResource
 from dagster_duckdb import DuckDBResource
 
 from dagster_v3.definitions import defs as load_project_defs
+
+
+class ListingPaginator:
+    def __init__(self, pages: list[dict[str, object]]) -> None:
+        self.pages = pages
+        self.yielded_page_count = 0
+
+    def paginate(self, *, Bucket: str, Prefix: str) -> Iterator[dict[str, object]]:
+        assert Bucket == "source-test"
+        assert Prefix == "raw/partition=2026/"
+        for page in self.pages:
+            self.yielded_page_count += 1
+            yield page
+
+
+class ListingClient:
+    def __init__(self, pages: list[dict[str, object]]) -> None:
+        self.paginator = ListingPaginator(pages)
+
+    def get_paginator(self, operation_name: str) -> ListingPaginator:
+        assert operation_name == "list_objects_v2"
+        return self.paginator
 
 
 def test_shared_resources_live_in_common() -> None:
@@ -42,6 +66,13 @@ def test_object_store_resource_resolves_env_vars_before_creating_boto_client(
     assert calls["endpoint_url"] == "http://s3.test:9000"
     assert calls["aws_access_key_id"] == "test-access-key"
     assert calls["aws_secret_access_key"] == "test-secret-key"
+    client_config = calls["config"]
+    assert client_config.connect_timeout == 5
+    assert client_config.read_timeout == 30
+    assert client_config.retries == {
+        "mode": "standard",
+        "total_max_attempts": 2,
+    }
 
 
 def test_object_store_exists_returns_false_when_bucket_is_missing() -> None:
@@ -59,6 +90,233 @@ def test_object_store_exists_returns_false_when_bucket_is_missing() -> None:
     resource = resources.ObjectStoreResource(s3_client=FakeClient())
 
     assert resource.exists("snapshot.parquet", bucket="missing-bucket") is False
+
+
+def test_object_store_reads_exact_object_size_without_listing() -> None:
+    resources = importlib.import_module("dagster_v3.defs.common.resources")
+
+    class FakeClient:
+        def head_object(self, Bucket: str, Key: str) -> dict[str, int]:
+            assert Bucket == "source-sweden-company"
+            assert Key == "raw/source.zip"
+            return {"ContentLength": 12_345}
+
+    resource = resources.ObjectStoreResource(s3_client=FakeClient())
+
+    assert (
+        resource.object_size("raw/source.zip", bucket="source-sweden-company")
+        == 12_345
+    )
+
+
+def test_object_store_limits_default_multipart_upload_concurrency(
+    tmp_path: Path,
+) -> None:
+    resources = importlib.import_module("dagster_v3.defs.common.resources")
+
+    class FakeClient:
+        transfer_config: TransferConfig | None = None
+
+        def upload_file(
+            self,
+            Filename: str,
+            Bucket: str,
+            Key: str,
+            Config: TransferConfig | None = None,
+        ) -> None:
+            assert Filename == str(tmp_path / "source.zip")
+            assert Bucket == "source-sweden-company"
+            assert Key == "raw/source.zip"
+            self.transfer_config = Config
+
+    client = FakeClient()
+    resource = resources.ObjectStoreResource(s3_client=client)
+
+    resource.upload_file(
+        "raw/source.zip",
+        tmp_path / "source.zip",
+        bucket="source-sweden-company",
+    )
+
+    assert client.transfer_config is not None
+    assert client.transfer_config.max_concurrency == 2
+
+
+def test_object_store_accepts_explicit_transfer_config(tmp_path: Path) -> None:
+    resources = importlib.import_module("dagster_v3.defs.common.resources")
+
+    class FakeClient:
+        transfer_config: TransferConfig | None = None
+
+        def upload_file(
+            self,
+            Filename: str,
+            Bucket: str,
+            Key: str,
+            Config: TransferConfig | None = None,
+        ) -> None:
+            self.transfer_config = Config
+
+    client = FakeClient()
+    resource = resources.ObjectStoreResource(s3_client=client)
+    transfer_config = TransferConfig(max_concurrency=1)
+
+    resource.upload_file(
+        "raw/source.zip",
+        tmp_path / "source.zip",
+        transfer_config=transfer_config,
+    )
+
+    assert client.transfer_config is transfer_config
+
+
+def test_object_store_lists_bounded_prefix() -> None:
+    resources = importlib.import_module("dagster_v3.defs.common.resources")
+    client = ListingClient(
+        [
+            {
+                "Contents": [{"Key": "raw/partition=2026/part-1.json"}],
+                "IsTruncated": False,
+            }
+        ]
+    )
+    resource = resources.ObjectStoreResource(
+        bucket="source-test",
+        s3_client=client,
+    )
+
+    assert resource.list_keys("raw/partition=2026/") == [
+        "raw/partition=2026/part-1.json"
+    ]
+
+
+def test_object_store_rejects_root_listing_before_calling_s3() -> None:
+    resources = importlib.import_module("dagster_v3.defs.common.resources")
+
+    class UnexpectedClient:
+        def get_paginator(self, operation_name: str) -> object:
+            raise AssertionError(f"Unexpected paginator request: {operation_name}")
+
+    resource = resources.ObjectStoreResource(s3_client=UnexpectedClient())
+
+    with pytest.raises(ValueError, match="prefix must not be blank"):
+        resource.list_keys("")
+
+
+def test_object_store_stops_when_key_limit_is_exceeded() -> None:
+    resources = importlib.import_module("dagster_v3.defs.common.resources")
+    client = ListingClient(
+        [
+            {
+                "Contents": [
+                    {"Key": "raw/partition=2026/part-1.json"},
+                    {"Key": "raw/partition=2026/part-2.json"},
+                    {"Key": "raw/partition=2026/part-3.json"},
+                ],
+                "IsTruncated": True,
+            },
+            {"Contents": [], "IsTruncated": False},
+        ]
+    )
+    resource = resources.ObjectStoreResource(
+        bucket="source-test",
+        s3_client=client,
+        list_max_keys=2,
+    )
+
+    with pytest.raises(
+        resources.ObjectStoreListingLimitError,
+        match="key limit exceeded.*keys=3.*limit=2",
+    ):
+        resource.list_keys("raw/partition=2026/")
+
+    assert client.paginator.yielded_page_count == 1
+
+
+def test_object_store_stops_before_requesting_page_beyond_limit() -> None:
+    resources = importlib.import_module("dagster_v3.defs.common.resources")
+    client = ListingClient(
+        [
+            {
+                "Contents": [{"Key": "raw/partition=2026/part-1.json"}],
+                "IsTruncated": True,
+            },
+            {
+                "Contents": [{"Key": "raw/partition=2026/part-2.json"}],
+                "IsTruncated": False,
+            },
+        ]
+    )
+    resource = resources.ObjectStoreResource(
+        bucket="source-test",
+        s3_client=client,
+        list_max_pages=1,
+    )
+
+    with pytest.raises(
+        resources.ObjectStoreListingLimitError,
+        match="page limit reached.*pages=1.*limit=1",
+    ):
+        resource.list_keys("raw/partition=2026/")
+
+    assert client.paginator.yielded_page_count == 1
+
+
+def test_object_store_stops_when_elapsed_limit_is_exceeded(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    resources = importlib.import_module("dagster_v3.defs.common.resources")
+    clock = iter([0.0, 61.0, 61.0])
+    monkeypatch.setattr(resources, "monotonic", lambda: next(clock))
+    resource = resources.ObjectStoreResource(
+        bucket="source-test",
+        s3_client=ListingClient(
+            [
+                {
+                    "Contents": [{"Key": "raw/partition=2026/part-1.json"}],
+                    "IsTruncated": False,
+                }
+            ]
+        ),
+    )
+
+    with pytest.raises(
+        resources.ObjectStoreListingLimitError,
+        match="elapsed-time limit exceeded.*elapsed_seconds=61.000.*limit=60.000",
+    ):
+        resource.list_keys("raw/partition=2026/")
+
+
+def test_object_store_logs_slow_listing_telemetry(
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    resources = importlib.import_module("dagster_v3.defs.common.resources")
+    clock = iter([0.0, 3.0, 3.0])
+    monkeypatch.setattr(resources, "monotonic", lambda: next(clock))
+    resource = resources.ObjectStoreResource(
+        bucket="source-test",
+        s3_client=ListingClient(
+            [
+                {
+                    "Contents": [{"Key": "raw/partition=2026/part-1.json"}],
+                    "IsTruncated": False,
+                }
+            ]
+        ),
+    )
+
+    with caplog.at_level(logging.WARNING, logger=resources.__name__):
+        resource.list_keys("raw/partition=2026/")
+
+    record = caplog.records[-1]
+    assert record.getMessage().startswith("Slow object-store listing")
+    assert record.object_store_bucket == "source-test"
+    assert record.object_store_prefix == "raw/partition=2026/"
+    assert record.object_store_page_count == 1
+    assert record.object_store_key_count == 1
+    assert record.object_store_elapsed_seconds == 3.0
+    assert record.object_store_limit_exceeded is False
 
 
 def test_project_clickhouse_resource_uses_official_dagster_resource(

@@ -9,6 +9,9 @@ describe("Sweden address quality queue", () => {
     expect(parseAddressQualityFilter(null)).toBe("ambiguous");
     expect(parseAddressQualityFilter("unknown")).toBe("ambiguous");
     expect(parseAddressQualityFilter("city_fallback")).toBe("city_fallback");
+    expect(parseAddressQualityFilter("street_fallback")).toBe(
+      "street_fallback",
+    );
   });
 
   it("composes address-owned data with geocodes and company links", async () => {

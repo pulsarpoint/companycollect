@@ -629,6 +629,54 @@ def test_scb_foreign_addresses_are_not_labeled_as_swedish(
     ]
 
 
+def test_scb_embedded_polish_postcode_is_recovered_from_foreign_address(
+    tmp_path: Path,
+) -> None:
+    database_path = tmp_path / "sweden_company_source.duckdb"
+
+    with duckdb.connect(str(database_path)) as connection:
+        _create_raw_tables(connection)
+        connection.execute(
+            f"""
+            insert into {tables.DLT_DATASET_NAME}.scb_raw
+            values
+            (
+                'run-1', 7, '165020706403', 'scb-hash-krakow-address',
+                'scb-key', '{{}}', '1', '', '', '0',
+                'VLASTIMILA HOFMANA 5 30-210 KRAKOW', '1', '96',
+                'KRAKOW FOREIGN COMPANY', '41000', '', '', '', '',
+                '165020706403', '00000', 'UTLANDET', '20060801', '1'
+            )
+            """
+        )
+
+        replace_sweden_company_normalized_tables(
+            connection=connection,
+            loaded_at=datetime(2026, 8, 15, 14, 0, tzinfo=UTC),
+        )
+
+        address = connection.execute(
+            f"""
+            select
+                raw_address,
+                street_address,
+                postal_code,
+                post_town,
+                country_code
+            from {tables.DLT_DATASET_NAME}.company_addresses
+            where company_id = '5020706403'
+            """
+        ).fetchone()
+
+    assert address == (
+        "VLASTIMILA HOFMANA 5 30-210 KRAKOW, 00000 UTLANDET",
+        "VLASTIMILA HOFMANA 5",
+        "30-210",
+        "KRAKOW",
+        "PL",
+    )
+
+
 def test_normalized_snapshot_emits_an_empty_address_tombstone_candidate(
     tmp_path: Path,
 ) -> None:

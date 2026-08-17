@@ -60,6 +60,7 @@ interface StoredAddressGeocode {
   sourceSnapshotAt?: string;
   coordinateLocality?: string;
   coordinateSupportingPointCount?: number;
+  coordinateSpreadMeters?: number | null;
 }
 
 export interface AddressGeocodeOutcomeCopy {
@@ -108,6 +109,53 @@ function approximateCityLocationDescription(
   );
 }
 
+function approximateAddressLocationDescription(
+  pointCount: number | undefined,
+  spreadMeters: number | null | undefined,
+  precision: "site" | "area",
+): string {
+  const candidates = new Intl.NumberFormat("en").format(pointCount ?? 0);
+  const spread =
+    typeof spreadMeters === "number"
+      ? ` across roughly ${new Intl.NumberFormat("en", {
+          maximumFractionDigits: 0,
+        }).format(spreadMeters)} metres`
+      : "";
+  const location =
+    precision === "site" ? "compact address site" : "address area";
+  return (
+    `${candidates} matching OpenStreetMap records form a ${location}${spread}. ` +
+    "The marker is their median location, not a verified building entrance."
+  );
+}
+
+function approximateStreetLocationDescription(
+  pointCount: number | undefined,
+  spreadMeters: number | null | undefined,
+  matchMethod: string | undefined,
+): string {
+  const usesRoadGeometry =
+    matchMethod === "nearby_postcode_street_road_segment_median";
+  const evidence = pointCount
+    ? `${new Intl.NumberFormat("en").format(pointCount)} OpenStreetMap ${
+        usesRoadGeometry ? "road segments" : "address points"
+      }`
+    : `OpenStreetMap ${usesRoadGeometry ? "road geometry" : "address points"}`;
+  const spread =
+    typeof spreadMeters === "number"
+      ? ` spanning roughly ${new Intl.NumberFormat("en", {
+          maximumFractionDigits: 0,
+        }).format(spreadMeters)} metres`
+      : "";
+  const postalContext = usesRoadGeometry
+    ? "near the supplied postal area"
+    : "in the supplied postal area";
+  return (
+    `${evidence} place this street ${postalContext}${spread}. ` +
+    "The requested house number was not found, so the marker represents the street area, not the building."
+  );
+}
+
 export function addressGeocodeOutcomeCopy(
   address: AddressRow,
 ): AddressGeocodeOutcomeCopy | null {
@@ -118,8 +166,43 @@ export function addressGeocodeOutcomeCopy(
         description:
           address.geocode_match_method === "city_street_house_exact_unique"
             ? "City, street, and house number matched one OpenStreetMap record."
-            : "Postal code, street, and house number matched one OpenStreetMap record.",
+            : address.geocode_match_method ===
+                "country_street_house_exact_unique"
+              ? "Street and house number matched one OpenStreetMap record across Sweden."
+              : "Postal code, street, and house number matched one OpenStreetMap record.",
         badge: "Exact match",
+      };
+    case "matched_site":
+      return {
+        title: "Approximate address site found",
+        description: approximateAddressLocationDescription(
+          address.geocode_coordinate_supporting_point_count ??
+            address.geocode_candidate_count,
+          address.geocode_coordinate_spread_meters,
+          "site",
+        ),
+        badge: "Approximate site",
+      };
+    case "matched_area":
+      return {
+        title: "Approximate address area found",
+        description: approximateAddressLocationDescription(
+          address.geocode_coordinate_supporting_point_count ??
+            address.geocode_candidate_count,
+          address.geocode_coordinate_spread_meters,
+          "area",
+        ),
+        badge: "Approximate area",
+      };
+    case "matched_street":
+      return {
+        title: "Approximate street location found",
+        description: approximateStreetLocationDescription(
+          address.geocode_coordinate_supporting_point_count,
+          address.geocode_coordinate_spread_meters,
+          address.geocode_match_method,
+        ),
+        badge: "Approximate street",
       };
     case "postal_box":
       return {
@@ -173,7 +256,10 @@ export function AddressGeocodeOutcomeNotice({
   const copy = addressGeocodeOutcomeCopy(address);
   if (!copy) return null;
   const Icon =
-    address.geocode_status === "matched_exact"
+    address.geocode_status === "matched_exact" ||
+    address.geocode_status === "matched_site" ||
+    address.geocode_status === "matched_area" ||
+    address.geocode_status === "matched_street"
       ? MapPin
       : address.geocode_status === "postal_box"
         ? Mailbox
@@ -213,11 +299,7 @@ export function AddressGeocodeOutcomeNotice({
           <p className="flex flex-wrap items-center gap-2">
             <span>Geocoding source: OpenStreetMap.</span>
             {evidenceLink ? (
-              <a
-                href={evidenceLink.url}
-                target="_blank"
-                rel="noreferrer"
-              >
+              <a href={evidenceLink.url} target="_blank" rel="noreferrer">
                 {evidenceLink.label}
               </a>
             ) : null}
@@ -326,6 +408,7 @@ export function storedAddressGeocode(
     coordinateLocality: address.geocode_coordinate_locality,
     coordinateSupportingPointCount:
       address.geocode_coordinate_supporting_point_count,
+    coordinateSpreadMeters: address.geocode_coordinate_spread_meters,
   };
 }
 
@@ -369,6 +452,14 @@ export function geocodeCountryCodeForAddress(
   );
 }
 
+export function canRequestInteractiveGeocode(
+  address: AddressRow,
+  registerCountryCode: string,
+): boolean {
+  if (registerCountryCode !== "se") return true;
+  return isForeignAddress(address) && normalizedCountryCode(address) !== null;
+}
+
 export function ContactLocationCard({
   country,
   companyId,
@@ -396,7 +487,9 @@ export function ContactLocationCard({
   // geocoder can resolve. Brazil's carries a building complement and a
   // zero-padded street number that make Nominatim return nothing.
   const candidateTarget =
-    !stored && country.code !== "se" && realAddresses.length > 0
+    !stored &&
+    realAddresses.length > 0 &&
+    canRequestInteractiveGeocode(geocodeAddress, country.code)
       ? geocodeAddress.geocode_address || geocodeAddress.full_address
       : null;
   // Over-long addresses are unresolvable: no fetch, no map — same as no address at all.
@@ -436,6 +529,11 @@ export function ContactLocationCard({
 
   if (contacts.length === 0 && realAddresses.length === 0) return null;
   const coords = stored ?? fetcher.data?.coords ?? null;
+  const approximateMapMarker =
+    (stored?.provider === "openstreetmap" &&
+      stored.precision !== undefined &&
+      stored.precision !== "building") ||
+    (!stored && fetcher.data?.precision === "street");
 
   return (
     <Card>
@@ -558,12 +656,48 @@ export function ContactLocationCard({
                 </p>
               </div>
             ) : null}
+            {stored?.provider === "openstreetmap" &&
+            (stored.precision === "site" || stored.precision === "area") ? (
+              <div className="flex flex-col items-start gap-1.5">
+                <Badge className="w-fit" variant="outline">
+                  {stored.precision === "site"
+                    ? "Approximate address site"
+                    : "Approximate address area"}
+                </Badge>
+                <p className="text-muted-foreground text-xs">
+                  {approximateAddressLocationDescription(
+                    stored.coordinateSupportingPointCount,
+                    stored.coordinateSpreadMeters,
+                    stored.precision,
+                  )}
+                </p>
+              </div>
+            ) : null}
+            {stored?.provider === "openstreetmap" &&
+            stored.precision === "street" ? (
+              <div className="flex flex-col items-start gap-1.5">
+                <Badge className="w-fit" variant="outline">
+                  Approximate street location
+                </Badge>
+                <p className="text-muted-foreground text-xs">
+                  {approximateStreetLocationDescription(
+                    stored.coordinateSupportingPointCount,
+                    stored.coordinateSpreadMeters,
+                    stored.matchMethod,
+                  )}
+                </p>
+              </div>
+            ) : null}
             {!stored && fetcher.data?.precision === "street" ? (
               <Badge className="w-fit" variant="outline">
                 Approximate street location
               </Badge>
             ) : null}
-            <MiniMap lat={coords.lat} lon={coords.lon} />
+            <MiniMap
+              lat={coords.lat}
+              lon={coords.lon}
+              approximate={approximateMapMarker}
+            />
           </div>
         ) : geocodeTarget && fetcher.state !== "idle" ? (
           <div className="bg-muted text-muted-foreground flex h-48 w-full items-center justify-center rounded-md text-xs">

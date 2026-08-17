@@ -221,6 +221,12 @@ describe("detail config", () => {
         expect(c.detail?.companyShellQuery).toContain(
           "incorporation_date AS registration_date",
         );
+        expect(c.detail?.companyShellQuery).toContain(
+          "AS legal_name_registration_date",
+        );
+        expect(c.detail?.companyShellQuery).toContain(
+          "$FORETAGSNAMN-ORGNAM$",
+        );
         expect(c.detail?.companyShellQuery).not.toContain("vat_number");
         expect(c.detail?.companyShellQuery).not.toContain(
           "se_companies_translated",

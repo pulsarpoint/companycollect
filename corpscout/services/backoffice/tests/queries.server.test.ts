@@ -807,6 +807,13 @@ describe("addresses", () => {
     expect(detail!.addresses[0].address_is_foreign).toBe(0);
   }, 30_000);
 
+  it("sweden exposes the primary legal-name registration date", async () => {
+    const se = getCountry("se")!;
+    const detail = await getCompanyDetail(se, "5562434182");
+
+    expect(detail!.record.legal_name_registration_date).toBe("1984-11-08");
+  }, 30_000);
+
   it("sweden identifies and cleans a Polish address stored as foreign by SCB", async () => {
     const se = getCountry("se")!;
     const detail = await getCompanyDetail(se, "5020640487");

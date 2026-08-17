@@ -1,11 +1,5 @@
 import type { ColumnDef } from "@tanstack/react-table";
-import {
-  ArrowLeft,
-  ExternalLink,
-  MapPin,
-  Search,
-  SearchX,
-} from "lucide-react";
+import { ArrowLeft, ExternalLink, MapPin, Search, SearchX } from "lucide-react";
 import { Form, Link, useNavigate } from "react-router";
 import { DataTable } from "~/components/data-table/data-table";
 import { DataTablePagination } from "~/components/data-table/pagination";
@@ -49,11 +43,13 @@ const qualityOptions: Array<{
   { value: "ambiguous", label: "Ambiguous" },
   { value: "unmatched", label: "Unmatched" },
   { value: "invalid", label: "Invalid" },
+  { value: "street_fallback", label: "Street fallback" },
   { value: "city_fallback", label: "City fallback" },
   { value: "low_confidence", label: "Low confidence" },
 ];
 
 function qualityLabel(row: AddressQualityRow): string {
+  if (row.geocodePrecision === "street") return "Street fallback";
   if (row.geocodePrecision === "city") return "City fallback";
   if (row.matchStatus === "invalid_address") return "Invalid address";
   if (row.matchStatus === "matched_exact" && row.matchConfidence < 0.8) {
@@ -117,7 +113,9 @@ function columns(): ColumnDef<AddressQualityRow, unknown>[] {
       header: "Resolved location",
       cell: ({ row }) => (
         <div className="flex min-w-44 flex-col gap-1">
-          <span>{row.original.coordinateLocality || row.original.postTown}</span>
+          <span>
+            {row.original.coordinateLocality || row.original.postTown}
+          </span>
           <span className="text-muted-foreground text-xs">
             {[row.original.postalCode, row.original.geocodePrecision]
               .filter(Boolean)
@@ -131,8 +129,7 @@ function columns(): ColumnDef<AddressQualityRow, unknown>[] {
                 : ""}
             </span>
           ) : null}
-          {row.original.latitude !== null &&
-          row.original.longitude !== null ? (
+          {row.original.latitude !== null && row.original.longitude !== null ? (
             <a
               href={`https://www.openstreetmap.org/?mlat=${row.original.latitude}&mlon=${row.original.longitude}#map=17/${row.original.latitude}/${row.original.longitude}`}
               target="_blank"
@@ -140,7 +137,8 @@ function columns(): ColumnDef<AddressQualityRow, unknown>[] {
               className="text-primary flex items-center gap-1 text-xs underline-offset-2 hover:underline"
             >
               <MapPin className="size-3" />
-              {row.original.latitude.toFixed(5)}, {row.original.longitude.toFixed(5)}
+              {row.original.latitude.toFixed(5)},{" "}
+              {row.original.longitude.toFixed(5)}
             </a>
           ) : null}
         </div>
@@ -199,7 +197,8 @@ function columns(): ColumnDef<AddressQualityRow, unknown>[] {
           ))}
           {row.original.companyCount > row.original.companies.length ? (
             <span className="text-muted-foreground text-xs tabular-nums">
-              +{integer.format(
+              +
+              {integer.format(
                 row.original.companyCount - row.original.companies.length,
               )}{" "}
               more
@@ -285,7 +284,7 @@ export function AddressQualityReview({
 
       <section
         aria-label="Address quality summary"
-        className="grid gap-3 sm:grid-cols-2 lg:grid-cols-5"
+        className="grid gap-3 sm:grid-cols-2 lg:grid-cols-6"
       >
         <QualityMetric
           title="Ambiguous"
@@ -301,6 +300,11 @@ export function AddressQualityReview({
           title="Invalid"
           value={result.stats.invalid}
           description="Insufficient normalized address"
+        />
+        <QualityMetric
+          title="Street fallback"
+          value={result.stats.streetFallback}
+          description="Street area, not the requested building"
         />
         <QualityMetric
           title="City fallback"

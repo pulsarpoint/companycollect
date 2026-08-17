@@ -59,11 +59,16 @@ entry point remains as a compatibility alias and runs the same full deployment.
 
 The controller needs `uv`, Ansible, and rsync. The target needs systemd,
 rsync, `lsof`, `ss`, executable `/root/.local/bin/uv`, an APT-compatible Linux
-package manager, and a manually provisioned `.env`. The role checks these
-prerequisites before stopping the running process. After synchronizing the
-Python environment, it installs and verifies the Chromium shared libraries
-required by CloakBrowser; the browser binary itself remains managed by
-CloakBrowser under `/root/.cloakbrowser`.
+package manager, outbound HTTPS access, several GiB of free disk, and a manually
+provisioned `.env`. The role checks these prerequisites before stopping the
+running process. When the pinned libpostal runtime or parser model is absent,
+the role builds it from its checksum-verified source archive while Dagster stays
+online, then installs and verifies it inside the normal active-run-gated
+deployment. After synchronizing the Python environment, the role verifies the
+pypostal binding against a Swedish apartment address, then installs and verifies
+the Chromium shared libraries required by CloakBrowser; the
+browser binary itself remains managed by CloakBrowser under
+`/root/.cloakbrowser`.
 
 ## Hot-sync asset code without restarting active runs
 
@@ -102,8 +107,9 @@ Before a stopped deployment, the role:
 3. applies a best-effort gate for `STARTING` or `STARTED` Dagster runs
    immediately before shutdown;
 4. gracefully retires only the exact root tmux session `dagster`, if present;
-5. rsyncs source without touching runtime state, runs frozen `uv sync`, installs
-   the CloakBrowser/Chromium system libraries, and validates the synchronized
+5. installs a prepared libpostal build when required, rsyncs source without
+   touching runtime state, runs frozen `uv sync`, installs the
+   CloakBrowser/Chromium system libraries, and validates the synchronized
    definitions; and
 6. starts systemd and verifies the webserver, `dagster_v3` code location,
    daemon heartbeats, listener address, and service cgroup.

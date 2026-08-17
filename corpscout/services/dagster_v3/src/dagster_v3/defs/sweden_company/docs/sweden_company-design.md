@@ -36,31 +36,53 @@ On each materialization it:
 4. Checks whether the source-last-modified/source object key already exists.
 5. Skips downloading files that already exist.
 6. Downloads missing files and uploads them to S3/RustFS.
-7. Writes a run-scoped manifest and updates a date-level latest-manifest pointer.
-8. Emits materialization metadata with bucket, manifest key, file keys, downloaded count, reused count, and downloaded bytes.
+7. Writes a small exact-key integrity sidecar for each immutable ZIP. Existing ZIPs
+   without a sidecar are streamed once to calculate their hash; the asset never lists
+   the raw prefix.
+8. Writes the existing run-scoped manifest and updates the date-level latest-manifest
+   pointer.
+9. Publishes a v2 Parquet catalog and, after verifying the stored catalog bytes, writes
+   the snapshot-date `commit.json` visibility boundary.
+10. Emits both legacy manifest metadata and v2 catalog identity/count metadata.
 
 Object keys are date-based:
 
 ```text
 sweden_company/raw/source_last_modified=YYYY-MM-DDTHH-MM-SSZ/source=scb_bulkfil/source.zip
+sweden_company/raw/source_last_modified=YYYY-MM-DDTHH-MM-SSZ/source=scb_bulkfil/source.zip.integrity.json
 sweden_company/raw/source_last_modified=YYYY-MM-DDTHH-MM-SSZ/source=bolagsverket_bulkfil/source.zip
+sweden_company/raw/source_last_modified=YYYY-MM-DDTHH-MM-SSZ/source=bolagsverket_bulkfil/source.zip.integrity.json
 sweden_company/raw/retrieved_date=YYYY-MM-DD/run_id=<dagster-run-id>/manifest.json
 sweden_company/raw/retrieved_date=YYYY-MM-DD/manifest.json
+v2/source=sweden_company/dataset=raw_archives/partition/snapshot_date=YYYY-MM-DD/catalogs/run_id=<dagster-run-id>/catalog.parquet
+v2/source=sweden_company/dataset=raw_archives/partition/snapshot_date=YYYY-MM-DD/commit.json
 ```
 
 If the same upstream `Last-Modified` timestamp already exists, the asset reuses that raw ZIP and does not issue an HTTP GET download for that file. A rerun still issues lightweight HEAD requests to resolve the current source timestamp.
 
-The run-scoped manifest is the canonical manifest for downstream assets in the same Dagster run. The date-level manifest is only a latest pointer for manual downstream-only materializations and does not replace earlier run-scoped manifests.
+The v1 run-scoped and date-level manifests are retained temporarily for rollback
+compatibility, but they are no longer a downstream contract. The snapshot asset returns
+the exact v2 commit key, snapshot date, bucket, and source run ID through Dagster's IO
+manager. `sweden_company_raw_duckdb` reads that exact commit and catalog without listing
+an S3 prefix. It fails if the date-level commit was replaced by a different run or if the
+catalog size, SHA256 digest, schema, identity columns, source slugs, or totals do not
+match the commit.
+
+The v2 catalog contains one row per ZIP, sorted by exact object key, and records the
+stored byte count, SHA256 digest, source identity, and retrieval provenance. The source
+ZIPs are not copied into the v2 prefix because they are already immutable, auditable
+source archives.
 
 `sweden_company_raw_duckdb` materializes the raw DuckDB staging database.
 
 On each materialization it:
 
-1. Resolves the raw manifest for the current Dagster run, falling back to the latest manifest if the raw download asset was materialized separately.
-2. Downloads each ZIP listed in that manifest from the `source-sweden-company` bucket.
-3. Extracts the single text member from each ZIP into a temporary local directory.
-4. Replaces the raw DuckDB tables with the exact source columns plus provenance columns.
-5. Emits row-count metadata for the manifest table and the two source tables.
+1. Loads the upstream snapshot reference through Dagster's IO manager.
+2. Reads and validates the exact v2 commit and Parquet catalog keys.
+3. Downloads each cataloged ZIP from the `source-sweden-company` bucket.
+4. Extracts the single text member from each ZIP into a temporary local directory.
+5. Replaces the raw DuckDB tables with the exact source columns plus provenance columns.
+6. Emits catalog identity and row-count metadata for the raw files and source tables.
 
 The DuckDB file is:
 
@@ -72,7 +94,7 @@ The DuckDB schema is `sweden_company`.
 
 | table | source | purpose |
 |---|---|---|---|
-| `raw_files` | manifest | one row per source ZIP used for the load |
+| `raw_files` | v2 catalog | one row per source ZIP used for the load |
 | `bolagsverket_raw` | `bolagsverket_bulkfil.zip` | raw legal-register rows from the semicolon-separated file |
 | `scb_raw` | `scb_bulkfil.zip` | raw SCB/FDB rows from the tab-separated file |
 
@@ -80,7 +102,7 @@ Each source table is a full replacement table. The source columns are loaded as 
 
 | column | meaning |
 |---|---|
-| `source_run_id` | Dagster run id from the selected raw manifest |
+| `source_run_id` | Dagster run ID from the committed v2 catalog |
 | `source_line_number` | 1-based row number inside the extracted source data, excluding the header |
 | `source_record_id` | source identifier field (`organisationsidentitet` for Bolagsverket, `PeOrgNr` for SCB) |
 | `source_payload_hash` | SHA256 of the raw JSON representation of the source columns |

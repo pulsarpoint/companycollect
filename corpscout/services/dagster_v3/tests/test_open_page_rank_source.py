@@ -6,6 +6,8 @@ import json
 from pathlib import Path
 from typing import Any
 
+from boto3.s3.transfer import TransferConfig
+
 from dagster_v3.defs.common.resources import ObjectStoreResource
 
 
@@ -16,7 +18,13 @@ class FakeS3Client:
     def create_bucket(self, Bucket: str) -> None:
         return None
 
-    def upload_file(self, Filename: str, Bucket: str, Key: str) -> None:
+    def upload_file(
+        self,
+        Filename: str,
+        Bucket: str,
+        Key: str,
+        Config: TransferConfig | None = None,
+    ) -> None:
         self.objects[(Bucket, Key)] = Path(Filename).read_bytes()
 
     def download_file(self, Bucket: str, Key: str, Filename: str) -> None:

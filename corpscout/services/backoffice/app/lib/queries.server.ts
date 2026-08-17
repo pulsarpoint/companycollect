@@ -1989,6 +1989,10 @@ export interface AddressRow {
   /** Structured fallback fields used when the exact address is absent from the map provider. */
   geocode_street?: string;
   geocode_postal_code?: string;
+  /** libpostal components retained separately from the original display address. */
+  street_name?: string;
+  house_number?: string;
+  address_unit?: string;
   /** Offline geocode from the address-owned geocoding table. */
   latitude?: number | null;
   longitude?: number | null;
@@ -2001,6 +2005,7 @@ export interface AddressRow {
   geocode_candidate_record_urls?: string[];
   geocode_coordinate_locality?: string;
   geocode_coordinate_supporting_point_count?: number;
+  geocode_coordinate_spread_meters?: number | null;
   geocode_source_record_id?: string;
   geocode_source_record_url?: string;
   geocode_source_url?: string;
@@ -2018,6 +2023,9 @@ export interface AddressSourceMember {
   address_source: string;
   raw_address: string;
   display_address: string;
+  street_name?: string;
+  house_number?: string;
+  address_unit?: string;
   registry_source_record_uid: string;
   registry_source_run_id: string;
   source_observed_at: string;

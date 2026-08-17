@@ -596,6 +596,9 @@ async function getAddressesSection(
          address_source,
          raw_address,
          display_address,
+         street_name,
+         house_number,
+         unit AS address_unit,
          registry_source_record_uid,
          registry_source_run_id,
          toString(source_observed_at) AS source_observed_at
@@ -617,6 +620,9 @@ async function getAddressesSection(
          toUInt8(address_kind = 'foreign') AS address_is_foreign,
          canonical_display_address AS geocode_address,
          street_address AS geocode_street,
+         street_name,
+         house_number,
+         unit AS address_unit,
          postal_code AS geocode_postal_code
        FROM corpscout.se_addresses_current
        PREWHERE address_id IN {address_ids:Array(String)}`,
@@ -637,6 +643,7 @@ async function getAddressesSection(
          ifNull(coordinate_locality, '') AS geocode_coordinate_locality,
          coordinate_supporting_point_count
            AS geocode_coordinate_supporting_point_count,
+         coordinate_spread_meters AS geocode_coordinate_spread_meters,
          ifNull(source_record_id, '') AS geocode_source_record_id,
          ifNull(source_record_url, '') AS geocode_source_record_url,
          ifNull(source_url, '') AS geocode_source_url,

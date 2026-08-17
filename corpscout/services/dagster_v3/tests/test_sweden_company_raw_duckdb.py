@@ -252,9 +252,24 @@ def test_bolagsverket_raw_loader_skips_and_records_malformed_csv_rows(
             '"Box 1$$STOCKHOLM$11122$SE-LAND"',
         ]
     )
-    malformed_row = ";".join(
+    malformed_unescaped_quote_row = ";".join(
         [
-            '"5560000001$ORGNR-IDORG',
+            '"5560000001$ORGNR-IDORG"',
+            '"1"',
+            '"SE-LAND"',
+            '"Broken "Quoted" AB"',
+            '"AB-ORGFO"',
+            '""',
+            '""',
+            '""',
+            '"2020-01-02"',
+            '"Runs broken.se"',
+            '"Box 2"',
+        ]
+    )
+    malformed_unterminated_quote_row = ";".join(
+        [
+            '"5560000002$ORGNR-IDORG',
             '"1"',
             '"SE-LAND"',
             '"Broken AB"',
@@ -268,7 +283,10 @@ def test_bolagsverket_raw_loader_skips_and_records_malformed_csv_rows(
         ]
     )
     bolagsverket_path.write_text(
-        f"{header}\n{valid_row}\n{malformed_row}\n",
+        (
+            f"{header}\n{valid_row}\n{malformed_unescaped_quote_row}\n"
+            f"{malformed_unterminated_quote_row}\n"
+        ),
         encoding="utf-8",
     )
 
@@ -301,7 +319,27 @@ def test_bolagsverket_raw_loader_skips_and_records_malformed_csv_rows(
             "Acme AB$FORETAGSNAMN-ORGNAM$2020-01-01",
         )
     ]
-    assert rejected_lines == 1
+    assert rejected_lines == 2
+
+
+def test_bolagsverket_raw_loader_disables_parallel_csv_scan(tmp_path: Path) -> None:
+    bolagsverket_path = tmp_path / "bolagsverket_bulkfil.txt"
+    bolagsverket_path.write_text("unused", encoding="utf-8")
+    executed_sql: list[str] = []
+
+    class CapturingConnection:
+        def execute(self, sql: str, params: list[str] | None = None) -> None:
+            executed_sql.append(sql)
+
+    raw_duckdb._replace_bolagsverket_raw_table(
+        connection=CapturingConnection(),
+        csv_path=bolagsverket_path,
+        source_run_id="run-1",
+        source_s3_key="raw/bolagsverket.zip",
+    )
+
+    read_csv_sql = next(sql for sql in executed_sql if "read_csv(" in sql)
+    assert "parallel=false" in read_csv_sql
 
 
 def test_scb_raw_loader_disables_parallel_csv_scan_with_null_padding(

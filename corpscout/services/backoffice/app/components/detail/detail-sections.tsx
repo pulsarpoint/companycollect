@@ -93,9 +93,12 @@ export function CompanyRecordSection({
   const gridFieldEntries = fields.filter(
     (field) => !usedKeys.has(field.key) && !hiddenFieldKeys.has(field.key),
   );
+  const industry = [company.industry_code, company.industry_label]
+    .filter(Boolean)
+    .join(" ");
   const gridFields: [string, unknown][] = [
     ...gridFieldEntries.map((f): [string, unknown] => [f.key, f.value]),
-    ["industry", [company.industry_code, company.industry_label].filter(Boolean).join(" ") || null],
+    ...(industry ? [["industry", industry] satisfies [string, unknown]] : []),
   ];
   const gridMarkers = new Map<string, string>(
     gridFieldEntries.filter((f) => f.fromOtherLang).map((f): [string, string] => [f.key, markerSuffix]),

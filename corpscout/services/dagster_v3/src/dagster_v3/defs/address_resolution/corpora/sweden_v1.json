@@ -1,0 +1,561 @@
+{
+  "version": "sweden-address-resolution-golden-v1",
+  "cases": [
+    {
+      "case_id": "exact_building_with_unit",
+      "description": "Apartment detail does not change an exact building match.",
+      "query": {
+        "document_id": "query-exact-unit",
+        "country_code": "SE",
+        "raw_address": "Våxtorpsgränd 26 lgh 1106, 12573 Älvsjö",
+        "search_text": "Våxtorpsgränd 26 lgh 1106, 12573 Älvsjö",
+        "street_name": "Våxtorpsgränd",
+        "house_number": "26",
+        "unit": "lgh 1106",
+        "postal_code": "12573",
+        "locality": "Älvsjö",
+        "address_kind": "physical",
+        "reference_precision": "",
+        "latitude": null,
+        "longitude": null,
+        "coordinate_spread_meters": null,
+        "supporting_record_count": 0,
+        "source_record_id": "query-exact-unit",
+        "source_record_url": ""
+      },
+      "references": [
+        {
+          "document_id": "reference-vax-26",
+          "country_code": "SE",
+          "raw_address": "",
+          "search_text": "Våxtorpsgränd 26, 12573 Älvsjö",
+          "street_name": "Våxtorpsgränd",
+          "house_number": "26",
+          "unit": "",
+          "postal_code": "12573",
+          "locality": "Älvsjö",
+          "address_kind": "physical",
+          "reference_precision": "building",
+          "latitude": 59.276887,
+          "longitude": 18.011506,
+          "coordinate_spread_meters": 0,
+          "supporting_record_count": 1,
+          "source_record_id": "node/vax-26",
+          "source_record_url": "https://www.openstreetmap.org/node/1"
+        }
+      ],
+      "expected": {
+        "status": "matched_exact",
+        "precision": "building",
+        "strategy": "parsed_full_exact"
+      }
+    },
+    {
+      "case_id": "one_character_street_deletion",
+      "description": "A missing character is corrected only with exact house and locality context.",
+      "query": {
+        "document_id": "query-samari-6",
+        "country_code": "SE",
+        "raw_address": "Samarigränd 6, 11853 Stockholm",
+        "search_text": "Samarigränd 6, 11853 Stockholm",
+        "street_name": "Samarigränd",
+        "house_number": "6",
+        "unit": "",
+        "postal_code": "11853",
+        "locality": "Stockholm",
+        "address_kind": "physical",
+        "reference_precision": "",
+        "latitude": null,
+        "longitude": null,
+        "coordinate_spread_meters": null,
+        "supporting_record_count": 0,
+        "source_record_id": "query-samari-6",
+        "source_record_url": ""
+      },
+      "references": [
+        {
+          "document_id": "reference-samarit-6",
+          "country_code": "SE",
+          "raw_address": "",
+          "search_text": "Samaritgränd 6, Stockholm",
+          "street_name": "Samaritgränd",
+          "house_number": "6",
+          "unit": "",
+          "postal_code": "",
+          "locality": "Stockholm",
+          "address_kind": "physical",
+          "reference_precision": "building",
+          "latitude": 59.316565,
+          "longitude": 18.0547933,
+          "coordinate_spread_meters": 0,
+          "supporting_record_count": 1,
+          "source_record_id": "node/1255629489",
+          "source_record_url": "https://www.openstreetmap.org/node/1255629489"
+        }
+      ],
+      "expected": {
+        "status": "matched_corrected",
+        "precision": "building",
+        "strategy": "fuzzy_street_locality_house"
+      }
+    },
+    {
+      "case_id": "one_character_transposition",
+      "description": "Adjacent transposition is a single Damerau-Levenshtein edit.",
+      "query": {
+        "document_id": "query-borgare-transposed",
+        "country_code": "SE",
+        "raw_address": "Borgaregtaan 19 B, 61131 Nyköping",
+        "search_text": "Borgaregtaan 19 B, 61131 Nyköping",
+        "street_name": "Borgaregtaan",
+        "house_number": "19 B",
+        "unit": "",
+        "postal_code": "61131",
+        "locality": "Nyköping",
+        "address_kind": "physical",
+        "reference_precision": "",
+        "latitude": null,
+        "longitude": null,
+        "coordinate_spread_meters": null,
+        "supporting_record_count": 0,
+        "source_record_id": "query-borgare-transposed",
+        "source_record_url": ""
+      },
+      "references": [
+        {
+          "document_id": "reference-borgare-19b",
+          "country_code": "SE",
+          "raw_address": "",
+          "search_text": "Borgaregatan 19 B, 61131 Nyköping",
+          "street_name": "Borgaregatan",
+          "house_number": "19 B",
+          "unit": "",
+          "postal_code": "61131",
+          "locality": "Nyköping",
+          "address_kind": "physical",
+          "reference_precision": "building",
+          "latitude": 58.755204,
+          "longitude": 16.99783,
+          "coordinate_spread_meters": 0,
+          "supporting_record_count": 1,
+          "source_record_id": "node/borgare-19b",
+          "source_record_url": "https://www.openstreetmap.org/"
+        }
+      ],
+      "expected": {
+        "status": "matched_corrected",
+        "precision": "building",
+        "strategy": "fuzzy_street_postcode_house"
+      }
+    },
+    {
+      "case_id": "postcode_mismatch_unique_building",
+      "description": "A conflicting postcode is visible but does not hide a unique locality building.",
+      "query": {
+        "document_id": "query-postcode-mismatch",
+        "country_code": "SE",
+        "raw_address": "Exempelvägen 12, 11111 Teststad",
+        "search_text": "Exempelvägen 12, 11111 Teststad",
+        "street_name": "Exempelvägen",
+        "house_number": "12",
+        "unit": "",
+        "postal_code": "11111",
+        "locality": "Teststad",
+        "address_kind": "physical",
+        "reference_precision": "",
+        "latitude": null,
+        "longitude": null,
+        "coordinate_spread_meters": null,
+        "supporting_record_count": 0,
+        "source_record_id": "query-postcode-mismatch",
+        "source_record_url": ""
+      },
+      "references": [
+        {
+          "document_id": "reference-postcode-correct",
+          "country_code": "SE",
+          "raw_address": "",
+          "search_text": "Exempelvägen 12, 11112 Teststad",
+          "street_name": "Exempelvägen",
+          "house_number": "12",
+          "unit": "",
+          "postal_code": "11112",
+          "locality": "Teststad",
+          "address_kind": "physical",
+          "reference_precision": "building",
+          "latitude": 59.3,
+          "longitude": 18.0,
+          "coordinate_spread_meters": 0,
+          "supporting_record_count": 1,
+          "source_record_id": "reference-postcode-correct",
+          "source_record_url": "https://www.openstreetmap.org/"
+        }
+      ],
+      "expected": {
+        "status": "matched_corrected",
+        "precision": "building",
+        "strategy": "postcode_mismatch_unique"
+      }
+    },
+    {
+      "case_id": "query_without_house_number",
+      "description": "An address without a house number cannot exceed street precision.",
+      "query": {
+        "document_id": "query-no-house",
+        "country_code": "SE",
+        "raw_address": "Boråsvägen, 51156 Kinna",
+        "search_text": "Boråsvägen, 51156 Kinna",
+        "street_name": "Boråsvägen",
+        "house_number": "",
+        "unit": "",
+        "postal_code": "51156",
+        "locality": "Kinna",
+        "address_kind": "physical",
+        "reference_precision": "",
+        "latitude": null,
+        "longitude": null,
+        "coordinate_spread_meters": null,
+        "supporting_record_count": 0,
+        "source_record_id": "query-no-house",
+        "source_record_url": ""
+      },
+      "references": [
+        {
+          "document_id": "reference-borasvagen-street",
+          "country_code": "SE",
+          "raw_address": "",
+          "search_text": "Boråsvägen, 51156 Kinna",
+          "street_name": "Boråsvägen",
+          "house_number": "",
+          "unit": "",
+          "postal_code": "51156",
+          "locality": "Kinna",
+          "address_kind": "physical",
+          "reference_precision": "street",
+          "latitude": 57.50416,
+          "longitude": 12.679325,
+          "coordinate_spread_meters": 400,
+          "supporting_record_count": 8,
+          "source_record_id": "street/borasvagen-51156",
+          "source_record_url": "https://www.openstreetmap.org/way/236813440"
+        }
+      ],
+      "expected": {
+        "status": "matched_street",
+        "precision": "street",
+        "strategy": "raw_full_exact"
+      }
+    },
+    {
+      "case_id": "requested_house_missing",
+      "description": "An unavailable requested house number produces only a flagged street result.",
+      "query": {
+        "document_id": "query-missing-building",
+        "country_code": "SE",
+        "raw_address": "Doktor Liborius gata 42 B, 41323 Göteborg",
+        "search_text": "Doktor Liborius gata 42 B, 41323 Göteborg",
+        "street_name": "Doktor Liborius gata",
+        "house_number": "42 B",
+        "unit": "",
+        "postal_code": "41323",
+        "locality": "Göteborg",
+        "address_kind": "physical",
+        "reference_precision": "",
+        "latitude": null,
+        "longitude": null,
+        "coordinate_spread_meters": null,
+        "supporting_record_count": 0,
+        "source_record_id": "query-missing-building",
+        "source_record_url": ""
+      },
+      "references": [
+        {
+          "document_id": "reference-liborius-street",
+          "country_code": "SE",
+          "raw_address": "",
+          "search_text": "Doktor Liborius gata, 41323 Göteborg",
+          "street_name": "Doktor Liborius gata",
+          "house_number": "",
+          "unit": "",
+          "postal_code": "41323",
+          "locality": "Göteborg",
+          "address_kind": "physical",
+          "reference_precision": "street",
+          "latitude": 57.68272,
+          "longitude": 11.976593,
+          "coordinate_spread_meters": 600,
+          "supporting_record_count": 4,
+          "source_record_id": "street/liborius-41323",
+          "source_record_url": "https://www.openstreetmap.org/"
+        }
+      ],
+      "expected": {
+        "status": "matched_street",
+        "precision": "street",
+        "strategy": "street_requested_house_missing"
+      }
+    },
+    {
+      "case_id": "duplicate_buildings_same_site",
+      "description": "Duplicate reference records within one site retain site precision.",
+      "query": {
+        "document_id": "query-site",
+        "country_code": "SE",
+        "raw_address": "Campusvägen 4, 12345 Teststad",
+        "search_text": "Campusvägen 4, 12345 Teststad",
+        "street_name": "Campusvägen",
+        "house_number": "4",
+        "unit": "",
+        "postal_code": "12345",
+        "locality": "Teststad",
+        "address_kind": "physical",
+        "reference_precision": "",
+        "latitude": null,
+        "longitude": null,
+        "coordinate_spread_meters": null,
+        "supporting_record_count": 0,
+        "source_record_id": "query-site",
+        "source_record_url": ""
+      },
+      "references": [
+        {
+          "document_id": "reference-site-a",
+          "country_code": "SE",
+          "raw_address": "",
+          "search_text": "Campusvägen 4, 12345 Teststad",
+          "street_name": "Campusvägen",
+          "house_number": "4",
+          "unit": "",
+          "postal_code": "12345",
+          "locality": "Teststad",
+          "address_kind": "physical",
+          "reference_precision": "building",
+          "latitude": 59.30000,
+          "longitude": 18.00000,
+          "coordinate_spread_meters": 0,
+          "supporting_record_count": 1,
+          "source_record_id": "reference-site-a",
+          "source_record_url": "https://www.openstreetmap.org/"
+        },
+        {
+          "document_id": "reference-site-b",
+          "country_code": "SE",
+          "raw_address": "",
+          "search_text": "Campusvägen 4, 12345 Teststad",
+          "street_name": "Campusvägen",
+          "house_number": "4",
+          "unit": "",
+          "postal_code": "12345",
+          "locality": "Teststad",
+          "address_kind": "physical",
+          "reference_precision": "building",
+          "latitude": 59.30005,
+          "longitude": 18.00005,
+          "coordinate_spread_meters": 0,
+          "supporting_record_count": 1,
+          "source_record_id": "reference-site-b",
+          "source_record_url": "https://www.openstreetmap.org/"
+        }
+      ],
+      "expected": {
+        "status": "matched_site",
+        "precision": "site",
+        "strategy": "parsed_full_exact"
+      }
+    },
+    {
+      "case_id": "separated_building_candidates",
+      "description": "Separated duplicate address candidates remain ambiguous.",
+      "query": {
+        "document_id": "query-separated",
+        "country_code": "SE",
+        "raw_address": "Långvägen 10, 12345 Teststad",
+        "search_text": "Långvägen 10, 12345 Teststad",
+        "street_name": "Långvägen",
+        "house_number": "10",
+        "unit": "",
+        "postal_code": "12345",
+        "locality": "Teststad",
+        "address_kind": "physical",
+        "reference_precision": "",
+        "latitude": null,
+        "longitude": null,
+        "coordinate_spread_meters": null,
+        "supporting_record_count": 0,
+        "source_record_id": "query-separated",
+        "source_record_url": ""
+      },
+      "references": [
+        {
+          "document_id": "reference-separated-a",
+          "country_code": "SE",
+          "raw_address": "",
+          "search_text": "Långvägen 10, 12345 Teststad",
+          "street_name": "Långvägen",
+          "house_number": "10",
+          "unit": "",
+          "postal_code": "12345",
+          "locality": "Teststad",
+          "address_kind": "physical",
+          "reference_precision": "building",
+          "latitude": 59.30,
+          "longitude": 18.00,
+          "coordinate_spread_meters": 0,
+          "supporting_record_count": 1,
+          "source_record_id": "reference-separated-a",
+          "source_record_url": "https://www.openstreetmap.org/"
+        },
+        {
+          "document_id": "reference-separated-b",
+          "country_code": "SE",
+          "raw_address": "",
+          "search_text": "Långvägen 10, 12345 Teststad",
+          "street_name": "Långvägen",
+          "house_number": "10",
+          "unit": "",
+          "postal_code": "12345",
+          "locality": "Teststad",
+          "address_kind": "physical",
+          "reference_precision": "building",
+          "latitude": 59.35,
+          "longitude": 18.05,
+          "coordinate_spread_meters": 0,
+          "supporting_record_count": 1,
+          "source_record_id": "reference-separated-b",
+          "source_record_url": "https://www.openstreetmap.org/"
+        }
+      ],
+      "expected": {
+        "status": "ambiguous",
+        "precision": "",
+        "strategy": "parsed_full_exact"
+      }
+    },
+    {
+      "case_id": "tied_street_corrections",
+      "description": "Two equally plausible corrected street names are textually ambiguous.",
+      "query": {
+        "document_id": "query-fuzzy-tie",
+        "country_code": "SE",
+        "raw_address": "Samarigränd 6, 11853 Stockholm",
+        "search_text": "Samarigränd 6, 11853 Stockholm",
+        "street_name": "Samarigränd",
+        "house_number": "6",
+        "unit": "",
+        "postal_code": "11853",
+        "locality": "Stockholm",
+        "address_kind": "physical",
+        "reference_precision": "",
+        "latitude": null,
+        "longitude": null,
+        "coordinate_spread_meters": null,
+        "supporting_record_count": 0,
+        "source_record_id": "query-fuzzy-tie",
+        "source_record_url": ""
+      },
+      "references": [
+        {
+          "document_id": "reference-fuzzy-tie-a",
+          "country_code": "SE",
+          "raw_address": "",
+          "search_text": "Samaritgränd 6, Stockholm",
+          "street_name": "Samaritgränd",
+          "house_number": "6",
+          "unit": "",
+          "postal_code": "",
+          "locality": "Stockholm",
+          "address_kind": "physical",
+          "reference_precision": "building",
+          "latitude": 59.316565,
+          "longitude": 18.054793,
+          "coordinate_spread_meters": 0,
+          "supporting_record_count": 1,
+          "source_record_id": "reference-fuzzy-tie-a",
+          "source_record_url": "https://www.openstreetmap.org/"
+        },
+        {
+          "document_id": "reference-fuzzy-tie-b",
+          "country_code": "SE",
+          "raw_address": "",
+          "search_text": "Samariegränd 6, Stockholm",
+          "street_name": "Samariegränd",
+          "house_number": "6",
+          "unit": "",
+          "postal_code": "",
+          "locality": "Stockholm",
+          "address_kind": "physical",
+          "reference_precision": "building",
+          "latitude": 59.32,
+          "longitude": 18.06,
+          "coordinate_spread_meters": 0,
+          "supporting_record_count": 1,
+          "source_record_id": "reference-fuzzy-tie-b",
+          "source_record_url": "https://www.openstreetmap.org/"
+        }
+      ],
+      "expected": {
+        "status": "ambiguous",
+        "precision": "",
+        "strategy": "fuzzy_street_locality_house"
+      }
+    },
+    {
+      "case_id": "cadastral_property_identifier",
+      "description": "A cadastral identifier does not enter the house-number matcher.",
+      "query": {
+        "document_id": "query-property",
+        "country_code": "SE",
+        "raw_address": "Öja 16:11, 27198 Ystad",
+        "search_text": "Öja 16:11, 27198 Ystad",
+        "street_name": "Öja",
+        "house_number": "16:11",
+        "unit": "",
+        "postal_code": "27198",
+        "locality": "Ystad",
+        "address_kind": "property_identifier",
+        "reference_precision": "",
+        "latitude": null,
+        "longitude": null,
+        "coordinate_spread_meters": null,
+        "supporting_record_count": 0,
+        "source_record_id": "query-property",
+        "source_record_url": ""
+      },
+      "references": [],
+      "expected": {
+        "status": "property_identifier",
+        "precision": "",
+        "strategy": ""
+      }
+    },
+    {
+      "case_id": "reference_address_missing",
+      "description": "A valid rural address absent from the reference remains unmatched.",
+      "query": {
+        "document_id": "query-rural-missing",
+        "country_code": "SE",
+        "raw_address": "Björka 175, 71193 Lindesberg",
+        "search_text": "Björka 175, 71193 Lindesberg",
+        "street_name": "Björka",
+        "house_number": "175",
+        "unit": "",
+        "postal_code": "71193",
+        "locality": "Lindesberg",
+        "address_kind": "physical",
+        "reference_precision": "",
+        "latitude": null,
+        "longitude": null,
+        "coordinate_spread_meters": null,
+        "supporting_record_count": 0,
+        "source_record_id": "query-rural-missing",
+        "source_record_url": ""
+      },
+      "references": [],
+      "expected": {
+        "status": "unmatched",
+        "precision": "",
+        "strategy": ""
+      }
+    }
+  ]
+}

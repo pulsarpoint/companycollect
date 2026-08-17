@@ -54,6 +54,7 @@ DENMARK_CVR_PERSON_DETAIL_MAPPING_VERSION = 2
 DENMARK_CVR_PERSON_IDS_TABLE = "person_ids"
 DENMARK_CVR_PERSON_ID_INSERT_BATCH_ROWS = 50_000
 DENMARK_CVR_PERSON_ID_PROGRESS_INTERVAL_SECONDS = 60.0
+DATACVR_PERSON_DETAIL_SUPPRESSIBLE_STATUSES = frozenset({404})
 
 DATACVR_PERSON_DETAIL_SCRIPT = """
 async ({ url }) => {
@@ -544,10 +545,7 @@ def _insert_staged_person_id_batch(
     rows: list[tuple[str, str, str]],
 ) -> None:
     arrow_table = pa.Table.from_arrays(
-        [
-            pa.array(values, type=pa.string())
-            for values in zip(*rows, strict=True)
-        ],
+        [pa.array(values, type=pa.string()) for values in zip(*rows, strict=True)],
         names=("person_id", "person_type", "company_cvr"),
     )
     registered_name = "_denmark_cvr_person_id_batch"
@@ -603,7 +601,7 @@ def person_detail_api_url(
     normalized_base_url = _validate_https_base_url(base_url)
     query = urlencode(
         {
-            "enhedsnummer": identity.person_id,
+            "identifikator": identity.person_id,
             "persontype": identity.person_type,
             "locale": "en",
         }
@@ -1202,10 +1200,10 @@ def _is_retryable_person_detail_result(result: Any) -> bool:
 
 
 def _is_suppressible_person_detail_result(result: Any) -> bool:
-    if not isinstance(result, Mapping):
-        return False
-    status = result.get("status")
-    return isinstance(status, int) and 400 <= status < 600
+    return (
+        isinstance(result, Mapping)
+        and result.get("status") in DATACVR_PERSON_DETAIL_SUPPRESSIBLE_STATUSES
+    )
 
 
 def _person_detail_retry_delay_seconds(

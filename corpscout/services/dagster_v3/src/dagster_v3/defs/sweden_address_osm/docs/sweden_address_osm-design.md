@@ -40,13 +40,21 @@ DuckDB's spatial extension `ST_ReadOSM` reads the compressed PBF directly with
 multithreaded protobuf parsing. The build scans the PBF twice without retaining
 the complete OSM graph:
 
-1. select objects carrying `addr:housenumber` and their address tags;
-2. select only the node coordinates referenced by address-tagged ways; and
-3. emit direct node coordinates or a point-on-surface for closed address ways.
+1. select objects carrying `addr:housenumber` plus named `highway` ways;
+2. select only the node coordinates referenced by those retained ways; and
+3. emit direct address-node coordinates, a point-on-surface for closed address
+   ways, or the midpoint along each named road segment.
 
 The durable `sweden_address_osm.address_points` table contains WGS84 longitude
 and latitude, normalized street/house-number/postcode matching fields, the OSM
 record URL and raw tags, and complete snapshot provenance.
+
+The durable `sweden_address_osm.street_segments` table contains one midpoint
+per named OSM highway way. It is not building evidence. The matcher uses it
+only after exact and address-point street matching fail, associates segments
+with nearby OSM postcode centroids, and publishes the result as a lower-
+confidence `matched_street` marker. Road groups wider than one kilometre remain
+unmatched rather than selecting an arbitrary location.
 
 Address-tagged relations are counted but omitted in this first implementation.
 Resolving their nested multipolygon membership requires an additional relation
@@ -65,12 +73,13 @@ the full company-address resolver will apply:
 2. OSM exact normalized postcode, street and house number;
 3. OSM exact normalized city, street and house number when the OSM record has no
    postcode, returning every candidate when the key is ambiguous;
-4. controlled fuzzy OSM match; and
-5. postcode/locality centroid fallback.
+4. flagged same-postcode street location from OSM address points;
+5. flagged nearby-postcode street location from named OSM road geometry; and
+6. controlled locality fallback for non-physical postal addresses.
 
-Every company match will retain source, source record ID, snapshot date,
-precision, method and confidence. This asset does not yet mutate company rows
-or publish coordinates to ClickHouse.
+Every company match retains source, snapshot date, precision, method and
+confidence. Approximate street markers never retain an OSM building record ID
+and are explicitly presented as non-building locations in the application.
 
 ## 5. Scheduling and verification
 

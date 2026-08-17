@@ -14,6 +14,18 @@ dagster_uv_binary: /root/.local/bin/uv
 dagster_venv_python: "{{ dagster_deploy_dir }}/.venv/bin/python"
 dagster_dg_binary: "{{ dagster_deploy_dir }}/.venv/bin/dg"
 
+dagster_libpostal_version: "1.1.4"
+dagster_libpostal_archive_checksum: >-
+  sha256:41ad2cd20261e6498f1843c8d21cd737470d17e975deb6ea2a5d1517880729d3
+dagster_libpostal_source_dir: >-
+  /usr/local/src/libpostal-{{ dagster_libpostal_version }}
+dagster_libpostal_archive: "{{ dagster_libpostal_source_dir }}.tar.gz"
+dagster_libpostal_data_root: >-
+  /var/lib/libpostal/{{ dagster_libpostal_version }}
+dagster_libpostal_parser_model: >-
+  {{ dagster_libpostal_data_root }}/libpostal/address_parser/address_parser_crf.dat
+dagster_libpostal_header: /usr/local/include/libpostal/libpostal.h
+
 dagster_listen_host: 0.0.0.0
 dagster_listen_port: 3000
 dagster_db_pool_max_overflow: 100

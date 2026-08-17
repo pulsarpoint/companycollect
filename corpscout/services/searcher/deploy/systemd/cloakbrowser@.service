@@ -1,0 +1,31 @@
+[Unit]
+Description=CloakBrowser CDP endpoint on localhost:%i
+Wants=network-online.target
+After=network-online.target
+
+[Service]
+Type=simple
+User=cloakbrowser
+Group=cloakbrowser
+WorkingDirectory=/opt/searcher
+StateDirectory=cloakbrowser-%i
+StateDirectoryMode=0700
+CacheDirectory=cloakbrowser
+CacheDirectoryMode=0750
+Environment=HOME=/var/lib/cloakbrowser-%i
+Environment=CLOAKBROWSER_CACHE_DIR=/var/cache/cloakbrowser
+Environment=PYTHONUNBUFFERED=1
+EnvironmentFile=-/etc/cloakbrowser/environment
+ExecStart=/opt/searcher/.venv/bin/python /opt/searcher/main.py --cdp-port %i --profile-dir /var/lib/cloakbrowser-%i/profile --headless
+Restart=on-failure
+RestartSec=5s
+TimeoutStopSec=30s
+KillSignal=SIGTERM
+UMask=0077
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectHome=true
+ProtectSystem=strict
+
+[Install]
+WantedBy=multi-user.target

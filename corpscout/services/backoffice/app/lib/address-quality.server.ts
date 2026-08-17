@@ -5,6 +5,7 @@ export const ADDRESS_QUALITY_FILTERS = [
   "ambiguous",
   "unmatched",
   "invalid",
+  "street_fallback",
   "city_fallback",
   "low_confidence",
 ] as const;
@@ -16,6 +17,7 @@ export interface AddressQualityStats {
   ambiguous: number;
   unmatched: number;
   invalid: number;
+  streetFallback: number;
   cityFallback: number;
   lowConfidence: number;
 }
@@ -65,6 +67,7 @@ interface AddressQualityStatsRow {
   ambiguous: number | string;
   unmatched: number | string;
   invalid: number | string;
+  street_fallback: number | string;
   city_fallback: number | string;
   low_confidence: number | string;
 }
@@ -108,6 +111,7 @@ interface AddressQualityCompanyNameRow {
 const QUALITY_FILTER_SQL: Record<AddressQualityFilter, string> = {
   all: `(
     geocode.match_status IN ('ambiguous', 'unmatched', 'invalid_address')
+    OR geocode.geocode_precision = 'street'
     OR geocode.geocode_precision = 'city'
     OR (
       geocode.match_status = 'matched_exact'
@@ -117,6 +121,7 @@ const QUALITY_FILTER_SQL: Record<AddressQualityFilter, string> = {
   ambiguous: "geocode.match_status = 'ambiguous'",
   unmatched: "geocode.match_status = 'unmatched'",
   invalid: "geocode.match_status = 'invalid_address'",
+  street_fallback: "geocode.geocode_precision = 'street'",
   city_fallback: "geocode.geocode_precision = 'city'",
   low_confidence: `(
     geocode.match_status = 'matched_exact'
@@ -127,12 +132,14 @@ const QUALITY_FILTER_SQL: Record<AddressQualityFilter, string> = {
 const ADDRESS_QUALITY_STATS_QUERY = `SELECT
   countIf(
     match_status IN ('ambiguous', 'unmatched', 'invalid_address')
+    OR geocode_precision = 'street'
     OR geocode_precision = 'city'
     OR (match_status = 'matched_exact' AND match_confidence < 0.8)
   ) AS reviewable,
   countIf(match_status = 'ambiguous') AS ambiguous,
   countIf(match_status = 'unmatched') AS unmatched,
   countIf(match_status = 'invalid_address') AS invalid,
+  countIf(geocode_precision = 'street') AS street_fallback,
   countIf(geocode_precision = 'city') AS city_fallback,
   countIf(match_status = 'matched_exact' AND match_confidence < 0.8)
     AS low_confidence
@@ -175,6 +182,7 @@ function qualityTotal(
     ambiguous: stats.ambiguous,
     unmatched: stats.unmatched,
     invalid: stats.invalid,
+    street_fallback: stats.streetFallback,
     city_fallback: stats.cityFallback,
     low_confidence: stats.lowConfidence,
   };
@@ -242,9 +250,10 @@ export async function searchAddressQualityQueue(options: {
          multiIf(
            geocode.match_status = 'ambiguous', 0,
            geocode.match_status = 'invalid_address', 1,
-           geocode.geocode_precision = 'city', 2,
-           geocode.match_status = 'unmatched', 3,
-           4
+           geocode.geocode_precision = 'street', 2,
+           geocode.geocode_precision = 'city', 3,
+           geocode.match_status = 'unmatched', 4,
+           5
          ),
          address.company_count DESC,
          address.address_id
@@ -301,6 +310,7 @@ export async function searchAddressQualityQueue(options: {
     ambiguous: Number(statsRow?.ambiguous ?? 0),
     unmatched: Number(statsRow?.unmatched ?? 0),
     invalid: Number(statsRow?.invalid ?? 0),
+    streetFallback: Number(statsRow?.street_fallback ?? 0),
     cityFallback: Number(statsRow?.city_fallback ?? 0),
     lowConfidence: Number(statsRow?.low_confidence ?? 0),
   };

@@ -58,9 +58,9 @@ def sweden_osm_pbf_s3(
     kinds={"python", "s3", "openstreetmap", "pbf", "duckdb", "spatial"},
     pool=tables.DUCKDB_POOL,
     description=(
-        "Builds a Sweden-only DuckDB address-point index from OSM address "
-        "nodes and address-tagged ways. Coordinates are WGS84 longitude and "
-        "latitude; every row retains its OSM identifier and snapshot provenance."
+        "Builds Sweden-only DuckDB indexes for OSM address points and named "
+        "road segments. Coordinates are WGS84 longitude and latitude; every "
+        "row retains its OSM identifier and snapshot provenance."
     ),
 )
 def sweden_osm_addresses_duckdb(
@@ -95,6 +95,7 @@ def sweden_osm_addresses_duckdb(
             "source_md5": str(manifest["source_md5"]),
             "source_snapshot_at": _source_snapshot_at(manifest).isoformat(),
             "duckdb_table": tables.QUALIFIED_ADDRESS_TABLE,
+            "street_segment_table": tables.QUALIFIED_STREET_SEGMENT_TABLE,
             "duckdb_path": str(tables.DUCKDB_PATH),
         }
     )
@@ -120,8 +121,6 @@ defs = dg.Definitions(
     jobs=[sweden_address_osm_job],
     resources={
         "sweden_address_osm_duckdb": duckdb_resource(tables.DUCKDB_PATH),
-        "sweden_address_osm_object_store": ObjectStoreResource(
-            bucket=tables.S3_BUCKET
-        ),
+        "sweden_address_osm_object_store": ObjectStoreResource(bucket=tables.S3_BUCKET),
     },
 )

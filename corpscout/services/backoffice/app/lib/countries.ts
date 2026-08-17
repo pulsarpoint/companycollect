@@ -774,6 +774,16 @@ LIMIT 50`,
       companyShellQuery: `SELECT c.* EXCEPT (activity_description, incorporation_date),
   c.activity_description AS activity_description_original,
   c.incorporation_date AS registration_date,
+  nullIf(
+    arrayElement(
+      splitByChar('$', arrayFirst(
+        entry -> position(entry, '$FORETAGSNAMN-ORGNAM$') > 0,
+        splitByChar('|', ifNull(c.legal_name_raw, ''))
+      )),
+      3
+    ),
+    ''
+  ) AS legal_name_registration_date,
   c.registration_number AS __shell_id,
   c.legal_name AS __shell_name,
   c.legal_form_code AS __shell_legal_form,

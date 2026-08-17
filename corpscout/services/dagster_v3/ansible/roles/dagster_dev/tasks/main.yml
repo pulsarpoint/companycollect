@@ -120,6 +120,130 @@
   check_mode: false
   changed_when: false
 
+- name: Inspect the installed libpostal version
+  ansible.builtin.command:
+    argv:
+      - pkg-config
+      - "--exact-version={{ dagster_libpostal_version }}"
+      - libpostal
+  register: dagster_libpostal_version_check
+  failed_when: false
+  changed_when: false
+  check_mode: false
+
+- name: Inspect the libpostal parser model
+  ansible.builtin.stat:
+    path: "{{ dagster_libpostal_parser_model }}"
+  register: dagster_libpostal_model
+
+- name: Inspect the libpostal development header
+  ansible.builtin.stat:
+    path: "{{ dagster_libpostal_header }}"
+  register: dagster_libpostal_development_header
+
+- name: Inspect the dynamic linker cache for libpostal
+  ansible.builtin.command:
+    argv:
+      - /sbin/ldconfig
+      - -p
+  register: dagster_libpostal_linker_cache
+  changed_when: false
+  check_mode: false
+
+- name: Decide whether libpostal must be installed
+  ansible.builtin.set_fact:
+    dagster_libpostal_install_required: >-
+      {{
+        dagster_libpostal_version_check.rc != 0
+        or not dagster_libpostal_model.stat.exists
+        or not (
+          dagster_libpostal_development_header.stat.isreg | default(false)
+        )
+        or 'libpostal.so.1' not in dagster_libpostal_linker_cache.stdout
+      }}
+
+- name: Preview the required libpostal installation
+  ansible.builtin.debug:
+    msg: >-
+      libpostal {{ dagster_libpostal_version }} and its parser model will be
+      built from the pinned source archive and installed before Dagster
+      restarts.
+  changed_when: true
+  when:
+    - ansible_check_mode
+    - dagster_libpostal_install_required
+
+- name: Prepare the pinned libpostal build while Dagster remains online
+  when:
+    - not ansible_check_mode
+    - dagster_libpostal_install_required
+  block:
+    - name: Install libpostal build prerequisites
+      ansible.builtin.apt:
+        name:
+          - autoconf
+          - automake
+          - build-essential
+          - ca-certificates
+          - curl
+          - libtool
+          - pkg-config
+        state: present
+        update_cache: true
+        cache_valid_time: 3600
+
+    - name: Create libpostal source and model directories
+      ansible.builtin.file:
+        path: "{{ item }}"
+        state: directory
+        owner: root
+        group: root
+        mode: "0755"
+      loop:
+        - /usr/local/src
+        - "{{ dagster_libpostal_data_root }}"
+
+    - name: Download the pinned libpostal source archive
+      ansible.builtin.get_url:
+        url: >-
+          https://github.com/openvenues/libpostal/archive/refs/tags/v{{
+          dagster_libpostal_version }}.tar.gz
+        dest: "{{ dagster_libpostal_archive }}"
+        checksum: "{{ dagster_libpostal_archive_checksum }}"
+        owner: root
+        group: root
+        mode: "0644"
+
+    - name: Extract the pinned libpostal source archive
+      ansible.builtin.unarchive:
+        src: "{{ dagster_libpostal_archive }}"
+        dest: /usr/local/src
+        remote_src: true
+        creates: "{{ dagster_libpostal_source_dir }}"
+
+    - name: Generate the libpostal configure script
+      ansible.builtin.command:
+        argv:
+          - ./bootstrap.sh
+        chdir: "{{ dagster_libpostal_source_dir }}"
+        creates: "{{ dagster_libpostal_source_dir }}/configure"
+
+    - name: Configure libpostal with its versioned model directory
+      ansible.builtin.command:
+        argv:
+          - ./configure
+          - "--datadir={{ dagster_libpostal_data_root }}"
+        chdir: "{{ dagster_libpostal_source_dir }}"
+        creates: "{{ dagster_libpostal_source_dir }}/Makefile"
+
+    - name: Build libpostal and download its parser model
+      ansible.builtin.command:
+        argv:
+          - make
+          - -j4
+        chdir: "{{ dagster_libpostal_source_dir }}"
+      changed_when: true
+
 - name: Verify deployment tools on the Dagster host
   ansible.builtin.command:
     argv:
@@ -386,7 +510,10 @@
       - --check
     chdir: "{{ dagster_deploy_dir }}"
   environment:
+    CPPFLAGS: -I/usr/local/include
     HOME: /root
+    LDFLAGS: -L/usr/local/lib
+    PKG_CONFIG_PATH: /usr/local/lib/pkgconfig
   register: dagster_uv_check
   changed_when: false
   failed_when: dagster_uv_check.rc not in [0, 1]
@@ -450,6 +577,7 @@
         )
         or not dagster_venv.stat.exists
         or (dagster_uv_check.rc | default(1)) != 0
+        or dagster_libpostal_install_required
         or dagster_unit_preview.changed
         or dagster_systemd_needs_reload
         or dagster_legacy_tmux_active
@@ -464,6 +592,7 @@
       environment_changed: "{{ dagster_environment_changed }}"
       force_restart: "{{ dagster_force_restart }}"
       legacy_tmux_active: "{{ dagster_legacy_tmux_active }}"
+      libpostal_install_required: "{{ dagster_libpostal_install_required }}"
       source_changed: "{{ dagster_source_changed }}"
       systemd_active: "{{ dagster_systemd_is_active }}"
       systemd_needs_reload: "{{ dagster_systemd_needs_reload }}"
@@ -596,6 +725,60 @@
     - dagster_deployment_required
     - dagster_systemd_is_active or dagster_legacy_tmux_active
 
+- name: Install the prepared libpostal build
+  ansible.builtin.command:
+    argv:
+      - make
+      - install
+    chdir: "{{ dagster_libpostal_source_dir }}"
+  changed_when: true
+  when:
+    - not ansible_check_mode
+    - dagster_libpostal_install_required
+
+- name: Refresh the dynamic linker cache after installing libpostal
+  ansible.builtin.command:
+    argv:
+      - /sbin/ldconfig
+  changed_when: false
+  when:
+    - not ansible_check_mode
+    - dagster_libpostal_install_required
+
+- name: Verify the installed libpostal version
+  ansible.builtin.command:
+    argv:
+      - pkg-config
+      - "--exact-version={{ dagster_libpostal_version }}"
+      - libpostal
+  changed_when: false
+  when: not ansible_check_mode
+
+- name: Verify the installed libpostal parser model
+  ansible.builtin.stat:
+    path: "{{ dagster_libpostal_parser_model }}"
+  register: dagster_libpostal_installed_model
+  when: not ansible_check_mode
+
+- name: Verify the installed libpostal development header
+  ansible.builtin.stat:
+    path: "{{ dagster_libpostal_header }}"
+  register: dagster_libpostal_installed_header
+  when: not ansible_check_mode
+
+- name: Require a complete libpostal installation
+  ansible.builtin.assert:
+    that:
+      - dagster_libpostal_installed_model.stat.isreg | default(false)
+      - dagster_libpostal_installed_model.stat.readable | default(false)
+      - dagster_libpostal_installed_header.stat.isreg | default(false)
+      - dagster_libpostal_installed_header.stat.readable | default(false)
+    fail_msg: >-
+      libpostal {{ dagster_libpostal_version }} is incomplete. Require the
+      parser model at {{ dagster_libpostal_parser_model }} and the development
+      header at {{ dagster_libpostal_header }}.
+  when: not ansible_check_mode
+
 - name: Synchronize changed Dagster source files
   ansible.builtin.command:
     argv:
@@ -654,7 +837,10 @@
       - --frozen
     chdir: "{{ dagster_deploy_dir }}"
   environment:
+    CPPFLAGS: -I/usr/local/include
     HOME: /root
+    LDFLAGS: -L/usr/local/lib
+    PKG_CONFIG_PATH: /usr/local/lib/pkgconfig
   register: dagster_uv_sync
   changed_when: >-
     'Installed ' in (dagster_uv_sync.stdout ~ dagster_uv_sync.stderr)
@@ -662,6 +848,23 @@
   when:
     - not ansible_check_mode
     - dagster_source_changed or dagster_environment_changed
+
+- name: Verify the libpostal Python binding and parser model
+  ansible.builtin.command:
+    argv:
+      - "{{ dagster_deploy_dir }}/.venv/bin/python"
+      - -c
+      - >-
+        from postal.parser import parse_address;
+        parts = {label: value for value, label in
+        parse_address('Våxtorpsgränd 26 lgh 1106, 12573 Älvsjö', country='se')};
+        assert parts.get('road') == 'våxtorpsgränd';
+        assert parts.get('house_number') == '26';
+        assert parts.get('unit') == 'lgh 1106'
+  changed_when: false
+  when:
+    - not ansible_check_mode
+    - dagster_deployment_required
 
 - name: Install Chromium runtime libraries for CloakBrowser
   ansible.builtin.command:

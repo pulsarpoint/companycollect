@@ -29,6 +29,7 @@ dependencies = [
     "openai>=2.41.1",
     "phonenumbers>=9.0.26,<10",
     "polars[rtcompat]>=1.41.2",
+    "postal==1.1.11",
     "pyarrow>=24.0.0",
     "pymupdf>=1.28.0",
     "python-dotenv>=1.0",

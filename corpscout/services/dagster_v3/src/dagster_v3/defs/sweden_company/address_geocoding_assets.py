@@ -11,6 +11,7 @@ from dagster_v3.defs.clickhouse.resolved import (
     export_duckdb_connection_table_to_clickhouse,
     replace_duckdb_connection_tables_in_clickhouse,
 )
+from dagster_v3.defs.sweden_address_osm import address_matching
 from dagster_v3.defs.sweden_address_osm import tables as osm_tables
 from dagster_v3.defs.sweden_company import (
     address_canonicalization,
@@ -381,7 +382,8 @@ def sweden_shared_addresses_clickhouse(
     pool=osm_tables.DUCKDB_POOL,
     description=(
         "Matches every distinct Sweden address identity to OSM once, retaining "
-        "exact, ambiguous, unmatched, invalid, foreign, and postal-box outcomes."
+        "exact building, approximate site, area, or street, ambiguous, unmatched, "
+        "invalid, foreign, and postal-box outcomes."
     ),
 )
 def sweden_shared_address_osm_matches_duckdb(
@@ -492,9 +494,10 @@ def sweden_address_geocodes_clickhouse(
     pool=osm_tables.DUCKDB_POOL,
     description=(
         "Matches canonical Swedish company addresses to the national OSM address "
-        "index by exact postal code, street, and house number, with an exact city "
-        "fallback for OSM records without postcodes. The DuckDB result retains "
-        "matched, ambiguous, unmatched, invalid, and foreign outcomes."
+        "index by postal code, street, and house number, with city and Sweden-wide "
+        "fallbacks for incomplete OSM records. Spatially compact candidates and "
+        "same-postcode streets produce flagged approximate markers; separated "
+        "candidates remain ambiguous."
     ),
 )
 def sweden_company_address_osm_matches_duckdb(
@@ -579,7 +582,8 @@ def sweden_company_address_geocodes_clickhouse(
     metadata={"table": address_geocoding.QUALIFIED_CLICKHOUSE_RESULTS_TABLE},
     description=(
         "Atomically replaces the Sweden company address geocoding outcome table "
-        "with one classified result per current address, including ambiguous, "
+        "with one classified result per current address, including exact, "
+        "approximate-site, approximate-area, approximate-street, ambiguous, "
         "unmatched, invalid, foreign, and postal-box outcomes."
     ),
 )
@@ -850,6 +854,16 @@ def sweden_shared_addresses_complete_check(
 def sweden_shared_address_geocodes_complete_check(
     clickhouse: ClickhouseResource,
 ) -> dg.AssetCheckResult:
+    street_fallback_method = address_matching.STREET_FALLBACK_METHOD
+    street_fallback_coordinate_method = (
+        address_matching.STREET_FALLBACK_COORDINATE_METHOD
+    )
+    street_fallback_confidence = address_matching.STREET_FALLBACK_CONFIDENCE
+    road_fallback_method = address_matching.ROAD_STREET_FALLBACK_METHOD
+    road_fallback_coordinate_method = (
+        address_matching.ROAD_STREET_FALLBACK_COORDINATE_METHOD
+    )
+    road_fallback_confidence = address_matching.ROAD_STREET_FALLBACK_CONFIDENCE
     with clickhouse.get_connection() as client:
         [(address_rows, unique_addresses, address_identity_runs)] = client.execute(
             f"""
@@ -869,6 +883,7 @@ def sweden_shared_address_geocodes_complete_check(
                 invalid_statuses,
                 invalid_coordinates,
                 invalid_exact_matches,
+                invalid_spatial_matches,
                 missing_snapshot_provenance,
             )
         ] = client.execute(
@@ -880,6 +895,9 @@ def sweden_shared_address_geocodes_complete_check(
                 uniqExact(geocode_run_id),
                 countIf(match_status NOT IN (
                     'matched_exact',
+                    'matched_site',
+                    'matched_area',
+                    'matched_street',
                     'ambiguous',
                     'unmatched',
                     'invalid_address',
@@ -902,6 +920,84 @@ def sweden_shared_address_geocodes_complete_check(
                         OR isNull(longitude)
                         OR geocode_precision != 'building'
                         OR match_confidence != 1.0
+                        OR coordinate_supporting_point_count != 1
+                        OR isNull(coordinate_spread_meters)
+                        OR coordinate_spread_meters != 0
+                    )
+                ),
+                countIf(
+                    match_status = 'matched_site'
+                    AND (
+                        candidate_count <= 1
+                        OR isNull(latitude)
+                        OR isNull(longitude)
+                        OR geocode_provider != 'openstreetmap'
+                        OR geocode_precision != 'site'
+                        OR abs(match_confidence - 0.8) > 0.001
+                        OR coordinate_supporting_point_count != candidate_count
+                        OR isNull(coordinate_spread_meters)
+                        OR coordinate_spread_meters > {
+                address_matching.SITE_MAX_SPREAD_METERS
+            }
+                    )
+                    OR match_status = 'matched_area'
+                    AND (
+                        candidate_count <= 1
+                        OR isNull(latitude)
+                        OR isNull(longitude)
+                        OR geocode_provider != 'openstreetmap'
+                        OR geocode_precision != 'area'
+                        OR abs(match_confidence - 0.6) > 0.001
+                        OR coordinate_supporting_point_count != candidate_count
+                        OR isNull(coordinate_spread_meters)
+                        OR coordinate_spread_meters <= {
+                address_matching.SITE_MAX_SPREAD_METERS
+            }
+                        OR coordinate_spread_meters > {
+                address_matching.AREA_MAX_SPREAD_METERS
+            }
+                    )
+                    OR match_status = 'matched_street'
+                    AND (
+                        candidate_count != 0
+                        OR length(candidate_record_ids) != 0
+                        OR length(candidate_record_urls) != 0
+                        OR isNull(latitude)
+                        OR isNull(longitude)
+                        OR geocode_provider != 'openstreetmap'
+                        OR geocode_precision != 'street'
+                        OR NOT (
+                            match_method = '{street_fallback_method}'
+                            AND abs(
+                                match_confidence - {street_fallback_confidence}
+                            ) <= 0.001
+                            AND coordinate_method
+                                = '{street_fallback_coordinate_method}'
+                            OR match_method = '{road_fallback_method}'
+                            AND abs(
+                                match_confidence - {road_fallback_confidence}
+                            ) <= 0.001
+                            AND coordinate_method
+                                = '{road_fallback_coordinate_method}'
+                        )
+                        OR coordinate_supporting_point_count = 0
+                        OR isNull(coordinate_spread_meters)
+                        OR coordinate_spread_meters < 0
+                        OR coordinate_spread_meters > {
+                address_matching.AREA_MAX_SPREAD_METERS
+            }
+                        OR isNotNull(source_record_id)
+                        OR isNotNull(source_record_url)
+                    )
+                    OR match_status = 'ambiguous'
+                    AND (
+                        candidate_count <= 1
+                        OR isNotNull(latitude)
+                        OR isNotNull(longitude)
+                        OR isNull(coordinate_spread_meters)
+                        OR coordinate_spread_meters <= {
+                address_matching.AREA_MAX_SPREAD_METERS
+            }
                     )
                 ),
                 countIf(
@@ -934,6 +1030,7 @@ def sweden_shared_address_geocodes_complete_check(
         and int(invalid_statuses) == 0
         and int(invalid_coordinates) == 0
         and int(invalid_exact_matches) == 0
+        and int(invalid_spatial_matches) == 0
         and int(missing_snapshot_provenance) == 0
     )
     return dg.AssetCheckResult(
@@ -949,6 +1046,7 @@ def sweden_shared_address_geocodes_complete_check(
             "invalid_statuses": int(invalid_statuses),
             "invalid_coordinates": int(invalid_coordinates),
             "invalid_exact_matches": int(invalid_exact_matches),
+            "invalid_spatial_matches": int(invalid_spatial_matches),
             "missing_snapshot_provenance": int(missing_snapshot_provenance),
         },
     )

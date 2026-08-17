@@ -216,10 +216,11 @@ def _replace_bolagsverket_raw_table(
                 columns={duckdb_columns},
                 quote='"',
                 escape='"',
-                strict_mode=false,
+                strict_mode=true,
                 store_rejects=true,
                 rejects_table='{BOLAGSVERKET_RAW_REJECTS_TEMP_TABLE}',
-                rejects_scan='{BOLAGSVERKET_RAW_REJECT_SCANS_TEMP_TABLE}'
+                rejects_scan='{BOLAGSVERKET_RAW_REJECT_SCANS_TEMP_TABLE}',
+                parallel=false
             )
         ),
         with_raw_record as (
