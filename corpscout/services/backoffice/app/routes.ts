@@ -78,6 +78,7 @@ export default [
     route("procurements/:source/:key", "routes/procurement-record.tsx"),
     route("people", "routes/people.tsx"),
     route("ip/:address", "routes/ip-address.tsx"),
+    route("financial-demo", "routes/financial-demo.tsx"),
     route(
       "country/:country/person-targets",
       "routes/country-person-targets.ts",

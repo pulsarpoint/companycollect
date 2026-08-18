@@ -3,6 +3,7 @@ import type { Route } from "./+types/company-financials";
 import { FinancialReportDocuments } from "~/components/detail/financial-report-documents";
 import { FinancialsSection } from "~/components/detail/financials-section";
 import { EsefSection } from "~/components/detail/esef-section";
+import { SwedenFinancialOverview } from "~/components/financials/sweden-financial-overview";
 import { FinancialFilingStatusSummary } from "~/components/financial-filing-status";
 import {
   Empty,
@@ -33,6 +34,52 @@ export default function CompanyFinancials({
   const { financialSources, filingStatus } = loaderData;
   const country = getCountry(params.country)!;
   const basePath = `/company/${params.country}/${params.id}/financials`;
+
+  if (country.code === "se") {
+    const registrySource = financialSources.find(
+      (source) => source.kind === "registry",
+    );
+    const factsHref = country.detail?.factsQuery
+      ? (year: string) => `/company/${country.code}/${params.id}/facts/${year}`
+      : undefined;
+
+    return (
+      <div className="flex w-full flex-col gap-10">
+        <SwedenFinancialOverview
+          financials={
+            registrySource?.kind === "registry" ? registrySource.financials : []
+          }
+          filingStatus={filingStatus}
+          factsHref={factsHref}
+        >
+          {registrySource?.kind === "registry" ? (
+            <FinancialReportDocuments
+              reports={registrySource.documents}
+              detailsHref={(report) =>
+                `${basePath}/${encodeURIComponent(report.documentId)}`
+              }
+            />
+          ) : null}
+        </SwedenFinancialOverview>
+
+        {financialSources
+          .filter((source) => source.kind === "esef")
+          .map((source) =>
+            source.kind === "esef" ? (
+              <EsefSection
+                key={source.id}
+                filings={source.filings}
+                title={source.title}
+                description={source.description}
+                detailsHref={(filing) =>
+                  `${basePath}/esef/${encodeURIComponent(filing.primary_fxo_id)}`
+                }
+              />
+            ) : null,
+          )}
+      </div>
+    );
+  }
 
   return (
     <div className="flex w-full flex-col gap-5">

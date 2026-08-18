@@ -603,15 +603,38 @@ export async function searchCompanies(
 export interface FinancialYearRow {
   fiscal_year: string;
   currency: string;
+  /** Source reporting period. Sweden's filed XBRL rows expose both dates;
+   * comparative history and older country adapters may omit them. */
+  report_period_start?: string | null;
+  report_period_end?: string | null;
   revenue_amount_original: number | null;
   revenue_amount_usd: number | null;
+  operating_result_amount_original?: number | null;
+  operating_result_amount_usd?: number | null;
   net_result_amount_original: number | null;
   net_result_amount_usd: number | null;
   total_assets_amount_original: number | null;
   total_assets_amount_usd: number | null;
   equity_amount_original: number | null;
   equity_amount_usd: number | null;
+  liabilities_amount_original?: number | null;
+  liabilities_amount_usd?: number | null;
+  cash_and_bank_amount_original?: number | null;
+  cash_and_bank_amount_usd?: number | null;
+  current_assets_amount_original?: number | null;
+  current_assets_amount_usd?: number | null;
+  current_liabilities_amount_original?: number | null;
+  current_liabilities_amount_usd?: number | null;
+  personnel_expenses_amount_original?: number | null;
+  personnel_expenses_amount_usd?: number | null;
+  wages_and_salaries_amount_original?: number | null;
+  wages_and_salaries_amount_usd?: number | null;
   employees: number | null;
+  source_fact_count?: number | null;
+  mapped_fact_count?: number | null;
+  fx_rate_to_usd?: number | null;
+  fx_rate_date?: string | null;
+  fx_source?: string | null;
   /** "filed" (actual filing) vs "comparative" (recovered from a later
    * filing's multi-year overview). Absent for countries without history. */
   observation?: "filed" | "comparative";
