@@ -9,6 +9,7 @@ from dagster_v3.defs.sweden_company import (
 )
 from dagster_v3.defs.sweden_company.address_resolution_shadow import (
     QUALIFIED_SHADOW_QUERY_DOCUMENTS_TABLE,
+    QUALIFIED_SHADOW_REFERENCE_DOCUMENTS_TABLE,
     QUALIFIED_SHADOW_RESULTS_TABLE,
 )
 
@@ -32,6 +33,12 @@ VALID_STATUSES = (
 POSTCODE_CONFLICT_STREET_STRATEGIES = (
     "street_without_house_postcode_conflict",
     "street_requested_house_missing_postcode_conflict",
+)
+BUILDING_MATCH_STATUSES = (
+    "matched_exact",
+    "matched_corrected",
+    "matched_site",
+    "matched_area",
 )
 
 
@@ -152,21 +159,58 @@ def _assert_shadow_is_promotable(
         """,
         [expected_policy_version],
     ).fetchall()
-    [(postcode_conflict_overrides,)] = connection.execute(
+    [(unsafe_postcode_conflict_overrides,)] = connection.execute(
         f"""
+        with postcode_conflict_overrides as materialized (
+            select
+                shadow.query_document_id,
+                shadow.match_confidence as shadow_match_confidence,
+                current.match_status as current_match_status,
+                current.match_method as current_match_method,
+                current.match_confidence as current_match_confidence,
+                current.candidate_record_ids as current_candidate_record_ids
+            from {QUALIFIED_SHADOW_RESULTS_TABLE} shadow
+            inner join {
+                shared_address_geocoding.QUALIFIED_DUCKDB_ADDRESS_GEOCODES_TABLE
+            } current
+                on cast(current.address_id as varchar) = shadow.query_document_id
+            where shadow.match_strategy in (
+                    {_quoted(POSTCODE_CONFLICT_STREET_STRATEGIES)}
+                  )
+              and current.match_method not in (
+                    {_quoted(POSTCODE_CONFLICT_STREET_STRATEGIES)}
+                  )
+        ), still_supported_buildings as (
+            select distinct override.query_document_id
+            from postcode_conflict_overrides override
+            inner join {QUALIFIED_SHADOW_QUERY_DOCUMENTS_TABLE} query
+                on query.document_id = override.query_document_id
+            cross join unnest(
+                override.current_candidate_record_ids
+            ) candidate(source_record_id)
+            inner join {QUALIFIED_SHADOW_REFERENCE_DOCUMENTS_TABLE} reference
+                on reference.source_record_id = candidate.source_record_id
+               and reference.reference_precision = 'building'
+               and reference.normalized_street = query.normalized_street
+               and reference.normalized_house_number
+                    = query.normalized_house_number
+        )
         select count(*)
-        from {QUALIFIED_SHADOW_RESULTS_TABLE} shadow
-        inner join {
-            shared_address_geocoding.QUALIFIED_DUCKDB_ADDRESS_GEOCODES_TABLE
-        } current
-            on cast(current.address_id as varchar) = shadow.query_document_id
-        where shadow.match_strategy in (
-                {_quoted(POSTCODE_CONFLICT_STREET_STRATEGIES)}
-              )
-          and current.match_status != 'unmatched'
-          and current.match_method not in (
-                {_quoted(POSTCODE_CONFLICT_STREET_STRATEGIES)}
-              )
+        from postcode_conflict_overrides override
+        left join still_supported_buildings supported
+            using (query_document_id)
+        where case
+            when override.current_match_status in (
+                    {_quoted(BUILDING_MATCH_STATUSES)}
+                 )
+                then supported.query_document_id is not null
+            when override.current_match_status = 'matched_street'
+                then coalesce(override.current_match_confidence, 0)
+                    > coalesce(override.shadow_match_confidence, 0)
+            when override.current_match_status in ('unmatched', 'ambiguous')
+                then false
+            else true
+        end
         """
     ).fetchall()
     if int(address_rows) == 0:
@@ -190,10 +234,11 @@ def _assert_shadow_is_promotable(
         raise ValueError("Shadow results must belong to one evaluation run")
     if int(invalid_statuses) != 0:
         raise ValueError("Shadow results contain unsupported resolution statuses")
-    if int(postcode_conflict_overrides) != 0:
+    if int(unsafe_postcode_conflict_overrides) != 0:
         raise ValueError(
-            "Postcode-conflict street fallbacks may only replace unmatched results "
-            "or refresh an existing postcode-conflict fallback"
+            "Postcode-conflict street fallbacks would replace "
+            f"{unsafe_postcode_conflict_overrides} still-supported building "
+            "matches or stronger street results"
         )
 
 

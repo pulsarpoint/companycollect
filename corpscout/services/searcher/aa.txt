@@ -1,0 +1,44 @@
+{
+  "company_profile": {
+    "legal_name": "032 Nordic AB",
+    "organization_number": "556910-2667",
+    "registration_date": "2012-11-13",
+    "status": "ACTIVE",
+    "company_type": "Aktiebolag (Limited Liability Company)",
+    "website": "https://bpafri.se",
+    "domain_purpose": "E-commerce store selling BPA-free water bottles and design-focused drinkware",
+    "primary_brand_distributed": "KOR Water",
+    "business_description": "Distributor of KOR Water containers, emphasizing unique design, ergonomics, and BPA-free materials. The company operates in the wholesale and retail of sports, leisure, and household goods.",
+    "contact_information": {
+      "phone": "076-012 01 60",
+      "address": {
+        "street": "Stora Nyby Gård Stenberga",
+        "postal_code": "635 19",
+        "city": "Eskilstuna",
+        "country": "Sweden"
+      },
+      "postal_address": "c/o Göran Smedbäck, Stora Nyby Gård Stenberga, 635 19 Eskilstuna"
+    },
+    "key_personnel": [
+      {
+        "name": "Karl Göran Smedbäck",
+        "role": "Ledamot (Board Member/Representative)"
+      }
+    ],
+    "industry_codes": {
+      "SNI": [
+        "46491 - Partihandel med sport- och fritidsartiklar (Wholesale of sports and leisure articles)",
+        "47641 - Specialiserad butikshandel med sport- och fritidsartiklar (Retail of sports and leisure articles)",
+        "47593 - Specialiserad butikshandel med glas, porslin och andra bosättningsvaror (Retail of glassware and household goods)",
+        "46499 - Partihandel med övriga hushållsvaror (Wholesale of other household goods)"
+      ]
+    },
+    "tax_registration": [
+      "Moms (VAT)",
+      "F-skatt (F-tax)",
+      "Arbetsgivaravgift (Employer contributions)"
+    ],
+    "employee_count": 0,
+    "source": "Bolagsverket, Allabolag.se, 032.se"
+  }
+}   

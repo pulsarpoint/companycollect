@@ -5,7 +5,7 @@ from playwright.async_api import Page, async_playwright
 
 
 CDP_URL = "http://127.0.0.1:9222"
-RATSIT_URL = "https://www.ratsit.se/5562434182-T.I.R._Byggnads_Aktiebolaget_Rajaharju#antal-anstallda"
+RATSIT_URL = "https://www.ratsit.se/5562434182-T.I.R._Byggnads_Aktiebolaget_Rajaharju"
 CONTENT_SELECTOR = "main .main-inner"
 
 

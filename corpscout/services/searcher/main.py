@@ -98,6 +98,7 @@ async def serve_browser(
     show_default=True,
     help="Run without or with a graphical browser window.",
 )
+
 def main(cdp_port: int, profile_dir: Path, headless: bool, address: IPv4Address | IPv6Address) -> None:
     """Run one persistent CloakBrowser instance with a local CDP endpoint."""
     asyncio.run(serve_browser(address, cdp_port, profile_dir, headless))

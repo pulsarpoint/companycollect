@@ -308,13 +308,20 @@ def test_sweden_shadow_promotion_rejects_postcode_conflict_match_override() -> N
             evaluated_at=datetime(2026, 8, 17, tzinfo=UTC),
             log=None,
         )
+        replace_current_geocodes_from_address_resolution_shadow(
+            connection=connection,
+            geocode_run_id="first-promotion-test-run",
+            matched_at=datetime(2026, 8, 17, 1, tzinfo=UTC),
+            expected_policy_version=SWEDEN_ADDRESS_RESOLUTION_POLICY.version,
+        )
         connection.execute(
             """
-            update sweden_company_enrichment.se_address_geocodes_current
+            update sweden_company_enrichment.se_address_resolution_results_shadow
             set
-                match_status = 'matched_street',
-                match_method = 'street_requested_house_missing'
-            where address_id = 'postcode-conflict'
+                resolution_status = 'matched_street',
+                match_strategy = 'street_requested_house_missing_postcode_conflict',
+                match_confidence = 0.35
+            where query_document_id = 'exact'
             """
         )
 
@@ -326,12 +333,60 @@ def test_sweden_shadow_promotion_rejects_postcode_conflict_match_override() -> N
                 expected_policy_version=SWEDEN_ADDRESS_RESOLUTION_POLICY.version,
             )
         except ValueError as error:
-            assert "Postcode-conflict street fallbacks" in str(error)
+            assert "1 still-supported building matches" in str(error)
         else:
             raise AssertionError(
                 "Promotion must reject a postcode-conflict fallback that "
-                "overrides an existing non-fallback match"
+                "overrides a still-supported building match"
             )
+
+
+def test_sweden_shadow_promotion_replaces_invalid_legacy_building_match() -> None:
+    with duckdb.connect(":memory:") as connection:
+        _create_sweden_shadow_fixture(connection)
+        replace_sweden_address_resolution_shadow(
+            connection=connection,
+            evaluation_run_id="shadow-test-run",
+            evaluated_at=datetime(2026, 8, 17, tzinfo=UTC),
+            log=None,
+        )
+        replace_current_geocodes_from_address_resolution_shadow(
+            connection=connection,
+            geocode_run_id="first-promotion-test-run",
+            matched_at=datetime(2026, 8, 17, 1, tzinfo=UTC),
+            expected_policy_version=SWEDEN_ADDRESS_RESOLUTION_POLICY.version,
+        )
+        connection.execute(
+            """
+            update sweden_company_enrichment.se_address_geocodes_current
+            set
+                match_status = 'matched_exact',
+                match_method = 'country_street_house_exact_unique',
+                match_confidence = 1.0,
+                candidate_record_ids = ['osm/furutunet-1']
+            where address_id = 'postcode-conflict'
+            """
+        )
+
+        counts = replace_current_geocodes_from_address_resolution_shadow(
+            connection=connection,
+            geocode_run_id="replacement-promotion-test-run",
+            matched_at=datetime(2026, 8, 17, 2, tzinfo=UTC),
+            expected_policy_version=SWEDEN_ADDRESS_RESOLUTION_POLICY.version,
+        )
+
+        assert counts["rows"] == 8
+        assert connection.execute(
+            """
+            select match_status, match_method, geocode_run_id
+            from sweden_company_enrichment.se_address_geocodes_current
+            where address_id = 'postcode-conflict'
+            """
+        ).fetchone() == (
+            "matched_street",
+            "street_requested_house_missing_postcode_conflict",
+            "replacement-promotion-test-run",
+        )
 
 
 def test_sweden_shadow_promotion_allows_postcode_conflict_refresh() -> None:
@@ -731,7 +786,9 @@ def _create_sweden_shadow_fixture(connection: duckdb.DuckDBPyConnection) -> None
         create table sweden_company_enrichment.se_address_geocodes_current (
             address_id varchar,
             match_status varchar,
-            match_method varchar default ''
+            match_method varchar default '',
+            match_confidence float default 0.0,
+            candidate_record_ids varchar[] default []
         );
         insert into sweden_company_enrichment.se_address_geocodes_current (
             address_id,
