@@ -297,6 +297,7 @@ EXPECTED_MIGRATIONS = (
     "000280_corpscout_se_bolagsverket_vdm_company_current",
     "000281_corpscout_se_company_presentation_fields",
     "000282_corpscout_se_annual_report_filing_status",
+    "000283_corpscout_se_bolagsverket_financial_observation_provenance",
 )
 
 NOOP_MIGRATIONS = {"000276_noop"}

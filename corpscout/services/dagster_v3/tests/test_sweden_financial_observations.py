@@ -17,11 +17,19 @@ from dagster_v3.defs.sweden_financial.observations import (
 
 MIGRATIONS_DIR = Path(__file__).resolve().parents[3] / "clickhouse" / "migrations"
 _MIGRATION_NAME = "000253_corpscout_se_bolagsverket_financial_observations"
+_PROVENANCE_MIGRATION_NAME = (
+    "000283_corpscout_se_bolagsverket_financial_observation_provenance"
+)
 _STAGE_TABLE = "`corpscout`.`_tmp_se_bolagsverket_financial_observations_test`"
 
 
 def test_observations_migration_preserves_context_periods_and_owns_table() -> None:
-    sql = (MIGRATIONS_DIR / f"{_MIGRATION_NAME}.up.sql").read_text()
+    sql = "\n".join(
+        (
+            (MIGRATIONS_DIR / f"{_MIGRATION_NAME}.up.sql").read_text(),
+            (MIGRATIONS_DIR / f"{_PROVENANCE_MIGRATION_NAME}.up.sql").read_text(),
+        )
+    )
     down_sql = (MIGRATIONS_DIR / f"{_MIGRATION_NAME}.down.sql").read_text()
 
     assert (
@@ -34,7 +42,7 @@ def test_observations_migration_preserves_context_periods_and_owns_table() -> No
         f"corpscout.{SE_BOLAGSVERKET_FINANCIAL_OBSERVATIONS_TABLE}" in sql
     )
     for column in SE_BOLAGSVERKET_FINANCIAL_OBSERVATIONS_COLUMNS:
-        assert f"    {column} " in sql
+        assert f"{column} " in sql
 
     assert "value_original Nullable(Decimal(38, 10))" in sql
     assert "value_usd Nullable(Decimal(38, 10))" in sql
@@ -64,6 +72,11 @@ def test_observations_sql_keeps_every_mapped_source_fact_without_resolution() ->
     assert "revenue_overlap_disagreement" in sql
     assert "ambiguous_solidity_scale" in sql
     assert "represented_period_approximated" in sql
+    assert "source_reported_company_name" in sql
+    assert "source_archive_key" in sql
+    assert "source_payload_hash" in sql
+    assert "source_fact_count" in sql
+    assert "source_unmapped_numeric_fact_count" in sql
 
     for concept_name in BOLAGSVERKET_FINANCIAL_CONCEPTS:
         assert f"concept_local_name = '{concept_name}'" in sql
@@ -71,6 +84,7 @@ def test_observations_sql_keeps_every_mapped_source_fact_without_resolution() ->
     assert "LIMIT 1 BY" not in sql
     assert "source_statement_key NOT IN" not in sql
     assert "observation_kind = 'reported' OR" not in sql
+    assert "WHERE metric_code != ''" in sql
 
 
 def test_observations_quality_sql_reports_source_grain_and_flags() -> None:

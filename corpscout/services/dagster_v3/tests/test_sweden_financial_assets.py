@@ -43,6 +43,9 @@ def test_sweden_financial_backfill_and_current_assets_are_separate() -> None:
         "sweden_financial_current_facts_usd_duckdb",
         "sweden_financial_current_reports_clickhouse",
         "sweden_financial_current_facts_clickhouse",
+        "se_bolagsverket_financial_observations_clickhouse",
+        "sweden_financial_metrics_clickhouse",
+        "se_financial_history_clickhouse",
         "sweden_financial_company_source_records_clickhouse",
         "se_financial_facts_concepts",
         "se_financial_taxonomy_concepts",
@@ -245,11 +248,7 @@ def test_sweden_financial_backfill_and_current_assets_are_separate() -> None:
     assert metrics_node.group_name == "sweden_financial"
     assert metrics_node.partitions_def is None
     assert metrics_node.parent_keys == {
-        dg.AssetKey("exchange_rates_v2_clickhouse"),
-        dg.AssetKey("sweden_financial_backfill_reports_clickhouse"),
-        dg.AssetKey("sweden_financial_current_reports_clickhouse"),
-        dg.AssetKey("sweden_financial_backfill_facts_clickhouse"),
-        dg.AssetKey("sweden_financial_current_facts_clickhouse"),
+        dg.AssetKey("se_bolagsverket_financial_observations_clickhouse"),
     }
 
 
@@ -263,16 +262,11 @@ def test_se_financial_history_clickhouse_asset_is_wired_correctly() -> None:
     assert history_node.pools == set()
     assert history_node.partitions_def is None
     assert history_node.parent_keys == {
-        dg.AssetKey("sweden_financial_backfill_reports_clickhouse"),
-        dg.AssetKey("sweden_financial_current_reports_clickhouse"),
-        dg.AssetKey("sweden_financial_backfill_facts_clickhouse"),
-        dg.AssetKey("sweden_financial_current_facts_clickhouse"),
-        dg.AssetKey("sweden_financial_metrics_clickhouse"),
+        dg.AssetKey("se_bolagsverket_financial_observations_clickhouse"),
     }
 
-    # The history asset should refresh whenever metrics refreshes: it lives
-    # in the same (currently unscheduled, manually/backfill-triggered)
-    # clickhouse job selection as reports/facts/metrics.
+    # History and metrics are sibling resolutions of the same observation
+    # asset and run in the same derived ClickHouse job.
     clickhouse_job_asset_keys = {
         key.path[-1]
         for key in repo.get_job(

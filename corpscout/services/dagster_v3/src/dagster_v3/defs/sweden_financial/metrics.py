@@ -10,20 +10,20 @@ from dagster_v3.defs.sweden_financial.clickhouse import (
     clickhouse_table_row_count,
     guard_against_clickhouse_table_shrink,
 )
+from dagster_v3.defs.sweden_financial.observations import (
+    SE_BOLAGSVERKET_FINANCIAL_OBSERVATIONS_TABLE,
+)
 from dagster_v3.defs.sweden_financial.resources import (
     DEFAULT_ARCHIVE_BASE_URL,
     SWEDEN_FINANCIAL_RAW_BUCKET,
 )
 
 SWEDEN_FINANCIAL_DATABASE = "corpscout"
-SE_FINANCIAL_REPORTS_TABLE = "se_financial_reports"
-SE_FINANCIAL_FACTS_TABLE = "se_financial_facts"
 SE_FINANCIAL_METRICS_TABLE = "se_financial_metrics"
-EXCHANGE_RATES_TABLE = "exchange_rates"
 QUALIFIED_SE_FINANCIAL_METRICS_TABLE = (
     f"{SWEDEN_FINANCIAL_DATABASE}.{SE_FINANCIAL_METRICS_TABLE}"
 )
-SWEDEN_FINANCIAL_MAPPING_VERSION = "sweden-bolagsverket-ixbrl-metrics-v1"
+SWEDEN_FINANCIAL_MAPPING_VERSION = "sweden-bolagsverket-observations-metrics-v2"
 
 MONEY_METRIC_NAMES = (
     "revenue",
@@ -101,15 +101,13 @@ def replace_sweden_financial_metrics_clickhouse(
     log: Callable[..., object] | None = None,
     allow_shrink: bool = False,
 ) -> dict[str, int | str | None]:
-    """Atomically rebuild the canonical Sweden metrics table from all XBRL facts."""
+    """Rebuild canonical Sweden metrics from source-owned observations."""
     assert_clickhouse_tables_exist(
         clickhouse,
         database=SWEDEN_FINANCIAL_DATABASE,
         tables=(
-            SE_FINANCIAL_REPORTS_TABLE,
-            SE_FINANCIAL_FACTS_TABLE,
+            SE_BOLAGSVERKET_FINANCIAL_OBSERVATIONS_TABLE,
             SE_FINANCIAL_METRICS_TABLE,
-            EXCHANGE_RATES_TABLE,
         ),
     )
     stage_table = f"_tmp_{SE_FINANCIAL_METRICS_TABLE}_{uuid.uuid4().hex}"
@@ -186,239 +184,221 @@ def build_sweden_financial_metrics_insert_sql(qualified_stage_table: str) -> str
     {columns}
 )
 WITH
-latest_exchange_rates AS (
+current_observations AS (
     SELECT
-        rate_date,
-        quote_currency,
-        argMax(rate, pulled_at) AS rate,
-        argMax(source, pulled_at) AS source
-    FROM corpscout.exchange_rates
-    WHERE base_currency = 'EUR'
-      AND quote_currency IN ('SEK', 'USD')
-    GROUP BY rate_date, quote_currency
-),
-exchange_rate_pairs AS (
-    SELECT
-        rate_date,
-        maxIf(rate, quote_currency = 'USD')
-            / maxIf(rate, quote_currency = 'SEK') AS fx_rate_to_usd,
-        anyIf(source, quote_currency = 'SEK') AS fx_source
-    FROM latest_exchange_rates
-    GROUP BY rate_date
-    HAVING countDistinct(quote_currency) = 2
-),
-requested_rate_dates AS (
-    SELECT DISTINCT report_period_end AS requested_rate_date
-    FROM corpscout.se_financial_reports
-    WHERE report_period_end IS NOT NULL
-),
-rates_for_reports AS (
-    SELECT
-        requested_rate_date,
-        if(
-            countIf(rate_date <= requested_rate_date) > 0,
-            argMaxIf(fx_rate_to_usd, rate_date, rate_date <= requested_rate_date),
-            argMinIf(fx_rate_to_usd, rate_date, rate_date > requested_rate_date)
-        ) AS fx_rate_to_usd,
-        if(
-            countIf(rate_date <= requested_rate_date) > 0,
-            maxIf(rate_date, rate_date <= requested_rate_date),
-            minIf(rate_date, rate_date > requested_rate_date)
-        ) AS fx_rate_date,
-        if(
-            countIf(rate_date <= requested_rate_date) > 0,
-            argMaxIf(fx_source, rate_date, rate_date <= requested_rate_date),
-            argMinIf(fx_source, rate_date, rate_date > requested_rate_date)
-        ) AS fx_source
-    FROM requested_rate_dates
-    CROSS JOIN exchange_rate_pairs
-    GROUP BY requested_rate_date
-),
-current_numeric_facts AS (
-    SELECT
-        statement_key,
-        concept_local_name,
-        amount_original,
-        currency,
-        fact_ordinal,
+        *,
         if(
             upperUTF8(ifNull(decimals, '')) = 'INF',
             100000,
             ifNull(toInt32OrNull(decimals), -100000)
         ) AS precision_rank,
         multiIf(
-            concept_local_name = 'Nettoomsattning', 'revenue',
-            concept_local_name = 'Rorelseresultat', 'operating_profit_loss',
-            concept_local_name = 'AretsResultat', 'profit_loss',
-            concept_local_name = 'Tillgangar', 'total_assets',
-            concept_local_name = 'Balansomslutning', 'total_assets_fallback',
-            concept_local_name = 'EgetKapital', 'equity',
-            concept_local_name = 'EgetKapitalSkulder', 'equity_liabilities',
-            concept_local_name = 'KassaBank', 'cash_and_bank',
-            concept_local_name = 'KassaBankExklRedovisningsmedel', 'cash_and_bank_fallback',
-            concept_local_name = 'Omsattningstillgangar', 'current_assets',
-            concept_local_name = 'KortfristigaFordringar', 'current_receivables',
-            concept_local_name = 'KortfristigaSkulder', 'current_liabilities',
-            concept_local_name = 'Personalkostnader', 'personnel_expenses',
-            concept_local_name = 'LonerAndraErsattningar', 'wages_and_salaries',
-            concept_local_name = 'MedelantaletAnstallda', 'employees',
-            ''
-        ) AS metric_code
-    FROM corpscout.se_financial_facts
-    PREWHERE amount_original IS NOT NULL
+            source_concept_local_name IN ('Tillgangar', 'KassaBank'), 2,
+            source_concept_local_name IN (
+                'Balansomslutning',
+                'KassaBankExklRedovisningsmedel'
+            ), 1,
+            0
+        ) AS concept_rank
+    FROM corpscout.se_bolagsverket_financial_observations
+    PREWHERE observation_kind = 'reported'
     WHERE dimensions = '{{}}'
-      AND lowerUTF8(context_id) IN ('period0', 'balans0')
+      AND lowerUTF8(source_context_id) IN ('period0', 'balans0')
+      AND represented_period_end = source_report_period_end
 ),
-facts_by_statement AS (
+observations_by_statement AS (
     SELECT
-        statement_key,
-        countIf(metric_code != '') AS mapped_fact_count,
-        countIf(metric_code = '' AND (currency = 'SEK' OR currency IS NULL))
+        source_statement_key AS statement_key,
+        any(country_iso2) AS country_iso2,
+        any(source_slug) AS source_slug,
+        any(source_record_id) AS source_record_id,
+        any(company_id) AS company_id,
+        any(source_report_period_start) AS report_period_start,
+        any(source_report_period_end) AS report_period_end,
+        any(source_fiscal_year) AS fiscal_year,
+        any(source_reported_company_name) AS reported_company_name,
+        any(source_archive_key) AS source_archive_key,
+        any(source_archive_name) AS source_archive_name,
+        any(source_nested_zip_name) AS nested_zip_name,
+        any(source_xhtml_object_key) AS xhtml_object_key,
+        any(source_taxonomy_entrypoint) AS taxonomy_entrypoint,
+        any(source_payload_hash) AS source_payload_hash,
+        any(source_fact_count) AS source_fact_count,
+        any(source_unmapped_numeric_fact_count)
+            + countIf(metric_code IN ('result_after_financial_items', 'solidity'))
             AS unmapped_numeric_fact_count,
-        argMaxIf(amount_original, tuple(precision_rank, fact_ordinal), metric_code = 'revenue')
-            AS revenue,
-        argMaxIf(amount_original, tuple(precision_rank, fact_ordinal), metric_code = 'operating_profit_loss')
+        countIf(metric_code IN (
+            'revenue',
+            'operating_profit_loss',
+            'profit_loss',
+            'total_assets',
+            'equity',
+            'equity_liabilities',
+            'cash_and_bank',
+            'current_assets',
+            'current_receivables',
+            'current_liabilities',
+            'personnel_expenses',
+            'wages_and_salaries',
+            'employees'
+        )) AS mapped_fact_count,
+        argMaxIf(
+            value_original,
+            tuple(concept_rank, precision_rank, source_fact_ordinal),
+            metric_code = 'revenue'
+        ) AS revenue,
+        argMaxIf(
+            value_usd,
+            tuple(concept_rank, precision_rank, source_fact_ordinal),
+            metric_code = 'revenue'
+        ) AS revenue_usd,
+        argMaxIf(value_original, tuple(concept_rank, precision_rank, source_fact_ordinal), metric_code = 'operating_profit_loss')
             AS operating_profit_loss,
-        argMaxIf(amount_original, tuple(precision_rank, fact_ordinal), metric_code = 'profit_loss')
+        argMaxIf(value_usd, tuple(concept_rank, precision_rank, source_fact_ordinal), metric_code = 'operating_profit_loss')
+            AS operating_profit_loss_usd,
+        argMaxIf(value_original, tuple(concept_rank, precision_rank, source_fact_ordinal), metric_code = 'profit_loss')
             AS profit_loss,
-        argMaxIf(amount_original, tuple(precision_rank, fact_ordinal), metric_code = 'total_assets')
+        argMaxIf(value_usd, tuple(concept_rank, precision_rank, source_fact_ordinal), metric_code = 'profit_loss')
+            AS profit_loss_usd,
+        argMaxIf(value_original, tuple(concept_rank, precision_rank, source_fact_ordinal), metric_code = 'total_assets')
             AS total_assets,
-        argMaxIf(amount_original, tuple(precision_rank, fact_ordinal), metric_code = 'total_assets_fallback')
-            AS total_assets_fallback,
-        argMaxIf(amount_original, tuple(precision_rank, fact_ordinal), metric_code = 'equity')
+        argMaxIf(value_usd, tuple(concept_rank, precision_rank, source_fact_ordinal), metric_code = 'total_assets')
+            AS total_assets_usd,
+        argMaxIf(value_original, tuple(concept_rank, precision_rank, source_fact_ordinal), metric_code = 'equity')
             AS equity,
-        argMaxIf(amount_original, tuple(precision_rank, fact_ordinal), metric_code = 'equity_liabilities')
+        argMaxIf(value_usd, tuple(concept_rank, precision_rank, source_fact_ordinal), metric_code = 'equity')
+            AS equity_usd,
+        argMaxIf(value_original, tuple(concept_rank, precision_rank, source_fact_ordinal), metric_code = 'equity_liabilities')
             AS equity_liabilities,
-        argMaxIf(amount_original, tuple(precision_rank, fact_ordinal), metric_code = 'cash_and_bank')
+        argMaxIf(value_usd, tuple(concept_rank, precision_rank, source_fact_ordinal), metric_code = 'equity_liabilities')
+            AS equity_liabilities_usd,
+        argMaxIf(value_original, tuple(concept_rank, precision_rank, source_fact_ordinal), metric_code = 'cash_and_bank')
             AS cash_and_bank,
-        argMaxIf(amount_original, tuple(precision_rank, fact_ordinal), metric_code = 'cash_and_bank_fallback')
-            AS cash_and_bank_fallback,
-        argMaxIf(amount_original, tuple(precision_rank, fact_ordinal), metric_code = 'current_assets')
+        argMaxIf(value_usd, tuple(concept_rank, precision_rank, source_fact_ordinal), metric_code = 'cash_and_bank')
+            AS cash_and_bank_usd,
+        argMaxIf(value_original, tuple(concept_rank, precision_rank, source_fact_ordinal), metric_code = 'current_assets')
             AS current_assets,
-        argMaxIf(amount_original, tuple(precision_rank, fact_ordinal), metric_code = 'current_receivables')
+        argMaxIf(value_usd, tuple(concept_rank, precision_rank, source_fact_ordinal), metric_code = 'current_assets')
+            AS current_assets_usd,
+        argMaxIf(value_original, tuple(concept_rank, precision_rank, source_fact_ordinal), metric_code = 'current_receivables')
             AS current_receivables,
-        argMaxIf(amount_original, tuple(precision_rank, fact_ordinal), metric_code = 'current_liabilities')
+        argMaxIf(value_usd, tuple(concept_rank, precision_rank, source_fact_ordinal), metric_code = 'current_receivables')
+            AS current_receivables_usd,
+        argMaxIf(value_original, tuple(concept_rank, precision_rank, source_fact_ordinal), metric_code = 'current_liabilities')
             AS current_liabilities,
-        argMaxIf(amount_original, tuple(precision_rank, fact_ordinal), metric_code = 'personnel_expenses')
+        argMaxIf(value_usd, tuple(concept_rank, precision_rank, source_fact_ordinal), metric_code = 'current_liabilities')
+            AS current_liabilities_usd,
+        argMaxIf(value_original, tuple(concept_rank, precision_rank, source_fact_ordinal), metric_code = 'personnel_expenses')
             AS personnel_expenses,
-        argMaxIf(amount_original, tuple(precision_rank, fact_ordinal), metric_code = 'wages_and_salaries')
+        argMaxIf(value_usd, tuple(concept_rank, precision_rank, source_fact_ordinal), metric_code = 'personnel_expenses')
+            AS personnel_expenses_usd,
+        argMaxIf(value_original, tuple(concept_rank, precision_rank, source_fact_ordinal), metric_code = 'wages_and_salaries')
             AS wages_and_salaries,
-        argMaxIf(amount_original, tuple(precision_rank, fact_ordinal), metric_code = 'employees')
-            AS employees
-    FROM current_numeric_facts
-    GROUP BY statement_key
+        argMaxIf(value_usd, tuple(concept_rank, precision_rank, source_fact_ordinal), metric_code = 'wages_and_salaries')
+            AS wages_and_salaries_usd,
+        argMaxIf(value_original, tuple(concept_rank, precision_rank, source_fact_ordinal), metric_code = 'employees')
+            AS employees,
+        argMaxIf(fx_rate_to_usd, source_fact_ordinal, fx_rate_to_usd IS NOT NULL)
+            AS fx_rate_to_usd,
+        argMaxIf(fx_rate_date, source_fact_ordinal, fx_rate_date IS NOT NULL)
+            AS fx_rate_date,
+        argMaxIf(fx_source, source_fact_ordinal, fx_source != '') AS fx_source
+    FROM current_observations
+    GROUP BY source_statement_key
 ),
 native_metrics AS (
     SELECT
-        reports.country_iso2 AS country_iso2,
-        reports.source_slug AS source_slug,
+        country_iso2,
+        source_slug,
         %(source_run_id)s AS source_run_id,
-        reports.source_record_id AS source_record_id,
-        reports.statement_key AS statement_key,
-        reports.company_id AS company_id,
-        reports.report_period_start AS report_period_start,
-        reports.report_period_end AS report_period_end,
-        reports.fiscal_year AS fiscal_year,
-        reports.reported_company_name AS reported_company_name,
+        source_record_id,
+        statement_key,
+        company_id,
+        report_period_start,
+        report_period_end,
+        toUInt16(fiscal_year) AS fiscal_year,
+        reported_company_name,
         concat(
             %(source_archive_base_url)s,
             '/arsredovisningar/',
-            extract(reports.source_archive_key, 'year=([^/]+)'),
+            extract(source_archive_key, 'year=([^/]+)'),
             '/',
-            reports.source_archive_name
+            source_archive_name
         ) AS source_archive_url,
-        reports.source_archive_key AS source_archive_key,
-        reports.source_archive_name AS source_archive_name,
-        reports.nested_zip_name AS nested_zip_name,
-        reports.xhtml_object_key AS xhtml_object_key,
-        concat(%(xhtml_uri_prefix)s, reports.xhtml_object_key) AS xhtml_source_uri,
-        reports.taxonomy_entrypoint AS taxonomy_entrypoint,
+        source_archive_key,
+        source_archive_name,
+        nested_zip_name,
+        xhtml_object_key,
+        concat(%(xhtml_uri_prefix)s, xhtml_object_key) AS xhtml_source_uri,
+        taxonomy_entrypoint,
         'SEK' AS currency,
-        cast(facts.revenue AS Nullable(Decimal(38, 6))) AS revenue_amount_original,
-        cast(facts.operating_profit_loss AS Nullable(Decimal(38, 6)))
+        cast(revenue AS Nullable(Decimal(38, 6))) AS revenue_amount_original,
+        cast(revenue_usd AS Nullable(Decimal(38, 6))) AS revenue_amount_usd,
+        cast(operating_profit_loss AS Nullable(Decimal(38, 6)))
             AS operating_profit_loss_amount_original,
-        cast(facts.profit_loss AS Nullable(Decimal(38, 6))) AS profit_loss_amount_original,
-        cast(coalesce(facts.total_assets, facts.total_assets_fallback) AS Nullable(Decimal(38, 6)))
-            AS total_assets_amount_original,
-        cast(facts.equity AS Nullable(Decimal(38, 6))) AS equity_amount_original,
+        cast(operating_profit_loss_usd AS Nullable(Decimal(38, 6)))
+            AS operating_profit_loss_amount_usd,
+        cast(profit_loss AS Nullable(Decimal(38, 6))) AS profit_loss_amount_original,
+        cast(profit_loss_usd AS Nullable(Decimal(38, 6))) AS profit_loss_amount_usd,
+        cast(total_assets AS Nullable(Decimal(38, 6))) AS total_assets_amount_original,
+        cast(total_assets_usd AS Nullable(Decimal(38, 6))) AS total_assets_amount_usd,
+        cast(equity AS Nullable(Decimal(38, 6))) AS equity_amount_original,
+        cast(equity_usd AS Nullable(Decimal(38, 6))) AS equity_amount_usd,
         cast(
             if(
-                coalesce(
-                    facts.equity_liabilities,
-                    facts.total_assets,
-                    facts.total_assets_fallback
-                ) >= facts.equity,
-                coalesce(
-                    facts.equity_liabilities,
-                    facts.total_assets,
-                    facts.total_assets_fallback
-                ) - facts.equity,
+                coalesce(equity_liabilities, total_assets) >= equity,
+                coalesce(equity_liabilities, total_assets) - equity,
                 NULL
-            )
-            AS Nullable(Decimal(38, 6))
+            ) AS Nullable(Decimal(38, 6))
         ) AS liabilities_amount_original,
-        toUInt8(
-            coalesce(
-                facts.equity_liabilities,
-                facts.total_assets,
-                facts.total_assets_fallback
-            ) < facts.equity
-        ) AS invalid_liabilities,
-        cast(coalesce(facts.cash_and_bank, facts.cash_and_bank_fallback) AS Nullable(Decimal(38, 6)))
-            AS cash_and_bank_amount_original,
-        cast(facts.current_assets AS Nullable(Decimal(38, 6)))
-            AS current_assets_amount_original,
-        cast(facts.current_receivables AS Nullable(Decimal(38, 6)))
+        cast(
+            if(
+                coalesce(equity_liabilities_usd, total_assets_usd) >= equity_usd,
+                coalesce(equity_liabilities_usd, total_assets_usd) - equity_usd,
+                NULL
+            ) AS Nullable(Decimal(38, 6))
+        ) AS liabilities_amount_usd,
+        toUInt8(coalesce(equity_liabilities, total_assets) < equity)
+            AS invalid_liabilities,
+        cast(cash_and_bank AS Nullable(Decimal(38, 6))) AS cash_and_bank_amount_original,
+        cast(cash_and_bank_usd AS Nullable(Decimal(38, 6))) AS cash_and_bank_amount_usd,
+        cast(current_assets AS Nullable(Decimal(38, 6))) AS current_assets_amount_original,
+        cast(current_assets_usd AS Nullable(Decimal(38, 6))) AS current_assets_amount_usd,
+        cast(current_receivables AS Nullable(Decimal(38, 6)))
             AS current_receivables_amount_original,
-        cast(facts.current_liabilities AS Nullable(Decimal(38, 6)))
+        cast(current_receivables_usd AS Nullable(Decimal(38, 6)))
+            AS current_receivables_amount_usd,
+        cast(current_liabilities AS Nullable(Decimal(38, 6)))
             AS current_liabilities_amount_original,
-        cast(facts.personnel_expenses AS Nullable(Decimal(38, 6)))
+        cast(current_liabilities_usd AS Nullable(Decimal(38, 6)))
+            AS current_liabilities_amount_usd,
+        cast(personnel_expenses AS Nullable(Decimal(38, 6)))
             AS personnel_expenses_amount_original,
-        cast(facts.wages_and_salaries AS Nullable(Decimal(38, 6)))
+        cast(personnel_expenses_usd AS Nullable(Decimal(38, 6)))
+            AS personnel_expenses_amount_usd,
+        cast(wages_and_salaries AS Nullable(Decimal(38, 6)))
             AS wages_and_salaries_amount_original,
+        cast(wages_and_salaries_usd AS Nullable(Decimal(38, 6)))
+            AS wages_and_salaries_amount_usd,
         if(
-            facts.employees >= 0,
-            toUInt64(round(facts.employees)),
+            employees >= 0,
+            toUInt64(round(employees)),
             cast(NULL AS Nullable(UInt64))
         ) AS employees,
-        reports.facts_count AS source_fact_count,
-        ifNull(facts.mapped_fact_count, 0) AS mapped_fact_count,
-        ifNull(facts.unmapped_numeric_fact_count, 0) AS unmapped_numeric_fact_count,
-        rates.fx_rate_to_usd AS fx_rate_to_usd,
-        rates.fx_rate_date AS fx_rate_date,
-        rates.fx_source AS fx_source,
-        reports.source_payload_hash AS source_payload_hash
-    FROM corpscout.se_financial_reports AS reports
-    LEFT JOIN facts_by_statement AS facts
-        ON facts.statement_key = reports.statement_key
-    LEFT JOIN rates_for_reports AS rates
-        ON rates.requested_rate_date = reports.report_period_end
-    -- 2026-07-18: exclude non-statement documents from the metrics table.
-    -- rar/rarc ('se/fr/ar/rar', 'se/fr/ar/rarc') are figure-less registration
-    -- envelopes, never real statements -- always excluded. race
-    -- ('se/fr/misc/race') is a mixed bag: ~110k company-years have NO other
-    -- source of figures, so a race row is kept ONLY when it carries at least
-    -- one mapped monetary metric; figure-less race rows are excluded.
-    -- gaap/coa bank filings (e.g. rcplcs credit institutions) are real
-    -- statements whose figures live in an external package, so they are
-    -- deliberately NOT excluded here even when figure-less.
-    -- This SQL is executed via `client.execute(sql, {...})` in
-    -- replace_sweden_financial_metrics_clickhouse (a params dict is passed),
-    -- and clickhouse_driver applies Python string formatting to the ENTIRE
-    -- query text against that dict before sending it -- so a lone percent
-    -- sign here is not data, it is a format placeholder start, and must be
-    -- doubled (see the LIKE clauses below) or execution raises
-    -- `TypeError: not enough arguments for format string`. Contrast with
-    -- history.py's build_history_insert_sql, whose identical-looking LIKE
-    -- patterns keep a single percent sign: that INSERT is executed with NO
-    -- params dict, so clickhouse_driver skips this formatting step there.
-    -- NOTE: this comment block is itself part of the formatted string --
-    -- do not put a lone percent sign anywhere in this file's SQL text,
-    -- comments included, or the same failure recurs.
-    WHERE ifNull(reports.taxonomy_entrypoint, '') NOT LIKE '%%/ar/rar%%'
+        source_fact_count,
+        mapped_fact_count,
+        unmapped_numeric_fact_count,
+        fx_rate_to_usd,
+        fx_rate_date,
+        fx_source,
+        source_payload_hash
+    FROM observations_by_statement
+    -- Registration envelopes are never statements. A race document is kept
+    -- only when the source observation layer mapped a generic metric from it.
+    WHERE ifNull(taxonomy_entrypoint, '') NOT LIKE '%%/ar/rar%%'
       AND NOT (
-          ifNull(reports.taxonomy_entrypoint, '') LIKE '%%/misc/race/%%'
-          AND ifNull(facts.mapped_fact_count, 0) = 0
+          ifNull(taxonomy_entrypoint, '') LIKE '%%/misc/race/%%'
+          AND mapped_fact_count = 0
       )
 )
 SELECT
@@ -441,29 +421,29 @@ SELECT
     taxonomy_entrypoint,
     currency,
     revenue_amount_original,
-    cast(revenue_amount_original * fx_rate_to_usd AS Nullable(Decimal(38, 6))),
+    revenue_amount_usd,
     operating_profit_loss_amount_original,
-    cast(operating_profit_loss_amount_original * fx_rate_to_usd AS Nullable(Decimal(38, 6))),
+    operating_profit_loss_amount_usd,
     profit_loss_amount_original,
-    cast(profit_loss_amount_original * fx_rate_to_usd AS Nullable(Decimal(38, 6))),
+    profit_loss_amount_usd,
     total_assets_amount_original,
-    cast(total_assets_amount_original * fx_rate_to_usd AS Nullable(Decimal(38, 6))),
+    total_assets_amount_usd,
     equity_amount_original,
-    cast(equity_amount_original * fx_rate_to_usd AS Nullable(Decimal(38, 6))),
+    equity_amount_usd,
     liabilities_amount_original,
-    cast(liabilities_amount_original * fx_rate_to_usd AS Nullable(Decimal(38, 6))),
+    liabilities_amount_usd,
     cash_and_bank_amount_original,
-    cast(cash_and_bank_amount_original * fx_rate_to_usd AS Nullable(Decimal(38, 6))),
+    cash_and_bank_amount_usd,
     current_assets_amount_original,
-    cast(current_assets_amount_original * fx_rate_to_usd AS Nullable(Decimal(38, 6))),
+    current_assets_amount_usd,
     current_receivables_amount_original,
-    cast(current_receivables_amount_original * fx_rate_to_usd AS Nullable(Decimal(38, 6))),
+    current_receivables_amount_usd,
     current_liabilities_amount_original,
-    cast(current_liabilities_amount_original * fx_rate_to_usd AS Nullable(Decimal(38, 6))),
+    current_liabilities_amount_usd,
     personnel_expenses_amount_original,
-    cast(personnel_expenses_amount_original * fx_rate_to_usd AS Nullable(Decimal(38, 6))),
+    personnel_expenses_amount_usd,
     wages_and_salaries_amount_original,
-    cast(wages_and_salaries_amount_original * fx_rate_to_usd AS Nullable(Decimal(38, 6))),
+    wages_and_salaries_amount_usd,
     employees,
     source_fact_count,
     mapped_fact_count,

@@ -12,7 +12,28 @@ from dagster_v3.defs.sweden_financial.metrics import (
     replace_sweden_financial_metrics_clickhouse,
 )
 
-_DEFAULT_QUALITY_ROW = (10, 8, 2019, 2025, 0, 1, 9, 8, 7, 7, 9, 9, 9, 8, 8, 7, 7, 5, 1, 6)
+_DEFAULT_QUALITY_ROW = (
+    10,
+    8,
+    2019,
+    2025,
+    0,
+    1,
+    9,
+    8,
+    7,
+    7,
+    9,
+    9,
+    9,
+    8,
+    8,
+    7,
+    7,
+    5,
+    1,
+    6,
+)
 
 
 class FakeClickHouseClient:
@@ -57,25 +78,27 @@ class FakeClickHouseClient:
         raise AssertionError(sql)
 
 
-def test_sweden_financial_metrics_sql_uses_current_precise_undimensioned_facts() -> (
-    None
-):
+def test_sweden_financial_metrics_sql_resolves_current_source_observations() -> None:
     sql = build_sweden_financial_metrics_insert_sql(
         "`corpscout`.`_tmp_se_financial_metrics_test`"
     )
 
-    assert "lowerUTF8(context_id) IN ('period0', 'balans0')" in sql
+    assert "corpscout.se_bolagsverket_financial_observations" in sql
+    assert "corpscout.se_financial_facts" not in sql
+    assert "corpscout.se_financial_reports" not in sql
+    assert "corpscout.exchange_rates" not in sql
+    assert "lowerUTF8(source_context_id) IN ('period0', 'balans0')" in sql
     assert "dimensions = '{}'" in sql
     assert "toInt32OrNull(decimals)" in sql
     assert "argMaxIf" in sql
-    assert "Nettoomsattning" in sql
-    assert "MedelantaletAnstallda" in sql
-    assert "KortfristigaFordringar" in sql
+    assert "source_concept_local_name IN ('Tillgangar', 'KassaBank')" in sql
+    assert "metric_code = 'employees'" in sql
+    assert "metric_code = 'current_receivables'" in sql
     assert "current_receivables_amount_original" in sql
     assert "negative derived liabilities" in sql
     assert "xhtml_source_uri" in sql
     assert "%(xhtml_uri_prefix)s" in sql
-    assert "corpscout.exchange_rates" in sql
+    assert "value_usd" in sql
 
 
 def test_sweden_financial_metrics_sql_excludes_non_statement_documents() -> None:
@@ -95,10 +118,10 @@ def test_sweden_financial_metrics_sql_excludes_non_statement_documents() -> None
 
     assert "NOT LIKE '%%/ar/rar%%'" in sql
     assert "LIKE '%%/misc/race/%%'" in sql
-    assert "ifNull(facts.mapped_fact_count, 0) = 0" in sql
+    assert "mapped_fact_count = 0" in sql
     # gaap/coa is never mentioned in the exclusion clause: bank filings are
     # kept even when figure-less.
-    where_clause_start = sql.index("WHERE ifNull(reports.taxonomy_entrypoint")
+    where_clause_start = sql.index("WHERE ifNull(taxonomy_entrypoint")
     where_clause = sql[where_clause_start : where_clause_start + 400]
     assert "gaap" not in where_clause
 
@@ -153,10 +176,8 @@ def test_replace_sweden_financial_metrics_is_atomic_and_reports_coverage(
 
     assert client.table_checks == [
         (
-            "se_financial_reports",
-            "se_financial_facts",
+            "se_bolagsverket_financial_observations",
             "se_financial_metrics",
-            "exchange_rates",
         )
     ]
     assert client.insert_parameters["source_run_id"] == "metrics-run"

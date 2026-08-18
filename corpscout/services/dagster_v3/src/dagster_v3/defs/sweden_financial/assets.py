@@ -605,19 +605,13 @@ SWEDEN_FINANCIAL_FACTS_EXPORT_DEPS = [
 
 
 @dg.asset(
-    deps=[
-        *SWEDEN_FINANCIAL_EXPORT_DEPS,
-        dg.AssetDep(
-            dg.AssetKey("exchange_rates_v2_clickhouse"),
-            partition_mapping=dg.AllPartitionMapping(),
-        ),
-    ],
+    deps=["se_bolagsverket_financial_observations_clickhouse"],
     group_name=GROUP_NAME,
     kinds={"python", "clickhouse", "xbrl", "fx"},
     metadata={"table": QUALIFIED_SE_FINANCIAL_METRICS_TABLE},
     description=(
-        "Builds canonical Sweden filing-level metrics from every published XBRL "
-        "fact, converts SEK to USD, and preserves exact source-document links."
+        "Resolves canonical Sweden filing-level metrics exclusively from the "
+        "source-owned Bolagsverket financial observations."
     ),
 )
 def sweden_financial_metrics_clickhouse(
@@ -666,15 +660,7 @@ def se_bolagsverket_financial_observations_clickhouse(
 
 
 @dg.asset(
-    deps=[
-        *SWEDEN_FINANCIAL_EXPORT_DEPS,
-        # Not a data dependency (the history build reads reports/facts/
-        # exchange_rates directly, not se_financial_metrics) -- an ordering
-        # dependency so history rebuilds land in the same wave as metrics
-        # (both derive from the same reports+facts and are consumed
-        # together downstream).
-        "sweden_financial_metrics_clickhouse",
-    ],
+    deps=["se_bolagsverket_financial_observations_clickhouse"],
     group_name=GROUP_NAME,
     kinds={"python", "clickhouse", "xbrl", "fx"},
     metadata={"table": QUALIFIED_SE_FINANCIAL_HISTORY_TABLE},
@@ -682,7 +668,7 @@ def se_bolagsverket_financial_observations_clickhouse(
         "Builds per-(company, fiscal_year) Sweden financial history rows -- "
         "each filing's own reported figures plus its flerarsoversikt "
         "comparative-year figures, trust-guarded on revenue overlap "
-        "agreement -- from se_financial_reports and se_financial_facts."
+        "agreement -- exclusively from source-owned Bolagsverket observations."
     ),
 )
 def se_financial_history_clickhouse(
@@ -851,6 +837,9 @@ SWEDEN_FINANCIAL_CURRENT_SELECTION = dg.AssetSelection.assets(
     "sweden_financial_current_facts_usd_duckdb",
     "sweden_financial_current_reports_clickhouse",
     "sweden_financial_current_facts_clickhouse",
+    "se_bolagsverket_financial_observations_clickhouse",
+    "sweden_financial_metrics_clickhouse",
+    "se_financial_history_clickhouse",
     "sweden_financial_company_source_records_clickhouse",
     "se_financial_facts_concepts",
     "se_financial_taxonomy_concepts",

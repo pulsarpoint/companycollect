@@ -76,65 +76,40 @@ def test_history_sql_context_regex_extracts_n_and_caps_at_four() -> None:
     # matching (case-normalized) regex.
     assert "(?i)^(period|balans)([0-9]+)$" in sql
     assert "^(?:period|balans)([0-9]+)$" in sql
-    assert "extract(lowerUTF8(context_id)" in sql
-    assert "match(context_id, '(?i)^(period|balans)([0-9]+)$')" in sql
+    assert "extract(lowerUTF8(source_context_id)" in sql
+    assert "match(source_context_id, '(?i)^(period|balans)([0-9]+)$')" in sql
 
     # flerarsoversikt cap: n <= 4, larger n is noise and dropped.
-    assert "n >= 0 AND n <= 4" in sql
+    assert "BETWEEN 0 AND 4" in sql
 
 
-def test_history_sql_excludes_registration_envelopes_and_figureless_race_docs() -> (
-    None
-):
-    # Mirrors build_sweden_financial_metrics_insert_sql's post-49fb7fb8
-    # document-scope exclusions: rar/rarc always excluded, race excluded
-    # only when it carries zero mapped (n=0/reported-year) history facts.
+def test_history_sql_reads_only_source_owned_observations() -> None:
     sql = _built_sql()
 
-    assert "NOT LIKE '%/ar/rar%'" in sql
-    assert "LIKE '%/misc/race/%'" in sql
-    assert "ifNull(reported_facts.mapped_fact_count, 0) = 0" in sql
+    assert "corpscout.se_bolagsverket_financial_observations" in sql
+    assert "corpscout.se_financial_facts" not in sql
+    assert "corpscout.se_financial_reports" not in sql
+    assert "corpscout.exchange_rates" not in sql
+    assert "corpscout.se_financial_metrics" not in sql
 
 
-def test_history_sql_like_patterns_are_unescaped_single_percent_no_params_contract() -> (
-    None
-):
-    """Regression/contrast test for the metrics.py %-format bug: unlike
-    build_sweden_financial_metrics_insert_sql (executed with a params dict,
-    so its LIKE literals are escaped to `%%`), build_history_insert_sql is
-    executed via `client.execute(sql)` with NO params
-    (replace_se_financial_history_clickhouse) -- clickhouse_driver never
-    %-formats it, so bare single-`%` LIKE literals are correct here and
-    `%%` would be WRONG (it would silently double the wildcard and break
-    the match). Pin both: single-% patterns present, and no
-    `%(name)s`-style placeholders anywhere (the no-params contract).
-    """
+def test_history_sql_has_no_driver_parameters() -> None:
     sql = _built_sql()
 
-    assert "LIKE '%/ar/rar%'" in sql
-    assert "LIKE '%/misc/race/%'" in sql
-    assert "%%" not in sql
     assert not re.search(r"%\([a-zA-Z_]+\)s", sql)
 
 
-def test_history_sql_trust_guard_disqualifies_on_revenue_overlap_disagreement() -> (
-    None
-):
+def test_history_sql_trust_guard_disqualifies_on_revenue_overlap_disagreement() -> None:
     sql = _built_sql()
 
-    # direct_revenue is a window function computed inline in history_rows
-    # (not a separate GROUP BY + self-join CTE) -- see history.py's inline
-    # comment for why (avoids tripling the base facts-table scan).
-    assert "argMinIf(facts.revenue, facts.statement_key, facts.n = 0)" in sql
-    assert "OVER (PARTITION BY eligible_reports.company_id, eligible_reports.fiscal_year - facts.n)" in sql
-    assert "direct_revenue" in sql
+    assert "revenue_overlap_relative_diff" in sql
     assert "disqualified_statements" in sql
     assert "> 0.005" in sql
     assert "SELECT DISTINCT statement_key" in sql
     assert (
         "WHERE observation = 'reported'\n"
-        "       OR source_statement_key NOT IN (SELECT statement_key FROM disqualified_statements)"
-        in sql
+        "       OR source_statement_key NOT IN (\n"
+        "           SELECT statement_key FROM disqualified_statements" in sql
     )
 
 
@@ -142,30 +117,23 @@ def test_history_sql_selection_prefers_reported_then_newest_statement() -> None:
     sql = _built_sql()
 
     assert (
-        "ORDER BY observation = 'reported' DESC, source_fiscal_year DESC, "
-        "source_statement_key DESC" in sql
+        "observation = 'reported' DESC,\n"
+        "    source_fiscal_year DESC,\n"
+        "    source_statement_key DESC" in sql
     )
     assert "LIMIT 1 BY company_id, fiscal_year" in sql
     # The ORDER BY/LIMIT are the very last clauses (final selection), not
     # buried inside an intermediate CTE.
-    order_by_index = sql.rindex("ORDER BY observation = 'reported' DESC")
-    assert sql[order_by_index:].strip().endswith(
-        "LIMIT 1 BY company_id, fiscal_year"
-    )
+    order_by_index = sql.rindex("ORDER BY\n    observation = 'reported' DESC")
+    assert sql[order_by_index:].strip().endswith("LIMIT 1 BY company_id, fiscal_year")
 
 
-def test_history_sql_joins_exchange_rates_with_shifted_period_end() -> None:
+def test_history_sql_uses_source_observation_usd_values() -> None:
     sql = _built_sql()
 
-    assert "corpscout.exchange_rates" in sql
-    assert "base_currency = 'EUR'" in sql
-    assert "quote_currency IN ('SEK', 'USD')" in sql
-    # Rate date shifts back by n years from the report's own period end --
-    # comparative-year USD is approximate by construction.
-    assert "addYears(report_period_end, -n)" in sql
-    assert (
-        "addYears(eligible_reports.report_period_end, -facts.n)" in sql
-    )
+    assert "value_usd" in sql
+    assert "corpscout.exchange_rates" not in sql
+    assert "fx_rate_to_usd" not in sql
 
 
 def test_history_sql_deduplicates_facts_by_precision_and_ordinal() -> None:
@@ -176,16 +144,22 @@ def test_history_sql_deduplicates_facts_by_precision_and_ordinal() -> None:
     sql = _built_sql()
 
     assert "precision_rank" in sql
-    assert "fact_ordinal" in sql
-    assert "argMaxIf(amount_original, tuple(precision_rank, fact_ordinal)" in sql
+    assert "source_fact_ordinal" in sql
+    assert "argMaxIf(" in sql
+    assert "tuple(concept_rank, precision_rank, source_fact_ordinal)" in sql
     assert "upperUTF8(ifNull(decimals, '')) = 'INF'" in sql
 
 
-def test_history_sql_maps_every_discovered_concept() -> None:
+def test_history_sql_consumes_observation_metric_codes() -> None:
     sql = _built_sql()
 
-    for concept_name in HISTORY_CONCEPTS:
-        assert f"concept_local_name = '{concept_name}'" in sql
+    for metric_code in (
+        "revenue",
+        "result_after_financial_items",
+        "solidity",
+        "total_assets",
+    ):
+        assert f"'{metric_code}'" in sql
 
 
 def test_history_sql_emits_every_schema_column_alias() -> None:
@@ -208,7 +182,8 @@ def test_history_sql_total_assets_coalesces_fallback_concept() -> None:
     # total_assets/total_assets_fallback coalesce for the same two concepts.
     sql = _built_sql()
 
-    assert "coalesce(facts.total_assets, facts.total_assets_fallback)" in sql
+    assert "source_concept_local_name = 'Tillgangar'" in sql
+    assert "metric_code = 'total_assets'" in sql
 
 
 def test_build_history_quality_sql_counts_stage_rows_by_observation() -> None:
@@ -233,9 +208,8 @@ def test_build_history_guard_metadata_sql_reuses_the_insert_sqls_shared_ctes() -
 
     assert "disqualified_statements AS (" in guard_sql
     assert "overlap_checks AS (" in guard_sql
-    assert (
-        "argMinIf(facts.revenue, facts.statement_key, facts.n = 0)" in guard_sql
-    )
+    assert "corpscout.se_bolagsverket_financial_observations" in guard_sql
+    assert "revenue_overlap_relative_diff" in guard_sql
     assert f"WHERE max_relative_diff > {OVERLAP_AGREEMENT_TOLERANCE}" in guard_sql
 
     # The guard query is read-only aggregation, not the INSERT: no stage
@@ -246,10 +220,7 @@ def test_build_history_guard_metadata_sql_reuses_the_insert_sqls_shared_ctes() -
 
     # Both queries build their shared CTE chain from the identical helper,
     # so the disqualification predicate text is byte-identical between them.
-    shared_fragment = (
-        "disqualified_statements AS (\n"
-        "    -- Trust guard: a statement with ANY overlap-year revenue disagreement"
-    )
+    shared_fragment = "disqualified_statements AS (\n    SELECT DISTINCT statement_key"
     assert shared_fragment in insert_sql
     assert shared_fragment in guard_sql
 
@@ -294,7 +265,9 @@ class _FakeHistoryClickHouseClient:
         raise AssertionError(sql)
 
 
-def _patch_clickhouse(monkeypatch, client: _FakeHistoryClickHouseClient) -> ClickhouseResource:
+def _patch_clickhouse(
+    monkeypatch, client: _FakeHistoryClickHouseClient
+) -> ClickhouseResource:
     resource = ClickhouseResource(host="localhost")
 
     @contextmanager
@@ -321,10 +294,7 @@ def test_replace_se_financial_history_is_atomic_and_reports_guard_metadata(
     assert client.table_checks == [
         (
             "se_financial_history",
-            "se_financial_reports",
-            "se_financial_facts",
-            "se_financial_metrics",
-            "exchange_rates",
+            "se_bolagsverket_financial_observations",
         )
     ]
     assert any(statement.startswith("CREATE TABLE") for statement in client.statements)
