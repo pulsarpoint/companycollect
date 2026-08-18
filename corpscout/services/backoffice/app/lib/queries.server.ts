@@ -96,6 +96,75 @@ interface IndustryRow {
   industry_label: string | null;
 }
 
+const SWEDEN_FINANCIAL_FILING_SCHEMA_QUERY = `
+SELECT toUInt8(countIf(name IN (
+  'se_annual_report_filing_observations',
+  'se_annual_report_filing_status_current'
+)) = 2) AS ready
+FROM system.tables
+WHERE database = currentDatabase()`;
+
+/**
+ * The public current-status view carries the complete source provenance used
+ * on the financial detail page. Company-list filtering only needs an id and a
+ * status, so keep that hot path narrow instead of aggregating every metadata
+ * column twice (once for count and once for rows).
+ */
+const SWEDEN_FINANCIAL_FILING_STATUS_IDS_QUERY = `
+WITH latest_observations AS (
+  SELECT company_id,
+    argMax(
+      tuple(
+        filing_status,
+        report_period_end,
+        observed_at,
+        source_slug,
+        source_record_id
+      ),
+      tuple(
+        ifNull(report_period_end, toDate32('1970-01-01')),
+        observed_at,
+        source_slug,
+        source_record_id
+      )
+    ) AS latest
+  FROM se_annual_report_filing_observations FINAL
+  GROUP BY company_id
+)
+SELECT f.company_id AS company_id,
+  if(
+    coalesce(o.company_id, '') = ''
+    OR tuple(
+      toDate32(f.period_end_date),
+      toUInt8(1),
+      f.resolved_at,
+      'sweden_financial',
+      concat('financials-latest:', f.company_id)
+    ) > tuple(
+      ifNull(o.latest.2, toDate32('1970-01-01')),
+      toUInt8(0),
+      o.latest.3,
+      o.latest.4,
+      o.latest.5
+    ),
+    'data_available',
+    o.latest.1
+  ) AS filing_status
+FROM se_company_financials_latest AS f
+LEFT JOIN latest_observations AS o USING (company_id)
+
+UNION ALL
+
+SELECT o.company_id AS company_id, o.latest.1 AS filing_status
+FROM latest_observations AS o
+LEFT ANTI JOIN se_company_financials_latest AS f USING (company_id)`;
+
+function swedenFinancialFilingSchemaReady(): Promise<boolean> {
+  return chQuery<{ ready: number }>(SWEDEN_FINANCIAL_FILING_SCHEMA_QUERY).then(
+    (rows) => Number(rows[0]?.ready ?? 0) === 1,
+  );
+}
+
 /**
  * Flags a register keeps ON the company row, computed in the main select.
  *
@@ -266,6 +335,7 @@ async function attachCompanyFlags(
 async function attachSwedenFinancialFilingStatuses(
   country: CountryConfig,
   rows: CompanyListRow[],
+  filingSchemaReady: boolean,
 ): Promise<void> {
   if (country.code !== "se") return;
   const ids = rows.map((row) => String(row.id ?? "")).filter(Boolean);
@@ -276,9 +346,13 @@ async function attachSwedenFinancialFilingStatuses(
     company_id: string;
     filing_status: string;
   }>(
-    `SELECT company_id, filing_status
-     FROM se_annual_report_filing_status_current
-     WHERE company_id IN {ids:Array(String)}`,
+    filingSchemaReady
+      ? `SELECT company_id, filing_status
+         FROM se_annual_report_filing_status_current
+         WHERE company_id IN {ids:Array(String)}`
+      : `SELECT company_id, 'data_available' AS filing_status
+         FROM se_company_financials_latest
+         WHERE company_id IN {ids:Array(String)}`,
     { ids },
   );
   const byCompany = new Map<string, FinancialFilingStatus>();
@@ -379,6 +453,8 @@ export async function searchCompanies(
   const q = (opts.q ?? "").trim();
   const sortColumn = getSortColumn(country, opts.sort ?? null);
   const dir: SortDir = opts.dir === "desc" ? "desc" : "asc";
+  const filingSchemaReady =
+    country.code === "se" ? await swedenFinancialFilingSchemaReady() : false;
 
   const conds: string[] = [];
   const params: Record<string, unknown> = {};
@@ -407,25 +483,46 @@ export async function searchCompanies(
     const knownStatuses = filingStatuses.filter(
       (status) => status !== "unknown",
     );
-    const filingConditions: string[] = [];
-    if (knownStatuses.length > 0) {
-      filingConditions.push(
+    const statusIdsQuery = filingSchemaReady
+      ? SWEDEN_FINANCIAL_FILING_STATUS_IDS_QUERY
+      : `SELECT company_id, 'data_available' AS filing_status
+         FROM se_company_financials_latest`;
+    if (!filingStatuses.includes("unknown")) {
+      conds.push(
         `toString(${country.idColumn}) IN (
           SELECT company_id
-          FROM se_annual_report_filing_status_current
+          FROM (${statusIdsQuery})
           WHERE filing_status IN {f_financial_filing_status:Array(String)}
         )`,
       );
       params.f_financial_filing_status = knownStatuses;
-    }
-    if (filingStatuses.includes("unknown")) {
-      filingConditions.push(
+    } else if (knownStatuses.length === 0) {
+      const evidenceIdsQuery = filingSchemaReady
+        ? `SELECT company_id FROM se_company_financials_latest
+           UNION DISTINCT
+           SELECT company_id FROM se_annual_report_filing_observations`
+        : `SELECT company_id FROM se_company_financials_latest`;
+      conds.push(
         `toString(${country.idColumn}) NOT IN (
-          SELECT company_id FROM se_annual_report_filing_status_current
+          ${evidenceIdsQuery}
         )`,
       );
+    } else {
+      // Unknown plus known states is the complement of the known states that
+      // were not selected. This evaluates the latest-status set once instead
+      // of running both an IN and a NOT IN aggregation for every page query.
+      const excludedStatuses = FINANCIAL_FILING_STATUSES.filter(
+        (status) => status !== "unknown" && !knownStatuses.includes(status),
+      );
+      conds.push(
+        `toString(${country.idColumn}) NOT IN (
+          SELECT company_id
+          FROM (${statusIdsQuery})
+          WHERE filing_status IN {f_financial_filing_status_excluded:Array(String)}
+        )`,
+      );
+      params.f_financial_filing_status_excluded = excludedStatuses;
     }
-    conds.push(`(${filingConditions.join(" OR ")})`);
   }
   for (const flag of availableCompanyFlags(country.code)) {
     const values = opts.filters?.[flagFilterKey(flag.id)];
@@ -498,7 +595,7 @@ export async function searchCompanies(
   }
 
   await attachCompanyFlags(country, rows);
-  await attachSwedenFinancialFilingStatuses(country, rows);
+  await attachSwedenFinancialFilingStatuses(country, rows, filingSchemaReady);
 
   return { rows, total, page, pageSize, sort: sortColumn.key, dir };
 }
@@ -2854,11 +2951,52 @@ interface FinancialFilingStatusQueryRow {
   observed_at: string;
 }
 
+function unknownFinancialFilingStatus(): CompanyFinancialFilingStatus {
+  return {
+    status: "unknown",
+    reportPeriodEnd: null,
+    filingRegisteredOn: null,
+    sourceFileFormat: null,
+    bolagsverketDocumentId: null,
+    sourceSlug: null,
+    observedAt: null,
+  };
+}
+
+async function getStructuredFinancialFilingFallback(
+  id: string,
+): Promise<CompanyFinancialFilingStatus> {
+  const [row] = await chQuery<{
+    report_period_end: string;
+    observed_at: string;
+  }>(
+    `SELECT toString(period_end_date) AS report_period_end,
+       toString(resolved_at) AS observed_at
+     FROM se_company_financials_latest
+     WHERE company_id = {id:String}
+     LIMIT 1`,
+    { id },
+  );
+  if (!row) return unknownFinancialFilingStatus();
+  return {
+    status: "data_available",
+    reportPeriodEnd: row.report_period_end || null,
+    filingRegisteredOn: null,
+    sourceFileFormat: "application/xhtml+xml",
+    bolagsverketDocumentId: null,
+    sourceSlug: "sweden_financial",
+    observedAt: row.observed_at || null,
+  };
+}
+
 export async function getCompanyFinancialFilingStatus(
   country: CountryConfig,
   id: string,
 ): Promise<CompanyFinancialFilingStatus | null> {
   if (country.code !== "se") return null;
+  if (!(await swedenFinancialFilingSchemaReady())) {
+    return getStructuredFinancialFilingFallback(id);
+  }
   const [row] = await chQuery<FinancialFilingStatusQueryRow>(
     `SELECT filing_status, toString(report_period_end) AS report_period_end,
        toString(filing_registered_on) AS filing_registered_on,
@@ -2870,15 +3008,7 @@ export async function getCompanyFinancialFilingStatus(
     { id },
   );
   if (!row || !isFinancialFilingStatus(row.filing_status)) {
-    return {
-      status: "unknown",
-      reportPeriodEnd: null,
-      filingRegisteredOn: null,
-      sourceFileFormat: null,
-      bolagsverketDocumentId: null,
-      sourceSlug: null,
-      observedAt: null,
-    };
+    return unknownFinancialFilingStatus();
   }
   return {
     status: row.filing_status,
