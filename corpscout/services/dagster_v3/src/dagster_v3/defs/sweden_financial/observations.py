@@ -30,7 +30,7 @@ QUALIFIED_SE_BOLAGSVERKET_FINANCIAL_OBSERVATIONS_TABLE = (
     f"{SWEDEN_FINANCIAL_DATABASE}.{SE_BOLAGSVERKET_FINANCIAL_OBSERVATIONS_TABLE}"
 )
 BOLAGSVERKET_FINANCIAL_OBSERVATIONS_MAPPING_VERSION = (
-    "se-bolagsverket-financial-observations-v1"
+    "se-bolagsverket-financial-observations-v2"
 )
 
 SE_BOLAGSVERKET_FINANCIAL_OBSERVATIONS_COLUMNS = (
@@ -136,15 +136,25 @@ latest_exchange_rates AS (
       AND quote_currency IN ('SEK', 'USD')
     GROUP BY rate_date, quote_currency
 ),
-exchange_rate_pairs AS (
+exchange_rates_to_usd AS (
     SELECT
         rate_date,
+        'SEK' AS currency,
         maxIf(rate, quote_currency = 'USD')
             / maxIf(rate, quote_currency = 'SEK') AS fx_rate_to_usd,
         anyIf(source, quote_currency = 'SEK') AS fx_source
     FROM latest_exchange_rates
     GROUP BY rate_date
     HAVING countDistinct(quote_currency) = 2
+    UNION ALL
+    SELECT
+        rate_date,
+        'EUR' AS currency,
+        maxIf(rate, quote_currency = 'USD') AS fx_rate_to_usd,
+        anyIf(source, quote_currency = 'USD') AS fx_source
+    FROM latest_exchange_rates
+    GROUP BY rate_date
+    HAVING countIf(quote_currency = 'USD') > 0
 ),
 source_numeric_facts AS (
     SELECT
@@ -199,7 +209,10 @@ current_statement_fact_counts AS (
             metric_code = ''
             AND dimensions = '{{}}'
             AND lowerUTF8(source_context_id) IN ('period0', 'balans0')
-            AND (upperUTF8(ifNull(currency, '')) = 'SEK' OR currency IS NULL)
+            AND (
+                upperUTF8(ifNull(currency, '')) IN ('SEK', 'EUR')
+                OR currency IS NULL
+            )
         ) AS source_unmapped_numeric_fact_count
     FROM source_numeric_facts
     GROUP BY source_statement_key
@@ -308,13 +321,16 @@ revenue_overlap_by_period AS (
     WHERE comparative.observation_kind = 'comparative'
 ),
 observation_rate_dates AS (
-    SELECT DISTINCT represented_period_end AS requested_rate_date
+    SELECT DISTINCT
+        represented_period_end AS requested_rate_date,
+        upperUTF8(ifNull(currency, '')) AS requested_currency
     FROM classified_observations
-    WHERE upperUTF8(ifNull(currency, '')) = 'SEK'
+    WHERE upperUTF8(ifNull(currency, '')) IN ('SEK', 'EUR')
 ),
 observation_rates AS (
     SELECT
         requested_rate_date,
+        requested_currency,
         if(
             countIf(rate_date <= requested_rate_date) > 0,
             argMaxIf(fx_rate_to_usd, rate_date, rate_date <= requested_rate_date),
@@ -331,8 +347,9 @@ observation_rates AS (
             argMinIf(fx_source, rate_date, rate_date > requested_rate_date)
         ) AS fx_source
     FROM observation_rate_dates
-    CROSS JOIN exchange_rate_pairs
-    GROUP BY requested_rate_date
+    CROSS JOIN exchange_rates_to_usd AS available_rates
+    WHERE available_rates.currency = requested_currency
+    GROUP BY requested_rate_date, requested_currency
 )
 SELECT
     observations.country_iso2,
@@ -371,25 +388,25 @@ SELECT
     observations.currency,
     cast(
         if(
-            upperUTF8(ifNull(observations.currency, '')) = 'SEK',
+            upperUTF8(ifNull(observations.currency, '')) IN ('SEK', 'EUR'),
             observations.value_original * rates.fx_rate_to_usd,
             NULL
         ) AS Nullable(Decimal(38, 10))
     ) AS value_usd,
     cast(
         if(
-            upperUTF8(ifNull(observations.currency, '')) = 'SEK',
+            upperUTF8(ifNull(observations.currency, '')) IN ('SEK', 'EUR'),
             rates.fx_rate_to_usd,
             NULL
         ) AS Nullable(Decimal(38, 12))
     ) AS fx_rate_to_usd,
     if(
-        upperUTF8(ifNull(observations.currency, '')) = 'SEK',
+        upperUTF8(ifNull(observations.currency, '')) IN ('SEK', 'EUR'),
         rates.fx_rate_date,
         NULL
     ) AS fx_rate_date,
     if(
-        upperUTF8(ifNull(observations.currency, '')) = 'SEK',
+        upperUTF8(ifNull(observations.currency, '')) IN ('SEK', 'EUR'),
         ifNull(rates.fx_source, ''),
         ''
     ) AS fx_source,
@@ -427,6 +444,7 @@ SELECT
 FROM classified_observations AS observations
 LEFT JOIN observation_rates AS rates
     ON rates.requested_rate_date = observations.represented_period_end
+   AND rates.requested_currency = upperUTF8(ifNull(observations.currency, ''))
 LEFT JOIN revenue_overlap_by_period AS overlap
     ON overlap.source_statement_key = observations.source_statement_key
    AND overlap.represented_fiscal_year = toInt32(
@@ -447,6 +465,11 @@ def build_bolagsverket_financial_observations_quality_sql(
     countIf(observation_kind = 'comparative') AS comparative_count,
     countIf(observation_kind = 'other') AS other_count,
     countIf(notEmpty(quality_flags)) AS flagged_count,
+    countIf(
+        value_original IS NOT NULL
+        AND upperUTF8(ifNull(currency, '')) IN ('SEK', 'EUR')
+        AND fx_rate_to_usd IS NULL
+    ) AS missing_fx_count,
     min(represented_fiscal_year) AS min_fiscal_year,
     max(represented_fiscal_year) AS max_fiscal_year
 FROM {qualified_stage_table}"""
@@ -460,6 +483,7 @@ _QUALITY_COLUMNS = (
     "comparative_count",
     "other_count",
     "flagged_count",
+    "missing_fx_count",
     "min_fiscal_year",
     "max_fiscal_year",
 )
@@ -477,6 +501,13 @@ def _validate_quality(quality: dict[str, int | None]) -> None:
         raise ValueError(
             "Bolagsverket financial observations build produced no rows; "
             f"refusing to replace "
+            f"{QUALIFIED_SE_BOLAGSVERKET_FINANCIAL_OBSERVATIONS_TABLE}"
+        )
+    if quality["missing_fx_count"] != 0:
+        raise ValueError(
+            "Bolagsverket financial observations are missing currency/USD "
+            f"exchange rates for {quality['missing_fx_count']} monetary facts; "
+            "refusing to replace "
             f"{QUALIFIED_SE_BOLAGSVERKET_FINANCIAL_OBSERVATIONS_TABLE}"
         )
 
@@ -558,12 +589,13 @@ def replace_se_bolagsverket_financial_observations_clickhouse(
     if log is not None:
         log(
             "Finished Bolagsverket financial observations: rows=%s companies=%s "
-            "statements=%s reported=%s comparative=%s flagged=%s",
+            "statements=%s reported=%s comparative=%s flagged=%s missing_fx=%s",
             metadata["row_count"],
             metadata["company_count"],
             metadata["statement_count"],
             metadata["reported_count"],
             metadata["comparative_count"],
             metadata["flagged_count"],
+            metadata["missing_fx_count"],
         )
     return metadata

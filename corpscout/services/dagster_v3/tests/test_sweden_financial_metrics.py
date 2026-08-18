@@ -99,6 +99,8 @@ def test_sweden_financial_metrics_sql_resolves_current_source_observations() -> 
     assert "xhtml_source_uri" in sql
     assert "%(xhtml_uri_prefix)s" in sql
     assert "value_usd" in sql
+    assert "AS statement_currency" in sql
+    assert "if(empty(statement_currency), 'SEK', statement_currency) AS currency" in sql
 
 
 def test_sweden_financial_metrics_sql_excludes_non_statement_documents() -> None:

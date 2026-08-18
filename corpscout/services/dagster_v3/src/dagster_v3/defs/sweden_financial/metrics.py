@@ -23,7 +23,7 @@ SE_FINANCIAL_METRICS_TABLE = "se_financial_metrics"
 QUALIFIED_SE_FINANCIAL_METRICS_TABLE = (
     f"{SWEDEN_FINANCIAL_DATABASE}.{SE_FINANCIAL_METRICS_TABLE}"
 )
-SWEDEN_FINANCIAL_MAPPING_VERSION = "sweden-bolagsverket-observations-metrics-v2"
+SWEDEN_FINANCIAL_MAPPING_VERSION = "sweden-bolagsverket-observations-metrics-v3"
 
 MONEY_METRIC_NAMES = (
     "revenue",
@@ -227,6 +227,11 @@ observations_by_statement AS (
         any(source_unmapped_numeric_fact_count)
             + countIf(metric_code IN ('result_after_financial_items', 'solidity'))
             AS unmapped_numeric_fact_count,
+        argMaxIf(
+            upperUTF8(ifNull(currency, '')),
+            tuple(precision_rank, source_fact_ordinal),
+            metric_code != 'employees' AND notEmpty(ifNull(currency, ''))
+        ) AS statement_currency,
         countIf(metric_code IN (
             'revenue',
             'operating_profit_loss',
@@ -331,7 +336,7 @@ native_metrics AS (
         xhtml_object_key,
         concat(%(xhtml_uri_prefix)s, xhtml_object_key) AS xhtml_source_uri,
         taxonomy_entrypoint,
-        'SEK' AS currency,
+        if(empty(statement_currency), 'SEK', statement_currency) AS currency,
         cast(revenue AS Nullable(Decimal(38, 6))) AS revenue_amount_original,
         cast(revenue_usd AS Nullable(Decimal(38, 6))) AS revenue_amount_usd,
         cast(operating_profit_loss AS Nullable(Decimal(38, 6)))
@@ -478,12 +483,21 @@ def _sweden_financial_metrics_quality_sql(qualified_stage_table: str) -> str:
         f"AS {metric_name}_statement_count"
         for metric_name in MONEY_METRIC_NAMES
     )
+    monetary_value_present = " OR\n        ".join(
+        f"{metric_name}_amount_original IS NOT NULL"
+        for metric_name in MONEY_METRIC_NAMES
+    )
     return f"""SELECT
     count() AS row_count,
     uniqExact(company_id) AS company_count,
     min(fiscal_year) AS min_fiscal_year,
     max(fiscal_year) AS max_fiscal_year,
-    countIf(report_period_end IS NOT NULL AND fx_rate_to_usd IS NULL) AS missing_fx_count,
+    countIf(
+        fx_rate_to_usd IS NULL
+        AND (
+        {monetary_value_present}
+        )
+    ) AS missing_fx_count,
     countIf(position(metric_warnings, 'negative derived liabilities') > 0)
         AS invalid_liabilities_statement_count,
     countIf(mapped_fact_count > 0) AS mapped_statement_count,
@@ -515,7 +529,7 @@ def _validate_quality(quality: dict[str, int | str | None]) -> None:
         )
     if quality["missing_fx_count"] != 0:
         raise ValueError(
-            "Sweden financial metric mapping is missing SEK/USD exchange rates for "
+            "Sweden financial metric mapping is missing currency/USD exchange rates for "
             f"{quality['missing_fx_count']} statements; refusing to replace "
             f"{QUALIFIED_SE_FINANCIAL_METRICS_TABLE}"
         )

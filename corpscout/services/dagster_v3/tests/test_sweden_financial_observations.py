@@ -77,6 +77,9 @@ def test_observations_sql_keeps_every_mapped_source_fact_without_resolution() ->
     assert "source_payload_hash" in sql
     assert "source_fact_count" in sql
     assert "source_unmapped_numeric_fact_count" in sql
+    assert "'EUR' AS currency" in sql
+    assert "IN ('SEK', 'EUR')" in sql
+    assert "rates.requested_currency = upperUTF8" in sql
 
     for concept_name in BOLAGSVERKET_FINANCIAL_CONCEPTS:
         assert f"concept_local_name = '{concept_name}'" in sql
@@ -97,6 +100,7 @@ def test_observations_quality_sql_reports_source_grain_and_flags() -> None:
     assert "countIf(observation_kind = 'comparative') AS comparative_count" in sql
     assert "countIf(observation_kind = 'other') AS other_count" in sql
     assert "countIf(notEmpty(quality_flags)) AS flagged_count" in sql
+    assert "AND fx_rate_to_usd IS NULL" in sql
 
 
 class _FakeObservationClickHouseClient:
@@ -150,7 +154,7 @@ def _patch_clickhouse(
 
 def test_observations_replace_is_atomic_and_reports_metadata(monkeypatch) -> None:
     client = _FakeObservationClickHouseClient(
-        quality_row=(10, 2, 3, 4, 5, 1, 2, 2020, 2024),
+        quality_row=(10, 2, 3, 4, 5, 1, 2, 0, 2020, 2024),
         existing_row_count=12,
     )
     resource = _patch_clickhouse(monkeypatch, client)
@@ -179,6 +183,7 @@ def test_observations_replace_is_atomic_and_reports_metadata(monkeypatch) -> Non
         "comparative_count": 5,
         "other_count": 1,
         "flagged_count": 2,
+        "missing_fx_count": 0,
         "min_fiscal_year": 2020,
         "max_fiscal_year": 2024,
         "table": QUALIFIED_SE_BOLAGSVERKET_FINANCIAL_OBSERVATIONS_TABLE,
@@ -187,11 +192,24 @@ def test_observations_replace_is_atomic_and_reports_metadata(monkeypatch) -> Non
 
 def test_observations_replace_refuses_empty_stage(monkeypatch) -> None:
     client = _FakeObservationClickHouseClient(
-        quality_row=(0, 0, 0, 0, 0, 0, 0, None, None)
+        quality_row=(0, 0, 0, 0, 0, 0, 0, 0, None, None)
     )
     resource = _patch_clickhouse(monkeypatch, client)
 
     with pytest.raises(ValueError, match="produced no rows"):
+        replace_se_bolagsverket_financial_observations_clickhouse(clickhouse=resource)
+
+    assert not any(sql.startswith("EXCHANGE TABLES") for sql in client.statements)
+    assert client.statements[-1].startswith("DROP TABLE")
+
+
+def test_observations_replace_refuses_missing_currency_conversion(monkeypatch) -> None:
+    client = _FakeObservationClickHouseClient(
+        quality_row=(10, 2, 3, 4, 5, 1, 2, 1, 2020, 2024)
+    )
+    resource = _patch_clickhouse(monkeypatch, client)
+
+    with pytest.raises(ValueError, match="currency/USD exchange rates"):
         replace_se_bolagsverket_financial_observations_clickhouse(clickhouse=resource)
 
     assert not any(sql.startswith("EXCHANGE TABLES") for sql in client.statements)
