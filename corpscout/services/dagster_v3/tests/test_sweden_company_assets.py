@@ -21,29 +21,20 @@ def test_sweden_company_refresh_job_and_schedule_registered() -> None:
         "sweden_company_raw_snapshot_s3",
         "sweden_company_raw_duckdb",
         "sweden_company_normalized_duckdb",
-        "sweden_company_companies_clickhouse",
-        "sweden_company_profile_history_clickhouse",
-        "sweden_company_addresses_clickhouse",
-        "sweden_company_industries_clickhouse",
-        "sweden_company_industry_history_clickhouse",
-        "sweden_registry_company_source_records_clickhouse",
+            "sweden_company_companies_clickhouse",
+            "sweden_company_profile_history_clickhouse",
+            "sweden_company_addresses_clickhouse",
+            "sweden_company_industries_clickhouse",
+            "sweden_company_industry_history_clickhouse",
+            "sweden_registry_company_source_records_clickhouse",
     }
     assert "sweden_company_clickhouse" not in asset_keys
 
     asset_graph = repo.asset_graph
     asset_node = asset_graph.get(dg.AssetKey("sweden_company_raw_snapshot_s3"))
     assert asset_node.group_name == "sweden_company"
-    assert asset_node.pools == {"sweden_company_duckdb"}
     duckdb_node = asset_graph.get(dg.AssetKey("sweden_company_raw_duckdb"))
     assert duckdb_node.group_name == "sweden_company"
-    assert duckdb_node.parent_keys == {dg.AssetKey("sweden_company_raw_snapshot_s3")}
-    from dagster_v3.defs.sweden_company.assets import sweden_company_raw_duckdb
-
-    [snapshot_input] = sweden_company_raw_duckdb.node_def.input_defs
-    assert snapshot_input.name == "sweden_company_raw_snapshot_s3"
-    assert (
-        snapshot_input.dagster_type.display_name == "SwedenCompanyRawSnapshotReference"
-    )
     normalized_node = asset_graph.get(dg.AssetKey("sweden_company_normalized_duckdb"))
     assert normalized_node.group_name == "sweden_company"
     for asset_key in (

@@ -20,16 +20,6 @@ from pydantic import model_validator
 from dagster_v3.defs.common.duckdb_resources import duckdb_resource
 from dagster_v3.defs.common.resources import ObjectStoreResource
 from dagster_v3.defs.denmark_cvr.assets import DENMARK_CVR_BUCKET
-from dagster_v3.defs.denmark_cvr.company_detail_catalog import (
-    DenmarkCvrCompanyDetailCatalogEntry,
-    DenmarkCvrCompanyDetailCatalogReference,
-    DenmarkCvrCompanyDetailObjectKind,
-    bootstrap_company_detail_catalog,
-    catalog_entry_from_body,
-    company_detail_catalog_enabled,
-    load_optional_company_detail_catalog,
-    publish_company_detail_catalog,
-)
 from dagster_v3.defs.denmark_cvr.duckdb_asset import (
     DENMARK_CVR_COMPANIES_TABLE,
     DENMARK_CVR_DUCKDB_PATH,
@@ -359,29 +349,6 @@ class DenmarkCvrCompanyDetailSummary:
             + self.skipped_company_count
             + self.already_skipped_company_count
         )
-
-
-@dataclass(frozen=True)
-class DenmarkCvrCompanyDetailCatalogWriteResult:
-    detail_summary: DenmarkCvrCompanyDetailSummary
-    catalog_reference: DenmarkCvrCompanyDetailCatalogReference
-    catalog_bootstrapped: bool
-    catalog_reused: bool
-    bootstrap_object_read_count: int
-    catalog_object_count: int
-
-
-@dataclass(frozen=True)
-class DenmarkCvrCompanyDetailPartitionSnapshot:
-    bucket: str
-    partition_key: str
-    catalog_reference: DenmarkCvrCompanyDetailCatalogReference | None
-
-
-@dataclass(frozen=True)
-class _DenmarkCvrCompanyDetailWriteResult:
-    summary: DenmarkCvrCompanyDetailSummary
-    written_object_keys: tuple[str, ...]
 
 
 class DenmarkCvrCompanyDetailRequestError(RuntimeError):
@@ -861,94 +828,6 @@ def write_company_detail_partition(
     )
 
 
-def write_company_detail_catalog_partition(
-    *,
-    object_store: ObjectStoreResource,
-    details: DenmarkCvrCompanyDetailResource,
-    partition_key: str,
-    cvrs: Sequence[str],
-    failure_database_path: Path,
-    observed_at: datetime,
-    source_run_id: str,
-    record_failure: Callable[[DenmarkCvrCompanyDetailFailureRecord], object],
-    log_info: Callable[..., object] | None = None,
-    log_warning: Callable[..., object] | None = None,
-) -> DenmarkCvrCompanyDetailCatalogWriteResult:
-    """Resolve one partition through an exact-key object catalog contract."""
-    _company_detail_bucket_index(partition_key)
-    selected_cvrs = tuple(cvrs)
-    for cvr in selected_cvrs:
-        if company_detail_bucket_key(cvr) != partition_key:
-            raise ValueError(f"CVR {cvr} does not belong to partition {partition_key}")
-
-    object_keys = {
-        cvr: (
-            company_detail_object_key(partition_key, cvr, english_keys=False),
-            company_detail_object_key(partition_key, cvr, english_keys=True),
-            company_detail_failure_object_key(partition_key, cvr),
-        )
-        for cvr in selected_cvrs
-    }
-    object_store.ensure_bucket(DENMARK_CVR_BUCKET)
-    existing_catalog = load_optional_company_detail_catalog(
-        object_store=object_store,
-        partition_key=partition_key,
-    )
-    if existing_catalog is None:
-        bootstrap = bootstrap_company_detail_catalog(
-            object_store=object_store,
-            partition_key=partition_key,
-            object_keys=object_keys,
-        )
-        initial_entries = bootstrap.entries
-        bootstrap_object_read_count = bootstrap.object_read_count
-    else:
-        initial_entries = existing_catalog.entries
-        bootstrap_object_read_count = 0
-
-    existing_keys = {entry.object_key for entry in initial_entries}
-    write_result = _write_company_details_from_existing_keys(
-        object_store=object_store,
-        details=details,
-        source_asset="denmark_cvr_company_details_s3",
-        result_partition_key=partition_key,
-        object_keys=object_keys,
-        existing_keys=existing_keys,
-        failure_database_path=failure_database_path,
-        observed_at=observed_at,
-        source_run_id=source_run_id,
-        record_failure=record_failure,
-        log_info=log_info,
-        log_warning=log_warning,
-    )
-    if existing_catalog is not None and not write_result.written_object_keys:
-        catalog = existing_catalog
-        catalog_reused = True
-    else:
-        catalog = publish_company_detail_catalog(
-            object_store=object_store,
-            partition_key=partition_key,
-            entries=_updated_company_detail_catalog_entries(
-                object_store=object_store,
-                partition_key=partition_key,
-                object_keys=object_keys,
-                initial_entries=initial_entries,
-                written_object_keys=write_result.written_object_keys,
-            ),
-            source_run_id=source_run_id,
-            created_at=observed_at,
-        )
-        catalog_reused = False
-    return DenmarkCvrCompanyDetailCatalogWriteResult(
-        detail_summary=write_result.summary,
-        catalog_reference=catalog.reference,
-        catalog_bootstrapped=existing_catalog is None,
-        catalog_reused=catalog_reused,
-        bootstrap_object_read_count=bootstrap_object_read_count,
-        catalog_object_count=len(catalog.entries),
-    )
-
-
 def write_company_detail_updates(
     *,
     object_store: ObjectStoreResource,
@@ -1023,49 +902,12 @@ def _write_company_details(
     existing_keys = set(
         object_store.list_keys(object_prefix, bucket=DENMARK_CVR_BUCKET)
     )
-    return _write_company_details_from_existing_keys(
-        object_store=object_store,
-        details=details,
-        source_asset=source_asset,
-        result_partition_key=result_partition_key,
-        object_keys=object_keys,
-        existing_keys=existing_keys,
-        failure_database_path=failure_database_path,
-        observed_at=observed_at,
-        source_run_id=source_run_id,
-        record_failure=record_failure,
-        log_info=log_info,
-        log_warning=log_warning,
-    ).summary
-
-
-def _write_company_details_from_existing_keys(
-    *,
-    object_store: ObjectStoreResource,
-    details: DenmarkCvrCompanyDetailResource,
-    source_asset: str,
-    result_partition_key: str,
-    object_keys: Mapping[str, tuple[str, str, str]],
-    existing_keys: set[str],
-    failure_database_path: Path,
-    observed_at: datetime,
-    source_run_id: str,
-    record_failure: Callable[[DenmarkCvrCompanyDetailFailureRecord], object],
-    log_info: Callable[..., object] | None,
-    log_warning: Callable[..., object] | None,
-) -> _DenmarkCvrCompanyDetailWriteResult:
-    if observed_at.utcoffset() is None:
-        raise ValueError("Company-detail observation timestamp must include a timezone")
-    if source_run_id.strip() == "":
-        raise ValueError("Company-detail source run ID must not be blank")
-
     failure_cvrs = _company_detail_failure_cvrs(failure_database_path)
 
     already_complete_count = 0
     already_skipped_count = 0
     translated_existing_count = 0
     written_object_count = 0
-    written_object_keys: list[str] = []
     cvrs_to_download: list[str] = []
     for cvr, (original_key, english_key, failure_key) in object_keys.items():
         if original_key in existing_keys and english_key in existing_keys:
@@ -1095,7 +937,6 @@ def _write_company_details_from_existing_keys(
             existing_keys.add(english_key)
             translated_existing_count += 1
             written_object_count += 1
-            written_object_keys.append(english_key)
             if cvr in failure_cvrs:
                 clear_company_detail_failure_history(failure_database_path, cvr)
                 failure_cvrs.remove(cvr)
@@ -1128,8 +969,6 @@ def _write_company_details_from_existing_keys(
             skipped_count += 1
             skipped_request_attempt_count += result.attempt_count
             written_object_count += 1
-            existing_keys.add(failure_key)
-            written_object_keys.append(failure_key)
             if log_warning is not None:
                 log_warning(
                     "Skipping DataCVR company detail after exhausted retries: "
@@ -1161,8 +1000,6 @@ def _write_company_details_from_existing_keys(
         downloaded_count += 1
         downloaded_size_bytes += download.downloaded_size_bytes
         written_object_count += 2
-        existing_keys.update((original_key, english_key))
-        written_object_keys.extend((original_key, english_key))
         if download.cvr in failure_cvrs:
             clear_company_detail_failure_history(
                 failure_database_path,
@@ -1194,81 +1031,19 @@ def _write_company_details_from_existing_keys(
             "DataCVR company-detail resource did not resolve every selected company: "
             f"selected={len(object_keys)} resolved={resolved_company_count}"
         )
-    return _DenmarkCvrCompanyDetailWriteResult(
-        summary=DenmarkCvrCompanyDetailSummary(
-            partition_key=result_partition_key,
-            selected_company_count=len(object_keys),
-            complete_company_count=complete_company_count,
-            skipped_company_count=skipped_count,
-            already_skipped_company_count=already_skipped_count,
-            skipped_request_attempt_count=skipped_request_attempt_count,
-            already_complete_company_count=already_complete_count,
-            translated_existing_company_count=translated_existing_count,
-            downloaded_company_count=downloaded_count,
-            written_object_count=written_object_count,
-            downloaded_size_bytes=downloaded_size_bytes,
-        ),
-        written_object_keys=tuple(written_object_keys),
+    return DenmarkCvrCompanyDetailSummary(
+        partition_key=result_partition_key,
+        selected_company_count=len(object_keys),
+        complete_company_count=complete_company_count,
+        skipped_company_count=skipped_count,
+        already_skipped_company_count=already_skipped_count,
+        skipped_request_attempt_count=skipped_request_attempt_count,
+        already_complete_company_count=already_complete_count,
+        translated_existing_company_count=translated_existing_count,
+        downloaded_company_count=downloaded_count,
+        written_object_count=written_object_count,
+        downloaded_size_bytes=downloaded_size_bytes,
     )
-
-
-def _updated_company_detail_catalog_entries(
-    *,
-    object_store: ObjectStoreResource,
-    partition_key: str,
-    object_keys: Mapping[str, tuple[str, str, str]],
-    initial_entries: tuple[DenmarkCvrCompanyDetailCatalogEntry, ...],
-    written_object_keys: tuple[str, ...],
-) -> tuple[DenmarkCvrCompanyDetailCatalogEntry, ...]:
-    object_kinds: tuple[DenmarkCvrCompanyDetailObjectKind, ...] = (
-        "original",
-        "english",
-        "failure",
-    )
-    identity_by_key = {
-        object_key: (cvr, object_kind)
-        for cvr, keys in object_keys.items()
-        for object_key, object_kind in zip(
-            keys,
-            object_kinds,
-            strict=True,
-        )
-    }
-    entries_by_key = {entry.object_key: entry for entry in initial_entries}
-    for object_key in written_object_keys:
-        if object_key not in identity_by_key:
-            raise ValueError(
-                "Denmark CVR company-detail writer produced an unexpected object: "
-                f"partition={partition_key} key={object_key}"
-            )
-        cvr, object_kind = identity_by_key[object_key]
-        entries_by_key[object_key] = catalog_entry_from_body(
-            cvr=cvr,
-            object_kind=object_kind,
-            object_key=object_key,
-            body=object_store.read_bytes(
-                object_key,
-                bucket=DENMARK_CVR_BUCKET,
-            ),
-        )
-
-    selected_cvrs = set(object_keys)
-    active_keys = {
-        entry.object_key for entry in initial_entries if entry.cvr not in selected_cvrs
-    }
-    available_keys = set(entries_by_key)
-    for cvr, (original_key, english_key, failure_key) in object_keys.items():
-        if original_key in available_keys and english_key in available_keys:
-            active_keys.update((original_key, english_key))
-            continue
-        if failure_key in available_keys:
-            active_keys.add(failure_key)
-            continue
-        raise DenmarkCvrCompanyDetailRequestError(
-            "Denmark CVR company-detail catalog cannot represent resolved company: "
-            f"partition={partition_key} cvr={cvr}"
-        )
-    return tuple(entries_by_key[key] for key in sorted(active_keys))
 
 
 @dg.asset(
@@ -1290,9 +1065,7 @@ def _updated_company_detail_catalog_entries(
         "DuckDB table, downloads each HTTPS DataCVR company-detail response, and "
         "checkpoints an original Danish-key JSON object plus an _en object whose "
         "keys are translated to English without changing values. Company-specific "
-        "server errors are skipped and checkpointed after three failed attempts. "
-        "The first eight canary buckets use exact-key v2 Parquet catalogs "
-        "instead of enumerating object prefixes."
+        "server errors are skipped and checkpointed after three failed attempts."
     ),
 )
 def denmark_cvr_company_details_s3(
@@ -1301,7 +1074,7 @@ def denmark_cvr_company_details_s3(
     object_store: ObjectStoreResource,
     denmark_cvr_company_details: DenmarkCvrCompanyDetailResource,
     denmark_cvr_duckdb: DuckDBResource,
-) -> dg.MaterializeResult[DenmarkCvrCompanyDetailPartitionSnapshot]:
+) -> dg.MaterializeResult:
     partition_key = context.partition_key
     observed_at = datetime.now(UTC)
     cvrs = company_detail_partition_cvrs(denmark_cvr_duckdb, partition_key)
@@ -1310,106 +1083,59 @@ def denmark_cvr_company_details_s3(
         partition_key,
         len(cvrs),
     )
-    catalog_result: DenmarkCvrCompanyDetailCatalogWriteResult | None = None
-    if company_detail_catalog_enabled(partition_key):
-        catalog_result = write_company_detail_catalog_partition(
-            object_store=object_store,
-            details=denmark_cvr_company_details,
-            partition_key=partition_key,
-            cvrs=cvrs,
-            failure_database_path=Path(
-                denmark_cvr_company_details.failure_database_path
-            ),
-            observed_at=observed_at,
-            source_run_id=context.run_id,
-            record_failure=lambda record: publish_company_detail_failure_record(
-                clickhouse,
-                record,
-            ),
-            log_info=context.log.info,
-            log_warning=context.log.warning,
-        )
-        summary = catalog_result.detail_summary
-    else:
-        summary = write_company_detail_partition(
-            object_store=object_store,
-            details=denmark_cvr_company_details,
-            partition_key=partition_key,
-            cvrs=cvrs,
-            failure_database_path=Path(
-                denmark_cvr_company_details.failure_database_path
-            ),
-            observed_at=observed_at,
-            source_run_id=context.run_id,
-            record_failure=lambda record: publish_company_detail_failure_record(
-                clickhouse,
-                record,
-            ),
-            log_info=context.log.info,
-            log_warning=context.log.warning,
-        )
-    metadata = {
-        "partition_key": summary.partition_key,
-        "hash_bucket_count": DENMARK_CVR_COMPANY_DETAIL_BUCKET_COUNT,
-        "selected_company_count": summary.selected_company_count,
-        "complete_company_count": summary.complete_company_count,
-        "resolved_company_count": summary.resolved_company_count,
-        "skipped_company_count": summary.skipped_company_count,
-        "already_skipped_company_count": summary.already_skipped_company_count,
-        "skipped_request_attempt_count": summary.skipped_request_attempt_count,
-        "already_complete_company_count": summary.already_complete_company_count,
-        "translated_existing_company_count": (
-            summary.translated_existing_company_count
+    summary = write_company_detail_partition(
+        object_store=object_store,
+        details=denmark_cvr_company_details,
+        partition_key=partition_key,
+        cvrs=cvrs,
+        failure_database_path=Path(denmark_cvr_company_details.failure_database_path),
+        observed_at=observed_at,
+        source_run_id=context.run_id,
+        record_failure=lambda record: publish_company_detail_failure_record(
+            clickhouse,
+            record,
         ),
-        "downloaded_company_count": summary.downloaded_company_count,
-        "written_object_count": summary.written_object_count,
-        "downloaded_size_bytes": summary.downloaded_size_bytes,
-        "failure_database_path": str(denmark_cvr_company_details.failure_database_path),
-        "max_request_attempts": denmark_cvr_company_details.max_attempts,
-        "retry_base_delay_seconds": (
-            denmark_cvr_company_details.retry_base_delay_seconds
-        ),
-        "retry_max_delay_seconds": (
-            denmark_cvr_company_details.retry_max_delay_seconds
-        ),
-        "failure_clickhouse_table": (
-            DENMARK_CVR_COMPANY_DETAIL_FAILURES_CLICKHOUSE_TABLE
-        ),
-        "key_mapping_version": DENMARK_CVR_COMPANY_DETAIL_MAPPING_VERSION,
-        "s3_bucket": DENMARK_CVR_BUCKET,
-        "s3_prefix": f"{DENMARK_CVR_COMPANY_DETAIL_PREFIX}/{partition_key}/",
-        "source_url": company_detail_api_url(
-            denmark_cvr_company_details.detail_base_url,
-            "00000000",
-        ).replace("00000000", "{cvr}"),
-        "object_catalog_mode": "v2" if catalog_result is not None else "legacy",
-    }
-    if catalog_result is not None:
-        metadata.update(
-            {
-                "object_catalog_commit_key": (
-                    catalog_result.catalog_reference.commit_key
-                ),
-                "object_catalog_source_run_id": (
-                    catalog_result.catalog_reference.source_run_id
-                ),
-                "object_catalog_object_count": catalog_result.catalog_object_count,
-                "object_catalog_bootstrapped": catalog_result.catalog_bootstrapped,
-                "object_catalog_reused": catalog_result.catalog_reused,
-                "object_catalog_bootstrap_object_read_count": (
-                    catalog_result.bootstrap_object_read_count
-                ),
-            }
-        )
+        log_info=context.log.info,
+        log_warning=context.log.warning,
+    )
     return dg.MaterializeResult(
-        value=DenmarkCvrCompanyDetailPartitionSnapshot(
-            bucket=DENMARK_CVR_BUCKET,
-            partition_key=partition_key,
-            catalog_reference=(
-                catalog_result.catalog_reference if catalog_result is not None else None
+        metadata={
+            "partition_key": summary.partition_key,
+            "hash_bucket_count": DENMARK_CVR_COMPANY_DETAIL_BUCKET_COUNT,
+            "selected_company_count": summary.selected_company_count,
+            "complete_company_count": summary.complete_company_count,
+            "resolved_company_count": summary.resolved_company_count,
+            "skipped_company_count": summary.skipped_company_count,
+            "already_skipped_company_count": summary.already_skipped_company_count,
+            "skipped_request_attempt_count": (summary.skipped_request_attempt_count),
+            "already_complete_company_count": summary.already_complete_company_count,
+            "translated_existing_company_count": (
+                summary.translated_existing_company_count
             ),
-        ),
-        metadata=metadata,
+            "downloaded_company_count": summary.downloaded_company_count,
+            "written_object_count": summary.written_object_count,
+            "downloaded_size_bytes": summary.downloaded_size_bytes,
+            "failure_database_path": str(
+                denmark_cvr_company_details.failure_database_path
+            ),
+            "max_request_attempts": denmark_cvr_company_details.max_attempts,
+            "retry_base_delay_seconds": (
+                denmark_cvr_company_details.retry_base_delay_seconds
+            ),
+            "retry_max_delay_seconds": (
+                denmark_cvr_company_details.retry_max_delay_seconds
+            ),
+            "failure_clickhouse_table": (
+                DENMARK_CVR_COMPANY_DETAIL_FAILURES_CLICKHOUSE_TABLE
+            ),
+            "key_mapping_version": DENMARK_CVR_COMPANY_DETAIL_MAPPING_VERSION,
+            "s3_bucket": DENMARK_CVR_BUCKET,
+            "s3_prefix": (f"{DENMARK_CVR_COMPANY_DETAIL_PREFIX}/{partition_key}/"),
+            "source_url": company_detail_api_url(
+                denmark_cvr_company_details.detail_base_url,
+                "00000000",
+            ).replace("00000000", "{cvr}"),
+        }
     )
 
 

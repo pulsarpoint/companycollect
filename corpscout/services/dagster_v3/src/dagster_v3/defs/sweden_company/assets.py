@@ -23,8 +23,7 @@ from dagster_v3.defs.sweden_company.normalized_duckdb import (
 from dagster_v3.defs.sweden_company.raw_duckdb import load_sweden_company_raw_manifest
 from dagster_v3.defs.sweden_company.resources import (
     SwedenCompanyBulkResource,
-    SwedenCompanyRawSnapshotReference,
-    load_catalog_manifest,
+    manifest_for_run,
 )
 from dagster_v3.defs.sweden_company.translation import (
     se_code_labels_clickhouse,
@@ -39,7 +38,6 @@ SWEDEN_COMPANY_DUCKDB_POOL = "sweden_company_duckdb"
 @dg.asset(
     group_name=GROUP_NAME,
     kinds={"python", "s3", "zip", "bolagsverket"},
-    pool=SWEDEN_COMPANY_DUCKDB_POOL,
     description=(
         "Downloads Sweden company bulk ZIP files from Bolagsverket high-value datasets "
         "into object storage. This asset does not parse or load the ZIP contents."
@@ -49,7 +47,7 @@ def sweden_company_raw_snapshot_s3(
     context: dg.AssetExecutionContext,
     sweden_company_bulk: SwedenCompanyBulkResource,
     object_store: ObjectStoreResource,
-) -> dg.MaterializeResult[SwedenCompanyRawSnapshotReference]:
+) -> dg.MaterializeResult:
     return sweden_company_bulk.download_snapshot(
         object_store=object_store,
         run_id=context.run_id,
@@ -59,6 +57,7 @@ def sweden_company_raw_snapshot_s3(
 
 
 @dg.asset(
+    deps=["sweden_company_raw_snapshot_s3"],
     group_name=GROUP_NAME,
     kinds={"python", "duckdb", "s3", "zip", "bolagsverket"},
     pool=SWEDEN_COMPANY_DUCKDB_POOL,
@@ -69,15 +68,11 @@ def sweden_company_raw_snapshot_s3(
 )
 def sweden_company_raw_duckdb(
     context: dg.AssetExecutionContext,
-    sweden_company_raw_snapshot_s3: SwedenCompanyRawSnapshotReference,
     object_store: ObjectStoreResource,
     sweden_company_duckdb: DuckDBResource,
 ) -> dg.MaterializeResult:
-    catalog_commit, manifest = load_catalog_manifest(
-        object_store=object_store,
-        snapshot=sweden_company_raw_snapshot_s3,
-    )
-    source_run_id = catalog_commit.source_run_id
+    manifest = manifest_for_run(object_store, context.run_id)
+    source_run_id = str(manifest["run_id"])
     with sweden_company_duckdb.get_connection() as connection:
         counts = load_sweden_company_raw_manifest(
             connection=connection,
@@ -90,9 +85,6 @@ def sweden_company_raw_duckdb(
             "duckdb_path": str(tables.SWEDEN_COMPANY_DUCKDB_PATH),
             "source_run_id": source_run_id,
             "retrieved_date": str(manifest["retrieved_date"]),
-            "object_catalog_commit_key": sweden_company_raw_snapshot_s3.commit_key,
-            "object_catalog_key": catalog_commit.catalog.key,
-            "object_catalog_sha256": catalog_commit.catalog.sha256,
             "raw_file_count": counts["raw_files"],
             "bolagsverket_row_count": counts.get("bolagsverket_raw", 0),
             "bolagsverket_rejected_line_count": counts.get(
