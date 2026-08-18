@@ -173,7 +173,12 @@ def _replace_company_registry_states_table(
                 nullif(trim(JurForm), '') as legal_form_code,
                 nullif(trim(FtgStat), '') as source_status_code,
                 nullif(trim(JEStat), '') as source_secondary_status_code,
-                null::varchar as derived_status,
+                case nullif(trim(FtgStat), '')
+                    when '1' then 'active'
+                    when '0' then 'inactive'
+                    when '9' then 'inactive'
+                    else null
+                end as derived_status,
                 null::varchar as status_reason,
                 try_strptime(nullif(trim(RegDatKtid), ''), '%Y%m%d')::date
                     as incorporation_date,
@@ -311,6 +316,32 @@ def _replace_companies_table(*, connection: Any, loaded_at: datetime) -> None:
             from sweden_company.company_registry_states
             where source = 'bolagsverket'
         ),
+        bolagsverket_name_entries as (
+            select
+                b.company_id,
+                b.legal_name,
+                trim(entry.value) as entry_value,
+                nullif(trim(split_part(entry.value, '$', 1)), '') as entry_name,
+                try_strptime(
+                    nullif(trim(split_part(entry.value, '$', 3)), ''),
+                    '%Y-%m-%d'
+                )::date as registered_on
+            from bolagsverket b,
+            unnest(string_split(coalesce(b.legal_name_raw, ''), '|')) as entry(value)
+            where split_part(entry.value, '$', 2) = 'FORETAGSNAMN-ORGNAM'
+        ),
+        bolagsverket_name_registration as (
+            select company_id, registered_on as legal_name_registration_date
+            from bolagsverket_name_entries
+            where registered_on is not null
+            qualify row_number() over (
+                partition by company_id
+                order by
+                    entry_name = legal_name desc,
+                    registered_on desc,
+                    entry_value desc
+            ) = 1
+        ),
         scb as (
             select *
             from sweden_company.company_registry_states
@@ -331,11 +362,28 @@ def _replace_companies_table(*, connection: Any, loaded_at: datetime) -> None:
                 s.legal_name
             ) as legal_name,
             b.legal_name_raw,
+            name_registration.legal_name_registration_date,
             coalesce(
                 b.legal_form_code,
                 s.legal_form_code
             ) as legal_form_code,
-            coalesce(b.derived_status, 'active') as status,
+            coalesce(b.derived_status, s.derived_status, 'unknown') as status,
+            case
+                when b.company_id is not null then 'bolagsverket'
+                when s.company_id is not null then 'scb'
+                else null
+            end as status_source,
+            case
+                when b.company_id is not null then b.observed_at
+                when s.company_id is not null then s.observed_at
+                else null
+            end as status_observed_at,
+            cast(
+                b.derived_status is not null
+                and s.derived_status is not null
+                and b.derived_status != s.derived_status
+                as utinyint
+            ) as status_conflict,
             b.status_reason,
             coalesce(b.incorporation_date, s.incorporation_date) as incorporation_date,
             b.dissolution_date,
@@ -349,6 +397,8 @@ def _replace_companies_table(*, connection: Any, loaded_at: datetime) -> None:
         from company_ids ids
         left join bolagsverket b on b.company_id = ids.company_id
         left join scb s on s.company_id = ids.company_id
+        left join bolagsverket_name_registration name_registration
+            on name_registration.company_id = ids.company_id
         """,
         [loaded_at],
     )

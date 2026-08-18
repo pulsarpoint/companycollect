@@ -39,7 +39,6 @@ finland_resolved_dbt_project = DbtProject(
     project_dir=FINLAND_RESOLVED_DBT_PROJECT_DIR,
     profiles_dir=FINLAND_RESOLVED_DBT_PROJECT_DIR,
 )
-finland_resolved_dbt_project.prepare_if_dev()
 
 
 class FinlandResolvedDbtTranslator(DagsterDbtTranslator):

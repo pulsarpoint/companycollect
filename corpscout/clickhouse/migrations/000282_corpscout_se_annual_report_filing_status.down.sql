@@ -1,0 +1,2 @@
+DROP VIEW IF EXISTS corpscout.se_annual_report_filing_status_current;
+DROP TABLE IF EXISTS corpscout.se_annual_report_filing_observations;

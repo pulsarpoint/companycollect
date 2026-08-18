@@ -532,6 +532,10 @@
       - --omit-dir-times
       - --itemize-changes
       - --dry-run
+      - --include=**/defs/finland_ytj/dbt/target/
+      - --include=**/defs/finland_ytj/dbt/target/manifest.json
+      - --include=**/defs/exchange_rates_v2/dbt/target/
+      - --include=**/defs/exchange_rates_v2/dbt/target/manifest.json
       - "--exclude-from={{ role_path }}/files/rsync-excludes.txt"
       - "--rsync-path=sudo -n rsync"
       - "{{ dagster_source_dir }}/"
@@ -790,6 +794,10 @@
       - --delay-updates
       - --omit-dir-times
       - --itemize-changes
+      - --include=**/defs/finland_ytj/dbt/target/
+      - --include=**/defs/finland_ytj/dbt/target/manifest.json
+      - --include=**/defs/exchange_rates_v2/dbt/target/
+      - --include=**/defs/exchange_rates_v2/dbt/target/manifest.json
       - "--exclude-from={{ role_path }}/files/rsync-excludes.txt"
       - "--rsync-path=sudo -n rsync"
       - "{{ dagster_source_dir }}/"

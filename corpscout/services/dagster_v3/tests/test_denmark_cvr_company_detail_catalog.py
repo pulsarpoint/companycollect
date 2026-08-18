@@ -39,6 +39,46 @@ CANARY_PARTITIONS = (
     "bucket_005",
     "bucket_006",
     "bucket_007",
+    "bucket_008",
+    "bucket_009",
+    "bucket_010",
+    "bucket_011",
+    "bucket_012",
+    "bucket_013",
+    "bucket_014",
+    "bucket_015",
+    "bucket_016",
+    "bucket_017",
+    "bucket_018",
+    "bucket_019",
+    "bucket_020",
+    "bucket_021",
+    "bucket_022",
+    "bucket_023",
+    "bucket_024",
+    "bucket_025",
+    "bucket_026",
+    "bucket_027",
+    "bucket_028",
+    "bucket_029",
+    "bucket_030",
+    "bucket_031",
+    "bucket_032",
+    "bucket_033",
+    "bucket_034",
+    "bucket_035",
+    "bucket_036",
+    "bucket_037",
+    "bucket_038",
+    "bucket_039",
+    "bucket_040",
+    "bucket_041",
+    "bucket_042",
+    "bucket_043",
+    "bucket_044",
+    "bucket_045",
+    "bucket_046",
+    "bucket_047",
 )
 COMPLETE_CVR = "10000286"
 ORIGINAL_ONLY_CVR = "10000312"
@@ -308,7 +348,7 @@ def test_compacted_asset_is_a_typed_canary_gated_downstream_asset() -> None:
 
 
 @pytest.mark.parametrize("partition_key", CANARY_PARTITIONS)
-def test_company_detail_catalog_canary_scope_includes_first_eight_buckets(
+def test_company_detail_catalog_canary_scope_includes_first_forty_eight_buckets(
     partition_key: str,
 ) -> None:
     assert company_detail_catalog_enabled(partition_key) is True
@@ -318,6 +358,6 @@ def test_company_detail_catalog_canary_scope_includes_first_eight_buckets(
 
 
 def test_company_detail_catalog_canary_scope_excludes_next_bucket() -> None:
-    assert company_detail_catalog_enabled("bucket_008") is False
+    assert company_detail_catalog_enabled("bucket_048") is False
     with pytest.raises(ValueError, match="canary partitions"):
-        company_detail_compacted_catalog_location("bucket_008")
+        company_detail_compacted_catalog_location("bucket_048")

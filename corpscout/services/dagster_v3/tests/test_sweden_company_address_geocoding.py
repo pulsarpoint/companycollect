@@ -2016,12 +2016,19 @@ def test_sweden_company_address_geocoding_assets_are_company_enhancements() -> N
     shared_geocode_clickhouse = repo.asset_graph.get(
         dg.AssetKey("sweden_address_geocodes_clickhouse")
     )
+    resolution_shadow = repo.asset_graph.get(
+        dg.AssetKey("sweden_address_resolution_shadow_duckdb")
+    )
+    resolution_current = repo.asset_graph.get(
+        dg.AssetKey("sweden_address_resolution_current_duckdb")
+    )
     published = repo.asset_graph.get(
         dg.AssetKey("sweden_company_address_geocodes_clickhouse")
     )
     job = repo.get_job("sweden_company_address_geocoding_job")
     shared_job = repo.get_job("sweden_shared_address_identity_job")
     shared_geocode_job = repo.get_job("sweden_shared_address_geocoding_job")
+    resolution_publish_job = repo.get_job("sweden_address_resolution_publish_job")
     weekly_job = repo.get_job("sweden_company_address_geocoding_weekly_job")
     schedule = repo.get_schedule_def("sweden_company_address_geocoding_weekly")
 
@@ -2044,9 +2051,16 @@ def test_sweden_company_address_geocoding_assets_are_company_enhancements() -> N
     }
     assert shared_geocode_duckdb.pools == {"sweden_address_osm_duckdb"}
     assert shared_geocode_clickhouse.parent_keys == {
-        dg.AssetKey("sweden_shared_address_osm_matches_duckdb")
+        dg.AssetKey("sweden_address_resolution_current_duckdb")
     }
     assert shared_geocode_clickhouse.pools == {"sweden_address_osm_duckdb"}
+    assert resolution_shadow.parent_keys == {
+        dg.AssetKey("sweden_address_resolution_golden_evaluation"),
+        dg.AssetKey("sweden_shared_address_osm_matches_duckdb"),
+    }
+    assert resolution_current.parent_keys == {
+        dg.AssetKey("sweden_address_resolution_shadow_duckdb")
+    }
     assert matches.group_name == "sweden_company"
     assert matches.parent_keys == {
         dg.AssetKey("sweden_company_canonical_addresses_clickhouse"),
@@ -2064,6 +2078,9 @@ def test_sweden_company_address_geocoding_assets_are_company_enhancements() -> N
         "sweden_shared_addresses_duckdb",
         "sweden_shared_addresses_clickhouse",
         "sweden_shared_address_osm_matches_duckdb",
+        "sweden_address_resolution_golden_evaluation",
+        "sweden_address_resolution_shadow_duckdb",
+        "sweden_address_resolution_current_duckdb",
         "sweden_address_geocodes_clickhouse",
         "sweden_company_address_osm_matches_duckdb",
         "sweden_company_address_geocodes_clickhouse",
@@ -2077,6 +2094,15 @@ def test_sweden_company_address_geocoding_assets_are_company_enhancements() -> N
         key.path[-1] for key in shared_geocode_job.asset_layer.executable_asset_keys
     } == {
         "sweden_shared_address_osm_matches_duckdb",
+        "sweden_address_resolution_golden_evaluation",
+        "sweden_address_resolution_shadow_duckdb",
+        "sweden_address_resolution_current_duckdb",
+        "sweden_address_geocodes_clickhouse",
+    }
+    assert {
+        key.path[-1] for key in resolution_publish_job.asset_layer.executable_asset_keys
+    } == {
+        "sweden_address_resolution_current_duckdb",
         "sweden_address_geocodes_clickhouse",
     }
     assert {key.path[-1] for key in weekly_job.asset_layer.executable_asset_keys} == {
@@ -2087,6 +2113,9 @@ def test_sweden_company_address_geocoding_assets_are_company_enhancements() -> N
         "sweden_shared_addresses_duckdb",
         "sweden_shared_addresses_clickhouse",
         "sweden_shared_address_osm_matches_duckdb",
+        "sweden_address_resolution_golden_evaluation",
+        "sweden_address_resolution_shadow_duckdb",
+        "sweden_address_resolution_current_duckdb",
         "sweden_address_geocodes_clickhouse",
         "sweden_company_address_osm_matches_duckdb",
         "sweden_company_address_geocodes_clickhouse",

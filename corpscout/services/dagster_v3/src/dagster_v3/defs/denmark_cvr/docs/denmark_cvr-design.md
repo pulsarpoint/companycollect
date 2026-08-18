@@ -66,7 +66,7 @@ hash is validated in Python before an object is written.
 
 For legacy buckets, the asset lists existing keys once and opens one browser
 session only when an original response is missing. `bucket_000` through
-`bucket_007` are the v2 object-catalog canary: each first run probes only the
+`bucket_047` are the v2 object-catalog canary: each first run probes only the
 deterministic per-CVR keys, writes an immutable Parquet catalog, and replaces the
 exact partition `commit.json` only after catalog verification. Later runs read
 that commit and catalog directly and never enumerate the legacy prefix. Every
@@ -119,13 +119,13 @@ v2/source=denmark_cvr/dataset=company_details/partition/hash_bucket=bucket_NNN/
 It records one row per active original, English-key, or terminal failure JSON
 object with CVR, kind, exact key, byte size, and SHA-256. The catalog is the
 steady-state inventory contract; unchanged runs reuse its existing commit and
-do not rewrite it. Buckets outside `bucket_000` through `bucket_007` and
+do not rewrite it. Buckets outside `bucket_000` through `bucket_047` and
 date-versioned updates keep their legacy listing behavior until the canary is
 accepted.
 
 `denmark_cvr_company_details_compacted_s3` shares the upstream asset's 128-bucket
 partition contract so Dagster can execute both assets in one run, but rejects
-every partition outside the eight-bucket canary. It receives the selected
+every partition outside the forty-eight-bucket canary. It receives the selected
 partition's typed catalog reference through Dagster's IO manager, verifies every
 cataloged JSON body, groups source objects toward a 256 MiB target, and writes
 content-addressed Parquet shards plus a separate catalog under:

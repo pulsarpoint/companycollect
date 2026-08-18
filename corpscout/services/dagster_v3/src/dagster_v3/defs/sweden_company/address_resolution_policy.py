@@ -1,8 +1,11 @@
 from dagster_v3.defs.address_resolution.model import AddressResolutionPolicy
 
 
+SWEDEN_STREET_VARIANT_LANGUAGES = {"SE": ("sv",)}
+
+
 SWEDEN_ADDRESS_RESOLUTION_POLICY = AddressResolutionPolicy(
-    version="se-address-resolution-policy-v2",
+    version="se-address-resolution-policy-v5",
     minimum_fuzzy_street_length=6,
     maximum_street_edit_distance=1,
     minimum_decisive_score_margin=0.05,
@@ -15,5 +18,9 @@ SWEDEN_ADDRESS_RESOLUTION_POLICY = AddressResolutionPolicy(
     fuzzy_postcode_score=0.92,
     fuzzy_locality_score=0.88,
     street_without_house_score=0.65,
+    street_without_house_locality_score=0.59,
+    street_without_house_postcode_conflict_score=0.55,
     street_missing_requested_house_score=0.45,
+    street_missing_requested_house_locality_score=0.39,
+    street_missing_requested_house_postcode_conflict_score=0.35,
 )

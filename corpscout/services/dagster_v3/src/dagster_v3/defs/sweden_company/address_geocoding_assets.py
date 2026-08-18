@@ -11,7 +11,6 @@ from dagster_v3.defs.clickhouse.resolved import (
     export_duckdb_connection_table_to_clickhouse,
     replace_duckdb_connection_tables_in_clickhouse,
 )
-from dagster_v3.defs.sweden_address_osm import address_matching
 from dagster_v3.defs.sweden_address_osm import tables as osm_tables
 from dagster_v3.defs.sweden_company import (
     address_canonicalization,
@@ -29,6 +28,9 @@ SHARED_ADDRESSES_DUCKDB_ASSET_KEY = "sweden_shared_addresses_duckdb"
 SHARED_ADDRESSES_CLICKHOUSE_ASSET_KEY = "sweden_shared_addresses_clickhouse"
 SHARED_GEOCODE_DUCKDB_ASSET_KEY = "sweden_shared_address_osm_matches_duckdb"
 SHARED_GEOCODE_CLICKHOUSE_ASSET_KEY = "sweden_address_geocodes_clickhouse"
+ADDRESS_RESOLUTION_GOLDEN_ASSET_KEY = "sweden_address_resolution_golden_evaluation"
+ADDRESS_RESOLUTION_SHADOW_ASSET_KEY = "sweden_address_resolution_shadow_duckdb"
+ADDRESS_RESOLUTION_CURRENT_ASSET_KEY = "sweden_address_resolution_current_duckdb"
 WEEKLY_CRON_SCHEDULE = "5 4 * * 2"
 WEEKLY_EXECUTION_TIMEZONE = "Europe/Stockholm"
 MAX_OSM_SNAPSHOT_AGE = timedelta(days=9)
@@ -410,7 +412,7 @@ def sweden_shared_address_osm_matches_duckdb(
 
 
 @dg.asset(
-    deps=[dg.AssetKey(SHARED_GEOCODE_DUCKDB_ASSET_KEY)],
+    deps=[dg.AssetKey(ADDRESS_RESOLUTION_CURRENT_ASSET_KEY)],
     group_name=GROUP_NAME,
     kinds={"python", "duckdb", "clickhouse", "openstreetmap"},
     pool=osm_tables.DUCKDB_POOL,
@@ -854,16 +856,6 @@ def sweden_shared_addresses_complete_check(
 def sweden_shared_address_geocodes_complete_check(
     clickhouse: ClickhouseResource,
 ) -> dg.AssetCheckResult:
-    street_fallback_method = address_matching.STREET_FALLBACK_METHOD
-    street_fallback_coordinate_method = (
-        address_matching.STREET_FALLBACK_COORDINATE_METHOD
-    )
-    street_fallback_confidence = address_matching.STREET_FALLBACK_CONFIDENCE
-    road_fallback_method = address_matching.ROAD_STREET_FALLBACK_METHOD
-    road_fallback_coordinate_method = (
-        address_matching.ROAD_STREET_FALLBACK_COORDINATE_METHOD
-    )
-    road_fallback_confidence = address_matching.ROAD_STREET_FALLBACK_CONFIDENCE
     with clickhouse.get_connection() as client:
         [(address_rows, unique_addresses, address_identity_runs)] = client.execute(
             f"""
@@ -882,8 +874,9 @@ def sweden_shared_address_geocodes_complete_check(
                 geocode_runs,
                 invalid_statuses,
                 invalid_coordinates,
-                invalid_exact_matches,
-                invalid_spatial_matches,
+                missing_geocoded_coordinates,
+                unexpected_coordinates,
+                invalid_precision,
                 missing_snapshot_provenance,
             )
         ] = client.execute(
@@ -895,6 +888,7 @@ def sweden_shared_address_geocodes_complete_check(
                 uniqExact(geocode_run_id),
                 countIf(match_status NOT IN (
                     'matched_exact',
+                    'matched_corrected',
                     'matched_site',
                     'matched_area',
                     'matched_street',
@@ -902,7 +896,8 @@ def sweden_shared_address_geocodes_complete_check(
                     'unmatched',
                     'invalid_address',
                     'foreign_address',
-                    'postal_box'
+                    'postal_box',
+                    'property_identifier'
                 )),
                 countIf(
                     isNull(latitude) != isNull(longitude)
@@ -913,92 +908,42 @@ def sweden_shared_address_geocodes_complete_check(
                     )
                 ),
                 countIf(
-                    match_status = 'matched_exact'
-                    AND (
-                        candidate_count != 1
-                        OR isNull(latitude)
-                        OR isNull(longitude)
-                        OR geocode_precision != 'building'
-                        OR match_confidence != 1.0
-                        OR coordinate_supporting_point_count != 1
-                        OR isNull(coordinate_spread_meters)
-                        OR coordinate_spread_meters != 0
+                    match_status IN (
+                        'matched_exact',
+                        'matched_corrected',
+                        'matched_site',
+                        'matched_area',
+                        'matched_street'
                     )
+                    AND (isNull(latitude) OR isNull(longitude))
                 ),
                 countIf(
-                    match_status = 'matched_site'
-                    AND (
-                        candidate_count <= 1
-                        OR isNull(latitude)
-                        OR isNull(longitude)
-                        OR geocode_provider != 'openstreetmap'
-                        OR geocode_precision != 'site'
-                        OR abs(match_confidence - 0.8) > 0.001
-                        OR coordinate_supporting_point_count != candidate_count
-                        OR isNull(coordinate_spread_meters)
-                        OR coordinate_spread_meters > {
-                address_matching.SITE_MAX_SPREAD_METERS
-            }
+                    match_status NOT IN (
+                        'matched_exact',
+                        'matched_corrected',
+                        'matched_site',
+                        'matched_area',
+                        'matched_street'
                     )
+                    AND (isNotNull(latitude) OR isNotNull(longitude))
+                ),
+                countIf(
+                    match_status IN ('matched_exact', 'matched_corrected')
+                        AND geocode_precision != 'building'
+                    OR match_status = 'matched_site'
+                        AND geocode_precision != 'site'
                     OR match_status = 'matched_area'
-                    AND (
-                        candidate_count <= 1
-                        OR isNull(latitude)
-                        OR isNull(longitude)
-                        OR geocode_provider != 'openstreetmap'
-                        OR geocode_precision != 'area'
-                        OR abs(match_confidence - 0.6) > 0.001
-                        OR coordinate_supporting_point_count != candidate_count
-                        OR isNull(coordinate_spread_meters)
-                        OR coordinate_spread_meters <= {
-                address_matching.SITE_MAX_SPREAD_METERS
-            }
-                        OR coordinate_spread_meters > {
-                address_matching.AREA_MAX_SPREAD_METERS
-            }
-                    )
+                        AND geocode_precision != 'area'
                     OR match_status = 'matched_street'
-                    AND (
-                        candidate_count != 0
-                        OR length(candidate_record_ids) != 0
-                        OR length(candidate_record_urls) != 0
-                        OR isNull(latitude)
-                        OR isNull(longitude)
-                        OR geocode_provider != 'openstreetmap'
-                        OR geocode_precision != 'street'
-                        OR NOT (
-                            match_method = '{street_fallback_method}'
-                            AND abs(
-                                match_confidence - {street_fallback_confidence}
-                            ) <= 0.001
-                            AND coordinate_method
-                                = '{street_fallback_coordinate_method}'
-                            OR match_method = '{road_fallback_method}'
-                            AND abs(
-                                match_confidence - {road_fallback_confidence}
-                            ) <= 0.001
-                            AND coordinate_method
-                                = '{road_fallback_coordinate_method}'
-                        )
-                        OR coordinate_supporting_point_count = 0
-                        OR isNull(coordinate_spread_meters)
-                        OR coordinate_spread_meters < 0
-                        OR coordinate_spread_meters > {
-                address_matching.AREA_MAX_SPREAD_METERS
-            }
-                        OR isNotNull(source_record_id)
-                        OR isNotNull(source_record_url)
+                        AND geocode_precision != 'street'
+                    OR match_status NOT IN (
+                        'matched_exact',
+                        'matched_corrected',
+                        'matched_site',
+                        'matched_area',
+                        'matched_street'
                     )
-                    OR match_status = 'ambiguous'
-                    AND (
-                        candidate_count <= 1
-                        OR isNotNull(latitude)
-                        OR isNotNull(longitude)
-                        OR isNull(coordinate_spread_meters)
-                        OR coordinate_spread_meters <= {
-                address_matching.AREA_MAX_SPREAD_METERS
-            }
-                    )
+                        AND geocode_precision != ''
                 ),
                 countIf(
                     isNull(source_url)
@@ -1029,8 +974,9 @@ def sweden_shared_address_geocodes_complete_check(
         and int(identity_mismatches) == 0
         and int(invalid_statuses) == 0
         and int(invalid_coordinates) == 0
-        and int(invalid_exact_matches) == 0
-        and int(invalid_spatial_matches) == 0
+        and int(missing_geocoded_coordinates) == 0
+        and int(unexpected_coordinates) == 0
+        and int(invalid_precision) == 0
         and int(missing_snapshot_provenance) == 0
     )
     return dg.AssetCheckResult(
@@ -1045,8 +991,9 @@ def sweden_shared_address_geocodes_complete_check(
             "identity_mismatches": int(identity_mismatches),
             "invalid_statuses": int(invalid_statuses),
             "invalid_coordinates": int(invalid_coordinates),
-            "invalid_exact_matches": int(invalid_exact_matches),
-            "invalid_spatial_matches": int(invalid_spatial_matches),
+            "missing_geocoded_coordinates": int(missing_geocoded_coordinates),
+            "unexpected_coordinates": int(unexpected_coordinates),
+            "invalid_precision": int(invalid_precision),
             "missing_snapshot_provenance": int(missing_snapshot_provenance),
         },
     )
@@ -1213,6 +1160,9 @@ sweden_company_address_geocoding_job = dg.define_asset_job(
         SHARED_ADDRESSES_DUCKDB_ASSET_KEY,
         SHARED_ADDRESSES_CLICKHOUSE_ASSET_KEY,
         SHARED_GEOCODE_DUCKDB_ASSET_KEY,
+        ADDRESS_RESOLUTION_GOLDEN_ASSET_KEY,
+        ADDRESS_RESOLUTION_SHADOW_ASSET_KEY,
+        ADDRESS_RESOLUTION_CURRENT_ASSET_KEY,
         SHARED_GEOCODE_CLICKHOUSE_ASSET_KEY,
         "sweden_company_address_osm_matches_duckdb",
         GEOCODE_ASSET_KEY,
@@ -1237,6 +1187,9 @@ sweden_shared_address_geocoding_job = dg.define_asset_job(
     name="sweden_shared_address_geocoding_job",
     selection=dg.AssetSelection.assets(
         SHARED_GEOCODE_DUCKDB_ASSET_KEY,
+        ADDRESS_RESOLUTION_GOLDEN_ASSET_KEY,
+        ADDRESS_RESOLUTION_SHADOW_ASSET_KEY,
+        ADDRESS_RESOLUTION_CURRENT_ASSET_KEY,
         SHARED_GEOCODE_CLICKHOUSE_ASSET_KEY,
     ),
     tags={"country": "SE", "pipeline": "shared_address_geocoding"},
@@ -1256,6 +1209,9 @@ sweden_company_address_geocoding_weekly_job = dg.define_asset_job(
         SHARED_ADDRESSES_DUCKDB_ASSET_KEY,
         SHARED_ADDRESSES_CLICKHOUSE_ASSET_KEY,
         SHARED_GEOCODE_DUCKDB_ASSET_KEY,
+        ADDRESS_RESOLUTION_GOLDEN_ASSET_KEY,
+        ADDRESS_RESOLUTION_SHADOW_ASSET_KEY,
+        ADDRESS_RESOLUTION_CURRENT_ASSET_KEY,
         SHARED_GEOCODE_CLICKHOUSE_ASSET_KEY,
         "sweden_company_address_osm_matches_duckdb",
         GEOCODE_ASSET_KEY,

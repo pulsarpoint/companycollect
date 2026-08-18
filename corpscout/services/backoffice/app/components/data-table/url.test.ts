@@ -3,6 +3,7 @@ import {
   clearAllFilters,
   nextSortDir,
   removeFilterValue,
+  setFilterValues,
   tableSearch,
   toggleFilterValue,
 } from "~/components/data-table/url";
@@ -10,7 +11,9 @@ import {
 describe("tableSearch", () => {
   it("preserves existing params and patches page", () => {
     const current = new URLSearchParams("q=grupp&sort=status&dir=desc&page=3");
-    expect(tableSearch(current, { page: 4 })).toBe("?q=grupp&sort=status&dir=desc&page=4");
+    expect(tableSearch(current, { page: 4 })).toBe(
+      "?q=grupp&sort=status&dir=desc&page=4",
+    );
   });
 
   it("resets page when sort changes", () => {
@@ -60,6 +63,22 @@ describe("toggleFilterValue", () => {
     const s = toggleFilterValue(current, "status", "A");
     expect(s).toContain("f_status=B");
     expect(s).not.toContain("f_status=A");
+  });
+});
+
+describe("setFilterValues", () => {
+  it("replaces one filter without disturbing the others", () => {
+    const current = new URLSearchParams(
+      "f_financial_filing_status=unknown&f_status=active&page=3",
+    );
+    expect(
+      setFilterValues(current, "financial_filing_status", [
+        "data_available",
+        "filed_unstructured",
+      ]),
+    ).toBe(
+      "?f_status=active&f_financial_filing_status=data_available&f_financial_filing_status=filed_unstructured",
+    );
   });
 });
 

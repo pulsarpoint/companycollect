@@ -5,6 +5,7 @@ import type { CompanyListRow } from "~/lib/queries.server";
 import { availableCompanyFlags, type CompanyFlagId } from "~/lib/company-flags";
 import { Badge } from "~/components/ui/badge";
 import { DataTableColumnHeader } from "~/components/data-table/column-header";
+import { FinancialFilingStatusGlyph } from "~/components/financial-filing-status";
 
 const EMPTY = <span className="text-muted-foreground">—</span>;
 
@@ -29,7 +30,9 @@ function cellFor(
           </span>
         );
       case "date":
-        return <span className="tabular-nums whitespace-nowrap">{text(value)}</span>;
+        return (
+          <span className="tabular-nums whitespace-nowrap">{text(value)}</span>
+        );
       case "status":
         return (
           <Badge variant={row.original.active ? "default" : "outline"}>
@@ -89,7 +92,9 @@ function cellFor(
             </Link>
           );
         }
-        return <span className="block max-w-[14rem] truncate">{text(value)}</span>;
+        return (
+          <span className="block max-w-[14rem] truncate">{text(value)}</span>
+        );
     }
   };
 }
@@ -109,24 +114,30 @@ export function buildCompanyColumns(
   /** Column ids to show. Undefined means every column the country has. */
   visible?: string[],
 ): ColumnDef<CompanyListRow, unknown>[] {
-  const defs: ColumnDef<CompanyListRow, unknown>[] = country.columns.map((col) => ({
-    id: col.key,
-    header: () => (
-      <DataTableColumnHeader
-        label={col.label}
-        sortKey={col.sortable ? col.key : undefined}
-        currentSort={sort}
-        currentDir={dir}
-      />
-    ),
-    cell: cellFor(col, country, legalForms),
-  }));
+  const defs: ColumnDef<CompanyListRow, unknown>[] = country.columns.map(
+    (col) => ({
+      id: col.key,
+      header: () => (
+        <DataTableColumnHeader
+          label={col.label}
+          sortKey={col.sortable ? col.key : undefined}
+          currentSort={sort}
+          currentDir={dir}
+        />
+      ),
+      cell: cellFor(col, country, legalForms),
+    }),
+  );
 
   if (country.industryQuery) {
     const industryDef: ColumnDef<CompanyListRow, unknown> = {
       id: "industry",
       header: () => (
-        <DataTableColumnHeader label="Industry" currentSort={sort} currentDir={dir} />
+        <DataTableColumnHeader
+          label="Industry"
+          currentSort={sort}
+          currentDir={dir}
+        />
       ),
       cell: ({ row }) => {
         const code = row.original.industry_code;
@@ -163,6 +174,14 @@ export function buildCompanyColumns(
         return (
           <span className="flex gap-1">
             {flags.map((flag) => {
+              if (country.code === "se" && flag.id === "financials") {
+                return (
+                  <FinancialFilingStatusGlyph
+                    key={flag.id}
+                    status={row.original.financial_filing_status ?? "unknown"}
+                  />
+                );
+              }
               const on = held.has(flag.id);
               return (
                 <span

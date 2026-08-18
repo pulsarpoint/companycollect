@@ -17,8 +17,19 @@ import { Badge } from "~/components/ui/badge";
 import { DataTable } from "~/components/data-table/data-table";
 import { DataTablePagination } from "~/components/data-table/pagination";
 import { buildCompanyColumns } from "~/components/data-table/company-columns";
-import { FilterSidebar, facetLabel } from "~/components/data-table/filter-sidebar";
-import { clearAllFilters, removeFilterValue } from "~/components/data-table/url";
+import {
+  FilterSidebar,
+  facetLabel,
+  facetValueLabel,
+} from "~/components/data-table/filter-sidebar";
+import {
+  FINANCIAL_FILING_STATUS_PRESENTATION,
+  FinancialFilingStatusGlyph,
+} from "~/components/financial-filing-status";
+import {
+  clearAllFilters,
+  removeFilterValue,
+} from "~/components/data-table/url";
 import { useEffectiveSearchParams } from "~/components/data-table/use-effective-search";
 
 export async function loader({ params, request }: Route.LoaderArgs) {
@@ -52,11 +63,19 @@ export async function loader({ params, request }: Route.LoaderArgs) {
 
 export function meta({ params }: Route.MetaArgs) {
   const country = getCountry(params.country);
-  return [{ title: `${country?.name ?? "Country"} companies – CompanyCollect Backoffice` }];
+  return [
+    {
+      title: `${country?.name ?? "Country"} companies – CompanyCollect Backoffice`,
+    },
+  ];
 }
 
-export default function CountryCompanies({ loaderData, params }: Route.ComponentProps) {
-  const { q, result, filters, legalForms, available, visibleColumns } = loaderData;
+export default function CountryCompanies({
+  loaderData,
+  params,
+}: Route.ComponentProps) {
+  const { q, result, filters, legalForms, available, visibleColumns } =
+    loaderData;
   const country = getCountry(params.country)!;
   const columns = buildCompanyColumns(
     country,
@@ -66,7 +85,9 @@ export default function CountryCompanies({ loaderData, params }: Route.Component
     visibleColumns,
   );
   const searchParams = useEffectiveSearchParams();
-  const flagLegend = availableCompanyFlags(country.code);
+  const flagLegend = availableCompanyFlags(country.code).filter(
+    (flag) => country.code !== "se" || flag.id !== "financials",
+  );
 
   return (
     <>
@@ -118,9 +139,15 @@ export default function CountryCompanies({ loaderData, params }: Route.Component
         <div className="flex flex-wrap items-center gap-2">
           {Object.entries(filters).flatMap(([key, values]) =>
             values.map((value) => (
-              <Badge key={`${key}:${value}`} variant="secondary" className="gap-1">
-                <span className="text-muted-foreground">{facetLabel(country, key)}:</span>
-                {value}
+              <Badge
+                key={`${key}:${value}`}
+                variant="secondary"
+                className="gap-1"
+              >
+                <span className="text-muted-foreground">
+                  {facetLabel(country, key)}:
+                </span>
+                {facetValueLabel(key, value)}
                 <Link
                   to={removeFilterValue(searchParams, key, value)}
                   preventScrollReset
@@ -141,9 +168,23 @@ export default function CountryCompanies({ loaderData, params }: Route.Component
         </div>
       ) : null}
 
-      {flagLegend.length > 0 && visibleColumns.includes("data") ? (
+      {(flagLegend.length > 0 || country.code === "se") &&
+      visibleColumns.includes("data") ? (
         <div className="text-muted-foreground flex flex-wrap items-center gap-x-4 gap-y-1 text-xs">
-          <span className="uppercase tracking-wide">Data held</span>
+          <span className="uppercase tracking-wide">
+            {country.code === "se" ? "Data and filing state" : "Data held"}
+          </span>
+          {country.code === "se"
+            ? FINANCIAL_FILING_STATUS_PRESENTATION.map((definition) => (
+                <span
+                  key={definition.value}
+                  className="flex items-center gap-1.5"
+                >
+                  <FinancialFilingStatusGlyph status={definition.value} />
+                  <span>{definition.shortLabel}</span>
+                </span>
+              ))
+            : null}
           {flagLegend.map((flag) => (
             <span key={flag.id} className="flex items-center gap-1.5">
               <span className="inline-flex size-5 shrink-0 items-center justify-center rounded-full border border-emerald-600/30 bg-emerald-500/15 text-[10px] leading-none font-semibold text-emerald-700 dark:border-emerald-400/30 dark:bg-emerald-400/15 dark:text-emerald-300">
@@ -152,7 +193,9 @@ export default function CountryCompanies({ loaderData, params }: Route.Component
               <span>{flag.label}</span>
             </span>
           ))}
-          <span className="opacity-70">green = held, red = not held</span>
+          {flagLegend.length > 0 ? (
+            <span className="opacity-70">green = held, red = not held</span>
+          ) : null}
         </div>
       ) : null}
 

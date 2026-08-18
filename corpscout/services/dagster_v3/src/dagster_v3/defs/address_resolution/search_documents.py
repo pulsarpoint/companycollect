@@ -1,3 +1,4 @@
+from collections.abc import Mapping, Sequence
 from typing import Any
 
 
@@ -35,6 +36,17 @@ SEARCH_DOCUMENT_COLUMNS = SEARCH_DOCUMENT_INPUT_COLUMNS + (
     "raw_trigrams",
     "street_deletion_signatures",
     "search_document_key",
+)
+
+STREET_VARIANT_COLUMNS = (
+    "document_id",
+    "index_scope",
+    "country_code",
+    "street_variant",
+    "normalized_street_variant",
+    "variant_kind",
+    "variant_rank",
+    "street_deletion_signatures",
 )
 
 
@@ -149,6 +161,130 @@ def replace_address_search_documents(
                 reference_precision
             )) as search_document_key
         from indexed
+        """
+    )
+
+
+def replace_address_street_variants(
+    connection: Any,
+    *,
+    document_table: str,
+    variant_table: str,
+    languages_by_country: Mapping[str, Sequence[str]],
+) -> None:
+    """Materialize parsed and libpostal-expanded street search variants."""
+    # Importing pypostal initializes libpostal's multi-gigabyte language model.
+    # Keep it out of Dagster definition discovery and load it during materialization.
+    import pyarrow as pa
+    from postal.expand import ADDRESS_STREET, expand_address
+
+    expansion_countries: list[str] = []
+    expansion_streets: list[str] = []
+    expanded_streets: list[str] = []
+    street_rows = connection.execute(
+        f"""
+        select distinct country_code, street_name
+        from {document_table}
+        where street_name != ''
+        order by country_code, street_name
+        """
+    ).fetchall()
+    for country_code, street_name in street_rows:
+        languages = languages_by_country.get(str(country_code))
+        if languages is None or len(languages) == 0:
+            continue
+        for expanded_street in expand_address(
+            str(street_name),
+            languages=list(languages),
+            address_components=ADDRESS_STREET,
+        ):
+            if expanded_street.strip() == "":
+                continue
+            expansion_countries.append(str(country_code))
+            expansion_streets.append(str(street_name))
+            expanded_streets.append(expanded_street)
+
+    expansion_input = "_address_resolution_street_expansion_input"
+    if expanded_streets:
+        registered_rows = "_address_resolution_street_expansion_rows"
+        connection.register(
+            registered_rows,
+            pa.table(
+                {
+                    "country_code": expansion_countries,
+                    "street_name": expansion_streets,
+                    "expanded_street": expanded_streets,
+                }
+            ),
+        )
+        try:
+            connection.execute(
+                f"""
+                create or replace temporary table {expansion_input} as
+                select distinct
+                    country_code::varchar as country_code,
+                    street_name::varchar as street_name,
+                    expanded_street::varchar as expanded_street
+                from {registered_rows}
+                """
+            )
+        finally:
+            connection.unregister(registered_rows)
+    else:
+        connection.execute(
+            f"""
+            create or replace temporary table {expansion_input} (
+                country_code varchar,
+                street_name varchar,
+                expanded_street varchar
+            )
+            """
+        )
+
+    normalized_expanded_street = _compact_text_sql("expanded_street")
+    connection.execute(
+        f"""
+        create or replace table {variant_table} as
+        with candidates as (
+            select
+                document_id,
+                index_scope,
+                country_code,
+                street_name as street_variant,
+                normalized_street as normalized_street_variant,
+                'parsed'::varchar as variant_kind,
+                0::utinyint as variant_rank
+            from {document_table}
+            where normalized_street != ''
+
+            union all
+
+            select
+                document.document_id,
+                document.index_scope,
+                document.country_code,
+                expansion.expanded_street,
+                {normalized_expanded_street} as normalized_street_variant,
+                'libpostal_expansion'::varchar as variant_kind,
+                1::utinyint as variant_rank
+            from {document_table} document
+            inner join {expansion_input} expansion
+                on expansion.country_code = document.country_code
+               and expansion.street_name = document.street_name
+        ), deduplicated as (
+            select *
+            from candidates
+            where normalized_street_variant != ''
+            qualify row_number() over (
+                partition by document_id, normalized_street_variant
+                order by variant_rank, street_variant
+            ) = 1
+        )
+        select
+            *,
+            {_deletion_signatures_sql("normalized_street_variant")}
+                as street_deletion_signatures
+        from deduplicated
         """
     )
 

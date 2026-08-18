@@ -24,6 +24,7 @@ export function formatFieldValue(key: string, value: unknown): string | null {
 const LINEAGE_EXACT = new Set([
   "country_iso2", "source_system", "resolved_at", "updated_from_raw_at",
   "name_normalized", "xml_object_key", "xml_sha256", "xml_size_bytes",
+  "status_source", "status_observed_at", "status_conflict",
   // OUR matcher's verdicts, not the register's data. A card headed "everything
   // this register publishes" led with company_match_status = 'exact' for Norway,
   // which the register never said. Kept in the lineage bucket rather than dropped:

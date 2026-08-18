@@ -7,6 +7,14 @@
     - "{{ dagster_source_dir }}/uv.lock"
     - "{{ dagster_source_dir }}/src/dagster_v3/definitions.py"
     - "{{ dagster_source_dir }}/src/dagster_v3/defs"
+    - "{{ dagster_source_dir }}/src/dagster_v3/defs/finland_ytj/dbt/dbt_project.yml"
+    - "{{ dagster_source_dir }}/src/dagster_v3/defs/finland_ytj/dbt/target/manifest.json"
+    - "{{ dagster_source_dir }}/src/dagster_v3/defs/exchange_rates_v2/dbt/dbt_project.yml"
+    - "{{ dagster_source_dir }}/src/dagster_v3/defs/exchange_rates_v2/dbt/target/manifest.json"
+    - "{{ dagster_source_dir }}/src/dagster_v3/defs/.local_defs_state/DbtProjectComponent__dbt__/project/dbt_project.yml"
+    - "{{ dagster_source_dir }}/src/dagster_v3/defs/.local_defs_state/DbtProjectComponent__dbt__/project/target/manifest.json"
+    - "{{ dagster_source_dir }}/src/dagster_v3/defs/.local_defs_state/DbtProjectComponent__dbt____web-features/project/dbt_project.yml"
+    - "{{ dagster_source_dir }}/src/dagster_v3/defs/.local_defs_state/DbtProjectComponent__dbt____web-features/project/target/manifest.json"
     - "{{ dagster_source_dir }}/src/dagster_v3/defs/.local_defs_state/DbtProjectComponent__dbt____company-serving/project/dbt_project.yml"
     - "{{ dagster_source_dir }}/src/dagster_v3/defs/.local_defs_state/DbtProjectComponent__dbt____company-serving/project/target/manifest.json"
     - "{{ dagster_source_dir }}/exchange_rates"
@@ -21,7 +29,7 @@
       - dagster_sync_local_content.results | map(attribute='stat.exists') | min
     fail_msg: >-
       Run this playbook from services/dagster_v3/ansible. The source tree or
-      generated company-serving dbt project state is incomplete.
+      generated dbt component state is incomplete.
   delegate_to: localhost
   become: false
   run_once: true
@@ -118,6 +126,12 @@
       - --exclude=__pycache__/
       - --exclude=*.pyc
       - --exclude=*.pyo
+      - --include=**/defs/finland_ytj/dbt/target/
+      - --include=**/defs/finland_ytj/dbt/target/manifest.json
+      - --include=**/defs/exchange_rates_v2/dbt/target/
+      - --include=**/defs/exchange_rates_v2/dbt/target/manifest.json
+      - --exclude=**/dbt/target/***
+      - --exclude=**/dbt/logs/
       - --rsync-path=sudo -n rsync
       - "{{ dagster_source_dir }}/src/dagster_v3/"
       - >-
@@ -269,6 +283,12 @@
       - --exclude=__pycache__/
       - --exclude=*.pyc
       - --exclude=*.pyo
+      - --include=**/defs/finland_ytj/dbt/target/
+      - --include=**/defs/finland_ytj/dbt/target/manifest.json
+      - --include=**/defs/exchange_rates_v2/dbt/target/
+      - --include=**/defs/exchange_rates_v2/dbt/target/manifest.json
+      - --exclude=**/dbt/target/***
+      - --exclude=**/dbt/logs/
       - --rsync-path=sudo -n rsync
       - "{{ dagster_source_dir }}/src/dagster_v3/"
       - >-

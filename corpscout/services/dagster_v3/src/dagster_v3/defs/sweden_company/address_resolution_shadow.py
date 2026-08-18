@@ -6,8 +6,12 @@ from dagster_v3.defs.address_resolution.resolution import (
     replace_address_resolution_candidates,
     replace_address_resolution_results,
 )
+from dagster_v3.defs.address_resolution.diagnostics import (
+    replace_unmatched_address_resolution_diagnostics,
+)
 from dagster_v3.defs.address_resolution.search_documents import (
     replace_address_search_documents,
+    replace_address_street_variants,
 )
 from dagster_v3.defs.sweden_address_osm import address_matching
 from dagster_v3.defs.sweden_address_osm import tables as osm_tables
@@ -18,16 +22,24 @@ from dagster_v3.defs.sweden_company import (
 )
 from dagster_v3.defs.sweden_company.address_resolution_policy import (
     SWEDEN_ADDRESS_RESOLUTION_POLICY,
+    SWEDEN_STREET_VARIANT_LANGUAGES,
 )
 
 SHADOW_QUERY_DOCUMENTS_TABLE = "se_address_resolution_query_index_shadow"
+SHADOW_QUERY_STREET_VARIANTS_TABLE = (
+    "se_address_resolution_query_street_variants_shadow"
+)
 SHADOW_REFERENCE_DOCUMENTS_TABLE = "se_address_resolution_reference_index_shadow"
 SHADOW_CANDIDATES_TABLE = "se_address_resolution_candidates_shadow"
 SHADOW_RESULTS_TABLE = "se_address_resolution_results_shadow"
 SHADOW_COMPARISON_TABLE = "se_address_resolution_comparison_shadow"
+UNMATCHED_DIAGNOSTICS_TABLE = "se_address_resolution_unmatched_diagnostics"
 
 QUALIFIED_SHADOW_QUERY_DOCUMENTS_TABLE = (
     f"{address_canonicalization.ENRICHMENT_SCHEMA}.{SHADOW_QUERY_DOCUMENTS_TABLE}"
+)
+QUALIFIED_SHADOW_QUERY_STREET_VARIANTS_TABLE = (
+    f"{address_canonicalization.ENRICHMENT_SCHEMA}.{SHADOW_QUERY_STREET_VARIANTS_TABLE}"
 )
 QUALIFIED_SHADOW_REFERENCE_DOCUMENTS_TABLE = (
     f"{address_canonicalization.ENRICHMENT_SCHEMA}.{SHADOW_REFERENCE_DOCUMENTS_TABLE}"
@@ -41,8 +53,11 @@ QUALIFIED_SHADOW_RESULTS_TABLE = (
 QUALIFIED_SHADOW_COMPARISON_TABLE = (
     f"{address_canonicalization.ENRICHMENT_SCHEMA}.{SHADOW_COMPARISON_TABLE}"
 )
+QUALIFIED_UNMATCHED_DIAGNOSTICS_TABLE = (
+    f"{address_canonicalization.ENRICHMENT_SCHEMA}.{UNMATCHED_DIAGNOSTICS_TABLE}"
+)
 
-INDEX_SCOPE = "SE-address-resolution-shadow-v1"
+INDEX_SCOPE = "SE-address-resolution-shadow-v2"
 
 
 def replace_sweden_address_resolution_shadow(
@@ -58,6 +73,13 @@ def replace_sweden_address_resolution_shadow(
     )
     _log(log, "Building Sweden address-resolution query search documents")
     _replace_query_documents(connection)
+    _log(log, "Building Sweden address-resolution query street variants")
+    replace_address_street_variants(
+        connection,
+        document_table=QUALIFIED_SHADOW_QUERY_DOCUMENTS_TABLE,
+        variant_table=QUALIFIED_SHADOW_QUERY_STREET_VARIANTS_TABLE,
+        languages_by_country=SWEDEN_STREET_VARIANT_LANGUAGES,
+    )
     _log(log, "Building Sweden OSM building search documents")
     _replace_building_reference_documents(connection)
     _log(log, "Building Sweden OSM contextual street search documents")
@@ -75,6 +97,7 @@ def replace_sweden_address_resolution_shadow(
     replace_address_resolution_candidates(
         connection,
         query_table=QUALIFIED_SHADOW_QUERY_DOCUMENTS_TABLE,
+        query_street_variant_table=(QUALIFIED_SHADOW_QUERY_STREET_VARIANTS_TABLE),
         reference_table=QUALIFIED_SHADOW_REFERENCE_DOCUMENTS_TABLE,
         candidate_table=QUALIFIED_SHADOW_CANDIDATES_TABLE,
         policy=SWEDEN_ADDRESS_RESOLUTION_POLICY,
@@ -101,6 +124,23 @@ def replace_sweden_address_resolution_shadow(
     _replace_comparison(connection)
     _assert_shadow_invariants(connection)
     return _shadow_counts(connection)
+
+
+def replace_sweden_address_resolution_unmatched_diagnostics(
+    *,
+    connection: Any,
+    diagnosed_at: datetime,
+) -> dict[str, object]:
+    return replace_unmatched_address_resolution_diagnostics(
+        connection,
+        query_table=QUALIFIED_SHADOW_QUERY_DOCUMENTS_TABLE,
+        query_street_variant_table=QUALIFIED_SHADOW_QUERY_STREET_VARIANTS_TABLE,
+        reference_table=QUALIFIED_SHADOW_REFERENCE_DOCUMENTS_TABLE,
+        result_table=QUALIFIED_SHADOW_RESULTS_TABLE,
+        diagnostic_table=QUALIFIED_UNMATCHED_DIAGNOSTICS_TABLE,
+        policy=SWEDEN_ADDRESS_RESOLUTION_POLICY,
+        diagnosed_at=diagnosed_at,
+    )
 
 
 def _replace_query_documents(connection: Any) -> None:
@@ -529,12 +569,25 @@ def _assert_shadow_invariants(connection: Any) -> None:
     [(comparisons,)] = connection.execute(
         f"select count(*) from {QUALIFIED_SHADOW_COMPARISON_TABLE}"
     ).fetchall()
+    [(variant_documents, expected_variant_documents)] = connection.execute(
+        f"""
+        select
+            count(distinct variant.document_id),
+            count(distinct query.document_id)
+        from {QUALIFIED_SHADOW_QUERY_DOCUMENTS_TABLE} query
+        left join {QUALIFIED_SHADOW_QUERY_STREET_VARIANTS_TABLE} variant
+            on variant.document_id = query.document_id
+        where query.normalized_street != ''
+        """
+    ).fetchall()
     if int(queries) != int(distinct_queries):
         raise ValueError("Shadow query search-document IDs must be unique")
     if int(results) != int(distinct_results) or int(results) != int(queries):
         raise ValueError("Every shadow query must have one resolution result")
     if int(comparisons) != int(results):
         raise ValueError("Every shadow result must compare with the current matcher")
+    if int(variant_documents) != int(expected_variant_documents):
+        raise ValueError("Every parsed query street must have a search variant")
 
 
 def _shadow_counts(connection: Any) -> dict[str, object]:
@@ -556,10 +609,15 @@ def _shadow_counts(connection: Any) -> dict[str, object]:
         limit 20
         """
     ).fetchall()
-    [(queries, references, candidates, results, changed)] = connection.execute(
-        f"""
+    [(queries, query_variants, references, candidates, results, changed)] = (
+        connection.execute(
+            f"""
         select
             (select count(*) from {QUALIFIED_SHADOW_QUERY_DOCUMENTS_TABLE}),
+            (
+                select count(*)
+                from {QUALIFIED_SHADOW_QUERY_STREET_VARIANTS_TABLE}
+            ),
             (select count(*) from {QUALIFIED_SHADOW_REFERENCE_DOCUMENTS_TABLE}),
             (select count(*) from {QUALIFIED_SHADOW_CANDIDATES_TABLE}),
             (select count(*) from {QUALIFIED_SHADOW_RESULTS_TABLE}),
@@ -569,9 +627,11 @@ def _shadow_counts(connection: Any) -> dict[str, object]:
                 where current_status != shadow_status
             )
         """
-    ).fetchall()
+        ).fetchall()
+    )
     return {
         "query_documents": int(queries),
+        "query_street_variants": int(query_variants),
         "reference_documents": int(references),
         "candidates": int(candidates),
         "results": int(results),
@@ -588,6 +648,7 @@ def _shadow_counts(connection: Any) -> dict[str, object]:
             for current, shadow, count in transition_rows
         ],
         "query_table": QUALIFIED_SHADOW_QUERY_DOCUMENTS_TABLE,
+        "query_street_variant_table": (QUALIFIED_SHADOW_QUERY_STREET_VARIANTS_TABLE),
         "reference_table": QUALIFIED_SHADOW_REFERENCE_DOCUMENTS_TABLE,
         "candidate_table": QUALIFIED_SHADOW_CANDIDATES_TABLE,
         "result_table": QUALIFIED_SHADOW_RESULTS_TABLE,

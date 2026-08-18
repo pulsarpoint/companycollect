@@ -16,7 +16,11 @@ class AddressResolutionPolicy:
     fuzzy_postcode_score: float
     fuzzy_locality_score: float
     street_without_house_score: float
+    street_without_house_locality_score: float
+    street_without_house_postcode_conflict_score: float
     street_missing_requested_house_score: float
+    street_missing_requested_house_locality_score: float
+    street_missing_requested_house_postcode_conflict_score: float
 
 
 @dataclass(frozen=True, slots=True)

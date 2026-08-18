@@ -1,4 +1,5 @@
 import json
+from collections.abc import Mapping, Sequence
 from pathlib import Path
 from typing import Any
 
@@ -19,6 +20,7 @@ from dagster_v3.defs.address_resolution.search_documents import (
     SEARCH_DOCUMENT_INPUT_COLUMNS,
     replace_address_search_document_input_table,
     replace_address_search_documents,
+    replace_address_street_variants,
 )
 
 
@@ -37,6 +39,7 @@ def evaluate_golden_address_resolution_corpus(
     *,
     corpus_path: Path,
     policy: AddressResolutionPolicy,
+    street_variant_languages_by_country: Mapping[str, Sequence[str]],
 ) -> GoldenAddressResolutionEvaluation:
     corpus_version, cases = load_golden_address_resolution_corpus(corpus_path)
     with duckdb.connect(":memory:") as connection:
@@ -46,6 +49,12 @@ def evaluate_golden_address_resolution_corpus(
             source_sql="select * from _golden_query_input",
             table_name="_golden_query_documents",
         )
+        replace_address_street_variants(
+            connection,
+            document_table="_golden_query_documents",
+            variant_table="_golden_query_street_variants",
+            languages_by_country=street_variant_languages_by_country,
+        )
         replace_address_search_documents(
             connection,
             source_sql="select * from _golden_reference_input",
@@ -54,6 +63,7 @@ def evaluate_golden_address_resolution_corpus(
         replace_address_resolution_candidates(
             connection,
             query_table="_golden_query_documents",
+            query_street_variant_table="_golden_query_street_variants",
             reference_table="_golden_reference_documents",
             candidate_table="_golden_candidates",
             policy=policy,

@@ -33,7 +33,7 @@
 **/__pycache__/
 **/*.pyc
 **/*.pyo
-**/dbt/target/
+**/dbt/target/***
 **/dbt/logs/
 **/dbt/.user.yml
 **/*.concurrent-update-lock

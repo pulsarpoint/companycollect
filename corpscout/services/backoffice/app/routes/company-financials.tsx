@@ -3,6 +3,7 @@ import type { Route } from "./+types/company-financials";
 import { FinancialReportDocuments } from "~/components/detail/financial-report-documents";
 import { FinancialsSection } from "~/components/detail/financials-section";
 import { EsefSection } from "~/components/detail/esef-section";
+import { FinancialFilingStatusSummary } from "~/components/financial-filing-status";
 import {
   Empty,
   EmptyDescription,
@@ -29,7 +30,7 @@ export default function CompanyFinancials({
   loaderData,
   params,
 }: Route.ComponentProps) {
-  const { financialSources } = loaderData;
+  const { financialSources, filingStatus } = loaderData;
   const country = getCountry(params.country)!;
   const basePath = `/company/${params.country}/${params.id}/financials`;
 
@@ -43,6 +44,10 @@ export default function CompanyFinancials({
         </p>
       </div>
 
+      {filingStatus ? (
+        <FinancialFilingStatusSummary filing={filingStatus} />
+      ) : null}
+
       {financialSources.length > 0 ? null : (
         <Empty className="border">
           <EmptyHeader>
@@ -50,11 +55,18 @@ export default function CompanyFinancials({
               <FileText />
             </EmptyMedia>
             <EmptyTitle>
-              No digitally filed annual report found in our sources.
+              {filingStatus?.status === "filed_unstructured"
+                ? "Annual report filed in another format."
+                : filingStatus?.status === "not_submitted"
+                  ? "Annual report not submitted."
+                  : "No digitally filed annual report found in our sources."}
             </EmptyTitle>
             <EmptyDescription>
-              No registry financial statement or ESEF report is connected to
-              this company yet.
+              {filingStatus?.status === "filed_unstructured"
+                ? "An official filing exists, but structured financial figures are not available."
+                : filingStatus?.status === "not_submitted"
+                  ? "An official source reports that the expected annual report is missing."
+                  : "No registry financial statement or ESEF report is connected to this company yet."}
             </EmptyDescription>
           </EmptyHeader>
         </Empty>

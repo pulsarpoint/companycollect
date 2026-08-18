@@ -1,5 +1,5 @@
 {
-  "version": "sweden-address-resolution-golden-v2",
+  "version": "sweden-address-resolution-golden-v4",
   "cases": [
     {
       "case_id": "exact_building_with_unit",
@@ -345,6 +345,142 @@
       }
     },
     {
+      "case_id": "postcode_conflict_compact_street",
+      "description": "An exact street and locality with a conflicting postcode produces only a compact flagged street marker.",
+      "query": {
+        "document_id": "query-postcode-conflict-street",
+        "country_code": "SE",
+        "raw_address": "Furutunet 15, 18148 Lidingö",
+        "search_text": "Furutunet 15, 18148 Lidingö",
+        "street_name": "Furutunet",
+        "house_number": "15",
+        "unit": "",
+        "postal_code": "18148",
+        "locality": "Lidingö",
+        "address_kind": "physical",
+        "reference_precision": "",
+        "latitude": null,
+        "longitude": null,
+        "coordinate_spread_meters": null,
+        "supporting_record_count": 0,
+        "source_record_id": "query-postcode-conflict-street",
+        "source_record_url": ""
+      },
+      "references": [
+        {
+          "document_id": "reference-furutunet-18147",
+          "country_code": "SE",
+          "raw_address": "",
+          "search_text": "Furutunet, 18147 Lidingö",
+          "street_name": "Furutunet",
+          "house_number": "",
+          "unit": "",
+          "postal_code": "18147",
+          "locality": "Lidingö",
+          "address_kind": "physical",
+          "reference_precision": "street",
+          "latitude": 59.3648,
+          "longitude": 18.1467,
+          "coordinate_spread_meters": 80,
+          "supporting_record_count": 4,
+          "source_record_id": "street/furutunet-18147",
+          "source_record_url": "https://www.openstreetmap.org/"
+        },
+        {
+          "document_id": "reference-furutunet-18146",
+          "country_code": "SE",
+          "raw_address": "",
+          "search_text": "Furutunet, 18146 Lidingö",
+          "street_name": "Furutunet",
+          "house_number": "",
+          "unit": "",
+          "postal_code": "18146",
+          "locality": "Lidingö",
+          "address_kind": "physical",
+          "reference_precision": "street",
+          "latitude": 59.3651,
+          "longitude": 18.1471,
+          "coordinate_spread_meters": 90,
+          "supporting_record_count": 3,
+          "source_record_id": "street/furutunet-18146",
+          "source_record_url": "https://www.openstreetmap.org/"
+        }
+      ],
+      "expected": {
+        "status": "matched_street",
+        "precision": "street",
+        "strategy": "street_requested_house_missing_postcode_conflict"
+      }
+    },
+    {
+      "case_id": "postcode_conflict_separated_street",
+      "description": "Same-name locality street evidence that is geographically separated remains ambiguous.",
+      "query": {
+        "document_id": "query-separated-postcode-conflict",
+        "country_code": "SE",
+        "raw_address": "Stationsgatan 99, 11111 Teststad",
+        "search_text": "Stationsgatan 99, 11111 Teststad",
+        "street_name": "Stationsgatan",
+        "house_number": "99",
+        "unit": "",
+        "postal_code": "11111",
+        "locality": "Teststad",
+        "address_kind": "physical",
+        "reference_precision": "",
+        "latitude": null,
+        "longitude": null,
+        "coordinate_spread_meters": null,
+        "supporting_record_count": 0,
+        "source_record_id": "query-separated-postcode-conflict",
+        "source_record_url": ""
+      },
+      "references": [
+        {
+          "document_id": "reference-stationsgatan-north",
+          "country_code": "SE",
+          "raw_address": "",
+          "search_text": "Stationsgatan, 22222 Teststad",
+          "street_name": "Stationsgatan",
+          "house_number": "",
+          "unit": "",
+          "postal_code": "22222",
+          "locality": "Teststad",
+          "address_kind": "physical",
+          "reference_precision": "street",
+          "latitude": 59.0,
+          "longitude": 18.0,
+          "coordinate_spread_meters": 50,
+          "supporting_record_count": 2,
+          "source_record_id": "street/stationsgatan-north",
+          "source_record_url": "https://www.openstreetmap.org/"
+        },
+        {
+          "document_id": "reference-stationsgatan-south",
+          "country_code": "SE",
+          "raw_address": "",
+          "search_text": "Stationsgatan, 33333 Teststad",
+          "street_name": "Stationsgatan",
+          "house_number": "",
+          "unit": "",
+          "postal_code": "33333",
+          "locality": "Teststad",
+          "address_kind": "physical",
+          "reference_precision": "street",
+          "latitude": 60.0,
+          "longitude": 18.0,
+          "coordinate_spread_meters": 50,
+          "supporting_record_count": 2,
+          "source_record_id": "street/stationsgatan-south",
+          "source_record_url": "https://www.openstreetmap.org/"
+        }
+      ],
+      "expected": {
+        "status": "ambiguous",
+        "precision": "",
+        "strategy": "street_requested_house_missing_postcode_conflict"
+      }
+    },
+    {
       "case_id": "duplicate_buildings_same_site",
       "description": "Duplicate reference records within one site retain site precision.",
       "query": {
@@ -600,6 +736,104 @@
         "source_record_url": ""
       },
       "references": [],
+      "expected": {
+        "status": "unmatched",
+        "precision": "",
+        "strategy": ""
+      }
+    },
+    {
+      "case_id": "swedish_street_abbreviation",
+      "description": "A punctuated Swedish street abbreviation resolves through an auditable libpostal variant.",
+      "query": {
+        "document_id": "query-karl-johansg-80",
+        "country_code": "SE",
+        "raw_address": "Karl Johansg. 80, 41455 Göteborg",
+        "search_text": "Karl Johansg. 80, 41455 Göteborg",
+        "street_name": "Karl Johansg.",
+        "house_number": "80",
+        "unit": "",
+        "postal_code": "41455",
+        "locality": "Göteborg",
+        "address_kind": "physical",
+        "reference_precision": "",
+        "latitude": null,
+        "longitude": null,
+        "coordinate_spread_meters": null,
+        "supporting_record_count": 0,
+        "source_record_id": "query-karl-johansg-80",
+        "source_record_url": ""
+      },
+      "references": [
+        {
+          "document_id": "reference-karl-johansgatan-80",
+          "country_code": "SE",
+          "raw_address": "",
+          "search_text": "Karl Johansgatan 80, 41455 Göteborg",
+          "street_name": "Karl Johansgatan",
+          "house_number": "80",
+          "unit": "",
+          "postal_code": "41455",
+          "locality": "Göteborg",
+          "address_kind": "physical",
+          "reference_precision": "building",
+          "latitude": 57.6943844,
+          "longitude": 11.92017,
+          "coordinate_spread_meters": 0,
+          "supporting_record_count": 1,
+          "source_record_id": "node/1484851478",
+          "source_record_url": "https://www.openstreetmap.org/node/1484851478"
+        }
+      ],
+      "expected": {
+        "status": "matched_corrected",
+        "precision": "building",
+        "strategy": "expanded_street_fuzzy_postcode_house"
+      }
+    },
+    {
+      "case_id": "swedish_street_abbreviation_conflicting_context",
+      "description": "An abbreviation variant cannot bypass conflicting postcode and locality context.",
+      "query": {
+        "document_id": "query-karl-johansg-wrong-context",
+        "country_code": "SE",
+        "raw_address": "Karl Johansg. 80, 11111 Teststad",
+        "search_text": "Karl Johansg. 80, 11111 Teststad",
+        "street_name": "Karl Johansg.",
+        "house_number": "80",
+        "unit": "",
+        "postal_code": "11111",
+        "locality": "Teststad",
+        "address_kind": "physical",
+        "reference_precision": "",
+        "latitude": null,
+        "longitude": null,
+        "coordinate_spread_meters": null,
+        "supporting_record_count": 0,
+        "source_record_id": "query-karl-johansg-wrong-context",
+        "source_record_url": ""
+      },
+      "references": [
+        {
+          "document_id": "reference-karl-johansgatan-wrong-context",
+          "country_code": "SE",
+          "raw_address": "",
+          "search_text": "Karl Johansgatan 80, 41455 Göteborg",
+          "street_name": "Karl Johansgatan",
+          "house_number": "80",
+          "unit": "",
+          "postal_code": "41455",
+          "locality": "Göteborg",
+          "address_kind": "physical",
+          "reference_precision": "building",
+          "latitude": 57.6943844,
+          "longitude": 11.92017,
+          "coordinate_spread_meters": 0,
+          "supporting_record_count": 1,
+          "source_record_id": "node/1484851478-wrong-context",
+          "source_record_url": "https://www.openstreetmap.org/node/1484851478"
+        }
+      ],
       "expected": {
         "status": "unmatched",
         "precision": "",

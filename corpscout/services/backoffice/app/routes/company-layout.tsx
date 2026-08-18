@@ -7,7 +7,11 @@ import {
   FiRegistryBadges,
 } from "~/components/detail/countries/fi-registry";
 import { LangToggle } from "~/components/detail/lang-toggle";
-import { resolveRecordFields, type Lang } from "~/components/detail/language";
+import {
+  formatCompanyStatusLabel,
+  resolveRecordFields,
+  type Lang,
+} from "~/components/detail/language";
 import { Badge } from "~/components/ui/badge";
 import { Button } from "~/components/ui/button";
 import { Skeleton } from "~/components/ui/skeleton";
@@ -138,9 +142,9 @@ export default function CompanyLayout({
   const statusLabel =
     statusValue == null || String(statusValue) === ""
       ? company.active
-        ? "active"
-        : "inactive"
-      : String(statusValue);
+        ? "Active"
+        : "Unknown"
+      : formatCompanyStatusLabel(String(statusValue));
 
   return (
     <div className="mx-auto flex w-full max-w-7xl flex-col gap-5">
