@@ -299,6 +299,10 @@ EXPECTED_MIGRATIONS = (
     "000282_corpscout_se_annual_report_filing_status",
     "000283_corpscout_se_bolagsverket_financial_observation_provenance",
     "000287_corpscout_se_financial_report_signatories",
+    "000288_corpscout_se_company_person_draft",
+    "000289_corpscout_company_person_semantic_hashes",
+    "000290_corpscout_company_person_source_observations_and_role_types",
+    "000291_corpscout_se_company_person",
 )
 
 NOOP_MIGRATIONS = {"000276_noop"}
