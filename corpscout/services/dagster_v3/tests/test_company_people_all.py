@@ -124,7 +124,7 @@ def test_company_people_all_insert_sql_unions_every_people_source() -> None:
 def test_se_xbrl_signatures_select_joins_se_companies_for_company_name() -> None:
     sql = PEOPLE_SOURCES["se_xbrl_signatures"]
 
-    assert "FROM corpscout.se_company_officers AS o" in sql
+    assert "FROM corpscout.se_financial_report_signatories AS o" in sql
     assert (
         "LEFT JOIN corpscout.se_companies AS c ON c.registration_number = o.company_id"
         in sql
@@ -334,7 +334,11 @@ def test_replace_company_people_all_is_atomic_and_reports_counts(monkeypatch) ->
     )
 
     assert client.table_checks == [
-        ("company_people_all", "se_company_officers", "se_companies"),
+        (
+            "company_people_all",
+            "se_financial_report_signatories",
+            "se_companies",
+        ),
     ]
     assert any(statement.startswith("CREATE TABLE") for statement in client.statements)
     assert any(statement.startswith("INSERT INTO") for statement in client.statements)
@@ -430,7 +434,9 @@ def test_company_people_all_clickhouse_asset_is_wired_correctly() -> None:
     assert node.group_name == "company_people_all"
     assert node.pools == set()
     assert node.partitions_def is None
-    assert node.parent_keys == {dg.AssetKey("se_company_officers_clickhouse")}
+    assert node.parent_keys == {
+        dg.AssetKey("se_financial_report_signatories_clickhouse")
+    }
 
 
 def test_company_people_all_schedule_running_daily_cron() -> None:

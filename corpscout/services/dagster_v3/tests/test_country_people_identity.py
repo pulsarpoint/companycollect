@@ -223,7 +223,7 @@ def test_country_people_replace_builds_and_exchanges_all_four_tables(
             COUNTRY_PERSON_IDENTIFIER_TABLE,
             COUNTRY_PERSON_TABLE,
             COUNTRY_PERSON_CORRECTION_TABLE,
-            "se_company_officers",
+            "se_financial_report_signatories",
             "se_companies",
         )
     ]

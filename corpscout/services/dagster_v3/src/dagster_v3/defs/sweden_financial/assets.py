@@ -37,9 +37,9 @@ from dagster_v3.defs.sweden_financial.metrics import (
     QUALIFIED_SE_FINANCIAL_METRICS_TABLE,
     replace_sweden_financial_metrics_clickhouse,
 )
-from dagster_v3.defs.sweden_financial.officers import (
-    QUALIFIED_SE_COMPANY_OFFICERS_TABLE,
-    replace_se_company_officers_clickhouse,
+from dagster_v3.defs.sweden_financial.signatories import (
+    QUALIFIED_SE_FINANCIAL_REPORT_SIGNATORIES_TABLE,
+    replace_se_financial_report_signatories_clickhouse,
 )
 from dagster_v3.defs.sweden_financial.audits import (
     QUALIFIED_SE_COMPANY_AUDITS_TABLE,
@@ -686,18 +686,18 @@ def se_financial_history_clickhouse(
     deps=SWEDEN_FINANCIAL_FACTS_EXPORT_DEPS,
     group_name=GROUP_NAME,
     kinds={"python", "clickhouse", "xbrl"},
-    metadata={"table": QUALIFIED_SE_COMPANY_OFFICERS_TABLE},
+    metadata={"table": QUALIFIED_SE_FINANCIAL_REPORT_SIGNATORIES_TABLE},
     description=(
-        "Extracts Swedish company officers (board members, CEO, auditors) "
-        "from XBRL signature-block facts in se_financial_facts."
+        "Extracts people reported in Swedish financial-report signature, "
+        "certification, and auditor sections from se_financial_facts."
     ),
 )
-def se_company_officers_clickhouse(
+def se_financial_report_signatories_clickhouse(
     context: dg.AssetExecutionContext,
     config: SwedenFinancialClickhouseExportConfig,
     clickhouse: ClickhouseResource,
 ) -> dg.MaterializeResult:
-    metadata = replace_se_company_officers_clickhouse(
+    metadata = replace_se_financial_report_signatories_clickhouse(
         clickhouse=clickhouse,
         source_run_id=context.run_id,
         resolved_at=datetime.now(UTC),
@@ -876,7 +876,7 @@ SWEDEN_FINANCIAL_CLICKHOUSE_SELECTION = dg.AssetSelection.assets(
     "sweden_financial_metrics_clickhouse",
     "se_bolagsverket_financial_observations_clickhouse",
     "se_financial_history_clickhouse",
-    "se_company_officers_clickhouse",
+    "se_financial_report_signatories_clickhouse",
     "se_company_audits_clickhouse",
     "sweden_financial_company_source_records_clickhouse",
 )
@@ -950,7 +950,7 @@ defs = dg.Definitions(
         sweden_financial_metrics_clickhouse,
         se_bolagsverket_financial_observations_clickhouse,
         se_financial_history_clickhouse,
-        se_company_officers_clickhouse,
+        se_financial_report_signatories_clickhouse,
         se_company_audits_clickhouse,
         se_financial_facts_concepts,
         se_financial_taxonomy_concepts,

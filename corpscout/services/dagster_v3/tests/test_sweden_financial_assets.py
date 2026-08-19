@@ -154,7 +154,7 @@ def test_sweden_financial_backfill_and_current_assets_are_separate() -> None:
         "sweden_financial_metrics_clickhouse",
         "se_financial_history_clickhouse",
         "se_bolagsverket_financial_observations_clickhouse",
-        "se_company_officers_clickhouse",
+        "se_financial_report_signatories_clickhouse",
         "se_company_audits_clickhouse",
         "sweden_financial_company_source_records_clickhouse",
     }

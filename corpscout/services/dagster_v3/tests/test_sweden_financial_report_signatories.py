@@ -8,18 +8,18 @@ import dagster as dg
 import pytest
 from dagster_clickhouse import ClickhouseResource
 
-from dagster_v3.defs.sweden_financial.officers import (
-    QUALIFIED_SE_COMPANY_OFFICERS_TABLE,
-    SE_COMPANY_OFFICERS_COLUMNS,
-    SE_COMPANY_OFFICERS_TABLE,
-    _officers_quality_sql,
-    build_officers_insert_sql,
-    replace_se_company_officers_clickhouse,
+from dagster_v3.defs.sweden_financial.signatories import (
+    QUALIFIED_SE_FINANCIAL_REPORT_SIGNATORIES_TABLE,
+    SE_FINANCIAL_REPORT_SIGNATORIES_COLUMNS,
+    SE_FINANCIAL_REPORT_SIGNATORIES_TABLE,
+    _signatories_quality_sql,
+    build_signatories_insert_sql,
+    replace_se_financial_report_signatories_clickhouse,
 )
 
 MIGRATIONS_DIR = Path(__file__).resolve().parents[3] / "clickhouse" / "migrations"
 
-_STAGE_TABLE = "`corpscout`.`_tmp_se_company_officers_test`"
+_STAGE_TABLE = "`corpscout`.`_tmp_se_financial_report_signatories_test`"
 
 
 def _migration_sql(file_name: str) -> str:
@@ -27,13 +27,16 @@ def _migration_sql(file_name: str) -> str:
 
 
 def _built_sql() -> str:
-    return build_officers_insert_sql(_STAGE_TABLE)
+    return build_signatories_insert_sql(_STAGE_TABLE)
 
 
-def test_officers_table_and_columns_constants() -> None:
-    assert SE_COMPANY_OFFICERS_TABLE == "se_company_officers"
-    assert QUALIFIED_SE_COMPANY_OFFICERS_TABLE == "corpscout.se_company_officers"
-    assert SE_COMPANY_OFFICERS_COLUMNS == (
+def test_signatories_table_and_columns_constants() -> None:
+    assert SE_FINANCIAL_REPORT_SIGNATORIES_TABLE == "se_financial_report_signatories"
+    assert (
+        QUALIFIED_SE_FINANCIAL_REPORT_SIGNATORIES_TABLE
+        == "corpscout.se_financial_report_signatories"
+    )
+    assert SE_FINANCIAL_REPORT_SIGNATORIES_COLUMNS == (
         "company_id",
         "fiscal_year",
         "statement_key",
@@ -47,9 +50,9 @@ def test_officers_table_and_columns_constants() -> None:
     )
 
 
-def test_migration_000143_covers_officers_columns_in_order() -> None:
+def test_migration_000143_covers_signatory_columns_in_order() -> None:
     """Contract test (mirrors history.py's migration-column contract): every
-    column in ``SE_COMPANY_OFFICERS_COLUMNS`` must appear, in order, in
+    column in ``SE_FINANCIAL_REPORT_SIGNATORIES_COLUMNS`` must appear, in order, in
     migration 000143's up SQL -- pins the Python columns tuple to the
     ClickHouse schema so the two can never silently drift apart.
     """
@@ -60,12 +63,12 @@ def test_migration_000143_covers_officers_columns_in_order() -> None:
     assert "CREATE TABLE IF NOT EXISTS corpscout.se_company_officers" in up_sql
 
     last_index = -1
-    for column_name in SE_COMPANY_OFFICERS_COLUMNS:
+    for column_name in SE_FINANCIAL_REPORT_SIGNATORIES_COLUMNS:
         marker = f"    {column_name} "
         index = up_sql.index(marker)
         assert index > last_index, (
             f"column {column_name!r} is out of order relative to "
-            "SE_COMPANY_OFFICERS_COLUMNS in the migration file"
+            "SE_FINANCIAL_REPORT_SIGNATORIES_COLUMNS in the migration file"
         )
         last_index = index
 
@@ -81,16 +84,16 @@ def test_migration_000143_covers_officers_columns_in_order() -> None:
     assert "DROP TABLE IF EXISTS corpscout.se_company_officers" in down_sql
 
 
-def test_officers_insert_sql_targets_stage_table_with_explicit_columns() -> None:
+def test_signatories_insert_sql_targets_stage_table_with_explicit_columns() -> None:
     sql = _built_sql()
 
     assert sql.startswith(f"INSERT INTO {_STAGE_TABLE} (")
     columns_block = sql[: sql.index(")\nWITH")]
-    for column_name in SE_COMPANY_OFFICERS_COLUMNS:
+    for column_name in SE_FINANCIAL_REPORT_SIGNATORIES_COLUMNS:
         assert column_name in columns_block
 
 
-def test_officers_sql_contains_the_four_concept_triples() -> None:
+def test_signatories_sql_contains_the_four_concept_triples() -> None:
     sql = _built_sql()
 
     for first, last, role in (
@@ -120,7 +123,7 @@ def test_officers_sql_contains_the_four_concept_triples() -> None:
         assert f"'{role}'" in sql
 
 
-def test_officers_sql_running_sum_person_grouping() -> None:
+def test_signatories_sql_running_sum_person_grouping() -> None:
     sql = _built_sql()
 
     assert "sum(is_first_name) OVER (" in sql
@@ -136,7 +139,7 @@ def test_officers_sql_running_sum_person_grouping() -> None:
 
 
 def _simulate_person_grouping(rows: list[dict[str, object]]) -> list[dict[str, str]]:
-    """Pure-Python mirror of ``build_officers_insert_sql``'s running-sum
+    """Pure-Python mirror of ``build_signatories_insert_sql``'s running-sum
     person grouping (``sum(is_first_name) OVER (PARTITION BY statement_key,
     signatory_kind ORDER BY fact_ordinal ...) AS person_seq``, then
     ``GROUP BY ... person_seq`` collapsing via ``anyIf``), reimplemented
@@ -239,7 +242,7 @@ def test_person_grouping_simulation_separates_board_signature_blocks_cleanly() -
     }
 
 
-def test_officers_sql_signatory_kind_classification() -> None:
+def test_signatories_sql_signatory_kind_classification() -> None:
     sql = _built_sql()
 
     assert "LIKE 'UnderskriftRevisionsberattelseRevisor%%'" in sql
@@ -249,7 +252,7 @@ def test_officers_sql_signatory_kind_classification() -> None:
     assert "'board_signature'" in sql
 
 
-def test_officers_sql_role_kind_mapping_covers_expected_vocabulary() -> None:
+def test_signatories_sql_role_kind_mapping_covers_expected_vocabulary() -> None:
     sql = _built_sql()
 
     for role_kind in (
@@ -270,14 +273,14 @@ def test_officers_sql_role_kind_mapping_covers_expected_vocabulary() -> None:
     assert "role_original = ''" in sql
 
 
-def test_officers_quality_sql_counts_null_fiscal_year_rows() -> None:
+def test_signatories_quality_sql_counts_null_fiscal_year_rows() -> None:
     """Locks in the module docstring's "Null fiscal year handling" section:
     rows with no resolved ``report_period_end`` get ``fiscal_year = 0`` and
     are KEPT (not filtered, unlike ``history.py``), so the quality metadata
     must surface how many rows carry that placeholder -- alongside
     ``unknown_role_count``, following the exact same ``countIf`` pattern.
     """
-    sql = _officers_quality_sql(_STAGE_TABLE)
+    sql = _signatories_quality_sql(_STAGE_TABLE)
 
     assert sql.startswith("SELECT")
     assert f"FROM {_STAGE_TABLE}" in sql
@@ -285,7 +288,7 @@ def test_officers_quality_sql_counts_null_fiscal_year_rows() -> None:
     assert "countIf(fiscal_year = 0) AS null_fiscal_year_count" in sql
 
 
-def test_officers_sql_empty_role_rows_are_kept_not_dropped() -> None:
+def test_signatories_sql_empty_role_rows_are_kept_not_dropped() -> None:
     # Real filings sometimes omit the role facts entirely while still
     # carrying a name -- HAVING only requires a name, not a role.
     sql = _built_sql()
@@ -293,9 +296,9 @@ def test_officers_sql_empty_role_rows_are_kept_not_dropped() -> None:
     assert "HAVING first_name != '' OR last_name != ''" in sql
 
 
-def test_officers_sql_survives_percent_formatting_with_driver_params() -> None:
+def test_signatories_sql_survives_percent_formatting_with_driver_params() -> None:
     """Regression test mirroring metrics.py's %-format round-trip check:
-    ``replace_se_company_officers_clickhouse`` calls
+    ``replace_se_financial_report_signatories_clickhouse`` calls
     ``client.execute(sql, {...})`` with a params dict (to carry
     ``resolved_at``), so clickhouse_driver Python-%-formats the whole query
     text against that dict. Every doubled ``%%`` LIKE/ILIKE literal must
@@ -317,7 +320,7 @@ def test_officers_sql_survives_percent_formatting_with_driver_params() -> None:
     assert "%%" not in formatted
 
 
-def test_officers_sql_has_no_bare_percent_placeholder_leaks() -> None:
+def test_signatories_sql_has_no_bare_percent_placeholder_leaks() -> None:
     # Only resolved_at is a driver placeholder; no other %(name)s markers.
     sql = _built_sql()
 
@@ -325,7 +328,7 @@ def test_officers_sql_has_no_bare_percent_placeholder_leaks() -> None:
     assert placeholders == {"%(resolved_at)s"}
 
 
-class _FakeOfficersClickHouseClient:
+class _FakeSignatoriesClickHouseClient:
     def __init__(
         self,
         *,
@@ -366,14 +369,14 @@ class _FakeOfficersClickHouseClient:
 
 
 def _patch_clickhouse(
-    monkeypatch, client: _FakeOfficersClickHouseClient
+    monkeypatch, client: _FakeSignatoriesClickHouseClient
 ) -> ClickhouseResource:
     resource = ClickhouseResource(host="localhost")
 
     @contextmanager
     def fake_get_connection(
         self: ClickhouseResource,
-    ) -> Iterator[_FakeOfficersClickHouseClient]:
+    ) -> Iterator[_FakeSignatoriesClickHouseClient]:
         yield client
 
     monkeypatch.setattr(ClickhouseResource, "get_connection", fake_get_connection)
@@ -383,18 +386,18 @@ def _patch_clickhouse(
 _DEFAULT_QUALITY_ROW = (500, 300, 250, 350, 100, 50, 20, 15)
 
 
-def test_replace_se_company_officers_is_atomic_and_reports_counts(monkeypatch) -> None:
-    client = _FakeOfficersClickHouseClient(quality_row=_DEFAULT_QUALITY_ROW)
+def test_replace_signatories_is_atomic_and_reports_counts(monkeypatch) -> None:
+    client = _FakeSignatoriesClickHouseClient(quality_row=_DEFAULT_QUALITY_ROW)
     resource = _patch_clickhouse(monkeypatch, client)
 
-    metadata = replace_se_company_officers_clickhouse(
+    metadata = replace_se_financial_report_signatories_clickhouse(
         clickhouse=resource,
-        source_run_id="officers-run",
+        source_run_id="signatories-run",
         resolved_at=datetime(2026, 7, 19, 15, 0, tzinfo=UTC),
     )
 
     assert client.table_checks == [
-        ("se_company_officers", "se_financial_facts"),
+        ("se_financial_report_signatories", "se_financial_facts"),
     ]
     assert any(statement.startswith("CREATE TABLE") for statement in client.statements)
     assert any(statement.startswith("INSERT INTO") for statement in client.statements)
@@ -403,7 +406,7 @@ def test_replace_se_company_officers_is_atomic_and_reports_counts(monkeypatch) -
     )
     assert client.statements[-1].startswith("DROP TABLE")
 
-    assert client.insert_parameters["source_run_id"] == "officers-run"
+    assert client.insert_parameters["source_run_id"] == "signatories-run"
     assert client.insert_parameters["resolved_at"] == datetime(
         2026, 7, 19, 15, 0, tzinfo=UTC
     )
@@ -416,20 +419,20 @@ def test_replace_se_company_officers_is_atomic_and_reports_counts(monkeypatch) -
     assert metadata["auditor_signatory_count"] == 50
     assert metadata["unknown_role_count"] == 20
     assert metadata["null_fiscal_year_count"] == 15
-    assert metadata["table"] == QUALIFIED_SE_COMPANY_OFFICERS_TABLE
-    assert metadata["source_run_id"] == "officers-run"
+    assert metadata["table"] == QUALIFIED_SE_FINANCIAL_REPORT_SIGNATORIES_TABLE
+    assert metadata["source_run_id"] == "signatories-run"
 
 
-def test_replace_se_company_officers_refuses_to_swap_an_empty_stage(
+def test_replace_signatories_refuses_to_swap_an_empty_stage(
     monkeypatch,
 ) -> None:
-    client = _FakeOfficersClickHouseClient(quality_row=(0, 0, 0, 0, 0, 0, 0, 0))
+    client = _FakeSignatoriesClickHouseClient(quality_row=(0, 0, 0, 0, 0, 0, 0, 0))
     resource = _patch_clickhouse(monkeypatch, client)
 
     with pytest.raises(ValueError, match="produced no rows"):
-        replace_se_company_officers_clickhouse(
+        replace_se_financial_report_signatories_clickhouse(
             clickhouse=resource,
-            source_run_id="officers-run",
+            source_run_id="signatories-run",
             resolved_at=datetime(2026, 7, 19, 15, 0, tzinfo=UTC),
         )
 
@@ -440,17 +443,17 @@ def test_replace_se_company_officers_refuses_to_swap_an_empty_stage(
     assert client.statements[-1].startswith("DROP TABLE")
 
 
-def test_replace_se_company_officers_refuses_shrink_below_half(monkeypatch) -> None:
+def test_replace_signatories_refuses_shrink_below_half(monkeypatch) -> None:
     quality_row = (49, *_DEFAULT_QUALITY_ROW[1:])
-    client = _FakeOfficersClickHouseClient(
+    client = _FakeSignatoriesClickHouseClient(
         quality_row=quality_row, existing_row_count=100
     )
     resource = _patch_clickhouse(monkeypatch, client)
 
     with pytest.raises(ValueError, match="Refusing to replace ClickHouse table"):
-        replace_se_company_officers_clickhouse(
+        replace_se_financial_report_signatories_clickhouse(
             clickhouse=resource,
-            source_run_id="officers-run",
+            source_run_id="signatories-run",
             resolved_at=datetime(2026, 7, 19, 15, 0, tzinfo=UTC),
         )
 
@@ -460,16 +463,16 @@ def test_replace_se_company_officers_refuses_shrink_below_half(monkeypatch) -> N
     assert client.statements[-1].startswith("DROP TABLE")
 
 
-def test_replace_se_company_officers_allow_shrink_overrides_guard(monkeypatch) -> None:
+def test_replace_signatories_allow_shrink_overrides_guard(monkeypatch) -> None:
     quality_row = (1, *_DEFAULT_QUALITY_ROW[1:])
-    client = _FakeOfficersClickHouseClient(
+    client = _FakeSignatoriesClickHouseClient(
         quality_row=quality_row, existing_row_count=100
     )
     resource = _patch_clickhouse(monkeypatch, client)
 
-    metadata = replace_se_company_officers_clickhouse(
+    metadata = replace_se_financial_report_signatories_clickhouse(
         clickhouse=resource,
-        source_run_id="officers-run",
+        source_run_id="signatories-run",
         resolved_at=datetime(2026, 7, 19, 15, 0, tzinfo=UTC),
         allow_shrink=True,
     )
@@ -480,12 +483,14 @@ def test_replace_se_company_officers_allow_shrink_overrides_guard(monkeypatch) -
     )
 
 
-def test_se_company_officers_clickhouse_asset_is_wired_correctly() -> None:
+def test_se_financial_report_signatories_clickhouse_asset_is_wired_correctly() -> None:
     from dagster_v3.definitions import defs as load_defs
 
     repo = load_defs().get_repository_def()
 
-    node = repo.asset_graph.get(dg.AssetKey("se_company_officers_clickhouse"))
+    node = repo.asset_graph.get(
+        dg.AssetKey("se_financial_report_signatories_clickhouse")
+    )
     assert node.group_name == "sweden_financial"
     assert node.pools == set()
     assert node.partitions_def is None
@@ -494,7 +499,7 @@ def test_se_company_officers_clickhouse_asset_is_wired_correctly() -> None:
         dg.AssetKey("sweden_financial_current_facts_clickhouse"),
     }
 
-    # The officers table should refresh whenever metrics/history refresh: it
+    # The signatories table should refresh whenever the derived wave refreshes: it
     # lives in the same (currently unscheduled, manually/backfill-triggered)
     # clickhouse job selection as reports/facts/metrics/history.
     clickhouse_job_asset_keys = {
@@ -503,4 +508,4 @@ def test_se_company_officers_clickhouse_asset_is_wired_correctly() -> None:
             "sweden_financial_clickhouse_job"
         ).asset_layer.executable_asset_keys
     }
-    assert "se_company_officers_clickhouse" in clickhouse_job_asset_keys
+    assert "se_financial_report_signatories_clickhouse" in clickhouse_job_asset_keys

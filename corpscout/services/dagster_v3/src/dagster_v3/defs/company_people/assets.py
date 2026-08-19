@@ -46,15 +46,16 @@ COMPANY_PEOPLE_DATABASE = "corpscout"
 GROUP_NAME = "company_people_all"
 
 # Source tables this asset reads from, asserted to exist before the build
-# starts (mirrors officers.py's assert_clickhouse_tables_exist call). Kept
+# starts (mirrors signatories.py's assert_clickhouse_tables_exist call). Kept
 # as a tuple rather than derived from PEOPLE_SOURCES because a source's
 # underlying table names aren't parseable out of its SELECT text -- add the
 # new source's table(s) here alongside its PEOPLE_SOURCES entry. Includes
-# both tables the se_xbrl_signatures SELECT reads from -- se_company_officers
+# both tables the se_xbrl_signatures SELECT reads from --
+# se_financial_report_signatories
 # (the FROM) and se_companies (the LEFT JOIN for company_name) -- so a
 # missing join table fails this module's own clear pre-flight error instead
 # of a raw ClickHouse "table doesn't exist" error surfacing mid-INSERT.
-_REQUIRED_SOURCE_TABLES = ("se_company_officers", "se_companies")
+_REQUIRED_SOURCE_TABLES = ("se_financial_report_signatories", "se_companies")
 
 _QUALITY_COLUMNS = (
     "row_count",
@@ -82,7 +83,7 @@ def build_company_people_all_insert_sql(qualified_stage_table: str) -> str:
 
 def _company_people_all_quality_sql(qualified_stage_table: str) -> str:
     """Cheap post-INSERT quality SELECT against the stage table itself
-    (mirrors ``officers.py``'s ``_officers_quality_sql``): total rows,
+    (mirrors ``signatories.py``'s ``_signatories_quality_sql``): total rows,
     distinct countries, distinct companies, and distinct sources -- a
     second source appearing (or an existing one silently vanishing) shows
     up in ``source_count`` without needing a dedicated per-source check.
@@ -121,7 +122,8 @@ def replace_company_people_all_clickhouse(
     """Atomically rebuild ``company_people_all`` in ClickHouse.
 
     See the module docstring for the stage + ``EXCHANGE TABLES`` + guards
-    shape, identical to ``replace_se_company_officers_clickhouse`` (Task 1).
+    shape, identical to
+    ``replace_se_financial_report_signatories_clickhouse``.
     """
     assert_clickhouse_tables_exist(
         clickhouse,
@@ -203,7 +205,7 @@ class CompanyPeopleClickhouseExportConfig(dg.Config):
 
 @dg.asset(
     name="company_people_all_clickhouse",
-    deps=["se_company_officers_clickhouse"],
+    deps=["se_financial_report_signatories_clickhouse"],
     group_name=GROUP_NAME,
     # eager() only fires once the default automation-condition sensor is
     # turned on in the Dagster UI -- not enabled by default in this repo.

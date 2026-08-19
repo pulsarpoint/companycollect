@@ -236,7 +236,7 @@ def build_audits_insert_sql(qualified_stage_table: str) -> str:
     corpscout.se_company_audits`` first, executes this INSERT with a params
     dict carrying ``resolved_at``, validates row counts, then ``EXCHANGE
     TABLES`` with the live table -- the same stage-then-swap pattern as
-    ``build_officers_insert_sql``.
+    ``build_signatories_insert_sql``.
     """
     columns = ",\n    ".join(SE_COMPANY_AUDITS_COLUMNS)
     audit_firm_concepts = ",\n              ".join(
@@ -350,7 +350,7 @@ def replace_se_company_audits_clickhouse(
 ) -> dict[str, int | str | None]:
     """Atomically rebuild ``se_company_audits`` in ClickHouse.
 
-    Mirrors ``replace_se_company_officers_clickhouse``'s stage + ``EXCHANGE
+    Mirrors ``replace_se_financial_report_signatories_clickhouse``'s stage + ``EXCHANGE
     TABLES`` pattern: a uuid-suffixed stage table is created as a
     schema-only copy of the live target, the built audit rows are INSERTed
     into it, a non-empty guard runs (refusing to ever replace a populated

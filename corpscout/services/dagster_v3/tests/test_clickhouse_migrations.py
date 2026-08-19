@@ -298,6 +298,7 @@ EXPECTED_MIGRATIONS = (
     "000281_corpscout_se_company_presentation_fields",
     "000282_corpscout_se_annual_report_filing_status",
     "000283_corpscout_se_bolagsverket_financial_observation_provenance",
+    "000287_corpscout_se_financial_report_signatories",
 )
 
 NOOP_MIGRATIONS = {"000276_noop"}
@@ -3302,6 +3303,20 @@ def test_sweden_annual_report_filing_status_is_evidence_gated() -> None:
         "DROP TABLE IF EXISTS corpscout.se_annual_report_filing_observations"
         in down_sql
     )
+
+
+def test_sweden_financial_report_signatories_renames_the_existing_table() -> None:
+    sql = _migration_sql(
+        "000287_corpscout_se_financial_report_signatories.up.sql"
+    )
+    down_sql = _migration_sql(
+        "000287_corpscout_se_financial_report_signatories.down.sql"
+    )
+
+    assert "RENAME TABLE corpscout.se_company_officers" in sql
+    assert "TO corpscout.se_financial_report_signatories" in sql
+    assert "RENAME TABLE corpscout.se_financial_report_signatories" in down_sql
+    assert "TO corpscout.se_company_officers" in down_sql
 
 
 def _migration_sql(file_name: str) -> str:

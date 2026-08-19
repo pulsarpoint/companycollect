@@ -321,7 +321,7 @@ reports/facts export pair), `sweden_financial_current_clickhouse_job` (the
 current-weekly export pair), and `sweden_financial_clickhouse_job` (the derived
 wave: `sweden_financial_metrics_clickhouse`, `se_financial_history_clickhouse`,
 `se_bolagsverket_financial_observations_clickhouse`,
-`se_company_officers_clickhouse`, `se_company_audits_clickhouse` — full rebuilds
+`se_financial_report_signatories_clickhouse`, `se_company_audits_clickhouse` — full rebuilds
 from ClickHouse facts, which stays correct for derivations and keeps the shrink
 guard). Run exports after the matching parsed DuckDB partitions are materialized,
 then the derived wave.

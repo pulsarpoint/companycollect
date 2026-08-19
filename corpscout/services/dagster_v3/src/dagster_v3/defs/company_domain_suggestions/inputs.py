@@ -79,7 +79,7 @@ WHERE registered_as IS NOT NULL
 
 OFFICERS_SQL = """
 SELECT company_id, first_name, last_name, role_kind
-FROM corpscout.se_company_officers
+FROM corpscout.se_financial_report_signatories
 WHERE company_id != ''
   AND first_name != ''
   AND last_name != ''

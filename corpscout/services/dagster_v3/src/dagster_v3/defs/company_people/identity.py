@@ -159,7 +159,7 @@ SELECT
     '' AS identifier_value,
     o.statement_key AS source_statement_key,
     %(resolved_at)s AS resolved_at
-FROM corpscout.se_company_officers AS o
+FROM corpscout.se_financial_report_signatories AS o
 LEFT JOIN corpscout.se_companies AS c ON c.registration_number = o.company_id
 WHERE trim(concat(o.first_name, ' ', o.last_name)) != ''
 GROUP BY
@@ -413,7 +413,7 @@ def replace_country_people_identity_clickhouse(
         tables=(
             *_TARGET_TABLES,
             COUNTRY_PERSON_CORRECTION_TABLE,
-            "se_company_officers",
+            "se_financial_report_signatories",
             "se_companies",
         ),
     )
@@ -546,7 +546,7 @@ class CountryPeopleIdentityConfig(dg.Config):
     specs=[
         dg.AssetSpec(
             "country_person_observations_clickhouse",
-            deps=[dg.AssetKey("se_company_officers_clickhouse")],
+            deps=[dg.AssetKey("se_financial_report_signatories_clickhouse")],
             group_name=GROUP_NAME,
             kinds={"clickhouse"},
             metadata={

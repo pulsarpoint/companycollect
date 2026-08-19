@@ -20,7 +20,7 @@ sources:
       - name: wikidata_company_source_snapshots
       - name: country_person_observation
       - name: country_person_match
-      - name: se_company_officers
+      - name: se_financial_report_signatories
       - name: company_description_observations
       - name: esef_document_people
       - name: esef_document_contact_candidates

@@ -114,7 +114,7 @@ def sweden_company_domain_suggestions_duckdb(
         tables=(
             tables.FEATURES_TABLE,
             "se_companies",
-            "se_company_officers",
+            "se_financial_report_signatories",
             "se_industries",
             "gleif_lei_records",
             "commoncrawl_page_jsonld",

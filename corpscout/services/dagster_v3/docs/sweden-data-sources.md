@@ -14,7 +14,7 @@ module's own design doc — this is the map, not the spec:
 | Module | Publisher / dataset | Acquisition | Cadence | ClickHouse tables (rows @ 2026-07-20) | Auth / license |
 |---|---|---|---|---|---|
 | `sweden_company` | Bolagsverket high-value datasets: SCB/FDB company bulk + Bolagsverket legal-register bulk (two full ZIP snapshots) | automated full snapshot | source refreshes ~weekly; schedule Mon 06:15 (STOPPED by default, enable in UI) | `se_companies` 3.41M, `se_company_addresses` 4.40M, `se_industries` 2.45M | none / open data |
-| `sweden_financial` | Bolagsverket årsredovisningar bulk ZIPs (inline-XBRL annual reports, archive years 2020–2026) | automated; backfill by year partition + weekly current refresh | weekly Sat 06:45 (RUNNING) | `se_financial_reports` 2.21M, `se_financial_facts` 290.7M, `se_financial_metrics` 1.97M, `se_financial_history` 3.01M, `se_company_officers` 5.43M, `se_company_audits` 396k | none / open data |
+| `sweden_financial` | Bolagsverket årsredovisningar bulk ZIPs (inline-XBRL annual reports, archive years 2020–2026) | automated; backfill by year partition + weekly current refresh | weekly Sat 06:45 (RUNNING) | `se_financial_reports` 2.21M, `se_financial_facts` 290.7M, `se_financial_metrics` 1.97M, `se_financial_history` 3.01M, `se_financial_report_signatories` 5.43M, `se_company_audits` 396k | none / open data |
 | cross-source consumers | — | derived from the tables above | daily / with financial refresh | `companies_all` (SE included), `company_people_all` 5.26M SE rows, `se_company_financials_latest` 570k | — |
 
 Entity key everywhere: the 10-digit **organisationsnummer** (`company_id` /
@@ -154,7 +154,7 @@ Chain (year-partitioned backfill + non-partitioned weekly current refresh):
      is how the backoffice shows more fiscal years than there are filings.
      Cross-checked at ~91% agreement where a comparative overlaps a real
      filing.
-   - **`se_company_officers`** — people reconstructed from the signature
+   - **`se_financial_report_signatories`** — people reconstructed from the signature
      blocks (`UnderskriftHandling*` / `Arsredovisning*` /
      `Faststallelseintyg*` concept triples): 5.43M rows ≈ 3.10M board /
      2.03M certification signers / 0.30M auditors across ~570k companies.

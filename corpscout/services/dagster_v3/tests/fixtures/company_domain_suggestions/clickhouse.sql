@@ -8,7 +8,7 @@ CREATE TABLE corpscout.se_companies
 ENGINE = ReplacingMergeTree
 ORDER BY company_id;
 
-CREATE TABLE corpscout.se_company_officers
+CREATE TABLE corpscout.se_financial_report_signatories
 (
     company_id String,
     first_name String,
@@ -79,7 +79,7 @@ INSERT INTO corpscout.se_companies VALUES
     ('5590000004', 'Blue River Technology AB'),
     ('5590000005', 'Northern Security Solutions AB');
 
-INSERT INTO corpscout.se_company_officers VALUES
+INSERT INTO corpscout.se_financial_report_signatories VALUES
     ('5590000000', 'Alice', 'Distinctive', 'board');
 
 INSERT INTO corpscout.se_industries VALUES

@@ -1,0 +1,2 @@
+RENAME TABLE corpscout.se_financial_report_signatories
+TO corpscout.se_company_officers;

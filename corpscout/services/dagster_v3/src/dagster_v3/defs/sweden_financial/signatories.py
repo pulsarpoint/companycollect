@@ -1,4 +1,4 @@
-"""Extracts Swedish company officers from XBRL signature-block facts.
+"""Extracts Swedish financial-report signatories from XBRL facts.
 
 Swedish annual reports embed a mandatory signature block -- board members,
 CEO, and (separately) the auditor -- as inline-XBRL facts under a handful of
@@ -46,7 +46,8 @@ the alias by substitution with no error, so no outer-SELECT wrapper is
 needed here.
 
 Percent-sign contract: this INSERT is executed via
-``client.execute(sql, {...})`` in ``replace_se_company_officers_clickhouse``
+``client.execute(sql, {...})`` in
+``replace_se_financial_report_signatories_clickhouse``
 (a params dict IS passed, to carry ``resolved_at``), so clickhouse_driver
 Python-%-formats the whole query text against that dict before sending it.
 Every literal ``%`` in the ``LIKE``/``ILIKE`` patterns below is therefore
@@ -56,7 +57,7 @@ doubled while ``history.py``'s (executed with NO params dict) are not.
 Grouping-window safety (why sharing one partition is safe): ``UnderskriftHandling*``
 and ``UnderskriftArsredovisningForetradare*`` BOTH classify to
 ``signatory_kind = 'board_signature'`` (see the ``multiIf`` in
-``build_officers_insert_sql``), so they share a single window partition --
+``build_signatories_insert_sql``), so they share a single window partition --
 ``PARTITION BY statement_key, signatory_kind ORDER BY fact_ordinal`` folds
 both families' facts into one running-sum sequence per statement.
 ``fact_ordinal`` is genuine document order (``parsing.py`` enumerates facts
@@ -82,13 +83,14 @@ against; the running sum has no way to tell which family a row belongs to
 within the shared partition, so if interleaving were ever observed it would
 misattribute a name/role from one family onto a person from the other. See
 ``test_person_grouping_simulation_separates_board_signature_blocks_cleanly``
-in ``tests/test_sweden_financial_officers.py`` for a pure-Python simulation
+in ``tests/test_sweden_financial_report_signatories.py`` for a pure-Python
+simulation
 of this exact running-sum + collapse semantics against a fabricated
 cross-family (but block-separated) fact sequence.
 
 Null fiscal year handling (rows are KEPT, not filtered): ``fiscal_year`` is
 ``toInt32(coalesce(toYear(report_period_end), 0))`` -- a statement with no
-resolved ``report_period_end`` gets ``fiscal_year = 0`` and its officer rows
+resolved ``report_period_end`` gets ``fiscal_year = 0`` and its signatory rows
 are still inserted. This is a deliberate divergence from ``history.py``,
 which filters ``reports.fiscal_year IS NOT NULL`` in its ``eligible_reports``
 CTE: history rows are inherently year-keyed (a comparative-year figure with
@@ -98,7 +100,7 @@ would silently discard a name/role that a consumer might still want (e.g.
 "who has ever signed for this company", independent of year). Downstream
 consumers that need a real fiscal year filter ``fiscal_year > 0`` themselves;
 the ``null_fiscal_year_count`` quality-metadata column (see
-``_officers_quality_sql``) surfaces how many rows carry the placeholder
+``_signatories_quality_sql``) surfaces how many rows carry the placeholder
 ``0`` so a materialization can be monitored for an unexpected spike.
 """
 
@@ -117,14 +119,14 @@ from dagster_v3.defs.sweden_financial.clickhouse import (
 
 SWEDEN_FINANCIAL_DATABASE = "corpscout"
 SE_FINANCIAL_FACTS_TABLE = "se_financial_facts"
-SE_COMPANY_OFFICERS_TABLE = "se_company_officers"
-QUALIFIED_SE_COMPANY_OFFICERS_TABLE = (
-    f"{SWEDEN_FINANCIAL_DATABASE}.{SE_COMPANY_OFFICERS_TABLE}"
+SE_FINANCIAL_REPORT_SIGNATORIES_TABLE = "se_financial_report_signatories"
+QUALIFIED_SE_FINANCIAL_REPORT_SIGNATORIES_TABLE = (
+    f"{SWEDEN_FINANCIAL_DATABASE}.{SE_FINANCIAL_REPORT_SIGNATORIES_TABLE}"
 )
 
 # Schema order -- MUST match migration 000143's column order exactly (a
 # contract test greps the migration file for each of these).
-SE_COMPANY_OFFICERS_COLUMNS = (
+SE_FINANCIAL_REPORT_SIGNATORIES_COLUMNS = (
     "company_id",
     "fiscal_year",
     "statement_key",
@@ -181,18 +183,18 @@ _QUALITY_COLUMNS = (
 )
 
 
-def build_officers_insert_sql(qualified_stage_table: str) -> str:
-    """Return the full ``INSERT INTO <stage> (<columns>) ...`` officers SQL.
+def build_signatories_insert_sql(qualified_stage_table: str) -> str:
+    """Return the full ``INSERT INTO <stage> (<columns>) ...`` signatory SQL.
 
-    The caller (``replace_se_company_officers_clickhouse``, below) creates
+    The caller (``replace_se_financial_report_signatories_clickhouse``, below) creates
     ``qualified_stage_table`` as ``CREATE TABLE ... AS
-    corpscout.se_company_officers`` first, executes this INSERT with a
+    corpscout.se_financial_report_signatories`` first, executes this INSERT with a
     params dict carrying ``resolved_at``, validates row counts, then
     ``EXCHANGE TABLES`` with the live table -- the same stage-then-swap
     pattern as ``build_history_insert_sql``/
-    ``build_sweden_financial_metrics_insert_sql``.
+    ``build_se_bolagsverket_financial_metrics_insert_sql``.
     """
-    columns = ",\n    ".join(SE_COMPANY_OFFICERS_COLUMNS)
+    columns = ",\n    ".join(SE_FINANCIAL_REPORT_SIGNATORIES_COLUMNS)
     first_name_concepts = ",\n            ".join(
         f"'{triple[0]}'" for triple in _SIGNATURE_CONCEPT_TRIPLES
     )
@@ -269,7 +271,7 @@ GROUP BY company_id, fiscal_year, statement_key, signatory_kind, person_seq
 HAVING first_name != '' OR last_name != ''"""
 
 
-def _officers_quality_sql(qualified_stage_table: str) -> str:
+def _signatories_quality_sql(qualified_stage_table: str) -> str:
     """Cheap post-INSERT quality SELECT against the stage table itself
     (mirrors ``history.py``'s ``build_history_quality_sql``): total rows,
     distinct companies/statements, a per-signatory-kind breakdown, the count
@@ -292,20 +294,20 @@ FROM {qualified_stage_table}"""
 
 def _quality_metadata(row: tuple[Any, ...]) -> dict[str, int]:
     return {
-        column: int(value)
-        for column, value in zip(_QUALITY_COLUMNS, row, strict=True)
+        column: int(value) for column, value in zip(_QUALITY_COLUMNS, row, strict=True)
     }
 
 
 def _validate_quality(quality: dict[str, int]) -> None:
     if quality["row_count"] == 0:
         raise ValueError(
-            "Sweden company officers extraction produced no rows; refusing "
-            f"to replace {QUALIFIED_SE_COMPANY_OFFICERS_TABLE}"
+            "Sweden financial-report signatory extraction produced no rows; "
+            "refusing to replace "
+            f"{QUALIFIED_SE_FINANCIAL_REPORT_SIGNATORIES_TABLE}"
         )
 
 
-def replace_se_company_officers_clickhouse(
+def replace_se_financial_report_signatories_clickhouse(
     *,
     clickhouse: ClickhouseResource,
     source_run_id: str,
@@ -313,11 +315,11 @@ def replace_se_company_officers_clickhouse(
     log: Callable[..., object] | None = None,
     allow_shrink: bool = False,
 ) -> dict[str, int | str | None]:
-    """Atomically rebuild ``se_company_officers`` in ClickHouse.
+    """Atomically rebuild ``se_financial_report_signatories`` in ClickHouse.
 
-    Mirrors ``replace_sweden_financial_metrics_clickhouse``'s stage +
+    Mirrors ``replace_se_bolagsverket_financial_metrics_clickhouse``'s stage +
     ``EXCHANGE TABLES`` pattern: a uuid-suffixed stage table is created as a
-    schema-only copy of the live target, the built officer rows are
+    schema-only copy of the live target, the built signatory rows are
     INSERTed into it, a non-empty guard runs (refusing to ever replace a
     populated table with an empty one), the shared shrink guard
     (``guard_against_clickhouse_table_shrink``) refuses a replace that would
@@ -329,17 +331,18 @@ def replace_se_company_officers_clickhouse(
     assert_clickhouse_tables_exist(
         clickhouse,
         database=SWEDEN_FINANCIAL_DATABASE,
-        tables=(SE_COMPANY_OFFICERS_TABLE, SE_FINANCIAL_FACTS_TABLE),
+        tables=(SE_FINANCIAL_REPORT_SIGNATORIES_TABLE, SE_FINANCIAL_FACTS_TABLE),
     )
-    stage_table = f"_tmp_{SE_COMPANY_OFFICERS_TABLE}_{uuid.uuid4().hex}"
+    stage_table = f"_tmp_{SE_FINANCIAL_REPORT_SIGNATORIES_TABLE}_{uuid.uuid4().hex}"
     qualified_stage_table = f"`{SWEDEN_FINANCIAL_DATABASE}`.`{stage_table}`"
     qualified_target_table = (
-        f"`{SWEDEN_FINANCIAL_DATABASE}`.`{SE_COMPANY_OFFICERS_TABLE}`"
+        f"`{SWEDEN_FINANCIAL_DATABASE}`.`{SE_FINANCIAL_REPORT_SIGNATORIES_TABLE}`"
     )
     if log is not None:
         log(
-            "Building Sweden company officers in ClickHouse: target=%s source_run_id=%s",
-            QUALIFIED_SE_COMPANY_OFFICERS_TABLE,
+            "Building Sweden financial-report signatories in ClickHouse: "
+            "target=%s source_run_id=%s",
+            QUALIFIED_SE_FINANCIAL_REPORT_SIGNATORIES_TABLE,
             source_run_id,
         )
 
@@ -350,21 +353,19 @@ def replace_se_company_officers_clickhouse(
         primary_error: Exception | None = None
         try:
             client.execute(
-                build_officers_insert_sql(qualified_stage_table),
+                build_signatories_insert_sql(qualified_stage_table),
                 {"resolved_at": resolved_at, "source_run_id": source_run_id},
             )
             quality_row = client.execute(
-                _officers_quality_sql(qualified_stage_table)
+                _signatories_quality_sql(qualified_stage_table)
             )[0]
-            quality: dict[str, int | str | None] = dict(
-                _quality_metadata(quality_row)
-            )
+            quality: dict[str, int | str | None] = dict(_quality_metadata(quality_row))
             _validate_quality(quality)
             existing_row_count = clickhouse_table_row_count(
                 client, qualified_target_table
             )
             guard_against_clickhouse_table_shrink(
-                qualified_table=QUALIFIED_SE_COMPANY_OFFICERS_TABLE,
+                qualified_table=QUALIFIED_SE_FINANCIAL_REPORT_SIGNATORIES_TABLE,
                 existing_row_count=existing_row_count,
                 staged_row_count=int(quality["row_count"]),
                 allow_shrink=allow_shrink,
@@ -382,11 +383,12 @@ def replace_se_company_officers_clickhouse(
                 if primary_error is None:
                     raise
 
-    quality["table"] = QUALIFIED_SE_COMPANY_OFFICERS_TABLE
+    quality["table"] = QUALIFIED_SE_FINANCIAL_REPORT_SIGNATORIES_TABLE
     quality["source_run_id"] = source_run_id
     if log is not None:
         log(
-            "Finished Sweden company officers: rows=%s companies=%s statements=%s "
+            "Finished Sweden financial-report signatories: rows=%s companies=%s "
+            "statements=%s "
             "unknown_role=%s null_fiscal_year=%s",
             quality["row_count"],
             quality["company_count"],

@@ -8,7 +8,7 @@ WITH registry_rows AS (
             statement_key, '|', signatory_kind, '|', toString(person_seq)
         ))), 1, 32))) AS observation_id,
         max(fiscal_year) OVER (PARTITION BY company_id) AS company_latest_fiscal_year
-    FROM {{ source('corpscout', 'se_company_officers') }} AS officers
+    FROM {{ source('corpscout', 'se_financial_report_signatories') }} AS officers
     INNER JOIN (
         SELECT company_id
         FROM {{ source('corpscout', 'se_companies') }} FINAL

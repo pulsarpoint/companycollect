@@ -234,7 +234,11 @@ CLICKHOUSE_LEAVES: tuple[ClickhouseLeaf, ...] = (
         ("se_bolagsverket_financial_observations",),
         None,
     ),
-    ClickhouseLeaf("se_company_officers_clickhouse", ("se_company_officers",), None),
+    ClickhouseLeaf(
+        "se_financial_report_signatories_clickhouse",
+        ("se_financial_report_signatories",),
+        None,
+    ),
     ClickhouseLeaf("se_company_audits_clickhouse", ("se_company_audits",), None),
     # uk_companies_house — register monthly 7th, financials monthly 8th, daily 09:00
     ClickhouseLeaf(

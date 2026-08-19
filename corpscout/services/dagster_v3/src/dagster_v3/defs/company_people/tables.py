@@ -20,7 +20,7 @@ column *order*, not just the column *names*. Adding a future source (NO
 roles, EE officers, BR socios) is exactly one new dict entry.
 
 The single entry today, ``se_xbrl_signatures``, reads Task 1's
-``corpscout.se_company_officers`` (one row per person per signatory
+``corpscout.se_financial_report_signatories`` (one row per person per signatory
 occurrence within one statement -- a person who signs in both the
 ``board_signature`` handling block and the annual-report-representative
 block, or across multiple concept triples, can appear more than once for
@@ -41,7 +41,7 @@ this identical ``(role_kind != 'unknown', statement_key)`` tuple condition,
 so the three are guaranteed to come from one single winning row rather than
 being resolved independently. ``company_name`` is
 joined from ``se_companies`` on ``registration_number`` (== ``company_id``
-in officer rows per the plan's identity note) and wrapped in ``any(...)``
+in signatory rows per the plan's identity note) and wrapped in ``any(...)``
 rather than added to the ``GROUP BY`` key: ``se_companies`` is a
 ``ReplacingMergeTree`` and unmerged parts can transiently hold more than one
 physical row per ``registration_number``, so the join can fan out before
@@ -52,12 +52,12 @@ guards against that fan-out ever changing this SELECT's *output* row count.
 
 A driver-params placeholder (``%(resolved_at)s``) is embedded directly in
 this SELECT rather than an inline ``now64(3)`` literal, mirroring Task 1's
-``officers.py`` (not ``companies_all``, which has no params dict): the
+``signatories.py`` (not ``companies_all``, which has no params dict): the
 builder in ``assets.py`` executes the combined ``INSERT`` via
 ``client.execute(sql, {"resolved_at": ..., "source_run_id": ...})``, so
 ``resolved_at`` is deterministic and test-controlled rather than wall-clock
 ``now64(3)`` baked into the SQL text. This SELECT has no ``LIKE``/``ILIKE``
-literals, so the %-escaping discipline that doubles ``%`` in ``officers.py``
+literals, so the %-escaping discipline that doubles ``%`` in ``signatories.py``
 does not apply here -- flagged for whoever adds the next source with a
 ``LIKE`` pattern.
 """
@@ -67,7 +67,7 @@ QUALIFIED_COMPANY_PEOPLE_ALL_TABLE = f"corpscout.{COMPANY_PEOPLE_ALL_TABLE}"
 
 # Schema order -- MUST match migration 000145's column order exactly (a
 # contract test greps the migration file for each of these, mirroring
-# officers.py's SE_COMPANY_OFFICERS_COLUMNS contract).
+# signatories.py's SE_FINANCIAL_REPORT_SIGNATORIES_COLUMNS contract).
 COMPANY_PEOPLE_ALL_COLUMNS = (
     "country_iso2",
     "company_id",
@@ -102,7 +102,7 @@ _SE_XBRL_SIGNATURES_SELECT = """SELECT
     'se_xbrl_signatures' AS source,
     argMax(o.statement_key, (o.role_kind != 'unknown', o.statement_key)) AS source_statement_key,
     %(resolved_at)s AS resolved_at
-FROM corpscout.se_company_officers AS o
+FROM corpscout.se_financial_report_signatories AS o
 LEFT JOIN corpscout.se_companies AS c ON c.registration_number = o.company_id
 GROUP BY o.company_id, o.fiscal_year, o.first_name, o.last_name, o.signatory_kind"""
 

@@ -91,7 +91,7 @@ registry_observations AS (
             statement_key, '|', signatory_kind, '|', toString(person_seq)
         ))), 1, 32))) AS observation_id,
         source_record_uid
-    FROM {{ source('corpscout', 'se_company_officers') }}
+    FROM {{ source('corpscout', 'se_financial_report_signatories') }}
 ),
 registry_person_matches AS (
     SELECT
