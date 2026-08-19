@@ -20,7 +20,14 @@ from typing import Any
 import dagster as dg
 from dagster_clickhouse import ClickhouseResource
 from openai import OpenAI
-from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
+from pydantic import (
+    BaseModel,
+    ConfigDict,
+    Field,
+    ValidationError,
+    field_validator,
+    model_validator,
+)
 
 from dagster_v3.defs.clickhouse.resolved import assert_clickhouse_tables_exist
 from dagster_v3.defs.company_people.draft import normalized_company_ids
@@ -50,6 +57,7 @@ PERSON_COLUMNS = (
 PROMPT_VERSION = "se-company-people-v2"
 DIRECT_PROMPT_VERSION = "single-source-copy-v2"
 MAX_OUTPUT_TOKENS = 4_000
+MAX_CONTRACT_ATTEMPTS = 3
 
 _WHITESPACE_PATTERN = re.compile(r"\s+")
 _ROLE_SEPARATOR_PATTERN = re.compile(r"[^a-z0-9]+")
@@ -136,6 +144,7 @@ class LlmCompanyPeopleResult:
     prompt_version: str
     prompt_tokens: int
     completion_tokens: int
+    contract_retry_count: int = 0
 
 
 @dataclass(frozen=True)
@@ -561,38 +570,78 @@ def request_company_people(
     batch: CompanyObservationBatch,
     previous_profiles: Sequence[ExistingPersonProfile],
     model: str,
+    maximum_contract_attempts: int = MAX_CONTRACT_ATTEMPTS,
 ) -> LlmCompanyPeopleResult:
+    if maximum_contract_attempts < 1:
+        raise ValueError("maximum_contract_attempts must be positive")
     request = build_company_people_request(
         company_id=company_id,
         batch=batch,
         previous_profiles=previous_profiles,
         model=model,
     )
-    api_response = client.chat.completions.create(**request)
-    content = api_response.choices[0].message.content
+    prompt_tokens = 0
+    completion_tokens = 0
+
+    for attempt in range(1, maximum_contract_attempts + 1):
+        api_response = client.chat.completions.create(**request)
+        usage = getattr(api_response, "usage", None)
+        prompt_tokens += _usage_value(usage, "prompt_tokens")
+        completion_tokens += _usage_value(usage, "completion_tokens")
+        content = api_response.choices[0].message.content
+        try:
+            response = _parse_company_people_response(content)
+            validate_company_people_response(
+                response,
+                batch=batch,
+                previous_profiles=previous_profiles,
+            )
+        except (RuntimeError, ValidationError, ValueError) as exc:
+            if attempt == maximum_contract_attempts:
+                raise ValueError(
+                    "LLM failed the company-person response contract after "
+                    f"{maximum_contract_attempts} attempts: {exc}"
+                ) from exc
+            required_draft_ids = sorted(
+                str(observation.draft_id) for observation in batch.observations
+            )
+            if content is not None:
+                request["messages"].append({"role": "assistant", "content": content})
+            request["messages"].append(
+                {
+                    "role": "user",
+                    "content": (
+                        "Your previous response failed validation: "
+                        f"{exc}. Return a corrected complete JSON object. The draft_ids "
+                        "across all people must contain each of these IDs exactly once "
+                        f"and no others: {json.dumps(required_draft_ids)}"
+                    ),
+                }
+            )
+            continue
+
+        return LlmCompanyPeopleResult(
+            response=response,
+            model_provider="deepseek",
+            model_name=model,
+            prompt_version=PROMPT_VERSION,
+            prompt_tokens=prompt_tokens,
+            completion_tokens=completion_tokens,
+            contract_retry_count=attempt - 1,
+        )
+
+    raise AssertionError("unreachable company-person LLM attempt loop")
+
+
+def _parse_company_people_response(content: str | None) -> LlmCompanyPeopleResponse:
     if content is None:
         raise RuntimeError("Company-person normalization returned no content")
     json_start = content.find("{")
     json_end = content.rfind("}")
     if json_start < 0 or json_end < json_start:
         raise RuntimeError("Company-person normalization did not return a JSON object")
-
-    response = LlmCompanyPeopleResponse.model_validate_json(
+    return LlmCompanyPeopleResponse.model_validate_json(
         content[json_start : json_end + 1]
-    )
-    validate_company_people_response(
-        response,
-        batch=batch,
-        previous_profiles=previous_profiles,
-    )
-    usage = getattr(api_response, "usage", None)
-    return LlmCompanyPeopleResult(
-        response=response,
-        model_provider="deepseek",
-        model_name=model,
-        prompt_version=PROMPT_VERSION,
-        prompt_tokens=_usage_value(usage, "prompt_tokens"),
-        completion_tokens=_usage_value(usage, "completion_tokens"),
     )
 
 
@@ -786,6 +835,7 @@ def _normalize_multi_source_company(
     )
     prompt_tokens = 0
     completion_tokens = 0
+    contract_retry_count = 0
 
     for batch in batches:
         request_profiles = _profiles_for_request(profiles)
@@ -801,6 +851,7 @@ def _normalize_multi_source_company(
         )
         prompt_tokens += result.prompt_tokens
         completion_tokens += result.completion_tokens
+        contract_retry_count += result.contract_retry_count
 
         batch_draft_ids = {observation.draft_id for observation in batch.observations}
         for profile in profiles.values():
@@ -881,6 +932,7 @@ def _normalize_multi_source_company(
         "llm_observation_count": len(company.observations),
         "llm_prompt_tokens": prompt_tokens,
         "llm_completion_tokens": completion_tokens,
+        "llm_contract_retry_count": contract_retry_count,
         "unchanged_profile_count": unchanged_profile_count,
     }
 
@@ -904,6 +956,7 @@ def normalize_companies(
         "llm_observation_count": 0,
         "llm_prompt_tokens": 0,
         "llm_completion_tokens": 0,
+        "llm_contract_retry_count": 0,
         "unchanged_profile_count": 0,
     }
 
@@ -1109,6 +1162,7 @@ def materialize_se_company_people(
         "llm_observation_count": 0,
         "llm_prompt_tokens": 0,
         "llm_completion_tokens": 0,
+        "llm_contract_retry_count": 0,
         "unchanged_profile_count": 0,
     }
     selected_company_count = 0
@@ -1288,8 +1342,13 @@ se_company_person_job = dg.define_asset_job(
     ),
 )
 
+se_company_person_publish_job = dg.define_asset_job(
+    "se_company_person_publish_job",
+    selection=dg.AssetSelection.assets("se_company_person_clickhouse"),
+)
+
 
 defs = dg.Definitions(
     assets=[se_company_person_clickhouse],
-    jobs=[se_company_person_job],
+    jobs=[se_company_person_job, se_company_person_publish_job],
 )

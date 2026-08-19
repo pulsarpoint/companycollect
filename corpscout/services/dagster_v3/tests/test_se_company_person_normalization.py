@@ -2,6 +2,7 @@ import json
 import uuid
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
+from types import SimpleNamespace
 
 import dagster as dg
 import pytest
@@ -25,6 +26,7 @@ from dagster_v3.defs.company_people.normalization import (
     build_pending_companies_sql,
     normalize_companies,
     observation_role_bucket,
+    request_company_people,
     validate_company_people_response,
 )
 
@@ -303,6 +305,76 @@ def test_response_validation_rejects_unknown_previous_person_id() -> None:
         )
 
 
+def test_llm_contract_failure_is_retried_with_exact_required_draft_ids() -> None:
+    observations = (
+        _observation("esef", name="First Person", role="auditor", index=1),
+        _observation("wikidata", name="Second Person", role="P3320", index=2),
+    )
+    batch = CompanyObservationBatch("all", 1, 1, observations)
+    contents = iter(
+        (
+            json.dumps(
+                {
+                    "people": [
+                        {
+                            "name": "First Person",
+                            "description": None,
+                            "draft_ids": [str(observations[0].draft_id)],
+                        }
+                    ]
+                }
+            ),
+            json.dumps(
+                {
+                    "people": [
+                        {
+                            "name": "First Person",
+                            "description": None,
+                            "draft_ids": [str(observations[0].draft_id)],
+                        },
+                        {
+                            "name": "Second Person",
+                            "description": None,
+                            "draft_ids": [str(observations[1].draft_id)],
+                        },
+                    ]
+                }
+            ),
+        )
+    )
+    requests: list[dict[str, object]] = []
+
+    class FakeCompletions:
+        def create(self, **request: object) -> SimpleNamespace:
+            requests.append(request)
+            return SimpleNamespace(
+                choices=[
+                    SimpleNamespace(message=SimpleNamespace(content=next(contents)))
+                ],
+                usage=SimpleNamespace(prompt_tokens=10, completion_tokens=5),
+            )
+
+    client = SimpleNamespace(
+        chat=SimpleNamespace(completions=FakeCompletions()),
+    )
+
+    result = request_company_people(
+        client,
+        company_id=COMPANY_ID,
+        batch=batch,
+        previous_profiles=(),
+        model="deepseek-v4-flash",
+    )
+
+    assert len(requests) == 2
+    assert result.contract_retry_count == 1
+    assert result.prompt_tokens == 20
+    assert result.completion_tokens == 10
+    correction = requests[1]["messages"][-1]["content"]
+    assert "failed validation" in correction
+    assert all(str(item.draft_id) in correction for item in observations)
+
+
 def test_single_source_company_is_copied_without_llm() -> None:
     observation = _observation(
         "esef", name="David Mindus", role="chief_executive", index=1
@@ -445,3 +517,10 @@ def test_main_asset_depends_on_draft_and_combined_job_runs_both() -> None:
         "se_company_person_draft_clickhouse",
         "se_company_person_clickhouse",
     }
+    publish_job_keys = {
+        key.path[-1]
+        for key in repository.get_job(
+            "se_company_person_publish_job"
+        ).asset_layer.executable_asset_keys
+    }
+    assert publish_job_keys == {"se_company_person_clickhouse"}
