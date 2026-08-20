@@ -59,7 +59,7 @@ ROLE_COLUMNS = (
     "role_draft_ids",
     "person_draft_ids",
     "sources",
-    "fiscal_years",
+    "fiscal_year",
     "first_observed_at",
     "last_observed_at",
     "is_current",
@@ -241,10 +241,11 @@ mapped_roles AS (
 candidates AS (
     SELECT
         reinterpretAsUUID(unhex(substring(hex(SHA256(concat(
-            'se-company-person-role-observation-v1\n',
+            'se-company-person-role-observation-v2\n',
             toString(person_draft_id), '\n',
             source_role_code, '\n',
-            role_code
+            role_code, '\n',
+            ifNull(toString(fiscal_year), 'undated')
         ))), 1, 32))) AS role_draft_id,
         *
     FROM mapped_roles
@@ -411,6 +412,7 @@ def build_role_assignments_insert_sql(
 WITH latest_role_drafts AS (
     SELECT
         drafts.person_draft_id,
+        drafts.fiscal_year,
         argMax(
             drafts.role_draft_id,
             (drafts.created_at, toString(drafts.role_draft_id))
@@ -428,15 +430,11 @@ WITH latest_role_drafts AS (
             (drafts.created_at, toString(drafts.role_draft_id))
         ) AS role_code,
         argMax(
-            drafts.fiscal_year,
-            (drafts.created_at, toString(drafts.role_draft_id))
-        ) AS fiscal_year,
-        argMax(
             drafts.source_observed_at,
             (drafts.created_at, toString(drafts.role_draft_id))
         ) AS source_observed_at
     FROM corpscout.se_company_person_role_draft AS drafts FINAL
-    GROUP BY drafts.person_draft_id
+    GROUP BY drafts.person_draft_id, drafts.fiscal_year
 ),
 person_evidence AS (
     SELECT
@@ -449,10 +447,11 @@ person_evidence AS (
 assignments AS (
     SELECT
         reinterpretAsUUID(unhex(substring(hex(SHA256(concat(
-            'se-company-person-role-v1\n',
+            'se-company-person-role-v2\n',
             evidence.company_id, '\n',
             toString(evidence.person_id), '\n',
-            roles.role_code
+            roles.role_code, '\n',
+            ifNull(toString(roles.fiscal_year), 'undated')
         ))), 1, 32))) AS role_id,
         evidence.person_id,
         evidence.company_id,
@@ -460,17 +459,18 @@ assignments AS (
         arraySort(groupUniqArray(roles.role_draft_id)) AS role_draft_ids,
         arraySort(groupUniqArray(evidence.person_draft_id)) AS person_draft_ids,
         arraySort(groupUniqArray(toString(roles.source))) AS sources,
-        arraySort(groupUniqArrayIf(
-            assumeNotNull(roles.fiscal_year),
-            roles.fiscal_year IS NOT NULL
-        )) AS fiscal_years,
+        roles.fiscal_year,
         min(roles.source_observed_at) AS first_observed_at,
         max(roles.source_observed_at) AS last_observed_at
     FROM person_evidence AS evidence
     INNER JOIN latest_role_drafts AS roles
         ON roles.person_draft_id = evidence.person_draft_id
        AND roles.company_id = evidence.company_id
-    GROUP BY evidence.person_id, evidence.company_id, roles.role_code
+    GROUP BY
+        evidence.person_id,
+        evidence.company_id,
+        roles.role_code,
+        roles.fiscal_year
 )
 SELECT
     assignments.role_id,
@@ -480,7 +480,7 @@ SELECT
     assignments.role_draft_ids,
     assignments.person_draft_ids,
     assignments.sources,
-    assignments.fiscal_years,
+    assignments.fiscal_year,
     assignments.first_observed_at,
     assignments.last_observed_at,
     toUInt8(1),
@@ -555,7 +555,7 @@ SELECT
     existing.role_draft_ids,
     existing.person_draft_ids,
     existing.sources,
-    existing.fiscal_years,
+    existing.fiscal_year,
     existing.first_observed_at,
     existing.last_observed_at,
     toUInt8(0),
@@ -581,7 +581,7 @@ SELECT
     staged.role_draft_ids,
     staged.person_draft_ids,
     staged.sources,
-    staged.fiscal_years,
+    staged.fiscal_year,
     staged.first_observed_at,
     staged.last_observed_at,
     staged.is_current,

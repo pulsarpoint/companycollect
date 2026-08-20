@@ -43,11 +43,27 @@ def test_role_tables_replace_obsolete_generic_relation() -> None:
 
     for column in ROLE_DRAFT_COLUMNS:
         assert f"    {column} " in sql
-    for column in ROLE_COLUMNS:
-        assert f"    {column} " in sql
+    assert "fiscal_years Array(UInt16)" in sql
 
     assert "DROP TABLE IF EXISTS corpscout.se_company_person_role" in down_sql
     assert "DROP TABLE IF EXISTS corpscout.se_company_person_role_draft" in down_sql
+
+
+def test_current_role_table_has_one_fiscal_year_per_row() -> None:
+    sql = (
+        MIGRATIONS_DIR / "000293_corpscout_se_company_person_roles_by_year.up.sql"
+    ).read_text(encoding="utf-8")
+    down_sql = (
+        MIGRATIONS_DIR / "000293_corpscout_se_company_person_roles_by_year.down.sql"
+    ).read_text(encoding="utf-8")
+
+    assert "DROP TABLE IF EXISTS corpscout.se_company_person_role" in sql
+    assert "fiscal_year Nullable(UInt16)" in sql
+    assert "fiscal_years Array(UInt16)" not in sql
+    for column in ROLE_COLUMNS:
+        assert f"    {column} " in sql
+
+    assert "fiscal_years Array(UInt16)" in down_sql
 
 
 def test_each_source_owns_its_native_role_mapping() -> None:
@@ -98,8 +114,9 @@ def test_role_draft_sql_links_exact_person_draft_and_static_mapping() -> None:
     assert "JSONExtractString(drafts.source_value_json, 'role_category')" in sql
     assert "JSONExtractString(drafts.source_value_json, 'role_property')" in sql
     assert "INNER JOIN role_mapping AS mapping" in sql
-    assert "se-company-person-role-observation-v1" in sql
+    assert "se-company-person-role-observation-v2" in sql
     assert "person_draft_id" in sql
+    assert "ifNull(toString(fiscal_year), 'undated')" in sql
     assert "FROM corpscout.se_company_person_role_draft FINAL" in sql
     assert "unknown" in sql
 
@@ -123,9 +140,12 @@ def test_current_roles_join_normalized_people_to_latest_role_drafts() -> None:
     assert "arrayJoin(people.draft_ids) AS person_draft_id" in sql
     assert "FROM corpscout.se_company_person AS people FINAL" in sql
     assert "roles.person_draft_id = evidence.person_draft_id" in sql
-    assert "GROUP BY evidence.person_id, evidence.company_id, roles.role_code" in sql
-    assert "se-company-person-role-v1" in sql
+    assert "GROUP BY drafts.person_draft_id, drafts.fiscal_year" in sql
+    assert "roles.fiscal_year" in sql
+    assert "se-company-person-role-v2" in sql
+    assert "ifNull(toString(roles.fiscal_year), 'undated')" in sql
     assert "arraySort(groupUniqArray(roles.role_draft_id))" in sql
+    assert "fiscal_years" not in sql
 
 
 def test_role_assets_and_jobs_follow_person_pipeline() -> None:
