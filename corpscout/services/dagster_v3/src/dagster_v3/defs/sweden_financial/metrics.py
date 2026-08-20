@@ -1,3 +1,11 @@
+"""Resolve reported and trusted comparative Bolagsverket observations.
+
+Each output row represents one fiscal year as asserted by one source filing.
+Directly reported rows expose the full stable metric set. Comparative rows
+backfill revenue and total assets only, retain the later filing as provenance,
+and are rejected when that filing disagrees with overlapping reported revenue.
+"""
+
 import uuid
 from collections.abc import Callable
 from datetime import datetime
@@ -11,6 +19,8 @@ from dagster_v3.defs.sweden_financial.clickhouse import (
     guard_against_clickhouse_table_shrink,
 )
 from dagster_v3.defs.sweden_financial.observations import (
+    MAX_COMPARATIVE_YEARS_BACK,
+    OVERLAP_AGREEMENT_TOLERANCE,
     SE_BOLAGSVERKET_FINANCIAL_OBSERVATIONS_TABLE,
 )
 from dagster_v3.defs.sweden_financial.resources import (
@@ -19,11 +29,11 @@ from dagster_v3.defs.sweden_financial.resources import (
 )
 
 SWEDEN_FINANCIAL_DATABASE = "corpscout"
-SE_FINANCIAL_METRICS_TABLE = "se_financial_metrics"
-QUALIFIED_SE_FINANCIAL_METRICS_TABLE = (
-    f"{SWEDEN_FINANCIAL_DATABASE}.{SE_FINANCIAL_METRICS_TABLE}"
+SE_BOLAGSVERKET_FINANCIAL_METRICS_TABLE = "se_bolagsverket_financial_metrics"
+QUALIFIED_SE_BOLAGSVERKET_FINANCIAL_METRICS_TABLE = (
+    f"{SWEDEN_FINANCIAL_DATABASE}.{SE_BOLAGSVERKET_FINANCIAL_METRICS_TABLE}"
 )
-SWEDEN_FINANCIAL_MAPPING_VERSION = "sweden-bolagsverket-observations-metrics-v3"
+SWEDEN_FINANCIAL_MAPPING_VERSION = "sweden-bolagsverket-observations-metrics-v4"
 
 MONEY_METRIC_NAMES = (
     "revenue",
@@ -40,7 +50,7 @@ MONEY_METRIC_NAMES = (
     "wages_and_salaries",
 )
 
-SE_FINANCIAL_METRICS_COLUMNS = (
+SE_BOLAGSVERKET_FINANCIAL_METRICS_COLUMNS = (
     "country_iso2",
     "source_slug",
     "source_run_id",
@@ -50,6 +60,8 @@ SE_FINANCIAL_METRICS_COLUMNS = (
     "report_period_start",
     "report_period_end",
     "fiscal_year",
+    "observation_kind",
+    "source_fiscal_year",
     "reported_company_name",
     "source_archive_url",
     "source_archive_key",
@@ -83,6 +95,8 @@ SE_FINANCIAL_METRICS_COLUMNS = (
 _QUALITY_COLUMNS = (
     "row_count",
     "company_count",
+    "reported_row_count",
+    "comparative_row_count",
     "min_fiscal_year",
     "max_fiscal_year",
     "missing_fx_count",
@@ -93,7 +107,7 @@ _QUALITY_COLUMNS = (
 )
 
 
-def replace_sweden_financial_metrics_clickhouse(
+def replace_se_bolagsverket_financial_metrics_clickhouse(
     *,
     clickhouse: ClickhouseResource,
     source_run_id: str,
@@ -101,24 +115,24 @@ def replace_sweden_financial_metrics_clickhouse(
     log: Callable[..., object] | None = None,
     allow_shrink: bool = False,
 ) -> dict[str, int | str | None]:
-    """Rebuild canonical Sweden metrics from source-owned observations."""
+    """Rebuild canonical Sweden yearly metrics from source-owned observations."""
     assert_clickhouse_tables_exist(
         clickhouse,
         database=SWEDEN_FINANCIAL_DATABASE,
         tables=(
             SE_BOLAGSVERKET_FINANCIAL_OBSERVATIONS_TABLE,
-            SE_FINANCIAL_METRICS_TABLE,
+            SE_BOLAGSVERKET_FINANCIAL_METRICS_TABLE,
         ),
     )
-    stage_table = f"_tmp_{SE_FINANCIAL_METRICS_TABLE}_{uuid.uuid4().hex}"
+    stage_table = f"_tmp_{SE_BOLAGSVERKET_FINANCIAL_METRICS_TABLE}_{uuid.uuid4().hex}"
     qualified_stage_table = f"`{SWEDEN_FINANCIAL_DATABASE}`.`{stage_table}`"
     qualified_target_table = (
-        f"`{SWEDEN_FINANCIAL_DATABASE}`.`{SE_FINANCIAL_METRICS_TABLE}`"
+        f"`{SWEDEN_FINANCIAL_DATABASE}`.`{SE_BOLAGSVERKET_FINANCIAL_METRICS_TABLE}`"
     )
     if log is not None:
         log(
             "Building Sweden financial metrics in ClickHouse: target=%s mapping=%s",
-            QUALIFIED_SE_FINANCIAL_METRICS_TABLE,
+            QUALIFIED_SE_BOLAGSVERKET_FINANCIAL_METRICS_TABLE,
             SWEDEN_FINANCIAL_MAPPING_VERSION,
         )
 
@@ -129,7 +143,9 @@ def replace_sweden_financial_metrics_clickhouse(
         primary_error: Exception | None = None
         try:
             client.execute(
-                build_sweden_financial_metrics_insert_sql(qualified_stage_table),
+                build_se_bolagsverket_financial_metrics_insert_sql(
+                    qualified_stage_table
+                ),
                 {
                     "source_run_id": source_run_id,
                     "mapping_version": SWEDEN_FINANCIAL_MAPPING_VERSION,
@@ -147,7 +163,7 @@ def replace_sweden_financial_metrics_clickhouse(
                 client, qualified_target_table
             )
             guard_against_clickhouse_table_shrink(
-                qualified_table=QUALIFIED_SE_FINANCIAL_METRICS_TABLE,
+                qualified_table=QUALIFIED_SE_BOLAGSVERKET_FINANCIAL_METRICS_TABLE,
                 existing_row_count=existing_row_count,
                 staged_row_count=int(quality["row_count"]),
                 allow_shrink=allow_shrink,
@@ -165,26 +181,37 @@ def replace_sweden_financial_metrics_clickhouse(
                 if primary_error is None:
                     raise
 
-    quality["table"] = QUALIFIED_SE_FINANCIAL_METRICS_TABLE
+    quality["table"] = QUALIFIED_SE_BOLAGSVERKET_FINANCIAL_METRICS_TABLE
     quality["mapping_version"] = SWEDEN_FINANCIAL_MAPPING_VERSION
     if log is not None:
         log(
-            "Finished Sweden financial metrics: rows=%s companies=%s mapped=%s missing_fx=%s",
+            "Finished Sweden financial metrics: rows=%s companies=%s reported=%s "
+            "comparative=%s mapped=%s missing_fx=%s",
             quality["row_count"],
             quality["company_count"],
+            quality["reported_row_count"],
+            quality["comparative_row_count"],
             quality["mapped_statement_count"],
             quality["missing_fx_count"],
         )
     return quality
 
 
-def build_sweden_financial_metrics_insert_sql(qualified_stage_table: str) -> str:
-    columns = ",\n    ".join(SE_FINANCIAL_METRICS_COLUMNS)
+def build_se_bolagsverket_financial_metrics_insert_sql(
+    qualified_stage_table: str,
+) -> str:
+    columns = ",\n    ".join(SE_BOLAGSVERKET_FINANCIAL_METRICS_COLUMNS)
     return f"""INSERT INTO {qualified_stage_table} (
     {columns}
 )
 WITH
-current_observations AS (
+disqualified_comparative_statements AS (
+    SELECT DISTINCT source_statement_key
+    FROM corpscout.se_bolagsverket_financial_observations
+    PREWHERE observation_kind = 'comparative'
+    WHERE revenue_overlap_relative_diff > {OVERLAP_AGREEMENT_TOLERANCE}
+),
+eligible_observations AS (
     SELECT
         *,
         if(
@@ -201,10 +228,30 @@ current_observations AS (
             0
         ) AS concept_rank
     FROM corpscout.se_bolagsverket_financial_observations
-    PREWHERE observation_kind = 'reported'
+    PREWHERE observation_kind IN ('reported', 'comparative')
     WHERE dimensions = '{{}}'
-      AND lowerUTF8(source_context_id) IN ('period0', 'balans0')
-      AND represented_period_end = source_report_period_end
+      AND (
+          (
+              observation_kind = 'reported'
+              AND lowerUTF8(source_context_id) IN ('period0', 'balans0')
+              AND represented_period_end = source_report_period_end
+          )
+          OR (
+              observation_kind = 'comparative'
+              AND match(source_context_id, '(?i)^(period|balans)([0-9]+)$')
+              AND toInt32OrZero(
+                  extract(
+                      lowerUTF8(source_context_id),
+                      '^(?:period|balans)([0-9]+)$'
+                  )
+              ) BETWEEN 1 AND {MAX_COMPARATIVE_YEARS_BACK}
+              AND metric_code IN ('revenue', 'total_assets')
+              AND source_statement_key NOT IN (
+                  SELECT source_statement_key
+                  FROM disqualified_comparative_statements
+              )
+          )
+      )
 ),
 observations_by_statement AS (
     SELECT
@@ -213,9 +260,19 @@ observations_by_statement AS (
         any(source_slug) AS source_slug,
         any(source_record_id) AS source_record_id,
         any(company_id) AS company_id,
-        any(source_report_period_start) AS report_period_start,
-        any(source_report_period_end) AS report_period_end,
-        any(source_fiscal_year) AS fiscal_year,
+        if(
+            observation_kind = 'reported',
+            any(source_report_period_start),
+            any(represented_period_start)
+        ) AS report_period_start,
+        if(
+            observation_kind = 'reported',
+            any(source_report_period_end),
+            any(represented_period_end)
+        ) AS report_period_end,
+        any(represented_fiscal_year) AS fiscal_year,
+        observation_kind,
+        any(source_fiscal_year) AS source_fiscal_year,
         any(source_reported_company_name) AS reported_company_name,
         any(source_archive_key) AS source_archive_key,
         any(source_archive_name) AS source_archive_name,
@@ -224,8 +281,12 @@ observations_by_statement AS (
         any(source_taxonomy_entrypoint) AS taxonomy_entrypoint,
         any(source_payload_hash) AS source_payload_hash,
         any(source_fact_count) AS source_fact_count,
-        any(source_unmapped_numeric_fact_count)
-            + countIf(metric_code IN ('result_after_financial_items', 'solidity'))
+        if(
+            observation_kind = 'reported',
+            any(source_unmapped_numeric_fact_count)
+                + countIf(metric_code IN ('result_after_financial_items', 'solidity')),
+            0
+        )
             AS unmapped_numeric_fact_count,
         argMaxIf(
             upperUTF8(ifNull(currency, '')),
@@ -308,8 +369,8 @@ observations_by_statement AS (
         argMaxIf(fx_rate_date, source_fact_ordinal, fx_rate_date IS NOT NULL)
             AS fx_rate_date,
         argMaxIf(fx_source, source_fact_ordinal, fx_source != '') AS fx_source
-    FROM current_observations
-    GROUP BY source_statement_key
+    FROM eligible_observations
+    GROUP BY source_statement_key, represented_fiscal_year, observation_kind
 ),
 native_metrics AS (
     SELECT
@@ -322,6 +383,8 @@ native_metrics AS (
         report_period_start,
         report_period_end,
         toUInt16(fiscal_year) AS fiscal_year,
+        observation_kind,
+        toUInt16(source_fiscal_year) AS source_fiscal_year,
         reported_company_name,
         concat(
             %(source_archive_base_url)s,
@@ -416,6 +479,8 @@ SELECT
     report_period_start,
     report_period_end,
     fiscal_year,
+    observation_kind,
+    source_fiscal_year,
     reported_company_name,
     source_archive_url,
     source_archive_key,
@@ -490,6 +555,8 @@ def _sweden_financial_metrics_quality_sql(qualified_stage_table: str) -> str:
     return f"""SELECT
     count() AS row_count,
     uniqExact(company_id) AS company_count,
+    countIf(observation_kind = 'reported') AS reported_row_count,
+    countIf(observation_kind = 'comparative') AS comparative_row_count,
     min(fiscal_year) AS min_fiscal_year,
     max(fiscal_year) AS max_fiscal_year,
     countIf(
@@ -520,16 +587,17 @@ def _validate_quality(quality: dict[str, int | str | None]) -> None:
     if quality["row_count"] == 0:
         raise ValueError(
             "Sweden financial metric mapping produced no rows; refusing to replace "
-            f"{QUALIFIED_SE_FINANCIAL_METRICS_TABLE}"
+            f"{QUALIFIED_SE_BOLAGSVERKET_FINANCIAL_METRICS_TABLE}"
         )
     if quality["mapped_statement_count"] == 0:
         raise ValueError(
             "Sweden financial metric mapping matched no XBRL statements; refusing "
-            f"to replace {QUALIFIED_SE_FINANCIAL_METRICS_TABLE}"
+            "to replace "
+            f"{QUALIFIED_SE_BOLAGSVERKET_FINANCIAL_METRICS_TABLE}"
         )
     if quality["missing_fx_count"] != 0:
         raise ValueError(
             "Sweden financial metric mapping is missing currency/USD exchange rates for "
             f"{quality['missing_fx_count']} statements; refusing to replace "
-            f"{QUALIFIED_SE_FINANCIAL_METRICS_TABLE}"
+            f"{QUALIFIED_SE_BOLAGSVERKET_FINANCIAL_METRICS_TABLE}"
         )

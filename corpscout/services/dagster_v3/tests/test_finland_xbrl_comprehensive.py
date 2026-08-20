@@ -137,6 +137,7 @@ def test_finland_publish_graph_uses_clickhouse_facts_directly() -> None:
         "fi_xbrl_facts_ch",
         "fi_xbrl_taxonomy_codes_ch",
         "fi_financial_metrics_ch",
+        "finland_financial_company_source_records_clickhouse",
     ):
         assert dg.AssetKey(key) in keys
 
@@ -147,6 +148,9 @@ def test_finland_publish_graph_uses_clickhouse_facts_directly() -> None:
         dg.AssetKey("fi_xbrl_contexts_ch"),
         dg.AssetKey("fi_xbrl_facts_ch"),
     }
+    assert graph.get(
+        dg.AssetKey("finland_financial_company_source_records_clickhouse")
+    ).parent_keys == {dg.AssetKey("fi_financial_statements_ch")}
 
 
 def test_finland_comprehensive_clickhouse_migration() -> None:

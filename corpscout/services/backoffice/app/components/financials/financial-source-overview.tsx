@@ -1,4 +1,4 @@
-import { useState, type ReactNode } from "react";
+import type { ReactNode } from "react";
 import {
   Check,
   CircleHelp,
@@ -11,8 +11,10 @@ import {
 import { Link } from "react-router";
 import {
   financialCopy,
+  financialSourceCopy,
   interpolate,
   type FinancialLocale,
+  type SwedenFinancialSourceId,
 } from "~/components/financials/copy";
 import type { FinancialComparisonRow } from "~/components/financials/financial-comparison-table";
 import { FinancialComparisonTable } from "~/components/financials/financial-comparison-table";
@@ -26,6 +28,7 @@ import {
   latestFinancialRows,
   percentage,
   percentageChange,
+  sourceFinancialRows,
   type FinancialMoneyMetric,
 } from "~/components/financials/metrics";
 import { EvidencePanel } from "~/components/detail/evidence";
@@ -47,15 +50,15 @@ import {
   EmptyMedia,
   EmptyTitle,
 } from "~/components/ui/empty";
-import {
-  Field,
-  FieldLabel,
-  FieldLegend,
-  FieldSet,
-} from "~/components/ui/field";
-import { RadioGroup, RadioGroupItem } from "~/components/ui/radio-group";
 import type { CompanyFinancialFilingStatus } from "~/lib/financial-filing-status";
-import type { FinancialYearRow } from "~/lib/queries.server";
+import type {
+  CompanyFinancialSource,
+  FinancialYearRow,
+} from "~/lib/queries.server";
+
+function isSwedenFinancialSourceId(id: string): id is SwedenFinancialSourceId {
+  return id === "bolagsverket-annual-accounts" || id === "esef";
+}
 
 function perEmployee(
   financial: FinancialYearRow,
@@ -118,20 +121,26 @@ function statusPresentation(
   }
 }
 
-export function SwedenFinancialOverview({
-  financials,
+export function FinancialSourceOverview({
+  source,
   filingStatus,
   factsHref,
+  locale,
   children,
 }: {
-  financials: FinancialYearRow[];
+  source: CompanyFinancialSource;
   filingStatus: CompanyFinancialFilingStatus | null;
   factsHref?: (year: string) => string;
+  locale: FinancialLocale;
   children?: ReactNode;
 }) {
-  const [locale, setLocale] = useState<FinancialLocale>("en");
+  const financials = source.financials;
   const copy = financialCopy[locale];
+  const translatedSource = isSwedenFinancialSourceId(source.id)
+    ? financialSourceCopy[locale].sources[source.id]
+    : null;
   const displayedFinancials = latestFinancialRows(financials);
+  const sourceFilings = sourceFinancialRows(financials);
   const unavailableFinancials = financials.filter(
     (financial) => !hasFinancialData(financial),
   );
@@ -144,7 +153,14 @@ export function SwedenFinancialOverview({
         (financial) => financial.fiscal_year !== latest.fiscal_year,
       )
     : undefined;
-  const status = statusPresentation(filingStatus, locale);
+  const status =
+    source.kind === "registry"
+      ? statusPresentation(filingStatus, locale)
+      : {
+          label: copy.available,
+          icon: Check,
+          variant: "default" as const,
+        };
   const StatusIcon = status.icon;
   const years = displayedFinancials.map((financial) => financial.fiscal_year);
   const yearRange = years.length ? `${years.at(-1)}–${years[0]}` : null;
@@ -304,7 +320,7 @@ export function SwedenFinancialOverview({
             <div className="flex flex-wrap items-center gap-2">
               <Badge variant="secondary">
                 <FileCheck2 data-icon="inline-start" />
-                {copy.source}
+                {translatedSource?.title ?? source.title}
               </Badge>
               {yearRange ? <Badge variant="outline">{yearRange}</Badge> : null}
               <Badge variant="outline">SEK / USD</Badge>
@@ -318,35 +334,6 @@ export function SwedenFinancialOverview({
               </p>
             </div>
           </div>
-
-          <FieldSet className="w-fit gap-2">
-            <FieldLegend variant="label">{copy.language}</FieldLegend>
-            <RadioGroup
-              value={locale}
-              onValueChange={(value) => setLocale(value as FinancialLocale)}
-              className="flex w-fit items-center gap-4"
-              aria-label={copy.language}
-            >
-              <Field orientation="horizontal" className="w-fit">
-                <RadioGroupItem value="sv" id="financial-language-sv" />
-                <FieldLabel
-                  htmlFor="financial-language-sv"
-                  className="font-normal"
-                >
-                  Svenska
-                </FieldLabel>
-              </Field>
-              <Field orientation="horizontal" className="w-fit">
-                <RadioGroupItem value="en" id="financial-language-en" />
-                <FieldLabel
-                  htmlFor="financial-language-en"
-                  className="font-normal"
-                >
-                  English
-                </FieldLabel>
-              </Field>
-            </RadioGroup>
-          </FieldSet>
         </div>
 
         <div className="flex flex-wrap items-center gap-2">
@@ -355,7 +342,7 @@ export function SwedenFinancialOverview({
             {status.label}
           </Badge>
           <span className="text-muted-foreground text-xs">
-            {copy.sourceDescription}
+            {translatedSource?.description ?? source.description}
           </span>
         </div>
       </header>
@@ -386,7 +373,9 @@ export function SwedenFinancialOverview({
                 <div className="text-muted-foreground text-right text-sm">
                   {period ? <p>{period}</p> : null}
                   <p>
-                    {latest.currency || "SEK"} / USD · {copy.standaloneAccounts}
+                    {latest.currency || "SEK"} / USD ·{" "}
+                    {translatedSource?.scope ??
+                      source.financials[0]?.accounting_scope}
                   </p>
                 </div>
                 <div className="flex flex-wrap items-center justify-end gap-2">
@@ -412,6 +401,58 @@ export function SwedenFinancialOverview({
               locale={locale}
               copy={copy.kpis}
             />
+
+            {factsHref && sourceFilings.length > 0 ? (
+              <nav
+                aria-labelledby="financial-source-filings-title"
+                className="flex flex-wrap items-end justify-between gap-4"
+              >
+                <div className="flex flex-col gap-1">
+                  <h3
+                    id="financial-source-filings-title"
+                    className="font-semibold"
+                  >
+                    {copy.sourceFilings.title}
+                  </h3>
+                  <p className="text-muted-foreground text-sm">
+                    {copy.sourceFilings.description}
+                  </p>
+                </div>
+                <div className="flex flex-wrap gap-2">
+                  {sourceFilings.map((financial) => {
+                    const factCount = financial.source_fact_count
+                      ? interpolate(copy.sourceFilings.factCount, {
+                          count: financial.source_fact_count.toLocaleString(
+                            locale === "sv" ? "sv-SE" : "en-US",
+                          ),
+                        })
+                      : null;
+                    return (
+                      <Link
+                        key={financial.fiscal_year}
+                        to={factsHref(financial.fiscal_year)}
+                        aria-label={interpolate(copy.sourceFilings.openYear, {
+                          year: financial.fiscal_year,
+                        })}
+                        className={buttonVariants({
+                          variant: "outline",
+                          size: "sm",
+                          className: "h-auto min-w-24 justify-between py-2",
+                        })}
+                      >
+                        <FileSearch data-icon="inline-start" />
+                        <span>{financial.fiscal_year}</span>
+                        {factCount ? (
+                          <span className="text-muted-foreground font-normal">
+                            {factCount}
+                          </span>
+                        ) : null}
+                      </Link>
+                    );
+                  })}
+                </div>
+              </nav>
+            ) : null}
           </section>
 
           <FinancialTrendChart
@@ -511,9 +552,11 @@ export function SwedenFinancialOverview({
                 <FileCheck2 className="text-muted-foreground size-5" />
                 <p className="font-medium">{copy.notes.officialFiling}</p>
                 <p className="text-muted-foreground text-sm">
-                  {interpolate(copy.notes.officialFilingDescription, {
-                    period: filingPeriodNote,
-                  })}
+                  {interpolate(
+                    translatedSource?.filingDescription ??
+                      copy.notes.officialFilingDescription,
+                    { period: filingPeriodNote },
+                  )}
                 </p>
               </div>
               <div className="flex flex-col gap-1">

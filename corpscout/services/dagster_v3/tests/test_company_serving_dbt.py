@@ -104,6 +104,8 @@ def test_serving_models_resolve_identity_and_evidence_offline() -> None:
     assert "observed_name_normalized" not in management
     assert "company_section_item_source_links" not in source_links
     assert "ref('company_serving_source_links_build')" in presence
+    assert "FROM evidence_links AS links\nINNER JOIN company_anchors AS anchors" in source_links
+    assert "FROM section_rows AS rows\nINNER JOIN company_anchors AS anchors" in presence
     assert "ref('company_domains_build')" in source_links
     assert "has(current.source_names, 'wikidata')" in source_links
     assert "has(current.source_names, 'esef_filing')" in source_links
@@ -122,6 +124,21 @@ def test_serving_models_resolve_identity_and_evidence_offline() -> None:
     assert "contract" in source_records
     assert "concat('SE', company_id, '01')" not in external_ids
     assert "issuer_scheme = 'vat'" in external_ids
+    assert external_ids.count(
+        "INNER JOIN companies\n        ON companies.company_id = identifiers.company_id"
+    ) == 2
+
+    assert company_domains.count("INNER JOIN companies") == 4
+
+    for model_name in (
+        "company_description_current_build.sql",
+        "company_contract_current_build.sql",
+        "se_company_industry_display_current_build.sql",
+        "se_company_address_display_current_build.sql",
+    ):
+        model = (models / model_name).read_text()
+        assert "source('corpscout', 'se_companies')" in model
+        assert "INNER JOIN company_anchors AS anchors" in model
 
 
 def test_serving_project_declares_integrity_tests() -> None:

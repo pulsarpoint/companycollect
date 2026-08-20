@@ -7,7 +7,10 @@ import {
 } from "~/lib/detail-queries/fr";
 
 export type CountryFeature =
-  "financials" | "industries" | "contacts" | "domains";
+  | "financials"
+  | "industries"
+  | "contacts"
+  | "domains";
 
 export type ColumnKind = "id" | "text" | "date" | "status";
 export type SortDir = "asc" | "desc";
@@ -570,21 +573,122 @@ ORDER BY cnt DESC
 LIMIT 50000`,
     industryFilterExpr: `business_id IN (SELECT business_id FROM fi_industries WHERE is_primary = 1 AND coalesce(source_industry_code, '') IN {f_industry:Array(String)})`,
     detail: {
-      financialsQuery: `SELECT toString(toYear(period_end)) AS fiscal_year, currency_original AS currency,
+      financialSources: [
+        {
+          id: "prh-digital-annual-accounts",
+          kind: "registry",
+          title: "PRH digital annual-account XBRL",
+          description:
+            "Standalone legal-entity accounts filed digitally with the Finnish Trade Register. Standardized figures, every tagged fact, and the original XML remain connected to the filing.",
+          yearFacts: true,
+        },
+        {
+          id: "esef",
+          kind: "esef",
+          title: "ESEF consolidated IFRS",
+          description:
+            "Consolidated IFRS figures extracted from filed ESEF reports. Group accounts remain distinct from standalone legal-entity filings.",
+        },
+      ],
+      financialsQuery: `SELECT toString(coalesce(fiscal_year, toYear(period_end))) AS fiscal_year, currency_original AS currency,
+  toString(period_start) AS report_period_start,
+  toString(period_end) AS report_period_end,
   toFloat64(revenue_amount_original) AS revenue_amount_original,
   toFloat64(revenue_amount_usd) AS revenue_amount_usd,
+  toFloat64(operating_profit_loss_amount_original) AS operating_result_amount_original,
+  toFloat64(operating_profit_loss_amount_usd) AS operating_result_amount_usd,
   toFloat64(profit_loss_amount_original) AS net_result_amount_original,
   toFloat64(profit_loss_amount_usd) AS net_result_amount_usd,
   toFloat64(total_assets_amount_original) AS total_assets_amount_original,
   toFloat64(total_assets_amount_usd) AS total_assets_amount_usd,
   toFloat64(equity_amount_original) AS equity_amount_original,
   toFloat64(equity_amount_usd) AS equity_amount_usd,
-  toFloat64(employees) AS employees
+  toFloat64(liabilities_amount_original) AS liabilities_amount_original,
+  toFloat64(liabilities_amount_usd) AS liabilities_amount_usd,
+  toFloat64(cash_and_bank_amount_original) AS cash_and_bank_amount_original,
+  toFloat64(cash_and_bank_amount_usd) AS cash_and_bank_amount_usd,
+  toFloat64(current_assets_amount_original) AS current_assets_amount_original,
+  toFloat64(current_assets_amount_usd) AS current_assets_amount_usd,
+  toFloat64(current_liabilities_amount_original) AS current_liabilities_amount_original,
+  toFloat64(current_liabilities_amount_usd) AS current_liabilities_amount_usd,
+  toFloat64(personnel_expenses_amount_original) AS personnel_expenses_amount_original,
+  toFloat64(personnel_expenses_amount_usd) AS personnel_expenses_amount_usd,
+  toFloat64(wages_and_salaries_amount_original) AS wages_and_salaries_amount_original,
+  toFloat64(wages_and_salaries_amount_usd) AS wages_and_salaries_amount_usd,
+  toFloat64(employees) AS employees,
+  toUInt64(source_fact_count) AS source_fact_count,
+  toUInt64(mapped_fact_count) AS mapped_fact_count,
+  toFloat64(fx_rate_to_usd) AS fx_rate_to_usd,
+  toString(fx_rate_date) AS fx_rate_date,
+  fx_source AS fx_source,
+  lower(hex(SHA256(concat(
+    'company-source-record-v1\\nfile\\nannual_report_xml\\n',
+    lowerUTF8(toString(xml_sha256))
+  )))) AS source_record_uid
 FROM fi_financial_metrics
 WHERE business_id = {id:String}
-ORDER BY fiscal_year DESC, resolved_at DESC
+ORDER BY fiscal_year DESC, registration_date DESC, resolved_at DESC
 LIMIT 1 BY fiscal_year
-LIMIT 20`,
+LIMIT 25`,
+      factsQuery: `SELECT f.concept_qname AS concept,
+  f.concept_local_name AS concept_local_name,
+  f.concept_label_en AS concept_label_en,
+  f.concept_label_fi AS concept_label_original,
+  'fi' AS concept_label_original_language,
+  if(coalesce(f.concept_label_en, '') != '', 'taxonomy', 'identifier') AS concept_label_en_source,
+  f.value_kind AS value_kind,
+  f.raw_value AS raw_value,
+  toFloat64(f.numeric_value) AS amount_original,
+  if(
+    upperUTF8(ifNull(f.currency, '')) = 'EUR'
+      AND metrics.fx_rate_to_usd IS NOT NULL
+      AND f.numeric_value IS NOT NULL,
+    toFloat64(f.numeric_value) * toFloat64(metrics.fx_rate_to_usd),
+    CAST(NULL, 'Nullable(Float64)')
+  ) AS amount_usd,
+  toString(metrics.fx_rate_date) AS fx_rate_date,
+  metrics.fx_source AS fx_source,
+  f.unit_id AS unit_id,
+  f.decimals AS decimals,
+  f.currency AS currency,
+  toString(f.date_value) AS date_value,
+  f.text_value AS text_value,
+  if(empty(f.dimensions), '{}', toJSONString(f.dimensions)) AS dimensions,
+  f.context_id AS context_id,
+  toString(f.context_period_start) AS period_start,
+  toString(f.instant_date) AS period_instant,
+  toString(f.context_period_end) AS period_duration_end,
+  toString(f.period_end) AS report_period_end,
+  f.is_comparative AS is_comparative,
+  f.xml_lang AS language,
+  f.taxonomy_entrypoint AS concept_taxonomy_entrypoint,
+  '' AS concept_source_url
+FROM fi_financial_facts_with_source AS f
+LEFT ANY JOIN (
+  SELECT statement_key, fx_rate_to_usd, fx_rate_date, fx_source
+  FROM fi_financial_metrics FINAL
+) AS metrics ON metrics.statement_key = f.statement_key
+WHERE f.business_id = {id:String} AND f.statement_key = (
+  SELECT statement_key
+  FROM fi_financial_metrics FINAL
+  WHERE business_id = {id:String}
+    AND coalesce(fiscal_year, toYear(period_end)) = {year:UInt16}
+  ORDER BY registration_date DESC, resolved_at DESC
+  LIMIT 1
+)
+ORDER BY f.fact_ordinal
+LIMIT 3000`,
+      factsDocumentQuery: `SELECT xml_object_key AS object_key,
+  xml_source_uri AS source_uri,
+  source_url AS archive_url,
+  concat(business_id, '_', toString(financial_date), '.xml') AS archive_name,
+  '' AS nested_zip_name,
+  'application/xml; charset=utf-8' AS content_type
+FROM fi_financial_metrics FINAL
+WHERE business_id = {id:String}
+  AND coalesce(fiscal_year, toYear(period_end)) = {year:UInt16}
+ORDER BY registration_date DESC, resolved_at DESC
+LIMIT 1`,
       contactsQuery: `SELECT contact_type AS contact_type, contact_value AS contact_value
 FROM fi_company_contacts
 WHERE registry_id = {id:String} AND is_current = 1
@@ -785,19 +889,15 @@ LIMIT 50`,
 FROM se_companies AS c
 PREWHERE c.company_id = {id:String}
 LIMIT 1`,
-      // se_financial_metrics is keyed on the normalized 10-digit orgnr
+      // se_bolagsverket_financial_metrics is keyed on the normalized 10-digit orgnr
       // (= registration_number since the 2026-07-18 identity fix). Some
       // companies carry duplicate per-year rows where one is all-NULL —
       // the isNull tiebreak prefers the complete row (same rule as the
       // company_financials_latest summary build).
-      // Filed years come from metrics (full column set). Years the company
-      // never filed digitally are backfilled from the flerårsöversikt
-      // comparatives in se_financial_history — revenue and total assets
-      // only: result_after_financial_items is NOT net result (91% concept
-      // agreement measured), and solidity's scale is ambiguous, so neither
-      // is surfaced in these shared columns.
-      financialsQuery: `SELECT * FROM (
-  SELECT toString(fiscal_year) AS fiscal_year, currency AS currency,
+      // Metrics resolves both directly reported years and trusted
+      // flerårsöversikt comparatives. Comparative rows intentionally expose
+      // revenue and total assets only; provenance stays explicit.
+      financialsQuery: `SELECT toString(fiscal_year) AS fiscal_year, currency AS currency,
     toString(report_period_start) AS report_period_start,
     toString(report_period_end) AS report_period_end,
     toFloat64(revenue_amount_original) AS revenue_amount_original,
@@ -828,47 +928,17 @@ LIMIT 1`,
     toFloat64(fx_rate_to_usd) AS fx_rate_to_usd,
     toString(fx_rate_date) AS fx_rate_date,
     fx_source AS fx_source,
-    'filed' AS observation,
-    '' AS source_fiscal_year,
-    lower(hex(SHA256(concat(
-      'company-source-record-v1\\nstructured\\nsweden_financial\\nannual_report_xhtml\\n',
-      statement_key, '\\n', statement_key
-    )))) AS source_record_uid
-  FROM se_financial_metrics
+    if(observation_kind = 'reported', 'filed', 'comparative') AS observation,
+    toString(source_fiscal_year) AS source_fiscal_year,
+    source_record_uid
+  FROM se_bolagsverket_financial_metrics
   WHERE company_id = {id:String}
-  ORDER BY fiscal_year DESC, isNull(revenue_amount_original) ASC, source_record_id DESC
+  ORDER BY fiscal_year DESC,
+    observation_kind = 'reported' DESC,
+    isNull(revenue_amount_original) ASC,
+    source_fiscal_year DESC,
+    source_record_id DESC
   LIMIT 1 BY fiscal_year
-  UNION ALL
-  SELECT toString(fiscal_year), currency,
-    NULL, NULL,
-    toFloat64(revenue_amount_original),
-    toFloat64(revenue_amount_usd),
-    NULL, NULL,
-    NULL, NULL,
-    toFloat64(total_assets_amount_original),
-    toFloat64(total_assets_amount_usd),
-    NULL, NULL,
-    NULL, NULL,
-    NULL, NULL,
-    NULL, NULL,
-    NULL, NULL,
-    NULL, NULL,
-    NULL, NULL,
-    NULL,
-    NULL, NULL, NULL, NULL, NULL,
-    'comparative',
-    toString(source_fiscal_year),
-    lower(hex(SHA256(concat(
-      'company-source-record-v1\\nstructured\\nsweden_financial\\nannual_report_xhtml\\n',
-      source_statement_key, '\\n', source_statement_key
-    ))))
-  FROM se_financial_history
-  WHERE company_id = {id:String} AND observation = 'comparative'
-    AND fiscal_year NOT IN (
-      SELECT fiscal_year FROM se_financial_metrics WHERE company_id = {id:String}
-    )
-)
-ORDER BY fiscal_year DESC
 LIMIT 25`,
       // Same filing the metrics row shows (metrics statement_key first);
       // falls back to the newest filing seen in facts for years whose
@@ -876,9 +946,10 @@ LIMIT 25`,
       factsQuery: `SELECT f.concept_qname AS concept,
   f.concept_local_name AS concept_local_name,
   if(labels.concept_local_name != '', labels.label_en, fallback_labels.label_en) AS concept_label_en,
-  if(labels.concept_local_name != '', labels.label_sv, fallback_labels.label_sv) AS concept_label_sv,
+  if(labels.concept_local_name != '', labels.label_sv, fallback_labels.label_sv) AS concept_label_original,
+  'sv' AS concept_label_original_language,
   if(labels.concept_local_name != '', labels.description_en, fallback_labels.description_en) AS concept_description_en,
-  if(labels.concept_local_name != '', labels.description_sv, fallback_labels.description_sv) AS concept_description_sv,
+  if(labels.concept_local_name != '', labels.description_sv, fallback_labels.description_sv) AS concept_description_original,
   if(labels.concept_local_name != '', labels.label_en_source, fallback_labels.label_source) AS concept_label_en_source,
   if(labels.concept_local_name != '', labels.label_translation_provider, fallback_labels.label_translation_provider) AS concept_label_translation_provider,
   if(labels.concept_local_name != '', labels.label_translation_model, fallback_labels.label_translation_model) AS concept_label_translation_model,
@@ -914,9 +985,12 @@ LEFT ANY JOIN se_financial_concept_labels AS fallback_labels
 WHERE f.company_id = {id:String} AND f.statement_key IN (
   SELECT statement_key FROM (
     SELECT statement_key, 0 AS pri
-    FROM se_financial_metrics
+    FROM se_bolagsverket_financial_metrics
     WHERE company_id = {id:String} AND fiscal_year = {year:UInt16}
-    ORDER BY isNull(revenue_amount_original) ASC, source_record_id DESC
+    ORDER BY observation_kind = 'reported' DESC,
+      isNull(revenue_amount_original) ASC,
+      source_fiscal_year DESC,
+      source_record_id DESC
     LIMIT 1
     UNION ALL
     SELECT argMax(statement_key, resolved_at) AS statement_key, 1 AS pri
@@ -1023,9 +1097,12 @@ LIMIT 1`,
   source_archive_url AS archive_url,
   source_archive_name AS archive_name,
   nested_zip_name AS nested_zip_name
-FROM se_financial_metrics
+FROM se_bolagsverket_financial_metrics
 WHERE company_id = {id:String} AND fiscal_year = {year:UInt16}
-ORDER BY isNull(revenue_amount_original) ASC, source_record_id DESC
+ORDER BY observation_kind = 'reported' DESC,
+  isNull(revenue_amount_original) ASC,
+  source_fiscal_year DESC,
+  source_record_id DESC
 LIMIT 1`,
       // GLEIF consolidation links both ways: rows where our LEI is the
       // START node are our parents (X IS_CONSOLIDATED_BY parent), rows
@@ -1264,7 +1341,10 @@ LIMIT 100`,
       table: "se_company_financials_latest",
       companyKeyExpr: "company_id",
     },
-    financialsByYear: { table: "se_financial_metrics", idColumn: "company_id" },
+    financialsByYear: {
+      table: "se_bolagsverket_financial_metrics",
+      idColumn: "company_id",
+    },
     financialsAggregates: {
       // Company ids normalized at the dagster layer since 2026-07-18 (16-prefix stripped); no workaround needed.
       nace: {

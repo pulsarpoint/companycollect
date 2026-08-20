@@ -20,10 +20,6 @@ from dagster_v3.defs.sweden_financial.clickhouse import (
     upsert_sweden_financial_facts_partition,
     upsert_sweden_financial_reports_partition,
 )
-from dagster_v3.defs.sweden_financial.history import (
-    QUALIFIED_SE_FINANCIAL_HISTORY_TABLE,
-    replace_se_financial_history_clickhouse,
-)
 from dagster_v3.defs.sweden_financial.observations import (
     QUALIFIED_SE_BOLAGSVERKET_FINANCIAL_OBSERVATIONS_TABLE,
     replace_se_bolagsverket_financial_observations_clickhouse,
@@ -34,8 +30,8 @@ from dagster_v3.defs.sweden_financial.parsing import (
     sweden_financial_source_duckdb_path,
 )
 from dagster_v3.defs.sweden_financial.metrics import (
-    QUALIFIED_SE_FINANCIAL_METRICS_TABLE,
-    replace_sweden_financial_metrics_clickhouse,
+    QUALIFIED_SE_BOLAGSVERKET_FINANCIAL_METRICS_TABLE,
+    replace_se_bolagsverket_financial_metrics_clickhouse,
 )
 from dagster_v3.defs.sweden_financial.signatories import (
     QUALIFIED_SE_FINANCIAL_REPORT_SIGNATORIES_TABLE,
@@ -608,18 +604,19 @@ SWEDEN_FINANCIAL_FACTS_EXPORT_DEPS = [
     deps=["se_bolagsverket_financial_observations_clickhouse"],
     group_name=GROUP_NAME,
     kinds={"python", "clickhouse", "xbrl", "fx"},
-    metadata={"table": QUALIFIED_SE_FINANCIAL_METRICS_TABLE},
+    metadata={"table": QUALIFIED_SE_BOLAGSVERKET_FINANCIAL_METRICS_TABLE},
     description=(
-        "Resolves canonical Sweden filing-level metrics exclusively from the "
-        "source-owned Bolagsverket financial observations."
+        "Resolves reported fiscal years and trusted comparative-year revenue "
+        "and total-assets backfills exclusively from source-owned Bolagsverket "
+        "financial observations."
     ),
 )
-def sweden_financial_metrics_clickhouse(
+def se_bolagsverket_financial_metrics_clickhouse(
     context: dg.AssetExecutionContext,
     config: SwedenFinancialClickhouseExportConfig,
     clickhouse: ClickhouseResource,
 ) -> dg.MaterializeResult:
-    counts = replace_sweden_financial_metrics_clickhouse(
+    counts = replace_se_bolagsverket_financial_metrics_clickhouse(
         clickhouse=clickhouse,
         source_run_id=context.run_id,
         resolved_at=datetime.now(UTC),
@@ -655,29 +652,6 @@ def se_bolagsverket_financial_observations_clickhouse(
         clickhouse=clickhouse,
         log=context.log.info,
         allow_shrink=config.allow_shrink,
-    )
-    return dg.MaterializeResult(metadata=metadata)
-
-
-@dg.asset(
-    deps=["se_bolagsverket_financial_observations_clickhouse"],
-    group_name=GROUP_NAME,
-    kinds={"python", "clickhouse", "xbrl", "fx"},
-    metadata={"table": QUALIFIED_SE_FINANCIAL_HISTORY_TABLE},
-    description=(
-        "Builds per-(company, fiscal_year) Sweden financial history rows -- "
-        "each filing's own reported figures plus its flerarsoversikt "
-        "comparative-year figures, trust-guarded on revenue overlap "
-        "agreement -- exclusively from source-owned Bolagsverket observations."
-    ),
-)
-def se_financial_history_clickhouse(
-    context: dg.AssetExecutionContext,
-    clickhouse: ClickhouseResource,
-) -> dg.MaterializeResult:
-    metadata = replace_se_financial_history_clickhouse(
-        clickhouse=clickhouse,
-        log=context.log.info,
     )
     return dg.MaterializeResult(metadata=metadata)
 
@@ -788,7 +762,7 @@ def sweden_financial_archive_ingest_gap_result(
 
 
 @dg.asset_check(
-    asset="sweden_financial_metrics_clickhouse",
+    asset="se_bolagsverket_financial_metrics_clickhouse",
     name="archive_ingest_complete",
 )
 def archive_ingest_complete(
@@ -802,7 +776,7 @@ def archive_ingest_complete(
     the existing paginated listing capability) and compares against distinct
     processed ``source_archive_key`` values per year in ClickHouse.
 
-    Attached to ``sweden_financial_metrics_clickhouse`` (not the
+    Attached to ``se_bolagsverket_financial_metrics_clickhouse`` (not the
     reports exports) because its semantics are whole-table completeness
     across ALL years: the reports exports are now partition-scoped, and a
     single-partition run must not be failed for years that simply have not
@@ -838,8 +812,7 @@ SWEDEN_FINANCIAL_CURRENT_SELECTION = dg.AssetSelection.assets(
     "sweden_financial_current_reports_clickhouse",
     "sweden_financial_current_facts_clickhouse",
     "se_bolagsverket_financial_observations_clickhouse",
-    "sweden_financial_metrics_clickhouse",
-    "se_financial_history_clickhouse",
+    "se_bolagsverket_financial_metrics_clickhouse",
     "sweden_financial_company_source_records_clickhouse",
     "se_financial_facts_concepts",
     "se_financial_taxonomy_concepts",
@@ -873,9 +846,8 @@ SWEDEN_FINANCIAL_CURRENT_CLICKHOUSE_SELECTION = dg.AssetSelection.assets(
     "sweden_financial_company_source_records_clickhouse",
 )
 SWEDEN_FINANCIAL_CLICKHOUSE_SELECTION = dg.AssetSelection.assets(
-    "sweden_financial_metrics_clickhouse",
+    "se_bolagsverket_financial_metrics_clickhouse",
     "se_bolagsverket_financial_observations_clickhouse",
-    "se_financial_history_clickhouse",
     "se_financial_report_signatories_clickhouse",
     "se_company_audits_clickhouse",
     "sweden_financial_company_source_records_clickhouse",
@@ -947,9 +919,8 @@ defs = dg.Definitions(
         sweden_financial_current_reports_clickhouse,
         sweden_financial_backfill_facts_clickhouse,
         sweden_financial_current_facts_clickhouse,
-        sweden_financial_metrics_clickhouse,
+        se_bolagsverket_financial_metrics_clickhouse,
         se_bolagsverket_financial_observations_clickhouse,
-        se_financial_history_clickhouse,
         se_financial_report_signatories_clickhouse,
         se_company_audits_clickhouse,
         se_financial_facts_concepts,

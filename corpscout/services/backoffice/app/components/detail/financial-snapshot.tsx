@@ -23,52 +23,27 @@ export function FinancialSnapshot({
   href: string;
 }) {
   const summaries = sources.map((source) => {
-    if (source.kind === "registry") {
-      const latest = source.financials.find((row) =>
-        [
-          row.revenue_amount_original,
-          row.revenue_amount_usd,
-          row.net_result_amount_original,
-          row.net_result_amount_usd,
-          row.total_assets_amount_original,
-          row.total_assets_amount_usd,
-          row.equity_amount_original,
-          row.equity_amount_usd,
-          row.employees,
-        ].some((value) => value !== null),
-      );
-      const documentCount = Math.max(
-        source.financials.length,
-        source.documents.length,
-      );
-      return {
-        id: source.id,
-        label: source.title,
-        period: latest
-          ? `${latest.fiscal_year} · ${latest.currency}`
-          : `${documentCount} filed ${documentCount === 1 ? "document" : "documents"}`,
-        summary: latest
-          ? `Revenue ${metricValue(latest.revenue_amount_original, latest.currency)} · assets ${metricValue(latest.total_assets_amount_original, latest.currency)}`
-          : "No standardized financial values in these filings",
-      };
-    }
-    const latest = source.filings.find((row) =>
+    const latest = source.financials.find((row) =>
       [
         row.revenue_amount_original,
-        row.profit_loss_amount_original,
+        row.net_result_amount_original,
         row.total_assets_amount_original,
         row.equity_amount_original,
       ].some((value) => value !== null),
     );
+    const documentCount =
+      source.kind === "registry"
+        ? Math.max(source.financials.length, source.documents.length)
+        : source.financials.length;
     return {
       id: source.id,
       label: source.title,
       period: latest
         ? `${latest.fiscal_year} · ${latest.currency}`
-        : `${source.filings.length} filed ${source.filings.length === 1 ? "report" : "reports"}`,
+        : `${documentCount} filed ${documentCount === 1 ? "document" : "documents"}`,
       summary: latest
         ? `Revenue ${metricValue(latest.revenue_amount_original, latest.currency)} · assets ${metricValue(latest.total_assets_amount_original, latest.currency)}`
-        : "No standardized financial values in these reports",
+        : "No standardized financial values in these filings",
     };
   });
 

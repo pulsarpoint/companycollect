@@ -102,3 +102,26 @@ export function latestFinancialRows(
     .sort((left, right) => Number(right.fiscal_year) - Number(left.fiscal_year))
     .slice(0, limit);
 }
+
+/** Direct annual-report filings with their own facts page, newest first.
+ * Comparative observations point back to another filing and therefore do
+ * not get a separate source action. */
+export function sourceFinancialRows(
+  financials: FinancialYearRow[],
+): FinancialYearRow[] {
+  const rowsByYear = new Map<string, FinancialYearRow>();
+  const newestFirst = [...financials].sort(
+    (left, right) => Number(right.fiscal_year) - Number(left.fiscal_year),
+  );
+
+  for (const financial of newestFirst) {
+    if (
+      financial.observation !== "comparative" &&
+      !rowsByYear.has(financial.fiscal_year)
+    ) {
+      rowsByYear.set(financial.fiscal_year, financial);
+    }
+  }
+
+  return [...rowsByYear.values()];
+}

@@ -3,11 +3,12 @@ import { getCountry } from "~/lib/countries";
 import { getFactsDocument } from "~/lib/queries.server";
 import { fetchObject } from "~/lib/object-store.server";
 
-/** Streams the original filing document (inline-XBRL XHTML) from the
- * corpscout object store so the browser can render it directly. */
+/** Streams the original XBRL or inline-XBRL filing from the object store. */
 export async function loader({ params }: Route.LoaderArgs) {
   const country = getCountry(params.country);
-  if (!country?.detail?.factsDocumentQuery) throw new Response("Not found", { status: 404 });
+  if (!country?.detail?.factsDocumentQuery) {
+    throw new Response("Not found", { status: 404 });
+  }
   const year = Number(params.year);
   if (!Number.isInteger(year) || year < 1900 || year > 2200) {
     throw new Response("Not found", { status: 404 });
@@ -26,7 +27,8 @@ export async function loader({ params }: Route.LoaderArgs) {
   }
   return new Response(upstream.body, {
     headers: {
-      "Content-Type": "application/xhtml+xml; charset=utf-8",
+      "Content-Type":
+        doc.content_type || "application/xhtml+xml; charset=utf-8",
       "Content-Disposition": "inline",
       "Cache-Control": "private, max-age=3600",
     },

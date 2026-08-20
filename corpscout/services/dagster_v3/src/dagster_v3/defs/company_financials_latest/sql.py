@@ -92,7 +92,7 @@ SOURCES = {
         "period_end": "period_end",
     },
     "se": {
-        "table": "se_financial_metrics",
+        "table": "se_bolagsverket_financial_metrics",
         "id": "company_id",
         "currency": "currency",
         "rev": "revenue",
@@ -101,6 +101,9 @@ SOURCES = {
         # se.report_period_end is Nullable(Date32) (verified live 2026-07-17),
         # not Date like the migration column -- toDate() normalizes it.
         "period_end": "toDate(report_period_end)",
+        "statement_order": (
+            "observation_kind = 'reported' DESC, source_fiscal_year DESC NULLS LAST, "
+        ),
     },
     "ee": {
         "table": "ee_financial_metrics",

@@ -5,7 +5,6 @@ import type { CompanyListRow } from "~/lib/queries.server";
 import { availableCompanyFlags, type CompanyFlagId } from "~/lib/company-flags";
 import { Badge } from "~/components/ui/badge";
 import { DataTableColumnHeader } from "~/components/data-table/column-header";
-import { FinancialFilingStatusGlyph } from "~/components/financial-filing-status";
 
 const EMPTY = <span className="text-muted-foreground">—</span>;
 
@@ -174,14 +173,6 @@ export function buildCompanyColumns(
         return (
           <span className="flex gap-1">
             {flags.map((flag) => {
-              if (country.code === "se" && flag.id === "financials") {
-                return (
-                  <FinancialFilingStatusGlyph
-                    key={flag.id}
-                    status={row.original.financial_filing_status ?? "unknown"}
-                  />
-                );
-              }
               const on = held.has(flag.id);
               return (
                 <span

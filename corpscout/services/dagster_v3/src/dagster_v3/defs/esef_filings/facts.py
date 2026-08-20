@@ -139,7 +139,7 @@ def iter_artifact_facts(
     fxo_id: str,
     period_end: str,
 ) -> Iterator[EsefFact]:
-    """Yield schema-v4 Arelle artifact facts through the serving row contract.
+    """Yield schema-v5 Arelle artifact facts through the serving row contract.
 
     ``artifact`` may be either the JSON mapping read from object storage or an
     ``EsefSegmentArtifact`` instance used by focused parser/parity tests. Fact

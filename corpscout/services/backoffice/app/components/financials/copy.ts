@@ -4,7 +4,7 @@ export const financialCopy = {
   en: {
     pageTitle: "Financial overview",
     pageDescription:
-      "Five-year development from filed standalone annual accounts. Every amount keeps the reported SEK value together with its normalized USD equivalent.",
+      "Five-year development from the selected filed source. Every amount keeps the reported SEK value together with its normalized USD equivalent.",
     language: "Language",
     source: "Bolagsverket annual-report XBRL",
     sourceDescription:
@@ -16,8 +16,14 @@ export const financialCopy = {
     latestFiling: "Latest filing",
     financialYear: "Financial year",
     standaloneAccounts: "standalone accounts",
-    allSourceFacts: "All source facts",
+    allSourceFacts: "Latest filing facts",
     sourceFactsForYear: "View source facts for",
+    sourceFilings: {
+      title: "Source filings",
+      description: "Open every tagged fact from each available annual report.",
+      factCount: "{count} facts",
+      openYear: "Open source facts for {year}",
+    },
     reportedIn: "Reported in",
     fromFiling: "from the {year} filing",
     noDataTitle: "No structured financial data available",
@@ -105,7 +111,7 @@ export const financialCopy = {
   sv: {
     pageTitle: "Finansiell översikt",
     pageDescription:
-      "Femårsutveckling från inlämnade årsredovisningar för den juridiska personen. Varje belopp visar rapporterat värde i SEK tillsammans med normaliserat värde i USD.",
+      "Femårsutveckling från den valda inlämnade källan. Varje belopp visar rapporterat värde i SEK tillsammans med normaliserat värde i USD.",
     language: "Språk",
     source: "Bolagsverkets årsredovisning i XBRL",
     sourceDescription:
@@ -117,8 +123,15 @@ export const financialCopy = {
     latestFiling: "Senaste årsredovisningen",
     financialYear: "Räkenskapsår",
     standaloneAccounts: "separat redovisning",
-    allSourceFacts: "Alla källfakta",
+    allSourceFacts: "Fakta från senaste årsredovisningen",
     sourceFactsForYear: "Visa källfakta för",
+    sourceFilings: {
+      title: "Inlämnade årsredovisningar",
+      description:
+        "Öppna samtliga taggade fakta från varje tillgänglig årsredovisning.",
+      factCount: "{count} fakta",
+      openYear: "Öppna källfakta för {year}",
+    },
     reportedIn: "Rapporterad i",
     fromFiling: "från årsredovisningen {year}",
     noDataTitle: "Inga strukturerade finansiella data tillgängliga",
@@ -204,6 +217,64 @@ export const financialCopy = {
     },
   },
 } as const;
+
+export const financialSourceCopy = {
+  en: {
+    selectorTitle: "Financial source",
+    selectorDescription:
+      "Choose one source and accounting scope. Values are never merged between sources.",
+    scopeLabel: "Accounting scope",
+    sources: {
+      "bolagsverket-annual-accounts": {
+        title: "Bolagsverket annual accounts",
+        shortTitle: "Bolagsverket",
+        scope: "Standalone legal entity",
+        description:
+          "Standardized figures from the legal entity's digitally filed annual reports.",
+        filingDescription:
+          "Bolagsverket digital annual report{period} for standalone legal-entity accounts.",
+      },
+      esef: {
+        title: "ESEF consolidated IFRS",
+        shortTitle: "ESEF",
+        scope: "Consolidated IFRS group",
+        description:
+          "Standardized group figures from filed ESEF annual financial reports.",
+        filingDescription:
+          "Filed ESEF annual financial report{period} for consolidated IFRS group accounts.",
+      },
+    },
+  },
+  sv: {
+    selectorTitle: "Finansiell källa",
+    selectorDescription:
+      "Välj en källa och redovisningsomfattning. Värden slås aldrig samman mellan källor.",
+    scopeLabel: "Redovisningsomfattning",
+    sources: {
+      "bolagsverket-annual-accounts": {
+        title: "Bolagsverkets årsredovisningar",
+        shortTitle: "Bolagsverket",
+        scope: "Juridisk person",
+        description:
+          "Standardiserade värden från den juridiska personens digitalt inlämnade årsredovisningar.",
+        filingDescription:
+          "Bolagsverkets digitala årsredovisning{period} för den juridiska personen.",
+      },
+      esef: {
+        title: "ESEF konsoliderad IFRS",
+        shortTitle: "ESEF",
+        scope: "Konsoliderad IFRS-koncern",
+        description:
+          "Standardiserade koncernvärden från inlämnade finansiella ESEF-årsrapporter.",
+        filingDescription:
+          "Inlämnad finansiell ESEF-årsrapport{period} för en konsoliderad IFRS-koncern.",
+      },
+    },
+  },
+} as const;
+
+export type SwedenFinancialSourceId =
+  keyof (typeof financialSourceCopy)["en"]["sources"];
 
 export type FinancialCopy = (typeof financialCopy)[FinancialLocale];
 

@@ -55,6 +55,15 @@ def main(argv: Sequence[str] | None = None) -> int:
             "segment_fact_counts": {
                 name: len(references) for name, references in artifact.segments.items()
             },
+            "visible_section_counts": {
+                section_type: sum(
+                    section.section_type == section_type
+                    for section in artifact.visible_sections
+                )
+                for section_type in sorted(
+                    {section.section_type for section in artifact.visible_sections}
+                )
+            },
             "error_count": artifact.quality.error_count,
             "warning_count": artifact.quality.warning_count,
         }

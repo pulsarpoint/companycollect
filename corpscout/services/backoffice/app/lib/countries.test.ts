@@ -191,6 +191,39 @@ describe("detail config", () => {
     }
   });
 
+  it("reads every Swedish financial year from unified metrics", () => {
+    const query = COUNTRIES.find((country) => country.code === "se")?.detail
+      ?.financialsQuery;
+
+    expect(query).toContain("FROM se_bolagsverket_financial_metrics");
+    expect(query).toContain("observation_kind = 'reported'");
+    expect(query).not.toContain("se_financial_history");
+  });
+
+  it("keeps Finland registry and consolidated financial sources separate", () => {
+    const detail = getCountry("fi")?.detail;
+
+    expect(detail?.financialSources?.map((source) => source.kind)).toEqual([
+      "registry",
+      "esef",
+    ]);
+    expect(detail?.financialSources?.[0]).toMatchObject({
+      id: "prh-digital-annual-accounts",
+      yearFacts: true,
+    });
+    expect(detail?.financialsQuery).toContain("FROM fi_financial_metrics");
+    expect(detail?.factsQuery).toContain(
+      "FROM fi_financial_facts_with_source AS f",
+    );
+    expect(detail?.factsQuery).toContain("AS concept_label_original");
+    expect(detail?.factsDocumentQuery).toContain(
+      "xml_source_uri AS source_uri",
+    );
+    expect(detail?.factsDocumentQuery).toContain(
+      "'application/xml; charset=utf-8' AS content_type",
+    );
+  });
+
   it("norway declares a full statements query; others do not yet", () => {
     for (const c of COUNTRIES) {
       if (c.code === "no") {

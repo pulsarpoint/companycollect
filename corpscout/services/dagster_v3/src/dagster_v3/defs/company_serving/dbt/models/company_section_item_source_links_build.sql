@@ -200,7 +200,7 @@ financials AS (
         concat('standalone:', toString(metrics.fiscal_year)) AS item_key, metrics.source_record_uid,
         'financial_statement' AS relationship_kind, 'registry_company_identifier' AS match_method,
         toFloat32(1) AS match_confidence, metrics.source_run_id, metrics.resolved_at AS linked_at
-    FROM {{ source('corpscout', 'se_financial_metrics') }} AS metrics FINAL
+    FROM {{ source('corpscout', 'se_bolagsverket_financial_metrics') }} AS metrics FINAL
     INNER JOIN company_anchors AS anchors ON anchors.company_id = metrics.company_id
     WHERE metrics.country_iso2 = '{{ var("country_code") }}' AND metrics.source_record_uid != ''
 ),
@@ -217,14 +217,16 @@ evidence_links AS (
     UNION ALL SELECT * FROM financials
 )
 SELECT DISTINCT
-    country_code,
-    company_id,
-    section,
-    CAST(item_key AS String) AS item_key,
-    CAST(source_record_uid AS String) AS source_record_uid,
-    relationship_kind,
-    match_method,
-    match_confidence,
-    source_run_id,
-    linked_at
-FROM evidence_links
+    links.country_code,
+    links.company_id,
+    links.section,
+    CAST(links.item_key AS String) AS item_key,
+    CAST(links.source_record_uid AS String) AS source_record_uid,
+    links.relationship_kind,
+    links.match_method,
+    links.match_confidence,
+    links.source_run_id,
+    links.linked_at
+FROM evidence_links AS links
+INNER JOIN company_anchors AS anchors
+    ON anchors.company_id = links.company_id

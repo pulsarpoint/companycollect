@@ -6,15 +6,18 @@ import pytest
 from dagster_clickhouse import ClickhouseResource
 
 from dagster_v3.defs.sweden_financial.metrics import (
-    SE_FINANCIAL_METRICS_TABLE,
+    SE_BOLAGSVERKET_FINANCIAL_METRICS_COLUMNS,
+    SE_BOLAGSVERKET_FINANCIAL_METRICS_TABLE,
     SWEDEN_FINANCIAL_MAPPING_VERSION,
-    build_sweden_financial_metrics_insert_sql,
-    replace_sweden_financial_metrics_clickhouse,
+    build_se_bolagsverket_financial_metrics_insert_sql,
+    replace_se_bolagsverket_financial_metrics_clickhouse,
 )
 
 _DEFAULT_QUALITY_ROW = (
     10,
     8,
+    7,
+    3,
     2019,
     2025,
     0,
@@ -79,8 +82,8 @@ class FakeClickHouseClient:
 
 
 def test_sweden_financial_metrics_sql_resolves_current_source_observations() -> None:
-    sql = build_sweden_financial_metrics_insert_sql(
-        "`corpscout`.`_tmp_se_financial_metrics_test`"
+    sql = build_se_bolagsverket_financial_metrics_insert_sql(
+        "`corpscout`.`_tmp_se_bolagsverket_financial_metrics_test`"
     )
 
     assert "corpscout.se_bolagsverket_financial_observations" in sql
@@ -103,10 +106,30 @@ def test_sweden_financial_metrics_sql_resolves_current_source_observations() -> 
     assert "if(empty(statement_currency), 'SEK', statement_currency) AS currency" in sql
 
 
+def test_sweden_financial_metrics_sql_unifies_trusted_comparative_years() -> None:
+    sql = build_se_bolagsverket_financial_metrics_insert_sql(
+        "`corpscout`.`_tmp_se_bolagsverket_financial_metrics_test`"
+    )
+
+    assert "observation_kind" in SE_BOLAGSVERKET_FINANCIAL_METRICS_COLUMNS
+    assert "source_fiscal_year" in SE_BOLAGSVERKET_FINANCIAL_METRICS_COLUMNS
+    assert "disqualified_comparative_statements AS (" in sql
+    assert "revenue_overlap_relative_diff > 0.005" in sql
+    assert "observation_kind IN ('reported', 'comparative')" in sql
+    assert "BETWEEN 1 AND 4" in sql
+    assert "metric_code IN ('revenue', 'total_assets')" in sql
+    assert (
+        "GROUP BY source_statement_key, represented_fiscal_year, observation_kind"
+        in sql
+    )
+    assert "toUInt16(source_fiscal_year) AS source_fiscal_year" in sql
+    assert "corpscout.se_financial_history" not in sql
+
+
 def test_sweden_financial_metrics_sql_excludes_non_statement_documents() -> None:
     # 2026-07-18: rar/rarc registration envelopes and figure-less race
-    # documents must never surface in se_financial_metrics; see
-    # build_sweden_financial_metrics_insert_sql's inline comment for the
+    # documents must never surface in se_bolagsverket_financial_metrics; see
+    # build_se_bolagsverket_financial_metrics_insert_sql's inline comment for the
     # full contract (gaap/coa bank filings are deliberately kept).
     #
     # The LIKE literals are `%%`-escaped (not bare `%`): this INSERT is
@@ -114,8 +137,8 @@ def test_sweden_financial_metrics_sql_excludes_non_statement_documents() -> None
     # clickhouse_driver Python-%-formats the whole query against that dict,
     # so a bare `%` here would raise `TypeError: not enough arguments for
     # format string` (see the inline comment above the WHERE clause).
-    sql = build_sweden_financial_metrics_insert_sql(
-        "`corpscout`.`_tmp_se_financial_metrics_test`"
+    sql = build_se_bolagsverket_financial_metrics_insert_sql(
+        "`corpscout`.`_tmp_se_bolagsverket_financial_metrics_test`"
     )
 
     assert "NOT LIKE '%%/ar/rar%%'" in sql
@@ -139,8 +162,8 @@ def test_sweden_financial_metrics_sql_survives_percent_formatting_with_driver_pa
     correctly), proving `%%/ar/rar%%` is the correct escaping and not an
     over-escape.
     """
-    sql = build_sweden_financial_metrics_insert_sql(
-        "`corpscout`.`_tmp_se_financial_metrics_test`"
+    sql = build_se_bolagsverket_financial_metrics_insert_sql(
+        "`corpscout`.`_tmp_se_bolagsverket_financial_metrics_test`"
     )
     params = {
         "source_run_id": "run-1",
@@ -156,7 +179,7 @@ def test_sweden_financial_metrics_sql_survives_percent_formatting_with_driver_pa
     assert "LIKE '%/misc/race/%'" in formatted
 
 
-def test_replace_sweden_financial_metrics_is_atomic_and_reports_coverage(
+def test_replace_se_bolagsverket_financial_metrics_is_atomic_and_reports_coverage(
     monkeypatch,
 ) -> None:
     client = FakeClickHouseClient()
@@ -170,7 +193,7 @@ def test_replace_sweden_financial_metrics_is_atomic_and_reports_coverage(
 
     monkeypatch.setattr(ClickhouseResource, "get_connection", fake_get_connection)
 
-    counts = replace_sweden_financial_metrics_clickhouse(
+    counts = replace_se_bolagsverket_financial_metrics_clickhouse(
         clickhouse=resource,
         source_run_id="metrics-run",
         resolved_at=datetime(2026, 7, 16, 20, 0, tzinfo=UTC),
@@ -179,7 +202,7 @@ def test_replace_sweden_financial_metrics_is_atomic_and_reports_coverage(
     assert client.table_checks == [
         (
             "se_bolagsverket_financial_observations",
-            "se_financial_metrics",
+            "se_bolagsverket_financial_metrics",
         )
     ]
     assert client.insert_parameters["source_run_id"] == "metrics-run"
@@ -195,19 +218,21 @@ def test_replace_sweden_financial_metrics_is_atomic_and_reports_coverage(
     assert client.statements[-1].startswith("DROP TABLE")
     assert counts["row_count"] == 10
     assert counts["company_count"] == 8
+    assert counts["reported_row_count"] == 7
+    assert counts["comparative_row_count"] == 3
     assert counts["mapped_statement_count"] == 9
     assert counts["missing_fx_count"] == 0
     assert counts["invalid_liabilities_statement_count"] == 1
     assert counts["revenue_statement_count"] == 8
     assert counts["employees_statement_count"] == 6
-    assert counts["table"] == f"corpscout.{SE_FINANCIAL_METRICS_TABLE}"
+    assert counts["table"] == (f"corpscout.{SE_BOLAGSVERKET_FINANCIAL_METRICS_TABLE}")
 
 
-def test_replace_sweden_financial_metrics_refuses_shrink_below_half(
+def test_replace_se_bolagsverket_financial_metrics_refuses_shrink_below_half(
     monkeypatch,
 ) -> None:
     # Regression test for the 2026-07-19 live incident: refuse a full
-    # rebuild that would leave se_financial_metrics with less than half its
+    # rebuild that would leave se_bolagsverket_financial_metrics with less than half
     # current row count (49% of 100 existing rows here).
     quality_row = (49, *_DEFAULT_QUALITY_ROW[1:])
     client = FakeClickHouseClient(quality_row=quality_row, existing_row_count=100)
@@ -222,7 +247,7 @@ def test_replace_sweden_financial_metrics_refuses_shrink_below_half(
     monkeypatch.setattr(ClickhouseResource, "get_connection", fake_get_connection)
 
     with pytest.raises(ValueError, match="Refusing to replace ClickHouse table"):
-        replace_sweden_financial_metrics_clickhouse(
+        replace_se_bolagsverket_financial_metrics_clickhouse(
             clickhouse=resource,
             source_run_id="metrics-run",
             resolved_at=datetime(2026, 7, 16, 20, 0, tzinfo=UTC),
@@ -235,7 +260,7 @@ def test_replace_sweden_financial_metrics_refuses_shrink_below_half(
     assert client.statements[-1].startswith("DROP TABLE")
 
 
-def test_replace_sweden_financial_metrics_allows_shrink_at_51_percent(
+def test_replace_se_bolagsverket_financial_metrics_allows_shrink_at_51_percent(
     monkeypatch,
 ) -> None:
     quality_row = (51, *_DEFAULT_QUALITY_ROW[1:])
@@ -250,7 +275,7 @@ def test_replace_sweden_financial_metrics_allows_shrink_at_51_percent(
 
     monkeypatch.setattr(ClickhouseResource, "get_connection", fake_get_connection)
 
-    counts = replace_sweden_financial_metrics_clickhouse(
+    counts = replace_se_bolagsverket_financial_metrics_clickhouse(
         clickhouse=resource,
         source_run_id="metrics-run",
         resolved_at=datetime(2026, 7, 16, 20, 0, tzinfo=UTC),
@@ -262,12 +287,14 @@ def test_replace_sweden_financial_metrics_allows_shrink_at_51_percent(
     )
 
 
-def test_replace_sweden_financial_metrics_allow_shrink_overrides_guard(
+def test_replace_se_bolagsverket_financial_metrics_allow_shrink_overrides_guard(
     monkeypatch,
 ) -> None:
     quality_row = (
         1,
         1,
+        1,
+        0,
         2025,
         2025,
         0,
@@ -298,7 +325,7 @@ def test_replace_sweden_financial_metrics_allow_shrink_overrides_guard(
 
     monkeypatch.setattr(ClickhouseResource, "get_connection", fake_get_connection)
 
-    counts = replace_sweden_financial_metrics_clickhouse(
+    counts = replace_se_bolagsverket_financial_metrics_clickhouse(
         clickhouse=resource,
         source_run_id="metrics-run",
         resolved_at=datetime(2026, 7, 16, 20, 0, tzinfo=UTC),

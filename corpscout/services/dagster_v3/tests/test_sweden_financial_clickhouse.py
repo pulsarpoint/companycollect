@@ -1029,7 +1029,7 @@ def test_upsert_facts_partition_is_idempotent_and_leaves_other_partitions(
 def test_guard_against_clickhouse_table_shrink_refuses_at_49_percent() -> None:
     with pytest.raises(ValueError, match="Refusing to replace ClickHouse table"):
         guard_against_clickhouse_table_shrink(
-            qualified_table="corpscout.se_financial_metrics",
+            qualified_table="corpscout.se_bolagsverket_financial_metrics",
             existing_row_count=100,
             staged_row_count=49,
             allow_shrink=False,
@@ -1041,14 +1041,14 @@ def test_guard_against_clickhouse_table_shrink_message_names_table_existing_stag
 ):
     with pytest.raises(ValueError) as exc_info:
         guard_against_clickhouse_table_shrink(
-            qualified_table="corpscout.se_financial_metrics",
+            qualified_table="corpscout.se_bolagsverket_financial_metrics",
             existing_row_count=100,
             staged_row_count=49,
             allow_shrink=False,
         )
 
     message = str(exc_info.value)
-    assert "corpscout.se_financial_metrics" in message
+    assert "corpscout.se_bolagsverket_financial_metrics" in message
     assert "100" in message
     assert "49" in message
     assert "allow_shrink=True" in message
@@ -1056,7 +1056,7 @@ def test_guard_against_clickhouse_table_shrink_message_names_table_existing_stag
 
 def test_guard_against_clickhouse_table_shrink_allows_at_51_percent() -> None:
     guard_against_clickhouse_table_shrink(
-        qualified_table="corpscout.se_financial_metrics",
+        qualified_table="corpscout.se_bolagsverket_financial_metrics",
         existing_row_count=100,
         staged_row_count=51,
         allow_shrink=False,
@@ -1070,7 +1070,7 @@ def test_guard_against_clickhouse_table_shrink_allows_exact_50_percent_boundary(
     # is allowed, only strictly-below-half refuses.
     assert SHRINK_GUARD_MIN_RATIO == 0.5
     guard_against_clickhouse_table_shrink(
-        qualified_table="corpscout.se_financial_metrics",
+        qualified_table="corpscout.se_bolagsverket_financial_metrics",
         existing_row_count=100,
         staged_row_count=50,
         allow_shrink=False,
@@ -1083,7 +1083,7 @@ def test_guard_against_clickhouse_table_shrink_never_trips_on_empty_existing_tab
     # A never-before-populated (or already-empty) target has nothing to
     # shrink from -- the guard is a no-op regardless of staged count.
     guard_against_clickhouse_table_shrink(
-        qualified_table="corpscout.se_financial_metrics",
+        qualified_table="corpscout.se_bolagsverket_financial_metrics",
         existing_row_count=0,
         staged_row_count=0,
         allow_shrink=False,
@@ -1094,7 +1094,7 @@ def test_guard_against_clickhouse_table_shrink_allow_shrink_overrides() -> None:
     # The explicit override path: even a would-be-refused shrink proceeds
     # when the caller has explicitly opted in.
     guard_against_clickhouse_table_shrink(
-        qualified_table="corpscout.se_financial_metrics",
+        qualified_table="corpscout.se_bolagsverket_financial_metrics",
         existing_row_count=100,
         staged_row_count=1,
         allow_shrink=True,

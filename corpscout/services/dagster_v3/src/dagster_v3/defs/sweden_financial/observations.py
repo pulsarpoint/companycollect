@@ -15,6 +15,9 @@ from typing import Any
 from dagster_clickhouse import ClickhouseResource
 
 from dagster_v3.defs.clickhouse.resolved import assert_clickhouse_tables_exist
+from dagster_v3.defs.common.financial_metric_mappings import (
+    concept_metric_codes_for_source,
+)
 from dagster_v3.defs.sweden_financial.clickhouse import (
     clickhouse_table_row_count,
     guard_against_clickhouse_table_shrink,
@@ -84,23 +87,11 @@ SE_BOLAGSVERKET_FINANCIAL_OBSERVATIONS_COLUMNS = (
 # metric code but remain separate rows with their original concept and ordinal;
 # choosing between them belongs to a later resolution layer.
 BOLAGSVERKET_FINANCIAL_CONCEPTS: dict[str, str] = {
-    "Nettoomsattning": "revenue",
-    "Rorelseresultat": "operating_profit_loss",
-    "AretsResultat": "profit_loss",
+    **concept_metric_codes_for_source("bolagsverket"),
     "ResultatEfterFinansiellaPoster": "result_after_financial_items",
     "Soliditet": "solidity",
-    "Tillgangar": "total_assets",
-    "Balansomslutning": "total_assets",
-    "EgetKapital": "equity",
     "EgetKapitalSkulder": "equity_liabilities",
-    "KassaBank": "cash_and_bank",
-    "KassaBankExklRedovisningsmedel": "cash_and_bank",
-    "Omsattningstillgangar": "current_assets",
     "KortfristigaFordringar": "current_receivables",
-    "KortfristigaSkulder": "current_liabilities",
-    "Personalkostnader": "personnel_expenses",
-    "LonerAndraErsattningar": "wages_and_salaries",
-    "MedelantaletAnstallda": "employees",
 }
 
 _CONTEXT_YEAR_EXTRACT_PATTERN = r"^(?:period|balans)([0-9]+)$"

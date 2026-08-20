@@ -5,17 +5,9 @@ import type { CountryConfig } from "~/lib/countries";
 import type { CompanyFilters } from "~/lib/filters";
 import { filterableFacetKeys } from "~/lib/filters";
 import { availableCompanyFlags, flagFilterKey } from "~/lib/company-flags";
-import {
-  FINANCIAL_FILING_FILTER_KEY,
-  isFinancialFilingStatus,
-} from "~/lib/financial-filing-status";
 import type { FacetOption } from "~/lib/facets.server";
-import {
-  setFilterValues,
-  toggleFilterValue,
-} from "~/components/data-table/url";
+import { toggleFilterValue } from "~/components/data-table/url";
 import { useEffectiveSearchParams } from "~/components/data-table/use-effective-search";
-import { FINANCIAL_FILING_STATUS_PRESENTATION } from "~/components/financial-filing-status";
 import { Badge } from "~/components/ui/badge";
 import { Button } from "~/components/ui/button";
 import {
@@ -37,13 +29,11 @@ import {
   SheetTitle,
   SheetTrigger,
 } from "~/components/ui/sheet";
-import { ToggleGroup, ToggleGroupItem } from "~/components/ui/toggle-group";
 
 const nf = new Intl.NumberFormat("en-US");
 
 export function facetLabel(country: CountryConfig, key: string): string {
   if (key === "industry") return "Industry";
-  if (key === FINANCIAL_FILING_FILTER_KEY) return "Annual report";
   // Flag filters are not columns, so the active-filter chip would otherwise
   // read "flag_financials: yes" -- the raw key, leaked to the reader.
   const flag = availableCompanyFlags(country.code).find(
@@ -54,12 +44,10 @@ export function facetLabel(country: CountryConfig, key: string): string {
 }
 
 export function facetValueLabel(key: string, value: string): string {
-  if (key !== FINANCIAL_FILING_FILTER_KEY) return value;
-  return (
-    FINANCIAL_FILING_STATUS_PRESENTATION.find(
-      (definition) => definition.value === value,
-    )?.label ?? value
-  );
+  if (!key.startsWith("flag_")) return value;
+  if (value === "yes") return "Has data";
+  if (value === "no") return "No data";
+  return value;
 }
 
 function FacetCombobox({
@@ -165,58 +153,6 @@ function FacetCombobox({
   );
 }
 
-function FinancialFilingFilters({ filters }: { filters: CompanyFilters }) {
-  const navigate = useNavigate();
-  const effectiveParams = useEffectiveSearchParams();
-  const selected = (filters[FINANCIAL_FILING_FILTER_KEY] ?? []).filter(
-    isFinancialFilingStatus,
-  );
-
-  return (
-    <div className="flex flex-col gap-2">
-      <div>
-        <p className="text-sm font-medium">Annual report</p>
-        <p className="text-muted-foreground text-xs">
-          Latest evidence-backed filing state
-        </p>
-      </div>
-      <ToggleGroup
-        multiple
-        value={selected}
-        onValueChange={(values) =>
-          navigate(
-            setFilterValues(
-              effectiveParams,
-              FINANCIAL_FILING_FILTER_KEY,
-              values,
-            ),
-            { preventScrollReset: true },
-          )
-        }
-        variant="outline"
-        size="sm"
-        className="w-full flex-wrap justify-start"
-        aria-label="Annual report filing status"
-      >
-        {FINANCIAL_FILING_STATUS_PRESENTATION.map((definition) => {
-          const Icon = definition.icon;
-          return (
-            <ToggleGroupItem
-              key={definition.value}
-              value={definition.value}
-              title={definition.meaning}
-              aria-label={definition.label}
-            >
-              <Icon data-icon="inline-start" />
-              {definition.shortLabel}
-            </ToggleGroupItem>
-          );
-        })}
-      </ToggleGroup>
-    </div>
-  );
-}
-
 /**
  * A switch per kind of data we hold.
  *
@@ -238,9 +174,7 @@ function FlagFilters({
   filters: CompanyFilters;
 }) {
   const effectiveParams = useEffectiveSearchParams();
-  const flags = availableCompanyFlags(country.code).filter(
-    (flag) => country.code !== "se" || flag.id !== "financials",
-  );
+  const flags = availableCompanyFlags(country.code);
   if (flags.length === 0) return null;
 
   return (
@@ -307,9 +241,6 @@ export function FilterSidebar({
           <SheetTitle>Filter companies</SheetTitle>
         </SheetHeader>
         <div className="flex flex-col gap-4 px-4 pb-6">
-          {country.code === "se" ? (
-            <FinancialFilingFilters filters={filters} />
-          ) : null}
           <FlagFilters country={country} filters={filters} />
           {filterableFacetKeys(country).map((key) => (
             <FacetCombobox

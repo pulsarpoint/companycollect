@@ -227,7 +227,9 @@ CLICKHOUSE_LEAVES: tuple[ClickhouseLeaf, ...] = (
         "sweden_financial_current_facts_clickhouse", ("se_financial_facts",), None
     ),
     ClickhouseLeaf(
-        "sweden_financial_metrics_clickhouse", ("se_financial_metrics",), None
+        "se_bolagsverket_financial_metrics_clickhouse",
+        ("se_bolagsverket_financial_metrics",),
+        None,
     ),
     ClickhouseLeaf(
         "se_bolagsverket_financial_observations_clickhouse",

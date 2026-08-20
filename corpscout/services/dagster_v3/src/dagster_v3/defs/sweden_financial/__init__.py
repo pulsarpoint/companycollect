@@ -1,7 +1,6 @@
 from dagster_v3.defs.sweden_financial.assets import (
     defs,
     se_bolagsverket_financial_observations_clickhouse,
-    se_financial_history_clickhouse,
     se_financial_taxonomy_concepts,
     se_financial_taxonomy_official_translations,
     sweden_financial_backfill_clickhouse_job,
@@ -24,7 +23,7 @@ from dagster_v3.defs.sweden_financial.assets import (
     sweden_financial_current_year_weekly,
     sweden_financial_current_report_xhtml_catalog_duckdb,
     sweden_financial_current_reports_clickhouse,
-    sweden_financial_metrics_clickhouse,
+    se_bolagsverket_financial_metrics_clickhouse,
 )
 from dagster_v3.defs.sweden_financial.resources import (
     SWEDEN_FINANCIAL_RAW_BUCKET,
@@ -44,7 +43,6 @@ __all__ = [
     "archive_object_key",
     "defs",
     "se_bolagsverket_financial_observations_clickhouse",
-    "se_financial_history_clickhouse",
     "se_financial_taxonomy_concepts",
     "se_financial_taxonomy_official_translations",
     "sweden_financial_backfill_clickhouse_job",
@@ -67,5 +65,5 @@ __all__ = [
     "sweden_financial_current_year_weekly",
     "sweden_financial_current_report_xhtml_catalog_duckdb",
     "sweden_financial_current_reports_clickhouse",
-    "sweden_financial_metrics_clickhouse",
+    "se_bolagsverket_financial_metrics_clickhouse",
 ]

@@ -61,25 +61,6 @@ export function FinancialFilingStatusBadge({
   );
 }
 
-export function FinancialFilingStatusGlyph({
-  status,
-}: {
-  status: FinancialFilingStatus;
-}) {
-  const definition = presentation(status);
-  const { icon: Icon, badgeVariant } = definition;
-  return (
-    <Badge
-      variant={badgeVariant}
-      className="size-5 p-0"
-      aria-label={definition.label}
-      title={`${definition.label}: ${definition.meaning}`}
-    >
-      <Icon />
-    </Badge>
-  );
-}
-
 export function FinancialFilingStatusSummary({
   filing,
 }: {

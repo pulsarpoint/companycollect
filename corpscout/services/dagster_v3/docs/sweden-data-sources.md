@@ -1,6 +1,6 @@
 # Sweden data sources — overview and state of processing
 
-Last updated: 2026-08-09. This is the map of everything we ingest for Sweden:
+Last updated: 2026-08-19. This is the map of everything we ingest for Sweden:
 what we download, how each pipeline processes it, what is live in ClickHouse
 today, the known gaps, and what should be done next. Deep detail lives in each
 module's own design doc — this is the map, not the spec:
@@ -14,7 +14,8 @@ module's own design doc — this is the map, not the spec:
 | Module | Publisher / dataset | Acquisition | Cadence | ClickHouse tables (rows @ 2026-07-20) | Auth / license |
 |---|---|---|---|---|---|
 | `sweden_company` | Bolagsverket high-value datasets: SCB/FDB company bulk + Bolagsverket legal-register bulk (two full ZIP snapshots) | automated full snapshot | source refreshes ~weekly; schedule Mon 06:15 (STOPPED by default, enable in UI) | `se_companies` 3.41M, `se_company_addresses` 4.40M, `se_industries` 2.45M | none / open data |
-| `sweden_financial` | Bolagsverket årsredovisningar bulk ZIPs (inline-XBRL annual reports, archive years 2020–2026) | automated; backfill by year partition + weekly current refresh | weekly Sat 06:45 (RUNNING) | `se_financial_reports` 2.21M, `se_financial_facts` 290.7M, `se_financial_metrics` 1.97M, `se_financial_history` 3.01M, `se_financial_report_signatories` 5.43M, `se_company_audits` 396k | none / open data |
+| `sweden_financial` | Bolagsverket årsredovisningar bulk ZIPs (inline-XBRL annual reports, archive years 2020–2026) | automated; backfill by year partition + weekly current refresh | weekly Sat 06:45 (RUNNING) | `se_financial_reports`, `se_financial_facts`, unified reported/comparative `se_bolagsverket_financial_metrics`, `se_financial_report_signatories`, `se_company_audits` | none / open data |
+| `esef_filings` | filings.xbrl.org ESEF reports for Swedish LEI issuers | automated cross-country ESEF flow | source-owned schedule | `esef_filings`, `esef_facts`, `esef_financial_metrics` | public filings |
 | cross-source consumers | — | derived from the tables above | daily / with financial refresh | `companies_all` (SE included), `company_people_all` 5.26M SE rows, `se_company_financials_latest` 570k | — |
 
 Entity key everywhere: the 10-digit **organisationsnummer** (`company_id` /
@@ -142,18 +143,12 @@ Chain (year-partitioned backfill + non-partitioned weekly current refresh):
      preserved; reported and comparative assertions coexist. Conflicts are
      quality flags, not filters, and no canonical or cross-source value is
      selected here.
-   - **`se_financial_metrics`** — one canonical row per filing: undimensioned
-     current-period facts, highest-declared-precision preference, standard
-     Swedish concept mapping (revenue, operating profit, profit/loss, assets,
-     equity, liabilities derived from the balance-sheet equation, cash,
-     current assets/receivables/liabilities, personnel expenses, wages,
-     employees), SEK→USD via shared `corpscout.exchange_rates`, plus archive
-     URL, exact XHTML S3 URI, taxonomy entrypoint, and mapping fact counts.
-   - **`se_financial_history`** — comparative-year rows recovered from each
-     filing's prior-year columns (3.01M rows, 1.04M pure comparatives), which
-     is how the backoffice shows more fiscal years than there are filings.
-     Cross-checked at ~91% agreement where a comparative overlaps a real
-     filing.
+   - **`se_bolagsverket_financial_metrics`** — one resolved row per filing and
+     represented fiscal year. Reported years carry the full standard metric set;
+     comparative years backfill revenue and total assets only. The latter are
+     retained only when overlapping revenue agrees with a directly reported
+     year, and `observation_kind` plus `source_fiscal_year` preserve their
+     provenance.
    - **`se_financial_report_signatories`** — people reconstructed from the signature
      blocks (`UnderskriftHandling*` / `Arsredovisning*` /
      `Faststallelseintyg*` concept triples): 5.43M rows ≈ 3.10M board /
@@ -171,6 +166,20 @@ its filing and exposes both the official Bolagsverket outer-archive URL and the
 exact extracted XHTML URI — this backs the "open source document" buttons in
 the backoffice facts drill-down.
 
+### Financial serving boundary
+
+The Financials page does not combine standalone Bolagsverket values with
+consolidated ESEF values. It reads two same-shape views independently:
+
+- `se_financials_bolagsverket_current` selects one Bolagsverket filing row per
+  company/year and retains filed versus comparative provenance.
+- `se_financials_esef_current` resolves Swedish ESEF issuers through
+  `company_identifier` and composes amendments per metric.
+
+Both expose the canonical presentation aliases and source-record UIDs. The UI
+shows only sources available for the company and lets the user switch the
+selected source without creating a cross-source winner.
+
 ### Jobs and schedules
 
 | job | contents | trigger |
@@ -180,7 +189,7 @@ the backoffice facts drill-down.
 | `sweden_financial_backfill_clickhouse_job` | backfill reports+facts export pair | manual, after parse |
 | `sweden_financial_context_period_backfill_job` | cached XHTML reparse + FX + scoped reports/facts exports, one archive-year partition per run | manual schema/data rollout |
 | `sweden_financial_current_clickhouse_job` | reconciling current export pair (manual; safe any time -- stateless diff vs ClickHouse) | manual |
-| `sweden_financial_clickhouse_job` | derived wave: source observations, metrics, history, officers, audits | after exports |
+| `sweden_financial_clickhouse_job` | derived wave: source observations, Bolagsverket metrics, officers, audits | after exports |
 
 Operational notes:
 

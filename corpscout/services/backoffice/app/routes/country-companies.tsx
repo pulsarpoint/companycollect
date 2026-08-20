@@ -1,4 +1,4 @@
-import { Form, Link } from "react-router";
+import { Form, Link, redirect } from "react-router";
 import { X } from "lucide-react";
 import type { Route } from "./+types/country-companies";
 import { getCountry } from "~/lib/countries";
@@ -10,7 +10,11 @@ import {
   parseCompanyColumns,
 } from "~/lib/company-columns";
 import { CompanyColumnPicker } from "~/components/data-table/company-column-picker";
-import { availableCompanyFlags } from "~/lib/company-flags";
+import { availableCompanyFlags, flagFilterKey } from "~/lib/company-flags";
+import {
+  FINANCIAL_FILING_FILTER_KEY,
+  isFinancialFilingStatus,
+} from "~/lib/financial-filing-status";
 import { Button } from "~/components/ui/button";
 import { Input } from "~/components/ui/input";
 import { Badge } from "~/components/ui/badge";
@@ -23,10 +27,6 @@ import {
   facetValueLabel,
 } from "~/components/data-table/filter-sidebar";
 import {
-  FINANCIAL_FILING_STATUS_PRESENTATION,
-  FinancialFilingStatusGlyph,
-} from "~/components/financial-filing-status";
-import {
   clearAllFilters,
   removeFilterValue,
 } from "~/components/data-table/url";
@@ -37,6 +37,24 @@ export async function loader({ params, request }: Route.LoaderArgs) {
   if (!country) throw new Response("Country not found", { status: 404 });
 
   const url = new URL(request.url);
+  const legacyFilterKey = `f_${FINANCIAL_FILING_FILTER_KEY}`;
+  if (country.code === "se" && url.searchParams.has(legacyFilterKey)) {
+    const legacyStatuses = url.searchParams
+      .getAll(legacyFilterKey)
+      .filter(isFinancialFilingStatus);
+    const financialDataFilterKey = `f_${flagFilterKey("financials")}`;
+    url.searchParams.delete(legacyFilterKey);
+    if (!url.searchParams.has(financialDataFilterKey)) {
+      const hasData = legacyStatuses.includes("data_available");
+      const hasNoData = legacyStatuses.some(
+        (status) => status !== "data_available",
+      );
+      if (hasData !== hasNoData) {
+        url.searchParams.set(financialDataFilterKey, hasData ? "yes" : "no");
+      }
+    }
+    throw redirect(`${url.pathname}${url.search}`);
+  }
   const filters = parseFilters(url.searchParams, country);
   const [result, legalFormLabels] = await Promise.all([
     searchCompanies(country, {
@@ -85,9 +103,7 @@ export default function CountryCompanies({
     visibleColumns,
   );
   const searchParams = useEffectiveSearchParams();
-  const flagLegend = availableCompanyFlags(country.code).filter(
-    (flag) => country.code !== "se" || flag.id !== "financials",
-  );
+  const flagLegend = availableCompanyFlags(country.code);
 
   return (
     <>
@@ -168,23 +184,9 @@ export default function CountryCompanies({
         </div>
       ) : null}
 
-      {(flagLegend.length > 0 || country.code === "se") &&
-      visibleColumns.includes("data") ? (
+      {flagLegend.length > 0 && visibleColumns.includes("data") ? (
         <div className="text-muted-foreground flex flex-wrap items-center gap-x-4 gap-y-1 text-xs">
-          <span className="uppercase tracking-wide">
-            {country.code === "se" ? "Data and filing state" : "Data held"}
-          </span>
-          {country.code === "se"
-            ? FINANCIAL_FILING_STATUS_PRESENTATION.map((definition) => (
-                <span
-                  key={definition.value}
-                  className="flex items-center gap-1.5"
-                >
-                  <FinancialFilingStatusGlyph status={definition.value} />
-                  <span>{definition.shortLabel}</span>
-                </span>
-              ))
-            : null}
+          <span className="uppercase tracking-wide">Data held</span>
           {flagLegend.map((flag) => (
             <span key={flag.id} className="flex items-center gap-1.5">
               <span className="inline-flex size-5 shrink-0 items-center justify-center rounded-full border border-emerald-600/30 bg-emerald-500/15 text-[10px] leading-none font-semibold text-emerald-700 dark:border-emerald-400/30 dark:bg-emerald-400/15 dark:text-emerald-300">

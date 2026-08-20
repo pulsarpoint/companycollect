@@ -31,6 +31,10 @@ from pydantic import (
 
 from dagster_v3.defs.clickhouse.resolved import assert_clickhouse_tables_exist
 from dagster_v3.defs.company_people.draft import normalized_company_ids
+from dagster_v3.defs.company_people.roles import (
+    canonical_role_code,
+    source_role_code,
+)
 from dagster_v3.defs.esef_filings.llm_enrichment import deepseek_settings
 
 DATABASE = "corpscout"
@@ -63,11 +67,6 @@ _WHITESPACE_PATTERN = re.compile(r"\s+")
 _ROLE_SEPARATOR_PATTERN = re.compile(r"[^a-z0-9]+")
 
 _ROLE_ALIASES = {
-    "p112": "founder",
-    "p127": "owner",
-    "p169": "chief_executive_officer",
-    "p3320": "board_member",
-    "p488": "board_chair",
     "audit_partner": "audit_partner",
     "auditor": "auditor",
     "board_chair": "board_chair",
@@ -348,7 +347,12 @@ def _role_token(value: object) -> str:
 def observation_role_bucket(observation: DraftPersonObservation) -> str:
     """Return a stable canonical-ish role bucket for request partitioning."""
     value = observation.source_value
+    mapped_role_code = canonical_role_code(observation.source, value)
+    if mapped_role_code is not None:
+        return mapped_role_code
+
     candidates = (
+        source_role_code(observation.source, value),
         value.get("role_kind"),
         value.get("role_category"),
         value.get("role_property"),
@@ -1338,7 +1342,9 @@ se_company_person_job = dg.define_asset_job(
     "se_company_person_job",
     selection=dg.AssetSelection.assets(
         "se_company_person_draft_clickhouse",
+        "se_company_person_role_draft_clickhouse",
         "se_company_person_clickhouse",
+        "se_company_person_role_clickhouse",
     ),
 )
 

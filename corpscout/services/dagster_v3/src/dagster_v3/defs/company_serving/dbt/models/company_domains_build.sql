@@ -1,9 +1,14 @@
 {{ config(materialized='table', order_by=['country_code', 'company_id', 'root_domain']) }}
 
-WITH existing AS (
+WITH companies AS (
+    SELECT company_id
+    FROM {{ source('corpscout', 'se_companies') }} FINAL
+),
+
+existing AS (
     SELECT
         country_code AS country_code,
-        company_id AS company_id,
+        domains.company_id AS company_id,
         root_domain AS root_domain,
         website_url,
         website_host,
@@ -24,7 +29,9 @@ WITH existing AS (
         first_seen_at,
         last_seen_at,
         resolved_at
-    FROM {{ source('corpscout', 'company_domains') }} FINAL
+    FROM {{ source('corpscout', 'company_domains') }} AS domains FINAL
+    INNER JOIN companies
+        ON companies.company_id = domains.company_id
     WHERE country_code = '{{ var("country_code") }}'
 ),
 
@@ -43,6 +50,8 @@ wikidata_sources AS (
         domains.is_primary AS source_suggested_primary,
         domains.resolved_at AS observed_at
     FROM {{ ref('company_external_identifier_current_build') }} AS identifiers
+    INNER JOIN companies
+        ON companies.company_id = identifiers.company_id
     INNER JOIN {{ source('corpscout', 'wikidata_company_domains') }} AS domains FINAL
         ON domains.registry_id = identifiers.identifier_value
     INNER JOIN {{ ref('company_wikidata_current_build') }} AS wikidata
@@ -92,6 +101,8 @@ esef_sources AS (
         toUInt8(0) AS source_suggested_primary,
         candidates.resolved_at AS observed_at
     FROM {{ source('corpscout', 'esef_document_contact_candidates') }} AS candidates
+    INNER JOIN companies
+        ON companies.company_id = candidates.company_id
     LEFT ANY JOIN {{ source('corpscout', 'esef_source_documents') }} AS documents
         ON documents.source_document_id = candidates.source_document_id
     WHERE candidates.country_iso2 = '{{ var("country_code") }}'
@@ -141,6 +152,8 @@ common_crawl_sources AS (
         toUInt8(suggestions.rank = 1) AS source_suggested_primary,
         suggestions.suggested_at AS observed_at
     FROM {{ source('corpscout', 'company_domain_suggestions_active') }} AS suggestions
+    INNER JOIN companies
+        ON companies.company_id = suggestions.company_id
     LEFT JOIN common_crawl_evidence AS evidence
         ON evidence.country_code = suggestions.country_iso2
        AND evidence.company_id = suggestions.company_id

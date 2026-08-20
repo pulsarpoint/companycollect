@@ -28,7 +28,7 @@ UPSTREAM_KEYS: dict[str, list[str]] = {
         "norway_brreg_financial_statements_updates_clickhouse",
     ],
     "fi": ["fi_financial_metrics_ch"],
-    "se": ["sweden_financial_metrics_clickhouse"],
+    "se": ["se_bolagsverket_financial_metrics_clickhouse"],
     "ee": ["estonia_ar_clickhouse_financial_metrics"],
     "lv": ["latvia_financial_metrics_clickhouse"],
     "fr": ["france_financial_metrics_clickhouse"],

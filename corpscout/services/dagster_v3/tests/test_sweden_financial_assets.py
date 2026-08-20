@@ -44,8 +44,7 @@ def test_sweden_financial_backfill_and_current_assets_are_separate() -> None:
         "sweden_financial_current_reports_clickhouse",
         "sweden_financial_current_facts_clickhouse",
         "se_bolagsverket_financial_observations_clickhouse",
-        "sweden_financial_metrics_clickhouse",
-        "se_financial_history_clickhouse",
+        "se_bolagsverket_financial_metrics_clickhouse",
         "sweden_financial_company_source_records_clickhouse",
         "se_financial_facts_concepts",
         "se_financial_taxonomy_concepts",
@@ -151,8 +150,7 @@ def test_sweden_financial_backfill_and_current_assets_are_separate() -> None:
         ).asset_layer.executable_asset_keys
     }
     assert clickhouse_job_asset_keys == {
-        "sweden_financial_metrics_clickhouse",
-        "se_financial_history_clickhouse",
+        "se_bolagsverket_financial_metrics_clickhouse",
         "se_bolagsverket_financial_observations_clickhouse",
         "se_financial_report_signatories_clickhouse",
         "se_company_audits_clickhouse",
@@ -243,37 +241,13 @@ def test_sweden_financial_backfill_and_current_assets_are_separate() -> None:
     }
 
     metrics_node = repo.asset_graph.get(
-        dg.AssetKey("sweden_financial_metrics_clickhouse")
+        dg.AssetKey("se_bolagsverket_financial_metrics_clickhouse")
     )
     assert metrics_node.group_name == "sweden_financial"
     assert metrics_node.partitions_def is None
     assert metrics_node.parent_keys == {
         dg.AssetKey("se_bolagsverket_financial_observations_clickhouse"),
     }
-
-
-def test_se_financial_history_clickhouse_asset_is_wired_correctly() -> None:
-    from dagster_v3.definitions import defs as load_defs
-
-    repo = load_defs().get_repository_def()
-
-    history_node = repo.asset_graph.get(dg.AssetKey("se_financial_history_clickhouse"))
-    assert history_node.group_name == "sweden_financial"
-    assert history_node.pools == set()
-    assert history_node.partitions_def is None
-    assert history_node.parent_keys == {
-        dg.AssetKey("se_bolagsverket_financial_observations_clickhouse"),
-    }
-
-    # History and metrics are sibling resolutions of the same observation
-    # asset and run in the same derived ClickHouse job.
-    clickhouse_job_asset_keys = {
-        key.path[-1]
-        for key in repo.get_job(
-            "sweden_financial_clickhouse_job"
-        ).asset_layer.executable_asset_keys
-    }
-    assert "se_financial_history_clickhouse" in clickhouse_job_asset_keys
 
 
 def test_se_bolagsverket_financial_observations_asset_is_wired_correctly() -> None:
@@ -349,7 +323,7 @@ def test_sweden_financial_docs_describe_raw_archive_scope() -> None:
     assert "archive sync manifest" in text
     assert "XHTML extraction" in text
     assert "se_financial_facts_with_source" in text
-    assert "se_financial_metrics" in text
+    assert "se_bolagsverket_financial_metrics" in text
 
 
 def test_archive_ingest_complete_check_registered() -> None:
@@ -364,7 +338,10 @@ def test_archive_ingest_complete_check_registered() -> None:
     # Attached to the unpartitioned derived metrics rebuild: the check's
     # semantics are whole-table (all years) completeness, which must not
     # fail a single-partition export run.
-    assert ("sweden_financial_metrics_clickhouse", "archive_ingest_complete") in names
+    assert (
+        "se_bolagsverket_financial_metrics_clickhouse",
+        "archive_ingest_complete",
+    ) in names
 
 
 def test_sweden_financial_archive_ingest_gap_result_passes_within_tolerance() -> None:

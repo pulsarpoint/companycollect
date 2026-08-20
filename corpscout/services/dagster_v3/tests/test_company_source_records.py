@@ -1,8 +1,5 @@
 import pytest
 
-from dagster_v3.defs.company_source_records.assets import (
-    _delete_superseded_esef_observations,
-)
 from dagster_v3.defs.company_source_records.identity import (
     clickhouse_file_source_record_uid_sql,
     clickhouse_structured_source_record_uid_sql,
@@ -13,6 +10,7 @@ from dagster_v3.defs.company_source_records.identity import (
 from dagster_v3.defs.company_source_records.sql import (
     esef_document_observation_sql,
     esef_source_record_sql,
+    finland_financial_source_record_sql,
     sweden_financial_source_record_sql,
     sweden_registry_source_record_sql,
     wikidata_source_record_sql,
@@ -108,6 +106,7 @@ def test_clickhouse_identity_expressions_share_python_identity_version() -> None
 def test_selected_source_sql_preserves_independent_origins_and_company_links() -> None:
     registry = "\n".join(sweden_registry_source_record_sql())
     financial = "\n".join(sweden_financial_source_record_sql())
+    finland_financial = "\n".join(finland_financial_source_record_sql())
     esef = "\n".join(esef_source_record_sql())
     wikidata = "\n".join(wikidata_source_record_sql())
 
@@ -116,6 +115,10 @@ def test_selected_source_sql_preserves_independent_origins_and_company_links() -
     assert "registry_subject" in registry
     assert "corpscout.se_financial_reports" in financial
     assert "annual_report_xhtml" in financial
+    assert "corpscout.fi_financial_statements" in finland_financial
+    assert "annual_report_xml" in finland_financial
+    assert "finland_prh_xbrl" in finland_financial
+    assert "'FI'" in finland_financial
     assert "verified_lei_registry_map" in esef
     assert "identifier_type = 'se_orgnr'" in wikidata
     assert "wikidata_verified_lei" in wikidata
@@ -143,41 +146,10 @@ def test_esef_llm_arrays_are_normalized_into_typed_observations() -> None:
     assert "prompt_version" in combined_sql
     assert "model_name" in combined_sql
     assert "ARRAY JOIN" in combined_sql
+    assert "DELETE" not in combined_sql
+    assert "ALTER TABLE" not in combined_sql
     assert "parseDate32BestEffortOrNull" not in combined_sql
     assert combined_sql.count("toDate32(parseDateTimeBestEffortOrNull(") == 3
-
-
-def test_esef_observation_publication_deletes_only_superseded_run_versions() -> None:
-    class FakeClient:
-        def __init__(self) -> None:
-            self.cleanup_calls: list[tuple[str, dict[str, object], dict[str, int]]] = []
-
-        def execute(
-            self,
-            query: str,
-            parameters: dict[str, object] | None = None,
-            settings: dict[str, int] | None = None,
-        ) -> list[tuple[str, str]]:
-            if query.startswith("SELECT DISTINCT"):
-                return [("a" * 64, "current-run")]
-            assert parameters is not None
-            assert settings is not None
-            self.cleanup_calls.append((query, parameters, settings))
-            return []
-
-    client = FakeClient()
-
-    assert _delete_superseded_esef_observations(client) == 1
-    assert len(client.cleanup_calls) == 4
-    for query, parameters, settings in client.cleanup_calls:
-        assert "source_record_uid IN %(source_record_uids)s" in query
-        assert "source_run_id) NOT IN %(current_versions)s" in query
-        assert parameters["source_record_uids"] == ("a" * 64,)
-        assert parameters["current_versions"] == (("a" * 64, "current-run"),)
-        assert settings == {"mutations_sync": 2}
-    description_query = client.cleanup_calls[0][0]
-    assert "extraction_method = 'llm_extraction'" in description_query
-    assert "corpscout.esef_document_company_information:" in description_query
 
 
 def test_wikidata_uses_compound_company_snapshot_and_separate_person_records() -> None:

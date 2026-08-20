@@ -11,7 +11,6 @@ export type FinancialFilingStatus = (typeof FINANCIAL_FILING_STATUSES)[number];
 
 export type FinancialFilingStatusDefinition = {
   value: FinancialFilingStatus;
-  shortLabel: string;
   label: string;
   meaning: string;
 };
@@ -30,28 +29,24 @@ export const FINANCIAL_FILING_STATUS_DEFINITIONS: readonly FinancialFilingStatus
   [
     {
       value: "data_available",
-      shortLabel: "Available",
       label: "Financial data available",
       meaning:
         "A structured annual report has been parsed into financial data.",
     },
     {
       value: "filed_unstructured",
-      shortLabel: "Other format",
       label: "Filed in another format",
       meaning:
         "An official filing exists, but it is not available as structured financial data.",
     },
     {
       value: "not_submitted",
-      shortLabel: "Not submitted",
       label: "Annual report not submitted",
       meaning:
         "An official source explicitly reports that the expected annual report is missing.",
     },
     {
       value: "unknown",
-      shortLabel: "Unknown",
       label: "Filing status unknown",
       meaning:
         "No structured report or explicit official filing observation is available yet.",

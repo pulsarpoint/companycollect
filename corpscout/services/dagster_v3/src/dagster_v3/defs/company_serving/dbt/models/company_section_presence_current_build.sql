@@ -45,11 +45,13 @@ section_rows AS (
     FROM {{ ref('company_domain_current_build') }}
 )
 SELECT
-    country_code,
-    company_id,
-    section,
-    toUInt32(countDistinct(item_key)) AS item_count,
-    max(observed_at) AS latest_observed_at,
+    rows.country_code,
+    rows.company_id,
+    rows.section,
+    toUInt32(countDistinct(rows.item_key)) AS item_count,
+    max(rows.observed_at) AS latest_observed_at,
     now64(3, 'UTC') AS resolved_at
-FROM section_rows
-GROUP BY country_code, company_id, section
+FROM section_rows AS rows
+INNER JOIN company_anchors AS anchors
+    ON anchors.company_id = rows.company_id
+GROUP BY rows.country_code, rows.company_id, rows.section

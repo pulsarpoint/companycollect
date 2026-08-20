@@ -13,6 +13,8 @@ leis AS (
         min(identifiers.first_seen_date) AS first_seen_date,
         max(identifiers.last_seen_date) AS last_seen_date
     FROM {{ source('corpscout', 'company_identifier') }} AS identifiers
+    INNER JOIN companies
+        ON companies.company_id = identifiers.company_id
     WHERE identifiers.country_code = '{{ var("country_code") }}'
       AND identifiers.issuer_scheme = 'lei'
       AND identifiers.is_current = 1
@@ -27,6 +29,8 @@ vats AS (
         min(identifiers.first_seen_date) AS first_seen_date,
         max(identifiers.last_seen_date) AS last_seen_date
     FROM {{ source('corpscout', 'company_identifier') }} AS identifiers
+    INNER JOIN companies
+        ON companies.company_id = identifiers.company_id
     WHERE identifiers.country_code = '{{ var("country_code") }}'
       AND identifiers.issuer_scheme = 'vat'
       AND identifiers.is_current = 1

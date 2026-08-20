@@ -16,11 +16,8 @@ import {
 } from "~/lib/countries";
 import type { CompanyFilters } from "~/lib/filters";
 import {
-  FINANCIAL_FILING_FILTER_KEY,
-  FINANCIAL_FILING_STATUSES,
   isFinancialFilingStatus,
   type CompanyFinancialFilingStatus,
-  type FinancialFilingStatus,
 } from "~/lib/financial-filing-status";
 import type { FinancialReportDocumentSummary } from "~/lib/norway-financial-reports";
 import { getNorwayFinancialReports } from "~/lib/norway-financial-reports.server";
@@ -66,13 +63,11 @@ export { PAGE_SIZES };
 
 export type CompanyListRow = Record<
   string,
-  string | number | null | CompanyFlagId[] | FinancialFilingStatus
+  string | number | null | CompanyFlagId[]
 > & {
   active: 0 | 1;
   /** Which kinds of data we hold for this company. See lib/company-flags. */
   flags?: CompanyFlagId[];
-  /** Sweden's evidence-backed latest annual-report state. */
-  financial_filing_status?: FinancialFilingStatus;
 };
 
 export interface CompanySearchResult {
@@ -103,61 +98,6 @@ SELECT toUInt8(countIf(name IN (
 )) = 2) AS ready
 FROM system.tables
 WHERE database = currentDatabase()`;
-
-/**
- * The public current-status view carries the complete source provenance used
- * on the financial detail page. Company-list filtering only needs an id and a
- * status, so keep that hot path narrow instead of aggregating every metadata
- * column twice (once for count and once for rows).
- */
-const SWEDEN_FINANCIAL_FILING_STATUS_IDS_QUERY = `
-WITH latest_observations AS (
-  SELECT company_id,
-    argMax(
-      tuple(
-        filing_status,
-        report_period_end,
-        observed_at,
-        source_slug,
-        source_record_id
-      ),
-      tuple(
-        ifNull(report_period_end, toDate32('1970-01-01')),
-        observed_at,
-        source_slug,
-        source_record_id
-      )
-    ) AS latest
-  FROM se_annual_report_filing_observations FINAL
-  GROUP BY company_id
-)
-SELECT f.company_id AS company_id,
-  if(
-    coalesce(o.company_id, '') = ''
-    OR tuple(
-      toDate32(f.period_end_date),
-      toUInt8(1),
-      f.resolved_at,
-      'sweden_financial',
-      concat('financials-latest:', f.company_id)
-    ) > tuple(
-      ifNull(o.latest.2, toDate32('1970-01-01')),
-      toUInt8(0),
-      o.latest.3,
-      o.latest.4,
-      o.latest.5
-    ),
-    'data_available',
-    o.latest.1
-  ) AS filing_status
-FROM se_company_financials_latest AS f
-LEFT JOIN latest_observations AS o USING (company_id)
-
-UNION ALL
-
-SELECT o.company_id AS company_id, o.latest.1 AS filing_status
-FROM latest_observations AS o
-LEFT ANTI JOIN se_company_financials_latest AS f USING (company_id)`;
 
 function swedenFinancialFilingSchemaReady(): Promise<boolean> {
   return chQuery<{ ready: number }>(SWEDEN_FINANCIAL_FILING_SCHEMA_QUERY).then(
@@ -332,41 +272,6 @@ async function attachCompanyFlags(
   }
 }
 
-async function attachSwedenFinancialFilingStatuses(
-  country: CountryConfig,
-  rows: CompanyListRow[],
-  filingSchemaReady: boolean,
-): Promise<void> {
-  if (country.code !== "se") return;
-  const ids = rows.map((row) => String(row.id ?? "")).filter(Boolean);
-  for (const row of rows) row.financial_filing_status = "unknown";
-  if (ids.length === 0) return;
-
-  const statuses = await chQuery<{
-    company_id: string;
-    filing_status: string;
-  }>(
-    filingSchemaReady
-      ? `SELECT company_id, filing_status
-         FROM se_annual_report_filing_status_current
-         WHERE company_id IN {ids:Array(String)}`
-      : `SELECT company_id, 'data_available' AS filing_status
-         FROM se_company_financials_latest
-         WHERE company_id IN {ids:Array(String)}`,
-    { ids },
-  );
-  const byCompany = new Map<string, FinancialFilingStatus>();
-  for (const row of statuses) {
-    if (isFinancialFilingStatus(row.filing_status)) {
-      byCompany.set(row.company_id, row.filing_status);
-    }
-  }
-  for (const row of rows) {
-    row.financial_filing_status =
-      byCompany.get(String(row.id ?? "")) ?? "unknown";
-  }
-}
-
 function buildCompanySelectList(country: CountryConfig): string {
   const joinKeyExpr = country.industryJoinKeyExpr ?? country.idColumn;
   return [
@@ -402,7 +307,9 @@ export async function getCompanyShell(
     };
     for (const column of country.columns) {
       company[column.key] = shellRecord[`__shell_${column.key}`] as
-        string | number | null;
+        | string
+        | number
+        | null;
     }
     const industryKey = String(shellRecord.__shell_industry_key ?? "");
     for (const key of Object.keys(shellRecord)) {
@@ -453,9 +360,6 @@ export async function searchCompanies(
   const q = (opts.q ?? "").trim();
   const sortColumn = getSortColumn(country, opts.sort ?? null);
   const dir: SortDir = opts.dir === "desc" ? "desc" : "asc";
-  const filingSchemaReady =
-    country.code === "se" ? await swedenFinancialFilingSchemaReady() : false;
-
   const conds: string[] = [];
   const params: Record<string, unknown> = {};
   if (q) {
@@ -471,58 +375,6 @@ export async function searchCompanies(
     // Column expr from registry; values bound as an Array(String) param.
     conds.push(`${column.expr} IN {f_${column.key}:Array(String)}`);
     params[`f_${column.key}`] = values;
-  }
-  const filingStatuses = (
-    opts.filters?.[FINANCIAL_FILING_FILTER_KEY] ?? []
-  ).filter(isFinancialFilingStatus);
-  if (
-    country.code === "se" &&
-    filingStatuses.length > 0 &&
-    filingStatuses.length < FINANCIAL_FILING_STATUSES.length
-  ) {
-    const knownStatuses = filingStatuses.filter(
-      (status) => status !== "unknown",
-    );
-    const statusIdsQuery = filingSchemaReady
-      ? SWEDEN_FINANCIAL_FILING_STATUS_IDS_QUERY
-      : `SELECT company_id, 'data_available' AS filing_status
-         FROM se_company_financials_latest`;
-    if (!filingStatuses.includes("unknown")) {
-      conds.push(
-        `toString(${country.idColumn}) IN (
-          SELECT company_id
-          FROM (${statusIdsQuery})
-          WHERE filing_status IN {f_financial_filing_status:Array(String)}
-        )`,
-      );
-      params.f_financial_filing_status = knownStatuses;
-    } else if (knownStatuses.length === 0) {
-      const evidenceIdsQuery = filingSchemaReady
-        ? `SELECT company_id FROM se_company_financials_latest
-           UNION DISTINCT
-           SELECT company_id FROM se_annual_report_filing_observations`
-        : `SELECT company_id FROM se_company_financials_latest`;
-      conds.push(
-        `toString(${country.idColumn}) NOT IN (
-          ${evidenceIdsQuery}
-        )`,
-      );
-    } else {
-      // Unknown plus known states is the complement of the known states that
-      // were not selected. This evaluates the latest-status set once instead
-      // of running both an IN and a NOT IN aggregation for every page query.
-      const excludedStatuses = FINANCIAL_FILING_STATUSES.filter(
-        (status) => status !== "unknown" && !knownStatuses.includes(status),
-      );
-      conds.push(
-        `toString(${country.idColumn}) NOT IN (
-          SELECT company_id
-          FROM (${statusIdsQuery})
-          WHERE filing_status IN {f_financial_filing_status_excluded:Array(String)}
-        )`,
-      );
-      params.f_financial_filing_status_excluded = excludedStatuses;
-    }
   }
   for (const flag of availableCompanyFlags(country.code)) {
     const values = opts.filters?.[flagFilterKey(flag.id)];
@@ -595,7 +447,6 @@ export async function searchCompanies(
   }
 
   await attachCompanyFlags(country, rows);
-  await attachSwedenFinancialFilingStatuses(country, rows, filingSchemaReady);
 
   return { rows, total, page, pageSize, sort: sortColumn.key, dir };
 }
@@ -636,7 +487,8 @@ export interface FinancialYearRow {
   fx_rate_date?: string | null;
   fx_source?: string | null;
   /** "filed" (actual filing) vs "comparative" (recovered from a later
-   * filing's multi-year overview). Absent for countries without history. */
+   * filing's multi-year overview). Absent when a country's metrics do not
+   * expose this provenance. */
   observation?: "filed" | "comparative";
   /** For comparative rows: fiscal year of the filing that carried the figures. */
   source_fiscal_year?: string;
@@ -644,12 +496,99 @@ export interface FinancialYearRow {
   evidence?: EvidenceRef[];
 }
 
+export interface FinancialSourceYearRow extends FinancialYearRow {
+  source_id: string;
+  accounting_scope: string;
+  source_document_id: string;
+  source_record_uids: string[];
+  source_url: string;
+  viewer_url: string;
+  mapping_version?: string | null;
+}
+
+const SWEDEN_FINANCIAL_METRICS_PROVENANCE_SCHEMA_QUERY = `
+SELECT toUInt8(countIf(name IN ('observation_kind', 'source_fiscal_year')) = 2) AS ready
+FROM system.columns
+WHERE database = currentDatabase() AND table = 'se_bolagsverket_financial_metrics'`;
+
+const SWEDEN_PROVENANCE_METRICS_ORDER_PATTERN =
+  /ORDER BY observation_kind = 'reported' DESC,\s*isNull\(revenue_amount_original\) ASC,\s*source_fiscal_year DESC,\s*source_record_id DESC/g;
+
+const SWEDEN_REPORTED_METRICS_ORDER = `ORDER BY
+  isNull(revenue_amount_original) ASC,
+  source_record_id DESC`;
+
+const SWEDEN_REPORTED_FINANCIALS_QUERY = `SELECT
+  toString(fiscal_year) AS fiscal_year,
+  currency AS currency,
+  toString(report_period_start) AS report_period_start,
+  toString(report_period_end) AS report_period_end,
+  toFloat64(revenue_amount_original) AS revenue_amount_original,
+  toFloat64(revenue_amount_usd) AS revenue_amount_usd,
+  toFloat64(operating_profit_loss_amount_original) AS operating_result_amount_original,
+  toFloat64(operating_profit_loss_amount_usd) AS operating_result_amount_usd,
+  toFloat64(profit_loss_amount_original) AS net_result_amount_original,
+  toFloat64(profit_loss_amount_usd) AS net_result_amount_usd,
+  toFloat64(total_assets_amount_original) AS total_assets_amount_original,
+  toFloat64(total_assets_amount_usd) AS total_assets_amount_usd,
+  toFloat64(equity_amount_original) AS equity_amount_original,
+  toFloat64(equity_amount_usd) AS equity_amount_usd,
+  toFloat64(liabilities_amount_original) AS liabilities_amount_original,
+  toFloat64(liabilities_amount_usd) AS liabilities_amount_usd,
+  toFloat64(cash_and_bank_amount_original) AS cash_and_bank_amount_original,
+  toFloat64(cash_and_bank_amount_usd) AS cash_and_bank_amount_usd,
+  toFloat64(current_assets_amount_original) AS current_assets_amount_original,
+  toFloat64(current_assets_amount_usd) AS current_assets_amount_usd,
+  toFloat64(current_liabilities_amount_original) AS current_liabilities_amount_original,
+  toFloat64(current_liabilities_amount_usd) AS current_liabilities_amount_usd,
+  toFloat64(personnel_expenses_amount_original) AS personnel_expenses_amount_original,
+  toFloat64(personnel_expenses_amount_usd) AS personnel_expenses_amount_usd,
+  toFloat64(wages_and_salaries_amount_original) AS wages_and_salaries_amount_original,
+  toFloat64(wages_and_salaries_amount_usd) AS wages_and_salaries_amount_usd,
+  toFloat64(employees) AS employees,
+  toUInt64(source_fact_count) AS source_fact_count,
+  toUInt64(mapped_fact_count) AS mapped_fact_count,
+  toFloat64(fx_rate_to_usd) AS fx_rate_to_usd,
+  toString(fx_rate_date) AS fx_rate_date,
+  fx_source AS fx_source,
+  'filed' AS observation,
+  toString(fiscal_year) AS source_fiscal_year,
+  source_record_uid
+FROM se_bolagsverket_financial_metrics
+WHERE company_id = {id:String}
+ORDER BY fiscal_year DESC, isNull(revenue_amount_original) ASC, source_record_id DESC
+LIMIT 1 BY fiscal_year
+LIMIT 25`;
+
+function swedenFinancialMetricsProvenanceReady(): Promise<boolean> {
+  return chQuery<{ ready: number }>(
+    SWEDEN_FINANCIAL_METRICS_PROVENANCE_SCHEMA_QUERY,
+  ).then((rows) => Number(rows[0]?.ready ?? 0) === 1);
+}
+
+function withoutSwedenFinancialMetricsProvenance(query: string): string {
+  const compatibleQuery = query.replace(
+    SWEDEN_PROVENANCE_METRICS_ORDER_PATTERN,
+    SWEDEN_REPORTED_METRICS_ORDER,
+  );
+  if (compatibleQuery === query) {
+    throw new Error(
+      "Sweden financial metrics query is missing its provenance ordering",
+    );
+  }
+  return compatibleQuery;
+}
+
 export async function getCompanyFinancials(
   country: CountryConfig,
   id: string,
 ): Promise<FinancialYearRow[]> {
   if (!country.detail?.financialsQuery) return [];
-  return chQuery<FinancialYearRow>(country.detail.financialsQuery, { id });
+  const query =
+    country.code === "se" && !(await swedenFinancialMetricsProvenanceReady())
+      ? SWEDEN_REPORTED_FINANCIALS_QUERY
+      : country.detail.financialsQuery;
+  return chQuery<FinancialYearRow>(query, { id });
 }
 
 /** Public corporate income tax data (tax base + assessed taxes), one row per
@@ -755,12 +694,12 @@ export interface TaxRecordRow {
 export interface FactRow {
   concept: string;
   concept_local_name?: string | null;
-  /** Taxonomy concept metadata is currently returned by Sweden's factsQuery;
-   * other countries may omit it. */
+  /** Canonical source-language and English taxonomy text when published. */
+  concept_label_original?: string | null;
+  concept_label_original_language?: string | null;
   concept_label_en?: string | null;
-  concept_label_sv?: string | null;
+  concept_description_original?: string | null;
   concept_description_en?: string | null;
-  concept_description_sv?: string | null;
   concept_label_en_source?: string | null;
   concept_label_translation_provider?: string | null;
   concept_label_translation_model?: string | null;
@@ -784,6 +723,12 @@ export interface FactRow {
   text_value: string | null;
   dimensions: string;
   context_id: string;
+  period_start?: string | null;
+  period_instant?: string | null;
+  period_duration_end?: string | null;
+  report_period_end?: string | null;
+  is_comparative?: number | null;
+  language?: string | null;
 }
 
 /** Raw source facts for one fiscal year's filing; empty when the country has
@@ -794,7 +739,11 @@ export async function getCompanyFacts(
   year: number,
 ): Promise<FactRow[]> {
   if (!country.detail?.factsQuery) return [];
-  return chQuery<FactRow>(country.detail.factsQuery, { id, year });
+  const query =
+    country.code === "se" && !(await swedenFinancialMetricsProvenanceReady())
+      ? withoutSwedenFinancialMetricsProvenance(country.detail.factsQuery)
+      : country.detail.factsQuery;
+  return chQuery<FactRow>(query, { id, year });
 }
 
 export interface FactsDocument {
@@ -803,6 +752,7 @@ export interface FactsDocument {
   archive_url: string;
   archive_name: string;
   nested_zip_name: string;
+  content_type?: string;
 }
 
 /** Locates the original source document for one fiscal year's filing. */
@@ -812,7 +762,13 @@ export async function getFactsDocument(
   year: number,
 ): Promise<FactsDocument | null> {
   if (!country.detail?.factsDocumentQuery) return null;
-  const rows = await chQuery<FactsDocument>(country.detail.factsDocumentQuery, {
+  const query =
+    country.code === "se" && !(await swedenFinancialMetricsProvenanceReady())
+      ? withoutSwedenFinancialMetricsProvenance(
+          country.detail.factsDocumentQuery,
+        )
+      : country.detail.factsDocumentQuery;
+  const rows = await chQuery<FactsDocument>(query, {
     id,
     year,
   });
@@ -1063,7 +1019,8 @@ export interface CompanyTechnologyInfrastructure {
   hostnames: TechnologyHostname[];
 }
 
-export interface CompanyTechnologyIpInventoryAddress extends TechnologyIpAddress {
+export interface CompanyTechnologyIpInventoryAddress
+  extends TechnologyIpAddress {
   hostnames: string[];
 }
 
@@ -2401,11 +2358,11 @@ export interface EsefFilingRow {
 
 export type CompanyFinancialSource =
   | (Extract<FinancialSourceDefinition, { kind: "registry" }> & {
-      financials: FinancialYearRow[];
+      financials: FinancialSourceYearRow[];
       documents: FinancialReportDocumentSummary[];
     })
   | (Extract<FinancialSourceDefinition, { kind: "esef" }> & {
-      filings: EsefFilingRow[];
+      financials: FinancialSourceYearRow[];
     });
 
 interface CompanySourceRecordQueryRow {
@@ -2881,6 +2838,84 @@ GROUP BY v.fiscal_year, v.period_end
 ORDER BY v.fiscal_year DESC
 LIMIT 12`;
 
+type SwedenFinancialSourceView =
+  | "se_financials_bolagsverket_current"
+  | "se_financials_esef_current";
+
+function swedenFinancialSourceViewQuery(view: SwedenFinancialSourceView) {
+  return `SELECT
+  source_id,
+  accounting_scope,
+  source_document_id,
+  toString(fiscal_year) AS fiscal_year,
+  toString(report_period_start) AS report_period_start,
+  toString(report_period_end) AS report_period_end,
+  currency,
+  toFloat64(revenue_amount_original) AS revenue_amount_original,
+  toFloat64(revenue_amount_usd) AS revenue_amount_usd,
+  toFloat64(operating_result_amount_original) AS operating_result_amount_original,
+  toFloat64(operating_result_amount_usd) AS operating_result_amount_usd,
+  toFloat64(net_result_amount_original) AS net_result_amount_original,
+  toFloat64(net_result_amount_usd) AS net_result_amount_usd,
+  toFloat64(total_assets_amount_original) AS total_assets_amount_original,
+  toFloat64(total_assets_amount_usd) AS total_assets_amount_usd,
+  toFloat64(equity_amount_original) AS equity_amount_original,
+  toFloat64(equity_amount_usd) AS equity_amount_usd,
+  toFloat64(liabilities_amount_original) AS liabilities_amount_original,
+  toFloat64(liabilities_amount_usd) AS liabilities_amount_usd,
+  toFloat64(cash_and_bank_amount_original) AS cash_and_bank_amount_original,
+  toFloat64(cash_and_bank_amount_usd) AS cash_and_bank_amount_usd,
+  toFloat64(current_assets_amount_original) AS current_assets_amount_original,
+  toFloat64(current_assets_amount_usd) AS current_assets_amount_usd,
+  toFloat64(current_liabilities_amount_original) AS current_liabilities_amount_original,
+  toFloat64(current_liabilities_amount_usd) AS current_liabilities_amount_usd,
+  toFloat64(personnel_expenses_amount_original) AS personnel_expenses_amount_original,
+  toFloat64(personnel_expenses_amount_usd) AS personnel_expenses_amount_usd,
+  toFloat64(wages_and_salaries_amount_original) AS wages_and_salaries_amount_original,
+  toFloat64(wages_and_salaries_amount_usd) AS wages_and_salaries_amount_usd,
+  toFloat64(employees) AS employees,
+  toUInt64(source_fact_count) AS source_fact_count,
+  toUInt64(mapped_fact_count) AS mapped_fact_count,
+  mapping_version,
+  toFloat64(fx_rate_to_usd) AS fx_rate_to_usd,
+  toString(fx_rate_date) AS fx_rate_date,
+  fx_source,
+  observation,
+  toString(source_fiscal_year) AS source_fiscal_year,
+  source_record_uids,
+  source_url,
+  viewer_url
+FROM corpscout.${view}
+WHERE company_id = {id:String}
+ORDER BY fiscal_year DESC
+LIMIT 25`;
+}
+
+const SWEDEN_FINANCIAL_SOURCE_VIEWS: Record<string, SwedenFinancialSourceView> =
+  {
+    "bolagsverket-annual-accounts": "se_financials_bolagsverket_current",
+    esef: "se_financials_esef_current",
+  };
+
+async function getSwedenFinancialSourceRows(
+  definitions: readonly FinancialSourceDefinition[],
+  id: string,
+): Promise<FinancialSourceYearRow[][]> {
+  return Promise.all(
+    definitions.map((definition) => {
+      const view = SWEDEN_FINANCIAL_SOURCE_VIEWS[definition.id];
+      return view
+        ? chQuery<FinancialSourceYearRow>(
+            swedenFinancialSourceViewQuery(view),
+            {
+              id,
+            },
+          )
+        : Promise.resolve([]);
+    }),
+  );
+}
+
 const COMPANY_EVIDENCE_SCHEMA_QUERY = `
 SELECT toUInt8(
   countIf(name IN (
@@ -2938,6 +2973,80 @@ function attachFinancialEvidence(
   }
 }
 
+function attachFinancialSourceEvidence(
+  financials: FinancialSourceYearRow[],
+  evidenceByUid: Map<string, EvidenceRef>,
+): void {
+  for (const row of financials) {
+    row.evidence = row.source_record_uids.flatMap((uid) =>
+      observationEvidence(evidenceByUid, uid, {
+        extractionMethod: "ixbrl_fact_mapping",
+        sourceDate: row.report_period_end ?? undefined,
+      }),
+    );
+  }
+}
+
+function registryFinancialSourceRows(
+  definition: Extract<FinancialSourceDefinition, { kind: "registry" }>,
+  financials: FinancialYearRow[],
+): FinancialSourceYearRow[] {
+  return financials.map((row) => ({
+    ...row,
+    source_id: definition.id,
+    accounting_scope: "standalone",
+    source_document_id: "",
+    source_record_uids: row.source_record_uid ? [row.source_record_uid] : [],
+    source_url: "",
+    viewer_url: "",
+  }));
+}
+
+function esefFinancialSourceRows(
+  filings: EsefFilingRow[],
+): FinancialSourceYearRow[] {
+  return filings.map((row) => ({
+    source_id: "esef",
+    accounting_scope: "consolidated_ifrs",
+    source_document_id: row.primary_fxo_id,
+    fiscal_year: String(row.fiscal_year),
+    currency: row.currency,
+    report_period_start: null,
+    report_period_end: row.period_end,
+    revenue_amount_original: row.revenue_amount_original,
+    revenue_amount_usd: row.revenue_amount_usd,
+    operating_result_amount_original: row.operating_profit_amount_original,
+    operating_result_amount_usd: row.operating_profit_amount_usd,
+    net_result_amount_original: row.profit_loss_amount_original,
+    net_result_amount_usd: row.profit_loss_amount_usd,
+    total_assets_amount_original: row.total_assets_amount_original,
+    total_assets_amount_usd: row.total_assets_amount_usd,
+    equity_amount_original: row.equity_amount_original,
+    equity_amount_usd: row.equity_amount_usd,
+    liabilities_amount_original: row.liabilities_amount_original,
+    liabilities_amount_usd: row.liabilities_amount_usd,
+    cash_and_bank_amount_original: row.cash_amount_original,
+    cash_and_bank_amount_usd: row.cash_amount_usd,
+    current_assets_amount_original: null,
+    current_assets_amount_usd: null,
+    current_liabilities_amount_original: null,
+    current_liabilities_amount_usd: null,
+    personnel_expenses_amount_original: null,
+    personnel_expenses_amount_usd: null,
+    wages_and_salaries_amount_original: null,
+    wages_and_salaries_amount_usd: null,
+    employees: row.employees,
+    source_fact_count: row.source_fact_count,
+    mapped_fact_count: row.mapped_fact_count,
+    observation: "filed",
+    source_fiscal_year: String(row.fiscal_year),
+    source_record_uids: row.source_record_uids,
+    source_url: row.source_url,
+    viewer_url: row.viewer_url,
+    evidence: row.evidence,
+  }));
+}
+
 function buildCompanyFinancialSources(
   definitions: readonly FinancialSourceDefinition[],
   financials: FinancialYearRow[],
@@ -2948,14 +3057,38 @@ function buildCompanyFinancialSources(
   for (const definition of definitions) {
     if (definition.kind === "registry") {
       if (financials.length > 0 || documents.length > 0) {
-        sources.push({ ...definition, financials, documents });
+        sources.push({
+          ...definition,
+          financials: registryFinancialSourceRows(definition, financials),
+          documents,
+        });
       }
       continue;
     }
     if (esefFilings.length > 0) {
-      sources.push({ ...definition, filings: esefFilings });
+      sources.push({
+        ...definition,
+        financials: esefFinancialSourceRows(esefFilings),
+      });
     }
   }
+  return sources;
+}
+
+function buildSwedenFinancialSources(
+  definitions: readonly FinancialSourceDefinition[],
+  rowsByDefinition: FinancialSourceYearRow[][],
+): CompanyFinancialSource[] {
+  const sources: CompanyFinancialSource[] = [];
+  definitions.forEach((definition, index) => {
+    const financials = rowsByDefinition[index] ?? [];
+    if (financials.length === 0) return;
+    if (definition.kind === "registry") {
+      sources.push({ ...definition, financials, documents: [] });
+      return;
+    }
+    sources.push({ ...definition, financials });
+  });
   return sources;
 }
 
@@ -3051,6 +3184,29 @@ export async function getCompanyFinancialDetail(
   id: string,
 ): Promise<CompanyFinancialDetail> {
   const definitions = country.detail?.financialSources ?? [];
+  const evidenceParams = { id, country: country.code.toUpperCase() };
+  const evidenceSchemaReadyPromise = companyEvidenceSchemaReady();
+  if (country.code === "se") {
+    const [rowsByDefinition, sourceRecordRows, filingStatus] =
+      await Promise.all([
+        getSwedenFinancialSourceRows(definitions, id),
+        evidenceQueryWhenReady(evidenceSchemaReadyPromise, () =>
+          getCompanySourceRecordRows(evidenceParams),
+        ),
+        getCompanyFinancialFilingStatus(country, id),
+      ]);
+    const { byUid } = buildEvidenceRefs(sourceRecordRows);
+    for (const rows of rowsByDefinition) {
+      attachFinancialSourceEvidence(rows, byUid);
+    }
+    return {
+      financialSources: buildSwedenFinancialSources(
+        definitions,
+        rowsByDefinition,
+      ),
+      filingStatus,
+    };
+  }
   const includesRegistry = definitions.some(
     (source) => source.kind === "registry",
   );
@@ -3058,8 +3214,6 @@ export async function getCompanyFinancialDetail(
   const documentProvider = definitions.find(
     (source) => source.kind === "registry" && source.documentProvider,
   );
-  const evidenceParams = { id, country: country.code.toUpperCase() };
-  const evidenceSchemaReadyPromise = companyEvidenceSchemaReady();
   const [financials, esefFilings, documents, sourceRecordRows, filingStatus] =
     await Promise.all([
       includesRegistry
@@ -3103,9 +3257,7 @@ export async function getCompanyDetail(
   const company = { ...shell.company };
 
   const sectionsPromise = Promise.all([
-    country.detail?.financialsQuery
-      ? chQuery<FinancialYearRow>(country.detail.financialsQuery, { id })
-      : Promise.resolve([]),
+    getCompanyFinancials(country, id),
     country.detail?.contactsQuery
       ? chQuery<ContactRow>(country.detail.contactsQuery, { id })
       : Promise.resolve([]),

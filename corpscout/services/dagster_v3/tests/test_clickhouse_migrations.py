@@ -23,7 +23,6 @@ from dagster_v3.defs.ted_procurement import tables as ted_procurement_tables
 from dagster_v3.defs.finland_verotax import tables as finland_verotax_tables
 from dagster_v3.defs.sweden_company import tables as sweden_company_tables
 from dagster_v3.defs.sweden_uhm_procurement import tables as sweden_uhm_tables
-from dagster_v3.defs.sweden_financial import history as sweden_financial_history
 from dagster_v3.defs.wikidata import tables as wikidata_tables
 from dagster_v3.defs.world_bank_macro import tables as world_bank_macro_tables
 
@@ -298,11 +297,15 @@ EXPECTED_MIGRATIONS = (
     "000281_corpscout_se_company_presentation_fields",
     "000282_corpscout_se_annual_report_filing_status",
     "000283_corpscout_se_bolagsverket_financial_observation_provenance",
+    "000284_corpscout_se_financial_metrics_unified_years",
+    "000285_corpscout_se_bolagsverket_financial_metrics_rename",
+    "000286_corpscout_se_financial_source_views",
     "000287_corpscout_se_financial_report_signatories",
     "000288_corpscout_se_company_person_draft",
     "000289_corpscout_company_person_semantic_hashes",
     "000290_corpscout_company_person_source_observations_and_role_types",
     "000291_corpscout_se_company_person",
+    "000292_corpscout_se_company_person_roles",
 )
 
 NOOP_MIGRATIONS = {"000276_noop"}
@@ -2827,7 +2830,22 @@ def test_sweden_financial_history_migration_covers_columns() -> None:
     down_sql = _migration_sql("000141_corpscout_se_financial_history.down.sql")
 
     assert "CREATE TABLE IF NOT EXISTS corpscout.se_financial_history" in sql
-    for column_name in sweden_financial_history.SE_FINANCIAL_HISTORY_COLUMNS:
+    for column_name in (
+        "company_id",
+        "fiscal_year",
+        "observation",
+        "source_statement_key",
+        "source_fiscal_year",
+        "currency",
+        "revenue_amount_original",
+        "revenue_amount_usd",
+        "result_after_financial_items_amount_original",
+        "result_after_financial_items_amount_usd",
+        "solidity_pct",
+        "total_assets_amount_original",
+        "total_assets_amount_usd",
+        "resolved_at",
+    ):
         assert f"    {column_name} " in sql
 
     assert "observation LowCardinality(String)" in sql
@@ -3277,9 +3295,7 @@ def test_sweden_company_presentation_fields_are_migrated() -> None:
 
 
 def test_sweden_annual_report_filing_status_is_evidence_gated() -> None:
-    sql = _migration_sql(
-        "000282_corpscout_se_annual_report_filing_status.up.sql"
-    )
+    sql = _migration_sql("000282_corpscout_se_annual_report_filing_status.up.sql")
     down_sql = _migration_sql(
         "000282_corpscout_se_annual_report_filing_status.down.sql"
     )
@@ -3293,8 +3309,7 @@ def test_sweden_annual_report_filing_status_is_evidence_gated() -> None:
     assert "not_submitted_has_report_period" in sql
     assert "'unknown'" not in sql
     assert (
-        "CREATE OR REPLACE VIEW corpscout.se_annual_report_filing_status_current"
-        in sql
+        "CREATE OR REPLACE VIEW corpscout.se_annual_report_filing_status_current" in sql
     )
     assert "FROM corpscout.se_company_financials_latest" in sql
     assert "toUInt8(filing_status = 'data_available')" in sql
@@ -3310,9 +3325,7 @@ def test_sweden_annual_report_filing_status_is_evidence_gated() -> None:
 
 
 def test_sweden_financial_report_signatories_renames_the_existing_table() -> None:
-    sql = _migration_sql(
-        "000287_corpscout_se_financial_report_signatories.up.sql"
-    )
+    sql = _migration_sql("000287_corpscout_se_financial_report_signatories.up.sql")
     down_sql = _migration_sql(
         "000287_corpscout_se_financial_report_signatories.down.sql"
     )
@@ -3321,6 +3334,141 @@ def test_sweden_financial_report_signatories_renames_the_existing_table() -> Non
     assert "TO corpscout.se_financial_report_signatories" in sql
     assert "RENAME TABLE corpscout.se_financial_report_signatories" in down_sql
     assert "TO corpscout.se_company_officers" in down_sql
+
+
+def test_sweden_company_person_draft_and_roles_are_migrated() -> None:
+    sql = _migration_sql("000288_corpscout_se_company_person_draft.up.sql")
+    down_sql = _migration_sql("000288_corpscout_se_company_person_draft.down.sql")
+
+    assert "CREATE TABLE IF NOT EXISTS corpscout.se_company_person_draft" in sql
+    assert "CREATE TABLE IF NOT EXISTS corpscout.company_person_role" in sql
+    assert sql.count("ENGINE = ReplacingMergeTree(updated_at)") == 2
+    assert "ORDER BY (company_id, person_id)" in sql
+    assert "ORDER BY (country_code, company_id, person_id, role_id)" in sql
+
+    for source in ("bolagsverket", "esef", "wikidata"):
+        assert f"{source}_source_record_uids Array(String)" in sql
+        assert f"{source}_profile_hash Nullable(FixedString(64))" in sql
+        assert f"{source}_role_hash Nullable(FixedString(64))" in sql
+
+    assert "source_count UInt8 MATERIALIZED" in sql
+    assert "profile_update_method LowCardinality(String)" in sql
+    assert "review_status LowCardinality(String)" in sql
+    assert "DROP TABLE IF EXISTS corpscout.company_person_role" in down_sql
+    assert "DROP TABLE IF EXISTS corpscout.se_company_person_draft" in down_sql
+
+
+def test_company_person_source_semantic_hashes_are_migrated() -> None:
+    sql = _migration_sql("000289_corpscout_company_person_semantic_hashes.up.sql")
+    down_sql = _migration_sql(
+        "000289_corpscout_company_person_semantic_hashes.down.sql"
+    )
+
+    for table_name in (
+        "wikidata_persons",
+        "wikidata_company_people",
+        "esef_document_people",
+        "se_financial_report_signatories",
+        "se_company_person_draft",
+    ):
+        assert f"ALTER TABLE corpscout.{table_name}" in sql
+
+    assert "person_profile_hash FixedString(64) MATERIALIZED" in sql
+    assert "person_role_hash FixedString(64) MATERIALIZED" in sql
+    assert "signatory_uid FixedString(64) MATERIALIZED" in sql
+    assert "wikidata_person_id Nullable(String)" in sql
+    assert "'company-source-record-v1" not in sql
+    assert "lowerUTF8(source_payload_hash)" not in sql
+
+    for column_name in (
+        "wikidata_person_id",
+        "signatory_uid",
+        "person_profile_hash",
+        "person_role_hash",
+    ):
+        assert f"DROP COLUMN IF EXISTS {column_name}" in down_sql
+
+
+def test_company_person_draft_is_reshaped_into_source_observations() -> None:
+    sql = _migration_sql(
+        "000290_corpscout_company_person_source_observations_and_role_types.up.sql"
+    )
+    down_sql = _migration_sql(
+        "000290_corpscout_company_person_source_observations_and_role_types.down.sql"
+    )
+
+    assert "TO corpscout.se_company_person_draft_legacy" in sql
+    assert "CREATE TABLE corpscout.se_company_person_draft" in sql
+    assert "draft_id UUID" in sql
+    assert "source_value_json String" in sql
+    assert "ENGINE = ReplacingMergeTree(created_at)" in sql
+    assert "ORDER BY (company_id, source, draft_id)" in sql
+    assert "person_id UUID" not in sql
+    assert "match_method" not in sql
+    assert "review_status" not in sql
+
+    assert "DROP TABLE IF EXISTS corpscout.se_company_person_draft" in down_sql
+    assert "TO corpscout.se_company_person_draft" in down_sql
+
+
+def test_canonical_company_person_role_types_are_seeded() -> None:
+    sql = _migration_sql(
+        "000290_corpscout_company_person_source_observations_and_role_types.up.sql"
+    )
+
+    assert "CREATE TABLE corpscout.company_person_role_type" in sql
+    assert "ENGINE = ReplacingMergeTree(updated_at)" in sql
+    for role_code in (
+        "board_chair",
+        "board_member",
+        "deputy_board_member",
+        "chief_executive_officer",
+        "deputy_chief_executive_officer",
+        "chief_financial_officer",
+        "executive",
+        "auditor",
+        "audit_partner",
+        "liquidator",
+        "founder",
+        "owner",
+    ):
+        assert f"('{role_code}'," in sql
+
+    assert "('other'," not in sql
+    assert "('unknown'," not in sql
+    assert "('NEW_ROLE_REQUIRED'," not in sql
+
+
+def test_normalized_sweden_company_people_table_is_migrated() -> None:
+    sql = _migration_sql("000291_corpscout_se_company_person.up.sql")
+    down_sql = _migration_sql("000291_corpscout_se_company_person.down.sql")
+
+    assert "CREATE TABLE IF NOT EXISTS corpscout.se_company_person" in sql
+    for column in (
+        "person_id UUID",
+        "company_id String",
+        "name String",
+        "description Nullable(String)",
+        "draft_ids Array(UUID)",
+        "model_provider LowCardinality(String)",
+        "model_name String",
+        "prompt_version String",
+        "source_run_id String",
+        "created_at DateTime64(3, 'UTC')",
+        "updated_at DateTime64(3, 'UTC')",
+    ):
+        assert column in sql
+
+    assert "draft_set_hash FixedString(64) MATERIALIZED" in sql
+    assert "arraySort(draft_ids)" in sql
+    assert "profile_hash FixedString(64) MATERIALIZED" in sql
+    assert "CONSTRAINT has_source_observation CHECK notEmpty(draft_ids)" in sql
+    assert "CONSTRAINT has_person_name CHECK trim(name) != ''" in sql
+    assert "ENGINE = ReplacingMergeTree(updated_at)" in sql
+    assert "ORDER BY (company_id, person_id)" in sql
+    assert "role_code" not in sql
+    assert "role_name" not in sql
+    assert "DROP TABLE IF EXISTS corpscout.se_company_person" in down_sql
 
 
 def _migration_sql(file_name: str) -> str:

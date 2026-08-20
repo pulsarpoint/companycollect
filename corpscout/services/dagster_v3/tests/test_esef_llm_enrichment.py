@@ -13,6 +13,7 @@ from dagster_v3.defs.common.duckdb_resources import duckdb_resource
 from dagster_v3.defs.esef_filings import tables
 from dagster_v3.defs.esef_filings.llm_enrichment import (
     EsefCompanyEnrichment,
+    SUPPORTED_ENRICHMENT_ARTIFACT_SCHEMA_VERSIONS,
     build_company_enrichment_request,
     build_enrichment_evidence,
     deepseek_settings,
@@ -25,6 +26,7 @@ from dagster_v3.defs.esef_filings.llm_enrichment import (
 from dagster_v3.defs.esef_filings.llm_enrichment_assets import (
     _load_latest_source_documents,
     _people_with_explicit_roles,
+    _source_specific_segment_artifact,
     esef_document_company_information_duckdb,
     run_esef_llm_enrichment,
 )
@@ -82,6 +84,105 @@ def test_build_enrichment_evidence_prioritizes_description_and_people() -> None:
     ]
     assert group_evidence == [] or group_evidence[0].truncated
     assert evidence_input.input_character_count <= 800
+
+
+def test_build_enrichment_evidence_includes_bounded_visible_people_sections() -> None:
+    artifact = _segment_artifact()
+    visible_text = "BOARD OF DIRECTORS\nAnna Andersson — Chair\nBo Berg — Board member"
+    artifact["visible_sections"] = [
+        {
+            "section_type": "board_composition",
+            "report_member": "reports/aak.xhtml",
+            "heading": "BOARD OF DIRECTORS",
+            "text": visible_text,
+            "page_id": "pf70",
+            "printed_page_number": "70",
+            "anchor_xpath": "/html/body/div/div[1]",
+            "anchor_visual_order": 1,
+            "extraction_method": "positioned_page",
+            "language": "en",
+            "original_character_count": len(visible_text),
+            "included_character_count": len(visible_text),
+            "truncated": False,
+            "text_sha256": sha256(visible_text.encode()).hexdigest(),
+        }
+    ]
+
+    evidence_input = build_enrichment_evidence(
+        artifact,
+        max_evidence_chars=20_000,
+    )
+
+    visible = evidence_input.evidence[0]
+    assert visible.evidence_kind == "visible_section"
+    assert visible.segment == "people_and_audit"
+    assert visible.text == visible_text
+    assert visible.model_dump()["section_type"] == "board_composition"
+    assert visible.model_dump()["printed_page_number"] == "70"
+    assert any(item.evidence_kind == "tagged_fact" for item in evidence_input.evidence)
+    assert evidence_input.input_character_count <= 20_000
+
+
+def test_build_enrichment_evidence_validates_visible_section_hash() -> None:
+    artifact = _segment_artifact()
+    visible_text = "Anna Andersson — Chair"
+    artifact["visible_sections"] = [
+        {
+            "section_type": "board_composition",
+            "report_member": "reports/aak.xhtml",
+            "heading": "Board",
+            "text": visible_text,
+            "page_id": "pf70",
+            "printed_page_number": "70",
+            "anchor_xpath": "/html/body/div/div[1]",
+            "anchor_visual_order": 1,
+            "extraction_method": "positioned_page",
+            "language": "en",
+            "original_character_count": len(visible_text),
+            "included_character_count": len(visible_text),
+            "truncated": False,
+            "text_sha256": "0" * 64,
+        }
+    ]
+
+    with pytest.raises(ValueError, match="text SHA-256 does not match"):
+        build_enrichment_evidence(artifact, max_evidence_chars=20_000)
+
+
+def test_build_enrichment_evidence_accepts_v3_and_preserves_source_version() -> None:
+    artifact = _segment_artifact()
+    artifact["schema_version"] = 3
+    artifact.pop("visible_sections")
+
+    evidence_input = build_enrichment_evidence(
+        artifact,
+        max_evidence_chars=20_000,
+    )
+
+    assert SUPPORTED_ENRICHMENT_ARTIFACT_SCHEMA_VERSIONS == (3, 4, 5)
+    assert evidence_input.source.segment_artifact_schema_version == 3
+
+
+@pytest.mark.parametrize("schema_version", [2, 6, "5", 4.0, True, None])
+def test_build_enrichment_evidence_rejects_unsupported_schema_versions(
+    schema_version: object,
+) -> None:
+    artifact = _segment_artifact()
+    artifact["schema_version"] = schema_version
+
+    with pytest.raises(
+        ValueError,
+        match=r"expected one of \[3, 4, 5\]",
+    ):
+        build_enrichment_evidence(artifact, max_evidence_chars=20_000)
+
+
+def test_source_artifact_schema_must_match_selected_document_metadata() -> None:
+    with pytest.raises(ValueError, match="expected=3 actual=5"):
+        _source_specific_segment_artifact(
+            _segment_artifact(),
+            document={"artifact_schema_version": 3},
+        )
 
 
 def test_request_company_enrichment_uses_deepseek_json_mode_and_validates_evidence() -> (
@@ -208,9 +309,7 @@ def test_request_company_enrichment_drops_person_cited_to_description() -> None:
         ),
     )
 
-    assert [person.name for person in result.enrichment.people] == [
-        "Example Executive"
-    ]
+    assert [person.name for person in result.enrichment.people] == ["Example Executive"]
     assert result.citation_adjustments[0].action == "candidate_dropped"
 
 
@@ -283,7 +382,7 @@ def test_enrichment_artifact_is_versioned_and_auditable() -> None:
     artifact = json.loads(body)
 
     assert artifact["schema_version"] == 1
-    assert artifact["prompt_version"] == "esef-company-enrichment-v1"
+    assert artifact["prompt_version"] == "esef-company-enrichment-v2"
     assert artifact["source"]["package_sha256"] == "a" * 64
     assert artifact["model"]["name"] == "deepseek-v4-flash"
     assert artifact["model"]["raw_response_sha256"]
@@ -302,7 +401,7 @@ def test_enrichment_artifact_is_versioned_and_auditable() -> None:
         request_sha256=request_sha256,
     ) == (
         "esef_filings/llm_company_enrichment/schema=v1/"
-        "prompt=esef-company-enrichment-v1/model=deepseek-v4-flash/"
+        "prompt=esef-company-enrichment-v2/model=deepseek-v4-flash/"
         f"package_sha256={'a' * 64}/request_sha256={request_sha256}/artifact.json"
     )
     assert json.loads(request_bytes) == request_payload
@@ -357,6 +456,7 @@ def test_latest_document_selector_uses_one_final_xbrl_per_company() -> None:
                 "https://example.test/aak.zip",
                 "packages/aak.zip",
                 artifact_object_key("a" * 64),
+                ARTIFACT_SCHEMA_VERSION,
             )
         ]
     )
@@ -375,13 +475,21 @@ def test_latest_document_selector_uses_one_final_xbrl_per_company() -> None:
     sql, parameters = clickhouse.client.calls[0]
     assert "row_number() OVER" in sql
     assert "PARTITION BY country_iso2, company_id" in sql
+    assert "PARTITION BY country_iso2, company_id, source_document_id" in sql
+    assert "preferred_filing_artifact_rank = 1" in sql
+    assert "ORDER BY artifact_schema_version DESC" in sql
     assert "latest_company_report_rank = 1" in sql
+    assert "artifact_schema_version = 3" in sql
+    assert "ixbrl_segments/schema=v3/%%" in sql
+    assert "artifact_schema_version = 4" in sql
     assert "ixbrl_segments/schema=v4/%%" in sql
+    assert "artifact_schema_version = 5" in sql
+    assert "ixbrl_segments/schema=v5/%%" in sql
     assert "esef_document_company_information" in sql
     assert "esef_source_documents FINAL" not in sql
     assert "esef_document_company_information FINAL" not in sql
     assert parameters["model_name"] == "deepseek-v4-flash"
-    assert parameters["prompt_version"] == "esef-company-enrichment-v1"
+    assert parameters["prompt_version"] == "esef-company-enrichment-v2"
     assert parameters["country_iso2"] == "SE"
     assert parameters["company_ids"] == ("5566692850",)
     clickhouse_client = Client("localhost")
@@ -390,22 +498,26 @@ def test_latest_document_selector_uses_one_final_xbrl_per_company() -> None:
         parameters,
         clickhouse_client.connection.context,
     )
+    assert "ixbrl_segments/schema=v3/%'" in rendered_sql
     assert "ixbrl_segments/schema=v4/%'" in rendered_sql
+    assert "ixbrl_segments/schema=v5/%'" in rendered_sql
 
 
-def test_latest_document_selector_requires_resolved_company_links(
-) -> None:
+def test_latest_document_selector_requires_resolved_company_links() -> None:
     clickhouse = _FakeClickHouse([])
 
-    assert _load_latest_source_documents(
-        clickhouse,
-        model="deepseek-v4-flash",
-        country_iso2="",
-        company_ids=set(),
-        source_document_ids=set(),
-        max_documents=None,
-        refresh_existing=False,
-    ) == []
+    assert (
+        _load_latest_source_documents(
+            clickhouse,
+            model="deepseek-v4-flash",
+            country_iso2="",
+            company_ids=set(),
+            source_document_ids=set(),
+            max_documents=None,
+            refresh_existing=False,
+        )
+        == []
+    )
     sql, _parameters = clickhouse.client.calls[0]
     assert "company_id != ''" in sql
     assert "country_iso2 != ''" in sql
@@ -584,6 +696,7 @@ def _source_document_clickhouse_row(input_key: str) -> tuple[object, ...]:
         "https://example.test/aak.zip",
         "packages/aak.zip",
         input_key,
+        ARTIFACT_SCHEMA_VERSION,
     )
 
 
@@ -781,6 +894,7 @@ def _segment_artifact(*, long_group_text: str = "") -> dict[str, Any]:
                 {"fact_key": "revenue-fact", "selection_reason": "concept:Revenue"}
             ],
         },
+        "visible_sections": [],
     }
 
 

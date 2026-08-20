@@ -69,15 +69,12 @@ describe("toggleFilterValue", () => {
 describe("setFilterValues", () => {
   it("replaces one filter without disturbing the others", () => {
     const current = new URLSearchParams(
-      "f_financial_filing_status=unknown&f_status=active&page=3",
+      "f_flag_financials=no&f_status=active&page=3",
     );
     expect(
-      setFilterValues(current, "financial_filing_status", [
-        "data_available",
-        "filed_unstructured",
-      ]),
+      setFilterValues(current, "flag_financials", ["yes"]),
     ).toBe(
-      "?f_status=active&f_financial_filing_status=data_available&f_financial_filing_status=filed_unstructured",
+      "?f_status=active&f_flag_financials=yes",
     );
   });
 });

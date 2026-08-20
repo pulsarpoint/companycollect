@@ -62,7 +62,7 @@ flowchart LR
 The immutable package is archived before parsing. The parsed artifact is the
 single deterministic contract: facts, taxonomy labels, contacts, disclosures,
 and financial observations derive from it. The production
-`esef_filing_facts_duckdb` asset was cut over to schema-v4 Arelle artifacts while
+`esef_filing_facts_duckdb` asset consumes schema-v5 Arelle artifacts while
 retaining its asset key and DuckDB/ClickHouse table contracts. The historical OIM
 JSON archive remains registered for explicit comparison or fallback, but routine
 refresh and backfill jobs do not select it. Arelle-to-OIM validation completed on
@@ -89,7 +89,7 @@ and validator contract are in `docs/esef-ixbrl-segment-parser.md`.
   source-linked rows for every filing version represented by that artifact. Artifact reads
   use bounded threads; JSON normalization and independent Parquet spooling use four worker
   processes; the main process performs filing-scoped, bounded DuckDB inserts. Checkpoints
-  include the parser contract (`arelle-artifact-v4`), so legacy OIM checkpoints cannot
+  include the parser contract (`arelle-artifact-v5`), so legacy OIM checkpoints cannot
   suppress the one-time cutover rewrite. The XHTML archive still reads the processed-week
   index directly and remains skip-existing in object storage. Both use
   `BackfillPolicy.multi_run(max_partitions_per_run=1)`.

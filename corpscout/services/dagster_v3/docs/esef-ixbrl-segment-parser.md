@@ -24,6 +24,11 @@ The artifact contains:
 - deterministic website candidates from tagged website facts, visible links,
   and visible XHTML text. URLs and hosts are grouped by a Public Suffix
   List-validated eTLD+1 registrable domain;
+- bounded visible-report sections for board composition, executive management,
+  board committees, auditor appointments, annual-report signatures, company
+  contacts, person profiles, ownership/listing information, and company
+  overviews. Semantic XHTML is read by heading/container order; PDF-style XHTML
+  is reconstructed from its page, `left`, and `bottom` CSS coordinates;
 - validation messages and completeness counters.
 
 Segment entries reference facts by deterministic key. They never duplicate or
@@ -37,6 +42,14 @@ Website evidence additionally records normalized URLs and hosts. Single-label
 hosts, IP addresses, unknown suffixes, email-only domains, XBRL infrastructure,
 static assets, and file-like `.zip` domains are rejected. External websites are
 kept as candidates with role evidence; they are not assumed to be company-owned.
+
+Each visible excerpt is capped at 6,000 characters and each section type at two
+excerpts. It records the report member, page wrapper ID, printed page number when
+detectable, anchor XPath and visual order, extraction method, language, original
+and included character counts, truncation state, and SHA-256 of the included
+text. These are report-period observations. In particular, an address printed
+in an annual report is not promoted over current Bolagsverket-derived company
+data.
 
 ## Parse one package locally
 
@@ -112,7 +125,7 @@ esef_filings/report_packages/package_sha256=<hash>/report-package.zip
 Artifacts use this content-addressed key layout:
 
 ```text
-esef_filings/ixbrl_segments/schema=v4/parser=arelle-<version>/package_sha256=<hash>/artifact.json
+esef_filings/ixbrl_segments/schema=v5/parser=arelle-<version>/candidates=v3/package_sha256=<hash>/artifact.json
 ```
 
 ## Extract company enrichment with DeepSeek
@@ -122,8 +135,15 @@ Materialize `esef_document_company_information_duckdb` after
 `DEEPSEEK_MODEL`, and `DEEPSEEK_API_KEY` environment variables. This paid asset is
 unpartitioned and is never included in the routine refresh or backfill. It reads the
 final ClickHouse source-document table and selects the newest parsed XBRL report for
-each resolved `(country_iso2, company_id)`. For example, this configuration processes
-the latest eligible report for selected Swedish companies:
+each resolved `(country_iso2, company_id)`. The parser produces schema-v5 artifacts.
+This downstream consumer also accepts validated schema-v3 and schema-v4 artifacts
+already stored in the source-document table. Those versions retain the tagged facts,
+concepts, segments, and source fields still accepted by prompt v2; schema v5 adds the
+visible-section evidence available only to prompt v2. A source-document row is eligible only when its recorded schema
+version matches its versioned object-key path. When the same filing has multiple
+versions, v5 is selected before v4 and v3, and only then does latest-report ranking run.
+For example,
+this configuration processes the latest eligible report for selected Swedish companies:
 
 ```yaml
 ops:
@@ -163,10 +183,16 @@ listing facts, or financial metrics that can be read deterministically.
 
 The input is not the multi-megabyte fact artifact. It contains the selected
 identity, business-profile, people-and-audit, products/markets/segments, and
-group-structure text facts, with a default 64,000-character filing budget and a
-32,000-character per-fact limit. Inline XBRL text-block facts legitimately
-contain XHTML fragments; `lxml` converts those fragments to visible text before
-the request. This is markup decoding, not regex-based information extraction.
+group-structure text facts, plus schema-v5 visible board, management, committee,
+auditor, signature, profile, and company-overview excerpts. The default filing
+budget is 64,000 characters. Visible evidence is capped at 32,000 characters,
+6,000 characters per excerpt, and two excerpts per section type; the remaining
+budget is available to tagged facts, which retain their 32,000-character
+per-fact cap. Inline XBRL text-block facts legitimately contain XHTML fragments;
+`lxml` converts those fragments to visible text before the request. This is
+markup decoding, not regex-based information extraction. Company-contact and
+ownership/listing sections remain in the v5 artifact for report-period queries
+but are not sent to the current output schema.
 
 Every returned item must cite one or more `E0001`-style evidence IDs. The
 application validates that each ID exists and belongs to a section allowed for
@@ -181,8 +207,8 @@ input independently reproducible and verifiable.
 Request and result artifacts use these content-addressed key layouts:
 
 ```text
-esef_filings/llm_company_enrichment_requests/schema=v1/prompt=esef-company-enrichment-v1/model=<model>/request_sha256=<request-hash>/request.json
-esef_filings/llm_company_enrichment/schema=v1/prompt=esef-company-enrichment-v1/model=<model>/package_sha256=<package-hash>/request_sha256=<request-hash>/artifact.json
+esef_filings/llm_company_enrichment_requests/schema=v1/prompt=esef-company-enrichment-v2/model=<model>/request_sha256=<request-hash>/request.json
+esef_filings/llm_company_enrichment/schema=v1/prompt=esef-company-enrichment-v2/model=<model>/package_sha256=<package-hash>/request_sha256=<request-hash>/artifact.json
 ```
 
 These remain source-document observations. `esef_document_information_clickhouse`
@@ -238,11 +264,11 @@ OIM-generated fact IDs for many XHTML facts without explicit IDs. Neither change
 concept identity, value, period, unit, dimensions, language, or the financial
 metrics.
 
-The production `esef_filing_facts_duckdb` asset now consumes the schema-v4 Arelle
+The production `esef_filing_facts_duckdb` asset consumes the schema-v5 Arelle
 artifact while retaining its existing asset key and DuckDB/ClickHouse schemas. It
 downloads every content-addressed artifact once per partition, projects one fact set
 per source document, spools bounded Parquet batches outside DuckDB, and replaces only
-the affected filing IDs. Ingestion checkpoints carry `arelle-artifact-v4`; an older
+the affected filing IDs. Ingestion checkpoints carry `arelle-artifact-v5`; an older
 OIM checkpoint therefore triggers the required one-time rewrite instead of silently
 skipping the filing. `esef_filing_facts_json_s3` remains registered but is not selected
 by routine refresh or backfill jobs.

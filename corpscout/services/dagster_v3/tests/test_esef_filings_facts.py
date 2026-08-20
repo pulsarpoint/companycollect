@@ -17,6 +17,7 @@ import pytest
 
 from dagster_v3.defs.esef_filings import facts
 from dagster_v3.defs.esef_filings import tables
+from dagster_v3.defs.esef_filings.artifact_contract import ARTIFACT_SCHEMA_VERSION
 
 FIXTURES_DIR = Path(__file__).resolve().parent / "fixtures" / "esef_filings"
 
@@ -90,7 +91,7 @@ def test_iter_oim_facts_consumes_fact_entries_lazily() -> None:
 
 def test_iter_artifact_facts_reuses_oim_row_contract_with_deterministic_ids() -> None:
     artifact = {
-        "schema_version": 4,
+        "schema_version": ARTIFACT_SCHEMA_VERSION,
         "facts": {
             "fact-key-a": {
                 "report_member": "reports/report.xhtml",

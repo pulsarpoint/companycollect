@@ -100,7 +100,7 @@ SE_FINANCIAL_FACTS_EXPORT_COLUMNS = (
 # upsert_sweden_financial_facts_partition below), which structurally cannot
 # touch rows beyond the running partition's own scope. This guard now only
 # guards the remaining Sweden full-replaces (the derived
-# se_financial_metrics rebuild plus the officers/audits publishes).
+# se_bolagsverket_financial_metrics rebuild plus the officers/audits publishes).
 SHRINK_GUARD_MIN_RATIO = 0.5
 
 
@@ -114,7 +114,7 @@ def guard_against_clickhouse_table_shrink(
     """Refuse a full-table replace that would shrink ``qualified_table``.
 
     Applies to the remaining Sweden CH full-replaces
-    (``sweden_financial_metrics_clickhouse`` and the derived
+    (``se_bolagsverket_financial_metrics_clickhouse`` and the derived
     officers/audits publishes): each stages its replacement data, then --
     before the atomic ``EXCHANGE TABLES`` swap -- must compare the staged
     row count against the table's CURRENT (pre-swap) row count. If the
@@ -340,7 +340,8 @@ def _statement_keys_for_archive_keys(
     """Map this partition's archive keys to their ``statement_key`` values.
 
     ``se_financial_facts`` has no ``source_archive_key`` column (only
-    ``se_financial_reports`` and the derived ``se_financial_metrics`` do --
+    ``se_financial_reports`` and the derived
+    ``se_bolagsverket_financial_metrics`` do --
     see migrations 000090/000134); facts link back to their report via
     ``statement_key`` only (``se_financial_facts_with_source`` joins on it).
     So the facts export's ClickHouse delete scope is expressed in

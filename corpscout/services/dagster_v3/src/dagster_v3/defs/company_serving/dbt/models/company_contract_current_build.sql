@@ -1,8 +1,13 @@
 {{ config(materialized='table', order_by=['country_code', 'company_id', 'contract_ref']) }}
 
+WITH company_anchors AS (
+    SELECT company_id
+    FROM {{ source('corpscout', 'se_companies') }} FINAL
+)
+
 SELECT
     country_code,
-    company_id,
+    contracts.company_id,
     contract_ref,
     argMax(source_slug, resolved_at) AS source,
     argMax(source_notice_id, resolved_at) AS notice_ref,
@@ -20,6 +25,8 @@ SELECT
     argMax(notice_value_currency, resolved_at) AS notice_currency,
     argMax(source_url, resolved_at) AS source_url,
     now64(3, 'UTC') AS resolved_at
-FROM {{ source('corpscout', 'company_contract_facts') }}
+FROM {{ source('corpscout', 'company_contract_facts') }} AS contracts
+INNER JOIN company_anchors AS anchors
+    ON anchors.company_id = contracts.company_id
 WHERE country_code = '{{ var("country_code") }}'
-GROUP BY country_code, company_id, contract_ref
+GROUP BY country_code, contracts.company_id, contract_ref

@@ -26,6 +26,7 @@ from dagster_v3.defs.common.resources import ObjectStoreResource
 from dagster_v3.defs.esef_filings import tables
 from dagster_v3.defs.esef_filings.llm_enrichment import (
     PROMPT_VERSION,
+    SUPPORTED_ENRICHMENT_ARTIFACT_SCHEMA_VERSIONS,
     build_company_enrichment_request,
     build_enrichment_evidence,
     deepseek_settings,
@@ -39,7 +40,6 @@ from dagster_v3.defs.esef_filings.segment_assets import (
     ESEF_DOCUMENT_BUCKET,
     ensure_document_company_information_table,
 )
-from dagster_v3.defs.esef_filings.segment_parser import ARTIFACT_SCHEMA_VERSION
 
 GROUP_NAME = "esef_filings"
 _PROGRESS_INTERVAL = 25
@@ -344,14 +344,20 @@ def _load_latest_source_documents(
         "package_url",
         "package_object_key",
         "parsed_artifact_object_key",
+        "artifact_schema_version",
     )
+    compatible_artifact_filters = [
+        (
+            f"(artifact_schema_version = {schema_version} AND "
+            "parsed_artifact_object_key LIKE "
+            f"'esef_filings/ixbrl_segments/schema=v{schema_version}/%%')"
+        )
+        for schema_version in SUPPORTED_ENRICHMENT_ARTIFACT_SCHEMA_VERSIONS
+    ]
     document_filters = [
         "extraction_status IN ('parsed', 'reused')",
         "parsed_artifact_object_key != ''",
-        (
-            "parsed_artifact_object_key LIKE "
-            f"'esef_filings/ixbrl_segments/schema=v{ARTIFACT_SCHEMA_VERSION}/%%'"
-        ),
+        f"({' OR '.join(compatible_artifact_filters)})",
         "company_id != ''",
         "country_iso2 != ''",
     ]
@@ -387,14 +393,26 @@ SELECT {select_columns}
 FROM
 (
     SELECT
-        {', '.join(columns)},
+        {", ".join(columns)},
         row_number() OVER (
             PARTITION BY country_iso2, company_id
             ORDER BY period_end DESC, fiscal_year DESC,
                 source_processed_at DESC, source_document_id DESC
         ) AS latest_company_report_rank
-    FROM {tables.QUALIFIED_ESEF_SOURCE_DOCUMENTS_TABLE}
-    WHERE {' AND '.join(document_filters)}
+    FROM
+    (
+        SELECT
+            {", ".join(columns)},
+            source_processed_at,
+            row_number() OVER (
+                PARTITION BY country_iso2, company_id, source_document_id
+                ORDER BY artifact_schema_version DESC,
+                    source_processed_at DESC, parsed_artifact_object_key DESC
+            ) AS preferred_filing_artifact_rank
+        FROM {tables.QUALIFIED_ESEF_SOURCE_DOCUMENTS_TABLE}
+        WHERE {" AND ".join(document_filters)}
+    ) AS compatible_documents
+    WHERE preferred_filing_artifact_rank = 1
 ) AS documents
 LEFT JOIN
 (
@@ -403,7 +421,7 @@ LEFT JOIN
     WHERE model_name = %(model_name)s
       AND prompt_version = %(prompt_version)s
 ) AS existing USING (source_document_id)
-WHERE {' AND '.join(outer_filters)}
+WHERE {" AND ".join(outer_filters)}
 ORDER BY documents.country_iso2, documents.company_id,
     documents.source_document_id
 {limit_sql}
@@ -419,6 +437,13 @@ def _source_specific_segment_artifact(
     document: Mapping[str, object],
 ) -> dict[str, Any]:
     artifact = dict(_mapping(value, name="segment artifact"))
+    artifact_schema_version = artifact.get("schema_version")
+    expected_schema_version = document.get("artifact_schema_version")
+    if artifact_schema_version != expected_schema_version:
+        raise ValueError(
+            "ESEF segment artifact schema does not match source-document metadata: "
+            f"expected={expected_schema_version} actual={artifact_schema_version}"
+        )
     source = dict(_mapping(artifact.get("source"), name="segment artifact source"))
     source.update(
         {

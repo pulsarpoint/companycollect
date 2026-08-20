@@ -99,13 +99,16 @@ from collections.abc import Callable
 from dagster_clickhouse import ClickhouseResource
 
 from dagster_v3.defs.clickhouse.resolved import assert_clickhouse_tables_exist
+from dagster_v3.defs.common.financial_metric_mappings import (
+    metric_concepts_for_source,
+)
 from dagster_v3.defs.esef_filings import tables
 from dagster_v3.defs.sweden_financial.clickhouse import (
     clickhouse_table_row_count,
     guard_against_clickhouse_table_shrink,
 )
 
-MAPPING_VERSION = "esef-ifrs-v1"
+MAPPING_VERSION = "esef-ifrs-v2"
 
 EXCHANGE_RATES_TABLE = "exchange_rates"
 QUALIFIED_EXCHANGE_RATES_TABLE = f"{tables.ESEF_DATABASE}.{EXCHANGE_RATES_TABLE}"
@@ -113,32 +116,7 @@ QUALIFIED_EXCHANGE_RATES_TABLE = f"{tables.ESEF_DATABASE}.{EXCHANGE_RATES_TABLE}
 # Concept mapping (Task 6 brief). Dict order is meaningful: within a metric,
 # the first concept wins over later ones (a fallback), and this insertion
 # order is what the SQL builder below walks to emit the coalesce chain.
-IFRS_METRIC_CONCEPTS: dict[str, tuple[str, ...]] = {
-    # Totals first, components last: a filer reporting both a total and its
-    # goods/services split must resolve to the total, or the coalesce would
-    # take one component and understate revenue. RevenueFromSaleOfGoods is a
-    # component for most filers but the sole top line for some (Axfood tags
-    # only that, at 84.06bn SEK for FY2024), which is why it is present at all.
-    #
-    # ifrs-full:RevenueFromInterest is deliberately excluded. A bank's interest
-    # revenue is not comparable with a retailer's turnover, so folding it into
-    # the same column would make cross-company ranking meaningless. Banks and
-    # investment entities keep a NULL revenue instead -- an honest absence.
-    "revenue": (
-        "ifrs-full:Revenue",
-        "ifrs-full:RevenueFromContractsWithCustomers",
-        "ifrs-full:RevenueAndOperatingIncome",
-        "ifrs-full:RevenueFromSaleOfGoods",
-        "ifrs-full:RevenueFromRenderingOfServices",
-    ),
-    "operating_profit": ("ifrs-full:ProfitLossFromOperatingActivities",),
-    "profit_loss": ("ifrs-full:ProfitLoss",),
-    "total_assets": ("ifrs-full:Assets",),
-    "equity": ("ifrs-full:Equity",),
-    "liabilities": ("ifrs-full:Liabilities",),
-    "cash": ("ifrs-full:CashAndCashEquivalents",),
-    "employees": ("ifrs-full:AverageNumberOfEmployees",),
-}
+IFRS_METRIC_CONCEPTS = metric_concepts_for_source("esef")
 
 # Deterministic tiebreak for every argMax/argMaxIf in this module's SQL:
 # highest decimals (precision) wins, fact_id breaks a genuine tie. Never a
@@ -495,7 +473,8 @@ def replace_esef_financial_metrics_clickhouse(
     Also refuses a replace that would shrink the table by more than half of
     its current row count, unless ``allow_shrink=True`` -- the same
     ``guard_against_clickhouse_table_shrink`` shrink guard
-    ``sweden_financial_metrics_clickhouse`` uses, checked AFTER the SELECT is
+    ``se_bolagsverket_financial_metrics_clickhouse`` uses, checked AFTER the
+    SELECT is
     staged but BEFORE the ``EXCHANGE TABLES`` swap. This is why the stage +
     insert + exchange sequence is inlined here rather than delegated to
     ``dagster_v3.contact_extraction.replace_table_from_select`` (see module

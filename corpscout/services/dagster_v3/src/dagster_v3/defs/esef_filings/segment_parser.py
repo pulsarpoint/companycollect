@@ -38,14 +38,20 @@ from dagster_v3.defs.esef_filings.website_candidates import (
     TaggedWebsiteValue,
     extract_website_candidates,
 )
+from dagster_v3.defs.esef_filings.visible_sections import (
+    VISIBLE_SECTION_EXTRACTOR_VERSION,
+    EsefVisibleSection,
+    extract_visible_sections,
+)
 
 ARELLE_VERSION = version("arelle-release")
-CANDIDATE_EXTRACTOR_VERSION = "2"
+CANDIDATE_EXTRACTOR_VERSION = "3"
 EXTRACTOR_VERSIONS = {
     dependency: version(dependency)
     for dependency in ("email-validator", "lxml", "phonenumbers", "tldextract")
 }
 EXTRACTOR_VERSIONS["corpscout-contact-candidates"] = CANDIDATE_EXTRACTOR_VERSION
+EXTRACTOR_VERSIONS["corpscout-visible-sections"] = VISIBLE_SECTION_EXTRACTOR_VERSION
 ARTIFACT_PREFIX = "esef_filings/ixbrl_segments"
 MAX_PACKAGE_FILES = 10_000
 MAX_PACKAGE_UNCOMPRESSED_BYTES = 1_500_000_000
@@ -280,7 +286,9 @@ class EsefParser:
     engine: str = "Arelle"
     version: str = ARELLE_VERSION
     validation_profile: str = "ESEF"
-    candidate_extractors: str = "deterministic XHTML and tagged-fact extraction"
+    candidate_extractors: str = (
+        "deterministic XHTML, CSS-layout, and tagged-fact extraction"
+    )
     candidate_extractor_versions: dict[str, str] = field(
         default_factory=lambda: dict(EXTRACTOR_VERSIONS)
     )
@@ -298,6 +306,7 @@ class EsefSegmentArtifact:
     segments: dict[str, list[EsefSegmentReference]]
     contact_candidates: list[EsefContactCandidate]
     website_candidates: list[EsefWebsiteCandidate]
+    visible_sections: list[EsefVisibleSection]
     quality: EsefQuality
 
 
@@ -381,6 +390,7 @@ def parse_esef_report_package(
                 if candidate.kind == "email"
             ),
         )
+        visible_sections = extract_visible_sections(report_paths)
 
     segments = _select_segments(parsed.facts, parsed.concepts)
     classified_fact_keys = {
@@ -410,6 +420,7 @@ def parse_esef_report_package(
         segments=segments,
         contact_candidates=contact_candidates,
         website_candidates=website_candidates,
+        visible_sections=visible_sections,
         quality=EsefQuality(
             fact_count=len(parsed.facts),
             text_fact_count=sum(

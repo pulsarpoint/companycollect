@@ -515,7 +515,9 @@ def test_main_asset_depends_on_draft_and_combined_job_runs_both() -> None:
     }
     assert job_keys == {
         "se_company_person_draft_clickhouse",
+        "se_company_person_role_draft_clickhouse",
         "se_company_person_clickhouse",
+        "se_company_person_role_clickhouse",
     }
     publish_job_keys = {
         key.path[-1]

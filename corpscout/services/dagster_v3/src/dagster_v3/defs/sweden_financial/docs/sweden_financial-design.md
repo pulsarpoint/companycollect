@@ -246,16 +246,40 @@ remain native-only. The scoped facts exporters run after this step, so both the
 lossless facts table and the canonical metrics projection carry USD values and
 rate provenance.
 
-`sweden_financial_metrics_clickhouse` builds one canonical row per filing in
-`corpscout.se_financial_metrics`. It selects undimensioned current-period facts,
-prefers the highest declared XBRL precision when a document repeats rounded and
-exact values, maps the standard Swedish concepts, derives total liabilities from
-the balance-sheet equation, and converts every monetary metric from SEK to USD
-using the shared `corpscout.exchange_rates` history. The metrics row includes the
-official archive URL, exact XHTML S3 URI, taxonomy entrypoint, mapping version,
-source/mapped/unmapped fact counts, and native and USD values. The full fact
-table remains the comprehensive representation for concepts that do not belong
-in the stable cross-country metric projection.
+`se_bolagsverket_financial_metrics_clickhouse` builds one row per filing and
+represented fiscal year in `corpscout.se_bolagsverket_financial_metrics`.
+Directly reported years carry
+the complete stable metric set. Trusted comparative years from each filing's
+multi-year overview carry revenue and total assets, with `observation_kind` and
+`source_fiscal_year` preserving provenance. A filing's comparative rows are
+rejected when overlapping revenue disagrees with a directly reported value.
+Every monetary metric keeps native and USD values. The full fact table remains
+the comprehensive representation for concepts that do not belong in the stable
+cross-country metric projection.
+
+## Source-specific serving views
+
+The physical metrics table is named
+`corpscout.se_bolagsverket_financial_metrics` because every row is derived from
+Bolagsverket annual-account facts. It is not a cross-source canonical table.
+The shared financial UI reads two independent same-shape views:
+
+```text
+se_bolagsverket_financial_metrics -> se_financials_bolagsverket_current
+esef_financial_metrics            -> se_financials_esef_current
+```
+
+`se_financials_bolagsverket_current` uses the reported/comparative and filing
+tiebreak rules to select one row per company and represented year.
+`se_financials_esef_current` resolves the LEI through `company_identifier` and
+keeps per-metric amendment composition. Unsupported ESEF presentation fields
+are typed nulls. Consumers query the views separately; they never union,
+coalesce, compare, or choose a winner across the two accounting scopes.
+
+The ordered concept mappings are code-owned in
+`defs/common/financial_metric_mappings.py`. Canonical presentation keys map to
+source concepts, while storage aliases such as ESEF `operating_profit` and
+Bolagsverket `operating_profit_loss` remain source-specific.
 
 ## Job And Schedule
 
@@ -319,7 +343,7 @@ The ClickHouse layer is three jobs:
 `sweden_financial_backfill_clickhouse_job` (the backfill-partitioned
 reports/facts export pair), `sweden_financial_current_clickhouse_job` (the
 current-weekly export pair), and `sweden_financial_clickhouse_job` (the derived
-wave: `sweden_financial_metrics_clickhouse`, `se_financial_history_clickhouse`,
+wave: `se_bolagsverket_financial_metrics_clickhouse`,
 `se_bolagsverket_financial_observations_clickhouse`,
 `se_financial_report_signatories_clickhouse`, `se_company_audits_clickhouse` — full rebuilds
 from ClickHouse facts, which stays correct for derivations and keeps the shrink

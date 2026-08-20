@@ -139,6 +139,7 @@ def test_ifrs_metric_concepts_shape_and_order() -> None:
         "ifrs-full:RevenueAndOperatingIncome",
         "ifrs-full:RevenueFromSaleOfGoods",
         "ifrs-full:RevenueFromRenderingOfServices",
+        "ifrs-full:RentalIncomeFromInvestmentProperty",
     )
     # Deliberately absent: ifrs-full:RevenueFromInterest. A bank's interest
     # revenue is not comparable with a retailer's turnover, and folding it in
@@ -154,7 +155,7 @@ def test_ifrs_metric_concepts_shape_and_order() -> None:
         "employees",
     ):
         assert len(IFRS_METRIC_CONCEPTS[metric_name]) == 1
-    assert MAPPING_VERSION == "esef-ifrs-v1"
+    assert MAPPING_VERSION == "esef-ifrs-v2"
 
 
 # --- build_esef_financial_metrics_select ------------------------------------
@@ -190,7 +191,10 @@ def test_build_select_currency_ignores_xbrl_unit_expressions() -> None:
     """
     sql = build_esef_financial_metrics_select("run-1")
     assert "match(currency, '^[A-Z]{3}$')" in sql
-    assert "argMaxIf(currency, (coalesce(decimals, -1000), fact_id), currency != '')" not in sql
+    assert (
+        "argMaxIf(currency, (coalesce(decimals, -1000), fact_id), currency != '')"
+        not in sql
+    )
 
 
 def test_build_select_balance_equation_liabilities_fallback() -> None:
@@ -427,7 +431,7 @@ def test_replace_esef_financial_metrics_clickhouse_refuses_on_shrink_below_ratio
     None
 ):
     # staged (10) < 0.5 * existing (100) -> the shrink guard must refuse,
-    # mirroring sweden_financial_metrics_clickhouse's
+    # mirroring se_bolagsverket_financial_metrics_clickhouse's
     # guard_against_clickhouse_table_shrink usage.
     client = FakeClickHouseClient(
         would_be_row_count=10, staged_row_count=10, existing_row_count=100

@@ -33,5 +33,25 @@ def test_sweden_financial_metrics_provenance_migration_adds_source_links_and_fac
     assert "DROP VIEW IF EXISTS corpscout.se_financial_facts_with_source" in down_sql
 
 
+def test_sweden_financial_metrics_unified_years_migration_replaces_history_table() -> (
+    None
+):
+    up_sql = _migration_sql(
+        "000284_corpscout_se_financial_metrics_unified_years.up.sql"
+    )
+    down_sql = _migration_sql(
+        "000284_corpscout_se_financial_metrics_unified_years.down.sql"
+    )
+
+    assert "ALTER TABLE corpscout.se_financial_metrics" in up_sql
+    assert "ADD COLUMN IF NOT EXISTS observation_kind" in up_sql
+    assert "ADD COLUMN IF NOT EXISTS source_fiscal_year" in up_sql
+    assert "DROP TABLE IF EXISTS corpscout.se_financial_history" in up_sql
+
+    assert "CREATE TABLE IF NOT EXISTS corpscout.se_financial_history" in down_sql
+    assert "DROP COLUMN IF EXISTS source_fiscal_year" in down_sql
+    assert "DROP COLUMN IF EXISTS observation_kind" in down_sql
+
+
 def _migration_sql(file_name: str) -> str:
     return (MIGRATIONS_DIR / file_name).read_text(encoding="utf-8")

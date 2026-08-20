@@ -94,6 +94,15 @@ def test_build_latest_insert_sql_qualifies_resolved_at_tiebreak() -> None:
         )
 
 
+def test_sweden_latest_prefers_reported_metrics_over_comparatives() -> None:
+    from dagster_v3.defs.company_financials_latest.sql import build_latest_insert_sql
+
+    sql = build_latest_insert_sql("se")
+
+    assert "observation_kind = 'reported' DESC" in sql
+    assert "source_fiscal_year DESC NULLS LAST" in sql
+
+
 def test_build_latest_insert_sql_rejects_unknown_code() -> None:
     from dagster_v3.defs.company_financials_latest.sql import build_latest_insert_sql
 

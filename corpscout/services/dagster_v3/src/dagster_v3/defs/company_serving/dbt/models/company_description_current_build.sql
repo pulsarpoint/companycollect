@@ -1,6 +1,11 @@
 {{ config(materialized='table', order_by=['country_code', 'company_id', 'description_kind', 'description_id']) }}
 
-WITH latest AS (
+WITH company_anchors AS (
+    SELECT company_id
+    FROM {{ source('corpscout', 'se_companies') }} FINAL
+),
+
+latest AS (
     SELECT
         observations.country_code,
         observations.company_id,
@@ -14,6 +19,8 @@ WITH latest AS (
         argMax(observations.confidence, observations.extracted_at) AS confidence,
         max(observations.extracted_at) AS latest_extracted_at
     FROM {{ source('corpscout', 'company_description_observations') }} AS observations FINAL
+    INNER JOIN company_anchors AS anchors
+        ON anchors.company_id = observations.company_id
     WHERE observations.country_code = '{{ var("country_code") }}'
     GROUP BY
         observations.country_code,

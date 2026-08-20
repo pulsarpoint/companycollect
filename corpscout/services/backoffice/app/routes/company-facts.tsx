@@ -125,11 +125,15 @@ function readerFact(
   fact: FactRow,
   factIndex: number,
   year: number,
+  countryLanguage: string,
 ): XbrlFact {
   const conceptLabelEnglish = fact.concept_label_en?.trim() ?? "";
-  const conceptLabelSwedish = fact.concept_label_sv?.trim() ?? "";
+  const conceptLabelOriginal = fact.concept_label_original?.trim() ?? "";
+  const conceptLabelOriginalLanguage =
+    fact.concept_label_original_language?.trim() || countryLanguage;
   const conceptDescriptionEnglish = fact.concept_description_en?.trim() ?? "";
-  const conceptDescriptionSwedish = fact.concept_description_sv?.trim() ?? "";
+  const conceptDescriptionOriginal =
+    fact.concept_description_original?.trim() ?? "";
   return {
     factId: `${factIndex}:${fact.context_id}:${fact.concept}`,
     conceptQname: fact.concept,
@@ -144,19 +148,20 @@ function readerFact(
     fxRateDate: fact.fx_rate_date ?? "",
     fxSource: fact.fx_source ?? "",
     decimals: readerDecimals(fact),
-    periodStart: "",
-    periodInstant: "",
-    periodDurationEnd: contextLabel(fact.context_id, year),
+    periodStart: fact.period_start ?? "",
+    periodInstant: fact.period_instant ?? "",
+    periodDurationEnd:
+      fact.period_duration_end ?? contextLabel(fact.context_id, year),
     unit: fact.unit_id ?? fact.currency ?? "",
     currency: fact.currency ?? "",
     dimensions: fact.dimensions,
-    language: "sv",
+    language: fact.language ?? countryLanguage,
     conceptLabels: [
-      ...(conceptLabelSwedish
+      ...(conceptLabelOriginal
         ? [
             {
-              language: "sv",
-              label: conceptLabelSwedish,
+              language: conceptLabelOriginalLanguage,
+              label: conceptLabelOriginal,
               isReportLanguage: true,
               source: "taxonomy" as const,
             },
@@ -180,11 +185,11 @@ function readerFact(
         : []),
     ],
     conceptDocumentation: [
-      ...(conceptDescriptionSwedish
+      ...(conceptDescriptionOriginal
         ? [
             {
-              language: "sv",
-              label: conceptDescriptionSwedish,
+              language: conceptLabelOriginalLanguage,
+              label: conceptDescriptionOriginal,
               isReportLanguage: true,
               source: "taxonomy" as const,
             },
@@ -243,11 +248,15 @@ export default function CompanyFacts({
   const backHref = hasFinancialSources
     ? `/company/${params.country}/${params.id}/financials`
     : `/company/${params.country}/${params.id}`;
+  const factsSource = country.detail?.financialSources?.find(
+    (source) => source.kind === "registry" && source.yearFacts,
+  );
+  const reportTitle = factsSource?.title ?? "Annual account";
   const [filter, setFilter] = useState("");
   const [visibleLimit, setVisibleLimit] = useState(FACT_BATCH_SIZE);
   const needle = filter.trim().toLowerCase();
   const readerFacts = facts.map((fact, factIndex) =>
-    readerFact(fact, factIndex, year),
+    readerFact(fact, factIndex, year, country.code),
   );
   const matchingFacts = readerFacts.filter((fact) =>
     matchesFilter(fact, needle),
@@ -257,7 +266,9 @@ export default function CompanyFacts({
     (fact) => fact.valueKind === "monetary",
   ).length;
   const currentPeriodCount = facts.filter((fact) =>
-    /^(period|balans)0$/i.test(fact.context_id),
+    fact.is_comparative == null
+      ? /^(period|balans)0$/i.test(fact.context_id)
+      : Number(fact.is_comparative) === 0,
   ).length;
   const dimensionedFactCount = facts.filter((fact) =>
     hasDimensions(fact.dimensions),
@@ -271,7 +282,9 @@ export default function CompanyFacts({
       : currencies.length > 1
         ? "Mixed"
         : "Unavailable";
-  const periodEnd = reportPeriodEnd(doc?.nestedZipName ?? "", year);
+  const periodEnd =
+    facts.find((fact) => fact.report_period_end)?.report_period_end ??
+    reportPeriodEnd(doc?.nestedZipName ?? "", year);
 
   return (
     <div className="flex w-full flex-col gap-5">
@@ -292,7 +305,7 @@ export default function CompanyFacts({
         <div className="flex min-w-0 flex-col gap-2">
           <div className="flex flex-wrap items-center gap-2">
             <h2 className="text-xl font-semibold tracking-tight">
-              Bolagsverket report · {year}
+              {reportTitle} · {year}
             </h2>
             <Badge variant="outline">Standalone annual account</Badge>
           </div>
@@ -378,8 +391,7 @@ export default function CompanyFacts({
             <div>
               <CardTitle>Tagged source facts</CardTitle>
               <CardDescription>
-                Exact Bolagsverket XBRL values before standardized metric
-                mapping.
+                Exact source XBRL values before standardized metric mapping.
               </CardDescription>
             </div>
             <Input
@@ -389,7 +401,7 @@ export default function CompanyFacts({
                 setVisibleLimit(FACT_BATCH_SIZE);
               }}
               placeholder="Search concepts, values, currency, or dimensions…"
-              aria-label="Search Bolagsverket report facts"
+              aria-label={`Search ${reportTitle} facts`}
               className="w-full sm:w-96"
             />
           </div>
@@ -415,7 +427,7 @@ export default function CompanyFacts({
             <>
               <XbrlFactsAccordion
                 facts={visibleFacts}
-                ariaLabel="Bolagsverket report facts"
+                ariaLabel={`${reportTitle} facts`}
               />
               <div className="mt-3 flex flex-wrap items-center justify-between gap-3">
                 <p className="text-muted-foreground text-xs">

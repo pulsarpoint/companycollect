@@ -1,7 +1,12 @@
 {{ config(materialized='table', order_by=['company_id', 'address_type', 'source', 'address_key']) }}
 
+WITH company_anchors AS (
+    SELECT company_id
+    FROM {{ source('corpscout', 'se_companies') }} FINAL
+)
+
 SELECT
-    company_id,
+    addresses.company_id,
     address_fingerprint AS address_key,
     address_type,
     source,
@@ -26,5 +31,7 @@ SELECT
     CAST(NULL, 'Nullable(DateTime64(3, \'UTC\'))') AS geocoded_at,
     source_record_uid,
     now64(3, 'UTC') AS resolved_at
-FROM {{ source('corpscout', 'se_company_addresses_current') }}
+FROM {{ source('corpscout', 'se_company_addresses_current') }} AS addresses
+INNER JOIN company_anchors AS anchors
+    ON anchors.company_id = addresses.company_id
 WHERE has_address = 1 AND has_observation = 1

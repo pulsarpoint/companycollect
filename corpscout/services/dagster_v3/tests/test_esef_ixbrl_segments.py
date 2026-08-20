@@ -42,6 +42,7 @@ from dagster_v3.defs.esef_filings.segment_parser import (
     compare_artifact_to_oim,
     parse_esef_report_package,
 )
+from dagster_v3.defs.esef_filings.visible_sections import extract_visible_sections
 from dagster_v3.defs.esef_filings.website_candidates import (
     TaggedWebsiteValue,
     extract_website_candidates,
@@ -85,9 +86,10 @@ def test_parse_report_package_resolves_continuations_and_selects_segments(
         }
     ]
     assert artifact.document.languages == ["en", "sv"]
-    assert artifact.schema_version == 4
+    assert artifact.schema_version == 5
     assert artifact.parser.candidate_extractor_versions.keys() == {
         "corpscout-contact-candidates",
+        "corpscout-visible-sections",
         "email-validator",
         "lxml",
         "phonenumbers",
@@ -140,6 +142,74 @@ def test_parse_report_package_resolves_continuations_and_selects_segments(
         "company_website",
         "investor_relations",
     ]
+    board_section = next(
+        section
+        for section in artifact.visible_sections
+        if section.section_type == "board_composition"
+    )
+    assert board_section.heading == "Board of Directors"
+    assert "Anna Andersson — Chair" in board_section.text
+    assert board_section.extraction_method == "semantic_section"
+
+
+def test_visible_sections_reconstruct_positioned_page_order_and_provenance(
+    tmp_path: Path,
+) -> None:
+    report_path = tmp_path / "positioned.xhtml"
+    report_path.write_text(_POSITIONED_VISIBLE_SECTIONS_XHTML, encoding="utf-8")
+
+    sections = extract_visible_sections({"reports/positioned.xhtml": report_path})
+
+    management = next(
+        section
+        for section in sections
+        if section.section_type == "executive_management"
+    )
+    assert management.page_id == "pf_management"
+    assert management.printed_page_number == "72"
+    assert management.heading == "FÖRETAGSLEDNING"
+    assert management.extraction_method == "positioned_page"
+    assert management.language == "sv"
+    assert management.text.index("FÖRETAGSLEDNING") < management.text.index(
+        "BJÖRN GARAT"
+    )
+    assert management.text.index("BJÖRN GARAT") < management.text.index(
+        "Finanschef och vice VD sedan 2012."
+    )
+    assert "Ignore Hidden Person" not in management.text
+    assert management.included_character_count == len(management.text)
+    assert management.text_sha256 == sha256(management.text.encode()).hexdigest()
+    assert {section.section_type for section in sections} >= {
+        "executive_management",
+        "person_profiles",
+        "company_contact",
+    }
+
+
+def test_visible_sections_stop_semantic_excerpt_at_next_heading(tmp_path: Path) -> None:
+    report_path = tmp_path / "semantic.xhtml"
+    report_path.write_text(
+        """<?xml version="1.0" encoding="UTF-8"?>
+<html xmlns="http://www.w3.org/1999/xhtml" xml:lang="en"><body>
+  <h2>Board of Directors</h2>
+  <p>Anna Andersson — Chair and board member.</p>
+  <p>Bo Berg — Board member.</p>
+  <h2>Revenue note</h2>
+  <p>Revenue was SEK 10 million.</p>
+</body></html>
+""",
+        encoding="utf-8",
+    )
+
+    sections = extract_visible_sections({"reports/semantic.xhtml": report_path})
+
+    board = next(
+        section for section in sections if section.section_type == "board_composition"
+    )
+    assert board.heading == "Board of Directors"
+    assert "Anna Andersson" in board.text
+    assert "Revenue was" not in board.text
+    assert board.extraction_method == "semantic_section"
 
 
 def test_website_candidates_are_normalized_deduplicated_and_auditable(
@@ -421,8 +491,8 @@ def test_parse_report_package_rejects_unsafe_zip_member(tmp_path: Path) -> None:
 
 def test_artifact_object_key_is_content_and_parser_versioned() -> None:
     assert artifact_object_key("a" * 64) == (
-        "esef_filings/ixbrl_segments/schema=v4/parser=arelle-2.43.1/"
-        "candidates=v2/"
+        "esef_filings/ixbrl_segments/schema=v5/parser=arelle-2.43.1/"
+        "candidates=v3/"
         f"package_sha256={'a' * 64}/artifact.json"
     )
 
@@ -1350,6 +1420,39 @@ _REPORT_XHTML = """<?xml version="1.0" encoding="UTF-8"?>
       </p>
       <script>hidden@do-not-use.se +46 40 999 99 99</script>
     </section>
+    <section id="board">
+      <h2>Board of Directors</h2>
+      <p>Anna Andersson — Chair and board member.</p>
+      <p>Bo Berg — Board member.</p>
+    </section>
+  </body>
+</html>
+"""
+
+_POSITIONED_VISIBLE_SECTIONS_XHTML = """<?xml version="1.0" encoding="UTF-8"?>
+<html xmlns="http://www.w3.org/1999/xhtml" xml:lang="sv">
+  <head><style>
+    .pf { position: relative; } .t { position: absolute; }
+    .w0 { width: 800px; } .h0 { height: 1100px; }
+    .x1 { left: 50px; } .x2 { left: 210px; }
+    .y1 { bottom: 1000px; } .y2 { bottom: 850px; }
+    .y3 { bottom: 820px; } .y4 { bottom: 790px; }
+    .y5 { bottom: 760px; } .y6 { bottom: 70px; }
+    .y7 { bottom: 50px; } .y8 { bottom: 30px; }
+    .hidden { display: none; }
+  </style></head>
+  <body>
+    <div id="pf_management" class="pf w0 h0"><div>
+      <div class="t x2 y3">Finanschef och vice VD sedan 2012.</div>
+      <div class="t x1 y1">FÖRETAGSLEDNING</div>
+      <div class="t x2 y2">BJÖRN GARAT</div>
+      <div class="t x2 y4">Utbildning: Civilekonom.</div>
+      <div class="t x2 y5">Arbetslivserfarenhet: Finansanalytiker.</div>
+      <div class="t x1 y6">Sample AB, Storgatan 1, 111 22 Stockholm</div>
+      <div class="t x1 y7">Org. nr. 556000-0000 · Telefon 08-123 45 67 · www.sample.se</div>
+      <div class="t x1 y8">72</div>
+      <div class="t x2 y2 hidden">Ignore Hidden Person — CEO</div>
+    </div></div>
   </body>
 </html>
 """

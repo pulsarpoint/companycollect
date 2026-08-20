@@ -192,6 +192,55 @@ FROM source_rows""",
     )
 
 
+def finland_financial_source_record_sql() -> tuple[str, ...]:
+    uid = clickhouse_file_source_record_uid_sql(
+        record_kind="annual_report_xml",
+        content_sha256_expression="xml_sha256",
+    )
+    source_rows = f"""
+SELECT
+    {uid} AS source_record_uid,
+    statement_key AS source_record_key,
+    business_id AS company_id,
+    xml_sha256 AS payload_sha256,
+    source_url,
+    xml_object_key,
+    source_run_id,
+    resolved_at AS observed_at
+FROM corpscout.fi_financial_statements FINAL
+WHERE statement_key != '' AND business_id != '' AND xml_sha256 != ''
+""".strip()
+    return (
+        f"""INSERT INTO {tables.QUALIFIED_SOURCE_RECORDS_TABLE}
+({", ".join(tables.SOURCE_RECORD_COLUMNS)})
+WITH source_rows AS ({source_rows}),
+existing AS (
+    SELECT source_record_uid, min(first_seen_at) AS first_seen_at
+    FROM {tables.QUALIFIED_SOURCE_RECORDS_TABLE}
+    GROUP BY source_record_uid
+)
+SELECT source_rows.source_record_uid, 'file', 'annual_report_xml',
+       source_rows.payload_sha256, toUInt16(1),
+       coalesce(existing.first_seen_at, source_rows.observed_at),
+       source_rows.observed_at
+FROM source_rows
+LEFT JOIN existing USING (source_record_uid)""",
+        f"""INSERT INTO {tables.QUALIFIED_SOURCE_RECORD_ORIGINS_TABLE}
+({", ".join(tables.SOURCE_RECORD_ORIGIN_COLUMNS)})
+WITH source_rows AS ({source_rows})
+SELECT source_record_uid, 'finland_prh_xbrl', source_record_key, source_url,
+       xml_object_key, payload_sha256, observed_at, source_run_id
+FROM source_rows""",
+        f"""INSERT INTO {tables.QUALIFIED_SOURCE_RECORD_LINKS_TABLE}
+({", ".join(tables.SOURCE_RECORD_LINK_COLUMNS)})
+WITH source_rows AS ({source_rows})
+SELECT source_record_uid, 'FI', company_id, 'reported_entity',
+       'xbrl_report_entity_identifier', toFloat32(1), 'fi_business_id', company_id,
+       source_run_id, observed_at
+FROM source_rows""",
+    )
+
+
 def esef_source_record_sql() -> tuple[str, ...]:
     uid = clickhouse_file_source_record_uid_sql(
         record_kind="esef_report_package",

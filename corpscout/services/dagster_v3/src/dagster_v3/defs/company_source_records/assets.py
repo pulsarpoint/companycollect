@@ -6,13 +6,11 @@ from dagster_v3.defs.company_source_records import tables
 from dagster_v3.defs.company_source_records.sql import (
     esef_document_observation_sql,
     esef_source_record_sql,
+    finland_financial_source_record_sql,
     sweden_financial_source_record_sql,
     sweden_registry_source_record_sql,
     wikidata_source_record_sql,
 )
-
-_ESEF_OBSERVATION_CLEANUP_BATCH_SIZE = 500
-
 
 def publish_company_source_records(
     *,
@@ -95,7 +93,6 @@ def publish_esef_document_observations(
     with clickhouse.get_connection() as client:
         for statement in esef_document_observation_sql():
             client.execute(statement)
-        cleanup_source_record_count = _delete_superseded_esef_observations(client)
         orphan_count = client.execute(
             "SELECT count() FROM ("
             "SELECT source_record_uid FROM "
@@ -124,67 +121,7 @@ def publish_esef_document_observations(
             )
             for table in observation_tables
         }
-        counts["cleanup_source_record_count"] = cleanup_source_record_count
     return counts
-
-
-def _delete_superseded_esef_observations(client: object) -> int:
-    """Remove derived rows superseded by the current document-information run.
-
-    Raw model responses remain in the source-specific information table and S3.
-    This only keeps the normalized observation projection aligned when a newer
-    normalization drops a candidate from an otherwise unchanged model artifact.
-    """
-    versions = client.execute(
-        "SELECT DISTINCT source_record_uid, source_run_id "
-        "FROM corpscout.esef_document_company_information "
-        "WHERE extraction_status IN ('complete', 'enriched', 'reused') "
-        "AND source_record_uid != '' AND source_run_id != ''"
-    )
-    versions_by_uid: dict[str, list[tuple[str, str]]] = {}
-    for source_record_uid, source_run_id in versions:
-        clean_uid = str(source_record_uid)
-        versions_by_uid.setdefault(clean_uid, []).append(
-            (clean_uid, str(source_run_id))
-        )
-    source_record_uids = sorted(versions_by_uid)
-    if not source_record_uids:
-        return 0
-
-    cleanup_tables = (
-        (
-            tables.QUALIFIED_DESCRIPTION_OBSERVATIONS_TABLE,
-            " AND extraction_method = 'llm_extraction' "
-            "AND startsWith(source_field, "
-            "'corpscout.esef_document_company_information:')",
-        ),
-        (tables.QUALIFIED_ESEF_DOCUMENT_PEOPLE_TABLE, ""),
-        (tables.QUALIFIED_ESEF_DOCUMENT_BUSINESS_ITEMS_TABLE, ""),
-        (tables.QUALIFIED_ESEF_DOCUMENT_GROUP_RELATIONSHIPS_TABLE, ""),
-    )
-    for offset in range(0, len(source_record_uids), _ESEF_OBSERVATION_CLEANUP_BATCH_SIZE):
-        uid_batch = source_record_uids[
-            offset : offset + _ESEF_OBSERVATION_CLEANUP_BATCH_SIZE
-        ]
-        current_versions = tuple(
-            version
-            for source_record_uid in uid_batch
-            for version in versions_by_uid[source_record_uid]
-        )
-        parameters = {
-            "source_record_uids": tuple(uid_batch),
-            "current_versions": current_versions,
-        }
-        for qualified_table, extra_filter in cleanup_tables:
-            client.execute(
-                f"ALTER TABLE {qualified_table} DELETE WHERE "
-                "source_record_uid IN %(source_record_uids)s AND "
-                "(source_record_uid, source_run_id) NOT IN %(current_versions)s"
-                f"{extra_filter}",
-                parameters,
-                settings={"mutations_sync": 2},
-            )
-    return len(source_record_uids)
 
 
 @dg.asset(
@@ -227,6 +164,25 @@ def sweden_financial_company_source_records_clickhouse(
             clickhouse=clickhouse,
             statements=sweden_financial_source_record_sql(),
             source_slugs=("sweden_financial",),
+        )
+    )
+
+
+@dg.asset(
+    name="finland_financial_company_source_records_clickhouse",
+    deps=[dg.AssetKey("fi_financial_statements_ch")],
+    group_name=tables.GROUP_NAME,
+    kinds={"clickhouse", "sql", "provenance", "xbrl"},
+    metadata={"tables": [tables.QUALIFIED_SOURCE_RECORDS_TABLE]},
+)
+def finland_financial_company_source_records_clickhouse(
+    clickhouse: ClickhouseResource,
+) -> dg.MaterializeResult:
+    return dg.MaterializeResult(
+        metadata=publish_company_source_records(
+            clickhouse=clickhouse,
+            statements=finland_financial_source_record_sql(),
+            source_slugs=("finland_prh_xbrl",),
         )
     )
 
@@ -298,6 +254,7 @@ defs = dg.Definitions(
     assets=[
         sweden_registry_company_source_records_clickhouse,
         sweden_financial_company_source_records_clickhouse,
+        finland_financial_company_source_records_clickhouse,
         esef_company_source_records_clickhouse,
         esef_document_observations_clickhouse,
         wikidata_company_source_records_clickhouse,
