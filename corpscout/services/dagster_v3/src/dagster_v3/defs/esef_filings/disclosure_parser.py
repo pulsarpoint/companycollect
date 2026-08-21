@@ -126,45 +126,6 @@ def ensure_disclosure_table(connection: Any) -> None:
     )
 
 
-def replace_disclosure_partition_rows(
-    connection: Any,
-    *,
-    source_document_ids: Sequence[str],
-    rows: Sequence[Mapping[str, object]],
-) -> None:
-    """Replace only the selected source documents in one transaction."""
-    ensure_disclosure_table(connection)
-    if not source_document_ids:
-        return
-    connection.execute("begin transaction")
-    try:
-        connection.execute(
-            "create or replace temp table selected_esef_disclosure_documents "
-            "(source_document_id varchar)"
-        )
-        connection.executemany(
-            "insert into selected_esef_disclosure_documents values (?)",
-            [(source_document_id,) for source_document_id in source_document_ids],
-        )
-        connection.execute(
-            f"delete from {tables.QUALIFIED_FACT_DISCLOSURES_TABLE} "
-            "where source_document_id in (select source_document_id from "
-            "selected_esef_disclosure_documents)"
-        )
-        if rows:
-            columns = tables.ESEF_FACT_DISCLOSURES_EXPORT_COLUMNS
-            placeholders = ", ".join("?" for _ in columns)
-            connection.executemany(
-                f"insert into {tables.QUALIFIED_FACT_DISCLOSURES_TABLE} "
-                f"values ({placeholders})",
-                [tuple(row[column] for column in columns) for row in rows],
-            )
-        connection.execute("commit")
-    except Exception:
-        connection.execute("rollback")
-        raise
-
-
 def _collect_blocks(
     parent: etree._Element,
     blocks: list[dict[str, Any]],

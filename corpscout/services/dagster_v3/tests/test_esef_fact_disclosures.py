@@ -2,7 +2,6 @@ import json
 from hashlib import sha256
 from pathlib import Path
 
-import duckdb
 from dagster import AssetKey
 
 from dagster_v3.defs.esef_filings import tables
@@ -20,7 +19,6 @@ from dagster_v3.defs.esef_filings.disclosure_parser import (
     DISCLOSURE_PARSER_VERSION,
     disclosure_row,
     parse_esef_disclosure,
-    replace_disclosure_partition_rows,
 )
 
 
@@ -111,36 +109,6 @@ def test_disclosure_row_is_deterministic_and_source_preserving() -> None:
     ]
     assert first["plain_text"] == "Oljor och fetter"
     assert first["source_run_id"] == "run-1"
-
-
-def test_partition_replace_is_idempotent_and_preserves_other_years() -> None:
-    connection = duckdb.connect(":memory:")
-    connection.execute("create schema esef_filings")
-    row_2024 = _stored_row("doc-2024", "fact-1", 2024, "First")
-    row_2023 = _stored_row("doc-2023", "fact-2", 2023, "Older")
-
-    replace_disclosure_partition_rows(
-        connection,
-        source_document_ids=["doc-2024", "doc-2023"],
-        rows=[row_2024, row_2023],
-    )
-    changed_2024 = _stored_row("doc-2024", "fact-1", 2024, "Changed")
-    replace_disclosure_partition_rows(
-        connection,
-        source_document_ids=["doc-2024"],
-        rows=[changed_2024],
-    )
-    replace_disclosure_partition_rows(
-        connection,
-        source_document_ids=["doc-2024"],
-        rows=[changed_2024],
-    )
-
-    rows = connection.execute(
-        f"select source_document_id, plain_text from {tables.QUALIFIED_FACT_DISCLOSURES_TABLE} "
-        "order by source_document_id"
-    ).fetchall()
-    assert rows == [("doc-2023", "Older"), ("doc-2024", "Changed")]
 
 
 def test_disclosure_assets_release_duckdb_during_parallel_parsing() -> None:
