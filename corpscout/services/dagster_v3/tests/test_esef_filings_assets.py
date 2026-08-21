@@ -2283,9 +2283,10 @@ class _MixedJobFakeClickHouseClient:
             requested = tuple(params["tables"]) if isinstance(params, dict) else ()
             return [(table,) for table in requested]
         if stripped.startswith("SELECT count() FROM ("):
-            # Pre-stage refuse-on-empty check (metrics.py / publish.py) --
-            # must stay > 0 so neither export raises
-            # refuse-to-replace-on-empty.
+            # Pre-stage refuse-on-empty check (publish.py's
+            # replace_esef_entity_registry_map_clickhouse still runs this
+            # bare "SELECT count() FROM (select_sql)" precheck) -- must stay
+            # > 0 so the export doesn't raise refuse-to-replace-on-empty.
             return [(1,)]
         if stripped.startswith("CREATE TABLE"):
             return []
@@ -2295,11 +2296,19 @@ class _MixedJobFakeClickHouseClient:
             return []
         if stripped.startswith("EXCHANGE TABLES"):
             return []
+        if stripped.startswith("SELECT count() FROM") and "_tmp_" in stripped:
+            # metrics.py's post-stage staged_row_count read (Task 1.2: the
+            # SELECT now runs once, via the staged INSERT ... SELECT, and
+            # the refuse-on-empty check reads this stage-table count right
+            # after -- must stay > 0 so the metrics export doesn't raise
+            # refuse-to-replace-on-empty).
+            return [(1,)]
         if stripped.startswith("SELECT count() FROM"):
-            # Sentinel-exclusion count, plus the shrink guard's staged-vs-
-            # existing row-count reads -- 0 on both sides trivially
-            # satisfies guard_against_clickhouse_table_shrink
-            # (existing_row_count <= 0 short-circuits its ratio check).
+            # Sentinel-exclusion count, plus the shrink guard's existing-
+            # table row-count read -- 0 trivially satisfies
+            # guard_against_clickhouse_table_shrink (existing_row_count <= 0
+            # short-circuits its ratio check, so the staged count of 1 above
+            # can never look like a shrink).
             return [(0,)]
         if stripped.startswith("DROP TABLE"):
             return []
