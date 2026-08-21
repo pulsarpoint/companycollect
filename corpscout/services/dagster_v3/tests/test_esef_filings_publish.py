@@ -855,13 +855,18 @@ class _FakeTranslatorSession:
 def test_translation_load_skips_unsupported_language_and_processes_known_ones(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """Language "tr" is not in _ESEF_LANGUAGE_NAMES; the asset must skip
-    only that row -- not raise dg.Failure -- while still enqueueing the
-    "no" row, and must report the skipped language in its materialization
-    metadata."""
+    """Languages "tr" and "uk" are not in _ESEF_LANGUAGE_NAMES; the asset
+    must skip only those rows -- not raise dg.Failure -- while still
+    enqueueing the "no" row, and must report both the skipped ROW count and
+    the skipped LANGUAGE set in its materialization metadata. Two "tr" rows
+    plus one "uk" row means the row count (3) and the language count (2)
+    genuinely differ, so a regression that logs/reports the language count
+    where the row count belongs would be caught here."""
     client = _FakeConceptLabelClickHouseClient(
         rows=[
-            ("tr", "Bilinmeyen etiket", 111),
+            ("tr", "Bilinmeyen etiket 1", 111),
+            ("tr", "Bilinmeyen etiket 2", 112),
+            ("uk", "Невідома етикетка", 113),
             ("no", "Kjent etikett", 222),
         ]
     )
@@ -874,8 +879,9 @@ def test_translation_load_skips_unsupported_language_and_processes_known_ones(
         TranslatorResource(base_url="http://translator:8080"),
     )
 
-    assert result.metadata["skipped_unsupported_languages"].value == ["tr"]
-    # Only "tr" is skipped -- "no" is still scanned and enqueued.
+    assert result.metadata["skipped_unsupported_languages"].value == ["tr", "uk"]
+    assert result.metadata["skipped_unsupported_label_count"] == 3
+    # Only "tr"/"uk" are skipped -- "no" is still scanned and enqueued.
     assert result.metadata["scanned_by_language"].value == {"no": 1}
     assert len(session.posts) == 1
     _, payload = session.posts[0]

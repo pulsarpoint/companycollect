@@ -398,18 +398,21 @@ def esef_document_concept_translation_load(
 
     rows_by_language: dict[str, list[tuple[str, int]]] = {}
     unsupported_languages: set[str] = set()
+    skipped_unsupported_label_count = 0
     for source_lang, source_text, source_text_hash in untranslated_rows:
         language = str(source_lang)
         if _esef_language_name(language) is None:
             unsupported_languages.add(language)
+            skipped_unsupported_label_count += 1
             continue
         rows_by_language.setdefault(language, []).append(
             (str(source_text), int(source_text_hash))
         )
     if unsupported_languages:
         context.log.warning(
-            "skipping %d ESEF concept labels with unsupported source "
+            "skipping %d ESEF concept labels across %d unsupported source "
             "languages: %s",
+            skipped_unsupported_label_count,
             len(unsupported_languages),
             ", ".join(sorted(unsupported_languages)),
         )
@@ -472,6 +475,7 @@ def esef_document_concept_translation_load(
             "skipped_unsupported_languages": dg.MetadataValue.json(
                 sorted(unsupported_languages)
             ),
+            "skipped_unsupported_label_count": skipped_unsupported_label_count,
         }
     )
 

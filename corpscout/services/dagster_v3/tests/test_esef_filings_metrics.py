@@ -394,7 +394,6 @@ def test_replace_esef_financial_metrics_clickhouse_stages_and_exchanges() -> Non
         i
         for i, s in enumerate(client.statements)
         if s.strip().startswith("SELECT count() FROM")
-        and not s.strip().startswith("SELECT count() FROM (")
         and "WHERE period_end =" not in s
     ]
     assert len(count_reads) == 2

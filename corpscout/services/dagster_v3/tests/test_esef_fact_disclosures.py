@@ -196,32 +196,6 @@ def test_processed_week_pipeline_snapshots_parses_and_publishes(tmp_path: Path) 
     )
 
 
-def _stored_row(
-    source_document_id: str,
-    fact_id: str,
-    fiscal_year: int,
-    text: str,
-) -> dict[str, object]:
-    return disclosure_row(
-        {
-            "source_document_id": source_document_id,
-            "package_sha256": sha256(source_document_id.encode()).hexdigest(),
-            "lei": "549300SAMPLE000000001",
-            "country_iso2": "SE",
-            "company_id": "5566000000",
-            "period_end": f"{fiscal_year}-12-31",
-            "fiscal_year": fiscal_year,
-            "fact_id": fact_id,
-            "concept_qname": "ifrs:DisclosureExplanatory",
-            "concept_local_name": "DisclosureExplanatory",
-            "language": "en",
-            "raw_value": f"<p>{text}</p>",
-        },
-        source_run_id="test-run",
-        extracted_at="2026-08-03T08:00:00Z",
-    )
-
-
 class _MemoryObjectStore:
     def __init__(self) -> None:
         self.objects: dict[tuple[str, str], bytes] = {}
