@@ -395,8 +395,8 @@ def build_esef_financial_metrics_select(source_run_id: str) -> str:
                     coalesce(
                         {liabilities_direct_sql},
                         if(
-                            facts.total_assets_c0 IS NOT NULL AND facts.equity_c0 IS NOT NULL,
-                            facts.total_assets_c0 - facts.equity_c0,
+                            ({total_assets_sql}) IS NOT NULL AND ({equity_sql}) IS NOT NULL,
+                            ({total_assets_sql}) - ({equity_sql}),
                             NULL
                         )
                     ) AS Nullable(Decimal(38, 2))

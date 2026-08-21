@@ -200,8 +200,24 @@ def test_build_select_currency_ignores_xbrl_unit_expressions() -> None:
 def test_build_select_balance_equation_liabilities_fallback() -> None:
     sql = build_esef_financial_metrics_select("run-1")
     assert "facts.liabilities_c0" in sql
-    assert "facts.total_assets_c0 IS NOT NULL AND facts.equity_c0 IS NOT NULL" in sql
-    assert "facts.total_assets_c0 - facts.equity_c0" in sql
+    assert (
+        "(facts.total_assets_c0) IS NOT NULL AND (facts.equity_c0) IS NOT NULL" in sql
+    )
+    assert "(facts.total_assets_c0) - (facts.equity_c0)" in sql
+
+
+def test_liabilities_fallback_uses_coalesced_candidates() -> None:
+    """Task 1.1: the fallback must reuse the same coalesced candidate
+    expressions ({total_assets_sql}/{equity_sql}) as the main columns above,
+    not a hardcoded first-candidate string. Today total_assets/equity each
+    have a single candidate concept, so _coalesce_candidates_sql renders the
+    bare column (no coalesce() wrapper) either way -- the parenthesized
+    guard-clause shape below is what distinguishes the new rendering from
+    the old hardcoded one, which lacked the wrapping parentheses."""
+    sql = build_esef_financial_metrics_select("run-1")
+    assert (
+        "facts.total_assets_c0 IS NOT NULL AND facts.equity_c0 IS NOT NULL" not in sql
+    )
 
 
 def test_build_select_excludes_sentinel_period_end() -> None:
