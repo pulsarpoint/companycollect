@@ -476,6 +476,34 @@ def test_esef_validation_loads_the_report_package_entrypoint(tmp_path: Path) -> 
     assert artifact.document.report_members == ["sample/reports/sample.xhtml"]
 
 
+def test_parse_report_package_accepts_inline_xbrl_outside_reports_directory(
+    tmp_path: Path,
+) -> None:
+    artifact = parse_esef_report_package(
+        _write_sample_report_package(tmp_path, report_member="sample.xhtml"),
+        source=EsefArtifactSource(fxo_id="NONSTANDARD-LAYOUT"),
+        validate_esef=False,
+    )
+
+    assert artifact.quality.fact_count == 4
+    assert artifact.document.report_members == ["sample.xhtml"]
+
+
+def test_parse_report_package_rejects_ordinary_html_outside_reports_directory(
+    tmp_path: Path,
+) -> None:
+    package_path = tmp_path / "ordinary-html.zip"
+    with zipfile.ZipFile(package_path, "w") as package:
+        package.writestr("preview.xhtml", "<html><body>Not Inline XBRL</body></html>")
+
+    with pytest.raises(ValueError, match="no report XHTML members"):
+        parse_esef_report_package(
+            package_path,
+            source=EsefArtifactSource(fxo_id="ORDINARY-HTML"),
+            validate_esef=False,
+        )
+
+
 def test_parse_report_package_rejects_unsafe_zip_member(tmp_path: Path) -> None:
     package_path = tmp_path / "unsafe.zip"
     with zipfile.ZipFile(package_path, "w") as package:
@@ -1260,7 +1288,11 @@ class _FakeObjectStore:
         self.created_buckets.append(bucket)
 
 
-def _write_sample_report_package(tmp_path: Path) -> Path:
+def _write_sample_report_package(
+    tmp_path: Path,
+    *,
+    report_member: str = "sample/reports/sample.xhtml",
+) -> Path:
     package_path = tmp_path / "sample-report-package.zip"
     package_root = "sample"
     with zipfile.ZipFile(package_path, "w") as package:
@@ -1291,7 +1323,7 @@ def _write_sample_report_package(tmp_path: Path) -> Path:
             _LABEL_LINKBASE_XML,
         )
         package.writestr(
-            f"{package_root}/reports/sample.xhtml",
+            report_member,
             _REPORT_XHTML,
         )
     return package_path

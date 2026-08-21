@@ -56,6 +56,10 @@ ARTIFACT_PREFIX = "esef_filings/ixbrl_segments"
 MAX_PACKAGE_FILES = 10_000
 MAX_PACKAGE_UNCOMPRESSED_BYTES = 1_500_000_000
 MAX_PACKAGE_MEMBER_BYTES = 750_000_000
+_INLINE_XBRL_NAMESPACE_MARKERS = (
+    b"http://www.xbrl.org/2008/inlineXBRL",
+    b"http://www.xbrl.org/2013/inlineXBRL",
+)
 _ARELLE_SESSION_LOCK = Lock()
 
 _STANDARD_NAMESPACE_PREFIXES = (
@@ -529,6 +533,7 @@ def _extract_report_package(package_path: Path, temp_dir: Path) -> list[str]:
             )
 
         report_members: list[str] = []
+        nonstandard_html_members: list[tuple[str, Path]] = []
         for member in members:
             normalized_name = member.filename.replace("\\", "/")
             member_path = PurePosixPath(normalized_name)
@@ -560,9 +565,35 @@ def _extract_report_package(package_path: Path, temp_dir: Path) -> list[str]:
             if "/reports/" in lowered and lowered.endswith((".xhtml", ".html")):
                 report_members.append(normalized_name)
 
+            elif lowered.endswith((".xhtml", ".html")):
+                nonstandard_html_members.append((normalized_name, target_path))
+
+    if report_members:
+        return sorted(report_members)
+
+    report_members = [
+        member_name
+        for member_name, member_path in nonstandard_html_members
+        if _contains_inline_xbrl_namespace(member_path)
+    ]
+
     if not report_members:
         raise ValueError("ESEF report package contains no report XHTML members")
     return sorted(report_members)
+
+
+def _contains_inline_xbrl_namespace(report_path: Path) -> bool:
+    longest_marker = max(map(len, _INLINE_XBRL_NAMESPACE_MARKERS))
+    previous_tail = b""
+    with report_path.open("rb") as report:
+        while chunk := report.read(64 * 1024):
+            searchable = previous_tail + chunk
+            if any(
+                marker in searchable for marker in _INLINE_XBRL_NAMESPACE_MARKERS
+            ):
+                return True
+            previous_tail = searchable[-longest_marker:]
+    return False
 
 
 def _parse_report_members(
