@@ -317,7 +317,7 @@ def esef_document_observation_sql() -> tuple[str, ...]:
     JSONExtractArrayRaw(info.{json_column})
 ) AS item_json
 FROM corpscout.esef_document_company_information AS info
-WHERE info.extraction_status IN ('complete', 'enriched', 'reused')
+WHERE info.extraction_status IN ('enriched', 'reused')
   AND info.source_record_uid != ''"""
         for item_kind, json_column in (
             ("product_or_service", "products_and_services_json"),
@@ -349,7 +349,7 @@ SELECT
     info.source_run_id,
     {extracted_at}
 FROM corpscout.esef_document_company_information AS info
-WHERE info.extraction_status IN ('complete', 'enriched', 'reused')
+WHERE info.extraction_status IN ('enriched', 'reused')
   AND info.company_description != ''
   AND info.source_record_uid != ''""",
         f"""INSERT INTO {tables.QUALIFIED_ESEF_DOCUMENT_PEOPLE_TABLE}
@@ -377,7 +377,7 @@ SELECT
     {extracted_at}
 FROM corpscout.esef_document_company_information AS info
 ARRAY JOIN JSONExtractArrayRaw(info.people_json) AS item_json
-WHERE info.extraction_status IN ('complete', 'enriched', 'reused')
+WHERE info.extraction_status IN ('enriched', 'reused')
   AND info.source_record_uid != ''
   AND JSONExtractString(item_json, 'name') != ''
   AND JSONExtractString(item_json, 'role') != ''""",
@@ -424,7 +424,7 @@ SELECT
     {extracted_at}
 FROM corpscout.esef_document_company_information AS info
 ARRAY JOIN JSONExtractArrayRaw(info.material_group_relationships_json) AS item_json
-WHERE info.extraction_status IN ('complete', 'enriched', 'reused')
+WHERE info.extraction_status IN ('enriched', 'reused')
   AND info.source_record_uid != ''
   AND JSONExtractString(item_json, 'related_company_name') != ''""",
     )
