@@ -46,9 +46,9 @@ FIXTURES_DIR = Path(__file__).resolve().parent / "fixtures" / "esef_filings"
 class FakeClickHouseClient:
     """Records every statement; answers just enough to drive the code paths
     under test (system.tables existence check, the excluded-sentinel-count
-    query, the pre-stage refuse-on-empty count, the ClickHouse-native
-    INSERT...SELECT path, the shrink-guard's staged-vs-existing row-count
-    reads, and the EXCHANGE/DROP no-ops).
+    query, the ClickHouse-native INSERT...SELECT path, the refuse-on-empty
+    and shrink-guard's staged-vs-existing row-count reads, and the
+    EXCHANGE/DROP no-ops).
 
     ``staged_row_count`` answers a bare ``SELECT count() FROM <table>`` whose
     table name contains ``_tmp_`` (the uuid-suffixed stage table --
@@ -63,14 +63,12 @@ class FakeClickHouseClient:
         self,
         *,
         excluded_sentinel_count: int = 3,
-        would_be_row_count: int = 5,
         staged_row_count: int = 5,
         existing_row_count: int = 5,
     ) -> None:
         self.statements: list[str] = []
         self.table_checks: list[tuple[str, ...]] = []
         self.excluded_sentinel_count = excluded_sentinel_count
-        self.would_be_row_count = would_be_row_count
         self.staged_row_count = staged_row_count
         self.existing_row_count = existing_row_count
 
@@ -86,8 +84,6 @@ class FakeClickHouseClient:
             and tables.QUALIFIED_ESEF_FILINGS_TABLE in stripped
         ):
             return [(self.excluded_sentinel_count,)]
-        if stripped.startswith("SELECT count() FROM ("):
-            return [(self.would_be_row_count,)]
         if stripped.startswith("CREATE TABLE"):
             return []
         if stripped.startswith("INSERT INTO") and "SELECT" in stripped:
@@ -355,7 +351,6 @@ def test_esef_financial_metrics_export_columns_match_migration_order() -> None:
 def test_replace_esef_financial_metrics_clickhouse_stages_and_exchanges() -> None:
     client = FakeClickHouseClient(
         excluded_sentinel_count=3,
-        would_be_row_count=5,
         staged_row_count=5,
         existing_row_count=5,
     )
@@ -378,16 +373,12 @@ def test_replace_esef_financial_metrics_clickhouse_stages_and_exchanges() -> Non
     assert any(s.startswith("EXCHANGE TABLES") for s in client.statements)
     assert any(s.startswith("DROP TABLE") for s in client.statements)
 
-    # The pre-create refuse-on-empty check must run before any stage DDL.
-    count_check_index = next(
-        i
-        for i, s in enumerate(client.statements)
-        if s.strip().startswith("SELECT count() FROM (")
+    # Task 1.2: the metrics SELECT now runs exactly once, via the staged
+    # INSERT ... SELECT -- the duplicate pre-stage
+    # "SELECT count() FROM (select_sql) AS scoped" precheck is gone.
+    assert not any(
+        s.strip().startswith("SELECT count() FROM (") for s in client.statements
     )
-    create_index = next(
-        i for i, s in enumerate(client.statements) if s.startswith("CREATE TABLE")
-    )
-    assert count_check_index < create_index
 
     # The shrink guard's row-count reads must both happen AFTER the INSERT
     # but BEFORE the EXCHANGE (see guard_against_clickhouse_table_shrink).
@@ -411,7 +402,11 @@ def test_replace_esef_financial_metrics_clickhouse_stages_and_exchanges() -> Non
 
 
 def test_replace_esef_financial_metrics_clickhouse_refuses_on_zero_rows() -> None:
-    client = FakeClickHouseClient(would_be_row_count=0)
+    # Task 1.2: the duplicate pre-stage "SELECT count() FROM (select_sql)"
+    # execute + refuse-on-empty check is gone -- the SELECT now runs exactly
+    # once, via the staged INSERT ... SELECT, and the refusal is driven by
+    # staged_row_count (read right after the INSERT) instead.
+    client = FakeClickHouseClient(staged_row_count=0)
 
     with pytest.raises(ValueError, match="would insert 0 rows"):
         replace_esef_financial_metrics_clickhouse(
@@ -419,7 +414,12 @@ def test_replace_esef_financial_metrics_clickhouse_refuses_on_zero_rows() -> Non
             source_run_id="run-1",
         )
 
-    assert not any(s.startswith("CREATE TABLE") for s in client.statements)
+    # The refusal now happens AFTER staging: the stage table is created and
+    # inserted into before the empty check fires, then cleaned up by the
+    # finally block -- and the EXCHANGE must never be reached.
+    assert any(s.startswith("CREATE TABLE") for s in client.statements)
+    assert any(s.startswith("INSERT INTO") and "SELECT" in s for s in client.statements)
+    assert any(s.startswith("DROP TABLE") for s in client.statements)
     assert not any(s.startswith("EXCHANGE TABLES") for s in client.statements)
 
 
@@ -449,9 +449,7 @@ def test_replace_esef_financial_metrics_clickhouse_refuses_on_shrink_below_ratio
     # staged (10) < 0.5 * existing (100) -> the shrink guard must refuse,
     # mirroring se_bolagsverket_financial_metrics_clickhouse's
     # guard_against_clickhouse_table_shrink usage.
-    client = FakeClickHouseClient(
-        would_be_row_count=10, staged_row_count=10, existing_row_count=100
-    )
+    client = FakeClickHouseClient(staged_row_count=10, existing_row_count=100)
 
     with pytest.raises(ValueError, match="Refusing to replace"):
         replace_esef_financial_metrics_clickhouse(
@@ -468,9 +466,7 @@ def test_replace_esef_financial_metrics_clickhouse_refuses_on_shrink_below_ratio
 def test_replace_esef_financial_metrics_clickhouse_allow_shrink_overrides_guard() -> (
     None
 ):
-    client = FakeClickHouseClient(
-        would_be_row_count=10, staged_row_count=10, existing_row_count=100
-    )
+    client = FakeClickHouseClient(staged_row_count=10, existing_row_count=100)
 
     result = replace_esef_financial_metrics_clickhouse(
         clickhouse=FakeClickHouseResource(client),

@@ -9,10 +9,9 @@ The stage + ``INSERT ... SELECT`` + ``EXCHANGE TABLES`` rebuild is inlined in
 ``dagster_v3.contact_extraction.replace_table_from_select``, which
 ``publish.py`` uses for ``esef_entity_registry_map``): this module needs two
 guards that shared helper doesn't provide a hook for -- an explicit
-refuse-on-empty check owned by this module, run BEFORE the stage table is
-even created, and the shrink guard
-(``sweden_financial.clickhouse.guard_against_clickhouse_table_shrink``),
-which must run against the staged data AFTER the INSERT but BEFORE the
+refuse-on-empty check and the shrink guard
+(``sweden_financial.clickhouse.guard_against_clickhouse_table_shrink``), both
+of which must run against the staged data AFTER the INSERT but BEFORE the
 EXCHANGE.
 
 One row per ``fxo_id`` (a filing *version*, not a (lei, period_end) pair):
@@ -465,21 +464,21 @@ def replace_esef_financial_metrics_clickhouse(
 ) -> dict[str, int]:
     """Atomically rebuild corpscout.esef_financial_metrics entirely in ClickHouse.
 
-    Refuses to touch the existing table if the scoped SELECT would insert 0
-    rows, checked BEFORE the stage table is even created -- same
+    Refuses to touch the existing table if the staged INSERT ... SELECT
+    would insert 0 rows, checked AFTER the SELECT is staged (using the
+    staged row count) but BEFORE the ``EXCHANGE TABLES`` swap -- same
     refuse-on-empty discipline as
     ``publish.replace_esef_entity_registry_map_clickhouse``.
 
     Also refuses a replace that would shrink the table by more than half of
     its current row count, unless ``allow_shrink=True`` -- the same
     ``guard_against_clickhouse_table_shrink`` shrink guard
-    ``se_bolagsverket_financial_metrics_clickhouse`` uses, checked AFTER the
-    SELECT is
-    staged but BEFORE the ``EXCHANGE TABLES`` swap. This is why the stage +
-    insert + exchange sequence is inlined here rather than delegated to
-    ``dagster_v3.contact_extraction.replace_table_from_select`` (see module
-    docstring): that shared helper runs the exchange immediately after the
-    insert, with no hook to check row counts in between.
+    ``se_bolagsverket_financial_metrics_clickhouse`` uses, also checked AFTER
+    the SELECT is staged but BEFORE the ``EXCHANGE TABLES`` swap. This is why
+    the stage + insert + exchange sequence is inlined here rather than
+    delegated to ``dagster_v3.contact_extraction.replace_table_from_select``
+    (see module docstring): that shared helper runs the exchange immediately
+    after the insert, with no hook to check row counts in between.
     """
     assert_clickhouse_tables_exist(
         clickhouse,
@@ -502,16 +501,6 @@ def replace_esef_financial_metrics_clickhouse(
             f"SELECT count() FROM {tables.QUALIFIED_ESEF_FILINGS_TABLE} "
             f"WHERE period_end = {SENTINEL_PERIOD_END_SQL}"
         )
-        [(would_be_row_count,)] = client.execute(
-            f"SELECT count() FROM ({select_sql}) AS scoped"
-        )
-        if int(would_be_row_count) == 0:
-            raise ValueError(
-                "ESEF financial metrics SELECT would insert 0 rows -- "
-                "refusing to replace "
-                f"{tables.QUALIFIED_ESEF_FINANCIAL_METRICS_TABLE} "
-                "(refuse-to-replace-on-empty)."
-            )
         client.execute(
             f"CREATE TABLE {qualified_stage_table} AS {qualified_target_table}"
         )
@@ -523,6 +512,13 @@ def replace_esef_financial_metrics_clickhouse(
                 f"{select_sql}"
             )
             staged_row_count = clickhouse_table_row_count(client, qualified_stage_table)
+            if staged_row_count == 0:
+                raise ValueError(
+                    "ESEF financial metrics SELECT would insert 0 rows -- "
+                    "refusing to replace "
+                    f"{tables.QUALIFIED_ESEF_FINANCIAL_METRICS_TABLE} "
+                    "(refuse-to-replace-on-empty)."
+                )
             existing_row_count = clickhouse_table_row_count(
                 client, qualified_target_table
             )
