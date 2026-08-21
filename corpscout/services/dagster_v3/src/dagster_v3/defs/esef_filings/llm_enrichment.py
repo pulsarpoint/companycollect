@@ -732,86 +732,6 @@ def _system_prompt() -> str:
     )
 
 
-def _validate_evidence_citations(
-    enrichment: EsefCompanyEnrichment,
-    evidence: Iterable[EsefEnrichmentEvidence],
-) -> None:
-    segments_by_id = {item.evidence_id: item.segment for item in evidence}
-    candidates: list[tuple[str, EvidenceBackedCandidate, frozenset[str]]] = []
-    if enrichment.company_description is not None:
-        candidates.append(
-            (
-                "company description",
-                enrichment.company_description,
-                frozenset(
-                    {
-                        "identity",
-                        "business_profile",
-                        "products_markets_and_segments",
-                    }
-                ),
-            )
-        )
-    candidates.extend(
-        ("people", candidate, frozenset({"people_and_audit"}))
-        for candidate in enrichment.people
-    )
-    business_segments = frozenset({"business_profile", "products_markets_and_segments"})
-    candidates.extend(
-        ("products and services", candidate, business_segments)
-        for candidate in enrichment.products_and_services
-    )
-    candidates.extend(
-        ("customer markets", candidate, business_segments)
-        for candidate in enrichment.customer_markets
-    )
-    candidates.extend(
-        (
-            "operating geographies",
-            candidate,
-            frozenset(
-                {
-                    "identity",
-                    "business_profile",
-                    "products_markets_and_segments",
-                    "group_structure",
-                }
-            ),
-        )
-        for candidate in enrichment.operating_geographies
-    )
-    candidates.extend(
-        ("business segments", candidate, business_segments)
-        for candidate in enrichment.business_segments
-    )
-    candidates.extend(
-        (
-            "group relationships",
-            candidate,
-            frozenset({"identity", "group_structure"}),
-        )
-        for candidate in enrichment.material_group_relationships
-    )
-
-    for candidate_type, candidate, allowed_segments in candidates:
-        for evidence_id in candidate.evidence_ids:
-            if evidence_id not in segments_by_id:
-                raise ValueError(
-                    f"ESEF LLM {candidate_type} candidate cites unknown evidence ID "
-                    f"{evidence_id}"
-                )
-            if segments_by_id[evidence_id] not in allowed_segments:
-                if candidate_type == "people":
-                    raise ValueError(
-                        "ESEF LLM people candidate cites unrelated evidence instead of "
-                        f"people_and_audit: {evidence_id}"
-                    )
-                raise ValueError(
-                    f"ESEF LLM {candidate_type} candidate cites unrelated segment "
-                    f"{segments_by_id[evidence_id]}: {evidence_id}"
-                )
-
-
 def _normalize_evidence_citations(
     enrichment: EsefCompanyEnrichment,
     evidence: Iterable[EsefEnrichmentEvidence],
@@ -919,7 +839,6 @@ def _normalize_evidence_citations(
         )
 
     normalized_enrichment = EsefCompanyEnrichment.model_validate(normalized)
-    _validate_evidence_citations(normalized_enrichment, evidence)
     return normalized_enrichment, tuple(adjustments)
 
 
