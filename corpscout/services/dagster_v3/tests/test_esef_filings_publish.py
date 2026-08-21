@@ -19,10 +19,15 @@ from datetime import date
 from decimal import Decimal
 from typing import Any
 
+import dagster as dg
 import duckdb
 import pytest
 
 from dagster_v3.defs.esef_filings import tables
+from dagster_v3.defs.esef_filings.document_publish import (
+    esef_document_concept_translation_coverage,
+    esef_document_concept_translation_load,
+)
 from dagster_v3.defs.esef_filings.publish import (
     ESEF_FACTS_COLUMN_EXPRESSIONS,
     ESEF_FILINGS_COLUMN_EXPRESSIONS,
@@ -34,6 +39,8 @@ from dagster_v3.defs.esef_filings.publish import (
     replace_esef_entity_registry_map_clickhouse,
 )
 from dagster_v3.defs.gleif.tables import GLEIF_LEI_RECORDS_TABLE
+from dagster_v3.defs.translator_load import resource as translator_resource
+from dagster_v3.defs.translator_load.resource import TranslatorResource
 
 
 class FakeClickHouseClient:
@@ -771,3 +778,119 @@ def test_esef_entity_map_export_columns_match_migration_order() -> None:
     ]
     positions = [sql.index(anchor) for anchor in anchors]
     assert positions == sorted(positions)
+
+
+# --- esef_document_concept_translation_load / coverage ----------------------
+#
+# One unknown-language label must not take down the whole publish chain (Task
+# 1.3): the loader skips it with a warning and still translates every row in
+# a known language, and the coverage check reports missing translations at
+# WARN severity rather than failing the run (mirrors the deliberate decision
+# in translator_load/coverage.py).
+
+
+class _FakeConceptLabelClickHouseClient:
+    """Answers whatever query the asset under test issues with canned rows --
+    each test only ever issues one query through its single connection."""
+
+    def __init__(self, rows: list[tuple[Any, ...]]) -> None:
+        self._rows = rows
+        self.statements: list[str] = []
+
+    def execute(self, sql: str, params: Any = None) -> list[tuple[Any, ...]]:
+        self.statements.append(sql)
+        return self._rows
+
+
+class _FakeConceptLabelClickHouseResource:
+    def __init__(self, client: _FakeConceptLabelClickHouseClient) -> None:
+        self._client = client
+
+    @contextmanager
+    def get_connection(self) -> Iterator[_FakeConceptLabelClickHouseClient]:
+        yield self._client
+
+
+class _FakeTranslatorSession:
+    """Minimal stand-in for requests.Session (mirrors
+    tests/test_translator_load.py's _FakeSession): records every enqueue
+    POST and answers queue-stats GETs with an already-idle queue, so
+    wait_for_queue_completion returns on its first poll."""
+
+    def __init__(self) -> None:
+        self.posts: list[tuple[str, dict]] = []
+
+    def __enter__(self) -> "_FakeTranslatorSession":
+        return self
+
+    def __exit__(self, exc_type, exc_value, traceback) -> bool:
+        return False
+
+    def post(self, url: str, json: dict, timeout: int = 60):
+        self.posts.append((url, json))
+        received = len(json["items"])
+
+        class _Resp:
+            status_code = 202
+
+            def raise_for_status(self) -> None:
+                return None
+
+            def json(self) -> dict:
+                return {"received": received, "inserted": received}
+
+        return _Resp()
+
+    def get(self, url: str, timeout: int = 10):
+        class _Resp:
+            def raise_for_status(self_inner) -> None:
+                return None
+
+            def json(self_inner) -> dict:
+                return {"input": 0, "pending": 0, "output": 0, "failed": 0}
+
+        return _Resp()
+
+
+def test_translation_load_skips_unsupported_language_and_processes_known_ones(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Language "tr" is not in _ESEF_LANGUAGE_NAMES; the asset must skip
+    only that row -- not raise dg.Failure -- while still enqueueing the
+    "no" row, and must report the skipped language in its materialization
+    metadata."""
+    client = _FakeConceptLabelClickHouseClient(
+        rows=[
+            ("tr", "Bilinmeyen etiket", 111),
+            ("no", "Kjent etikett", 222),
+        ]
+    )
+    session = _FakeTranslatorSession()
+    monkeypatch.setattr(translator_resource.requests, "Session", lambda: session)
+
+    result = esef_document_concept_translation_load.node_def.compute_fn.decorated_fn(
+        dg.build_asset_context(),
+        _FakeConceptLabelClickHouseResource(client),
+        TranslatorResource(base_url="http://translator:8080"),
+    )
+
+    assert result.metadata["skipped_unsupported_languages"].value == ["tr"]
+    # Only "tr" is skipped -- "no" is still scanned and enqueued.
+    assert result.metadata["scanned_by_language"].value == {"no": 1}
+    assert len(session.posts) == 1
+    _, payload = session.posts[0]
+    assert payload["source_lang"] == "no"
+    assert payload["source_language_name"] == "Norwegian"
+
+
+def test_translation_coverage_reports_warn_severity_on_mismatch() -> None:
+    client = _FakeConceptLabelClickHouseClient(rows=[(10, 7)])
+
+    result = (
+        esef_document_concept_translation_coverage.node_def.compute_fn.decorated_fn(
+            _FakeConceptLabelClickHouseResource(client)
+        )
+    )
+
+    assert result.passed is False
+    assert result.severity == dg.AssetCheckSeverity.WARN

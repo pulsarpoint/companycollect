@@ -407,11 +407,11 @@ def esef_document_concept_translation_load(
             (str(source_text), int(source_text_hash))
         )
     if unsupported_languages:
-        raise dg.Failure(
-            description="ESEF concept labels use unsupported source languages",
-            metadata={
-                "languages": dg.MetadataValue.json(sorted(unsupported_languages))
-            },
+        context.log.warning(
+            "skipping %d ESEF concept labels with unsupported source "
+            "languages: %s",
+            len(unsupported_languages),
+            ", ".join(sorted(unsupported_languages)),
         )
 
     received = 0
@@ -420,8 +420,6 @@ def esef_document_concept_translation_load(
     for source_lang in sorted(rows_by_language):
         rows = rows_by_language[source_lang]
         language_name = _esef_language_name(source_lang)
-        if language_name is None:
-            raise AssertionError("validated ESEF language must have a display name")
         context.log.info(
             "%s: %d untranslated ESEF taxonomy labels",
             source_lang,
@@ -471,6 +469,9 @@ def esef_document_concept_translation_load(
                     for language, rows in sorted(rows_by_language.items())
                 }
             ),
+            "skipped_unsupported_languages": dg.MetadataValue.json(
+                sorted(unsupported_languages)
+            ),
         }
     )
 
@@ -488,6 +489,10 @@ def esef_document_concept_translation_coverage(
         )
     return dg.AssetCheckResult(
         passed=int(source_texts) == int(translated_texts),
+        # A missing translation degrades a page, it does not break a
+        # pipeline (see translator_load/coverage.py) -- must not block a
+        # materialisation.
+        severity=dg.AssetCheckSeverity.WARN,
         metadata={
             "source_texts": int(source_texts),
             "translated_texts": int(translated_texts),
