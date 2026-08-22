@@ -1,0 +1,5 @@
+GRANT INSERT ON corpscout.se_company_person_correction
+TO corpscout_person_correction_writer;
+
+GRANT INSERT ON corpscout.se_company_person_enrichment_observation
+TO corpscout_person_correction_writer;
