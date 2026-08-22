@@ -12,11 +12,13 @@ backoffice_postgres_owner: corpscout_backoffice_owner
 backoffice_postgres_app_user: corpscout_backoffice_app
 backoffice_postgres_dagster_user: corpscout_backoffice_dagster
 
-# This is a separate host from Dagster's primary PostgreSQL. Publish only on
+# This is a dedicated host (postgresqueue, 192.168.88.147), separate from
+# Dagster's primary PostgreSQL and from the central Corpscout Postgres. Publish only on
 # the server's LAN address and accept clients only from the local /24.
-backoffice_postgres_bind_address: 192.168.88.169
+backoffice_postgres_bind_address: 192.168.88.147
 backoffice_postgres_port: 5432
 backoffice_postgres_allowed_ipv4_cidr: 192.168.88.0/24
 
 backoffice_postgres_max_connections: 100
-backoffice_postgres_shared_buffers: 512MB
+# postgresqueue has 30 GB RAM and runs nothing else; 2 GB is conservative.
+backoffice_postgres_shared_buffers: 2GB

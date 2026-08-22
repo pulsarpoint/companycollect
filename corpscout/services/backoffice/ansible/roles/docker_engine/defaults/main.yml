@@ -1,0 +1,12 @@
+---
+# Docker's apt repository publishes one channel per Ubuntu/Debian codename
+# (https://download.docker.com/linux/ubuntu/dists/). Override when a host runs
+# a release Docker has not published yet.
+docker_engine_apt_codename: "{{ ansible_distribution_release }}"
+docker_engine_apt_arch: "{{ 'amd64' if ansible_architecture == 'x86_64' else ansible_architecture }}"
+docker_engine_packages:
+  - docker-ce
+  - docker-ce-cli
+  - containerd.io
+  - docker-buildx-plugin
+  - docker-compose-plugin

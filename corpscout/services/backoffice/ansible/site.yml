@@ -3,4 +3,5 @@
   hosts: backoffice_postgres_hosts
   become: true
   roles:
+    - docker_engine
     - backoffice_postgres

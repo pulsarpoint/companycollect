@@ -1,0 +1,71 @@
+---
+# Installs Docker Engine and the Compose plugin from Docker's official apt
+# repository. Idempotent; safe to rerun on a host that already has Docker.
+- name: Refuse unsupported distributions
+  ansible.builtin.assert:
+    that:
+      - ansible_distribution in ['Ubuntu', 'Debian']
+    fail_msg: "docker_engine supports Ubuntu and Debian only (got {{ ansible_distribution }})."
+
+- name: Install apt prerequisites
+  ansible.builtin.apt:
+    name:
+      - ca-certificates
+      - curl
+      - gnupg
+      - python3-apt
+      - python3-debian
+    state: present
+    update_cache: true
+
+- name: Create apt keyring directory
+  ansible.builtin.file:
+    path: /etc/apt/keyrings
+    state: directory
+    owner: root
+    group: root
+    mode: "0755"
+
+- name: Download Docker apt signing key
+  ansible.builtin.get_url:
+    url: "https://download.docker.com/linux/{{ ansible_distribution | lower }}/gpg"
+    dest: /etc/apt/keyrings/docker.asc
+    owner: root
+    group: root
+    mode: "0644"
+
+- name: Add Docker apt repository
+  ansible.builtin.deb822_repository:
+    name: docker
+    types: [deb]
+    uris: "https://download.docker.com/linux/{{ ansible_distribution | lower }}"
+    suites: ["{{ docker_engine_apt_codename }}"]
+    components: [stable]
+    architectures: ["{{ docker_engine_apt_arch }}"]
+    signed_by: /etc/apt/keyrings/docker.asc
+    state: present
+  register: docker_engine_repository
+
+- name: Refresh apt cache after adding the repository
+  ansible.builtin.apt:
+    update_cache: true
+  when: docker_engine_repository.changed
+
+- name: Install Docker Engine and the Compose plugin
+  ansible.builtin.apt:
+    name: "{{ docker_engine_packages }}"
+    state: present
+
+- name: Enable and start Docker
+  ansible.builtin.systemd_service:
+    name: docker
+    enabled: true
+    state: started
+
+- name: Verify Docker daemon
+  ansible.builtin.command: docker info
+  changed_when: false
+
+- name: Verify Compose plugin
+  ansible.builtin.command: docker compose version
+  changed_when: false
