@@ -23,6 +23,7 @@
 - Dagster: no `from __future__ import annotations` in defs modules; `uv run` for every command; `uv run dg check defs` green before each commit. Python 3.14.
 - Commits by explicit path only (shared working tree carries unrelated uncommitted work). Conventional Commits. Never commit the backoffice admin WIP (`app/routes/admin-*`, `app/lib/sweden-*`, …) as part of this plan unless a task names the file.
 - Backoffice: named ClickHouse params only; route components never import values from `.server` modules; `pnpm typecheck` and `npx vitest run` green before each commit.
+- Insert discipline: ClickHouse cost is parts per second, not rows. The pipeline inserts suggestions one `INSERT … VALUES` per publish batch (Task 4). Any other automatic producer of suggestion rows (Temporal worker, discovery script) must either batch rows per call or use the backoffice writer client, which enables server-side batching (`async_insert = 1`, `wait_for_async_insert = 1`, `async_insert_busy_timeout_ms = 1000`, Task 9). Never loop single-row inserts into ClickHouse.
 - All migrations: `CREATE DATABASE IF NOT EXISTS corpscout;` first line, only the `corpscout` database, a `.down.sql` twin, no `;` inside `--` comments, and the file name appended to `EXPECTED_MIGRATIONS` / `EXPECTED_ACCESS_MIGRATIONS` in `tests/test_clickhouse_migrations.py`.
 
 ---
@@ -2540,7 +2541,7 @@ git commit -m "feat(backoffice): validate Sweden company-person correction rows"
 **Interfaces:**
 - Consumes: `validateSePersonCorrection`, `SePersonCorrectionDraft` (Task 8).
 - Produces:
-  - `chInsertSeCompanyPersonCorrections<T extends object>(values: T[]): Promise<void>`.
+  - `chInsertSeCompanyPersonCorrections<T extends object>(values: T[]): Promise<void>` and `chInsertSeCompanyPersonSuggestions<T extends object>(values: T[]): Promise<void>`; the write client carries `async_insert` settings.
   - `seCompanyPersonId(companyId: string, name: string): string` — mirrors Python `person_id_for`.
   - `getSeCompanyPerson(companyId, personId): Promise<SeCompanyPersonDetail | null>` with `{ person, drafts, roles, suggestions, corrections }`.
   - `appendSeCompanyPersonCorrection(input: SePersonCorrectionInput): Promise<{ correctionId: string }>` — re-reads the person's `draft_set_hash`; throws `SePersonCorrectionValidationError("The evidence changed while you were reviewing. Reload and decide again.")` on mismatch (except `undo`, which carries the zero hash).
@@ -2648,9 +2649,39 @@ describe("appendSeCompanyPersonCorrection", () => {
 Run: `npx vitest run tests/clickhouse-writer.server.test.ts tests/se-company-person.server.test.ts`
 Expected: FAIL — missing exports
 
-- [ ] **Step 3: Add the writer**
+- [ ] **Step 3: Add the writer and turn on server-side insert batching**
 
-In `app/lib/clickhouse.server.ts` after `chInsertPersonCorrections`:
+In `app/lib/clickhouse.server.ts`, inside `getWriteClient()` replace
+`clickhouse_settings: { use_top_k_dynamic_filtering: 0 },` with:
+
+```ts
+      clickhouse_settings: {
+        use_top_k_dynamic_filtering: 0,
+        // One review click is one row. Automatic producers may append several
+        // rows per second; async inserts let ClickHouse coalesce them into ~1
+        // part per second instead of one part per INSERT. wait_for_async_insert
+        // keeps read-after-write: the row is durable and visible when the
+        // promise resolves.
+        async_insert: 1,
+        wait_for_async_insert: 1,
+        async_insert_busy_timeout_ms: 1000,
+      },
+```
+
+Extend the writer test in `tests/clickhouse-writer.server.test.ts` ("uses dedicated credentials") with:
+
+```ts
+    expect(clickhouse.createClient).toHaveBeenCalledWith(
+      expect.objectContaining({
+        clickhouse_settings: expect.objectContaining({
+          async_insert: 1,
+          wait_for_async_insert: 1,
+        }),
+      }),
+    );
+```
+
+Then, after `chInsertPersonCorrections`, add the suggestion-aware writer:
 
 ```ts
 /** Append reviewed decisions to the Sweden company-person correction ledger. */
@@ -2660,6 +2691,21 @@ export async function chInsertSeCompanyPersonCorrections<T extends object>(
   if (values.length === 0) return;
   await getWriteClient().insert({
     table: "se_company_person_correction",
+    values,
+    format: "JSONEachRow",
+  });
+}
+
+/**
+ * Append model suggestions produced outside Dagster. Callers batch rows per
+ * call; the writer client's async_insert settings coalesce the rest.
+ */
+export async function chInsertSeCompanyPersonSuggestions<T extends object>(
+  values: T[],
+): Promise<void> {
+  if (values.length === 0) return;
+  await getWriteClient().insert({
+    table: "se_company_person_suggestion",
     values,
     format: "JSONEachRow",
   });
