@@ -20,7 +20,7 @@ Direction agreed on 2026-08-21 after the SE people curation audit:
 This spec covers **sub-project 1** only:
 
 1. Two new ClickHouse tables: `se_company_person_correction` (ledger) and
-   `se_company_person_suggestion` (model output), plus writer grants and two provenance
+   `se_company_person_enrichment_observation` (model output), plus writer grants and two provenance
    columns on `se_company_person`.
 2. Precedence and staleness rules in `normalization.py` and `roles.py`.
 3. A Dagster sensor that re-runs only the companies touched by new ledger rows.
@@ -32,6 +32,10 @@ Follow-on sub-projects, each with its own spec:
   signatories as person evidence instead of dropping them.
 - **3.** Person grain: one row per (company, person) with a role timeline; the 11.7k
   name-key collisions become the review queue fed by this ledger.
+- **5.** Enrichment observations and review queue — per-country observation tables, Postgres
+  review queue, auto-approval policy; see
+  `2026-08-22-enrichment-observations-and-review-queue-design.md`. Sub-project 1's
+  `se_company_person_enrichment_observation` is the first table of that template.
 - **4.** Re-point the admin wizard at ClickHouse; retire the DuckDB/SQLite drafts, the local
   `person_profile_llm_response`, and the backoffice Temporal worker (its three workflows are
   covered by the Dagster assets — Dagster is the only producer of suggestion rows; a
@@ -71,10 +75,10 @@ ORDER BY (company_id, subject_person_id, created_at, correction_id);
 
 Append-only. "Current" decisions are derived (§4.1); rows are never updated or deleted.
 
-### 2.2 `corpscout.se_company_person_suggestion`
+### 2.2 `corpscout.se_company_person_enrichment_observation`
 
 ```sql
-CREATE TABLE IF NOT EXISTS corpscout.se_company_person_suggestion
+CREATE TABLE IF NOT EXISTS corpscout.se_company_person_enrichment_observation
 (
     suggestion_id    UUID,
     company_id       String,
@@ -97,8 +101,10 @@ ENGINE = MergeTree
 ORDER BY (company_id, person_id, input_hash, created_at);
 ```
 
-One row per model call per person. The same `(person_id, input_hash)` may appear more than
-once (re-runs, model changes); the newest `created_at` is the current suggestion. The
+One row per model call per person — an enrichment observation in the sense of the
+observations/review-queue design (it has no status; decisions about it live in the ledger).
+The same `(person_id, input_hash)` may appear more than once (re-runs, model changes); the
+newest `created_at` is the current suggestion. The
 backoffice's SQLite `person_profile_llm_response` is the same idea and is superseded by
 this table in sub-project 4.
 
@@ -124,7 +130,7 @@ column.
 
 ```sql
 GRANT INSERT ON corpscout.se_company_person_correction TO corpscout_person_correction_writer;
-GRANT INSERT ON corpscout.se_company_person_suggestion TO corpscout_person_correction_writer;
+GRANT INSERT ON corpscout.se_company_person_enrichment_observation TO corpscout_person_correction_writer;
 ```
 
 The backoffice writer account (`CLICKHOUSE_WRITE_USER`, provisioned by
@@ -209,7 +215,7 @@ draft_ids, correction_ids and suggestion_id.
 ### 4.5 Suggestions
 
 Every LLM response the pipeline accepts (after the existing pydantic contract and repair
-loop) is inserted into `se_company_person_suggestion` before it is used. Publishing
+loop) is inserted into `se_company_person_enrichment_observation` before it is used. Publishing
 behaviour for multi-source companies does **not** change: absent a correction, the newest
 suggestion for the current `input_hash` publishes (status today). `reject_suggestion`
 blocks it; `approve_suggestion` pins it. Single-source companies never call the model and
@@ -308,5 +314,5 @@ Draft 2 rows and the company Management section link to the review page by
 - Ledger row `decided_by` stays a free string; no user table yet.
 - `raw_response` is stored (audit value outweighs size: ~3 KB × a few hundred rows).
 - Suggestions from the backoffice's own interactive LLM runs are not written to
-  `se_company_person_suggestion` in this sub-project; that migration is part of
+  `se_company_person_enrichment_observation` in this sub-project; that migration is part of
   sub-project 4.

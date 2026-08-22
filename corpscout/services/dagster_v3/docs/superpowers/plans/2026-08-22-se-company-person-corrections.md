@@ -4,7 +4,7 @@
 
 **Goal:** Let a reviewer correct any Sweden company person (merge, split, reassign, override, approve/reject a model suggestion, set/remove a role) through an append-only ClickHouse ledger that the Dagster pipeline applies on every run, with model output recorded as suggestions and a sensor that re-runs only the touched companies.
 
-**Architecture:** Two new ClickHouse tables (`se_company_person_correction`, `se_company_person_suggestion`) plus provenance columns on `se_company_person` / `se_company_person_role`. `normalization.py` loads the effective ledger per company, applies it after deterministic/LLM grouping with precedence *correction > suggestion > deterministic*, skips stale rows, and records applied ids; `roles.py` applies role corrections in SQL. A sensor scoped to touched `company_ids` runs a review job. The backoffice validates and appends ledger rows through the existing correction-writer role and shows one ClickHouse-backed review page.
+**Architecture:** Two new ClickHouse tables (`se_company_person_correction`, `se_company_person_enrichment_observation`) plus provenance columns on `se_company_person` / `se_company_person_role`. `normalization.py` loads the effective ledger per company, applies it after deterministic/LLM grouping with precedence *correction > suggestion > deterministic*, skips stale rows, and records applied ids; `roles.py` applies role corrections in SQL. A sensor scoped to touched `company_ids` runs a review job. The backoffice validates and appends ledger rows through the existing correction-writer role and shows one ClickHouse-backed review page.
 
 **Tech Stack:** ClickHouse (golang-migrate files under `corpscout/clickhouse/migrations/`), Dagster 1.13 assets/sensors in `dagster_v3/defs/company_people/`, pytest via `uv run`, React Router 8 + vitest in `corpscout/services/backoffice`.
 
@@ -93,7 +93,7 @@ def test_correction_and_suggestion_tables_match_insert_contracts() -> None:
     down = _sql("000295_corpscout_se_company_person_corrections.down.sql")
 
     assert "CREATE TABLE IF NOT EXISTS corpscout.se_company_person_correction" in sql
-    assert "CREATE TABLE IF NOT EXISTS corpscout.se_company_person_suggestion" in sql
+    assert "CREATE TABLE IF NOT EXISTS corpscout.se_company_person_enrichment_observation" in sql
     assert sql.count("ENGINE = MergeTree") == 2
     for column in CORRECTION_COLUMNS:
         assert f"    {column} " in sql
@@ -108,7 +108,7 @@ def test_correction_and_suggestion_tables_match_insert_contracts() -> None:
     assert "merged_into_person_id Nullable(UUID)" in sql
     assert "ALTER TABLE corpscout.se_company_person_role" in sql
 
-    assert "DROP TABLE IF EXISTS corpscout.se_company_person_suggestion" in down
+    assert "DROP TABLE IF EXISTS corpscout.se_company_person_enrichment_observation" in down
     assert "DROP TABLE IF EXISTS corpscout.se_company_person_correction" in down
     assert "DROP COLUMN IF EXISTS correction_ids" in down
 
@@ -122,7 +122,7 @@ def test_writer_grants_are_insert_only() -> None:
         "TO corpscout_person_correction_writer"
     ) in sql
     assert (
-        "GRANT INSERT ON corpscout.se_company_person_suggestion\n"
+        "GRANT INSERT ON corpscout.se_company_person_enrichment_observation\n"
         "TO corpscout_person_correction_writer"
     ) in sql
     assert "GRANT SELECT" not in sql
@@ -186,7 +186,7 @@ ORDER BY (company_id, subject_person_id, created_at, correction_id);
 -- One row per model call per person. The newest created_at for a
 -- (person_id, input_hash) pair is the current suggestion unless a correction
 -- approves an older one.
-CREATE TABLE IF NOT EXISTS corpscout.se_company_person_suggestion
+CREATE TABLE IF NOT EXISTS corpscout.se_company_person_enrichment_observation
 (
     suggestion_id UUID,
     company_id String,
@@ -237,7 +237,7 @@ ALTER TABLE corpscout.se_company_person
     DROP COLUMN IF EXISTS correction_set_hash,
     DROP COLUMN IF EXISTS correction_ids;
 
-DROP TABLE IF EXISTS corpscout.se_company_person_suggestion;
+DROP TABLE IF EXISTS corpscout.se_company_person_enrichment_observation;
 DROP TABLE IF EXISTS corpscout.se_company_person_correction;
 ```
 
@@ -249,7 +249,7 @@ DROP TABLE IF EXISTS corpscout.se_company_person_correction;
 GRANT INSERT ON corpscout.se_company_person_correction
 TO corpscout_person_correction_writer;
 
-GRANT INSERT ON corpscout.se_company_person_suggestion
+GRANT INSERT ON corpscout.se_company_person_enrichment_observation
 TO corpscout_person_correction_writer;
 ```
 
@@ -259,7 +259,7 @@ TO corpscout_person_correction_writer;
 REVOKE INSERT ON corpscout.se_company_person_correction
 FROM corpscout_person_correction_writer;
 
-REVOKE INSERT ON corpscout.se_company_person_suggestion
+REVOKE INSERT ON corpscout.se_company_person_enrichment_observation
 FROM corpscout_person_correction_writer;
 ```
 
@@ -303,7 +303,7 @@ DATABASE = "corpscout"
 GROUP_NAME = "company_people"
 
 CORRECTION_TABLE = "se_company_person_correction"
-SUGGESTION_TABLE = "se_company_person_suggestion"
+SUGGESTION_TABLE = "se_company_person_enrichment_observation"
 QUALIFIED_CORRECTION_TABLE = f"{DATABASE}.{CORRECTION_TABLE}"
 QUALIFIED_SUGGESTION_TABLE = f"{DATABASE}.{SUGGESTION_TABLE}"
 
@@ -515,7 +515,7 @@ def test_loader_sql_scopes_by_selected_companies() -> None:
         assert "WHERE company_id IN %(selected_company_ids)s" in sql
         assert "ORDER BY company_id" in sql
     assert "FROM corpscout.se_company_person_correction" in build_company_corrections_sql()
-    assert "FROM corpscout.se_company_person_suggestion" in build_company_suggestions_sql()
+    assert "FROM corpscout.se_company_person_enrichment_observation" in build_company_suggestions_sql()
 
     cte = effective_company_corrections_cte()
     assert "effective_company_corrections AS (" in cte
@@ -587,7 +587,7 @@ def build_company_suggestions_sql() -> str:
     draft_ids,
     suggestion,
     created_at
-FROM corpscout.se_company_person_suggestion
+FROM corpscout.se_company_person_enrichment_observation
 WHERE company_id IN %(selected_company_ids)s
 ORDER BY company_id, person_id, input_hash, created_at"""
 
@@ -2707,7 +2707,7 @@ export async function chInsertSeCompanyPersonSuggestions<T extends object>(
 ): Promise<void> {
   if (values.length === 0) return;
   await getWriteClient().insert({
-    table: "se_company_person_suggestion",
+    table: "se_company_person_enrichment_observation",
     values,
     format: "JSONEachRow",
   });
@@ -2859,7 +2859,7 @@ const SUGGESTIONS_SQL = `SELECT
   toString(s.model_provider) AS model_provider, s.model_name, s.prompt_version,
   toString(s.created_at) AS created_at,
   toUInt8(s.suggestion_id = {publishedSuggestionId:Nullable(UUID)}) AS is_published
-FROM corpscout.se_company_person_suggestion AS s
+FROM corpscout.se_company_person_enrichment_observation AS s
 WHERE s.company_id = {companyId:String} AND s.person_id = {personId:UUID}
 ORDER BY s.created_at DESC
 LIMIT 50`;
@@ -3479,11 +3479,11 @@ SELECT name FROM system.columns WHERE database='corpscout' AND table='se_company
 SHOW GRANTS FOR corpscout_person_correction_writer;
 ```
 
-Expected: four column names; grants list INSERT on `country_person_correction`, `se_company_person_correction`, `se_company_person_suggestion`.
+Expected: four column names; grants list INSERT on `country_person_correction`, `se_company_person_correction`, `se_company_person_enrichment_observation`.
 
 - [ ] **Step 2: Deploy Dagster** (`cd corpscout/services/dagster_v3/ansible && ansible-playbook -i inventory.ini light_sync.yml`), confirm `se_company_person_correction_sensor` shows RUNNING in the Dagster UI.
 
-- [ ] **Step 3: Smoke the pipeline with no ledger rows.** Launch `se_company_person_publish_job` with `company_ids: ["5592990765"]`. Expected metadata: `applied_correction_count = 0`, `stale_correction_count = 0`, `settled_company_count` ≥ 0, no exception; `se_company_person_suggestion` gains rows for that company if it is multi-source.
+- [ ] **Step 3: Smoke the pipeline with no ledger rows.** Launch `se_company_person_publish_job` with `company_ids: ["5592990765"]`. Expected metadata: `applied_correction_count = 0`, `stale_correction_count = 0`, `settled_company_count` ≥ 0, no exception; `se_company_person_enrichment_observation` gains rows for that company if it is multi-source.
 
 - [ ] **Step 4: End-to-end correction.** In the backoffice open `/admin/se/people/person/5592990765/<person_id>` (take the id from the Draft 2 "Review in ClickHouse" link), submit an `override_field` with a new name. Within ~2 minutes:
 
