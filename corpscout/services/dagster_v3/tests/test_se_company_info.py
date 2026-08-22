@@ -241,7 +241,7 @@ def test_parse_description_suggestion_validates_shape() -> None:
     ):
         with pytest.raises(ValueError):
             parse_description_suggestion(bad)
-    assert DESCRIPTION_PROMPT_VERSION == "se-company-info-description-v1"
+    assert DESCRIPTION_PROMPT_VERSION == "se-company-info-description-v2"
 
 
 def test_initial_load_can_publish_multi_source_companies_without_the_model() -> None:
@@ -611,3 +611,23 @@ def test_definitions_wire_final_jobs_sensor_schedule_and_leaves() -> None:
     assert all(leaves[key].max_age is None for key in (
         "se_company_info_clickhouse", "se_company_info_scb_clickhouse",
         "se_company_info_esef_clickhouse", "se_company_info_wikidata_clickhouse"))
+
+
+def test_a_truncated_model_response_is_reported_as_truncation_not_as_bad_json() -> None:
+    """deepseek-v4-flash spends completion tokens on reasoning_content; when max_tokens runs out the
+    JSON has no closing brace. The failure must name the cause so the operator raises the budget."""
+    from dagster_v3.defs.se_company.info import _request_description
+
+    class _Truncating:
+        def __init__(self) -> None:
+            self.chat = SimpleNamespace(completions=self)
+
+        def create(self, **request):  # noqa: ANN003
+            return SimpleNamespace(
+                choices=[SimpleNamespace(finish_reason="length",
+                                         message=SimpleNamespace(content='{"description": "cut off'))],
+                usage=SimpleNamespace(prompt_tokens=300, completion_tokens=800))
+
+    with pytest.raises(ValueError, match="truncated .*finish_reason=length.*completion_tokens=800"):
+        _request_description(_Truncating(), {"model": "m", "messages": []}, provider="p")
+    assert build_description_request(_outcome(), "m")["max_tokens"] >= 4000
