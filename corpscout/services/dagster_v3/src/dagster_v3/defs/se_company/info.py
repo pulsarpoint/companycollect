@@ -66,11 +66,20 @@ SE_COMPANY_INFO_CORRECTION = "se_company_info_correction"
 SE_COMPANY_INFO_OBSERVATION = "se_company_info_enrichment_observation"
 # A LEFT JOIN miss reads as this instant, not as a bare NULL comparison.
 EPOCH_SQL = "toDateTime64('1970-01-01 00:00:00', 3, 'UTC')"
-# "Still owed a description": several sources offered one and no suggestion has ever
-# been stored for this company -- the initial load ran with the model off, or the
-# model call failed. Written once and used by both branches of the change scan.
+# "Still owed a description": several sources offered one, no suggestion has ever been
+# stored for this company -- the initial load ran with the model off, or the model call
+# failed -- and no reviewer decision has been applied to it. Written once and used by
+# both branches of the change scan.
+#
+# The correction_ids test is what keeps a reviewed company out: `reject_suggestion`
+# clears suggestion_id and leaves description_source at the deterministic source, so
+# the row is indistinguishable from a never-modelled one by its description columns
+# alone; its applied-correction list is the honest signal. Array columns cannot be
+# Nullable, so a LEFT JOIN miss yields [] under either join_use_nulls setting and the
+# length test needs no ifNull (which would in fact be a type error here).
 PENDING_MODEL_SQL = (
     "ifNull(published.description_source_count, 0) > 1 AND published.suggestion_id IS NULL"
+    " AND length(published.correction_ids) = 0"
 )
 # Model calls are persisted in flushes of this many rows, so a hard crash mid-page
 # loses at most one flush of paid calls rather than the whole page.
@@ -183,6 +192,13 @@ def build_changed_companies_sql() -> str:
     failed. Without that last term nothing about such a company ever changes again,
     so only a manual ``pending_model_only`` run would ever retry it.
 
+    "Still owed a description" excludes any company that already carries an applied
+    correction: a reviewer has decided this description, and re-running the model on it
+    every week would only produce a suggestion the ledger immediately overrides again.
+    Such a company still re-resolves on NEW evidence or a NEW ledger row -- those two
+    terms are untouched -- so a later correction or a fresh artifact version is picked
+    up as usual.
+
     A published-vs-live correction id set comparison would be wrong here: a stale or
     malformed correction is never applied, so its id would never appear on the
     published row and the company would be re-selected on every run forever.
@@ -220,7 +236,8 @@ ledger AS (
 published AS (
     SELECT final.company_id AS company_id, final.resolved_at AS resolved_at,
         final.description_source_count AS description_source_count,
-        final.suggestion_id AS suggestion_id
+        final.suggestion_id AS suggestion_id,
+        final.correction_ids AS correction_ids
     FROM {DATABASE}.{SE_COMPANY_INFO} AS final FINAL
     WHERE (%(all_companies)s = 1 OR final.company_id IN %(company_ids)s)
 )

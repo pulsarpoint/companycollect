@@ -31,6 +31,10 @@ COMPANY = "5565200028"
 OTHER_COMPANY = "5560125220"
 THIRD_COMPANY = "5567890123"
 EPOCH_SQL = "toDateTime64('1970-01-01 00:00:00', 3, 'UTC')"
+# "Still owed a description", as both branches of the change scan must spell it.
+PENDING_SQL = ("ifNull(published.description_source_count, 0) > 1"
+               " AND published.suggestion_id IS NULL"
+               " AND length(published.correction_ids) = 0")
 
 # assert_clickhouse_tables_exist runs its own SELECT against system.tables first,
 # so every scripted answer list starts with the tables it asks about.
@@ -139,12 +143,21 @@ def test_changed_companies_sql_compares_artifact_versions_and_ledger_with_the_fi
     assert "ifNull(published.company_id, '') = ''" in sql
     assert f"artifacts.latest_observed_at > ifNull(published.resolved_at, {EPOCH_SQL})" in sql
     assert f"ifNull(ledger.latest_correction_at, {EPOCH_SQL}) > ifNull(published.resolved_at, {EPOCH_SQL})" in sql
-    assert "%(pending_model_only)s = 1 AND ifNull(published.description_source_count, 0) > 1 AND published.suggestion_id IS NULL" in sql
+    assert f"%(pending_model_only)s = 1 AND {PENDING_SQL}" in sql
     # ... and, on a model-on ordinary run, "published with several sources but no
     # suggestion" is itself a change -- otherwise nothing about such a company ever
     # changes again and only a manual pending_model_only pass would retry it.
-    assert ("OR (%(include_pending)s = 1 AND ifNull(published.description_source_count, 0) > 1"
-            " AND published.suggestion_id IS NULL)") in sql
+    assert f"OR (%(include_pending)s = 1 AND {PENDING_SQL})" in sql
+    assert sql.count(PENDING_SQL) == 2  # one predicate, spelled the same in both branches
+    # A company that already carries an applied correction is NOT pending: a reviewer
+    # has decided its description and the model would only be overridden again. Keyed
+    # on the applied-correction list, never on description_source -- reject_suggestion
+    # leaves that at the deterministic source. Array columns are never Nullable, so a
+    # LEFT JOIN miss is [] under either join_use_nulls setting (and ifNull on a
+    # non-Nullable Array is a type error).
+    assert "length(published.correction_ids) = 0" in sql
+    assert "ifNull(published.correction_ids" not in sql
+    assert "final.correction_ids AS correction_ids" in sql  # the CTE has to project it
     assert "arraySort(groupArrayIf(toString(correction_id), NOT superseded))" not in sql
     # Every LEFT JOIN miss must be read through ifNull: bare comparisons are NULL under
     # join_use_nulls = 1, which makes the whole scan return zero rows.
