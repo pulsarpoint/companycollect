@@ -1,17 +1,24 @@
 import { data } from "react-router";
 import type { Route } from "./+types/admin-se-people-person";
-import { SePersonReviewWorkspace } from "~/components/admin/se-person-review-workspace";
-import { getCompanyPersonRoleTypes } from "~/lib/company-roles.server";
+import {
+  SePersonNotPublished,
+  SePersonReviewWorkspace,
+} from "~/components/admin/se-person-review-workspace";
+import {
+  getCompanyPersonRoleTypes,
+  type CompanyPersonRoleType,
+} from "~/lib/company-roles.server";
 import {
   appendSeCompanyPersonCorrection,
   getSeCompanyPerson,
   ZERO_EVIDENCE_HASH,
 } from "~/lib/se-company-person.server";
-import { SePersonCorrectionValidationError } from "~/lib/se-person-corrections";
+import {
+  SePersonCorrectionValidationError,
+  type SePersonCorrectionInput,
+} from "~/lib/se-person-corrections";
 
-function activeRoleCodesFrom(
-  roleTypes: Awaited<ReturnType<typeof getCompanyPersonRoleTypes>>,
-): string[] {
+function activeRoleCodesFrom(roleTypes: CompanyPersonRoleType[]): string[] {
   return roleTypes
     .filter((roleType) => roleType.is_active === 1)
     .map((roleType) => roleType.role_code);
@@ -22,10 +29,12 @@ export async function loader({ params }: Route.LoaderArgs) {
     getSeCompanyPerson(params.companyId, params.personId),
     getCompanyPersonRoleTypes(),
   ]);
-  if (!detail) {
-    throw data("Person not found", { status: 404 });
-  }
-  return { detail, activeRoleCodes: activeRoleCodesFrom(roleTypes) };
+  // A person Dagster has not published yet is a normal state of the pipeline,
+  // not a broken link: the page says so while the response still carries 404.
+  return data(
+    { detail, activeRoleCodes: activeRoleCodesFrom(roleTypes) },
+    detail ? undefined : { status: 404 },
+  );
 }
 
 function text(form: FormData, name: string): string {
@@ -38,22 +47,37 @@ function optionalText(form: FormData, name: string): string | null {
 }
 
 /**
- * Only the keys the validator allows for this kind are collected; anything else
- * a form happens to carry is dropped here rather than rejected downstream.
+ * Collects only the payload keys the validator allows for this kind.
+ *
+ * `override_field` diffs against the values the reviewer was shown, because a
+ * correction is replayed on every Dagster run: sending an untouched field would
+ * pin it forever, and sending an empty description would pin it to null.
  */
-function payloadFor(form: FormData, kind: string): Record<string, unknown> {
+export function payloadFor(
+  form: FormData,
+  kind: string,
+): Record<string, unknown> {
   const payload: Record<string, unknown> = {};
   if (kind === "override_field") {
-    if (text(form, "name").trim() !== "") payload.name = text(form, "name");
-    if (form.has("description")) {
-      payload.description = text(form, "description") || null;
+    const name = text(form, "name").trim();
+    if (name !== text(form, "original_name").trim()) {
+      payload.name = name;
+    }
+    const description = text(form, "description").trim();
+    if (text(form, "clear_description") === "yes") {
+      payload.description = null;
+    } else if (
+      description !== "" &&
+      description !== text(form, "original_description").trim()
+    ) {
+      payload.description = description;
     }
   } else if (kind === "split_person") {
     payload.name = text(form, "name");
   } else if (kind === "approve_suggestion" || kind === "reject_suggestion") {
     payload.suggestion_id = text(form, "suggestion_id");
-    const note = kind === "reject_suggestion" ? optionalText(form, "note") : null;
-    if (note) payload.note = note;
+    const note = kind === "reject_suggestion" ? text(form, "note").trim() : "";
+    if (note !== "") payload.note = note;
   } else if (kind === "set_role") {
     payload.role_code = text(form, "role_code");
     const year = text(form, "fiscal_year").trim();
@@ -62,18 +86,29 @@ function payloadFor(form: FormData, kind: string): Record<string, unknown> {
   return payload;
 }
 
-export async function action({ request, params }: Route.ActionArgs) {
-  const form = await request.formData();
+export type SePersonCorrectionRequest =
+  | { ok: true; input: SePersonCorrectionInput }
+  | { ok: false; error: string };
+
+export function buildCorrectionInput(
+  form: FormData,
+  params: { companyId: string; personId: string },
+  roleTypes: CompanyPersonRoleType[],
+): SePersonCorrectionRequest {
   const kind = text(form, "correction_kind");
-  const roleTypes = await getCompanyPersonRoleTypes();
-  try {
-    const result = await appendSeCompanyPersonCorrection({
+  const payload = payloadFor(form, kind);
+  if (kind === "override_field" && Object.keys(payload).length === 0) {
+    return { ok: false, error: "Nothing changed." };
+  }
+  return {
+    ok: true,
+    input: {
       companyId: params.companyId,
       kind,
       subjectPersonId: params.personId,
       targetPersonId: optionalText(form, "target_person_id"),
       draftIds: form.getAll("draft_id").map(String),
-      payload: payloadFor(form, kind),
+      payload,
       // Undo supersedes a decision rather than the evidence, so it carries the
       // zero hash instead of the draft-set hash the reviewer saw.
       evidenceHash:
@@ -82,7 +117,19 @@ export async function action({ request, params }: Route.ActionArgs) {
       supersedesCorrectionId:
         kind === "undo" ? optionalText(form, "supersedes_correction_id") : null,
       activeRoleCodes: new Set(activeRoleCodesFrom(roleTypes)),
-    });
+    },
+  };
+}
+
+export async function action({ request, params }: Route.ActionArgs) {
+  const form = await request.formData();
+  const roleTypes = await getCompanyPersonRoleTypes();
+  const built = buildCorrectionInput(form, params, roleTypes);
+  if (!built.ok) {
+    return { ok: false as const, error: built.error };
+  }
+  try {
+    const result = await appendSeCompanyPersonCorrection(built.input);
     return { ok: true as const, correctionId: result.correctionId };
   } catch (error) {
     if (error instanceof SePersonCorrectionValidationError) {
@@ -95,7 +142,7 @@ export async function action({ request, params }: Route.ActionArgs) {
 export function meta({ loaderData }: Route.MetaArgs) {
   return [
     {
-      title: `${loaderData?.detail.person.name ?? "Person"} review | CompanyCollect`,
+      title: `${loaderData?.detail?.person.name ?? "Person"} review | CompanyCollect`,
     },
   ];
 }
@@ -103,7 +150,16 @@ export function meta({ loaderData }: Route.MetaArgs) {
 export default function AdminSwedenPersonReview({
   loaderData,
   actionData,
+  params,
 }: Route.ComponentProps) {
+  if (!loaderData.detail) {
+    return (
+      <SePersonNotPublished
+        companyId={params.companyId}
+        personId={params.personId}
+      />
+    );
+  }
   return (
     <SePersonReviewWorkspace
       detail={loaderData.detail}

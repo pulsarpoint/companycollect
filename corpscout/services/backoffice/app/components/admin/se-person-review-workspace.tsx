@@ -1,8 +1,8 @@
-import { CheckCircle2Icon, TriangleAlertIcon } from "lucide-react";
-import { Form, Link } from "react-router";
+import { ArrowLeftIcon, CheckCircle2Icon, TriangleAlertIcon, UserSearchIcon } from "lucide-react";
+import { Form, Link, useNavigation } from "react-router";
 import { Alert, AlertDescription, AlertTitle } from "~/components/ui/alert";
 import { Badge } from "~/components/ui/badge";
-import { Button } from "~/components/ui/button";
+import { Button, buttonVariants } from "~/components/ui/button";
 import {
   Card,
   CardContent,
@@ -11,6 +11,14 @@ import {
   CardTitle,
 } from "~/components/ui/card";
 import { Checkbox } from "~/components/ui/checkbox";
+import {
+  Empty,
+  EmptyContent,
+  EmptyDescription,
+  EmptyHeader,
+  EmptyMedia,
+  EmptyTitle,
+} from "~/components/ui/empty";
 import { Input } from "~/components/ui/input";
 import {
   Table,
@@ -67,17 +75,50 @@ function DraftCheckboxes({
           key={draft.draft_id}
           className="flex items-start gap-2 text-sm leading-5"
         >
-          <Checkbox
-            name="draft_id"
-            value={draft.draft_id}
-            className="mt-0.5"
-          />
+          <Checkbox name="draft_id" value={draft.draft_id} className="mt-0.5" />
           <span>
             {draft.source} · {draft.name} · {draft.role_original || "—"} ·{" "}
             {draft.fiscal_year ?? "undated"}
           </span>
         </label>
       ))}
+    </div>
+  );
+}
+
+/** Shown when Dagster has not published this person into `se_company_person`. */
+export function SePersonNotPublished({
+  companyId,
+  personId,
+}: {
+  companyId: string;
+  personId: string;
+}) {
+  return (
+    <div className="flex flex-1 flex-col gap-6 p-4 md:p-6">
+      <Empty className="border">
+        <EmptyHeader>
+          <EmptyMedia variant="icon">
+            <UserSearchIcon />
+          </EmptyMedia>
+          <EmptyTitle>Not published yet</EmptyTitle>
+          <EmptyDescription>
+            Company {companyId} has no person{" "}
+            <code className="font-mono text-xs">{personId}</code> in
+            se_company_person. Dagster publishes a person once its drafts are
+            built, so this page fills in after the next run.
+          </EmptyDescription>
+        </EmptyHeader>
+        <EmptyContent>
+          <Link
+            className={buttonVariants({ variant: "outline" })}
+            to="/admin/se/people?step=draft-2"
+          >
+            <ArrowLeftIcon data-icon="inline-start" />
+            Back to people
+          </Link>
+        </EmptyContent>
+      </Empty>
     </div>
   );
 }
@@ -93,6 +134,8 @@ export function SePersonReviewWorkspace({
 }) {
   const { person, drafts, roles, suggestions, corrections } = detail;
   const hash = person.draft_set_hash;
+  // One click is one ledger row: block every submit while one is in flight.
+  const busy = useNavigation().state !== "idle";
   return (
     <div className="flex flex-1 flex-col gap-6 p-4 md:p-6">
       <header className="flex flex-col gap-2">
@@ -149,7 +192,7 @@ export function SePersonReviewWorkspace({
         <CardHeader>
           <CardTitle>Source observations</CardTitle>
           <CardDescription>
-            The Draft rows this published person was built from. Their set is
+            The draft rows this published person was built from. Their set is
             what the evidence hash covers.
           </CardDescription>
         </CardHeader>
@@ -163,6 +206,7 @@ export function SePersonReviewWorkspace({
                 <TableHead>Year</TableHead>
                 <TableHead>Observed</TableHead>
                 <TableHead>Draft</TableHead>
+                <TableHead>Payload</TableHead>
               </TableRow>
             </TableHeader>
             <TableBody>
@@ -179,6 +223,16 @@ export function SePersonReviewWorkspace({
                   </TableCell>
                   <TableCell className="font-mono text-xs">
                     {draft.draft_id}
+                  </TableCell>
+                  <TableCell>
+                    <details>
+                      <summary className="cursor-pointer text-xs text-muted-foreground">
+                        payload
+                      </summary>
+                      <pre className="mt-1 max-w-lg overflow-x-auto whitespace-pre-wrap break-words rounded-lg border bg-muted p-2 font-mono text-xs">
+                        {draft.source_value_json}
+                      </pre>
+                    </details>
                   </TableCell>
                 </TableRow>
               ))}
@@ -197,9 +251,7 @@ export function SePersonReviewWorkspace({
         </CardHeader>
         <CardContent className="flex flex-wrap gap-2">
           {roles.length === 0 ? (
-            <span className="text-sm text-muted-foreground">
-              No role rows.
-            </span>
+            <span className="text-sm text-muted-foreground">No role rows.</span>
           ) : null}
           {roles.map((role) => (
             <Badge
@@ -277,6 +329,8 @@ export function SePersonReviewWorkspace({
                           kind === "approve_suggestion" ? "default" : "outline"
                         }
                         type="submit"
+                        disabled={busy}
+                        aria-busy={busy}
                       >
                         {kind === "approve_suggestion" ? "Approve" : "Reject"}
                       </Button>
@@ -300,6 +354,14 @@ export function SePersonReviewWorkspace({
         <CardContent className="grid gap-6 lg:grid-cols-2">
           <Form method="post" className="flex flex-col gap-2">
             <HiddenCommon kind="override_field" evidenceHash={hash} />
+            {/* Diffed server-side: an untouched field must not enter the
+                payload, because Dagster replays the correction every run. */}
+            <input type="hidden" name="original_name" value={person.name} />
+            <input
+              type="hidden"
+              name="original_description"
+              value={person.description ?? ""}
+            />
             <h3 className="text-sm font-medium">Override name / description</h3>
             <Input name="name" defaultValue={person.name} aria-label="Name" />
             <Textarea
@@ -308,8 +370,14 @@ export function SePersonReviewWorkspace({
               aria-label="Description"
               placeholder="Description"
             />
+            <label className="flex items-center gap-2 text-sm">
+              <Checkbox name="clear_description" value="yes" />
+              <span>Clear the description</span>
+            </label>
             <Input name="reason" placeholder="Reason" required />
-            <Button type="submit">Save override</Button>
+            <Button type="submit" disabled={busy} aria-busy={busy}>
+              Save override
+            </Button>
           </Form>
 
           <Form method="post" className="flex flex-col gap-2">
@@ -323,7 +391,12 @@ export function SePersonReviewWorkspace({
               required
             />
             <Input name="reason" placeholder="Reason" required />
-            <Button type="submit" variant="outline">
+            <Button
+              type="submit"
+              variant="outline"
+              disabled={busy}
+              aria-busy={busy}
+            >
               Merge
             </Button>
           </Form>
@@ -340,7 +413,12 @@ export function SePersonReviewWorkspace({
               required
             />
             <Input name="reason" placeholder="Reason" required />
-            <Button type="submit" variant="outline">
+            <Button
+              type="submit"
+              variant="outline"
+              disabled={busy}
+              aria-busy={busy}
+            >
               Reassign
             </Button>
           </Form>
@@ -353,7 +431,12 @@ export function SePersonReviewWorkspace({
             <DraftCheckboxes drafts={drafts} />
             <Input name="name" placeholder="Name of the new person" required />
             <Input name="reason" placeholder="Reason" required />
-            <Button type="submit" variant="outline">
+            <Button
+              type="submit"
+              variant="outline"
+              disabled={busy}
+              aria-busy={busy}
+            >
               Split
             </Button>
           </Form>
@@ -368,6 +451,7 @@ export function SePersonReviewWorkspace({
               className="h-8 rounded-lg border border-input bg-transparent px-2.5 text-sm"
               required
             >
+              <option value="">Select a role…</option>
               {activeRoleCodes.map((code) => (
                 <option key={code} value={code}>
                   {code}
@@ -380,7 +464,12 @@ export function SePersonReviewWorkspace({
               inputMode="numeric"
             />
             <Input name="reason" placeholder="Reason" required />
-            <Button type="submit" variant="outline">
+            <Button
+              type="submit"
+              variant="outline"
+              disabled={busy}
+              aria-busy={busy}
+            >
               Set role
             </Button>
           </Form>
@@ -392,7 +481,12 @@ export function SePersonReviewWorkspace({
             </h3>
             <DraftCheckboxes drafts={drafts} />
             <Input name="reason" placeholder="Reason" required />
-            <Button type="submit" variant="outline">
+            <Button
+              type="submit"
+              variant="outline"
+              disabled={busy}
+              aria-busy={busy}
+            >
               Remove role
             </Button>
           </Form>
@@ -434,10 +528,7 @@ export function SePersonReviewWorkspace({
               <code className="font-mono text-xs">{correction.payload}</code>
               {correction.is_current &&
               correction.correction_kind !== "undo" ? (
-                <Form
-                  method="post"
-                  className="ml-auto flex items-center gap-2"
-                >
+                <Form method="post" className="ml-auto flex items-center gap-2">
                   <input type="hidden" name="correction_kind" value="undo" />
                   <input
                     type="hidden"
@@ -450,7 +541,13 @@ export function SePersonReviewWorkspace({
                     required
                     className="w-40"
                   />
-                  <Button size="sm" variant="ghost" type="submit">
+                  <Button
+                    size="sm"
+                    variant="ghost"
+                    type="submit"
+                    disabled={busy}
+                    aria-busy={busy}
+                  >
                     Undo
                   </Button>
                 </Form>
