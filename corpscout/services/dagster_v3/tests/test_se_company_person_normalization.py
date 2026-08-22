@@ -430,7 +430,7 @@ def test_single_source_company_is_copied_without_llm() -> None:
     )
     company = _company(observation)
 
-    writes, _suggestions, metrics = normalize_companies(
+    writes, _suggestions, metrics, _notes = normalize_companies(
         [company],
         llm_suggester=None,
         llm_model=None,
@@ -486,7 +486,7 @@ def test_multi_source_company_is_sent_once_when_below_limit() -> None:
             ]
         )
 
-    writes, _suggestions, metrics = normalize_companies(
+    writes, _suggestions, metrics, _notes = normalize_companies(
         [company],
         llm_suggester=suggest,
         llm_model="deepseek-v4-flash",
@@ -535,7 +535,7 @@ def test_large_company_sends_role_batches_and_all_observations() -> None:
             ]
         )
 
-    writes, _suggestions, metrics = normalize_companies(
+    writes, _suggestions, metrics, _notes = normalize_companies(
         [company],
         llm_suggester=suggest,
         llm_model="deepseek-v4-flash",
@@ -620,7 +620,7 @@ def test_multi_source_company_records_one_suggestion_per_person() -> None:
             ]
         )
 
-    writes, suggestions, metrics = normalize_companies(
+    writes, suggestions, metrics, _notes = normalize_companies(
         [company],
         llm_suggester=suggest,
         llm_model="deepseek-v4-flash",
@@ -675,7 +675,7 @@ def test_stored_suggestion_with_current_input_hash_skips_the_llm() -> None:
         calls.append(company_id)
         raise AssertionError("LLM must not be called when a suggestion is current")
 
-    writes, suggestions, metrics = normalize_companies(
+    writes, suggestions, metrics, _notes = normalize_companies(
         [company],
         llm_suggester=suggest,
         llm_model="deepseek-v4-flash",
@@ -781,7 +781,7 @@ def test_override_field_wins_over_deterministic_name_and_records_provenance() ->
         ),
     )
 
-    writes, _suggestions, metrics = normalize_companies(
+    writes, _suggestions, metrics, _notes = normalize_companies(
         [company],
         llm_suggester=None,
         llm_model=None,
@@ -816,7 +816,7 @@ def test_override_is_stale_when_evidence_hash_moved() -> None:
         ),
     )
 
-    writes, _suggestions, metrics = normalize_companies(
+    writes, _suggestions, metrics, _notes = normalize_companies(
         [company],
         llm_suggester=None,
         llm_model=None,
@@ -856,7 +856,7 @@ def test_merge_persons_moves_evidence_and_tombstones_the_subject() -> None:
         ),
     )
 
-    writes, _suggestions, metrics = normalize_companies(
+    writes, _suggestions, metrics, _notes = normalize_companies(
         [company],
         llm_suggester=None,
         llm_model=None,
@@ -898,7 +898,7 @@ def test_reassign_draft_requires_the_draft_on_the_subject() -> None:
         ),
     )
 
-    writes, _suggestions, metrics = normalize_companies(
+    writes, _suggestions, metrics, _notes = normalize_companies(
         [company],
         llm_suggester=None,
         llm_model=None,
@@ -932,7 +932,7 @@ def test_split_person_creates_a_new_deterministic_person_from_payload_name() -> 
         ),
     )
 
-    writes, _suggestions, _metrics = normalize_companies(
+    writes, _suggestions, _metrics, _notes = normalize_companies(
         [company],
         llm_suggester=None,
         llm_model=None,
@@ -1019,7 +1019,7 @@ def test_approve_suggestion_pins_the_suggestion_and_ignores_an_unknown_one() -> 
         ),
     )
 
-    writes, _suggestions, metrics = normalize_companies(
+    writes, _suggestions, metrics, _notes = normalize_companies(
         [company],
         llm_suggester=_refuse_llm,
         llm_model="deepseek-v4-flash",
@@ -1057,7 +1057,7 @@ def test_reject_suggestion_falls_back_to_the_deterministic_name() -> None:
         ),
     )
 
-    writes, _suggestions, metrics = normalize_companies(
+    writes, _suggestions, metrics, _notes = normalize_companies(
         [company],
         llm_suggester=_refuse_llm,
         llm_model="deepseek-v4-flash",
@@ -1103,7 +1103,7 @@ def test_a_later_approval_overrides_an_earlier_rejection() -> None:
         ),
     )
 
-    writes, _suggestions, metrics = normalize_companies(
+    writes, _suggestions, metrics, _notes = normalize_companies(
         [company],
         llm_suggester=_refuse_llm,
         llm_model="deepseek-v4-flash",
@@ -1144,7 +1144,7 @@ def test_approve_is_stale_when_the_suggestion_input_hash_is_not_current() -> Non
         ),
     )
 
-    writes, _suggestions, metrics = normalize_companies(
+    writes, _suggestions, metrics, _notes = normalize_companies(
         [company],
         llm_suggester=_refuse_llm,
         llm_model="deepseek-v4-flash",
@@ -1227,7 +1227,7 @@ def test_approve_that_would_strip_another_person_bare_is_stale() -> None:
         ),
     )
 
-    writes, _suggestions, metrics = normalize_companies(
+    writes, _suggestions, metrics, _notes = normalize_companies(
         [company],
         llm_suggester=_refuse_llm,
         llm_model="deepseek-v4-flash",
@@ -1239,3 +1239,151 @@ def test_approve_that_would_strip_another_person_bare_is_stale() -> None:
     assert metrics["applied_correction_count"] == 0
     assert metrics["stale_correction_count"] == 1
     assert metrics["invalid_profile_count"] == 0
+
+
+def test_a_merge_tombstone_never_reaches_the_model_or_the_empty_guard() -> None:
+    """After a merge both rows hold the drafts; the tombstone must not fail the run."""
+    observations = (
+        _observation("bolagsverket", name="David Mindus", role="ceo", index=1),
+        _observation("esef", name="David Mindus", role="chief_executive", index=2),
+    )
+    draft_ids = tuple(sorted(item.draft_id for item in observations))
+    target = ExistingPersonProfile(
+        person_id=uuid.UUID(int=2000),
+        name="David Gustaf Mindus",
+        description="CEO.",
+        draft_ids=draft_ids,
+        created_at=NOW - timedelta(days=1),
+        draft_set_hash="b" * 64,
+    )
+    tombstone = ExistingPersonProfile(
+        person_id=uuid.UUID(int=1000),
+        name="David Mindus",
+        description=None,
+        draft_ids=draft_ids,
+        created_at=NOW - timedelta(days=2),
+        draft_set_hash="a" * 64,
+        merged_into_person_id=target.person_id,
+    )
+    company = CompanyPersonWork(
+        status=_company(*observations).status,
+        observations=observations,
+        previous_profiles=(target, tombstone),
+    )
+    seen_profiles: list[tuple[ExistingPersonProfile, ...]] = []
+
+    def suggest(
+        company_id: str,
+        batch: CompanyObservationBatch,
+        previous_profiles: tuple[ExistingPersonProfile, ...],
+        request: dict[str, object],
+    ) -> LlmCompanyPeopleResult:
+        seen_profiles.append(previous_profiles)
+        return _llm_result(
+            [
+                LlmCompanyPersonSuggestion(
+                    existing_person_id=target.person_id,
+                    name="David Gustaf Mindus",
+                    description="Chief executive officer.",
+                    draft_ids=[item.draft_id for item in batch.observations],
+                )
+            ]
+        )
+
+    writes, _suggestions, metrics, notes = normalize_companies(
+        [company],
+        llm_suggester=suggest,
+        llm_model="deepseek-v4-flash",
+        maximum_observations_per_request=10,
+        created_at=NOW,
+    )
+
+    assert [profile.person_id for profile in seen_profiles[0]] == [target.person_id]
+    assert [write.person_id for write in writes] == [target.person_id]
+    assert writes[0].draft_ids == draft_ids
+    assert metrics["emptied_profile_count"] == 0
+    assert metrics["invalid_profile_count"] == 0
+    assert notes[0].emptied_person_ids == ()
+
+
+def test_a_model_that_drops_a_live_profile_skips_it_instead_of_failing() -> None:
+    """The published row simply stays; one company must not fail the whole batch."""
+    observations = (
+        _observation("bolagsverket", name="David Mindus", role="ceo", index=1),
+        _observation("esef", name="Erik Eriksson", role="executive", index=2),
+    )
+    dropped = ExistingPersonProfile(
+        person_id=uuid.UUID(int=3000),
+        name="Erik Eriksson",
+        description=None,
+        draft_ids=(observations[1].draft_id,),
+        created_at=NOW - timedelta(days=1),
+        draft_set_hash="c" * 64,
+    )
+    company = CompanyPersonWork(
+        status=_company(*observations).status,
+        observations=observations,
+        previous_profiles=(dropped,),
+    )
+
+    def suggest(
+        company_id: str,
+        batch: CompanyObservationBatch,
+        previous_profiles: tuple[ExistingPersonProfile, ...],
+        request: dict[str, object],
+    ) -> LlmCompanyPeopleResult:
+        return _llm_result(
+            [
+                LlmCompanyPersonSuggestion(
+                    name="David Gustaf Mindus",
+                    description="One person after all.",
+                    draft_ids=[item.draft_id for item in batch.observations],
+                )
+            ]
+        )
+
+    writes, _suggestions, metrics, notes = normalize_companies(
+        [company],
+        llm_suggester=suggest,
+        llm_model="deepseek-v4-flash",
+        maximum_observations_per_request=10,
+        created_at=NOW,
+    )
+
+    assert dropped.person_id not in {write.person_id for write in writes}
+    assert len(writes) == 1
+    assert metrics["emptied_profile_count"] == 1
+    assert metrics["invalid_profile_count"] == 0
+    assert notes[0].emptied_person_ids == (dropped.person_id,)
+    assert notes[0].company_id == COMPANY_ID
+
+
+def test_normalization_notes_carry_the_stale_correction_ids_per_company() -> None:
+    observations = (
+        _observation("bolagsverket", name="David Mindus", role="ceo", index=1),
+    )
+    company = CompanyPersonWork(
+        status=_company(*observations).status,
+        observations=observations,
+        previous_profiles=(),
+        corrections=(
+            _correction(
+                1,
+                "override_field",
+                subject=uuid.UUID(int=4242),
+                payload={"name": "Nobody"},
+            ),
+        ),
+    )
+
+    _writes, _suggestions, metrics, notes = normalize_companies(
+        [company],
+        llm_suggester=None,
+        llm_model=None,
+        maximum_observations_per_request=10,
+        created_at=NOW,
+    )
+
+    assert metrics["stale_correction_count"] == 1
+    assert notes[0].company_id == COMPANY_ID
+    assert notes[0].stale_correction_ids == (uuid.UUID(int=9001),)

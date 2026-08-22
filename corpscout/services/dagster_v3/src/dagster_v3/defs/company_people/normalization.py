@@ -9,7 +9,6 @@ are chunked; no source observation is dropped.
 
 import hashlib
 import json
-import os
 import re
 import uuid
 from collections import defaultdict
@@ -817,6 +816,7 @@ def _previous_profile_by_name(
 def _profiles_for_request(
     profiles: Mapping[uuid.UUID, _ProfileAccumulator],
 ) -> tuple[ExistingPersonProfile, ...]:
+    """Live profiles only: a merge tombstone is history, not identity evidence."""
     return tuple(
         ExistingPersonProfile(
             person_id=profile.person_id,
@@ -826,7 +826,7 @@ def _profiles_for_request(
             created_at=profile.created_at,
         )
         for profile in sorted(profiles.values(), key=lambda item: str(item.person_id))
-        if profile.draft_ids
+        if profile.draft_ids and profile.merged_into_person_id is None
     )
 
 
@@ -858,6 +858,28 @@ def _profile_changed(
 class CorrectionOutcome:
     applied: tuple[PersonCorrection, ...]
     stale: tuple[PersonCorrection, ...]
+
+
+@dataclass(frozen=True)
+class _MultiSourceOutcome:
+    profiles: dict[uuid.UUID, _ProfileAccumulator]
+    suggestion_writes: list[SuggestionWrite]
+    metrics: dict[str, int]
+    current_input_hashes: frozenset[str]
+    emptied_person_ids: tuple[uuid.UUID, ...]
+
+
+@dataclass(frozen=True)
+class CompanyNormalizationNotes:
+    """What one company skipped, by id, so the run log can name it."""
+
+    company_id: str
+    stale_correction_ids: tuple[uuid.UUID, ...]
+    emptied_person_ids: tuple[uuid.UUID, ...] = ()
+
+    @property
+    def is_empty(self) -> bool:
+        return not self.stale_correction_ids and not self.emptied_person_ids
 
 
 def _evidence_is_current(
@@ -1114,8 +1136,12 @@ def _finalize_company_profiles(
     *,
     current_input_hashes: frozenset[str],
     created_at: datetime,
-) -> tuple[list[PersonProfileWrite], dict[str, int]]:
-    """Apply the ledger, then write only the profiles that actually changed."""
+) -> tuple[list[PersonProfileWrite], dict[str, int], tuple[uuid.UUID, ...]]:
+    """Apply the ledger, then write only the profiles that actually changed.
+
+    The ids of the corrections that were too stale to apply are returned so the
+    caller can name them in the run log instead of only counting them.
+    """
     previous_by_id = {item.person_id: item for item in company.previous_profiles}
     outcome = apply_person_corrections(
         profiles,
@@ -1155,12 +1181,16 @@ def _finalize_company_profiles(
                 merged_into_person_id=profile.merged_into_person_id,
             )
         )
-    return writes, {
-        "unchanged_profile_count": unchanged_profile_count,
-        "invalid_profile_count": invalid_profile_count,
-        "applied_correction_count": len(outcome.applied),
-        "stale_correction_count": len(outcome.stale),
-    }
+    return (
+        writes,
+        {
+            "unchanged_profile_count": unchanged_profile_count,
+            "invalid_profile_count": invalid_profile_count,
+            "applied_correction_count": len(outcome.applied),
+            "stale_correction_count": len(outcome.stale),
+        },
+        tuple(correction.correction_id for correction in outcome.stale),
+    )
 
 
 def _normalize_single_source_company(
@@ -1283,12 +1313,12 @@ def _normalize_multi_source_company(
     llm_model: str | None,
     maximum_observations_per_request: int,
     created_at: datetime,
-) -> tuple[
-    dict[uuid.UUID, _ProfileAccumulator],
-    list[SuggestionWrite],
-    dict[str, int],
-    frozenset[str],
-]:
+) -> "_MultiSourceOutcome":
+    # A merge tombstone keeps the drafts it was merged away with, and so does
+    # the person it was merged into. Seeding both would hand the model the same
+    # evidence twice and leave whichever row it does not re-populate empty, so
+    # tombstones stay out of this run entirely: their published row is history
+    # and is left exactly as it is.
     profiles = {
         previous.person_id: _ProfileAccumulator(
             person_id=previous.person_id,
@@ -1301,6 +1331,7 @@ def _normalize_multi_source_company(
             prompt_version=PROMPT_VERSION,
         )
         for previous in company.previous_profiles
+        if previous.merged_into_person_id is None
     }
     batches = batch_company_observations(
         company.observations,
@@ -1435,21 +1466,29 @@ def _normalize_multi_source_company(
             )
             profile.suggestion_id = suggestion_id
 
-    empty_profiles = [
-        str(profile.person_id)
-        for profile in profiles.values()
-        if profile.touched and not profile.draft_ids
-    ]
-    if empty_profiles:
-        raise ValueError(
-            "LLM merge would remove all evidence from existing profiles, which the "
-            f"append-only main table cannot represent: {sorted(empty_profiles)}"
+    # A model that hands every draft of an existing person to somebody else
+    # leaves that person with no evidence, and the main table's
+    # `CHECK notEmpty(draft_ids)` cannot represent that. One such profile used to
+    # abort the materialization for every company in the batch. It is now
+    # dropped from this run instead: nothing is written for it, so its published
+    # row stays exactly as it is, and the count plus the ids reach the run log.
+    emptied_person_ids = tuple(
+        sorted(
+            (
+                profile.person_id
+                for profile in profiles.values()
+                if profile.touched and not profile.draft_ids
+            ),
+            key=str,
         )
+    )
+    for person_id in emptied_person_ids:
+        del profiles[person_id]
 
-    return (
-        profiles,
-        suggestion_writes,
-        {
+    return _MultiSourceOutcome(
+        profiles=profiles,
+        suggestion_writes=suggestion_writes,
+        metrics={
             "llm_request_count": request_count,
             "llm_reused_batch_count": reused_batch_count,
             "llm_role_batch_count": len(batches) if len(batches) > 1 else 0,
@@ -1457,8 +1496,10 @@ def _normalize_multi_source_company(
             "llm_prompt_tokens": prompt_tokens,
             "llm_completion_tokens": completion_tokens,
             "llm_contract_retry_count": contract_retry_count,
+            "emptied_profile_count": len(emptied_person_ids),
         },
-        frozenset(input_hashes),
+        current_input_hashes=frozenset(input_hashes),
+        emptied_person_ids=emptied_person_ids,
     )
 
 
@@ -1469,10 +1510,21 @@ def normalize_companies(
     llm_model: str | None,
     maximum_observations_per_request: int,
     created_at: datetime,
-) -> tuple[list[PersonProfileWrite], list[SuggestionWrite], dict[str, int]]:
-    """Normalize changed companies and return writes only after all LLM calls pass."""
+) -> tuple[
+    list[PersonProfileWrite],
+    list[SuggestionWrite],
+    dict[str, int],
+    list[CompanyNormalizationNotes],
+]:
+    """Normalize changed companies and return writes only after all LLM calls pass.
+
+    The fourth return value names, per company, what was skipped: the stale
+    ledger rows and the profiles a model emptied. Counting them is not enough for
+    a reviewer to find them again.
+    """
     writes: list[PersonProfileWrite] = []
     suggestion_writes: list[SuggestionWrite] = []
+    notes: list[CompanyNormalizationNotes] = []
     metrics = {
         "direct_company_count": 0,
         "llm_company_count": 0,
@@ -1489,34 +1541,36 @@ def normalize_companies(
         "invalid_profile_count": 0,
         "applied_correction_count": 0,
         "stale_correction_count": 0,
+        "emptied_profile_count": 0,
     }
 
     for company in companies:
+        emptied_person_ids: tuple[uuid.UUID, ...] = ()
         if company.requires_llm:
             if llm_suggester is None:
                 raise RuntimeError("A multi-source company requires an LLM suggester")
             metrics["llm_company_count"] += 1
-            (
-                profiles,
-                company_suggestions,
-                company_metrics,
-                current_input_hashes,
-            ) = _normalize_multi_source_company(
+            outcome = _normalize_multi_source_company(
                 company,
                 llm_suggester=llm_suggester,
                 llm_model=llm_model,
                 maximum_observations_per_request=maximum_observations_per_request,
                 created_at=created_at,
             )
-            company_writes, finalize_metrics = _finalize_company_profiles(
+            emptied_person_ids = outcome.emptied_person_ids
+            (
+                company_writes,
+                finalize_metrics,
+                stale_correction_ids,
+            ) = _finalize_company_profiles(
                 company,
-                profiles,
-                current_input_hashes=current_input_hashes,
+                outcome.profiles,
+                current_input_hashes=outcome.current_input_hashes,
                 created_at=created_at,
             )
             metrics["llm_inserted_count"] += len(company_writes)
-            suggestion_writes.extend(company_suggestions)
-            for name, value in (*company_metrics.items(), *finalize_metrics.items()):
+            suggestion_writes.extend(outcome.suggestion_writes)
+            for name, value in (*outcome.metrics.items(), *finalize_metrics.items()):
                 metrics[name] += value
         else:
             metrics["direct_company_count"] += 1
@@ -1524,7 +1578,11 @@ def normalize_companies(
                 company,
                 created_at=created_at,
             )
-            company_writes, finalize_metrics = _finalize_company_profiles(
+            (
+                company_writes,
+                finalize_metrics,
+                stale_correction_ids,
+            ) = _finalize_company_profiles(
                 company,
                 profiles,
                 current_input_hashes=frozenset(),
@@ -1534,8 +1592,15 @@ def normalize_companies(
             for name, value in finalize_metrics.items():
                 metrics[name] += value
         writes.extend(company_writes)
+        notes.append(
+            CompanyNormalizationNotes(
+                company_id=company.status.company_id,
+                stale_correction_ids=stale_correction_ids,
+                emptied_person_ids=emptied_person_ids,
+            )
+        )
 
-    return writes, suggestion_writes, metrics
+    return writes, suggestion_writes, metrics, notes
 
 
 def _load_company_work(
@@ -1758,7 +1823,10 @@ def materialize_se_company_people(
 
     deepseek_client = llm_client
     selected_model = llm_model
-    model_provider = os.getenv("DEEPSEEK_PROVIDER", "deepseek").strip() or "deepseek"
+    # The provider label rides with the rest of the endpoint configuration:
+    # a DeepSeek-compatible endpoint that is not DeepSeek must not be recorded
+    # as one. Filled in below when the settings are loaded for a real call.
+    model_provider = "deepseek"
     normalization_metrics = {
         "direct_company_count": 0,
         "llm_company_count": 0,
@@ -1775,6 +1843,7 @@ def materialize_se_company_people(
         "invalid_profile_count": 0,
         "applied_correction_count": 0,
         "stale_correction_count": 0,
+        "emptied_profile_count": 0,
         "settled_company_count": 0,
         "suggestion_inserted_count": 0,
     }
@@ -1813,6 +1882,7 @@ def materialize_se_company_people(
             if deepseek_client is None:
                 settings = deepseek_settings()
                 selected_model = settings.model
+                model_provider = settings.provider
                 deepseek_client = OpenAI(
                     base_url=settings.base_url.rstrip("/"),
                     api_key=settings.api_key,
@@ -1842,13 +1912,24 @@ def materialize_se_company_people(
 
             llm_suggester = suggest_company_people
 
-        writes, suggestion_writes, batch_metrics = normalize_companies(
+        writes, suggestion_writes, batch_metrics, notes = normalize_companies(
             companies,
             llm_suggester=llm_suggester,
             llm_model=selected_model,
             maximum_observations_per_request=maximum_observations_per_request,
             created_at=updated_at,
         )
+        if log is not None:
+            for note in notes:
+                if note.is_empty:
+                    continue
+                log(
+                    "Stale corrections skipped: company=%s ids=%s "
+                    "emptied_people=%s",
+                    note.company_id,
+                    [str(value) for value in note.stale_correction_ids],
+                    [str(value) for value in note.emptied_person_ids],
+                )
         normalization_metrics["suggestion_inserted_count"] += _insert_suggestion_writes(
             clickhouse=clickhouse,
             writes=suggestion_writes,

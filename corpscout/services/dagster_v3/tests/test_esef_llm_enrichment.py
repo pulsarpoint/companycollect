@@ -420,6 +420,13 @@ def test_deepseek_settings_use_existing_repository_environment(
     assert settings.base_url == "https://api.deepseek.example"
     assert settings.model == "deepseek-v4-flash"
     assert settings.api_key == "test-key"
+    # The provider label rides with the endpoint so a DeepSeek-compatible host
+    # that is not DeepSeek is not recorded as one.
+    assert settings.provider == "deepseek"
+    monkeypatch.setenv("DEEPSEEK_PROVIDER", "  fireworks  ")
+    assert deepseek_settings().provider == "fireworks"
+    monkeypatch.setenv("DEEPSEEK_PROVIDER", "   ")
+    assert deepseek_settings().provider == "deepseek"
     monkeypatch.delenv("DEEPSEEK_API_KEY")
     with pytest.raises(RuntimeError, match="DEEPSEEK_API_KEY"):
         deepseek_settings()

@@ -205,6 +205,9 @@ class DeepSeekSettings:
     base_url: str
     model: str
     api_key: str
+    # Recorded as model_provider on the rows a call produces. Optional: the
+    # endpoint is DeepSeek-compatible, but it is not always DeepSeek itself.
+    provider: str = "deepseek"
 
 
 def deepseek_settings() -> DeepSeekSettings:
@@ -222,6 +225,7 @@ def deepseek_settings() -> DeepSeekSettings:
         base_url=values["DEEPSEEK_URL"],
         model=values["DEEPSEEK_MODEL"],
         api_key=values["DEEPSEEK_API_KEY"],
+        provider=os.getenv("DEEPSEEK_PROVIDER", "").strip() or "deepseek",
     )
 
 
