@@ -8,6 +8,7 @@ import dagster as dg
 import pytest
 from pydantic import ValidationError
 
+from dagster_v3.defs.company_people.corrections import StoredSuggestion
 from dagster_v3.defs.company_people.normalization import (
     DIRECT_PROMPT_VERSION,
     PERSON_COLUMNS,
@@ -20,6 +21,7 @@ from dagster_v3.defs.company_people.normalization import (
     LlmCompanyPeopleResponse,
     LlmCompanyPeopleResult,
     LlmCompanyPersonSuggestion,
+    SuggestionWrite,
     batch_company_observations,
     build_company_people_request,
     build_company_statistics_sql,
@@ -27,6 +29,7 @@ from dagster_v3.defs.company_people.normalization import (
     normalize_companies,
     observation_role_bucket,
     request_company_people,
+    request_input_hash,
     validate_company_people_response,
 )
 
@@ -381,9 +384,10 @@ def test_single_source_company_is_copied_without_llm() -> None:
     )
     company = _company(observation)
 
-    writes, metrics = normalize_companies(
+    writes, _suggestions, metrics = normalize_companies(
         [company],
         llm_suggester=None,
+        llm_model=None,
         maximum_observations_per_request=10,
         created_at=NOW,
     )
@@ -434,9 +438,10 @@ def test_multi_source_company_is_sent_once_when_below_limit() -> None:
             ]
         )
 
-    writes, metrics = normalize_companies(
+    writes, _suggestions, metrics = normalize_companies(
         [company],
         llm_suggester=suggest,
+        llm_model="deepseek-v4-flash",
         maximum_observations_per_request=10,
         created_at=NOW,
     )
@@ -481,9 +486,10 @@ def test_large_company_sends_role_batches_and_all_observations() -> None:
             ]
         )
 
-    writes, metrics = normalize_companies(
+    writes, _suggestions, metrics = normalize_companies(
         [company],
         llm_suggester=suggest,
+        llm_model="deepseek-v4-flash",
         maximum_observations_per_request=2,
         created_at=NOW,
     )
@@ -526,3 +532,109 @@ def test_main_asset_depends_on_draft_and_combined_job_runs_both() -> None:
         ).asset_layer.executable_asset_keys
     }
     assert publish_job_keys == {"se_company_person_clickhouse"}
+
+
+def test_request_input_hash_is_stable_and_ignores_repair_turns() -> None:
+    observation = _observation("esef", name="David Mindus", role="chief_executive", index=1)
+    batch = batch_company_observations([observation], maximum_observations_per_request=10)[0]
+    request = build_company_people_request(
+        company_id=COMPANY_ID, batch=batch, previous_profiles=[], model="deepseek-v4-flash"
+    )
+
+    first = request_input_hash(request)
+    request["messages"].append({"role": "assistant", "content": "{}"})
+
+    assert len(first) == 64
+    assert request_input_hash(request) != first  # repair turns change the payload
+    assert request_input_hash(
+        build_company_people_request(
+            company_id=COMPANY_ID, batch=batch, previous_profiles=[], model="deepseek-v4-flash"
+        )
+    ) == first
+
+
+def test_multi_source_company_records_one_suggestion_per_person() -> None:
+    observations = (
+        _observation("bolagsverket", name="David Mindus", role="ceo", index=1),
+        _observation("esef", name="David Mindus", role="chief_executive", index=2),
+    )
+    company = _company(*observations)
+
+    def suggest(company_id, batch, previous_profiles):
+        return _llm_result(
+            [
+                LlmCompanyPersonSuggestion(
+                    name="David Gustaf Mindus",
+                    description="CEO.",
+                    draft_ids=[item.draft_id for item in batch.observations],
+                )
+            ]
+        )
+
+    writes, suggestions, metrics = normalize_companies(
+        [company],
+        llm_suggester=suggest,
+        llm_model="deepseek-v4-flash",
+        maximum_observations_per_request=10,
+        created_at=NOW,
+    )
+
+    assert len(writes) == 1
+    assert len(suggestions) == 1
+    assert isinstance(suggestions[0], SuggestionWrite)
+    assert suggestions[0].person_id == writes[0].person_id
+    assert writes[0].suggestion_id == suggestions[0].suggestion_id
+    assert json.loads(suggestions[0].suggestion_json)["name"] == "David Gustaf Mindus"
+    assert len(suggestions[0].input_hash) == 64
+    assert metrics["llm_request_count"] == 1
+
+
+def test_stored_suggestion_with_current_input_hash_skips_the_llm() -> None:
+    observations = (
+        _observation("bolagsverket", name="David Mindus", role="ceo", index=1),
+        _observation("esef", name="David Mindus", role="chief_executive", index=2),
+    )
+    batch = batch_company_observations(observations, maximum_observations_per_request=10)[0]
+    input_hash = request_input_hash(
+        build_company_people_request(
+            company_id=COMPANY_ID, batch=batch, previous_profiles=[], model="deepseek-v4-flash"
+        )
+    )
+    stored = StoredSuggestion(
+        suggestion_id=uuid.UUID(int=500),
+        company_id=COMPANY_ID,
+        person_id=uuid.UUID(int=1000),
+        input_hash=input_hash,
+        draft_ids=tuple(sorted(item.draft_id for item in observations)),
+        name="David Gustaf Mindus",
+        description="CEO.",
+        existing_person_id=None,
+        created_at=NOW,
+    )
+    company = CompanyPersonWork(
+        status=_company(*observations).status,
+        observations=observations,
+        previous_profiles=(),
+        suggestions=(stored,),
+    )
+    calls: list[str] = []
+
+    def suggest(company_id, batch, previous_profiles):
+        calls.append(company_id)
+        raise AssertionError("LLM must not be called when a suggestion is current")
+
+    writes, suggestions, metrics = normalize_companies(
+        [company],
+        llm_suggester=suggest,
+        llm_model="deepseek-v4-flash",
+        maximum_observations_per_request=10,
+        created_at=NOW,
+    )
+
+    assert calls == []
+    assert suggestions == []
+    assert len(writes) == 1
+    assert writes[0].name == "David Gustaf Mindus"
+    assert writes[0].suggestion_id == uuid.UUID(int=500)
+    assert metrics["llm_reused_batch_count"] == 1
+    assert metrics["llm_request_count"] == 0

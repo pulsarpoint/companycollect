@@ -9,6 +9,7 @@ are chunked; no source observation is dropped.
 
 import hashlib
 import json
+import os
 import re
 import uuid
 from collections import defaultdict
@@ -30,6 +31,18 @@ from pydantic import (
 )
 
 from dagster_v3.defs.clickhouse.resolved import assert_clickhouse_tables_exist
+from dagster_v3.defs.company_people.corrections import (
+    CORRECTION_TABLE,
+    QUALIFIED_SUGGESTION_TABLE,
+    SUGGESTION_COLUMNS,
+    SUGGESTION_TABLE,
+    PersonCorrection,
+    StoredSuggestion,
+    build_company_corrections_sql,
+    build_company_suggestions_sql,
+    correction_from_row,
+    suggestion_from_row,
+)
 from dagster_v3.defs.company_people.draft import normalized_company_ids
 from dagster_v3.defs.company_people.roles import (
     canonical_role_code,
@@ -121,6 +134,8 @@ class CompanyPersonWork:
     status: CompanyPersonStatus
     observations: tuple[DraftPersonObservation, ...]
     previous_profiles: tuple[ExistingPersonProfile, ...]
+    suggestions: tuple[StoredSuggestion, ...] = ()
+    corrections: tuple[PersonCorrection, ...] = ()
 
     @property
     def requires_llm(self) -> bool:
@@ -144,6 +159,8 @@ class LlmCompanyPeopleResult:
     prompt_tokens: int
     completion_tokens: int
     contract_retry_count: int = 0
+    input_hash: str = ""
+    raw_response: str = ""
 
 
 @dataclass(frozen=True)
@@ -156,6 +173,24 @@ class PersonProfileWrite:
     model_provider: str
     model_name: str
     prompt_version: str
+    created_at: datetime
+    suggestion_id: uuid.UUID | None = None
+
+
+@dataclass(frozen=True)
+class SuggestionWrite:
+    suggestion_id: uuid.UUID
+    company_id: str
+    person_id: uuid.UUID
+    input_hash: str
+    draft_ids: tuple[uuid.UUID, ...]
+    suggestion_json: str
+    raw_response: str
+    model_provider: str
+    model_name: str
+    prompt_version: str
+    prompt_tokens: int
+    completion_tokens: int
     created_at: datetime
 
 
@@ -170,6 +205,7 @@ class _ProfileAccumulator:
     model_name: str
     prompt_version: str
     touched: bool = False
+    suggestion_id: uuid.UUID | None = None
 
 
 class LlmCompanyPersonSuggestion(BaseModel):
@@ -532,6 +568,21 @@ def build_company_people_request(
     }
 
 
+def request_input_hash(request: Mapping[str, Any]) -> str:
+    """Hash the exact model, prompt version and messages of one request."""
+    payload = json.dumps(
+        {
+            "model": request["model"],
+            "prompt_version": PROMPT_VERSION,
+            "messages": request["messages"],
+        },
+        ensure_ascii=False,
+        separators=(",", ":"),
+        sort_keys=True,
+    )
+    return hashlib.sha256(payload.encode()).hexdigest()
+
+
 def validate_company_people_response(
     response: LlmCompanyPeopleResponse,
     *,
@@ -574,6 +625,7 @@ def request_company_people(
     batch: CompanyObservationBatch,
     previous_profiles: Sequence[ExistingPersonProfile],
     model: str,
+    model_provider: str = "deepseek",
     maximum_contract_attempts: int = MAX_CONTRACT_ATTEMPTS,
 ) -> LlmCompanyPeopleResult:
     if maximum_contract_attempts < 1:
@@ -584,6 +636,7 @@ def request_company_people(
         previous_profiles=previous_profiles,
         model=model,
     )
+    input_hash = request_input_hash(request)
     prompt_tokens = 0
     completion_tokens = 0
 
@@ -626,12 +679,14 @@ def request_company_people(
 
         return LlmCompanyPeopleResult(
             response=response,
-            model_provider="deepseek",
+            model_provider=model_provider,
             model_name=model,
             prompt_version=PROMPT_VERSION,
             prompt_tokens=prompt_tokens,
             completion_tokens=completion_tokens,
             contract_retry_count=attempt - 1,
+            input_hash=input_hash,
+            raw_response=content or "",
         )
 
     raise AssertionError("unreachable company-person LLM attempt loop")
@@ -810,13 +865,67 @@ def _normalize_single_source_company(
     return writes, unchanged_profile_count
 
 
+def _newest_stored_by_person(
+    stored: Sequence[StoredSuggestion],
+) -> tuple[StoredSuggestion, ...]:
+    """Keep the newest stored row per person, ordered by person id."""
+    newest_by_person: dict[uuid.UUID, StoredSuggestion] = {}
+    for row in sorted(
+        stored, key=lambda item: (item.created_at, str(item.suggestion_id))
+    ):
+        newest_by_person[row.person_id] = row
+    return tuple(
+        newest_by_person[person_id] for person_id in sorted(newest_by_person, key=str)
+    )
+
+
+def _reuse_stored_suggestions(
+    stored: Sequence[StoredSuggestion],
+    *,
+    batch: CompanyObservationBatch,
+    previous_profiles: Sequence[ExistingPersonProfile],
+    model: str,
+    input_hash: str,
+) -> LlmCompanyPeopleResult | None:
+    """Rebuild a validated response from stored rows, or None to call the model."""
+    if not stored:
+        return None
+    try:
+        response = LlmCompanyPeopleResponse(
+            people=[
+                LlmCompanyPersonSuggestion(
+                    existing_person_id=row.existing_person_id,
+                    name=row.name,
+                    description=row.description,
+                    draft_ids=list(row.draft_ids),
+                )
+                for row in stored
+            ]
+        )
+        validate_company_people_response(
+            response, batch=batch, previous_profiles=previous_profiles
+        )
+    except (ValidationError, ValueError):
+        return None
+    return LlmCompanyPeopleResult(
+        response=response,
+        model_provider="stored",
+        model_name=model,
+        prompt_version=PROMPT_VERSION,
+        prompt_tokens=0,
+        completion_tokens=0,
+        input_hash=input_hash,
+    )
+
+
 def _normalize_multi_source_company(
     company: CompanyPersonWork,
     *,
     llm_suggester: CompanyLlmSuggester,
+    llm_model: str | None,
     maximum_observations_per_request: int,
     created_at: datetime,
-) -> tuple[list[PersonProfileWrite], dict[str, int]]:
+) -> tuple[list[PersonProfileWrite], list[SuggestionWrite], dict[str, int]]:
     profiles = {
         previous.person_id: _ProfileAccumulator(
             person_id=previous.person_id,
@@ -840,19 +949,52 @@ def _normalize_multi_source_company(
     prompt_tokens = 0
     completion_tokens = 0
     contract_retry_count = 0
+    suggestion_writes: list[SuggestionWrite] = []
+    reused_batch_count = 0
+    request_count = 0
+    stored_by_hash: dict[str, list[StoredSuggestion]] = defaultdict(list)
+    for stored in company.suggestions:
+        stored_by_hash[stored.input_hash].append(stored)
 
     for batch in batches:
         request_profiles = _profiles_for_request(profiles)
-        result = llm_suggester(
-            company.status.company_id,
-            batch,
-            request_profiles,
+        if llm_model is None:
+            raise RuntimeError("A multi-source company requires an LLM model name")
+        input_hash = request_input_hash(
+            build_company_people_request(
+                company_id=company.status.company_id,
+                batch=batch,
+                previous_profiles=request_profiles,
+                model=llm_model,
+            )
         )
-        validate_company_people_response(
-            result.response,
+        stored_rows = _newest_stored_by_person(stored_by_hash.get(input_hash, ()))
+        result = _reuse_stored_suggestions(
+            stored_rows,
             batch=batch,
             previous_profiles=request_profiles,
+            model=llm_model,
+            input_hash=input_hash,
         )
+        stored_by_draft_ids: dict[tuple[uuid.UUID, ...], StoredSuggestion] = {}
+        if result is None:
+            result = llm_suggester(
+                company.status.company_id,
+                batch,
+                request_profiles,
+            )
+            validate_company_people_response(
+                result.response,
+                batch=batch,
+                previous_profiles=request_profiles,
+            )
+            request_count += 1
+        else:
+            reused_batch_count += 1
+            stored_by_draft_ids = {
+                tuple(sorted(row.draft_ids)): row for row in stored_rows
+            }
+        reused = result.model_provider == "stored"
         prompt_tokens += result.prompt_tokens
         completion_tokens += result.completion_tokens
         contract_retry_count += result.contract_retry_count
@@ -869,7 +1011,12 @@ def _normalize_multi_source_company(
             for profile in profiles.values()
         }
         for suggestion in result.response.people:
-            person_id = suggestion.existing_person_id
+            stored_row = stored_by_draft_ids.get(tuple(sorted(suggestion.draft_ids)))
+            person_id = (
+                stored_row.person_id
+                if stored_row is not None
+                else suggestion.existing_person_id
+            )
             if person_id is None:
                 person_id = profiles_by_name.get(_name_match_key(suggestion.name))
             if person_id is None:
@@ -883,8 +1030,12 @@ def _normalize_multi_source_company(
                     description=suggestion.description,
                     draft_ids=set(),
                     created_at=created_at,
-                    model_provider=result.model_provider,
-                    model_name=result.model_name,
+                    model_provider=(
+                        "deterministic" if reused else result.model_provider
+                    ),
+                    model_name=(
+                        "stored-suggestion" if reused else result.model_name
+                    ),
                     prompt_version=result.prompt_version,
                 )
                 profiles[person_id] = profile
@@ -892,10 +1043,34 @@ def _normalize_multi_source_company(
             if suggestion.description is not None:
                 profile.description = suggestion.description
             profile.draft_ids.update(suggestion.draft_ids)
-            profile.model_provider = result.model_provider
-            profile.model_name = result.model_name
-            profile.prompt_version = result.prompt_version
+            if not reused:
+                profile.model_provider = result.model_provider
+                profile.model_name = result.model_name
+                profile.prompt_version = result.prompt_version
             profile.touched = True
+
+            if stored_row is not None:
+                profile.suggestion_id = stored_row.suggestion_id
+                continue
+            suggestion_id = uuid.uuid4()
+            suggestion_writes.append(
+                SuggestionWrite(
+                    suggestion_id=suggestion_id,
+                    company_id=company.status.company_id,
+                    person_id=person_id,
+                    input_hash=result.input_hash or input_hash,
+                    draft_ids=tuple(sorted(suggestion.draft_ids)),
+                    suggestion_json=suggestion.model_dump_json(),
+                    raw_response=result.raw_response,
+                    model_provider=result.model_provider,
+                    model_name=result.model_name,
+                    prompt_version=result.prompt_version,
+                    prompt_tokens=result.prompt_tokens,
+                    completion_tokens=result.completion_tokens,
+                    created_at=created_at,
+                )
+            )
+            profile.suggestion_id = suggestion_id
 
     empty_profiles = [
         str(profile.person_id)
@@ -927,35 +1102,44 @@ def _normalize_multi_source_company(
                 model_name=profile.model_name,
                 prompt_version=profile.prompt_version,
                 created_at=profile.created_at,
+                suggestion_id=profile.suggestion_id,
             )
         )
 
-    return writes, {
-        "llm_request_count": len(batches),
-        "llm_role_batch_count": len(batches) if len(batches) > 1 else 0,
-        "llm_observation_count": len(company.observations),
-        "llm_prompt_tokens": prompt_tokens,
-        "llm_completion_tokens": completion_tokens,
-        "llm_contract_retry_count": contract_retry_count,
-        "unchanged_profile_count": unchanged_profile_count,
-    }
+    return (
+        writes,
+        suggestion_writes,
+        {
+            "llm_request_count": request_count,
+            "llm_reused_batch_count": reused_batch_count,
+            "llm_role_batch_count": len(batches) if len(batches) > 1 else 0,
+            "llm_observation_count": len(company.observations),
+            "llm_prompt_tokens": prompt_tokens,
+            "llm_completion_tokens": completion_tokens,
+            "llm_contract_retry_count": contract_retry_count,
+            "unchanged_profile_count": unchanged_profile_count,
+        },
+    )
 
 
 def normalize_companies(
     companies: Sequence[CompanyPersonWork],
     *,
     llm_suggester: CompanyLlmSuggester | None,
+    llm_model: str | None,
     maximum_observations_per_request: int,
     created_at: datetime,
-) -> tuple[list[PersonProfileWrite], dict[str, int]]:
+) -> tuple[list[PersonProfileWrite], list[SuggestionWrite], dict[str, int]]:
     """Normalize changed companies and return writes only after all LLM calls pass."""
     writes: list[PersonProfileWrite] = []
+    suggestion_writes: list[SuggestionWrite] = []
     metrics = {
         "direct_company_count": 0,
         "llm_company_count": 0,
         "directly_inserted_count": 0,
         "llm_inserted_count": 0,
         "llm_request_count": 0,
+        "llm_reused_batch_count": 0,
         "llm_role_batch_count": 0,
         "llm_observation_count": 0,
         "llm_prompt_tokens": 0,
@@ -969,13 +1153,19 @@ def normalize_companies(
             if llm_suggester is None:
                 raise RuntimeError("A multi-source company requires an LLM suggester")
             metrics["llm_company_count"] += 1
-            company_writes, company_metrics = _normalize_multi_source_company(
+            (
+                company_writes,
+                company_suggestions,
+                company_metrics,
+            ) = _normalize_multi_source_company(
                 company,
                 llm_suggester=llm_suggester,
+                llm_model=llm_model,
                 maximum_observations_per_request=maximum_observations_per_request,
                 created_at=created_at,
             )
             metrics["llm_inserted_count"] += len(company_writes)
+            suggestion_writes.extend(company_suggestions)
             for name, value in company_metrics.items():
                 metrics[name] += value
         else:
@@ -988,7 +1178,7 @@ def normalize_companies(
             metrics["unchanged_profile_count"] += unchanged_count
         writes.extend(company_writes)
 
-    return writes, metrics
+    return writes, suggestion_writes, metrics
 
 
 def _load_company_work(
@@ -1001,6 +1191,8 @@ def _load_company_work(
     selected_company_ids = tuple(status.company_id for status in statuses)
     observations_by_company: dict[str, list[DraftPersonObservation]] = defaultdict(list)
     profiles_by_company: dict[str, list[ExistingPersonProfile]] = defaultdict(list)
+    suggestions_by_company: dict[str, list[StoredSuggestion]] = defaultdict(list)
+    corrections_by_company: dict[str, list[PersonCorrection]] = defaultdict(list)
 
     with clickhouse.get_connection() as client:
         parameters = {"selected_company_ids": selected_company_ids}
@@ -1010,6 +1202,12 @@ def _load_company_work(
         for row in client.execute(build_existing_profiles_sql(), parameters):
             company_id, profile = _profile_from_row(row)
             profiles_by_company[company_id].append(profile)
+        for row in client.execute(build_company_suggestions_sql(), parameters):
+            company_id, suggestion = suggestion_from_row(row)
+            suggestions_by_company[company_id].append(suggestion)
+        for row in client.execute(build_company_corrections_sql(), parameters):
+            company_id, correction = correction_from_row(row)
+            corrections_by_company[company_id].append(correction)
 
     result: list[CompanyPersonWork] = []
     for status in statuses:
@@ -1033,6 +1231,8 @@ def _load_company_work(
                 status=status,
                 observations=observations,
                 previous_profiles=tuple(profiles_by_company[status.company_id]),
+                suggestions=tuple(suggestions_by_company[status.company_id]),
+                corrections=tuple(corrections_by_company[status.company_id]),
             )
         )
     return result
@@ -1114,6 +1314,43 @@ def _insert_person_writes(
                         raise
 
 
+def _insert_suggestion_writes(
+    *,
+    clickhouse: ClickhouseResource,
+    writes: Sequence[SuggestionWrite],
+    source_run_id: str,
+) -> int:
+    """Append one enrichment observation row per suggestion in a single INSERT."""
+    if not writes:
+        return 0
+    insert_columns = _insert_columns(SUGGESTION_COLUMNS)
+    rows = [
+        (
+            write.suggestion_id,
+            write.company_id,
+            write.person_id,
+            write.input_hash,
+            list(write.draft_ids),
+            write.suggestion_json,
+            write.raw_response,
+            write.model_provider,
+            write.model_name,
+            write.prompt_version,
+            write.prompt_tokens,
+            write.completion_tokens,
+            source_run_id,
+            write.created_at,
+        )
+        for write in writes
+    ]
+    with clickhouse.get_connection() as client:
+        client.execute(
+            f"INSERT INTO {QUALIFIED_SUGGESTION_TABLE} ({insert_columns}) VALUES",
+            rows,
+        )
+    return len(rows)
+
+
 def materialize_se_company_people(
     *,
     clickhouse: ClickhouseResource,
@@ -1132,7 +1369,12 @@ def materialize_se_company_people(
     assert_clickhouse_tables_exist(
         clickhouse,
         database=DATABASE,
-        tables=(PERSON_DRAFT_TABLE, PERSON_TABLE),
+        tables=(
+            PERSON_DRAFT_TABLE,
+            PERSON_TABLE,
+            SUGGESTION_TABLE,
+            CORRECTION_TABLE,
+        ),
     )
     query_parameters = {
         "all_companies": not company_scope,
@@ -1156,18 +1398,21 @@ def materialize_se_company_people(
 
     deepseek_client = llm_client
     selected_model = llm_model
+    model_provider = os.getenv("DEEPSEEK_PROVIDER", "deepseek").strip() or "deepseek"
     normalization_metrics = {
         "direct_company_count": 0,
         "llm_company_count": 0,
         "directly_inserted_count": 0,
         "llm_inserted_count": 0,
         "llm_request_count": 0,
+        "llm_reused_batch_count": 0,
         "llm_role_batch_count": 0,
         "llm_observation_count": 0,
         "llm_prompt_tokens": 0,
         "llm_completion_tokens": 0,
         "llm_contract_retry_count": 0,
         "unchanged_profile_count": 0,
+        "suggestion_inserted_count": 0,
     }
     selected_company_count = 0
     inserted_count = 0
@@ -1218,13 +1463,15 @@ def materialize_se_company_people(
                     batch=batch,
                     previous_profiles=previous_profiles,
                     model=selected_model,
+                    model_provider=model_provider,
                 )
 
             llm_suggester = suggest_company_people
 
-        writes, batch_metrics = normalize_companies(
+        writes, suggestion_writes, batch_metrics = normalize_companies(
             companies,
             llm_suggester=llm_suggester,
+            llm_model=selected_model,
             maximum_observations_per_request=maximum_observations_per_request,
             created_at=updated_at,
         )
@@ -1233,6 +1480,11 @@ def materialize_se_company_people(
                 "Company-person processing made no publish progress for pending "
                 f"companies: {[status.company_id for status in statuses[:10]]}"
             )
+        normalization_metrics["suggestion_inserted_count"] += _insert_suggestion_writes(
+            clickhouse=clickhouse,
+            writes=suggestion_writes,
+            source_run_id=source_run_id,
+        )
         total_person_count = _insert_person_writes(
             clickhouse=clickhouse,
             writes=writes,
