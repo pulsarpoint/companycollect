@@ -147,11 +147,15 @@ Rules for a source file (README):
 
 Inputs: se_company_info_scb (identity and legal name — authoritative), se_company_info_esef,
 se_company_info_wikidata, later se_company_info_commoncrawl.
-Rules (merge_company_info, pure function, unit-tested):
-  legal_name   ← SCB always.
-  description  ← if only one source has one: that; if several agree (normalised): that;
-                 otherwise CONFLICT → LLM writes one description from all sources.
-  activity     ← SCB industry code; ESEF/Wikidata text kept as evidence only.
+Rules (merge_company_info, pure function, unit-tested) — refined 2026-08-22: only the
+description is merged; every other column is copied from its owning source as-is.
+  legal_name, legal form, status, dates, industry ← SCB always.
+  wikidata_id ← Wikidata; lei ← ESEF.
+  description  ← exactly one source has one: copy it (no model call);
+                 two or more: the model writes one description from all of them,
+                 published with description_source = 'llm' and description_sources /
+                 description_source_record_uids naming every contributor. No
+                 agreement heuristic — several sources always go to the model.
 Ledger: se_company_info_correction (override_field / approve_suggestion / reject_suggestion / undo)
         wins over everything; stale by evidence_hash, as for people.
 LLM:    conflicts only; request cached by input_hash in se_company_info_enrichment_observation;
