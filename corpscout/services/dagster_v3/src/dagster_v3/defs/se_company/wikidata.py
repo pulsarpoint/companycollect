@@ -101,7 +101,8 @@ FROM candidates"""
     metadata={"table": f"{DATABASE}.{TABLE}"},
     description=(
         "Wikidata facts for Swedish companies linked by orgnr or LEI (label, description, "
-        "inception, legal form, industry, headquarters, employees) as an append-only artifact."
+        "inception, legal form, industry, headquarters, employees); a new observation is written "
+        "only when the evidence hash changes and the latest per (company, source record) survives merges."
     ),
 )
 def se_company_info_wikidata_clickhouse(

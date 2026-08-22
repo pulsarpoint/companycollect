@@ -10,7 +10,8 @@ Assets
   se_company_info_scb_clickhouse → corpscout.se_company_info_scb
     legal name, legal form, status, incorporation/dissolution, activity
     description (Bolagsverket verksamhetsbeskrivning) and the primary SNI/NACE
-    code; one row per register version, appended only when evidence_hash changes.
+    code; a new observation is written only when evidence_hash changes, and the latest one per
+    (company, source record) survives merges.
 Downstream: info.py (legal_name is authoritative from here).
 """
 
@@ -95,8 +96,8 @@ WHERE source_record_uid != ''"""
     metadata={"table": f"{DATABASE}.{TABLE}"},
     description=(
         "Register facts per Swedish company (legal name, form, status, dates, activity "
-        "description, primary SNI/NACE) as an append-only artifact; a new version is "
-        "written only when the evidence hash changes."
+        "description, primary SNI/NACE); a new observation is written only when the evidence "
+        "hash changes and the latest per (company, source record) survives merges."
     ),
 )
 def se_company_info_scb_clickhouse(
