@@ -80,6 +80,20 @@ export interface SeCompanyPersonCorrectionRow {
   is_applied: number;
 }
 
+/** One live ledger row the pipeline can no longer apply (spec §4.3). */
+export interface SeStaleCorrectionRow {
+  company_id: string;
+  correction_id: string;
+  correction_kind: string;
+  subject_person_id: string;
+  reason: string;
+  decided_by: string;
+  created_at: string;
+  subject_missing: number;
+  evidence_moved: number;
+  drafts_missing: number;
+}
+
 export interface SeCompanyPersonDetail {
   person: SeCompanyPersonRow;
   drafts: SeCompanyPersonDraftRow[];
@@ -204,6 +218,56 @@ WHERE c.company_id = {companyId:String}
   AND (c.subject_person_id = {personId:UUID} OR c.target_person_id = {personId:UUID})
 ORDER BY c.created_at DESC, c.correction_id DESC
 LIMIT 200`;
+
+/**
+ * Every live correction the pipeline will skip, across companies: the reviewer
+ * has to be able to find them again, not only see a count in asset metadata.
+ * The three reasons are reported separately so the page can say which one it is.
+ */
+export const STALE_CORRECTIONS_SQL = `WITH superseded AS (
+  SELECT supersedes_correction_id AS id
+  FROM corpscout.se_company_person_correction
+  WHERE supersedes_correction_id IS NOT NULL
+)
+SELECT
+  c.company_id AS company_id,
+  toString(c.correction_id) AS correction_id,
+  c.correction_kind AS correction_kind,
+  toString(c.subject_person_id) AS subject_person_id,
+  c.reason AS reason,
+  c.decided_by AS decided_by,
+  toString(c.created_at) AS created_at,
+  toUInt8(subj.company_id = '') AS subject_missing,
+  toUInt8(
+    subj.company_id != ''
+    AND toString(subj.draft_set_hash) != toString(c.evidence_hash)
+  ) AS evidence_moved,
+  toUInt8(
+    subj.company_id != ''
+    AND notEmpty(c.draft_ids)
+    AND NOT hasAll(subj.draft_ids, c.draft_ids)
+  ) AS drafts_missing
+FROM corpscout.se_company_person_correction AS c
+LEFT JOIN corpscout.se_company_person AS subj FINAL
+  ON subj.company_id = c.company_id AND subj.person_id = c.subject_person_id
+WHERE c.correction_id NOT IN (SELECT id FROM superseded)
+  AND c.correction_kind != 'undo'
+  AND toString(c.evidence_hash) != {zeroHash:String}
+  AND (
+    subj.company_id = ''
+    OR toString(subj.draft_set_hash) != toString(c.evidence_hash)
+    OR (notEmpty(c.draft_ids) AND NOT hasAll(subj.draft_ids, c.draft_ids))
+  )
+ORDER BY c.created_at DESC
+LIMIT 500`;
+
+export async function listStaleSeCompanyPersonCorrections(): Promise<
+  SeStaleCorrectionRow[]
+> {
+  return chQuery<SeStaleCorrectionRow>(STALE_CORRECTIONS_SQL, {
+    zeroHash: ZERO_EVIDENCE_HASH,
+  });
+}
 
 export async function getSeCompanyPerson(
   companyId: string,

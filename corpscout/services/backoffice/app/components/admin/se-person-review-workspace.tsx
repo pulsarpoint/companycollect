@@ -164,6 +164,11 @@ export function SePersonReviewWorkspace({
           <code className="font-mono text-xs">{hash.slice(0, 12)}</code> ·
           prompt {person.prompt_version} · updated {person.updated_at}
         </p>
+        <p className="text-sm">
+          <Link className="underline" to="/admin/se/people/stale-corrections">
+            Corrections the pipeline is skipping
+          </Link>
+        </p>
         {person.description ? (
           <p className="text-sm">{person.description}</p>
         ) : null}

@@ -11,7 +11,9 @@ import {
   CORRECTIONS_SQL,
   DRAFTS_SQL,
   getSeCompanyPerson,
+  listStaleSeCompanyPersonCorrections,
   PERSON_SQL,
+  STALE_CORRECTIONS_SQL,
   ROLES_SQL,
   seCompanyPersonId,
   SUGGESTIONS_SQL,
@@ -149,6 +151,50 @@ describe("review query SQL text", () => {
     expect(CORRECTIONS_SQL).toContain("subj.person_id = c.subject_person_id");
     expect(CORRECTIONS_SQL).toContain("toString(subj.draft_set_hash)");
     expect(CORRECTIONS_SQL).not.toContain("{draftSetHash:String}");
+  });
+});
+
+describe("listStaleSeCompanyPersonCorrections", () => {
+  beforeEach(() => {
+    clickhouse.insert.mockReset();
+    clickhouse.query.mockReset();
+  });
+
+  it("lists live rows the pipeline cannot apply, with the reason for each", () => {
+    expect(STALE_CORRECTIONS_SQL).toContain(
+      "LEFT JOIN corpscout.se_company_person AS subj FINAL",
+    );
+    expect(STALE_CORRECTIONS_SQL).toContain(
+      "ON subj.company_id = c.company_id AND subj.person_id = c.subject_person_id",
+    );
+    expect(STALE_CORRECTIONS_SQL).toContain(
+      "c.correction_id NOT IN (SELECT id FROM superseded)",
+    );
+    expect(STALE_CORRECTIONS_SQL).toContain("c.correction_kind != 'undo'");
+    expect(STALE_CORRECTIONS_SQL).toContain(
+      "toString(c.evidence_hash) != {zeroHash:String}",
+    );
+    for (const reason of [
+      "AS subject_missing",
+      "AS evidence_moved",
+      "AS drafts_missing",
+    ]) {
+      expect(STALE_CORRECTIONS_SQL).toContain(reason);
+    }
+    expect(STALE_CORRECTIONS_SQL).toContain("hasAll(subj.draft_ids, c.draft_ids)");
+    expect(STALE_CORRECTIONS_SQL).toContain("ORDER BY c.created_at DESC\nLIMIT 500");
+  });
+
+  it("passes the zero hash as a named parameter", async () => {
+    clickhouse.query.mockResolvedValueOnce([{ correction_id: "corr-1" }]);
+
+    const rows = await listStaleSeCompanyPersonCorrections();
+
+    expect(rows).toEqual([{ correction_id: "corr-1" }]);
+    expect(clickhouse.query.mock.calls[0]).toEqual([
+      STALE_CORRECTIONS_SQL,
+      { zeroHash: ZERO_EVIDENCE_HASH },
+    ]);
   });
 });
 
