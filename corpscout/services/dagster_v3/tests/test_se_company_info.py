@@ -28,6 +28,9 @@ from dagster_v3.defs.se_company.info_rules import ArtifactRow, merge_company_inf
 
 NOW = datetime(2026, 8, 22, 12, tzinfo=UTC)
 COMPANY = "5565200028"
+OTHER_COMPANY = "5560125220"
+THIRD_COMPANY = "5567890123"
+EPOCH_SQL = "toDateTime64('1970-01-01 00:00:00', 3, 'UTC')"
 
 # assert_clickhouse_tables_exist runs its own SELECT against system.tables first,
 # so every scripted answer list starts with the tables it asks about.
@@ -43,50 +46,30 @@ EXISTING_TABLES = [
     )
 ]
 
-ARTIFACT_ROWS = [
-    (
-        "scb",
-        COMPANY,
-        "scb:1",
-        "a" * 64,
-        NOW,
-        json.dumps(
-            {
-                "legal_name": "Alpha AB",
-                "legal_name_raw": "",
-                "legal_form_code": "AB",
-                "status": "active",
-                "incorporation_date": "",
-                "dissolution_date": "",
-                "activity_description": "IT-konsulter.",
-                "primary_sni_code": "62010",
-                "primary_nace_code": "62.01",
-            }
-        ),
-    ),
-    (
-        "wikidata",
-        COMPANY,
-        "wikidata:Q1",
-        "c" * 64,
-        NOW,
-        json.dumps(
-            {
-                "wikidata_id": "Q1",
-                "wikidata_url": "",
-                "name": "Alpha",
-                "official_name": "",
-                "company_description": "Swedish fintech company",
-                "inception_date": "",
-                "legal_form_label": "",
-                "industry_wikidata_id": "",
-                "industry_label": "",
-                "headquarters_label": "",
-                "employee_count": "",
-            }
-        ),
-    ),
-]
+
+def _scb_row(company_id: str, description: str = "IT-konsulter.") -> tuple:
+    return (
+        "scb", company_id, f"scb:{company_id}", "a" * 64, NOW,
+        json.dumps({
+            "legal_name": "Alpha AB", "legal_name_raw": "", "legal_form_code": "AB",
+            "status": "active", "incorporation_date": "", "dissolution_date": "",
+            "activity_description": description, "primary_sni_code": "62010",
+            "primary_nace_code": "62.01"}),
+    )
+
+
+def _wikidata_row(company_id: str) -> tuple:
+    return (
+        "wikidata", company_id, "wikidata:Q1", "c" * 64, NOW,
+        json.dumps({
+            "wikidata_id": "Q1", "wikidata_url": "", "name": "Alpha", "official_name": "",
+            "company_description": "Swedish fintech company", "inception_date": "",
+            "legal_form_label": "", "industry_wikidata_id": "", "industry_label": "",
+            "headquarters_label": "", "employee_count": ""}),
+    )
+
+
+ARTIFACT_ROWS = [_scb_row(COMPANY), _wikidata_row(COMPANY)]
 
 
 def _outcome():
@@ -104,14 +87,15 @@ def _outcome():
 
 
 class _FakeCompletions:
-    def __init__(self, content: str) -> None:
-        self.content = content
+    def __init__(self, contents: list[str]) -> None:
+        self.contents = list(contents)
         self.requests: list[dict] = []
 
     def create(self, **request):
         self.requests.append(request)
+        content = self.contents.pop(0) if len(self.contents) > 1 else self.contents[0]
         return SimpleNamespace(
-            choices=[SimpleNamespace(message=SimpleNamespace(content=self.content))],
+            choices=[SimpleNamespace(message=SimpleNamespace(content=content))],
             usage=SimpleNamespace(prompt_tokens=11, completion_tokens=7),
         )
 
@@ -119,9 +103,27 @@ class _FakeCompletions:
 class FakeLlm:
     """Just enough of the OpenAI client for _request_description."""
 
-    def __init__(self, content: str) -> None:
-        self.completions = _FakeCompletions(content)
+    def __init__(self, *contents: str) -> None:
+        self.completions = _FakeCompletions(list(contents))
         self.chat = SimpleNamespace(completions=self.completions)
+
+
+GOOD_REPLY = json.dumps({
+    "description": "Alpha AB is a Swedish fintech company providing IT consulting.",
+    "language": "en", "rationale": "both sources"})
+
+
+def _final_rows(client) -> list[tuple]:
+    """Every row staged for the final table, in insert order."""
+    rows = []
+    for sql, params in client.executed:
+        if re.match(r"^INSERT INTO `corpscout`\.`_tmp_se_company_info_[0-9a-f]{32}`", sql):
+            rows.extend(params)
+    return rows
+
+
+def _change_scans(client) -> list[dict]:
+    return [params for sql, params in client.executed if sql.startswith("WITH artifacts AS (")]
 
 
 def test_changed_companies_sql_compares_artifact_versions_and_ledger_with_the_final() -> None:
@@ -129,21 +131,28 @@ def test_changed_companies_sql_compares_artifact_versions_and_ledger_with_the_fi
     for table in ("se_company_info_scb", "se_company_info_esef", "se_company_info_wikidata"):
         assert f"FROM corpscout.{table}" in sql
     assert "FROM corpscout.se_company_info AS final FINAL" in sql
-    assert "%(pending_model_only)s = 1 AND published.description_source_count > 1 AND published.suggestion_id IS NULL" in sql
     # A company is changed when it has never been published, when an artifact carries a
     # newer observation than the published resolution, or when the ledger gained a row
     # after it. Deliberately NOT a published-vs-live correction_ids comparison: a stale
     # or malformed correction is never applied, so that predicate would re-select the
     # same company on every run forever.
-    assert "published.company_id = ''" in sql
-    assert "artifacts.latest_observed_at > published.resolved_at" in sql
-    assert "ledger.latest_correction_at > published.resolved_at" in sql
+    assert "ifNull(published.company_id, '') = ''" in sql
+    assert f"artifacts.latest_observed_at > ifNull(published.resolved_at, {EPOCH_SQL})" in sql
+    assert f"ifNull(ledger.latest_correction_at, {EPOCH_SQL}) > ifNull(published.resolved_at, {EPOCH_SQL})" in sql
+    assert "%(pending_model_only)s = 1 AND ifNull(published.description_source_count, 0) > 1 AND published.suggestion_id IS NULL" in sql
     assert "arraySort(groupArrayIf(toString(correction_id), NOT superseded))" not in sql
+    # Every LEFT JOIN miss must be read through ifNull: bare comparisons are NULL under
+    # join_use_nulls = 1, which makes the whole scan return zero rows.
+    assert "published.company_id = ''" not in sql.replace("ifNull(published.company_id, '') = ''", "")
+    assert "> published.resolved_at" not in sql
+    assert "published.description_source_count > 1" not in sql
+    assert "ledger.latest_correction_at >" not in sql
     # ClickHouse 26.5: after the LEFT JOINs every company_id reference is qualified.
     assert "AND artifacts.company_id > %(after_company_id)s" in sql
     assert "ORDER BY artifacts.company_id" in sql
     assert "\nORDER BY company_id" not in sql and "\n  AND company_id " not in sql
-    assert "LIMIT %(max_companies)s" in sql
+    # One page per call: the LIMIT is the page size, not the whole run's cap.
+    assert "LIMIT %(page_size)s" in sql
 
 
 def test_artifact_rows_sql_unions_the_three_artifacts_with_a_source_column() -> None:
@@ -200,10 +209,15 @@ def test_parse_description_suggestion_validates_shape() -> None:
         ' "language": "en", "rationale": "both"}'
     )
     assert isinstance(suggestion, DescriptionSuggestion) and suggestion.language == "en"
-    with pytest.raises(ValueError):
-        parse_description_suggestion('{"description": "", "language": "en", "rationale": ""}')
-    with pytest.raises(ValueError):
-        parse_description_suggestion(None)
+    for bad in (
+        '{"description": "", "language": "en", "rationale": ""}',
+        '{"description": "ok", "language": "EN", "rationale": ""}',   # two letters, but not a code
+        '{"description": "ok", "language": "en", "extra": 1}',        # extra="forbid"
+        "no json here",
+        None,
+    ):
+        with pytest.raises(ValueError):
+            parse_description_suggestion(bad)
     assert DESCRIPTION_PROMPT_VERSION == "se-company-info-description-v1"
 
 
@@ -234,12 +248,24 @@ def test_initial_load_can_publish_multi_source_companies_without_the_model() -> 
     assert not any(sql.startswith("INSERT") and "enrichment_observation" in sql
                    for sql, _ in client.executed)
     assert "observation_inserted_count" not in metadata
-    staged_insert = next(params for sql, params in client.executed
-                         if sql.startswith("INSERT INTO `corpscout`.`_tmp_se_company_info_"))
-    row = dict(zip(INSERT_COLUMNS, staged_insert[0], strict=True))
-    assert row["description_source_count"] == 2 and row["description_sources"] == ["wikidata", "scb"]
-    assert row["description_source"] == "wikidata"
-    assert row["suggestion_id"] is None and row["model_provider"] == "deterministic"
+
+    # Every position of the published tuple, not just the description ones: a swapped
+    # pair of same-typed columns here would otherwise pass an entirely green suite.
+    staged = _final_rows(client)
+    assert len(staged) == 1
+    assert dict(zip(INSERT_COLUMNS, staged[0], strict=True)) == {
+        "company_id": COMPANY, "legal_name": "Alpha AB", "legal_form_code": "AB",
+        "status": "active", "incorporation_date": None,
+        "description": "Swedish fintech company", "description_language": "en",
+        "description_source": "wikidata", "description_sources": ["wikidata", "scb"],
+        "description_source_record_uids": ["wikidata:Q1", f"scb:{COMPANY}"],
+        "description_source_count": 2, "primary_nace_code": "62.01", "primary_sni_code": "62010",
+        "wikidata_id": "Q1", "lei": None,
+        "source_record_uids": [f"scb:{COMPANY}", "wikidata:Q1"],
+        "evidence_hashes": ["a" * 64, "c" * 64], "correction_ids": [], "suggestion_id": None,
+        "model_provider": "deterministic", "model_name": "se-company-info-rules",
+        "prompt_version": "se-company-info-rules-v1", "source_run_id": "run", "resolved_at": NOW,
+    }
 
 
 def test_model_pass_records_the_observation_before_publishing_its_description() -> None:
@@ -250,9 +276,7 @@ def test_model_pass_records_the_observation_before_publishing_its_description() 
     )
     from tests.test_se_company_common import FakeClickhouse, FakeClient
 
-    llm = FakeLlm(json.dumps({
-        "description": "Alpha AB is a Swedish fintech company providing IT consulting.",
-        "language": "en", "rationale": "both sources"}))
+    llm = FakeLlm(GOOD_REPLY)
     client = FakeClient(answers=[
         EXISTING_TABLES, [(COMPANY,)], ARTIFACT_ROWS, [], [],
         [(1, 0)], [(0,)], [(1,)],   # observation publish
@@ -275,16 +299,113 @@ def test_model_pass_records_the_observation_before_publishing_its_description() 
     assert observation_target < final_stage  # durable before the description it justifies
 
     observation = dict(zip(OBSERVATION_COLUMNS, client.executed[observation_stage][1][0], strict=True))
-    row = dict(zip(INSERT_COLUMNS, client.executed[final_stage][1][0], strict=True))
-    assert row["description"] == "Alpha AB is a Swedish fintech company providing IT consulting."
-    assert row["description_source"] == "llm" and row["description_language"] == "en"
-    assert row["description_sources"] == ["wikidata", "scb"] and row["description_source_count"] == 2
-    assert row["model_provider"] == "fake-provider" and row["model_name"] == "fake-model"
-    assert row["prompt_version"] == DESCRIPTION_PROMPT_VERSION
-    assert isinstance(row["suggestion_id"], uuid.UUID)
-    assert observation["suggestion_id"] == row["suggestion_id"]
-    assert re.fullmatch(r"[0-9a-f]{64}", observation["input_hash"])
-    assert json.loads(observation["suggestion"])["language"] == "en"
+    suggestion_id = observation.pop("suggestion_id")
+    input_hash = observation.pop("input_hash")
+    assert isinstance(suggestion_id, uuid.UUID) and re.fullmatch(r"[0-9a-f]{64}", input_hash)
+    assert observation == {
+        "company_id": COMPANY,
+        "suggestion": json.dumps({
+            "description": "Alpha AB is a Swedish fintech company providing IT consulting.",
+            "language": "en", "rationale": "both sources"}, ensure_ascii=False),
+        "raw_response": GOOD_REPLY, "model_provider": "fake-provider", "model_name": "fake-model",
+        "prompt_version": DESCRIPTION_PROMPT_VERSION, "prompt_tokens": 11, "completion_tokens": 7,
+        "source_run_id": "run", "created_at": NOW,
+    }
+
+    assert dict(zip(INSERT_COLUMNS, _final_rows(client)[0], strict=True)) == {
+        "company_id": COMPANY, "legal_name": "Alpha AB", "legal_form_code": "AB",
+        "status": "active", "incorporation_date": None,
+        "description": "Alpha AB is a Swedish fintech company providing IT consulting.",
+        "description_language": "en", "description_source": "llm",
+        "description_sources": ["wikidata", "scb"],
+        "description_source_record_uids": ["wikidata:Q1", f"scb:{COMPANY}"],
+        "description_source_count": 2, "primary_nace_code": "62.01", "primary_sni_code": "62010",
+        "wikidata_id": "Q1", "lei": None,
+        "source_record_uids": [f"scb:{COMPANY}", "wikidata:Q1"],
+        "evidence_hashes": ["a" * 64, "c" * 64], "correction_ids": [],
+        "suggestion_id": suggestion_id, "model_provider": "fake-provider",
+        "model_name": "fake-model", "prompt_version": DESCRIPTION_PROMPT_VERSION,
+        "source_run_id": "run", "resolved_at": NOW,
+    }
+
+
+def test_one_unusable_model_reply_only_costs_its_own_company() -> None:
+    """A malformed reply must not fail the asset and discard the page's paid calls:
+    that company publishes its deterministic pick (and no suggestion_id, so the
+    pending_model_only pass re-selects it), while its neighbour's observation is
+    still inserted."""
+    from dagster_v3.defs.se_company.info import INSERT_COLUMNS, materialize_se_company_info
+    from tests.test_se_company_common import FakeClickhouse, FakeClient
+
+    llm = FakeLlm(json.dumps({"description": "x", "language": "en", "rationale": "", "extra": 1}),
+                  GOOD_REPLY)
+    client = FakeClient(answers=[
+        EXISTING_TABLES,
+        [(COMPANY,), (OTHER_COMPANY,)],
+        [*ARTIFACT_ROWS, _scb_row(OTHER_COMPANY), _wikidata_row(OTHER_COMPANY)],
+        [], [],
+        [(1, 0)], [(0,)], [(1,)],   # observation publish -- only the second company's
+        [(2, 0)], [(0,)], [(2,)],   # final publish -- both companies
+    ])
+    logged: list[tuple] = []
+    metadata = materialize_se_company_info(
+        clickhouse=FakeClickhouse(client), source_run_id="run", resolved_at=NOW,
+        company_ids=[], max_companies=2, company_batch_size=2, timeout_seconds=10,
+        llm_client=llm, llm_model="fake-model", llm_provider="fake-provider",
+        log=lambda *args: logged.append(args))
+
+    assert metadata["model_failed_count"] == 1
+    assert metadata["llm_request_count"] == 1 and metadata["observation_inserted_count"] == 1
+    assert metadata["multi_source_count"] == 2
+    assert any("model failed" in str(entry[0]) and COMPANY in str(entry) for entry in logged)
+
+    failed, succeeded = (dict(zip(INSERT_COLUMNS, row, strict=True)) for row in _final_rows(client))
+    assert failed["company_id"] == COMPANY
+    assert failed["description"] == "Swedish fintech company"      # deterministic pick
+    assert failed["description_source"] == "wikidata" and failed["suggestion_id"] is None
+    assert failed["model_provider"] == "deterministic"
+    assert succeeded["company_id"] == OTHER_COMPANY
+    assert succeeded["description_source"] == "llm" and succeeded["suggestion_id"] is not None
+
+
+def test_the_change_scan_is_paged_and_stops_on_a_short_page() -> None:
+    """Each scan asks for exactly one page and resumes from the last company id, so the
+    scan is never re-run for rows that are then thrown away; a page shorter than the
+    limit means there is nothing left to ask for."""
+    from dagster_v3.defs.se_company.info import materialize_se_company_info
+    from tests.test_se_company_common import FakeClickhouse, FakeClient
+
+    client = FakeClient(answers=[
+        EXISTING_TABLES,
+        [(OTHER_COMPANY,), (COMPANY,)],                     # page 1: full
+        [_scb_row(OTHER_COMPANY), _scb_row(COMPANY)], [], [],
+        [(2, 0)], [(0,)], [(2,)],
+        [(THIRD_COMPANY,)],                                 # page 2: short -> stop
+        [_scb_row(THIRD_COMPANY)], [], [],
+        [(1, 0)], [(2,)], [(3,)],
+    ])
+    metadata = materialize_se_company_info(
+        clickhouse=FakeClickhouse(client), source_run_id="run", resolved_at=NOW,
+        company_ids=[], max_companies=5, company_batch_size=2, timeout_seconds=10,
+        llm_client=None, llm_model=None, llm_provider=None, log=None)
+
+    scans = _change_scans(client)
+    assert [scan["after_company_id"] for scan in scans] == ["", COMPANY]  # keyset advances
+    assert [scan["page_size"] for scan in scans] == [2, 2]
+    assert metadata["selected_company_count"] == 3 and metadata["stopped_at_cap"] is False
+    assert len(_final_rows(client)) == 3
+
+
+def test_the_model_pass_refuses_to_run_with_the_model_switched_off() -> None:
+    from dagster_v3.defs.se_company.info import materialize_se_company_info
+    from tests.test_se_company_common import FakeClickhouse, FakeClient
+
+    with pytest.raises(ValueError, match="pending_model_only"):
+        materialize_se_company_info(
+            clickhouse=FakeClickhouse(FakeClient(answers=[])), source_run_id="run", resolved_at=NOW,
+            company_ids=[], max_companies=1, company_batch_size=1, timeout_seconds=10,
+            llm_client=None, llm_model=None, llm_provider=None, log=None,
+            resolve_multi_source_with_llm=False, pending_model_only=True)
 
 
 def test_insert_columns_match_the_migration_in_order() -> None:
