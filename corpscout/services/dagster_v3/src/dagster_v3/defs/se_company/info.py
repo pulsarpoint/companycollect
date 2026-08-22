@@ -66,6 +66,12 @@ SE_COMPANY_INFO_CORRECTION = "se_company_info_correction"
 SE_COMPANY_INFO_OBSERVATION = "se_company_info_enrichment_observation"
 # A LEFT JOIN miss reads as this instant, not as a bare NULL comparison.
 EPOCH_SQL = "toDateTime64('1970-01-01 00:00:00', 3, 'UTC')"
+# "Still owed a description": several sources offered one and no suggestion has ever
+# been stored for this company -- the initial load ran with the model off, or the
+# model call failed. Written once and used by both branches of the change scan.
+PENDING_MODEL_SQL = (
+    "ifNull(published.description_source_count, 0) > 1 AND published.suggestion_id IS NULL"
+)
 # Model calls are persisted in flushes of this many rows, so a hard crash mid-page
 # loses at most one flush of paid calls rather than the whole page.
 OBSERVATION_FLUSH_ROWS = 200
@@ -166,14 +172,20 @@ def build_description_request(outcome: InfoOutcome, model: str) -> dict[str, Any
 
 
 def build_changed_companies_sql() -> str:
-    """Companies whose final row is missing or older than their evidence.
+    """Companies whose final row is missing, older than their evidence, or still owed
+    a description.
 
-    Three reasons to resolve a company again: it has never been published, an
-    artifact carries an observation newer than the published resolution, or the
-    correction ledger gained a row after it. A published-vs-live correction id set
-    comparison would be wrong here: a stale or malformed correction is never
-    applied, so its id would never appear on the published row and the company
-    would be re-selected on every run forever.
+    Reasons to resolve a company again: it has never been published, an artifact
+    carries an observation newer than the published resolution, the correction
+    ledger gained a row after it, or -- when this run has the model on
+    (``include_pending``) -- it was published with several description sources and
+    no suggestion, because the initial load ran with the model off or the model call
+    failed. Without that last term nothing about such a company ever changes again,
+    so only a manual ``pending_model_only`` run would ever retry it.
+
+    A published-vs-live correction id set comparison would be wrong here: a stale or
+    malformed correction is never applied, so its id would never appear on the
+    published row and the company would be re-selected on every run forever.
 
     ``max(observed_at)`` per artifact needs no FINAL -- ``observed_at`` IS the
     ReplacingMergeTree version column, so an unmerged older duplicate can never be
@@ -217,11 +229,12 @@ FROM artifacts
 LEFT JOIN published ON published.company_id = artifacts.company_id
 LEFT JOIN ledger ON ledger.company_id = artifacts.company_id
 WHERE (
-        (%(pending_model_only)s = 1 AND ifNull(published.description_source_count, 0) > 1 AND published.suggestion_id IS NULL)
+        (%(pending_model_only)s = 1 AND {PENDING_MODEL_SQL})
      OR (%(pending_model_only)s = 0 AND (
             ifNull(published.company_id, '') = ''
             OR artifacts.latest_observed_at > ifNull(published.resolved_at, {EPOCH_SQL})
-            OR ifNull(ledger.latest_correction_at, {EPOCH_SQL}) > ifNull(published.resolved_at, {EPOCH_SQL})))
+            OR ifNull(ledger.latest_correction_at, {EPOCH_SQL}) > ifNull(published.resolved_at, {EPOCH_SQL})
+            OR (%(include_pending)s = 1 AND {PENDING_MODEL_SQL})))
       )
   AND artifacts.company_id > %(after_company_id)s
 ORDER BY artifacts.company_id
@@ -308,7 +321,11 @@ def materialize_se_company_info(
     assert_clickhouse_tables_exist(clickhouse, database=DATABASE, tables=(
         *ARTIFACT_TABLES.values(), SE_COMPANY_INFO, SE_COMPANY_INFO_CORRECTION, SE_COMPANY_INFO_OBSERVATION))
     base = {"all_companies": int(not scope), "company_ids": scope or ("",),
-            "pending_model_only": int(pending_model_only)}
+            "pending_model_only": int(pending_model_only),
+            # A model-on ordinary run also picks up whatever the model still owes:
+            # with the model off there is nothing to retry, and the pending_model_only
+            # pass already selects exactly those companies through its own branch.
+            "include_pending": int(resolve_multi_source_with_llm and not pending_model_only)}
     metrics: dict[str, int] = defaultdict(int)
     after_company_id = ""
     stopped_at_cap = False
@@ -317,6 +334,9 @@ def materialize_se_company_info(
     while True:
         remaining = max_companies - metrics["selected_company_count"]
         if remaining <= 0:
+            # Reachable only after a FULL page (a short page breaks at the bottom of
+            # the loop), so the scan may well have more companies to give: this flag
+            # means "the cap stopped us, not exhaustion".
             stopped_at_cap = True
             break
         page_size = min(company_batch_size, remaining)
@@ -369,7 +389,9 @@ def materialize_se_company_info(
                     # One unusable reply is that company's problem, never the page's:
                     # failing here would also discard every paid call already made in
                     # this page. The company publishes its deterministic pick with no
-                    # suggestion_id, so the pending_model_only pass picks it up again.
+                    # suggestion_id, which is itself a reason to re-select it: the next
+                    # model-on run (the weekly job included) retries it, and so does a
+                    # pending_model_only pass.
                     # current_input_hash goes back to None: no live suggestion exists
                     # for this evidence, so an approve/reject correction must read stale.
                     metrics["model_failed_count"] += 1
@@ -442,6 +464,7 @@ class SECompanyInfoConfig(dg.Config):
     # False = for companies with several description sources publish the provisional pick
     # (highest-priority source) without calling the model; used for the initial load so the
     # model pass can run separately, bounded by max_companies and resumable via input_hash.
+    # Those companies are not stranded: any later model-on run selects them again.
     resolve_multi_source_with_llm: bool = True
     # True = select only companies with description_source_count > 1 and no suggestion yet
     # (the model pass of the initial load). Requires resolve_multi_source_with_llm: asking

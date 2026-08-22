@@ -140,6 +140,11 @@ def test_changed_companies_sql_compares_artifact_versions_and_ledger_with_the_fi
     assert f"artifacts.latest_observed_at > ifNull(published.resolved_at, {EPOCH_SQL})" in sql
     assert f"ifNull(ledger.latest_correction_at, {EPOCH_SQL}) > ifNull(published.resolved_at, {EPOCH_SQL})" in sql
     assert "%(pending_model_only)s = 1 AND ifNull(published.description_source_count, 0) > 1 AND published.suggestion_id IS NULL" in sql
+    # ... and, on a model-on ordinary run, "published with several sources but no
+    # suggestion" is itself a change -- otherwise nothing about such a company ever
+    # changes again and only a manual pending_model_only pass would retry it.
+    assert ("OR (%(include_pending)s = 1 AND ifNull(published.description_source_count, 0) > 1"
+            " AND published.suggestion_id IS NULL)") in sql
     assert "arraySort(groupArrayIf(toString(correction_id), NOT superseded))" not in sql
     # Every LEFT JOIN miss must be read through ifNull: bare comparisons are NULL under
     # join_use_nulls = 1, which makes the whole scan return zero rows.
@@ -406,6 +411,76 @@ def test_the_model_pass_refuses_to_run_with_the_model_switched_off() -> None:
             company_ids=[], max_companies=1, company_batch_size=1, timeout_seconds=10,
             llm_client=None, llm_model=None, llm_provider=None, log=None,
             resolve_multi_source_with_llm=False, pending_model_only=True)
+
+
+def test_a_model_on_run_also_re_selects_companies_still_owed_a_description() -> None:
+    """A company published with several description sources and no suggestion (the
+    initial load ran with the model off, or its model call failed) is never touched by
+    artifacts or the ledger again, so the ordinary model-on run has to treat that state
+    as a change -- otherwise only a manual pending_model_only pass would ever retry it."""
+    from dagster_v3.defs.se_company.info import materialize_se_company_info
+    from tests.test_se_company_common import FakeClickhouse, FakeClient
+
+    def _scan_parameters(**kwargs) -> dict:
+        client = FakeClient(answers=[EXISTING_TABLES, []])  # an empty scan: its parameters are the point
+        materialize_se_company_info(
+            clickhouse=FakeClickhouse(client), source_run_id="run", resolved_at=NOW,
+            company_ids=[], max_companies=5, company_batch_size=2, timeout_seconds=10,
+            llm_client=None, llm_model=None, llm_provider=None, log=None, **kwargs)
+        return _change_scans(client)[0]
+
+    model_on = _scan_parameters()
+    assert model_on["include_pending"] == 1 and model_on["pending_model_only"] == 0
+    # Model off: there is nothing to retry, so the term must not select anything.
+    assert _scan_parameters(resolve_multi_source_with_llm=False)["include_pending"] == 0
+    # The dedicated pass selects exactly those companies through its own branch.
+    assert _scan_parameters(pending_model_only=True)["include_pending"] == 0
+
+
+def test_model_calls_are_flushed_in_batches_so_a_crash_cannot_lose_a_whole_page(monkeypatch) -> None:
+    from dagster_v3.defs.se_company import info
+    from tests.test_se_company_common import FakeClickhouse, FakeClient
+
+    monkeypatch.setattr(info, "OBSERVATION_FLUSH_ROWS", 1)
+    client = FakeClient(answers=[
+        EXISTING_TABLES, [(COMPANY,), (OTHER_COMPANY,)],
+        [*ARTIFACT_ROWS, _scb_row(OTHER_COMPANY), _wikidata_row(OTHER_COMPANY)], [], [],
+        [(1, 0)], [(0,)], [(1,)],   # flush after the first company
+        [(1, 0)], [(1,)], [(2,)],   # flush after the second
+        [(2, 0)], [(0,)], [(2,)],   # final publish
+    ])
+    metadata = info.materialize_se_company_info(
+        clickhouse=FakeClickhouse(client), source_run_id="run", resolved_at=NOW,
+        company_ids=[], max_companies=2, company_batch_size=2, timeout_seconds=10,
+        llm_client=FakeLlm(GOOD_REPLY), llm_model="fake-model", llm_provider="fake-provider", log=None)
+
+    assert metadata["observation_inserted_count"] == 2 and metadata["llm_request_count"] == 2
+    stages = [i for i, (sql, _) in enumerate(client.executed)
+              if sql.startswith("INSERT INTO `corpscout`.`_tmp_se_company_info_enrichment_observation_")]
+    final_stage = next(i for i, (sql, _) in enumerate(client.executed)
+                       if re.match(r"^INSERT INTO `corpscout`\.`_tmp_se_company_info_[0-9a-f]{32}`", sql))
+    assert len(stages) == 2 and max(stages) < final_stage  # two flushes, both before the final
+    assert [len(client.executed[i][1]) for i in stages] == [1, 1]
+
+
+def test_the_cap_rather_than_exhaustion_is_reported_when_a_full_page_uses_it_up() -> None:
+    """stopped_at_cap is only reachable after a FULL page (a short page ends the loop
+    at the bottom), so it always means "more changed companies may remain"."""
+    from dagster_v3.defs.se_company.info import materialize_se_company_info
+    from tests.test_se_company_common import FakeClickhouse, FakeClient
+
+    client = FakeClient(answers=[
+        EXISTING_TABLES, [(COMPANY,)], ARTIFACT_ROWS, [], [], [(1, 0)], [(0,)], [(1,)]])
+    logged: list[tuple] = []
+    metadata = materialize_se_company_info(
+        clickhouse=FakeClickhouse(client), source_run_id="run", resolved_at=NOW,
+        company_ids=[], max_companies=1, company_batch_size=1, timeout_seconds=10,
+        llm_client=None, llm_model=None, llm_provider=None,
+        log=lambda *args: logged.append(args), resolve_multi_source_with_llm=False)
+
+    assert metadata["stopped_at_cap"] is True
+    assert len(_change_scans(client)) == 1  # the cap stops the loop before asking again
+    assert any("max_companies cap" in str(entry[0]) for entry in logged)
 
 
 def test_insert_columns_match_the_migration_in_order() -> None:
