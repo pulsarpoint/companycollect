@@ -1819,7 +1819,7 @@ def test_initial_load_can_publish_multi_source_companies_without_the_model() -> 
     """resolve_multi_source_with_llm=False publishes the provisional pick and records the
     contributing sources; the model is never constructed. Exercised through materialize_se_company_info with a fake
     ClickHouse client that returns one changed company, its artifact rows (an scb/wikidata
-    disagreement) and no ledger/observations; the staged final row must carry has_conflict=1,
+    pair of descriptions) and no ledger/observations;
     description_source='esef'|'wikidata'|'scb' (never 'llm'), and llm_request_count == 0."""
     from dagster_v3.defs.se_company.info import INSERT_COLUMNS, materialize_se_company_info
     from tests.test_se_company_common import FakeClickhouse, FakeClient  # reuse the scripted fake
