@@ -34,8 +34,8 @@ defs/se_company/
   README.md        this design, condensed: layers, naming, envelope, how to add a source/datatype
   common.py        publish_with_stage(), ledger_sensor(), reuse_or_call() — the only shared code
   scb.py           group se_company_scb          ← sweden_company_companies_clickhouse (register = company_id universe)
-  esef.py          group se_company_esef         ← esef_company_source_records_clickhouse
-  wikidata.py      group se_company_wikidata     ← wikidata_company_source_records_clickhouse
+  esef.py          group se_company_esef         ← esef_document_company_information_clickhouse (+ esef_source_documents)
+  wikidata.py      group se_company_wikidata     ← wikidata_companies (+ company_identifier links)
   bolagsverket.py  group se_company_bolagsverket ← sweden_financial_company_source_records_clickhouse
   commoncrawl.py   group se_company_commoncrawl  ← company_domains (confirmed links) + commoncrawl_* company_info   (later)
   info.py          group se_company              → se_company_info        (merge asset, ledger, sensor)
@@ -90,7 +90,8 @@ ORDER BY (company_id, source_record_uid);
 ```
 
 Every final table carries, after its typed merged columns: `source_record_uids Array(String)`,
-`evidence_hashes Array(FixedString(64))`, `correction_ids Array(UUID)`,
+`evidence_hashes Array(String)` (64-char lowercase hex — `Array(String)` rather than
+`Array(FixedString(64))` so a short value can never be NUL-padded into a wrong hash), `correction_ids Array(UUID)`,
 `suggestion_id Nullable(UUID)`, `model_provider`, `model_name`, `prompt_version`,
 `source_run_id`, `resolved_at`; engine `ReplacingMergeTree(resolved_at)`, `ORDER BY (company_id)`.
 Change detection for a company = any artifact `observed_at` > final `resolved_at`, or the live
@@ -101,9 +102,11 @@ ledger set ≠ `correction_ids`.
 ```python
 """Swedish company artifacts extracted from ESEF filings.
 
-Input (source layer): esef_company_source_records_clickhouse — one row per kept fact/section,
-all countries. This module keeps country_code = 'SE' issuers and writes one artifact table per
-datatype with the standard envelope followed by ESEF's own typed columns.
+Input (source layer): esef_document_company_information_clickhouse joined to
+esef_source_documents — the published, typed ESEF payload (not the generic
+company_source_records provenance layer, which is an audit trail rather than a typed input).
+This module keeps SE issuers and writes one artifact table per datatype with the standard
+envelope followed by ESEF's own typed columns.
 
 Assets
   se_company_info_esef_clickhouse       → corpscout.se_company_info_esef       (name, description, activity text per filing)
@@ -113,7 +116,7 @@ Downstream: info.py, financial.py.
 
 @dg.asset(
     name="se_company_info_esef_clickhouse",
-    deps=[dg.AssetKey("esef_company_source_records_clickhouse")],
+    deps=[dg.AssetKey("esef_document_company_information_clickhouse")],
     group_name="se_company_esef",
     kinds={"clickhouse", "python"},
     metadata={"table": "corpscout.se_company_info_esef"},
