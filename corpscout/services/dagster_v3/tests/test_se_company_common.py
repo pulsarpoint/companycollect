@@ -33,7 +33,11 @@ KIND_ORDER = {"override_field": 0, "approve_suggestion": 1, "reject_suggestion":
 
 
 class FakeClient:
-    """Records executed SQL; answers count queries from a scripted list."""
+    """Records executed SQL; answers read queries from a scripted list.
+
+    A read is anything starting with SELECT or WITH (a CTE query reads too);
+    everything else -- CREATE/INSERT/DROP -- is recorded and answers nothing.
+    """
 
     def __init__(self, answers: list[list[tuple]]) -> None:
         self.executed: list[tuple[str, object]] = []
@@ -41,7 +45,7 @@ class FakeClient:
 
     def execute(self, sql: str, parameters: object = None) -> list[tuple]:
         self.executed.append((sql, parameters))
-        if sql.lstrip().upper().startswith("SELECT"):
+        if sql.lstrip().upper().startswith(("SELECT", "WITH")):
             return self.answers.pop(0)
         return []
 

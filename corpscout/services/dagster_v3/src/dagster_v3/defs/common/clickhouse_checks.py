@@ -207,6 +207,15 @@ CLICKHOUSE_LEAVES: tuple[ClickhouseLeaf, ...] = (
         ("se_addresses_current", "se_company_address_links_current"),
         WEEKLY,
     ),
+    # se_company — the information pilot: three per-source artifacts and the merged
+    # final. max_age stays None while se_company_info_weekly ships STOPPED; a
+    # freshness bound only makes sense once the schedule is turned on.
+    ClickhouseLeaf("se_company_info_scb_clickhouse", ("se_company_info_scb",), None),
+    ClickhouseLeaf("se_company_info_esef_clickhouse", ("se_company_info_esef",), None),
+    ClickhouseLeaf(
+        "se_company_info_wikidata_clickhouse", ("se_company_info_wikidata",), None
+    ),
+    ClickhouseLeaf("se_company_info_clickhouse", ("se_company_info",), None),
     # sweden_financial — reports/facts are scoped incremental exports. The
     # source-owned observation and other derived publishers are unscheduled
     # full rebuilds, so they receive row-count checks but no freshness check.
