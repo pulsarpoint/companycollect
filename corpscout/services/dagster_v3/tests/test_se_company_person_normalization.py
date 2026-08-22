@@ -1,5 +1,6 @@
 import json
 import uuid
+from dataclasses import replace
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from types import SimpleNamespace
@@ -373,6 +374,16 @@ def test_llm_contract_failure_is_retried_with_exact_required_draft_ids() -> None
     assert result.contract_retry_count == 1
     assert result.prompt_tokens == 20
     assert result.completion_tokens == 10
+    # The recorded hash is taken before any repair turn is appended, so it still
+    # matches the hash normalization uses to look up stored suggestions.
+    assert result.input_hash == request_input_hash(
+        build_company_people_request(
+            company_id=COMPANY_ID,
+            batch=batch,
+            previous_profiles=(),
+            model="deepseek-v4-flash",
+        )
+    )
     correction = requests[1]["messages"][-1]["content"]
     assert "failed validation" in correction
     assert all(str(item.draft_id) in correction for item in observations)
@@ -424,9 +435,11 @@ def test_multi_source_company_is_sent_once_when_below_limit() -> None:
         company_id: str,
         batch: CompanyObservationBatch,
         previous_profiles: tuple[ExistingPersonProfile, ...],
+        request: dict[str, object],
     ) -> LlmCompanyPeopleResult:
         assert company_id == COMPANY_ID
         assert previous_profiles == ()
+        assert request["model"] == "deepseek-v4-flash"
         calls.append(batch)
         return _llm_result(
             [
@@ -473,8 +486,9 @@ def test_large_company_sends_role_batches_and_all_observations() -> None:
         company_id: str,
         batch: CompanyObservationBatch,
         previous_profiles: tuple[ExistingPersonProfile, ...],
+        request: dict[str, object],
     ) -> LlmCompanyPeopleResult:
-        del company_id, previous_profiles
+        del company_id, previous_profiles, request
         received_ids.extend(item.draft_id for item in batch.observations)
         return _llm_result(
             [
@@ -534,7 +548,7 @@ def test_main_asset_depends_on_draft_and_combined_job_runs_both() -> None:
     assert publish_job_keys == {"se_company_person_clickhouse"}
 
 
-def test_request_input_hash_is_stable_and_ignores_repair_turns() -> None:
+def test_request_input_hash_is_stable_and_covers_every_message() -> None:
     observation = _observation("esef", name="David Mindus", role="chief_executive", index=1)
     batch = batch_company_observations([observation], maximum_observations_per_request=10)[0]
     request = build_company_people_request(
@@ -545,7 +559,7 @@ def test_request_input_hash_is_stable_and_ignores_repair_turns() -> None:
     request["messages"].append({"role": "assistant", "content": "{}"})
 
     assert len(first) == 64
-    assert request_input_hash(request) != first  # repair turns change the payload
+    assert request_input_hash(request) != first  # an extra message is a new payload
     assert request_input_hash(
         build_company_people_request(
             company_id=COMPANY_ID, batch=batch, previous_profiles=[], model="deepseek-v4-flash"
@@ -560,7 +574,7 @@ def test_multi_source_company_records_one_suggestion_per_person() -> None:
     )
     company = _company(*observations)
 
-    def suggest(company_id, batch, previous_profiles):
+    def suggest(company_id, batch, previous_profiles, request):
         return _llm_result(
             [
                 LlmCompanyPersonSuggestion(
@@ -609,6 +623,9 @@ def test_stored_suggestion_with_current_input_hash_skips_the_llm() -> None:
         name="David Gustaf Mindus",
         description="CEO.",
         existing_person_id=None,
+        model_provider="deepseek",
+        model_name="deepseek-v4-flash",
+        prompt_version=PROMPT_VERSION,
         created_at=NOW,
     )
     company = CompanyPersonWork(
@@ -619,7 +636,7 @@ def test_stored_suggestion_with_current_input_hash_skips_the_llm() -> None:
     )
     calls: list[str] = []
 
-    def suggest(company_id, batch, previous_profiles):
+    def suggest(company_id, batch, previous_profiles, request):
         calls.append(company_id)
         raise AssertionError("LLM must not be called when a suggestion is current")
 
@@ -636,5 +653,36 @@ def test_stored_suggestion_with_current_input_hash_skips_the_llm() -> None:
     assert len(writes) == 1
     assert writes[0].name == "David Gustaf Mindus"
     assert writes[0].suggestion_id == uuid.UUID(int=500)
+    assert writes[0].model_provider == "deepseek"
+    assert writes[0].model_name == "deepseek-v4-flash"
+    assert writes[0].prompt_version == PROMPT_VERSION
     assert metrics["llm_reused_batch_count"] == 1
     assert metrics["llm_request_count"] == 0
+
+
+def test_suggester_answering_a_different_request_is_rejected() -> None:
+    observations = (
+        _observation("bolagsverket", name="David Mindus", role="ceo", index=1),
+        _observation("esef", name="David Mindus", role="chief_executive", index=2),
+    )
+    company = _company(*observations)
+
+    def suggest(company_id, batch, previous_profiles, request):
+        result = _llm_result(
+            [
+                LlmCompanyPersonSuggestion(
+                    name="David Gustaf Mindus",
+                    draft_ids=[item.draft_id for item in batch.observations],
+                )
+            ]
+        )
+        return replace(result, input_hash="f" * 64)
+
+    with pytest.raises(ValueError, match="LLM input hash mismatch"):
+        normalize_companies(
+            [company],
+            llm_suggester=suggest,
+            llm_model="deepseek-v4-flash",
+            maximum_observations_per_request=10,
+            created_at=NOW,
+        )

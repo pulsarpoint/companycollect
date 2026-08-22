@@ -161,6 +161,7 @@ class LlmCompanyPeopleResult:
     contract_retry_count: int = 0
     input_hash: str = ""
     raw_response: str = ""
+    reused: bool = False
 
 
 @dataclass(frozen=True)
@@ -250,8 +251,11 @@ class LlmCompanyPeopleResponse(BaseModel):
         return self
 
 
+# (company_id, batch, previous_profiles, request) -> result. The fourth argument
+# is the request the caller already built and hashed; the suggester forwards it
+# unchanged so the recorded input_hash is exactly the one looked up.
 CompanyLlmSuggester = Callable[
-    [str, CompanyObservationBatch, tuple[ExistingPersonProfile, ...]],
+    [str, CompanyObservationBatch, tuple[ExistingPersonProfile, ...], dict[str, Any]],
     LlmCompanyPeopleResult,
 ]
 
@@ -626,16 +630,24 @@ def request_company_people(
     previous_profiles: Sequence[ExistingPersonProfile],
     model: str,
     model_provider: str = "deepseek",
+    request: dict[str, Any] | None = None,
     maximum_contract_attempts: int = MAX_CONTRACT_ATTEMPTS,
 ) -> LlmCompanyPeopleResult:
+    """Resolve one batch with the model, repairing contract failures in place.
+
+    A prebuilt ``request`` is used verbatim so the recorded ``input_hash`` is the
+    one the caller used to look up stored suggestions. Repair turns are appended
+    after the hash is taken and therefore never change it.
+    """
     if maximum_contract_attempts < 1:
         raise ValueError("maximum_contract_attempts must be positive")
-    request = build_company_people_request(
-        company_id=company_id,
-        batch=batch,
-        previous_profiles=previous_profiles,
-        model=model,
-    )
+    if request is None:
+        request = build_company_people_request(
+            company_id=company_id,
+            batch=batch,
+            previous_profiles=previous_profiles,
+            model=model,
+        )
     input_hash = request_input_hash(request)
     prompt_tokens = 0
     completion_tokens = 0
@@ -884,12 +896,14 @@ def _reuse_stored_suggestions(
     *,
     batch: CompanyObservationBatch,
     previous_profiles: Sequence[ExistingPersonProfile],
-    model: str,
     input_hash: str,
 ) -> LlmCompanyPeopleResult | None:
     """Rebuild a validated response from stored rows, or None to call the model."""
     if not stored:
         return None
+    provenance = max(
+        stored, key=lambda item: (item.created_at, str(item.suggestion_id))
+    )
     try:
         response = LlmCompanyPeopleResponse(
             people=[
@@ -909,12 +923,13 @@ def _reuse_stored_suggestions(
         return None
     return LlmCompanyPeopleResult(
         response=response,
-        model_provider="stored",
-        model_name=model,
-        prompt_version=PROMPT_VERSION,
+        model_provider=provenance.model_provider,
+        model_name=provenance.model_name,
+        prompt_version=provenance.prompt_version,
         prompt_tokens=0,
         completion_tokens=0,
         input_hash=input_hash,
+        reused=True,
     )
 
 
@@ -955,25 +970,23 @@ def _normalize_multi_source_company(
     stored_by_hash: dict[str, list[StoredSuggestion]] = defaultdict(list)
     for stored in company.suggestions:
         stored_by_hash[stored.input_hash].append(stored)
+    if llm_model is None:
+        raise RuntimeError("A multi-source company requires an LLM model name")
 
     for batch in batches:
         request_profiles = _profiles_for_request(profiles)
-        if llm_model is None:
-            raise RuntimeError("A multi-source company requires an LLM model name")
-        input_hash = request_input_hash(
-            build_company_people_request(
-                company_id=company.status.company_id,
-                batch=batch,
-                previous_profiles=request_profiles,
-                model=llm_model,
-            )
+        request = build_company_people_request(
+            company_id=company.status.company_id,
+            batch=batch,
+            previous_profiles=request_profiles,
+            model=llm_model,
         )
+        input_hash = request_input_hash(request)
         stored_rows = _newest_stored_by_person(stored_by_hash.get(input_hash, ()))
         result = _reuse_stored_suggestions(
             stored_rows,
             batch=batch,
             previous_profiles=request_profiles,
-            model=llm_model,
             input_hash=input_hash,
         )
         stored_by_draft_ids: dict[tuple[uuid.UUID, ...], StoredSuggestion] = {}
@@ -982,19 +995,27 @@ def _normalize_multi_source_company(
                 company.status.company_id,
                 batch,
                 request_profiles,
+                request,
             )
+            if result.input_hash and result.input_hash != input_hash:
+                raise ValueError(
+                    "LLM input hash mismatch: the suggester answered a different "
+                    f"request than the one looked up: expected={input_hash} "
+                    f"got={result.input_hash}"
+                )
             validate_company_people_response(
                 result.response,
                 batch=batch,
                 previous_profiles=request_profiles,
             )
-            request_count += 1
         else:
-            reused_batch_count += 1
             stored_by_draft_ids = {
                 tuple(sorted(row.draft_ids)): row for row in stored_rows
             }
-        reused = result.model_provider == "stored"
+        if result.reused:
+            reused_batch_count += 1
+        else:
+            request_count += 1
         prompt_tokens += result.prompt_tokens
         completion_tokens += result.completion_tokens
         contract_retry_count += result.contract_retry_count
@@ -1030,12 +1051,8 @@ def _normalize_multi_source_company(
                     description=suggestion.description,
                     draft_ids=set(),
                     created_at=created_at,
-                    model_provider=(
-                        "deterministic" if reused else result.model_provider
-                    ),
-                    model_name=(
-                        "stored-suggestion" if reused else result.model_name
-                    ),
+                    model_provider=result.model_provider,
+                    model_name=result.model_name,
                     prompt_version=result.prompt_version,
                 )
                 profiles[person_id] = profile
@@ -1043,10 +1060,9 @@ def _normalize_multi_source_company(
             if suggestion.description is not None:
                 profile.description = suggestion.description
             profile.draft_ids.update(suggestion.draft_ids)
-            if not reused:
-                profile.model_provider = result.model_provider
-                profile.model_name = result.model_name
-                profile.prompt_version = result.prompt_version
+            profile.model_provider = result.model_provider
+            profile.model_name = result.model_name
+            profile.prompt_version = result.prompt_version
             profile.touched = True
 
             if stored_row is not None:
@@ -1058,7 +1074,7 @@ def _normalize_multi_source_company(
                     suggestion_id=suggestion_id,
                     company_id=company.status.company_id,
                     person_id=person_id,
-                    input_hash=result.input_hash or input_hash,
+                    input_hash=input_hash,
                     draft_ids=tuple(sorted(suggestion.draft_ids)),
                     suggestion_json=suggestion.model_dump_json(),
                     raw_response=result.raw_response,
@@ -1456,6 +1472,7 @@ def materialize_se_company_people(
                 company_id: str,
                 batch: CompanyObservationBatch,
                 previous_profiles: tuple[ExistingPersonProfile, ...],
+                request: dict[str, Any],
             ) -> LlmCompanyPeopleResult:
                 return request_company_people(
                     deepseek_client,
@@ -1464,6 +1481,7 @@ def materialize_se_company_people(
                     previous_profiles=previous_profiles,
                     model=selected_model,
                     model_provider=model_provider,
+                    request=request,
                 )
 
             llm_suggester = suggest_company_people

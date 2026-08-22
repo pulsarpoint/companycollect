@@ -94,6 +94,9 @@ class StoredSuggestion:
     name: str
     description: str | None
     existing_person_id: uuid.UUID | None
+    model_provider: str
+    model_name: str
+    prompt_version: str
     created_at: datetime
 
 
@@ -122,6 +125,9 @@ def build_company_suggestions_sql() -> str:
     toString(input_hash),
     draft_ids,
     suggestion,
+    model_provider,
+    model_name,
+    prompt_version,
     created_at
 FROM corpscout.se_company_person_enrichment_observation
 WHERE company_id IN %(selected_company_ids)s
@@ -205,7 +211,10 @@ def suggestion_from_row(row: Sequence[Any]) -> tuple[str, StoredSuggestion]:
         name=str(suggestion.get("name", "")),
         description=None if description is None else str(description),
         existing_person_id=_nullable_uuid(suggestion.get("existing_person_id")),
-        created_at=row[6],
+        model_provider=str(row[6]),
+        model_name=str(row[7]),
+        prompt_version=str(row[8]),
+        created_at=row[9],
     )
 
 

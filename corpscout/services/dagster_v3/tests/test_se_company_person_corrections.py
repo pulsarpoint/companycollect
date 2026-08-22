@@ -211,12 +211,20 @@ def test_row_mappers_parse_payload_and_nullable_columns() -> None:
                     "draft_ids": [str(uuid.UUID(int=1))],
                 }
             ),
+            "deepseek",
+            "deepseek-v4-flash",
+            "se-company-people-v2",
             NOW,
         )
     )
     assert company_id == COMPANY_ID
+    assert isinstance(suggestion, StoredSuggestion)
     assert suggestion.name == "Anna Svensson"
     assert suggestion.draft_ids == (uuid.UUID(int=1),)
+    assert suggestion.model_provider == "deepseek"
+    assert suggestion.model_name == "deepseek-v4-flash"
+    assert suggestion.prompt_version == "se-company-people-v2"
+    assert suggestion.created_at == NOW
 
 
 def test_loader_sql_scopes_by_selected_companies() -> None:
@@ -225,6 +233,26 @@ def test_loader_sql_scopes_by_selected_companies() -> None:
         assert "ORDER BY company_id" in sql
     assert "FROM corpscout.se_company_person_correction" in build_company_corrections_sql()
     assert "FROM corpscout.se_company_person_enrichment_observation" in build_company_suggestions_sql()
+
+    # suggestion_from_row reads this SELECT positionally, so pin the exact order:
+    # the provenance columns sit between the payload and created_at, and swapping
+    # two same-typed String columns would be invisible to a membership check.
+    suggestions_sql = build_company_suggestions_sql()
+    select_block = suggestions_sql[
+        suggestions_sql.index("SELECT") + len("SELECT") : suggestions_sql.index("FROM")
+    ]
+    assert [line.strip().rstrip(",") for line in select_block.strip().splitlines()] == [
+        "suggestion_id",
+        "company_id",
+        "person_id",
+        "toString(input_hash)",
+        "draft_ids",
+        "suggestion",
+        "model_provider",
+        "model_name",
+        "prompt_version",
+        "created_at",
+    ]
 
     cte = effective_company_corrections_cte()
     assert "effective_company_corrections AS (" in cte
