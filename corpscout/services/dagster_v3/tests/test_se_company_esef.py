@@ -9,7 +9,7 @@ from dagster_v3.defs.se_company.esef import (
     SE_COMPANY_INFO_ESEF_SQL,
     se_company_info_esef_clickhouse,
 )
-from tests.se_company_ddl import declared_columns
+from tests.se_company_ddl import declared_columns, projection_aliases
 
 
 def test_esef_select_keeps_swedish_issuers_with_a_description() -> None:
@@ -17,6 +17,7 @@ def test_esef_select_keeps_swedish_issuers_with_a_description() -> None:
         c for c in declared_columns("se_company_info_esef") if c != "evidence_hash"
     ]
     sql = SE_COMPANY_INFO_ESEF_SQL
+    assert projection_aliases(sql) == list(SE_COMPANY_INFO_ESEF_COLUMNS)
     assert "FROM corpscout.esef_document_company_information AS info" in sql
     assert (
         "INNER JOIN corpscout.esef_source_documents AS documents ON documents.source_document_id = info.source_document_id"
@@ -25,6 +26,15 @@ def test_esef_select_keeps_swedish_issuers_with_a_description() -> None:
     assert "info.country_iso2 = 'SE'" in sql and "match(info.company_id, '^[0-9]{10}$')" in sql
     assert "trim(info.company_description) != ''" in sql
     assert "info.source_record_uid AS source_record_uid" in sql
+    # Stable tie-break: resolved_at DESC alone can tie between extraction runs;
+    # model_provider/model_name/prompt_version are real columns on this table
+    # (confirmed against the migration DDL) and make the "newest" pick
+    # deterministic instead of it flipping (and evidence_hash with it) between
+    # runs when timestamps collide.
+    assert (
+        "ORDER BY info.resolved_at DESC, info.model_provider, info.model_name, info.prompt_version"
+        in sql
+    )
     assert "LIMIT 1 BY info.company_id, info.source_record_uid" in sql
     assert "NOT EXISTS" not in sql  # dedupe is publish_with_stage's job now
 
@@ -35,7 +45,10 @@ def test_esef_asset_depends_on_the_document_information_asset() -> None:
     asset = load_defs().get_repository_def().asset_graph.get(
         dg.AssetKey("se_company_info_esef_clickhouse")
     )
-    assert asset.parent_keys == {dg.AssetKey("esef_document_company_information_clickhouse")}
+    assert asset.parent_keys == {
+        dg.AssetKey("esef_document_company_information_clickhouse"),
+        dg.AssetKey("esef_source_documents_clickhouse"),
+    }
     assert asset.group_name == "se_company_esef"
 
 

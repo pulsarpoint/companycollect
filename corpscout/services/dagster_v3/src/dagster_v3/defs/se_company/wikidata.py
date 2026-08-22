@@ -5,7 +5,8 @@ per entity) linked to a Swedish orgnr either directly (wikidata_company_identifi
 identifier_type = 'se_orgnr') or via a current LEI in corpscout.company_identifier;
 the register (sweden_company_companies_clickhouse → se_companies) bounds the id
 universe. Writes the standard envelope followed by Wikidata's own typed columns.
-source_record_uid is 'wikidata:<QID>' — one row per entity version.
+source_record_uid is 'wikidata:<QID>' — latest observation per (company, source
+record); superseded observations collapse at merge.
 
 Assets
   se_company_info_wikidata_clickhouse → corpscout.se_company_info_wikidata
@@ -79,15 +80,22 @@ candidates AS (
     WHERE trim(entities.name) != ''
 )
 SELECT
-    company_id, source_record_uid, observed_at, source_run_id,
-    wikidata_id, wikidata_url, name, official_name, company_description, inception_date,
-    legal_form_label, industry_wikidata_id, industry_label, headquarters_label, employee_count
+    company_id AS company_id, source_record_uid AS source_record_uid, observed_at AS observed_at, source_run_id AS source_run_id,
+    wikidata_id AS wikidata_id, wikidata_url AS wikidata_url, name AS name, official_name AS official_name,
+    company_description AS company_description, inception_date AS inception_date, legal_form_label AS legal_form_label,
+    industry_wikidata_id AS industry_wikidata_id, industry_label AS industry_label, headquarters_label AS headquarters_label,
+    employee_count AS employee_count
 FROM candidates"""
 
 
 @dg.asset(
     name="se_company_info_wikidata_clickhouse",
-    deps=[dg.AssetKey("wikidata_companies"), dg.AssetKey("sweden_company_companies_clickhouse")],
+    deps=[
+        dg.AssetKey("wikidata_companies"),
+        dg.AssetKey("sweden_company_companies_clickhouse"),
+        dg.AssetKey("wikidata_company_identifiers"),
+        dg.AssetKey("company_identifier_clickhouse"),
+    ],
     group_name=GROUP_NAME,
     kinds={"clickhouse", "python"},
     metadata={"table": f"{DATABASE}.{TABLE}"},

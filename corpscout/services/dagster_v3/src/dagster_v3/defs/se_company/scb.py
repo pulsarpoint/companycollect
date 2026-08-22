@@ -37,7 +37,26 @@ SE_COMPANY_INFO_SCB_COLUMNS = (
 # rows whose (company_id, source_record_uid, evidence_hash) is not already in the
 # target -- the target's MATERIALIZED evidence_hash expression computes the hash
 # on the stage, so it is never re-expressed here.
-SE_COMPANY_INFO_SCB_SQL = """WITH candidates AS (
+#
+# industries is pre-aggregated to one row per company_id *before* joining to
+# companies -- se_industries fans out per company (several SNI/NACE rows), so
+# joining it straight into candidates would force a GROUP BY over every
+# companies column (including the free-text activity_description) just to
+# undo that fan-out, at 2.2M-company scale. Aggregating first means the join
+# to companies is a plain 1:1 LEFT JOIN with no outer GROUP BY at all. The
+# argMaxIf tie-break is a tuple (updated_from_raw_at, code) rather than just
+# updated_from_raw_at, so two industry rows with the exact same timestamp
+# resolve deterministically instead of the pick flipping (and evidence_hash
+# with it) between runs.
+SE_COMPANY_INFO_SCB_SQL = """WITH industries AS (
+    SELECT
+        industries.company_id AS company_id,
+        ifNull(argMaxIf(industries.sni_code, (industries.updated_from_raw_at, industries.sni_code), industries.is_primary = 1), '') AS primary_sni_code,
+        ifNull(argMaxIf(industries.nace_rev2_class_code, (industries.updated_from_raw_at, industries.nace_rev2_class_code), industries.is_primary = 1), '') AS primary_nace_code
+    FROM corpscout.se_industries AS industries
+    GROUP BY industries.company_id
+),
+candidates AS (
     SELECT
         companies.company_id AS company_id,
         ifNull(nullIf(companies.scb_source_record_uid, ''), companies.bolagsverket_source_record_uid) AS source_record_uid,
@@ -50,21 +69,17 @@ SE_COMPANY_INFO_SCB_SQL = """WITH candidates AS (
         companies.incorporation_date AS incorporation_date,
         companies.dissolution_date AS dissolution_date,
         companies.activity_description AS activity_description,
-        ifNull(argMaxIf(industries.sni_code, industries.updated_from_raw_at, industries.is_primary = 1), '') AS primary_sni_code,
-        ifNull(argMaxIf(industries.nace_rev2_class_code, industries.updated_from_raw_at, industries.is_primary = 1), '') AS primary_nace_code
+        ifNull(industries.primary_sni_code, '') AS primary_sni_code,
+        ifNull(industries.primary_nace_code, '') AS primary_nace_code
     FROM corpscout.se_companies AS companies FINAL
-    LEFT JOIN corpscout.se_industries AS industries ON industries.company_id = companies.company_id
+    LEFT JOIN industries ON industries.company_id = companies.company_id
     WHERE match(companies.company_id, '^[0-9]{10}$')
-    GROUP BY
-        companies.company_id, companies.scb_source_record_uid, companies.bolagsverket_source_record_uid,
-        companies.updated_from_raw_at, companies.legal_name, companies.legal_name_raw,
-        companies.legal_form_code, companies.status, companies.incorporation_date,
-        companies.dissolution_date, companies.activity_description
 )
 SELECT
-    company_id, source_record_uid, observed_at, source_run_id,
-    legal_name, legal_name_raw, legal_form_code, status, incorporation_date, dissolution_date,
-    activity_description, primary_sni_code, primary_nace_code
+    company_id AS company_id, source_record_uid AS source_record_uid, observed_at AS observed_at, source_run_id AS source_run_id,
+    legal_name AS legal_name, legal_name_raw AS legal_name_raw, legal_form_code AS legal_form_code, status AS status,
+    incorporation_date AS incorporation_date, dissolution_date AS dissolution_date, activity_description AS activity_description,
+    primary_sni_code AS primary_sni_code, primary_nace_code AS primary_nace_code
 FROM candidates
 WHERE source_record_uid != ''"""
 

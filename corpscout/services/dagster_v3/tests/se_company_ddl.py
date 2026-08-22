@@ -32,3 +32,21 @@ def declared_columns(table: str) -> list[str]:
 
 def artifact_tables() -> list[str]:
     return sorted(set(re.findall(r"CREATE TABLE IF NOT EXISTS corpscout\.(se_company_info_(?!correction|enrichment)[a-z0-9_]+)\n", _sql())))
+
+
+def projection_aliases(sql: str) -> list[str]:
+    """The ordered `AS <name>` aliases of an artifact SELECT constant's outermost
+    (trailing, unindented) projection -- the one that actually determines the
+    order `publish_with_stage` binds to the positional insert-column list, so a
+    swapped pair of same-typed columns here would insert transposed values with
+    an otherwise-green suite. Every SE_COMPANY_INFO_*_SQL constant ends in a
+    top-level `SELECT ... FROM ...` (no leading indent) after its last CTE
+    closes; CTE-internal SELECTs are indented, so `\\nSELECT\\n` unambiguously
+    finds only the trailing one. That projection must alias every column
+    (`col AS col` where the name doesn't otherwise change) so this stays a
+    simple regex rather than a real SQL parser.
+    """
+    trailing_select = sql.rindex("\nSELECT\n")
+    projection_end = sql.index("\nFROM ", trailing_select)
+    projection = sql[trailing_select:projection_end]
+    return re.findall(r"AS (\w+)", projection)

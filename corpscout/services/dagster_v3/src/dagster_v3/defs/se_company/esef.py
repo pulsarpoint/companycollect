@@ -55,25 +55,30 @@ SE_COMPANY_INFO_ESEF_SQL = """WITH candidates AS (
     WHERE info.country_iso2 = 'SE'
       AND match(info.company_id, '^[0-9]{10}$')
       AND trim(info.company_description) != ''
-    ORDER BY info.resolved_at DESC
+    ORDER BY info.resolved_at DESC, info.model_provider, info.model_name, info.prompt_version
     LIMIT 1 BY info.company_id, info.source_record_uid
 )
 SELECT
-    company_id, source_record_uid, observed_at, source_run_id,
-    source_document_id, lei, entity_name, fiscal_year, company_description,
-    description_language, description_confidence, products_and_services_json, business_segments_json
+    company_id AS company_id, source_record_uid AS source_record_uid, observed_at AS observed_at, source_run_id AS source_run_id,
+    source_document_id AS source_document_id, lei AS lei, entity_name AS entity_name, fiscal_year AS fiscal_year,
+    company_description AS company_description, description_language AS description_language,
+    description_confidence AS description_confidence, products_and_services_json AS products_and_services_json,
+    business_segments_json AS business_segments_json
 FROM candidates"""
 
 
 @dg.asset(
     name="se_company_info_esef_clickhouse",
-    deps=[dg.AssetKey("esef_document_company_information_clickhouse")],
+    deps=[
+        dg.AssetKey("esef_document_company_information_clickhouse"),
+        dg.AssetKey("esef_source_documents_clickhouse"),
+    ],
     group_name=GROUP_NAME,
     kinds={"clickhouse", "python"},
     metadata={"table": f"{DATABASE}.{TABLE}"},
     description=(
-        "Company description and business text reported in each Swedish ESEF filing, "
-        "as an append-only artifact keyed by filing; new version only when the evidence hash changes."
+        "Company description and business text reported in each Swedish ESEF filing; "
+        "latest observation per (company, source record) — superseded observations collapse at merge."
     ),
 )
 def se_company_info_esef_clickhouse(

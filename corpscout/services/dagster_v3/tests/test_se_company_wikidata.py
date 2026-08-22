@@ -9,7 +9,7 @@ from dagster_v3.defs.se_company.wikidata import (
     SE_COMPANY_INFO_WIKIDATA_SQL,
     se_company_info_wikidata_clickhouse,
 )
-from tests.se_company_ddl import declared_columns
+from tests.se_company_ddl import declared_columns, projection_aliases
 
 
 def test_wikidata_select_links_entities_by_orgnr_or_lei() -> None:
@@ -17,12 +17,14 @@ def test_wikidata_select_links_entities_by_orgnr_or_lei() -> None:
         c for c in declared_columns("se_company_info_wikidata") if c != "evidence_hash"
     ]
     sql = SE_COMPANY_INFO_WIKIDATA_SQL
+    assert projection_aliases(sql) == list(SE_COMPANY_INFO_WIKIDATA_COLUMNS)
     assert "identifiers.identifier_type = 'se_orgnr'" in sql
     assert "identifiers.identifier_type = 'lei'" in sql
     assert "issuer_scheme = 'lei'" in sql and "is_current = 1" in sql
     assert "FROM corpscout.wikidata_companies AS entities FINAL" in sql
     assert "concat('wikidata:', entities.wikidata_id) AS source_record_uid" in sql
     assert "entities.resolved_at AS observed_at" in sql
+    assert "match(company_id, '^[0-9]{10}$')" in sql
     assert "NOT EXISTS" not in sql  # dedupe is publish_with_stage's job now
 
 
@@ -35,6 +37,8 @@ def test_wikidata_asset_depends_on_entities_and_the_register() -> None:
     assert asset.parent_keys == {
         dg.AssetKey("wikidata_companies"),
         dg.AssetKey("sweden_company_companies_clickhouse"),
+        dg.AssetKey("wikidata_company_identifiers"),
+        dg.AssetKey("company_identifier_clickhouse"),
     }
     assert asset.group_name == "se_company_wikidata"
 

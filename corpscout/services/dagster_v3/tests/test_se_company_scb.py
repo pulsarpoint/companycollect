@@ -9,7 +9,7 @@ from dagster_v3.defs.se_company.scb import (
     SE_COMPANY_INFO_SCB_SQL,
     se_company_info_scb_clickhouse,
 )
-from tests.se_company_ddl import declared_columns
+from tests.se_company_ddl import declared_columns, projection_aliases
 
 
 def test_scb_select_projects_envelope_then_payload_in_table_order() -> None:
@@ -17,6 +17,7 @@ def test_scb_select_projects_envelope_then_payload_in_table_order() -> None:
         c for c in declared_columns("se_company_info_scb") if c != "evidence_hash"
     ]
     sql = SE_COMPANY_INFO_SCB_SQL
+    assert projection_aliases(sql) == list(SE_COMPANY_INFO_SCB_COLUMNS)
     assert "FROM corpscout.se_companies AS companies FINAL" in sql
     assert (
         "ifNull(nullIf(companies.scb_source_record_uid, ''), companies.bolagsverket_source_record_uid) AS source_record_uid"
@@ -24,10 +25,21 @@ def test_scb_select_projects_envelope_then_payload_in_table_order() -> None:
     )
     assert "companies.updated_from_raw_at AS observed_at" in sql
     assert "%(source_run_id)s AS source_run_id" in sql
+    # industries is pre-aggregated to one row per company_id in its own CTE, then
+    # joined 1:1 -- no outer GROUP BY over every companies column is needed to
+    # undo a fan-out. The tie-break is a tuple so a same-timestamp tie can't flip
+    # the pick (and evidence_hash with it) between runs.
     assert (
-        "argMaxIf(industries.sni_code, industries.updated_from_raw_at, industries.is_primary = 1)"
+        "argMaxIf(industries.sni_code, (industries.updated_from_raw_at, industries.sni_code), industries.is_primary = 1)"
         in sql
     )
+    assert (
+        "argMaxIf(industries.nace_rev2_class_code, (industries.updated_from_raw_at, industries.nace_rev2_class_code), industries.is_primary = 1)"
+        in sql
+    )
+    assert "GROUP BY industries.company_id" in sql
+    assert "LEFT JOIN industries ON industries.company_id = companies.company_id" in sql
+    assert "GROUP BY\n        companies.company_id" not in sql  # the wide outer GROUP BY is gone
     assert "NOT EXISTS" not in sql  # dedupe is publish_with_stage's job now
     assert "match(companies.company_id, '^[0-9]{10}$')" in sql
 
