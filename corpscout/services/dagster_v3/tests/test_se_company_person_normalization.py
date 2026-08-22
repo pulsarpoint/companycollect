@@ -155,6 +155,19 @@ def test_company_sql_compares_all_draft_ids_at_company_boundary() -> None:
     assert "LIMIT %(max_companies)s" in pending_sql
 
 
+def test_company_status_projects_the_join_key_instead_of_drafts_star() -> None:
+    """`drafts.*` drops company_id after the second `USING` join (ClickHouse 26.5)."""
+    for sql in (build_company_statistics_sql(), build_pending_companies_sql()):
+        assert "drafts.*" not in sql
+        for column in (
+            "company_id",
+            "source_count",
+            "observation_count",
+            "draft_ids",
+        ):
+            assert f"drafts.{column} AS {column}," in sql
+
+
 @pytest.mark.parametrize(
     ("source", "role", "expected"),
     [
@@ -1060,6 +1073,53 @@ def test_reject_suggestion_falls_back_to_the_deterministic_name() -> None:
     assert writes[0].model_name == "rejected-suggestion"
     assert writes[0].correction_ids == (uuid.UUID(int=9001),)
     assert metrics["applied_correction_count"] == 1
+
+
+def test_a_later_approval_overrides_an_earlier_rejection() -> None:
+    """Spec §4.1: approve and reject share a step, so the newer decision wins."""
+    observations = (
+        _observation("bolagsverket", name="David Mindus", role="ceo", index=1),
+        _observation("esef", name="David Mindus", role="chief_executive", index=2),
+    )
+    stored = _stored_suggestion(observations)
+    company = CompanyPersonWork(
+        status=_company(*observations).status,
+        observations=observations,
+        previous_profiles=(),
+        suggestions=(stored,),
+        corrections=(
+            _correction(
+                1,
+                "reject_suggestion",
+                subject=stored.person_id,
+                payload={"suggestion_id": str(stored.suggestion_id)},
+            ),
+            _correction(
+                2,
+                "approve_suggestion",
+                subject=stored.person_id,
+                payload={"suggestion_id": str(stored.suggestion_id)},
+            ),
+        ),
+    )
+
+    writes, _suggestions, metrics = normalize_companies(
+        [company],
+        llm_suggester=_refuse_llm,
+        llm_model="deepseek-v4-flash",
+        maximum_observations_per_request=10,
+        created_at=NOW,
+    )
+
+    assert len(writes) == 1
+    assert writes[0].name == "David Gustaf Mindus"
+    assert writes[0].suggestion_id == stored.suggestion_id
+    assert writes[0].correction_ids == (
+        uuid.UUID(int=9001),
+        uuid.UUID(int=9002),
+    )
+    assert metrics["applied_correction_count"] == 2
+    assert metrics["stale_correction_count"] == 0
 
 
 def test_approve_is_stale_when_the_suggestion_input_hash_is_not_current() -> None:

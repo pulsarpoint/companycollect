@@ -66,9 +66,18 @@ PERSON_CORRECTION_KINDS = (
 ROLE_CORRECTION_KINDS = ("set_role", "remove_role")
 UNDO_KIND = "undo"
 CORRECTION_KINDS = frozenset((*PERSON_CORRECTION_KINDS, *ROLE_CORRECTION_KINDS, UNDO_KIND))
+# Spec §4.1 applies corrections in four steps: which drafts belong to whom, then
+# the profile source, then field values, then roles. Kinds inside one step share
+# a rank so `(created_at, correction_id)` decides between them -- an approval
+# that follows a rejection has to win, and a per-kind rank would ignore the clock.
+CORRECTION_KIND_STEPS = (
+    ("merge_persons", "reassign_draft", "split_person"),
+    ("approve_suggestion", "reject_suggestion"),
+    ("override_field",),
+    ("set_role", "remove_role"),
+)
 KIND_ORDER = {
-    kind: index
-    for index, kind in enumerate((*PERSON_CORRECTION_KINDS, *ROLE_CORRECTION_KINDS))
+    kind: step for step, kinds in enumerate(CORRECTION_KIND_STEPS) for kind in kinds
 }
 ZERO_HASH = "0" * 64
 
@@ -147,6 +156,11 @@ def effective_company_corrections_cte() -> str:
     Used by normalization's company-status query so a new ledger row counts as
     changed evidence for exactly that company. Role kinds are excluded because
     they never change se_company_person rows.
+
+    The undo lookup carries the same company scope as the outer scan: an undo
+    always names a row of its own company, so scoping it keeps the subquery from
+    reading the whole ledger and matches Python's company-scoped
+    ``effective_corrections``.
     """
     return f"""effective_company_corrections AS (
     SELECT
@@ -164,6 +178,7 @@ def effective_company_corrections_cte() -> str:
                 SELECT supersedes_correction_id
                 FROM corpscout.se_company_person_correction
                 WHERE supersedes_correction_id IS NOT NULL
+                  AND (%(all_companies)s OR company_id IN %(company_ids)s)
             ) AS superseded
         FROM corpscout.se_company_person_correction AS ledger
         WHERE (%(all_companies)s OR ledger.company_id IN %(company_ids)s)
@@ -224,7 +239,7 @@ def suggestion_from_row(row: Sequence[Any]) -> tuple[str, StoredSuggestion]:
 def effective_corrections(
     corrections: Sequence[PersonCorrection],
 ) -> tuple[PersonCorrection, ...]:
-    """Drop superseded rows, undo rows and unknown kinds; order by kind then time."""
+    """Drop superseded rows, undo rows and unknown kinds; order by step then time."""
     superseded = {
         correction.supersedes_correction_id
         for correction in corrections
@@ -277,7 +292,7 @@ FROM {QUALIFIED_CORRECTION_TABLE}"""
 def build_touched_companies_sql() -> str:
     return f"""SELECT DISTINCT company_id
 FROM {QUALIFIED_CORRECTION_TABLE}
-WHERE (created_at, correction_id) > (parseDateTime64BestEffort(%(since)s, 3), toUUID(%(since_id)s))
+WHERE (created_at, correction_id) > (parseDateTime64BestEffort(%(since)s, 3, 'UTC'), toUUID(%(since_id)s))
 ORDER BY company_id"""
 
 

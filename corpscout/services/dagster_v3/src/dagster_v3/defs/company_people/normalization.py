@@ -313,7 +313,14 @@ published_companies AS (
 {effective_company_corrections_cte()},
 company_status AS (
     SELECT
-        drafts.*,
+        -- Named one by one on purpose. After the second `LEFT JOIN … USING`, a
+        -- star projection of the left side stops carrying the join key into the
+        -- outer scope, and selecting company_id from company_status then dies
+        -- with UNKNOWN_IDENTIFIER on ClickHouse 26.5.
+        drafts.company_id AS company_id,
+        drafts.source_count AS source_count,
+        drafts.observation_count AS observation_count,
+        drafts.draft_ids AS draft_ids,
         published.company_id != ''
             AND published.draft_ids = drafts.draft_ids
             AND published.correction_ids = corrections.correction_ids AS is_unchanged

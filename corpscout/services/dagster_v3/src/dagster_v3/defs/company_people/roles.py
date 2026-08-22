@@ -109,14 +109,20 @@ def _role_kinds_sql() -> str:
 
 
 def _live_role_corrections_filter(company_ids: Sequence[str]) -> str:
-    """Role corrections for these companies that no later row has undone."""
+    """Role corrections for these companies that no later row has undone.
+
+    The undo lookup repeats the company scope: an undo names a row of its own
+    company, so the subquery never has to scan the whole ledger.
+    """
     company_filter = _company_filter("ledger.company_id", company_ids)
+    undo_filter = _company_filter("company_id", company_ids)
     return f"""{company_filter}
       AND ledger.correction_kind IN ({_role_kinds_sql()})
       AND ledger.correction_id NOT IN (
           SELECT supersedes_correction_id
           FROM corpscout.se_company_person_correction
           WHERE supersedes_correction_id IS NOT NULL
+            AND {undo_filter}
       )"""
 
 

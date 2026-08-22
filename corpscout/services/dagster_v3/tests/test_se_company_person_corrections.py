@@ -12,6 +12,7 @@ from dagster_clickhouse import ClickhouseResource
 from dagster_v3.defs.company_people.corrections import (
     CORRECTION_COLUMNS,
     CORRECTION_KINDS,
+    KIND_ORDER,
     PERSON_CORRECTION_KINDS,
     ROLE_CORRECTION_KINDS,
     SUGGESTION_COLUMNS,
@@ -168,11 +169,29 @@ def test_effective_corrections_drop_superseded_and_undo_rows_and_order_by_kind()
         _correction(4, "override_field", payload={"name": "Second"}),
         _correction(5, "set_role"),
         _correction(6, "not_a_kind"),
+        # Rows 7 and 8 share spec step 2, so the order between them is the
+        # order they were decided in, not the alphabet of their kinds.
+        _correction(7, "reject_suggestion"),
+        _correction(8, "approve_suggestion"),
     )
 
     effective = effective_corrections(rows)
 
-    assert [c.correction_id.int for c in effective] == [2, 4, 5]
+    assert [c.correction_id.int for c in effective] == [2, 7, 8, 4, 5]
+
+
+def test_kind_order_gives_every_spec_step_one_shared_rank() -> None:
+    """Spec §4.1: evidence moves, then the profile source, then fields, then roles."""
+    steps = (
+        ("merge_persons", "reassign_draft", "split_person"),
+        ("approve_suggestion", "reject_suggestion"),
+        ("override_field",),
+        ("set_role", "remove_role"),
+    )
+    ranks = [{KIND_ORDER[kind] for kind in step} for step in steps]
+
+    assert [sorted(rank) for rank in ranks] == [[0], [1], [2], [3]]
+    assert set(KIND_ORDER) == set(CORRECTION_KINDS) - {UNDO_KIND}
 
 
 def test_correction_set_hash_sorts_string_ids_like_clickhouse() -> None:
@@ -269,6 +288,10 @@ def test_loader_sql_scopes_by_selected_companies() -> None:
     assert "supersedes_correction_id IS NOT NULL" in cte
     assert "correction_kind IN ('merge_persons'" in cte
     assert "'undo'" not in cte
+    # The undo lookup carries the same company scope as the outer scan, so it
+    # never degenerates into a full-ledger read.
+    assert cte.count("%(all_companies)s OR") == 2
+    assert cte.count("company_id IN %(company_ids)s") == 2
 
 
 def test_review_job_selects_person_and_role_assets_without_draft_import() -> None:
@@ -295,7 +318,7 @@ def test_sensor_sql_reads_cursor_and_touched_companies() -> None:
     touched = build_touched_companies_sql()
     assert (
         "WHERE (created_at, correction_id) > "
-        "(parseDateTime64BestEffort(%(since)s, 3), toUUID(%(since_id)s))"
+        "(parseDateTime64BestEffort(%(since)s, 3, 'UTC'), toUUID(%(since_id)s))"
     ) in touched
     assert "SELECT DISTINCT company_id" in touched
     assert "ORDER BY company_id" in touched
