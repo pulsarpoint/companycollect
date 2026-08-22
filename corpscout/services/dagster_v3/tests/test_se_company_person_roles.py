@@ -15,6 +15,7 @@ from dagster_v3.defs.company_people.roles import (
     build_unmapped_source_roles_sql,
     canonical_role_code,
 )
+from dagster_v3.defs.company_people.roles import _ZERO_UUID as ZERO_UUID
 from dagster_v3.defs.esef_filings.roles import (
     ESEF_ROLE_CATEGORY_TO_CANONICAL_ROLE,
 )
@@ -213,7 +214,7 @@ def test_role_assignments_apply_role_corrections_and_skip_merged_people() -> Non
     assert "JSONExtractString(ledger.payload, 'role_code')" in sql
     assert "WHERE is_active = 1" in sql
     assert "people.merged_into_person_id IS NULL" in sql
-    assert "corrections.correction_kind != 'remove_role'" in sql
+    assert "ifNull(corrections.correction_kind, '') != 'remove_role'" in sql
     assert "arraySort(groupUniqArray(corrections.correction_id))" in sql
     assert "assignments.correction_ids," in sql
     assert "(\n    " + ",\n    ".join(ROLE_COLUMNS) + "\n)" in sql
@@ -264,3 +265,43 @@ def test_stale_role_corrections_are_counted_not_applied() -> None:
     assert "AS stale_count" in sql
     assert "AS applied_count" in sql
     assert "count() AS live_count" in sql
+
+
+def test_role_sql_never_assumes_join_use_nulls_is_zero() -> None:
+    """A LEFT JOIN miss is '' / the zero UUID here, but only while join_use_nulls=0.
+
+    With join_use_nulls=1 every one of these comparisons would yield NULL: the
+    role stage would lose every uncorrected role and the publish step would then
+    deactivate the whole role table.
+    """
+    stage = "`corpscout`.`_tmp_roles`"
+    companies = ["5565200028"]
+    insert_sql = build_role_assignments_insert_sql(stage, companies)
+    quality_sql = _role_assignment_quality_sql(stage, companies)
+    publish_sql = _publish_role_assignments_sql(stage, companies)
+    stale_sql = build_stale_role_corrections_sql(companies)
+
+    assert "ifNull(corrections.correction_kind, '') != 'remove_role'" in insert_sql
+    assert "ifNull(corrections.correction_kind, '') = 'set_role'" in insert_sql
+    assert (
+        "ifNull(toString(existing.role_id), '{zero}') = '{zero}'".format(
+            zero=ZERO_UUID
+        )
+        in insert_sql
+    )
+    for sql in (insert_sql, quality_sql, publish_sql, stale_sql):
+        for column in ("existing.role_id", "current.role_id", "bound.person_id"):
+            bare = f"toString({column})"
+            for occurrence in _occurrences(sql, bare):
+                assert sql[max(0, occurrence - 7) : occurrence] == "ifNull(", (
+                    f"{bare} is compared without an ifNull guard"
+                )
+
+
+def _occurrences(text: str, needle: str) -> list[int]:
+    found = []
+    start = text.find(needle)
+    while start != -1:
+        found.append(start)
+        start = text.find(needle, start + 1)
+    return found

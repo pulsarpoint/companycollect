@@ -545,14 +545,15 @@ assignments AS (
         evidence.person_id AS person_id,
         evidence.company_id AS company_id,
         if(
-            corrections.correction_kind = 'set_role',
+            ifNull(corrections.correction_kind, '') = 'set_role',
             corrections.role_code,
             roles.role_code
         ) AS role_code,
         arraySort(groupUniqArray(roles.role_draft_id)) AS role_draft_ids,
         arraySort(groupUniqArray(evidence.person_draft_id)) AS person_draft_ids,
         arrayFilter(
-            correction_id -> toString(correction_id) != '{_ZERO_UUID}',
+            correction_id -> ifNull(toString(correction_id), '{_ZERO_UUID}')
+                != '{_ZERO_UUID}',
             arraySort(groupUniqArray(corrections.correction_id))
         ) AS correction_ids,
         arraySort(groupUniqArray(toString(roles.source))) AS sources,
@@ -569,7 +570,11 @@ assignments AS (
        AND corrections.person_draft_id = evidence.person_draft_id
        AND ifNull(toString(corrections.fiscal_year), 'undated')
            = ifNull(toString(roles.fiscal_year), 'undated')
-    WHERE corrections.correction_kind != 'remove_role'
+    -- Every guard below reads a LEFT JOIN miss explicitly. Bare comparisons
+    -- work only while join_use_nulls = 0; under join_use_nulls = 1 they yield
+    -- NULL, this WHERE would drop every uncorrected role from the stage, and the
+    -- publish step would then deactivate the whole role table.
+    WHERE ifNull(corrections.correction_kind, '') != 'remove_role'
     GROUP BY
         evidence.person_id,
         evidence.company_id,
@@ -591,9 +596,9 @@ SELECT
     toUInt8(1),
     %(source_run_id)s,
     if(
-        toString(existing.role_id) = '{_ZERO_UUID}',
+        ifNull(toString(existing.role_id), '{_ZERO_UUID}') = '{_ZERO_UUID}',
         %(updated_at)s,
-        existing.created_at
+        ifNull(existing.created_at, %(updated_at)s)
     ),
     %(updated_at)s
 FROM assignments
@@ -613,9 +618,11 @@ def _role_assignment_quality_sql(
     uniqExact(staged.company_id) AS staged_company_count,
     uniqExact(staged.person_id) AS staged_person_count,
     uniqExact(staged.role_code) AS canonical_role_count,
-    countIf(toString(existing.role_id) = '{_ZERO_UUID}') AS inserted_role_count,
     countIf(
-        toString(existing.role_id) != '{_ZERO_UUID}'
+        ifNull(toString(existing.role_id), '{_ZERO_UUID}') = '{_ZERO_UUID}'
+    ) AS inserted_role_count,
+    countIf(
+        ifNull(toString(existing.role_id), '{_ZERO_UUID}') != '{_ZERO_UUID}'
         AND (
             existing.role_draft_set_hash != staged.role_draft_set_hash
             OR existing.correction_ids != staged.correction_ids
@@ -636,7 +643,7 @@ def _role_assignment_quality_sql(
            AND current.role_id = existing.role_id
         WHERE existing.is_current = 1
           AND {company_filter}
-          AND toString(current.role_id) = '{_ZERO_UUID}'
+          AND ifNull(toString(current.role_id), '{_ZERO_UUID}') = '{_ZERO_UUID}'
     ) AS deactivated_role_count
 FROM {qualified_stage_table} AS staged
 LEFT JOIN corpscout.se_company_person_role AS existing FINAL
@@ -677,7 +684,7 @@ LEFT JOIN {qualified_stage_table} AS current
    AND current.role_id = existing.role_id
 WHERE existing.is_current = 1
   AND {company_filter}
-  AND toString(current.role_id) = '{_ZERO_UUID}'
+  AND ifNull(toString(current.role_id), '{_ZERO_UUID}') = '{_ZERO_UUID}'
 
 UNION ALL
 
@@ -702,7 +709,7 @@ LEFT JOIN corpscout.se_company_person_role AS existing FINAL
     ON existing.company_id = staged.company_id
    AND existing.person_id = staged.person_id
    AND existing.role_id = staged.role_id
-WHERE toString(existing.role_id) = '{_ZERO_UUID}'
+WHERE ifNull(toString(existing.role_id), '{_ZERO_UUID}') = '{_ZERO_UUID}'
    OR existing.is_current = 0
    OR existing.role_draft_set_hash != staged.role_draft_set_hash
    OR existing.correction_ids != staged.correction_ids"""
@@ -737,7 +744,9 @@ bound AS (
 decided AS (
     SELECT
         live.correction_id AS correction_id,
-        max(toString(bound.person_id) != '{_ZERO_UUID}') AS is_applied,
+        max(
+            ifNull(toString(bound.person_id), '{_ZERO_UUID}') != '{_ZERO_UUID}'
+        ) AS is_applied,
         max(live.role_code_is_active) AS role_code_is_active
     FROM live
     LEFT JOIN bound
