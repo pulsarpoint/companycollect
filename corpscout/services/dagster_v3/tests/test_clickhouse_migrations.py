@@ -309,6 +309,7 @@ EXPECTED_MIGRATIONS = (
     "000293_corpscout_se_company_person_roles_by_year",
     "000294_corpscout_employee_board_representative_role",
     "000295_corpscout_se_company_person_corrections",
+    "000297_corpscout_se_company_info",
 )
 
 NOOP_MIGRATIONS = {"000276_noop"}
@@ -316,6 +317,7 @@ NOOP_MIGRATIONS = {"000276_noop"}
 EXPECTED_ACCESS_MIGRATIONS = (
     "000241_corpscout_person_correction_writer_role",
     "000296_corpscout_se_company_person_correction_writer_grants",
+    "000298_corpscout_se_company_info_writer_grants",
 )
 
 OBSOLETE_CLICKHOUSE_DATABASE_REFERENCES = (

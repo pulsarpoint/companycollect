@@ -1,0 +1,5 @@
+REVOKE INSERT ON corpscout.se_company_info_correction
+FROM corpscout_person_correction_writer;
+
+REVOKE INSERT ON corpscout.se_company_info_enrichment_observation
+FROM corpscout_person_correction_writer;
