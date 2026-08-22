@@ -1,4 +1,3 @@
-# tests/test_se_company_layout.py
 import pytest
 
 from tests.se_company_ddl import ENVELOPE, FINAL_PROVENANCE, artifact_tables, declared_columns, table_block, MIGRATIONS_DIR
@@ -13,6 +12,8 @@ def test_artifact_table_starts_with_the_envelope(table: str) -> None:
     columns = declared_columns(table)
     block = table_block(table)
 
+    assert block.count("CREATE TABLE") == 1 and block.endswith(";")  # one statement, nothing of the next table
+
     assert tuple(columns[: len(ENVELOPE)]) == ENVELOPE
     assert len(columns) > len(ENVELOPE)  # a payload exists
     assert "evidence_hash FixedString(64) MATERIALIZED" in block
@@ -26,8 +27,9 @@ def test_final_table_ends_with_provenance() -> None:
     block = table_block("se_company_info")
 
     assert columns[0] == "company_id"
-    for column in ("description_sources", "description_source_record_uids", "description_source_count"):
-        assert column in columns
+    after_description_source = columns.index("description_source") + 1
+    assert columns[after_description_source : after_description_source + 3] == [
+        "description_sources", "description_source_record_uids", "description_source_count"]
     assert tuple(columns[-len(FINAL_PROVENANCE):]) == FINAL_PROVENANCE
     assert "evidence_set_hash FixedString(64) MATERIALIZED" in block
     assert "arraySort(arrayMap(x -> toString(x), evidence_hashes))" in block
@@ -55,3 +57,4 @@ def test_writer_grants_are_insert_only() -> None:
     assert "GRANT INSERT ON corpscout.se_company_info_enrichment_observation\nTO corpscout_person_correction_writer" in up
     assert "GRANT SELECT" not in up and "GRANT ALL" not in up
     assert "REVOKE INSERT ON corpscout.se_company_info_correction" in down
+    assert "REVOKE INSERT ON corpscout.se_company_info_enrichment_observation" in down
