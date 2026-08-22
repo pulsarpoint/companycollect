@@ -94,8 +94,12 @@ Every final table carries, after its typed merged columns: `source_record_uids A
 `Array(FixedString(64))` so a short value can never be NUL-padded into a wrong hash), `correction_ids Array(UUID)`,
 `suggestion_id Nullable(UUID)`, `model_provider`, `model_name`, `prompt_version`,
 `source_run_id`, `resolved_at`; engine `ReplacingMergeTree(resolved_at)`, `ORDER BY (company_id)`.
-Change detection for a company = any artifact `observed_at` > final `resolved_at`, or the live
-ledger set ≠ `correction_ids`.
+Change detection for a company = no final row yet, or any artifact `observed_at` > final
+`resolved_at`, or the ledger's newest `created_at` for that company > final `resolved_at`; a
+model-on run additionally re-selects companies still owed a model description (several
+candidates, no `suggestion_id`, no applied correction). Never "live ledger set ≠
+`correction_ids`": stale or malformed corrections are never applied, so that predicate would
+re-select a company forever.
 
 ## 5. An artifact asset (the shape every source file repeats)
 
@@ -126,7 +130,7 @@ Downstream: info.py, financial.py.
 def se_company_info_esef_clickhouse(context, clickhouse: ClickhouseResource) -> dg.MaterializeResult:
     """Select SE rows from the source table → stage → validate envelope → insert new versions → counts."""
     assert_clickhouse_tables_exist(clickhouse, database="corpscout",
-                                   tables=("esef_company_source_records", "se_company_info_esef"))
+                                   tables=("esef_document_company_information", "esef_source_documents", "se_company_info_esef"))
     counts = publish_with_stage(
         clickhouse,
         target="se_company_info_esef",
@@ -182,8 +186,8 @@ def se_company_info_clickhouse(context, config: SECompanyScopeConfig, clickhouse
                                   scope=config.company_ids)
     rows = load_artifact_rows(clickhouse, companies, SE_COMPANY_INFO_ARTIFACTS)
     outcomes = [merge_company_info(company, rows[company]) for company in companies]
-    outcomes = apply_ledger(outcomes, load_corrections(clickhouse, companies, "se_company_info_correction"))
-    outcomes = resolve_conflicts_with_llm(outcomes, reuse_or_call, COMPANY_INFO_PROMPT)
+    outcomes = resolve_conflicts_with_llm(outcomes, reuse_or_call, COMPANY_INFO_PROMPT)  # observation row first
+    outcomes = apply_ledger(outcomes, load_corrections(clickhouse, companies, "se_company_info_correction"))  # corrections win
     accepted, contested = apply_policy(outcomes)
     publish_with_stage(clickhouse, target="se_company_info", rows=to_final_rows(accepted))
     open_review_items(contested)
