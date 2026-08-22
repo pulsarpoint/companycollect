@@ -340,7 +340,15 @@ def _script(*, join_use_nulls: int) -> str:
 
     rows_sql = _render(build_artifact_rows_sql(), {"company_ids": (ALPHA,)})
     parts.append(
-        _marked("rows", f"SELECT source, company_id, source_record_uid FROM ({rows_sql}) ORDER BY source")
+        _marked(
+            "rows",
+            "SELECT source, company_id, source_record_uid, isValidJSON(payload_json), "
+            "JSONType(payload_json, 'incorporation_date'), "
+            "JSONExtractString(payload_json, 'incorporation_date'), "
+            "JSONExtractString(payload_json, 'dissolution_date'), "
+            "JSONExtractString(payload_json, 'primary_sni_code') "
+            f"FROM ({rows_sql}) ORDER BY source",
+        )
     )
     parts.append(
         _marked(
@@ -411,6 +419,19 @@ def test_artifact_rows_sql_returns_one_row_per_source_for_alpha(
     assert sorted(row[0] for row in rows) == ["esef", "scb", "wikidata"]
     wikidata_row = next(row for row in rows if row[0] == "wikidata")
     assert wikidata_row[2] == "wikidata:Q1"
+
+    # Ruling R3, pinned by execution rather than by substring: every payload column is
+    # stringified INSIDE the ifNull, so the map is String -> String throughout. A
+    # Date32 therefore arrives as JSON *text* (not a number or a JSON date), and a NULL
+    # arrives as the empty string -- which is exactly what info_rules reads as "missing".
+    # The rejected shape, toString(ifNull(col, '')), is a NO_COMMON_TYPE error on 26.5,
+    # so this row could not exist at all if the expressions were the other way round.
+    scb_row = next(row for row in rows if row[0] == "scb")
+    is_valid_json, date_type, incorporation_date, dissolution_date, sni_code = scb_row[3:8]
+    assert is_valid_json == "1"
+    assert date_type == "String" and incorporation_date == "2001-02-03"  # Nullable(Date32) as text
+    assert dissolution_date == ""  # a NULL Date32 renders as '', never as "null"
+    assert sni_code == "62010"
 
 
 def test_final_row_evidence_set_hash_matches_info_rules(sections: dict[str, list[list[str]]]) -> None:

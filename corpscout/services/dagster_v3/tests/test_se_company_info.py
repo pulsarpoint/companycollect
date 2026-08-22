@@ -16,6 +16,7 @@ from types import SimpleNamespace
 import dagster as dg
 import pytest
 
+from dagster_v3.defs.se_company.common import input_hash_for
 from dagster_v3.defs.se_company.info import (
     DESCRIPTION_PROMPT_VERSION,
     DescriptionSuggestion,
@@ -24,7 +25,11 @@ from dagster_v3.defs.se_company.info import (
     build_description_request,
     parse_description_suggestion,
 )
-from dagster_v3.defs.se_company.info_rules import ArtifactRow, merge_company_info
+from dagster_v3.defs.se_company.info_rules import (
+    ArtifactRow,
+    evidence_set_hash_for,
+    merge_company_info,
+)
 
 NOW = datetime(2026, 8, 22, 12, tzinfo=UTC)
 COMPANY = "5565200028"
@@ -494,6 +499,74 @@ def test_the_cap_rather_than_exhaustion_is_reported_when_a_full_page_uses_it_up(
     assert metadata["stopped_at_cap"] is True
     assert len(_change_scans(client)) == 1  # the cap stops the loop before asking again
     assert any("max_companies cap" in str(entry[0]) for entry in logged)
+
+
+def test_an_explicit_scope_is_chunked_so_the_rendered_query_stays_under_max_query_size() -> None:
+    """Both scan queries embed the id list three times, substituted client-side, so a
+    5,000-id scope already renders to ~212 KB of the 262,144-byte default max_query_size.
+    A scoped run (a correction sensor can name thousands of companies) is split into
+    chunks of company_batch_size, each paged on its own."""
+    from dagster_v3.defs.se_company.info import materialize_se_company_info
+    from tests.test_se_company_common import FakeClickhouse, FakeClient
+
+    scope = [f"55600000{index:02d}" for index in range(7)]
+    client = FakeClient(answers=[EXISTING_TABLES, [], [], []])  # one empty scan per chunk
+    materialize_se_company_info(
+        clickhouse=FakeClickhouse(client), source_run_id="run", resolved_at=NOW,
+        company_ids=scope, max_companies=1_000, company_batch_size=3, timeout_seconds=10,
+        llm_client=None, llm_model=None, llm_provider=None, log=None)
+
+    scans = _change_scans(client)
+    assert [len(scan["company_ids"]) for scan in scans] == [3, 3, 1]
+    assert sorted(sum((list(scan["company_ids"]) for scan in scans), [])) == sorted(scope)
+    assert all(scan["all_companies"] == 0 for scan in scans)
+    assert all(scan["after_company_id"] == "" for scan in scans)  # each chunk pages from its start
+
+
+def test_the_config_caps_the_batch_at_the_query_size_limit() -> None:
+    from dagster_v3.defs.se_company.info import SECompanyInfoConfig
+
+    assert SECompanyInfoConfig().company_batch_size == 5_000
+    with pytest.raises(ValueError):
+        SECompanyInfoConfig(company_batch_size=5_001)
+
+
+def test_an_approval_survives_a_run_that_does_not_call_the_model() -> None:
+    """The ledger validates approve/reject against the hash of the request that produced
+    the suggestion, and that hash includes the model name. A model-off run therefore has
+    to recompute it from the newest stored observation -- otherwise every reviewer
+    decision reads stale and the approved text is dropped on the next publish."""
+    from dagster_v3.defs.se_company.info import INSERT_COLUMNS, materialize_se_company_info
+    from tests.test_se_company_common import FakeClickhouse, FakeClient
+
+    suggestion_id, correction_id = uuid.uuid4(), uuid.uuid4()
+    suggestion = {"description": "Alpha AB builds payment software in Sweden.",
+                  "language": "en", "rationale": "merged"}
+    # The hash the model-off run must arrive at: same request, the STORED model name.
+    stored_hash = input_hash_for(
+        build_description_request(_outcome(), model="stored-model"), DESCRIPTION_PROMPT_VERSION)
+
+    client = FakeClient(answers=[
+        EXISTING_TABLES, [(COMPANY,)], ARTIFACT_ROWS,
+        [(correction_id, COMPANY, "approve_suggestion", json.dumps({"suggestion_id": str(suggestion_id)}),
+          evidence_set_hash_for(("a" * 64, "c" * 64)), None, NOW)],
+        [(suggestion_id, COMPANY, stored_hash, json.dumps(suggestion),
+          "fake-provider", "stored-model", DESCRIPTION_PROMPT_VERSION, NOW)],
+        [(1, 0)], [(0,)], [(1,)],
+    ])
+    metadata = materialize_se_company_info(
+        clickhouse=FakeClickhouse(client), source_run_id="run", resolved_at=NOW,
+        company_ids=[COMPANY], max_companies=1, company_batch_size=1, timeout_seconds=10,
+        llm_client=None, llm_model=None, llm_provider=None, log=None,
+        resolve_multi_source_with_llm=False)
+
+    assert metadata["stale_correction_count"] == 0 and metadata["applied_correction_count"] == 1
+    assert metadata.get("llm_request_count", 0) == 0  # no model call was made to get there
+    row = dict(zip(INSERT_COLUMNS, _final_rows(client)[0], strict=True))
+    assert row["description"] == "Alpha AB builds payment software in Sweden."
+    assert row["description_source"] == "reviewed" and row["description_language"] == "en"
+    assert row["suggestion_id"] == suggestion_id and row["correction_ids"] == [correction_id]
+    assert row["model_provider"] == "fake-provider" and row["model_name"] == "stored-model"
 
 
 def test_insert_columns_match_the_migration_in_order() -> None:

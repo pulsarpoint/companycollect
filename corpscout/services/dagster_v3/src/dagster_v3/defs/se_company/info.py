@@ -337,135 +337,162 @@ def materialize_se_company_info(
     scope = normalized_company_ids(company_ids)
     assert_clickhouse_tables_exist(clickhouse, database=DATABASE, tables=(
         *ARTIFACT_TABLES.values(), SE_COMPANY_INFO, SE_COMPANY_INFO_CORRECTION, SE_COMPANY_INFO_OBSERVATION))
-    base = {"all_companies": int(not scope), "company_ids": scope or ("",),
-            "pending_model_only": int(pending_model_only),
-            # A model-on ordinary run also picks up whatever the model still owes:
-            # with the model off there is nothing to retry, and the pending_model_only
-            # pass already selects exactly those companies through its own branch.
-            "include_pending": int(resolve_multi_source_with_llm and not pending_model_only)}
+    # Both scan queries embed %(company_ids)s three times and clickhouse-driver
+    # substitutes them client-side, so the rendered statement grows by ~12 bytes per id
+    # per copy: 5,000 ids render to ~212 KB and roughly 6,150 blow past ClickHouse's
+    # default max_query_size of 262,144 ("Code: 62 Max query size exceeded"). An
+    # explicit scope -- a correction sensor can name thousands of companies -- is
+    # therefore split into chunks of at most company_batch_size ids, each paged on its
+    # own, and company_batch_size itself is capped at 5,000 by the config.
+    chunks = [tuple(scope[start : start + company_batch_size])
+              for start in range(0, len(scope), company_batch_size)] or [()]
     metrics: dict[str, int] = defaultdict(int)
-    after_company_id = ""
     stopped_at_cap = False
     client, model, provider = llm_client, llm_model, llm_provider
 
-    while True:
-        remaining = max_companies - metrics["selected_company_count"]
-        if remaining <= 0:
-            # Reachable only after a FULL page (a short page breaks at the bottom of
-            # the loop), so the scan may well have more companies to give: this flag
-            # means "the cap stopped us, not exhaustion".
-            stopped_at_cap = True
+    for chunk in chunks:
+        if stopped_at_cap:
             break
-        page_size = min(company_batch_size, remaining)
-        with clickhouse.get_connection() as ch:
-            companies = [str(r[0]) for r in ch.execute(build_changed_companies_sql(),
-                         {**base, "after_company_id": after_company_id, "page_size": page_size})]
-        if not companies:
-            break
-        after_company_id = companies[-1]
-        params = {"company_ids": tuple(companies)}
-        with clickhouse.get_connection() as ch:
-            rows_by_company: dict[str, list[ArtifactRow]] = defaultdict(list)
-            for row in ch.execute(build_artifact_rows_sql(), params):
-                rows_by_company[str(row[1])].append(_artifact_row_from_row(row))
-            ledger_by_company = defaultdict(list)
-            for row in ch.execute(build_ledger_sql(SE_COMPANY_INFO_CORRECTION), params):
-                item = ledger_row_from_row(row)
-                ledger_by_company[item.company_id].append(item)
-            stored_by_company = defaultdict(list)
-            for row in ch.execute(build_observations_sql(SE_COMPANY_INFO_OBSERVATION), params):
-                observation = observation_from_row(row)
-                stored_by_company[observation.company_id].append(observation)
+        base = {"all_companies": int(not chunk), "company_ids": chunk or ("",),
+                "pending_model_only": int(pending_model_only),
+                # A model-on ordinary run also picks up whatever the model still owes:
+                # with the model off there is nothing to retry, and the pending_model_only
+                # pass already selects exactly those companies through its own branch.
+                "include_pending": int(resolve_multi_source_with_llm and not pending_model_only)}
+        after_company_id = ""
+        while True:
+            remaining = max_companies - metrics["selected_company_count"]
+            if remaining <= 0:
+                # Reachable only after a FULL page (a short page breaks at the bottom of
+                # the loop), so the scan may well have more companies to give: this flag
+                # means "the cap stopped us, not exhaustion".
+                stopped_at_cap = True
+                break
+            page_size = min(company_batch_size, remaining)
+            with clickhouse.get_connection() as ch:
+                companies = [str(r[0]) for r in ch.execute(build_changed_companies_sql(),
+                             {**base, "after_company_id": after_company_id, "page_size": page_size})]
+            if not companies:
+                break
+            after_company_id = companies[-1]
+            params = {"company_ids": tuple(companies)}
+            with clickhouse.get_connection() as ch:
+                rows_by_company: dict[str, list[ArtifactRow]] = defaultdict(list)
+                for row in ch.execute(build_artifact_rows_sql(), params):
+                    rows_by_company[str(row[1])].append(_artifact_row_from_row(row))
+                ledger_by_company = defaultdict(list)
+                for row in ch.execute(build_ledger_sql(SE_COMPANY_INFO_CORRECTION), params):
+                    item = ledger_row_from_row(row)
+                    ledger_by_company[item.company_id].append(item)
+                stored_by_company = defaultdict(list)
+                for row in ch.execute(build_observations_sql(SE_COMPANY_INFO_OBSERVATION), params):
+                    observation = observation_from_row(row)
+                    stored_by_company[observation.company_id].append(observation)
 
-        final_rows: list[tuple[Any, ...]] = []
-        observation_rows: list[tuple[Any, ...]] = []
-        for company_id in companies:
-            outcome = merge_company_info(company_id, rows_by_company.get(company_id, []))
-            if outcome is None:
-                metrics["skipped_no_register_count"] += 1
-                continue
-            current_input_hash = None
-            if outcome.needs_model:
-                metrics["multi_source_count"] += 1
-            if outcome.needs_model and resolve_multi_source_with_llm:
-                if client is None:
-                    settings = deepseek_settings()
-                    client = OpenAI(base_url=settings.base_url.rstrip("/"), api_key=settings.api_key,
-                                    timeout=float(timeout_seconds), max_retries=2)
-                    model, provider = settings.model, settings.provider
-                if not model or not provider:
-                    raise ValueError(
-                        "An LLM model and provider are required to resolve multi-source descriptions")
-                request = build_description_request(outcome, model=model)
-                current_input_hash = input_hash_for(request, DESCRIPTION_PROMPT_VERSION)
-                try:
-                    result, reused = reuse_or_call(
-                        input_hash=current_input_hash, stored=stored_by_company.get(company_id, []),
-                        call=partial(_request_description, client, request, provider=provider))
-                except (ValueError, IndexError, OpenAIError) as exc:
-                    # One unusable reply is that company's problem, never the page's:
-                    # failing here would also discard every paid call already made in
-                    # this page. The company publishes its deterministic pick with no
-                    # suggestion_id, which is itself a reason to re-select it: the next
-                    # model-on run (the weekly job included) retries it, and so does a
-                    # pending_model_only pass.
-                    # current_input_hash goes back to None: no live suggestion exists
-                    # for this evidence, so an approve/reject correction must read stale.
-                    metrics["model_failed_count"] += 1
-                    current_input_hash = None
-                    if log is not None:
-                        log("se_company_info description model failed: company=%s error=%s", company_id, exc)
-                else:
-                    metrics["llm_reused_count" if reused else "llm_request_count"] += 1
-                    if not reused:
-                        observation_rows.append((result.suggestion_id, company_id, current_input_hash,
-                            json.dumps(result.suggestion, ensure_ascii=False), result.raw_response, result.model_provider,
-                            result.model_name, result.prompt_version, result.prompt_tokens, result.completion_tokens,
-                            source_run_id, resolved_at))
-                        # Visible to this company's corrections in the same run: an
-                        # approve_suggestion naming this brand-new id must resolve.
-                        stored_by_company[company_id].append(StoredObservation(
-                            suggestion_id=result.suggestion_id, company_id=company_id,
-                            input_hash=current_input_hash, suggestion=result.suggestion,
-                            model_provider=result.model_provider, model_name=result.model_name,
-                            prompt_version=result.prompt_version, created_at=resolved_at))
-                        if len(observation_rows) >= OBSERVATION_FLUSH_ROWS:
-                            _publish_observations(clickhouse=clickhouse, rows=observation_rows, metrics=metrics)
-                    # The model's provenance is set BEFORE the ledger runs, so a later
-                    # reject/override resets it; description_candidates is never rebuilt
-                    # (reject_suggestion falls back to its first entry).
-                    outcome = replace(outcome, description=str(result.suggestion["description"]),
-                                      description_language=str(result.suggestion.get("language") or "en"),
-                                      description_source="llm", suggestion_id=result.suggestion_id,
-                                      model_provider=result.model_provider, model_name=result.model_name,
-                                      prompt_version=result.prompt_version)
-            outcome = apply_info_ledger(outcome, ledger_by_company.get(company_id, []),
-                                        evidence_set_hash=evidence_set_hash_for(outcome.evidence_hashes),
-                                        current_input_hash=current_input_hash,
-                                        stored=stored_by_company.get(company_id, []))
-            metrics["applied_correction_count"] += len(outcome.correction_ids)
-            metrics["stale_correction_count"] += len(outcome.stale_correction_ids)
-            if outcome.stale_correction_ids and log is not None:
-                log("Stale corrections skipped: company=%s ids=%s", company_id, [str(i) for i in outcome.stale_correction_ids])
-            final_rows.append(_final_row(outcome, source_run_id=source_run_id, resolved_at=resolved_at))
+            final_rows: list[tuple[Any, ...]] = []
+            observation_rows: list[tuple[Any, ...]] = []
+            for company_id in companies:
+                outcome = merge_company_info(company_id, rows_by_company.get(company_id, []))
+                if outcome is None:
+                    metrics["skipped_no_register_count"] += 1
+                    continue
+                current_input_hash = None
+                # The live list, not a copy: a suggestion made just below has to be
+                # visible to this company's own corrections in the same run.
+                stored = stored_by_company[company_id]
+                if outcome.needs_model:
+                    metrics["multi_source_count"] += 1
+                if outcome.needs_model and resolve_multi_source_with_llm:
+                    if client is None:
+                        settings = deepseek_settings()
+                        client = OpenAI(base_url=settings.base_url.rstrip("/"), api_key=settings.api_key,
+                                        timeout=float(timeout_seconds), max_retries=2)
+                        model, provider = settings.model, settings.provider
+                    if not model or not provider:
+                        raise ValueError(
+                            "An LLM model and provider are required to resolve multi-source descriptions")
+                    request = build_description_request(outcome, model=model)
+                    current_input_hash = input_hash_for(request, DESCRIPTION_PROMPT_VERSION)
+                    try:
+                        result, reused = reuse_or_call(
+                            input_hash=current_input_hash, stored=stored,
+                            call=partial(_request_description, client, request, provider=provider))
+                    except (ValueError, IndexError, OpenAIError) as exc:
+                        # One unusable reply is that company's problem, never the page's:
+                        # failing here would also discard every paid call already made in
+                        # this page. The company publishes its deterministic pick with no
+                        # suggestion_id, which is itself a reason to re-select it: the next
+                        # model-on run (the weekly job included) retries it, and so does a
+                        # pending_model_only pass.
+                        # current_input_hash goes back to None: no live suggestion exists
+                        # for this evidence, so an approve/reject correction must read stale.
+                        metrics["model_failed_count"] += 1
+                        current_input_hash = None
+                        if log is not None:
+                            log("se_company_info description model failed: company=%s error=%s", company_id, exc)
+                    else:
+                        metrics["llm_reused_count" if reused else "llm_request_count"] += 1
+                        if not reused:
+                            observation_rows.append((result.suggestion_id, company_id, current_input_hash,
+                                json.dumps(result.suggestion, ensure_ascii=False), result.raw_response, result.model_provider,
+                                result.model_name, result.prompt_version, result.prompt_tokens, result.completion_tokens,
+                                source_run_id, resolved_at))
+                            # Visible to this company's corrections in the same run: an
+                            # approve_suggestion naming this brand-new id must resolve.
+                            stored.append(StoredObservation(
+                                suggestion_id=result.suggestion_id, company_id=company_id,
+                                input_hash=current_input_hash, suggestion=result.suggestion,
+                                model_provider=result.model_provider, model_name=result.model_name,
+                                prompt_version=result.prompt_version, created_at=resolved_at))
+                            if len(observation_rows) >= OBSERVATION_FLUSH_ROWS:
+                                _publish_observations(clickhouse=clickhouse, rows=observation_rows, metrics=metrics)
+                        # The model's provenance is set BEFORE the ledger runs, so a later
+                        # reject/override resets it; description_candidates is never rebuilt
+                        # (reject_suggestion falls back to its first entry).
+                        outcome = replace(outcome, description=str(result.suggestion["description"]),
+                                          description_language=str(result.suggestion.get("language") or "en"),
+                                          description_source="llm", suggestion_id=result.suggestion_id,
+                                          model_provider=result.model_provider, model_name=result.model_name,
+                                          prompt_version=result.prompt_version)
+                elif stored:
+                    # Even on a run that never calls the model, the ledger validates an
+                    # approve/reject against the hash of the request that produced the
+                    # suggestion -- and that hash includes the model name. Recomputing it
+                    # from the newest stored observation's model_name is pure Python (no
+                    # API call, no deepseek_settings()) and is what keeps a reviewer's
+                    # decision alive on a model-off run: without it every approval reads
+                    # stale and the reviewed text is silently dropped on the next publish.
+                    newest = max(stored, key=lambda row: (row.created_at, str(row.suggestion_id)))
+                    current_input_hash = input_hash_for(
+                        build_description_request(outcome, model=newest.model_name),
+                        DESCRIPTION_PROMPT_VERSION)
+                outcome = apply_info_ledger(outcome, ledger_by_company.get(company_id, []),
+                                            evidence_set_hash=evidence_set_hash_for(outcome.evidence_hashes),
+                                            current_input_hash=current_input_hash,
+                                            stored=stored)
+                metrics["applied_correction_count"] += len(outcome.correction_ids)
+                metrics["stale_correction_count"] += len(outcome.stale_correction_ids)
+                if outcome.stale_correction_ids and log is not None:
+                    log("Stale corrections skipped: company=%s ids=%s", company_id, [str(i) for i in outcome.stale_correction_ids])
+                final_rows.append(_final_row(outcome, source_run_id=source_run_id, resolved_at=resolved_at))
 
-        _publish_observations(clickhouse=clickhouse, rows=observation_rows, metrics=metrics)
-        if final_rows:
-            # new_versions_only stays off: the final is keyed by company_id and a new
-            # row per resolution is the point -- ReplacingMergeTree(resolved_at) keeps
-            # the newest.
-            counts = publish_with_stage(clickhouse=clickhouse, target=SE_COMPANY_INFO, insert_columns=INSERT_COLUMNS,
-                                        rows=final_rows, invalid_condition="trim(legal_name) = '' OR empty(source_record_uids)",
-                                        new_versions_only=False)
-            metrics["inserted_count"] += counts.inserted
-            metrics["total_count"] = counts.total
-        metrics["selected_company_count"] += len(companies)
-        if log is not None:
-            log("se_company_info page: companies=%s inserted=%s multi_source=%s llm=%s reused=%s failed=%s",
-                len(companies), len(final_rows), metrics["multi_source_count"], metrics["llm_request_count"],
-                metrics["llm_reused_count"], metrics["model_failed_count"])
-        if len(companies) < page_size:
-            break  # a short page means the scan is exhausted; no need to ask again
+            _publish_observations(clickhouse=clickhouse, rows=observation_rows, metrics=metrics)
+            if final_rows:
+                # new_versions_only stays off: the final is keyed by company_id and a new
+                # row per resolution is the point -- ReplacingMergeTree(resolved_at) keeps
+                # the newest.
+                counts = publish_with_stage(clickhouse=clickhouse, target=SE_COMPANY_INFO, insert_columns=INSERT_COLUMNS,
+                                            rows=final_rows, invalid_condition="trim(legal_name) = '' OR empty(source_record_uids)",
+                                            new_versions_only=False)
+                metrics["inserted_count"] += counts.inserted
+                metrics["total_count"] = counts.total
+            metrics["selected_company_count"] += len(companies)
+            if log is not None:
+                log("se_company_info page: companies=%s inserted=%s multi_source=%s llm=%s reused=%s failed=%s",
+                    len(companies), len(final_rows), metrics["multi_source_count"], metrics["llm_request_count"],
+                    metrics["llm_reused_count"], metrics["model_failed_count"])
+            if len(companies) < page_size:
+                break  # a short page means the scan is exhausted; no need to ask again
     if stopped_at_cap and log is not None:
         log("se_company_info stopped at the max_companies cap (%s): changed companies may remain, "
             "the next run resumes from the start of the scan", max_companies)
@@ -476,7 +503,11 @@ def materialize_se_company_info(
 class SECompanyInfoConfig(dg.Config):
     company_ids: list[str] = Field(default_factory=list)
     max_companies: int = Field(default=1_000_000, ge=1, le=1_000_000)
-    company_batch_size: int = Field(default=5_000, ge=1, le=25_000)
+    # Capped at 5,000: this is both the scan page size and the chunk size for an
+    # explicit company_ids scope, and each scan query embeds the id list three times
+    # client-side -- 5,000 ids render to ~212 KB against ClickHouse's 262,144-byte
+    # default max_query_size, which ~6,150 ids would exceed.
+    company_batch_size: int = Field(default=5_000, ge=1, le=5_000)
     timeout_seconds: int = Field(default=120, ge=1, le=600)
     # False = for companies with several description sources publish the provisional pick
     # (highest-priority source) without calling the model; used for the initial load so the

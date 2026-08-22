@@ -12,7 +12,9 @@ filing version; the newest extraction per filing wins.
 Assets
   se_company_info_esef_clickhouse → corpscout.se_company_info_esef
 Downstream: info.py (description candidate; entity_name is evidence only —
-legal_name always comes from SCB).
+legal_name always comes from SCB, and no rule reads entity_name, which is why the
+join to the documents table is a LEFT one: a filing whose document row is missing
+must still contribute its description, not vanish).
 """
 
 from datetime import UTC, datetime
@@ -43,7 +45,7 @@ SE_COMPANY_INFO_ESEF_SQL = """WITH candidates AS (
         %(source_run_id)s AS source_run_id,
         info.source_document_id AS source_document_id,
         info.lei AS lei,
-        documents.entity_name AS entity_name,
+        ifNull(documents.entity_name, '') AS entity_name,
         info.fiscal_year AS fiscal_year,
         info.company_description AS company_description,
         toString(info.description_language) AS description_language,
@@ -51,7 +53,7 @@ SE_COMPANY_INFO_ESEF_SQL = """WITH candidates AS (
         info.products_and_services_json AS products_and_services_json,
         info.business_segments_json AS business_segments_json
     FROM corpscout.esef_document_company_information AS info
-    INNER JOIN corpscout.esef_source_documents AS documents ON documents.source_document_id = info.source_document_id
+    LEFT JOIN corpscout.esef_source_documents AS documents ON documents.source_document_id = info.source_document_id
     WHERE info.country_iso2 = 'SE'
       AND match(info.company_id, '^[0-9]{10}$')
       AND trim(info.company_description) != ''

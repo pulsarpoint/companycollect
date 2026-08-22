@@ -19,10 +19,16 @@ def test_esef_select_keeps_swedish_issuers_with_a_description() -> None:
     sql = SE_COMPANY_INFO_ESEF_SQL
     assert projection_aliases(sql) == list(SE_COMPANY_INFO_ESEF_COLUMNS)
     assert "FROM corpscout.esef_document_company_information AS info" in sql
+    # A LEFT join: the documents table only supplies entity_name, which no rule reads,
+    # so a missing document row must not drop an otherwise valid description. Its
+    # entity_name is non-Nullable in the source DDL, so the miss still needs the ifNull
+    # guard (it is NULL under join_use_nulls = 1, and the artifact column is String).
     assert (
-        "INNER JOIN corpscout.esef_source_documents AS documents ON documents.source_document_id = info.source_document_id"
+        "LEFT JOIN corpscout.esef_source_documents AS documents ON documents.source_document_id = info.source_document_id"
         in sql
     )
+    assert "INNER JOIN corpscout.esef_source_documents" not in sql
+    assert "ifNull(documents.entity_name, '') AS entity_name" in sql
     assert "info.country_iso2 = 'SE'" in sql and "match(info.company_id, '^[0-9]{10}$')" in sql
     assert "trim(info.company_description) != ''" in sql
     assert "info.source_record_uid AS source_record_uid" in sql
