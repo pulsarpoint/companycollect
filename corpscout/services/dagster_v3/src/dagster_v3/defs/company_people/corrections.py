@@ -12,6 +12,9 @@ from dataclasses import dataclass
 from datetime import datetime
 from typing import Any
 
+import dagster as dg
+from dagster_clickhouse import ClickhouseResource
+
 DATABASE = "corpscout"
 GROUP_NAME = "company_people"
 
@@ -249,3 +252,94 @@ def correction_set_hash(correction_ids: Sequence[uuid.UUID]) -> str:
     """Match the ClickHouse MATERIALIZED correction_set_hash (sorted strings)."""
     joined = "\n".join(sorted(str(value) for value in correction_ids))
     return hashlib.sha256(joined.encode()).hexdigest()
+
+
+REVIEW_ASSET_NAMES = (
+    "se_company_person_clickhouse",
+    "se_company_person_role_draft_clickhouse",
+    "se_company_person_role_clickhouse",
+)
+
+se_company_person_review_job = dg.define_asset_job(
+    "se_company_person_review_job",
+    selection=dg.AssetSelection.assets(*REVIEW_ASSET_NAMES),
+)
+
+
+def build_correction_cursor_sql() -> str:
+    return f"""SELECT
+    count(),
+    if(count() = 0, '', toString(argMax(correction_id, (created_at, correction_id)))),
+    if(count() = 0, '', toString(max(created_at)))
+FROM {QUALIFIED_CORRECTION_TABLE}"""
+
+
+def build_touched_companies_sql() -> str:
+    return f"""SELECT DISTINCT company_id
+FROM {QUALIFIED_CORRECTION_TABLE}
+WHERE created_at > parseDateTime64BestEffort(%(since)s, 3)
+ORDER BY company_id"""
+
+
+def se_company_person_correction_cursor(clickhouse: ClickhouseResource) -> str:
+    """`count:last_id:last_created_at`; advances for every appended ledger row."""
+    with clickhouse.get_connection() as client:
+        rows = client.execute(build_correction_cursor_sql())
+    if not rows or int(rows[0][0]) == 0:
+        return ""
+    return f"{int(rows[0][0])}:{rows[0][1]}:{rows[0][2]}"
+
+
+def touched_company_ids_since(
+    clickhouse: ClickhouseResource, since: str
+) -> tuple[str, ...]:
+    with clickhouse.get_connection() as client:
+        rows = client.execute(build_touched_companies_sql(), {"since": since})
+    return tuple(str(row[0]) for row in rows)
+
+
+def review_run_request(cursor: str, company_ids: Sequence[str]) -> dg.RunRequest:
+    return dg.RunRequest(
+        run_key=f"se-company-person-correction:{cursor}",
+        run_config={
+            "ops": {
+                asset_name: {"config": {"company_ids": list(company_ids)}}
+                for asset_name in REVIEW_ASSET_NAMES
+            }
+        },
+    )
+
+
+@dg.sensor(
+    name="se_company_person_correction_sensor",
+    job=se_company_person_review_job,
+    default_status=dg.DefaultSensorStatus.RUNNING,
+    minimum_interval_seconds=60,
+    required_resource_keys={"clickhouse"},
+)
+def se_company_person_correction_sensor(
+    context: dg.SensorEvaluationContext,
+) -> dg.SensorResult | dg.SkipReason:
+    cursor = se_company_person_correction_cursor(context.resources.clickhouse)
+    if cursor == "":
+        return dg.SkipReason("No Sweden company-person corrections exist")
+    if cursor == context.cursor:
+        return dg.SkipReason("No new Sweden company-person corrections")
+    previous_created_at = (
+        context.cursor.split(":", 2)[2] if context.cursor else "1970-01-01 00:00:00.000"
+    )
+    company_ids = touched_company_ids_since(
+        context.resources.clickhouse, previous_created_at
+    )
+    if not company_ids:
+        return dg.SensorResult(run_requests=[], cursor=cursor)
+    return dg.SensorResult(
+        run_requests=[review_run_request(cursor, company_ids)],
+        cursor=cursor,
+    )
+
+
+defs = dg.Definitions(
+    jobs=[se_company_person_review_job],
+    sensors=[se_company_person_correction_sensor],
+)

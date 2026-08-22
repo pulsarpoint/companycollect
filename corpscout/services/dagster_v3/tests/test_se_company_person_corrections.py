@@ -3,6 +3,8 @@ import uuid
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
+import dagster as dg
+
 from dagster_v3.defs.company_people.corrections import (
     CORRECTION_COLUMNS,
     CORRECTION_KINDS,
@@ -14,10 +16,13 @@ from dagster_v3.defs.company_people.corrections import (
     StoredSuggestion,
     build_company_corrections_sql,
     build_company_suggestions_sql,
+    build_correction_cursor_sql,
+    build_touched_companies_sql,
     correction_from_row,
     correction_set_hash,
     effective_company_corrections_cte,
     effective_corrections,
+    review_run_request,
     suggestion_from_row,
 )
 
@@ -259,3 +264,42 @@ def test_loader_sql_scopes_by_selected_companies() -> None:
     assert "supersedes_correction_id IS NOT NULL" in cte
     assert "correction_kind IN ('merge_persons'" in cte
     assert "'undo'" not in cte
+
+
+def test_review_job_selects_person_and_role_assets_without_draft_import() -> None:
+    from dagster_v3.definitions import defs as load_defs
+
+    repository = load_defs().get_repository_def()
+    keys = {
+        key.path[-1]
+        for key in repository.get_job("se_company_person_review_job").asset_layer.executable_asset_keys
+    }
+    assert keys == {
+        "se_company_person_clickhouse",
+        "se_company_person_role_draft_clickhouse",
+        "se_company_person_role_clickhouse",
+    }
+    sensor = repository.get_sensor_def("se_company_person_correction_sensor")
+    assert sensor.job_name == "se_company_person_review_job"
+    assert sensor.minimum_interval_seconds == 60
+
+
+def test_sensor_sql_reads_cursor_and_touched_companies() -> None:
+    assert "argMax(correction_id, (created_at, correction_id))" in build_correction_cursor_sql()
+    assert "toString(max(created_at))" in build_correction_cursor_sql()
+    touched = build_touched_companies_sql()
+    assert "WHERE created_at > parseDateTime64BestEffort(%(since)s, 3)" in touched
+    assert "SELECT DISTINCT company_id" in touched
+
+
+def test_run_request_scopes_every_asset_to_touched_companies() -> None:
+    request = review_run_request("3:abc:2026-08-22 09:00:00.000", ("5565200028",))
+
+    assert request.run_key == "se-company-person-correction:3:abc:2026-08-22 09:00:00.000"
+    assert request.run_config == {
+        "ops": {
+            "se_company_person_clickhouse": {"config": {"company_ids": ["5565200028"]}},
+            "se_company_person_role_draft_clickhouse": {"config": {"company_ids": ["5565200028"]}},
+            "se_company_person_role_clickhouse": {"config": {"company_ids": ["5565200028"]}},
+        }
+    }
