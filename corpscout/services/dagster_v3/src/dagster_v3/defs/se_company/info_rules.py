@@ -47,6 +47,7 @@ class InfoOutcome:
     evidence_hashes: tuple[str, ...]
     needs_model: bool = False
     description_candidates: tuple[tuple[str, str, str], ...] = ()  # (source, source_record_uid, text)
+    description_candidate_languages: tuple[str, ...] = ()  # parallel to description_candidates
     correction_ids: tuple[uuid.UUID, ...] = ()
     stale_correction_ids: tuple[uuid.UUID, ...] = ()
     suggestion_id: uuid.UUID | None = None
@@ -97,9 +98,17 @@ def merge_company_info(company_id: str, rows: Sequence[ArtifactRow]) -> InfoOutc
     nothing, exactly one is copied as-is, two or more always need the model
     (no agreement heuristic) -- the ESEF > Wikidata > SCB pick is only a
     provisional value until the model (or a review correction) replaces it.
+
+    A company without a register row, or whose register row carries no legal
+    name at all, is never published: this mirrors the final table's
+    ``has_legal_name`` CHECK, so a nameless row never reaches the point of
+    aborting the whole publish batch.
     """
     scb = _newest(rows, "scb")
     if scb is None:
+        return None
+    legal_name = _text(scb.values.get("legal_name")) or _text(scb.values.get("legal_name_raw")) or ""
+    if not legal_name:
         return None
     esef = _newest(
         rows,
@@ -112,29 +121,26 @@ def merge_company_info(company_id: str, rows: Sequence[ArtifactRow]) -> InfoOutc
     )
     wikidata = _newest(rows, "wikidata")
 
-    # (source, source_record_uid, text, language) for every source that offers a description
+    # (source, source_record_uid, text, language) for every source that offers a description.
+    # Each text is captured once and narrowed by its own truthy check, so the
+    # list is genuinely `str` (never `str | None`) in every slot.
     candidates: list[tuple[str, str, str, str]] = []
-    if esef is not None and _text(esef.values.get("company_description")):
-        candidates.append((
-            "esef",
-            esef.source_record_uid,
-            _text(esef.values["company_description"]),
-            str(esef.values.get("description_language") or ""),
-        ))
-    if wikidata is not None and _text(wikidata.values.get("company_description")):
-        candidates.append((
-            "wikidata",
-            wikidata.source_record_uid,
-            _text(wikidata.values["company_description"]),
-            "en",
-        ))
-    if _text(scb.values.get("activity_description")):
-        candidates.append((
-            "scb",
-            scb.source_record_uid,
-            _text(scb.values["activity_description"]),
-            "sv",
-        ))
+    if esef is not None:
+        esef_description = _text(esef.values.get("company_description"))
+        if esef_description:
+            candidates.append((
+                "esef",
+                esef.source_record_uid,
+                esef_description,
+                str(esef.values.get("description_language") or ""),
+            ))
+    if wikidata is not None:
+        wikidata_description = _text(wikidata.values.get("company_description"))
+        if wikidata_description:
+            candidates.append(("wikidata", wikidata.source_record_uid, wikidata_description, "en"))
+    scb_description = _text(scb.values.get("activity_description"))
+    if scb_description:
+        candidates.append(("scb", scb.source_record_uid, scb_description, "sv"))
     candidates.sort(key=lambda item: DESCRIPTION_PRIORITY.index(item[0]))
 
     description, language, source = None, "", ""
@@ -145,7 +151,7 @@ def merge_company_info(company_id: str, rows: Sequence[ArtifactRow]) -> InfoOutc
     used = [row for row in (scb, esef, wikidata) if row is not None]
     return InfoOutcome(
         company_id=company_id,
-        legal_name=_text(scb.values.get("legal_name")) or _text(scb.values.get("legal_name_raw")) or "",
+        legal_name=legal_name,
         legal_form_code=_text(scb.values.get("legal_form_code")),
         status=str(scb.values.get("status") or ""),
         incorporation_date=_date(scb.values.get("incorporation_date")),
@@ -162,6 +168,7 @@ def merge_company_info(company_id: str, rows: Sequence[ArtifactRow]) -> InfoOutc
         evidence_hashes=tuple(row.evidence_hash for row in used),
         needs_model=needs_model,
         description_candidates=tuple((src, uid, text) for src, uid, text, _ in candidates),
+        description_candidate_languages=tuple(c[3] for c in candidates),
     )
 
 
@@ -185,11 +192,23 @@ def apply_info_ledger(
       description) -> silently skipped: neither applied nor counted as stale.
 
     ``approve_suggestion`` publishes the stored suggestion's description with
-    ``description_source = "reviewed"`` and ``suggestion_id`` set.
+    ``description_source = "reviewed"`` and ``suggestion_id`` set -- unless
+    the stored suggestion has no non-empty ``description`` string, in which
+    case the correction is treated as stale (nothing sensible to approve).
     ``reject_suggestion`` discards it, falls back to the highest-priority
-    deterministic candidate, and clears ``suggestion_id``. Both share an
-    ``INFO_KIND_ORDER`` rank, so between them "later" (by ``created_at``)
-    wins.
+    deterministic candidate (text and language alike), and clears
+    ``suggestion_id``. Both share an ``INFO_KIND_ORDER`` rank, so between
+    them "later" (by ``created_at``) wins.
+
+    Both ``reject_suggestion`` and ``override_field`` also reset
+    ``model_provider``/``model_name``/``prompt_version`` to fixed
+    deterministic values, so a rejected or manually-overridden description is
+    never mistaken for a still-live model result: ``model_provider =
+    "deterministic"`` and ``prompt_version = ""`` for both, with
+    ``model_name`` distinguishing *why* the row is deterministic
+    (``"rejected-suggestion"`` vs ``"override"``) rather than reusing
+    ``InfoOutcome``'s own class-default ``model_name``, which means "the
+    original merge never needed a model" -- a different fact.
     """
     stored_by_id = {row.suggestion_id: row for row in stored}
     applied: list[uuid.UUID] = []
@@ -210,6 +229,9 @@ def apply_info_ledger(
                 description_source="reviewed",
                 suggestion_id=None,
                 needs_model=False,
+                model_provider="deterministic",
+                model_name="override",
+                prompt_version="",
             )
         elif correction.kind in ("approve_suggestion", "reject_suggestion"):
             try:
@@ -222,9 +244,16 @@ def apply_info_ledger(
                 stale.append(correction.correction_id)
                 continue
             if correction.kind == "approve_suggestion":
+                raw_description = suggestion.suggestion.get("description")
+                approved_text = raw_description.strip() if isinstance(raw_description, str) else ""
+                if not approved_text:
+                    # Nothing sensible to approve -- treat like any other
+                    # correction that no longer names something usable.
+                    stale.append(correction.correction_id)
+                    continue
                 outcome = replace(
                     outcome,
-                    description=_text(suggestion.suggestion.get("description")),
+                    description=approved_text,
                     description_language=str(suggestion.suggestion.get("language") or outcome.description_language),
                     description_source="reviewed",
                     suggestion_id=suggestion_id,
@@ -234,14 +263,27 @@ def apply_info_ledger(
                     prompt_version=suggestion.prompt_version,
                 )
             else:
-                # rejected: fall back to the highest-priority source text, keep the sources list
+                # Rejected: fall back to the highest-priority deterministic
+                # candidate, text and language alike (description_candidates
+                # / description_candidate_languages are never mutated by a
+                # prior correction, so this is always the original merge's
+                # pick, not whatever an intervening approve last set).
                 fallback = outcome.description_candidates[0] if outcome.description_candidates else None
+                fallback_language = (
+                    outcome.description_candidate_languages[0]
+                    if outcome.description_candidate_languages
+                    else outcome.description_language
+                )
                 outcome = replace(
                     outcome,
                     suggestion_id=None,
                     needs_model=False,
                     description=fallback[2] if fallback else outcome.description,
                     description_source=fallback[0] if fallback else outcome.description_source,
+                    description_language=fallback_language,
+                    model_provider="deterministic",
+                    model_name="rejected-suggestion",
+                    prompt_version="",
                 )
         applied.append(correction.correction_id)
     return replace(
