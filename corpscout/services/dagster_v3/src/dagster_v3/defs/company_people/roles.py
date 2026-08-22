@@ -9,6 +9,10 @@ from dagster_clickhouse import ClickhouseResource
 from pydantic import Field
 
 from dagster_v3.defs.clickhouse.resolved import assert_clickhouse_tables_exist
+from dagster_v3.defs.company_people.corrections import (
+    CORRECTION_TABLE,
+    ROLE_CORRECTION_KINDS,
+)
 from dagster_v3.defs.company_people.draft import normalized_company_ids
 from dagster_v3.defs.esef_filings.roles import (
     ESEF_ROLE_CATEGORY_TO_CANONICAL_ROLE,
@@ -58,6 +62,7 @@ ROLE_COLUMNS = (
     "role_code",
     "role_draft_ids",
     "person_draft_ids",
+    "correction_ids",
     "sources",
     "fiscal_year",
     "first_observed_at",
@@ -97,6 +102,62 @@ def _company_filter(column: str, company_ids: Sequence[str]) -> str:
         return "1"
     values = ", ".join(f"'{company_id}'" for company_id in normalized)
     return f"{column} IN ({values})"
+
+
+def _role_kinds_sql() -> str:
+    return ", ".join(f"'{kind}'" for kind in ROLE_CORRECTION_KINDS)
+
+
+def _live_role_corrections_filter(company_ids: Sequence[str]) -> str:
+    """Role corrections for these companies that no later row has undone."""
+    company_filter = _company_filter("ledger.company_id", company_ids)
+    return f"""{company_filter}
+      AND ledger.correction_kind IN ({_role_kinds_sql()})
+      AND ledger.correction_id NOT IN (
+          SELECT supersedes_correction_id
+          FROM corpscout.se_company_person_correction
+          WHERE supersedes_correction_id IS NOT NULL
+      )"""
+
+
+def _active_role_code_condition() -> str:
+    """True unless a set_role names a role the role pool no longer offers."""
+    return """(
+          ledger.correction_kind = 'remove_role'
+          OR JSONExtractString(ledger.payload, 'role_code') IN (
+              SELECT role_code
+              FROM corpscout.company_person_role_type FINAL
+              WHERE is_active = 1
+          )
+      )"""
+
+
+def _role_corrections_cte(company_ids: Sequence[str]) -> str:
+    """Live set_role / remove_role decisions, one row per draft they bind to.
+
+    A correction applies only when the draft still belongs to its subject
+    person (the join in the assignment query enforces that) and, for set_role,
+    only when the requested role_code is still active.
+    """
+    return f"""role_corrections AS (
+    SELECT
+        ledger.correction_id,
+        ledger.company_id,
+        ledger.subject_person_id,
+        ledger.correction_kind,
+        arrayJoin(ledger.draft_ids) AS person_draft_id,
+        JSONExtractString(ledger.payload, 'role_code') AS role_code,
+        if(
+            JSONHas(ledger.payload, 'fiscal_year')
+                AND JSONType(ledger.payload, 'fiscal_year') != 'Null',
+            toNullable(toUInt16(JSONExtractUInt(ledger.payload, 'fiscal_year'))),
+            CAST(NULL, 'Nullable(UInt16)')
+        ) AS fiscal_year_filter,
+        ledger.created_at
+    FROM corpscout.se_company_person_correction AS ledger
+    WHERE {_live_role_corrections_filter(company_ids)}
+      AND {_active_role_code_condition()}
+)"""
 
 
 def source_role_code(
@@ -409,7 +470,8 @@ def build_role_assignments_insert_sql(
     return f"""INSERT INTO {qualified_stage_table} (
     {columns}
 )
-WITH latest_role_drafts AS (
+WITH {_role_corrections_cte(company_ids)},
+latest_role_drafts AS (
     SELECT
         drafts.person_draft_id,
         drafts.fiscal_year,
@@ -443,6 +505,7 @@ person_evidence AS (
         arrayJoin(people.draft_ids) AS person_draft_id
     FROM corpscout.se_company_person AS people FINAL
     WHERE {company_filter}
+      AND people.merged_into_person_id IS NULL
 ),
 assignments AS (
     SELECT
@@ -450,26 +513,48 @@ assignments AS (
             'se-company-person-role-v2\n',
             evidence.company_id, '\n',
             toString(evidence.person_id), '\n',
-            roles.role_code, '\n',
+            role_code, '\n',
             ifNull(toString(roles.fiscal_year), 'undated')
         ))), 1, 32))) AS role_id,
-        evidence.person_id,
-        evidence.company_id,
-        roles.role_code,
+        evidence.person_id AS person_id,
+        evidence.company_id AS company_id,
+        if(
+            corrections.correction_kind = 'set_role',
+            corrections.role_code,
+            roles.role_code
+        ) AS role_code,
         arraySort(groupUniqArray(roles.role_draft_id)) AS role_draft_ids,
         arraySort(groupUniqArray(evidence.person_draft_id)) AS person_draft_ids,
+        arrayFilter(
+            correction_id -> toString(correction_id) != '{_ZERO_UUID}',
+            arraySort(groupUniqArray(corrections.correction_id))
+        ) AS correction_ids,
         arraySort(groupUniqArray(toString(roles.source))) AS sources,
-        roles.fiscal_year,
+        roles.fiscal_year AS fiscal_year,
         min(roles.source_observed_at) AS first_observed_at,
         max(roles.source_observed_at) AS last_observed_at
     FROM person_evidence AS evidence
     INNER JOIN latest_role_drafts AS roles
         ON roles.person_draft_id = evidence.person_draft_id
        AND roles.company_id = evidence.company_id
+    LEFT JOIN (
+        SELECT *
+        FROM role_corrections
+        ORDER BY created_at DESC, correction_id DESC
+        LIMIT 1 BY company_id, subject_person_id, person_draft_id
+    ) AS corrections
+        ON corrections.company_id = evidence.company_id
+       AND corrections.subject_person_id = evidence.person_id
+       AND corrections.person_draft_id = evidence.person_draft_id
+       AND (
+           corrections.fiscal_year_filter IS NULL
+           OR corrections.fiscal_year_filter = roles.fiscal_year
+       )
+    WHERE corrections.correction_kind != 'remove_role'
     GROUP BY
         evidence.person_id,
         evidence.company_id,
-        roles.role_code,
+        role_code,
         roles.fiscal_year
 )
 SELECT
@@ -479,6 +564,7 @@ SELECT
     assignments.role_code,
     assignments.role_draft_ids,
     assignments.person_draft_ids,
+    assignments.correction_ids,
     assignments.sources,
     assignments.fiscal_year,
     assignments.first_observed_at,
@@ -554,6 +640,7 @@ SELECT
     existing.role_code,
     existing.role_draft_ids,
     existing.person_draft_ids,
+    existing.correction_ids,
     existing.sources,
     existing.fiscal_year,
     existing.first_observed_at,
@@ -580,6 +667,7 @@ SELECT
     staged.role_code,
     staged.role_draft_ids,
     staged.person_draft_ids,
+    staged.correction_ids,
     staged.sources,
     staged.fiscal_year,
     staged.first_observed_at,
@@ -598,6 +686,50 @@ WHERE toString(existing.role_id) = '{_ZERO_UUID}'
    OR existing.role_draft_set_hash != staged.role_draft_set_hash"""
 
 
+def build_stale_role_corrections_sql(company_ids: Sequence[str] = ()) -> str:
+    """Split live role corrections into the applied ones and the stale ones.
+
+    A role correction is stale when its drafts no longer belong to its subject
+    person or when a set_role names a role the pool no longer offers. Stale
+    rows are counted for the reviewer, never applied and never deleted.
+    """
+    return f"""WITH live AS (
+    SELECT
+        ledger.correction_id,
+        ledger.company_id,
+        ledger.subject_person_id,
+        arrayJoin(ledger.draft_ids) AS person_draft_id,
+        {_active_role_code_condition()} AS role_code_is_active
+    FROM corpscout.se_company_person_correction AS ledger
+    WHERE {_live_role_corrections_filter(company_ids)}
+),
+bound AS (
+    SELECT
+        people.person_id,
+        people.company_id,
+        arrayJoin(people.draft_ids) AS person_draft_id
+    FROM corpscout.se_company_person AS people FINAL
+    WHERE people.merged_into_person_id IS NULL
+),
+decided AS (
+    SELECT
+        live.correction_id AS correction_id,
+        max(toString(bound.person_id) != '{_ZERO_UUID}') AS is_applied,
+        max(live.role_code_is_active) AS role_code_is_active
+    FROM live
+    LEFT JOIN bound
+        ON bound.company_id = live.company_id
+       AND bound.person_id = live.subject_person_id
+       AND bound.person_draft_id = live.person_draft_id
+    GROUP BY live.correction_id
+)
+SELECT
+    countIf(NOT (is_applied AND role_code_is_active)) AS stale_count,
+    countIf(is_applied AND role_code_is_active) AS applied_count,
+    count() AS live_count
+FROM decided"""
+
+
 def materialize_se_company_person_roles(
     *,
     clickhouse: ClickhouseResource,
@@ -611,7 +743,13 @@ def materialize_se_company_person_roles(
     assert_clickhouse_tables_exist(
         clickhouse,
         database=DATABASE,
-        tables=(PERSON_TABLE, ROLE_DRAFT_TABLE, ROLE_TABLE),
+        tables=(
+            PERSON_TABLE,
+            ROLE_TYPE_TABLE,
+            ROLE_DRAFT_TABLE,
+            ROLE_TABLE,
+            CORRECTION_TABLE,
+        ),
     )
 
     stage_table = f"_tmp_{ROLE_TABLE}_{uuid.uuid4().hex}"
@@ -640,6 +778,9 @@ def materialize_se_company_person_roles(
                 _publish_role_assignments_sql(qualified_stage_table, company_scope),
                 {"source_run_id": source_run_id, "updated_at": updated_at},
             )
+            correction_counts = client.execute(
+                build_stale_role_corrections_sql(company_scope)
+            )[0]
             total_current_role_count = int(
                 client.execute(
                     f"SELECT count() FROM {qualified_target_table} FINAL "
@@ -666,6 +807,8 @@ def materialize_se_company_person_roles(
         "updated_role_count": int(quality[5]),
         "skipped_role_count": int(quality[6]),
         "deactivated_role_count": int(quality[7]),
+        "stale_role_correction_count": int(correction_counts[0]),
+        "applied_role_correction_count": int(correction_counts[1]),
         "total_current_role_count": total_current_role_count,
         "source_run_id": source_run_id,
         "company_scope": list(company_scope),
@@ -673,12 +816,15 @@ def materialize_se_company_person_roles(
     if log is not None:
         log(
             "Published Sweden company-person roles: staged=%s inserted=%s "
-            "updated=%s skipped=%s deactivated=%s total=%s",
+            "updated=%s skipped=%s deactivated=%s corrections=%s stale=%s "
+            "total=%s",
             metadata["staged_role_count"],
             metadata["inserted_role_count"],
             metadata["updated_role_count"],
             metadata["skipped_role_count"],
             metadata["deactivated_role_count"],
+            metadata["applied_role_correction_count"],
+            metadata["stale_role_correction_count"],
             metadata["total_current_role_count"],
         )
     return metadata

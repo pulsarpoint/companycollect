@@ -9,6 +9,7 @@ from dagster_v3.defs.company_people.roles import (
     build_inactive_canonical_roles_sql,
     build_role_assignments_insert_sql,
     build_role_draft_insert_sql,
+    build_stale_role_corrections_sql,
     build_unmapped_source_roles_sql,
     canonical_role_code,
 )
@@ -61,8 +62,17 @@ def test_current_role_table_has_one_fiscal_year_per_row() -> None:
     assert "DROP TABLE IF EXISTS corpscout.se_company_person_role" in sql
     assert "fiscal_year Nullable(UInt16)" in sql
     assert "fiscal_years Array(UInt16)" not in sql
+    corrections_sql = (
+        MIGRATIONS_DIR / "000295_corpscout_se_company_person_corrections.up.sql"
+    ).read_text(encoding="utf-8")
     for column in ROLE_COLUMNS:
-        assert f"    {column} " in sql
+        if column == "correction_ids":
+            assert (
+                "ADD COLUMN IF NOT EXISTS correction_ids Array(UUID) DEFAULT [] "
+                "AFTER person_draft_ids" in corrections_sql
+            )
+        else:
+            assert f"    {column} " in sql
 
     assert "fiscal_years Array(UInt16)" in down_sql
 
@@ -190,3 +200,29 @@ def test_source_role_json_contract_uses_existing_draft_fields() -> None:
     for source, source_value, expected in examples:
         serialized = json.loads(json.dumps(source_value))
         assert canonical_role_code(source, serialized) == expected
+
+
+def test_role_assignments_apply_role_corrections_and_skip_merged_people() -> None:
+    sql = build_role_assignments_insert_sql("`corpscout`.`_tmp_roles`", ["5565200028"])
+
+    assert "role_corrections AS (" in sql
+    assert "correction_kind IN ('set_role', 'remove_role')" in sql
+    assert "arrayJoin(ledger.draft_ids) AS person_draft_id" in sql
+    assert "JSONExtractString(ledger.payload, 'role_code')" in sql
+    assert "WHERE is_active = 1" in sql
+    assert "people.merged_into_person_id IS NULL" in sql
+    assert "corrections.correction_kind != 'remove_role'" in sql
+    assert "arraySort(groupUniqArray(corrections.correction_id))" in sql
+    assert "correction_ids" in sql
+    for column in ROLE_COLUMNS:
+        assert column in sql
+    assert "correction_ids" in ROLE_COLUMNS
+
+
+def test_stale_role_corrections_are_counted_not_applied() -> None:
+    sql = build_stale_role_corrections_sql(["5565200028"])
+
+    assert "FROM corpscout.se_company_person_correction" in sql
+    assert "correction_kind IN ('set_role', 'remove_role')" in sql
+    assert "supersedes_correction_id IS NOT NULL" in sql
+    assert "count()" in sql
