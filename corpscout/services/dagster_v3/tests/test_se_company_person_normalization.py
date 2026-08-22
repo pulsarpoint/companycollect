@@ -942,7 +942,7 @@ def test_company_status_sql_includes_effective_corrections_and_processed_guard()
         assert "effective_company_corrections AS (" in sql
         assert "arrayMap(id -> toString(id), correction_ids)" in sql
         assert "published.correction_ids = corrections.correction_ids" in sql
-    assert "AND company_id NOT IN %(processed_company_ids)s" in pending_sql
+    assert "AND company_id > %(after_company_id)s" in pending_sql
 
 
 def _stored_suggestion(
@@ -1060,3 +1060,122 @@ def test_reject_suggestion_falls_back_to_the_deterministic_name() -> None:
     assert writes[0].model_name == "rejected-suggestion"
     assert writes[0].correction_ids == (uuid.UUID(int=9001),)
     assert metrics["applied_correction_count"] == 1
+
+
+def test_approve_is_stale_when_the_suggestion_input_hash_is_not_current() -> None:
+    observations = (
+        _observation("bolagsverket", name="David Mindus", role="ceo", index=1),
+        _observation("esef", name="David Mindus", role="chief_executive", index=2),
+    )
+    current = _stored_suggestion(observations)
+    outdated = replace(current, suggestion_id=uuid.UUID(int=501), input_hash="f" * 64)
+    company = CompanyPersonWork(
+        status=_company(*observations).status,
+        observations=observations,
+        previous_profiles=(),
+        suggestions=(current, outdated),
+        corrections=(
+            _correction(
+                1,
+                "approve_suggestion",
+                subject=current.person_id,
+                payload={"suggestion_id": str(outdated.suggestion_id)},
+            ),
+        ),
+    )
+
+    writes, _suggestions, metrics = normalize_companies(
+        [company],
+        llm_suggester=_refuse_llm,
+        llm_model="deepseek-v4-flash",
+        maximum_observations_per_request=10,
+        created_at=NOW,
+    )
+
+    assert len(writes) == 1
+    assert writes[0].suggestion_id == current.suggestion_id
+    assert writes[0].correction_ids == ()
+    assert metrics["applied_correction_count"] == 0
+    assert metrics["stale_correction_count"] == 1
+
+
+def test_approve_that_would_strip_another_person_bare_is_stale() -> None:
+    first = _observation("bolagsverket", name="David Mindus", role="ceo", index=1)
+    second = _observation("esef", name="Erik Eriksson", role="executive", index=2)
+    observations = (first, second)
+    published = (
+        ExistingPersonProfile(
+            person_id=uuid.UUID(int=1000),
+            name="David Gustaf Mindus",
+            description="CEO.",
+            draft_ids=(first.draft_id,),
+            created_at=NOW - timedelta(days=1),
+            draft_set_hash="a" * 64,
+            suggestion_id=uuid.UUID(int=500),
+        ),
+        ExistingPersonProfile(
+            person_id=uuid.UUID(int=2000),
+            name="Erik Eriksson",
+            description=None,
+            draft_ids=(second.draft_id,),
+            created_at=NOW - timedelta(days=1),
+            draft_set_hash="b" * 64,
+            suggestion_id=uuid.UUID(int=501),
+        ),
+    )
+    batch = batch_company_observations(
+        observations, maximum_observations_per_request=10
+    )[0]
+    input_hash = request_input_hash(
+        build_company_people_request(
+            company_id=COMPANY_ID,
+            batch=batch,
+            previous_profiles=published,
+            model="deepseek-v4-flash",
+        )
+    )
+    stored = tuple(
+        StoredSuggestion(
+            suggestion_id=profile.suggestion_id,
+            company_id=COMPANY_ID,
+            person_id=profile.person_id,
+            input_hash=input_hash,
+            draft_ids=profile.draft_ids,
+            name=profile.name,
+            description=profile.description,
+            existing_person_id=None,
+            model_provider="deepseek",
+            model_name="deepseek-v4-flash",
+            prompt_version=PROMPT_VERSION,
+            created_at=NOW,
+        )
+        for profile in published
+    )
+    company = CompanyPersonWork(
+        status=_company(*observations).status,
+        observations=observations,
+        previous_profiles=published,
+        suggestions=stored,
+        corrections=(
+            # David's profile would take Erik's only observation.
+            _correction(
+                1,
+                "approve_suggestion",
+                subject=published[0].person_id,
+                payload={"suggestion_id": str(published[1].suggestion_id)},
+            ),
+        ),
+    )
+
+    writes, _suggestions, metrics = normalize_companies(
+        [company],
+        llm_suggester=_refuse_llm,
+        llm_model="deepseek-v4-flash",
+        maximum_observations_per_request=10,
+        created_at=NOW,
+    )
+
+    assert writes == []  # nothing applied, so both profiles are unchanged
+    assert metrics["applied_correction_count"] == 0
+    assert metrics["stale_correction_count"] == 1
+    assert metrics["invalid_profile_count"] == 0

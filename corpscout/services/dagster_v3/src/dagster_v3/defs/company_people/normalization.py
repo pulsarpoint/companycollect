@@ -129,6 +129,7 @@ class ExistingPersonProfile:
     draft_set_hash: str = ""
     merged_into_person_id: uuid.UUID | None = None
     correction_ids: tuple[uuid.UUID, ...] = ()
+    suggestion_id: uuid.UUID | None = None
 
 
 @dataclass(frozen=True)
@@ -337,7 +338,7 @@ def build_pending_companies_sql() -> str:
 SELECT company_id, source_count, observation_count, draft_ids
 FROM company_status
 WHERE NOT is_unchanged
-  AND company_id NOT IN %(processed_company_ids)s
+  AND company_id > %(after_company_id)s
 ORDER BY company_id
 LIMIT %(max_companies)s"""
 
@@ -365,7 +366,8 @@ def build_existing_profiles_sql() -> str:
     created_at,
     toString(draft_set_hash),
     merged_into_person_id,
-    correction_ids
+    correction_ids,
+    suggestion_id
 FROM corpscout.se_company_person FINAL
 WHERE company_id IN %(selected_company_ids)s
 ORDER BY company_id, person_id"""
@@ -409,6 +411,7 @@ def _profile_from_row(row: Sequence[Any]) -> tuple[str, ExistingPersonProfile]:
         draft_set_hash=str(row[6]),
         merged_into_person_id=None if row[7] is None else uuid.UUID(str(row[7])),
         correction_ids=tuple(uuid.UUID(str(value)) for value in row[8]),
+        suggestion_id=None if row[9] is None else uuid.UUID(str(row[9])),
     )
 
 
@@ -774,9 +777,6 @@ def person_id_for(company_id: str, name: str) -> uuid.UUID:
     return uuid.UUID(hex=digest[:32])
 
 
-_person_id = person_id_for
-
-
 def _source_name(observation: DraftPersonObservation) -> str:
     value = observation.source_value
     if observation.source == "bolagsverket":
@@ -842,6 +842,7 @@ def _profile_changed(
         or tuple(sorted(profile.draft_ids)) != previous.draft_ids
         or _sorted_correction_ids(profile.correction_ids)
         != _sorted_correction_ids(previous.correction_ids)
+        or profile.suggestion_id != previous.suggestion_id
         or profile.merged_into_person_id != previous.merged_into_person_id
     )
 
@@ -927,7 +928,15 @@ def apply_person_corrections(
     stale: list[PersonCorrection] = []
 
     def ensure_profile(person_id: uuid.UUID) -> _ProfileAccumulator | None:
-        """The in-run profile for a person, restored from the published row."""
+        """The in-run profile for a person, restored from the published row.
+
+        Published provenance strings are not loaded back (the profile query
+        reads content and evidence only), so a restored row is re-labelled as
+        what actually produced it: the correction engine. The published
+        ``suggestion_id`` is carried so approving nothing does not silently drop
+        the suggestion this profile was published from, and the tombstone
+        pointer starts clear because only a live merge may set it.
+        """
         profile = profiles.get(person_id)
         if profile is not None:
             return profile
@@ -938,11 +947,15 @@ def apply_person_corrections(
             person_id=previous.person_id,
             name=previous.name,
             description=previous.description,
+            # Empty on purpose: this person has no observation in this run, so
+            # its evidence is only whatever a correction moves onto it.
             draft_ids=set(),
             created_at=previous.created_at,
             model_provider="deterministic",
             model_name="correction",
             prompt_version=DIRECT_PROMPT_VERSION,
+            suggestion_id=previous.suggestion_id,
+            merged_into_person_id=None,
         )
         profiles[person_id] = profile
         return profile
@@ -1034,10 +1047,25 @@ def apply_person_corrections(
                 stale.append(correction)
                 continue
             if correction.kind == "approve_suggestion":
+                # Approving takes the suggestion's drafts from whoever holds
+                # them. A person the steal would leave with no evidence cannot
+                # be published at all (000291's CHECK notEmpty(draft_ids)), so
+                # the correction is stale instead of producing a rejected row.
+                moved = set(suggestion.draft_ids)
+                emptied = [
+                    other.person_id
+                    for other in profiles.values()
+                    if other is not subject
+                    and other.draft_ids
+                    and not other.draft_ids - moved
+                ]
+                if emptied or not subject.draft_ids | moved:
+                    stale.append(correction)
+                    continue
                 for other in profiles.values():
                     if other is not subject:
-                        other.draft_ids -= set(suggestion.draft_ids)
-                subject.draft_ids |= set(suggestion.draft_ids)
+                        other.draft_ids -= moved
+                subject.draft_ids |= moved
                 subject.name = suggestion.name
                 subject.description = suggestion.description
                 subject.suggestion_id = suggestion.suggestion_id
@@ -1070,16 +1098,6 @@ def apply_person_corrections(
 
         applied.append(correction)
 
-    for profile in profiles.values():
-        if (
-            profile.touched
-            and not profile.draft_ids
-            and profile.merged_into_person_id is None
-        ):
-            raise ValueError(
-                "Corrections would remove all evidence from a person, which the "
-                f"append-only main table cannot represent: {profile.person_id}"
-            )
     return CorrectionOutcome(applied=tuple(applied), stale=tuple(stale))
 
 
@@ -1100,8 +1118,15 @@ def _finalize_company_profiles(
     )
     writes: list[PersonProfileWrite] = []
     unchanged_profile_count = 0
+    invalid_profile_count = 0
     for profile in sorted(profiles.values(), key=lambda item: str(item.person_id)):
         if not profile.touched:
+            continue
+        if not profile.draft_ids:
+            # Defensive: every kind that moves evidence refuses to empty a
+            # person, so this is unreachable by design. Skipping the write keeps
+            # a bug from failing the run on the main table's notEmpty check.
+            invalid_profile_count += 1
             continue
         previous = previous_by_id.get(profile.person_id)
         if not _profile_changed(profile, previous):
@@ -1125,6 +1150,7 @@ def _finalize_company_profiles(
         )
     return writes, {
         "unchanged_profile_count": unchanged_profile_count,
+        "invalid_profile_count": invalid_profile_count,
         "applied_correction_count": len(outcome.applied),
         "stale_correction_count": len(outcome.stale),
     }
@@ -1453,6 +1479,7 @@ def normalize_companies(
         "llm_completion_tokens": 0,
         "llm_contract_retry_count": 0,
         "unchanged_profile_count": 0,
+        "invalid_profile_count": 0,
         "applied_correction_count": 0,
         "stale_correction_count": 0,
     }
@@ -1738,6 +1765,7 @@ def materialize_se_company_people(
         "llm_completion_tokens": 0,
         "llm_contract_retry_count": 0,
         "unchanged_profile_count": 0,
+        "invalid_profile_count": 0,
         "applied_correction_count": 0,
         "stale_correction_count": 0,
         "settled_company_count": 0,
@@ -1747,9 +1775,10 @@ def materialize_se_company_people(
     inserted_count = 0
     publish_batch_count = 0
     total_person_count = 0
-    # A company whose only change is a stale correction publishes nothing and
-    # would otherwise be handed back by the next pending query forever.
-    processed_company_ids: set[str] = set()
+    # Batches walk company_id order. A company whose only change is a stale
+    # correction publishes nothing, so without this cursor the next pending
+    # query would hand it back forever.
+    after_company_id = ""
 
     while selected_company_count < max_companies:
         current_batch_size = min(
@@ -1764,7 +1793,7 @@ def materialize_se_company_people(
                     {
                         **query_parameters,
                         "max_companies": current_batch_size,
-                        "processed_company_ids": tuple(processed_company_ids) or ("",),
+                        "after_company_id": after_company_id,
                     },
                 )
             ]
@@ -1819,7 +1848,7 @@ def materialize_se_company_people(
             source_run_id=source_run_id,
         )
         selected_company_count += len(companies)
-        processed_company_ids.update(status.company_id for status in statuses)
+        after_company_id = statuses[-1].company_id
         for name, value in batch_metrics.items():
             normalization_metrics[name] += value
 
