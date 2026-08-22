@@ -6,6 +6,8 @@ import dagster as dg
 from dagster_v3.defs.company_people.roles import (
     ROLE_COLUMNS,
     ROLE_DRAFT_COLUMNS,
+    _publish_role_assignments_sql,
+    _role_assignment_quality_sql,
     build_inactive_canonical_roles_sql,
     build_role_assignments_insert_sql,
     build_role_draft_insert_sql,
@@ -213,16 +215,52 @@ def test_role_assignments_apply_role_corrections_and_skip_merged_people() -> Non
     assert "people.merged_into_person_id IS NULL" in sql
     assert "corrections.correction_kind != 'remove_role'" in sql
     assert "arraySort(groupUniqArray(corrections.correction_id))" in sql
-    assert "correction_ids" in sql
-    for column in ROLE_COLUMNS:
-        assert column in sql
-    assert "correction_ids" in ROLE_COLUMNS
+    assert "assignments.correction_ids," in sql
+    assert "(\n    " + ",\n    ".join(ROLE_COLUMNS) + "\n)" in sql
+    assert ROLE_COLUMNS.index("correction_ids") == (
+        ROLE_COLUMNS.index("person_draft_ids") + 1
+    )
+
+
+def test_role_corrections_win_per_fiscal_year_not_per_draft() -> None:
+    sql = build_role_assignments_insert_sql("`corpscout`.`_tmp_roles`", ["5565200028"])
+
+    assert "applicable_corrections AS (" in sql
+    assert "ORDER BY ledger.created_at DESC, ledger.correction_id DESC" in sql
+    assert (
+        "LIMIT 1 BY company_id, subject_person_id, person_draft_id, fiscal_year"
+        in sql
+    )
+    assert (
+        "ifNull(toString(corrections.fiscal_year), 'undated')\n"
+        "           = ifNull(toString(roles.fiscal_year), 'undated')" in sql
+    )
+
+
+def test_changed_corrections_republish_the_role_row() -> None:
+    publish_sql = _publish_role_assignments_sql(
+        "`corpscout`.`_tmp_roles`",
+        ["5565200028"],
+    )
+    quality_sql = _role_assignment_quality_sql(
+        "`corpscout`.`_tmp_roles`",
+        ["5565200028"],
+    )
+
+    assert "    existing.correction_ids,\n" in publish_sql
+    assert "    staged.correction_ids,\n" in publish_sql
+    assert "OR existing.correction_ids != staged.correction_ids" in publish_sql
+    assert "OR existing.correction_ids != staged.correction_ids" in quality_sql
+    assert "AND existing.correction_ids = staged.correction_ids" in quality_sql
 
 
 def test_stale_role_corrections_are_counted_not_applied() -> None:
     sql = build_stale_role_corrections_sql(["5565200028"])
 
-    assert "FROM corpscout.se_company_person_correction" in sql
+    assert "FROM corpscout.se_company_person_correction AS ledger" in sql
     assert "correction_kind IN ('set_role', 'remove_role')" in sql
     assert "supersedes_correction_id IS NOT NULL" in sql
-    assert "count()" in sql
+    assert "people.company_id IN ('5565200028')" in sql
+    assert "AS stale_count" in sql
+    assert "AS applied_count" in sql
+    assert "count() AS live_count" in sql

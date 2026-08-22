@@ -507,6 +507,26 @@ person_evidence AS (
     WHERE {company_filter}
       AND people.merged_into_person_id IS NULL
 ),
+applicable_corrections AS (
+    SELECT
+        ledger.correction_id AS correction_id,
+        ledger.company_id AS company_id,
+        ledger.subject_person_id AS subject_person_id,
+        ledger.person_draft_id AS person_draft_id,
+        ledger.correction_kind AS correction_kind,
+        ledger.role_code AS role_code,
+        roles.fiscal_year AS fiscal_year
+    FROM role_corrections AS ledger
+    INNER JOIN latest_role_drafts AS roles
+        ON roles.person_draft_id = ledger.person_draft_id
+       AND roles.company_id = ledger.company_id
+       AND (
+           ledger.fiscal_year_filter IS NULL
+           OR ledger.fiscal_year_filter = roles.fiscal_year
+       )
+    ORDER BY ledger.created_at DESC, ledger.correction_id DESC
+    LIMIT 1 BY company_id, subject_person_id, person_draft_id, fiscal_year
+),
 assignments AS (
     SELECT
         reinterpretAsUUID(unhex(substring(hex(SHA256(concat(
@@ -537,19 +557,12 @@ assignments AS (
     INNER JOIN latest_role_drafts AS roles
         ON roles.person_draft_id = evidence.person_draft_id
        AND roles.company_id = evidence.company_id
-    LEFT JOIN (
-        SELECT *
-        FROM role_corrections
-        ORDER BY created_at DESC, correction_id DESC
-        LIMIT 1 BY company_id, subject_person_id, person_draft_id
-    ) AS corrections
+    LEFT JOIN applicable_corrections AS corrections
         ON corrections.company_id = evidence.company_id
        AND corrections.subject_person_id = evidence.person_id
        AND corrections.person_draft_id = evidence.person_draft_id
-       AND (
-           corrections.fiscal_year_filter IS NULL
-           OR corrections.fiscal_year_filter = roles.fiscal_year
-       )
+       AND ifNull(toString(corrections.fiscal_year), 'undated')
+           = ifNull(toString(roles.fiscal_year), 'undated')
     WHERE corrections.correction_kind != 'remove_role'
     GROUP BY
         evidence.person_id,
@@ -599,12 +612,14 @@ def _role_assignment_quality_sql(
         toString(existing.role_id) != '{_ZERO_UUID}'
         AND (
             existing.role_draft_set_hash != staged.role_draft_set_hash
+            OR existing.correction_ids != staged.correction_ids
             OR existing.is_current = 0
         )
     ) AS updated_role_count,
     countIf(
         existing.is_current = 1
         AND existing.role_draft_set_hash = staged.role_draft_set_hash
+        AND existing.correction_ids = staged.correction_ids
     ) AS skipped_role_count,
     (
         SELECT count()
@@ -683,7 +698,8 @@ LEFT JOIN corpscout.se_company_person_role AS existing FINAL
    AND existing.role_id = staged.role_id
 WHERE toString(existing.role_id) = '{_ZERO_UUID}'
    OR existing.is_current = 0
-   OR existing.role_draft_set_hash != staged.role_draft_set_hash"""
+   OR existing.role_draft_set_hash != staged.role_draft_set_hash
+   OR existing.correction_ids != staged.correction_ids"""
 
 
 def build_stale_role_corrections_sql(company_ids: Sequence[str] = ()) -> str:
@@ -709,7 +725,8 @@ bound AS (
         people.company_id,
         arrayJoin(people.draft_ids) AS person_draft_id
     FROM corpscout.se_company_person AS people FINAL
-    WHERE people.merged_into_person_id IS NULL
+    WHERE {_company_filter("people.company_id", company_ids)}
+      AND people.merged_into_person_id IS NULL
 ),
 decided AS (
     SELECT
