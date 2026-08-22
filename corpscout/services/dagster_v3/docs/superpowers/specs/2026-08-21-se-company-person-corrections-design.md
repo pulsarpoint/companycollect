@@ -316,3 +316,37 @@ Draft 2 rows and the company Management section link to the review page by
 - Suggestions from the backoffice's own interactive LLM runs are not written to
   `se_company_person_enrichment_observation` in this sub-project; that migration is part of
   sub-project 4.
+
+## 9. Amendments (2026-08-22 implementation)
+
+What the implementation settled differently from the sections above. Each line
+supersedes the section it names.
+
+- **§2.3** — `se_company_person` also gained `merged_into_person_id Nullable(UUID)`.
+  A merged person keeps its evidence rows and points at the surviving person, so
+  a tombstone is recognisable without replaying the ledger.
+- **§3** — `reject_suggestion` accepts an optional `note` in its payload next to
+  `suggestion_id`, so a reviewer can record what the model got wrong.
+- **§4.1** — the four kind groups are *steps that share a rank*, not four
+  separate ranks. `(created_at, correction_id)` decides inside a step, so an
+  approval that follows a rejection wins instead of the kind order deciding it.
+- **§4.3** — role staleness is draft-binding only: `set_role` / `remove_role` are
+  stale when their drafts no longer belong to the subject or when the
+  `role_code` is inactive. Their `evidence_hash` is not compared, because role
+  rows are rebuilt per draft rather than per profile.
+- **§4.4** — `correction_set_hash` sorts the ids **as strings** (matching the
+  ClickHouse MATERIALIZED column), and `_profile_changed` compares the
+  correction-id *arrays* rather than the hash.
+- **§5.2** — the page shows `is_published` (this suggestion is the published one)
+  and `is_current` (it carries the published suggestion's `input_hash`). The
+  backoffice cannot recompute Dagster's request hash, so `is_current` is that
+  proxy, and only current rows may be approved or rejected. The merge-target
+  search box and the `updated_at` poll after a write are deferred to
+  sub-project 4; the page says to reload instead. The stale-correction list of
+  §4.3 is `/admin/se/people/stale-corrections`.
+- **§6** — a merge tombstone is excluded from the model request and from the
+  empty-profile guard: it is never seeded into a multi-source run, so the model
+  never sees the same drafts twice and the tombstone's published row is left
+  alone. The guard itself no longer raises. A profile a model genuinely emptied
+  is dropped from the run, counted in `emptied_profile_count` and logged by id;
+  its previous published row simply stays.
