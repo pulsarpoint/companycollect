@@ -12,6 +12,7 @@ vi.mock("@clickhouse/client", () => ({
 import {
   chInsertCompanyDomains,
   chInsertPersonCorrections,
+  chInsertSeCompanyPersonCorrections,
 } from "~/lib/clickhouse.server";
 
 describe("person correction ClickHouse writer", () => {
@@ -46,6 +47,14 @@ describe("person correction ClickHouse writer", () => {
         password: "writer-secret",
       }),
     );
+    expect(clickhouse.createClient).toHaveBeenCalledWith(
+      expect.objectContaining({
+        clickhouse_settings: expect.objectContaining({
+          async_insert: 1,
+          wait_for_async_insert: 1,
+        }),
+      }),
+    );
     expect(clickhouse.insert).toHaveBeenCalledWith({
       table: "country_person_correction",
       values: rows,
@@ -65,6 +74,21 @@ describe("person correction ClickHouse writer", () => {
     expect(clickhouse.insert).toHaveBeenCalledWith({
       table: "company_domains",
       values: rows,
+      format: "JSONEachRow",
+    });
+  });
+
+  it("writes Sweden company-person corrections with the writer client", async () => {
+    vi.stubEnv("CLICKHOUSE_WRITE_USER", "correction_writer");
+    vi.stubEnv("CLICKHOUSE_WRITE_PASSWORD", "writer-secret");
+    clickhouse.createClient.mockReturnValue({ insert: clickhouse.insert });
+    clickhouse.insert.mockResolvedValue(undefined);
+
+    await chInsertSeCompanyPersonCorrections([{ correction_id: "test" }]);
+
+    expect(clickhouse.insert).toHaveBeenCalledWith({
+      table: "se_company_person_correction",
+      values: [{ correction_id: "test" }],
       format: "JSONEachRow",
     });
   });

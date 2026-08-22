@@ -39,7 +39,17 @@ function getWriteClient(): ClickHouseClient {
       password,
       database: process.env.CLICKHOUSE_DATABASE ?? "corpscout",
       request_timeout: 30_000,
-      clickhouse_settings: { use_top_k_dynamic_filtering: 0 },
+      clickhouse_settings: {
+        use_top_k_dynamic_filtering: 0,
+        // One review click is one row. Automatic producers may append several
+        // rows per second; async inserts let ClickHouse coalesce them into ~1
+        // part per second instead of one part per INSERT. wait_for_async_insert
+        // keeps read-after-write: the row is durable and visible when the
+        // promise resolves.
+        async_insert: 1,
+        wait_for_async_insert: 1,
+        async_insert_busy_timeout_ms: 1000,
+      },
     });
   }
   return writeClient;
@@ -66,6 +76,31 @@ export async function chQuery<T>(
   return result.json<T>();
 }
 
+/**
+ * Streams a read-only ClickHouse query without buffering the full result in
+ * application memory. Every yielded value is one JSONEachRow object.
+ */
+export async function* chStreamQuery<T>(
+  sql: string,
+  params?: Record<string, unknown>,
+): AsyncGenerator<T> {
+  const result = await getReadClient().query({
+    query: sql,
+    query_params: params,
+    format: "JSONEachRow",
+  });
+
+  try {
+    for await (const rows of result.stream<T>()) {
+      for (const row of rows) {
+        yield row.json<T>();
+      }
+    }
+  } finally {
+    result.close();
+  }
+}
+
 /** Append reviewed decisions to the immutable person-correction ledger. */
 export async function chInsertPersonCorrections<T extends object>(
   values: T[],
@@ -85,6 +120,35 @@ export async function chInsertCompanyDomains<T extends object>(
   if (values.length === 0) return;
   await getWriteClient().insert({
     table: "company_domains",
+    values,
+    format: "JSONEachRow",
+  });
+}
+
+/** Append reviewed decisions to the Sweden company-person correction ledger. */
+export async function chInsertSeCompanyPersonCorrections<T extends object>(
+  values: T[],
+): Promise<void> {
+  if (values.length === 0) return;
+  await getWriteClient().insert({
+    table: "se_company_person_correction",
+    values,
+    format: "JSONEachRow",
+  });
+}
+
+/**
+ * Append model suggestions produced by a one-off script or a synchronous
+ * per-person re-run in the backoffice. Dagster remains the normal producer.
+ * Callers batch rows per call; the writer client's async_insert settings
+ * coalesce the rest.
+ */
+export async function chInsertSeCompanyPersonSuggestions<T extends object>(
+  values: T[],
+): Promise<void> {
+  if (values.length === 0) return;
+  await getWriteClient().insert({
+    table: "se_company_person_enrichment_observation",
     values,
     format: "JSONEachRow",
   });
