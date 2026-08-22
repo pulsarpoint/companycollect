@@ -1,3 +1,6 @@
+import json
+import uuid
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
 from dagster_v3.defs.company_people.corrections import (
@@ -7,6 +10,15 @@ from dagster_v3.defs.company_people.corrections import (
     ROLE_CORRECTION_KINDS,
     SUGGESTION_COLUMNS,
     UNDO_KIND,
+    PersonCorrection,
+    StoredSuggestion,
+    build_company_corrections_sql,
+    build_company_suggestions_sql,
+    correction_from_row,
+    correction_set_hash,
+    effective_company_corrections_cte,
+    effective_corrections,
+    suggestion_from_row,
 )
 
 MIGRATIONS_DIR = Path(__file__).resolve().parents[3] / "clickhouse" / "migrations"
@@ -111,3 +123,111 @@ def test_correction_kinds_are_closed_and_ordered() -> None:
     assert CORRECTION_KINDS == frozenset(
         (*PERSON_CORRECTION_KINDS, *ROLE_CORRECTION_KINDS, UNDO_KIND)
     )
+
+
+NOW = datetime(2026, 8, 22, 9, tzinfo=UTC)
+COMPANY_ID = "5565200028"
+
+
+def _correction(
+    index: int,
+    kind: str,
+    *,
+    supersedes: int | None = None,
+    payload: dict[str, object] | None = None,
+) -> PersonCorrection:
+    return PersonCorrection(
+        correction_id=uuid.UUID(int=index),
+        company_id=COMPANY_ID,
+        kind=kind,
+        subject_person_id=uuid.UUID(int=1000),
+        target_person_id=None,
+        draft_ids=(),
+        payload=payload or {},
+        evidence_hash="0" * 64,
+        supersedes_correction_id=None if supersedes is None else uuid.UUID(int=supersedes),
+        created_at=NOW + timedelta(seconds=index),
+    )
+
+
+def test_effective_corrections_drop_superseded_and_undo_rows_and_order_by_kind() -> None:
+    rows = (
+        _correction(1, "override_field", payload={"name": "First"}),
+        _correction(2, "merge_persons"),
+        _correction(3, "undo", supersedes=1),
+        _correction(4, "override_field", payload={"name": "Second"}),
+        _correction(5, "set_role"),
+        _correction(6, "not_a_kind"),
+    )
+
+    effective = effective_corrections(rows)
+
+    assert [c.correction_id.int for c in effective] == [2, 4, 5]
+
+
+def test_correction_set_hash_sorts_string_ids_like_clickhouse() -> None:
+    ids = [uuid.UUID(int=2), uuid.UUID(int=1)]
+
+    assert correction_set_hash(ids) == (
+        "7a70c782c5d30f61a8f57b905eaa11c41ec8ffeafaa3a0e99c4fca60044a28d4"
+    )
+    assert correction_set_hash([]) == (
+        "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    )
+
+
+def test_row_mappers_parse_payload_and_nullable_columns() -> None:
+    company_id, correction = correction_from_row(
+        (
+            uuid.UUID(int=7),
+            COMPANY_ID,
+            "override_field",
+            uuid.UUID(int=1000),
+            None,
+            [],
+            json.dumps({"name": "Anna K. Svensson"}),
+            "a" * 64,
+            None,
+            NOW,
+        )
+    )
+    assert company_id == COMPANY_ID
+    assert correction.kind == "override_field"
+    assert correction.payload == {"name": "Anna K. Svensson"}
+    assert correction.target_person_id is None
+
+    company_id, suggestion = suggestion_from_row(
+        (
+            uuid.UUID(int=8),
+            COMPANY_ID,
+            uuid.UUID(int=1000),
+            "b" * 64,
+            [uuid.UUID(int=1)],
+            json.dumps(
+                {
+                    "existing_person_id": None,
+                    "name": "Anna Svensson",
+                    "description": None,
+                    "draft_ids": [str(uuid.UUID(int=1))],
+                }
+            ),
+            NOW,
+        )
+    )
+    assert company_id == COMPANY_ID
+    assert suggestion.name == "Anna Svensson"
+    assert suggestion.draft_ids == (uuid.UUID(int=1),)
+
+
+def test_loader_sql_scopes_by_selected_companies() -> None:
+    for sql in (build_company_corrections_sql(), build_company_suggestions_sql()):
+        assert "WHERE company_id IN %(selected_company_ids)s" in sql
+        assert "ORDER BY company_id" in sql
+    assert "FROM corpscout.se_company_person_correction" in build_company_corrections_sql()
+    assert "FROM corpscout.se_company_person_enrichment_observation" in build_company_suggestions_sql()
+
+    cte = effective_company_corrections_cte()
+    assert "effective_company_corrections AS (" in cte
+    assert "supersedes_correction_id IS NOT NULL" in cte
+    assert "correction_kind IN ('merge_persons'" in cte
+    assert "'undo'" not in cte
