@@ -4,7 +4,7 @@
 
 **Goal:** Build the first per-source/per-datatype pipeline under `defs/se_company/`: three `info` artifact tables (SCB register, ESEF, Wikidata) with the standard envelope, one merged `se_company_info` final with provenance, a correction ledger + sensor, an LLM step for description conflicts, and a backoffice review page — all as plain hand-written Dagster assets.
 
-**Architecture:** Source layer assets (existing) → artifact assets in `se_company/{scb,esef,wikidata}.py` (groups `se_company_<source>`, append-only versions keyed by evidence hash) → `se_company/info.py` final asset (group `se_company`): changed companies → pure merge rules → ledger corrections → LLM only on description conflicts (cached by `input_hash`) → stage/validate/publish with provenance. Three helpers in `se_company/common.py`. Backoffice: writer + server module + review page reusing the person-review pattern.
+**Architecture:** Source layer assets (existing) → artifact assets in `se_company/{scb,esef,wikidata}.py` (groups `se_company_<source>`, append-only versions keyed by evidence hash) → `se_company/info.py` final asset (group `se_company`): changed companies → pure merge rules → ledger corrections → LLM only on description conflicts (cached by `input_hash`) → stage/validate/publish with provenance. Each module owns only its own table name and insert columns; the migration is the single schema source of truth. Three helpers in `se_company/common.py`. Backoffice: writer + server module + review page reusing the person-review pattern.
 
 **Tech Stack:** ClickHouse 26.5 (golang-migrate SQL under `corpscout/clickhouse/migrations/`), Dagster 1.13 (`uv run`), OpenAI-compatible client via `deepseek_settings()`, pytest + clickhouse-local harness, React Router 8 + vitest in `corpscout/services/backoffice`.
 
@@ -28,85 +28,95 @@
 
 ---
 
-### Task 1: Migrations 000297/000298 and `se_company/tables.py` with contract tests
+### Task 1: Migrations 000297/000298 with envelope contract tests (no registry)
 
 **Files:**
 - Create: `corpscout/clickhouse/migrations/000297_corpscout_se_company_info.up.sql`, `.down.sql`
 - Create: `corpscout/clickhouse/migrations/000298_corpscout_se_company_info_writer_grants.up.sql`, `.down.sql`
-- Create: `corpscout/services/dagster_v3/src/dagster_v3/defs/se_company/__init__.py` (empty), `corpscout/services/dagster_v3/src/dagster_v3/defs/se_company/tables.py`
+- Create: `corpscout/services/dagster_v3/src/dagster_v3/defs/se_company/__init__.py` (empty)
 - Modify: `corpscout/services/dagster_v3/tests/test_clickhouse_migrations.py` (`EXPECTED_MIGRATIONS` tail after `"000295_corpscout_se_company_person_corrections"`, and `EXPECTED_ACCESS_MIGRATIONS`)
 - Test: `corpscout/services/dagster_v3/tests/test_se_company_layout.py`
 
 **Interfaces:**
-- Produces (`tables.py`): `DATABASE = "corpscout"`, `ENVELOPE_COLUMNS = ("company_id", "source_record_uid", "observed_at", "source_run_id", "evidence_hash")`, `FINAL_PROVENANCE_COLUMNS = ("source_record_uids", "evidence_hashes", "evidence_set_hash", "correction_ids", "suggestion_id", "model_provider", "model_name", "prompt_version", "source_run_id", "resolved_at")`, `SE_COMPANY_INFO_SCB = "se_company_info_scb"`, `SE_COMPANY_INFO_ESEF = "se_company_info_esef"`, `SE_COMPANY_INFO_WIKIDATA = "se_company_info_wikidata"`, `SE_COMPANY_INFO = "se_company_info"`, `SE_COMPANY_INFO_CORRECTION = "se_company_info_correction"`, `SE_COMPANY_INFO_OBSERVATION = "se_company_info_enrichment_observation"`, `SE_COMPANY_ARTIFACT_TABLES: dict[str, tuple[str, ...]]` mapping artifact table → payload columns in order, `SE_COMPANY_FINAL_TABLES: dict[str, tuple[str, ...]]` mapping final table → typed merged columns in order, `ARTIFACT_MIGRATION = "000297_corpscout_se_company_info.up.sql"`.
+- Produces: the six tables in migration 000297 and the grants in 000298. No Python module carries table/column lists for other modules: each asset module (Tasks 3–7) declares its own table name and insert columns next to its SQL, and the tests read the migration file directly.
+- Test helper produced here and reused by Tasks 3–7: `tests/se_company_ddl.py` with `artifact_tables() -> list[str]`, `table_block(table) -> str`, `declared_columns(table) -> list[str]` (parses `000297_corpscout_se_company_info.up.sql`; `declared_columns` returns the column names in DDL order, MATERIALIZED columns included).
 
 - [ ] **Step 1: Write the failing contract tests**
 
 ```python
-# tests/test_se_company_layout.py
+# tests/se_company_ddl.py — shared by the se_company tests; reads the migration, never a registry
+import re
 from pathlib import Path
 
-import pytest
-
-from dagster_v3.defs.se_company.tables import (
-    ARTIFACT_MIGRATION,
-    ENVELOPE_COLUMNS,
-    FINAL_PROVENANCE_COLUMNS,
-    SE_COMPANY_ARTIFACT_TABLES,
-    SE_COMPANY_FINAL_TABLES,
-)
-
 MIGRATIONS_DIR = Path(__file__).resolve().parents[3] / "clickhouse" / "migrations"
+MIGRATION = "000297_corpscout_se_company_info.up.sql"
+ENVELOPE = ("company_id", "source_record_uid", "observed_at", "source_run_id", "evidence_hash")
+FINAL_PROVENANCE = ("source_record_uids", "evidence_hashes", "evidence_set_hash", "correction_ids",
+                    "suggestion_id", "model_provider", "model_name", "prompt_version", "source_run_id", "resolved_at")
 
 
-def _table_block(sql: str, table: str) -> str:
+def _sql() -> str:
+    return (MIGRATIONS_DIR / MIGRATION).read_text(encoding="utf-8")
+
+
+def table_block(table: str) -> str:
+    sql = _sql()
     start = sql.index(f"CREATE TABLE IF NOT EXISTS corpscout.{table}\n")
     end = sql.find("CREATE TABLE IF NOT EXISTS", start + 1)
     return sql[start : end if end != -1 else len(sql)]
 
 
-def _positions(block: str, columns: tuple[str, ...]) -> list[int]:
-    positions = []
-    for column in columns:
-        assert f"    {column} " in block, f"{column} missing"
-        positions.append(block.index(f"    {column} "))
-    return positions
+def declared_columns(table: str) -> list[str]:
+    """Column names in DDL order: lines indented by exactly four spaces before the CONSTRAINT/engine part."""
+    names = []
+    for line in table_block(table).splitlines():
+        match = re.match(r"^    ([a-z_]+) ", line)
+        if match and match.group(1) != "CONSTRAINT":
+            names.append(match.group(1))
+    return names
 
 
-@pytest.mark.parametrize("table", sorted(SE_COMPANY_ARTIFACT_TABLES))
-def test_artifact_table_starts_with_the_envelope_then_its_payload(table: str) -> None:
-    block = _table_block((MIGRATIONS_DIR / ARTIFACT_MIGRATION).read_text(encoding="utf-8"), table)
-    columns = (*ENVELOPE_COLUMNS, *SE_COMPANY_ARTIFACT_TABLES[table])
+def artifact_tables() -> list[str]:
+    return sorted(set(re.findall(r"CREATE TABLE IF NOT EXISTS corpscout\.(se_company_info_(?!correction|enrichment)[a-z]+)\n", _sql())))
+```
 
-    positions = _positions(block, columns)
+```python
+# tests/test_se_company_layout.py
+import pytest
 
-    assert positions == sorted(positions)
-    assert positions[0] == min(_positions(block, (columns[0],)))
+from tests.se_company_ddl import ENVELOPE, FINAL_PROVENANCE, artifact_tables, declared_columns, table_block, MIGRATIONS_DIR
+
+
+def test_the_pilot_declares_three_artifact_tables() -> None:
+    assert artifact_tables() == ["se_company_info_esef", "se_company_info_scb", "se_company_info_wikidata"]
+
+
+@pytest.mark.parametrize("table", artifact_tables())
+def test_artifact_table_starts_with_the_envelope(table: str) -> None:
+    columns = declared_columns(table)
+    block = table_block(table)
+
+    assert tuple(columns[: len(ENVELOPE)]) == ENVELOPE
+    assert len(columns) > len(ENVELOPE)  # a payload exists
     assert "evidence_hash FixedString(64) MATERIALIZED" in block
     assert "ENGINE = ReplacingMergeTree(observed_at)" in block
     assert "ORDER BY (company_id, source_record_uid)" in block
     assert "CONSTRAINT has_company CHECK match(company_id, '^[0-9]{10}$')" in block
 
 
-@pytest.mark.parametrize("table", sorted(SE_COMPANY_FINAL_TABLES))
-def test_final_table_carries_typed_columns_then_provenance(table: str) -> None:
-    block = _table_block((MIGRATIONS_DIR / ARTIFACT_MIGRATION).read_text(encoding="utf-8"), table)
-    columns = ("company_id", *SE_COMPANY_FINAL_TABLES[table], *FINAL_PROVENANCE_COLUMNS)
+def test_final_table_ends_with_provenance() -> None:
+    columns = declared_columns("se_company_info")
+    block = table_block("se_company_info")
 
-    positions = _positions(block, columns)
-
-    assert positions == sorted(positions)
+    assert columns[0] == "company_id"
+    assert tuple(columns[-len(FINAL_PROVENANCE):]) == FINAL_PROVENANCE
     assert "evidence_set_hash FixedString(64) MATERIALIZED" in block
     assert "arraySort(arrayMap(x -> toString(x), evidence_hashes))" in block
-    assert "ENGINE = ReplacingMergeTree(resolved_at)" in block
-    assert "ORDER BY (company_id)" in block
+    assert "ENGINE = ReplacingMergeTree(resolved_at)" in block and "ORDER BY (company_id)" in block
 
 
 def test_ledger_and_observation_tables_twin_the_person_ones() -> None:
-    sql = (MIGRATIONS_DIR / ARTIFACT_MIGRATION).read_text(encoding="utf-8")
-    ledger = _table_block(sql, "se_company_info_correction")
-    observation = _table_block(sql, "se_company_info_enrichment_observation")
-
+    ledger, observation = table_block("se_company_info_correction"), table_block("se_company_info_enrichment_observation")
     for column in ("correction_id", "company_id", "correction_kind", "payload", "evidence_hash",
                    "reason", "decided_by", "supersedes_correction_id", "created_at"):
         assert f"    {column} " in ledger
@@ -122,7 +132,6 @@ def test_ledger_and_observation_tables_twin_the_person_ones() -> None:
 def test_writer_grants_are_insert_only() -> None:
     up = (MIGRATIONS_DIR / "000298_corpscout_se_company_info_writer_grants.up.sql").read_text()
     down = (MIGRATIONS_DIR / "000298_corpscout_se_company_info_writer_grants.down.sql").read_text()
-
     assert "GRANT INSERT ON corpscout.se_company_info_correction\nTO corpscout_person_correction_writer" in up
     assert "GRANT INSERT ON corpscout.se_company_info_enrichment_observation\nTO corpscout_person_correction_writer" in up
     assert "GRANT SELECT" not in up and "GRANT ALL" not in up
@@ -132,111 +141,9 @@ def test_writer_grants_are_insert_only() -> None:
 - [ ] **Step 2: Run to verify failure**
 
 Run (from `corpscout/services/dagster_v3`): `uv run pytest tests/test_se_company_layout.py -q`
-Expected: FAIL with `ModuleNotFoundError: No module named 'dagster_v3.defs.se_company'`
+Expected: FAIL with `FileNotFoundError` (migration 000297 does not exist yet)
 
-- [ ] **Step 3: Write `tables.py`**
-
-```python
-"""Table names and column contracts for the Sweden company data layers.
-
-Artifact tables start with ENVELOPE_COLUMNS, then the source's own payload.
-Final tables carry their typed merged columns, then FINAL_PROVENANCE_COLUMNS.
-The tuples here drive tests/test_se_company_layout.py; adding a table means
-adding it here and writing its migration.
-"""
-
-DATABASE = "corpscout"
-
-ENVELOPE_COLUMNS = (
-    "company_id",
-    "source_record_uid",
-    "observed_at",
-    "source_run_id",
-    "evidence_hash",
-)
-
-FINAL_PROVENANCE_COLUMNS = (
-    "source_record_uids",
-    "evidence_hashes",
-    "evidence_set_hash",
-    "correction_ids",
-    "suggestion_id",
-    "model_provider",
-    "model_name",
-    "prompt_version",
-    "source_run_id",
-    "resolved_at",
-)
-
-SE_COMPANY_INFO_SCB = "se_company_info_scb"
-SE_COMPANY_INFO_ESEF = "se_company_info_esef"
-SE_COMPANY_INFO_WIKIDATA = "se_company_info_wikidata"
-SE_COMPANY_INFO = "se_company_info"
-SE_COMPANY_INFO_CORRECTION = "se_company_info_correction"
-SE_COMPANY_INFO_OBSERVATION = "se_company_info_enrichment_observation"
-
-ARTIFACT_MIGRATION = "000297_corpscout_se_company_info.up.sql"
-
-SE_COMPANY_ARTIFACT_TABLES: dict[str, tuple[str, ...]] = {
-    SE_COMPANY_INFO_SCB: (
-        "legal_name",
-        "legal_name_raw",
-        "legal_form_code",
-        "status",
-        "incorporation_date",
-        "dissolution_date",
-        "activity_description",
-        "primary_sni_code",
-        "primary_nace_code",
-    ),
-    SE_COMPANY_INFO_ESEF: (
-        "source_document_id",
-        "lei",
-        "entity_name",
-        "fiscal_year",
-        "company_description",
-        "description_language",
-        "description_confidence",
-        "products_and_services_json",
-        "business_segments_json",
-    ),
-    SE_COMPANY_INFO_WIKIDATA: (
-        "wikidata_id",
-        "wikidata_url",
-        "name",
-        "official_name",
-        "company_description",
-        "inception_date",
-        "legal_form_label",
-        "industry_wikidata_id",
-        "industry_label",
-        "headquarters_label",
-        "employee_count",
-    ),
-}
-
-SE_COMPANY_FINAL_TABLES: dict[str, tuple[str, ...]] = {
-    SE_COMPANY_INFO: (
-        "legal_name",
-        "legal_form_code",
-        "status",
-        "incorporation_date",
-        "description",
-        "description_language",
-        "description_source",
-        "primary_nace_code",
-        "primary_sni_code",
-        "wikidata_id",
-        "lei",
-    ),
-}
-
-
-def qualified(table: str) -> str:
-    return f"`{DATABASE}`.`{table}`"
-```
-
-- [ ] **Step 4: Write migration 000297**
+- [ ] **Step 3: Write migration 000297**
 
 `000297_corpscout_se_company_info.up.sql`:
 
@@ -422,7 +329,7 @@ DROP TABLE IF EXISTS corpscout.se_company_info_esef;
 DROP TABLE IF EXISTS corpscout.se_company_info_scb;
 ```
 
-- [ ] **Step 5: Write migration 000298**
+- [ ] **Step 4: Write migration 000298**
 
 `.up.sql`:
 
@@ -444,16 +351,16 @@ REVOKE INSERT ON corpscout.se_company_info_enrichment_observation
 FROM corpscout_person_correction_writer;
 ```
 
-- [ ] **Step 6: Register in `tests/test_clickhouse_migrations.py`**
+- [ ] **Step 5: Register in `tests/test_clickhouse_migrations.py`**
 
 Append `"000297_corpscout_se_company_info",` after `"000295_corpscout_se_company_person_corrections",` in `EXPECTED_MIGRATIONS`; append `"000298_corpscout_se_company_info_writer_grants",` to `EXPECTED_ACCESS_MIGRATIONS`.
 
-- [ ] **Step 7: Run**
+- [ ] **Step 6: Run**
 
 Run: `uv run pytest tests/test_se_company_layout.py tests/test_clickhouse_migrations.py -q`
 Expected: PASS
 
-- [ ] **Step 8: Commit**
+- [ ] **Step 7: Commit**
 
 ```bash
 cd /Users/graovic/pulsarpoint/ppoint/companycollect
@@ -462,8 +369,8 @@ git add corpscout/clickhouse/migrations/000297_corpscout_se_company_info.up.sql 
         corpscout/clickhouse/migrations/000298_corpscout_se_company_info_writer_grants.up.sql \
         corpscout/clickhouse/migrations/000298_corpscout_se_company_info_writer_grants.down.sql \
         corpscout/services/dagster_v3/src/dagster_v3/defs/se_company/__init__.py \
-        corpscout/services/dagster_v3/src/dagster_v3/defs/se_company/tables.py \
         corpscout/services/dagster_v3/tests/test_clickhouse_migrations.py \
+        corpscout/services/dagster_v3/tests/se_company_ddl.py \
         corpscout/services/dagster_v3/tests/test_se_company_layout.py
 git commit -m "feat(se_company): info artifact, final, ledger and observation tables"
 ```
@@ -657,15 +564,19 @@ from typing import Any
 import dagster as dg
 from dagster_clickhouse import ClickhouseResource
 
-from dagster_v3.defs.se_company.tables import DATABASE, qualified
 from dagster_v3.defs.sweden_financial.clickhouse import (
     clickhouse_table_row_count,
     guard_against_clickhouse_table_shrink,
 )
 
+DATABASE = "corpscout"
 ZERO_UUID = "00000000-0000-0000-0000-000000000000"
 EPOCH = "1970-01-01 00:00:00.000"
 UNDO_KIND = "undo"
+
+
+def qualified(table: str) -> str:
+    return f"`{DATABASE}`.`{table}`"
 
 
 @dataclass(frozen=True)
@@ -937,8 +848,8 @@ git commit -m "feat(se_company): shared publish, ledger and observation-reuse he
 - Test: `corpscout/services/dagster_v3/tests/test_se_company_scb.py`
 
 **Interfaces:**
-- Consumes: `publish_with_stage`, `PublishCounts` (Task 2); `SE_COMPANY_INFO_SCB`, `ENVELOPE_COLUMNS`, `SE_COMPANY_ARTIFACT_TABLES` (Task 1); existing `assert_clickhouse_tables_exist`.
-- Produces: `SE_COMPANY_INFO_SCB_SQL: str` (module constant; `%(source_run_id)s`, `%(observed_at)s` params), `SE_COMPANY_INFO_SCB_COLUMNS = (*ENVELOPE_COLUMNS[:4], *payload)` (no `evidence_hash` — it is MATERIALIZED), asset `se_company_info_scb_clickhouse`, `defs`.
+- Consumes: `publish_with_stage`, `PublishCounts` (Task 2); `tests/se_company_ddl.declared_columns` (Task 1, tests only); existing `assert_clickhouse_tables_exist`.
+- Produces: `TABLE = "se_company_info_scb"`, `SE_COMPANY_INFO_SCB_SQL: str` (module constant; `%(source_run_id)s` param), `SE_COMPANY_INFO_SCB_COLUMNS` (envelope minus the MATERIALIZED `evidence_hash`, then this module's payload in DDL order), asset `se_company_info_scb_clickhouse`, `defs`.
 
 - [ ] **Step 1: Failing tests**
 
@@ -947,11 +858,11 @@ git commit -m "feat(se_company): shared publish, ledger and observation-reuse he
 import dagster as dg
 
 from dagster_v3.defs.se_company.scb import SE_COMPANY_INFO_SCB_COLUMNS, SE_COMPANY_INFO_SCB_SQL
-from dagster_v3.defs.se_company.tables import ENVELOPE_COLUMNS, SE_COMPANY_ARTIFACT_TABLES, SE_COMPANY_INFO_SCB
+from tests.se_company_ddl import declared_columns
 
 
 def test_scb_select_projects_envelope_then_payload_in_table_order() -> None:
-    assert SE_COMPANY_INFO_SCB_COLUMNS == (*ENVELOPE_COLUMNS[:4], *SE_COMPANY_ARTIFACT_TABLES[SE_COMPANY_INFO_SCB])
+    assert list(SE_COMPANY_INFO_SCB_COLUMNS) == [c for c in declared_columns("se_company_info_scb") if c != "evidence_hash"]
     sql = SE_COMPANY_INFO_SCB_SQL
     assert "FROM corpscout.se_companies AS companies FINAL" in sql
     assert "ifNull(nullIf(companies.scb_source_record_uid, ''), companies.bolagsverket_source_record_uid) AS source_record_uid" in sql
@@ -999,15 +910,16 @@ from dagster_clickhouse import ClickhouseResource
 
 from dagster_v3.defs.clickhouse.resolved import assert_clickhouse_tables_exist
 from dagster_v3.defs.se_company.common import publish_with_stage
-from dagster_v3.defs.se_company.tables import (
-    DATABASE,
-    ENVELOPE_COLUMNS,
-    SE_COMPANY_ARTIFACT_TABLES,
-    SE_COMPANY_INFO_SCB,
-)
 
 GROUP_NAME = "se_company_scb"
-SE_COMPANY_INFO_SCB_COLUMNS = (*ENVELOPE_COLUMNS[:4], *SE_COMPANY_ARTIFACT_TABLES[SE_COMPANY_INFO_SCB])
+DATABASE = "corpscout"
+TABLE = "se_company_info_scb"
+# Positional insert list: the envelope (evidence_hash is MATERIALIZED, so omitted) then this
+# module's payload, in the order the migration declares them — pinned by the test.
+SE_COMPANY_INFO_SCB_COLUMNS = (
+    "company_id", "source_record_uid", "observed_at", "source_run_id",
+    *("legal_name", "legal_name_raw", "legal_form_code", "status", "incorporation_date", "dissolution_date", "activity_description", "primary_sni_code", "primary_nace_code"),
+)
 
 # New versions only: a candidate row is skipped when the target already holds a row
 # with the same (company_id, source_record_uid) AND the same evidence hash. The hash
@@ -1061,7 +973,7 @@ WHERE source_record_uid != ''
     deps=[dg.AssetKey("sweden_company_companies_clickhouse")],
     group_name=GROUP_NAME,
     kinds={"clickhouse", "python"},
-    metadata={"table": f"{DATABASE}.{SE_COMPANY_INFO_SCB}"},
+    metadata={"table": f"{DATABASE}.{TABLE}"},
     description=(
         "Register facts per Swedish company (legal name, form, status, dates, activity "
         "description, primary SNI/NACE) as an append-only artifact; a new version is "
@@ -1073,11 +985,11 @@ def se_company_info_scb_clickhouse(
 ) -> dg.MaterializeResult:
     """Select from se_companies (+ primary industry) → stage → validate → append new versions."""
     assert_clickhouse_tables_exist(
-        clickhouse, database=DATABASE, tables=("se_companies", "se_industries", SE_COMPANY_INFO_SCB)
+        clickhouse, database=DATABASE, tables=("se_companies", "se_industries", TABLE)
     )
     counts = publish_with_stage(
         clickhouse=clickhouse,
-        target=SE_COMPANY_INFO_SCB,
+        target=TABLE,
         insert_columns=SE_COMPANY_INFO_SCB_COLUMNS,
         select_sql=SE_COMPANY_INFO_SCB_SQL,
         select_parameters={"source_run_id": context.run_id},
@@ -1086,7 +998,7 @@ def se_company_info_scb_clickhouse(
     context.log.info("se_company_info_scb: appended=%s total=%s", counts.inserted, counts.total)
     return dg.MaterializeResult(
         metadata={"appended_count": counts.inserted, "total_count": counts.total,
-                  "table": f"{DATABASE}.{SE_COMPANY_INFO_SCB}", "resolved_at": datetime.now(UTC).isoformat()}
+                  "table": f"{DATABASE}.{TABLE}", "resolved_at": datetime.now(UTC).isoformat()}
     )
 
 
@@ -1111,8 +1023,8 @@ git commit -m "feat(se_company): se_company_info_scb artifact from the register"
 - Test: `corpscout/services/dagster_v3/tests/test_se_company_esef.py`
 
 **Interfaces:**
-- Consumes: Task 2 helpers, Task 1 constants. Source tables: `corpscout.esef_document_company_information` (columns `source_document_id, source_record_uid, lei, country_iso2, company_id, fiscal_year, company_description, description_language, description_confidence, products_and_services_json, business_segments_json, model_provider, model_name, prompt_version, resolved_at`) and `corpscout.esef_source_documents` (`source_document_id, entity_name`).
-- Produces: `SE_COMPANY_INFO_ESEF_SQL`, `SE_COMPANY_INFO_ESEF_COLUMNS`, asset `se_company_info_esef_clickhouse` (dep `esef_document_company_information_clickhouse`), `defs`.
+- Consumes: Task 2 helpers. Source tables: `corpscout.esef_document_company_information` (columns `source_document_id, source_record_uid, lei, country_iso2, company_id, fiscal_year, company_description, description_language, description_confidence, products_and_services_json, business_segments_json, model_provider, model_name, prompt_version, resolved_at`) and `corpscout.esef_source_documents` (`source_document_id, entity_name`).
+- Produces: `TABLE = "se_company_info_esef"`, `SE_COMPANY_INFO_ESEF_SQL`, `SE_COMPANY_INFO_ESEF_COLUMNS`, asset `se_company_info_esef_clickhouse` (dep `esef_document_company_information_clickhouse`), `defs`.
 
 - [ ] **Step 1: Failing tests**
 
@@ -1121,11 +1033,11 @@ git commit -m "feat(se_company): se_company_info_scb artifact from the register"
 import dagster as dg
 
 from dagster_v3.defs.se_company.esef import SE_COMPANY_INFO_ESEF_COLUMNS, SE_COMPANY_INFO_ESEF_SQL
-from dagster_v3.defs.se_company.tables import ENVELOPE_COLUMNS, SE_COMPANY_ARTIFACT_TABLES, SE_COMPANY_INFO_ESEF
+from tests.se_company_ddl import declared_columns
 
 
 def test_esef_select_keeps_swedish_issuers_with_a_description() -> None:
-    assert SE_COMPANY_INFO_ESEF_COLUMNS == (*ENVELOPE_COLUMNS[:4], *SE_COMPANY_ARTIFACT_TABLES[SE_COMPANY_INFO_ESEF])
+    assert list(SE_COMPANY_INFO_ESEF_COLUMNS) == [c for c in declared_columns("se_company_info_esef") if c != "evidence_hash"]
     sql = SE_COMPANY_INFO_ESEF_SQL
     assert "FROM corpscout.esef_document_company_information AS info" in sql
     assert "INNER JOIN corpscout.esef_source_documents AS documents ON documents.source_document_id = info.source_document_id" in sql
@@ -1173,15 +1085,16 @@ from dagster_clickhouse import ClickhouseResource
 
 from dagster_v3.defs.clickhouse.resolved import assert_clickhouse_tables_exist
 from dagster_v3.defs.se_company.common import publish_with_stage
-from dagster_v3.defs.se_company.tables import (
-    DATABASE,
-    ENVELOPE_COLUMNS,
-    SE_COMPANY_ARTIFACT_TABLES,
-    SE_COMPANY_INFO_ESEF,
-)
 
 GROUP_NAME = "se_company_esef"
-SE_COMPANY_INFO_ESEF_COLUMNS = (*ENVELOPE_COLUMNS[:4], *SE_COMPANY_ARTIFACT_TABLES[SE_COMPANY_INFO_ESEF])
+DATABASE = "corpscout"
+TABLE = "se_company_info_esef"
+# Positional insert list: the envelope (evidence_hash is MATERIALIZED, so omitted) then this
+# module's payload, in the order the migration declares them — pinned by the test.
+SE_COMPANY_INFO_ESEF_COLUMNS = (
+    "company_id", "source_record_uid", "observed_at", "source_run_id",
+    *("source_document_id", "lei", "entity_name", "fiscal_year", "company_description", "description_language", "description_confidence", "products_and_services_json", "business_segments_json"),
+)
 
 SE_COMPANY_INFO_ESEF_SQL = """WITH candidates AS (
     SELECT
@@ -1230,7 +1143,7 @@ WHERE NOT EXISTS (
     deps=[dg.AssetKey("esef_document_company_information_clickhouse")],
     group_name=GROUP_NAME,
     kinds={"clickhouse", "python"},
-    metadata={"table": f"{DATABASE}.{SE_COMPANY_INFO_ESEF}"},
+    metadata={"table": f"{DATABASE}.{TABLE}"},
     description=(
         "Company description and business text reported in each Swedish ESEF filing, "
         "as an append-only artifact keyed by filing; new version only when the evidence hash changes."
@@ -1242,10 +1155,10 @@ def se_company_info_esef_clickhouse(
     """Select SE filings with a description → stage → validate → append new versions."""
     assert_clickhouse_tables_exist(
         clickhouse, database=DATABASE,
-        tables=("esef_document_company_information", "esef_source_documents", SE_COMPANY_INFO_ESEF),
+        tables=("esef_document_company_information", "esef_source_documents", TABLE),
     )
     counts = publish_with_stage(
-        clickhouse=clickhouse, target=SE_COMPANY_INFO_ESEF,
+        clickhouse=clickhouse, target=TABLE,
         insert_columns=SE_COMPANY_INFO_ESEF_COLUMNS, select_sql=SE_COMPANY_INFO_ESEF_SQL,
         select_parameters={"source_run_id": context.run_id},
         invalid_condition="trim(company_id) = '' OR trim(source_record_uid) = '' OR trim(company_description) = ''",
@@ -1253,7 +1166,7 @@ def se_company_info_esef_clickhouse(
     context.log.info("se_company_info_esef: appended=%s total=%s", counts.inserted, counts.total)
     return dg.MaterializeResult(metadata={
         "appended_count": counts.inserted, "total_count": counts.total,
-        "table": f"{DATABASE}.{SE_COMPANY_INFO_ESEF}", "resolved_at": datetime.now(UTC).isoformat(),
+        "table": f"{DATABASE}.{TABLE}", "resolved_at": datetime.now(UTC).isoformat(),
     })
 
 
@@ -1278,8 +1191,8 @@ git commit -m "feat(se_company): se_company_info_esef artifact from ESEF filings
 - Test: `corpscout/services/dagster_v3/tests/test_se_company_wikidata.py`
 
 **Interfaces:**
-- Consumes: Task 2 helpers, Task 1 constants. Sources: `corpscout.wikidata_companies` (`wikidata_id, wikidata_url, name, official_name, company_description, inception_date, legal_form_label, industry_wikidata_id, industry_label, headquarters_label, employee_count, source_record_id, resolved_at`), `corpscout.wikidata_company_identifiers` (`wikidata_id, identifier_type, identifier_value`), `corpscout.company_identifier` (`country_code, company_id, issuer_scheme, issuer_id, is_current`), `corpscout.se_companies`.
-- Produces: `SE_COMPANY_INFO_WIKIDATA_SQL`, `SE_COMPANY_INFO_WIKIDATA_COLUMNS`, asset `se_company_info_wikidata_clickhouse` (deps `wikidata_companies`, `sweden_company_companies_clickhouse`), `defs`.
+- Consumes: Task 2 helpers. Sources: `corpscout.wikidata_companies` (`wikidata_id, wikidata_url, name, official_name, company_description, inception_date, legal_form_label, industry_wikidata_id, industry_label, headquarters_label, employee_count, source_record_id, resolved_at`), `corpscout.wikidata_company_identifiers` (`wikidata_id, identifier_type, identifier_value`), `corpscout.company_identifier` (`country_code, company_id, issuer_scheme, issuer_id, is_current`), `corpscout.se_companies`.
+- Produces: `TABLE = "se_company_info_wikidata"`, `SE_COMPANY_INFO_WIKIDATA_SQL`, `SE_COMPANY_INFO_WIKIDATA_COLUMNS`, asset `se_company_info_wikidata_clickhouse` (deps `wikidata_companies`, `sweden_company_companies_clickhouse`), `defs`.
 
 - [ ] **Step 1: Failing tests**
 
@@ -1287,12 +1200,12 @@ git commit -m "feat(se_company): se_company_info_esef artifact from ESEF filings
 # tests/test_se_company_wikidata.py
 import dagster as dg
 
-from dagster_v3.defs.se_company.tables import ENVELOPE_COLUMNS, SE_COMPANY_ARTIFACT_TABLES, SE_COMPANY_INFO_WIKIDATA
 from dagster_v3.defs.se_company.wikidata import SE_COMPANY_INFO_WIKIDATA_COLUMNS, SE_COMPANY_INFO_WIKIDATA_SQL
+from tests.se_company_ddl import declared_columns
 
 
 def test_wikidata_select_links_entities_by_orgnr_or_lei() -> None:
-    assert SE_COMPANY_INFO_WIKIDATA_COLUMNS == (*ENVELOPE_COLUMNS[:4], *SE_COMPANY_ARTIFACT_TABLES[SE_COMPANY_INFO_WIKIDATA])
+    assert list(SE_COMPANY_INFO_WIKIDATA_COLUMNS) == [c for c in declared_columns("se_company_info_wikidata") if c != "evidence_hash"]
     sql = SE_COMPANY_INFO_WIKIDATA_SQL
     assert "identifiers.identifier_type = 'se_orgnr'" in sql
     assert "identifiers.identifier_type = 'lei'" in sql
@@ -1337,15 +1250,16 @@ from dagster_clickhouse import ClickhouseResource
 
 from dagster_v3.defs.clickhouse.resolved import assert_clickhouse_tables_exist
 from dagster_v3.defs.se_company.common import publish_with_stage
-from dagster_v3.defs.se_company.tables import (
-    DATABASE,
-    ENVELOPE_COLUMNS,
-    SE_COMPANY_ARTIFACT_TABLES,
-    SE_COMPANY_INFO_WIKIDATA,
-)
 
 GROUP_NAME = "se_company_wikidata"
-SE_COMPANY_INFO_WIKIDATA_COLUMNS = (*ENVELOPE_COLUMNS[:4], *SE_COMPANY_ARTIFACT_TABLES[SE_COMPANY_INFO_WIKIDATA])
+DATABASE = "corpscout"
+TABLE = "se_company_info_wikidata"
+# Positional insert list: the envelope (evidence_hash is MATERIALIZED, so omitted) then this
+# module's payload, in the order the migration declares them — pinned by the test.
+SE_COMPANY_INFO_WIKIDATA_COLUMNS = (
+    "company_id", "source_record_uid", "observed_at", "source_run_id",
+    *("wikidata_id", "wikidata_url", "name", "official_name", "company_description", "inception_date", "legal_form_label", "industry_wikidata_id", "industry_label", "headquarters_label", "employee_count"),
+)
 
 SE_COMPANY_INFO_WIKIDATA_SQL = """WITH swedish_companies AS (
     SELECT company_id FROM corpscout.se_companies FINAL WHERE match(company_id, '^[0-9]{10}$')
@@ -1418,7 +1332,7 @@ WHERE NOT EXISTS (
     deps=[dg.AssetKey("wikidata_companies"), dg.AssetKey("sweden_company_companies_clickhouse")],
     group_name=GROUP_NAME,
     kinds={"clickhouse", "python"},
-    metadata={"table": f"{DATABASE}.{SE_COMPANY_INFO_WIKIDATA}"},
+    metadata={"table": f"{DATABASE}.{TABLE}"},
     description=(
         "Wikidata facts for Swedish companies linked by orgnr or LEI (label, description, "
         "inception, legal form, industry, headquarters, employees) as an append-only artifact."
@@ -1430,10 +1344,10 @@ def se_company_info_wikidata_clickhouse(
     """Link Wikidata entities to Swedish orgnrs → stage → validate → append new versions."""
     assert_clickhouse_tables_exist(
         clickhouse, database=DATABASE,
-        tables=("wikidata_companies", "wikidata_company_identifiers", "company_identifier", "se_companies", SE_COMPANY_INFO_WIKIDATA),
+        tables=("wikidata_companies", "wikidata_company_identifiers", "company_identifier", "se_companies", TABLE),
     )
     counts = publish_with_stage(
-        clickhouse=clickhouse, target=SE_COMPANY_INFO_WIKIDATA,
+        clickhouse=clickhouse, target=TABLE,
         insert_columns=SE_COMPANY_INFO_WIKIDATA_COLUMNS, select_sql=SE_COMPANY_INFO_WIKIDATA_SQL,
         select_parameters={"source_run_id": context.run_id},
         invalid_condition="trim(company_id) = '' OR trim(source_record_uid) = '' OR trim(wikidata_id) = ''",
@@ -1441,7 +1355,7 @@ def se_company_info_wikidata_clickhouse(
     context.log.info("se_company_info_wikidata: appended=%s total=%s", counts.inserted, counts.total)
     return dg.MaterializeResult(metadata={
         "appended_count": counts.inserted, "total_count": counts.total,
-        "table": f"{DATABASE}.{SE_COMPANY_INFO_WIKIDATA}", "resolved_at": datetime.now(UTC).isoformat(),
+        "table": f"{DATABASE}.{TABLE}", "resolved_at": datetime.now(UTC).isoformat(),
     })
 
 
@@ -1659,6 +1573,14 @@ def _text(value: object) -> str | None:
     return cleaned or None
 
 
+def _date(value: object) -> date | None:
+    """Artifact rows arrive as strings (JSON map); the final stores Date32."""
+    if value is None or isinstance(value, date):
+        return value
+    text = str(value).strip()
+    return date.fromisoformat(text) if text else None
+
+
 def _newest(rows: Sequence[ArtifactRow], source: str, key=None) -> ArtifactRow | None:
     matching = [row for row in rows if row.source == source]
     if not matching:
@@ -1670,7 +1592,7 @@ def merge_company_info(company_id: str, rows: Sequence[ArtifactRow]) -> InfoOutc
     scb = _newest(rows, "scb")
     if scb is None:
         return None
-    esef = _newest(rows, "esef", key=lambda row: (int(row.values.get("fiscal_year") or 0), row.observed_at, row.source_record_uid))
+    esef = _newest(rows, "esef", key=lambda row: (int(str(row.values.get("fiscal_year") or 0) or 0), row.observed_at, row.source_record_uid))
     wikidata = _newest(rows, "wikidata")
 
     candidates: list[tuple[str, str, str]] = []  # (source, text, language)
@@ -1693,7 +1615,7 @@ def merge_company_info(company_id: str, rows: Sequence[ArtifactRow]) -> InfoOutc
         legal_name=_text(scb.values.get("legal_name")) or _text(scb.values.get("legal_name_raw")) or "",
         legal_form_code=_text(scb.values.get("legal_form_code")),
         status=str(scb.values.get("status") or ""),
-        incorporation_date=scb.values.get("incorporation_date"),
+        incorporation_date=_date(scb.values.get("incorporation_date")),
         description=description,
         description_language=language,
         description_source=source,
@@ -1829,10 +1751,12 @@ def test_changed_companies_sql_compares_artifact_versions_and_ledger_with_the_fi
 def test_artifact_rows_sql_unions_the_three_artifacts_with_a_source_column() -> None:
     sql = build_artifact_rows_sql()
     assert sql.count("UNION ALL") == 2
-    for source in ("'scb' AS source", "'esef' AS source", "'wikidata' AS source")
+    for source in ("'scb' AS source", "'esef' AS source", "'wikidata' AS source"):
         assert source in sql
     assert "WHERE company_id IN %(company_ids)s" in sql
     assert "toString(evidence_hash) AS evidence_hash" in sql
+    assert "toJSONString(map('legal_name'" in sql and "'activity_description'" in sql
+    assert "* EXCEPT" not in sql and " * " not in sql  # explicit read contract, never star
 
 
 def test_description_request_is_json_only_and_lists_every_candidate() -> None:
@@ -1854,6 +1778,13 @@ def test_parse_description_suggestion_validates_shape() -> None:
     with pytest.raises(ValueError):
         parse_description_suggestion(None)
     assert DESCRIPTION_PROMPT_VERSION == "se-company-info-description-v1"
+
+
+def test_insert_columns_match_the_migration_in_order() -> None:
+    from dagster_v3.defs.se_company.info import INSERT_COLUMNS
+    from tests.se_company_ddl import declared_columns
+
+    assert list(INSERT_COLUMNS) == [c for c in declared_columns("se_company_info") if c != "evidence_set_hash"]
 
 
 def test_definitions_wire_final_jobs_sensor_schedule_and_leaves() -> None:
@@ -1932,23 +1863,36 @@ from dagster_v3.defs.se_company.info_rules import (
     evidence_set_hash_for,
     merge_company_info,
 )
-from dagster_v3.defs.se_company.tables import (
-    DATABASE,
-    FINAL_PROVENANCE_COLUMNS,
-    SE_COMPANY_FINAL_TABLES,
-    SE_COMPANY_INFO,
-    SE_COMPANY_INFO_CORRECTION,
-    SE_COMPANY_INFO_ESEF,
-    SE_COMPANY_INFO_OBSERVATION,
-    SE_COMPANY_INFO_SCB,
-    SE_COMPANY_INFO_WIKIDATA,
-)
 
+DATABASE = "corpscout"
 GROUP_NAME = "se_company"
 DESCRIPTION_PROMPT_VERSION = "se-company-info-description-v1"
-ARTIFACTS = (("scb", SE_COMPANY_INFO_SCB), ("esef", SE_COMPANY_INFO_ESEF), ("wikidata", SE_COMPANY_INFO_WIKIDATA))
-INSERT_COLUMNS = ("company_id", *SE_COMPANY_FINAL_TABLES[SE_COMPANY_INFO],
-                  *(c for c in FINAL_PROVENANCE_COLUMNS if c != "evidence_set_hash"))
+SE_COMPANY_INFO = "se_company_info"
+SE_COMPANY_INFO_CORRECTION = "se_company_info_correction"
+SE_COMPANY_INFO_OBSERVATION = "se_company_info_enrichment_observation"
+
+# This module's READ contract: which artifact tables it consumes and exactly which of
+# their columns it uses. Naming the columns here (instead of `*`) means a renamed or
+# dropped artifact column fails this query loudly instead of silently shifting values.
+ARTIFACT_READS: dict[str, tuple[str, ...]] = {
+    "scb": ("legal_name", "legal_name_raw", "legal_form_code", "status", "incorporation_date",
+            "dissolution_date", "activity_description", "primary_sni_code", "primary_nace_code"),
+    "esef": ("source_document_id", "lei", "entity_name", "fiscal_year", "company_description",
+             "description_language", "description_confidence"),
+    "wikidata": ("wikidata_id", "wikidata_url", "name", "official_name", "company_description",
+                 "inception_date", "legal_form_label", "industry_wikidata_id", "industry_label",
+                 "headquarters_label", "employee_count"),
+}
+ARTIFACT_TABLES = {source: f"se_company_info_{source}" for source in ARTIFACT_READS}
+
+# This module's WRITE contract: se_company_info insert columns in DDL order (the
+# MATERIALIZED evidence_set_hash is omitted) — pinned against the migration by the test.
+INSERT_COLUMNS = (
+    "company_id", "legal_name", "legal_form_code", "status", "incorporation_date", "description",
+    "description_language", "description_source", "primary_nace_code", "primary_sni_code", "wikidata_id", "lei",
+    "source_record_uids", "evidence_hashes", "correction_ids", "suggestion_id",
+    "model_provider", "model_name", "prompt_version", "source_run_id", "resolved_at",
+)
 OBSERVATION_COLUMNS = ("suggestion_id", "company_id", "input_hash", "suggestion", "raw_response",
                        "model_provider", "model_name", "prompt_version", "prompt_tokens", "completion_tokens",
                        "source_run_id", "created_at")
@@ -2000,7 +1944,7 @@ def build_description_request(outcome: InfoOutcome, model: str) -> dict[str, Any
 def build_changed_companies_sql() -> str:
     artifact_union = "\n    UNION ALL\n    ".join(
         f"SELECT company_id, max(observed_at) AS latest_observed_at FROM {DATABASE}.{table} FINAL GROUP BY company_id"
-        for _, table in ARTIFACTS)
+        for table in ARTIFACT_TABLES.values())
     return f"""WITH artifacts AS (
     SELECT company_id, max(latest_observed_at) AS latest_observed_at
     FROM (
@@ -2041,25 +1985,23 @@ LIMIT %(max_companies)s"""
 
 
 def build_artifact_rows_sql() -> str:
+    """One SELECT per artifact naming exactly the columns this module reads, as a JSON map."""
     selects = []
-    for source, table in ARTIFACTS:
+    for source, columns in ARTIFACT_READS.items():
+        pairs = ", ".join(f"'{column}', toString(ifNull({column}, ''))" for column in columns)
         selects.append(f"""SELECT '{source}' AS source, company_id, source_record_uid, toString(evidence_hash) AS evidence_hash,
-        observed_at, toJSONString(tuple(* EXCEPT (company_id, source_record_uid, observed_at, source_run_id, evidence_hash))) AS payload_json
-    FROM {DATABASE}.{table} FINAL
+        observed_at, toJSONString(map({pairs})) AS payload_json
+    FROM {DATABASE}.{ARTIFACT_TABLES[source]} FINAL
     WHERE company_id IN %(company_ids)s""")
     return "\n    UNION ALL\n    ".join(selects) + "\nORDER BY company_id, source, observed_at"
 ```
 
-> NOTE for the implementer: `toJSONString(tuple(* EXCEPT …))` yields a JSON **array** in positional column order; map it back to names using `SE_COMPANY_ARTIFACT_TABLES[table]` (payload column order is the table order). If ClickHouse 26.5 rejects `* EXCEPT` inside `tuple()`, list the payload columns explicitly per artifact instead (`toJSONString(tuple(legal_name, legal_name_raw, …))`) and keep the same positional mapping.
-
 ```python
 def _artifact_row_from_row(row: Sequence[Any]) -> ArtifactRow:
-    source = str(row[0])
-    table = dict(ARTIFACTS)[source]
-    from dagster_v3.defs.se_company.tables import SE_COMPANY_ARTIFACT_TABLES
-    values = dict(zip(SE_COMPANY_ARTIFACT_TABLES[table], json.loads(str(row[5])), strict=True))
-    return ArtifactRow(source=source, source_record_uid=str(row[2]), evidence_hash=str(row[3]),
-                       observed_at=row[4], values=values)
+    """payload_json is a name→string map, so typed NULLs arrive as '' and numbers as text;
+    info_rules treats '' as missing and casts fiscal_year/employee_count where it needs them."""
+    return ArtifactRow(source=str(row[0]), source_record_uid=str(row[2]), evidence_hash=str(row[3]),
+                       observed_at=row[4], values=json.loads(str(row[5])))
 
 
 def _request_description(client: OpenAI, request: Mapping[str, Any], *, provider: str) -> ObservationResult:
@@ -2093,8 +2035,7 @@ def materialize_se_company_info(
 ) -> dict[str, object]:
     scope = normalized_company_ids(company_ids)
     assert_clickhouse_tables_exist(clickhouse, database=DATABASE, tables=(
-        SE_COMPANY_INFO_SCB, SE_COMPANY_INFO_ESEF, SE_COMPANY_INFO_WIKIDATA, SE_COMPANY_INFO,
-        SE_COMPANY_INFO_CORRECTION, SE_COMPANY_INFO_OBSERVATION))
+        *ARTIFACT_TABLES.values(), SE_COMPANY_INFO, SE_COMPANY_INFO_CORRECTION, SE_COMPANY_INFO_OBSERVATION))
     base = {"all_companies": not scope, "company_ids": scope or ("",)}
     metrics: dict[str, int] = defaultdict(int)
     after_company_id = ""
@@ -2651,8 +2592,10 @@ git commit -m "feat(backoffice): company-info review page with ledger correction
 
 ## Self-review
 
-**Spec coverage (2026-08-22-sweden-company-source-artifacts-design.md):** §2 folder — Tasks 1–7 create `tables.py`, `common.py`, `scb.py`, `esef.py`, `wikidata.py`, `info_rules.py`, `info.py` (README deferred to the pilot close-out note in Task 11/spec §9 — add `se_company/README.md` = spec §1–§4 condensed as part of Task 1 if the reviewer asks; it is documentation, not behaviour). §3 naming — every table/asset/group name in Tasks 1–7 follows it. §4 envelope/provenance — Task 1 migration + contract tests. §5 artifact asset shape — Tasks 3–5. §6 final asset shape and rules — Tasks 6–7 (financial precedence view is out of this pilot). §7 helpers — Task 2. §8 tests — Tasks 1–8 (definitions contract lives in Tasks 3–5 and 7 rather than one layout test; acceptable). §9 pilot — Tasks 1–11; backoffice per §9.4 — Tasks 9–10 (review page; public-page switch-over stays out per Global Constraints).
+**Spec coverage (2026-08-22-sweden-company-source-artifacts-design.md):** §2 folder — Tasks 1–7 create `common.py`, `scb.py`, `esef.py`, `wikidata.py`, `info_rules.py`, `info.py` (README deferred to the pilot close-out note in Task 11/spec §9 — add `se_company/README.md` = spec §1–§4 condensed as part of Task 1 if the reviewer asks; it is documentation, not behaviour). §3 naming — every table/asset/group name in Tasks 1–7 follows it. §4 envelope/provenance — Task 1 migration + contract tests. §5 artifact asset shape — Tasks 3–5. §6 final asset shape and rules — Tasks 6–7 (financial precedence view is out of this pilot). §7 helpers — Task 2. §8 tests — Tasks 1–8 (definitions contract lives in Tasks 3–5 and 7 rather than one layout test; acceptable). §9 pilot — Tasks 1–11; backoffice per §9.4 — Tasks 9–10 (review page; public-page switch-over stays out per Global Constraints).
 
 **Placeholder scan:** Task 7 carries an explicit NOTE about `* EXCEPT` with the fallback spelled out; Task 9 Step 3 describes the server module's SQL by clause rather than full text — the exported-constant tests in Step 1 pin what each query must contain, and the person twin (`se-company-person.server.ts`) is the literal pattern; Task 10 describes the component by sections with the test pinning required markup. No TBD/TODO.
+
+**Schema ownership:** no Python registry of tables/columns — each module declares only its own `TABLE` and insert list (write contract) and, for the final, the artifact columns it reads (`ARTIFACT_READS`, read contract); tests pin every list against the migration via `tests/se_company_ddl.py`.
 
 **Type consistency:** `PublishCounts(staged, inserted, total)` used in Tasks 3–7; `LedgerRow`/`effective_ledger(rows, kind_order)` in Tasks 2 and 6; `StoredObservation`/`ObservationResult`/`reuse_or_call` in Tasks 2 and 7; `ArtifactRow(source, source_record_uid, evidence_hash, observed_at, values)` in Tasks 6–7; `InfoOutcome` fields match `_final_row` order and `INSERT_COLUMNS` (company_id + typed columns + provenance minus the MATERIALIZED `evidence_set_hash`); `SeInfoCorrectionInput`/`validateSeInfoCorrection` in Tasks 9–10; `ZERO_EVIDENCE_HASH` imported from `se-person-corrections` in both.
