@@ -15,9 +15,11 @@ import {
   ROLES_SQL,
   seCompanyPersonId,
   SUGGESTIONS_SQL,
-  ZERO_EVIDENCE_HASH,
 } from "~/lib/se-company-person.server";
-import { SePersonCorrectionValidationError } from "~/lib/se-person-corrections";
+import {
+  SePersonCorrectionValidationError,
+  ZERO_EVIDENCE_HASH,
+} from "~/lib/se-person-corrections";
 
 const COMPANY = "5565200028";
 const PERSON = "43234b7d-0184-16b5-de47-dc086a2b0ed9";
@@ -82,16 +84,29 @@ describe("review query SQL text", () => {
       "trim(concat(\n      JSONExtractString(source_value_json, 'first_name'), ' ',\n      JSONExtractString(source_value_json, 'last_name')\n    ))",
     );
     expect(DRAFTS_SQL).toContain("JSONExtractString(source_value_json, 'name')");
-    expect(DRAFTS_SQL).toContain("FROM corpscout.se_company_person_draft FINAL");
+    expect(DRAFTS_SQL).toContain("FROM corpscout.se_company_person_draft AS d FINAL");
     expect(DRAFTS_SQL).toContain("{draftIds:Array(UUID)}");
   });
 
   it("PERSON_SQL selects the review columns from se_company_person", () => {
-    expect(PERSON_SQL).toContain("FROM corpscout.se_company_person FINAL");
+    expect(PERSON_SQL).toContain("FROM corpscout.se_company_person AS p FINAL");
     expect(PERSON_SQL).toContain("draft_set_hash");
     expect(PERSON_SQL).toContain("correction_ids");
     expect(PERSON_SQL).toContain("suggestion_id");
     expect(PERSON_SQL).toContain("merged_into_person_id");
+  });
+
+  it("filters on the table's own columns, never on the String aliases", () => {
+    // `toString(person_id) AS person_id` shadows the UUID column, so an
+    // unqualified `person_id = {personId:UUID}` dies with NO_COMMON_TYPE and
+    // `draft_id IN {draftIds:Array(UUID)}` silently matches nothing.
+    expect(PERSON_SQL).toContain(
+      "WHERE p.company_id = {companyId:String} AND p.person_id = {personId:UUID}",
+    );
+    expect(DRAFTS_SQL).toContain(
+      "WHERE d.company_id = {companyId:String} AND d.draft_id IN {draftIds:Array(UUID)}",
+    );
+    expect(DRAFTS_SQL).toContain("FROM corpscout.se_company_person_draft AS d FINAL");
   });
 
   it("ROLES_SQL selects correction_ids and is_current from se_company_person_role", () => {
@@ -109,14 +124,31 @@ describe("review query SQL text", () => {
     );
   });
 
+  it("SUGGESTIONS_SQL marks the rows whose evidence still matches the published one", () => {
+    expect(SUGGESTIONS_SQL).toContain("AS is_current");
+    expect(SUGGESTIONS_SQL).toContain(
+      "WHERE suggestion_id = {publishedSuggestionId:Nullable(UUID)}",
+    );
+  });
+
   it("CORRECTIONS_SQL derives is_current/is_stale/is_applied from the right params", () => {
     expect(CORRECTIONS_SQL).toContain("supersedes_correction_id AS id");
     expect(CORRECTIONS_SQL).toContain("NOT IN (SELECT id FROM superseded)) AS is_current");
     expect(CORRECTIONS_SQL).toContain("{zeroHash:String}");
-    expect(CORRECTIONS_SQL).toContain("{draftSetHash:String}");
     expect(CORRECTIONS_SQL).toContain("AS is_stale");
     expect(CORRECTIONS_SQL).toContain("{appliedIds:Array(String)}");
     expect(CORRECTIONS_SQL).toContain("AS is_applied");
+  });
+
+  it("CORRECTIONS_SQL measures staleness against the row's own subject", () => {
+    // A merge or reassign shown on the destination's page is about the SUBJECT's
+    // evidence; comparing it with the page person's hash marks it stale on sight.
+    expect(CORRECTIONS_SQL).toContain(
+      "LEFT JOIN corpscout.se_company_person AS subj FINAL",
+    );
+    expect(CORRECTIONS_SQL).toContain("subj.person_id = c.subject_person_id");
+    expect(CORRECTIONS_SQL).toContain("toString(subj.draft_set_hash)");
+    expect(CORRECTIONS_SQL).not.toContain("{draftSetHash:String}");
   });
 });
 
@@ -180,7 +212,6 @@ describe("getSeCompanyPerson", () => {
         companyId: COMPANY,
         personId: PERSON,
         zeroHash: ZERO_EVIDENCE_HASH,
-        draftSetHash: personRow.draft_set_hash,
         appliedIds: personRow.correction_ids,
       },
     ]);

@@ -1,3 +1,9 @@
+/**
+ * The evidence hash an `undo` carries: it supersedes a decision, not evidence.
+ * Client-safe on purpose -- the review form needs it while building a row.
+ */
+export const ZERO_EVIDENCE_HASH = "0".repeat(64);
+
 export const SE_PERSON_CORRECTION_KINDS = [
   "merge_persons",
   "reassign_draft",

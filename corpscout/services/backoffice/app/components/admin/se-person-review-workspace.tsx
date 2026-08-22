@@ -289,6 +289,9 @@ export function SePersonReviewWorkspace({
                   {suggestion.model_provider} · {suggestion.model_name}
                 </Badge>
                 {suggestion.is_published ? <Badge>published</Badge> : null}
+                {suggestion.is_current ? null : (
+                  <Badge variant="outline">superseded evidence</Badge>
+                )}
                 <span className="text-xs text-muted-foreground">
                   {suggestion.created_at}
                 </span>
@@ -296,8 +299,19 @@ export function SePersonReviewWorkspace({
               <pre className="mt-2 overflow-x-auto whitespace-pre-wrap break-words font-mono text-xs">
                 {suggestion.suggestion}
               </pre>
+              {/* Approving a suggestion the pipeline no longer asks for is
+                  stale on arrival (spec §4.3), so those rows stay read-only. */}
+              {suggestion.is_current ? null : (
+                <p className="mt-2 text-xs text-muted-foreground">
+                  Answered evidence this person no longer has. Nothing to decide
+                  until the model is asked again.
+                </p>
+              )}
               <div className="mt-2 flex flex-wrap gap-2">
-                {(["approve_suggestion", "reject_suggestion"] as const).map(
+                {(suggestion.is_current
+                  ? (["approve_suggestion", "reject_suggestion"] as const)
+                  : ([] as const)
+                ).map(
                   (kind) => (
                     <Form
                       key={kind}

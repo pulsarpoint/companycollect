@@ -6,10 +6,11 @@ import {
 import {
   SePersonCorrectionValidationError,
   validateSePersonCorrection,
+  ZERO_EVIDENCE_HASH,
   type SePersonCorrectionInput,
 } from "~/lib/se-person-corrections";
 
-export const ZERO_EVIDENCE_HASH = "0".repeat(64);
+export { ZERO_EVIDENCE_HASH };
 const CORRECTION_ACTOR = "backoffice";
 
 export interface SeCompanyPersonRow {
@@ -59,6 +60,7 @@ export interface SeCompanyPersonSuggestionRow {
   prompt_version: string;
   created_at: string;
   is_published: number;
+  is_current: number;
 }
 
 export interface SeCompanyPersonCorrectionRow {
@@ -98,23 +100,32 @@ export function seCompanyPersonId(companyId: string, name: string): string {
   return `${hex.slice(0, 8)}-${hex.slice(8, 12)}-${hex.slice(12, 16)}-${hex.slice(16, 20)}-${hex.slice(20)}`;
 }
 
+/**
+ * The WHERE clause filters through the table alias on purpose. Every id is
+ * projected as `toString(x) AS x`, which shadows the underlying column: an
+ * unqualified `person_id = {personId:UUID}` compares String with UUID and dies
+ * with NO_COMMON_TYPE, and the equivalent `IN` in DRAFTS_SQL matches nothing at
+ * all. The output names stay as the TypeScript row types expect.
+ */
 export const PERSON_SQL = `SELECT
-  toString(person_id) AS person_id, company_id, name, description,
-  arrayMap(id -> toString(id), draft_ids) AS draft_ids,
-  toString(draft_set_hash) AS draft_set_hash,
-  arrayMap(id -> toString(id), correction_ids) AS correction_ids,
-  toString(suggestion_id) AS suggestion_id,
-  toString(merged_into_person_id) AS merged_into_person_id,
-  toString(model_provider) AS model_provider, model_name, prompt_version,
-  toString(updated_at) AS updated_at
-FROM corpscout.se_company_person FINAL
-WHERE company_id = {companyId:String} AND person_id = {personId:UUID}
+  toString(p.person_id) AS person_id, p.company_id AS company_id,
+  p.name AS name, p.description AS description,
+  arrayMap(id -> toString(id), p.draft_ids) AS draft_ids,
+  toString(p.draft_set_hash) AS draft_set_hash,
+  arrayMap(id -> toString(id), p.correction_ids) AS correction_ids,
+  toString(p.suggestion_id) AS suggestion_id,
+  toString(p.merged_into_person_id) AS merged_into_person_id,
+  toString(p.model_provider) AS model_provider, p.model_name AS model_name,
+  p.prompt_version AS prompt_version,
+  toString(p.updated_at) AS updated_at
+FROM corpscout.se_company_person AS p FINAL
+WHERE p.company_id = {companyId:String} AND p.person_id = {personId:UUID}
 LIMIT 1`;
 
 export const DRAFTS_SQL = `SELECT
-  toString(draft_id) AS draft_id, toString(source) AS source,
+  toString(d.draft_id) AS draft_id, toString(d.source) AS source,
   multiIf(
-    source = 'bolagsverket',
+    d.source = 'bolagsverket',
     trim(concat(
       JSONExtractString(source_value_json, 'first_name'), ' ',
       JSONExtractString(source_value_json, 'last_name')
@@ -122,13 +133,15 @@ export const DRAFTS_SQL = `SELECT
     JSONExtractString(source_value_json, 'name')
   ) AS name,
   multiIf(
-    source = 'bolagsverket', JSONExtractString(source_value_json, 'role_original'),
-    source = 'esef', JSONExtractString(source_value_json, 'role'),
+    d.source = 'bolagsverket', JSONExtractString(source_value_json, 'role_original'),
+    d.source = 'esef', JSONExtractString(source_value_json, 'role'),
     JSONExtractString(source_value_json, 'role_label')
   ) AS role_original,
-  fiscal_year, toString(source_observed_at) AS source_observed_at, source_value_json
-FROM corpscout.se_company_person_draft FINAL
-WHERE company_id = {companyId:String} AND draft_id IN {draftIds:Array(UUID)}
+  d.fiscal_year AS fiscal_year,
+  toString(d.source_observed_at) AS source_observed_at,
+  d.source_value_json AS source_value_json
+FROM corpscout.se_company_person_draft AS d FINAL
+WHERE d.company_id = {companyId:String} AND d.draft_id IN {draftIds:Array(UUID)}
 ORDER BY source, fiscal_year, draft_id`;
 
 export const ROLES_SQL = `SELECT
@@ -146,7 +159,16 @@ export const SUGGESTIONS_SQL = `SELECT
   arrayMap(id -> toString(id), s.draft_ids) AS draft_ids, s.suggestion AS suggestion,
   toString(s.model_provider) AS model_provider, s.model_name, s.prompt_version,
   toString(s.created_at) AS created_at,
-  toUInt8(ifNull(s.suggestion_id = {publishedSuggestionId:Nullable(UUID)}, 0)) AS is_published
+  toUInt8(ifNull(s.suggestion_id = {publishedSuggestionId:Nullable(UUID)}, 0)) AS is_published,
+  -- "Current" is the closest the backoffice can get to Dagster's request hash:
+  -- a suggestion answers the same evidence as the published one when it carries
+  -- the same input_hash. Only those may be approved or rejected.
+  toUInt8(ifNull(s.input_hash = (
+    SELECT input_hash
+    FROM corpscout.se_company_person_enrichment_observation
+    WHERE suggestion_id = {publishedSuggestionId:Nullable(UUID)}
+    LIMIT 1
+  ), 0)) AS is_current
 FROM corpscout.se_company_person_enrichment_observation AS s
 WHERE s.company_id = {companyId:String} AND s.person_id = {personId:UUID}
 ORDER BY s.created_at DESC
@@ -166,13 +188,18 @@ SELECT
   toString(c.supersedes_correction_id) AS supersedes_correction_id,
   toString(c.created_at) AS created_at,
   toUInt8(c.correction_id NOT IN (SELECT id FROM superseded)) AS is_current,
+  -- Staleness belongs to the row's SUBJECT, not to the person whose page this
+  -- is: a merge or reassign listed on the destination's page binds the source
+  -- person's evidence. A subject that no longer exists joins to '' and is stale.
   toUInt8(
     c.correction_id NOT IN (SELECT id FROM superseded)
     AND toString(c.evidence_hash) != {zeroHash:String}
-    AND toString(c.evidence_hash) != {draftSetHash:String}
+    AND toString(c.evidence_hash) != toString(subj.draft_set_hash)
   ) AS is_stale,
   toUInt8(has({appliedIds:Array(String)}, toString(c.correction_id))) AS is_applied
 FROM corpscout.se_company_person_correction AS c
+LEFT JOIN corpscout.se_company_person AS subj FINAL
+  ON subj.company_id = c.company_id AND subj.person_id = c.subject_person_id
 WHERE c.company_id = {companyId:String}
   AND (c.subject_person_id = {personId:UUID} OR c.target_person_id = {personId:UUID})
 ORDER BY c.created_at DESC, c.correction_id DESC
@@ -192,7 +219,7 @@ export async function getSeCompanyPerson(
     }),
     chQuery<SeCompanyPersonCorrectionRow>(CORRECTIONS_SQL, {
       companyId, personId, zeroHash: ZERO_EVIDENCE_HASH,
-      draftSetHash: person.draft_set_hash, appliedIds: person.correction_ids,
+      appliedIds: person.correction_ids,
     }),
   ]);
   return { person, drafts, roles, suggestions, corrections };
@@ -208,9 +235,9 @@ export async function appendSeCompanyPersonCorrection(
   const draft = validateSePersonCorrection(input);
   if (draft.correction_kind !== "undo") {
     const [current] = await chQuery<{ draft_set_hash: string }>(
-      `SELECT toString(draft_set_hash) AS draft_set_hash
-       FROM corpscout.se_company_person FINAL
-       WHERE company_id = {companyId:String} AND person_id = {personId:UUID}
+      `SELECT toString(p.draft_set_hash) AS draft_set_hash
+       FROM corpscout.se_company_person AS p FINAL
+       WHERE p.company_id = {companyId:String} AND p.person_id = {personId:UUID}
        LIMIT 1`,
       { companyId: draft.company_id, personId: draft.subject_person_id },
     );

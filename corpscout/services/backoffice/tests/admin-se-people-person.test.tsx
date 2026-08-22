@@ -3,14 +3,12 @@ import { createMemoryRouter, RouterProvider } from "react-router";
 import { describe, expect, it } from "vitest";
 import { SePersonReviewWorkspace } from "~/components/admin/se-person-review-workspace";
 import type { CompanyPersonRoleType } from "~/lib/company-roles.server";
-import {
-  ZERO_EVIDENCE_HASH,
-  type SeCompanyPersonDetail,
-} from "~/lib/se-company-person.server";
+import type { SeCompanyPersonDetail } from "~/lib/se-company-person.server";
+import { ZERO_EVIDENCE_HASH } from "~/lib/se-person-corrections";
 import {
   buildCorrectionInput,
   payloadFor,
-} from "~/routes/admin-se-people-person";
+} from "~/lib/se-person-review-form";
 
 const EVIDENCE_HASH = "a".repeat(64);
 const SUGGESTION_ID = "77777777-7777-4777-8777-777777777777";
@@ -63,6 +61,7 @@ const reviewedDetail: SeCompanyPersonDetail = {
       prompt_version: "person-profile-v3",
       created_at: "2026-08-22 10:00:00.000",
       is_published: 0,
+      is_current: 1,
     },
   ],
   corrections: [
@@ -179,6 +178,21 @@ describe("Sweden company-person review page", () => {
       expect(form).toContain(`name="suggestion_id" value="${SUGGESTION_ID}"`);
       expect(form).toContain(`name="evidence_hash" value="${EVIDENCE_HASH}"`);
     }
+  });
+
+  it("offers no decision on a suggestion whose evidence is superseded", () => {
+    const supersededDetail: SeCompanyPersonDetail = {
+      ...reviewedDetail,
+      suggestions: [{ ...reviewedDetail.suggestions[0], is_current: 0 }],
+    };
+
+    const html = renderWorkspace(supersededDetail);
+
+    expect(html).toContain("superseded evidence");
+    expect(html).not.toContain('value="approve_suggestion"');
+    expect(html).not.toContain('value="reject_suggestion"');
+    // The suggestion itself stays readable; only the decision is withdrawn.
+    expect(html).toContain("David Mindus");
   });
 
   it("undoes a ledger row by superseding it rather than by evidence hash", () => {
