@@ -23,10 +23,48 @@ def test_correction_and_suggestion_tables_match_insert_contracts() -> None:
     assert "CREATE TABLE IF NOT EXISTS corpscout.se_company_person_correction" in sql
     assert "CREATE TABLE IF NOT EXISTS corpscout.se_company_person_enrichment_observation" in sql
     assert sql.count("ENGINE = MergeTree") == 2
+
+    # Scope each column-order check to its own CREATE TABLE block: company_id and
+    # created_at appear in BOTH tables, so searching the whole file for a column's
+    # position could find the wrong table's occurrence and miss a reorder.
+    correction_block = sql[
+        sql.index(
+            "CREATE TABLE IF NOT EXISTS corpscout.se_company_person_correction"
+        ) : sql.index(
+            "CREATE TABLE IF NOT EXISTS corpscout.se_company_person_enrichment_observation"
+        )
+    ]
+    suggestion_block = sql[
+        sql.index(
+            "CREATE TABLE IF NOT EXISTS corpscout.se_company_person_enrichment_observation"
+        ) : sql.index("ALTER TABLE corpscout.se_company_person")
+    ]
+
+    correction_positions = []
     for column in CORRECTION_COLUMNS:
-        assert f"    {column} " in sql
+        assert f"    {column} " in correction_block, column
+        correction_positions.append(correction_block.index(f"    {column} "))
+    # INSERT INTO t(a, b) SELECT ... writes positionally in ClickHouse -- aliases
+    # are ignored -- so membership alone can't catch a reorder that swaps values
+    # between same-typed adjacent columns (e.g. subject_person_id/target_person_id
+    # are both UUID-family, as are draft_ids/evidence_hash's neighbors).
+    assert correction_positions == sorted(correction_positions), (
+        "the migration's se_company_person_correction column order must match "
+        "CORRECTION_COLUMNS order exactly -- a mismatch here means a positional "
+        "INSERT will silently swap values between same-typed adjacent columns"
+    )
+
+    suggestion_positions = []
     for column in SUGGESTION_COLUMNS:
-        assert f"    {column} " in sql
+        assert f"    {column} " in suggestion_block, column
+        suggestion_positions.append(suggestion_block.index(f"    {column} "))
+    assert suggestion_positions == sorted(suggestion_positions), (
+        "the migration's se_company_person_enrichment_observation column order "
+        "must match SUGGESTION_COLUMNS order exactly -- a mismatch here means a "
+        "positional INSERT will silently swap values between same-typed adjacent "
+        "columns"
+    )
+
     assert "CONSTRAINT valid_payload CHECK isValidJSON(payload)" in sql
     assert "ALTER TABLE corpscout.se_company_person" in sql
     assert "correction_ids Array(UUID) DEFAULT []" in sql
