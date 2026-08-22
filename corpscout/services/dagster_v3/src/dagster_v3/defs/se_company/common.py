@@ -1,8 +1,10 @@
 """Shared helpers for the Sweden company data layers.
 
-Three things repeat across every artifact and final asset and live here:
-publishing through a stage table, reading/ordering a correction ledger, and
-reusing a stored model observation by input hash. Nothing else is shared.
+Four things repeat across every artifact and final asset and live here:
+publishing through a stage table, reading/ordering a correction ledger,
+reusing a stored model observation by input hash, and the sensor factory
+that turns a ledger's new rows into a scoped run request. Nothing else is
+shared.
 """
 
 import hashlib
@@ -98,16 +100,27 @@ def publish_with_stage(
                 )
             existing = clickhouse_table_row_count(client, qualified_target)
             if new_versions_only:
-                stage_columns = _columns_sql(insert_columns, prefix="stage.")
-                client.execute(
-                    f"INSERT INTO {qualified_target} ({columns})\n"
-                    f"SELECT {stage_columns} FROM {qualified_stage} AS stage\n"
+                anti_join_sql = (
+                    f"FROM {qualified_stage} AS stage\n"
                     f"LEFT ANTI JOIN {qualified_target} AS existing\n"
                     "ON existing.company_id = stage.company_id "
                     "AND existing.source_record_uid = stage.source_record_uid "
                     "AND existing.evidence_hash = stage.evidence_hash"
                 )
+                # Counted BEFORE the target insert, as its own query: a plain
+                # before/after row-count delta on a ReplacingMergeTree target is
+                # not safe here -- a background merge between the two plain counts
+                # can make the delta under-report or go negative, since count()
+                # is not FINAL-aware. This anti-join count is what actually
+                # determines `inserted`.
+                inserted = int(client.execute(f"SELECT count() {anti_join_sql}")[0][0])
+                stage_columns = _columns_sql(insert_columns, prefix="stage.")
+                client.execute(
+                    f"INSERT INTO {qualified_target} ({columns})\n"
+                    f"SELECT {stage_columns} {anti_join_sql}"
+                )
             else:
+                inserted = staged
                 client.execute(
                     f"INSERT INTO {qualified_target} ({columns})\nSELECT {columns} FROM {qualified_stage}"
                 )
@@ -118,7 +131,6 @@ def publish_with_stage(
                 staged_row_count=total,
                 allow_shrink=allow_shrink,
             )
-            inserted = (total - existing) if new_versions_only else staged
             return PublishCounts(staged=staged, inserted=inserted, total=total)
         except Exception as exc:
             primary_error = exc
@@ -184,7 +196,11 @@ def effective_ledger(
         if row.supersedes_correction_id is not None
     }
     live = [
-        row for row in rows if row.correction_id not in superseded and row.kind in kind_order
+        row
+        for row in rows
+        if row.correction_id not in superseded
+        and row.kind != UNDO_KIND
+        and row.kind in kind_order
     ]
     return tuple(
         sorted(live, key=lambda row: (kind_order[row.kind], row.created_at, str(row.correction_id)))
