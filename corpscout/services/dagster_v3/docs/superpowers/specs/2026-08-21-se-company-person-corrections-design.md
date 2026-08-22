@@ -32,9 +32,12 @@ Follow-on sub-projects, each with its own spec:
   signatories as person evidence instead of dropping them.
 - **3.** Person grain: one row per (company, person) with a role timeline; the 11.7k
   name-key collisions become the review queue fed by this ledger.
-- **4.** Re-point the admin wizard at ClickHouse, retire the DuckDB/SQLite drafts and the
-  local `person_profile_llm_response`, schedule the Dagster chain, add freshness checks,
-  apply migration 000294, commit the outstanding admin work.
+- **4.** Re-point the admin wizard at ClickHouse; retire the DuckDB/SQLite drafts, the local
+  `person_profile_llm_response`, and the backoffice Temporal worker (its three workflows are
+  covered by the Dagster assets — Dagster is the only producer of suggestion rows; a
+  per-person "re-run now" is a synchronous backoffice call or a scoped Dagster run);
+  schedule the Dagster chain, add freshness checks, apply migration 000294, commit the
+  outstanding admin work.
 
 Out of scope here: cross-company person identity (no personnummer in SE filings — stays
 "same name", never "same person"), changing the LLM provider or prompt, authentication.

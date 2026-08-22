@@ -23,7 +23,7 @@
 - Dagster: no `from __future__ import annotations` in defs modules; `uv run` for every command; `uv run dg check defs` green before each commit. Python 3.14.
 - Commits by explicit path only (shared working tree carries unrelated uncommitted work). Conventional Commits. Never commit the backoffice admin WIP (`app/routes/admin-*`, `app/lib/sweden-*`, …) as part of this plan unless a task names the file.
 - Backoffice: named ClickHouse params only; route components never import values from `.server` modules; `pnpm typecheck` and `npx vitest run` green before each commit.
-- Insert discipline: ClickHouse cost is parts per second, not rows. The pipeline inserts suggestions one `INSERT … VALUES` per publish batch (Task 4). Any other automatic producer of suggestion rows (Temporal worker, discovery script) must either batch rows per call or use the backoffice writer client, which enables server-side batching (`async_insert = 1`, `wait_for_async_insert = 1`, `async_insert_busy_timeout_ms = 1000`, Task 9). Never loop single-row inserts into ClickHouse.
+- Insert discipline: ClickHouse cost is parts per second, not rows. The pipeline inserts suggestions one `INSERT … VALUES` per publish batch (Task 4). Dagster is the only producer of suggestion rows (the backoffice Temporal worker is retired in sub-project 4). Any one-off script that appends rows must either batch rows per call or use the backoffice writer client, which enables server-side batching (`async_insert = 1`, `wait_for_async_insert = 1`, `async_insert_busy_timeout_ms = 1000`, Task 9). Never loop single-row inserts into ClickHouse.
 - All migrations: `CREATE DATABASE IF NOT EXISTS corpscout;` first line, only the `corpscout` database, a `.down.sql` twin, no `;` inside `--` comments, and the file name appended to `EXPECTED_MIGRATIONS` / `EXPECTED_ACCESS_MIGRATIONS` in `tests/test_clickhouse_migrations.py`.
 
 ---
@@ -2697,8 +2697,10 @@ export async function chInsertSeCompanyPersonCorrections<T extends object>(
 }
 
 /**
- * Append model suggestions produced outside Dagster. Callers batch rows per
- * call; the writer client's async_insert settings coalesce the rest.
+ * Append model suggestions produced by a one-off script or a synchronous
+ * per-person re-run in the backoffice. Dagster remains the normal producer.
+ * Callers batch rows per call; the writer client's async_insert settings
+ * coalesce the rest.
  */
 export async function chInsertSeCompanyPersonSuggestions<T extends object>(
   values: T[],
