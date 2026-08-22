@@ -82,8 +82,117 @@ describe("validateSePersonCorrection", () => {
 
   it("rejects bad company ids, hashes, kinds and empty reasons", () => {
     expect(() => validateSePersonCorrection({ ...base, companyId: "123", kind: "override_field", payload: { name: "A" } })).toThrow("10-digit");
+    expect(() => validateSePersonCorrection({ ...base, companyId: "556520-0028", kind: "override_field", payload: { name: "A" } })).toThrow("10-digit");
     expect(() => validateSePersonCorrection({ ...base, evidenceHash: "xyz", kind: "override_field", payload: { name: "A" } })).toThrow("evidence");
     expect(() => validateSePersonCorrection({ ...base, kind: "delete_person" })).toThrow("Unknown correction");
     expect(() => validateSePersonCorrection({ ...base, reason: " ", kind: "override_field", payload: { name: "A" } })).toThrow("Reason");
+  });
+
+  it("rejects non-string name/role_code/description values", () => {
+    expect(() =>
+      validateSePersonCorrection({ ...base, kind: "override_field", payload: { name: 123 } }),
+    ).toThrow("name");
+    expect(() =>
+      validateSePersonCorrection({ ...base, kind: "set_role", draftIds: [DRAFT], payload: { role_code: 123 } }),
+    ).toThrow("role_code");
+    expect(() =>
+      validateSePersonCorrection({ ...base, kind: "override_field", payload: { description: 123 } }),
+    ).toThrow("description");
+  });
+
+  it("builds a successful merge_persons row", () => {
+    const row = validateSePersonCorrection({
+      ...base, kind: "merge_persons", targetPersonId: TARGET, draftIds: [],
+    });
+    expect(row).toEqual({
+      company_id: "5565200028",
+      correction_kind: "merge_persons",
+      subject_person_id: SUBJECT,
+      target_person_id: TARGET,
+      draft_ids: [],
+      payload: "{}",
+      evidence_hash: HASH,
+      reason: "Reviewer note",
+      supersedes_correction_id: null,
+    });
+  });
+
+  it("rejects merge_persons with draft ids", () => {
+    expect(() =>
+      validateSePersonCorrection({ ...base, kind: "merge_persons", targetPersonId: TARGET, draftIds: [DRAFT] }),
+    ).toThrow("does not take draft");
+  });
+
+  it("builds a successful remove_role row", () => {
+    const row = validateSePersonCorrection({
+      ...base, kind: "remove_role", draftIds: [DRAFT],
+    });
+    expect(row).toEqual({
+      company_id: "5565200028",
+      correction_kind: "remove_role",
+      subject_person_id: SUBJECT,
+      target_person_id: null,
+      draft_ids: [DRAFT],
+      payload: "{}",
+      evidence_hash: HASH,
+      reason: "Reviewer note",
+      supersedes_correction_id: null,
+    });
+  });
+
+  it("rejects remove_role with no drafts", () => {
+    expect(() =>
+      validateSePersonCorrection({ ...base, kind: "remove_role", draftIds: [] }),
+    ).toThrow("at least one draft");
+  });
+
+  it("scopes supersedes_correction_id to undo only", () => {
+    expect(() =>
+      validateSePersonCorrection({ ...base, kind: "override_field", payload: { name: "A" }, supersedesCorrectionId: SUBJECT }),
+    ).toThrow("Only undo may supersede");
+    const row = validateSePersonCorrection({
+      ...base, kind: "undo", supersedesCorrectionId: SUBJECT,
+    });
+    expect(row.supersedes_correction_id).toEqual(SUBJECT.toLowerCase());
+  });
+
+  it("builds override_field with null description", () => {
+    const row = validateSePersonCorrection({
+      ...base, kind: "override_field", payload: { description: null },
+    });
+    expect(JSON.parse(row.payload)).toEqual({ description: null });
+  });
+
+  it("builds override_field with description string", () => {
+    const row = validateSePersonCorrection({
+      ...base, kind: "override_field", payload: { description: " Test description " },
+    });
+    expect(JSON.parse(row.payload)).toEqual({ description: "Test description" });
+  });
+
+  it("builds successful split_person row", () => {
+    const row = validateSePersonCorrection({
+      ...base, kind: "split_person", draftIds: [DRAFT], payload: { name: " New Person " },
+    });
+    expect(JSON.parse(row.payload)).toEqual({ name: "New Person" });
+  });
+
+  it("builds successful approve_suggestion row", () => {
+    const row = validateSePersonCorrection({
+      ...base, kind: "approve_suggestion", payload: { suggestion_id: DRAFT },
+    });
+    expect(JSON.parse(row.payload)).toEqual({ suggestion_id: DRAFT.toLowerCase() });
+  });
+
+  it("builds successful reject_suggestion row with and without note", () => {
+    const rowWithoutNote = validateSePersonCorrection({
+      ...base, kind: "reject_suggestion", payload: { suggestion_id: DRAFT },
+    });
+    expect(JSON.parse(rowWithoutNote.payload)).toEqual({ suggestion_id: DRAFT.toLowerCase() });
+
+    const rowWithNote = validateSePersonCorrection({
+      ...base, kind: "reject_suggestion", payload: { suggestion_id: DRAFT, note: " Duplicate " },
+    });
+    expect(JSON.parse(rowWithNote.payload)).toEqual({ suggestion_id: DRAFT.toLowerCase(), note: "Duplicate" });
   });
 });

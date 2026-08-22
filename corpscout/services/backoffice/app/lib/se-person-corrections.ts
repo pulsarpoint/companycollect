@@ -87,6 +87,11 @@ export function validateSePersonCorrection(
   const reason = input.reason.trim();
   if (reason === "" || reason.length > 1000) fail("Reason is required (max 1000 characters).");
 
+  // Scope supersedes_correction_id to undo only
+  if (kind !== "undo" && input.supersedesCorrectionId) {
+    fail("Only undo may supersede a correction.");
+  }
+
   const payload = input.payload ?? {};
   for (const key of Object.keys(payload)) {
     if (!ALLOWED_PAYLOAD_KEYS[kind].includes(key)) {
@@ -112,7 +117,8 @@ export function validateSePersonCorrection(
     }
     case "split_person": {
       if (draftIds.length === 0) fail("Select at least one draft to split out.");
-      const name = String(payload.name ?? "").trim();
+      if (typeof payload.name !== "string") fail("Split name must be a string.");
+      const name = payload.name.trim();
       if (name === "") fail("Split needs the new person's name.");
       cleanPayload.name = name;
       break;
@@ -130,16 +136,18 @@ export function validateSePersonCorrection(
     }
     case "override_field": {
       if ("name" in payload) {
-        const name = String(payload.name ?? "").trim();
+        if (typeof payload.name !== "string") fail("Override name must be a string.");
+        const name = payload.name.trim();
         if (name === "") fail("Override name cannot be empty.");
         cleanPayload.name = name;
       }
       if ("description" in payload) {
         const description = payload.description;
+        if (description !== null && typeof description !== "string") fail("Override description must be a string or null.");
         cleanPayload.description =
-          description === null || String(description).trim() === ""
+          description === null || (typeof description === "string" && description.trim() === "")
             ? null
-            : String(description).trim();
+            : (description as string).trim();
       }
       if (Object.keys(cleanPayload).length === 0) fail("Override needs a name or description.");
       break;
@@ -148,7 +156,8 @@ export function validateSePersonCorrection(
     case "remove_role": {
       if (draftIds.length === 0) fail("Select at least one draft for the role change.");
       if (kind === "set_role") {
-        const roleCode = String(payload.role_code ?? "").trim();
+        if (typeof payload.role_code !== "string") fail("Set role_code must be a string.");
+        const roleCode = payload.role_code.trim();
         if (!input.activeRoleCodes.has(roleCode)) fail("Select an active canonical role.");
         cleanPayload.role_code = roleCode;
         if ("fiscal_year" in payload && payload.fiscal_year !== null) {
@@ -165,6 +174,11 @@ export function validateSePersonCorrection(
     }
   }
 
+  let supersedesCorrectionId: string | null = null;
+  if (kind === "undo") {
+    supersedesCorrectionId = uuidOrFail(input.supersedesCorrectionId, "Superseded correction");
+  }
+
   return {
     company_id: companyId,
     correction_kind: kind,
@@ -174,8 +188,6 @@ export function validateSePersonCorrection(
     payload: JSON.stringify(cleanPayload),
     evidence_hash: evidenceHash,
     reason,
-    supersedes_correction_id: input.supersedesCorrectionId
-      ? uuidOrFail(input.supersedesCorrectionId, "Superseded correction")
-      : null,
+    supersedes_correction_id: supersedesCorrectionId,
   };
 }
