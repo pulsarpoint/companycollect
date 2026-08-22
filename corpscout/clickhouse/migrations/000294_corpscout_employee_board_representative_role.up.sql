@@ -1,5 +1,7 @@
 CREATE DATABASE IF NOT EXISTS corpscout;
 
+-- INSERT ... SELECT rather than INSERT ... VALUES: the golang-migrate ClickHouse driver
+-- only accepts VALUES inserts in batch mode and rejects them at apply time.
 INSERT INTO corpscout.company_person_role_type (
     role_code,
     display_name,
@@ -9,12 +11,11 @@ INSERT INTO corpscout.company_person_role_type (
     created_at,
     updated_at
 )
-VALUES (
-    'employee_board_representative',
-    'Employee board representative',
-    'governance',
-    'Employee-appointed member of the company board representing the workforce.',
-    1,
-    toDateTime64('2026-08-20 00:00:00', 3, 'UTC'),
-    toDateTime64('2026-08-20 00:00:00', 3, 'UTC')
-);
+SELECT
+    'employee_board_representative' AS role_code,
+    'Employee board representative' AS display_name,
+    'governance' AS role_group,
+    'Employee-appointed member of the company board representing the workforce.' AS description,
+    1 AS is_active,
+    toDateTime64('2026-08-20 00:00:00', 3, 'UTC') AS created_at,
+    toDateTime64('2026-08-20 00:00:00', 3, 'UTC') AS updated_at;
