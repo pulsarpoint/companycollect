@@ -1,9 +1,13 @@
 import json
 import uuid
+from collections.abc import Iterator
+from contextlib import contextmanager
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
 import dagster as dg
+import pytest
+from dagster_clickhouse import ClickhouseResource
 
 from dagster_v3.defs.company_people.corrections import (
     CORRECTION_COLUMNS,
@@ -23,6 +27,7 @@ from dagster_v3.defs.company_people.corrections import (
     effective_company_corrections_cte,
     effective_corrections,
     review_run_request,
+    se_company_person_correction_sensor,
     suggestion_from_row,
 )
 
@@ -288,8 +293,12 @@ def test_sensor_sql_reads_cursor_and_touched_companies() -> None:
     assert "argMax(correction_id, (created_at, correction_id))" in build_correction_cursor_sql()
     assert "toString(max(created_at))" in build_correction_cursor_sql()
     touched = build_touched_companies_sql()
-    assert "WHERE created_at > parseDateTime64BestEffort(%(since)s, 3)" in touched
+    assert (
+        "WHERE (created_at, correction_id) > "
+        "(parseDateTime64BestEffort(%(since)s, 3), toUUID(%(since_id)s))"
+    ) in touched
     assert "SELECT DISTINCT company_id" in touched
+    assert "ORDER BY company_id" in touched
 
 
 def test_run_request_scopes_every_asset_to_touched_companies() -> None:
@@ -303,3 +312,194 @@ def test_run_request_scopes_every_asset_to_touched_companies() -> None:
             "se_company_person_role_clickhouse": {"config": {"company_ids": ["5565200028"]}},
         }
     }
+
+
+class _FakeCorrectionLedgerClient:
+    """In-memory `se_company_person_correction` ledger answering the sensor's
+    two queries. Faithfully mirrors the tuple ordering used by both
+    `build_correction_cursor_sql` (argMax by `(created_at, correction_id)`) and
+    `build_touched_companies_sql` (`(created_at, correction_id) > (since, since_id)`)
+    so the boundary behaviour under test isn't reimplemented differently here.
+    """
+
+    def __init__(self) -> None:
+        self.rows: list[tuple[str, str, str]] = []  # (company_id, correction_id, created_at)
+
+    def append(self, company_id: str, correction_id: str, created_at: str) -> None:
+        self.rows.append((company_id, correction_id, created_at))
+
+    def execute(
+        self, sql: str, params: dict[str, object] | None = None
+    ) -> list[tuple[object, ...]]:
+        if "argMax(correction_id" in sql:
+            if not self.rows:
+                return [(0, "", "")]
+            _, last_id, last_created_at = max(self.rows, key=lambda row: (row[2], row[1]))
+            return [(len(self.rows), last_id, last_created_at)]
+        if "SELECT DISTINCT company_id" in sql:
+            assert params is not None
+            since = (str(params["since"]), str(params["since_id"]))
+            touched = sorted(
+                {
+                    company_id
+                    for company_id, correction_id, created_at in self.rows
+                    if (created_at, correction_id) > since
+                }
+            )
+            return [(company_id,) for company_id in touched]
+        raise AssertionError(sql)
+
+
+def _patch_correction_clickhouse(
+    monkeypatch: pytest.MonkeyPatch, client: _FakeCorrectionLedgerClient
+) -> ClickhouseResource:
+    resource = ClickhouseResource(host="localhost")
+
+    @contextmanager
+    def fake_get_connection(
+        self: ClickhouseResource,
+    ) -> Iterator[_FakeCorrectionLedgerClient]:
+        yield client
+
+    monkeypatch.setattr(ClickhouseResource, "get_connection", fake_get_connection)
+    return resource
+
+
+def _client_with_rows(
+    rows: list[tuple[str, str, str]],
+) -> _FakeCorrectionLedgerClient:
+    client = _FakeCorrectionLedgerClient()
+    for company_id, correction_id, created_at in rows:
+        client.append(company_id, correction_id, created_at)
+    return client
+
+
+_CORRECTION_ID_A = str(uuid.UUID(int=1))
+_CORRECTION_ID_B = str(uuid.UUID(int=2))
+_CORRECTION_ID_C = str(uuid.UUID(int=3))
+_CORRECTION_ID_D = str(uuid.UUID(int=4))
+
+_REVIEW_COMPANY_A = "5560000001"
+_REVIEW_COMPANY_B = "5560000002"
+_REVIEW_COMPANY_C = "5560000003"
+_REVIEW_COMPANY_D = "5560000004"
+
+_CREATED_AT_0 = "2026-08-22 08:59:59.000"
+_CREATED_AT_1 = "2026-08-22 09:00:00.000"
+_CREATED_AT_2 = "2026-08-22 09:00:01.000"
+
+
+def test_sensor_skips_when_the_correction_ledger_is_empty(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    resource = _patch_correction_clickhouse(monkeypatch, _FakeCorrectionLedgerClient())
+    context = dg.build_sensor_context(cursor=None, resources={"clickhouse": resource})
+
+    execution_data = se_company_person_correction_sensor.evaluate_tick(context)
+
+    assert execution_data.skip_message == "No Sweden company-person corrections exist"
+    assert not execution_data.run_requests
+
+
+def test_sensor_first_tick_scopes_every_asset_to_touched_companies(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    client = _client_with_rows(
+        [
+            (_REVIEW_COMPANY_A, _CORRECTION_ID_A, _CREATED_AT_1),
+            (_REVIEW_COMPANY_B, _CORRECTION_ID_B, _CREATED_AT_2),
+        ]
+    )
+    resource = _patch_correction_clickhouse(monkeypatch, client)
+    context = dg.build_sensor_context(cursor=None, resources={"clickhouse": resource})
+
+    execution_data = se_company_person_correction_sensor.evaluate_tick(context)
+
+    assert execution_data.cursor == f"2:{_CORRECTION_ID_B}:{_CREATED_AT_2}"
+    assert execution_data.run_requests is not None
+    assert len(execution_data.run_requests) == 1
+    run_config = execution_data.run_requests[0].run_config
+    for asset_name in (
+        "se_company_person_clickhouse",
+        "se_company_person_role_draft_clickhouse",
+        "se_company_person_role_clickhouse",
+    ):
+        assert run_config["ops"][asset_name]["config"]["company_ids"] == [
+            _REVIEW_COMPANY_A,
+            _REVIEW_COMPANY_B,
+        ]
+
+
+def test_sensor_second_tick_with_unchanged_cursor_skips(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    client = _client_with_rows(
+        [
+            (_REVIEW_COMPANY_A, _CORRECTION_ID_A, _CREATED_AT_1),
+            (_REVIEW_COMPANY_B, _CORRECTION_ID_B, _CREATED_AT_2),
+        ]
+    )
+    resource = _patch_correction_clickhouse(monkeypatch, client)
+    cursor = f"2:{_CORRECTION_ID_B}:{_CREATED_AT_2}"
+    context = dg.build_sensor_context(cursor=cursor, resources={"clickhouse": resource})
+
+    execution_data = se_company_person_correction_sensor.evaluate_tick(context)
+
+    assert execution_data.skip_message == "No new Sweden company-person corrections"
+    assert not execution_data.run_requests
+
+
+def test_sensor_rescopes_a_row_sharing_the_previous_max_timestamp(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # C's correction lands in the SAME millisecond as B's (the previous tick's
+    # cursor boundary) but with a greater correction_id. A plain
+    # `created_at > since` filter would silently never re-scope C -- this is
+    # the boundary Important-1 fixes.
+    client = _client_with_rows(
+        [
+            (_REVIEW_COMPANY_A, _CORRECTION_ID_A, _CREATED_AT_1),
+            (_REVIEW_COMPANY_B, _CORRECTION_ID_B, _CREATED_AT_2),
+            (_REVIEW_COMPANY_C, _CORRECTION_ID_C, _CREATED_AT_2),
+        ]
+    )
+    resource = _patch_correction_clickhouse(monkeypatch, client)
+    cursor = f"2:{_CORRECTION_ID_B}:{_CREATED_AT_2}"
+    context = dg.build_sensor_context(cursor=cursor, resources={"clickhouse": resource})
+
+    execution_data = se_company_person_correction_sensor.evaluate_tick(context)
+
+    assert execution_data.cursor == f"3:{_CORRECTION_ID_C}:{_CREATED_AT_2}"
+    assert execution_data.run_requests is not None
+    assert len(execution_data.run_requests) == 1
+    run_config = execution_data.run_requests[0].run_config
+    assert run_config["ops"]["se_company_person_clickhouse"]["config"][
+        "company_ids"
+    ] == [_REVIEW_COMPANY_C]
+
+
+def test_sensor_advances_cursor_without_a_run_request_when_no_company_crosses_the_boundary(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # D's correction lands with an EARLIER created_at than the previous cursor's
+    # boundary (e.g. a writer with clock skew). The ledger grew -- count changes,
+    # so the fresh cursor differs from context.cursor -- but D never satisfies the
+    # strict tuple filter, so no company is touched. The sensor must still return
+    # a run-less SensorResult (not raise, not get stuck) and still advance the
+    # cursor, rather than re-evaluate the same stale boundary forever.
+    client = _client_with_rows(
+        [
+            (_REVIEW_COMPANY_A, _CORRECTION_ID_A, _CREATED_AT_1),
+            (_REVIEW_COMPANY_B, _CORRECTION_ID_B, _CREATED_AT_2),
+            (_REVIEW_COMPANY_C, _CORRECTION_ID_C, _CREATED_AT_2),
+            (_REVIEW_COMPANY_D, _CORRECTION_ID_D, _CREATED_AT_0),
+        ]
+    )
+    resource = _patch_correction_clickhouse(monkeypatch, client)
+    cursor = f"3:{_CORRECTION_ID_C}:{_CREATED_AT_2}"
+    context = dg.build_sensor_context(cursor=cursor, resources={"clickhouse": resource})
+
+    execution_data = se_company_person_correction_sensor.evaluate_tick(context)
+
+    assert execution_data.cursor == f"4:{_CORRECTION_ID_C}:{_CREATED_AT_2}"
+    assert execution_data.run_requests == []

@@ -277,7 +277,7 @@ FROM {QUALIFIED_CORRECTION_TABLE}"""
 def build_touched_companies_sql() -> str:
     return f"""SELECT DISTINCT company_id
 FROM {QUALIFIED_CORRECTION_TABLE}
-WHERE created_at > parseDateTime64BestEffort(%(since)s, 3)
+WHERE (created_at, correction_id) > (parseDateTime64BestEffort(%(since)s, 3), toUUID(%(since_id)s))
 ORDER BY company_id"""
 
 
@@ -291,10 +291,12 @@ def se_company_person_correction_cursor(clickhouse: ClickhouseResource) -> str:
 
 
 def touched_company_ids_since(
-    clickhouse: ClickhouseResource, since: str
+    clickhouse: ClickhouseResource, since: str, since_id: str
 ) -> tuple[str, ...]:
     with clickhouse.get_connection() as client:
-        rows = client.execute(build_touched_companies_sql(), {"since": since})
+        rows = client.execute(
+            build_touched_companies_sql(), {"since": since, "since_id": since_id}
+        )
     return tuple(str(row[0]) for row in rows)
 
 
@@ -325,11 +327,13 @@ def se_company_person_correction_sensor(
         return dg.SkipReason("No Sweden company-person corrections exist")
     if cursor == context.cursor:
         return dg.SkipReason("No new Sweden company-person corrections")
-    previous_created_at = (
-        context.cursor.split(":", 2)[2] if context.cursor else "1970-01-01 00:00:00.000"
-    )
+    if context.cursor:
+        _, previous_id, previous_created_at = context.cursor.split(":", 2)
+    else:
+        previous_id = "00000000-0000-0000-0000-000000000000"
+        previous_created_at = "1970-01-01 00:00:00.000"
     company_ids = touched_company_ids_since(
-        context.resources.clickhouse, previous_created_at
+        context.resources.clickhouse, previous_created_at, previous_id
     )
     if not company_ids:
         return dg.SensorResult(run_requests=[], cursor=cursor)
