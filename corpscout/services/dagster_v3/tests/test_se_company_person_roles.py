@@ -16,6 +16,7 @@ from dagster_v3.defs.esef_filings.roles import (
     ESEF_ROLE_CATEGORY_TO_CANONICAL_ROLE,
 )
 from dagster_v3.defs.sweden_financial.roles import (
+    BOLAGSVERKET_ORIGINAL_ROLE_TO_CANONICAL_ROLE,
     BOLAGSVERKET_ROLE_KIND_TO_CANONICAL_ROLE,
     BOLAGSVERKET_ROLELESS_ROLE_KINDS,
 )
@@ -76,6 +77,10 @@ def test_each_source_owns_its_native_role_mapping() -> None:
         "liquidator": "liquidator",
     }
     assert BOLAGSVERKET_ROLELESS_ROLE_KINDS == {"unknown"}
+    assert BOLAGSVERKET_ORIGINAL_ROLE_TO_CANONICAL_ROLE == {
+        "Arbetstagarrepresentant": "employee_board_representative",
+        "Vice VD": "deputy_chief_executive_officer"
+    }
     assert ESEF_ROLE_CATEGORY_TO_CANONICAL_ROLE["chief_executive"] == (
         "chief_executive_officer"
     )

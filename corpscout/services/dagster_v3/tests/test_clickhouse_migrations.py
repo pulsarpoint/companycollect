@@ -307,6 +307,7 @@ EXPECTED_MIGRATIONS = (
     "000291_corpscout_se_company_person",
     "000292_corpscout_se_company_person_roles",
     "000293_corpscout_se_company_person_roles_by_year",
+    "000294_corpscout_employee_board_representative_role",
 )
 
 NOOP_MIGRATIONS = {"000276_noop"}
@@ -3438,6 +3439,21 @@ def test_canonical_company_person_role_types_are_seeded() -> None:
     assert "('other'," not in sql
     assert "('unknown'," not in sql
     assert "('NEW_ROLE_REQUIRED'," not in sql
+
+
+def test_employee_board_representative_role_is_added() -> None:
+    up_sql = _migration_sql(
+        "000294_corpscout_employee_board_representative_role.up.sql"
+    )
+    down_sql = _migration_sql(
+        "000294_corpscout_employee_board_representative_role.down.sql"
+    )
+
+    assert "'employee_board_representative'" in up_sql
+    assert "'Employee board representative'" in up_sql
+    assert "'governance'" in up_sql
+    assert "representing the workforce" in up_sql
+    assert "DELETE WHERE role_code = 'employee_board_representative'" in down_sql
 
 
 def test_normalized_sweden_company_people_table_is_migrated() -> None:
