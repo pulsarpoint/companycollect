@@ -9,7 +9,10 @@ import dagster as dg
 import pytest
 from pydantic import ValidationError
 
-from dagster_v3.defs.company_people.corrections import StoredSuggestion
+from dagster_v3.defs.company_people.corrections import (
+    PersonCorrection,
+    StoredSuggestion,
+)
 from dagster_v3.defs.company_people.normalization import (
     DIRECT_PROMPT_VERSION,
     PERSON_COLUMNS,
@@ -29,6 +32,7 @@ from dagster_v3.defs.company_people.normalization import (
     build_pending_companies_sql,
     normalize_companies,
     observation_role_bucket,
+    person_id_for,
     request_company_people,
     request_input_hash,
     validate_company_people_response,
@@ -37,6 +41,13 @@ from dagster_v3.defs.company_people.normalization import (
 MIGRATIONS_DIR = Path(__file__).resolve().parents[3] / "clickhouse" / "migrations"
 NOW = datetime(2026, 8, 19, 12, tzinfo=UTC)
 COMPANY_ID = "5565200028"
+# Insert columns added to se_company_person by migration 000295, in the order
+# that migration's AFTER clauses place them.
+CORRECTION_PERSON_COLUMNS = (
+    "correction_ids",
+    "suggestion_id",
+    "merged_into_person_id",
+)
 
 
 def _observation(
@@ -109,14 +120,22 @@ def _llm_result(
 
 
 def test_main_table_migration_matches_insert_contract() -> None:
-    sql = (MIGRATIONS_DIR / "000291_corpscout_se_company_person.up.sql").read_text(
+    # Every insert column is declared by the migration that introduced it: the
+    # original table in 000291, the three provenance columns in 000295.
+    created = (MIGRATIONS_DIR / "000291_corpscout_se_company_person.up.sql").read_text(
         encoding="utf-8"
     )
+    altered = (
+        MIGRATIONS_DIR / "000295_corpscout_se_company_person_corrections.up.sql"
+    ).read_text(encoding="utf-8")
 
     for column in PERSON_COLUMNS:
-        assert f"    {column} " in sql
-    assert "draft_set_hash FixedString(64) MATERIALIZED" in sql
-    assert "profile_hash FixedString(64) MATERIALIZED" in sql
+        if column in CORRECTION_PERSON_COLUMNS:
+            assert f"ADD COLUMN IF NOT EXISTS {column} " in altered
+        else:
+            assert f"    {column} " in created
+    assert "draft_set_hash FixedString(64) MATERIALIZED" in created
+    assert "profile_hash FixedString(64) MATERIALIZED" in created
 
 
 def test_company_sql_compares_all_draft_ids_at_company_boundary() -> None:
@@ -128,7 +147,10 @@ def test_company_sql_compares_all_draft_ids_at_company_boundary() -> None:
         assert "uniqExact(source) AS source_count" in sql
         assert "arraySort(groupUniqArray(draft_id)) AS draft_ids" in sql
         assert "arrayFlatten(groupArray(draft_ids))" in sql
-        assert "published.draft_ids = drafts.draft_ids AS is_unchanged" in sql
+        # The published draft set is compared in full; the correction half of
+        # is_unchanged is pinned by the effective-corrections test below.
+        assert "published.draft_ids = drafts.draft_ids" in sql
+        assert "AS is_unchanged" in sql
     assert "countIf(is_unchanged) AS skipped_company_count" in statistics_sql
     assert "LIMIT %(max_companies)s" in pending_sql
 
@@ -686,3 +708,355 @@ def test_suggester_answering_a_different_request_is_rejected() -> None:
             maximum_observations_per_request=10,
             created_at=NOW,
         )
+
+
+def _correction(
+    index: int,
+    kind: str,
+    *,
+    subject: uuid.UUID,
+    target: uuid.UUID | None = None,
+    draft_ids: tuple[uuid.UUID, ...] = (),
+    payload: dict[str, object] | None = None,
+    evidence_hash: str = "0" * 64,
+) -> PersonCorrection:
+    return PersonCorrection(
+        correction_id=uuid.UUID(int=9000 + index),
+        company_id=COMPANY_ID,
+        kind=kind,
+        subject_person_id=subject,
+        target_person_id=target,
+        draft_ids=draft_ids,
+        payload=payload or {},
+        evidence_hash=evidence_hash,
+        supersedes_correction_id=None,
+        created_at=NOW + timedelta(minutes=index),
+    )
+
+
+def _previous(
+    name: str,
+    draft_ids: tuple[uuid.UUID, ...],
+    draft_set_hash: str,
+) -> ExistingPersonProfile:
+    return ExistingPersonProfile(
+        person_id=person_id_for(COMPANY_ID, name),
+        name=name,
+        description=None,
+        draft_ids=tuple(sorted(draft_ids)),
+        created_at=NOW - timedelta(days=1),
+        draft_set_hash=draft_set_hash,
+    )
+
+
+def test_override_field_wins_over_deterministic_name_and_records_provenance() -> None:
+    observation = _observation("bolagsverket", name="Anna Svensson", role="ceo", index=1)
+    subject = person_id_for(COMPANY_ID, "Anna Svensson")
+    previous = _previous("Anna Svensson", (observation.draft_id,), "a" * 64)
+    company = CompanyPersonWork(
+        status=_company(observation).status,
+        observations=(observation,),
+        previous_profiles=(previous,),
+        corrections=(
+            _correction(
+                1,
+                "override_field",
+                subject=subject,
+                payload={"name": "Anna K. Svensson"},
+                evidence_hash="a" * 64,
+            ),
+        ),
+    )
+
+    writes, _suggestions, metrics = normalize_companies(
+        [company],
+        llm_suggester=None,
+        llm_model=None,
+        maximum_observations_per_request=10,
+        created_at=NOW,
+    )
+
+    assert len(writes) == 1
+    assert writes[0].name == "Anna K. Svensson"
+    assert writes[0].correction_ids == (uuid.UUID(int=9001),)
+    assert writes[0].model_provider == "deterministic"
+    assert metrics["applied_correction_count"] == 1
+    assert metrics["stale_correction_count"] == 0
+
+
+def test_override_is_stale_when_evidence_hash_moved() -> None:
+    observation = _observation("bolagsverket", name="Anna Svensson", role="ceo", index=1)
+    subject = person_id_for(COMPANY_ID, "Anna Svensson")
+    previous = _previous("Anna Svensson", (observation.draft_id,), "b" * 64)
+    company = CompanyPersonWork(
+        status=_company(observation).status,
+        observations=(observation,),
+        previous_profiles=(previous,),
+        corrections=(
+            _correction(
+                1,
+                "override_field",
+                subject=subject,
+                payload={"name": "Anna K. Svensson"},
+                evidence_hash="a" * 64,
+            ),
+        ),
+    )
+
+    writes, _suggestions, metrics = normalize_companies(
+        [company],
+        llm_suggester=None,
+        llm_model=None,
+        maximum_observations_per_request=10,
+        created_at=NOW,
+    )
+
+    assert writes == []  # unchanged profile, nothing applied
+    assert metrics["stale_correction_count"] == 1
+    assert metrics["applied_correction_count"] == 0
+
+
+def test_merge_persons_moves_evidence_and_tombstones_the_subject() -> None:
+    first = _observation("bolagsverket", name="Anna Svensson", role="ceo", index=1)
+    second = _observation(
+        "bolagsverket", name="Anna Svensson-Berg", role="board_member", index=2
+    )
+    # The two names must key differently (anna|svensson vs anna|svensson-berg),
+    # otherwise the deterministic pass folds them into one profile and the merge
+    # subject never exists in the run.
+    subject = person_id_for(COMPANY_ID, "Anna Svensson-Berg")
+    target = person_id_for(COMPANY_ID, "Anna Svensson")
+    previous_subject = _previous("Anna Svensson-Berg", (second.draft_id,), "c" * 64)
+    previous_target = _previous("Anna Svensson", (first.draft_id,), "d" * 64)
+    company = CompanyPersonWork(
+        status=_company(first, second).status,
+        observations=(first, second),
+        previous_profiles=(previous_target, previous_subject),
+        corrections=(
+            _correction(
+                1,
+                "merge_persons",
+                subject=subject,
+                target=target,
+                evidence_hash="c" * 64,
+            ),
+        ),
+    )
+
+    writes, _suggestions, metrics = normalize_companies(
+        [company],
+        llm_suggester=None,
+        llm_model=None,
+        maximum_observations_per_request=10,
+        created_at=NOW,
+    )
+
+    by_id = {write.person_id: write for write in writes}
+    assert set(by_id[target].draft_ids) == {first.draft_id, second.draft_id}
+    assert by_id[target].correction_ids == (uuid.UUID(int=9001),)
+    assert by_id[subject].merged_into_person_id == target
+    assert by_id[subject].draft_ids == (second.draft_id,)
+    assert metrics["applied_correction_count"] == 1
+
+
+def test_reassign_draft_requires_the_draft_on_the_subject() -> None:
+    first = _observation("bolagsverket", name="Anna Svensson", role="ceo", index=1)
+    second = _observation(
+        "bolagsverket", name="Erik Eriksson", role="board_member", index=2
+    )
+    anna = person_id_for(COMPANY_ID, "Anna Svensson")
+    erik = person_id_for(COMPANY_ID, "Erik Eriksson")
+    company = CompanyPersonWork(
+        status=_company(first, second).status,
+        observations=(first, second),
+        previous_profiles=(
+            _previous("Anna Svensson", (first.draft_id,), "a" * 64),
+            _previous("Erik Eriksson", (second.draft_id,), "b" * 64),
+        ),
+        corrections=(
+            _correction(
+                1,
+                "reassign_draft",
+                subject=anna,
+                target=erik,
+                draft_ids=(uuid.UUID(int=77),),
+                evidence_hash="a" * 64,
+            ),
+        ),
+    )
+
+    writes, _suggestions, metrics = normalize_companies(
+        [company],
+        llm_suggester=None,
+        llm_model=None,
+        maximum_observations_per_request=10,
+        created_at=NOW,
+    )
+
+    assert writes == []
+    assert metrics["stale_correction_count"] == 1
+
+
+def test_split_person_creates_a_new_deterministic_person_from_payload_name() -> None:
+    first = _observation("bolagsverket", name="Anna Svensson", role="ceo", index=1)
+    second = _observation("bolagsverket", name="Anna Svensson", role="auditor", index=2)
+    anna = person_id_for(COMPANY_ID, "Anna Svensson")
+    company = CompanyPersonWork(
+        status=_company(first, second).status,
+        observations=(first, second),
+        previous_profiles=(
+            _previous("Anna Svensson", (first.draft_id, second.draft_id), "a" * 64),
+        ),
+        corrections=(
+            _correction(
+                1,
+                "split_person",
+                subject=anna,
+                draft_ids=(second.draft_id,),
+                payload={"name": "Anna Svensson (auditor)"},
+                evidence_hash="a" * 64,
+            ),
+        ),
+    )
+
+    writes, _suggestions, _metrics = normalize_companies(
+        [company],
+        llm_suggester=None,
+        llm_model=None,
+        maximum_observations_per_request=10,
+        created_at=NOW,
+    )
+
+    by_id = {write.person_id: write for write in writes}
+    new_id = person_id_for(COMPANY_ID, "Anna Svensson (auditor)")
+    assert by_id[anna].draft_ids == (first.draft_id,)
+    assert by_id[new_id].draft_ids == (second.draft_id,)
+    assert by_id[new_id].name == "Anna Svensson (auditor)"
+
+
+def test_company_status_sql_includes_effective_corrections_and_processed_guard() -> None:
+    statistics_sql = build_company_statistics_sql()
+    pending_sql = build_pending_companies_sql()
+
+    for sql in (statistics_sql, pending_sql):
+        assert "effective_company_corrections AS (" in sql
+        assert "arrayMap(id -> toString(id), correction_ids)" in sql
+        assert "published.correction_ids = corrections.correction_ids" in sql
+    assert "AND company_id NOT IN %(processed_company_ids)s" in pending_sql
+
+
+def _stored_suggestion(
+    observations: tuple[DraftPersonObservation, ...],
+) -> StoredSuggestion:
+    """A suggestion whose input_hash is the one this company's batch produces."""
+    batch = batch_company_observations(
+        observations, maximum_observations_per_request=10
+    )[0]
+    return StoredSuggestion(
+        suggestion_id=uuid.UUID(int=500),
+        company_id=COMPANY_ID,
+        person_id=uuid.UUID(int=1000),
+        input_hash=request_input_hash(
+            build_company_people_request(
+                company_id=COMPANY_ID,
+                batch=batch,
+                previous_profiles=[],
+                model="deepseek-v4-flash",
+            )
+        ),
+        draft_ids=tuple(sorted(item.draft_id for item in observations)),
+        name="David Gustaf Mindus",
+        description="CEO.",
+        existing_person_id=None,
+        model_provider="deepseek",
+        model_name="deepseek-v4-flash",
+        prompt_version=PROMPT_VERSION,
+        created_at=NOW,
+    )
+
+
+def _refuse_llm(company_id, batch, previous_profiles, request):
+    raise AssertionError("the stored suggestion must be reused, not re-requested")
+
+
+def test_approve_suggestion_pins_the_suggestion_and_ignores_an_unknown_one() -> None:
+    observations = (
+        _observation("bolagsverket", name="David Mindus", role="ceo", index=1),
+        _observation("esef", name="David Mindus", role="chief_executive", index=2),
+    )
+    stored = _stored_suggestion(observations)
+    company = CompanyPersonWork(
+        status=_company(*observations).status,
+        observations=observations,
+        previous_profiles=(),
+        suggestions=(stored,),
+        corrections=(
+            _correction(
+                1,
+                "approve_suggestion",
+                subject=stored.person_id,
+                payload={"suggestion_id": str(uuid.UUID(int=404))},
+            ),
+            _correction(
+                2,
+                "approve_suggestion",
+                subject=stored.person_id,
+                payload={"suggestion_id": str(stored.suggestion_id)},
+            ),
+        ),
+    )
+
+    writes, _suggestions, metrics = normalize_companies(
+        [company],
+        llm_suggester=_refuse_llm,
+        llm_model="deepseek-v4-flash",
+        maximum_observations_per_request=10,
+        created_at=NOW,
+    )
+
+    assert len(writes) == 1
+    assert writes[0].person_id == stored.person_id
+    assert writes[0].name == "David Gustaf Mindus"
+    assert writes[0].suggestion_id == stored.suggestion_id
+    assert writes[0].correction_ids == (uuid.UUID(int=9002),)
+    assert metrics["applied_correction_count"] == 1
+    assert metrics["stale_correction_count"] == 1  # the unknown suggestion id
+
+
+def test_reject_suggestion_falls_back_to_the_deterministic_name() -> None:
+    observations = (
+        _observation("bolagsverket", name="David Mindus", role="ceo", index=1),
+        _observation("esef", name="David Mindus", role="chief_executive", index=2),
+    )
+    stored = _stored_suggestion(observations)
+    company = CompanyPersonWork(
+        status=_company(*observations).status,
+        observations=observations,
+        previous_profiles=(),
+        suggestions=(stored,),
+        corrections=(
+            _correction(
+                1,
+                "reject_suggestion",
+                subject=stored.person_id,
+                payload={"suggestion_id": str(stored.suggestion_id)},
+            ),
+        ),
+    )
+
+    writes, _suggestions, metrics = normalize_companies(
+        [company],
+        llm_suggester=_refuse_llm,
+        llm_model="deepseek-v4-flash",
+        maximum_observations_per_request=10,
+        created_at=NOW,
+    )
+
+    assert len(writes) == 1
+    assert writes[0].name == "David Mindus"
+    assert writes[0].description is None
+    assert writes[0].suggestion_id is None
+    assert writes[0].model_provider == "deterministic"
+    assert writes[0].model_name == "rejected-suggestion"
+    assert writes[0].correction_ids == (uuid.UUID(int=9001),)
+    assert metrics["applied_correction_count"] == 1

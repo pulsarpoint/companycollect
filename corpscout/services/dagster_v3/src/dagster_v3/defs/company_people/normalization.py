@@ -14,7 +14,7 @@ import re
 import uuid
 from collections import defaultdict
 from collections.abc import Callable, Mapping, Sequence
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from typing import Any
 
@@ -33,14 +33,18 @@ from pydantic import (
 from dagster_v3.defs.clickhouse.resolved import assert_clickhouse_tables_exist
 from dagster_v3.defs.company_people.corrections import (
     CORRECTION_TABLE,
+    PERSON_CORRECTION_KINDS,
     QUALIFIED_SUGGESTION_TABLE,
     SUGGESTION_COLUMNS,
     SUGGESTION_TABLE,
+    ZERO_HASH,
     PersonCorrection,
     StoredSuggestion,
     build_company_corrections_sql,
     build_company_suggestions_sql,
     correction_from_row,
+    effective_company_corrections_cte,
+    effective_corrections,
     suggestion_from_row,
 )
 from dagster_v3.defs.company_people.draft import normalized_company_ids
@@ -63,6 +67,9 @@ PERSON_COLUMNS = (
     "name",
     "description",
     "draft_ids",
+    "correction_ids",
+    "suggestion_id",
+    "merged_into_person_id",
     "model_provider",
     "model_name",
     "prompt_version",
@@ -119,6 +126,9 @@ class ExistingPersonProfile:
     description: str | None
     draft_ids: tuple[uuid.UUID, ...]
     created_at: datetime
+    draft_set_hash: str = ""
+    merged_into_person_id: uuid.UUID | None = None
+    correction_ids: tuple[uuid.UUID, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -176,6 +186,8 @@ class PersonProfileWrite:
     prompt_version: str
     created_at: datetime
     suggestion_id: uuid.UUID | None = None
+    correction_ids: tuple[uuid.UUID, ...] = ()
+    merged_into_person_id: uuid.UUID | None = None
 
 
 @dataclass(frozen=True)
@@ -207,6 +219,8 @@ class _ProfileAccumulator:
     prompt_version: str
     touched: bool = False
     suggestion_id: uuid.UUID | None = None
+    merged_into_person_id: uuid.UUID | None = None
+    correction_ids: list[uuid.UUID] = field(default_factory=list)
 
 
 class LlmCompanyPersonSuggestion(BaseModel):
@@ -269,7 +283,12 @@ def _insert_columns(columns: Sequence[str]) -> str:
 
 
 def _company_status_ctes() -> str:
-    return """draft_companies AS (
+    """Company evidence: the draft set plus the live ledger rows applied to it.
+
+    A company is unchanged only when both match what is already published, so an
+    appended correction is itself changed evidence for exactly that company.
+    """
+    return f"""draft_companies AS (
     SELECT
         company_id,
         uniqExact(source) AS source_count,
@@ -282,18 +301,24 @@ def _company_status_ctes() -> str:
 published_companies AS (
     SELECT
         company_id,
-        arraySort(arrayDistinct(arrayFlatten(groupArray(draft_ids)))) AS draft_ids
+        arraySort(arrayDistinct(arrayFlatten(groupArray(draft_ids)))) AS draft_ids,
+        arraySort(arrayDistinct(arrayFlatten(groupArray(
+            arrayMap(id -> toString(id), correction_ids)
+        )))) AS correction_ids
     FROM corpscout.se_company_person FINAL
     WHERE (%(all_companies)s OR company_id IN %(company_ids)s)
     GROUP BY company_id
 ),
+{effective_company_corrections_cte()},
 company_status AS (
     SELECT
         drafts.*,
         published.company_id != ''
-            AND published.draft_ids = drafts.draft_ids AS is_unchanged
+            AND published.draft_ids = drafts.draft_ids
+            AND published.correction_ids = corrections.correction_ids AS is_unchanged
     FROM draft_companies AS drafts
     LEFT JOIN published_companies AS published USING (company_id)
+    LEFT JOIN effective_company_corrections AS corrections USING (company_id)
 )"""
 
 
@@ -312,6 +337,7 @@ def build_pending_companies_sql() -> str:
 SELECT company_id, source_count, observation_count, draft_ids
 FROM company_status
 WHERE NOT is_unchanged
+  AND company_id NOT IN %(processed_company_ids)s
 ORDER BY company_id
 LIMIT %(max_companies)s"""
 
@@ -336,7 +362,10 @@ def build_existing_profiles_sql() -> str:
     name,
     description,
     draft_ids,
-    created_at
+    created_at,
+    toString(draft_set_hash),
+    merged_into_person_id,
+    correction_ids
 FROM corpscout.se_company_person FINAL
 WHERE company_id IN %(selected_company_ids)s
 ORDER BY company_id, person_id"""
@@ -377,6 +406,9 @@ def _profile_from_row(row: Sequence[Any]) -> tuple[str, ExistingPersonProfile]:
         description=str(row[3]) if row[3] is not None else None,
         draft_ids=tuple(sorted(uuid.UUID(str(value)) for value in row[4])),
         created_at=row[5],
+        draft_set_hash=str(row[6]),
+        merged_into_person_id=None if row[7] is None else uuid.UUID(str(row[7])),
+        correction_ids=tuple(uuid.UUID(str(value)) for value in row[8]),
     )
 
 
@@ -734,11 +766,15 @@ def _name_match_key(value: str) -> str:
     return f"{tokens[0]}|{tokens[-1]}"
 
 
-def _person_id(company_id: str, name: str) -> uuid.UUID:
+def person_id_for(company_id: str, name: str) -> uuid.UUID:
+    """The deterministic person id corrections refer to: company plus name key."""
     digest = hashlib.sha256(
         f"se-company-person-v1\n{company_id}\n{_name_match_key(name)}".encode()
     ).hexdigest()
     return uuid.UUID(hex=digest[:32])
+
+
+_person_id = person_id_for
 
 
 def _source_name(observation: DraftPersonObservation) -> str:
@@ -787,6 +823,13 @@ def _profiles_for_request(
     )
 
 
+def _sorted_correction_ids(
+    correction_ids: Sequence[uuid.UUID],
+) -> tuple[uuid.UUID, ...]:
+    """Sort by string like the ClickHouse correction_set_hash does."""
+    return tuple(sorted(set(correction_ids), key=str))
+
+
 def _profile_changed(
     profile: _ProfileAccumulator,
     previous: ExistingPersonProfile | None,
@@ -797,14 +840,301 @@ def _profile_changed(
         profile.name != previous.name
         or profile.description != previous.description
         or tuple(sorted(profile.draft_ids)) != previous.draft_ids
+        or _sorted_correction_ids(profile.correction_ids)
+        != _sorted_correction_ids(previous.correction_ids)
+        or profile.merged_into_person_id != previous.merged_into_person_id
     )
+
+
+@dataclass(frozen=True)
+class CorrectionOutcome:
+    applied: tuple[PersonCorrection, ...]
+    stale: tuple[PersonCorrection, ...]
+
+
+def _evidence_is_current(
+    correction: PersonCorrection,
+    profile: _ProfileAccumulator | None,
+    previous: ExistingPersonProfile | None,
+) -> bool:
+    """True when the reviewer's evidence still matches the published row and this run.
+
+    ``draft_set_hash`` is never recomputed in Python: it is compared as loaded
+    from the published row, together with an in-run equality check that the
+    person's evidence has not moved since that row was written.
+    """
+    if correction.evidence_hash == ZERO_HASH:
+        return profile is not None
+    if profile is None or previous is None:
+        return False
+    return (
+        previous.draft_set_hash == correction.evidence_hash
+        and tuple(sorted(profile.draft_ids)) == previous.draft_ids
+    )
+
+
+def _deterministic_name(
+    profile: _ProfileAccumulator,
+    observations_by_id: Mapping[uuid.UUID, DraftPersonObservation],
+) -> str:
+    """The name the source observations support, ignoring model suggestions."""
+    ordered = sorted(
+        (
+            observations_by_id[draft_id]
+            for draft_id in profile.draft_ids
+            if draft_id in observations_by_id
+        ),
+        key=lambda item: (
+            item.source_observed_at,
+            item.fiscal_year or 0,
+            str(item.draft_id),
+        ),
+        reverse=True,
+    )
+    for observation in ordered:
+        name = _source_name(observation)
+        if name:
+            return name
+    return profile.name
+
+
+def _nullable_payload_uuid(value: object) -> uuid.UUID | None:
+    if value is None or str(value).strip() == "":
+        return None
+    try:
+        return uuid.UUID(str(value))
+    except ValueError:
+        return None
+
+
+def apply_person_corrections(
+    profiles: dict[uuid.UUID, _ProfileAccumulator],
+    *,
+    company: CompanyPersonWork,
+    current_input_hashes: frozenset[str],
+    created_at: datetime,
+) -> CorrectionOutcome:
+    """Apply live person corrections in kind order; never apply a stale one.
+
+    A correction is decided before anything is mutated: a stale or inapplicable
+    row leaves every profile exactly as it was, is counted, and stays in the
+    ledger for the reviewer to re-decide.
+    """
+    previous_by_id = {item.person_id: item for item in company.previous_profiles}
+    observations_by_id = {item.draft_id: item for item in company.observations}
+    suggestions_by_id = {item.suggestion_id: item for item in company.suggestions}
+    applied: list[PersonCorrection] = []
+    stale: list[PersonCorrection] = []
+
+    def ensure_profile(person_id: uuid.UUID) -> _ProfileAccumulator | None:
+        """The in-run profile for a person, restored from the published row."""
+        profile = profiles.get(person_id)
+        if profile is not None:
+            return profile
+        previous = previous_by_id.get(person_id)
+        if previous is None:
+            return None
+        profile = _ProfileAccumulator(
+            person_id=previous.person_id,
+            name=previous.name,
+            description=previous.description,
+            draft_ids=set(),
+            created_at=previous.created_at,
+            model_provider="deterministic",
+            model_name="correction",
+            prompt_version=DIRECT_PROMPT_VERSION,
+        )
+        profiles[person_id] = profile
+        return profile
+
+    for correction in effective_corrections(company.corrections):
+        if correction.kind not in PERSON_CORRECTION_KINDS:
+            continue
+        subject = profiles.get(correction.subject_person_id)
+        previous = previous_by_id.get(correction.subject_person_id)
+        if subject is None or not _evidence_is_current(correction, subject, previous):
+            stale.append(correction)
+            continue
+
+        if correction.kind == "merge_persons":
+            if (
+                correction.target_person_id is None
+                or correction.target_person_id == subject.person_id
+            ):
+                stale.append(correction)
+                continue
+            target = ensure_profile(correction.target_person_id)
+            if target is None:
+                stale.append(correction)
+                continue
+            target.draft_ids.update(subject.draft_ids)
+            target.correction_ids.append(correction.correction_id)
+            target.touched = True
+            subject.merged_into_person_id = target.person_id
+            subject.correction_ids.append(correction.correction_id)
+            subject.touched = True
+
+        elif correction.kind == "reassign_draft":
+            moved = set(correction.draft_ids)
+            if (
+                correction.target_person_id is None
+                or correction.target_person_id == subject.person_id
+                or len(moved) != 1
+                or not moved <= subject.draft_ids
+                or subject.draft_ids == moved
+            ):
+                stale.append(correction)
+                continue
+            target = ensure_profile(correction.target_person_id)
+            if target is None:
+                stale.append(correction)
+                continue
+            subject.draft_ids -= moved
+            target.draft_ids |= moved
+            for profile in (subject, target):
+                profile.correction_ids.append(correction.correction_id)
+                profile.touched = True
+
+        elif correction.kind == "split_person":
+            moved = set(correction.draft_ids)
+            name = str(correction.payload.get("name", "")).strip()
+            if not moved or not moved < subject.draft_ids or name == "":
+                stale.append(correction)
+                continue
+            new_id = person_id_for(company.status.company_id, name)
+            if new_id == subject.person_id:
+                stale.append(correction)
+                continue
+            target = ensure_profile(new_id)
+            if target is None:
+                target = _ProfileAccumulator(
+                    person_id=new_id,
+                    name=name,
+                    description=None,
+                    draft_ids=set(),
+                    created_at=created_at,
+                    model_provider="deterministic",
+                    model_name="correction",
+                    prompt_version=DIRECT_PROMPT_VERSION,
+                )
+                profiles[new_id] = target
+            subject.draft_ids -= moved
+            target.draft_ids |= moved
+            target.name = name
+            for profile in (subject, target):
+                profile.correction_ids.append(correction.correction_id)
+                profile.touched = True
+
+        elif correction.kind in ("approve_suggestion", "reject_suggestion"):
+            suggestion_id = _nullable_payload_uuid(
+                correction.payload.get("suggestion_id")
+            )
+            suggestion = suggestions_by_id.get(suggestion_id) if suggestion_id else None
+            if suggestion is None or suggestion.input_hash not in current_input_hashes:
+                stale.append(correction)
+                continue
+            if correction.kind == "approve_suggestion":
+                for other in profiles.values():
+                    if other is not subject:
+                        other.draft_ids -= set(suggestion.draft_ids)
+                subject.draft_ids |= set(suggestion.draft_ids)
+                subject.name = suggestion.name
+                subject.description = suggestion.description
+                subject.suggestion_id = suggestion.suggestion_id
+            else:
+                subject.name = _deterministic_name(subject, observations_by_id)
+                subject.description = None
+                subject.suggestion_id = None
+                subject.model_provider = "deterministic"
+                subject.model_name = "rejected-suggestion"
+                subject.prompt_version = DIRECT_PROMPT_VERSION
+            subject.correction_ids.append(correction.correction_id)
+            subject.touched = True
+
+        elif correction.kind == "override_field":
+            name = None
+            if "name" in correction.payload:
+                name = str(correction.payload["name"]).strip()
+                if name == "":
+                    stale.append(correction)
+                    continue
+            if name is not None:
+                subject.name = name
+            if "description" in correction.payload:
+                value = correction.payload["description"]
+                subject.description = (
+                    None if value is None else str(value).strip() or None
+                )
+            subject.correction_ids.append(correction.correction_id)
+            subject.touched = True
+
+        applied.append(correction)
+
+    for profile in profiles.values():
+        if (
+            profile.touched
+            and not profile.draft_ids
+            and profile.merged_into_person_id is None
+        ):
+            raise ValueError(
+                "Corrections would remove all evidence from a person, which the "
+                f"append-only main table cannot represent: {profile.person_id}"
+            )
+    return CorrectionOutcome(applied=tuple(applied), stale=tuple(stale))
+
+
+def _finalize_company_profiles(
+    company: CompanyPersonWork,
+    profiles: dict[uuid.UUID, _ProfileAccumulator],
+    *,
+    current_input_hashes: frozenset[str],
+    created_at: datetime,
+) -> tuple[list[PersonProfileWrite], dict[str, int]]:
+    """Apply the ledger, then write only the profiles that actually changed."""
+    previous_by_id = {item.person_id: item for item in company.previous_profiles}
+    outcome = apply_person_corrections(
+        profiles,
+        company=company,
+        current_input_hashes=current_input_hashes,
+        created_at=created_at,
+    )
+    writes: list[PersonProfileWrite] = []
+    unchanged_profile_count = 0
+    for profile in sorted(profiles.values(), key=lambda item: str(item.person_id)):
+        if not profile.touched:
+            continue
+        previous = previous_by_id.get(profile.person_id)
+        if not _profile_changed(profile, previous):
+            unchanged_profile_count += 1
+            continue
+        writes.append(
+            PersonProfileWrite(
+                person_id=profile.person_id,
+                company_id=company.status.company_id,
+                name=profile.name,
+                description=profile.description,
+                draft_ids=tuple(sorted(profile.draft_ids)),
+                model_provider=profile.model_provider,
+                model_name=profile.model_name,
+                prompt_version=profile.prompt_version,
+                created_at=profile.created_at,
+                suggestion_id=profile.suggestion_id,
+                correction_ids=_sorted_correction_ids(profile.correction_ids),
+                merged_into_person_id=profile.merged_into_person_id,
+            )
+        )
+    return writes, {
+        "unchanged_profile_count": unchanged_profile_count,
+        "applied_correction_count": len(outcome.applied),
+        "stale_correction_count": len(outcome.stale),
+    }
 
 
 def _normalize_single_source_company(
     company: CompanyPersonWork,
     *,
     created_at: datetime,
-) -> tuple[list[PersonProfileWrite], int]:
+) -> dict[uuid.UUID, _ProfileAccumulator]:
     by_name: dict[str, list[DraftPersonObservation]] = defaultdict(list)
     for observation in company.observations:
         source_name = _source_name(observation)
@@ -812,11 +1142,7 @@ def _normalize_single_source_company(
             by_name[_name_match_key(source_name)].append(observation)
 
     previous_by_name = _previous_profile_by_name(company.previous_profiles)
-    previous_by_id = {
-        profile.person_id: profile for profile in company.previous_profiles
-    }
-    writes: list[PersonProfileWrite] = []
-    unchanged_profile_count = 0
+    profiles: dict[uuid.UUID, _ProfileAccumulator] = {}
     source = next(iter({item.source for item in company.observations}))
 
     for name_key, observations in sorted(by_name.items()):
@@ -845,36 +1171,20 @@ def _normalize_single_source_company(
         person_id = (
             previous.person_id
             if previous is not None
-            else _person_id(company.status.company_id, name)
+            else person_id_for(company.status.company_id, name)
         )
-        draft_ids = tuple(sorted(item.draft_id for item in observations))
-        profile = _ProfileAccumulator(
+        profiles[person_id] = _ProfileAccumulator(
             person_id=person_id,
             name=name,
             description=description,
-            draft_ids=set(draft_ids),
+            draft_ids={item.draft_id for item in observations},
             created_at=previous.created_at if previous is not None else created_at,
             model_provider="deterministic",
             model_name=f"single-source:{source}",
             prompt_version=DIRECT_PROMPT_VERSION,
+            touched=True,
         )
-        if not _profile_changed(profile, previous_by_id.get(person_id)):
-            unchanged_profile_count += 1
-            continue
-        writes.append(
-            PersonProfileWrite(
-                person_id=profile.person_id,
-                company_id=company.status.company_id,
-                name=profile.name,
-                description=profile.description,
-                draft_ids=draft_ids,
-                model_provider=profile.model_provider,
-                model_name=profile.model_name,
-                prompt_version=profile.prompt_version,
-                created_at=profile.created_at,
-            )
-        )
-    return writes, unchanged_profile_count
+    return profiles
 
 
 def _newest_stored_by_person(
@@ -940,7 +1250,12 @@ def _normalize_multi_source_company(
     llm_model: str | None,
     maximum_observations_per_request: int,
     created_at: datetime,
-) -> tuple[list[PersonProfileWrite], list[SuggestionWrite], dict[str, int]]:
+) -> tuple[
+    dict[uuid.UUID, _ProfileAccumulator],
+    list[SuggestionWrite],
+    dict[str, int],
+    frozenset[str],
+]:
     profiles = {
         previous.person_id: _ProfileAccumulator(
             person_id=previous.person_id,
@@ -954,9 +1269,6 @@ def _normalize_multi_source_company(
         )
         for previous in company.previous_profiles
     }
-    previous_by_id = {
-        previous.person_id: previous for previous in company.previous_profiles
-    }
     batches = batch_company_observations(
         company.observations,
         maximum_observations_per_request=maximum_observations_per_request,
@@ -967,6 +1279,7 @@ def _normalize_multi_source_company(
     suggestion_writes: list[SuggestionWrite] = []
     reused_batch_count = 0
     request_count = 0
+    input_hashes: set[str] = set()
     stored_by_hash: dict[str, list[StoredSuggestion]] = defaultdict(list)
     for stored in company.suggestions:
         stored_by_hash[stored.input_hash].append(stored)
@@ -982,6 +1295,7 @@ def _normalize_multi_source_company(
             model=llm_model,
         )
         input_hash = request_input_hash(request)
+        input_hashes.add(input_hash)
         stored_rows = _newest_stored_by_person(stored_by_hash.get(input_hash, ()))
         result = _reuse_stored_suggestions(
             stored_rows,
@@ -1041,7 +1355,7 @@ def _normalize_multi_source_company(
             if person_id is None:
                 person_id = profiles_by_name.get(_name_match_key(suggestion.name))
             if person_id is None:
-                person_id = _person_id(company.status.company_id, suggestion.name)
+                person_id = person_id_for(company.status.company_id, suggestion.name)
 
             profile = profiles.get(person_id)
             if profile is None:
@@ -1099,31 +1413,8 @@ def _normalize_multi_source_company(
             f"append-only main table cannot represent: {sorted(empty_profiles)}"
         )
 
-    writes: list[PersonProfileWrite] = []
-    unchanged_profile_count = 0
-    for profile in sorted(profiles.values(), key=lambda item: str(item.person_id)):
-        if not profile.touched:
-            continue
-        if not _profile_changed(profile, previous_by_id.get(profile.person_id)):
-            unchanged_profile_count += 1
-            continue
-        writes.append(
-            PersonProfileWrite(
-                person_id=profile.person_id,
-                company_id=company.status.company_id,
-                name=profile.name,
-                description=profile.description,
-                draft_ids=tuple(sorted(profile.draft_ids)),
-                model_provider=profile.model_provider,
-                model_name=profile.model_name,
-                prompt_version=profile.prompt_version,
-                created_at=profile.created_at,
-                suggestion_id=profile.suggestion_id,
-            )
-        )
-
     return (
-        writes,
+        profiles,
         suggestion_writes,
         {
             "llm_request_count": request_count,
@@ -1133,8 +1424,8 @@ def _normalize_multi_source_company(
             "llm_prompt_tokens": prompt_tokens,
             "llm_completion_tokens": completion_tokens,
             "llm_contract_retry_count": contract_retry_count,
-            "unchanged_profile_count": unchanged_profile_count,
         },
+        frozenset(input_hashes),
     )
 
 
@@ -1162,6 +1453,8 @@ def normalize_companies(
         "llm_completion_tokens": 0,
         "llm_contract_retry_count": 0,
         "unchanged_profile_count": 0,
+        "applied_correction_count": 0,
+        "stale_correction_count": 0,
     }
 
     for company in companies:
@@ -1170,9 +1463,10 @@ def normalize_companies(
                 raise RuntimeError("A multi-source company requires an LLM suggester")
             metrics["llm_company_count"] += 1
             (
-                company_writes,
+                profiles,
                 company_suggestions,
                 company_metrics,
+                current_input_hashes,
             ) = _normalize_multi_source_company(
                 company,
                 llm_suggester=llm_suggester,
@@ -1180,18 +1474,31 @@ def normalize_companies(
                 maximum_observations_per_request=maximum_observations_per_request,
                 created_at=created_at,
             )
+            company_writes, finalize_metrics = _finalize_company_profiles(
+                company,
+                profiles,
+                current_input_hashes=current_input_hashes,
+                created_at=created_at,
+            )
             metrics["llm_inserted_count"] += len(company_writes)
             suggestion_writes.extend(company_suggestions)
-            for name, value in company_metrics.items():
+            for name, value in (*company_metrics.items(), *finalize_metrics.items()):
                 metrics[name] += value
         else:
             metrics["direct_company_count"] += 1
-            company_writes, unchanged_count = _normalize_single_source_company(
+            profiles = _normalize_single_source_company(
                 company,
                 created_at=created_at,
             )
+            company_writes, finalize_metrics = _finalize_company_profiles(
+                company,
+                profiles,
+                current_input_hashes=frozenset(),
+                created_at=created_at,
+            )
             metrics["directly_inserted_count"] += len(company_writes)
-            metrics["unchanged_profile_count"] += unchanged_count
+            for name, value in finalize_metrics.items():
+                metrics[name] += value
         writes.extend(company_writes)
 
     return writes, suggestion_writes, metrics
@@ -1279,6 +1586,9 @@ def _insert_person_writes(
             write.name,
             write.description,
             list(write.draft_ids),
+            list(write.correction_ids),
+            write.suggestion_id,
+            write.merged_into_person_id,
             write.model_provider,
             write.model_name,
             write.prompt_version,
@@ -1428,12 +1738,18 @@ def materialize_se_company_people(
         "llm_completion_tokens": 0,
         "llm_contract_retry_count": 0,
         "unchanged_profile_count": 0,
+        "applied_correction_count": 0,
+        "stale_correction_count": 0,
+        "settled_company_count": 0,
         "suggestion_inserted_count": 0,
     }
     selected_company_count = 0
     inserted_count = 0
     publish_batch_count = 0
     total_person_count = 0
+    # A company whose only change is a stale correction publishes nothing and
+    # would otherwise be handed back by the next pending query forever.
+    processed_company_ids: set[str] = set()
 
     while selected_company_count < max_companies:
         current_batch_size = min(
@@ -1445,7 +1761,11 @@ def materialize_se_company_people(
                 _status_from_row(row)
                 for row in client.execute(
                     build_pending_companies_sql(),
-                    {**query_parameters, "max_companies": current_batch_size},
+                    {
+                        **query_parameters,
+                        "max_companies": current_batch_size,
+                        "processed_company_ids": tuple(processed_company_ids) or ("",),
+                    },
                 )
             ]
         if not statuses:
@@ -1493,27 +1813,34 @@ def materialize_se_company_people(
             maximum_observations_per_request=maximum_observations_per_request,
             created_at=updated_at,
         )
-        if not writes:
-            raise RuntimeError(
-                "Company-person processing made no publish progress for pending "
-                f"companies: {[status.company_id for status in statuses[:10]]}"
-            )
         normalization_metrics["suggestion_inserted_count"] += _insert_suggestion_writes(
             clickhouse=clickhouse,
             writes=suggestion_writes,
             source_run_id=source_run_id,
         )
+        selected_company_count += len(companies)
+        processed_company_ids.update(status.company_id for status in statuses)
+        for name, value in batch_metrics.items():
+            normalization_metrics[name] += value
+
+        if not writes:
+            normalization_metrics["settled_company_count"] += len(companies)
+            if log is not None:
+                log(
+                    "Sweden company-person batch produced no new profiles "
+                    "(stale corrections or unchanged evidence): companies=%s",
+                    [status.company_id for status in statuses[:10]],
+                )
+            continue
+
         total_person_count = _insert_person_writes(
             clickhouse=clickhouse,
             writes=writes,
             source_run_id=source_run_id,
             updated_at=updated_at,
         )
-        selected_company_count += len(companies)
         inserted_count += len(writes)
         publish_batch_count += 1
-        for name, value in batch_metrics.items():
-            normalization_metrics[name] += value
 
         if log is not None:
             log(
