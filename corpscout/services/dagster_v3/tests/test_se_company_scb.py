@@ -41,7 +41,7 @@ def test_scb_select_projects_envelope_then_payload_in_table_order() -> None:
     assert "LEFT JOIN industries ON industries.company_id = companies.company_id" in sql
     assert "GROUP BY\n        companies.company_id" not in sql  # the wide outer GROUP BY is gone
     assert "NOT EXISTS" not in sql  # dedupe is publish_with_stage's job now
-    assert "match(companies.company_id, '^[0-9]{10}$')" in sql
+    assert "match(companies.company_id, '^([0-9]{10}|[0-9]{12})$')" in sql
 
 
 def test_scb_asset_reads_the_register_and_writes_its_own_table() -> None:

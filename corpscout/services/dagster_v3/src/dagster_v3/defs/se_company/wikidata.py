@@ -19,7 +19,7 @@ import dagster as dg
 from dagster_clickhouse import ClickhouseResource
 
 from dagster_v3.defs.clickhouse.resolved import assert_clickhouse_tables_exist
-from dagster_v3.defs.se_company.common import publish_with_stage
+from dagster_v3.defs.se_company.common import SE_COMPANY_ID_PATTERN, publish_with_stage
 
 GROUP_NAME = "se_company_wikidata"
 DATABASE = "corpscout"
@@ -34,7 +34,7 @@ SE_COMPANY_INFO_WIKIDATA_COLUMNS = (
 )
 
 SE_COMPANY_INFO_WIKIDATA_SQL = """WITH swedish_companies AS (
-    SELECT company_id FROM corpscout.se_companies FINAL WHERE match(company_id, '^[0-9]{10}$')
+    SELECT company_id FROM corpscout.se_companies FINAL WHERE match(company_id, '{SE_COMPANY_ID_PATTERN}')
 ),
 company_leis AS (
     SELECT identifiers.company_id AS company_id, upperUTF8(identifiers.issuer_id) AS lei
@@ -85,7 +85,7 @@ SELECT
     company_description AS company_description, inception_date AS inception_date, legal_form_label AS legal_form_label,
     industry_wikidata_id AS industry_wikidata_id, industry_label AS industry_label, headquarters_label AS headquarters_label,
     employee_count AS employee_count
-FROM candidates"""
+FROM candidates""".replace("{SE_COMPANY_ID_PATTERN}", SE_COMPANY_ID_PATTERN)
 
 
 @dg.asset(

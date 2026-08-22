@@ -23,7 +23,7 @@ import dagster as dg
 from dagster_clickhouse import ClickhouseResource
 
 from dagster_v3.defs.clickhouse.resolved import assert_clickhouse_tables_exist
-from dagster_v3.defs.se_company.common import publish_with_stage
+from dagster_v3.defs.se_company.common import SE_COMPANY_ID_PATTERN, publish_with_stage
 
 GROUP_NAME = "se_company_esef"
 DATABASE = "corpscout"
@@ -55,7 +55,7 @@ SE_COMPANY_INFO_ESEF_SQL = """WITH candidates AS (
     FROM corpscout.esef_document_company_information AS info
     LEFT JOIN corpscout.esef_source_documents AS documents ON documents.source_document_id = info.source_document_id
     WHERE info.country_iso2 = 'SE'
-      AND match(info.company_id, '^[0-9]{10}$')
+      AND match(info.company_id, '{SE_COMPANY_ID_PATTERN}')
       AND trim(info.company_description) != ''
     ORDER BY info.resolved_at DESC, info.model_provider, info.model_name, info.prompt_version
     LIMIT 1 BY info.company_id, info.source_record_uid
@@ -66,7 +66,7 @@ SELECT
     company_description AS company_description, description_language AS description_language,
     description_confidence AS description_confidence, products_and_services_json AS products_and_services_json,
     business_segments_json AS business_segments_json
-FROM candidates"""
+FROM candidates""".replace("{SE_COMPANY_ID_PATTERN}", SE_COMPANY_ID_PATTERN)
 
 
 @dg.asset(

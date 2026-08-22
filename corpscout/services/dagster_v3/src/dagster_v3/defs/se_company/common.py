@@ -23,6 +23,10 @@ from dagster_v3.defs.sweden_financial.clickhouse import (
     guard_against_clickhouse_table_shrink,
 )
 
+# Swedish company ids the pilot publishes: 10-digit organisationsnummer (legal entities) and
+# 12-digit personnummer-based ids (sole traders). Mirrors the has_company CHECK (migration 000299).
+SE_COMPANY_ID_PATTERN = "^([0-9]{10}|[0-9]{12})$"
+
 DATABASE = "corpscout"
 ZERO_UUID = "00000000-0000-0000-0000-000000000000"
 EPOCH = "1970-01-01 00:00:00.000"

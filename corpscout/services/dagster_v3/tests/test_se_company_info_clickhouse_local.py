@@ -64,6 +64,7 @@ MIGRATIONS = (
     "000248_corpscout_esef_source_record_uid_cast.up.sql",
     "000281_corpscout_se_company_presentation_fields.up.sql",
     "000297_corpscout_se_company_info.up.sql",
+    "000299_corpscout_se_company_info_sole_traders.up.sql",
 )
 NEEDED_TABLES = frozenset(
     {
@@ -87,6 +88,7 @@ _TABLE_RE = re.compile(r"^(?:CREATE TABLE(?: IF NOT EXISTS)?|ALTER TABLE)\s+corp
 RUN_ID = "fixture-run-1"
 ALPHA = "5565200028"  # SCB path: scb_source_payload_hash drives scb_source_record_uid.
 BETA = "5560125220"  # Fallback path: no scb hash -- falls back to bolagsverket_source_record_uid.
+GAMMA = "196408233412"  # Sole trader: 12-digit personnummer-based id, admitted by 000299.
 
 T_SEED = _literal(datetime(2026, 8, 1, tzinfo=UTC))
 T_ESEF_SOURCE = _literal(datetime(2025, 4, 1, tzinfo=UTC))
@@ -136,6 +138,10 @@ VALUES
     ('{BETA}', '{BETA}', 'Beta AB', 'BETA AB', 'AB', 'active',
      '1998-06-15', 'Handel med datorer.', 'fixture',
      'bv-2', 'beta-bolagsverket-payload-hash',
+     NULL, NULL, {T_SEED}),
+    ('{GAMMA}', '{GAMMA}', 'Gamma Enskild Firma', 'GAMMA ENSKILD FIRMA', 'E', 'active',
+     '2010-01-01', 'Snickeri.', 'fixture',
+     'bv-3', 'gamma-bolagsverket-payload-hash',
      NULL, NULL, {T_SEED});
 
 INSERT INTO corpscout.se_industries
@@ -388,9 +394,10 @@ def test_artifact_publishes_append_new_versions_and_are_idempotent(
     sections: dict[str, list[list[str]]],
 ) -> None:
     """Pins R9: ALPHA's scb_source_record_uid path and BETA's bolagsverket fallback
-    both produce a non-empty source_record_uid, so se_company_info_scb gets 2 rows."""
+    both produce a non-empty source_record_uid, and GAMMA (12-digit sole trader) is admitted
+    by 000299, so se_company_info_scb gets 3 rows."""
     counts = _counts(sections["counts"])
-    assert counts == {"se_company_info_scb": 2, "se_company_info_esef": 1, "se_company_info_wikidata": 1}
+    assert counts == {"se_company_info_scb": 3, "se_company_info_esef": 1, "se_company_info_wikidata": 1}
 
     # Second pass, identical evidence: the anti-join lets nothing new through.
     assert _counts(sections["counts_after_rerun"]) == counts
@@ -407,9 +414,9 @@ def test_changed_companies_scan_tracks_publication_and_pending_model(
 ) -> None:
     """Pins build_changed_companies_sql's three states: never published, published and
     settled, and published-but-still-owed-a-description (include_pending)."""
-    assert {row[0] for row in sections["changed_empty_final"]} == {ALPHA, BETA}
-    assert {row[0] for row in sections["changed_after_final_default"]} == {BETA}
-    assert {row[0] for row in sections["changed_after_final_pending"]} == {ALPHA, BETA}
+    assert {row[0] for row in sections["changed_empty_final"]} == {ALPHA, BETA, GAMMA}
+    assert {row[0] for row in sections["changed_after_final_default"]} == {BETA, GAMMA}
+    assert {row[0] for row in sections["changed_after_final_pending"]} == {ALPHA, BETA, GAMMA}
 
 
 def test_artifact_rows_sql_returns_one_row_per_source_for_alpha(

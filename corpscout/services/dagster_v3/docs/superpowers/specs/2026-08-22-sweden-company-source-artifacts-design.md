@@ -83,7 +83,7 @@ CREATE TABLE IF NOT EXISTS corpscout.se_company_info_esef
     description       Nullable(String),
     fiscal_year       UInt16,
     ...
-    CONSTRAINT has_company CHECK match(company_id, '^[0-9]{10}$')
+    CONSTRAINT has_company CHECK match(company_id, '^([0-9]{10}|[0-9]{12})$')  -- legal entities and sole traders (000299)
 )
 ENGINE = ReplacingMergeTree(observed_at)
 ORDER BY (company_id, source_record_uid);

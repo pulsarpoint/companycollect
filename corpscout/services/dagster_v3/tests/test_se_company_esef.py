@@ -29,7 +29,7 @@ def test_esef_select_keeps_swedish_issuers_with_a_description() -> None:
     )
     assert "INNER JOIN corpscout.esef_source_documents" not in sql
     assert "ifNull(documents.entity_name, '') AS entity_name" in sql
-    assert "info.country_iso2 = 'SE'" in sql and "match(info.company_id, '^[0-9]{10}$')" in sql
+    assert "info.country_iso2 = 'SE'" in sql and "match(info.company_id, '^([0-9]{10}|[0-9]{12})$')" in sql
     assert "trim(info.company_description) != ''" in sql
     assert "info.source_record_uid AS source_record_uid" in sql
     # Stable tie-break: resolved_at DESC alone can tie between extraction runs;

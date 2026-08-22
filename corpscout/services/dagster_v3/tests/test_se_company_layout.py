@@ -19,7 +19,7 @@ def test_artifact_table_starts_with_the_envelope(table: str) -> None:
     assert "evidence_hash FixedString(64) MATERIALIZED" in block
     assert "ENGINE = ReplacingMergeTree(observed_at)" in block
     assert "ORDER BY (company_id, source_record_uid)" in block
-    assert "CONSTRAINT has_company CHECK match(company_id, '^[0-9]{10}$')" in block
+    assert "CONSTRAINT has_company CHECK match(company_id, '^[0-9]{10}$')" in block  # 000297; widened by 000299
 
 
 def test_final_table_ends_with_provenance() -> None:
@@ -58,3 +58,17 @@ def test_writer_grants_are_insert_only() -> None:
     assert "GRANT SELECT" not in up and "GRANT ALL" not in up
     assert "REVOKE INSERT ON corpscout.se_company_info_correction" in down
     assert "REVOKE INSERT ON corpscout.se_company_info_enrichment_observation" in down
+
+
+def test_sole_traders_are_admitted_by_000299_on_every_company_keyed_table() -> None:
+    """The owner's 2026-08-22 decision: 12-digit personnummer-based ids are published too."""
+    from dagster_v3.defs.se_company.common import SE_COMPANY_ID_PATTERN
+
+    up = (MIGRATIONS_DIR / "000299_corpscout_se_company_info_sole_traders.up.sql").read_text()
+    down = (MIGRATIONS_DIR / "000299_corpscout_se_company_info_sole_traders.down.sql").read_text()
+    for table in ("se_company_info_scb", "se_company_info_esef", "se_company_info_wikidata",
+                  "se_company_info", "se_company_info_correction"):
+        assert f"ALTER TABLE corpscout.{table}\n    DROP CONSTRAINT has_company,\n    ADD CONSTRAINT has_company CHECK match(company_id, '{SE_COMPANY_ID_PATTERN}')" in up
+        assert ("ALTER TABLE corpscout." + table + "\n    DROP CONSTRAINT has_company,\n"
+                "    ADD CONSTRAINT has_company CHECK match(company_id, '^[0-9]{10}$')") in down
+    assert SE_COMPANY_ID_PATTERN == "^([0-9]{10}|[0-9]{12})$"

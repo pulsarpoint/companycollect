@@ -21,7 +21,7 @@ import dagster as dg
 from dagster_clickhouse import ClickhouseResource
 
 from dagster_v3.defs.clickhouse.resolved import assert_clickhouse_tables_exist
-from dagster_v3.defs.se_company.common import publish_with_stage
+from dagster_v3.defs.se_company.common import SE_COMPANY_ID_PATTERN, publish_with_stage
 
 GROUP_NAME = "se_company_scb"
 DATABASE = "corpscout"
@@ -74,7 +74,7 @@ candidates AS (
         ifNull(industries.primary_nace_code, '') AS primary_nace_code
     FROM corpscout.se_companies AS companies FINAL
     LEFT JOIN industries ON industries.company_id = companies.company_id
-    WHERE match(companies.company_id, '^[0-9]{10}$')
+    WHERE match(companies.company_id, '{SE_COMPANY_ID_PATTERN}')
 )
 SELECT
     company_id AS company_id, source_record_uid AS source_record_uid, observed_at AS observed_at, source_run_id AS source_run_id,
@@ -82,7 +82,7 @@ SELECT
     incorporation_date AS incorporation_date, dissolution_date AS dissolution_date, activity_description AS activity_description,
     primary_sni_code AS primary_sni_code, primary_nace_code AS primary_nace_code
 FROM candidates
-WHERE source_record_uid != ''"""
+WHERE source_record_uid != ''""".replace("{SE_COMPANY_ID_PATTERN}", SE_COMPANY_ID_PATTERN)
 
 
 @dg.asset(

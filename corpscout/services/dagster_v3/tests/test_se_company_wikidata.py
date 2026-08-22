@@ -24,7 +24,7 @@ def test_wikidata_select_links_entities_by_orgnr_or_lei() -> None:
     assert "FROM corpscout.wikidata_companies AS entities FINAL" in sql
     assert "concat('wikidata:', entities.wikidata_id) AS source_record_uid" in sql
     assert "entities.resolved_at AS observed_at" in sql
-    assert "match(company_id, '^[0-9]{10}$')" in sql
+    assert "match(company_id, '^([0-9]{10}|[0-9]{12})$')" in sql
     assert "NOT EXISTS" not in sql  # dedupe is publish_with_stage's job now
 
 
