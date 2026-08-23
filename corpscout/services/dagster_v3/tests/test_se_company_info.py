@@ -607,8 +607,10 @@ def test_definitions_wire_final_jobs_sensor_schedule_and_leaves() -> None:
     assert leaves["se_company_info_scb_clickhouse"].tables == ("se_company_info_scb",)
     assert leaves["se_company_info_esef_clickhouse"].tables == ("se_company_info_esef",)
     assert leaves["se_company_info_wikidata_clickhouse"].tables == ("se_company_info_wikidata",)
-    # The weekly schedule ships STOPPED, so a freshness bound would only be noise today.
-    assert all(leaves[key].max_age is None for key in (
+    # se_company_info_weekly is RUNNING (phase 7): a missed week must show as stale.
+    from dagster_v3.defs.common.clickhouse_checks import WEEKLY
+
+    assert all(leaves[key].max_age == WEEKLY for key in (
         "se_company_info_clickhouse", "se_company_info_scb_clickhouse",
         "se_company_info_esef_clickhouse", "se_company_info_wikidata_clickhouse"))
 

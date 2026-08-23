@@ -208,14 +208,14 @@ CLICKHOUSE_LEAVES: tuple[ClickhouseLeaf, ...] = (
         WEEKLY,
     ),
     # se_company — the information pilot: three per-source artifacts and the merged
-    # final. max_age stays None while se_company_info_weekly ships STOPPED; a
-    # freshness bound only makes sense once the schedule is turned on.
-    ClickhouseLeaf("se_company_info_scb_clickhouse", ("se_company_info_scb",), None),
-    ClickhouseLeaf("se_company_info_esef_clickhouse", ("se_company_info_esef",), None),
+    # final, all refreshed by se_company_info_weekly (Mondays 06:50 UTC, RUNNING since
+    # 2026-08-23), so a missed week turns the freshness check red.
+    ClickhouseLeaf("se_company_info_scb_clickhouse", ("se_company_info_scb",), WEEKLY),
+    ClickhouseLeaf("se_company_info_esef_clickhouse", ("se_company_info_esef",), WEEKLY),
     ClickhouseLeaf(
-        "se_company_info_wikidata_clickhouse", ("se_company_info_wikidata",), None
+        "se_company_info_wikidata_clickhouse", ("se_company_info_wikidata",), WEEKLY
     ),
-    ClickhouseLeaf("se_company_info_clickhouse", ("se_company_info",), None),
+    ClickhouseLeaf("se_company_info_clickhouse", ("se_company_info",), WEEKLY),
     # sweden_financial — reports/facts are scoped incremental exports. The
     # source-owned observation and other derived publishers are unscheduled
     # full rebuilds, so they receive row-count checks but no freshness check.
