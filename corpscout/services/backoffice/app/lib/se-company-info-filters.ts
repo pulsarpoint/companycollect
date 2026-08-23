@@ -15,6 +15,12 @@
  * changes) while `pageSize`, `sort` and `dir` survive.
  */
 import type { SortDir } from "~/lib/countries";
+import { clampPage, clampPageSize, DEFAULT_PAGE_SIZE } from "~/lib/paging";
+import {
+  SE_INFO_CORRECTION_KINDS,
+  SE_INFO_CORRECTION_STATUSES,
+} from "~/lib/se-info-corrections";
+import { INFO_LIST_SOURCES } from "~/lib/se-company-info-sources";
 
 /** Sentinel `<Select>` value for "no filter". Base UI's Select reserves the
  * empty string for the unselected/placeholder state, so an explicit,
@@ -99,10 +105,12 @@ export function infoFilterChips(
   const chips: FilterChip[] = [];
   if (filters.companyId) chips.push(chip("companyId", `Company ${filters.companyId}`));
   if (filters.name) chips.push(chip("name", `Name “${filters.name}”`));
-  if (filters.source) chips.push(chip("source", `Source ${filters.source}`));
-  if (filters.status) chips.push(chip("status", `Status ${filters.status}`));
-  if (filters.legalForm) chips.push(chip("legalForm", `Legal form ${filters.legalForm}`));
-  if (filters.language) chips.push(chip("language", `Language ${filters.language}`));
+  if (filters.source) chips.push(chip("source", `Source ${chipValue(filters.source)}`));
+  if (filters.status) chips.push(chip("status", `Status ${chipValue(filters.status)}`));
+  if (filters.legalForm) {
+    chips.push(chip("legalForm", `Legal form ${chipValue(filters.legalForm)}`));
+  }
+  if (filters.language) chips.push(chip("language", `Language ${chipValue(filters.language)}`));
   if (filters.suggestion) chips.push(chip("suggestion", `Suggestion ${filters.suggestion}`));
   if (filters.entity) {
     chips.push(chip("entity", `Entity ${ENTITY_LABELS[filters.entity] ?? filters.entity}`));
@@ -119,7 +127,9 @@ export function correctionFilterChips(
   if (filters.companyId) chips.push(chip("companyId", `Company ${filters.companyId}`));
   if (filters.kind) chips.push(chip("kind", `Kind ${filters.kind}`));
   if (filters.status) chips.push(chip("status", `Status ${filters.status}`));
-  if (filters.decidedBy) chips.push(chip("decidedBy", `Decided by ${filters.decidedBy}`));
+  if (filters.decidedBy) {
+    chips.push(chip("decidedBy", `Decided by ${chipValue(filters.decidedBy)}`));
+  }
   return chips;
 }
 
@@ -188,12 +198,100 @@ export function selectValue(value: string): string {
   return value === "" ? ANY_FILTER_VALUE : value;
 }
 
-/** A data-driven option's label: '' is a real value (no code recorded). */
-export function optionLabel(value: string): string {
-  return value === "" ? NONE_FILTER_VALUE : value;
-}
-
 /** A data-driven option's URL value: '' cannot travel, so it travels as "none". */
 export function optionValue(value: string): string {
   return value === "" ? NONE_FILTER_VALUE : value;
+}
+
+/** The same option shown to a reader: parenthesised, so the absence of a value
+ * never reads as a code the register might actually use. */
+export function optionLabel(value: string): string {
+  const url = optionValue(value);
+  return url === value ? value : `(${url})`;
+}
+
+/** A filter value in a chip: the "none" sentinel reads as "(none)" there too. */
+function chipValue(value: string): string {
+  return value === NONE_FILTER_VALUE ? `(${NONE_FILTER_VALUE})` : value;
+}
+
+/* -------------------------------------------------------------------- */
+/* Parsing the URL (both list routes)                                    */
+/* -------------------------------------------------------------------- */
+
+/** What a list page carries besides its filters, parsed and clamped. `sort`
+ * and `dir` stay raw here: only the query builder's own whitelist decides
+ * whether they name a real column, and it owns the fallback. */
+export interface ParsedListView {
+  page: number;
+  pageSize: number;
+  sort: string | undefined;
+  dir: string | undefined;
+}
+
+export function parseListView(url: URL): ParsedListView {
+  return {
+    page: clampPage(Number.parseInt(url.searchParams.get("page") || "1", 10)),
+    pageSize: clampPageSize(
+      Number.parseInt(
+        url.searchParams.get("pageSize") || String(DEFAULT_PAGE_SIZE),
+        10,
+      ),
+    ),
+    sort: url.searchParams.get("sort") ?? undefined,
+    dir: url.searchParams.get("dir") ?? undefined,
+  };
+}
+
+/**
+ * One filter value as APPLIED, which is what the chips and the Filters count
+ * describe. Three things collapse to "no filter": an absent/blank param, the
+ * select's "Any" sentinel, and -- when `allowed` is given -- a value the query
+ * builder's own whitelist would drop. Without that last check a hand-typed
+ * `?source=bogus` would show a chip and a count of 1 over a completely
+ * unfiltered table.
+ *
+ * Data-driven columns (status, legal form, description language, decided_by)
+ * pass no `allowed`: their values come from the column itself, they reach SQL
+ * only as named params, and a value that matches nothing simply returns no
+ * rows -- which the chip then correctly describes.
+ */
+function filterValue(
+  url: URL,
+  name: string,
+  allowed?: readonly string[],
+): string {
+  const value = (url.searchParams.get(name) ?? "").trim();
+  if (value === "" || value === ANY_FILTER_VALUE) return "";
+  if (allowed !== undefined && !allowed.includes(value)) return "";
+  return value;
+}
+
+const ENTITY_VALUES = ["legal", "sole"] as const;
+const SUGGESTION_VALUES = ["yes", "no"] as const;
+
+export function parseInfoFilters(url: URL): SeCompanyInfoTableFilters {
+  return {
+    companyId: filterValue(url, "companyId"),
+    name: filterValue(url, "name"),
+    source: filterValue(url, "source", INFO_LIST_SOURCES),
+    status: filterValue(url, "status"),
+    legalForm: filterValue(url, "legalForm"),
+    language: filterValue(url, "language"),
+    suggestion: filterValue(url, "suggestion", SUGGESTION_VALUES),
+    entity: filterValue(url, "entity", ENTITY_VALUES),
+    multi: url.searchParams.get("multi") === "1",
+    corrected: url.searchParams.get("corrected") === "1",
+  };
+}
+
+export function parseCorrectionFilters(
+  url: URL,
+): SeCompanyInfoCorrectionsTableFilters {
+  return {
+    companyId: filterValue(url, "companyId"),
+    kind: filterValue(url, "kind", SE_INFO_CORRECTION_KINDS),
+    status: filterValue(url, "status", SE_INFO_CORRECTION_STATUSES),
+    decidedBy: filterValue(url, "decidedBy"),
+  };
 }

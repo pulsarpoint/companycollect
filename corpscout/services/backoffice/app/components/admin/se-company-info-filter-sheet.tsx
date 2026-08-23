@@ -77,18 +77,23 @@ function Field({ label, children }: { label: string; children: React.ReactNode }
  * reserves the empty string for the unselected state. */
 function FilterSelect({
   name,
+  label,
   value,
   options,
   labelOf = (option: string) => option,
 }: {
   name: string;
+  /** Also the control's aria-label: a Base UI select's trigger is a button
+   * whose only text is the current value, so the visible <Label> above it does
+   * not name it to a screen reader. */
+  label: string;
   value: string;
   options: readonly string[];
   labelOf?: (option: string) => string;
 }) {
   return (
     <Select name={name} defaultValue={selectValue(value)}>
-      <SelectTrigger className="w-full" size="sm">
+      <SelectTrigger className="w-full" size="sm" aria-label={label}>
         <SelectValue />
       </SelectTrigger>
       <SelectContent>
@@ -145,17 +150,28 @@ export function SeCompanyInfoFilterFields({
     <div className="flex flex-col gap-3 px-4">
       <ViewFields view={view} />
       <Field label="Company id">
-        <Input name="companyId" defaultValue={filters.companyId} placeholder="Exact id" />
+        <Input
+          name="companyId"
+          aria-label="Company id"
+          defaultValue={filters.companyId}
+          placeholder="Exact id"
+        />
       </Field>
       <Field label="Name">
-        <Input name="name" defaultValue={filters.name} placeholder="Legal name contains" />
+        <Input
+          name="name"
+          aria-label="Name"
+          defaultValue={filters.name}
+          placeholder="Legal name contains"
+        />
       </Field>
       <Field label="Description source">
-        <FilterSelect name="source" value={filters.source} options={INFO_LIST_SOURCES} />
+        <FilterSelect name="source" label="Description source" value={filters.source} options={INFO_LIST_SOURCES} />
       </Field>
       <Field label="Status">
         <FilterSelect
           name="status"
+          label="Status"
           value={filters.status}
           options={options.statuses}
           labelOf={optionLabel}
@@ -164,6 +180,7 @@ export function SeCompanyInfoFilterFields({
       <Field label="Legal form">
         <FilterSelect
           name="legalForm"
+          label="Legal form"
           value={filters.legalForm}
           options={options.legalFormCodes}
           labelOf={optionLabel}
@@ -172,17 +189,18 @@ export function SeCompanyInfoFilterFields({
       <Field label="Description language">
         <FilterSelect
           name="language"
+          label="Description language"
           value={filters.language}
           options={options.descriptionLanguages}
           labelOf={optionLabel}
         />
       </Field>
       <Field label="Has suggestion">
-        <FilterSelect name="suggestion" value={filters.suggestion} options={["yes", "no"]} />
+        <FilterSelect name="suggestion" label="Has suggestion" value={filters.suggestion} options={["yes", "no"]} />
       </Field>
       <Field label="Entity">
         <Select name="entity" defaultValue={selectValue(filters.entity)}>
-          <SelectTrigger className="w-full" size="sm">
+          <SelectTrigger className="w-full" size="sm" aria-label="Entity">
             <SelectValue />
           </SelectTrigger>
           <SelectContent>
@@ -217,14 +235,20 @@ export function SeCompanyInfoCorrectionsFilterFields({
     <div className="flex flex-col gap-3 px-4">
       <ViewFields view={view} />
       <Field label="Company id">
-        <Input name="companyId" defaultValue={filters.companyId} placeholder="Exact id" />
+        <Input
+          name="companyId"
+          aria-label="Company id"
+          defaultValue={filters.companyId}
+          placeholder="Exact id"
+        />
       </Field>
       <Field label="Kind">
-        <FilterSelect name="kind" value={filters.kind} options={SE_INFO_CORRECTION_KINDS} />
+        <FilterSelect name="kind" label="Kind" value={filters.kind} options={SE_INFO_CORRECTION_KINDS} />
       </Field>
       <Field label="Status">
         <FilterSelect
           name="status"
+          label="Status"
           value={filters.status}
           options={SE_INFO_CORRECTION_STATUSES}
         />
@@ -232,6 +256,7 @@ export function SeCompanyInfoCorrectionsFilterFields({
       <Field label="Decided by">
         <FilterSelect
           name="decidedBy"
+          label="Decided by"
           value={filters.decidedBy}
           options={options.decidedBy}
           labelOf={optionLabel}

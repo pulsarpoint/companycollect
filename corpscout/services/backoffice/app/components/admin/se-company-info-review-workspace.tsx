@@ -395,13 +395,13 @@ export function SeCompanyInfoReviewWorkspace({
   return (
     <div className="flex flex-1 flex-col gap-6 p-4 md:p-6">
       <header className="flex flex-col gap-2">
+        {/* The description source belongs to the published row, and is badged
+            on that card -- repeating it here read as a second, separate fact. */}
         <div className="flex flex-wrap items-center gap-2">
-          <Badge variant="outline">ClickHouse</Badge>
           <Badge variant="secondary">{info.status}</Badge>
           {info.legal_form_code ? (
             <Badge variant="secondary">{info.legal_form_code}</Badge>
           ) : null}
-          <Badge variant="secondary">{info.description_source}</Badge>
           {info.correction_ids.length > 0 ? <Badge>reviewed</Badge> : null}
         </div>
         <h1 className="text-2xl font-semibold tracking-tight">

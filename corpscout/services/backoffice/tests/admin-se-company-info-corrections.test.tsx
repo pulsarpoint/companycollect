@@ -11,6 +11,7 @@ import {
   correctionFilterChips,
   correctionsListSearch,
   EMPTY_CORRECTION_FILTERS,
+  parseCorrectionFilters,
   type SeCompanyInfoCorrectionsTableFilters,
 } from "~/lib/se-company-info-filters";
 
@@ -232,6 +233,11 @@ describe("SeCompanyInfoCorrectionsFilterFields", () => {
     // An unset filter shows the explicit "Any" item Base UI needs.
     expect(html).toContain('name="kind" value="any"');
     expect(html).toContain('name="decidedBy" value="any"');
+    // A Base UI select's trigger is a button whose only text is the current
+    // value, so the visible <Label> above it names nothing to a screen reader.
+    for (const label of ["Company id", "Kind", "Status", "Decided by"]) {
+      expect(html).toContain(`aria-label="${label}"`);
+    }
     // Not filters, but they must survive one being applied.
     expect(html).toContain('type="hidden" name="pageSize" value="100"');
     expect(html).toContain('type="hidden" name="sort" value="created_at"');
@@ -250,5 +256,30 @@ describe("SeCompanyInfoCorrectionsFilterFields", () => {
     expect(html).toContain('name="kind" value="undo"');
     expect(html).toContain('name="status" value="applied"');
     expect(html).toContain('name="decidedBy" value="backoffice"');
+  });
+});
+
+describe("parseCorrectionFilters", () => {
+  const at = (search: string) =>
+    new URL(`http://localhost/admin/se/company-info/corrections${search}`);
+
+  it("reads every ledger filter from the URL", () => {
+    expect(
+      parseCorrectionFilters(
+        at("?companyId=5565200028&kind=undo&status=applied&decidedBy=backoffice"),
+      ),
+    ).toEqual(APPLIED_FILTERS);
+  });
+
+  it("drops a kind or status the query builder would ignore, so no chip claims it", () => {
+    for (const search of ["?kind=bogus", "?kind=any", "?status=bogus", "?status=any"]) {
+      const filters = parseCorrectionFilters(at(search));
+      expect(filters).toEqual(EMPTY_CORRECTION_FILTERS);
+      expect(correctionFilterChips(filters)).toEqual([]);
+    }
+  });
+
+  it("passes decided_by through: its options come from the ledger, not from an enum", () => {
+    expect(parseCorrectionFilters(at("?decidedBy=dagster")).decidedBy).toBe("dagster");
   });
 });

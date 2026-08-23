@@ -128,7 +128,10 @@ export interface SeCompanyInfoListFilters {
   /** "yes" | "no" -- anything else (including the select's "any") is absent. */
   suggestion?: string;
   multi?: boolean;
-  entity?: "legal" | "sole";
+  /** "legal" | "sole" -- anything else is absent. Plain `string` so the
+   * routes' parsed, already-validated filter object is assignable as-is
+   * instead of being re-spelled field by field. */
+  entity?: string;
   corrected?: boolean;
 }
 

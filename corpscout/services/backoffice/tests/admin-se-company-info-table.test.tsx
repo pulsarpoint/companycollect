@@ -14,6 +14,8 @@ import {
   infoListSearch,
   optionLabel,
   optionValue,
+  parseInfoFilters,
+  parseListView,
   type SeCompanyInfoTableFilters,
 } from "~/lib/se-company-info-filters";
 
@@ -277,13 +279,29 @@ describe("SeCompanyInfoFilterFields", () => {
     expect(html).toContain('type="hidden" name="pageSize" value="100"');
     expect(html).toContain('type="hidden" name="sort" value="company_id"');
     expect(html).toContain('type="hidden" name="dir" value="asc"');
+    // A Base UI select's trigger is a button whose only text is the current
+    // value, so the visible <Label> above it names nothing to a screen reader.
+    for (const label of [
+      "Company id",
+      "Name",
+      "Description source",
+      "Status",
+      "Legal form",
+      "Description language",
+      "Has suggestion",
+      "Entity",
+    ]) {
+      expect(html).toContain(`aria-label="${label}"`);
+    }
   });
 
-  it("shows an empty data-driven value as the \"none\" option, which is what travels in the URL", () => {
+  it("shows an empty data-driven value as the \"(none)\" option, which travels in the URL as \"none\"", () => {
     // A Base UI select renders its item list in a popup (a portal), so the
     // options themselves are not in the SSR markup -- what IS pinned here is
     // the mapping every data-driven option goes through, in both directions.
-    expect(optionLabel("")).toBe("none");
+    // The label is parenthesised so an absent value never reads as a code the
+    // register might actually use.
+    expect(optionLabel("")).toBe("(none)");
     expect(optionValue("")).toBe("none");
     expect(optionLabel("AB")).toBe("AB");
     expect(optionValue("AB")).toBe("AB");
@@ -298,5 +316,60 @@ describe("SeCompanyInfoFilterFields", () => {
     expect(applied).toContain('name="suggestion" value="yes"');
     expect(applied).toContain('name="companyId" value="5565200028"');
     expect(applied).toContain('checked=""');
+  });
+});
+
+describe("parseInfoFilters", () => {
+  const at = (search: string) => new URL(`http://localhost/admin/se/company-info${search}`);
+
+  it("reads every filter from the URL", () => {
+    const filters = parseInfoFilters(
+      at("?companyId=5565200028&name=Alpha&source=llm&status=active&legalForm=AB&language=en&suggestion=yes&entity=legal&multi=1&corrected=1"),
+    );
+    expect(filters).toEqual(APPLIED_FILTERS);
+    expect(infoFilterChips(filters)).toHaveLength(10);
+  });
+
+  it("drops a value the query builder would ignore, so no chip claims a filter the table does not have", () => {
+    // Live before this fix: ?source=bogus showed a chip "Source bogus" and a
+    // count of 1 over all 3.5M rows.
+    for (const search of [
+      "?source=bogus",
+      "?source=any",
+      "?source=",
+      "?entity=sideways",
+      "?suggestion=maybe",
+    ]) {
+      const filters = parseInfoFilters(at(search));
+      expect(filters).toEqual(EMPTY_INFO_FILTERS);
+      expect(infoFilterChips(filters)).toEqual([]);
+    }
+  });
+
+  it("passes data-driven values through: their options come from the column, not from an enum", () => {
+    expect(parseInfoFilters(at("?status=whatever")).status).toBe("whatever");
+    expect(parseInfoFilters(at("?legalForm=none")).legalForm).toBe("none");
+    expect(parseInfoFilters(at("?language=sv")).language).toBe("sv");
+    // ...and the "none" sentinel reads as "(none)" in the chip.
+    expect(infoFilterChips(parseInfoFilters(at("?legalForm=none")))).toEqual([
+      { param: "legalForm", label: "Legal form (none)" },
+    ]);
+  });
+
+  it("parses and clamps the view both list routes share, leaving sort/dir to the query whitelist", () => {
+    expect(parseListView(at("?page=3&pageSize=500&sort=legal_name&dir=desc"))).toEqual({
+      page: 3,
+      pageSize: 200,
+      sort: "legal_name",
+      dir: "desc",
+    });
+    expect(parseListView(at(""))).toEqual({
+      page: 1,
+      pageSize: 50,
+      sort: undefined,
+      dir: undefined,
+    });
+    expect(parseListView(at("?page=0&pageSize=1")).page).toBe(1);
+    expect(parseListView(at("?page=0&pageSize=1")).pageSize).toBe(10);
   });
 });

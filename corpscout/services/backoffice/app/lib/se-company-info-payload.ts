@@ -159,6 +159,28 @@ export interface JsonListItem {
 const ITEM_NAME_KEYS = ["name", "label", "title"] as const;
 
 /**
+ * The rest of a list item, in prose rather than JSON: the two keys the ESEF
+ * extractor always writes read as `confidence 0.9 · E0010, E0015`, and any
+ * other key as `key: value`, so nothing is dropped and nothing has to be read
+ * as raw JSON on the page.
+ */
+function formatItemDetail(rest: Record<string, unknown>): string {
+  const parts: string[] = [];
+  for (const [key, value] of Object.entries(rest)) {
+    if (key === "confidence" && typeof value === "number") {
+      parts.push(`confidence ${value}`);
+    } else if (key === "evidence_ids" && Array.isArray(value)) {
+      if (value.length > 0) parts.push(value.map(String).join(", "));
+    } else {
+      parts.push(
+        `${key}: ${typeof value === "string" ? value : JSON.stringify(value)}`,
+      );
+    }
+  }
+  return parts.join(" · ");
+}
+
+/**
  * A JSON-blob field rendered as a list. ESEF's products/segments blobs are
  * arrays of objects ({name, confidence, evidence_ids}) written by the
  * disclosure extractor; the public company page shows such an item by its
@@ -185,10 +207,7 @@ export function parseJsonList(raw: string): JsonListItem[] | null {
     const rest = Object.fromEntries(
       Object.entries(record).filter(([key]) => key !== nameKey),
     );
-    return {
-      text: record[nameKey] as string,
-      detail: Object.keys(rest).length > 0 ? JSON.stringify(rest) : "",
-    };
+    return { text: record[nameKey] as string, detail: formatItemDetail(rest) };
   });
 }
 

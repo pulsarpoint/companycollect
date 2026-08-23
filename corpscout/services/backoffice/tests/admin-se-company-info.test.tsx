@@ -269,6 +269,20 @@ describe("company info review page", () => {
     expect(html).toContain('title="when the pipeline recorded this version"');
   });
 
+  it("badges the description source once, on the published card, not again in the header", () => {
+    const html = render();
+    const header = html.slice(0, html.indexOf("Published version"));
+    // description_source is "llm" on this fixture: it belongs to the published
+    // row and is badged there, so the header must not repeat it -- nor carry
+    // the leftover "ClickHouse" badge.
+    expect(header).not.toContain(">llm<");
+    expect(html).not.toContain("ClickHouse");
+    // The status and legal form badges stay in the header.
+    expect(header).toContain(">active<");
+    expect(header).toContain(">AB<");
+    expect(html.match(/>llm</g)).toHaveLength(1);
+  });
+
   it("is the company's hub: header links to the company page and to this company's ledger", () => {
     const html = render();
     expect(html).toContain('href="/company/se/5565200028"');
@@ -353,9 +367,10 @@ describe("company info review page", () => {
     }
     expect(html).toContain("2025");
     // Each item leads with its name (as the public company page does) and
-    // keeps the rest of the object beside it rather than dropping it.
+    // keeps the rest of the object beside it, in prose rather than raw JSON.
     expect(html).toContain("<li>Payment terminals");
-    expect(html).toContain("&quot;confidence&quot;:0.9");
+    expect(html).toContain("confidence 0.9 · E0010");
+    expect(html).not.toContain("&quot;confidence&quot;");
     expect(html).toContain("<li>Card issuing</li>");
   });
 
