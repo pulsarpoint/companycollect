@@ -270,20 +270,22 @@ describe("company info review page", () => {
     expect(html).toContain('title="when the pipeline recorded this version"');
   });
 
-  it("badges the LLM flag and the sources on the published card, not in the header", () => {
+  it("badges the LLM flag, the sources and the reviewed state on the published card", () => {
     const html = render();
-    const header = html.slice(0, html.indexOf("Published version"));
     // Task 17: no description_source label anywhere -- the published card says
-    // whether the model wrote the text and which sources fed it, and the header
-    // keeps only what identifies the company (nor the leftover "ClickHouse").
-    expect(header).not.toContain("LLM ");
-    expect(header).not.toContain("Sources:");
+    // whether the model wrote the text and which sources fed it (nor the
+    // leftover "ClickHouse").
     expect(html).not.toContain("ClickHouse");
     expect(html).toContain("LLM yes");
     expect(html).toContain("Sources: wikidata, scb");
-    // The status and legal form badges stay in the header.
-    expect(header).toContain(">active<");
-    expect(header).toContain(">AB<");
+    // Task 18: the "reviewed" badge came off the page header and onto the row
+    // it is a fact about.
+    const reviewed = render({
+      ...detail,
+      info: { ...detail.info, correction_ids: [OVERRIDE_CORRECTION_ID] },
+    });
+    expect(reviewed).toContain(">reviewed<");
+    expect(html).not.toContain(">reviewed<");
   });
 
   it("says LLM no for a description that was copied from one input", () => {
@@ -297,14 +299,22 @@ describe("company info review page", () => {
     expect(html).toContain("Sources: scb");
   });
 
-  it("is the company's hub: header links to the company page and to this company's ledger", () => {
+  // Task 18: Info is one tab of the company area, and the area's layout owns
+  // the company header -- the name, the status/legal-form badges and the two
+  // company-level links. This page rendering them again would be a second,
+  // duplicate header on every load. The layout's own copy is asserted in
+  // tests/admin-se-company-area.test.tsx.
+  it("carries no company header of its own: that moved to the area layout", () => {
     const html = render();
-    expect(html).toContain('href="/company/se/5565200028"');
-    expect(html).toContain(
+    expect(html).not.toContain("Company page");
+    expect(html).not.toContain("Corrections ledger");
+    expect(html).not.toContain('href="/company/se/5565200028"');
+    expect(html).not.toContain(
       'href="/admin/se/company-info/corrections?companyId=5565200028"',
     );
-    expect(html).toContain("Company page");
-    expect(html).toContain("Corrections ledger");
+    // The company name still appears -- inside the SCB artifact payload, which
+    // is evidence, not a header.
+    expect(html).not.toContain("<h1");
   });
 
   it("lays the page out as published version, then every source, then suggestions and corrections", () => {

@@ -97,10 +97,16 @@ export default [
       "se/people/person/:companyId/:personId",
       "routes/admin-se-people-person.tsx",
     ),
-    route(
-      "se/company/:companyId/info",
-      "routes/admin-se-company-info.tsx",
-    ),
+    // One company, five tabs. The layout owns the header and the sub-menu; a
+    // bare /admin/se/company/:companyId redirects to Info.
+    route("se/company/:companyId", "routes/admin-se-company-layout.tsx", [
+      index("routes/admin-se-company-index.tsx"),
+      route("info", "routes/admin-se-company-info.tsx"),
+      route("address", "routes/admin-se-company-address.tsx"),
+      route("financial", "routes/admin-se-company-financial.tsx"),
+      route("people", "routes/admin-se-company-people.tsx"),
+      route("domains", "routes/admin-se-company-domains.tsx"),
+    ]),
     route("se/company-info", "routes/admin-se-company-info-table.tsx"),
     route(
       "se/company-info/corrections",

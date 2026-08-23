@@ -3,7 +3,7 @@ import {
   FileSearchIcon,
   TriangleAlertIcon,
 } from "lucide-react";
-import { Form, Link, useNavigation } from "react-router";
+import { Form, useNavigation } from "react-router";
 import { Alert, AlertDescription, AlertTitle } from "~/components/ui/alert";
 import { Badge } from "~/components/ui/badge";
 import { Button, buttonVariants } from "~/components/ui/button";
@@ -106,8 +106,10 @@ export function SeCompanyInfoNotPublished({
 }: {
   companyId: string;
 }) {
+  // No padding of its own: both callers (the company layout's 404 branch and
+  // the Info tab) render this inside the layout's padded container.
   return (
-    <div className="flex flex-1 flex-col gap-6 p-4 md:p-6">
+    <div className="flex flex-col gap-6">
       <Empty className="border">
         <EmptyHeader>
           <EmptyMedia variant="icon">
@@ -287,6 +289,11 @@ function PublishedCard({ info }: { info: SeCompanyInfoRow }) {
           <Badge variant="secondary">
             {sources === "" ? "no sources" : `Sources: ${sources}`}
           </Badge>
+          {/* Moved off the page header in Task 18: whether a reviewer has
+              already decided on this row belongs to the row. */}
+          {info.correction_ids.length > 0 ? (
+            <Badge variant="outline">reviewed</Badge>
+          ) : null}
         </div>
         <CardDescription>
           The se_company_info row every surface reads for this company. Both
@@ -398,40 +405,10 @@ export function SeCompanyInfoReviewWorkspace({
   const groups = groupArtifactsBySource(artifacts);
 
   return (
-    <div className="flex flex-1 flex-col gap-6 p-4 md:p-6">
-      <header className="flex flex-col gap-2">
-        {/* The description source belongs to the published row, and is badged
-            on that card -- repeating it here read as a second, separate fact. */}
-        <div className="flex flex-wrap items-center gap-2">
-          <Badge variant="secondary">{info.status}</Badge>
-          {info.legal_form_code ? (
-            <Badge variant="secondary">{info.legal_form_code}</Badge>
-          ) : null}
-          {info.correction_ids.length > 0 ? <Badge>reviewed</Badge> : null}
-        </div>
-        <h1 className="text-2xl font-semibold tracking-tight">
-          {info.legal_name}
-        </h1>
-        <p className="text-sm text-muted-foreground">
-          Company <span className="font-mono">{info.company_id}</span> · every
-          source below is what this company's published info was resolved from.
-        </p>
-        <div className="flex flex-wrap items-center gap-3 text-sm">
-          <Link
-            className="underline underline-offset-2"
-            to={`/company/se/${encodeURIComponent(info.company_id)}`}
-          >
-            Company page
-          </Link>
-          <Link
-            className="underline underline-offset-2"
-            to={`/admin/se/company-info/corrections?companyId=${encodeURIComponent(info.company_id)}`}
-          >
-            Corrections ledger
-          </Link>
-        </div>
-      </header>
-
+    // No header of its own: Task 18 moved the company identity, the links and
+    // the sub-menu up into admin-se-company-layout.tsx, which renders this
+    // tab inside its own padded container.
+    <div className="flex flex-col gap-6">
       {result?.ok ? (
         <Alert>
           <CheckCircle2Icon />

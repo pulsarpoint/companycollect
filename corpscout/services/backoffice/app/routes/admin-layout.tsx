@@ -1,4 +1,4 @@
-import { Link, Outlet, useLocation } from "react-router";
+import { Link, Outlet, useLocation, useRouteLoaderData } from "react-router";
 import { AdminSidebar } from "~/components/admin/admin-sidebar";
 import {
   Breadcrumb,
@@ -18,9 +18,32 @@ import {
   getPeopleSourceDefinition,
   isPeopleSourceName,
 } from "~/lib/people-sources";
+// Type-only: erased at build, so the company layout's shell shape is shared
+// here without pulling its ClickHouse module into the client bundle.
+import type { SeCompanyShell } from "~/lib/se-company-shell.server";
+import {
+  seCompanyIdFromPath,
+  seCompanyTabFromPath,
+  seCompanyTabLabel,
+} from "~/lib/se-company-tabs";
+
+/**
+ * The company crumb reads the company layout's own loader data rather than
+ * re-querying: the breadcrumbs render above the company route tree, where no
+ * loader data reaches them as props. An id whose layout has not resolved
+ * (or that 404s) falls back to the id itself, which is still a true label.
+ */
+function useSeCompanyLabel(companyId: string): string {
+  const data = useRouteLoaderData("routes/admin-se-company-layout") as
+    | { shell: SeCompanyShell | null }
+    | undefined;
+  return data?.shell?.legal_name ?? companyId;
+}
 
 function AdminBreadcrumbs() {
   const { pathname } = useLocation();
+  const companyId = seCompanyIdFromPath(pathname);
+  const companyLabel = useSeCompanyLabel(companyId);
   const onGeneralRolesPage = pathname === "/admin/general/roles";
   const onLlmSettingsPage = pathname === "/admin/settings/llms";
   const onPeopleLlmInputPage = pathname.startsWith(
@@ -114,18 +137,38 @@ function AdminBreadcrumbs() {
     return (
       <Breadcrumb>
         <BreadcrumbList>
-          <BreadcrumbItem className="hidden sm:block">
+          <BreadcrumbItem className="hidden md:block">
             <BreadcrumbLink render={<Link to="/admin/se/people" />}>
               Admin
             </BreadcrumbLink>
           </BreadcrumbItem>
-          <BreadcrumbSeparator className="hidden sm:block" />
-          <BreadcrumbItem className="hidden sm:block">
+          <BreadcrumbSeparator className="hidden md:block" />
+          <BreadcrumbItem className="hidden md:block">
             <BreadcrumbPage>Sweden</BreadcrumbPage>
+          </BreadcrumbItem>
+          <BreadcrumbSeparator className="hidden md:block" />
+          <BreadcrumbItem className="hidden sm:block">
+            <BreadcrumbLink render={<Link to="/admin/se/company-info" />}>
+              Company info
+            </BreadcrumbLink>
           </BreadcrumbItem>
           <BreadcrumbSeparator className="hidden sm:block" />
           <BreadcrumbItem>
-            <BreadcrumbPage>Company info</BreadcrumbPage>
+            <BreadcrumbLink
+              render={
+                <Link
+                  to={`/admin/se/company/${encodeURIComponent(companyId)}/info`}
+                />
+              }
+            >
+              {companyLabel}
+            </BreadcrumbLink>
+          </BreadcrumbItem>
+          <BreadcrumbSeparator />
+          <BreadcrumbItem>
+            <BreadcrumbPage>
+              {seCompanyTabLabel(seCompanyTabFromPath(pathname))}
+            </BreadcrumbPage>
           </BreadcrumbItem>
         </BreadcrumbList>
       </Breadcrumb>
