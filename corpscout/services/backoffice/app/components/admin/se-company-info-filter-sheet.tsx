@@ -3,7 +3,6 @@ import { Form, Link } from "react-router";
 import { ListFilterIcon, XIcon } from "lucide-react";
 import { Badge } from "~/components/ui/badge";
 import { Button } from "~/components/ui/button";
-import { Checkbox } from "~/components/ui/checkbox";
 import { Input } from "~/components/ui/input";
 import { Label } from "~/components/ui/label";
 import {
@@ -40,8 +39,8 @@ import {
   type SeCompanyInfoCorrectionsTableFilters,
   type SeCompanyInfoTableFilters,
   type TableView,
+  YES_NO_VALUES,
 } from "~/lib/se-company-info-filters";
-import { INFO_LIST_SOURCES } from "~/lib/se-company-info-sources";
 import {
   SE_INFO_CORRECTION_KINDS,
   SE_INFO_CORRECTION_STATUSES,
@@ -165,9 +164,6 @@ export function SeCompanyInfoFilterFields({
           placeholder="Legal name contains"
         />
       </Field>
-      <Field label="Description source">
-        <FilterSelect name="source" label="Description source" value={filters.source} options={INFO_LIST_SOURCES} />
-      </Field>
       <Field label="Status">
         <FilterSelect
           name="status"
@@ -186,18 +182,6 @@ export function SeCompanyInfoFilterFields({
           labelOf={optionLabel}
         />
       </Field>
-      <Field label="Description language">
-        <FilterSelect
-          name="language"
-          label="Description language"
-          value={filters.language}
-          options={options.descriptionLanguages}
-          labelOf={optionLabel}
-        />
-      </Field>
-      <Field label="Has suggestion">
-        <FilterSelect name="suggestion" label="Has suggestion" value={filters.suggestion} options={["yes", "no"]} />
-      </Field>
       <Field label="Entity">
         <Select name="entity" defaultValue={selectValue(filters.entity)}>
           <SelectTrigger className="w-full" size="sm" aria-label="Entity">
@@ -210,14 +194,14 @@ export function SeCompanyInfoFilterFields({
           </SelectContent>
         </Select>
       </Field>
-      <label className="flex items-center gap-2 text-sm">
-        <Checkbox name="multi" value="1" defaultChecked={filters.multi} />
-        Multi-source
-      </label>
-      <label className="flex items-center gap-2 text-sm">
-        <Checkbox name="corrected" value="1" defaultChecked={filters.corrected} />
-        Has corrections
-      </label>
+      <Field label="Description">
+        <FilterSelect
+          name="description"
+          label="Description"
+          value={filters.description}
+          options={YES_NO_VALUES}
+        />
+      </Field>
     </div>
   );
 }
@@ -349,7 +333,7 @@ export function SeCompanyInfoFilterSheet({
       chips={infoFilterChips(filters)}
       clearHref={infoListSearch(EMPTY_INFO_FILTERS, view)}
       hrefWithout={(param) => infoListSearch(filters, view, param)}
-      title="Filter company info"
+      title="Filter companies"
       description="Every filter is a URL parameter, so a filtered list can be shared or bookmarked. Sorting and page size are kept."
     >
       <SeCompanyInfoFilterFields filters={filters} options={options} view={view} />

@@ -40,9 +40,10 @@ const detail: SeCompanyInfoDetail = {
     description: "Alpha builds payment software.",
     description_sv: "Alpha bygger betalprogramvara.",
     description_language: "en",
-    description_source: "llm",
-    // "llm" also appears here -- the header must not repeat it (round-1 3d).
-    description_sources: ["llm", "scb"],
+    // Task 17: one boolean instead of a source label. The text is the model's,
+    // merged from the two sources listed below.
+    llm_enhanced: 1,
+    description_sources: ["wikidata", "scb"],
     description_source_record_uids: ["scb:1"],
     description_source_count: 1,
     primary_nace_code: "62.01",
@@ -269,18 +270,31 @@ describe("company info review page", () => {
     expect(html).toContain('title="when the pipeline recorded this version"');
   });
 
-  it("badges the description source once, on the published card, not again in the header", () => {
+  it("badges the LLM flag and the sources on the published card, not in the header", () => {
     const html = render();
     const header = html.slice(0, html.indexOf("Published version"));
-    // description_source is "llm" on this fixture: it belongs to the published
-    // row and is badged there, so the header must not repeat it -- nor carry
-    // the leftover "ClickHouse" badge.
-    expect(header).not.toContain(">llm<");
+    // Task 17: no description_source label anywhere -- the published card says
+    // whether the model wrote the text and which sources fed it, and the header
+    // keeps only what identifies the company (nor the leftover "ClickHouse").
+    expect(header).not.toContain("LLM ");
+    expect(header).not.toContain("Sources:");
     expect(html).not.toContain("ClickHouse");
+    expect(html).toContain("LLM yes");
+    expect(html).toContain("Sources: wikidata, scb");
     // The status and legal form badges stay in the header.
     expect(header).toContain(">active<");
     expect(header).toContain(">AB<");
-    expect(html.match(/>llm</g)).toHaveLength(1);
+  });
+
+  it("says LLM no for a description that was copied from one input", () => {
+    // The deterministic pick, a reviewer override and a rejected suggestion all
+    // land here: the published text is not the model's.
+    const html = render({
+      ...detail,
+      info: { ...detail.info, llm_enhanced: 0, description_sources: ["scb"] },
+    });
+    expect(html).toContain("LLM no");
+    expect(html).toContain("Sources: scb");
   });
 
   it("is the company's hub: header links to the company page and to this company's ledger", () => {
@@ -408,10 +422,11 @@ describe("company info review page", () => {
     expect(html).toContain("No source artifacts.");
   });
 
-  it("does not repeat description_source inside description_sources", () => {
+  it("annotates the English text with its language and every contributing source", () => {
+    // Task 17: no winning-source label to leave out of the list any more --
+    // the sources ARE the list, and the LLM flag is a badge of its own.
     const html = render();
-    expect(html).toContain("(en · llm · scb)");
-    expect(html).not.toContain("llm · llm");
+    expect(html).toContain("(en · wikidata, scb)");
   });
 
   it("shows suggestion language and rationale parsed from the suggestion body", () => {

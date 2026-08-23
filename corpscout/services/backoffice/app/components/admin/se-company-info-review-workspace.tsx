@@ -269,18 +269,24 @@ function groupArtifactsBySource(
 
 /** The published row: what surfaces actually serve for this company. */
 function PublishedCard({ info }: { info: SeCompanyInfoRow }) {
-  // description_source is the winning source; don't repeat it inside the full
-  // description_sources list.
-  const otherSources = info.description_sources.filter(
-    (source) => source !== info.description_source,
-  );
+  // Task 17: one flag, not a source label. "Where the text came from" is the
+  // sources list beside it (every source that contributed a candidate); "who
+  // decided" is the correction ids further down. `llm_enhanced` answers only
+  // "did the model write this", which no other column on the row says.
+  const llmEnhanced = Boolean(Number(info.llm_enhanced));
+  const sources = info.description_sources.join(", ");
   return (
     <Card>
       <CardHeader>
         <div className="flex flex-wrap items-center gap-2">
           <CardTitle>Published version</CardTitle>
           <Badge>active</Badge>
-          <Badge variant="secondary">{info.description_source}</Badge>
+          <Badge variant={llmEnhanced ? "default" : "outline"}>
+            LLM {llmEnhanced ? "yes" : "no"}
+          </Badge>
+          <Badge variant="secondary">
+            {sources === "" ? "no sources" : `Sources: ${sources}`}
+          </Badge>
         </div>
         <CardDescription>
           The se_company_info row every surface reads for this company. Both
@@ -298,9 +304,8 @@ function PublishedCard({ info }: { info: SeCompanyInfoRow }) {
               <p className="text-sm">
                 {info.description}{" "}
                 <span className="text-xs text-muted-foreground">
-                  ({info.description_language} · {info.description_source}
-                  {otherSources.length > 0 ? ` · ${otherSources.join(", ")}` : ""}
-                  )
+                  ({info.description_language}
+                  {sources === "" ? "" : ` · ${sources}`})
                 </span>
               </p>
             ) : (
@@ -327,7 +332,7 @@ function PublishedCard({ info }: { info: SeCompanyInfoRow }) {
             ["SNI", info.primary_sni_code],
             ["Wikidata id", info.wikidata_id ?? ""],
             ["LEI", info.lei ?? ""],
-            ["Description sources", info.description_sources.join(", ")],
+            ["Description sources", sources],
             [
               "Description source records",
               info.description_source_record_uids.join(", "),

@@ -59,8 +59,9 @@ describe("the selection query", () => {
     }
 
     // "Still owed a description", keyed on the applied-correction list -- a
-    // reject_suggestion leaves description_source at the deterministic source,
-    // so only correction_ids tells a reviewed company from a never-modelled one.
+    // reject_suggestion republishes the deterministic pick and leaves
+    // llm_enhanced down, so only correction_ids tells a reviewed company from a
+    // never-modelled one.
     expect(sql).toContain(
       "(ifNull(published.description_source_count, 0) > 1 AND published.suggestion_id IS NULL AND length(published.correction_ids) = 0) AS pending_model",
     );

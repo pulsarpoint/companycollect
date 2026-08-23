@@ -18,9 +18,10 @@ const nf = new Intl.NumberFormat("en-US");
 
 export type { SeCompanyInfoTableFilters };
 
-function sourceLabel(source: string): string {
-  return source === "" ? "none" : source;
-}
+const ENTITY_LABELS: Record<string, string> = {
+  legal: "Legal",
+  sole: "Sole trader",
+};
 
 /** Every column sorts server-side, so the columns are built per render with
  * the sort the URL asked for. `sortKey` is typed against the query builder's
@@ -77,90 +78,47 @@ function buildColumns(
       ),
     },
     {
-      id: "description_source",
-      header: head("Source", "description_source"),
-      cell: ({ row }) => (
-        <Badge variant="secondary">{sourceLabel(row.original.description_source)}</Badge>
-      ),
-    },
-    {
-      id: "description_sources",
-      header: head("Sources", "description_sources"),
-      cell: ({ row }) => {
-        const sources = row.original.description_sources;
-        return (
-          <span className="text-muted-foreground text-xs">
-            {sources.length > 0 ? sources.join(", ") : "—"}
-          </span>
-        );
-      },
-    },
-    {
-      id: "description_language",
-      header: head("Language", "description_language"),
+      id: "entity_type",
+      header: head("Entity", "entity_type"),
       cell: ({ row }) => (
         <span className="text-muted-foreground text-xs">
-          {row.original.description_language === "" ? "—" : row.original.description_language}
+          {ENTITY_LABELS[row.original.entity_type] ?? row.original.entity_type}
         </span>
       ),
     },
     {
-      id: "description_snippet",
-      header: head("Description", "description_snippet"),
-      cell: ({ row }) => {
-        const snippet = row.original.description_snippet;
-        return (
-          <span className="block max-w-[24rem] truncate" title={snippet}>
-            {snippet === "" ? "—" : snippet}
-          </span>
-        );
-      },
-    },
-    {
-      id: "has_suggestion",
-      header: head("Suggestion", "has_suggestion"),
+      // Task 17: the only description fact this list carries. Whether the text
+      // came from the model, a reviewer or one register is the detail page's
+      // story, and it needs the sources beside it to be worth anything.
+      id: "has_description",
+      header: head("Description", "has_description"),
       cell: ({ row }) => (
-        <Badge variant={row.original.has_suggestion ? "default" : "outline"}>
-          {row.original.has_suggestion ? "yes" : "no"}
+        <Badge variant={row.original.has_description ? "default" : "outline"}>
+          {row.original.has_description ? "yes" : "no"}
         </Badge>
-      ),
-    },
-    {
-      id: "corrections_count",
-      header: head("Corrections", "corrections_count"),
-      cell: ({ row }) => <span className="tabular-nums">{row.original.corrections_count}</span>,
-    },
-    {
-      id: "resolved_at",
-      header: head("Resolved", "resolved_at"),
-      cell: ({ row }) => (
-        <span className="text-muted-foreground text-xs">{row.original.resolved_at}</span>
       ),
     },
   ];
 }
 
+/** What the filtered list contains, in the list's own terms: how many
+ * companies, and how many of them have a description. The model/review numbers
+ * belong to the Pipeline page, which is where they can be acted on. */
 function CountsStrip({ counts }: { counts: SeCompanyInfoListCounts }) {
   return (
     <div className="flex flex-wrap items-center gap-2 text-sm">
-      {counts.bySource.map((entry) => (
-        <Badge key={entry.source} variant="secondary">
-          {sourceLabel(entry.source)}
-          <span className="text-muted-foreground ml-1 tabular-nums">{nf.format(entry.count)}</span>
+      {[
+        ["Companies", counts.total],
+        ["With description", counts.withDescription],
+        ["Without description", counts.withoutDescription],
+      ].map(([label, count]) => (
+        <Badge key={label} variant="outline">
+          {label}
+          <span className="text-muted-foreground ml-1 tabular-nums">
+            {nf.format(count as number)}
+          </span>
         </Badge>
       ))}
-      <Badge variant="outline">
-        Multi-source
-        <span className="text-muted-foreground ml-1 tabular-nums">
-          {nf.format(counts.multiSourceCount)}
-        </span>
-      </Badge>
-      <Badge variant="outline">
-        Pending model
-        <span className="text-muted-foreground ml-1 tabular-nums">
-          {nf.format(counts.pendingModelCount)}
-        </span>
-      </Badge>
     </div>
   );
 }
@@ -198,7 +156,7 @@ export function SeCompanyInfoTable({
         columns={buildColumns(sort, dir)}
         data={rows}
         emptyText="No companies match these filters."
-        minWidthClassName="min-w-[72rem]"
+        minWidthClassName="min-w-[48rem]"
         rowHref={(row) => `/admin/se/company/${encodeURIComponent(row.company_id)}/info`}
       />
       <DataTablePagination total={total} page={page} pageSize={pageSize} itemsLabel="companies" />

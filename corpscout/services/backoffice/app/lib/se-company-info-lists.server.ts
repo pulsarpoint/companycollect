@@ -20,7 +20,6 @@ import {
   ANY_FILTER_VALUE,
   NONE_FILTER_VALUE,
 } from "~/lib/se-company-info-filters";
-import { INFO_LIST_SOURCES } from "~/lib/se-company-info-sources";
 import { ZERO_EVIDENCE_HASH } from "~/lib/se-person-corrections";
 
 export type { SeInfoCorrectionStatus };
@@ -33,10 +32,10 @@ function nonEmpty(value: string | undefined): string | null {
 /**
  * A data-driven discrete filter's value: absent when unset or when the select
  * says "Any", and the empty string when it says "none" (a company with no
- * legal form code / description language / status recorded). Values reach SQL
- * only as named params, never as text -- the option lists these come from are
- * read from the column itself (see loadSeCompanyInfoFilterOptions), so there
- * is no fixed enum to whitelist them against the way `source` and `kind` have.
+ * legal form code or no status recorded). Values reach SQL only as named
+ * params, never as text -- the option lists these come from are read from the
+ * column itself (see loadSeCompanyInfoFilterOptions), so there is no fixed enum
+ * to whitelist them against the way the ledger's `kind` has.
  */
 function discreteValue(value: string | undefined): string | null {
   const trimmed = nonEmpty(value);
@@ -104,35 +103,36 @@ export const PAGE_LIMIT_OFFSET_SQL = "LIMIT {limit:UInt32} OFFSET {offset:UInt32
 /* Page 1: /admin/se/company-info -- the se_company_info table          */
 /* -------------------------------------------------------------------- */
 
+/**
+ * One company, as this list shows it. Task 17 (owner addendum 2026-08-23):
+ * /admin/se/company-info is a COMPANIES list, not a description view -- so it
+ * carries the register's own columns plus exactly one description fact, whether
+ * the company has a published description at all. Everything about WHERE that
+ * description came from, who reviewed it and whether the model wrote it lives
+ * on the detail page, which has room to say it properly.
+ */
 export interface SeCompanyInfoListRow {
   company_id: string;
   legal_name: string;
   status: string;
   legal_form_code: string;
-  description_source: string;
-  description_sources: string[];
-  description_language: string;
-  description_snippet: string;
-  has_suggestion: number;
-  corrections_count: number;
-  resolved_at: string;
+  /** "legal" (10-digit org number) | "sole" (12-digit personnummer-based id). */
+  entity_type: string;
+  /** 0 | 1 -- `description IS NOT NULL`, projected as UInt8 (see the SELECT). */
+  has_description: number;
 }
 
 export interface SeCompanyInfoListFilters {
   companyId?: string;
   name?: string;
-  source?: string;
   status?: string;
   legalForm?: string;
-  language?: string;
-  /** "yes" | "no" -- anything else (including the select's "any") is absent. */
-  suggestion?: string;
-  multi?: boolean;
   /** "legal" | "sole" -- anything else is absent. Plain `string` so the
    * routes' parsed, already-validated filter object is assignable as-is
    * instead of being re-spelled field by field. */
   entity?: string;
-  corrected?: boolean;
+  /** "yes" | "no" -- anything else (including the select's "any") is absent. */
+  description?: string;
 }
 
 export interface SeCompanyInfoListQuery extends SeCompanyInfoListFilters {
@@ -146,22 +146,19 @@ export interface SeCompanyInfoListQuery extends SeCompanyInfoListFilters {
  * Every column a header may sort by, mapped to the expression that sorts it.
  * The keys are exactly the columns of `SeCompanyInfoListRow` (the component's
  * `sortKey`s are typed against them), and a request naming anything else falls
- * back to the default -- nothing from the request is ever interpolated.
- * `has_suggestion` sorts by the underlying nullable id, `corrections_count` by
- * the array length the row shows.
+ * back to the default -- nothing from the request is ever interpolated. The two
+ * computed columns sort by their own expression rather than by the SELECT alias:
+ * ClickHouse does not guarantee an alias is visible to ORDER BY at the same
+ * query level. `entity_type` sorts by the id length it is derived from, which
+ * orders legal (10) before sole (12) -- the same order the labels do.
  */
 export const INFO_SORT_COLUMNS = {
   company_id: "i.company_id",
   legal_name: "i.legal_name",
   status: "i.status",
   legal_form_code: "i.legal_form_code",
-  description_source: "i.description_source",
-  description_sources: "i.description_sources",
-  description_language: "i.description_language",
-  description_snippet: "i.description",
-  has_suggestion: "i.suggestion_id",
-  corrections_count: "length(i.correction_ids)",
-  resolved_at: "i.resolved_at",
+  entity_type: "length(i.company_id)",
+  has_description: "(i.description IS NOT NULL)",
 } as const;
 
 export type SeCompanyInfoSortKey = keyof typeof INFO_SORT_COLUMNS;
@@ -187,23 +184,21 @@ export function infoOrderBySql(sort: SeCompanyInfoSortKey, dir: SortDir): string
   ]);
 }
 
-/** No `total` here on purpose: the table's pagination total is derived from
- * `loadSeCompanyInfoCounts`'s by-source breakdown (see the route), which the
- * page already loads for the counts strip -- so listing a page of rows never
- * needs its own separate `count()` scan. */
+/** No `total` here on purpose: the table's pagination total is
+ * `loadSeCompanyInfoCounts`'s `total` (see the route), which the page already
+ * loads for the counts strip -- so listing a page of rows never needs its own
+ * separate `count()` scan. */
 export interface SeCompanyInfoListPage {
   rows: SeCompanyInfoListRow[];
 }
 
-export interface SeCompanyInfoSourceCount {
-  source: string;
-  count: number;
-}
-
+/** The counts strip: how many companies match, and how many of them have a
+ * published description. Nothing about the model or the review queue -- the
+ * Pipeline page owns those numbers. */
 export interface SeCompanyInfoListCounts {
-  bySource: SeCompanyInfoSourceCount[];
-  multiSourceCount: number;
-  pendingModelCount: number;
+  total: number;
+  withDescription: number;
+  withoutDescription: number;
 }
 
 /**
@@ -228,21 +223,10 @@ export function buildInfoListFilter(
     where.push("i.legal_name ILIKE {name:String}");
     params.name = `%${name}%`;
   }
-  const source = nonEmpty(filters.source);
-  if (source && (INFO_LIST_SOURCES as readonly string[]).includes(source)) {
-    where.push("toString(i.description_source) = {source:String}");
-    params.source = source === "none" ? "" : source;
-  }
-  if (filters.multi) {
-    where.push("i.description_source_count > 1");
-  }
   if (filters.entity === "legal") {
     where.push("length(i.company_id) = 10");
   } else if (filters.entity === "sole") {
     where.push("length(i.company_id) = 12");
-  }
-  if (filters.corrected) {
-    where.push("notEmpty(i.correction_ids)");
   }
   const status = discreteValue(filters.status);
   if (status !== null) {
@@ -257,50 +241,35 @@ export function buildInfoListFilter(
     where.push("ifNull(i.legal_form_code, '') = {legalForm:String}");
     params.legalForm = legalForm;
   }
-  const language = discreteValue(filters.language);
-  if (language !== null) {
-    where.push("toString(i.description_language) = {language:String}");
-    params.language = language;
-  }
-  if (filters.suggestion === "yes") {
-    where.push("i.suggestion_id IS NOT NULL");
-  } else if (filters.suggestion === "no") {
-    where.push("i.suggestion_id IS NULL");
+  // IS NOT NULL, never `!= ''`: description is Nullable and the merge writes
+  // NULL for "this company has no description", which is what this asks.
+  if (filters.description === "yes") {
+    where.push("i.description IS NOT NULL");
+  } else if (filters.description === "no") {
+    where.push("i.description IS NULL");
   }
   return { where, params };
 }
 
-/** description snippet is truncated in SQL with substringUTF8 (not `substring`,
- * which is byte-based and cuts a multi-byte character -- å/ä/ö -- in half,
- * rendering U+FFFD) and not just CSS, so the full description text of 3.5M
- * rows never crosses the wire for a page that only shows the first 120
- * characters. */
+/** No description TEXT crosses the wire for this list: the page shows whether
+ * there is one, not what it says, so 3.5M descriptions stay in ClickHouse.
+ * entity_type is derived from the id length -- 000299 admitted 12-digit
+ * personnummer-based sole-trader ids beside the 10-digit org numbers. */
 export const INFO_LIST_SELECT_SQL = `SELECT
   i.company_id AS company_id,
   i.legal_name AS legal_name,
   toString(i.status) AS status,
   ifNull(i.legal_form_code, '') AS legal_form_code,
-  toString(i.description_source) AS description_source,
-  i.description_sources AS description_sources,
-  toString(i.description_language) AS description_language,
-  substringUTF8(ifNull(i.description, ''), 1, 120) AS description_snippet,
-  toUInt8(i.suggestion_id IS NOT NULL) AS has_suggestion,
-  length(i.correction_ids) AS corrections_count,
-  toString(i.resolved_at) AS resolved_at
+  if(length(i.company_id) = 12, 'sole', 'legal') AS entity_type,
+  toUInt8(i.description IS NOT NULL) AS has_description
 FROM corpscout.se_company_info AS i FINAL`;
 
-export const INFO_COUNTS_BY_SOURCE_SQL = `SELECT
-  toString(i.description_source) AS description_source,
-  toString(count()) AS count
-FROM corpscout.se_company_info AS i FINAL`;
-
-export const INFO_COUNTS_TOTALS_SQL = `SELECT
-  toString(countIf(i.description_source_count > 1)) AS multi_source_count,
-  toString(countIf(
-    i.description_source_count > 1
-    AND i.suggestion_id IS NULL
-    AND empty(i.correction_ids)
-  )) AS pending_model_count
+/** One scan for all three numbers: the strip's totals and the table's own
+ * pagination total (see `listSeCompanyInfoPage`). */
+export const INFO_COUNTS_SQL = `SELECT
+  toString(count()) AS total,
+  toString(countIf(i.description IS NOT NULL)) AS with_description,
+  toString(countIf(i.description IS NULL)) AS without_description
 FROM corpscout.se_company_info AS i FINAL`;
 
 function infoFilterClause(filters: SeCompanyInfoListFilters): {
@@ -313,10 +282,9 @@ function infoFilterClause(filters: SeCompanyInfoListFilters): {
   return { filter, where, params };
 }
 
-/** No count() query: the page's total is derived by the route from
- * `loadSeCompanyInfoCounts`'s by-source breakdown, which shares this exact
- * WHERE and is loaded alongside this call anyway for the counts strip -- one
- * fewer FINAL scan over 3.5M rows per page load. */
+/** No count() query: the page's total is `loadSeCompanyInfoCounts`'s `total`,
+ * which shares this exact WHERE and is loaded alongside this call anyway for
+ * the counts strip -- one fewer FINAL scan over 3.5M rows per page load. */
 export async function listSeCompanyInfoPage(
   query: SeCompanyInfoListQuery,
 ): Promise<SeCompanyInfoListPage> {
@@ -335,34 +303,24 @@ ${PAGE_LIMIT_OFFSET_SQL}`,
 }
 
 /**
- * Rows by description_source, plus the multi-source and pending-model
- * totals, all computed with the exact same WHERE as `listSeCompanyInfoPage`
- * (built once from the same filters) so the strip never drifts from the
- * table it sits above. Summing `bySource[].count` gives the table's
- * pagination total (see `listSeCompanyInfoPage`'s doc comment).
+ * Total / with description / without description, computed with the exact same
+ * WHERE as `listSeCompanyInfoPage` (built once from the same filters) so the
+ * strip never drifts from the table it sits above. `total` is also the table's
+ * pagination total.
  */
 export async function loadSeCompanyInfoCounts(
   filters: SeCompanyInfoListFilters,
 ): Promise<SeCompanyInfoListCounts> {
   const { filter, params } = infoFilterClause(filters);
-
-  const [bySource, totals] = await Promise.all([
-    chQuery<{ description_source: string; count: string }>(
-      `${INFO_COUNTS_BY_SOURCE_SQL}
-${filter}
-GROUP BY i.description_source
-ORDER BY i.description_source`,
-      params,
-    ),
-    chQuery<{ multi_source_count: string; pending_model_count: string }>(
-      `${INFO_COUNTS_TOTALS_SQL}\n${filter}`,
-      params,
-    ),
-  ]);
+  const [row] = await chQuery<{
+    total: string;
+    with_description: string;
+    without_description: string;
+  }>(`${INFO_COUNTS_SQL}\n${filter}`, params);
   return {
-    bySource: bySource.map((r) => ({ source: r.description_source, count: Number(r.count) })),
-    multiSourceCount: Number(totals[0]?.multi_source_count ?? 0),
-    pendingModelCount: Number(totals[0]?.pending_model_count ?? 0),
+    total: Number(row?.total ?? 0),
+    withDescription: Number(row?.with_description ?? 0),
+    withoutDescription: Number(row?.without_description ?? 0),
   };
 }
 
@@ -382,7 +340,6 @@ export const FILTER_OPTIONS_TTL_MS = 10 * 60 * 1000;
 export interface SeCompanyInfoFilterOptions {
   statuses: string[];
   legalFormCodes: string[];
-  descriptionLanguages: string[];
 }
 
 export interface SeCompanyInfoCorrectionFilterOptions {
@@ -390,7 +347,7 @@ export interface SeCompanyInfoCorrectionFilterOptions {
 }
 
 /**
- * ONE query for every data-driven option list of se_company_info, read FINAL
+ * ONE query for the two data-driven option lists of se_company_info, read FINAL
  * like every other query against it (a company's status is whatever its newest
  * version says, so the pre-merge parts would offer values no live row has).
  * `groupUniqArray` over a LowCardinality column is a dictionary walk, not a
@@ -400,8 +357,7 @@ export interface SeCompanyInfoCorrectionFilterOptions {
  */
 export const INFO_FILTER_OPTIONS_SQL = `SELECT
   arraySort(groupUniqArray(toString(i.status))) AS statuses,
-  arraySort(groupUniqArray(ifNull(i.legal_form_code, ''))) AS legal_form_codes,
-  arraySort(groupUniqArray(toString(i.description_language))) AS description_languages
+  arraySort(groupUniqArray(ifNull(i.legal_form_code, ''))) AS legal_form_codes
 FROM corpscout.se_company_info AS i FINAL`;
 
 /** The ledger's only data-driven discrete column: correction_kind and the
@@ -436,12 +392,10 @@ export async function loadSeCompanyInfoFilterOptions(): Promise<SeCompanyInfoFil
   const [row] = await chQuery<{
     statuses: string[];
     legal_form_codes: string[];
-    description_languages: string[];
   }>(INFO_FILTER_OPTIONS_SQL);
   const value: SeCompanyInfoFilterOptions = {
     statuses: row?.statuses ?? [],
     legalFormCodes: row?.legal_form_codes ?? [],
-    descriptionLanguages: row?.description_languages ?? [],
   };
   infoOptionsCache = { value, at: Date.now() };
   return value;

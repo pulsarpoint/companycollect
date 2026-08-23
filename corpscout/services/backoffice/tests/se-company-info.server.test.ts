@@ -78,13 +78,16 @@ describe("company info queries", () => {
       "toString(i.evidence_set_hash) AS evidence_set_hash",
       "i.correction_ids",
       "toString(i.suggestion_id) AS suggestion_id",
-      "i.description_source",
+      // Task 17: the Bool llm_enhanced replaces the description_source label,
+      // cast to UInt8 so JSONEachRow yields one predictable 0/1 shape.
+      "toUInt8(i.llm_enhanced) AS llm_enhanced",
       // Task 14: the published row holds both languages natively (migration 000301).
       "i.description AS description",
       "i.description_sv AS description_sv",
     ]) {
       expect(INFO_SQL).toContain(c);
     }
+    expect(INFO_SQL).not.toContain("description_source AS");
     expect(ARTIFACT_ROWS_SQL).toContain("'scb' AS source");
     expect(ARTIFACT_ROWS_SQL).toContain("'esef' AS source");
     expect(ARTIFACT_ROWS_SQL).toContain("'wikidata' AS source");

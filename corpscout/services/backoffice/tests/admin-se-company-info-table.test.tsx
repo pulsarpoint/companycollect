@@ -27,43 +27,29 @@ const ROW: SeCompanyInfoListRow = {
   legal_name: "Alpha AB",
   status: "active",
   legal_form_code: "AB",
-  description_source: "llm",
-  description_sources: ["llm", "scb"],
-  description_language: "en",
-  description_snippet: "Alpha builds payment software.",
-  has_suggestion: 1,
-  corrections_count: 2,
-  resolved_at: "2026-08-22 09:00:00.000",
+  entity_type: "legal",
+  has_description: 1,
 };
 
 const COUNTS: SeCompanyInfoListCounts = {
-  bySource: [
-    { source: "scb", count: 1200 },
-    { source: "llm", count: 340 },
-    { source: "", count: 55 },
-  ],
-  multiSourceCount: 87,
-  pendingModelCount: 12,
+  total: 1595,
+  withDescription: 1540,
+  withoutDescription: 55,
 };
 
 const OPTIONS: SeCompanyInfoFilterOptions = {
   statuses: ["active", "dissolved"],
   legalFormCodes: ["", "AB"],
-  descriptionLanguages: ["en", "sv"],
 };
 
 const APPLIED_FILTERS: SeCompanyInfoTableFilters = {
   ...EMPTY_INFO_FILTERS,
   companyId: "5565200028",
   name: "Alpha",
-  source: "llm",
   status: "active",
   legalForm: "AB",
-  language: "en",
-  suggestion: "yes",
   entity: "legal",
-  multi: true,
-  corrected: true,
+  description: "yes",
 };
 
 function render(props: Partial<Parameters<typeof SeCompanyInfoTable>[0]> = {}) {
@@ -119,34 +105,56 @@ describe("SeCompanyInfoTable", () => {
     expect(html).not.toContain('href="/company/se/5565200028"');
   });
 
-  it("shows the row's legal name, status, legal form, sources, language, snippet, suggestion and corrections count", () => {
+  it("shows the row's legal name, status, legal form, entity and description yes/no", () => {
     const html = render();
     expect(html).toContain("Alpha AB");
     expect(html).toContain("active");
     expect(html).toContain(">AB<");
-    expect(html).toContain("llm");
-    expect(html).toContain("llm, scb");
-    expect(html).toContain("Alpha builds payment software.");
-    // Scoped to the suggestion/corrections cells' own markup, not a bare
-    // "yes"/"2" that could trivially match unrelated text elsewhere on the
-    // page (a date, a class name, an "Any" option, ...).
+    expect(html).toContain(">Legal<");
     expect(html).toContain(">yes<");
-    expect(html).toContain('<span class="tabular-nums">2</span>');
-    expect(html).toContain("2026-08-22 09:00:00.000");
   });
 
-  it("shows the no-suggestion row's badge as \"no\"", () => {
-    const html = render({ rows: [{ ...ROW, has_suggestion: 0 }] });
+  it("shows a company with no description as \"no\"", () => {
+    const html = render({ rows: [{ ...ROW, has_description: 0 }] });
     expect(html).toContain(">no<");
+  });
+
+  it("labels a 12-digit sole trader by its entity type", () => {
+    const html = render({
+      rows: [{ ...ROW, company_id: "196408233412", entity_type: "sole" }],
+    });
+    expect(html).toContain(">Sole trader<");
+  });
+
+  it("says nothing about the description's provenance -- that is the detail page's job", () => {
+    // Task 17 (owner addendum): this list is a COMPANIES list. No source, no
+    // language, no snippet, no suggestion/correction counts, no resolved stamp.
+    const html = render();
+    for (const gone of [
+      ">Source<",
+      ">Sources<",
+      ">LLM<",
+      ">Language<",
+      ">Suggestion<",
+      ">Corrections<",
+      ">Resolved<",
+    ]) {
+      expect(html).not.toContain(gone);
+    }
+    expect(html).not.toContain("Alpha builds payment software.");
   });
 
   it("renders the counts strip from the SAME filtered counts, not recomputed", () => {
     const html = render();
-    expect(html).toContain("scb");
-    expect(html).toContain("1,200");
-    expect(html).toContain("340");
-    expect(html).toContain("87");
-    expect(html).toContain("12");
+    expect(html).toContain("Companies");
+    expect(html).toContain("1,595");
+    expect(html).toContain("With description");
+    expect(html).toContain("1,540");
+    expect(html).toContain("Without description");
+    expect(html).toContain("55");
+    // The model/review totals moved to the Pipeline page.
+    expect(html).not.toContain("Multi-source");
+    expect(html).not.toContain("Pending model");
   });
 
   it("shows the pager total and page", () => {
@@ -170,13 +178,8 @@ describe("SeCompanyInfoTable sorting", () => {
       "legal_name",
       "status",
       "legal_form_code",
-      "description_source",
-      "description_sources",
-      "description_language",
-      "description_snippet",
-      "has_suggestion",
-      "corrections_count",
-      "resolved_at",
+      "entity_type",
+      "has_description",
     ]) {
       expect(html).toContain(`href="${PATH}?sort=${key}&amp;dir=asc"`);
     }
@@ -188,7 +191,7 @@ describe("SeCompanyInfoTable sorting", () => {
     expect(html).toContain('data-active="true"');
     expect(html).toContain(`href="${PATH}?sort=legal_name&amp;dir=desc"`);
     // Another column still offers its own first click, unaffected.
-    expect(html).toContain(`href="${PATH}?sort=resolved_at&amp;dir=asc"`);
+    expect(html).toContain(`href="${PATH}?sort=has_description&amp;dir=asc"`);
   });
 });
 
@@ -196,35 +199,32 @@ describe("SeCompanyInfoTable filter sheet", () => {
   it("opens the filters from one button, badged with the number applied", () => {
     expect(render()).toContain("Filters");
     const html = render({ filters: APPLIED_FILTERS });
-    // Ten filters are set on APPLIED_FILTERS, and the badge says so.
-    expect(infoFilterChips(APPLIED_FILTERS)).toHaveLength(10);
-    expect(html).toContain(">10<");
+    // Six filters are set on APPLIED_FILTERS, and the badge says so.
+    expect(infoFilterChips(APPLIED_FILTERS)).toHaveLength(6);
+    expect(html).toContain(">6<");
   });
 
   it("summarises each applied filter as a chip whose X re-navigates without that param", () => {
     const html = render({ filters: APPLIED_FILTERS });
-    expect(html).toContain("Source llm");
     expect(html).toContain("Status active");
     expect(html).toContain("Legal form AB");
-    expect(html).toContain("Language en");
-    expect(html).toContain("Suggestion yes");
-    expect(html).toContain("Multi-source");
-    expect(html).toContain("Has corrections");
-    expect(html).toContain('aria-label="Remove filter Source llm"');
+    expect(html).toContain("Entity Legal (10-digit)");
+    expect(html).toContain("Description yes");
+    expect(html).toContain('aria-label="Remove filter Description yes"');
 
     // The chip's link is the same URL minus that one param -- with the sort and
     // page size kept, and `page` deliberately dropped.
-    const withoutSource = infoListSearch(
+    const withoutDescription = infoListSearch(
       APPLIED_FILTERS,
       { sort: "company_id", dir: "asc", pageSize: 50 },
-      "source",
+      "description",
     );
-    expect(withoutSource).not.toContain("source=");
-    expect(withoutSource).toContain("companyId=5565200028");
-    expect(withoutSource).toContain("sort=company_id");
-    expect(withoutSource).toContain("pageSize=50");
-    expect(withoutSource).not.toContain("page=1");
-    expect(html).toContain(`href="${PATH}${withoutSource.replaceAll("&", "&amp;")}"`);
+    expect(withoutDescription).not.toContain("description=");
+    expect(withoutDescription).toContain("companyId=5565200028");
+    expect(withoutDescription).toContain("sort=company_id");
+    expect(withoutDescription).toContain("pageSize=50");
+    expect(withoutDescription).not.toContain("page=1");
+    expect(html).toContain(`href="${PATH}${withoutDescription.replaceAll("&", "&amp;")}"`);
   });
 
   it("keeps sort and page size when every filter is cleared", () => {
@@ -248,31 +248,16 @@ describe("SeCompanyInfoTable filter sheet", () => {
 describe("SeCompanyInfoFilterFields", () => {
   it("offers a field for every filter, including one select per discrete column", () => {
     const html = renderFields();
-    for (const name of [
-      "companyId",
-      "name",
-      "source",
-      "status",
-      "legalForm",
-      "language",
-      "suggestion",
-      "entity",
-      "multi",
-      "corrected",
-    ]) {
+    for (const name of ["companyId", "name", "status", "legalForm", "entity", "description"]) {
       expect(html).toContain(`name="${name}"`);
     }
-    for (const label of [
-      "Company id",
-      "Name",
-      "Description source",
-      "Status",
-      "Legal form",
-      "Description language",
-      "Has suggestion",
-      "Entity",
-    ]) {
+    for (const label of ["Company id", "Name", "Status", "Legal form", "Entity", "Description"]) {
       expect(html).toContain(label);
+    }
+    // Task 17: the description-provenance filters are gone from this page.
+    for (const gone of ['name="source"', 'name="language"', 'name="suggestion"',
+                        'name="multi"', 'name="corrected"']) {
+      expect(html).not.toContain(gone);
     }
     // Not filters, but the form must carry them: applying a filter resets
     // `page` on purpose and must never reset the page size or the sort.
@@ -281,16 +266,7 @@ describe("SeCompanyInfoFilterFields", () => {
     expect(html).toContain('type="hidden" name="dir" value="asc"');
     // A Base UI select's trigger is a button whose only text is the current
     // value, so the visible <Label> above it names nothing to a screen reader.
-    for (const label of [
-      "Company id",
-      "Name",
-      "Description source",
-      "Status",
-      "Legal form",
-      "Description language",
-      "Has suggestion",
-      "Entity",
-    ]) {
+    for (const label of ["Company id", "Name", "Status", "Legal form", "Entity", "Description"]) {
       expect(html).toContain(`aria-label="${label}"`);
     }
   });
@@ -312,10 +288,9 @@ describe("SeCompanyInfoFilterFields", () => {
     const applied = renderFields(APPLIED_FILTERS);
     expect(applied).toContain('name="status" value="active"');
     expect(applied).toContain('name="legalForm" value="AB"');
-    expect(applied).toContain('name="language" value="en"');
-    expect(applied).toContain('name="suggestion" value="yes"');
+    expect(applied).toContain('name="entity" value="legal"');
+    expect(applied).toContain('name="description" value="yes"');
     expect(applied).toContain('name="companyId" value="5565200028"');
-    expect(applied).toContain('checked=""');
   });
 });
 
@@ -324,21 +299,26 @@ describe("parseInfoFilters", () => {
 
   it("reads every filter from the URL", () => {
     const filters = parseInfoFilters(
-      at("?companyId=5565200028&name=Alpha&source=llm&status=active&legalForm=AB&language=en&suggestion=yes&entity=legal&multi=1&corrected=1"),
+      at("?companyId=5565200028&name=Alpha&status=active&legalForm=AB&entity=legal&description=yes"),
     );
     expect(filters).toEqual(APPLIED_FILTERS);
-    expect(infoFilterChips(filters)).toHaveLength(10);
+    expect(infoFilterChips(filters)).toHaveLength(6);
   });
 
   it("drops a value the query builder would ignore, so no chip claims a filter the table does not have", () => {
-    // Live before this fix: ?source=bogus showed a chip "Source bogus" and a
-    // count of 1 over all 3.5M rows.
+    // Live before this fix: ?description=bogus showed a chip "Description
+    // bogus" and a count of 1 over all 3.5M rows. A URL naming one of the
+    // filters Task 17 removed is dropped the same way -- it is simply unknown.
     for (const search of [
-      "?source=bogus",
-      "?source=any",
-      "?source=",
+      "?description=bogus",
+      "?description=any",
+      "?description=",
       "?entity=sideways",
-      "?suggestion=maybe",
+      "?source=llm",
+      "?language=en",
+      "?suggestion=yes",
+      "?multi=1",
+      "?corrected=1",
     ]) {
       const filters = parseInfoFilters(at(search));
       expect(filters).toEqual(EMPTY_INFO_FILTERS);
@@ -349,7 +329,6 @@ describe("parseInfoFilters", () => {
   it("passes data-driven values through: their options come from the column, not from an enum", () => {
     expect(parseInfoFilters(at("?status=whatever")).status).toBe("whatever");
     expect(parseInfoFilters(at("?legalForm=none")).legalForm).toBe("none");
-    expect(parseInfoFilters(at("?language=sv")).language).toBe("sv");
     // ...and the "none" sentinel reads as "(none)" in the chip.
     expect(infoFilterChips(parseInfoFilters(at("?legalForm=none")))).toEqual([
       { param: "legalForm", label: "Legal form (none)" },

@@ -37,12 +37,10 @@ export async function loader({ request }: Route.LoaderArgs) {
     // filter sheet's discrete option lists must not cost a FINAL scan per load.
     loadSeCompanyInfoFilterOptions(),
   ]);
-  // listSeCompanyInfoPage no longer runs its own count() -- the table's
-  // pagination total is the sum of the counts strip's by-source breakdown,
-  // which shares this exact WHERE and is already loaded above for the strip.
-  const total = counts.bySource.reduce((sum, entry) => sum + entry.count, 0);
-
-  return { listPage, counts, options, total, filters, view, sort };
+  // listSeCompanyInfoPage runs no count() of its own -- the table's pagination
+  // total is the counts strip's `total`, which shares this exact WHERE and is
+  // already loaded above for the strip.
+  return { listPage, counts, options, total: counts.total, filters, view, sort };
 }
 
 export function meta() {
@@ -54,11 +52,13 @@ export default function AdminSeCompanyInfoTable({ loaderData }: Route.ComponentP
   return (
     <div className="flex flex-1 flex-col gap-6 p-4 md:p-6">
       <header className="flex flex-col gap-2">
+        {/* Named for the sidebar entry that opens it, not for what the list
+            now shows: the page IS the companies list of se_company_info. */}
         <h1 className="text-2xl font-semibold tracking-tight">Company info</h1>
         <p className="text-sm text-muted-foreground">
-          The published se_company_info row for every Swedish company, read
-          FINAL. Filter and sort to find what to review next; each row opens
-          that company's info page.
+          Every Swedish company published in se_company_info, read FINAL.
+          Filter and sort to find one; each row opens that company's info page,
+          where its description, sources, suggestions and corrections live.
         </p>
       </header>
       <SeCompanyInfoTable

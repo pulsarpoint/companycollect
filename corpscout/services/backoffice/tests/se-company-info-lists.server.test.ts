@@ -13,8 +13,7 @@ import {
   CORRECTIONS_LIST_SELECT_SQL,
   correctionsOrderBySql,
   FILTER_OPTIONS_TTL_MS,
-  INFO_COUNTS_BY_SOURCE_SQL,
-  INFO_COUNTS_TOTALS_SQL,
+  INFO_COUNTS_SQL,
   INFO_FILTER_OPTIONS_SQL,
   INFO_LIST_SELECT_SQL,
   INFO_SORT_COLUMNS,
@@ -49,24 +48,12 @@ describe("buildInfoListFilter", () => {
       where: ["i.legal_name ILIKE {name:String}"],
       params: { name: "%Alpha%" },
     });
-    expect(buildInfoListFilter({ source: "llm" })).toEqual({
-      where: ["toString(i.description_source) = {source:String}"],
-      params: { source: "llm" },
-    });
-    expect(buildInfoListFilter({ multi: true })).toEqual({
-      where: ["i.description_source_count > 1"],
-      params: {},
-    });
     expect(buildInfoListFilter({ entity: "legal" })).toEqual({
       where: ["length(i.company_id) = 10"],
       params: {},
     });
     expect(buildInfoListFilter({ entity: "sole" })).toEqual({
       where: ["length(i.company_id) = 12"],
-      params: {},
-    });
-    expect(buildInfoListFilter({ corrected: true })).toEqual({
-      where: ["notEmpty(i.correction_ids)"],
       params: {},
     });
     expect(buildInfoListFilter({ status: "active" })).toEqual({
@@ -77,16 +64,15 @@ describe("buildInfoListFilter", () => {
       where: ["ifNull(i.legal_form_code, '') = {legalForm:String}"],
       params: { legalForm: "AB" },
     });
-    expect(buildInfoListFilter({ language: "en" })).toEqual({
-      where: ["toString(i.description_language) = {language:String}"],
-      params: { language: "en" },
-    });
-    expect(buildInfoListFilter({ suggestion: "yes" })).toEqual({
-      where: ["i.suggestion_id IS NOT NULL"],
+    // Task 17: the one description-shaped thing this list still says -- does the
+    // company have a published description at all? IS NOT NULL, never `!= ''`:
+    // the column is Nullable and the merge writes NULL for "no text".
+    expect(buildInfoListFilter({ description: "yes" })).toEqual({
+      where: ["i.description IS NOT NULL"],
       params: {},
     });
-    expect(buildInfoListFilter({ suggestion: "no" })).toEqual({
-      where: ["i.suggestion_id IS NULL"],
+    expect(buildInfoListFilter({ description: "no" })).toEqual({
+      where: ["i.description IS NULL"],
       params: {},
     });
   });
@@ -96,61 +82,83 @@ describe("buildInfoListFilter", () => {
       { status: "any" },
       { status: "  " },
       { legalForm: "any" },
-      { language: "any" },
-      { suggestion: "any" },
-      { suggestion: "maybe" },
+      { description: "any" },
+      { description: "maybe" },
     ]) {
       expect(buildInfoListFilter(filters)).toEqual({ where: [], params: {} });
     }
   });
 
-  it("maps source=none to the empty-string description_source", () => {
-    expect(buildInfoListFilter({ source: "none" }).params).toEqual({ source: "" });
-  });
-
-  it("ignores blank strings and unknown source values (including the filter form's 'any' sentinel) instead of filtering on them", () => {
+  it("ignores blank strings instead of filtering on them", () => {
     expect(buildInfoListFilter({ companyId: "  ", name: "" })).toEqual({
       where: [],
       params: {},
     });
-    expect(buildInfoListFilter({ source: "bogus" })).toEqual({ where: [], params: {} });
-    expect(buildInfoListFilter({ source: "any" })).toEqual({ where: [], params: {} });
+  });
+
+  it("no longer builds any description-provenance predicate", () => {
+    // Task 17: the source/language/suggestion/multi/corrected filters are gone
+    // from this page -- they belong to the detail page, which keeps the whole
+    // description story. A stale URL naming them must simply not filter.
+    const stale = {
+      source: "llm",
+      language: "en",
+      suggestion: "yes",
+      multi: true,
+      corrected: true,
+    } as Record<string, unknown>;
+    expect(buildInfoListFilter(stale)).toEqual({ where: [], params: {} });
   });
 
   it("ANDs every set filter together, in a stable order", () => {
     const { where, params } = buildInfoListFilter({
       companyId: "5565200028",
       name: "Alpha",
-      source: "scb",
-      multi: true,
       entity: "legal",
-      corrected: true,
+      status: "active",
+      legalForm: "AB",
+      description: "yes",
     });
     expect(where).toEqual([
       "i.company_id = {companyId:String}",
       "i.legal_name ILIKE {name:String}",
-      "toString(i.description_source) = {source:String}",
-      "i.description_source_count > 1",
       "length(i.company_id) = 10",
-      "notEmpty(i.correction_ids)",
+      "toString(i.status) = {status:String}",
+      "ifNull(i.legal_form_code, '') = {legalForm:String}",
+      "i.description IS NOT NULL",
     ]);
     expect(params).toEqual({
       companyId: "5565200028",
       name: "%Alpha%",
-      source: "scb",
+      status: "active",
+      legalForm: "AB",
     });
   });
 });
 
 describe("se_company_info list SQL shape", () => {
-  it("reads FINAL everywhere, truncates the snippet UTF-8-safely, and pages with named LIMIT/OFFSET params", () => {
+  it("reads FINAL, projects the company columns plus one description yes/no, and pages with named LIMIT/OFFSET params", () => {
     expect(INFO_LIST_SELECT_SQL).toContain("FROM corpscout.se_company_info AS i FINAL");
-    // substring() is byte-based and cuts a multi-byte character (å/ä/ö) in
-    // half, rendering U+FFFD -- substringUTF8 is required, not substring().
-    expect(INFO_LIST_SELECT_SQL).toContain("substringUTF8(ifNull(i.description, ''), 1, 120)");
-    expect(INFO_LIST_SELECT_SQL).not.toContain("substring(ifNull(i.description");
-    expect(INFO_COUNTS_BY_SOURCE_SQL).toContain("FROM corpscout.se_company_info AS i FINAL");
-    expect(INFO_COUNTS_TOTALS_SQL).toContain("FROM corpscout.se_company_info AS i FINAL");
+    expect(INFO_LIST_SELECT_SQL).toContain(
+      "toUInt8(i.description IS NOT NULL) AS has_description",
+    );
+    expect(INFO_LIST_SELECT_SQL).toContain(
+      "if(length(i.company_id) = 12, 'sole', 'legal') AS entity_type",
+    );
+    // Task 17: no description text crosses the wire for this list at all -- so
+    // no snippet, and none of the provenance columns the detail page shows.
+    for (const gone of [
+      "substringUTF8",
+      "description_source",
+      "description_sources",
+      "description_language",
+      "suggestion_id",
+      "correction_ids",
+      "resolved_at",
+    ]) {
+      expect(INFO_LIST_SELECT_SQL).not.toContain(gone);
+    }
+    expect(INFO_COUNTS_SQL).toContain("FROM corpscout.se_company_info AS i FINAL");
     expect(PAGE_LIMIT_OFFSET_SQL).toBe("LIMIT {limit:UInt32} OFFSET {offset:UInt32}");
   });
 });
@@ -164,8 +172,8 @@ describe("listSeCompanyInfoPage", () => {
 
     expect(page).toEqual({ rows: [] });
     // Exactly one query: the row query. The pagination total comes from
-    // loadSeCompanyInfoCounts's by-source breakdown instead (see that
-    // function's doc comment) -- one fewer FINAL scan per page load.
+    // loadSeCompanyInfoCounts instead (see that function's doc comment) -- one
+    // fewer FINAL scan per page load.
     expect(clickhouse.query).toHaveBeenCalledTimes(1);
     const [rowsSql, rowsParams] = clickhouse.query.mock.calls[0];
     expect(rowsSql).toContain("FROM corpscout.se_company_info AS i FINAL");
@@ -188,64 +196,46 @@ describe("listSeCompanyInfoPage", () => {
 
   it("threads filters into the row query", async () => {
     clickhouse.query.mockResolvedValue([]);
-    await listSeCompanyInfoPage({ page: 2, pageSize: 50, source: "llm", multi: true });
+    await listSeCompanyInfoPage({ page: 2, pageSize: 50, status: "active", description: "no" });
 
     const [rowsSql, rowsParams] = clickhouse.query.mock.calls[0];
     expect(rowsSql).toContain(
-      "WHERE toString(i.description_source) = {source:String} AND i.description_source_count > 1",
+      "WHERE toString(i.status) = {status:String} AND i.description IS NULL",
     );
-    expect(rowsParams).toEqual({ source: "llm", limit: 50, offset: 50 });
+    expect(rowsParams).toEqual({ status: "active", limit: 50, offset: 50 });
   });
 });
 
 describe("loadSeCompanyInfoCounts", () => {
   beforeEach(() => clickhouse.query.mockReset());
 
-  it("groups by description_source and computes the multi-source and pending-model totals with the same filters as the table", async () => {
-    clickhouse.query
-      .mockResolvedValueOnce([
-        { description_source: "scb", count: "100" },
-        { description_source: "llm", count: "40" },
-      ])
-      .mockResolvedValueOnce([{ multi_source_count: "40", pending_model_count: "12" }]);
+  it("counts total / with description / without description in ONE query, with the table's own filters", async () => {
+    clickhouse.query.mockResolvedValueOnce([
+      { total: "145", with_description: "140", without_description: "5" },
+    ]);
 
     const counts = await loadSeCompanyInfoCounts({ entity: "legal" });
 
-    expect(counts).toEqual({
-      bySource: [
-        { source: "scb", count: 100 },
-        { source: "llm", count: 40 },
-      ],
-      multiSourceCount: 40,
-      pendingModelCount: 12,
-    });
-
-    const [bySourceSql, bySourceParams] = clickhouse.query.mock.calls[0];
-    expect(bySourceSql).toContain(INFO_COUNTS_BY_SOURCE_SQL);
-    expect(bySourceSql).toContain("WHERE length(i.company_id) = 10");
-    expect(bySourceSql).toContain("GROUP BY i.description_source");
-    expect(bySourceParams).toEqual({});
-
-    const [totalsSql, totalsParams] = clickhouse.query.mock.calls[1];
-    expect(totalsSql).toContain(INFO_COUNTS_TOTALS_SQL);
-    expect(totalsSql).toContain("WHERE length(i.company_id) = 10");
-    expect(totalsSql).toContain("description_source_count > 1");
-    expect(totalsSql).toContain("suggestion_id IS NULL");
-    expect(totalsSql).toContain("empty(i.correction_ids)");
-    expect(totalsParams).toEqual({});
+    expect(counts).toEqual({ total: 145, withDescription: 140, withoutDescription: 5 });
+    expect(clickhouse.query).toHaveBeenCalledTimes(1);
+    const [sql, params] = clickhouse.query.mock.calls[0];
+    expect(sql).toContain(INFO_COUNTS_SQL);
+    expect(sql).toContain("WHERE length(i.company_id) = 10");
+    expect(sql).toContain("countIf(i.description IS NOT NULL)");
+    expect(sql).toContain("countIf(i.description IS NULL)");
+    // Task 17: the model/review totals belong to the pipeline page, not here.
+    expect(sql).not.toContain("description_source_count");
+    expect(sql).not.toContain("GROUP BY");
+    expect(params).toEqual({});
   });
 
-  it("(route contract) summing bySource[].count reproduces the table's pagination total", async () => {
-    clickhouse.query
-      .mockResolvedValueOnce([
-        { description_source: "scb", count: "100" },
-        { description_source: "llm", count: "40" },
-        { description_source: "", count: "5" },
-      ])
-      .mockResolvedValueOnce([{ multi_source_count: "40", pending_model_count: "12" }]);
-    const counts = await loadSeCompanyInfoCounts({});
-    const total = counts.bySource.reduce((sum, entry) => sum + entry.count, 0);
-    expect(total).toBe(145);
+  it("returns zeroes (never throws) when the filtered table has no rows", async () => {
+    clickhouse.query.mockResolvedValueOnce([]);
+    expect(await loadSeCompanyInfoCounts({})).toEqual({
+      total: 0,
+      withDescription: 0,
+      withoutDescription: 0,
+    });
   });
 });
 
@@ -422,8 +412,12 @@ describe("server-side sorting", () => {
     expect(infoOrderBySql("legal_name", "desc")).toBe(
       "ORDER BY i.legal_name DESC, i.company_id ASC",
     );
-    expect(infoOrderBySql("corrections_count", "asc")).toBe(
-      "ORDER BY length(i.correction_ids) ASC, i.company_id ASC",
+    // A computed column sorts by its expression, not by the SELECT alias.
+    expect(infoOrderBySql("has_description", "desc")).toBe(
+      "ORDER BY (i.description IS NOT NULL) DESC, i.company_id ASC",
+    );
+    expect(infoOrderBySql("entity_type", "asc")).toBe(
+      "ORDER BY length(i.company_id) ASC, i.company_id ASC",
     );
     // The default sort IS the tiebreak column, so it appears once.
     expect(infoOrderBySql("company_id", "asc")).toBe("ORDER BY i.company_id ASC");
@@ -443,9 +437,9 @@ describe("server-side sorting", () => {
   it("threads the chosen sort into the paged row query", async () => {
     clickhouse.query.mockReset();
     clickhouse.query.mockResolvedValue([]);
-    await listSeCompanyInfoPage({ page: 1, pageSize: 50, sort: "resolved_at", dir: "desc" });
+    await listSeCompanyInfoPage({ page: 1, pageSize: 50, sort: "legal_form_code", dir: "desc" });
     expect(clickhouse.query.mock.calls[0][0]).toContain(
-      "ORDER BY i.resolved_at DESC, i.company_id ASC",
+      "ORDER BY i.legal_form_code DESC, i.company_id ASC",
     );
 
     clickhouse.query.mockClear();
@@ -469,13 +463,8 @@ describe("server-side sorting", () => {
       "legal_name",
       "status",
       "legal_form_code",
-      "description_source",
-      "description_sources",
-      "description_language",
-      "description_snippet",
-      "has_suggestion",
-      "corrections_count",
-      "resolved_at",
+      "entity_type",
+      "has_description",
     ]);
     expect(Object.keys(CORRECTION_SORT_COLUMNS)).toEqual([
       "created_at",
@@ -498,11 +487,7 @@ describe("discrete filter options", () => {
 
   it("reads every data-driven option list of a table in ONE query, over FINAL", async () => {
     clickhouse.query.mockResolvedValueOnce([
-      {
-        statuses: ["active", "dissolved"],
-        legal_form_codes: ["", "AB"],
-        description_languages: ["en", "sv"],
-      },
+      { statuses: ["active", "dissolved"], legal_form_codes: ["", "AB"] },
     ]);
 
     const options = await loadSeCompanyInfoFilterOptions();
@@ -510,20 +495,22 @@ describe("discrete filter options", () => {
     expect(clickhouse.query).toHaveBeenCalledTimes(1);
     expect(clickhouse.query.mock.calls[0][0]).toBe(INFO_FILTER_OPTIONS_SQL);
     expect(INFO_FILTER_OPTIONS_SQL).toContain("FROM corpscout.se_company_info AS i FINAL");
-    for (const column of ["i.status", "i.legal_form_code", "i.description_language"]) {
+    for (const column of ["i.status", "i.legal_form_code"]) {
       expect(INFO_FILTER_OPTIONS_SQL).toContain(`groupUniqArray(`);
       expect(INFO_FILTER_OPTIONS_SQL).toContain(column);
     }
+    // Task 17: description_language is not a filter on this page any more, so
+    // its option list is not read either.
+    expect(INFO_FILTER_OPTIONS_SQL).not.toContain("description_language");
     expect(options).toEqual({
       statuses: ["active", "dissolved"],
       legalFormCodes: ["", "AB"],
-      descriptionLanguages: ["en", "sv"],
     });
   });
 
   it("serves the cached options within the TTL and re-reads after it", async () => {
     clickhouse.query.mockResolvedValue([
-      { statuses: ["active"], legal_form_codes: ["AB"], description_languages: ["en"] },
+      { statuses: ["active"], legal_form_codes: ["AB"] },
     ]);
     const now = Date.parse("2026-08-23T10:00:00Z");
     const clock = vi.spyOn(Date, "now").mockReturnValue(now);
@@ -558,7 +545,6 @@ describe("discrete filter options", () => {
     expect(await loadSeCompanyInfoFilterOptions()).toEqual({
       statuses: [],
       legalFormCodes: [],
-      descriptionLanguages: [],
     });
     resetSeCompanyInfoFilterOptionsCache();
     expect(await loadSeCompanyInfoCorrectionFilterOptions()).toEqual({ decidedBy: [] });

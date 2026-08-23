@@ -28,7 +28,15 @@ export interface SeCompanyInfoRow {
   /** The Swedish half of the published pair (migration 000301); null when there is none. */
   description_sv: string | null;
   description_language: string;
-  description_source: string;
+  /**
+   * Did the published text come out of the model (migration 000304)? True for
+   * the model's merged summary and for an approved suggestion; false for
+   * anything copied from one input, for a reviewer's own wording, after a
+   * rejection, and when there is no text at all. Typed as a union because a
+   * ClickHouse `Bool` arrives from JSONEachRow as a JSON boolean, while
+   * INFO_SQL's `toUInt8` cast makes it 0/1 -- either reads correctly as truthy.
+   */
+  llm_enhanced: number | boolean;
   description_sources: string[];
   description_source_record_uids: string[];
   description_source_count: number;
@@ -108,8 +116,10 @@ export interface SeCompanyInfoDetail {
  * (Nullable(UUID)) come back as plain strings, and correction_ids
  * (Array(UUID)) is mapped the same way DRAFTS_SQL-style queries do
  * elsewhere in this app. LowCardinality(String) columns (status,
- * description_language, description_source, model_provider) are also
- * wrapped, matching se-company-person.server.ts's PERSON_SQL convention.
+ * description_language, model_provider) are also wrapped, matching
+ * se-company-person.server.ts's PERSON_SQL convention, and the Bool
+ * llm_enhanced is cast to UInt8 for the same reason: one predictable JSON
+ * shape rather than whatever the driver makes of the column type.
  */
 export const INFO_SQL = `SELECT
   i.company_id AS company_id,
@@ -120,7 +130,7 @@ export const INFO_SQL = `SELECT
   i.description AS description,
   i.description_sv AS description_sv,
   toString(i.description_language) AS description_language,
-  toString(i.description_source) AS description_source,
+  toUInt8(i.llm_enhanced) AS llm_enhanced,
   i.description_sources AS description_sources,
   i.description_source_record_uids AS description_source_record_uids,
   i.description_source_count AS description_source_count,

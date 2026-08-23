@@ -20,45 +20,39 @@ import {
   SE_INFO_CORRECTION_KINDS,
   SE_INFO_CORRECTION_STATUSES,
 } from "~/lib/se-info-corrections";
-import { INFO_LIST_SOURCES } from "~/lib/se-company-info-sources";
 
 /** Sentinel `<Select>` value for "no filter". Base UI's Select reserves the
  * empty string for the unselected/placeholder state, so an explicit,
  * selectable "Any" needs a real value. Server-side it is treated as absent. */
 export const ANY_FILTER_VALUE = "any";
 
-/** Sentinel for "this column is empty on the row" -- a company with no
- * description source, no legal form code or no description language. The
- * empty string cannot travel as a URL value (it is indistinguishable from an
- * absent filter), so it travels as this and is mapped back to '' in SQL. */
+/** Sentinel for "this column is empty on the row" -- a company with no legal
+ * form code, or no status recorded. The empty string cannot travel as a URL
+ * value (it is indistinguishable from an absent filter), so it travels as this
+ * and is mapped back to '' in SQL. */
 export const NONE_FILTER_VALUE = "none";
 
+/** Task 17 (owner addendum 2026-08-23): the company-info list filters
+ * COMPANIES. Its description-provenance filters (source, language, suggestion,
+ * multi-source, has-corrections) are gone -- that story is the detail page's. */
 export interface SeCompanyInfoTableFilters {
   companyId: string;
   name: string;
-  source: string;
   status: string;
   legalForm: string;
-  language: string;
-  /** "" | "yes" | "no" -- whether the company has a model suggestion. */
-  suggestion: string;
   /** "" | "legal" | "sole" */
   entity: string;
-  multi: boolean;
-  corrected: boolean;
+  /** "" | "yes" | "no" -- whether the company has a published description. */
+  description: string;
 }
 
 export const EMPTY_INFO_FILTERS: SeCompanyInfoTableFilters = {
   companyId: "",
   name: "",
-  source: "",
   status: "",
   legalForm: "",
-  language: "",
-  suggestion: "",
   entity: "",
-  multi: false,
-  corrected: false,
+  description: "",
 };
 
 export interface SeCompanyInfoCorrectionsTableFilters {
@@ -105,18 +99,16 @@ export function infoFilterChips(
   const chips: FilterChip[] = [];
   if (filters.companyId) chips.push(chip("companyId", `Company ${filters.companyId}`));
   if (filters.name) chips.push(chip("name", `Name “${filters.name}”`));
-  if (filters.source) chips.push(chip("source", `Source ${chipValue(filters.source)}`));
   if (filters.status) chips.push(chip("status", `Status ${chipValue(filters.status)}`));
   if (filters.legalForm) {
     chips.push(chip("legalForm", `Legal form ${chipValue(filters.legalForm)}`));
   }
-  if (filters.language) chips.push(chip("language", `Language ${chipValue(filters.language)}`));
-  if (filters.suggestion) chips.push(chip("suggestion", `Suggestion ${filters.suggestion}`));
   if (filters.entity) {
     chips.push(chip("entity", `Entity ${ENTITY_LABELS[filters.entity] ?? filters.entity}`));
   }
-  if (filters.multi) chips.push(chip("multi", "Multi-source"));
-  if (filters.corrected) chips.push(chip("corrected", "Has corrections"));
+  if (filters.description) {
+    chips.push(chip("description", `Description ${filters.description}`));
+  }
   return chips;
 }
 
@@ -161,14 +153,10 @@ export function infoListSearch(
     [
       ["companyId", filters.companyId],
       ["name", filters.name],
-      ["source", filters.source],
       ["status", filters.status],
       ["legalForm", filters.legalForm],
-      ["language", filters.language],
-      ["suggestion", filters.suggestion],
       ["entity", filters.entity],
-      ["multi", filters.multi ? "1" : ""],
-      ["corrected", filters.corrected ? "1" : ""],
+      ["description", filters.description],
     ],
     view,
     omit,
@@ -248,13 +236,13 @@ export function parseListView(url: URL): ParsedListView {
  * describe. Three things collapse to "no filter": an absent/blank param, the
  * select's "Any" sentinel, and -- when `allowed` is given -- a value the query
  * builder's own whitelist would drop. Without that last check a hand-typed
- * `?source=bogus` would show a chip and a count of 1 over a completely
+ * `?description=bogus` would show a chip and a count of 1 over a completely
  * unfiltered table.
  *
- * Data-driven columns (status, legal form, description language, decided_by)
- * pass no `allowed`: their values come from the column itself, they reach SQL
- * only as named params, and a value that matches nothing simply returns no
- * rows -- which the chip then correctly describes.
+ * Data-driven columns (status, legal form, decided_by) pass no `allowed`:
+ * their values come from the column itself, they reach SQL only as named
+ * params, and a value that matches nothing simply returns no rows -- which the
+ * chip then correctly describes.
  */
 function filterValue(
   url: URL,
@@ -268,20 +256,19 @@ function filterValue(
 }
 
 const ENTITY_VALUES = ["legal", "sole"] as const;
-const SUGGESTION_VALUES = ["yes", "no"] as const;
+
+/** The two yes/no filter values, exported so the sheet's `<Select>` options and
+ * the URL whitelist are one list rather than two that can drift. */
+export const YES_NO_VALUES = ["yes", "no"] as const;
 
 export function parseInfoFilters(url: URL): SeCompanyInfoTableFilters {
   return {
     companyId: filterValue(url, "companyId"),
     name: filterValue(url, "name"),
-    source: filterValue(url, "source", INFO_LIST_SOURCES),
     status: filterValue(url, "status"),
     legalForm: filterValue(url, "legalForm"),
-    language: filterValue(url, "language"),
-    suggestion: filterValue(url, "suggestion", SUGGESTION_VALUES),
     entity: filterValue(url, "entity", ENTITY_VALUES),
-    multi: url.searchParams.get("multi") === "1",
-    corrected: url.searchParams.get("corrected") === "1",
+    description: filterValue(url, "description", YES_NO_VALUES),
   };
 }
 
