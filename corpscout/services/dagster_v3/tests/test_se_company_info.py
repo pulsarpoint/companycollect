@@ -56,13 +56,17 @@ EXISTING_TABLES = [
 ]
 
 
-def _scb_row(company_id: str, description: str = "IT-konsulter.") -> tuple:
+SCB_SWEDISH = "IT-konsulter."
+SCB_ENGLISH = "IT consultants."
+
+
+def _scb_row(company_id: str, description: str = SCB_SWEDISH) -> tuple:
     return (
         "scb", company_id, f"scb:{company_id}", "a" * 64, NOW,
         json.dumps({
             "legal_name": "Alpha AB", "legal_name_raw": "", "legal_form_code": "AB",
             "status": "active", "incorporation_date": "", "dissolution_date": "",
-            "activity_description": description, "activity_description_en": "",
+            "activity_description": description, "activity_description_en": SCB_ENGLISH,
             "primary_sni_code": "62010", "primary_nace_code": "62.01"}),
     )
 
@@ -85,7 +89,7 @@ def _outcome():
     scb = ArtifactRow("scb", "scb:1", "a" * 64, NOW, {
         "legal_name": "Alpha AB", "legal_name_raw": None, "legal_form_code": "AB",
         "status": "active", "incorporation_date": None, "dissolution_date": None,
-        "activity_description": "IT-konsulter.", "activity_description_en": "",
+        "activity_description": SCB_SWEDISH, "activity_description_en": SCB_ENGLISH,
         "primary_sni_code": "62010", "primary_nace_code": "62.01"})
     wiki = ArtifactRow("wikidata", "wikidata:Q1", "c" * 64, NOW, {
         "wikidata_id": "Q1", "wikidata_url": "", "name": "Alpha", "official_name": None,
@@ -228,6 +232,12 @@ def test_description_request_is_json_only_and_lists_every_source() -> None:
     payload = json.loads(request["messages"][1]["content"])
     assert payload["company_id"] == COMPANY and payload["legal_name"] == "Alpha AB"
     assert [c["source"] for c in payload["sources"]] == ["wikidata", "scb"]
+    # SCB's entry carries the register's own Swedish wording beside the English text the
+    # translator produced, so the Swedish summary can reuse its phrasing instead of being
+    # a re-translation of the model's English one. Only SCB has a Swedish original.
+    scb_entry, wikidata_entry = payload["sources"][1], payload["sources"][0]
+    assert scb_entry == {"source": "scb", "text": SCB_ENGLISH, "text_sv": SCB_SWEDISH}
+    assert "text_sv" not in wikidata_entry
     assert request["response_format"] == {"type": "json_object"} and request["temperature"] == 0
     system = request["messages"][0]["content"]
     assert "untrusted" in system.lower()
@@ -237,6 +247,43 @@ def test_description_request_is_json_only_and_lists_every_source() -> None:
     assert '"description_sv"' in system
     assert "English" in system and "Swedish" in system
     assert "same facts" in system
+    assert "text_sv" in system and "reuse its phrasing" in system
+
+
+def test_an_untranslated_scb_company_sends_its_swedish_text_once() -> None:
+    """text_sv is added only when it says something the entry's own text does not: an
+    untranslated company already sends the Swedish original AS the candidate text."""
+    scb = ArtifactRow("scb", "scb:1", "a" * 64, NOW, {
+        "legal_name": "Alpha AB", "legal_name_raw": None, "legal_form_code": "AB",
+        "status": "active", "incorporation_date": None, "dissolution_date": None,
+        "activity_description": SCB_SWEDISH, "activity_description_en": "",
+        "primary_sni_code": "62010", "primary_nace_code": "62.01"})
+    wiki = ArtifactRow("wikidata", "wikidata:Q1", "c" * 64, NOW, {
+        "wikidata_id": "Q1", "wikidata_url": "", "name": "Alpha", "official_name": None,
+        "company_description": "Swedish fintech company", "inception_date": None,
+        "legal_form_label": None, "industry_wikidata_id": None, "industry_label": None,
+        "headquarters_label": None, "employee_count": None})
+    payload = json.loads(build_description_request(
+        merge_company_info(COMPANY, [scb, wiki]), model="m")["messages"][1]["content"])
+    assert payload["sources"][1] == {"source": "scb", "text": SCB_SWEDISH}
+
+
+def test_the_request_is_the_same_before_and_after_the_model_has_answered() -> None:
+    """The model-on run hashes the request before calling, and a later model-off run
+    recomputes that hash from the same outcome to keep an approval alive. Every field the
+    payload reads must therefore be one no model result and no correction rewrites --
+    reading `description_sv` (which the model replaces) instead of the never-mutated
+    `description_sv_candidate` would make every reviewer decision read stale."""
+    from dataclasses import replace
+
+    outcome = _outcome()
+    answered = replace(
+        outcome, description="Merged text", description_sv="Sammanslagen text",
+        description_source="llm", description_language="en", suggestion_id=uuid.uuid4(),
+        model_provider="deepseek", model_name="deepseek-v4-flash", prompt_version="x")
+    assert build_description_request(answered, model="m") == build_description_request(outcome, model="m")
+    assert input_hash_for(build_description_request(answered, model="m"), DESCRIPTION_PROMPT_VERSION) == (
+        input_hash_for(build_description_request(outcome, model="m"), DESCRIPTION_PROMPT_VERSION))
 
 
 def test_parse_description_suggestion_validates_shape() -> None:
@@ -303,7 +350,7 @@ def test_initial_load_can_publish_multi_source_companies_without_the_model() -> 
         "description": "Swedish fintech company",
         # SCB contributed a candidate, so its Swedish original is published beside the
         # English pick even though the model never ran.
-        "description_sv": "IT-konsulter.", "description_language": "en",
+        "description_sv": SCB_SWEDISH, "description_language": "en",
         "description_source": "wikidata", "description_sources": ["wikidata", "scb"],
         "description_source_record_uids": ["wikidata:Q1", f"scb:{COMPANY}"],
         "description_source_count": 2, "primary_nace_code": "62.01", "primary_sni_code": "62010",
@@ -665,4 +712,5 @@ def test_a_truncated_model_response_is_reported_as_truncation_not_as_bad_json() 
 
     with pytest.raises(ValueError, match="truncated .*finish_reason=length.*completion_tokens=800"):
         _request_description(_Truncating(), {"model": "m", "messages": []}, provider="p")
-    assert build_description_request(_outcome(), "m")["max_tokens"] >= 4000
+    # Two summaries plus reasoning_content: 4000 was sized for one.
+    assert build_description_request(_outcome(), "m")["max_tokens"] >= 6000

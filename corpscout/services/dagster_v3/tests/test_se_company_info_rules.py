@@ -394,6 +394,23 @@ def test_approve_suggestion_publishes_both_of_the_models_languages() -> None:
     assert applied.suggestion_id == uuid.UUID(int=40)
 
 
+def test_approving_a_pre_v3_suggestion_leaves_the_swedish_text_as_computed() -> None:
+    """An observation recorded before the bilingual prompt has no Swedish half. Absent
+    means "leave it as computed" -- the same rule override_field follows -- so the
+    deterministic Swedish text stays rather than being blanked to NULL."""
+    outcome = merge_company_info(COMPANY, [_scb(description="Saeljer programvara."), _wikidata("fintech")])
+    hash_now = evidence_set_hash_for(outcome.evidence_hashes)
+    stored = StoredObservation(uuid.UUID(int=44), COMPANY, "h" * 64,
+                               {"description": "Merged text", "language": "en"}, "deepseek", "m", "v2", NOW)
+    approve = LedgerRow(uuid.UUID(int=45), COMPANY, "approve_suggestion",
+                        {"suggestion_id": str(uuid.UUID(int=44))}, hash_now, None, NOW)
+    applied = apply_info_ledger(outcome, [approve], evidence_set_hash=hash_now,
+                                current_input_hash="h" * 64, stored=[stored])
+    assert applied.description == "Merged text"
+    assert applied.description_sv == "Saeljer programvara."
+    assert applied.correction_ids == (uuid.UUID(int=45),)
+
+
 def test_reject_suggestion_restores_the_deterministic_pair() -> None:
     outcome = merge_company_info(COMPANY, [_scb(description="Saeljer programvara."), _wikidata("fintech")])
     hash_now = evidence_set_hash_for(outcome.evidence_hashes)

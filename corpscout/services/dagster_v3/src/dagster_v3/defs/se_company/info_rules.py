@@ -234,7 +234,10 @@ def apply_info_ledger(
     ``approve_suggestion`` publishes both of the stored suggestion's languages with
     ``description_source = "reviewed"`` and ``suggestion_id`` set -- unless
     the stored suggestion has no non-empty ``description`` string, in which
-    case the correction is treated as stale (nothing sensible to approve).
+    case the correction is treated as stale (nothing sensible to approve). A
+    suggestion with no Swedish half (one recorded before the bilingual prompt)
+    leaves ``description_sv`` as computed, exactly as an absent
+    ``description_sv`` in an override payload does.
     ``reject_suggestion`` discards it, falls back to the highest-priority
     deterministic candidate (text and language alike) together with the
     deterministic Swedish text, and clears ``suggestion_id``. Both share an
@@ -296,14 +299,15 @@ def apply_info_ledger(
                     # correction that no longer names something usable.
                     stale.append(correction.correction_id)
                     continue
+                # A suggestion recorded before the bilingual prompt has no Swedish half.
+                # Absent means "leave it as computed" -- the same rule override_field
+                # follows -- so the deterministic Swedish text stays rather than being
+                # blanked to NULL by an approval that never spoke about it.
+                approved_sv = _text(suggestion.suggestion.get("description_sv"))
                 outcome = replace(
                     outcome,
                     description=approved_text,
-                    # A suggestion without a usable Swedish half publishes none: it answered
-                    # a request this pipeline no longer makes (the prompt version is part of
-                    # input_hash), so inventing one from SCB would pair the model's English
-                    # with someone else's Swedish.
-                    description_sv=_text(suggestion.suggestion.get("description_sv")),
+                    description_sv=outcome.description_sv if approved_sv is None else approved_sv,
                     description_language=str(suggestion.suggestion.get("language") or outcome.description_language),
                     description_source="reviewed",
                     suggestion_id=suggestion_id,
