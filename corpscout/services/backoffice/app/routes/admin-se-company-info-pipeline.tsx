@@ -10,19 +10,27 @@ import {
   SE_COMPANY_INFO_ASSET,
   SE_COMPANY_INFO_JOB,
   SE_COMPANY_INFO_REVIEW_JOB,
+  SE_COMPANY_INFO_SCHEDULE,
+  SE_COMPANY_INFO_SENSOR,
   type AssetMaterialization,
   type DagsterRun,
   type InstigatorStates,
 } from "~/lib/dagster.server";
 import { listLlmProfiles, type LlmProfile } from "~/lib/llm-settings.server";
 import {
+  ActionTokenError,
   buildArtifactRunConfig,
   buildInfoRunConfig,
   infoArtifactAsset,
   loadSeCompanyInfoPipelineStats,
+  mintLaunchToken,
+  verifyLaunchToken,
+  type LaunchIntent,
+  type SeCompanyInfoPipelineStats,
 } from "~/lib/se-company-info-pipeline.server";
 import {
   clampConcurrency,
+  clampMaxCompanies,
   dagsterApiKeyVariable,
   isInfoArtifact,
   PILOT_TAG_KEY,
@@ -37,6 +45,21 @@ import {
 const RUN_LIMIT = 12;
 const nf = new Intl.NumberFormat("en-US");
 
+interface PipelineActionData {
+  ok: boolean;
+  error: string;
+  confirmation: PipelineConfirmation | null;
+  launched: { runId: string; url: string | null; job: string } | null;
+}
+
+function refused(error: string): PipelineActionData {
+  return { ok: false, error, confirmation: null, launched: null };
+}
+
+function message(error: unknown): string {
+  return error instanceof Error ? error.message : String(error);
+}
+
 function formValue(form: FormData, name: string): string {
   const value = form.get(name);
   return typeof value === "string" ? value : "";
@@ -44,7 +67,7 @@ function formValue(form: FormData, name: string): string {
 
 function formNumber(form: FormData, name: string, fallback: number): number {
   const parsed = Number.parseInt(formValue(form, name), 10);
-  return Number.isFinite(parsed) && parsed > 0 ? parsed : fallback;
+  return Number.isFinite(parsed) ? parsed : fallback;
 }
 
 /** A Dagster outage must not take the page down: the stats and the LLM profiles
@@ -60,7 +83,8 @@ async function dagsterView(): Promise<{
       listRuns({ job: SE_COMPANY_INFO_JOB, limit: RUN_LIMIT }),
       listRuns({ job: SE_COMPANY_INFO_REVIEW_JOB, limit: RUN_LIMIT }),
       assetMaterializations({ asset: SE_COMPANY_INFO_ASSET, limit: RUN_LIMIT * 2 }),
-      instigatorStates(),
+      // This pipeline's two, not the repository's 52 schedules and 15 sensors.
+      instigatorStates({ names: [SE_COMPANY_INFO_SCHEDULE, SE_COMPANY_INFO_SENSOR] }),
     ]);
     const runs = [...jobRuns, ...reviewRuns]
       .sort((a, b) => (b.startTime ?? 0) - (a.startTime ?? 0))
@@ -74,18 +98,29 @@ async function dagsterView(): Promise<{
   }
 }
 
+/** ClickHouse is guarded exactly like Dagster is: the page's job is to say what
+ * it knows and why it does not know the rest, never to 500. */
+async function statsView(): Promise<{
+  stats: SeCompanyInfoPipelineStats | null;
+  error: string;
+}> {
+  try {
+    return { stats: await loadSeCompanyInfoPipelineStats(), error: "" };
+  } catch (error) {
+    return { stats: null, error: message(error) };
+  }
+}
+
 function profileFor(profiles: LlmProfile[], profileId: string): LlmProfile | null {
   return profiles.find((profile) => profile.profileId === profileId) ?? null;
 }
 
 export async function loader() {
-  const [stats, dagster] = await Promise.all([
-    loadSeCompanyInfoPipelineStats(),
-    dagsterView(),
-  ]);
+  const [statsResult, dagster] = await Promise.all([statsView(), dagsterView()]);
   const profiles = listLlmProfiles();
   return {
-    stats,
+    stats: statsResult.stats,
+    statsError: statsResult.error,
     profiles: profiles.map((profile) => ({
       profileId: profile.profileId,
       name: profile.name,
@@ -95,9 +130,10 @@ export async function loader() {
       isActive: profile.isActive,
       // The variable the profile page stores, beside the one the Dagster host
       // will actually read. A mismatch means the run fails on the host, so the
-      // page says so before anything is launched.
+      // page says so before anything is launched; "" means the provider name
+      // cannot produce a readable variable at all.
       apiKeyEnvironmentVariable: profile.apiKeyEnvironmentVariable,
-      dagsterApiKeyVariable: dagsterApiKeyVariable(profile.provider),
+      dagsterApiKeyVariable: dagsterApiKeyVariable(profile.provider) ?? "",
     })),
     runs: dagster.runs.map((run) => ({
       ...run,
@@ -110,30 +146,92 @@ export async function loader() {
   };
 }
 
-export async function action({ request }: Route.ActionArgs) {
+export async function action({ request }: Route.ActionArgs): Promise<PipelineActionData> {
   const form = await request.formData();
   const intent = formValue(form, "intent");
   const profiles = listLlmProfiles();
 
+  /** The three values a model run is parameterised by, read the same way in the
+   * confirm branch and the launch branch -- the launch has to rebuild exactly
+   * what was signed, so there is one reader, not two. */
   const modelRun = (pendingModelOnly: boolean) => {
     const useModel = pendingModelOnly || formValue(form, "use_model") === "1";
-    const maxCompanies = formNumber(form, "max_companies", 1_000);
-    const concurrency = clampConcurrency(Number.parseInt(formValue(form, "concurrency"), 10));
+    const maxCompanies = clampMaxCompanies(formNumber(form, "max_companies", 1_000));
+    const concurrency = clampConcurrency(formNumber(form, "concurrency", 1));
     const profile = useModel ? profileFor(profiles, formValue(form, "profile_id")) : null;
     return { useModel, maxCompanies, concurrency, profile };
+  };
+
+  const modelIntent = (
+    pendingModelOnly: boolean,
+    run: ReturnType<typeof modelRun>,
+  ): LaunchIntent => ({
+    job: SE_COMPANY_INFO_REVIEW_JOB,
+    runConfig: buildInfoRunConfig({
+      maxCompanies: run.maxCompanies,
+      useModel: run.useModel,
+      pendingModelOnly,
+      llm: {
+        // A model-off run still carries a profile so the run records which model
+        // its stored suggestions were hashed against; it is never called.
+        provider: run.profile?.provider ?? "deepseek",
+        model: run.profile?.model ?? "deepseek-v4-flash",
+        baseUrl: run.profile?.baseUrl ?? "https://api.deepseek.com",
+        concurrency: run.concurrency,
+      },
+    }),
+  });
+
+  const artifactIntent = (artifact: string): LaunchIntent => ({
+    job: SE_COMPANY_INFO_JOB,
+    assetSelection: [infoArtifactAsset(artifact as never)],
+    runConfig: buildArtifactRunConfig(),
+  });
+
+  /** Nothing reaches Dagster without a live signature over this exact intent. */
+  const launch = async (
+    launchIntent: LaunchIntent,
+    token: string,
+  ): Promise<PipelineActionData> => {
+    const verified = verifyLaunchToken(token, launchIntent);
+    if (!verified.ok) return refused(verified.error);
+    const run = await launchRun({
+      job: launchIntent.job,
+      ...(launchIntent.assetSelection ? { assetSelection: launchIntent.assetSelection } : {}),
+      runConfig: launchIntent.runConfig,
+      tags: { [PILOT_TAG_KEY]: PILOT_TAG_VALUE },
+    });
+    return {
+      ok: true,
+      error: "",
+      confirmation: null,
+      launched: { runId: run.runId, url: dagsterRunUrl(run.runId), job: launchIntent.job },
+    };
   };
 
   try {
     if (intent === "confirm-resolve" || intent === "confirm-model-pass") {
       const pendingModelOnly = intent === "confirm-model-pass";
-      const { useModel, maxCompanies, concurrency, profile } = modelRun(pendingModelOnly);
+      const run = modelRun(pendingModelOnly);
+      const { useModel, maxCompanies, concurrency, profile } = run;
       if (useModel && !profile) {
-        return { error: "Choose an LLM profile before launching a run that calls the model.", confirmation: null, launched: null };
+        return refused("Choose an LLM profile before launching a run that calls the model.");
+      }
+      const keyVariable = profile ? dagsterApiKeyVariable(profile.provider) : null;
+      if (useModel && profile && keyVariable === null) {
+        return refused(
+          `Provider "${profile.provider}" does not name an environment variable the Dagster ` +
+            "host can read a key from. Fix the provider name in LLM settings.",
+        );
       }
       // The numbers are re-read here rather than taken from the page the operator
       // is looking at: a confirmation must restate what is true now, not what was
       // true when the tab was opened.
-      const { selection } = await loadSeCompanyInfoPipelineStats();
+      const statsResult = await statsView();
+      if (!statsResult.stats) {
+        return refused(`The selection counts are unavailable, so nothing is confirmed: ${statsResult.error}`);
+      }
+      const { selection } = statsResult.stats;
       const selected = pendingModelOnly
         ? selection.pendingModelCount
         : useModel
@@ -150,8 +248,8 @@ export async function action({ request }: Route.ActionArgs) {
             ? `Up to ${nf.format(calls)} of them enter the model step, ${concurrency} call${concurrency === 1 ? "" : "s"} at a time. Answers already stored for the same request are reused and cost nothing.`
             : "The model is switched off: multi-source companies publish their deterministic pick and no call is made.",
           useModel && profile
-            ? `Model ${profile.model} (${profile.provider}) at ${profile.baseUrl}; the key comes from ${dagsterApiKeyVariable(profile.provider)} on the Dagster host.`
-            : "No model profile is sent.",
+            ? `Model ${profile.model} (${profile.provider}) at ${profile.baseUrl}; the key comes from ${keyVariable} on the Dagster host.`
+            : "No model is called.",
           "The run writes to corpscout.se_company_info and, when the model answers, to se_company_info_enrichment_observation.",
         ],
         fields: {
@@ -159,16 +257,15 @@ export async function action({ request }: Route.ActionArgs) {
           max_companies: String(maxCompanies),
           concurrency: String(concurrency),
           profile_id: profile?.profileId ?? "",
+          action_token: mintLaunchToken(modelIntent(pendingModelOnly, run)),
         },
       };
-      return { error: "", confirmation, launched: null };
+      return { ok: true, error: "", confirmation, launched: null };
     }
 
     if (intent === "confirm-artifact") {
       const artifact = formValue(form, "artifact");
-      if (!isInfoArtifact(artifact)) {
-        return { error: "Choose an artifact to refresh.", confirmation: null, launched: null };
-      }
+      if (!isInfoArtifact(artifact)) return refused("Choose an artifact to refresh.");
       const confirmation: PipelineConfirmation = {
         intent: "launch-artifact",
         title: `Refresh the ${artifact} artifact`,
@@ -177,63 +274,32 @@ export async function action({ request }: Route.ActionArgs) {
           "New evidence appended here makes those companies changed, so the next resolve run picks them up.",
           "No model is called and se_company_info is not written by this run.",
         ],
-        fields: { artifact },
+        fields: { artifact, action_token: mintLaunchToken(artifactIntent(artifact)) },
       };
-      return { error: "", confirmation, launched: null };
+      return { ok: true, error: "", confirmation, launched: null };
     }
 
     if (intent === "launch-resolve" || intent === "launch-model-pass") {
       const pendingModelOnly = intent === "launch-model-pass";
-      const { useModel, maxCompanies, concurrency, profile } = modelRun(pendingModelOnly);
-      if (useModel && !profile) {
-        return { error: "Choose an LLM profile before launching a run that calls the model.", confirmation: null, launched: null };
+      const run = modelRun(pendingModelOnly);
+      if (run.useModel && !run.profile) {
+        return refused("Choose an LLM profile before launching a run that calls the model.");
       }
-      const run = await launchRun({
-        job: SE_COMPANY_INFO_REVIEW_JOB,
-        runConfig: buildInfoRunConfig({
-          maxCompanies,
-          useModel,
-          pendingModelOnly,
-          llm: {
-            // A model-off run still carries a profile so the run records which
-            // model its stored suggestions were hashed against; it is never called.
-            provider: profile?.provider ?? "deepseek",
-            model: profile?.model ?? "deepseek-v4-flash",
-            baseUrl: profile?.baseUrl ?? "https://api.deepseek.com",
-            concurrency,
-          },
-        }),
-        tags: { [PILOT_TAG_KEY]: PILOT_TAG_VALUE },
-      });
-      return {
-        error: "",
-        confirmation: null,
-        launched: { runId: run.runId, url: dagsterRunUrl(run.runId), job: SE_COMPANY_INFO_REVIEW_JOB },
-      };
+      return await launch(modelIntent(pendingModelOnly, run), formValue(form, "action_token"));
     }
 
     if (intent === "launch-artifact") {
       const artifact = formValue(form, "artifact");
-      if (!isInfoArtifact(artifact)) {
-        return { error: "Choose an artifact to refresh.", confirmation: null, launched: null };
-      }
-      const run = await launchRun({
-        job: SE_COMPANY_INFO_JOB,
-        assetSelection: [infoArtifactAsset(artifact)],
-        runConfig: buildArtifactRunConfig(),
-        tags: { [PILOT_TAG_KEY]: PILOT_TAG_VALUE },
-      });
-      return {
-        error: "",
-        confirmation: null,
-        launched: { runId: run.runId, url: dagsterRunUrl(run.runId), job: SE_COMPANY_INFO_JOB },
-      };
+      if (!isInfoArtifact(artifact)) return refused("Choose an artifact to refresh.");
+      return await launch(artifactIntent(artifact), formValue(form, "action_token"));
     }
 
-    return { error: "Unknown pipeline action.", confirmation: null, launched: null };
+    return refused("Unknown pipeline action.");
   } catch (error) {
-    if (error instanceof DagsterError) {
-      return { error: error.message, confirmation: null, launched: null };
+    // A missing signing secret is a configuration failure, not a crash: the page
+    // says so and no run is started.
+    if (error instanceof ActionTokenError || error instanceof DagsterError) {
+      return refused(error.message);
     }
     throw error;
   }
@@ -250,6 +316,7 @@ export default function AdminSeCompanyInfoPipeline({
   return (
     <SeCompanyInfoPipeline
       stats={loaderData.stats}
+      statsError={loaderData.statsError}
       profiles={loaderData.profiles}
       runs={loaderData.runs}
       instigators={loaderData.instigators}

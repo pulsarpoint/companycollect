@@ -11,6 +11,8 @@ import {
   REPOSITORY_LOCATION_NAME,
   REPOSITORY_NAME,
   runStatus,
+  SE_COMPANY_INFO_SCHEDULE,
+  SE_COMPANY_INFO_SENSOR,
 } from "~/lib/dagster.server";
 
 const URL_OPTION = "http://dagster:3000/graphql";
@@ -230,31 +232,43 @@ describe("assetMaterializations", () => {
 });
 
 describe("instigatorStates", () => {
-  it("reports whether the schedule and the sensor are running", async () => {
-    const { impl, calls } = fetchFake([
-      {
-        data: {
-          schedulesOrError: {
-            __typename: "Schedules",
-            results: [
-              {
-                name: "se_company_info_weekly",
-                cronSchedule: "50 6 * * 1",
-                scheduleState: { status: "RUNNING" },
-              },
-            ],
-          },
-          sensorsOrError: {
-            __typename: "Sensors",
-            results: [
-              { name: "se_company_info_correction_sensor", sensorState: { status: "STOPPED" } },
-            ],
-          },
+  /** The real repository answers with 52 schedules and 15 sensors; the query
+   * takes a repository selector and nothing else, so the filtering is ours. */
+  const ROSTER = [
+    {
+      data: {
+        schedulesOrError: {
+          __typename: "Schedules",
+          results: [
+            { name: "norway_brreg_weekly", cronSchedule: "0 3 * * 2", scheduleState: { status: "RUNNING" } },
+            {
+              name: "se_company_info_weekly",
+              cronSchedule: "50 6 * * 1",
+              scheduleState: { status: "RUNNING" },
+            },
+            { name: "ted_procurement_daily", cronSchedule: "0 1 * * *", scheduleState: { status: "STOPPED" } },
+          ],
+        },
+        sensorsOrError: {
+          __typename: "Sensors",
+          results: [
+            { name: "se_company_person_correction_sensor", sensorState: { status: "RUNNING" } },
+            { name: "se_company_info_correction_sensor", sensorState: { status: "STOPPED" } },
+          ],
         },
       },
-    ]);
+    },
+  ];
 
-    await expect(instigatorStates({ fetchImpl: impl, url: URL_OPTION })).resolves.toEqual({
+  it("reports only the instigators it was asked about", async () => {
+    const { impl, calls } = fetchFake([...ROSTER]);
+
+    await expect(
+      instigatorStates(
+        { names: [SE_COMPANY_INFO_SCHEDULE, SE_COMPANY_INFO_SENSOR] },
+        { fetchImpl: impl, url: URL_OPTION },
+      ),
+    ).resolves.toEqual({
       schedules: [
         { name: "se_company_info_weekly", status: "RUNNING", cronSchedule: "50 6 * * 1" },
       ],
@@ -266,6 +280,23 @@ describe("instigatorStates", () => {
         repositoryName: REPOSITORY_NAME,
       },
     });
+  });
+
+  it("returns the whole roster when no names are given", async () => {
+    const { impl } = fetchFake([...ROSTER]);
+    const states = await instigatorStates({}, { fetchImpl: impl, url: URL_OPTION });
+    expect(states.schedules).toHaveLength(3);
+    expect(states.sensors).toHaveLength(2);
+  });
+
+  it("names an instigator that is not in the repository by simply omitting it", async () => {
+    const { impl } = fetchFake([...ROSTER]);
+    const states = await instigatorStates(
+      { names: ["se_company_info_weekly", "renamed_away"] },
+      { fetchImpl: impl, url: URL_OPTION },
+    );
+    expect(states.schedules.map((entry) => entry.name)).toEqual(["se_company_info_weekly"]);
+    expect(states.sensors).toEqual([]);
   });
 });
 

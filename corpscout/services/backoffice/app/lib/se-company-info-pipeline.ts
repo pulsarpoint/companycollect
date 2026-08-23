@@ -1,7 +1,7 @@
 /**
  * The client-safe half of the Pipeline page: the artifact names the form offers,
- * the concurrency range the asset accepts, and the shape of the confirmation
- * panel the action hands back.
+ * the bounds the asset's config accepts, the select items the profile picker
+ * renders, and the shape of the confirmation panel the action hands back.
  *
  * Deliberately free of Dagster asset names, run-config shapes and anything that
  * reaches ClickHouse -- those live in `se-company-info-pipeline.server.ts`, and
@@ -28,19 +28,77 @@ export const PILOT_TAG_VALUE = "backoffice";
 export const MIN_CONCURRENCY = 1;
 export const MAX_CONCURRENCY = 8;
 
+/** Mirrors SECompanyInfoConfig.max_companies (ge=1, le=1_000_000). Out-of-range
+ * values are a config error on the Dagster side, so the form never submits one
+ * and the action clamps whatever arrives regardless of the input's `max`. */
+export const MIN_COMPANIES = 1;
+export const MAX_COMPANIES = 1_000_000;
+
+function clamp(value: number, low: number, high: number): number {
+  if (!Number.isFinite(value)) return low;
+  return Math.min(high, Math.max(low, Math.trunc(value)));
+}
+
 export function clampConcurrency(value: number): number {
-  if (!Number.isFinite(value)) return MIN_CONCURRENCY;
-  return Math.min(MAX_CONCURRENCY, Math.max(MIN_CONCURRENCY, Math.trunc(value)));
+  return clamp(value, MIN_CONCURRENCY, MAX_CONCURRENCY);
+}
+
+export function clampMaxCompanies(value: number): number {
+  return clamp(value, MIN_COMPANIES, MAX_COMPANIES);
 }
 
 /**
- * The environment variable the Dagster host reads this provider's API key from.
- * Derived from the provider name exactly as `llm_api_key_variable` does, so the
- * page can warn when a stored LLM profile names a different variable -- the key
- * itself is never read here and never sent anywhere.
+ * The environment variable the Dagster host reads this provider's API key from,
+ * or null when there is none it could read.
+ *
+ * Dagster builds the name with a bare `provider.upper()`
+ * (`llm_api_key_variable`), so normalising here can only ever DESCRIBE what the
+ * host will look up -- it cannot fix it. A provider name that uppercases to
+ * something which is not a valid environment identifier ("open-ai",
+ * "3rd-party", "") therefore has no key variable at all, and the page says so
+ * rather than showing a name nothing will ever read. The key itself is never
+ * read here and never sent anywhere.
  */
-export function dagsterApiKeyVariable(provider: string): string {
-  return `${provider.toUpperCase()}_API_KEY`;
+export function dagsterApiKeyVariable(provider: string): string | null {
+  const upper = provider.trim().toUpperCase();
+  const normalized = upper.replace(/[^A-Z0-9]/g, "_");
+  if (normalized !== upper) return null;
+  if (!/^[A-Z_][A-Z0-9_]*$/.test(normalized)) return null;
+  return `${normalized}_API_KEY`;
+}
+
+/** One stored LLM profile as the page sees it -- never the key, only the name
+ * of the variable it lives in. */
+export interface PipelineProfileOption {
+  profileId: string;
+  name: string;
+  provider: string;
+  model: string;
+  baseUrl: string;
+  isActive: boolean;
+  /** The variable the LLM settings page stored. */
+  apiKeyEnvironmentVariable: string;
+  /** The variable the Dagster host will actually read; "" when the provider
+   * name cannot produce one. */
+  dagsterApiKeyVariable: string;
+}
+
+/**
+ * Base UI's `Select` renders the trigger from its `items` list, not from the
+ * chosen `<SelectItem>`'s children: without it the trigger shows the raw value,
+ * which for a profile is a UUID.
+ */
+export function profileSelectItems(
+  profiles: PipelineProfileOption[],
+): { label: string; value: string }[] {
+  return profiles.map((profile) => ({
+    label: `${profile.name} — ${profile.model}`,
+    value: profile.profileId,
+  }));
+}
+
+export function artifactSelectItems(): { label: string; value: string }[] {
+  return INFO_ARTIFACT_SOURCES.map((source) => ({ label: source, value: source }));
 }
 
 export type PipelineIntent =
@@ -57,6 +115,9 @@ export interface PipelineConfirmation {
   title: string;
   /** One line per number the operator is agreeing to. */
   lines: string[];
-  /** Hidden fields replayed verbatim into the launch form. */
+  /**
+   * Hidden fields replayed verbatim into the launch form, including the signed
+   * `action_token` that binds the launch to this confirmation.
+   */
   fields: Record<string, string>;
 }

@@ -23,12 +23,10 @@ export const SE_COMPANY_INFO_JOB = "se_company_info_job";
 export const SE_COMPANY_INFO_REVIEW_JOB = "se_company_info_review_job";
 export const SE_COMPANY_INFO_ASSET = "se_company_info_clickhouse";
 
-/** Run states Dagster reports; anything else is passed through as-is. */
-export const DAGSTER_TERMINAL_STATUSES = [
-  "SUCCESS",
-  "FAILURE",
-  "CANCELED",
-] as const;
+/** The two instigators that drive THIS pipeline. The repository has 52 schedules
+ * and 15 sensors; a page that renders all of them tells its reader nothing. */
+export const SE_COMPANY_INFO_SCHEDULE = "se_company_info_weekly";
+export const SE_COMPANY_INFO_SENSOR = "se_company_info_correction_sensor";
 
 export class DagsterError extends Error {
   constructor(message: string) {
@@ -409,8 +407,17 @@ const INSTIGATORS_QUERY = `query BackofficeInstigators($repositorySelector: Repo
   }
 }`;
 
-/** Whether the weekly schedule and the correction sensor are RUNNING or STOPPED. */
+/**
+ * Whether the named schedules and sensors are RUNNING or STOPPED.
+ *
+ * `names` is applied here rather than in the query: Dagster's
+ * `schedulesOrError`/`sensorsOrError` take a repository selector and nothing
+ * else, so the repository's whole roster comes back and the caller says which of
+ * it is theirs. An empty or omitted list means "everything", which is only ever
+ * useful for a repository-wide view.
+ */
 export async function instigatorStates(
+  input: { names?: readonly string[] } = {},
   options: DagsterOptions = {},
 ): Promise<InstigatorStates> {
   const data = await graphql<{
@@ -442,15 +449,21 @@ export async function instigatorStates(
   if (scheduleError) throw scheduleError;
   const sensorError = unionError(data.sensorsOrError, "Sensors", "Reading sensors");
   if (sensorError) throw sensorError;
+  const wanted = new Set(input.names ?? []);
+  const mine = (name: string) => wanted.size === 0 || wanted.has(name);
   return {
-    schedules: (data.schedulesOrError.results ?? []).map((schedule) => ({
-      name: schedule.name,
-      status: schedule.scheduleState?.status ?? "UNKNOWN",
-      cronSchedule: schedule.cronSchedule,
-    })),
-    sensors: (data.sensorsOrError.results ?? []).map((sensor) => ({
-      name: sensor.name,
-      status: sensor.sensorState?.status ?? "UNKNOWN",
-    })),
+    schedules: (data.schedulesOrError.results ?? [])
+      .filter((schedule) => mine(schedule.name))
+      .map((schedule) => ({
+        name: schedule.name,
+        status: schedule.scheduleState?.status ?? "UNKNOWN",
+        cronSchedule: schedule.cronSchedule,
+      })),
+    sensors: (data.sensorsOrError.results ?? [])
+      .filter((sensor) => mine(sensor.name))
+      .map((sensor) => ({
+        name: sensor.name,
+        status: sensor.sensorState?.status ?? "UNKNOWN",
+      })),
   };
 }

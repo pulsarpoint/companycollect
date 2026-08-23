@@ -24,24 +24,18 @@ import {
 import type { InstigatorStates } from "~/lib/dagster.server";
 import type { SeCompanyInfoPipelineStats } from "~/lib/se-company-info-pipeline.server";
 import {
+  artifactSelectItems,
   INFO_ARTIFACT_SOURCES,
+  MAX_COMPANIES,
   MAX_CONCURRENCY,
+  MIN_COMPANIES,
   MIN_CONCURRENCY,
+  profileSelectItems,
   type PipelineConfirmation,
+  type PipelineProfileOption,
 } from "~/lib/se-company-info-pipeline";
 
 const nf = new Intl.NumberFormat("en-US");
-
-export interface PipelineProfileOption {
-  profileId: string;
-  name: string;
-  provider: string;
-  model: string;
-  baseUrl: string;
-  isActive: boolean;
-  apiKeyEnvironmentVariable: string;
-  dagsterApiKeyVariable: string;
-}
 
 export interface PipelineRunRow {
   runId: string;
@@ -67,10 +61,13 @@ function instant(seconds: number | null): string {
   return new Date(seconds * 1000).toISOString().replace("T", " ").slice(0, 19);
 }
 
+/** Finished runs only. A running run's duration would need the clock, and
+ * reading it during render makes the markup differ between server and client
+ * (a hydration mismatch) and go stale the moment it is painted. */
 function duration(run: PipelineRunRow): string {
   if (run.startTime === null) return "—";
-  const end = run.endTime ?? Date.now() / 1000;
-  const total = Math.max(0, Math.round(end - run.startTime));
+  if (run.endTime === null) return "running";
+  const total = Math.max(0, Math.round(run.endTime - run.startTime));
   const hours = Math.floor(total / 3600);
   const minutes = Math.floor((total % 3600) / 60);
   const seconds = total % 60;
@@ -132,14 +129,20 @@ function ProfileSelect({ profiles }: { profiles: PipelineProfileOption[] }) {
   const preselected = profiles.find((profile) => profile.isActive) ?? profiles[0];
   return (
     <Field label="LLM profile">
-      <Select name="profile_id" defaultValue={preselected?.profileId ?? ""}>
+      {/* `items` is what Base UI renders the trigger from -- without it the
+        * trigger shows the chosen value, which for a profile is a UUID. */}
+      <Select
+        items={profileSelectItems(profiles)}
+        name="profile_id"
+        defaultValue={preselected?.profileId ?? ""}
+      >
         <SelectTrigger className="w-56" size="sm">
           <SelectValue placeholder="No profile configured" />
         </SelectTrigger>
         <SelectContent>
           {profiles.map((profile) => (
             <SelectItem key={profile.profileId} value={profile.profileId}>
-              {profile.name} — {profile.model}
+              {`${profile.name} — ${profile.model}`}
             </SelectItem>
           ))}
         </SelectContent>
@@ -166,7 +169,14 @@ function ConcurrencyField() {
 function MaxCompaniesField({ defaultValue }: { defaultValue: number }) {
   return (
     <Field label="Stop after">
-      <Input name="max_companies" type="number" min={1} defaultValue={defaultValue} className="w-32" />
+      <Input
+        name="max_companies"
+        type="number"
+        min={MIN_COMPANIES}
+        max={MAX_COMPANIES}
+        defaultValue={defaultValue}
+        className="w-32"
+      />
     </Field>
   );
 }
@@ -204,6 +214,7 @@ function ConfirmationPanel({
 
 export function SeCompanyInfoPipeline({
   stats,
+  statsError,
   profiles,
   runs,
   instigators,
@@ -212,7 +223,8 @@ export function SeCompanyInfoPipeline({
   launched,
   error,
 }: {
-  stats: SeCompanyInfoPipelineStats;
+  stats: SeCompanyInfoPipelineStats | null;
+  statsError: string;
   profiles: PipelineProfileOption[];
   runs: PipelineRunRow[];
   instigators: InstigatorStates | null;
@@ -221,7 +233,6 @@ export function SeCompanyInfoPipeline({
   launched: PipelineLaunched | null;
   error: string;
 }) {
-  const { selection } = stats;
   const mismatched = profiles.filter(
     (profile) => profile.apiKeyEnvironmentVariable !== profile.dagsterApiKeyVariable,
   );
@@ -299,6 +310,21 @@ export function SeCompanyInfoPipeline({
 
       {confirmation ? <ConfirmationPanel confirmation={confirmation} /> : null}
 
+      {stats === null ? (
+        <Card>
+          <CardHeader>
+            <CardTitle>Selection counts unavailable</CardTitle>
+            <CardDescription>
+              ClickHouse did not answer, so this page cannot say what a run would
+              select — and the actions below refuse to confirm anything until it
+              does.
+            </CardDescription>
+          </CardHeader>
+          <CardContent>
+            <p className="text-muted-foreground text-sm">{statsError}</p>
+          </CardContent>
+        </Card>
+      ) : (
       <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-4">
         <Card>
           <CardHeader>
@@ -308,28 +334,28 @@ export function SeCompanyInfoPipeline({
           <CardContent className="flex flex-col gap-3">
             <Stat
               label="Selected"
-              value={nf.format(selection.changedCount)}
-              hint={`${nf.format(selection.changedWithoutModelCount)} without the model term`}
+              value={nf.format(stats.selection.changedCount)}
+              hint={`${nf.format(stats.selection.changedWithoutModelCount)} without the model term`}
             />
             <div className="flex flex-wrap gap-1.5 text-xs">
               <Badge variant="secondary">
                 never published
                 <span className="ml-1 tabular-nums">
-                  {nf.format(selection.neverPublishedCount)}
+                  {nf.format(stats.selection.neverPublishedCount)}
                 </span>
               </Badge>
               {INFO_ARTIFACT_SOURCES.map((source) => (
                 <Badge key={source} variant="secondary">
                   new {source}
                   <span className="ml-1 tabular-nums">
-                    {nf.format(selection.newEvidenceCounts[source])}
+                    {nf.format(stats.selection.newEvidenceCounts[source])}
                   </span>
                 </Badge>
               ))}
               <Badge variant="secondary">
                 ledger
                 <span className="ml-1 tabular-nums">
-                  {nf.format(selection.ledgerPendingCount)}
+                  {nf.format(stats.selection.ledgerPendingCount)}
                 </span>
               </Badge>
             </div>
@@ -348,12 +374,12 @@ export function SeCompanyInfoPipeline({
           <CardContent className="flex flex-col gap-3">
             <Stat
               label="Would call the model"
-              value={nf.format(selection.wouldCallModelCount)}
+              value={nf.format(stats.selection.wouldCallModelCount)}
               hint="Selected and last published with several description sources"
             />
             <Stat
               label="Still owed a description"
-              value={nf.format(selection.pendingModelCount)}
+              value={nf.format(stats.selection.pendingModelCount)}
               hint="What the model pass selects"
             />
           </CardContent>
@@ -374,7 +400,7 @@ export function SeCompanyInfoPipeline({
               </div>
             ))}
             <p className="text-muted-foreground text-xs">
-              {nf.format(selection.companyCount)} companies carry at least one
+              {nf.format(stats.selection.companyCount)} companies carry at least one
               artifact row.
             </p>
           </CardContent>
@@ -404,15 +430,17 @@ export function SeCompanyInfoPipeline({
           </CardContent>
         </Card>
       </div>
+      )}
 
       {mismatched.length > 0 ? (
         <Alert variant="destructive">
           <AlertTitle>Profile key variable will not be read</AlertTitle>
           <AlertDescription>
             {mismatched
-              .map(
-                (profile) =>
-                  `${profile.name} stores ${profile.apiKeyEnvironmentVariable}, but the Dagster host reads ${profile.dagsterApiKeyVariable} for provider "${profile.provider}"`,
+              .map((profile) =>
+                profile.dagsterApiKeyVariable === ""
+                  ? `provider "${profile.provider}" (${profile.name}) does not name an environment variable at all, so no key can be read for it`
+                  : `${profile.name} stores ${profile.apiKeyEnvironmentVariable}, but the Dagster host reads ${profile.dagsterApiKeyVariable} for provider "${profile.provider}"`,
               )
               .join("; ")}
             . Rename the variable on the Dagster host or the profile at{" "}
@@ -482,7 +510,7 @@ export function SeCompanyInfoPipeline({
             <Form method="post" className="flex flex-wrap items-end gap-3">
               <input type="hidden" name="intent" value="confirm-artifact" />
               <Field label="Artifact">
-                <Select name="artifact" defaultValue="scb">
+                <Select items={artifactSelectItems()} name="artifact" defaultValue="scb">
                   <SelectTrigger className="w-40" size="sm">
                     <SelectValue />
                   </SelectTrigger>
