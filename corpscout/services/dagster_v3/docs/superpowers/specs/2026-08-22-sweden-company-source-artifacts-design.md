@@ -247,6 +247,23 @@ code (`se_company/tables.py`): `SE_COMPANY_ARTIFACT_TABLES`, `SE_COMPANY_FINAL_T
 5. Then `financial.py` (precedence view over `se_company_financial_esef` /
    `_bolagsverket`), then `commoncrawl.py`, then move people.
 
+**Status 2026-08-23 — pilot live.** Initial load done without re-ingesting any source:
+`se_company_info_scb` 3,523,558 rows (every `se_companies` row with a source uid, 12-digit
+sole traders included since 000299), `se_company_info_wikidata` 3,119, `se_company_info_esef` 2;
+`se_company_info` 3,523,558 companies, of which 689 have several description sources and carry
+a model-written description (`deepseek-v4-flash`, ~236K prompt / ~308K completion tokens in
+total), 667,871 have no description from any source. `se_company_info_correction_sensor` and
+`se_company_info_weekly` (Mondays 06:50 UTC) are RUNNING; the four leaves have the WEEKLY
+freshness bound. End to end verified through the backoffice page on real companies: override →
+sensor → scoped run → `reviewed`; undo → revert; reject of the newest suggestion → deterministic
+pick, observation reused (no model call).
+
+Known behaviour to remember: a suggestion's `input_hash` includes the prompt version, so after
+a prompt bump a decision on the previously published suggestion is judged stale and the
+company is re-described once (171 companies still carry `v1` suggestions; each costs one call
+on its next re-resolution). The backoffice's "evidence changed" badge reflects evidence-hash
+staleness only, not this input-hash staleness.
+
 ## 10. Out of scope
 
 Cross-country unification (frozen), addresses (already resolved elsewhere), moving the people
