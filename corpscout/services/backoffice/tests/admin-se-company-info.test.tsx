@@ -209,8 +209,9 @@ describe("company info review page", () => {
     expect(html).toContain('name="original_description_sv" value=""');
   });
 
-  it("shows the suggestion's Swedish half beside its English one", () => {
+  it("shows the suggestion's Swedish half beside its English one, each labelled", () => {
     const html = render();
+    expect(html).toContain("English: Alpha builds payment software.");
     expect(html).toContain("Swedish: Alpha AB bygger betalprogramvara i Sverige.");
   });
 

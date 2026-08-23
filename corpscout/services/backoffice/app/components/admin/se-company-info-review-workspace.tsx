@@ -328,8 +328,10 @@ export function SeCompanyInfoReviewWorkspace({
                     {suggestion.created_at}
                   </span>
                 </div>
+                {/* Both halves are labelled: one model call answers in two
+                    languages, and an unlabelled pair reads as one text repeated. */}
                 {parsed?.description ? (
-                  <p className="mt-2 text-sm">{parsed.description}</p>
+                  <p className="mt-2 text-sm">English: {parsed.description}</p>
                 ) : null}
                 {parsed?.descriptionSv ? (
                   <p className="mt-1 text-sm">
