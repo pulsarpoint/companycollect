@@ -1,0 +1,287 @@
+import { randomUUID } from "node:crypto";
+import {
+  chInsertSeCompanyInfoCorrections,
+  chQuery,
+} from "~/lib/clickhouse.server";
+import {
+  SeInfoCorrectionValidationError,
+  validateSeInfoCorrection,
+  ZERO_EVIDENCE_HASH,
+  type SeInfoCorrectionInput,
+} from "~/lib/se-info-corrections";
+
+export { ZERO_EVIDENCE_HASH };
+const CORRECTION_ACTOR = "backoffice";
+
+/** Every column of the published corpscout.se_company_info row. */
+export interface SeCompanyInfoRow {
+  company_id: string;
+  legal_name: string;
+  legal_form_code: string | null;
+  status: string;
+  incorporation_date: string | null;
+  description: string | null;
+  description_language: string;
+  description_source: string;
+  description_sources: string[];
+  description_source_record_uids: string[];
+  description_source_count: number;
+  primary_nace_code: string;
+  primary_sni_code: string;
+  wikidata_id: string | null;
+  lei: string | null;
+  source_record_uids: string[];
+  evidence_hashes: string[];
+  evidence_set_hash: string;
+  correction_ids: string[];
+  suggestion_id: string | null;
+  model_provider: string;
+  model_name: string;
+  prompt_version: string;
+  source_run_id: string;
+  resolved_at: string;
+}
+
+export interface SeCompanyInfoArtifactRow {
+  source: string;
+  source_record_uid: string;
+  observed_at: string;
+  evidence_hash: string;
+  summary: string;
+}
+
+export interface SeCompanyInfoSuggestionRow {
+  suggestion_id: string;
+  input_hash: string;
+  suggestion: string;
+  model_provider: string;
+  model_name: string;
+  prompt_version: string;
+  created_at: string;
+  is_published: number;
+  is_newest: number;
+}
+
+export interface SeCompanyInfoCorrectionRow {
+  correction_id: string;
+  correction_kind: string;
+  payload: string;
+  evidence_hash: string;
+  reason: string;
+  decided_by: string;
+  supersedes_correction_id: string | null;
+  created_at: string;
+  is_current: number;
+  is_stale: number;
+  is_applied: number;
+}
+
+export interface SeCompanyInfoDetail {
+  info: SeCompanyInfoRow;
+  artifacts: SeCompanyInfoArtifactRow[];
+  suggestions: SeCompanyInfoSuggestionRow[];
+  corrections: SeCompanyInfoCorrectionRow[];
+}
+
+/**
+ * Every column is aliased explicitly (including ones already named the
+ * same) so the projected shape never depends on ClickHouse's own naming for
+ * a wrapped expression. Hash/UUID-typed columns are wrapped in toString():
+ * evidence_set_hash (a MATERIALIZED FixedString) and suggestion_id
+ * (Nullable(UUID)) come back as plain strings, and correction_ids
+ * (Array(UUID)) is mapped the same way DRAFTS_SQL-style queries do
+ * elsewhere in this app. LowCardinality(String) columns (status,
+ * description_language, description_source, model_provider) are also
+ * wrapped, matching se-company-person.server.ts's PERSON_SQL convention.
+ */
+export const INFO_SQL = `SELECT
+  i.company_id AS company_id,
+  i.legal_name AS legal_name,
+  i.legal_form_code AS legal_form_code,
+  toString(i.status) AS status,
+  toString(i.incorporation_date) AS incorporation_date,
+  i.description AS description,
+  toString(i.description_language) AS description_language,
+  toString(i.description_source) AS description_source,
+  i.description_sources AS description_sources,
+  i.description_source_record_uids AS description_source_record_uids,
+  i.description_source_count AS description_source_count,
+  i.primary_nace_code AS primary_nace_code,
+  i.primary_sni_code AS primary_sni_code,
+  i.wikidata_id AS wikidata_id,
+  i.lei AS lei,
+  i.source_record_uids AS source_record_uids,
+  i.evidence_hashes AS evidence_hashes,
+  toString(i.evidence_set_hash) AS evidence_set_hash,
+  arrayMap(id -> toString(id), i.correction_ids) AS correction_ids,
+  toString(i.suggestion_id) AS suggestion_id,
+  toString(i.model_provider) AS model_provider,
+  i.model_name AS model_name,
+  i.prompt_version AS prompt_version,
+  i.source_run_id AS source_run_id,
+  toString(i.resolved_at) AS resolved_at
+FROM corpscout.se_company_info AS i FINAL
+WHERE i.company_id = {companyId:String}
+LIMIT 1`;
+
+/**
+ * Every artifact leg reads FINAL (each source table is itself a
+ * ReplacingMergeTree of versions) and aliases every projected expression,
+ * including the per-leg literal `source` and the computed `summary` --
+ * ClickHouse only applies a trailing ORDER BY to the last SELECT of a
+ * UNION ALL chain, so the three legs are wrapped in a subquery and the
+ * ORDER BY sits outside it, over the union's own output columns.
+ */
+export const ARTIFACT_ROWS_SQL = `SELECT * FROM (
+  SELECT
+    'scb' AS source,
+    a.source_record_uid AS source_record_uid,
+    toString(a.observed_at) AS observed_at,
+    toString(a.evidence_hash) AS evidence_hash,
+    ifNull(a.activity_description, '') AS summary
+  FROM corpscout.se_company_info_scb AS a FINAL
+  WHERE a.company_id = {companyId:String}
+  UNION ALL
+  SELECT
+    'esef' AS source,
+    a.source_record_uid AS source_record_uid,
+    toString(a.observed_at) AS observed_at,
+    toString(a.evidence_hash) AS evidence_hash,
+    a.company_description AS summary
+  FROM corpscout.se_company_info_esef AS a FINAL
+  WHERE a.company_id = {companyId:String}
+  UNION ALL
+  SELECT
+    'wikidata' AS source,
+    a.source_record_uid AS source_record_uid,
+    toString(a.observed_at) AS observed_at,
+    toString(a.evidence_hash) AS evidence_hash,
+    ifNull(a.company_description, '') AS summary
+  FROM corpscout.se_company_info_wikidata AS a FINAL
+  WHERE a.company_id = {companyId:String}
+)
+ORDER BY source, observed_at DESC`;
+
+/**
+ * is_newest is the company's newest observation by (created_at,
+ * suggestion_id) -- the only one Dagster's reuse/staleness logic (input_hash
+ * matching) would even consider live, so it is the only one a reviewer may
+ * approve or reject. is_published is a plain equality against the
+ * published row's suggestion_id, not a hash comparison.
+ */
+export const SUGGESTIONS_SQL = `SELECT
+  toString(s.suggestion_id) AS suggestion_id,
+  toString(s.input_hash) AS input_hash,
+  s.suggestion AS suggestion,
+  toString(s.model_provider) AS model_provider,
+  s.model_name AS model_name,
+  s.prompt_version AS prompt_version,
+  toString(s.created_at) AS created_at,
+  toUInt8(ifNull(s.suggestion_id = {publishedSuggestionId:Nullable(UUID)}, 0)) AS is_published,
+  toUInt8(s.suggestion_id = (
+    SELECT suggestion_id
+    FROM corpscout.se_company_info_enrichment_observation
+    WHERE company_id = {companyId:String}
+    ORDER BY created_at DESC, suggestion_id DESC
+    LIMIT 1
+  )) AS is_newest
+FROM corpscout.se_company_info_enrichment_observation AS s
+WHERE s.company_id = {companyId:String}
+ORDER BY s.created_at DESC
+LIMIT 50`;
+
+/**
+ * is_stale marks a live (not superseded) correction whose evidence_hash no
+ * longer matches the published row: != the zero hash (undo's own marker,
+ * never stale) and != {evidenceSetHash:String} -- the page's own company,
+ * so its own evidence_set_hash is always the right comparison (unlike the
+ * person ledger, there is no separate subject to look up).
+ */
+export const CORRECTIONS_SQL = `WITH superseded AS (
+  SELECT supersedes_correction_id AS id
+  FROM corpscout.se_company_info_correction
+  WHERE company_id = {companyId:String} AND supersedes_correction_id IS NOT NULL
+)
+SELECT
+  toString(c.correction_id) AS correction_id,
+  c.correction_kind AS correction_kind,
+  c.payload AS payload,
+  toString(c.evidence_hash) AS evidence_hash,
+  c.reason AS reason,
+  c.decided_by AS decided_by,
+  toString(c.supersedes_correction_id) AS supersedes_correction_id,
+  toString(c.created_at) AS created_at,
+  toUInt8(c.correction_id NOT IN (SELECT id FROM superseded)) AS is_current,
+  toUInt8(
+    c.correction_id NOT IN (SELECT id FROM superseded)
+    AND toString(c.evidence_hash) != {zeroHash:String}
+    AND toString(c.evidence_hash) != {evidenceSetHash:String}
+  ) AS is_stale,
+  toUInt8(has({appliedIds:Array(String)}, toString(c.correction_id))) AS is_applied
+FROM corpscout.se_company_info_correction AS c
+WHERE c.company_id = {companyId:String}
+ORDER BY c.created_at DESC, c.correction_id DESC
+LIMIT 200`;
+
+/**
+ * Loads a company's published info row plus its artifact provenance, model
+ * suggestions and correction ledger for the review page. Returns null when
+ * the company has no published row (nothing to review yet).
+ */
+export async function loadSeCompanyInfoDetail(
+  companyId: string,
+): Promise<SeCompanyInfoDetail | null> {
+  const [info] = await chQuery<SeCompanyInfoRow>(INFO_SQL, { companyId });
+  if (!info) return null;
+  const [artifacts, suggestions, corrections] = await Promise.all([
+    chQuery<SeCompanyInfoArtifactRow>(ARTIFACT_ROWS_SQL, { companyId }),
+    chQuery<SeCompanyInfoSuggestionRow>(SUGGESTIONS_SQL, {
+      companyId,
+      publishedSuggestionId: info.suggestion_id,
+    }),
+    chQuery<SeCompanyInfoCorrectionRow>(CORRECTIONS_SQL, {
+      companyId,
+      zeroHash: ZERO_EVIDENCE_HASH,
+      evidenceSetHash: info.evidence_set_hash,
+      appliedIds: info.correction_ids,
+    }),
+  ]);
+  return { info, artifacts, suggestions, corrections };
+}
+
+function correctionTimestamp(): string {
+  return new Date().toISOString().replace("T", " ").replace("Z", "");
+}
+
+export async function appendSeCompanyInfoCorrection(
+  input: SeInfoCorrectionInput,
+): Promise<{ correctionId: string }> {
+  const draft = validateSeInfoCorrection(input);
+  if (draft.correction_kind !== "undo") {
+    const [current] = await chQuery<{ evidence_set_hash: string }>(
+      `SELECT toString(i.evidence_set_hash) AS evidence_set_hash
+       FROM corpscout.se_company_info AS i FINAL
+       WHERE i.company_id = {companyId:String}
+       LIMIT 1`,
+      { companyId: draft.company_id },
+    );
+    if (!current) {
+      throw new SeInfoCorrectionValidationError("This company is not published.");
+    }
+    if (current.evidence_set_hash !== draft.evidence_hash) {
+      throw new SeInfoCorrectionValidationError(
+        "The evidence changed while you were reviewing. Reload and decide again.",
+      );
+    }
+  }
+  const correctionId = randomUUID();
+  await chInsertSeCompanyInfoCorrections([
+    {
+      correction_id: correctionId,
+      ...draft,
+      decided_by: CORRECTION_ACTOR,
+      created_at: correctionTimestamp(),
+    },
+  ]);
+  return { correctionId };
+}
