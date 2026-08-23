@@ -77,11 +77,12 @@ export function SeCompanyPeopleTab({
     <Card>
       <CardHeader>
         <div className="flex flex-wrap items-center gap-2">
-          <CardTitle className="text-base">People</CardTitle>
-          <Badge variant="outline">{people.length}</Badge>
-          {withoutRoles > 0 ? (
-            <Badge variant="outline">{withoutRoles} without a role</Badge>
-          ) : null}
+          {/* One count sentence rather than a title plus two count badges:
+              "how many, and how many are incomplete" is one fact. */}
+          <CardTitle className="text-base">
+            {people.length} {people.length === 1 ? "person" : "people"}
+            {withoutRoles > 0 ? ` · ${withoutRoles} without a role` : ""}
+          </CardTitle>
         </div>
         <CardDescription>
           Published rows from se_company_person, with the roles resolved into

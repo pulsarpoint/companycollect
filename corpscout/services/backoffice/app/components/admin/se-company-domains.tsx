@@ -1,6 +1,7 @@
 import { GlobeIcon } from "lucide-react";
 import { Link } from "react-router";
 import { Badge } from "~/components/ui/badge";
+import { DefinitionList, text } from "~/components/admin/definition-list";
 import {
   Card,
   CardContent,
@@ -17,8 +18,6 @@ import {
   EmptyTitle,
 } from "~/components/ui/empty";
 import type { SeCompanyDomainRow } from "~/lib/se-company-domains.server";
-
-const EMPTY_VALUE = <span className="text-muted-foreground">—</span>;
 
 /** The unreviewed-domain queue, pre-filtered to this company. The queue reads
  * its filter from `?q=`, which matches on company id as well as name. */
@@ -111,26 +110,18 @@ function DomainCard({ row }: { row: SeCompanyDomainRow }) {
             </ul>
           )}
         </div>
-        <dl className="grid grid-cols-1 gap-x-6 gap-y-1 text-sm sm:grid-cols-[minmax(11rem,auto)_1fr]">
-          {[
-            ["Website host", row.website_host],
-            ["Reviewed by", row.reviewed_by],
-            ["Reviewed at", row.reviewed_at],
-            ["Review note", row.review_note],
-            ["First seen", row.first_seen_at],
-            ["Last seen", row.last_seen_at],
-            ["Resolved at", row.resolved_at],
-          ].map(([label, value]) => (
-            <div key={label} className="contents">
-              <dt className="text-muted-foreground text-xs uppercase tracking-wide sm:pt-0.5">
-                {label}
-              </dt>
-              <dd className="mb-2 break-all sm:mb-0">
-                {value === "" ? EMPTY_VALUE : value}
-              </dd>
-            </div>
-          ))}
-        </dl>
+        <DefinitionList
+          valueClassName="break-all"
+          entries={[
+            ["Website host", text(row.website_host)],
+            ["Reviewed by", text(row.reviewed_by)],
+            ["Reviewed at", text(row.reviewed_at)],
+            ["Review note", text(row.review_note)],
+            ["First seen", text(row.first_seen_at)],
+            ["Last seen", text(row.last_seen_at)],
+            ["Resolved at", text(row.resolved_at)],
+          ]}
+        />
       </CardContent>
     </Card>
   );

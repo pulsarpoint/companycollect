@@ -5,6 +5,10 @@ import {
 } from "lucide-react";
 import { Form, useNavigation } from "react-router";
 import { Alert, AlertDescription, AlertTitle } from "~/components/ui/alert";
+import {
+  DefinitionList,
+  EMPTY_VALUE,
+} from "~/components/admin/definition-list";
 import { Badge } from "~/components/ui/badge";
 import { Button, buttonVariants } from "~/components/ui/button";
 import {
@@ -137,8 +141,6 @@ export function SeCompanyInfoNotPublished({
   );
 }
 
-const EMPTY_VALUE = <span className="text-muted-foreground">—</span>;
-
 /** One payload value, rendered the way its kind asks: a link for the two
  * Wikidata identity fields, a list for ESEF's JSON blobs, plain text for
  * everything else (including a column this app has never seen). */
@@ -232,18 +234,14 @@ function ArtifactCard({
         </CardDescription>
       </CardHeader>
       <CardContent>
-        <dl className="grid grid-cols-1 gap-x-6 gap-y-1 text-sm sm:grid-cols-[minmax(11rem,auto)_1fr]">
-          {entries.map((entry) => (
-            <div key={entry.key} className="contents">
-              <dt className="text-muted-foreground text-xs uppercase tracking-wide sm:pt-0.5">
-                {entry.label}
-              </dt>
-              <dd className="mb-2 sm:mb-0">
-                <PayloadValue entry={entry} payload={artifact.payload} />
-              </dd>
-            </div>
-          ))}
-        </dl>
+        {/* Labels are unique within one source's payload field list, so the
+            label is a stable key here. */}
+        <DefinitionList
+          entries={entries.map((entry) => [
+            entry.label,
+            <PayloadValue entry={entry} payload={artifact.payload} />,
+          ])}
+        />
       </CardContent>
     </Card>
   );
@@ -332,8 +330,9 @@ function PublishedCard({ info }: { info: SeCompanyInfoRow }) {
             )}
           </div>
         </div>
-        <dl className="grid grid-cols-1 gap-x-6 gap-y-1 text-sm sm:grid-cols-[minmax(11rem,auto)_1fr]">
-          {[
+        <DefinitionList
+          valueClassName="break-all"
+          entries={[
             ["Incorporated", info.incorporation_date ?? ""],
             ["NACE", info.primary_nace_code],
             ["SNI", info.primary_sni_code],
@@ -353,17 +352,11 @@ function PublishedCard({ info }: { info: SeCompanyInfoRow }) {
             ],
             ["Resolved at", info.resolved_at],
             ["Run", info.source_run_id],
-          ].map(([label, value]) => (
-            <div key={label} className="contents">
-              <dt className="text-muted-foreground text-xs uppercase tracking-wide sm:pt-0.5">
-                {label}
-              </dt>
-              <dd className="mb-2 break-all sm:mb-0">
-                {value === "" ? EMPTY_VALUE : value}
-              </dd>
-            </div>
-          ))}
-        </dl>
+          ].map(([label, value]) => [
+            label,
+            value === "" ? EMPTY_VALUE : value,
+          ])}
+        />
       </CardContent>
     </Card>
   );

@@ -2,6 +2,11 @@ import { CoinsIcon } from "lucide-react";
 import { Link } from "react-router";
 import { Badge } from "~/components/ui/badge";
 import {
+  DefinitionList,
+  EMPTY_VALUE,
+  text,
+} from "~/components/admin/definition-list";
+import {
   Card,
   CardContent,
   CardDescription,
@@ -29,8 +34,6 @@ import type {
   SeCompanyFinancialYearRow,
   SeCompanyFinancialsLatestRow,
 } from "~/lib/se-company-financial.server";
-
-const EMPTY_VALUE = <span className="text-muted-foreground">—</span>;
 
 /** The label each serving view carries on this page. */
 const SOURCE_LABELS: Record<string, { title: string; description: string }> = {
@@ -64,10 +67,6 @@ function formatAmount(value: string): React.ReactNode {
     return <span className="tabular-nums">{value}</span>;
   }
   return <span className="tabular-nums">{groupedNumber.format(numeric)}</span>;
-}
-
-function text(value: string): React.ReactNode {
-  return value === "" ? EMPTY_VALUE : value;
 }
 
 /** Every column of se_company_financials_latest, under its own label. */
@@ -131,8 +130,9 @@ function LatestCard({
             ))}
           </TableBody>
         </Table>
-        <dl className="mt-4 grid grid-cols-1 gap-x-6 gap-y-1 text-sm sm:grid-cols-[minmax(11rem,auto)_1fr]">
-          {[
+        <DefinitionList
+          className="mt-4"
+          entries={[
             ["Fiscal year", text(latest.fiscal_year)],
             ["Period end", text(latest.period_end_date)],
             ["Employees", formatAmount(latest.employees)],
@@ -151,18 +151,22 @@ function LatestCard({
                 </Link>
               ),
             ],
-          ].map(([label, value]) => (
-            <div key={String(label)} className="contents">
-              <dt className="text-muted-foreground text-xs uppercase tracking-wide sm:pt-0.5">
-                {label}
-              </dt>
-              <dd className="mb-2 sm:mb-0">{value}</dd>
-            </div>
-          ))}
-        </dl>
+          ]}
+        />
       </CardContent>
     </Card>
   );
+}
+
+/**
+ * A column stands for a fiscal year, so the year is its key -- keying on
+ * `source_document_id` tied React's identity to the *filing*, so a re-filed
+ * year swapped the whole column instead of updating its cells. The period end
+ * joins the key because the ESEF view groups by (company, fiscal_year,
+ * report_period_end) and can therefore return two columns for one year.
+ */
+function yearKey(year: SeCompanyFinancialYearRow): string {
+  return `${year.fiscal_year}:${year.report_period_end}`;
 }
 
 const YEAR_FIGURES: Array<[string, keyof SeCompanyFinancialYearRow]> = [
@@ -215,7 +219,7 @@ function SourceYearsCard({
               <TableHead>Figure</TableHead>
               {years.map((year) => (
                 <TableHead
-                  key={year.source_document_id}
+                  key={yearKey(year)}
                   className="text-right tabular-nums"
                 >
                   {year.fiscal_year === "" ? "—" : year.fiscal_year}
@@ -232,7 +236,7 @@ function SourceYearsCard({
                 <TableCell>{figureLabel}</TableCell>
                 {years.map((year) => (
                   <TableCell
-                    key={year.source_document_id}
+                    key={yearKey(year)}
                     className="text-right"
                   >
                     {formatAmount(String(year[key]))}
@@ -243,7 +247,7 @@ function SourceYearsCard({
             <TableRow>
               <TableCell>Observation</TableCell>
               {years.map((year) => (
-                <TableCell key={year.source_document_id} className="text-right">
+                <TableCell key={yearKey(year)} className="text-right">
                   <Badge
                     variant={
                       year.observation === "filed" ? "secondary" : "outline"
@@ -258,7 +262,7 @@ function SourceYearsCard({
               <TableCell>Period</TableCell>
               {years.map((year) => (
                 <TableCell
-                  key={year.source_document_id}
+                  key={yearKey(year)}
                   className="text-right text-xs tabular-nums"
                 >
                   {year.report_period_start === "" && year.report_period_end === ""
@@ -271,7 +275,7 @@ function SourceYearsCard({
               <TableCell>FX to USD</TableCell>
               {years.map((year) => (
                 <TableCell
-                  key={year.source_document_id}
+                  key={yearKey(year)}
                   className="text-right text-xs"
                 >
                   {year.fx_rate_to_usd === "" ? (
@@ -289,7 +293,7 @@ function SourceYearsCard({
               <TableCell>Facts mapped</TableCell>
               {years.map((year) => (
                 <TableCell
-                  key={year.source_document_id}
+                  key={yearKey(year)}
                   className="text-right text-xs tabular-nums"
                 >
                   {year.mapped_fact_count} / {year.source_fact_count}
@@ -300,7 +304,7 @@ function SourceYearsCard({
               <TableCell>Document</TableCell>
               {years.map((year) => (
                 <TableCell
-                  key={year.source_document_id}
+                  key={yearKey(year)}
                   className="text-right text-xs"
                 >
                   {year.viewer_url === "" ? (

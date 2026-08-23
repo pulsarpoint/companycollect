@@ -108,19 +108,49 @@ describe("company area SQL", () => {
     expect(FINANCIALS_LATEST_SQL).not.toContain("FINAL");
   });
 
-  it("ifNulls every LEFT JOIN miss on the address chain", () => {
-    // The geocode hangs off the canonical address, two joins away from the
-    // company's own observation, so every projected column from `d`, `l`,
-    // `ca` and `g` has to survive a miss as "" rather than as null.
-    for (const alias of ["d.", "l.", "ca.", "g."]) {
-      const projected = ADDRESS_ROWS_SQL.split("\nFROM ")[0]
-        .split("\n")
-        .filter((line) => line.includes(alias));
+  /**
+   * ClickHouse fills a LEFT JOIN miss with each column's *type default*, not
+   * NULL, so `ifNull` cannot see one: `match_confidence` (Float32) reads 0 and
+   * `matched_at` (DateTime64) reads 1970-01-01. Each joined side therefore
+   * needs a `has_*` flag tested against a column that is never empty on a real
+   * row, and every column from that side gated on it. The behaviour this
+   * protects is exercised end-to-end in tests/admin-se-company-area.test.tsx
+   * ("shows nothing rather than type defaults ..."); this pins the mechanism,
+   * because a projection added later would silently reintroduce the bug.
+   */
+  it("gates every joined-side column of the address chain on its own hit flag", () => {
+    const projection = ADDRESS_ROWS_SQL.split("\nFROM ")[0];
+    for (const [alias, flag] of [
+      ["d.", "has_display"],
+      ["l.", "has_link"],
+      ["ca.", "has_canonical"],
+      ["g.", "has_geocode"],
+    ]) {
+      // Split into whole projected expressions, not lines: a multi-line one
+      // (is_canonical_source) carries its gate on a different line than its
+      // alias reference.
+      const gate = `AS ${flag}`;
+      const projected = projection
+        .split(/,\n(?=  \S)/)
+        .filter((expr) => expr.includes(alias) && !expr.includes(gate));
       expect(projected.length, alias).toBeGreaterThan(0);
       for (const line of projected) {
-        expect(line, `${alias} ${line}`).toContain("ifNull(");
+        // Either gated on the flag, or an ifNull over a genuinely Nullable
+        // SOURCE column (g.latitude / g.longitude), which is a different case.
+        const gated = line.includes(flag);
+        const nullableSource = /ifNull\(toString\(g\.(latitude|longitude)\)/.test(
+          line,
+        );
+        expect(gated || nullableSource, `${alias} ${line}`).toBe(true);
       }
     }
+    // And the two columns that actually broke are gated, not ifNull'd.
+    expect(ADDRESS_ROWS_SQL).toContain(
+      "if(has_geocode, toString(g.match_confidence), '')",
+    );
+    expect(ADDRESS_ROWS_SQL).toContain(
+      "if(has_geocode, toString(g.matched_at), '')",
+    );
   });
 
   it("filters the role join in a subquery, not in an outer WHERE", () => {

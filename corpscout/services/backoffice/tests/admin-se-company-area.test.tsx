@@ -1,13 +1,26 @@
 import { renderToStaticMarkup } from "react-dom/server";
 import { createMemoryRouter, RouterProvider } from "react-router";
-import { describe, expect, it } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 
+// One hoisted ClickHouse mock covers every `.server` module reachable from the
+// route modules imported below, so the loaders can be exercised end-to-end
+// (loader -> component) without a live database.
+const clickhouse = vi.hoisted(() => ({ query: vi.fn() }));
+vi.mock("~/lib/clickhouse.server", () => ({ chQuery: clickhouse.query }));
+
+import AdminSwedenCompanyLayout, {
+  shouldRevalidate,
+} from "~/routes/admin-se-company-layout";
+import { loader as companyIndexLoader } from "~/routes/admin-se-company-index";
 import { SeCompanyHeader } from "~/components/admin/se-company-header";
 import { SeCompanyAddressTab } from "~/components/admin/se-company-address";
 import { SeCompanyDomainsTab } from "~/components/admin/se-company-domains";
 import { SeCompanyFinancialTab } from "~/components/admin/se-company-financial";
 import { SeCompanyPeopleTab } from "~/components/admin/se-company-people";
-import type { SeCompanyAddressRow } from "~/lib/se-company-address.server";
+import {
+  loadSeCompanyAddresses,
+  type SeCompanyAddressRow,
+} from "~/lib/se-company-address.server";
 import type { SeCompanyDomainRow } from "~/lib/se-company-domains.server";
 import type { SeCompanyFinancialDetail } from "~/lib/se-company-financial.server";
 import type { SeCompanyPersonRow } from "~/lib/se-company-people.server";
@@ -50,6 +63,11 @@ function anchorWithHref(html: string, href: string): string {
   }
   throw new Error(`no <a> with href ${href}`);
 }
+
+beforeEach(() => {
+  clickhouse.query.mockReset();
+  clickhouse.query.mockResolvedValue([]);
+});
 
 describe("se company tab paths", () => {
   it("reads the tab off the URL and falls back to info", () => {
@@ -120,6 +138,10 @@ describe("company area header", () => {
 const address: SeCompanyAddressRow = {
   address_type: "postal",
   source: "bolagsverket",
+  has_display: 1,
+  has_link: 1,
+  has_canonical: 1,
+  has_geocode: 1,
   raw_address: "Borgargatan 16, lgh 1302$Nicklas$STOCKHOLM$11734$SE-LAND",
   display_address: "Nicklas, Borgargatan 16, lgh 1302, 11734 STOCKHOLM",
   care_of: "Nicklas",
@@ -192,6 +214,54 @@ describe("address tab", () => {
       seCompanyTabPath(COMPANY_ID, "address"),
     );
     expect(html).toContain("No address recorded");
+  });
+
+  /**
+   * The row here is what the gated SQL actually returns for a company that
+   * address identity has never touched (verified live against 195905252499):
+   * every joined-side column empty, every `has_*` flag 0. Before the gates,
+   * `match_confidence` (Float32) and `matched_at` (DateTime64) came back as
+   * their type defaults on a LEFT JOIN miss -- `ifNull` never sees those --
+   * and the page claimed a geocode confidence of 0 taken on 1970-01-01.
+   */
+  it("shows nothing rather than type defaults when the join finds no geocode", async () => {
+    clickhouse.query.mockResolvedValue([
+      {
+        ...address,
+        has_display: 0,
+        has_link: 0,
+        has_canonical: 0,
+        has_geocode: 0,
+        display_address: "",
+        resolved_country_code: "",
+        is_foreign: 0,
+        address_id: "",
+        canonical_address_key: "",
+        canonical_display_address: "",
+        is_canonical_source: 0,
+        link_review_status: "",
+        geocode_status: "",
+        geocode_precision: "",
+        geocode_provider: "",
+        geocode_match_method: "",
+        geocode_match_confidence: "",
+        latitude: "",
+        longitude: "",
+        geocoded_at: "",
+      },
+    ]);
+    const addresses = await loadSeCompanyAddresses(COMPANY_ID);
+    const html = render(
+      <SeCompanyAddressTab addresses={addresses} />,
+      seCompanyTabPath(COMPANY_ID, "address"),
+    );
+    expect(html).not.toContain("1970");
+    expect(html).not.toContain("Match confidence");
+    expect(html).not.toContain("openstreetmap.org");
+    expect(html).toContain("Not linked to a canonical address yet");
+    // The register's own fields still render -- only the derived side is gone.
+    expect(html).toContain("Postal address");
+    expect(html).toContain("11734");
   });
 });
 
@@ -366,7 +436,7 @@ describe("people tab", () => {
     );
     // The catalog's wording, the year it was observed for and who observed it.
     expect(html).toContain("Chief executive officer 2025 · bolagsverket");
-    expect(html).toContain("1 without a role");
+    expect(html).toContain("2 people · 1 without a role");
   });
 
   it("says so when Dagster has published no people", () => {
@@ -445,5 +515,110 @@ describe("tab labels", () => {
       "people",
       "domains",
     ]);
+  });
+});
+
+/**
+ * The layout is a route component, so its props are React Router's generated
+ * `Route.ComponentProps` (loaderData, params, matches, ...). A test only ever
+ * drives the two the component reads, so the rest is cast away here once
+ * rather than at each call.
+ */
+type LayoutProps = Parameters<typeof AdminSwedenCompanyLayout>[0];
+
+function layoutProps(
+  loadedShell: SeCompanyShell | null,
+  companyId: string,
+): LayoutProps {
+  return {
+    loaderData: { shell: loadedShell },
+    params: { companyId },
+  } as unknown as LayoutProps;
+}
+
+describe("company area routes", () => {
+  it("redirects a bare company path to Info", async () => {
+    // The loader always throws, so the thrown Response IS the contract.
+    let thrown: unknown;
+    try {
+      companyIndexLoader({ params: { companyId: COMPANY_ID } } as never);
+    } catch (error) {
+      thrown = error;
+    }
+    expect(thrown).toBeInstanceOf(Response);
+    const response = thrown as Response;
+    expect(response.status).toBe(302);
+    expect(response.headers.get("Location")).toBe(
+      `/admin/se/company/${COMPANY_ID}/info`,
+    );
+  });
+
+  it("re-reads the shell only when the company changes", () => {
+    // Tab switches keep :companyId, so the header must not be re-fetched.
+    expect(
+      shouldRevalidate({
+        currentParams: { companyId: COMPANY_ID },
+        nextParams: { companyId: COMPANY_ID },
+      }),
+    ).toBe(false);
+    expect(
+      shouldRevalidate({
+        currentParams: { companyId: COMPANY_ID },
+        nextParams: { companyId: "5592990765" },
+      }),
+    ).toBe(true);
+  });
+
+  it("renders the not-found view instead of the outlet for an unknown id", () => {
+    const html = renderToStaticMarkup(
+      <RouterProvider
+        router={createMemoryRouter(
+          [
+            {
+              path: "/admin/se/company/:companyId",
+              element: (
+                <AdminSwedenCompanyLayout
+                  {...layoutProps(null, "0000000000")}
+                />
+              ),
+              children: [{ path: "info", element: <p>TAB CONTENT</p> }],
+            },
+          ],
+          { initialEntries: ["/admin/se/company/0000000000/info"] },
+        )}
+      />,
+    );
+    // An id in neither table never resolves itself, so it must not be told to
+    // wait for the next Dagster run.
+    expect(html).toContain("No company with this id in the register");
+    expect(html).not.toContain("Not published yet");
+    expect(html).not.toContain("TAB CONTENT");
+    // No header and no sub-menu either: there is no company to head.
+    expect(html).not.toContain("<h1");
+    expect(html).not.toContain('role="tab"');
+  });
+
+  it("renders the header and the outlet for a company that resolves", () => {
+    const html = renderToStaticMarkup(
+      <RouterProvider
+        router={createMemoryRouter(
+          [
+            {
+              path: "/admin/se/company/:companyId",
+              element: (
+                <AdminSwedenCompanyLayout
+                  {...layoutProps(shell, COMPANY_ID)}
+                />
+              ),
+              children: [{ path: "info", element: <p>TAB CONTENT</p> }],
+            },
+          ],
+          { initialEntries: [seCompanyTabPath(COMPANY_ID, "info")] },
+        )}
+      />,
+    );
+    expect(html).toContain("Beijer Byggmaterial Aktiebolag");
+    expect(html).toContain("TAB CONTENT");
+    expect(html).not.toContain("No company with this id in the register");
   });
 });
