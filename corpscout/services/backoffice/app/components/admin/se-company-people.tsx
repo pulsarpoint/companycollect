@@ -1,5 +1,6 @@
 import { UsersRoundIcon } from "lucide-react";
 import { Link } from "react-router";
+import { EMPTY_VALUE } from "~/components/admin/definition-list";
 import { Badge } from "~/components/ui/badge";
 import {
   Card,
@@ -28,7 +29,6 @@ import type {
   SeCompanyPersonRow,
 } from "~/lib/se-company-people.server";
 
-const EMPTY_VALUE = <span className="text-muted-foreground">—</span>;
 
 /** A role reads as "Board member 2024 · esef" -- the label, the year it was
  * observed for and who observed it, because all three change independently. */
