@@ -130,7 +130,11 @@ LIMIT 1`;
  * including the per-leg literal `source` and the computed `summary` --
  * ClickHouse only applies a trailing ORDER BY to the last SELECT of a
  * UNION ALL chain, so the three legs are wrapped in a subquery and the
- * ORDER BY sits outside it, over the union's own output columns.
+ * ORDER BY sits outside it, over the union's own output columns. The
+ * `source_record_uid` tiebreak matters in practice: bulk-loaded SCB rows
+ * routinely share one `observed_at`. ESEF grows one row per filing, so
+ * (unlike INFO_SQL/SUGGESTIONS_SQL/CORRECTIONS_SQL, which are bounded by
+ * construction) this one needs its own LIMIT.
  */
 export const ARTIFACT_ROWS_SQL = `SELECT * FROM (
   SELECT
@@ -160,7 +164,8 @@ export const ARTIFACT_ROWS_SQL = `SELECT * FROM (
   FROM corpscout.se_company_info_wikidata AS a FINAL
   WHERE a.company_id = {companyId:String}
 )
-ORDER BY source, observed_at DESC`;
+ORDER BY source, observed_at DESC, source_record_uid
+LIMIT 500`;
 
 /**
  * is_newest is the company's newest observation by (created_at,

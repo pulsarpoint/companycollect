@@ -14,7 +14,7 @@ import {
   loadSeCompanyInfoDetail,
   SUGGESTIONS_SQL,
 } from "~/lib/se-company-info.server";
-import { SeInfoCorrectionValidationError } from "~/lib/se-info-corrections";
+import { SeInfoCorrectionValidationError, ZERO_EVIDENCE_HASH } from "~/lib/se-info-corrections";
 
 const COMPANY = "5565200028";
 
@@ -33,11 +33,36 @@ describe("company info queries", () => {
     expect(ARTIFACT_ROWS_SQL).toContain("'scb' AS source");
     expect(ARTIFACT_ROWS_SQL).toContain("'esef' AS source");
     expect(ARTIFACT_ROWS_SQL).toContain("'wikidata' AS source");
+    // Each artifact leg reads FINAL -- pin the exact FROM clause per leg, not
+    // just the source literal, so a leg silently losing FINAL still fails.
+    expect(ARTIFACT_ROWS_SQL).toContain("FROM corpscout.se_company_info_scb AS a FINAL");
+    expect(ARTIFACT_ROWS_SQL).toContain("FROM corpscout.se_company_info_esef AS a FINAL");
+    expect(ARTIFACT_ROWS_SQL).toContain("FROM corpscout.se_company_info_wikidata AS a FINAL");
+    // A trailing ORDER BY only binds to the last SELECT of a UNION ALL chain
+    // in ClickHouse, so the union must be wrapped and the ORDER BY placed
+    // outside it -- pin the closing paren immediately followed by the ORDER
+    // BY. The source_record_uid tiebreak (bulk-loaded SCB rows share one
+    // observed_at) and the LIMIT (ESEF grows per filing; the other three
+    // queries are bounded by construction already) are pinned separately.
+    expect(ARTIFACT_ROWS_SQL).toContain(")\nORDER BY source, observed_at DESC");
+    expect(ARTIFACT_ROWS_SQL).toContain(", source_record_uid");
+    expect(ARTIFACT_ROWS_SQL).toContain("LIMIT 500");
     expect(SUGGESTIONS_SQL).toContain("FROM corpscout.se_company_info_enrichment_observation AS s");
-    expect(SUGGESTIONS_SQL).toContain("ifNull(s.suggestion_id = {publishedSuggestionId:Nullable(UUID)}, 0)");
-    // P16 ruling: the two suggestion flags are is_published and is_newest,
-    // not a single is_current.
-    expect(SUGGESTIONS_SQL).toContain("AS is_newest");
+    // Pin the full expression including its alias for both suggestion flags,
+    // so a swap between is_published and is_newest fails: P16 ruling made
+    // them two independent flags, not a single is_current.
+    expect(SUGGESTIONS_SQL).toContain(
+      "toUInt8(ifNull(s.suggestion_id = {publishedSuggestionId:Nullable(UUID)}, 0)) AS is_published",
+    );
+    expect(SUGGESTIONS_SQL).toContain(
+      `toUInt8(s.suggestion_id = (
+    SELECT suggestion_id
+    FROM corpscout.se_company_info_enrichment_observation
+    WHERE company_id = {companyId:String}
+    ORDER BY created_at DESC, suggestion_id DESC
+    LIMIT 1
+  )) AS is_newest`,
+    );
     expect(CORRECTIONS_SQL).toContain("supersedes_correction_id IS NOT NULL");
     expect(CORRECTIONS_SQL).toContain("{zeroHash:String}");
     expect(CORRECTIONS_SQL).toContain("has({appliedIds:Array(String)}, toString(c.correction_id))");
@@ -82,6 +107,26 @@ describe("appendSeCompanyInfoCorrection", () => {
       decided_by: "backoffice",
     });
     expect(rows[0].created_at).toMatch(/^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}\.\d{3}$/);
+  });
+
+  it("undo skips the evidence re-read and inserts exactly one row", async () => {
+    clickhouse.insert.mockResolvedValue(undefined);
+    const { correctionId } = await appendSeCompanyInfoCorrection({
+      companyId: COMPANY,
+      kind: "undo",
+      evidenceHash: ZERO_EVIDENCE_HASH,
+      reason: "r",
+      supersedesCorrectionId: "11111111-1111-4111-8111-111111111111",
+    });
+    expect(clickhouse.query).not.toHaveBeenCalled();
+    expect(clickhouse.insert).toHaveBeenCalledTimes(1);
+    const [rows] = clickhouse.insert.mock.calls[0];
+    expect(rows[0]).toMatchObject({
+      correction_id: correctionId,
+      company_id: COMPANY,
+      correction_kind: "undo",
+      supersedes_correction_id: "11111111-1111-4111-8111-111111111111",
+    });
   });
 
   it("loadSeCompanyInfoDetail threads ids into the detail queries and returns null when missing", async () => {

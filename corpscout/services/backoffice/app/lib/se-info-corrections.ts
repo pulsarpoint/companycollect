@@ -145,26 +145,32 @@ export function validateSeInfoCorrection(
 }
 
 /**
- * Dagster's INFO_KIND_ORDER (info_rules.py) ranks override_field after
- * approve/reject regardless of created_at, so a live override always wins
- * over any approve/reject decided before or after it -- a reviewer who
- * approves a suggestion after overriding the description sees nothing
- * happen. This mirrors that rule at the review layer: while a live override
- * exists, approve/reject is a no-op server-side, so the UI should refuse to
- * offer it and point at the override instead.
+ * Dagster's `apply_info_ledger` (info_rules.py) first drops any correction
+ * whose evidence hash no longer matches -- stale ones never reach the
+ * kind-ranking step at all. Only among what's left does INFO_KIND_ORDER rank
+ * `override_field` after approve/reject regardless of `created_at`, so a
+ * *current* (non-stale) live override always wins over any approve/reject
+ * decided before or after it -- a reviewer who approves a suggestion after
+ * overriding the description sees nothing happen. This mirrors both rules at
+ * the review layer: while a current, live override exists, approve/reject is
+ * a no-op server-side, so the UI should refuse to offer it and point at the
+ * override instead. A stale override was already dropped by Dagster before
+ * ranking, so it must not block approve/reject here either.
  *
  * A "live" override is one no later `undo` row supersedes (an undo row's
- * `supersedes_correction_id` names the correction it cancels). `corrections`
- * is expected newest-first, matching CORRECTIONS_SQL's own
- * `ORDER BY created_at DESC` -- this row shape carries no created_at of its
- * own, so "newest" means the first live match in that given order, not a
- * recomputed sort.
+ * `supersedes_correction_id` names the correction it cancels). Unlike a
+ * caller-trusted order, this sorts `corrections` itself by
+ * `created_at DESC, correction_id DESC` before picking, so it doesn't matter
+ * what order the array arrives in.
  */
 export function liveOverrideCorrectionId(
   corrections: ReadonlyArray<{
     correction_id: string;
     correction_kind: string;
     supersedes_correction_id: string | null;
+    is_current: number;
+    is_stale: number;
+    created_at: string;
   }>,
 ): string | null {
   const supersededIds = new Set(
@@ -172,8 +178,17 @@ export function liveOverrideCorrectionId(
       .filter((row) => row.correction_kind === "undo" && row.supersedes_correction_id)
       .map((row) => row.supersedes_correction_id as string),
   );
-  const live = corrections.find(
-    (row) => row.correction_kind === "override_field" && !supersededIds.has(row.correction_id),
+  const liveOverrides = corrections.filter(
+    (row) =>
+      row.correction_kind === "override_field" &&
+      row.is_current === 1 &&
+      row.is_stale === 0 &&
+      !supersededIds.has(row.correction_id),
   );
-  return live ? live.correction_id : null;
+  if (liveOverrides.length === 0) return null;
+  liveOverrides.sort((a, b) => {
+    if (a.created_at !== b.created_at) return a.created_at > b.created_at ? -1 : 1;
+    return a.correction_id > b.correction_id ? -1 : 1;
+  });
+  return liveOverrides[0].correction_id;
 }
