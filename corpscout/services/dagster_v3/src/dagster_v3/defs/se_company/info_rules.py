@@ -32,6 +32,13 @@ class InfoOutcome:
     company_id: str
     legal_name: str
     legal_form_code: str | None
+    # What that code is CALLED, in both languages, from the curated corpscout.se_code_labels
+    # dictionary the SCB artifact already joined -- copied like every other non-description
+    # field, never model-written and never overridable by a review correction. '' means the
+    # dictionary does not name this code (the artifact's join missed), which is a fact about
+    # the curation, not about the company.
+    legal_form_label_en: str
+    legal_form_label_sv: str
     status: str
     incorporation_date: date | None
     description: str | None
@@ -108,7 +115,9 @@ def merge_company_info(company_id: str, rows: Sequence[ArtifactRow]) -> InfoOutc
     """Merge one company's artifact rows into a final outcome.
 
     Every non-description field is copied as-is from its owning source's
-    newest row. ``description_sv`` is SCB's Swedish original (the register's own
+    newest row -- the legal-form labels included: they are the curated
+    dictionary's names for ``legal_form_code``, joined in by the SCB artifact,
+    so the merge only carries them across. ``description_sv`` is SCB's Swedish original (the register's own
     verksamhetsbeskrivning, never the translation) whenever the register has one, and
     None otherwise -- a Wikidata/ESEF-only description has no Swedish half. When two or
     more sources force the model in, it overwrites both languages at once (info.py).
@@ -191,6 +200,8 @@ def merge_company_info(company_id: str, rows: Sequence[ArtifactRow]) -> InfoOutc
         company_id=company_id,
         legal_name=legal_name,
         legal_form_code=_text(scb.values.get("legal_form_code")),
+        legal_form_label_en=str(scb.values.get("legal_form_label_en") or ""),
+        legal_form_label_sv=str(scb.values.get("legal_form_label_sv") or ""),
         status=str(scb.values.get("status") or ""),
         incorporation_date=_date(scb.values.get("incorporation_date")),
         description=description,

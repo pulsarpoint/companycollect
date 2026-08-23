@@ -187,3 +187,58 @@ def test_declared_columns_replays_a_dropped_column() -> None:
     assert "llm_enhanced" in columns and "description_source" not in columns
     # The drop is narrow: the three columns whose names merely start the same way stay.
     assert {"description_sources", "description_source_record_uids", "description_source_count"} <= set(columns)
+
+
+def test_the_curated_label_table_gains_the_official_swedish_name_in_000305() -> None:
+    """The labels are a FIXTURE, not a translation job: the Bolagsverket/SCB names are
+    curated in-repo and seeded by se_code_labels_clickhouse, so the Swedish name is one
+    more column of that dictionary."""
+    up = (MIGRATIONS_DIR / "000305_corpscout_se_code_labels_swedish.up.sql").read_text()
+    down = (MIGRATIONS_DIR / "000305_corpscout_se_code_labels_swedish.down.sql").read_text()
+
+    assert "ADD COLUMN IF NOT EXISTS label_sv String DEFAULT '' AFTER label_en" in up
+    assert "DROP COLUMN IF EXISTS label_sv" in down
+    # DEFAULT '', never Nullable: a code either has a curated Swedish name or it has none
+    # (the status-reason codes do not), and every consumer reads a label through ifNull.
+    assert "Nullable" not in _statements(up)
+    # 000305 touches the label dictionary only -- the info tables are 000306's business.
+    assert "se_company_info" not in _statements(up) and "se_company_info" not in _statements(down)
+
+
+def test_scb_and_the_final_carry_both_legal_form_labels_from_000306() -> None:
+    """The owner's 2026-08-23 decision: the legal-form label is part of the info merge,
+    COPIED from the register like the translated description and never written by the
+    model, in both languages -- so the artifact hashes them (v3) and the final holds them
+    beside the code they name."""
+    up = (MIGRATIONS_DIR / "000306_corpscout_se_company_info_legal_form_label.up.sql").read_text()
+    down = (MIGRATIONS_DIR / "000306_corpscout_se_company_info_legal_form_label.down.sql").read_text()
+
+    # Both tables: the pair sits straight after legal_form_code, English then Swedish.
+    for table in ("se_company_info_scb", "se_company_info"):
+        columns = declared_columns(table)
+        at = columns.index("legal_form_code") + 1
+        assert columns[at : at + 2] == ["legal_form_label_en", "legal_form_label_sv"], table
+    assert up.count("ADD COLUMN IF NOT EXISTS legal_form_label_en String DEFAULT '' AFTER legal_form_code") == 2
+    assert up.count(
+        "ADD COLUMN IF NOT EXISTS legal_form_label_sv String DEFAULT '' AFTER legal_form_label_en"
+    ) == 2
+
+    # v3 is v2's list with the two labels hashed right after the code they name -- derived
+    # from 000300's v2 rather than transcribed, so a drifting column cannot pass by being
+    # pasted twice. (v2 is itself derived from 000297's v1 by that migration's own test.)
+    v2 = _materialized((MIGRATIONS_DIR / "000300_corpscout_se_company_info_scb_english.up.sql").read_text())
+    v3 = v2.replace("scb-v2", "scb-v3").replace(
+        "ifNull(legal_form_code, ''), '\\n', status",
+        "ifNull(legal_form_code, ''), '\\n', legal_form_label_en, '\\n', legal_form_label_sv, '\\n', status",
+    )
+    assert v3 != v2
+    assert _materialized(up) == v3
+    # The down file restores 000300's expression verbatim, and does so BEFORE dropping the
+    # columns the v3 expression reads.
+    assert _materialized(down) == v2
+    assert down.index("MODIFY COLUMN evidence_hash") < down.index("DROP COLUMN IF EXISTS legal_form_label_sv")
+
+    # The final needs no expression change: evidence_set_hash covers the artifacts' hashes
+    # only, so the two copied columns are plain data there.
+    final_alter = up[up.index("ALTER TABLE corpscout.se_company_info\n") :]
+    assert "MATERIALIZED" not in final_alter and "evidence_set_hash" not in final_alter

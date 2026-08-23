@@ -17,7 +17,9 @@ COMPANY = "5565200028"
 
 def _scb(description=None, **values):
     return ArtifactRow("scb", "scb:1", "a" * 64, NOW, {
-        "legal_name": "Alpha AB", "legal_name_raw": "ALPHA AB", "legal_form_code": "AB", "status": "active",
+        "legal_name": "Alpha AB", "legal_name_raw": "ALPHA AB", "legal_form_code": "AB-ORGFO",
+        "legal_form_label_en": "Limited company (aktiebolag)", "legal_form_label_sv": "Aktiebolag",
+        "status": "active",
         "incorporation_date": None, "dissolution_date": None, "activity_description": description,
         "activity_description_en": "",
         "primary_sni_code": "62010", "primary_nace_code": "62.01", **values})
@@ -522,3 +524,28 @@ def test_a_stale_correction_leaves_the_flag_alone() -> None:
                                 current_input_hash=None, stored=())
     assert applied.llm_enhanced and applied.description == "Merged text"
     assert applied.stale_correction_ids == (uuid.UUID(int=55),)
+
+
+def test_the_legal_form_labels_are_copied_from_the_register() -> None:
+    """Both labels are SCB's, copied like every other non-description field -- the model is
+    never asked what a legal form is called, and the reviewer never overrides it (an
+    override_field payload naming anything but the descriptions is malformed)."""
+    outcome = merge_company_info(COMPANY, [_scb(description="Säljer programvara.")])
+    assert outcome is not None
+    assert outcome.legal_form_code == "AB-ORGFO"
+    assert outcome.legal_form_label_en == "Limited company (aktiebolag)"
+    assert outcome.legal_form_label_sv == "Aktiebolag"
+
+
+def test_a_code_with_no_curated_label_publishes_empty_labels() -> None:
+    """A legal_form_code the curated dictionary does not name reaches the artifact as ''
+    (the SELECT's ifNull on the join miss), and the merge copies that through rather than
+    inventing a label or dropping the company."""
+    outcome = merge_company_info(
+        COMPANY,
+        [_scb(description="Säljer programvara.", legal_form_code="ZZZ",
+              legal_form_label_en="", legal_form_label_sv="")],
+    )
+    assert outcome is not None
+    assert outcome.legal_form_code == "ZZZ"
+    assert (outcome.legal_form_label_en, outcome.legal_form_label_sv) == ("", "")

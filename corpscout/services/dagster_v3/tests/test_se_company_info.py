@@ -75,7 +75,9 @@ def _scb_row(company_id: str, description: str = SCB_SWEDISH) -> tuple:
     return (
         "scb", company_id, f"scb:{company_id}", "a" * 64, NOW,
         json.dumps({
-            "legal_name": "Alpha AB", "legal_name_raw": "", "legal_form_code": "AB",
+            "legal_name": "Alpha AB", "legal_name_raw": "", "legal_form_code": "AB-ORGFO",
+            "legal_form_label_en": "Limited company (aktiebolag)",
+            "legal_form_label_sv": "Aktiebolag",
             "status": "active", "incorporation_date": "", "dissolution_date": "",
             "activity_description": description, "activity_description_en": SCB_ENGLISH,
             "primary_sni_code": "62010", "primary_nace_code": "62.01"}),
@@ -108,7 +110,9 @@ def _selected(company_id: str, **flags: int) -> tuple:
 
 def _outcome():
     scb = ArtifactRow("scb", "scb:1", "a" * 64, NOW, {
-        "legal_name": "Alpha AB", "legal_name_raw": None, "legal_form_code": "AB",
+        "legal_name": "Alpha AB", "legal_name_raw": None, "legal_form_code": "AB-ORGFO",
+        "legal_form_label_en": "Limited company (aktiebolag)",
+        "legal_form_label_sv": "Aktiebolag",
         "status": "active", "incorporation_date": None, "dissolution_date": None,
         "activity_description": SCB_SWEDISH, "activity_description_en": SCB_ENGLISH,
         "primary_sni_code": "62010", "primary_nace_code": "62.01"})
@@ -178,7 +182,16 @@ def test_changed_companies_sql_compares_artifact_versions_and_ledger_with_the_fi
     # for a rules-only change (new merge logic, a new artifact column) that no
     # observed_at or ledger row reflects. It sits in the ordinary branch only, still
     # paged and still capped by max_companies.
-    assert "OR %(resolve_all)s = 1" in sql
+    # ... and it carries a CUTOFF, because the scan has no memory of its own: it is
+    # ordered by company_id and every run starts from the first id again, so a capped
+    # resolve_all pass would otherwise re-select the same slice on every run instead of
+    # continuing. A company already rewritten at or after the cutoff is skipped.
+    assert (
+        "OR (%(resolve_all)s = 1 AND "
+        f"ifNull(published.resolved_at, {EPOCH_SQL}) < "
+        "parseDateTime64BestEffort(%(resolve_all_before)s, 3, 'UTC'))"
+    ) in sql
+    assert "OR %(resolve_all)s = 1\n" not in sql  # never the memoryless form again
     assert f"%(pending_model_only)s = 1 AND {PENDING_SQL}" in sql
     # ... and, on a model-on ordinary run, "published with several sources but no
     # suggestion" is itself a change -- otherwise nothing about such a company ever
@@ -304,7 +317,9 @@ def test_an_untranslated_scb_company_sends_its_swedish_text_once() -> None:
     """text_sv is added only when it says something the entry's own text does not: an
     untranslated company already sends the Swedish original AS the candidate text."""
     scb = ArtifactRow("scb", "scb:1", "a" * 64, NOW, {
-        "legal_name": "Alpha AB", "legal_name_raw": None, "legal_form_code": "AB",
+        "legal_name": "Alpha AB", "legal_name_raw": None, "legal_form_code": "AB-ORGFO",
+        "legal_form_label_en": "Limited company (aktiebolag)",
+        "legal_form_label_sv": "Aktiebolag",
         "status": "active", "incorporation_date": None, "dissolution_date": None,
         "activity_description": SCB_SWEDISH, "activity_description_en": "",
         "primary_sni_code": "62010", "primary_nace_code": "62.01"})
@@ -395,7 +410,11 @@ def test_initial_load_can_publish_multi_source_companies_without_the_model() -> 
     staged = _final_rows(client)
     assert len(staged) == 1
     assert dict(zip(INSERT_COLUMNS, staged[0], strict=True)) == {
-        "company_id": COMPANY, "legal_name": "Alpha AB", "legal_form_code": "AB",
+        "company_id": COMPANY, "legal_name": "Alpha AB", "legal_form_code": "AB-ORGFO",
+        # Copied from the SCB artifact, which joined the curated dictionary -- the model
+        # writes descriptions, never the name of a legal form.
+        "legal_form_label_en": "Limited company (aktiebolag)",
+        "legal_form_label_sv": "Aktiebolag",
         "status": "active", "incorporation_date": None,
         "description": "Swedish fintech company",
         # SCB contributed a candidate, so its Swedish original is published beside the
@@ -460,7 +479,11 @@ def test_model_pass_records_the_observation_before_publishing_its_description() 
     }
 
     assert dict(zip(INSERT_COLUMNS, _final_rows(client)[0], strict=True)) == {
-        "company_id": COMPANY, "legal_name": "Alpha AB", "legal_form_code": "AB",
+        "company_id": COMPANY, "legal_name": "Alpha AB", "legal_form_code": "AB-ORGFO",
+        # Copied from the SCB artifact, which joined the curated dictionary -- the model
+        # writes descriptions, never the name of a legal form.
+        "legal_form_label_en": "Limited company (aktiebolag)",
+        "legal_form_label_sv": "Aktiebolag",
         "status": "active", "incorporation_date": None,
         "description": "Alpha AB is a Swedish fintech company providing IT consulting.",
         "description_sv": "Alpha AB aer ett svenskt fintechbolag som erbjuder IT-konsulttjaenster.",
@@ -576,6 +599,16 @@ def test_a_model_on_run_also_re_selects_companies_still_owed_a_description() -> 
     # resolve_all is off unless asked for: an ordinary run still resolves only what moved.
     assert model_on["resolve_all"] == 0
     assert _scan_parameters(resolve_all=True)["resolve_all"] == 1
+    # The cutoff is always bound (the predicate parses it whether or not resolve_all is
+    # on, so '' would be a parse error rather than a no-op). Empty config -> the run's own
+    # resolved_at, so nothing THIS run publishes can be selected again by it.
+    assert model_on["resolve_all_before"] == "2026-08-22 12:00:00.000"
+    assert _scan_parameters(resolve_all=True)["resolve_all_before"] == "2026-08-22 12:00:00.000"
+    # An explicit cutoff passes through untouched -- that is how a multi-run pass makes
+    # every run skip what the earlier runs already rewrote.
+    assert _scan_parameters(
+        resolve_all=True, resolve_all_before="2026-08-23 18:30:00"
+    )["resolve_all_before"] == "2026-08-23 18:30:00"
     # Model off: there is nothing to retry, so the term must not select anything.
     assert _scan_parameters(resolve_multi_source_with_llm=False)["include_pending"] == 0
     # The dedicated pass selects exactly those companies through its own branch.
@@ -658,6 +691,11 @@ def test_the_config_caps_the_batch_at_the_query_size_limit() -> None:
         SECompanyInfoConfig(company_batch_size=5_001)
     assert SECompanyInfoConfig().resolve_all is False
     assert SECompanyInfoConfig(resolve_all=True).resolve_all is True
+    # Empty means "this pass is one run": the cutoff falls back to the run's own instant.
+    assert SECompanyInfoConfig().resolve_all_before == ""
+    assert SECompanyInfoConfig(
+        resolve_all=True, resolve_all_before="2026-08-23 18:30:00"
+    ).resolve_all_before == "2026-08-23 18:30:00"
 
 
 def test_an_approval_survives_a_run_that_does_not_call_the_model() -> None:

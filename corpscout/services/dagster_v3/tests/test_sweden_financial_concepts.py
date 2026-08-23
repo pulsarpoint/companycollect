@@ -4,6 +4,7 @@ import dagster as dg
 
 from dagster_v3.defs.sweden_company.translation import (
     LEGAL_FORM_LABEL_EN_BY_CODE,
+    LEGAL_FORM_LABEL_SV_BY_CODE,
     STATUS_REASON_LABEL_EN_BY_CODE,
 )
 from dagster_v3.defs.sweden_financial.concepts import (
@@ -229,3 +230,61 @@ def test_code_label_dictionaries_are_sane() -> None:
         assert code in LEGAL_FORM_LABEL_EN_BY_CODE
     for code in ("VERKUPP-AVORG", "OVERK-AVORG", "KKAV-AVORG", "LIAV-AVORG"):
         assert code in STATUS_REASON_LABEL_EN_BY_CODE
+
+
+# The nine legal-form codes whose English label carries no Swedish term in parentheses to
+# cross-check against, with the official Swedish name each one is pinned to instead:
+#
+#   SE-ORGFO / SCE-ORGFO   the parenthetical is the EU form's abbreviation, not Swedish --
+#                          cross-checked against the SCB twins 43 and 55, whose English
+#                          labels do name "europabolag" and "europakooperativ".
+#   10 / 84                the parenthetical is an English gloss ("sole proprietor",
+#                          "regional authority"), so SCB's own juridisk-form name is used.
+#   98 / 99                no parenthetical at all.
+#   31 / 72 / 87           the parenthetical abbreviates SCB's name with a slash
+#                          ("handels-/kommanditbolag"); the label spells it out.
+_SV_NOT_DERIVABLE_FROM_THE_ENGLISH_PARENTHETICAL = {
+    "SE-ORGFO": "Europabolag",
+    "SCE-ORGFO": "Europakooperativ",
+    "10": "Fysisk person",
+    "31": "Handelsbolag, kommanditbolag",
+    "72": "Övrig stiftelse och fond",
+    "84": "Region",
+    "87": "Offentlig korporation och anstalt",
+    "98": "Övrig svensk juridisk person, bildad enligt särskild lagstiftning",
+    "99": "Juridisk form ej utredd",
+}
+
+
+def test_every_legal_form_code_has_both_labels() -> None:
+    """The Swedish name is the OFFICIAL one and the English label the gloss beside it, so
+    the two dictionaries must describe exactly the same set of codes -- a code seeded with
+    one label and not the other would publish a half-empty legal form on every surface."""
+    assert set(LEGAL_FORM_LABEL_SV_BY_CODE) == set(LEGAL_FORM_LABEL_EN_BY_CODE)
+    for code, label in LEGAL_FORM_LABEL_SV_BY_CODE.items():
+        assert label == label.strip() and label, code
+        assert label[0].isupper(), code  # a proper name, not a sentence fragment
+
+
+def test_swedish_legal_form_labels_match_the_english_labels_parenthetical() -> None:
+    """Each English label keeps the source terminology in parentheses ("Limited company
+    (aktiebolag)"), which is exactly what the Swedish column must say -- so the curation is
+    checked against itself rather than trusted. The nine codes whose parenthetical is not a
+    Swedish term are pinned by hand above instead, one reason each."""
+    for code, english in LEGAL_FORM_LABEL_EN_BY_CODE.items():
+        swedish = LEGAL_FORM_LABEL_SV_BY_CODE[code]
+        if code in _SV_NOT_DERIVABLE_FROM_THE_ENGLISH_PARENTHETICAL:
+            assert swedish == _SV_NOT_DERIVABLE_FROM_THE_ENGLISH_PARENTHETICAL[code], code
+            continue
+        parenthetical = english[english.index("(") + 1 : english.rindex(")")]
+        assert swedish.casefold() == parenthetical.casefold(), code
+
+
+def test_status_reason_labels_have_no_curated_swedish_name() -> None:
+    """The Bolagsverket deregistration-reason codes have no published Swedish name list to
+    curate from, so the seed writes '' for their label_sv rather than inventing one. This
+    test is the reminder: adding LEGAL_FORM_LABEL_SV_BY_CODE's twin for them is a curation
+    task, not a code change."""
+    from dagster_v3.defs.sweden_company import translation
+
+    assert not hasattr(translation, "STATUS_REASON_LABEL_SV_BY_CODE")

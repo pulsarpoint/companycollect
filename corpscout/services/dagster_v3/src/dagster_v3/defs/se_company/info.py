@@ -2,7 +2,11 @@
 
 Inputs: se_company_info_scb (identity, legal name -- authoritative), se_company_info_esef,
 se_company_info_wikidata.
-Rules: info_rules.merge_company_info (pure). A description conflict (several sources
+Rules: info_rules.merge_company_info (pure). Every non-description field is copied from
+its owning source -- the legal-form labels included: corpscout.se_code_labels names the
+code in English and in the official Swedish, the SCB artifact joins both in, and this
+module only carries them across (the model is never asked what a legal form is called).
+A description conflict (several sources
 offer one) is resolved by the model: one request per company listing every candidate,
 cached by input_hash in se_company_info_enrichment_observation; the model's text is
 published with llm_enhanced = true unless a ledger row says otherwise. Which sources
@@ -78,6 +82,16 @@ SE_COMPANY_INFO_CORRECTION = "se_company_info_correction"
 SE_COMPANY_INFO_OBSERVATION = "se_company_info_enrichment_observation"
 # A LEFT JOIN miss reads as this instant, not as a bare NULL comparison.
 EPOCH_SQL = "toDateTime64('1970-01-01 00:00:00', 3, 'UTC')"
+
+
+def _clickhouse_stamp(moment: datetime) -> str:
+    """``moment`` as the millisecond text ClickHouse's parseDateTime64BestEffort reads.
+
+    The scan passes the timezone separately (``, 3, 'UTC'``), so the text itself carries
+    no offset -- a tz-aware datetime is rendered by its own fields, which for the UTC
+    stamps this module works in is already UTC.
+    """
+    return moment.strftime("%Y-%m-%d %H:%M:%S.%f")[:-3]
 # "Still owed a description": several sources offered one, no suggestion has ever been
 # stored for this company -- the initial load ran with the model off, or the model call
 # failed -- and no reviewer decision has been applied to it. Written once and used by
@@ -157,7 +171,8 @@ SELECTION_COLUMNS = ("company_id", *SELECTION_REASONS, "multi_source")
 # This module's WRITE contract: se_company_info insert columns in DDL order (the
 # MATERIALIZED evidence_set_hash is omitted) -- pinned against the migration by the test.
 INSERT_COLUMNS = (
-    "company_id", "legal_name", "legal_form_code", "status", "incorporation_date", "description",
+    "company_id", "legal_name", "legal_form_code", "legal_form_label_en", "legal_form_label_sv",
+    "status", "incorporation_date", "description",
     "description_sv", "description_language", "llm_enhanced", "description_sources",
     "description_source_record_uids",
     "description_source_count", "primary_nace_code", "primary_sni_code", "wikidata_id", "lei",
@@ -359,6 +374,16 @@ def build_changed_companies_sql() -> str:
     disjunct of the ordinary branch only, so it never widens a ``pending_model_only``
     pass, and it is still bounded by ``max_companies`` and paged like any other scan.
 
+    It carries a CUTOFF (``resolve_all_before``) because the scan has no memory of its
+    own: it is ordered by ``company_id`` and every run starts from the first id again,
+    so a pass capped below the table size would re-select the SAME slice on the next run
+    instead of continuing past it (observed in production: two 1M-company runs over a
+    3.5M-row table rewrote exactly the same million ids). A company whose published
+    ``resolved_at`` is already at or after the cutoff has been rewritten by this pass and
+    is skipped, which turns "run it again" into "carry on where it stopped". The cutoff is
+    always bound -- ``parseDateTime64BestEffort`` is parsed whether or not ``resolve_all``
+    is on, so an empty string would be an error rather than a no-op.
+
     One page per call: the LIMIT is the page size and the caller resumes from
     ``after_company_id``, so the scan is never re-run for rows it then throws away.
 
@@ -430,7 +455,7 @@ WHERE (
         (%(pending_model_only)s = 1 AND {PENDING_MODEL_SQL})
      OR (%(pending_model_only)s = 0 AND (
             ifNull(published.company_id, '') = ''
-            OR %(resolve_all)s = 1
+            OR (%(resolve_all)s = 1 AND {published_at} < parseDateTime64BestEffort(%(resolve_all_before)s, 3, 'UTC'))
             OR artifacts.latest_observed_at > ifNull(published.resolved_at, {EPOCH_SQL})
             OR ifNull(ledger.latest_correction_at, {EPOCH_SQL}) > ifNull(published.resolved_at, {EPOCH_SQL})
             OR (%(include_pending)s = 1 AND {PENDING_MODEL_SQL})))
@@ -506,7 +531,8 @@ def _request_description(client: OpenAI, request: Mapping[str, Any], *, provider
 
 def _final_row(outcome: InfoOutcome, *, source_run_id: str, resolved_at: datetime) -> tuple[Any, ...]:
     return (
-        outcome.company_id, outcome.legal_name, outcome.legal_form_code, outcome.status, outcome.incorporation_date,
+        outcome.company_id, outcome.legal_name, outcome.legal_form_code,
+        outcome.legal_form_label_en, outcome.legal_form_label_sv, outcome.status, outcome.incorporation_date,
         outcome.description, outcome.description_sv, outcome.description_language, outcome.llm_enhanced,
         list(outcome.description_sources), list(outcome.description_source_record_uids), len(outcome.description_sources),
         outcome.primary_nace_code, outcome.primary_sni_code, outcome.wikidata_id, outcome.lei,
@@ -726,7 +752,7 @@ def materialize_se_company_info(
     max_companies: int, company_batch_size: int, execute: bool,
     llm_client: OpenAI | None, llm_profile: LlmProfileConfig, log: Callable[..., object] | None,
     resolve_multi_source_with_llm: bool = True, pending_model_only: bool = False,
-    resolve_all: bool = False,
+    resolve_all: bool = False, resolve_all_before: str = "",
 ) -> dict[str, object]:
     """Resolve the changed companies -- or, with ``execute`` false, only say which.
 
@@ -744,6 +770,15 @@ def materialize_se_company_info(
         raise ValueError(
             "A run that resolves multi-source descriptions needs an LLM client built "
             "from its llm profile; build_llm_client resolves the key on the host")
+    # One cutoff for the whole run: every chunk and every page binds this same value, so a
+    # row this run publishes can never be re-selected by a later page of the same run.
+    # Empty config -> the run's own resolved_at, which is the exact instant every row this
+    # run writes carries, so a strict `<` excludes precisely those rows. A multi-run pass
+    # supplies its own, older cutoff and reuses it (see SECompanyInfoConfig).
+    #
+    # Always bound, even with resolve_all off: the scan's parseDateTime64BestEffort is
+    # parsed regardless of the flag beside it, so '' would be an error, not a no-op.
+    resolve_all_cutoff = resolve_all_before.strip() or _clickhouse_stamp(resolved_at)
     scope = normalized_company_ids(company_ids)
     assert_clickhouse_tables_exist(clickhouse, database=DATABASE, tables=(
         *ARTIFACT_TABLES.values(), SE_COMPANY_INFO, SE_COMPANY_INFO_CORRECTION, SE_COMPANY_INFO_OBSERVATION))
@@ -771,6 +806,7 @@ def materialize_se_company_info(
         base = {"all_companies": int(not chunk), "company_ids": chunk or ("",),
                 "pending_model_only": int(pending_model_only),
                 "resolve_all": int(resolve_all),
+                "resolve_all_before": resolve_all_cutoff,
                 # A model-on ordinary run also picks up whatever the model still owes:
                 # with the model off there is nothing to retry, and the pending_model_only
                 # pass already selects exactly those companies through its own branch.
@@ -855,9 +891,19 @@ class SECompanyInfoConfig(dg.Config):
     pending_model_only: bool = False
     # True = re-resolve every in-scope company even though no evidence moved. For rules-only
     # changes (new merge logic, a new artifact column): nothing in the artifacts or the ledger
-    # marks those companies as changed, so an ordinary run would resolve none of them. Still
-    # bounded by max_companies and resumable, so a full sweep can be run in slices.
+    # marks those companies as changed, so an ordinary run would resolve none of them.
     resolve_all: bool = False
+    # The cutoff resolve_all resumes from: a company whose published resolved_at is already
+    # at or after it has been rewritten by this pass and is skipped. ISO-8601 UTC, e.g.
+    # "2026-08-23 18:30:00". Empty means "this pass is one run" -- the cutoff falls back to
+    # the run's own resolved_at, so nothing this run publishes can be selected again.
+    #
+    # A pass that CANNOT fit in one run (max_companies below the table size) must give an
+    # EXPLICIT cutoff -- the instant before the first run started -- and reuse it for every
+    # run of the pass. Without one the scan has no memory: it is ordered by company_id and
+    # every run starts from the first id again, so run 2 re-selects exactly what run 1 just
+    # rewrote (observed in production: two 1M runs over 3.5M rows wrote the same million ids).
+    resolve_all_before: str = ""
 
 
 @dg.asset(
@@ -885,7 +931,8 @@ def se_company_info_clickhouse(context: dg.AssetExecutionContext, config: SEComp
         company_ids=config.company_ids, max_companies=config.max_companies, company_batch_size=config.company_batch_size,
         execute=config.execute, llm_client=llm_client, llm_profile=profile, log=context.log.info,
         resolve_multi_source_with_llm=config.resolve_multi_source_with_llm,
-        pending_model_only=config.pending_model_only, resolve_all=config.resolve_all)
+        pending_model_only=config.pending_model_only, resolve_all=config.resolve_all,
+        resolve_all_before=config.resolve_all_before)
     return dg.MaterializeResult(metadata={**metadata, "table": f"{DATABASE}.{SE_COMPANY_INFO}"})
 
 

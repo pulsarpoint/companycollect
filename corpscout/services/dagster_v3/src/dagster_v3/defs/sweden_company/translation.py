@@ -5,9 +5,16 @@ codes via a curated dictionary table.
 distinct) -> scanned and enqueued to the Go translator service (the sole
 writer of ``text_translations``), exactly the Norway pattern. Legal-form and
 status-reason values are Bolagsverket/SCB CODES, not prose -- an LLM would
-guess -- so they get English labels from the curated in-repo dictionaries
-below, seeded into ``corpscout.se_code_labels`` (migration 000150 owns the
-schema; the ``se_companies_translated`` view joins both sources back).
+guess -- so they get labels from the curated in-repo dictionaries below,
+seeded into ``corpscout.se_code_labels`` (migration 000150 owns the schema,
+000305 adds ``label_sv``; the ``se_companies_translated`` view joins both
+sources back, and the SCB info artifact copies the legal-form pair into
+``se_company_info_scb``).
+
+Legal forms carry BOTH languages: the Swedish name is the official term a
+Swedish-facing surface shows and the English one is the gloss beside it.
+Status reasons carry English only -- there is no published Swedish name list
+for the Bolagsverket deregistration-reason codes to curate from.
 
 Label curation notes: the ``*-ORGFO`` codes are Bolagsverket organisation
 forms and the numeric codes are SCB legal forms (juridisk form); the
@@ -105,6 +112,81 @@ LEGAL_FORM_LABEL_EN_BY_CODE: dict[str, str] = {
     "99": "Legal form not determined",
 }
 
+# The OFFICIAL Swedish name of every legal form, beside the English gloss above --
+# Bolagsverket's organisationsform names for the ``*-ORGFO`` codes and SCB's juridisk-form
+# names for the numeric ones. This is the name a Swedish-facing surface shows; the English
+# label is what stands beside it. Same key set as LEGAL_FORM_LABEL_EN_BY_CODE (pinned by a
+# test), and every entry is cross-checked against the Swedish term the English label keeps
+# in parentheses -- the nine codes whose parenthetical is not a Swedish term (the two EU
+# forms named by their abbreviation, the four glossed in English or not glossed at all, and
+# the three SCB names the English label abbreviates with a slash) are pinned by hand in that
+# same test, one stated reason each.
+#
+# There is deliberately no STATUS_REASON_LABEL_SV_BY_CODE: the Bolagsverket
+# deregistration-reason codes have no published Swedish name list to curate from, so the
+# seed writes '' for their label_sv rather than inventing one.
+LEGAL_FORM_LABEL_SV_BY_CODE: dict[str, str] = {
+    # Bolagsverket organisation forms (…-ORGFO)
+    "AB-ORGFO": "Aktiebolag",
+    "E-ORGFO": "Enskild näringsidkare",
+    "HB-ORGFO": "Handelsbolag",
+    "KB-ORGFO": "Kommanditbolag",
+    "BRF-ORGFO": "Bostadsrättsförening",
+    "EK-ORGFO": "Ekonomisk förening",
+    "FL-ORGFO": "Filial",
+    "I-ORGFO": "Ideell förening",
+    "S-ORGFO": "Stiftelse",
+    "BF-ORGFO": "Bostadsförening",
+    "KHF-ORGFO": "Kooperativ hyresrättsförening",
+    "FAB-ORGFO": "Försäkringsaktiebolag",
+    "SB-ORGFO": "Sparbank",
+    "BFL-ORGFO": "Bankfilial",
+    "OFB-ORGFO": "Ömsesidigt försäkringsbolag",
+    "BAB-ORGFO": "Bankaktiebolag",
+    "TSF-ORGFO": "Trossamfund",
+    "SF-ORGFO": "Sambruksförening",
+    "FOF-ORGFO": "Försäkringsförening",
+    "TPF-ORGFO": "Tjänstepensionsförening",
+    "SE-ORGFO": "Europabolag",
+    "TPAB-ORGFO": "Tjänstepensionsaktiebolag",
+    "SCE-ORGFO": "Europakooperativ",
+    "MB-ORGFO": "Medlemsbank",
+    "OTPB-ORGFO": "Ömsesidigt tjänstepensionsbolag",
+    # SCB legal forms (juridisk form)
+    "10": "Fysisk person",
+    "21": "Enkelt bolag",
+    "22": "Partrederi",
+    "23": "Värdepappersfond",
+    "31": "Handelsbolag, kommanditbolag",
+    "41": "Bankaktiebolag",
+    "42": "Försäkringsaktiebolag",
+    "43": "Europabolag",
+    "49": "Övriga aktiebolag",
+    "51": "Ekonomisk förening",
+    "53": "Bostadsrättsförening",
+    "54": "Kooperativ hyresrättsförening",
+    "55": "Europakooperativ",
+    "61": "Ideell förening",
+    "62": "Samfällighet",
+    "63": "Registrerat trossamfund",
+    "71": "Familjestiftelse",
+    "72": "Övrig stiftelse och fond",
+    "81": "Statlig enhet",
+    "82": "Kommun",
+    "83": "Kommunalförbund",
+    "84": "Region",
+    "87": "Offentlig korporation och anstalt",
+    "88": "Hypoteksförening",
+    "91": "Oskiftat dödsbo",
+    "92": "Ömsesidigt försäkringsbolag",
+    "93": "Sparbank",
+    "94": "Understödsförening",
+    "95": "Arbetslöshetskassa",
+    "96": "Utländsk juridisk person",
+    "98": "Övrig svensk juridisk person, bildad enligt särskild lagstiftning",
+    "99": "Juridisk form ej utredd",
+}
+
 STATUS_REASON_LABEL_EN_BY_CODE: dict[str, str] = {
     "VERKUPP-AVORG": "Deregistered — business ceased (verksamheten upphörd)",
     "OVERK-AVORG": "Deregistered — business transferred (verksamheten överlåten)",
@@ -147,8 +229,9 @@ STATUS_REASON_LABEL_EN_BY_CODE: dict[str, str] = {
     metadata={"table": QUALIFIED_SE_CODE_LABELS_TABLE},
     description=(
         "Seeds corpscout.se_code_labels from the curated in-repo legal-form "
-        "and status-reason dictionaries. ReplacingMergeTree(version) + "
-        "argMax in the consuming view make re-seeding after a label "
+        "and status-reason dictionaries -- legal forms in English AND Swedish, "
+        "status reasons in English only. ReplacingMergeTree(version) + "
+        "argMax in the consumers make re-seeding after a label "
         "correction effective without deletes."
     ),
 )
@@ -160,16 +243,22 @@ def se_code_labels_clickhouse(
         clickhouse, database="corpscout", tables=("se_code_labels",)
     )
     rows = [
-        ("legal_form", code, label)
+        ("legal_form", code, label, LEGAL_FORM_LABEL_SV_BY_CODE[code])
         for code, label in LEGAL_FORM_LABEL_EN_BY_CODE.items()
     ] + [
-        ("status_reason", code, label)
+        # No curated Swedish source for the Bolagsverket deregistration-reason codes, so
+        # their label_sv is written as '' rather than invented -- the same value the
+        # column defaults to, and what every consumer already reads through ifNull.
+        ("status_reason", code, label, "")
         for code, label in STATUS_REASON_LABEL_EN_BY_CODE.items()
     ]
     with clickhouse.get_connection() as client:
+        # version is left to its DEFAULT now(), so every seed is a NEW version of each
+        # code: ReplacingMergeTree(version) plus argMax(version) in the consumers make a
+        # corrected label effective without a delete.
         client.execute(
             f"INSERT INTO {QUALIFIED_SE_CODE_LABELS_TABLE} "
-            "(code_type, code, label_en) VALUES",
+            "(code_type, code, label_en, label_sv) VALUES",
             rows,
         )
     context.log.info("seeded %d code labels", len(rows))
@@ -177,6 +266,7 @@ def se_code_labels_clickhouse(
         metadata={
             "rows": len(rows),
             "legal_form_labels": len(LEGAL_FORM_LABEL_EN_BY_CODE),
+            "legal_form_labels_sv": len(LEGAL_FORM_LABEL_SV_BY_CODE),
             "status_reason_labels": len(STATUS_REASON_LABEL_EN_BY_CODE),
         }
     )

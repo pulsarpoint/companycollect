@@ -60,6 +60,22 @@ def test_scb_select_projects_envelope_then_payload_in_table_order() -> None:
     assert "GROUP BY source_text_hash" in sql
     assert ") AS act ON act.source_text_hash = cityHash64(ifNull(companies.activity_description, ''))" in sql
     assert "ifNull(act.translated_text, '') AS activity_description_en" in sql
+    # The legal-form labels are the curated dictionary's, read exactly the way
+    # corpscout.se_companies_translated reads them: argMax(version) per code, joined on
+    # the raw code (which mixes Bolagsverket -ORGFO text codes with SCB juridisk-form
+    # numbers). Both languages come out of ONE grouped subquery -- two joins to the same
+    # dictionary would scan it twice for no reason. The join miss reads as '' under either
+    # join_use_nulls setting, which is what a code with no curated label means.
+    assert (
+        "SELECT code, argMax(label_en, version) AS label_en, argMax(label_sv, version) AS label_sv\n"
+        "        FROM corpscout.se_code_labels\n"
+        "        WHERE code_type = 'legal_form'\n"
+        "        GROUP BY code"
+    ) in sql
+    assert ") AS lf ON lf.code = ifNull(companies.legal_form_code, '')" in sql
+    assert "ifNull(lf.label_en, '') AS legal_form_label_en" in sql
+    assert "ifNull(lf.label_sv, '') AS legal_form_label_sv" in sql
+    assert sql.count("FROM corpscout.se_code_labels") == 1
     assert "GROUP BY\n        companies.company_id" not in sql  # the wide outer GROUP BY is gone
     assert "NOT EXISTS" not in sql  # dedupe is publish_with_stage's job now
     assert "match(companies.company_id, '^([0-9]{10}|[0-9]{12})$')" in sql
@@ -77,6 +93,10 @@ def test_scb_asset_reads_the_register_and_writes_its_own_table() -> None:
         # The translator service writes corpscout.text_translations outside Dagster; this
         # asset is the one that enqueues the Swedish descriptions and waits for it.
         dg.AssetKey("sweden_company_translation_load"),
+        # The legal-form labels are a curated in-repo fixture; this is the asset that
+        # seeds corpscout.se_code_labels, so a label correction reaches the artifact
+        # through the normal dependency rather than by luck of scheduling order.
+        dg.AssetKey("se_code_labels_clickhouse"),
     }
     assert asset.group_name == "se_company_scb"
     assert asset.metadata["table"] == "corpscout.se_company_info_scb"
@@ -112,7 +132,8 @@ class _FakeClickhouse:
 
 def test_scb_asset_publishes_new_versions_only_via_left_anti_join() -> None:
     client = _FakeClient(
-        existing_tables={"se_companies", "se_industries", "text_translations", "se_company_info_scb"},
+        existing_tables={"se_companies", "se_industries", "text_translations", "se_code_labels",
+                         "se_company_info_scb"},
         answers=[[(2, 0)], [(10,)], [(1,)], [(11,)]],  # staged/invalid, existing, anti-join, total
     )
 

@@ -71,6 +71,11 @@ MIGRATIONS = (
     # SELECT names one explicit language pair and picks argMax(version) itself.
     "000069_corpscout_text_translations_table_column.up.sql",
     "000084_corpscout_se_company_registry.up.sql",
+    # se_code_labels is the curated code -> label dictionary the SCB SELECT joins for the
+    # legal-form labels. 000150 is its CREATE TABLE; the same file's CREATE OR REPLACE VIEW
+    # statements (se_companies_translated, se_financial_concept_labels) are not CREATE/ALTER
+    # TABLE and are filtered out with everything else this pipeline never reads.
+    "000150_corpscout_se_translations.up.sql",
     "000174_corpscout_company_identifier.up.sql",
     "000243_corpscout_esef_source_documents.up.sql",
     "000244_corpscout_company_source_records.up.sql",
@@ -95,11 +100,21 @@ MIGRATIONS = (
 # prove ClickHouse accepts. Applying it with the other DDL would only ever test it against
 # an empty table.
 ENGLISH_MIGRATION = ("000300_corpscout_se_company_info_scb_english.up.sql",)
+# 000305 lands on a se_code_labels the seed asset has already filled, so its rows must read
+# the new column as DEFAULT '' until the asset is re-seeded -- applied after the fixture for
+# that reason, and before the first SCB SELECT, which reads label_sv.
+SWEDISH_LABEL_MIGRATION = ("000305_corpscout_se_code_labels_swedish.up.sql",)
+# ... and 000306 lands on a se_company_info_scb that already holds rows, exactly like 000300:
+# two ADD COLUMNs (the second positioned AFTER the first, in the same statement) plus a
+# MODIFY COLUMN of the MATERIALIZED evidence_hash, v2 -> v3. Applied straight after 000300 so
+# the pair is executed against the pre-existing v1 rows rather than against an empty table.
+LEGAL_FORM_LABEL_MIGRATION = ("000306_corpscout_se_company_info_legal_form_label.up.sql",)
 NEEDED_TABLES = frozenset(
     {
         "se_companies",
         "se_industries",
         "text_translations",
+        "se_code_labels",
         "esef_source_documents",
         "esef_document_company_information",
         "wikidata_companies",
@@ -132,6 +147,18 @@ T_RESOLVED = "now64(3, 'UTC')"
 # real pause. FORMAT Null keeps sleep's own row out of the marked-section stream.
 SETTLE = "SELECT sleep(0.05) FORMAT Null;\n"
 EVIDENCE_HASHES = ("a" * 64, "b" * 64, "c" * 64)
+
+# se_code_labels.version is a plain DateTime (second resolution) whose DEFAULT is now(), so
+# the three seeds below stamp it EXPLICITLY rather than racing inside one second: what is
+# under test is argMax(version) picking the newest curation, not the clock.
+LABEL_V1 = _literal(datetime(2026, 8, 1, tzinfo=UTC))   # English only, pre-000305
+LABEL_V2 = _literal(datetime(2026, 8, 2, tzinfo=UTC))   # the re-seed that adds Swedish
+LABEL_V3 = _literal(datetime(2026, 8, 3, tzinfo=UTC))   # a curation FIX to one Swedish name
+# ALPHA's and GAMMA's forms are named by the curated dictionary; BETA's deliberately is not,
+# so its artifact row exercises the LEFT JOIN miss (both labels '' under either
+# join_use_nulls setting) instead of only the happy path.
+ALPHA_FORM, BETA_FORM, GAMMA_FORM = "AB-ORGFO", "HB-ORGFO", "E-ORGFO"
+GAMMA_FORM_SV, GAMMA_FORM_SV_FIXED = "Enskild naeringsidkare", "Enskild firma"
 
 
 def _schema_statements(migrations: tuple[str, ...]) -> list[str]:
@@ -167,18 +194,23 @@ INSERT INTO corpscout.se_companies
      bolagsverket_source_record_id, bolagsverket_source_payload_hash,
      scb_source_record_id, scb_source_payload_hash, updated_from_raw_at)
 VALUES
-    ('{ALPHA}', '{ALPHA}', 'Alpha AB', 'ALPHA AB', 'AB', 'active',
+    ('{ALPHA}', '{ALPHA}', 'Alpha AB', 'ALPHA AB', '{ALPHA_FORM}', 'active',
      '2001-02-03', 'IT-konsulter.', 'fixture',
      NULL, NULL,
      'scb-1', 'alpha-scb-payload-hash', {T_SEED}),
-    ('{BETA}', '{BETA}', 'Beta AB', 'BETA AB', 'AB', 'active',
+    ('{BETA}', '{BETA}', 'Beta AB', 'BETA AB', '{BETA_FORM}', 'active',
      '1998-06-15', 'Handel med datorer.', 'fixture',
      'bv-2', 'beta-bolagsverket-payload-hash',
      NULL, NULL, {T_SEED}),
-    ('{GAMMA}', '{GAMMA}', 'Gamma Enskild Firma', 'GAMMA ENSKILD FIRMA', 'E', 'active',
+    ('{GAMMA}', '{GAMMA}', 'Gamma Enskild Firma', 'GAMMA ENSKILD FIRMA', '{GAMMA_FORM}', 'active',
      '2010-01-01', 'Snickeri.', 'fixture',
      'bv-3', 'gamma-bolagsverket-payload-hash',
      NULL, NULL, {T_SEED});
+
+INSERT INTO corpscout.se_code_labels (code_type, code, label_en, version)
+VALUES
+    ('legal_form', '{ALPHA_FORM}', 'Limited company (aktiebolag)', {LABEL_V1}),
+    ('legal_form', '{GAMMA_FORM}', 'Sole trader (enskild naeringsidkare)', {LABEL_V1});
 
 INSERT INTO corpscout.se_industries
     (company_id, sequence, is_primary, sni_code, nace_rev2_class_code, source_field,
@@ -247,7 +279,7 @@ INSERT INTO corpscout.se_companies
      bolagsverket_source_record_id, bolagsverket_source_payload_hash,
      scb_source_record_id, scb_source_payload_hash, updated_from_raw_at)
 VALUES
-    ('{ALPHA}', '{ALPHA}', 'Alpha Aktiebolag', 'ALPHA AKTIEBOLAG', 'AB', 'active',
+    ('{ALPHA}', '{ALPHA}', 'Alpha Aktiebolag', 'ALPHA AKTIEBOLAG', '{ALPHA_FORM}', 'active',
      '2001-02-03', 'IT-konsulter och molntjaenster.', 'fixture-v2',
      NULL, NULL,
      'scb-1', 'alpha-scb-payload-hash', {T_CHANGED});
@@ -257,7 +289,11 @@ VALUES
 # v1 evidence_hash was computed without the English text. Written by projecting the current
 # SELECT down to its v1 columns, so no second copy of the SCB SELECT has to be maintained
 # here just to produce them.
-V1_SCB_COLUMNS = tuple(c for c in SE_COMPANY_INFO_SCB_COLUMNS if c != "activity_description_en")
+V1_SCB_COLUMNS = tuple(
+    c
+    for c in SE_COMPANY_INFO_SCB_COLUMNS
+    if c not in ("activity_description_en", "legal_form_label_en", "legal_form_label_sv")
+)
 
 # BETA's description is translated only after the artifact already holds its row -- the
 # translator service runs outside Dagster, so this is the ordinary case, not an edge one.
@@ -281,6 +317,35 @@ VALUES
     ('corpscout.se_companies', 'activity_description', cityHash64('IT-konsulter och molntjaenster.'),
      'sv', 'en', 'IT consultants and cloud services.', 'translator', 'm', 1);
 """.strip()
+
+# What se_code_labels_clickhouse does after 000305: it re-seeds every curated code with a
+# NEW version, now carrying label_sv beside label_en. ReplacingMergeTree(version) plus
+# argMax(version) in the consumers make the newer curation win without a delete, so the
+# older English-only rows simply stop being read.
+CODE_LABELS_SWEDISH_SEED_SQL = f"""
+INSERT INTO corpscout.se_code_labels (code_type, code, label_en, label_sv, version)
+VALUES
+    ('legal_form', '{ALPHA_FORM}', 'Limited company (aktiebolag)', 'Aktiebolag', {LABEL_V2}),
+    ('legal_form', '{GAMMA_FORM}', 'Sole trader (enskild naeringsidkare)', '{GAMMA_FORM_SV}', {LABEL_V2});
+""".strip()
+
+# A curation FIX: one Swedish name is corrected, at a newer version again. Only GAMMA
+# carries that code, so this is the "a label changed" case -- and because 000306 hashes both
+# labels into evidence_hash (v3), it must append exactly one new SCB version.
+LABEL_CORRECTION_SQL = f"""
+INSERT INTO corpscout.se_code_labels (code_type, code, label_en, label_sv, version)
+VALUES
+    ('legal_form', '{GAMMA_FORM}', 'Sole trader (enskild naeringsidkare)', '{GAMMA_FORM_SV_FIXED}', {LABEL_V3});
+""".strip()
+
+CODE_LABELS_SQL = (
+    "SELECT code, label_en, label_sv FROM corpscout.se_code_labels FINAL "
+    "WHERE code_type = 'legal_form' ORDER BY code"
+)
+SCB_LABELS_SQL = (
+    "SELECT company_id, ifNull(legal_form_code, ''), legal_form_label_en, legal_form_label_sv "
+    "FROM corpscout.se_company_info_scb FINAL ORDER BY company_id"
+)
 
 ARTIFACTS = (
     ("se_company_info_scb", SE_COMPANY_INFO_SCB_COLUMNS, SE_COMPANY_INFO_SCB_SQL),
@@ -335,7 +400,8 @@ def _string_array(values: tuple[str, ...]) -> str:
 
 
 # One row shaped like a real info.py `_final_row(...)` tuple, in INSERT_COLUMNS order
-# (imported, never hand-copied). llm_enhanced is `true` here -- the merged text is the
+# (imported, never hand-copied). The two legal-form labels sit between legal_form_code and
+# status, copied from the SCB row exactly as info_rules copies them. llm_enhanced is `true` here -- the merged text is the
 # model's -- and it sits between description_language and description_sources, so a
 # 000304 that positioned the column anywhere else would bind the Bool to a String
 # column and fail the insert outright. description_source_count=2, suggestion_id=NULL and
@@ -344,23 +410,49 @@ def _string_array(values: tuple[str, ...]) -> str:
 # ALPHA carries at that point -- so build_changed_companies_sql must drop ALPHA under
 # default settings and re-select it only when include_pending=1, until pass 5 appends a
 # genuinely newer artifact version.
-_FINAL_ROW_VALUES = (
-    f"'{ALPHA}', 'Alpha AB', 'AB', 'active', '2001-02-03', "
-    "'Alpha builds payment software.', 'Alpha bygger betalprogramvara.', 'en', true, "
-    f"{_string_array(('esef', 'wikidata'))}, {_string_array(('doc-esef-uid', 'wikidata:Q1'))}, 2, "
-    "'62.01', '62010', 'Q1', '5493001KJTIIGC8Y1R12', "
-    f"{_string_array(('scb-uid-1', 'doc-esef-uid', 'wikidata:Q1'))}, {_string_array(EVIDENCE_HASHES)}, "
-    f"[], NULL, 'deterministic', 'se-company-info-rules', 'se-company-info-rules-v1', "
-    f"'{RUN_ID}', {T_RESOLVED}"
+def _final_row_values(company: str, form: str, resolved_at: str) -> str:
+    return (
+        f"'{company}', 'Alpha AB', '{form}', 'Limited company (aktiebolag)', 'Aktiebolag', "
+        "'active', '2001-02-03', "
+        "'Alpha builds payment software.', 'Alpha bygger betalprogramvara.', 'en', true, "
+        f"{_string_array(('esef', 'wikidata'))}, {_string_array(('doc-esef-uid', 'wikidata:Q1'))}, 2, "
+        "'62.01', '62010', 'Q1', '5493001KJTIIGC8Y1R12', "
+        f"{_string_array(('scb-uid-1', 'doc-esef-uid', 'wikidata:Q1'))}, {_string_array(EVIDENCE_HASHES)}, "
+        "[], NULL, 'deterministic', 'se-company-info-rules', 'se-company-info-rules-v1', "
+        f"'{RUN_ID}', {resolved_at}"
+    )
+
+
+def _final_rows_sql(*rows: str) -> str:
+    """Publish `rows` through a stage, the way info.py's publish_with_stage does."""
+    values = ",\n       ".join(f"({row})" for row in rows)
+    return (
+        "CREATE TABLE corpscout._tmp_se_company_info AS corpscout.se_company_info;\n"
+        f"INSERT INTO corpscout._tmp_se_company_info ({', '.join(INSERT_COLUMNS)})\n"
+        f"VALUES {values};\n"
+        f"INSERT INTO corpscout.se_company_info ({', '.join(INSERT_COLUMNS)})\n"
+        f"SELECT {', '.join(INSERT_COLUMNS)} FROM corpscout._tmp_se_company_info;\n"
+        "DROP TABLE corpscout._tmp_se_company_info;\n"
+    )
+
+
+FINAL_ROW_SQL = _final_rows_sql(_final_row_values(ALPHA, ALPHA_FORM, T_RESOLVED))
+
+# The resolve_all cutoff case: two more published rows, one resolved BEFORE the cutoff and
+# one AFTER it. Both stamps are far in the future, so no artifact this script wrote can be
+# newer than either -- the ONLY term that can select them is the resolve_all disjunct, and
+# what separates them is the cutoff alone.
+T_BEFORE_CUTOFF = _literal(datetime(2099, 1, 1, tzinfo=UTC))
+RESOLVE_ALL_CUTOFF = "2099-01-02 00:00:00"
+T_AFTER_CUTOFF = _literal(datetime(2099, 1, 3, tzinfo=UTC))
+CUTOFF_ROWS_SQL = _final_rows_sql(
+    _final_row_values(BETA, BETA_FORM, T_BEFORE_CUTOFF),
+    _final_row_values(GAMMA, GAMMA_FORM, T_AFTER_CUTOFF),
 )
-FINAL_ROW_SQL = (
-    "CREATE TABLE corpscout._tmp_se_company_info AS corpscout.se_company_info;\n"
-    f"INSERT INTO corpscout._tmp_se_company_info ({', '.join(INSERT_COLUMNS)})\n"
-    f"VALUES ({_FINAL_ROW_VALUES});\n"
-    f"INSERT INTO corpscout.se_company_info ({', '.join(INSERT_COLUMNS)})\n"
-    f"SELECT {', '.join(INSERT_COLUMNS)} FROM corpscout._tmp_se_company_info;\n"
-    "DROP TABLE corpscout._tmp_se_company_info;\n"
-)
+# The cutoff that keeps the EARLIER `changed_after_final_resolve_all` marker meaning what it
+# always meant ("resolve_all re-selects a settled company"): later than every resolved_at in
+# play at that point, which is now64 at script time.
+NO_CUTOFF = "2099-12-31 23:59:59"
 
 
 def _marked(label: str, query: str) -> str:
@@ -368,14 +460,23 @@ def _marked(label: str, query: str) -> str:
 
 
 def _changed_params(
-    *, pending_model_only: int, include_pending: int, resolve_all: int = 0
+    *,
+    pending_model_only: int,
+    include_pending: int,
+    resolve_all: int = 0,
+    resolve_all_before: str = NO_CUTOFF,
 ) -> dict[str, object]:
+    """The scan's parameters. ``resolve_all_before`` is ALWAYS bound, resolve_all or not:
+    the predicate's parseDateTime64BestEffort is parsed regardless of the flag beside it,
+    so an empty string would be a query error rather than a no-op -- which is exactly the
+    behaviour this harness has to hold info.py to."""
     return {
         "all_companies": 1,
         "company_ids": ("",),
         "pending_model_only": pending_model_only,
         "include_pending": include_pending,
         "resolve_all": resolve_all,
+        "resolve_all_before": resolve_all_before,
         "after_company_id": "",
         "page_size": 10,
     }
@@ -388,6 +489,14 @@ def _script(*, join_use_nulls: int) -> str:
         parts.append("SET join_use_nulls = 1;")
     parts.append(";\n".join(_schema_statements(MIGRATIONS)) + ";")
     parts.append(FIXTURE)
+
+    # 000305 lands on a se_code_labels the seed asset has already filled (English only):
+    # the existing rows must read label_sv as its DEFAULT '' until the asset runs again.
+    parts.append(";\n".join(_schema_statements(SWEDISH_LABEL_MIGRATION)) + ";")
+    parts.append(_marked("code_labels_before_reseed", CODE_LABELS_SQL))
+    # ... and then the asset runs again, appending a newer version of every curated code.
+    parts.append(CODE_LABELS_SWEDISH_SEED_SQL)
+    parts.append(_marked("code_labels_after_reseed", CODE_LABELS_SQL))
 
     # The live host's starting point: se_company_info_scb already holds v1 rows, and 000300
     # lands on them. Their evidence_hash must survive the ALTER untouched (MODIFY COLUMN of
@@ -407,6 +516,18 @@ def _script(*, join_use_nulls: int) -> str:
         _marked(
             "v1_rows_after_migration",
             "SELECT company_id, toString(evidence_hash), activity_description_en "
+            "FROM corpscout.se_company_info_scb ORDER BY company_id",
+        )
+    )
+    # ... and 000306 straight after it, on the same pre-existing rows: two ADD COLUMNs (the
+    # second positioned AFTER the first, in the same statement) plus MODIFY COLUMN of the
+    # MATERIALIZED evidence_hash, v2 -> v3. It also adds the final's two columns, which
+    # FINAL_ROW_SQL binds positionally further down.
+    parts.append(";\n".join(_schema_statements(LEGAL_FORM_LABEL_MIGRATION)) + ";")
+    parts.append(
+        _marked(
+            "v1_rows_after_label_migration",
+            "SELECT company_id, toString(evidence_hash), legal_form_label_en, legal_form_label_sv "
             "FROM corpscout.se_company_info_scb ORDER BY company_id",
         )
     )
@@ -430,6 +551,7 @@ def _script(*, join_use_nulls: int) -> str:
             "FROM corpscout.se_company_info_scb FINAL ORDER BY company_id",
         )
     )
+    parts.append(_marked("scb_labels", SCB_LABELS_SQL))
 
     # Nothing published yet: every company with an artifact row is "changed".
     parts.append(
@@ -525,6 +647,17 @@ def _script(*, join_use_nulls: int) -> str:
         )
     )
 
+    # Pass 6: a CURATION FIX. The dictionary is re-seeded with a corrected Swedish name for
+    # GAMMA's legal form and nothing else changes anywhere. Because 000306 hashes both labels
+    # into evidence_hash, exactly one new SCB version is appended -- for GAMMA alone -- and
+    # the corrected name is what FINAL reads. Under a v2 hash the fix would never leave the
+    # dictionary.
+    parts.append(LABEL_CORRECTION_SQL)
+    parts.append(SETTLE)
+    parts.append(_publish_pass(scb_table, scb_columns, scb_sql, render_params))
+    parts.append(_marked("counts_after_label_correction", COUNTS_SQL))
+    parts.append(_marked("scb_labels_after_correction", SCB_LABELS_SQL))
+
     rows_sql = _render(build_artifact_rows_sql(), {"company_ids": (ALPHA,)})
     parts.append(
         _marked(
@@ -534,7 +667,9 @@ def _script(*, join_use_nulls: int) -> str:
             "JSONExtractString(payload_json, 'incorporation_date'), "
             "JSONExtractString(payload_json, 'dissolution_date'), "
             "JSONExtractString(payload_json, 'primary_sni_code'), "
-            "JSONExtractString(payload_json, 'activity_description_en') "
+            "JSONExtractString(payload_json, 'activity_description_en'), "
+            "JSONExtractString(payload_json, 'legal_form_label_en'), "
+            "JSONExtractString(payload_json, 'legal_form_label_sv') "
             f"FROM ({rows_sql}) ORDER BY source",
         )
     )
@@ -542,6 +677,13 @@ def _script(*, join_use_nulls: int) -> str:
         _marked(
             "final_description",
             "SELECT ifNull(description, ''), ifNull(description_sv, '') "
+            f"FROM corpscout.se_company_info FINAL WHERE company_id = '{ALPHA}'",
+        )
+    )
+    parts.append(
+        _marked(
+            "final_legal_form",
+            "SELECT ifNull(legal_form_code, ''), legal_form_label_en, legal_form_label_sv "
             f"FROM corpscout.se_company_info FINAL WHERE company_id = '{ALPHA}'",
         )
     )
@@ -566,6 +708,38 @@ def _script(*, join_use_nulls: int) -> str:
         _marked(
             "evidence_set_hash",
             f"SELECT toString(evidence_set_hash) FROM corpscout.se_company_info FINAL WHERE company_id = '{ALPHA}'",
+        )
+    )
+
+    # Last: resolve_all's CUTOFF, the thing that gives a capped sweep a memory. BETA and
+    # GAMMA are published with far-future resolved_at stamps straddling the cutoff, so no
+    # artifact can be newer than either and the resolve_all disjunct is the only term that
+    # can select them -- BETA (before the cutoff) is, GAMMA (after it) is not. The control
+    # scan below, same cutoff with resolve_all off, selects neither.
+    parts.append(SETTLE)
+    parts.append(CUTOFF_ROWS_SQL)
+    parts.append(
+        _marked(
+            "resolve_all_with_cutoff",
+            _render(
+                build_changed_companies_sql(),
+                _changed_params(
+                    pending_model_only=0, include_pending=0, resolve_all=1,
+                    resolve_all_before=RESOLVE_ALL_CUTOFF,
+                ),
+            ),
+        )
+    )
+    parts.append(
+        _marked(
+            "resolve_all_off_with_cutoff",
+            _render(
+                build_changed_companies_sql(),
+                _changed_params(
+                    pending_model_only=0, include_pending=0, resolve_all=0,
+                    resolve_all_before=RESOLVE_ALL_CUTOFF,
+                ),
+            ),
         )
     )
     return "\n".join(parts) + "\n"
@@ -611,12 +785,97 @@ def test_000300_alters_a_table_that_already_holds_v1_rows(
     assert [row[2] for row in sections["v1_rows_after_migration"]] == ["", "", ""]
 
 
-def test_the_next_run_appends_v2_versions_carrying_the_english_description(
+def test_000305_alters_a_dictionary_that_already_holds_rows(
     sections: dict[str, list[list[str]]],
 ) -> None:
-    """v2 hashes the English text, so every company is re-appended once -- with a strictly
-    newer observed_at than the v1 row it supersedes, which is what makes FINAL keep it (and
-    what makes the change scan see it). No ReplacingMergeTree version tie is involved."""
+    """The live upgrade path for the FIXTURE table: 000305 lands on a se_code_labels the
+    seed asset has already filled. Its rows must read the new column as DEFAULT '' -- and
+    then the asset's next seed, one INSERT at a newer version, is what actually fills it
+    (ReplacingMergeTree(version), no delete anywhere)."""
+    assert sections["code_labels_before_reseed"] == [
+        [ALPHA_FORM, "Limited company (aktiebolag)", ""],
+        [GAMMA_FORM, "Sole trader (enskild naeringsidkare)", ""],
+    ]
+    assert sections["code_labels_after_reseed"] == [
+        [ALPHA_FORM, "Limited company (aktiebolag)", "Aktiebolag"],
+        [GAMMA_FORM, "Sole trader (enskild naeringsidkare)", GAMMA_FORM_SV],
+    ]
+
+
+def test_000306_alters_a_table_that_already_holds_rows(
+    sections: dict[str, list[list[str]]],
+) -> None:
+    """The live upgrade path 000306 has to survive: two ADD COLUMNs -- the second positioned
+    AFTER the first, in the SAME statement -- plus MODIFY COLUMN of the MATERIALIZED
+    evidence_hash, on a se_company_info_scb that already holds rows. The script would have
+    failed outright had ClickHouse 26.5 rejected that combination, so reaching these rows is
+    itself the acceptance proof; what is asserted here is that the rows came through
+    unchanged -- old parts keep the hash they were written with, and both new columns read
+    as DEFAULT ''."""
+    before = {row[0]: row[1] for row in sections["v1_rows_after_migration"]}
+    after = {row[0]: row[1] for row in sections["v1_rows_after_label_migration"]}
+    assert after == before
+    assert [(row[2], row[3]) for row in sections["v1_rows_after_label_migration"]] == [
+        ("", ""), ("", ""), ("", "")
+    ]
+
+
+def test_both_legal_form_labels_round_trip_from_the_curated_dictionary(
+    sections: dict[str, list[list[str]]],
+) -> None:
+    """What Task 19 exists for: the artifact copies BOTH labels off se_code_labels, keyed by
+    a legal_form_code that mixes Bolagsverket text codes with SCB numbers. BETA's form is
+    deliberately absent from the dictionary, so its row proves the LEFT JOIN miss reads as
+    '' rather than as NULL or as a dropped company -- under either join_use_nulls setting,
+    which is why this file runs the whole script twice."""
+    assert sections["scb_labels"] == [
+        # ORDER BY company_id is a String sort, so the 12-digit sole trader comes first.
+        [GAMMA, GAMMA_FORM, "Sole trader (enskild naeringsidkare)", GAMMA_FORM_SV],
+        [BETA, BETA_FORM, "", ""],
+        [ALPHA, ALPHA_FORM, "Limited company (aktiebolag)", "Aktiebolag"],
+    ]
+
+
+def test_a_label_correction_appends_exactly_one_new_version(
+    sections: dict[str, list[list[str]]],
+) -> None:
+    """The reason both labels are inside evidence_hash (v3): re-seeding the curated
+    dictionary with a corrected Swedish name has to reach the published artifact. Only
+    GAMMA carries the corrected code, so exactly one version is appended -- a label fix is
+    not a 3.5M-row rewrite."""
+    before = _counts(sections["counts_after_alpha_translation"])
+    after = _counts(sections["counts_after_label_correction"])
+    assert after["se_company_info_scb"] == before["se_company_info_scb"] + 1
+    assert after["se_company_info_esef"] == before["se_company_info_esef"]
+    assert after["se_company_info_wikidata"] == before["se_company_info_wikidata"]
+
+    corrected = {row[0]: (row[2], row[3]) for row in sections["scb_labels_after_correction"]}
+    assert corrected[GAMMA] == ("Sole trader (enskild naeringsidkare)", GAMMA_FORM_SV_FIXED)
+    # Nobody else moved: ALPHA keeps its labels and BETA keeps its two empty ones.
+    assert corrected[ALPHA] == ("Limited company (aktiebolag)", "Aktiebolag")
+    assert corrected[BETA] == ("", "")
+
+
+def test_the_final_row_carries_both_legal_form_labels(
+    sections: dict[str, list[list[str]]],
+) -> None:
+    """000306's two String columns take values through the same positional INSERT_COLUMNS
+    list info.py binds to. They sit between legal_form_code and status -- all three
+    Strings -- so a column declared anywhere else than INSERT_COLUMNS names would not
+    reject the insert, it would silently transpose the three values. Hence reading them
+    back by name."""
+    assert sections["final_legal_form"] == [
+        [ALPHA_FORM, "Limited company (aktiebolag)", "Aktiebolag"]
+    ]
+
+
+def test_the_next_run_appends_upgraded_versions_carrying_the_new_columns(
+    sections: dict[str, list[list[str]]],
+) -> None:
+    """v3 hashes the English text (000300) and both legal-form labels (000306), so every
+    company is re-appended once -- with a strictly newer observed_at than the v1 row it
+    supersedes, which is what makes FINAL keep it (and what makes the change scan see it).
+    No ReplacingMergeTree version tie is involved."""
     v1 = {row[0]: (row[1], row[2]) for row in sections["v1_rows"]}
     versions: dict[str, list[tuple[str, str, str]]] = {}
     for company, evidence_hash, english, observed_at in sections["scb_versions"]:
@@ -689,6 +948,27 @@ def test_a_translation_arriving_after_publication_re_selects_the_company(
     assert {row[0] for row in sections["changed_after_alpha_translation"]} == {ALPHA, BETA, GAMMA}
 
 
+def test_resolve_all_skips_companies_already_rewritten_past_its_cutoff(
+    sections: dict[str, list[list[str]]],
+) -> None:
+    """The production bug this cutoff exists for: the scan is ordered by company_id and
+    every run starts from the first id again, so a resolve_all pass capped below the table
+    size re-selected the SAME slice on the next run instead of continuing past it. With a
+    cutoff, a company already rewritten at or after it is skipped.
+
+    BETA and GAMMA are published with far-future stamps straddling the cutoff, so nothing
+    else in the scan can select them: BETA (resolved BEFORE the cutoff) comes back, GAMMA
+    (resolved AFTER it) does not. ALPHA is in the set for its own reason -- pass 5 appended
+    an artifact version newer than its resolution -- which the control scan below shows.
+    """
+    with_resolve_all = {row[0] for row in sections["resolve_all_with_cutoff"]}
+    without = {row[0] for row in sections["resolve_all_off_with_cutoff"]}
+    assert GAMMA not in with_resolve_all
+    assert BETA in with_resolve_all and BETA not in without
+    assert with_resolve_all - without == {BETA}  # the cutoff branch added exactly BETA
+    assert without == {ALPHA}
+
+
 def test_resolve_all_re_selects_settled_companies(sections: dict[str, list[list[str]]]) -> None:
     """For a rules-only change -- new merge logic, a new artifact column -- nothing about a
     company's evidence moved, so only resolve_all can bring it back."""
@@ -722,6 +1002,9 @@ def test_artifact_rows_sql_returns_one_row_per_source_for_alpha(
     # so this row could not exist at all if the expressions were the other way round.
     scb_row = next(row for row in rows if row[0] == "scb")
     is_valid_json, date_type, incorporation_date, dissolution_date, sni_code, english = scb_row[3:9]
+    # info_rules copies both labels off this map, so they have to survive the round trip
+    # through toJSONString(map(...)) as ordinary Strings.
+    assert scb_row[9:11] == ["Limited company (aktiebolag)", "Aktiebolag"]
     # info_rules reads this key and prefers it over the Swedish text: ALPHA's newest SCB
     # version is the changed payload, and its own translation is what the payload carries.
     assert english == "IT consultants and cloud services."
