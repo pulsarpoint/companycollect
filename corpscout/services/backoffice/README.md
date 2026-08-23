@@ -8,7 +8,6 @@ reading source observations and resolved projections from ClickHouse.
 ```bash
 pnpm install
 cp .env.example .env   # fill CLICKHOUSE_PASSWORD from corpscout/.env
-pnpm provision:clickhouse-writer # once, after ClickHouse migrations 241 and 269
 pnpm dev               # http://localhost:5183
 ```
 
@@ -18,8 +17,9 @@ pnpm dev               # http://localhost:5183
 - `pnpm build` / `pnpm start` — production build / serve (port 3000)
 - `pnpm typecheck` — react-router typegen + tsc
 - `pnpm test` — vitest (integration tests hit the real ClickHouse from .env)
-- `pnpm provision:clickhouse-writer` — create/update the dedicated ClickHouse
-  user named by `CLICKHOUSE_WRITE_USER` and grant only the correction-writer role
+- `pnpm temporal:people-worker` — run the durable Swedish Draft 1, Draft 2,
+  and person-profile LLM worker; it must share the backoffice data directory
+  and LLM environment
 
 ## Structure
 
@@ -37,6 +37,42 @@ pnpm dev               # http://localhost:5183
 - `app/routes.ts` — `/` redirects to `/companies` (unified list); the
   company detail page is `/company/{country_code}/{id}`.
 
+## Running the Sweden people Temporal worker
+
+The backoffice only submits workflows. A separate long-lived Temporal worker
+executes Draft 1 rebuilds, Draft 2 rebuilds, and bulk person-profile LLM
+enhancement.
+
+Configure `.env` first. The worker uses the same ClickHouse, DuckDB, SQLite,
+LLM provider, and API-key environment as the backoffice. At minimum, verify the
+Temporal connection:
+
+```dotenv
+TEMPORAL_ADDRESS=companycollect:7233
+TEMPORAL_NAMESPACE=corpscout
+TEMPORAL_PEOPLE_TASK_QUEUE=backoffice-sweden-people
+TEMPORAL_PEOPLE_WORKER_ACTIVITY_SLOTS=4
+```
+
+Run the worker in a separate terminal from the backoffice server:
+
+```bash
+cd corpscout/services/backoffice
+pnpm install
+pnpm temporal:people-worker
+```
+
+Keep this process running while people-processing workflows are active. A
+successfully started worker logs `state: 'RUNNING'` and the task queue
+`backoffice-sweden-people`. If the worker is stopped, Temporal retains queued
+and running workflow state; processing resumes when a compatible worker starts
+again.
+
+The worker and backoffice must use the same `data/sweden` directory. Draft data
+is stored in `people-draft.duckdb`, while UI-facing job progress and saved LLM
+responses are stored in `people-curation.sqlite`. Stop the local worker with
+Ctrl-C; Temporal performs a graceful drain before exit.
+
 ## Person identities and corrections
 
 Person URLs use the stable country-scoped `person_id`, not a name. Names remain
@@ -53,11 +89,8 @@ user-authentication layer, so new correction rows use `backoffice` as their
 `decided_by` source. Before enabling writes:
 
 1. Apply ClickHouse migration 241.
-2. Put a unique writer username and a random password of at least 16 characters
-   in `CLICKHOUSE_WRITE_USER` and `CLICKHOUSE_WRITE_PASSWORD`.
-3. Run `pnpm provision:clickhouse-writer` with an administrative
-   `CLICKHOUSE_USER`/`CLICKHOUSE_PASSWORD`.
-4. Restart the backoffice with the writer variables configured.
+2. Correction-ledger writes use the same `CLICKHOUSE_USER`/`CLICKHOUSE_PASSWORD`
+   as reads (the Dagster pipelines' account); no separate writer user.
 
 ## Domain-suggestion reviews
 

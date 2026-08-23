@@ -6,7 +6,7 @@ export default defineConfig({
   server: { port: 5183 },
   plugins: [tailwindcss(), reactRouter()],
   optimizeDeps: {
-    exclude: ["react-leaflet", "@react-leaflet/core"],
+    exclude: ["react-leaflet", "@react-leaflet/core", "@duckdb/node-api"],
     include: ["leaflet"],
   },
   resolve: {

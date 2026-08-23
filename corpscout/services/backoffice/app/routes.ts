@@ -88,4 +88,52 @@ export default [
     // Old bookmarks: /financials/country/:c still lands on the country page.
     route("financials/country/:country", "routes/financials-country.tsx"),
   ]),
+  route("admin", "routes/admin-layout.tsx", [
+    index("routes/admin-index.tsx"),
+    route("general/roles", "routes/admin-general-roles.tsx"),
+    route("settings/llms", "routes/admin-settings-llms.tsx"),
+    route("se/people", "routes/admin-se-people.tsx"),
+    route(
+      "se/people/person/:companyId/:personId",
+      "routes/admin-se-people-person.tsx",
+    ),
+    route(
+      "se/company/:companyId/info",
+      "routes/admin-se-company-info.tsx",
+    ),
+    route("se/company-info", "routes/admin-se-company-info-table.tsx"),
+    route(
+      "se/company-info/corrections",
+      "routes/admin-se-company-info-corrections.tsx",
+    ),
+    route(
+      "se/company-info/pipeline",
+      "routes/admin-se-company-info-pipeline.tsx",
+    ),
+    route(
+      "se/people/llm-input/:draftTwoId",
+      "routes/admin-se-people-llm-input.tsx",
+    ),
+    route(
+      "se/people/draft-1-job",
+      "routes/admin-se-people-draft-job.ts",
+    ),
+    route(
+      "se/people/draft-2-job",
+      "routes/admin-se-people-draft-two-job.ts",
+    ),
+    route(
+      "se/people/llm-bulk-job",
+      "routes/admin-se-people-llm-bulk-job.ts",
+    ),
+    route(
+      "se/people/stale-corrections",
+      "routes/admin-se-people-stale-corrections.tsx",
+    ),
+    route("se/people/sources", "routes/admin-se-people-sources.tsx"),
+    route(
+      "se/people/sources/:sourceName",
+      "routes/admin-se-people-source.tsx",
+    ),
+  ]),
 ] satisfies RouteConfig;

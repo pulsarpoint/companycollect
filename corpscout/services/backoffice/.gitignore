@@ -7,3 +7,5 @@
 /build/
 
 .cache/
+.playwright-cli/
+__pycache__/
