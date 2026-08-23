@@ -189,8 +189,8 @@ def test_changed_companies_sql_compares_artifact_versions_and_ledger_with_the_fi
     assert sql.count(PENDING_SQL) == 3
     # A company that already carries an applied correction is NOT pending: a reviewer
     # has decided its description and the model would only be overridden again. Keyed
-    # on the applied-correction list, never on description_source -- reject_suggestion
-    # leaves that at the deterministic source. Array columns are never Nullable, so a
+    # on the applied-correction list, never on llm_enhanced -- reject_suggestion leaves
+    # that flag down, exactly as a never-modelled row has it. Array columns are never Nullable, so a
     # LEFT JOIN miss is [] under either join_use_nulls setting (and ifNull on a
     # non-Nullable Array is a type error).
     assert "length(published.correction_ids) = 0" in sql
@@ -329,7 +329,7 @@ def test_the_request_is_the_same_before_and_after_the_model_has_answered() -> No
     outcome = _outcome()
     answered = replace(
         outcome, description="Merged text", description_sv="Sammanslagen text",
-        description_source="llm", description_language="en", suggestion_id=uuid.uuid4(),
+        llm_enhanced=True, description_language="en", suggestion_id=uuid.uuid4(),
         model_provider="deepseek", model_name="deepseek-v4-flash", prompt_version="x")
     assert build_description_request(answered, _profile("m")) == build_description_request(outcome, _profile("m"))
     assert input_hash_for(build_description_request(answered, _profile("m")), DESCRIPTION_PROMPT_VERSION) == (
@@ -401,7 +401,9 @@ def test_initial_load_can_publish_multi_source_companies_without_the_model() -> 
         # SCB contributed a candidate, so its Swedish original is published beside the
         # English pick even though the model never ran.
         "description_sv": SCB_SWEDISH, "description_language": "en",
-        "description_source": "wikidata", "description_sources": ["wikidata", "scb"],
+        # Copied from Wikidata, the highest-priority candidate -- the model never ran,
+        # so nothing about this row is the model's.
+        "llm_enhanced": False, "description_sources": ["wikidata", "scb"],
         "description_source_record_uids": ["wikidata:Q1", f"scb:{COMPANY}"],
         "description_source_count": 2, "primary_nace_code": "62.01", "primary_sni_code": "62010",
         "wikidata_id": "Q1", "lei": None,
@@ -462,7 +464,7 @@ def test_model_pass_records_the_observation_before_publishing_its_description() 
         "status": "active", "incorporation_date": None,
         "description": "Alpha AB is a Swedish fintech company providing IT consulting.",
         "description_sv": "Alpha AB aer ett svenskt fintechbolag som erbjuder IT-konsulttjaenster.",
-        "description_language": "en", "description_source": "llm",
+        "description_language": "en", "llm_enhanced": True,
         "description_sources": ["wikidata", "scb"],
         "description_source_record_uids": ["wikidata:Q1", f"scb:{COMPANY}"],
         "description_source_count": 2, "primary_nace_code": "62.01", "primary_sni_code": "62010",
@@ -507,10 +509,10 @@ def test_one_unusable_model_reply_only_costs_its_own_company() -> None:
     failed, succeeded = (dict(zip(INSERT_COLUMNS, row, strict=True)) for row in _final_rows(client))
     assert failed["company_id"] == COMPANY
     assert failed["description"] == "Swedish fintech company"      # deterministic pick
-    assert failed["description_source"] == "wikidata" and failed["suggestion_id"] is None
+    assert failed["llm_enhanced"] is False and failed["suggestion_id"] is None
     assert failed["model_provider"] == "deterministic"
     assert succeeded["company_id"] == OTHER_COMPANY
-    assert succeeded["description_source"] == "llm" and succeeded["suggestion_id"] is not None
+    assert succeeded["llm_enhanced"] is True and succeeded["suggestion_id"] is not None
 
 
 def test_the_change_scan_is_paged_and_stops_on_a_short_page() -> None:
@@ -693,7 +695,9 @@ def test_an_approval_survives_a_run_that_does_not_call_the_model() -> None:
     row = dict(zip(INSERT_COLUMNS, _final_rows(client)[0], strict=True))
     assert row["description"] == "Alpha AB builds payment software in Sweden."
     assert row["description_sv"] == "Alpha AB bygger betalprogramvara i Sverige."
-    assert row["description_source"] == "reviewed" and row["description_language"] == "en"
+    # Approved, but the text is still the model's -- and the reviewer's involvement is
+    # what correction_ids below records.
+    assert row["llm_enhanced"] is True and row["description_language"] == "en"
     assert row["suggestion_id"] == suggestion_id and row["correction_ids"] == [correction_id]
     assert row["model_provider"] == "fake-provider" and row["model_name"] == "stored-model"
 

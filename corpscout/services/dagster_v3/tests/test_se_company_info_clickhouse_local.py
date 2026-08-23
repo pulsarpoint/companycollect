@@ -46,6 +46,7 @@ from dagster_v3.defs.se_company.wikidata import (
     SE_COMPANY_INFO_WIKIDATA_COLUMNS,
     SE_COMPANY_INFO_WIKIDATA_SQL,
 )
+from tests.se_company_ddl import declared_columns
 from tests.test_se_company_person_clickhouse_local import _clickhouse_local_command, _literal, _render
 
 pytestmark = pytest.mark.integration
@@ -82,6 +83,11 @@ MIGRATIONS = (
     # applied with the rest of the DDL rather than late like 000300, because it lands on
     # the final (empty here until FINAL_ROW_SQL) and not on the SCB artifact 000300 alters.
     "000301_corpscout_se_company_info_description_sv.up.sql",
+    # 000304 adds se_company_info.llm_enhanced and drops description_source -- the pair
+    # INSERT_COLUMNS below is derived from. Applied with the rest for the same reason as
+    # 000301: it lands on the final, which is empty until FINAL_ROW_SQL, not on the SCB
+    # artifact whose live upgrade 000300 has to demonstrate against existing rows.
+    "000304_corpscout_se_company_info_llm_enhanced.up.sql",
 )
 # Applied later in the script than the rest, on purpose: on the live host 000300 lands on
 # a se_company_info_scb that already holds 3.5M v1 rows, and "ALTER ... MODIFY COLUMN of a
@@ -329,7 +335,10 @@ def _string_array(values: tuple[str, ...]) -> str:
 
 
 # One row shaped like a real info.py `_final_row(...)` tuple, in INSERT_COLUMNS order
-# (imported, never hand-copied). description_source_count=2, suggestion_id=NULL and
+# (imported, never hand-copied). llm_enhanced is `true` here -- the merged text is the
+# model's -- and it sits between description_language and description_sources, so a
+# 000304 that positioned the column anywhere else would bind the Bool to a String
+# column and fail the insert outright. description_source_count=2, suggestion_id=NULL and
 # correction_ids=[] together satisfy info.py's PENDING_MODEL_SQL, and resolved_at
 # (T_RESOLVED = now64, inserted after a SETTLE) is later than every artifact observed_at
 # ALPHA carries at that point -- so build_changed_companies_sql must drop ALPHA under
@@ -337,7 +346,7 @@ def _string_array(values: tuple[str, ...]) -> str:
 # genuinely newer artifact version.
 _FINAL_ROW_VALUES = (
     f"'{ALPHA}', 'Alpha AB', 'AB', 'active', '2001-02-03', "
-    "'Alpha builds payment software.', 'Alpha bygger betalprogramvara.', 'en', 'llm', "
+    "'Alpha builds payment software.', 'Alpha bygger betalprogramvara.', 'en', true, "
     f"{_string_array(('esef', 'wikidata'))}, {_string_array(('doc-esef-uid', 'wikidata:Q1'))}, 2, "
     "'62.01', '62010', 'Q1', '5493001KJTIIGC8Y1R12', "
     f"{_string_array(('scb-uid-1', 'doc-esef-uid', 'wikidata:Q1'))}, {_string_array(EVIDENCE_HASHES)}, "
@@ -538,6 +547,23 @@ def _script(*, join_use_nulls: int) -> str:
     )
     parts.append(
         _marked(
+            "final_llm_enhanced",
+            "SELECT toUInt8(llm_enhanced) FROM corpscout.se_company_info FINAL "
+            f"WHERE company_id = '{ALPHA}'",
+        )
+    )
+    # What ClickHouse itself says the final's columns are, after every migration this
+    # script applied -- the only place the DDL replay in tests/se_company_ddl.py is
+    # checked against a real server rather than against itself.
+    parts.append(
+        _marked(
+            "final_columns",
+            "SELECT name FROM system.columns WHERE database = 'corpscout' "
+            "AND table = 'se_company_info' ORDER BY position",
+        )
+    )
+    parts.append(
+        _marked(
             "evidence_set_hash",
             f"SELECT toString(evidence_set_hash) FROM corpscout.se_company_info FINAL WHERE company_id = '{ALPHA}'",
         )
@@ -717,3 +743,26 @@ def test_the_final_row_carries_both_description_languages(sections: dict[str, li
     assert sections["final_description"] == [
         ["Alpha builds payment software.", "Alpha bygger betalprogramvara."]
     ]
+
+
+def test_the_final_row_round_trips_the_llm_enhanced_flag(sections: dict[str, list[list[str]]]) -> None:
+    """000304's Bool takes a value through the same positional INSERT_COLUMNS list info.py
+    binds to. The flag sits between two String columns, so a column declared in a
+    different place than INSERT_COLUMNS names would not merely transpose values here --
+    it would reject the insert, and the script would never reach this assertion."""
+    assert sections["final_llm_enhanced"] == [["1"]]
+
+
+def test_the_deployed_final_columns_are_what_the_ddl_replay_says(
+    sections: dict[str, list[list[str]]],
+) -> None:
+    """tests/se_company_ddl.py replays the later ALTERs (000301's ADD, 000304's ADD and
+    DROP) on top of 000297's CREATE TABLE to say what the deployed table looks like. Here
+    ClickHouse answers the same question after actually executing them, so a replay that
+    silently mis-parses a clause -- an ``AFTER`` it failed to see, a ``DROP COLUMN`` it
+    ignored -- is caught rather than agreeing with itself."""
+    assert [row[0] for row in sections["final_columns"]] == declared_columns("se_company_info")
+    # ... and the two facts the replay exists to carry, spelled out.
+    names = [row[0] for row in sections["final_columns"]]
+    assert names[names.index("description_language") + 1] == "llm_enhanced"
+    assert "description_source" not in names

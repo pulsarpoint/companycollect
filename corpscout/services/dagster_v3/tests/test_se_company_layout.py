@@ -67,9 +67,14 @@ def test_final_table_ends_with_provenance() -> None:
     block = table_block("se_company_info")
 
     assert columns[0] == "company_id"
-    after_description_source = columns.index("description_source") + 1
-    assert columns[after_description_source : after_description_source + 3] == [
-        "description_sources", "description_source_record_uids", "description_source_count"]
+    # 000304 replaced the single description_source label with the llm_enhanced flag,
+    # in that same slot: the description block still runs language -> flag -> the list
+    # of every source that contributed and how many there were.
+    after_description_language = columns.index("description_language") + 1
+    assert columns[after_description_language : after_description_language + 4] == [
+        "llm_enhanced", "description_sources", "description_source_record_uids",
+        "description_source_count"]
+    assert "description_source" not in columns
     assert tuple(columns[-len(FINAL_PROVENANCE):]) == FINAL_PROVENANCE
     assert "evidence_set_hash FixedString(64) MATERIALIZED" in block
     assert "arraySort(arrayMap(x -> toString(x), evidence_hashes))" in block
@@ -130,3 +135,55 @@ def test_the_final_carries_both_description_languages_from_000301() -> None:
     assert "description_sv String" not in up
     # 000301 touches the final only -- the artifacts keep their own columns.
     assert "se_company_info_scb" not in up and "se_company_info_scb" not in down
+
+
+def _statements(sql: str) -> str:
+    """`sql` with its comment lines removed -- what ClickHouse would actually execute."""
+    return "\n".join(line for line in sql.splitlines() if not line.strip().startswith("--"))
+
+
+def test_the_final_flags_llm_written_text_from_000304() -> None:
+    """The owner's 2026-08-23 decision: keep every description source and where it came
+    from (description_sources / description_source_record_uids / the artifact rows), keep
+    the model's suggestions, and drop the single description_source label in favour of one
+    boolean -- did the published text come out of the model or not. Reviewer involvement
+    stays visible through correction_ids, so no 'reviewed' label is needed either."""
+    up = (MIGRATIONS_DIR / "000304_corpscout_se_company_info_llm_enhanced.up.sql").read_text()
+    down = (MIGRATIONS_DIR / "000304_corpscout_se_company_info_llm_enhanced.down.sql").read_text()
+
+    assert "ADD COLUMN IF NOT EXISTS llm_enhanced Bool DEFAULT false AFTER description_language" in up
+    assert "DROP COLUMN IF EXISTS description_source" in up
+    # Two statements, add before drop: llm_enhanced is positioned against a column the
+    # same migration is about to remove, so the order is load-bearing.
+    assert up.count("ALTER TABLE corpscout.se_company_info") == 2
+    assert up.index("ADD COLUMN IF NOT EXISTS llm_enhanced") < up.index("DROP COLUMN IF EXISTS description_source")
+
+    # The down file is the exact inverse, in the mirrored order.
+    assert "ADD COLUMN IF NOT EXISTS description_source LowCardinality(String) AFTER description_language" in down
+    assert "DROP COLUMN IF EXISTS llm_enhanced" in down
+    assert down.index("ADD COLUMN IF NOT EXISTS description_source") < down.index("DROP COLUMN IF EXISTS llm_enhanced")
+
+    # Asserted against the STATEMENTS, not the files: both carry a long comment block
+    # that names the columns and types deliberately left alone.
+    statements, down_statements = (_statements(text) for text in (up, down))
+    # DEFAULT false, never Nullable: every row answers the question, and the rows written
+    # before this migration answer it with "no" until they are resolved again.
+    assert "Nullable" not in statements
+    # 000304 touches the final only -- the artifacts and the ledger keep their columns.
+    for other in ("se_company_info_scb", "se_company_info_esef", "se_company_info_wikidata",
+                  "se_company_info_correction", "se_company_info_enrichment_observation"):
+        assert other not in statements and other not in down_statements
+    # The columns the flag does NOT replace: where each description came from is still
+    # recorded, per source and per source record.
+    for kept in ("description_sources", "description_source_record_uids", "description_source_count"):
+        assert kept not in statements and kept not in down_statements
+
+
+def test_declared_columns_replays_a_dropped_column() -> None:
+    """``declared_columns`` is the tests' picture of the DEPLOYED table, so a migration
+    that drops a column has to be replayed as faithfully as one that adds one -- 000304
+    does both in one file, and the add is positioned against the column the drop removes."""
+    columns = declared_columns("se_company_info")
+    assert "llm_enhanced" in columns and "description_source" not in columns
+    # The drop is narrow: the three columns whose names merely start the same way stay.
+    assert {"description_sources", "description_source_record_uids", "description_source_count"} <= set(columns)

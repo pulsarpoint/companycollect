@@ -41,7 +41,13 @@ class InfoOutcome:
     # (its description came from Wikidata/ESEF only).
     description_sv: str | None
     description_language: str
-    description_source: str
+    # Did the PUBLISHED text come out of the model? True for the model's merged summary
+    # and for an approved suggestion; false for anything copied from an input (the
+    # deterministic multi-source pick included), for a reviewer's own wording, after a
+    # rejection, and when there is no text at all. Where each candidate came from is
+    # recorded separately (description_sources / description_source_record_uids), and
+    # reviewer involvement in correction_ids -- this flag answers one question only.
+    llm_enhanced: bool
     description_sources: tuple[str, ...]
     description_source_record_uids: tuple[str, ...]
     primary_nace_code: str
@@ -175,9 +181,9 @@ def merge_company_info(company_id: str, rows: Sequence[ArtifactRow]) -> InfoOutc
     # candidate either.
     description_sv = _text(scb.values.get("activity_description"))
 
-    description, language, source = None, "", ""
+    description, language = None, ""
     if candidates:
-        source, _, description, language = candidates[0]  # copied when single; provisional when several
+        _, _, description, language = candidates[0]  # copied when single; provisional when several
     needs_model = len(candidates) > 1
 
     used = [row for row in (scb, esef, wikidata) if row is not None]
@@ -190,7 +196,8 @@ def merge_company_info(company_id: str, rows: Sequence[ArtifactRow]) -> InfoOutc
         description=description,
         description_sv=description_sv,
         description_language=language,
-        description_source=source,
+        # The merge only ever copies: the model runs later, in info.py.
+        llm_enhanced=False,
         description_sources=tuple(c[0] for c in candidates),
         description_source_record_uids=tuple(c[1] for c in candidates),
         primary_nace_code=str(scb.values.get("primary_nace_code") or ""),
@@ -232,7 +239,8 @@ def apply_info_ledger(
     applied. Anything else is malformed.
 
     ``approve_suggestion`` publishes both of the stored suggestion's languages with
-    ``description_source = "reviewed"`` and ``suggestion_id`` set -- unless
+    ``llm_enhanced = True`` (the text is the model's, whoever approved it) and
+    ``suggestion_id`` set -- unless
     the stored suggestion has no non-empty ``description`` string, in which
     case the correction is treated as stale (nothing sensible to approve). A
     suggestion with no Swedish half (one recorded before the bilingual prompt)
@@ -240,7 +248,8 @@ def apply_info_ledger(
     ``description_sv`` in an override payload does.
     ``reject_suggestion`` discards it, falls back to the highest-priority
     deterministic candidate (text and language alike) together with the
-    deterministic Swedish text, and clears ``suggestion_id``. Both share an
+    deterministic Swedish text, and clears ``suggestion_id`` and
+    ``llm_enhanced``. Both share an
     ``INFO_KIND_ORDER`` rank, so between them "later" (by ``created_at``) wins.
 
     Both ``reject_suggestion`` and ``override_field`` also reset
@@ -274,7 +283,9 @@ def apply_info_ledger(
                 # Absent -> whatever this outcome already carries; present (null included)
                 # -> the reviewer's decision.
                 description_sv=_text(values[1]) if len(values) > 1 else outcome.description_sv,
-                description_source="reviewed",
+                # The reviewer typed this text, so it is not the model's -- however the
+                # row got here (a model answer earlier in the same resolution included).
+                llm_enhanced=False,
                 suggestion_id=None,
                 needs_model=False,
                 model_provider="deterministic",
@@ -309,7 +320,8 @@ def apply_info_ledger(
                     description=approved_text,
                     description_sv=outcome.description_sv if approved_sv is None else approved_sv,
                     description_language=str(suggestion.suggestion.get("language") or outcome.description_language),
-                    description_source="reviewed",
+                    # Approved, but still the model's text.
+                    llm_enhanced=True,
                     suggestion_id=suggestion_id,
                     needs_model=False,
                     model_provider=suggestion.model_provider,
@@ -334,7 +346,8 @@ def apply_info_ledger(
                     needs_model=False,
                     description=fallback[2] if fallback else outcome.description,
                     description_sv=outcome.description_sv_candidate,
-                    description_source=fallback[0] if fallback else outcome.description_source,
+                    # Back to a copied candidate, so the flag goes down with the text.
+                    llm_enhanced=False,
                     description_language=fallback_language,
                     model_provider="deterministic",
                     model_name="rejected-suggestion",

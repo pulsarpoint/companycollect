@@ -20,24 +20,31 @@ def table_block(table: str) -> str:
     return sql[start : sql.index(";", start) + 1]
 
 
-def _added_columns(table: str) -> list[tuple[str, str | None]]:
-    """``(column, after)`` for every ``ADD COLUMN`` a migration later than 000297 aims at `table`.
+def _column_changes(table: str) -> list[tuple[str, str, str | None]]:
+    """``(op, column, after)`` for every ADD/DROP COLUMN a migration later than 000297
+    aims at `table`, in ledger order -- ``op`` is ``"add"`` or ``"drop"``, and ``after``
+    is only ever set on an add.
 
     The pilot's tables outgrew their first migration (000300 adds
-    ``se_company_info_scb.activity_description_en``), and what these tests pin is the
-    *deployed* column list, not 000297's snapshot of it -- so ``declared_columns``
-    replays later ADD COLUMNs rather than each test hard-coding what they added.
-    Migration file names sort in ledger order (zero-padded), and only ADD COLUMN is
-    replayed: ADD CONSTRAINT (000299) and MODIFY COLUMN (000300) change no column list.
+    ``se_company_info_scb.activity_description_en``; 000304 adds
+    ``se_company_info.llm_enhanced`` and drops ``description_source``), and what these
+    tests pin is the *deployed* column list, not 000297's snapshot of it -- so
+    ``declared_columns`` replays the later ALTERs rather than each test hard-coding what
+    they changed. Migration file names sort in ledger order (zero-padded), and only ADD
+    COLUMN / DROP COLUMN are replayed: ADD CONSTRAINT (000299) and MODIFY COLUMN (000300)
+    change no column list. Order is preserved ACROSS the two kinds, not just within one:
+    000304 positions its new column against a column its own next statement removes.
 
     Format this relies on, for whoever writes the next ALTER: one clause per line, the
-    line starting with ``ADD COLUMN`` (optionally ``IF NOT EXISTS``) followed by the
-    column name, and ``AFTER <column>`` -- if the position matters -- ending that same
-    line (a trailing comma is fine). A clause wrapped across lines, or an ``AFTER`` that
-    is not last on its line, is read as "appended at the end" and the layout test will
-    say so.
+    line starting with ``ADD COLUMN`` (optionally ``IF NOT EXISTS``) or ``DROP COLUMN``
+    (optionally ``IF EXISTS``) followed by the column name, and -- for an add whose
+    position matters -- ``AFTER <column>`` ending that same line (a trailing comma is
+    fine). A clause wrapped across lines, or an ``AFTER`` that is not last on its line,
+    is read as "appended at the end" and the layout test will say so. ``DROP
+    CONSTRAINT`` (000299) is not ``DROP COLUMN`` and is ignored, as is anything in a
+    ``.down.sql`` file: only ``*.up.sql`` is replayed.
     """
-    added: list[tuple[str, str | None]] = []
+    changes: list[tuple[str, str, str | None]] = []
     for path in sorted(MIGRATIONS_DIR.glob("[0-9]*.up.sql")):
         if path.name <= MIGRATION:
             continue
@@ -46,28 +53,36 @@ def _added_columns(table: str) -> list[tuple[str, str | None]]:
             if not re.search(rf"ALTER TABLE corpscout\.{table}\b", statement):
                 continue
             for line in statement.splitlines():
-                name = re.match(r"\s*ADD COLUMN(?: IF NOT EXISTS)? ([a-z_0-9]+) ", line)
-                if name:
+                added = re.match(r"\s*ADD COLUMN(?: IF NOT EXISTS)? ([a-z_0-9]+) ", line)
+                if added:
                     after = re.search(r" AFTER ([a-z_0-9]+),?\s*$", line)
-                    added.append((name.group(1), after.group(1) if after else None))
-    return added
+                    changes.append(("add", added.group(1), after.group(1) if after else None))
+                    continue
+                dropped = re.match(r"\s*DROP COLUMN(?: IF EXISTS)? ([a-z_0-9]+),?\s*$", line)
+                if dropped:
+                    changes.append(("drop", dropped.group(1), None))
+    return changes
 
 
 def declared_columns(table: str) -> list[str]:
-    """Column names in deployed DDL order: 000297's own, then later ADD COLUMNs in place.
+    """Column names in deployed DDL order: 000297's own, then later ALTERs replayed in place.
 
     000297's are the lines indented by exactly four spaces before the CONSTRAINT/engine part;
-    a later ADD COLUMN lands right after the column its ``AFTER`` names (last, without one).
+    a later ADD COLUMN lands right after the column its ``AFTER`` names (last, without one),
+    and a later DROP COLUMN removes one. Both are replayed in ledger order, so an add
+    positioned against a column a later statement drops still lands where it belongs.
     """
     names = []
     for line in table_block(table).splitlines():
         match = re.match(r"^    ([a-z_0-9]+) ", line)
         if match:
             names.append(match.group(1))
-    for column, after in _added_columns(table):
-        if column in names:
-            continue
-        names.insert(names.index(after) + 1 if after in names else len(names), column)
+    for op, column, after in _column_changes(table):
+        if op == "drop":
+            if column in names:
+                names.remove(column)
+        elif column not in names:  # IF NOT EXISTS: a re-added column keeps its place
+            names.insert(names.index(after) + 1 if after in names else len(names), column)
     return names
 
 

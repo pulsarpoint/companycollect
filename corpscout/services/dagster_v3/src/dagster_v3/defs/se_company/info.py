@@ -5,7 +5,9 @@ se_company_info_wikidata.
 Rules: info_rules.merge_company_info (pure). A description conflict (several sources
 offer one) is resolved by the model: one request per company listing every candidate,
 cached by input_hash in se_company_info_enrichment_observation; the model's text is
-published with description_source = 'llm' unless a ledger row says otherwise.
+published with llm_enhanced = true unless a ledger row says otherwise. Which sources
+offered a description is recorded separately (description_sources /
+description_source_record_uids) and is never about who wrote the published text.
 Languages: every row carries both, description (English) and description_sv (Swedish).
 Deterministically the Swedish one is SCB's own verksamhetsbeskrivning; when the model
 runs it writes both from the same facts in one call (000301, prompt version v3).
@@ -82,9 +84,9 @@ EPOCH_SQL = "toDateTime64('1970-01-01 00:00:00', 3, 'UTC')"
 # both branches of the change scan.
 #
 # The correction_ids test is what keeps a reviewed company out: `reject_suggestion`
-# clears suggestion_id and leaves description_source at the deterministic source, so
-# the row is indistinguishable from a never-modelled one by its description columns
-# alone; its applied-correction list is the honest signal. Array columns cannot be
+# clears suggestion_id and leaves llm_enhanced down, so the row is indistinguishable
+# from a never-modelled one by its description columns alone; its applied-correction
+# list is the honest signal. Array columns cannot be
 # Nullable, so a LEFT JOIN miss yields [] under either join_use_nulls setting and the
 # length test needs no ifNull (which would in fact be a type error here).
 MULTI_SOURCE_SQL = "ifNull(published.description_source_count, 0) > 1"
@@ -156,7 +158,7 @@ SELECTION_COLUMNS = ("company_id", *SELECTION_REASONS, "multi_source")
 # MATERIALIZED evidence_set_hash is omitted) -- pinned against the migration by the test.
 INSERT_COLUMNS = (
     "company_id", "legal_name", "legal_form_code", "status", "incorporation_date", "description",
-    "description_sv", "description_language", "description_source", "description_sources",
+    "description_sv", "description_language", "llm_enhanced", "description_sources",
     "description_source_record_uids",
     "description_source_count", "primary_nace_code", "primary_sni_code", "wikidata_id", "lei",
     "source_record_uids", "evidence_hashes", "correction_ids", "suggestion_id",
@@ -505,7 +507,7 @@ def _request_description(client: OpenAI, request: Mapping[str, Any], *, provider
 def _final_row(outcome: InfoOutcome, *, source_run_id: str, resolved_at: datetime) -> tuple[Any, ...]:
     return (
         outcome.company_id, outcome.legal_name, outcome.legal_form_code, outcome.status, outcome.incorporation_date,
-        outcome.description, outcome.description_sv, outcome.description_language, outcome.description_source,
+        outcome.description, outcome.description_sv, outcome.description_language, outcome.llm_enhanced,
         list(outcome.description_sources), list(outcome.description_source_record_uids), len(outcome.description_sources),
         outcome.primary_nace_code, outcome.primary_sni_code, outcome.wikidata_id, outcome.lei,
         list(outcome.source_record_uids), list(outcome.evidence_hashes), list(outcome.correction_ids),
@@ -689,7 +691,7 @@ def _resolve_page(
                                   description_sv=str(result.suggestion.get("description_sv") or "").strip()
                                   or outcome.description_sv,
                                   description_language=str(result.suggestion.get("language") or "en"),
-                                  description_source="llm", suggestion_id=result.suggestion_id,
+                                  llm_enhanced=True, suggestion_id=result.suggestion_id,
                                   model_provider=result.model_provider, model_name=result.model_name,
                                   prompt_version=result.prompt_version)
         outcome = apply_info_ledger(outcome, ledger_by_company.get(item.company_id, []),
