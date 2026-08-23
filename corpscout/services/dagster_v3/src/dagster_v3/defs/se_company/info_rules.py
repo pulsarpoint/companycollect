@@ -35,6 +35,11 @@ class InfoOutcome:
     status: str
     incorporation_date: date | None
     description: str | None
+    # The Swedish half of the published pair: SCB's own verksamhetsbeskrivning
+    # deterministically, the model's Swedish summary once it has answered, whatever a
+    # reviewer decided after that. None means the company has no Swedish text at all
+    # (its description came from Wikidata/ESEF only).
+    description_sv: str | None
     description_language: str
     description_source: str
     description_sources: tuple[str, ...]
@@ -48,6 +53,10 @@ class InfoOutcome:
     needs_model: bool = False
     description_candidates: tuple[tuple[str, str, str], ...] = ()  # (source, source_record_uid, text)
     description_candidate_languages: tuple[str, ...] = ()  # parallel to description_candidates
+    # The deterministic value of description_sv, kept beside it and never mutated by a
+    # correction -- reject_suggestion restores the pair from here, exactly as it restores
+    # the English text from description_candidates[0].
+    description_sv_candidate: str | None = None
     correction_ids: tuple[uuid.UUID, ...] = ()
     stale_correction_ids: tuple[uuid.UUID, ...] = ()
     suggestion_id: uuid.UUID | None = None
@@ -93,7 +102,12 @@ def merge_company_info(company_id: str, rows: Sequence[ArtifactRow]) -> InfoOutc
     """Merge one company's artifact rows into a final outcome.
 
     Every non-description field is copied as-is from its owning source's
-    newest row. Description candidates are gathered from every source with a
+    newest row. ``description_sv`` is SCB's Swedish original (the register's own
+    verksamhetsbeskrivning, never the translation) whenever the register has one, and
+    None otherwise -- a Wikidata/ESEF-only description has no Swedish half. When two or
+    more sources force the model in, it overwrites both languages at once (info.py).
+
+    Description candidates are gathered from every source with a
     non-empty description (newest row per source, SCB's in English when the
     translator has rendered it): zero candidates publish nothing, exactly one
     is copied as-is, two or more always need the model
@@ -154,6 +168,13 @@ def merge_company_info(company_id: str, rows: Sequence[ArtifactRow]) -> InfoOutc
         ))
     candidates.sort(key=lambda item: DESCRIPTION_PRIORITY.index(item[0]))
 
+    # SCB is the only Swedish-language source, and it is always present (the merge
+    # returns None above without it), so this covers every deterministic case at once:
+    # the Swedish original when the register has one, None when it does not -- including
+    # the "SCB row exists but carries no description" case, where SCB contributes no
+    # candidate either.
+    description_sv = _text(scb.values.get("activity_description"))
+
     description, language, source = None, "", ""
     if candidates:
         source, _, description, language = candidates[0]  # copied when single; provisional when several
@@ -167,6 +188,7 @@ def merge_company_info(company_id: str, rows: Sequence[ArtifactRow]) -> InfoOutc
         status=str(scb.values.get("status") or ""),
         incorporation_date=_date(scb.values.get("incorporation_date")),
         description=description,
+        description_sv=description_sv,
         description_language=language,
         description_source=source,
         description_sources=tuple(c[0] for c in candidates),
@@ -180,6 +202,7 @@ def merge_company_info(company_id: str, rows: Sequence[ArtifactRow]) -> InfoOutc
         needs_model=needs_model,
         description_candidates=tuple((src, uid, text) for src, uid, text, _ in candidates),
         description_candidate_languages=tuple(c[3] for c in candidates),
+        description_sv_candidate=description_sv,
     )
 
 
@@ -202,14 +225,20 @@ def apply_info_ledger(
       legal name is SCB's -- an unknown field, or a non-string/non-null
       description) -> silently skipped: neither applied nor counted as stale.
 
-    ``approve_suggestion`` publishes the stored suggestion's description with
+    An ``override_field`` payload is ``{"description"}`` or
+    ``{"description", "description_sv"}``: the English text is always required, the
+    Swedish one is optional and its ABSENCE means "leave the Swedish text as computed"
+    (deterministic or model-written), while a present ``None`` is a decision and is
+    applied. Anything else is malformed.
+
+    ``approve_suggestion`` publishes both of the stored suggestion's languages with
     ``description_source = "reviewed"`` and ``suggestion_id`` set -- unless
     the stored suggestion has no non-empty ``description`` string, in which
     case the correction is treated as stale (nothing sensible to approve).
     ``reject_suggestion`` discards it, falls back to the highest-priority
-    deterministic candidate (text and language alike), and clears
-    ``suggestion_id``. Both share an ``INFO_KIND_ORDER`` rank, so between
-    them "later" (by ``created_at``) wins.
+    deterministic candidate (text and language alike) together with the
+    deterministic Swedish text, and clears ``suggestion_id``. Both share an
+    ``INFO_KIND_ORDER`` rank, so between them "later" (by ``created_at``) wins.
 
     Both ``reject_suggestion`` and ``override_field`` also reset
     ``model_provider``/``model_name``/``prompt_version`` to fixed
@@ -229,14 +258,19 @@ def apply_info_ledger(
             stale.append(correction.correction_id)
             continue
         if correction.kind == "override_field":
-            if set(correction.payload) != {"description"}:
-                continue  # malformed: legal_name (SCB's only) or an unknown field
-            value = correction.payload["description"]
-            if value is not None and not isinstance(value, str):
-                continue  # malformed: description must be str or null
+            if set(correction.payload) not in ({"description"}, {"description", "description_sv"}):
+                continue  # malformed: legal_name (SCB's only), an unknown field, or no description
+            values = [correction.payload["description"]]
+            if "description_sv" in correction.payload:
+                values.append(correction.payload["description_sv"])
+            if any(value is not None and not isinstance(value, str) for value in values):
+                continue  # malformed: each description must be str or null
             outcome = replace(
                 outcome,
-                description=_text(value),
+                description=_text(values[0]),
+                # Absent -> whatever this outcome already carries; present (null included)
+                # -> the reviewer's decision.
+                description_sv=_text(values[1]) if len(values) > 1 else outcome.description_sv,
                 description_source="reviewed",
                 suggestion_id=None,
                 needs_model=False,
@@ -265,6 +299,11 @@ def apply_info_ledger(
                 outcome = replace(
                     outcome,
                     description=approved_text,
+                    # A suggestion without a usable Swedish half publishes none: it answered
+                    # a request this pipeline no longer makes (the prompt version is part of
+                    # input_hash), so inventing one from SCB would pair the model's English
+                    # with someone else's Swedish.
+                    description_sv=_text(suggestion.suggestion.get("description_sv")),
                     description_language=str(suggestion.suggestion.get("language") or outcome.description_language),
                     description_source="reviewed",
                     suggestion_id=suggestion_id,
@@ -290,6 +329,7 @@ def apply_info_ledger(
                     suggestion_id=None,
                     needs_model=False,
                     description=fallback[2] if fallback else outcome.description,
+                    description_sv=outcome.description_sv_candidate,
                     description_source=fallback[0] if fallback else outcome.description_source,
                     description_language=fallback_language,
                     model_provider="deterministic",

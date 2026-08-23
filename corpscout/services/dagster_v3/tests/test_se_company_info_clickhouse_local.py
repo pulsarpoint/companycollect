@@ -78,6 +78,10 @@ MIGRATIONS = (
     "000281_corpscout_se_company_presentation_fields.up.sql",
     "000297_corpscout_se_company_info.up.sql",
     "000299_corpscout_se_company_info_sole_traders.up.sql",
+    # 000301 adds se_company_info.description_sv, which INSERT_COLUMNS below names: it is
+    # applied with the rest of the DDL rather than late like 000300, because it lands on
+    # the final (empty here until FINAL_ROW_SQL) and not on the SCB artifact 000300 alters.
+    "000301_corpscout_se_company_info_description_sv.up.sql",
 )
 # Applied later in the script than the rest, on purpose: on the live host 000300 lands on
 # a se_company_info_scb that already holds 3.5M v1 rows, and "ALTER ... MODIFY COLUMN of a
@@ -333,7 +337,7 @@ def _string_array(values: tuple[str, ...]) -> str:
 # genuinely newer artifact version.
 _FINAL_ROW_VALUES = (
     f"'{ALPHA}', 'Alpha AB', 'AB', 'active', '2001-02-03', "
-    "'Alpha builds payment software.', 'en', 'llm', "
+    "'Alpha builds payment software.', 'Alpha bygger betalprogramvara.', 'en', 'llm', "
     f"{_string_array(('esef', 'wikidata'))}, {_string_array(('doc-esef-uid', 'wikidata:Q1'))}, 2, "
     "'62.01', '62010', 'Q1', '5493001KJTIIGC8Y1R12', "
     f"{_string_array(('scb-uid-1', 'doc-esef-uid', 'wikidata:Q1'))}, {_string_array(EVIDENCE_HASHES)}, "
@@ -527,6 +531,13 @@ def _script(*, join_use_nulls: int) -> str:
     )
     parts.append(
         _marked(
+            "final_description",
+            "SELECT ifNull(description, ''), ifNull(description_sv, '') "
+            f"FROM corpscout.se_company_info FINAL WHERE company_id = '{ALPHA}'",
+        )
+    )
+    parts.append(
+        _marked(
             "evidence_set_hash",
             f"SELECT toString(evidence_set_hash) FROM corpscout.se_company_info FINAL WHERE company_id = '{ALPHA}'",
         )
@@ -697,3 +708,12 @@ def test_artifact_rows_sql_returns_one_row_per_source_for_alpha(
 def test_final_row_evidence_set_hash_matches_info_rules(sections: dict[str, list[list[str]]]) -> None:
     expected = evidence_set_hash_for(EVIDENCE_HASHES)
     assert sections["evidence_set_hash"] == [[expected]]
+
+
+def test_the_final_row_carries_both_description_languages(sections: dict[str, list[list[str]]]) -> None:
+    """000301's Nullable(String) column takes a value through the same positional
+    INSERT_COLUMNS list info.py binds to -- if description_sv were declared in a different
+    place than INSERT_COLUMNS names, the two texts would come back transposed."""
+    assert sections["final_description"] == [
+        ["Alpha builds payment software.", "Alpha bygger betalprogramvara."]
+    ]

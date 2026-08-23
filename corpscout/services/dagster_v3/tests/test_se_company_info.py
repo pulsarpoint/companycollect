@@ -62,8 +62,8 @@ def _scb_row(company_id: str, description: str = "IT-konsulter.") -> tuple:
         json.dumps({
             "legal_name": "Alpha AB", "legal_name_raw": "", "legal_form_code": "AB",
             "status": "active", "incorporation_date": "", "dissolution_date": "",
-            "activity_description": description, "primary_sni_code": "62010",
-            "primary_nace_code": "62.01"}),
+            "activity_description": description, "activity_description_en": "",
+            "primary_sni_code": "62010", "primary_nace_code": "62.01"}),
     )
 
 
@@ -85,8 +85,8 @@ def _outcome():
     scb = ArtifactRow("scb", "scb:1", "a" * 64, NOW, {
         "legal_name": "Alpha AB", "legal_name_raw": None, "legal_form_code": "AB",
         "status": "active", "incorporation_date": None, "dissolution_date": None,
-        "activity_description": "IT-konsulter.", "primary_sni_code": "62010",
-        "primary_nace_code": "62.01"})
+        "activity_description": "IT-konsulter.", "activity_description_en": "",
+        "primary_sni_code": "62010", "primary_nace_code": "62.01"})
     wiki = ArtifactRow("wikidata", "wikidata:Q1", "c" * 64, NOW, {
         "wikidata_id": "Q1", "wikidata_url": "", "name": "Alpha", "official_name": None,
         "company_description": "Swedish fintech company", "inception_date": None,
@@ -119,6 +119,7 @@ class FakeLlm:
 
 GOOD_REPLY = json.dumps({
     "description": "Alpha AB is a Swedish fintech company providing IT consulting.",
+    "description_sv": "Alpha AB aer ett svenskt fintechbolag som erbjuder IT-konsulttjaenster.",
     "language": "en", "rationale": "both sources"})
 
 
@@ -228,25 +229,40 @@ def test_description_request_is_json_only_and_lists_every_source() -> None:
     assert payload["company_id"] == COMPANY and payload["legal_name"] == "Alpha AB"
     assert [c["source"] for c in payload["sources"]] == ["wikidata", "scb"]
     assert request["response_format"] == {"type": "json_object"} and request["temperature"] == 0
-    assert "untrusted" in request["messages"][0]["content"].lower()
+    system = request["messages"][0]["content"]
+    assert "untrusted" in system.lower()
+    # One call, two languages: the prompt has to ask for both AND bind them to the same
+    # facts -- two independently written summaries would publish a company that says
+    # different things depending on which column a surface reads.
+    assert '"description_sv"' in system
+    assert "English" in system and "Swedish" in system
+    assert "same facts" in system
 
 
 def test_parse_description_suggestion_validates_shape() -> None:
     suggestion = parse_description_suggestion(
         '{"description": "Alpha AB is a Swedish fintech company offering IT consulting.",'
+        ' "description_sv": "Alpha AB aer ett svenskt fintechbolag.",'
         ' "language": "en", "rationale": "both"}'
     )
     assert isinstance(suggestion, DescriptionSuggestion) and suggestion.language == "en"
+    assert suggestion.description_sv == "Alpha AB aer ett svenskt fintechbolag."
     for bad in (
-        '{"description": "", "language": "en", "rationale": ""}',
-        '{"description": "ok", "language": "EN", "rationale": ""}',   # two letters, but not a code
-        '{"description": "ok", "language": "en", "extra": 1}',        # extra="forbid"
+        '{"description": "", "description_sv": "sv", "language": "en", "rationale": ""}',
+        '{"description": "ok", "description_sv": "", "language": "en", "rationale": ""}',
+        # Both languages are required: a reply with only the English half would publish a
+        # company whose Swedish column silently reverts to whatever SCB happened to say.
+        '{"description": "ok", "language": "en", "rationale": ""}',
+        '{"description": "ok", "description_sv": "sv", "language": "EN"}',  # two letters, not a code
+        '{"description": "ok", "description_sv": "sv", "language": "en", "extra": 1}',  # extra="forbid"
         "no json here",
         None,
     ):
         with pytest.raises(ValueError):
             parse_description_suggestion(bad)
-    assert DESCRIPTION_PROMPT_VERSION == "se-company-info-description-v2"
+    # v3: the prompt asks for both languages, so every v2 suggestion answers a request
+    # this pipeline no longer makes (input_hash covers the prompt version).
+    assert DESCRIPTION_PROMPT_VERSION == "se-company-info-description-v3"
 
 
 def test_initial_load_can_publish_multi_source_companies_without_the_model() -> None:
@@ -284,7 +300,10 @@ def test_initial_load_can_publish_multi_source_companies_without_the_model() -> 
     assert dict(zip(INSERT_COLUMNS, staged[0], strict=True)) == {
         "company_id": COMPANY, "legal_name": "Alpha AB", "legal_form_code": "AB",
         "status": "active", "incorporation_date": None,
-        "description": "Swedish fintech company", "description_language": "en",
+        "description": "Swedish fintech company",
+        # SCB contributed a candidate, so its Swedish original is published beside the
+        # English pick even though the model never ran.
+        "description_sv": "IT-konsulter.", "description_language": "en",
         "description_source": "wikidata", "description_sources": ["wikidata", "scb"],
         "description_source_record_uids": ["wikidata:Q1", f"scb:{COMPANY}"],
         "description_source_count": 2, "primary_nace_code": "62.01", "primary_sni_code": "62010",
@@ -334,6 +353,7 @@ def test_model_pass_records_the_observation_before_publishing_its_description() 
         "company_id": COMPANY,
         "suggestion": json.dumps({
             "description": "Alpha AB is a Swedish fintech company providing IT consulting.",
+            "description_sv": "Alpha AB aer ett svenskt fintechbolag som erbjuder IT-konsulttjaenster.",
             "language": "en", "rationale": "both sources"}, ensure_ascii=False),
         "raw_response": GOOD_REPLY, "model_provider": "fake-provider", "model_name": "fake-model",
         "prompt_version": DESCRIPTION_PROMPT_VERSION, "prompt_tokens": 11, "completion_tokens": 7,
@@ -344,6 +364,7 @@ def test_model_pass_records_the_observation_before_publishing_its_description() 
         "company_id": COMPANY, "legal_name": "Alpha AB", "legal_form_code": "AB",
         "status": "active", "incorporation_date": None,
         "description": "Alpha AB is a Swedish fintech company providing IT consulting.",
+        "description_sv": "Alpha AB aer ett svenskt fintechbolag som erbjuder IT-konsulttjaenster.",
         "description_language": "en", "description_source": "llm",
         "description_sources": ["wikidata", "scb"],
         "description_source_record_uids": ["wikidata:Q1", f"scb:{COMPANY}"],
@@ -551,6 +572,7 @@ def test_an_approval_survives_a_run_that_does_not_call_the_model() -> None:
 
     suggestion_id, correction_id = uuid.uuid4(), uuid.uuid4()
     suggestion = {"description": "Alpha AB builds payment software in Sweden.",
+                  "description_sv": "Alpha AB bygger betalprogramvara i Sverige.",
                   "language": "en", "rationale": "merged"}
     # The hash the model-off run must arrive at: same request, the STORED model name.
     stored_hash = input_hash_for(
@@ -574,6 +596,7 @@ def test_an_approval_survives_a_run_that_does_not_call_the_model() -> None:
     assert metadata.get("llm_request_count", 0) == 0  # no model call was made to get there
     row = dict(zip(INSERT_COLUMNS, _final_rows(client)[0], strict=True))
     assert row["description"] == "Alpha AB builds payment software in Sweden."
+    assert row["description_sv"] == "Alpha AB bygger betalprogramvara i Sverige."
     assert row["description_source"] == "reviewed" and row["description_language"] == "en"
     assert row["suggestion_id"] == suggestion_id and row["correction_ids"] == [correction_id]
     assert row["model_provider"] == "fake-provider" and row["model_name"] == "stored-model"

@@ -278,3 +278,136 @@ def test_override_field_resets_model_provenance() -> None:
     assert applied.prompt_version == ""
     assert applied.suggestion_id is None
     assert applied.description == "Reviewed text"
+
+
+# Task 14 (owner decision 2026-08-23): the final holds both languages natively.
+# `description` is the published English text, `description_sv` the Swedish one --
+# SCB's own verksamhetsbeskrivning deterministically, the model's Swedish summary
+# when several sources had to be merged.
+
+
+def test_scb_only_publishes_the_swedish_original_beside_the_english_text() -> None:
+    outcome = merge_company_info(
+        COMPANY, [_scb(description="Saeljer programvara.", activity_description_en="Sells software.")]
+    )
+    assert outcome is not None
+    assert outcome.description == "Sells software." and outcome.description_language == "en"
+    # The Swedish column is the register's own text, never the translation.
+    assert outcome.description_sv == "Saeljer programvara."
+
+
+def test_an_untranslated_scb_company_publishes_the_same_text_in_both_columns() -> None:
+    """Nothing special happens for the ~8% the translator has not reached: `description`
+    falls back to the Swedish text, and `description_sv` is that same original."""
+    outcome = merge_company_info(COMPANY, [_scb(description="Saeljer programvara.")])
+    assert outcome.description == "Saeljer programvara." and outcome.description_language == "sv"
+    assert outcome.description_sv == "Saeljer programvara."
+
+
+def test_a_company_with_no_scb_text_has_no_swedish_description() -> None:
+    """Wikidata/ESEF-only descriptions have no Swedish original to publish, and NULL
+    (not an empty string) is what "there is none" means in the final."""
+    outcome = merge_company_info(COMPANY, [_scb(description=None), _wikidata("Swedish fintech company")])
+    assert outcome.description == "Swedish fintech company"
+    assert outcome.description_sv is None
+    assert merge_company_info(COMPANY, [_scb(description=None)]).description_sv is None
+
+
+def test_the_deterministic_multi_source_pick_keeps_scbs_swedish_text() -> None:
+    """Model off (the initial load): the English pick is ESEF's, but SCB still
+    contributed a candidate, so its Swedish original is what description_sv carries."""
+    outcome = merge_company_info(COMPANY, [
+        _scb(description="Konsultverksamhet inom IT.", activity_description_en="IT consulting."),
+        _esef("Alpha builds payment software for retailers."),
+    ])
+    assert outcome.needs_model and outcome.description_source == "esef"
+    assert outcome.description_sv == "Konsultverksamhet inom IT."
+    # Kept unmutated beside it, so reject_suggestion can restore the pair.
+    assert outcome.description_sv_candidate == "Konsultverksamhet inom IT."
+
+
+def test_override_field_may_carry_both_languages() -> None:
+    outcome = merge_company_info(COMPANY, [_scb(description="Saeljer programvara.")])
+    hash_now = evidence_set_hash_for(outcome.evidence_hashes)
+    both = LedgerRow(uuid.UUID(int=20), COMPANY, "override_field",
+                     {"description": "Reviewed text", "description_sv": "Granskad text"}, hash_now, None, NOW)
+    applied = apply_info_ledger(outcome, [both], evidence_set_hash=hash_now, current_input_hash=None, stored=())
+    assert applied.description == "Reviewed text" and applied.description_sv == "Granskad text"
+    assert applied.description_source == "reviewed" and applied.correction_ids == (uuid.UUID(int=20),)
+
+
+def test_override_field_without_description_sv_leaves_the_swedish_text_as_computed() -> None:
+    """The key is optional: an override that names only `description` must not silently
+    blank the Swedish text a reviewer never touched."""
+    outcome = merge_company_info(COMPANY, [_scb(description="Saeljer programvara.")])
+    hash_now = evidence_set_hash_for(outcome.evidence_hashes)
+    english_only = LedgerRow(uuid.UUID(int=21), COMPANY, "override_field",
+                             {"description": "Reviewed text"}, hash_now, None, NOW)
+    applied = apply_info_ledger(outcome, [english_only], evidence_set_hash=hash_now,
+                                current_input_hash=None, stored=())
+    assert applied.description == "Reviewed text"
+    assert applied.description_sv == "Saeljer programvara."
+    assert applied.correction_ids == (uuid.UUID(int=21),)
+
+
+def test_override_field_can_clear_the_swedish_text_with_an_explicit_null() -> None:
+    """Present-and-null is a decision ("there is no good Swedish text"), and it is
+    applied -- unlike an absent key, which means "leave it alone"."""
+    outcome = merge_company_info(COMPANY, [_scb(description="Saeljer programvara.")])
+    hash_now = evidence_set_hash_for(outcome.evidence_hashes)
+    cleared = LedgerRow(uuid.UUID(int=22), COMPANY, "override_field",
+                        {"description": "Reviewed text", "description_sv": None}, hash_now, None, NOW)
+    applied = apply_info_ledger(outcome, [cleared], evidence_set_hash=hash_now,
+                                current_input_hash=None, stored=())
+    assert applied.description == "Reviewed text" and applied.description_sv is None
+    assert applied.correction_ids == (uuid.UUID(int=22),)
+
+
+def test_override_field_rejects_a_non_string_description_sv_and_a_swedish_only_payload() -> None:
+    outcome = merge_company_info(COMPANY, [_scb(description="Saeljer programvara.")])
+    hash_now = evidence_set_hash_for(outcome.evidence_hashes)
+    for index, payload in enumerate((
+        {"description": "Reviewed text", "description_sv": 123},   # not a string
+        {"description_sv": "Granskad text"},                        # description is required
+        {"description": "Reviewed text", "description_sv": "ok", "status": "dissolved"},  # unknown key
+    )):
+        correction = LedgerRow(uuid.UUID(int=30 + index), COMPANY, "override_field", payload, hash_now, None, NOW)
+        applied = apply_info_ledger(outcome, [correction], evidence_set_hash=hash_now,
+                                    current_input_hash=None, stored=())
+        assert applied.description == outcome.description, payload
+        assert applied.description_sv == outcome.description_sv, payload
+        assert applied.correction_ids == () and applied.stale_correction_ids == ()
+
+
+def test_approve_suggestion_publishes_both_of_the_models_languages() -> None:
+    outcome = merge_company_info(COMPANY, [_scb(description="Saeljer programvara."), _wikidata("fintech")])
+    hash_now = evidence_set_hash_for(outcome.evidence_hashes)
+    stored = StoredObservation(
+        uuid.UUID(int=40), COMPANY, "h" * 64,
+        {"description": "Merged text", "description_sv": "Sammanslagen text", "language": "en"},
+        "deepseek", "m", "v1", NOW)
+    approve = LedgerRow(uuid.UUID(int=41), COMPANY, "approve_suggestion",
+                        {"suggestion_id": str(uuid.UUID(int=40))}, hash_now, None, NOW)
+    applied = apply_info_ledger(outcome, [approve], evidence_set_hash=hash_now,
+                                current_input_hash="h" * 64, stored=[stored])
+    assert applied.description == "Merged text" and applied.description_sv == "Sammanslagen text"
+    assert applied.suggestion_id == uuid.UUID(int=40)
+
+
+def test_reject_suggestion_restores_the_deterministic_pair() -> None:
+    outcome = merge_company_info(COMPANY, [_scb(description="Saeljer programvara."), _wikidata("fintech")])
+    hash_now = evidence_set_hash_for(outcome.evidence_hashes)
+    # As the asset leaves it once the model has answered: both languages are the model's.
+    modelled = replace(outcome, description="Merged text", description_sv="Sammanslagen text",
+                       description_source="llm", model_provider="deepseek", model_name="m", prompt_version="v1")
+    stored = StoredObservation(
+        uuid.UUID(int=42), COMPANY, "h" * 64,
+        {"description": "Merged text", "description_sv": "Sammanslagen text", "language": "en"},
+        "deepseek", "m", "v1", NOW)
+    reject = LedgerRow(uuid.UUID(int=43), COMPANY, "reject_suggestion",
+                       {"suggestion_id": str(uuid.UUID(int=42))}, hash_now, None, NOW)
+    applied = apply_info_ledger(modelled, [reject], evidence_set_hash=hash_now,
+                                current_input_hash="h" * 64, stored=[stored])
+    assert applied.description == "fintech"  # wikidata, the highest-priority candidate present
+    assert applied.description_sv == "Saeljer programvara."  # ... and SCB's Swedish original is back
+    assert applied.suggestion_id is None and applied.model_name == "rejected-suggestion"

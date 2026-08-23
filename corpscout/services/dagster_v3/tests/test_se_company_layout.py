@@ -112,3 +112,21 @@ def test_sole_traders_are_admitted_by_000299_on_every_company_keyed_table() -> N
         assert ("ALTER TABLE corpscout." + table + "\n    DROP CONSTRAINT has_company,\n"
                 "    ADD CONSTRAINT has_company CHECK match(company_id, '^[0-9]{10}$')") in down
     assert SE_COMPANY_ID_PATTERN == "^([0-9]{10}|[0-9]{12})$"
+
+
+def test_the_final_carries_both_description_languages_from_000301() -> None:
+    """The owner's 2026-08-23 decision: the final holds both languages natively --
+    the model writes the English and the Swedish summary in one call, so there is no
+    translation-load asset and no bilingual view to keep in step."""
+    up = (MIGRATIONS_DIR / "000301_corpscout_se_company_info_description_sv.up.sql").read_text()
+    down = (MIGRATIONS_DIR / "000301_corpscout_se_company_info_description_sv.down.sql").read_text()
+
+    columns = declared_columns("se_company_info")
+    assert columns[columns.index("description") + 1] == "description_sv"
+    assert "ADD COLUMN IF NOT EXISTS description_sv Nullable(String) AFTER description" in up
+    assert "DROP COLUMN IF EXISTS description_sv" in down
+    # Nullable, never DEFAULT '': "this company has no Swedish text" (Wikidata/ESEF-only)
+    # is a different fact from "its Swedish text is empty", and the merge publishes NULL.
+    assert "description_sv String" not in up
+    # 000301 touches the final only -- the artifacts keep their own columns.
+    assert "se_company_info_scb" not in up and "se_company_info_scb" not in down
