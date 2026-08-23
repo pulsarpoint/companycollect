@@ -27,6 +27,9 @@ describe("company info queries", () => {
       "i.correction_ids",
       "toString(i.suggestion_id) AS suggestion_id",
       "i.description_source",
+      // Task 14: the published row holds both languages natively (migration 000301).
+      "i.description AS description",
+      "i.description_sv AS description_sv",
     ]) {
       expect(INFO_SQL).toContain(c);
     }

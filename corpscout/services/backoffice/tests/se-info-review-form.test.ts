@@ -95,6 +95,66 @@ describe("company info review form", () => {
     expect(ticked).toMatchObject({ ok: true, input: { payload: { description: null } } });
   });
 
+  // Task 14: the override form edits both published languages. description stays
+  // required by the ledger, so it rides along even when only the Swedish text moved --
+  // an override decides the whole published pair, not one column of it.
+  it("carries description_sv only when it changed, and always sends the description", () => {
+    const both = {
+      description: "New",
+      original_description: "Old",
+      description_sv: "Ny",
+      original_description_sv: "Gammal",
+    };
+    expect(payloadFor(form(both), "override_field")).toEqual({
+      description: "New",
+      description_sv: "Ny",
+    });
+    expect(
+      payloadFor(form({ ...both, description_sv: "Gammal " }), "override_field"),
+    ).toEqual({ description: "New" });
+    expect(
+      payloadFor(form({ ...both, description: "Old " }), "override_field"),
+    ).toEqual({ description: "Old", description_sv: "Ny" });
+    expect(
+      payloadFor(
+        form({ ...both, description_sv: "Gammal", clear_description_sv: "yes" }),
+        "override_field",
+      ),
+    ).toEqual({ description: "New", description_sv: null });
+    // Neither language moved: still nothing to send.
+    expect(
+      payloadFor(
+        form({ ...both, description: "Old", description_sv: "Gammal" }),
+        "override_field",
+      ),
+    ).toEqual({});
+  });
+
+  it("emptying either textarea without ticking its box points at that box", () => {
+    const base = {
+      correction_kind: "override_field",
+      description: "Old",
+      original_description: "Old",
+      description_sv: "Gammal",
+      original_description_sv: "Gammal",
+      evidence_hash: "a".repeat(64),
+      reason: "r",
+    };
+    expect(
+      buildCorrectionInput(form({ ...base, description_sv: "" }), params),
+    ).toEqual({
+      ok: false,
+      error: "To clear the Swedish description, tick its box.",
+    });
+    // The English hint still wins when both are emptied -- one message at a time.
+    expect(
+      buildCorrectionInput(
+        form({ ...base, description: "", description_sv: "" }),
+        params,
+      ),
+    ).toEqual({ ok: false, error: "To clear the description, tick the box." });
+  });
+
   it("approve/reject carry suggestion_id; reject may carry a note; undo uses the zero hash", () => {
     expect(
       payloadFor(

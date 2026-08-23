@@ -71,6 +71,7 @@ function HiddenCommon({
  */
 function parseSuggestion(raw: string): {
   description?: string;
+  descriptionSv?: string;
   language?: string;
   rationale?: string;
 } | null {
@@ -81,6 +82,10 @@ function parseSuggestion(raw: string): {
     return {
       description:
         typeof obj.description === "string" ? obj.description : undefined,
+      // Both languages come from one model call (prompt v3); a suggestion recorded
+      // before that carries only the English half and simply shows nothing here.
+      descriptionSv:
+        typeof obj.description_sv === "string" ? obj.description_sv : undefined,
       language: typeof obj.language === "string" ? obj.language : undefined,
       rationale:
         typeof obj.rationale === "string" ? obj.rationale : undefined,
@@ -175,27 +180,49 @@ export function SeCompanyInfoReviewWorkspace({
           model {info.model_provider} · {info.model_name} · prompt{" "}
           {info.prompt_version} · resolved {info.resolved_at}
         </p>
-        {info.description
-          ? (() => {
-              // description_source is the winning source; don't repeat it
-              // inside the full description_sources list.
-              const otherSources = info.description_sources.filter(
-                (source) => source !== info.description_source,
-              );
-              return (
-                <p className="text-sm">
-                  {info.description}{" "}
-                  <span className="text-xs text-muted-foreground">
-                    ({info.description_language} · {info.description_source}
-                    {otherSources.length > 0
-                      ? ` · ${otherSources.join(", ")}`
-                      : ""}
-                    )
-                  </span>
-                </p>
-              );
-            })()
-          : <p className="text-sm text-muted-foreground">No description.</p>}
+        {/* The published row holds both languages natively (migration 000301):
+            the English text is what surfaces publish, the Swedish one the
+            register's own wording (or the model's Swedish summary). */}
+        <div className="grid gap-3 md:grid-cols-2">
+          <div className="flex flex-col gap-1">
+            <span className="text-xs font-medium uppercase tracking-wide text-muted-foreground">
+              English
+            </span>
+            {info.description
+              ? (() => {
+                  // description_source is the winning source; don't repeat it
+                  // inside the full description_sources list.
+                  const otherSources = info.description_sources.filter(
+                    (source) => source !== info.description_source,
+                  );
+                  return (
+                    <p className="text-sm">
+                      {info.description}{" "}
+                      <span className="text-xs text-muted-foreground">
+                        ({info.description_language} · {info.description_source}
+                        {otherSources.length > 0
+                          ? ` · ${otherSources.join(", ")}`
+                          : ""}
+                        )
+                      </span>
+                    </p>
+                  );
+                })()
+              : <p className="text-sm text-muted-foreground">No description.</p>}
+          </div>
+          <div className="flex flex-col gap-1">
+            <span className="text-xs font-medium uppercase tracking-wide text-muted-foreground">
+              Swedish
+            </span>
+            {info.description_sv ? (
+              <p className="text-sm">{info.description_sv}</p>
+            ) : (
+              <p className="text-sm text-muted-foreground">
+                No Swedish description.
+              </p>
+            )}
+          </div>
+        </div>
       </header>
 
       {result?.ok ? (
@@ -230,7 +257,12 @@ export function SeCompanyInfoReviewWorkspace({
               <TableRow>
                 <TableHead>Source</TableHead>
                 <TableHead>Record</TableHead>
-                <TableHead>Observed</TableHead>
+                {/* The artifact stamp is when this pipeline recorded the version,
+                    not a register date: SCB's bulk load carries one constant
+                    updated_from_raw_at for every company. */}
+                <TableHead title="when the pipeline recorded this version">
+                  Observed
+                </TableHead>
                 <TableHead>Summary</TableHead>
               </TableRow>
             </TableHeader>
@@ -298,6 +330,11 @@ export function SeCompanyInfoReviewWorkspace({
                 </div>
                 {parsed?.description ? (
                   <p className="mt-2 text-sm">{parsed.description}</p>
+                ) : null}
+                {parsed?.descriptionSv ? (
+                  <p className="mt-1 text-sm">
+                    Swedish: {parsed.descriptionSv}
+                  </p>
                 ) : null}
                 {parsed?.language ? (
                   <p className="mt-1 text-xs text-muted-foreground">
@@ -394,8 +431,10 @@ export function SeCompanyInfoReviewWorkspace({
           <CardTitle>Override description</CardTitle>
           <CardDescription>
             Every decision is appended to the correction ledger with a
-            reason; nothing here rewrites the published row directly. Leave
-            the text as-is and check the box to clear the description
+            reason; nothing here rewrites the published row directly. Each
+            language is sent only when you change it — except the English
+            text, which the ledger always requires, so an override decides
+            both. Leave a text as-is and tick its box to clear that language
             entirely.
           </CardDescription>
         </CardHeader>
@@ -413,13 +452,29 @@ export function SeCompanyInfoReviewWorkspace({
             <Textarea
               name="description"
               defaultValue={info.description ?? ""}
-              aria-label="Description"
-              placeholder="Description"
+              aria-label="English description"
+              placeholder="English description"
               rows={4}
             />
             <label className="flex items-center gap-2 text-sm">
               <Checkbox name="clear_description" value="yes" />
               <span>Clear the description</span>
+            </label>
+            <input
+              type="hidden"
+              name="original_description_sv"
+              value={info.description_sv ?? ""}
+            />
+            <Textarea
+              name="description_sv"
+              defaultValue={info.description_sv ?? ""}
+              aria-label="Swedish description"
+              placeholder="Swedish description"
+              rows={4}
+            />
+            <label className="flex items-center gap-2 text-sm">
+              <Checkbox name="clear_description_sv" value="yes" />
+              <span>Clear the Swedish description</span>
             </label>
             <Input
               name="reason"

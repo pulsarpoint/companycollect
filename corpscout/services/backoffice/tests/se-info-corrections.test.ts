@@ -46,6 +46,60 @@ describe("validateSeInfoCorrection", () => {
     ).toThrow("description");
   });
 
+  // Task 14: the published row holds both languages, so an override may decide both.
+  // description stays required; description_sv is optional and its ABSENCE means "leave
+  // the Swedish text as Dagster computed it", while a present null clears it.
+  it("override may carry an optional description_sv (string or null)", () => {
+    expect(
+      validateSeInfoCorrection({
+        ...base,
+        kind: "override_field",
+        payload: { description: " New text ", description_sv: " Ny text " },
+      }).payload,
+    ).toBe(JSON.stringify({ description: "New text", description_sv: "Ny text" }));
+    expect(
+      validateSeInfoCorrection({
+        ...base,
+        kind: "override_field",
+        payload: { description: "New text", description_sv: null },
+      }).payload,
+    ).toBe(JSON.stringify({ description: "New text", description_sv: null }));
+    // Absent stays absent -- never null, which Dagster would apply as "no Swedish text".
+    expect(
+      JSON.parse(
+        validateSeInfoCorrection({
+          ...base,
+          kind: "override_field",
+          payload: { description: "New text" },
+        }).payload,
+      ),
+    ).toEqual({ description: "New text" });
+  });
+
+  it("override rejects a Swedish-only payload, a non-string and an empty description_sv", () => {
+    expect(() =>
+      validateSeInfoCorrection({
+        ...base,
+        kind: "override_field",
+        payload: { description_sv: "Ny text" },
+      }),
+    ).toThrow("description");
+    expect(() =>
+      validateSeInfoCorrection({
+        ...base,
+        kind: "override_field",
+        payload: { description: "New text", description_sv: 12 },
+      }),
+    ).toThrow("Swedish");
+    expect(() =>
+      validateSeInfoCorrection({
+        ...base,
+        kind: "override_field",
+        payload: { description: "New text", description_sv: "   " },
+      }),
+    ).toThrow("Swedish");
+  });
+
   it("approve/reject need a uuid suggestion id; reject may carry a note", () => {
     expect(() =>
       validateSeInfoCorrection({ ...base, kind: "approve_suggestion", payload: { suggestion_id: "x" } }),

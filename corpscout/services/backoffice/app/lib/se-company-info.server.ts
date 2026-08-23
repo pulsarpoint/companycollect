@@ -21,6 +21,8 @@ export interface SeCompanyInfoRow {
   status: string;
   incorporation_date: string | null;
   description: string | null;
+  /** The Swedish half of the published pair (migration 000301); null when there is none. */
+  description_sv: string | null;
   description_language: string;
   description_source: string;
   description_sources: string[];
@@ -101,6 +103,7 @@ export const INFO_SQL = `SELECT
   toString(i.status) AS status,
   toString(i.incorporation_date) AS incorporation_date,
   i.description AS description,
+  i.description_sv AS description_sv,
   toString(i.description_language) AS description_language,
   toString(i.description_source) AS description_source,
   i.description_sources AS description_sources,

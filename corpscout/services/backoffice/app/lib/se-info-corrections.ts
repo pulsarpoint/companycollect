@@ -69,7 +69,10 @@ const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{
 const HASH_PATTERN = /^[0-9a-f]{64}$/;
 
 const ALLOWED_PAYLOAD_KEYS: Record<SeInfoCorrectionKind, readonly string[]> = {
-  override_field: ["description"],
+  // Both published languages may be decided at once (migration 000301): description
+  // is required, description_sv optional -- Dagster leaves the Swedish text as computed
+  // when the key is absent and applies it (null included) when it is present.
+  override_field: ["description", "description_sv"],
   approve_suggestion: ["suggestion_id"],
   reject_suggestion: ["suggestion_id", "note"],
   undo: [],
@@ -122,7 +125,7 @@ export function validateSeInfoCorrection(
 
   switch (kind) {
     case "override_field": {
-      // legal_name is SCB's; only description may be reviewer-overridden.
+      // legal_name is SCB's; only the two description columns may be reviewer-overridden.
       if (evidenceHash === ZERO_EVIDENCE_HASH) fail("The evidence hash is missing or malformed.");
       if (!("description" in payload)) fail("Override needs a description.");
       const description = payload.description;
@@ -132,6 +135,18 @@ export function validateSeInfoCorrection(
       const trimmed = typeof description === "string" ? description.trim() : null;
       if (trimmed === "") fail("Override description cannot be empty.");
       cleanPayload.description = trimmed;
+      // Absent stays absent: Dagster reads a missing key as "leave the Swedish text as
+      // computed", which is a different instruction from an explicit null ("there is
+      // none"). Never default it to null here.
+      if ("description_sv" in payload) {
+        const swedish = payload.description_sv;
+        if (swedish !== null && typeof swedish !== "string") {
+          fail("Override Swedish description must be a string or null.");
+        }
+        const trimmedSwedish = typeof swedish === "string" ? swedish.trim() : null;
+        if (trimmedSwedish === "") fail("Override Swedish description cannot be empty.");
+        cleanPayload.description_sv = trimmedSwedish;
+      }
       break;
     }
     case "approve_suggestion":

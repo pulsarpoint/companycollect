@@ -23,13 +23,38 @@ function optionalText(form: FormData, name: string): string | null {
   return form.has(name) ? text(form, name) : null;
 }
 
+/** One override textarea's state, diffed against the text the reviewer was shown. */
+interface OverrideField {
+  /** The trimmed textarea contents. */
+  value: string;
+  /** The trimmed text this field was rendered with. */
+  original: string;
+  /** Its "clear this" checkbox. */
+  cleared: boolean;
+  /** Cleared, or edited to something non-empty and different. */
+  changed: boolean;
+}
+
+function overrideField(form: FormData, name: string): OverrideField {
+  const value = text(form, name).trim();
+  const original = text(form, `original_${name}`).trim();
+  const cleared = text(form, `clear_${name}`) === "yes";
+  return { value, original, cleared, changed: cleared || (value !== "" && value !== original) };
+}
+
 /**
  * Collects only the payload keys the validator allows for this kind.
  *
- * `override_field` diffs against the description the reviewer was shown,
+ * `override_field` diffs each language against the text the reviewer was shown,
  * because a correction is replayed on every Dagster run: sending an untouched
  * description would pin it forever, and sending an empty description would
  * pin it to null.
+ *
+ * `description` is required by the ledger even when only the Swedish text moved, so it
+ * rides along unchanged in that case -- an override decides the whole published pair,
+ * not one column of it. `description_sv` is the other way round: it is sent only when it
+ * changed, because Dagster reads an ABSENT key as "leave the Swedish text as computed"
+ * (deterministic or model-written) and a present null as "there is none".
  */
 export function payloadFor(
   form: FormData,
@@ -37,14 +62,13 @@ export function payloadFor(
 ): Record<string, unknown> {
   const payload: Record<string, unknown> = {};
   if (kind === "override_field") {
-    const description = text(form, "description").trim();
-    if (text(form, "clear_description") === "yes") {
-      payload.description = null;
-    } else if (
-      description !== "" &&
-      description !== text(form, "original_description").trim()
-    ) {
-      payload.description = description;
+    const english = overrideField(form, "description");
+    const swedish = overrideField(form, "description_sv");
+    if (english.changed || swedish.changed) {
+      payload.description = english.cleared || english.value === "" ? null : english.value;
+      if (swedish.changed) {
+        payload.description_sv = swedish.cleared ? null : swedish.value;
+      }
     }
   } else if (kind === "approve_suggestion" || kind === "reject_suggestion") {
     payload.suggestion_id = text(form, "suggestion_id");
@@ -64,21 +88,24 @@ export function buildCorrectionInput(
 ): SeInfoCorrectionRequest {
   const kind = text(form, "correction_kind");
   const payload = payloadFor(form, kind);
-  if (kind === "override_field" && Object.keys(payload).length === 0) {
-    // An emptied textarea with the clear checkbox left unticked looks
-    // identical to "nothing changed" once trimmed -- point the reviewer at
-    // the checkbox instead of the generic message so they know why the
-    // empty text didn't take.
-    const description = text(form, "description").trim();
-    const original = text(form, "original_description").trim();
-    if (
-      description === "" &&
-      original !== "" &&
-      text(form, "clear_description") !== "yes"
-    ) {
+  if (kind === "override_field") {
+    // An emptied textarea with its clear checkbox left unticked looks identical to
+    // "nothing changed" once trimmed -- point the reviewer at the checkbox instead of
+    // the generic message so they know why the empty text didn't take. Checked before
+    // the empty-payload test, because a change to the OTHER language would otherwise
+    // carry the emptied one silently past this refusal.
+    const emptied = (["description", "description_sv"] as const)
+      .map((name) => overrideField(form, name))
+      .findIndex((field) => field.value === "" && field.original !== "" && !field.cleared);
+    if (emptied === 0) {
       return { ok: false, error: "To clear the description, tick the box." };
     }
-    return { ok: false, error: "Nothing changed." };
+    if (emptied === 1) {
+      return { ok: false, error: "To clear the Swedish description, tick its box." };
+    }
+    if (Object.keys(payload).length === 0) {
+      return { ok: false, error: "Nothing changed." };
+    }
   }
   return {
     ok: true,

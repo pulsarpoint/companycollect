@@ -38,6 +38,7 @@ const detail: SeCompanyInfoDetail = {
     status: "active",
     incorporation_date: "2001-02-03",
     description: "Alpha builds payment software.",
+    description_sv: "Alpha bygger betalprogramvara.",
     description_language: "en",
     description_source: "llm",
     // "llm" also appears here -- the header must not repeat it (round-1 3d).
@@ -80,7 +81,7 @@ const detail: SeCompanyInfoDetail = {
       suggestion_id: SUGGESTION_ID,
       input_hash: "h".repeat(64),
       suggestion:
-        '{"description":"Alpha builds payment software.","language":"en"}',
+        '{"description":"Alpha builds payment software.","description_sv":"Alpha AB bygger betalprogramvara i Sverige.","language":"en"}',
       model_provider: "deepseek",
       model_name: "m",
       prompt_version: "v",
@@ -170,6 +171,54 @@ describe("company info review page", () => {
       );
     }
     expect(html).toContain('name="original_description"');
+  });
+
+  // Task 14: the published row holds both languages (migration 000301), so the page
+  // shows both and the override form edits both.
+  it("shows both published languages and gives the override form a field for each", () => {
+    const html = render();
+    expect(html).toContain("Alpha builds payment software.");
+    expect(html).toContain("Alpha bygger betalprogramvara.");
+    const overrideForm = formContaining(
+      html,
+      'name="correction_kind" value="override_field"',
+    );
+    for (const field of [
+      'name="original_description"',
+      'name="description"',
+      'name="clear_description"',
+      'name="original_description_sv"',
+      'name="description_sv"',
+      'name="clear_description_sv"',
+    ]) {
+      expect(overrideForm).toContain(field);
+    }
+    // The Swedish original the reviewer is diffed against, not the English one.
+    expect(overrideForm).toContain(
+      'name="original_description_sv" value="Alpha bygger betalprogramvara."',
+    );
+  });
+
+  it("says so when a company has no Swedish text at all", () => {
+    const html = render({
+      ...detail,
+      info: { ...detail.info, description_sv: null },
+    });
+    expect(html).toContain("No Swedish description.");
+    // The empty override field still posts the original it was diffed against.
+    expect(html).toContain('name="original_description_sv" value=""');
+  });
+
+  it("shows the suggestion's Swedish half beside its English one", () => {
+    const html = render();
+    expect(html).toContain("Swedish: Alpha AB bygger betalprogramvara i Sverige.");
+  });
+
+  // Task 13 round 1: the artifact stamp means "when the pipeline recorded this
+  // version", not a register date -- the column has to say so.
+  it("explains what the Sources Observed column stamps", () => {
+    const html = render();
+    expect(html).toContain('title="when the pipeline recorded this version"');
   });
 
   it("does not repeat description_source inside description_sources", () => {
