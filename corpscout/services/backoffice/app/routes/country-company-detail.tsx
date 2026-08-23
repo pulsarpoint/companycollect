@@ -1,4 +1,6 @@
 import type { Route } from "./+types/country-company-detail";
+import { Link } from "react-router";
+import { buttonVariants } from "~/components/ui/button";
 import { getCountry } from "~/lib/countries";
 import { getCompanyDetail } from "~/lib/queries.server";
 import {
@@ -88,6 +90,16 @@ export default function CompanyDetail({
     ] as const;
     return (
       <div className="flex w-full max-w-5xl flex-col gap-4">
+        {/* company.company_id is undefined for SE shells; params.id is the
+            company id the loader used to look this record up. */}
+        <div className="flex justify-end">
+          <Link
+            className={buttonVariants({ variant: "outline", size: "sm" })}
+            to={`/admin/se/company/${params.id}/info`}
+          >
+            Review company info
+          </Link>
+        </div>
         <CompanyRecordSection
           company={shell.company}
           record={shell.record}
