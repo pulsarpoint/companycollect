@@ -95,6 +95,8 @@ describe("the selection query", () => {
     expect(INFO_ARTIFACT_FRESHNESS_SQL.match(/UNION ALL/g)).toHaveLength(2);
     // Rows stored without usage numbers would drag the averages towards zero.
     expect(INFO_OBSERVATION_AVERAGES_SQL).toContain("WHERE prompt_tokens > 0");
+    expect(INFO_OBSERVATION_AVERAGES_SQL).toContain("AS avg_prompt_tokens");
+    expect(INFO_OBSERVATION_AVERAGES_SQL).not.toMatch(/\) AS prompt_tokens/);
     expect(INFO_OBSERVATION_AVERAGES_SQL).toContain("GROUP BY model_name");
   });
 });
@@ -127,8 +129,8 @@ describe("loadSeCompanyInfoPipelineStats", () => {
         {
           model_name: "deepseek-v4-flash",
           call_count: "1200",
-          prompt_tokens: "640",
-          completion_tokens: "240",
+          avg_prompt_tokens: "640",
+          avg_completion_tokens: "240",
           latest_created_at: "2026-08-22 09:00:00.000",
         },
       ];

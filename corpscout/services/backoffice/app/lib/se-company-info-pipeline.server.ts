@@ -201,13 +201,14 @@ export const INFO_ARTIFACT_FRESHNESS_SQL = INFO_ARTIFACTS.map(
 FROM corpscout.${artifact.table}`,
 ).join("\nUNION ALL\n");
 
-/** Per model, what one description call has actually cost. `prompt_tokens > 0`
+/** Per model, what one description call has actually cost. The averages are aliased
+ * `avg_*` so the WHERE below binds to the source columns, not the aggregates. `prompt_tokens > 0`
  * drops rows stored without usage numbers, which would drag the average down. */
 export const INFO_OBSERVATION_AVERAGES_SQL = `SELECT
   model_name AS model_name,
   toString(count()) AS call_count,
-  toString(round(avg(prompt_tokens))) AS prompt_tokens,
-  toString(round(avg(completion_tokens))) AS completion_tokens,
+  toString(round(avg(prompt_tokens))) AS avg_prompt_tokens,
+  toString(round(avg(completion_tokens))) AS avg_completion_tokens,
   toString(max(created_at)) AS latest_created_at
 FROM corpscout.se_company_info_enrichment_observation
 WHERE prompt_tokens > 0
@@ -299,8 +300,8 @@ export async function loadSeCompanyInfoPipelineStats(
     models: models.map((entry) => ({
       modelName: entry.model_name,
       callCount: Number(entry.call_count),
-      promptTokens: Number(entry.prompt_tokens),
-      completionTokens: Number(entry.completion_tokens),
+      promptTokens: Number(entry.avg_prompt_tokens),
+      completionTokens: Number(entry.avg_completion_tokens),
       latestCreatedAt: entry.latest_created_at,
     })),
   };
