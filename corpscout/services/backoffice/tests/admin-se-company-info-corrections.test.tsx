@@ -2,7 +2,20 @@ import { renderToStaticMarkup } from "react-dom/server";
 import { createMemoryRouter, RouterProvider } from "react-router";
 import { describe, expect, it } from "vitest";
 import { SeCompanyInfoCorrectionsTable } from "~/components/admin/se-company-info-corrections-table";
-import type { SeCompanyInfoCorrectionListRow } from "~/lib/se-company-info-lists.server";
+import { SeCompanyInfoCorrectionsFilterFields } from "~/components/admin/se-company-info-filter-sheet";
+import type {
+  SeCompanyInfoCorrectionFilterOptions,
+  SeCompanyInfoCorrectionListRow,
+} from "~/lib/se-company-info-lists.server";
+import {
+  correctionFilterChips,
+  correctionsListSearch,
+  EMPTY_CORRECTION_FILTERS,
+  type SeCompanyInfoCorrectionsTableFilters,
+} from "~/lib/se-company-info-filters";
+
+/** Every in-page link resolves against the route this table is rendered at. */
+const PATH = "/admin/se/company-info/corrections";
 
 const OVERRIDE_ROW: SeCompanyInfoCorrectionListRow = {
   correction_id: "22222222-2222-4222-8222-222222222222",
@@ -47,7 +60,16 @@ const UNDO_ROW: SeCompanyInfoCorrectionListRow = {
   status: "undone",
 };
 
-const EMPTY_FILTERS = { companyId: "", kind: "", status: "" };
+const OPTIONS: SeCompanyInfoCorrectionFilterOptions = {
+  decidedBy: ["backoffice", "dagster"],
+};
+
+const APPLIED_FILTERS: SeCompanyInfoCorrectionsTableFilters = {
+  companyId: "5565200028",
+  kind: "undo",
+  status: "applied",
+  decidedBy: "backoffice",
+};
 
 function render(props: Partial<Parameters<typeof SeCompanyInfoCorrectionsTable>[0]> = {}) {
   const router = createMemoryRouter(
@@ -60,7 +82,10 @@ function render(props: Partial<Parameters<typeof SeCompanyInfoCorrectionsTable>[
             total={12}
             page={1}
             pageSize={50}
-            filters={EMPTY_FILTERS}
+            sort="created_at"
+            dir="desc"
+            filters={EMPTY_CORRECTION_FILTERS}
+            options={OPTIONS}
             {...props}
           />
         ),
@@ -119,26 +144,6 @@ describe("SeCompanyInfoCorrectionsTable", () => {
     expect(render({ rows: [UNDO_ROW] })).toContain("undone");
   });
 
-  it("carries the applied filters as the form's default values", () => {
-    const html = render({
-      filters: { companyId: "5565200028", kind: "undo", status: "applied" },
-    });
-    expect(html).toContain('name="companyId" value="5565200028"');
-    expect(html).toContain('name="kind" value="undo"');
-    expect(html).toContain('name="status" value="applied"');
-  });
-
-  it("carries the current pageSize as a hidden field, so submitting a filter doesn't silently reset it", () => {
-    const html = render({ pageSize: 100 });
-    expect(html).toContain('type="hidden" name="pageSize" value="100"');
-  });
-
-  it("offers an explicit \"Any\" option on the kind and status selects, selected when no filter is set", () => {
-    const html = render();
-    expect(html).toContain('name="kind" value="any"');
-    expect(html).toContain('name="status" value="any"');
-  });
-
   it("shows the pager total and page", () => {
     const html = render();
     expect(html).toContain("12");
@@ -148,5 +153,102 @@ describe("SeCompanyInfoCorrectionsTable", () => {
   it("renders an empty state when no rows match", () => {
     const html = render({ rows: [], total: 0 });
     expect(html).toContain("No corrections match these filters.");
+  });
+});
+
+describe("SeCompanyInfoCorrectionsTable sorting", () => {
+  it("gives EVERY column a header that sorts by it, server-side, via ?sort=&dir=", () => {
+    // Sorted newest-first by created_at (the default), so that header offers
+    // the flip to ascending and every other one offers its own first click.
+    const html = render();
+    for (const key of [
+      "company_id",
+      "correction_id",
+      "correction_kind",
+      "payload",
+      "reason",
+      "decided_by",
+      "status",
+    ]) {
+      expect(html).toContain(`href="${PATH}?sort=${key}&amp;dir=asc"`);
+    }
+    expect(html).toContain(`href="${PATH}?sort=created_at&amp;dir=asc"`);
+  });
+
+  it("marks the active column and flips its direction on the next click", () => {
+    const html = render({ sort: "decided_by", dir: "asc" });
+    expect(html).toContain('data-active="true"');
+    expect(html).toContain(`href="${PATH}?sort=decided_by&amp;dir=desc"`);
+  });
+});
+
+describe("SeCompanyInfoCorrectionsTable filter sheet", () => {
+  it("opens the filters from one button, badged with the number applied, one chip each", () => {
+    expect(render()).toContain("Filters");
+    const html = render({ filters: APPLIED_FILTERS });
+    expect(correctionFilterChips(APPLIED_FILTERS)).toHaveLength(4);
+    expect(html).toContain(">4<");
+    expect(html).toContain("Kind undo");
+    expect(html).toContain("Status applied");
+    expect(html).toContain("Decided by backoffice");
+    expect(html).toContain('aria-label="Remove filter Kind undo"');
+  });
+
+  it("gives each chip a link that drops just that param, keeping sort and page size", () => {
+    const html = render({ filters: APPLIED_FILTERS });
+    const withoutKind = correctionsListSearch(
+      APPLIED_FILTERS,
+      { sort: "created_at", dir: "desc", pageSize: 50 },
+      "kind",
+    );
+    expect(withoutKind).not.toContain("kind=");
+    expect(withoutKind).toContain("decidedBy=backoffice");
+    expect(withoutKind).toContain("sort=created_at");
+    expect(withoutKind).toContain("pageSize=50");
+    expect(html).toContain(`href="${PATH}${withoutKind.replaceAll("&", "&amp;")}"`);
+  });
+
+  it("shows no chips when nothing is filtered", () => {
+    expect(correctionFilterChips(EMPTY_CORRECTION_FILTERS)).toEqual([]);
+    expect(render()).not.toContain("Clear all");
+  });
+});
+
+describe("SeCompanyInfoCorrectionsFilterFields", () => {
+  it("offers a field for every filter, including one select per discrete column", () => {
+    const html = renderToStaticMarkup(
+      <SeCompanyInfoCorrectionsFilterFields
+        filters={EMPTY_CORRECTION_FILTERS}
+        options={OPTIONS}
+        view={{ sort: "created_at", dir: "desc", pageSize: 100 }}
+      />,
+    );
+    for (const name of ["companyId", "kind", "status", "decidedBy"]) {
+      expect(html).toContain(`name="${name}"`);
+    }
+    for (const label of ["Company id", "Kind", "Status", "Decided by"]) {
+      expect(html).toContain(label);
+    }
+    // An unset filter shows the explicit "Any" item Base UI needs.
+    expect(html).toContain('name="kind" value="any"');
+    expect(html).toContain('name="decidedBy" value="any"');
+    // Not filters, but they must survive one being applied.
+    expect(html).toContain('type="hidden" name="pageSize" value="100"');
+    expect(html).toContain('type="hidden" name="sort" value="created_at"');
+    expect(html).toContain('type="hidden" name="dir" value="desc"');
+  });
+
+  it("carries the applied filters as the form's default values", () => {
+    const html = renderToStaticMarkup(
+      <SeCompanyInfoCorrectionsFilterFields
+        filters={APPLIED_FILTERS}
+        options={OPTIONS}
+        view={{ sort: "created_at", dir: "desc", pageSize: 50 }}
+      />,
+    );
+    expect(html).toContain('name="companyId" value="5565200028"');
+    expect(html).toContain('name="kind" value="undo"');
+    expect(html).toContain('name="status" value="applied"');
+    expect(html).toContain('name="decidedBy" value="backoffice"');
   });
 });

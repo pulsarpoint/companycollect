@@ -1,0 +1,361 @@
+import { useState } from "react";
+import { Form, Link } from "react-router";
+import { ListFilterIcon, XIcon } from "lucide-react";
+import { Badge } from "~/components/ui/badge";
+import { Button } from "~/components/ui/button";
+import { Checkbox } from "~/components/ui/checkbox";
+import { Input } from "~/components/ui/input";
+import { Label } from "~/components/ui/label";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "~/components/ui/select";
+import {
+  Sheet,
+  SheetContent,
+  SheetDescription,
+  SheetHeader,
+  SheetTitle,
+  SheetTrigger,
+} from "~/components/ui/sheet";
+import type {
+  SeCompanyInfoCorrectionFilterOptions,
+  SeCompanyInfoFilterOptions,
+} from "~/lib/se-company-info-lists.server";
+import {
+  ANY_FILTER_VALUE,
+  correctionFilterChips,
+  correctionsListSearch,
+  EMPTY_CORRECTION_FILTERS,
+  EMPTY_INFO_FILTERS,
+  infoFilterChips,
+  infoListSearch,
+  optionLabel,
+  optionValue,
+  selectValue,
+  type FilterChip,
+  type SeCompanyInfoCorrectionsTableFilters,
+  type SeCompanyInfoTableFilters,
+  type TableView,
+} from "~/lib/se-company-info-filters";
+import { INFO_LIST_SOURCES } from "~/lib/se-company-info-sources";
+import {
+  SE_INFO_CORRECTION_KINDS,
+  SE_INFO_CORRECTION_STATUSES,
+} from "~/lib/se-info-corrections";
+
+/**
+ * Both list pages' filters, in a right-hand `Sheet` opened by one "Filters"
+ * button, mirroring `source-role-mappings-sheet.tsx`'s Sheet usage and
+ * `data-table/contract-filter-sheet.tsx`'s button-with-count.
+ *
+ * The sheet holds a plain GET `<Form>`: every field is a named input, Apply is
+ * its submit, and the browser builds the next URL -- so the filters work with
+ * no JavaScript state to keep in step, and `pageSize`/`sort`/`dir` ride along
+ * as hidden fields (a filter change deliberately resets `page`, but must never
+ * silently reset the reviewer's page size or the column they sorted by).
+ *
+ * The fields are exported separately from the sheet that wraps them: a Base UI
+ * dialog renders through a portal, which produces nothing at all during SSR,
+ * so a test asserting on the fields renders `...FilterFields` directly.
+ */
+
+function Field({ label, children }: { label: string; children: React.ReactNode }) {
+  return (
+    <div className="flex flex-col gap-1">
+      <Label className="text-xs font-medium">{label}</Label>
+      {children}
+    </div>
+  );
+}
+
+/** A select whose options are fixed in code (an enum) or read from the column
+ * itself; either way "Any" is a real, selectable item, because Base UI
+ * reserves the empty string for the unselected state. */
+function FilterSelect({
+  name,
+  value,
+  options,
+  labelOf = (option: string) => option,
+}: {
+  name: string;
+  value: string;
+  options: readonly string[];
+  labelOf?: (option: string) => string;
+}) {
+  return (
+    <Select name={name} defaultValue={selectValue(value)}>
+      <SelectTrigger className="w-full" size="sm">
+        <SelectValue />
+      </SelectTrigger>
+      <SelectContent>
+        <SelectItem value={ANY_FILTER_VALUE}>Any</SelectItem>
+        {options.map((option) => (
+          <SelectItem key={option} value={optionValue(option)}>
+            {labelOf(option)}
+          </SelectItem>
+        ))}
+      </SelectContent>
+    </Select>
+  );
+}
+
+/** Hidden fields for everything that is not a filter but must survive one
+ * being applied. */
+function ViewFields({ view }: { view: TableView }) {
+  return (
+    <>
+      <input type="hidden" name="pageSize" value={view.pageSize} />
+      <input type="hidden" name="sort" value={view.sort} />
+      <input type="hidden" name="dir" value={view.dir} />
+    </>
+  );
+}
+
+function SheetActions({ clearHref }: { clearHref: string }) {
+  return (
+    <div className="mt-auto flex gap-2 border-t p-4">
+      <Button type="submit" className="flex-1">
+        Apply
+      </Button>
+      <Button
+        variant="outline"
+        nativeButton={false}
+        render={<Link to={clearHref} />}
+      >
+        Clear
+      </Button>
+    </div>
+  );
+}
+
+export function SeCompanyInfoFilterFields({
+  filters,
+  options,
+  view,
+}: {
+  filters: SeCompanyInfoTableFilters;
+  options: SeCompanyInfoFilterOptions;
+  view: TableView;
+}) {
+  return (
+    <div className="flex flex-col gap-3 px-4">
+      <ViewFields view={view} />
+      <Field label="Company id">
+        <Input name="companyId" defaultValue={filters.companyId} placeholder="Exact id" />
+      </Field>
+      <Field label="Name">
+        <Input name="name" defaultValue={filters.name} placeholder="Legal name contains" />
+      </Field>
+      <Field label="Description source">
+        <FilterSelect name="source" value={filters.source} options={INFO_LIST_SOURCES} />
+      </Field>
+      <Field label="Status">
+        <FilterSelect
+          name="status"
+          value={filters.status}
+          options={options.statuses}
+          labelOf={optionLabel}
+        />
+      </Field>
+      <Field label="Legal form">
+        <FilterSelect
+          name="legalForm"
+          value={filters.legalForm}
+          options={options.legalFormCodes}
+          labelOf={optionLabel}
+        />
+      </Field>
+      <Field label="Description language">
+        <FilterSelect
+          name="language"
+          value={filters.language}
+          options={options.descriptionLanguages}
+          labelOf={optionLabel}
+        />
+      </Field>
+      <Field label="Has suggestion">
+        <FilterSelect name="suggestion" value={filters.suggestion} options={["yes", "no"]} />
+      </Field>
+      <Field label="Entity">
+        <Select name="entity" defaultValue={selectValue(filters.entity)}>
+          <SelectTrigger className="w-full" size="sm">
+            <SelectValue />
+          </SelectTrigger>
+          <SelectContent>
+            <SelectItem value={ANY_FILTER_VALUE}>Any</SelectItem>
+            <SelectItem value="legal">Legal (10-digit)</SelectItem>
+            <SelectItem value="sole">Sole trader (12-digit)</SelectItem>
+          </SelectContent>
+        </Select>
+      </Field>
+      <label className="flex items-center gap-2 text-sm">
+        <Checkbox name="multi" value="1" defaultChecked={filters.multi} />
+        Multi-source
+      </label>
+      <label className="flex items-center gap-2 text-sm">
+        <Checkbox name="corrected" value="1" defaultChecked={filters.corrected} />
+        Has corrections
+      </label>
+    </div>
+  );
+}
+
+export function SeCompanyInfoCorrectionsFilterFields({
+  filters,
+  options,
+  view,
+}: {
+  filters: SeCompanyInfoCorrectionsTableFilters;
+  options: SeCompanyInfoCorrectionFilterOptions;
+  view: TableView;
+}) {
+  return (
+    <div className="flex flex-col gap-3 px-4">
+      <ViewFields view={view} />
+      <Field label="Company id">
+        <Input name="companyId" defaultValue={filters.companyId} placeholder="Exact id" />
+      </Field>
+      <Field label="Kind">
+        <FilterSelect name="kind" value={filters.kind} options={SE_INFO_CORRECTION_KINDS} />
+      </Field>
+      <Field label="Status">
+        <FilterSelect
+          name="status"
+          value={filters.status}
+          options={SE_INFO_CORRECTION_STATUSES}
+        />
+      </Field>
+      <Field label="Decided by">
+        <FilterSelect
+          name="decidedBy"
+          value={filters.decidedBy}
+          options={options.decidedBy}
+          labelOf={optionLabel}
+        />
+      </Field>
+    </div>
+  );
+}
+
+/** The button, its active-filter count, and one removable chip per applied
+ * filter. Each chip's X re-navigates to the same page without that one param
+ * (built from the filter state, never from the live location, so a pending
+ * navigation cannot make a chip point at a URL that re-adds it). */
+function FilterBar({
+  chips,
+  clearHref,
+  hrefWithout,
+  title,
+  description,
+  children,
+}: {
+  chips: FilterChip[];
+  clearHref: string;
+  hrefWithout: (param: string) => string;
+  title: string;
+  description: string;
+  children: React.ReactNode;
+}) {
+  const [open, setOpen] = useState(false);
+  return (
+    <div className="flex flex-wrap items-center gap-2">
+      <Sheet open={open} onOpenChange={setOpen}>
+        <SheetTrigger render={<Button variant="outline" size="sm" />}>
+          <ListFilterIcon data-icon="inline-start" />
+          Filters
+          {chips.length > 0 ? (
+            <Badge variant="secondary" className="ml-1 px-1.5">
+              {chips.length}
+            </Badge>
+          ) : null}
+        </SheetTrigger>
+        <SheetContent side="right" className="flex w-full flex-col sm:max-w-sm">
+          <SheetHeader>
+            <SheetTitle>{title}</SheetTitle>
+            <SheetDescription>{description}</SheetDescription>
+          </SheetHeader>
+          {/* Applying navigates, which leaves this component mounted -- close
+              the sheet on submit so the reviewer sees the filtered table. */}
+          <Form
+            method="get"
+            className="flex min-h-0 flex-1 flex-col gap-4 overflow-y-auto"
+            onSubmit={() => setOpen(false)}
+          >
+            {children}
+          </Form>
+        </SheetContent>
+      </Sheet>
+      {chips.map((chip) => (
+        <Badge key={chip.param} variant="secondary" className="gap-1 pr-1">
+          {chip.label}
+          <Link
+            to={hrefWithout(chip.param)}
+            aria-label={`Remove filter ${chip.label}`}
+            className="rounded-sm opacity-70 hover:opacity-100"
+          >
+            <XIcon className="size-3" />
+          </Link>
+        </Badge>
+      ))}
+      {chips.length > 0 ? (
+        <Button variant="ghost" size="sm" nativeButton={false} render={<Link to={clearHref} />}>
+          Clear all
+        </Button>
+      ) : null}
+    </div>
+  );
+}
+
+export function SeCompanyInfoFilterSheet({
+  filters,
+  view,
+  options,
+}: {
+  filters: SeCompanyInfoTableFilters;
+  view: TableView;
+  options: SeCompanyInfoFilterOptions;
+}) {
+  return (
+    <FilterBar
+      chips={infoFilterChips(filters)}
+      clearHref={infoListSearch(EMPTY_INFO_FILTERS, view)}
+      hrefWithout={(param) => infoListSearch(filters, view, param)}
+      title="Filter company info"
+      description="Every filter is a URL parameter, so a filtered list can be shared or bookmarked. Sorting and page size are kept."
+    >
+      <SeCompanyInfoFilterFields filters={filters} options={options} view={view} />
+      <SheetActions clearHref={infoListSearch(EMPTY_INFO_FILTERS, view)} />
+    </FilterBar>
+  );
+}
+
+export function SeCompanyInfoCorrectionsFilterSheet({
+  filters,
+  view,
+  options,
+}: {
+  filters: SeCompanyInfoCorrectionsTableFilters;
+  view: TableView;
+  options: SeCompanyInfoCorrectionFilterOptions;
+}) {
+  return (
+    <FilterBar
+      chips={correctionFilterChips(filters)}
+      clearHref={correctionsListSearch(EMPTY_CORRECTION_FILTERS, view)}
+      hrefWithout={(param) => correctionsListSearch(filters, view, param)}
+      title="Filter corrections"
+      description="Every filter is a URL parameter, so a filtered ledger can be shared or bookmarked. Sorting and page size are kept."
+    >
+      <SeCompanyInfoCorrectionsFilterFields
+        filters={filters}
+        options={options}
+        view={view}
+      />
+      <SheetActions clearHref={correctionsListSearch(EMPTY_CORRECTION_FILTERS, view)} />
+    </FilterBar>
+  );
+}

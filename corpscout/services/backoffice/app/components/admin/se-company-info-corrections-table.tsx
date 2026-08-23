@@ -1,39 +1,20 @@
 import type { ColumnDef } from "@tanstack/react-table";
-import { Form, Link } from "react-router";
+import { Link } from "react-router";
 import { Badge } from "~/components/ui/badge";
-import { Button } from "~/components/ui/button";
-import { Input } from "~/components/ui/input";
-import { Label } from "~/components/ui/label";
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from "~/components/ui/select";
 import { DataTable } from "~/components/data-table/data-table";
+import { DataTableColumnHeader } from "~/components/data-table/column-header";
 import { DataTablePagination } from "~/components/data-table/pagination";
+import { SeCompanyInfoCorrectionsFilterSheet } from "~/components/admin/se-company-info-filter-sheet";
+import type { SortDir } from "~/lib/countries";
 import type {
+  SeCompanyInfoCorrectionFilterOptions,
   SeCompanyInfoCorrectionListRow,
+  SeCompanyInfoCorrectionSortKey,
   SeInfoCorrectionStatus,
 } from "~/lib/se-company-info-lists.server";
-import {
-  SE_INFO_CORRECTION_KINDS,
-  SE_INFO_CORRECTION_STATUSES,
-} from "~/lib/se-info-corrections";
+import type { SeCompanyInfoCorrectionsTableFilters } from "~/lib/se-company-info-filters";
 
-/** Sentinel `<Select>` value for "no filter" -- see se-company-info-table.tsx's
- * identical constant for why an explicit, selectable "Any" needs a non-""
- * value. Never submitted as a meaningful filter: buildCorrectionsListFilter's
- * whitelist checks against SE_INFO_CORRECTION_KINDS/SE_INFO_CORRECTION_STATUSES
- * already exclude anything else, "any" included. */
-const ANY = "any";
-
-export interface SeCompanyInfoCorrectionsTableFilters {
-  companyId: string;
-  kind: string;
-  status: string;
-}
+export type { SeCompanyInfoCorrectionsTableFilters };
 
 const STATUS_VARIANT: Record<
   SeInfoCorrectionStatus,
@@ -71,156 +52,95 @@ function payloadSummary(row: SeCompanyInfoCorrectionListRow): string {
   return row.payload;
 }
 
-const COLUMNS: ColumnDef<SeCompanyInfoCorrectionListRow, unknown>[] = [
-  {
-    id: "created_at",
-    header: "Decided",
-    cell: ({ row }) => (
-      <span className="text-muted-foreground text-xs whitespace-nowrap">
-        {row.original.created_at}
-      </span>
-    ),
-  },
-  {
-    id: "company_id",
-    header: "Company",
-    cell: ({ row }) => {
-      const id = row.original.company_id;
-      // The row itself opens the review page; the id links to the company page.
-      return (
-        <Link
-          to={`/company/se/${encodeURIComponent(id)}`}
-          className="font-mono text-xs underline underline-offset-2"
-        >
-          {id}
-        </Link>
-      );
-    },
-  },
-  {
-    id: "correction_id",
-    header: "Id",
-    cell: ({ row }) => (
-      <span className="font-mono text-xs">{row.original.correction_id.slice(0, 8)}</span>
-    ),
-  },
-  {
-    id: "correction_kind",
-    header: "Kind",
-    cell: ({ row }) => <Badge variant="outline">{row.original.correction_kind}</Badge>,
-  },
-  {
-    id: "payload",
-    header: "Payload",
-    cell: ({ row }) => {
-      const summary = payloadSummary(row.original);
-      return (
-        <span className="block max-w-[22rem] truncate" title={summary}>
-          {summary}
+/** Every column sorts server-side, so the columns are built per render with
+ * the sort the URL asked for. `sortKey` is typed against the ledger query's
+ * own whitelist, so a header can never name a column the server would reject. */
+function buildColumns(
+  sort: string,
+  dir: SortDir,
+): ColumnDef<SeCompanyInfoCorrectionListRow, unknown>[] {
+  const head = (label: string, sortKey: SeCompanyInfoCorrectionSortKey) => () => (
+    <DataTableColumnHeader
+      label={label}
+      sortKey={sortKey}
+      currentSort={sort}
+      currentDir={dir}
+    />
+  );
+  return [
+    {
+      id: "created_at",
+      header: head("Decided", "created_at"),
+      cell: ({ row }) => (
+        <span className="text-muted-foreground text-xs whitespace-nowrap">
+          {row.original.created_at}
         </span>
-      );
+      ),
     },
-  },
-  {
-    id: "reason",
-    header: "Reason",
-    cell: ({ row }) => (
-      <span className="block max-w-[16rem] truncate" title={row.original.reason}>
-        {row.original.reason}
-      </span>
-    ),
-  },
-  {
-    id: "decided_by",
-    header: "Decided by",
-    cell: ({ row }) => <span className="text-muted-foreground text-xs">{row.original.decided_by}</span>,
-  },
-  {
-    id: "status",
-    header: "Status",
-    cell: ({ row }) => (
-      <Badge variant={STATUS_VARIANT[row.original.status]}>{row.original.status}</Badge>
-    ),
-  },
-];
-
-function Field({ label, children }: { label: string; children: React.ReactNode }) {
-  return (
-    <div className="flex flex-col gap-1">
-      <Label className="text-xs font-medium">{label}</Label>
-      {children}
-    </div>
-  );
-}
-
-function FilterForm({
-  filters,
-  pageSize,
-}: {
-  filters: SeCompanyInfoCorrectionsTableFilters;
-  pageSize: number;
-}) {
-  return (
-    <Form
-      key={JSON.stringify(filters)}
-      method="get"
-      className="flex flex-wrap items-end gap-3"
-    >
-      {/* A filter change resets `page` (deliberately -- no hidden field for
-       * it) but must not silently reset the reviewer's chosen page size back
-       * to the default. */}
-      <input type="hidden" name="pageSize" value={pageSize} />
-      <Field label="Company id">
-        <Input
-          name="companyId"
-          defaultValue={filters.companyId}
-          className="w-40"
-          placeholder="Exact id"
-        />
-      </Field>
-      <Field label="Kind">
-        <Select name="kind" defaultValue={filters.kind === "" ? ANY : filters.kind}>
-          <SelectTrigger className="w-44" size="sm">
-            <SelectValue />
-          </SelectTrigger>
-          <SelectContent>
-            <SelectItem value={ANY}>Any</SelectItem>
-            {SE_INFO_CORRECTION_KINDS.map((kind) => (
-              <SelectItem key={kind} value={kind}>
-                {kind}
-              </SelectItem>
-            ))}
-          </SelectContent>
-        </Select>
-      </Field>
-      <Field label="Status">
-        <Select name="status" defaultValue={filters.status === "" ? ANY : filters.status}>
-          <SelectTrigger className="w-32" size="sm">
-            <SelectValue />
-          </SelectTrigger>
-          <SelectContent>
-            <SelectItem value={ANY}>Any</SelectItem>
-            {SE_INFO_CORRECTION_STATUSES.map((status) => (
-              <SelectItem key={status} value={status}>
-                {status}
-              </SelectItem>
-            ))}
-          </SelectContent>
-        </Select>
-      </Field>
-      <Button type="submit" size="sm">
-        Apply filters
-      </Button>
-      <Button
-        variant="ghost"
-        size="sm"
-        nativeButton={false}
-        render={<Link to="/admin/se/company-info/corrections" />}
-      >
-        Clear
-      </Button>
-    </Form>
-  );
+    {
+      id: "company_id",
+      header: head("Company", "company_id"),
+      cell: ({ row }) => {
+        const id = row.original.company_id;
+        // The row itself opens the review page; the id links to the company page.
+        return (
+          <Link
+            to={`/company/se/${encodeURIComponent(id)}`}
+            className="font-mono text-xs underline underline-offset-2"
+          >
+            {id}
+          </Link>
+        );
+      },
+    },
+    {
+      id: "correction_id",
+      header: head("Id", "correction_id"),
+      cell: ({ row }) => (
+        <span className="font-mono text-xs">{row.original.correction_id.slice(0, 8)}</span>
+      ),
+    },
+    {
+      id: "correction_kind",
+      header: head("Kind", "correction_kind"),
+      cell: ({ row }) => <Badge variant="outline">{row.original.correction_kind}</Badge>,
+    },
+    {
+      id: "payload",
+      header: head("Payload", "payload"),
+      cell: ({ row }) => {
+        const summary = payloadSummary(row.original);
+        return (
+          <span className="block max-w-[22rem] truncate" title={summary}>
+            {summary}
+          </span>
+        );
+      },
+    },
+    {
+      id: "reason",
+      header: head("Reason", "reason"),
+      cell: ({ row }) => (
+        <span className="block max-w-[16rem] truncate" title={row.original.reason}>
+          {row.original.reason}
+        </span>
+      ),
+    },
+    {
+      id: "decided_by",
+      header: head("Decided by", "decided_by"),
+      cell: ({ row }) => (
+        <span className="text-muted-foreground text-xs">{row.original.decided_by}</span>
+      ),
+    },
+    {
+      id: "status",
+      header: head("Status", "status"),
+      cell: ({ row }) => (
+        <Badge variant={STATUS_VARIANT[row.original.status]}>{row.original.status}</Badge>
+      ),
+    },
+  ];
 }
 
 export function SeCompanyInfoCorrectionsTable({
@@ -228,19 +148,29 @@ export function SeCompanyInfoCorrectionsTable({
   total,
   page,
   pageSize,
+  sort,
+  dir,
   filters,
+  options,
 }: {
   rows: SeCompanyInfoCorrectionListRow[];
   total: number;
   page: number;
   pageSize: number;
+  sort: string;
+  dir: SortDir;
   filters: SeCompanyInfoCorrectionsTableFilters;
+  options: SeCompanyInfoCorrectionFilterOptions;
 }) {
   return (
     <div className="flex flex-col gap-4">
-      <FilterForm filters={filters} pageSize={pageSize} />
+      <SeCompanyInfoCorrectionsFilterSheet
+        filters={filters}
+        view={{ sort, dir, pageSize }}
+        options={options}
+      />
       <DataTable
-        columns={COLUMNS}
+        columns={buildColumns(sort, dir)}
         data={rows}
         emptyText="No corrections match these filters."
         minWidthClassName="min-w-[64rem]"

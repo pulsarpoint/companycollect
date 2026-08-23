@@ -6,16 +6,28 @@ vi.mock("~/lib/clickhouse.server", () => ({ chQuery: clickhouse.query }));
 import {
   buildCorrectionsListFilter,
   buildInfoListFilter,
+  CORRECTION_FILTER_OPTIONS_SQL,
+  CORRECTION_SORT_COLUMNS,
   CORRECTION_STATUS_EXPR,
   CORRECTIONS_LIST_COUNT_SQL,
   CORRECTIONS_LIST_SELECT_SQL,
+  correctionsOrderBySql,
+  FILTER_OPTIONS_TTL_MS,
   INFO_COUNTS_BY_SOURCE_SQL,
   INFO_COUNTS_TOTALS_SQL,
+  INFO_FILTER_OPTIONS_SQL,
   INFO_LIST_SELECT_SQL,
+  INFO_SORT_COLUMNS,
+  infoOrderBySql,
   listSeCompanyInfoCorrectionsPage,
   listSeCompanyInfoPage,
+  loadSeCompanyInfoCorrectionFilterOptions,
   loadSeCompanyInfoCounts,
+  loadSeCompanyInfoFilterOptions,
   PAGE_LIMIT_OFFSET_SQL,
+  resetSeCompanyInfoFilterOptionsCache,
+  resolveCorrectionsSort,
+  resolveInfoSort,
   SCOPED_PUBLISHED_JOIN_SQL,
   UNDONE_CTE_SQL,
 } from "~/lib/se-company-info-lists.server";
@@ -57,6 +69,39 @@ describe("buildInfoListFilter", () => {
       where: ["notEmpty(i.correction_ids)"],
       params: {},
     });
+    expect(buildInfoListFilter({ status: "active" })).toEqual({
+      where: ["toString(i.status) = {status:String}"],
+      params: { status: "active" },
+    });
+    expect(buildInfoListFilter({ legalForm: "AB" })).toEqual({
+      where: ["ifNull(i.legal_form_code, '') = {legalForm:String}"],
+      params: { legalForm: "AB" },
+    });
+    expect(buildInfoListFilter({ language: "en" })).toEqual({
+      where: ["toString(i.description_language) = {language:String}"],
+      params: { language: "en" },
+    });
+    expect(buildInfoListFilter({ suggestion: "yes" })).toEqual({
+      where: ["i.suggestion_id IS NOT NULL"],
+      params: {},
+    });
+    expect(buildInfoListFilter({ suggestion: "no" })).toEqual({
+      where: ["i.suggestion_id IS NULL"],
+      params: {},
+    });
+  });
+
+  it("treats the select's 'any' sentinel and a blank as absent on every data-driven filter", () => {
+    for (const filters of [
+      { status: "any" },
+      { status: "  " },
+      { legalForm: "any" },
+      { language: "any" },
+      { suggestion: "any" },
+      { suggestion: "maybe" },
+    ]) {
+      expect(buildInfoListFilter(filters)).toEqual({ where: [], params: {} });
+    }
   });
 
   it("maps source=none to the empty-string description_source", () => {
@@ -224,6 +269,16 @@ describe("buildCorrectionsListFilter", () => {
     const statusFilter = buildCorrectionsListFilter({ status: "applied" });
     expect(statusFilter.where).toEqual([`(${CORRECTION_STATUS_EXPR}) = {status:String}`]);
     expect(statusFilter.params).toEqual({ zeroHash: ZERO_EVIDENCE_HASH, status: "applied" });
+    expect(buildCorrectionsListFilter({ decidedBy: "backoffice" })).toEqual({
+      where: ["c.decided_by = {decidedBy:String}"],
+      params: { zeroHash: ZERO_EVIDENCE_HASH, decidedBy: "backoffice" },
+    });
+    // decided_by is data-driven (its options come from the ledger itself), so
+    // the select's "any" sentinel is what marks it absent.
+    expect(buildCorrectionsListFilter({ decidedBy: "any" })).toEqual({
+      where: [],
+      params: { zeroHash: ZERO_EVIDENCE_HASH },
+    });
   });
 
   it("whitelists kind against SE_INFO_CORRECTION_KINDS, ignoring an unknown value (including 'any') instead of filtering on it", () => {
@@ -338,5 +393,174 @@ describe("listSeCompanyInfoCorrectionsPage", () => {
       companyId: "5565200028",
       kind: "undo",
     });
+  });
+});
+
+describe("server-side sorting", () => {
+  it("whitelists every sort key against the list row type and falls back to the default, never 500s", () => {
+    expect(resolveInfoSort("legal_name", "desc")).toEqual({ sort: "legal_name", dir: "desc" });
+    // Anything not in the whitelist -- an unknown column, SQL text, a blank --
+    // is the default sort, not an error and never interpolated.
+    for (const bogus of ["legal_name; DROP TABLE", "i.legal_name", "unknown", "", undefined]) {
+      expect(resolveInfoSort(bogus, "desc")).toEqual({ sort: "company_id", dir: "desc" });
+    }
+    expect(resolveInfoSort("legal_name", "sideways")).toEqual({
+      sort: "legal_name",
+      dir: "asc",
+    });
+    expect(resolveCorrectionsSort("decided_by", "asc")).toEqual({
+      sort: "decided_by",
+      dir: "asc",
+    });
+    expect(resolveCorrectionsSort("bogus", "bogus")).toEqual({
+      sort: "created_at",
+      dir: "desc",
+    });
+  });
+
+  it("emits ORDER BY <col> <dir> with a stable tiebreak, and never repeats the sorted column", () => {
+    expect(infoOrderBySql("legal_name", "desc")).toBe(
+      "ORDER BY i.legal_name DESC, i.company_id ASC",
+    );
+    expect(infoOrderBySql("corrections_count", "asc")).toBe(
+      "ORDER BY length(i.correction_ids) ASC, i.company_id ASC",
+    );
+    // The default sort IS the tiebreak column, so it appears once.
+    expect(infoOrderBySql("company_id", "asc")).toBe("ORDER BY i.company_id ASC");
+    expect(correctionsOrderBySql("company_id", "asc")).toBe(
+      "ORDER BY c.company_id ASC, c.created_at DESC, c.correction_id DESC",
+    );
+    // The unchanged default: newest first, correction_id breaking ties.
+    expect(correctionsOrderBySql("created_at", "desc")).toBe(
+      "ORDER BY c.created_at DESC, c.correction_id DESC",
+    );
+    // A computed column sorts by its expression, not by the SELECT alias.
+    expect(correctionsOrderBySql("status", "asc")).toBe(
+      `ORDER BY (${CORRECTION_STATUS_EXPR}) ASC, c.created_at DESC, c.correction_id DESC`,
+    );
+  });
+
+  it("threads the chosen sort into the paged row query", async () => {
+    clickhouse.query.mockReset();
+    clickhouse.query.mockResolvedValue([]);
+    await listSeCompanyInfoPage({ page: 1, pageSize: 50, sort: "resolved_at", dir: "desc" });
+    expect(clickhouse.query.mock.calls[0][0]).toContain(
+      "ORDER BY i.resolved_at DESC, i.company_id ASC",
+    );
+
+    clickhouse.query.mockClear();
+    clickhouse.query.mockResolvedValue([]);
+    await listSeCompanyInfoCorrectionsPage({
+      page: 1,
+      pageSize: 50,
+      sort: "decided_by",
+      dir: "asc",
+    });
+    expect(clickhouse.query.mock.calls[0][0]).toContain(
+      "ORDER BY c.decided_by ASC, c.created_at DESC, c.correction_id DESC",
+    );
+  });
+
+  it("keys every sort column by a column of the row type it sorts", () => {
+    // Sorting a list by a name the row does not have would give a header that
+    // silently never sorts; the component's sortKey is typed against these.
+    expect(Object.keys(INFO_SORT_COLUMNS)).toEqual([
+      "company_id",
+      "legal_name",
+      "status",
+      "legal_form_code",
+      "description_source",
+      "description_sources",
+      "description_language",
+      "description_snippet",
+      "has_suggestion",
+      "corrections_count",
+      "resolved_at",
+    ]);
+    expect(Object.keys(CORRECTION_SORT_COLUMNS)).toEqual([
+      "created_at",
+      "company_id",
+      "correction_id",
+      "correction_kind",
+      "payload",
+      "reason",
+      "decided_by",
+      "status",
+    ]);
+  });
+});
+
+describe("discrete filter options", () => {
+  beforeEach(() => {
+    clickhouse.query.mockReset();
+    resetSeCompanyInfoFilterOptionsCache();
+  });
+
+  it("reads every data-driven option list of a table in ONE query, over FINAL", async () => {
+    clickhouse.query.mockResolvedValueOnce([
+      {
+        statuses: ["active", "dissolved"],
+        legal_form_codes: ["", "AB"],
+        description_languages: ["en", "sv"],
+      },
+    ]);
+
+    const options = await loadSeCompanyInfoFilterOptions();
+
+    expect(clickhouse.query).toHaveBeenCalledTimes(1);
+    expect(clickhouse.query.mock.calls[0][0]).toBe(INFO_FILTER_OPTIONS_SQL);
+    expect(INFO_FILTER_OPTIONS_SQL).toContain("FROM corpscout.se_company_info AS i FINAL");
+    for (const column of ["i.status", "i.legal_form_code", "i.description_language"]) {
+      expect(INFO_FILTER_OPTIONS_SQL).toContain(`groupUniqArray(`);
+      expect(INFO_FILTER_OPTIONS_SQL).toContain(column);
+    }
+    expect(options).toEqual({
+      statuses: ["active", "dissolved"],
+      legalFormCodes: ["", "AB"],
+      descriptionLanguages: ["en", "sv"],
+    });
+  });
+
+  it("serves the cached options within the TTL and re-reads after it", async () => {
+    clickhouse.query.mockResolvedValue([
+      { statuses: ["active"], legal_form_codes: ["AB"], description_languages: ["en"] },
+    ]);
+    const now = Date.parse("2026-08-23T10:00:00Z");
+    const clock = vi.spyOn(Date, "now").mockReturnValue(now);
+
+    await loadSeCompanyInfoFilterOptions();
+    await loadSeCompanyInfoFilterOptions();
+    expect(clickhouse.query).toHaveBeenCalledTimes(1);
+
+    clock.mockReturnValue(now + FILTER_OPTIONS_TTL_MS + 1);
+    await loadSeCompanyInfoFilterOptions();
+    expect(clickhouse.query).toHaveBeenCalledTimes(2);
+    clock.mockRestore();
+  });
+
+  it("reads the ledger's own decided_by values, cached the same way", async () => {
+    clickhouse.query.mockResolvedValue([{ decided_by: ["backoffice", "dagster"] }]);
+
+    expect(await loadSeCompanyInfoCorrectionFilterOptions()).toEqual({
+      decidedBy: ["backoffice", "dagster"],
+    });
+    await loadSeCompanyInfoCorrectionFilterOptions();
+    expect(clickhouse.query).toHaveBeenCalledTimes(1);
+    expect(clickhouse.query.mock.calls[0][0]).toBe(CORRECTION_FILTER_OPTIONS_SQL);
+    expect(CORRECTION_FILTER_OPTIONS_SQL).toContain(
+      "FROM corpscout.se_company_info_correction AS c",
+    );
+    expect(CORRECTION_FILTER_OPTIONS_SQL).toContain("groupUniqArray(c.decided_by)");
+  });
+
+  it("returns empty option lists (never throws) when the table has no rows", async () => {
+    clickhouse.query.mockResolvedValue([]);
+    expect(await loadSeCompanyInfoFilterOptions()).toEqual({
+      statuses: [],
+      legalFormCodes: [],
+      descriptionLanguages: [],
+    });
+    resetSeCompanyInfoFilterOptionsCache();
+    expect(await loadSeCompanyInfoCorrectionFilterOptions()).toEqual({ decidedBy: [] });
   });
 });

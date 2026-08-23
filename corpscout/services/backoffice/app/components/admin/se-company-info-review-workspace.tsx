@@ -24,16 +24,20 @@ import {
   EmptyTitle,
 } from "~/components/ui/empty";
 import { Input } from "~/components/ui/input";
-import {
-  Table,
-  TableBody,
-  TableCell,
-  TableHead,
-  TableHeader,
-  TableRow,
-} from "~/components/ui/table";
 import { Textarea } from "~/components/ui/textarea";
-import type { SeCompanyInfoDetail } from "~/lib/se-company-info.server";
+import type {
+  SeCompanyInfoArtifactRow,
+  SeCompanyInfoDetail,
+  SeCompanyInfoRow,
+} from "~/lib/se-company-info.server";
+import {
+  ARTIFACT_SOURCES,
+  artifactPayloadEntries,
+  artifactSourceLabel,
+  parseJsonList,
+  wikidataHref,
+  type ArtifactPayloadEntry,
+} from "~/lib/se-company-info-payload";
 import { liveOverrideRefusal } from "~/lib/se-info-review-form";
 
 export type SeCompanyInfoReviewResult =
@@ -131,6 +135,243 @@ export function SeCompanyInfoNotPublished({
   );
 }
 
+const EMPTY_VALUE = <span className="text-muted-foreground">—</span>;
+
+/** One payload value, rendered the way its kind asks: a link for the two
+ * Wikidata identity fields, a list for ESEF's JSON blobs, plain text for
+ * everything else (including a column this app has never seen). */
+function PayloadValue({
+  entry,
+  payload,
+}: {
+  entry: ArtifactPayloadEntry;
+  payload: Record<string, string>;
+}) {
+  if (entry.value === "") return EMPTY_VALUE;
+  if (entry.kind === "wikidata-id") {
+    return (
+      <a
+        className="underline underline-offset-2"
+        href={wikidataHref(entry.value, payload.wikidata_url ?? "")}
+        target="_blank"
+        rel="noreferrer"
+      >
+        {entry.value}
+      </a>
+    );
+  }
+  if (entry.kind === "url") {
+    return (
+      <a
+        className="underline underline-offset-2 break-all"
+        href={entry.value}
+        target="_blank"
+        rel="noreferrer"
+      >
+        {entry.value}
+      </a>
+    );
+  }
+  if (entry.kind === "json-list") {
+    const items = parseJsonList(entry.value);
+    // Unparseable or not an array: show the raw text rather than dropping it.
+    if (items === null) return <span className="break-all">{entry.value}</span>;
+    if (items.length === 0) return EMPTY_VALUE;
+    return (
+      <ul className="list-disc pl-4">
+        {items.map((item, index) => (
+          <li key={`${index}-${item.text}`}>
+            {item.text}
+            {item.detail === "" ? null : (
+              <span className="text-muted-foreground ml-1 text-xs break-all">
+                {item.detail}
+              </span>
+            )}
+          </li>
+        ))}
+      </ul>
+    );
+  }
+  return <span>{entry.value}</span>;
+}
+
+/** One artifact version: its envelope, then every payload column of its table
+ * as a labelled definition list. */
+function ArtifactCard({
+  artifact,
+  contributes,
+}: {
+  artifact: SeCompanyInfoArtifactRow;
+  contributes: boolean;
+}) {
+  const entries = artifactPayloadEntries(artifact.source, artifact.payload);
+  return (
+    <Card>
+      <CardHeader>
+        <div className="flex flex-wrap items-center gap-2">
+          <CardTitle className="font-mono text-sm">
+            {artifact.source_record_uid}
+          </CardTitle>
+          {contributes ? (
+            <Badge variant="secondary">contributes to description</Badge>
+          ) : null}
+        </div>
+        <CardDescription>
+          {/* The artifact stamp is when this pipeline recorded the version, not
+              a register date: SCB's bulk load carries one constant
+              updated_from_raw_at for every company. */}
+          <span title="when the pipeline recorded this version">
+            observed {artifact.observed_at}
+          </span>{" "}
+          · evidence{" "}
+          <code className="font-mono text-xs">
+            {artifact.evidence_hash.slice(0, 8)}
+          </code>
+        </CardDescription>
+      </CardHeader>
+      <CardContent>
+        <dl className="grid grid-cols-1 gap-x-6 gap-y-1 text-sm sm:grid-cols-[minmax(11rem,auto)_1fr]">
+          {entries.map((entry) => (
+            <div key={entry.key} className="contents">
+              <dt className="text-muted-foreground text-xs uppercase tracking-wide sm:pt-0.5">
+                {entry.label}
+              </dt>
+              <dd className="mb-2 sm:mb-0">
+                <PayloadValue entry={entry} payload={artifact.payload} />
+              </dd>
+            </div>
+          ))}
+        </dl>
+      </CardContent>
+    </Card>
+  );
+}
+
+/** Artifacts grouped by source, the known sources in reading order and any
+ * source this app does not know about after them (a fourth artifact table
+ * would show up here rather than vanish). */
+function groupArtifactsBySource(
+  artifacts: SeCompanyInfoArtifactRow[],
+): Array<{ source: string; rows: SeCompanyInfoArtifactRow[] }> {
+  const seen = new Set<string>(ARTIFACT_SOURCES);
+  const order = [
+    ...ARTIFACT_SOURCES,
+    ...artifacts.map((row) => row.source).filter((source) => !seen.has(source)),
+  ];
+  const groups: Array<{ source: string; rows: SeCompanyInfoArtifactRow[] }> = [];
+  for (const source of order) {
+    if (groups.some((group) => group.source === source)) continue;
+    const rows = artifacts.filter((row) => row.source === source);
+    if (rows.length > 0) groups.push({ source, rows });
+  }
+  return groups;
+}
+
+/** The published row: what surfaces actually serve for this company. */
+function PublishedCard({ info }: { info: SeCompanyInfoRow }) {
+  // description_source is the winning source; don't repeat it inside the full
+  // description_sources list.
+  const otherSources = info.description_sources.filter(
+    (source) => source !== info.description_source,
+  );
+  return (
+    <Card>
+      <CardHeader>
+        <div className="flex flex-wrap items-center gap-2">
+          <CardTitle>Published version</CardTitle>
+          <Badge>active</Badge>
+          <Badge variant="secondary">{info.description_source}</Badge>
+        </div>
+        <CardDescription>
+          The se_company_info row every surface reads for this company. Both
+          languages are stored natively; corrections below change it only after
+          the next Dagster review run.
+        </CardDescription>
+      </CardHeader>
+      <CardContent className="flex flex-col gap-4">
+        <div className="grid gap-3 md:grid-cols-2">
+          <div className="flex flex-col gap-1">
+            <span className="text-xs font-medium uppercase tracking-wide text-muted-foreground">
+              English
+            </span>
+            {info.description ? (
+              <p className="text-sm">
+                {info.description}{" "}
+                <span className="text-xs text-muted-foreground">
+                  ({info.description_language} · {info.description_source}
+                  {otherSources.length > 0 ? ` · ${otherSources.join(", ")}` : ""}
+                  )
+                </span>
+              </p>
+            ) : (
+              <p className="text-sm text-muted-foreground">No description.</p>
+            )}
+          </div>
+          <div className="flex flex-col gap-1">
+            <span className="text-xs font-medium uppercase tracking-wide text-muted-foreground">
+              Swedish
+            </span>
+            {info.description_sv ? (
+              <p className="text-sm">{info.description_sv}</p>
+            ) : (
+              <p className="text-sm text-muted-foreground">
+                No Swedish description.
+              </p>
+            )}
+          </div>
+        </div>
+        <dl className="grid grid-cols-1 gap-x-6 gap-y-1 text-sm sm:grid-cols-[minmax(11rem,auto)_1fr]">
+          {[
+            ["Incorporated", info.incorporation_date ?? ""],
+            ["NACE", info.primary_nace_code],
+            ["SNI", info.primary_sni_code],
+            ["Wikidata id", info.wikidata_id ?? ""],
+            ["LEI", info.lei ?? ""],
+            ["Description sources", info.description_sources.join(", ")],
+            [
+              "Description source records",
+              info.description_source_record_uids.join(", "),
+            ],
+            ["Source records", info.source_record_uids.join(", ")],
+            ["Evidence set hash", info.evidence_set_hash],
+            ["Correction ids", info.correction_ids.join(", ")],
+            [
+              "Model",
+              `${info.model_provider} · ${info.model_name} · prompt ${info.prompt_version}`,
+            ],
+            ["Resolved at", info.resolved_at],
+            ["Run", info.source_run_id],
+          ].map(([label, value]) => (
+            <div key={label} className="contents">
+              <dt className="text-muted-foreground text-xs uppercase tracking-wide sm:pt-0.5">
+                {label}
+              </dt>
+              <dd className="mb-2 break-all sm:mb-0">
+                {value === "" ? EMPTY_VALUE : value}
+              </dd>
+            </div>
+          ))}
+        </dl>
+      </CardContent>
+    </Card>
+  );
+}
+
+function SectionHeading({
+  title,
+  description,
+}: {
+  title: string;
+  description: string;
+}) {
+  return (
+    <div className="flex flex-col gap-1">
+      <h2 className="text-lg font-semibold tracking-tight">{title}</h2>
+      <p className="text-sm text-muted-foreground">{description}</p>
+    </div>
+  );
+}
+
 export function SeCompanyInfoReviewWorkspace({
   detail,
   result,
@@ -148,6 +389,8 @@ export function SeCompanyInfoReviewWorkspace({
   // kinds always share one answer (the check doesn't look at which kind was
   // asked), so one call covers both buttons below.
   const overrideRefusal = liveOverrideRefusal("approve_suggestion", corrections);
+  const contributing = new Set(info.description_source_record_uids);
+  const groups = groupArtifactsBySource(artifacts);
 
   return (
     <div className="flex flex-1 flex-col gap-6 p-4 md:p-6">
@@ -165,63 +408,22 @@ export function SeCompanyInfoReviewWorkspace({
           {info.legal_name}
         </h1>
         <p className="text-sm text-muted-foreground">
-          Company{" "}
+          Company <span className="font-mono">{info.company_id}</span> · every
+          source below is what this company's published info was resolved from.
+        </p>
+        <div className="flex flex-wrap items-center gap-3 text-sm">
           <Link
-            className="underline"
+            className="underline underline-offset-2"
             to={`/company/se/${encodeURIComponent(info.company_id)}`}
           >
-            {info.company_id}
-          </Link>{" "}
-          · incorporated {info.incorporation_date ?? "unknown"} · NACE{" "}
-          {info.primary_nace_code} · SNI {info.primary_sni_code}
-          {info.wikidata_id ? <> · wikidata {info.wikidata_id}</> : null}
-          {info.lei ? <> · LEI {info.lei}</> : null} · evidence{" "}
-          <code className="font-mono text-xs">{hash.slice(0, 12)}</code> ·
-          model {info.model_provider} · {info.model_name} · prompt{" "}
-          {info.prompt_version} · resolved {info.resolved_at}
-        </p>
-        {/* The published row holds both languages natively (migration 000301):
-            the English text is what surfaces publish, the Swedish one the
-            register's own wording (or the model's Swedish summary). */}
-        <div className="grid gap-3 md:grid-cols-2">
-          <div className="flex flex-col gap-1">
-            <span className="text-xs font-medium uppercase tracking-wide text-muted-foreground">
-              English
-            </span>
-            {info.description
-              ? (() => {
-                  // description_source is the winning source; don't repeat it
-                  // inside the full description_sources list.
-                  const otherSources = info.description_sources.filter(
-                    (source) => source !== info.description_source,
-                  );
-                  return (
-                    <p className="text-sm">
-                      {info.description}{" "}
-                      <span className="text-xs text-muted-foreground">
-                        ({info.description_language} · {info.description_source}
-                        {otherSources.length > 0
-                          ? ` · ${otherSources.join(", ")}`
-                          : ""}
-                        )
-                      </span>
-                    </p>
-                  );
-                })()
-              : <p className="text-sm text-muted-foreground">No description.</p>}
-          </div>
-          <div className="flex flex-col gap-1">
-            <span className="text-xs font-medium uppercase tracking-wide text-muted-foreground">
-              Swedish
-            </span>
-            {info.description_sv ? (
-              <p className="text-sm">{info.description_sv}</p>
-            ) : (
-              <p className="text-sm text-muted-foreground">
-                No Swedish description.
-              </p>
-            )}
-          </div>
+            Company page
+          </Link>
+          <Link
+            className="underline underline-offset-2"
+            to={`/admin/se/company-info/corrections?companyId=${encodeURIComponent(info.company_id)}`}
+          >
+            Corrections ledger
+          </Link>
         </div>
       </header>
 
@@ -243,56 +445,32 @@ export function SeCompanyInfoReviewWorkspace({
         </Alert>
       ) : null}
 
-      <Card>
-        <CardHeader>
-          <CardTitle>Sources</CardTitle>
-          <CardDescription>
-            The artifact rows this published company info was resolved from.
-            Their set is what the evidence hash covers.
-          </CardDescription>
-        </CardHeader>
-        <CardContent>
-          <Table>
-            <TableHeader>
-              <TableRow>
-                <TableHead>Source</TableHead>
-                <TableHead>Record</TableHead>
-                {/* The artifact stamp is when this pipeline recorded the version,
-                    not a register date: SCB's bulk load carries one constant
-                    updated_from_raw_at for every company. */}
-                <TableHead title="when the pipeline recorded this version">
-                  Observed
-                </TableHead>
-                <TableHead>Summary</TableHead>
-              </TableRow>
-            </TableHeader>
-            <TableBody>
-              {artifacts.length === 0 ? (
-                <TableRow>
-                  <TableCell
-                    colSpan={4}
-                    className="text-sm text-muted-foreground"
-                  >
-                    No source artifacts.
-                  </TableCell>
-                </TableRow>
-              ) : null}
-              {artifacts.map((artifact) => (
-                <TableRow key={`${artifact.source}:${artifact.source_record_uid}`}>
-                  <TableCell>{artifact.source}</TableCell>
-                  <TableCell className="font-mono text-xs">
-                    {artifact.source_record_uid}
-                  </TableCell>
-                  <TableCell className="text-muted-foreground">
-                    {artifact.observed_at}
-                  </TableCell>
-                  <TableCell>{artifact.summary}</TableCell>
-                </TableRow>
-              ))}
-            </TableBody>
-          </Table>
-        </CardContent>
-      </Card>
+      <PublishedCard info={info} />
+
+      <section className="flex flex-col gap-4">
+        <SectionHeading
+          title="Sources"
+          description="Every artifact row connected to this company, in full. Their set is what the evidence hash covers."
+        />
+        {groups.length === 0 ? (
+          <p className="text-sm text-muted-foreground">No source artifacts.</p>
+        ) : null}
+        {groups.map((group) => (
+          <div key={group.source} className="flex flex-col gap-3">
+            <h3 className="flex items-center gap-2 text-sm font-semibold">
+              {artifactSourceLabel(group.source)}
+              <Badge variant="outline">{group.rows.length}</Badge>
+            </h3>
+            {group.rows.map((artifact) => (
+              <ArtifactCard
+                key={`${artifact.source}:${artifact.source_record_uid}`}
+                artifact={artifact}
+                contributes={contributing.has(artifact.source_record_uid)}
+              />
+            ))}
+          </div>
+        ))}
+      </section>
 
       <Card>
         <CardHeader>
@@ -428,136 +606,143 @@ export function SeCompanyInfoReviewWorkspace({
         </CardContent>
       </Card>
 
-      <Card>
-        <CardHeader>
-          <CardTitle>Override description</CardTitle>
-          <CardDescription>
-            Every decision is appended to the correction ledger with a
-            reason; nothing here rewrites the published row directly. Each
-            language is sent only when you change it — except the English
-            text, which the ledger always requires, so an override decides
-            both. Leave a text as-is and tick its box to clear that language
-            entirely.
-          </CardDescription>
-        </CardHeader>
-        <CardContent>
-          <Form method="post" className="flex max-w-2xl flex-col gap-2">
-            <HiddenCommon kind="override_field" evidenceHash={hash} />
-            {/* Diffed server-side: an untouched description must not enter
-                the payload, because Dagster replays the correction every
-                run. */}
-            <input
-              type="hidden"
-              name="original_description"
-              value={info.description ?? ""}
-            />
-            <Textarea
-              name="description"
-              defaultValue={info.description ?? ""}
-              aria-label="English description"
-              placeholder="English description"
-              rows={4}
-            />
-            <label className="flex items-center gap-2 text-sm">
-              <Checkbox name="clear_description" value="yes" />
-              <span>Clear the description</span>
-            </label>
-            <input
-              type="hidden"
-              name="original_description_sv"
-              value={info.description_sv ?? ""}
-            />
-            <Textarea
-              name="description_sv"
-              defaultValue={info.description_sv ?? ""}
-              aria-label="Swedish description"
-              placeholder="Swedish description"
-              rows={4}
-            />
-            <label className="flex items-center gap-2 text-sm">
-              <Checkbox name="clear_description_sv" value="yes" />
-              <span>Clear the Swedish description</span>
-            </label>
-            <Input
-              name="reason"
-              placeholder="Reason"
-              aria-label="Reason"
-              required
-            />
-            <Button type="submit" disabled={busy} aria-busy={busy}>
-              Save override
-            </Button>
-          </Form>
-        </CardContent>
-      </Card>
+      <section className="flex flex-col gap-4">
+        <SectionHeading
+          title="Corrections"
+          description="Reviewer decisions for this company. Every one is appended to the ledger with a reason and applied by the next Dagster review run."
+        />
 
-      <Card>
-        <CardHeader>
-          <CardTitle>Ledger</CardTitle>
-          <CardDescription>
-            Every correction ever recorded for this company, newest first.
-            Undo appends a superseding row instead of deleting one.
-          </CardDescription>
-        </CardHeader>
-        <CardContent className="flex flex-col gap-2">
-          {corrections.length === 0 ? (
-            <span className="text-sm text-muted-foreground">
-              No corrections yet.
-            </span>
-          ) : null}
-          {corrections.map((correction) => (
-            <div
-              key={correction.correction_id}
-              className="flex flex-wrap items-center gap-2 rounded-lg border p-2 text-sm"
-            >
-              <Badge variant={correction.is_current ? "default" : "outline"}>
-                {correction.correction_kind}
-              </Badge>
-              <code className="font-mono text-xs text-muted-foreground">
-                {correction.correction_id.slice(0, 8)}
-              </code>
-              {correction.is_stale ? (
-                <Badge variant="destructive">evidence changed</Badge>
-              ) : null}
-              {correction.is_applied ? (
-                <Badge variant="secondary">applied</Badge>
-              ) : null}
-              <span>{correction.reason}</span>
-              <span className="text-xs text-muted-foreground">
-                {correction.decided_by} · {correction.created_at}
+        <Card>
+          <CardHeader>
+            <CardTitle>Override description</CardTitle>
+            <CardDescription>
+              Every decision is appended to the correction ledger with a
+              reason; nothing here rewrites the published row directly. Each
+              language is sent only when you change it — except the English
+              text, which the ledger always requires, so an override decides
+              both. Leave a text as-is and tick its box to clear that language
+              entirely.
+            </CardDescription>
+          </CardHeader>
+          <CardContent>
+            <Form method="post" className="flex max-w-2xl flex-col gap-2">
+              <HiddenCommon kind="override_field" evidenceHash={hash} />
+              {/* Diffed server-side: an untouched description must not enter
+                  the payload, because Dagster replays the correction every
+                  run. */}
+              <input
+                type="hidden"
+                name="original_description"
+                value={info.description ?? ""}
+              />
+              <Textarea
+                name="description"
+                defaultValue={info.description ?? ""}
+                aria-label="English description"
+                placeholder="English description"
+                rows={4}
+              />
+              <label className="flex items-center gap-2 text-sm">
+                <Checkbox name="clear_description" value="yes" />
+                <span>Clear the description</span>
+              </label>
+              <input
+                type="hidden"
+                name="original_description_sv"
+                value={info.description_sv ?? ""}
+              />
+              <Textarea
+                name="description_sv"
+                defaultValue={info.description_sv ?? ""}
+                aria-label="Swedish description"
+                placeholder="Swedish description"
+                rows={4}
+              />
+              <label className="flex items-center gap-2 text-sm">
+                <Checkbox name="clear_description_sv" value="yes" />
+                <span>Clear the Swedish description</span>
+              </label>
+              <Input
+                name="reason"
+                placeholder="Reason"
+                aria-label="Reason"
+                required
+              />
+              <Button type="submit" disabled={busy} aria-busy={busy}>
+                Save override
+              </Button>
+            </Form>
+          </CardContent>
+        </Card>
+
+        <Card>
+          <CardHeader>
+            <CardTitle>Ledger</CardTitle>
+            <CardDescription>
+              Every correction ever recorded for this company, newest first.
+              Undo appends a superseding row instead of deleting one.
+            </CardDescription>
+          </CardHeader>
+          <CardContent className="flex flex-col gap-2">
+            {corrections.length === 0 ? (
+              <span className="text-sm text-muted-foreground">
+                No corrections yet.
               </span>
-              <code className="font-mono text-xs">{correction.payload}</code>
-              {correction.is_current &&
-              correction.correction_kind !== "undo" ? (
-                <Form method="post" className="ml-auto flex items-center gap-2">
-                  <input type="hidden" name="correction_kind" value="undo" />
-                  <input
-                    type="hidden"
-                    name="supersedes_correction_id"
-                    value={correction.correction_id}
-                  />
-                  <Input
-                    name="reason"
-                    placeholder="Why undo"
-                    aria-label="Why undo"
-                    required
-                    className="w-40"
-                  />
-                  <Button
-                    size="sm"
-                    variant="ghost"
-                    type="submit"
-                    disabled={busy}
-                    aria-busy={busy}
-                  >
-                    Undo
-                  </Button>
-                </Form>
-              ) : null}
-            </div>
-          ))}
-        </CardContent>
-      </Card>
+            ) : null}
+            {corrections.map((correction) => (
+              <div
+                key={correction.correction_id}
+                className="flex flex-wrap items-center gap-2 rounded-lg border p-2 text-sm"
+              >
+                <Badge variant={correction.is_current ? "default" : "outline"}>
+                  {correction.correction_kind}
+                </Badge>
+                <code className="font-mono text-xs text-muted-foreground">
+                  {correction.correction_id.slice(0, 8)}
+                </code>
+                {correction.is_stale ? (
+                  <Badge variant="destructive">evidence changed</Badge>
+                ) : null}
+                {correction.is_applied ? (
+                  <Badge variant="secondary">applied</Badge>
+                ) : null}
+                <span>{correction.reason}</span>
+                <span className="text-xs text-muted-foreground">
+                  {correction.decided_by} · {correction.created_at}
+                </span>
+                <code className="font-mono text-xs">{correction.payload}</code>
+                {correction.is_current &&
+                correction.correction_kind !== "undo" ? (
+                  <Form method="post" className="ml-auto flex items-center gap-2">
+                    <input type="hidden" name="correction_kind" value="undo" />
+                    <input
+                      type="hidden"
+                      name="supersedes_correction_id"
+                      value={correction.correction_id}
+                    />
+                    <Input
+                      name="reason"
+                      placeholder="Why undo"
+                      aria-label="Why undo"
+                      required
+                      className="w-40"
+                    />
+                    <Button
+                      size="sm"
+                      variant="ghost"
+                      type="submit"
+                      disabled={busy}
+                      aria-busy={busy}
+                    >
+                      Undo
+                    </Button>
+                  </Form>
+                ) : null}
+              </div>
+            ))}
+          </CardContent>
+        </Card>
+      </section>
     </div>
   );
 }

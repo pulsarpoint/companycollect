@@ -60,20 +60,67 @@ const detail: SeCompanyInfoDetail = {
     source_run_id: "run-1",
     resolved_at: "2026-08-22 09:00:00.000",
   },
+  // Task 16: each artifact carries its FULL payload (every column of its table),
+  // and the page renders every one of them under a label.
   artifacts: [
     {
       source: "scb",
       source_record_uid: "scb:1",
       observed_at: "2026-08-01 00:00:00.000",
       evidence_hash: "a".repeat(64),
-      summary: "IT-konsulter.",
+      payload: {
+        legal_name: "Alpha AB",
+        legal_name_raw: "ALPHA AB",
+        legal_form_code: "AB",
+        status: "active",
+        incorporation_date: "2001-02-03",
+        dissolution_date: "",
+        activity_description: "IT-konsulter.",
+        activity_description_en: "IT consultancy.",
+        primary_sni_code: "62010",
+        primary_nace_code: "62.01",
+      },
     },
     {
       source: "wikidata",
       source_record_uid: "wikidata:Q1",
       observed_at: "2026-08-01 00:00:00.000",
       evidence_hash: "c".repeat(64),
-      summary: "Swedish fintech company",
+      payload: {
+        wikidata_id: "Q1",
+        wikidata_url: "https://www.wikidata.org/wiki/Q1",
+        name: "Alpha",
+        official_name: "Alpha AB",
+        company_description: "Swedish fintech company",
+        inception_date: "2001-02-03",
+        legal_form_label: "aktiebolag",
+        industry_wikidata_id: "Q837171",
+        industry_label: "financial technology",
+        headquarters_label: "Stockholm",
+        employee_count: "120",
+        // A column this app does not know about yet (a future migration's).
+        future_column: "kept anyway",
+      },
+    },
+    {
+      source: "esef",
+      source_record_uid: "esef:doc-1",
+      observed_at: "2026-08-02 00:00:00.000",
+      evidence_hash: "d".repeat(64),
+      payload: {
+        source_document_id: "doc-1",
+        lei: "549300ALPHA0000000AB",
+        entity_name: "Alpha AB",
+        fiscal_year: "2025",
+        company_description: "Alpha provides payment infrastructure.",
+        description_language: "en",
+        description_confidence: "0.92",
+        // The shape the ESEF disclosure extractor actually writes: objects
+        // with a name plus its confidence/evidence.
+        products_and_services_json:
+          '[{"name":"Payment terminals","confidence":0.9,"evidence_ids":["E0010"]},{"name":"Card issuing"}]',
+        business_segments_json: "[]",
+      },
     },
   ],
   suggestions: [
@@ -216,10 +263,134 @@ describe("company info review page", () => {
   });
 
   // Task 13 round 1: the artifact stamp means "when the pipeline recorded this
-  // version", not a register date -- the column has to say so.
-  it("explains what the Sources Observed column stamps", () => {
+  // version", not a register date -- the label has to say so.
+  it("explains what an artifact's observed stamp means", () => {
     const html = render();
     expect(html).toContain('title="when the pipeline recorded this version"');
+  });
+
+  it("is the company's hub: header links to the company page and to this company's ledger", () => {
+    const html = render();
+    expect(html).toContain('href="/company/se/5565200028"');
+    expect(html).toContain(
+      'href="/admin/se/company-info/corrections?companyId=5565200028"',
+    );
+    expect(html).toContain("Company page");
+    expect(html).toContain("Corrections ledger");
+  });
+
+  it("lays the page out as published version, then every source, then suggestions and corrections", () => {
+    const html = render();
+    for (const heading of [
+      "Published version",
+      "Sources",
+      "SCB register",
+      "Wikidata",
+      "ESEF filing",
+      "Model suggestions",
+      "Corrections",
+      "Override description",
+      "Ledger",
+    ]) {
+      expect(html).toContain(heading);
+    }
+    // The published card is the active one, and says so.
+    expect(html).toContain(">active<");
+  });
+
+  it("shows every SCB payload column under its own label, empty ones as an em dash", () => {
+    const html = render();
+    for (const [label, value] of [
+      ["Legal name", "Alpha AB"],
+      ["Raw name", "ALPHA AB"],
+      ["Registration date", "2001-02-03"],
+      ["Activity description (sv)", "IT-konsulter."],
+      ["Activity description (en)", "IT consultancy."],
+      ["SNI", "62010"],
+      ["NACE", "62.01"],
+    ]) {
+      expect(html).toContain(label);
+      expect(html).toContain(value);
+    }
+    // dissolution_date is empty on this fixture.
+    expect(html).toContain("Dissolution date");
+    expect(html).toContain("—");
+  });
+
+  it("shows every Wikidata payload column, links the id to wikidata.org, and keeps unknown columns", () => {
+    const html = render();
+    expect(html).toContain('href="https://www.wikidata.org/wiki/Q1"');
+    for (const value of [
+      "Swedish fintech company",
+      "aktiebolag",
+      "financial technology",
+      "Stockholm",
+      "120",
+    ]) {
+      expect(html).toContain(value);
+    }
+    for (const label of ["Label", "Official name", "Headquarters", "Employees"]) {
+      expect(html).toContain(label);
+    }
+    // A column this app has never seen still renders, labelled from its name.
+    expect(html).toContain("Future column");
+    expect(html).toContain("kept anyway");
+  });
+
+  it("shows the ESEF payload including its JSON blobs as lists", () => {
+    const html = render();
+    for (const label of [
+      "Entity name",
+      "LEI",
+      "Fiscal year",
+      "Source document",
+      "Description language",
+      "Description confidence",
+      "Products &amp; services",
+      "Business segments",
+    ]) {
+      expect(html).toContain(label);
+    }
+    expect(html).toContain("2025");
+    // Each item leads with its name (as the public company page does) and
+    // keeps the rest of the object beside it rather than dropping it.
+    expect(html).toContain("<li>Payment terminals");
+    expect(html).toContain("&quot;confidence&quot;:0.9");
+    expect(html).toContain("<li>Card issuing</li>");
+  });
+
+  it("badges only the sources whose record actually contributed to the published description", () => {
+    const html = render();
+    expect(html.match(/contributes to description/g)).toHaveLength(1);
+    // scb:1 is the contributing uid on this fixture, so the badge sits inside
+    // the SCB group -- between its heading and the next source's.
+    const scbGroup = html.slice(
+      html.indexOf("SCB register"),
+      html.indexOf("Wikidata", html.indexOf("SCB register")),
+    );
+    expect(scbGroup).toContain("contributes to description");
+  });
+
+  it("renders a source card even when its payload is empty (every label, every value an em dash)", () => {
+    const html = render({
+      ...detail,
+      artifacts: [
+        {
+          source: "scb",
+          source_record_uid: "scb:1",
+          observed_at: "2026-08-01 00:00:00.000",
+          evidence_hash: "a".repeat(64),
+          payload: {},
+        },
+      ],
+    });
+    expect(html).toContain("Legal name");
+    expect(html).toContain("—");
+  });
+
+  it("says so when a company has no artifacts at all", () => {
+    const html = render({ ...detail, artifacts: [] });
+    expect(html).toContain("No source artifacts.");
   });
 
   it("does not repeat description_source inside description_sources", () => {

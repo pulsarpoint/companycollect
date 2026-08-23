@@ -15,8 +15,60 @@ import {
   SUGGESTIONS_SQL,
 } from "~/lib/se-company-info.server";
 import { SeInfoCorrectionValidationError, ZERO_EVIDENCE_HASH } from "~/lib/se-info-corrections";
+import {
+  ARTIFACT_PAYLOAD_FIELDS,
+  type ArtifactSource,
+} from "~/lib/se-company-info-payload";
 
 const COMPANY = "5565200028";
+
+/**
+ * The payload columns of each artifact table, straight from the DDL
+ * (migration 000297 plus 000300's activity_description_en) minus the envelope
+ * (company_id, source_record_uid, observed_at, source_run_id) and the
+ * MATERIALIZED evidence_hash. Hand-copied here on purpose: it is the
+ * independent statement of the schema that both the display list and the
+ * query are checked against, so a column the migrations add can never stay
+ * invisible on the review page.
+ */
+const DDL_PAYLOAD_COLUMNS: Record<ArtifactSource, string[]> = {
+  scb: [
+    "legal_name",
+    "legal_name_raw",
+    "legal_form_code",
+    "status",
+    "incorporation_date",
+    "dissolution_date",
+    "activity_description",
+    "activity_description_en",
+    "primary_sni_code",
+    "primary_nace_code",
+  ],
+  esef: [
+    "source_document_id",
+    "lei",
+    "entity_name",
+    "fiscal_year",
+    "company_description",
+    "description_language",
+    "description_confidence",
+    "products_and_services_json",
+    "business_segments_json",
+  ],
+  wikidata: [
+    "wikidata_id",
+    "wikidata_url",
+    "name",
+    "official_name",
+    "company_description",
+    "inception_date",
+    "legal_form_label",
+    "industry_wikidata_id",
+    "industry_label",
+    "headquarters_label",
+    "employee_count",
+  ],
+};
 
 describe("company info queries", () => {
   it("qualify WHERE columns and expose provenance", () => {
@@ -41,13 +93,9 @@ describe("company info queries", () => {
     expect(ARTIFACT_ROWS_SQL).toContain("FROM corpscout.se_company_info_scb AS a FINAL");
     expect(ARTIFACT_ROWS_SQL).toContain("FROM corpscout.se_company_info_esef AS a FINAL");
     expect(ARTIFACT_ROWS_SQL).toContain("FROM corpscout.se_company_info_wikidata AS a FINAL");
-    // SCB's verksamhetsbeskrivning is Swedish; the artifact carries the translator's
-    // English rendering beside it (migration 000300) and that is what the Sources table
-    // shows -- the Swedish original only for a company the translator has not reached.
-    // Both legs stay non-null, so summary is still a plain string, never null.
-    expect(ARTIFACT_ROWS_SQL).toContain(
-      "ifNull(nullIf(a.activity_description_en, ''), ifNull(a.activity_description, '')) AS summary",
-    );
+    // Task 16: the review page is the hub, so each leg carries its FULL payload
+    // as one JSON map instead of a single pre-picked summary column.
+    expect(ARTIFACT_ROWS_SQL).not.toContain("AS summary");
     // A trailing ORDER BY only binds to the last SELECT of a UNION ALL chain
     // in ClickHouse, so the union must be wrapped and the ORDER BY placed
     // outside it -- pin the closing paren immediately followed by the ORDER
@@ -76,6 +124,46 @@ describe("company info queries", () => {
     expect(CORRECTIONS_SQL).toContain("supersedes_correction_id IS NOT NULL");
     expect(CORRECTIONS_SQL).toContain("{zeroHash:String}");
     expect(CORRECTIONS_SQL).toContain("has({appliedIds:Array(String)}, toString(c.correction_id))");
+  });
+
+  it("projects every artifact leg with the same alias order, envelope first then payload_json", () => {
+    // UNION ALL matches legs positionally, so every leg must project the same
+    // five aliases in the same order -- pin the order, not just the presence.
+    // Select-list aliases only: each ends the line, unlike the `AS a FINAL`
+    // table alias every leg's FROM carries.
+    const aliases = [...ARTIFACT_ROWS_SQL.matchAll(/AS (\w+)(?=,|\n)/g)].map((m) => m[1]);
+    expect(aliases).toEqual([
+      "source",
+      "source_record_uid",
+      "observed_at",
+      "evidence_hash",
+      "payload_json",
+      "source",
+      "source_record_uid",
+      "observed_at",
+      "evidence_hash",
+      "payload_json",
+      "source",
+      "source_record_uid",
+      "observed_at",
+      "evidence_hash",
+      "payload_json",
+    ]);
+  });
+
+  it("carries EVERY payload column of every artifact table in its toJSONString(map(...))", () => {
+    for (const [source, columns] of Object.entries(DDL_PAYLOAD_COLUMNS)) {
+      // The display list is the query's own column list, so a column missing
+      // from one is missing from both -- check it against the DDL directly.
+      const fields = ARTIFACT_PAYLOAD_FIELDS[source as ArtifactSource];
+      expect([...fields.map((field) => field.key)].sort()).toEqual([...columns].sort());
+      for (const column of columns) {
+        // The Dagster build_artifact_rows_sql convention: the cast is INSIDE
+        // ifNull (ClickHouse has no common type for a Date/number and '').
+        expect(ARTIFACT_ROWS_SQL).toContain(`'${column}', ifNull(toString(a.${column}), '')`);
+      }
+    }
+    expect(ARTIFACT_ROWS_SQL.match(/toJSONString\(map\(/g)).toHaveLength(3);
   });
 });
 
@@ -172,5 +260,42 @@ describe("appendSeCompanyInfoCorrection", () => {
       evidenceSetHash: "a".repeat(64),
       appliedIds: ["22222222-2222-4222-8222-222222222222"],
     });
+  });
+
+  it("parses each artifact's payload_json into a name->string map, and never lets a bad one throw", async () => {
+    clickhouse.query
+      .mockResolvedValueOnce([
+        { company_id: COMPANY, suggestion_id: null, evidence_set_hash: "a".repeat(64), correction_ids: [] },
+      ])
+      .mockResolvedValueOnce([
+        {
+          source: "scb",
+          source_record_uid: "scb:1",
+          observed_at: "2026-08-01 00:00:00.000",
+          evidence_hash: "b".repeat(64),
+          payload_json: '{"legal_name":"Alpha AB","incorporation_date":"2001-02-03"}',
+        },
+        {
+          source: "wikidata",
+          source_record_uid: "wikidata:Q1",
+          observed_at: "2026-08-01 00:00:00.000",
+          evidence_hash: "c".repeat(64),
+          payload_json: "not json",
+        },
+      ])
+      .mockResolvedValueOnce([])
+      .mockResolvedValueOnce([]);
+
+    const detail = await loadSeCompanyInfoDetail(COMPANY);
+
+    expect(detail?.artifacts[0]).toEqual({
+      source: "scb",
+      source_record_uid: "scb:1",
+      observed_at: "2026-08-01 00:00:00.000",
+      evidence_hash: "b".repeat(64),
+      payload: { legal_name: "Alpha AB", incorporation_date: "2001-02-03" },
+    });
+    // A malformed payload is an empty map, not a 500 on the review page.
+    expect(detail?.artifacts[1].payload).toEqual({});
   });
 });

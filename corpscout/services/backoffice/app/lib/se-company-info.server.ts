@@ -9,6 +9,10 @@ import {
   ZERO_EVIDENCE_HASH,
   type SeInfoCorrectionInput,
 } from "~/lib/se-info-corrections";
+import {
+  ARTIFACT_PAYLOAD_FIELDS,
+  type ArtifactSource,
+} from "~/lib/se-company-info-payload";
 
 export { ZERO_EVIDENCE_HASH };
 const CORRECTION_ACTOR = "backoffice";
@@ -49,7 +53,18 @@ export interface SeCompanyInfoArtifactRow {
   source_record_uid: string;
   observed_at: string;
   evidence_hash: string;
-  summary: string;
+  /** Every payload column of this artifact table, name -> text (see
+   * ARTIFACT_ROWS_SQL). Parsed server-side from `payload_json`. */
+  payload: Record<string, string>;
+}
+
+/** What ClickHouse returns for ARTIFACT_ROWS_SQL, before payload_json is parsed. */
+interface SeCompanyInfoArtifactQueryRow {
+  source: string;
+  source_record_uid: string;
+  observed_at: string;
+  evidence_hash: string;
+  payload_json: string;
 }
 
 export interface SeCompanyInfoSuggestionRow {
@@ -127,49 +142,60 @@ FROM corpscout.se_company_info AS i FINAL
 WHERE i.company_id = {companyId:String}
 LIMIT 1`;
 
+const ARTIFACT_TABLES: Record<ArtifactSource, string> = {
+  scb: "corpscout.se_company_info_scb",
+  esef: "corpscout.se_company_info_esef",
+  wikidata: "corpscout.se_company_info_wikidata",
+};
+
+/** One leg's payload as a JSON map, built from the ONE payload-column list
+ * this app keeps (se-company-info-payload.ts). Mirrors Dagster's
+ * `build_artifact_rows_sql`: every value is `ifNull(toString(col), '')`, with
+ * the cast INSIDE ifNull because ClickHouse has no common type for a
+ * Date/number and '' -- so typed NULLs arrive as '' and numbers as text, and
+ * the map's value type stays a uniform String. */
+function payloadMapSql(source: ArtifactSource): string {
+  const pairs = ARTIFACT_PAYLOAD_FIELDS[source]
+    .map((field) => `'${field.key}', ifNull(toString(a.${field.key}), '')`)
+    .join(",\n      ");
+  return `toJSONString(map(\n      ${pairs}\n    ))`;
+}
+
+function artifactLegSql(source: ArtifactSource): string {
+  return `  SELECT
+    '${source}' AS source,
+    a.source_record_uid AS source_record_uid,
+    toString(a.observed_at) AS observed_at,
+    toString(a.evidence_hash) AS evidence_hash,
+    ${payloadMapSql(source)} AS payload_json
+  FROM ${ARTIFACT_TABLES[source]} AS a FINAL
+  WHERE a.company_id = {companyId:String}`;
+}
+
 /**
  * Every artifact leg reads FINAL (each source table is itself a
- * ReplacingMergeTree of versions) and aliases every projected expression,
- * including the per-leg literal `source` and the computed `summary`. The SCB
- * leg shows the translator's English rendering of the Swedish
- * verksamhetsbeskrivning (the column migration 000300 added, and the text the
- * pilot publishes), falling back to the Swedish original for a company the
- * translator has not reached yet; both legs are non-null, so `summary` stays a
- * plain string. ClickHouse only applies a trailing ORDER BY to the last SELECT
- * of a UNION ALL chain, so the three legs are wrapped in a subquery and the
- * ORDER BY sits outside it, over the union's own output columns. The
- * `source_record_uid` tiebreak matters in practice: bulk-loaded SCB rows
- * routinely share one `observed_at`. ESEF grows one row per filing, so
- * (unlike INFO_SQL/SUGGESTIONS_SQL/CORRECTIONS_SQL, which are bounded by
- * construction) this one needs its own LIMIT.
+ * ReplacingMergeTree of versions) and aliases every projected expression, in
+ * the same order in every leg (UNION ALL matches columns positionally): the
+ * envelope the review page shows -- source, record uid, observed_at,
+ * evidence_hash -- then the leg's FULL payload as one JSON map. The review
+ * page is the hub for this company, so it renders every payload column rather
+ * than one pre-picked summary; picking which text to show is a display
+ * decision, not a query one.
+ *
+ * ClickHouse only applies a trailing ORDER BY to the last SELECT of a UNION
+ * ALL chain, so the three legs are wrapped in a subquery and the ORDER BY sits
+ * outside it, over the union's own output columns. The `source_record_uid`
+ * tiebreak matters in practice: bulk-loaded SCB rows routinely share one
+ * `observed_at`. ESEF grows one row per filing, so (unlike
+ * INFO_SQL/SUGGESTIONS_SQL/CORRECTIONS_SQL, which are bounded by construction)
+ * this one needs its own LIMIT.
  */
 export const ARTIFACT_ROWS_SQL = `SELECT * FROM (
-  SELECT
-    'scb' AS source,
-    a.source_record_uid AS source_record_uid,
-    toString(a.observed_at) AS observed_at,
-    toString(a.evidence_hash) AS evidence_hash,
-    ifNull(nullIf(a.activity_description_en, ''), ifNull(a.activity_description, '')) AS summary
-  FROM corpscout.se_company_info_scb AS a FINAL
-  WHERE a.company_id = {companyId:String}
+${artifactLegSql("scb")}
   UNION ALL
-  SELECT
-    'esef' AS source,
-    a.source_record_uid AS source_record_uid,
-    toString(a.observed_at) AS observed_at,
-    toString(a.evidence_hash) AS evidence_hash,
-    a.company_description AS summary
-  FROM corpscout.se_company_info_esef AS a FINAL
-  WHERE a.company_id = {companyId:String}
+${artifactLegSql("esef")}
   UNION ALL
-  SELECT
-    'wikidata' AS source,
-    a.source_record_uid AS source_record_uid,
-    toString(a.observed_at) AS observed_at,
-    toString(a.evidence_hash) AS evidence_hash,
-    ifNull(a.company_description, '') AS summary
-  FROM corpscout.se_company_info_wikidata AS a FINAL
-  WHERE a.company_id = {companyId:String}
+${artifactLegSql("wikidata")}
 )
 ORDER BY source, observed_at DESC, source_record_uid
 LIMIT 500`;
@@ -236,6 +262,28 @@ ORDER BY c.created_at DESC, c.correction_id DESC
 LIMIT 200`;
 
 /**
+ * `payload_json` is a ClickHouse `map(String, String)` rendered by
+ * toJSONString, so every value is already text. Parsed defensively anyway: a
+ * malformed payload must leave the rest of the review page renderable rather
+ * than 500 the whole company, and a non-string value (impossible from that
+ * map, but cheap to guard) is stringified rather than handed to React.
+ */
+function parseArtifactPayload(raw: string): Record<string, string> {
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(raw);
+  } catch {
+    return {};
+  }
+  if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) return {};
+  const payload: Record<string, string> = {};
+  for (const [key, value] of Object.entries(parsed as Record<string, unknown>)) {
+    payload[key] = typeof value === "string" ? value : String(value ?? "");
+  }
+  return payload;
+}
+
+/**
  * Loads a company's published info row plus its artifact provenance, model
  * suggestions and correction ledger for the review page. Returns null when
  * the company has no published row (nothing to review yet).
@@ -245,8 +293,8 @@ export async function loadSeCompanyInfoDetail(
 ): Promise<SeCompanyInfoDetail | null> {
   const [info] = await chQuery<SeCompanyInfoRow>(INFO_SQL, { companyId });
   if (!info) return null;
-  const [artifacts, suggestions, corrections] = await Promise.all([
-    chQuery<SeCompanyInfoArtifactRow>(ARTIFACT_ROWS_SQL, { companyId }),
+  const [artifactRows, suggestions, corrections] = await Promise.all([
+    chQuery<SeCompanyInfoArtifactQueryRow>(ARTIFACT_ROWS_SQL, { companyId }),
     chQuery<SeCompanyInfoSuggestionRow>(SUGGESTIONS_SQL, {
       companyId,
       publishedSuggestionId: info.suggestion_id,
@@ -258,6 +306,13 @@ export async function loadSeCompanyInfoDetail(
       appliedIds: info.correction_ids,
     }),
   ]);
+  const artifacts: SeCompanyInfoArtifactRow[] = artifactRows.map((row) => ({
+    source: row.source,
+    source_record_uid: row.source_record_uid,
+    observed_at: row.observed_at,
+    evidence_hash: row.evidence_hash,
+    payload: parseArtifactPayload(row.payload_json),
+  }));
   return { info, artifacts, suggestions, corrections };
 }
 

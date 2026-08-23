@@ -9,12 +9,17 @@
  * being a fixed string.
  */
 import { chQuery } from "~/lib/clickhouse.server";
+import type { SortDir } from "~/lib/countries";
 import { clampPage, clampPageSize } from "~/lib/paging";
 import {
   SE_INFO_CORRECTION_KINDS,
   SE_INFO_CORRECTION_STATUSES,
   type SeInfoCorrectionStatus,
 } from "~/lib/se-info-corrections";
+import {
+  ANY_FILTER_VALUE,
+  NONE_FILTER_VALUE,
+} from "~/lib/se-company-info-filters";
 import { INFO_LIST_SOURCES } from "~/lib/se-company-info-sources";
 import { ZERO_EVIDENCE_HASH } from "~/lib/se-person-corrections";
 
@@ -23,6 +28,63 @@ export type { SeInfoCorrectionStatus };
 function nonEmpty(value: string | undefined): string | null {
   const trimmed = value?.trim() ?? "";
   return trimmed === "" ? null : trimmed;
+}
+
+/**
+ * A data-driven discrete filter's value: absent when unset or when the select
+ * says "Any", and the empty string when it says "none" (a company with no
+ * legal form code / description language / status recorded). Values reach SQL
+ * only as named params, never as text -- the option lists these come from are
+ * read from the column itself (see loadSeCompanyInfoFilterOptions), so there
+ * is no fixed enum to whitelist them against the way `source` and `kind` have.
+ */
+function discreteValue(value: string | undefined): string | null {
+  const trimmed = nonEmpty(value);
+  if (trimmed === null || trimmed === ANY_FILTER_VALUE) return null;
+  return trimmed === NONE_FILTER_VALUE ? "" : trimmed;
+}
+
+/* -------------------------------------------------------------------- */
+/* Server-side sorting                                                   */
+/* -------------------------------------------------------------------- */
+
+interface SortTerm {
+  expr: string;
+  dir: SortDir;
+}
+
+/**
+ * ORDER BY for one whitelisted column plus the list's own stable tiebreak,
+ * with any tiebreak that IS the sorted column dropped (so the default sort
+ * still reads `ORDER BY i.company_id ASC`, not the same column twice).
+ *
+ * Cost note: se_company_info is a 3.5M-row ReplacingMergeTree ordered by
+ * company_id, so sorting a page by any other column is a top-N sort over the
+ * FINAL-merged result (`ORDER BY ... LIMIT/OFFSET`), which ClickHouse does in
+ * one pass with a bounded heap -- fine for an admin list. A DEEP page on such
+ * a sort (offset in the hundreds of thousands) degenerates into a full sort;
+ * that is accepted here rather than restricting sorting to the key.
+ */
+function orderBySql(primary: SortTerm, tiebreaks: readonly SortTerm[]): string {
+  const terms = [
+    primary,
+    ...tiebreaks.filter((term) => term.expr !== primary.expr),
+  ];
+  return `ORDER BY ${terms
+    .map((term) => `${term.expr} ${term.dir === "desc" ? "DESC" : "ASC"}`)
+    .join(", ")}`;
+}
+
+function resolveDir(dir: string | undefined, fallback: SortDir): SortDir {
+  return dir === "asc" || dir === "desc" ? dir : fallback;
+}
+
+function resolveSortKey<K extends string>(
+  columns: Record<K, string>,
+  sort: string | undefined,
+  fallback: K,
+): K {
+  return sort !== undefined && Object.hasOwn(columns, sort) ? (sort as K) : fallback;
 }
 
 function pageParams(query: { page: number; pageSize: number }): {
@@ -46,8 +108,10 @@ export interface SeCompanyInfoListRow {
   company_id: string;
   legal_name: string;
   status: string;
+  legal_form_code: string;
   description_source: string;
   description_sources: string[];
+  description_language: string;
   description_snippet: string;
   has_suggestion: number;
   corrections_count: number;
@@ -58,6 +122,11 @@ export interface SeCompanyInfoListFilters {
   companyId?: string;
   name?: string;
   source?: string;
+  status?: string;
+  legalForm?: string;
+  language?: string;
+  /** "yes" | "no" -- anything else (including the select's "any") is absent. */
+  suggestion?: string;
   multi?: boolean;
   entity?: "legal" | "sole";
   corrected?: boolean;
@@ -66,6 +135,53 @@ export interface SeCompanyInfoListFilters {
 export interface SeCompanyInfoListQuery extends SeCompanyInfoListFilters {
   page: number;
   pageSize: number;
+  sort?: string;
+  dir?: string;
+}
+
+/**
+ * Every column a header may sort by, mapped to the expression that sorts it.
+ * The keys are exactly the columns of `SeCompanyInfoListRow` (the component's
+ * `sortKey`s are typed against them), and a request naming anything else falls
+ * back to the default -- nothing from the request is ever interpolated.
+ * `has_suggestion` sorts by the underlying nullable id, `corrections_count` by
+ * the array length the row shows.
+ */
+export const INFO_SORT_COLUMNS = {
+  company_id: "i.company_id",
+  legal_name: "i.legal_name",
+  status: "i.status",
+  legal_form_code: "i.legal_form_code",
+  description_source: "i.description_source",
+  description_sources: "i.description_sources",
+  description_language: "i.description_language",
+  description_snippet: "i.description",
+  has_suggestion: "i.suggestion_id",
+  corrections_count: "length(i.correction_ids)",
+  resolved_at: "i.resolved_at",
+} as const;
+
+export type SeCompanyInfoSortKey = keyof typeof INFO_SORT_COLUMNS;
+
+export const DEFAULT_INFO_SORT: SeCompanyInfoSortKey = "company_id";
+export const DEFAULT_INFO_DIR: SortDir = "asc";
+
+export function resolveInfoSort(
+  sort: string | undefined,
+  dir: string | undefined,
+): { sort: SeCompanyInfoSortKey; dir: SortDir } {
+  return {
+    sort: resolveSortKey(INFO_SORT_COLUMNS, sort, DEFAULT_INFO_SORT),
+    dir: resolveDir(dir, DEFAULT_INFO_DIR),
+  };
+}
+
+/** company_id is the table's ORDER BY key, so it is a total tiebreak: two
+ * pages of a name sort never show the same row twice or skip one. */
+export function infoOrderBySql(sort: SeCompanyInfoSortKey, dir: SortDir): string {
+  return orderBySql({ expr: INFO_SORT_COLUMNS[sort], dir }, [
+    { expr: INFO_SORT_COLUMNS.company_id, dir: "asc" },
+  ]);
 }
 
 /** No `total` here on purpose: the table's pagination total is derived from
@@ -125,6 +241,29 @@ export function buildInfoListFilter(
   if (filters.corrected) {
     where.push("notEmpty(i.correction_ids)");
   }
+  const status = discreteValue(filters.status);
+  if (status !== null) {
+    where.push("toString(i.status) = {status:String}");
+    params.status = status;
+  }
+  // legal_form_code is the one Nullable column among the discrete filters, so
+  // its predicate carries the same ifNull guard its option list does --
+  // otherwise "no legal form code" could never be selected.
+  const legalForm = discreteValue(filters.legalForm);
+  if (legalForm !== null) {
+    where.push("ifNull(i.legal_form_code, '') = {legalForm:String}");
+    params.legalForm = legalForm;
+  }
+  const language = discreteValue(filters.language);
+  if (language !== null) {
+    where.push("toString(i.description_language) = {language:String}");
+    params.language = language;
+  }
+  if (filters.suggestion === "yes") {
+    where.push("i.suggestion_id IS NOT NULL");
+  } else if (filters.suggestion === "no") {
+    where.push("i.suggestion_id IS NULL");
+  }
   return { where, params };
 }
 
@@ -137,8 +276,10 @@ export const INFO_LIST_SELECT_SQL = `SELECT
   i.company_id AS company_id,
   i.legal_name AS legal_name,
   toString(i.status) AS status,
+  ifNull(i.legal_form_code, '') AS legal_form_code,
   toString(i.description_source) AS description_source,
   i.description_sources AS description_sources,
+  toString(i.description_language) AS description_language,
   substringUTF8(ifNull(i.description, ''), 1, 120) AS description_snippet,
   toUInt8(i.suggestion_id IS NOT NULL) AS has_suggestion,
   length(i.correction_ids) AS corrections_count,
@@ -178,11 +319,12 @@ export async function listSeCompanyInfoPage(
 ): Promise<SeCompanyInfoListPage> {
   const { filter, params } = infoFilterClause(query);
   const { limit, offset } = pageParams(query);
+  const sort = resolveInfoSort(query.sort, query.dir);
 
   const rows = await chQuery<SeCompanyInfoListRow>(
     `${INFO_LIST_SELECT_SQL}
 ${filter}
-ORDER BY i.company_id
+${infoOrderBySql(sort.sort, sort.dir)}
 ${PAGE_LIMIT_OFFSET_SQL}`,
     { ...params, limit, offset },
   );
@@ -222,6 +364,97 @@ ORDER BY i.description_source`,
 }
 
 /* -------------------------------------------------------------------- */
+/* Discrete filter option lists (shared by both pages' filter sheets)     */
+/* -------------------------------------------------------------------- */
+
+/**
+ * How long a table's option lists are served from memory. They are the
+ * DISTINCT values of a few low-cardinality columns -- a new status or legal
+ * form code appearing ten minutes late in a filter list costs nothing, while
+ * scanning 3.5M FINAL-merged rows on every page load would cost a second on
+ * every reviewer's every click.
+ */
+export const FILTER_OPTIONS_TTL_MS = 10 * 60 * 1000;
+
+export interface SeCompanyInfoFilterOptions {
+  statuses: string[];
+  legalFormCodes: string[];
+  descriptionLanguages: string[];
+}
+
+export interface SeCompanyInfoCorrectionFilterOptions {
+  decidedBy: string[];
+}
+
+/**
+ * ONE query for every data-driven option list of se_company_info, read FINAL
+ * like every other query against it (a company's status is whatever its newest
+ * version says, so the pre-merge parts would offer values no live row has).
+ * `groupUniqArray` over a LowCardinality column is a dictionary walk, not a
+ * per-row aggregation; `arraySort` makes the option order stable between
+ * loads. legal_form_code is Nullable, so its NULL is folded into '' -- the
+ * value the "none" option filters on.
+ */
+export const INFO_FILTER_OPTIONS_SQL = `SELECT
+  arraySort(groupUniqArray(toString(i.status))) AS statuses,
+  arraySort(groupUniqArray(ifNull(i.legal_form_code, ''))) AS legal_form_codes,
+  arraySort(groupUniqArray(toString(i.description_language))) AS description_languages
+FROM corpscout.se_company_info AS i FINAL`;
+
+/** The ledger's only data-driven discrete column: correction_kind and the
+ * computed status are fixed enums the review page already defines. No FINAL --
+ * se_company_info_correction is an append-only MergeTree, not Replacing. */
+export const CORRECTION_FILTER_OPTIONS_SQL = `SELECT
+  arraySort(groupUniqArray(c.decided_by)) AS decided_by
+FROM corpscout.se_company_info_correction AS c`;
+
+interface OptionsCacheEntry<T> {
+  value: T;
+  at: number;
+}
+
+let infoOptionsCache: OptionsCacheEntry<SeCompanyInfoFilterOptions> | null = null;
+let correctionOptionsCache: OptionsCacheEntry<SeCompanyInfoCorrectionFilterOptions> | null =
+  null;
+
+function isFresh(entry: OptionsCacheEntry<unknown> | null): boolean {
+  return entry !== null && Date.now() - entry.at < FILTER_OPTIONS_TTL_MS;
+}
+
+/** Drops both cached option lists. Used by tests; also the one lever if a
+ * reviewer ever needs the lists refreshed before the TTL expires. */
+export function resetSeCompanyInfoFilterOptionsCache(): void {
+  infoOptionsCache = null;
+  correctionOptionsCache = null;
+}
+
+export async function loadSeCompanyInfoFilterOptions(): Promise<SeCompanyInfoFilterOptions> {
+  if (isFresh(infoOptionsCache)) return infoOptionsCache!.value;
+  const [row] = await chQuery<{
+    statuses: string[];
+    legal_form_codes: string[];
+    description_languages: string[];
+  }>(INFO_FILTER_OPTIONS_SQL);
+  const value: SeCompanyInfoFilterOptions = {
+    statuses: row?.statuses ?? [],
+    legalFormCodes: row?.legal_form_codes ?? [],
+    descriptionLanguages: row?.description_languages ?? [],
+  };
+  infoOptionsCache = { value, at: Date.now() };
+  return value;
+}
+
+export async function loadSeCompanyInfoCorrectionFilterOptions(): Promise<SeCompanyInfoCorrectionFilterOptions> {
+  if (isFresh(correctionOptionsCache)) return correctionOptionsCache!.value;
+  const [row] = await chQuery<{ decided_by: string[] }>(CORRECTION_FILTER_OPTIONS_SQL);
+  const value: SeCompanyInfoCorrectionFilterOptions = {
+    decidedBy: row?.decided_by ?? [],
+  };
+  correctionOptionsCache = { value, at: Date.now() };
+  return value;
+}
+
+/* -------------------------------------------------------------------- */
 /* Page 2: /admin/se/company-info/corrections -- the correction ledger  */
 /* -------------------------------------------------------------------- */
 
@@ -241,11 +474,14 @@ export interface SeCompanyInfoCorrectionListFilters {
   companyId?: string;
   kind?: string;
   status?: string;
+  decidedBy?: string;
 }
 
 export interface SeCompanyInfoCorrectionListQuery extends SeCompanyInfoCorrectionListFilters {
   page: number;
   pageSize: number;
+  sort?: string;
+  dir?: string;
 }
 
 export interface SeCompanyInfoCorrectionListPage {
@@ -347,7 +583,59 @@ export function buildCorrectionsListFilter(
     where.push(`(${CORRECTION_STATUS_EXPR}) = {status:String}`);
     params.status = status;
   }
+  // decided_by has no enum to whitelist against (it is whoever wrote the row:
+  // the backoffice today, another actor tomorrow), so its options come from
+  // the ledger itself and the chosen one travels as a named param.
+  const decidedBy = discreteValue(filters.decidedBy);
+  if (decidedBy !== null) {
+    where.push("c.decided_by = {decidedBy:String}");
+    params.decidedBy = decidedBy;
+  }
   return { where, params };
+}
+
+/**
+ * Every column of the ledger a header may sort by. `status` is computed, so it
+ * sorts by CORRECTION_STATUS_EXPR itself rather than by the SELECT alias --
+ * ClickHouse does not guarantee an alias is visible to ORDER BY at the same
+ * query level any more than it does to WHERE.
+ */
+export const CORRECTION_SORT_COLUMNS = {
+  created_at: "c.created_at",
+  company_id: "c.company_id",
+  correction_id: "c.correction_id",
+  correction_kind: "c.correction_kind",
+  payload: "c.payload",
+  reason: "c.reason",
+  decided_by: "c.decided_by",
+  status: `(${CORRECTION_STATUS_EXPR})`,
+} as const;
+
+export type SeCompanyInfoCorrectionSortKey = keyof typeof CORRECTION_SORT_COLUMNS;
+
+export const DEFAULT_CORRECTION_SORT: SeCompanyInfoCorrectionSortKey = "created_at";
+export const DEFAULT_CORRECTION_DIR: SortDir = "desc";
+
+export function resolveCorrectionsSort(
+  sort: string | undefined,
+  dir: string | undefined,
+): { sort: SeCompanyInfoCorrectionSortKey; dir: SortDir } {
+  return {
+    sort: resolveSortKey(CORRECTION_SORT_COLUMNS, sort, DEFAULT_CORRECTION_SORT),
+    dir: resolveDir(dir, DEFAULT_CORRECTION_DIR),
+  };
+}
+
+/** (created_at DESC, correction_id DESC) stays the tiebreak -- and, when
+ * nothing else is chosen, IS the sort, unchanged from before sorting existed. */
+export function correctionsOrderBySql(
+  sort: SeCompanyInfoCorrectionSortKey,
+  dir: SortDir,
+): string {
+  return orderBySql({ expr: CORRECTION_SORT_COLUMNS[sort], dir }, [
+    { expr: CORRECTION_SORT_COLUMNS.created_at, dir: "desc" },
+    { expr: CORRECTION_SORT_COLUMNS.correction_id, dir: "desc" },
+  ]);
 }
 
 export async function listSeCompanyInfoCorrectionsPage(
@@ -356,12 +644,13 @@ export async function listSeCompanyInfoCorrectionsPage(
   const { where, params } = buildCorrectionsListFilter(query);
   const filter = where.length > 0 ? `WHERE ${where.join(" AND ")}` : "";
   const { limit, offset } = pageParams(query);
+  const sort = resolveCorrectionsSort(query.sort, query.dir);
 
   const [rows, counted] = await Promise.all([
     chQuery<SeCompanyInfoCorrectionListRow>(
       `${CORRECTIONS_LIST_SELECT_SQL}
 ${filter}
-ORDER BY c.created_at DESC, c.correction_id DESC
+${correctionsOrderBySql(sort.sort, sort.dir)}
 ${PAGE_LIMIT_OFFSET_SQL}`,
       { ...params, limit, offset },
     ),
