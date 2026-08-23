@@ -15,6 +15,12 @@ The publish sequence (stage -> validate -> LEFT ANTI JOIN copy -> drop stage) mi
 for that anti-join -- it is inlined in the function -- so ``_publish_pass`` below
 copies the shape verbatim instead of importing a builder that does not exist.
 
+The script also replays 000300's live upgrade rather than assuming it: the SCB table is
+first filled with v1 rows (the SELECT projected down to its pre-000300 columns), then
+000300's ALTER lands on them, and the next publish pass appends one v2 version per company
+-- so "ADD COLUMN + MODIFY COLUMN of a MATERIALIZED expression, on a table with rows in it"
+is executed on the deployed ClickHouse version, not argued about.
+
 The whole script runs twice, once under default settings and once with
 ``SET join_use_nulls = 1`` prepended (mirrors ``tests/test_se_company_person_clickhouse_local.py``):
 every LEFT JOIN miss in ``build_changed_companies_sql`` is read through ``ifNull``, so
@@ -56,6 +62,13 @@ MIGRATIONS = (
     "000013_corpscout_wikidata_company_seed.up.sql",
     "000017_corpscout_wikidata_company_country.up.sql",
     "000018_corpscout_wikidata_company_augmentations.up.sql",
+    # text_translations holds the translator service's English renderings, which the SCB
+    # SELECT joins. 000069 is the CREATE TABLE whose columns are the deployed ones; the
+    # later 000252 only re-keys the table (ORDER BY gains the language pair) through a
+    # build-beside-and-RENAME dance whose INSERT/RENAME statements this per-table filter
+    # cannot replay -- and the re-key changes no column and no result here, since the
+    # SELECT names one explicit language pair and picks argMax(version) itself.
+    "000069_corpscout_text_translations_table_column.up.sql",
     "000084_corpscout_se_company_registry.up.sql",
     "000174_corpscout_company_identifier.up.sql",
     "000243_corpscout_esef_source_documents.up.sql",
@@ -66,10 +79,17 @@ MIGRATIONS = (
     "000297_corpscout_se_company_info.up.sql",
     "000299_corpscout_se_company_info_sole_traders.up.sql",
 )
+# Applied later in the script than the rest, on purpose: on the live host 000300 lands on
+# a se_company_info_scb that already holds 3.5M v1 rows, and "ALTER ... MODIFY COLUMN of a
+# MATERIALIZED expression, with rows present" is exactly the statement this harness has to
+# prove ClickHouse accepts. Applying it with the other DDL would only ever test it against
+# an empty table.
+ENGLISH_MIGRATION = ("000300_corpscout_se_company_info_scb_english.up.sql",)
 NEEDED_TABLES = frozenset(
     {
         "se_companies",
         "se_industries",
+        "text_translations",
         "esef_source_documents",
         "esef_document_company_information",
         "wikidata_companies",
@@ -98,7 +118,7 @@ T_RESOLVED = _literal(datetime(2026, 8, 10, tzinfo=UTC))  # ALPHA's final row --
 EVIDENCE_HASHES = ("a" * 64, "b" * 64, "c" * 64)
 
 
-def _schema_statements() -> list[str]:
+def _schema_statements(migrations: tuple[str, ...]) -> list[str]:
     """CREATE/ALTER TABLE statements for NEEDED_TABLES only, in migration order.
 
     Several of the included migration files also touch tables this pipeline never
@@ -107,7 +127,7 @@ def _schema_statements() -> list[str]:
     never creates them. Filtered per statement's target table instead.
     """
     statements: list[str] = []
-    for name in MIGRATIONS:
+    for name in migrations:
         text = (MIGRATIONS_DIR / name).read_text(encoding="utf-8")
         for raw in text.split(";"):
             statement = "\n".join(
@@ -149,6 +169,15 @@ INSERT INTO corpscout.se_industries
      source_run_id, source_record_id, source_payload_hash, updated_from_raw_at)
 VALUES
     ('{ALPHA}', 1, 1, '62010', '62.01', 'sni', 'fixture', 'ind-1', 'ind-hash', {T_SEED});
+
+INSERT INTO corpscout.text_translations
+    (source_table, source_column, source_text_hash, source_lang, target_lang, translated_text,
+     provider, model, version)
+VALUES
+    ('corpscout.se_companies', 'activity_description', cityHash64('IT-konsulter.'), 'sv', 'en',
+     'IT consultants.', 'translator', 'm', 1),
+    ('corpscout.se_companies', 'activity_description', cityHash64('IT-konsulter och molntjaenster.'),
+     'sv', 'en', 'IT consultants and cloud services.', 'translator', 'm', 1);
 
 INSERT INTO corpscout.esef_source_documents
     (source_document_id, document_type, lei, entity_name, country_iso2, company_id, period_end,
@@ -210,6 +239,23 @@ VALUES
      'scb-1', 'alpha-scb-payload-hash', {T_CHANGED});
 """.strip()
 
+# The pre-000300 state of the table on the live host: rows written by the v1 SELECT, whose
+# v1 evidence_hash was computed without the English text. Written by projecting the current
+# SELECT down to its v1 columns, so no second copy of the SCB SELECT has to be maintained
+# here just to produce them.
+V1_SCB_COLUMNS = tuple(c for c in SE_COMPANY_INFO_SCB_COLUMNS if c != "activity_description_en")
+
+# BETA's description is translated only after the artifact already holds its row -- the
+# translator service runs outside Dagster, so this is the ordinary case, not an edge one.
+BETA_TRANSLATION_SQL = """
+INSERT INTO corpscout.text_translations
+    (source_table, source_column, source_text_hash, source_lang, target_lang, translated_text,
+     provider, model, version)
+VALUES
+    ('corpscout.se_companies', 'activity_description', cityHash64('Handel med datorer.'), 'sv', 'en',
+     'Trade in computers.', 'translator', 'm', 1);
+""".strip()
+
 ARTIFACTS = (
     ("se_company_info_scb", SE_COMPANY_INFO_SCB_COLUMNS, SE_COMPANY_INFO_SCB_SQL),
     ("se_company_info_esef", SE_COMPANY_INFO_ESEF_COLUMNS, SE_COMPANY_INFO_ESEF_SQL),
@@ -246,6 +292,15 @@ def _publish_pass(table: str, columns: tuple[str, ...], select_sql: str, params:
         f"INSERT INTO {stage} ({col_list})\n{rendered_select};\n"
         f"INSERT INTO corpscout.{table} ({col_list})\nSELECT {stage_cols}\n{anti_join};\n"
         f"DROP TABLE {stage};\n"
+    )
+
+
+def _v1_scb_rows_sql(params: dict[str, object]) -> str:
+    """The v1 artifact rows, inserted straight (no anti-join needed: the table is empty)."""
+    columns = ", ".join(V1_SCB_COLUMNS)
+    return (
+        f"INSERT INTO corpscout.se_company_info_scb ({columns})\n"
+        f"SELECT {columns} FROM (\n{_render(SE_COMPANY_INFO_SCB_SQL, params)}\n);\n"
     )
 
 
@@ -298,13 +353,48 @@ def _script(*, join_use_nulls: int) -> str:
     parts: list[str] = []
     if join_use_nulls:
         parts.append("SET join_use_nulls = 1;")
-    parts.append(";\n".join(_schema_statements()) + ";")
+    parts.append(";\n".join(_schema_statements(MIGRATIONS)) + ";")
     parts.append(FIXTURE)
+
+    # The live host's starting point: se_company_info_scb already holds v1 rows, and 000300
+    # lands on them. Their evidence_hash must survive the ALTER untouched (MODIFY COLUMN of
+    # a MATERIALIZED expression rewrites no existing part), and the column added beside them
+    # must read as its DEFAULT ''.
+    parts.append(_v1_scb_rows_sql(render_params))
+    parts.append(
+        _marked(
+            "v1_rows",
+            "SELECT company_id, toString(evidence_hash) FROM corpscout.se_company_info_scb "
+            "ORDER BY company_id",
+        )
+    )
+    parts.append(";\n".join(_schema_statements(ENGLISH_MIGRATION)) + ";")
+    parts.append(
+        _marked(
+            "v1_rows_after_migration",
+            "SELECT company_id, toString(evidence_hash), activity_description_en "
+            "FROM corpscout.se_company_info_scb ORDER BY company_id",
+        )
+    )
 
     # Pass 1: every artifact's SELECT, staged then copied through the anti-join.
     for table, columns, sql in ARTIFACTS:
         parts.append(_publish_pass(table, columns, sql, render_params))
     parts.append(_marked("counts", COUNTS_SQL))
+    parts.append(
+        _marked(
+            "scb_versions",
+            "SELECT company_id, toString(evidence_hash), activity_description_en "
+            "FROM corpscout.se_company_info_scb ORDER BY company_id, evidence_hash",
+        )
+    )
+    parts.append(
+        _marked(
+            "scb_final",
+            "SELECT company_id, ifNull(activity_description, ''), activity_description_en "
+            "FROM corpscout.se_company_info_scb FINAL ORDER BY company_id",
+        )
+    )
 
     # Nothing published yet: every company with an artifact row is "changed".
     parts.append(
@@ -325,6 +415,20 @@ def _script(*, join_use_nulls: int) -> str:
     scb_table, scb_columns, scb_sql = ARTIFACTS[0]
     parts.append(_publish_pass(scb_table, scb_columns, scb_sql, render_params))
     parts.append(_marked("counts_after_changed_payload", COUNTS_SQL))
+
+    # Pass 4: BETA's description gets translated (by a service outside this pipeline), so
+    # only BETA's evidence changes -- exactly one new version is appended, carrying the
+    # English text the review page and the model will read.
+    parts.append(BETA_TRANSLATION_SQL)
+    parts.append(_publish_pass(scb_table, scb_columns, scb_sql, render_params))
+    parts.append(_marked("counts_after_beta_translation", COUNTS_SQL))
+    parts.append(
+        _marked(
+            "beta_english",
+            "SELECT activity_description_en FROM corpscout.se_company_info_scb FINAL "
+            f"WHERE company_id = '{BETA}'",
+        )
+    )
 
     # Publish ALPHA's final row, then rescan: ALPHA drops out under default settings
     # (its resolved_at is newer than every artifact) and reappears once include_pending=1
@@ -352,7 +456,8 @@ def _script(*, join_use_nulls: int) -> str:
             "JSONType(payload_json, 'incorporation_date'), "
             "JSONExtractString(payload_json, 'incorporation_date'), "
             "JSONExtractString(payload_json, 'dissolution_date'), "
-            "JSONExtractString(payload_json, 'primary_sni_code') "
+            "JSONExtractString(payload_json, 'primary_sni_code'), "
+            "JSONExtractString(payload_json, 'activity_description_en') "
             f"FROM ({rows_sql}) ORDER BY source",
         )
     )
@@ -390,14 +495,67 @@ def _counts(rows: list[list[str]]) -> dict[str, int]:
     return {source: int(count) for source, count in rows}
 
 
+def test_000300_alters_a_table_that_already_holds_v1_rows(
+    sections: dict[str, list[list[str]]],
+) -> None:
+    """The live upgrade path: 000300 lands on 3.5M existing rows. The script would have
+    failed outright had ClickHouse 26.5 rejected ADD COLUMN + MODIFY COLUMN of a
+    MATERIALIZED expression in one ALTER on a non-empty table, so reaching these rows is
+    itself the acceptance proof; what is asserted here is that the rows came through
+    unchanged -- old parts keep their v1 hash, and the new column reads as DEFAULT ''."""
+    before = {row[0]: row[1] for row in sections["v1_rows"]}
+    after = {row[0]: row[1] for row in sections["v1_rows_after_migration"]}
+    assert set(before) == {ALPHA, BETA, GAMMA}
+    assert after == before
+    assert [row[2] for row in sections["v1_rows_after_migration"]] == ["", "", ""]
+
+
+def test_the_next_run_appends_v2_versions_carrying_the_english_description(
+    sections: dict[str, list[list[str]]],
+) -> None:
+    """v2 hashes the English text, so every company is re-appended once -- and the v2 row
+    is the one FINAL keeps even though it shares (company_id, source_record_uid) *and*
+    observed_at with the v1 row it supersedes (ReplacingMergeTree breaks a version tie in
+    favour of the later insert). Getting that wrong would quietly serve Swedish."""
+    v1_hashes = {row[0]: row[1] for row in sections["v1_rows"]}
+    versions: dict[str, list[tuple[str, str]]] = {}
+    for company, evidence_hash, english in sections["scb_versions"]:
+        versions.setdefault(company, []).append((evidence_hash, english))
+    assert set(versions) == {ALPHA, BETA, GAMMA}
+    for company, rows in versions.items():
+        assert len(rows) == 2, company
+        hashes = {hash_ for hash_, _ in rows}
+        assert v1_hashes[company] in hashes  # the pre-000300 version is still on disk
+        assert len(hashes) == 2  # and the appended one hashes differently (v2)
+
+    final = {row[0]: (row[1], row[2]) for row in sections["scb_final"]}
+    assert final[ALPHA] == ("IT-konsulter.", "IT consultants.")
+    assert final[BETA] == ("Handel med datorer.", "")  # not translated yet at this point
+    assert final[GAMMA] == ("Snickeri.", "")
+
+
+def test_a_late_translation_appends_exactly_one_new_version(
+    sections: dict[str, list[list[str]]],
+) -> None:
+    """The translator service writes text_translations outside this pipeline, so a
+    description translated between two runs must show up as a new artifact version."""
+    before = _counts(sections["counts_after_changed_payload"])
+    after = _counts(sections["counts_after_beta_translation"])
+    assert after["se_company_info_scb"] == before["se_company_info_scb"] + 1
+    assert after["se_company_info_esef"] == before["se_company_info_esef"]
+    assert after["se_company_info_wikidata"] == before["se_company_info_wikidata"]
+    assert sections["beta_english"] == [["Trade in computers."]]
+
+
 def test_artifact_publishes_append_new_versions_and_are_idempotent(
     sections: dict[str, list[list[str]]],
 ) -> None:
     """Pins R9: ALPHA's scb_source_record_uid path and BETA's bolagsverket fallback
     both produce a non-empty source_record_uid, and GAMMA (12-digit sole trader) is admitted
-    by 000299, so se_company_info_scb gets 3 rows."""
+    by 000299, so all three companies publish -- 6 SCB rows, since each one's pre-000300 v1
+    row is still on disk beside the v2 version this pass appended."""
     counts = _counts(sections["counts"])
-    assert counts == {"se_company_info_scb": 3, "se_company_info_esef": 1, "se_company_info_wikidata": 1}
+    assert counts == {"se_company_info_scb": 6, "se_company_info_esef": 1, "se_company_info_wikidata": 1}
 
     # Second pass, identical evidence: the anti-join lets nothing new through.
     assert _counts(sections["counts_after_rerun"]) == counts
@@ -434,7 +592,10 @@ def test_artifact_rows_sql_returns_one_row_per_source_for_alpha(
     # The rejected shape, toString(ifNull(col, '')), is a NO_COMMON_TYPE error on 26.5,
     # so this row could not exist at all if the expressions were the other way round.
     scb_row = next(row for row in rows if row[0] == "scb")
-    is_valid_json, date_type, incorporation_date, dissolution_date, sni_code = scb_row[3:8]
+    is_valid_json, date_type, incorporation_date, dissolution_date, sni_code, english = scb_row[3:9]
+    # info_rules reads this key and prefers it over the Swedish text: ALPHA's newest SCB
+    # version is the changed payload, and its own translation is what the payload carries.
+    assert english == "IT consultants and cloud services."
     assert is_valid_json == "1"
     assert date_type == "String" and incorporation_date == "2001-02-03"  # Nullable(Date32) as text
     assert dissolution_date == ""  # a NULL Date32 renders as '', never as "null"

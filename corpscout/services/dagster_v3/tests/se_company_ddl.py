@@ -20,13 +20,47 @@ def table_block(table: str) -> str:
     return sql[start : sql.index(";", start) + 1]
 
 
+def _added_columns(table: str) -> list[tuple[str, str | None]]:
+    """``(column, after)`` for every ``ADD COLUMN`` a migration later than 000297 aims at `table`.
+
+    The pilot's tables outgrew their first migration (000300 adds
+    ``se_company_info_scb.activity_description_en``), and what these tests pin is the
+    *deployed* column list, not 000297's snapshot of it -- so ``declared_columns``
+    replays later ADD COLUMNs rather than each test hard-coding what they added.
+    Migration file names sort in ledger order (zero-padded), and only ADD COLUMN is
+    replayed: ADD CONSTRAINT (000299) and MODIFY COLUMN (000300) change no column list.
+    """
+    added: list[tuple[str, str | None]] = []
+    for path in sorted(MIGRATIONS_DIR.glob("[0-9]*.up.sql")):
+        if path.name <= MIGRATION:
+            continue
+        for raw in path.read_text(encoding="utf-8").split(";"):
+            statement = "\n".join(line for line in raw.splitlines() if not line.strip().startswith("--"))
+            if not re.search(rf"ALTER TABLE corpscout\.{table}\b", statement):
+                continue
+            for line in statement.splitlines():
+                name = re.match(r"\s*ADD COLUMN(?: IF NOT EXISTS)? ([a-z_0-9]+) ", line)
+                if name:
+                    after = re.search(r" AFTER ([a-z_0-9]+),?\s*$", line)
+                    added.append((name.group(1), after.group(1) if after else None))
+    return added
+
+
 def declared_columns(table: str) -> list[str]:
-    """Column names in DDL order: lines indented by exactly four spaces before the CONSTRAINT/engine part."""
+    """Column names in deployed DDL order: 000297's own, then later ADD COLUMNs in place.
+
+    000297's are the lines indented by exactly four spaces before the CONSTRAINT/engine part;
+    a later ADD COLUMN lands right after the column its ``AFTER`` names (last, without one).
+    """
     names = []
     for line in table_block(table).splitlines():
         match = re.match(r"^    ([a-z_0-9]+) ", line)
         if match:
             names.append(match.group(1))
+    for column, after in _added_columns(table):
+        if column in names:
+            continue
+        names.insert(names.index(after) + 1 if after in names else len(names), column)
     return names
 
 

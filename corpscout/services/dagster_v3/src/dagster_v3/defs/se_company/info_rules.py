@@ -94,8 +94,9 @@ def merge_company_info(company_id: str, rows: Sequence[ArtifactRow]) -> InfoOutc
 
     Every non-description field is copied as-is from its owning source's
     newest row. Description candidates are gathered from every source with a
-    non-empty description (newest row per source): zero candidates publish
-    nothing, exactly one is copied as-is, two or more always need the model
+    non-empty description (newest row per source, SCB's in English when the
+    translator has rendered it): zero candidates publish nothing, exactly one
+    is copied as-is, two or more always need the model
     (no agreement heuristic) -- the ESEF > Wikidata > SCB pick is only a
     provisional value until the model (or a review correction) replaces it.
 
@@ -138,9 +139,19 @@ def merge_company_info(company_id: str, rows: Sequence[ArtifactRow]) -> InfoOutc
         wikidata_description = _text(wikidata.values.get("company_description"))
         if wikidata_description:
             candidates.append(("wikidata", wikidata.source_record_uid, wikidata_description, "en"))
-    scb_description = _text(scb.values.get("activity_description"))
+    # SCB's verksamhetsbeskrivning is Swedish; the artifact carries the translator's
+    # English rendering beside it (000300) and that is what the pilot publishes and
+    # what the model is shown. A company the translator has not reached yet keeps its
+    # Swedish text rather than losing its only description.
+    scb_description_en = _text(scb.values.get("activity_description_en"))
+    scb_description = scb_description_en or _text(scb.values.get("activity_description"))
     if scb_description:
-        candidates.append(("scb", scb.source_record_uid, scb_description, "sv"))
+        candidates.append((
+            "scb",
+            scb.source_record_uid,
+            scb_description,
+            "en" if scb_description_en else "sv",
+        ))
     candidates.sort(key=lambda item: DESCRIPTION_PRIORITY.index(item[0]))
 
     description, language, source = None, "", ""

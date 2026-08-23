@@ -1,17 +1,20 @@
 """Swedish company artifacts from the SCB/Bolagsverket company register.
 
 Input (source layer): sweden_company_companies_clickhouse → corpscout.se_companies
-(one row per company, rebuilt weekly from the register bulk files) and
-corpscout.se_industries (SNI/NACE codes per company, is_primary flag).
+(one row per company, rebuilt weekly from the register bulk files),
+corpscout.se_industries (SNI/NACE codes per company, is_primary flag) and
+corpscout.text_translations (the translator service's English rendering of the
+Swedish activity description, enqueued by sweden_company_translation_load).
 This module writes one artifact table per datatype with the standard envelope
 followed by the register's own typed columns.
 
 Assets
   se_company_info_scb_clickhouse → corpscout.se_company_info_scb
     legal name, legal form, status, incorporation/dissolution, activity
-    description (Bolagsverket verksamhetsbeskrivning) and the primary SNI/NACE
-    code; a new observation is written only when evidence_hash changes, and the latest one per
-    (company, source record) survives merges.
+    description (Bolagsverket verksamhetsbeskrivning) with its English
+    translation, and the primary SNI/NACE code; a new observation is written
+    only when evidence_hash changes, and the latest one per (company, source
+    record) survives merges.
 Downstream: info.py (legal_name is authoritative from here).
 """
 
@@ -31,7 +34,8 @@ TABLE = "se_company_info_scb"
 SE_COMPANY_INFO_SCB_COLUMNS = (
     "company_id", "source_record_uid", "observed_at", "source_run_id",
     "legal_name", "legal_name_raw", "legal_form_code", "status", "incorporation_date",
-    "dissolution_date", "activity_description", "primary_sni_code", "primary_nace_code",
+    "dissolution_date", "activity_description", "activity_description_en",
+    "primary_sni_code", "primary_nace_code",
 )
 
 # New versions only: publish_with_stage stages these candidates, then keeps only
@@ -49,6 +53,14 @@ SE_COMPANY_INFO_SCB_COLUMNS = (
 # updated_from_raw_at, so two industry rows with the exact same timestamp
 # resolve deterministically instead of the pick flipping (and evidence_hash
 # with it) between runs.
+#
+# activity_description_en is the translator service's English rendering of the
+# Swedish verksamhetsbeskrivning, read from corpscout.text_translations exactly
+# the way corpscout.se_companies_translated reads it: one explicit language pair
+# (grouping by source_text_hash alone would let a second target language replace
+# the English text), newest by version, keyed by cityHash64 of the source text.
+# The translator runs outside Dagster, so a description translated after this run
+# simply changes evidence_hash on the next one and is appended as a new version.
 SE_COMPANY_INFO_SCB_SQL = """WITH industries AS (
     SELECT
         industries.company_id AS company_id,
@@ -70,17 +82,25 @@ candidates AS (
         companies.incorporation_date AS incorporation_date,
         companies.dissolution_date AS dissolution_date,
         companies.activity_description AS activity_description,
+        ifNull(act.translated_text, '') AS activity_description_en,
         ifNull(industries.primary_sni_code, '') AS primary_sni_code,
         ifNull(industries.primary_nace_code, '') AS primary_nace_code
     FROM corpscout.se_companies AS companies FINAL
     LEFT JOIN industries ON industries.company_id = companies.company_id
+    LEFT JOIN (
+        SELECT source_text_hash, argMax(translated_text, version) AS translated_text
+        FROM corpscout.text_translations
+        WHERE source_table = 'corpscout.se_companies' AND source_column = 'activity_description'
+          AND source_lang = 'sv' AND target_lang = 'en'
+        GROUP BY source_text_hash
+    ) AS act ON act.source_text_hash = cityHash64(ifNull(companies.activity_description, ''))
     WHERE match(companies.company_id, '{SE_COMPANY_ID_PATTERN}')
 )
 SELECT
     company_id AS company_id, source_record_uid AS source_record_uid, observed_at AS observed_at, source_run_id AS source_run_id,
     legal_name AS legal_name, legal_name_raw AS legal_name_raw, legal_form_code AS legal_form_code, status AS status,
     incorporation_date AS incorporation_date, dissolution_date AS dissolution_date, activity_description AS activity_description,
-    primary_sni_code AS primary_sni_code, primary_nace_code AS primary_nace_code
+    activity_description_en AS activity_description_en, primary_sni_code AS primary_sni_code, primary_nace_code AS primary_nace_code
 FROM candidates
 WHERE source_record_uid != ''""".replace("{SE_COMPANY_ID_PATTERN}", SE_COMPANY_ID_PATTERN)
 
@@ -90,22 +110,26 @@ WHERE source_record_uid != ''""".replace("{SE_COMPANY_ID_PATTERN}", SE_COMPANY_I
     deps=[
         dg.AssetKey("sweden_company_companies_clickhouse"),
         dg.AssetKey("sweden_company_industries_clickhouse"),
+        dg.AssetKey("sweden_company_translation_load"),
     ],
     group_name=GROUP_NAME,
     kinds={"clickhouse", "python"},
     metadata={"table": f"{DATABASE}.{TABLE}"},
     description=(
         "Register facts per Swedish company (legal name, form, status, dates, activity "
-        "description, primary SNI/NACE); a new observation is written only when the evidence "
-        "hash changes and the latest per (company, source record) survives merges."
+        "description in Swedish and the translator's English, primary SNI/NACE); a new "
+        "observation is written only when the evidence hash changes and the latest per "
+        "(company, source record) survives merges."
     ),
 )
 def se_company_info_scb_clickhouse(
     context: dg.AssetExecutionContext, clickhouse: ClickhouseResource
 ) -> dg.MaterializeResult:
-    """Select from se_companies (+ primary industry) → stage → validate → append new versions."""
+    """Select from se_companies (+ primary industry, + English description) → stage → validate → append."""
     assert_clickhouse_tables_exist(
-        clickhouse, database=DATABASE, tables=("se_companies", "se_industries", TABLE)
+        clickhouse,
+        database=DATABASE,
+        tables=("se_companies", "se_industries", "text_translations", TABLE),
     )
     counts = publish_with_stage(
         clickhouse=clickhouse,

@@ -19,6 +19,7 @@ def _scb(description=None, **values):
     return ArtifactRow("scb", "scb:1", "a" * 64, NOW, {
         "legal_name": "Alpha AB", "legal_name_raw": "ALPHA AB", "legal_form_code": "AB", "status": "active",
         "incorporation_date": None, "dissolution_date": None, "activity_description": description,
+        "activity_description_en": "",
         "primary_sni_code": "62010", "primary_nace_code": "62.01", **values})
 
 
@@ -47,6 +48,34 @@ def test_single_source_description_is_used_as_is() -> None:
     assert outcome.description_source == "scb" and not outcome.needs_model
     assert outcome.description_sources == ("scb",) and outcome.description_source_record_uids == ("scb:1",)
     assert outcome.source_record_uids == ("scb:1",) and outcome.evidence_hashes == ("a" * 64,)
+
+
+def test_scb_description_prefers_the_translators_english_text() -> None:
+    outcome = merge_company_info(
+        COMPANY, [_scb(description="Säljer programvara.", activity_description_en="Sells software.")]
+    )
+    assert outcome is not None
+    assert outcome.description == "Sells software." and outcome.description_language == "en"
+    assert outcome.description_source == "scb" and not outcome.needs_model
+
+
+def test_scb_description_falls_back_to_swedish_when_untranslated() -> None:
+    """~8% of the register has no translation yet (the translator runs outside this
+    pipeline), so the Swedish text is still published rather than nothing."""
+    outcome = merge_company_info(COMPANY, [_scb(description="Säljer programvara.")])
+    assert outcome is not None
+    assert outcome.description == "Säljer programvara." and outcome.description_language == "sv"
+
+
+def test_the_model_is_offered_the_english_scb_text() -> None:
+    outcome = merge_company_info(COMPANY, [
+        _scb(description="Säljer programvara.", activity_description_en="Sells software."),
+        _wikidata("swedish software company"),
+    ])
+    assert outcome is not None and outcome.needs_model
+    assert [c[0] for c in outcome.description_candidates] == ["wikidata", "scb"]
+    assert outcome.description_candidates[1] == ("scb", "scb:1", "Sells software.")
+    assert outcome.description_candidate_languages == ("en", "en")
 
 
 def test_two_sources_always_need_the_model_even_when_they_agree() -> None:

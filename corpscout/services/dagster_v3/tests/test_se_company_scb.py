@@ -39,6 +39,19 @@ def test_scb_select_projects_envelope_then_payload_in_table_order() -> None:
     )
     assert "GROUP BY industries.company_id" in sql
     assert "LEFT JOIN industries ON industries.company_id = companies.company_id" in sql
+    # The English activity description is the translator's, read exactly the way
+    # corpscout.se_companies_translated reads it: one explicit language pair (a second
+    # target language must never replace the English text), newest by version, keyed by
+    # cityHash64 of the source text. The join miss reads as '' under either
+    # join_use_nulls setting, which is what info_rules treats as "no translation yet".
+    assert (
+        "WHERE source_table = 'corpscout.se_companies' AND source_column = 'activity_description'\n"
+        "          AND source_lang = 'sv' AND target_lang = 'en'"
+    ) in sql
+    assert "argMax(translated_text, version) AS translated_text" in sql
+    assert "GROUP BY source_text_hash" in sql
+    assert ") AS act ON act.source_text_hash = cityHash64(ifNull(companies.activity_description, ''))" in sql
+    assert "ifNull(act.translated_text, '') AS activity_description_en" in sql
     assert "GROUP BY\n        companies.company_id" not in sql  # the wide outer GROUP BY is gone
     assert "NOT EXISTS" not in sql  # dedupe is publish_with_stage's job now
     assert "match(companies.company_id, '^([0-9]{10}|[0-9]{12})$')" in sql
@@ -53,6 +66,9 @@ def test_scb_asset_reads_the_register_and_writes_its_own_table() -> None:
     assert asset.parent_keys == {
         dg.AssetKey("sweden_company_companies_clickhouse"),
         dg.AssetKey("sweden_company_industries_clickhouse"),
+        # The translator service writes corpscout.text_translations outside Dagster; this
+        # asset is the one that enqueues the Swedish descriptions and waits for it.
+        dg.AssetKey("sweden_company_translation_load"),
     }
     assert asset.group_name == "se_company_scb"
     assert asset.metadata["table"] == "corpscout.se_company_info_scb"
@@ -88,7 +104,7 @@ class _FakeClickhouse:
 
 def test_scb_asset_publishes_new_versions_only_via_left_anti_join() -> None:
     client = _FakeClient(
-        existing_tables={"se_companies", "se_industries", "se_company_info_scb"},
+        existing_tables={"se_companies", "se_industries", "text_translations", "se_company_info_scb"},
         answers=[[(2, 0)], [(10,)], [(1,)], [(11,)]],  # staged/invalid, existing, anti-join, total
     )
 
