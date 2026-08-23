@@ -86,21 +86,14 @@ const COLUMNS: ColumnDef<SeCompanyInfoCorrectionListRow, unknown>[] = [
     header: "Company",
     cell: ({ row }) => {
       const id = row.original.company_id;
+      // The row itself opens the review page; the id links to the company page.
       return (
-        <div className="flex flex-col gap-0.5">
-          <Link
-            to={`/company/se/${encodeURIComponent(id)}`}
-            className="font-mono text-xs underline underline-offset-2"
-          >
-            {id}
-          </Link>
-          <Link
-            to={`/admin/se/company/${encodeURIComponent(id)}/info`}
-            className="text-muted-foreground text-xs underline underline-offset-2"
-          >
-            Review
-          </Link>
-        </div>
+        <Link
+          to={`/company/se/${encodeURIComponent(id)}`}
+          className="font-mono text-xs underline underline-offset-2"
+        >
+          {id}
+        </Link>
       );
     },
   },
@@ -251,6 +244,7 @@ export function SeCompanyInfoCorrectionsTable({
         data={rows}
         emptyText="No corrections match these filters."
         minWidthClassName="min-w-[64rem]"
+        rowHref={(row) => `/admin/se/company/${encodeURIComponent(row.company_id)}/info`}
       />
       <DataTablePagination total={total} page={page} pageSize={pageSize} itemsLabel="corrections" />
     </div>

@@ -72,10 +72,12 @@ function render(props: Partial<Parameters<typeof SeCompanyInfoCorrectionsTable>[
 }
 
 describe("SeCompanyInfoCorrectionsTable", () => {
-  it("links the company id to the company page and the review page", () => {
+  it("links the company id to the company page and opens the review page from the row", () => {
     const html = render();
     expect(html).toContain('href="/company/se/5565200028"');
-    expect(html).toContain('href="/admin/se/company/5565200028/info"');
+    expect(html).toContain('data-href="/admin/se/company/5565200028/info"');
+    expect(html).toContain('role="link"');
+    expect(html).not.toContain(">Review<");
   });
 
   it("shows the 8-char correction id, matching the review page's prefix", () => {
