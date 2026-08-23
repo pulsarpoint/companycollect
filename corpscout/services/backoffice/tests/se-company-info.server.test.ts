@@ -38,6 +38,13 @@ describe("company info queries", () => {
     expect(ARTIFACT_ROWS_SQL).toContain("FROM corpscout.se_company_info_scb AS a FINAL");
     expect(ARTIFACT_ROWS_SQL).toContain("FROM corpscout.se_company_info_esef AS a FINAL");
     expect(ARTIFACT_ROWS_SQL).toContain("FROM corpscout.se_company_info_wikidata AS a FINAL");
+    // SCB's verksamhetsbeskrivning is Swedish; the artifact carries the translator's
+    // English rendering beside it (migration 000300) and that is what the Sources table
+    // shows -- the Swedish original only for a company the translator has not reached.
+    // Both legs stay non-null, so summary is still a plain string, never null.
+    expect(ARTIFACT_ROWS_SQL).toContain(
+      "ifNull(nullIf(a.activity_description_en, ''), ifNull(a.activity_description, '')) AS summary",
+    );
     // A trailing ORDER BY only binds to the last SELECT of a UNION ALL chain
     // in ClickHouse, so the union must be wrapped and the ORDER BY placed
     // outside it -- pin the closing paren immediately followed by the ORDER

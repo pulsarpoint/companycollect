@@ -127,9 +127,13 @@ LIMIT 1`;
 /**
  * Every artifact leg reads FINAL (each source table is itself a
  * ReplacingMergeTree of versions) and aliases every projected expression,
- * including the per-leg literal `source` and the computed `summary` --
- * ClickHouse only applies a trailing ORDER BY to the last SELECT of a
- * UNION ALL chain, so the three legs are wrapped in a subquery and the
+ * including the per-leg literal `source` and the computed `summary`. The SCB
+ * leg shows the translator's English rendering of the Swedish
+ * verksamhetsbeskrivning (the column migration 000300 added, and the text the
+ * pilot publishes), falling back to the Swedish original for a company the
+ * translator has not reached yet; both legs are non-null, so `summary` stays a
+ * plain string. ClickHouse only applies a trailing ORDER BY to the last SELECT
+ * of a UNION ALL chain, so the three legs are wrapped in a subquery and the
  * ORDER BY sits outside it, over the union's own output columns. The
  * `source_record_uid` tiebreak matters in practice: bulk-loaded SCB rows
  * routinely share one `observed_at`. ESEF grows one row per filing, so
@@ -142,7 +146,7 @@ export const ARTIFACT_ROWS_SQL = `SELECT * FROM (
     a.source_record_uid AS source_record_uid,
     toString(a.observed_at) AS observed_at,
     toString(a.evidence_hash) AS evidence_hash,
-    ifNull(a.activity_description, '') AS summary
+    ifNull(nullIf(a.activity_description_en, ''), ifNull(a.activity_description, '')) AS summary
   FROM corpscout.se_company_info_scb AS a FINAL
   WHERE a.company_id = {companyId:String}
   UNION ALL
