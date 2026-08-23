@@ -19,7 +19,6 @@
  * run. It is an admin page, loaded by hand, so that is affordable; it is not
  * something to put behind an auto-refresh.
  */
-import { createHmac, timingSafeEqual } from "node:crypto";
 import { chQuery } from "~/lib/clickhouse.server";
 import {
   clampConcurrency,
@@ -310,114 +309,19 @@ export async function loadSeCompanyInfoPipelineStats(
 }
 
 /* -------------------------------------------------------------------- */
-/* Binding a launch to the confirmation that described it                */
+/* What one launch is                                                    */
 /* -------------------------------------------------------------------- */
 
 /**
- * The backoffice has no authentication and these launches spend money, so a
- * `launch-*` POST is not trusted on its own: the `confirm-*` branch signs the
- * exact run it described, and `launch-*` refuses anything that does not carry a
- * live signature for the run it is about to start.
+ * A launch, whole: the job, the assets it is narrowed to, and the config.
  *
- * The token carries no payload -- only an expiry and a MAC over
- * `expiry.canonical(intent)`. Verification recomputes the MAC from the intent
- * the launch branch actually built, so a replayed token whose form fields have
- * been edited (a bigger `max_companies`, a different model, another artifact)
- * signs a different intent and is rejected. It is a binding, not a session: it
- * does not authenticate anybody, it only proves that this exact run was the one
- * just described on screen.
+ * The confirm step builds one of these to describe what it is about to offer,
+ * and the launch step builds the same one again from the replayed form fields
+ * and hands it to Dagster -- so there is one definition of "the run", not a
+ * description on screen and a separate thing that actually runs.
  */
-export const ACTION_TOKEN_TTL_SECONDS = 600;
-
-export class ActionTokenError extends Error {
-  constructor(message: string) {
-    super(message);
-    this.name = "ActionTokenError";
-  }
-}
-
-/** What a launch is: the job, the assets, and the config. All of it is signed. */
 export interface LaunchIntent {
   job: string;
   assetSelection?: string[];
   runConfig: Record<string, unknown>;
-}
-
-function actionSecret(secret = process.env.BACKOFFICE_ACTION_SECRET): string {
-  const value = (secret ?? "").trim();
-  if (value === "") {
-    throw new ActionTokenError(
-      "BACKOFFICE_ACTION_SECRET is not set, so a launch cannot be bound to its " +
-        "confirmation. Set it in the backoffice environment; runs stay refused until then.",
-    );
-  }
-  return value;
-}
-
-/** Key order must not change the signature, so the JSON is written sorted. */
-function canonical(value: unknown): string {
-  if (Array.isArray(value)) return `[${value.map(canonical).join(",")}]`;
-  if (value !== null && typeof value === "object") {
-    const entries = Object.entries(value as Record<string, unknown>)
-      .filter(([, item]) => item !== undefined)
-      .sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0));
-    return `{${entries.map(([key, item]) => `${JSON.stringify(key)}:${canonical(item)}`).join(",")}}`;
-  }
-  return JSON.stringify(value ?? null);
-}
-
-function sign(expiresAt: number, intent: LaunchIntent, secret?: string): string {
-  return createHmac("sha256", actionSecret(secret))
-    .update(`${expiresAt}.${canonical(intent)}`)
-    .digest("hex");
-}
-
-export interface ActionTokenOptions {
-  now?: number;
-  secret?: string;
-}
-
-/** Throws `ActionTokenError` when no secret is configured: a page that cannot
- * sign must not offer a launch button that would be refused anyway. */
-export function mintLaunchToken(intent: LaunchIntent, options: ActionTokenOptions = {}): string {
-  const nowSeconds = Math.floor((options.now ?? Date.now()) / 1000);
-  const expiresAt = nowSeconds + ACTION_TOKEN_TTL_SECONDS;
-  return `${expiresAt}.${sign(expiresAt, intent, options.secret)}`;
-}
-
-/** Never throws: a missing secret, a malformed token and a forged one are all
- * the same answer to the caller -- do not launch, and say why. */
-export function verifyLaunchToken(
-  token: string,
-  intent: LaunchIntent,
-  options: ActionTokenOptions = {},
-): { ok: true } | { ok: false; error: string } {
-  const [rawExpiry, mac] = token.split(".");
-  if (!rawExpiry || !mac) {
-    return { ok: false, error: "Confirm the run again: this launch carried no confirmation." };
-  }
-  const expiresAt = Number.parseInt(rawExpiry, 10);
-  if (!Number.isFinite(expiresAt)) {
-    return { ok: false, error: "Confirm the run again: this launch carried no confirmation." };
-  }
-  if (Math.floor((options.now ?? Date.now()) / 1000) > expiresAt) {
-    return { ok: false, error: "That confirmation has expired. Review the numbers again." };
-  }
-  let expected: string;
-  try {
-    expected = sign(expiresAt, intent, options.secret);
-  } catch (error) {
-    return { ok: false, error: error instanceof Error ? error.message : String(error) };
-  }
-  const given = Buffer.from(mac, "hex");
-  const want = Buffer.from(expected, "hex");
-  if (given.length !== want.length || !timingSafeEqual(given, want)) {
-    return {
-      ok: false,
-      error:
-        "This launch does not match the run that was confirmed. Review it again — " +
-        "nothing was started.",
-    };
-  }
-  return { ok: true };
 }

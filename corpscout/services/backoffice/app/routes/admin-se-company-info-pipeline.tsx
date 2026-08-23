@@ -18,13 +18,10 @@ import {
 } from "~/lib/dagster.server";
 import { listLlmProfiles, type LlmProfile } from "~/lib/llm-settings.server";
 import {
-  ActionTokenError,
   buildArtifactRunConfig,
   buildInfoRunConfig,
   infoArtifactAsset,
   loadSeCompanyInfoPipelineStats,
-  mintLaunchToken,
-  verifyLaunchToken,
   type LaunchIntent,
   type SeCompanyInfoPipelineStats,
 } from "~/lib/se-company-info-pipeline.server";
@@ -188,13 +185,13 @@ export async function action({ request }: Route.ActionArgs): Promise<PipelineAct
     runConfig: buildArtifactRunConfig(),
   });
 
-  /** Nothing reaches Dagster without a live signature over this exact intent. */
-  const launch = async (
-    launchIntent: LaunchIntent,
-    token: string,
-  ): Promise<PipelineActionData> => {
-    const verified = verifyLaunchToken(token, launchIntent);
-    if (!verified.ok) return refused(verified.error);
+  /**
+   * The second step of the two: the operator has seen the numbers a `confirm-*`
+   * re-read and posted the same run back. `launchIntent` is rebuilt from those
+   * replayed fields rather than carried over, so what starts is what the confirm
+   * branch would describe for exactly these fields.
+   */
+  const launch = async (launchIntent: LaunchIntent): Promise<PipelineActionData> => {
     const run = await launchRun({
       job: launchIntent.job,
       ...(launchIntent.assetSelection ? { assetSelection: launchIntent.assetSelection } : {}),
@@ -257,7 +254,6 @@ export async function action({ request }: Route.ActionArgs): Promise<PipelineAct
           max_companies: String(maxCompanies),
           concurrency: String(concurrency),
           profile_id: profile?.profileId ?? "",
-          action_token: mintLaunchToken(modelIntent(pendingModelOnly, run)),
         },
       };
       return { ok: true, error: "", confirmation, launched: null };
@@ -274,7 +270,7 @@ export async function action({ request }: Route.ActionArgs): Promise<PipelineAct
           "New evidence appended here makes those companies changed, so the next resolve run picks them up.",
           "No model is called and se_company_info is not written by this run.",
         ],
-        fields: { artifact, action_token: mintLaunchToken(artifactIntent(artifact)) },
+        fields: { artifact },
       };
       return { ok: true, error: "", confirmation, launched: null };
     }
@@ -285,20 +281,20 @@ export async function action({ request }: Route.ActionArgs): Promise<PipelineAct
       if (run.useModel && !run.profile) {
         return refused("Choose an LLM profile before launching a run that calls the model.");
       }
-      return await launch(modelIntent(pendingModelOnly, run), formValue(form, "action_token"));
+      return await launch(modelIntent(pendingModelOnly, run));
     }
 
     if (intent === "launch-artifact") {
       const artifact = formValue(form, "artifact");
       if (!isInfoArtifact(artifact)) return refused("Choose an artifact to refresh.");
-      return await launch(artifactIntent(artifact), formValue(form, "action_token"));
+      return await launch(artifactIntent(artifact));
     }
 
     return refused("Unknown pipeline action.");
   } catch (error) {
-    // A missing signing secret is a configuration failure, not a crash: the page
-    // says so and no run is started.
-    if (error instanceof ActionTokenError || error instanceof DagsterError) {
+    // A Dagster that refuses or cannot be reached is an answer on the page, not
+    // a crash; nothing was started either way.
+    if (error instanceof DagsterError) {
       return refused(error.message);
     }
     throw error;

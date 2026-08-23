@@ -1,13 +1,14 @@
 /**
- * The launch path of the Pipeline page's action.
+ * The Pipeline page's action: what a confirmation says, and what a launch then
+ * sends to Dagster.
  *
- * The backoffice has no authentication and these launches spend money, so the
- * property under test is not "does it launch" but "does it refuse to launch
- * anything that was not just confirmed on screen". Dagster, ClickHouse and the
- * settings database are faked at their module boundaries; the token, the run
- * config and the action's own branching are real.
+ * These launches spend money, so the assertions are on the exact run config and
+ * tags that cross the boundary -- `execute: true` above all, since a run without
+ * it is a preview that writes nothing. Dagster, ClickHouse and the settings
+ * database are faked at their module boundaries; the run-config builder, the
+ * artifact asset names and the action's own branching are real.
  */
-import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { LlmProfile } from "~/lib/llm-settings.server";
 import type { SeCompanyInfoPipelineStats } from "~/lib/se-company-info-pipeline.server";
 
@@ -58,8 +59,8 @@ vi.mock("~/lib/dagster.server", async (importOriginal) => ({
   instigatorStates: async () => ({ schedules: [], sensors: [] }),
 }));
 
-// Only the ClickHouse read is faked here: the token, the run-config builder and
-// the artifact asset names stay real, because those are what is being asserted.
+// Only the ClickHouse read is faked: the run-config builder and the artifact
+// asset names stay real, because those are what is being asserted.
 vi.mock("~/lib/se-company-info-pipeline.server", async (importOriginal) => ({
   ...(await importOriginal<typeof import("~/lib/se-company-info-pipeline.server")>()),
   loadSeCompanyInfoPipelineStats: () => loadStats(),
@@ -96,64 +97,17 @@ async function confirmResolve(
 }
 
 beforeEach(() => {
-  vi.stubEnv("BACKOFFICE_ACTION_SECRET", "test-secret");
   launchRun.mockClear();
   loadStats.mockClear();
   loadStats.mockImplementation(async () => STATS);
 });
 
-afterEach(() => {
-  vi.unstubAllEnvs();
-});
-
-describe("a launch must be bound to the confirmation that described it", () => {
-  it("refuses a launch that carries no token, without calling Dagster", async () => {
-    const result = await post({ intent: "launch-resolve", ...RESOLVE_FIELDS });
-    expect(result.ok).toBe(false);
-    expect(result.error).toMatch(/confirm/i);
-    expect(result.launched).toBeNull();
-    expect(launchRun).not.toHaveBeenCalled();
-  });
-
-  it("refuses a token minted for a different run", async () => {
-    // The confirmation said 1,000 companies; the replayed form says 1,000,000.
-    // The token signs the config, so the edited field signs a different one.
-    const fields = await confirmResolve();
-    const result = await post({
-      intent: "launch-resolve",
-      ...RESOLVE_FIELDS,
-      max_companies: "1000000",
-      action_token: fields.action_token,
-    });
-    expect(result.ok).toBe(false);
-    expect(result.error).toMatch(/does not match/i);
-    expect(launchRun).not.toHaveBeenCalled();
-
-    // ... and the same for the model behind it: a token for the model-on run
-    // does not authorise the model-off one, nor the model pass.
-    const modelOff = await post({
-      intent: "launch-resolve",
-      ...RESOLVE_FIELDS,
-      use_model: "",
-      action_token: fields.action_token,
-    });
-    expect(modelOff.ok).toBe(false);
-    const modelPass = await post({
-      intent: "launch-model-pass",
-      ...RESOLVE_FIELDS,
-      action_token: fields.action_token,
-    });
-    expect(modelPass.ok).toBe(false);
-    expect(launchRun).not.toHaveBeenCalled();
-  });
-
+describe("launching a confirmed run", () => {
   it("launches the confirmed run with execute: true and the pilot tag", async () => {
+    // The two steps as the page performs them: confirm re-reads the numbers and
+    // hands back the fields, the launch form posts them straight back.
     const fields = await confirmResolve();
-    const result = await post({
-      intent: "launch-resolve",
-      ...RESOLVE_FIELDS,
-      action_token: fields.action_token,
-    });
+    const result = await post({ intent: "launch-resolve", ...fields });
 
     expect(result.ok).toBe(true);
     expect(result.launched?.runId).toBe("run-1");
@@ -187,47 +141,35 @@ describe("a launch must be bound to the confirmation that described it", () => {
 
   it("binds an artifact refresh to its own asset", async () => {
     const confirmed = await post({ intent: "confirm-artifact", artifact: "esef" });
-    const token = confirmed.confirmation!.fields.action_token;
+    expect(confirmed.confirmation?.fields).toEqual({ artifact: "esef" });
 
-    const swapped = await post({ intent: "launch-artifact", artifact: "scb", action_token: token });
-    expect(swapped.ok).toBe(false);
-    expect(launchRun).not.toHaveBeenCalled();
-
-    const launched = await post({
-      intent: "launch-artifact",
-      artifact: "esef",
-      action_token: token,
-    });
+    const launched = await post({ intent: "launch-artifact", ...confirmed.confirmation!.fields });
     expect(launched.ok).toBe(true);
     const [input] = launchRun.mock.calls[0] as unknown as [
       { job: string; assetSelection: string[]; runConfig: unknown; tags: Record<string, string> },
     ];
     expect(input.job).toBe("se_company_info_job");
+    // The asset is derived from the artifact, never a fixed one: a refresh of
+    // scb must not run esef's asset.
     expect(input.assetSelection).toEqual(["se_company_info_esef_clickhouse"]);
     expect(input.runConfig).toEqual({});
     expect(input.tags).toEqual({ pilot: "backoffice" });
+
+    await post({ intent: "launch-artifact", artifact: "scb" });
+    const [second] = launchRun.mock.calls[1] as unknown as [{ assetSelection: string[] }];
+    expect(second.assetSelection).toEqual(["se_company_info_scb_clickhouse"]);
   });
 
-  it("refuses everything when no signing secret is configured", async () => {
-    vi.stubEnv("BACKOFFICE_ACTION_SECRET", "");
-    const confirmed = await post({ intent: "confirm-resolve", ...RESOLVE_FIELDS });
-    expect(confirmed.ok).toBe(false);
-    expect(confirmed.error).toMatch(/BACKOFFICE_ACTION_SECRET/);
-    expect(confirmed.confirmation).toBeNull();
-
-    const launched = await post({
-      intent: "launch-resolve",
-      ...RESOLVE_FIELDS,
-      action_token: "1893456000.deadbeef",
-    });
-    expect(launched.ok).toBe(false);
-    expect(launched.error).toMatch(/BACKOFFICE_ACTION_SECRET/);
+  it("refuses an artifact the pipeline does not have, without calling Dagster", async () => {
+    const result = await post({ intent: "launch-artifact", artifact: "se_company_info" });
+    expect(result.ok).toBe(false);
     expect(launchRun).not.toHaveBeenCalled();
   });
+
 });
 
 describe("the confirmation step", () => {
-  it("restates the numbers it just re-read, and clamps what it signs", async () => {
+  it("restates the numbers it just re-read, and clamps what it hands back", async () => {
     const fields = await confirmResolve({ max_companies: "99999999", concurrency: "42" });
     expect(loadStats).toHaveBeenCalledTimes(1);
     expect(fields.max_companies).toBe("1000000");

@@ -1,7 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
 import {
-  ACTION_TOKEN_TTL_SECONDS,
-  ActionTokenError,
   buildArtifactRunConfig,
   buildInfoRunConfig,
   DEFAULT_MAX_TOKENS,
@@ -12,9 +10,6 @@ import {
   INFO_SELECTION_COUNTS_SQL,
   infoArtifactAsset,
   loadSeCompanyInfoPipelineStats,
-  mintLaunchToken,
-  verifyLaunchToken,
-  type LaunchIntent,
 } from "~/lib/se-company-info-pipeline.server";
 
 const PROFILE = {
@@ -262,87 +257,5 @@ describe("buildArtifactRunConfig", () => {
     expect(buildArtifactRunConfig()).toEqual({});
     expect(infoArtifactAsset("scb")).toBe("se_company_info_scb_clickhouse");
     expect(infoArtifactAsset("wikidata")).toBe("se_company_info_wikidata_clickhouse");
-  });
-});
-
-describe("launch tokens", () => {
-  const SECRET = "test-secret";
-  const NOW = 1_800_000_000_000;
-  const INTENT: LaunchIntent = {
-    job: "se_company_info_review_job",
-    runConfig: buildInfoRunConfig({ maxCompanies: 1000, useModel: true, llm: PROFILE }),
-  };
-
-  it("accepts its own token for the same intent", () => {
-    const token = mintLaunchToken(INTENT, { now: NOW, secret: SECRET });
-    expect(verifyLaunchToken(token, INTENT, { now: NOW + 1000, secret: SECRET })).toEqual({
-      ok: true,
-    });
-  });
-
-  it("signs the intent, so any edit to the run invalidates it", () => {
-    const token = mintLaunchToken(INTENT, { now: NOW, secret: SECRET });
-    const bigger: LaunchIntent = {
-      job: INTENT.job,
-      runConfig: buildInfoRunConfig({ maxCompanies: 1_000_000, useModel: true, llm: PROFILE }),
-    };
-    const elsewhere: LaunchIntent = { ...INTENT, job: "se_company_info_job" };
-    const narrowed: LaunchIntent = { ...INTENT, assetSelection: ["se_company_info_scb_clickhouse"] };
-    for (const intent of [bigger, elsewhere, narrowed]) {
-      const result = verifyLaunchToken(token, intent, { now: NOW, secret: SECRET });
-      expect(result.ok).toBe(false);
-    }
-  });
-
-  it("is not transferable between secrets, and does not outlive its window", () => {
-    const token = mintLaunchToken(INTENT, { now: NOW, secret: SECRET });
-    expect(verifyLaunchToken(token, INTENT, { now: NOW, secret: "another" }).ok).toBe(false);
-    const expired = verifyLaunchToken(token, INTENT, {
-      now: NOW + (ACTION_TOKEN_TTL_SECONDS + 1) * 1000,
-      secret: SECRET,
-    });
-    expect(expired).toEqual({ ok: false, error: expect.stringMatching(/expired/i) });
-  });
-
-  it("treats a missing, malformed or forged token the same way", () => {
-    for (const token of ["", "not-a-token", "abc.def", "1800000600.00", "1800000600.zz"]) {
-      const result = verifyLaunchToken(token, INTENT, { now: NOW, secret: SECRET });
-      expect(result.ok).toBe(false);
-      expect((result as { error: string }).error).not.toBe("");
-    }
-  });
-
-  it("fails closed with no secret: minting throws, verifying refuses", () => {
-    expect(() => mintLaunchToken(INTENT, { now: NOW, secret: "  " })).toThrow(ActionTokenError);
-    const result = verifyLaunchToken("1800000600.aa", INTENT, { now: NOW, secret: "" });
-    expect(result).toEqual({
-      ok: false,
-      error: expect.stringContaining("BACKOFFICE_ACTION_SECRET"),
-    });
-  });
-
-  it("does not depend on the key order of the config it signs", () => {
-    // The launch branch REBUILDS the config rather than replaying the confirmed
-    // JSON, so a signature that moved with key order would refuse perfectly
-    // good launches. Every level is reversed here, including the llm block.
-    const reverse = (value: Record<string, unknown>): Record<string, unknown> =>
-      Object.fromEntries(Object.entries(value).reverse());
-    const config = (INTENT.runConfig as { ops: Record<string, { config: Record<string, unknown> }> })
-      .ops.se_company_info_clickhouse.config;
-    const reordered: LaunchIntent = {
-      runConfig: {
-        ops: {
-          se_company_info_clickhouse: {
-            config: reverse({ ...config, llm: reverse(config.llm as Record<string, unknown>) }),
-          },
-        },
-      },
-      job: INTENT.job,
-      // An absent assetSelection and an explicitly undefined one are the same run.
-      assetSelection: undefined,
-    };
-    expect(Object.keys(reordered.runConfig)).toEqual(["ops"]);
-    const token = mintLaunchToken(INTENT, { now: NOW, secret: SECRET });
-    expect(verifyLaunchToken(token, reordered, { now: NOW, secret: SECRET })).toEqual({ ok: true });
   });
 });

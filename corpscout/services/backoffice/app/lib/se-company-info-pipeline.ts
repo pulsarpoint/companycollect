@@ -115,9 +115,7 @@ export interface PipelineConfirmation {
   title: string;
   /** One line per number the operator is agreeing to. */
   lines: string[];
-  /**
-   * Hidden fields replayed verbatim into the launch form, including the signed
-   * `action_token` that binds the launch to this confirmation.
-   */
+  /** Hidden fields replayed verbatim into the launch form, so the run that
+   * starts is the one these numbers describe. */
   fields: Record<string, string>;
 }
