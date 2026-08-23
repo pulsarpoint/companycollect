@@ -216,6 +216,12 @@ def build_changed_companies_sql() -> str:
     NULL, the WHERE is NULL for every never-published company, and the scan returns
     zero rows -- i.e. the pipeline would silently stop resolving anything.
 
+    ``resolve_all`` re-selects every in-scope company even though nothing about its
+    evidence moved -- for rules-only changes where no evidence moved (new merge logic,
+    a new artifact column), which no ``observed_at`` and no ledger row reflects. It is a
+    disjunct of the ordinary branch only, so it never widens a ``pending_model_only``
+    pass, and it is still bounded by ``max_companies`` and paged like any other scan.
+
     One page per call: the LIMIT is the page size and the caller resumes from
     ``after_company_id``, so the scan is never re-run for rows it then throws away.
     """
@@ -252,6 +258,7 @@ WHERE (
         (%(pending_model_only)s = 1 AND {PENDING_MODEL_SQL})
      OR (%(pending_model_only)s = 0 AND (
             ifNull(published.company_id, '') = ''
+            OR %(resolve_all)s = 1
             OR artifacts.latest_observed_at > ifNull(published.resolved_at, {EPOCH_SQL})
             OR ifNull(ledger.latest_correction_at, {EPOCH_SQL}) > ifNull(published.resolved_at, {EPOCH_SQL})
             OR (%(include_pending)s = 1 AND {PENDING_MODEL_SQL})))
@@ -337,6 +344,7 @@ def materialize_se_company_info(
     max_companies: int, company_batch_size: int, timeout_seconds: int,
     llm_client: OpenAI | None, llm_model: str | None, llm_provider: str | None, log: Callable[..., object] | None,
     resolve_multi_source_with_llm: bool = True, pending_model_only: bool = False,
+    resolve_all: bool = False,
 ) -> dict[str, object]:
     if pending_model_only and not resolve_multi_source_with_llm:
         raise ValueError(
@@ -363,6 +371,7 @@ def materialize_se_company_info(
             break
         base = {"all_companies": int(not chunk), "company_ids": chunk or ("",),
                 "pending_model_only": int(pending_model_only),
+                "resolve_all": int(resolve_all),
                 # A model-on ordinary run also picks up whatever the model still owes:
                 # with the model off there is nothing to retry, and the pending_model_only
                 # pass already selects exactly those companies through its own branch.
@@ -526,6 +535,11 @@ class SECompanyInfoConfig(dg.Config):
     # (the model pass of the initial load). Requires resolve_multi_source_with_llm: asking
     # for the companies that still need the model with the model off is refused, not ignored.
     pending_model_only: bool = False
+    # True = re-resolve every in-scope company even though no evidence moved. For rules-only
+    # changes (new merge logic, a new artifact column): nothing in the artifacts or the ledger
+    # marks those companies as changed, so an ordinary run would resolve none of them. Still
+    # bounded by max_companies and resumable, so a full sweep can be run in slices.
+    resolve_all: bool = False
 
 
 @dg.asset(
@@ -544,7 +558,8 @@ def se_company_info_clickhouse(context: dg.AssetExecutionContext, config: SEComp
         clickhouse=clickhouse, source_run_id=context.run_id, resolved_at=datetime.now(UTC),
         company_ids=config.company_ids, max_companies=config.max_companies, company_batch_size=config.company_batch_size,
         timeout_seconds=config.timeout_seconds, llm_client=None, llm_model=None, llm_provider=None, log=context.log.info,
-        resolve_multi_source_with_llm=config.resolve_multi_source_with_llm, pending_model_only=config.pending_model_only)
+        resolve_multi_source_with_llm=config.resolve_multi_source_with_llm,
+        pending_model_only=config.pending_model_only, resolve_all=config.resolve_all)
     return dg.MaterializeResult(metadata={**metadata, "table": f"{DATABASE}.{SE_COMPANY_INFO}"})
 
 

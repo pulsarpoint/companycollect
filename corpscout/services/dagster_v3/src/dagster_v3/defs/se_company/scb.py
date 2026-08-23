@@ -31,6 +31,11 @@ DATABASE = "corpscout"
 TABLE = "se_company_info_scb"
 # Positional insert list: the envelope (evidence_hash is MATERIALIZED, so omitted) then this
 # module's payload, in the order the migration declares them — pinned by the test.
+# observed_at = when this artifact observed the version; the register's bulk-load stamp is
+# constant and cannot order versions (se_companies.updated_from_raw_at is one value for the
+# whole weekly load, older than every se_company_info.resolved_at, so a version appended
+# under it would never look newer than the row it replaces and the change scan would never
+# select the company again).
 SE_COMPANY_INFO_SCB_COLUMNS = (
     "company_id", "source_record_uid", "observed_at", "source_run_id",
     "legal_name", "legal_name_raw", "legal_form_code", "status", "incorporation_date",
@@ -60,7 +65,10 @@ SE_COMPANY_INFO_SCB_COLUMNS = (
 # (grouping by source_text_hash alone would let a second target language replace
 # the English text), newest by version, keyed by cityHash64 of the source text.
 # The translator runs outside Dagster, so a description translated after this run
-# simply changes evidence_hash on the next one and is appended as a new version.
+# simply changes evidence_hash on the next one and is appended as a new version --
+# stamped with that run's now64, hence strictly newer than the version it replaces
+# and visible to info.py's change scan. Rows the anti-join skips are never rewritten,
+# so an unchanged company keeps its original stamp instead of looking new every week.
 SE_COMPANY_INFO_SCB_SQL = """WITH industries AS (
     SELECT
         industries.company_id AS company_id,
@@ -73,7 +81,7 @@ candidates AS (
     SELECT
         companies.company_id AS company_id,
         ifNull(nullIf(companies.scb_source_record_uid, ''), companies.bolagsverket_source_record_uid) AS source_record_uid,
-        companies.updated_from_raw_at AS observed_at,
+        now64(3, 'UTC') AS observed_at,
         %(source_run_id)s AS source_run_id,
         companies.legal_name AS legal_name,
         companies.legal_name_raw AS legal_name_raw,

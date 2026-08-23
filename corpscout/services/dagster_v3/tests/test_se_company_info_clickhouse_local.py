@@ -114,7 +114,13 @@ T_SEED = _literal(datetime(2026, 8, 1, tzinfo=UTC))
 T_ESEF_SOURCE = _literal(datetime(2025, 4, 1, tzinfo=UTC))
 T_ESEF_INFO = _literal(datetime(2025, 4, 2, tzinfo=UTC))
 T_CHANGED = _literal(datetime(2026, 8, 5, tzinfo=UTC))  # ALPHA's new SCB payload version.
-T_RESOLVED = _literal(datetime(2026, 8, 10, tzinfo=UTC))  # ALPHA's final row -- after T_CHANGED.
+# ALPHA's final row resolves *now*: artifact observed_at is now64 at append time (scb.py),
+# so a fixed literal could no longer be "after every artifact this script has produced".
+T_RESOLVED = "now64(3, 'UTC')"
+# DateTime64(3) has millisecond resolution and consecutive statements can share one, so
+# every point where a stamp must be strictly newer than the previous one is separated by a
+# real pause. FORMAT Null keeps sleep's own row out of the marked-section stream.
+SETTLE = "SELECT sleep(0.05) FORMAT Null;\n"
 EVIDENCE_HASHES = ("a" * 64, "b" * 64, "c" * 64)
 
 
@@ -175,9 +181,7 @@ INSERT INTO corpscout.text_translations
      provider, model, version)
 VALUES
     ('corpscout.se_companies', 'activity_description', cityHash64('IT-konsulter.'), 'sv', 'en',
-     'IT consultants.', 'translator', 'm', 1),
-    ('corpscout.se_companies', 'activity_description', cityHash64('IT-konsulter och molntjaenster.'),
-     'sv', 'en', 'IT consultants and cloud services.', 'translator', 'm', 1);
+     'IT consultants.', 'translator', 'm', 1);
 
 INSERT INTO corpscout.esef_source_documents
     (source_document_id, document_type, lei, entity_name, country_iso2, company_id, period_end,
@@ -256,6 +260,18 @@ VALUES
      'Trade in computers.', 'translator', 'm', 1);
 """.strip()
 
+# ALPHA's changed payload is translated only after ALPHA has been published -- the case
+# that proves an appended version is visible to the change scan at all (see
+# test_a_translation_arriving_after_publication_re_selects_the_company).
+ALPHA_TRANSLATION_SQL = """
+INSERT INTO corpscout.text_translations
+    (source_table, source_column, source_text_hash, source_lang, target_lang, translated_text,
+     provider, model, version)
+VALUES
+    ('corpscout.se_companies', 'activity_description', cityHash64('IT-konsulter och molntjaenster.'),
+     'sv', 'en', 'IT consultants and cloud services.', 'translator', 'm', 1);
+""".strip()
+
 ARTIFACTS = (
     ("se_company_info_scb", SE_COMPANY_INFO_SCB_COLUMNS, SE_COMPANY_INFO_SCB_SQL),
     ("se_company_info_esef", SE_COMPANY_INFO_ESEF_COLUMNS, SE_COMPANY_INFO_ESEF_SQL),
@@ -311,9 +327,10 @@ def _string_array(values: tuple[str, ...]) -> str:
 # One row shaped like a real info.py `_final_row(...)` tuple, in INSERT_COLUMNS order
 # (imported, never hand-copied). description_source_count=2, suggestion_id=NULL and
 # correction_ids=[] together satisfy info.py's PENDING_MODEL_SQL, and resolved_at
-# (T_RESOLVED) is later than every artifact observed_at ALPHA carries (including the
-# changed-payload SCB version at T_CHANGED) -- so build_changed_companies_sql must
-# drop ALPHA under default settings and re-select it only when include_pending=1.
+# (T_RESOLVED = now64, inserted after a SETTLE) is later than every artifact observed_at
+# ALPHA carries at that point -- so build_changed_companies_sql must drop ALPHA under
+# default settings and re-select it only when include_pending=1, until pass 5 appends a
+# genuinely newer artifact version.
 _FINAL_ROW_VALUES = (
     f"'{ALPHA}', 'Alpha AB', 'AB', 'active', '2001-02-03', "
     "'Alpha builds payment software.', 'en', 'llm', "
@@ -337,12 +354,15 @@ def _marked(label: str, query: str) -> str:
     return f"SELECT '@@{label}';\n{query} FORMAT TSV;\n"
 
 
-def _changed_params(*, pending_model_only: int, include_pending: int) -> dict[str, object]:
+def _changed_params(
+    *, pending_model_only: int, include_pending: int, resolve_all: int = 0
+) -> dict[str, object]:
     return {
         "all_companies": 1,
         "company_ids": ("",),
         "pending_model_only": pending_model_only,
         "include_pending": include_pending,
+        "resolve_all": resolve_all,
         "after_company_id": "",
         "page_size": 10,
     }
@@ -364,10 +384,11 @@ def _script(*, join_use_nulls: int) -> str:
     parts.append(
         _marked(
             "v1_rows",
-            "SELECT company_id, toString(evidence_hash) FROM corpscout.se_company_info_scb "
-            "ORDER BY company_id",
+            "SELECT company_id, toString(evidence_hash), toString(observed_at) "
+            "FROM corpscout.se_company_info_scb ORDER BY company_id",
         )
     )
+    parts.append(SETTLE)
     parts.append(";\n".join(_schema_statements(ENGLISH_MIGRATION)) + ";")
     parts.append(
         _marked(
@@ -384,8 +405,9 @@ def _script(*, join_use_nulls: int) -> str:
     parts.append(
         _marked(
             "scb_versions",
-            "SELECT company_id, toString(evidence_hash), activity_description_en "
-            "FROM corpscout.se_company_info_scb ORDER BY company_id, evidence_hash",
+            "SELECT company_id, toString(evidence_hash), activity_description_en, "
+            "toString(observed_at) FROM corpscout.se_company_info_scb "
+            "ORDER BY company_id, observed_at, evidence_hash",
         )
     )
     parts.append(
@@ -404,14 +426,27 @@ def _script(*, join_use_nulls: int) -> str:
         )
     )
 
-    # Pass 2: identical rerun -- same evidence, so the anti-join lets nothing through.
+    # Pass 2: identical rerun -- same evidence, so the anti-join lets nothing through. The
+    # SETTLE guarantees the rerun's now64 differs from pass 1's, so an unchanged row keeping
+    # its stamp is a real result: the anti-join keys on the hash, and rows it skips are never
+    # rewritten (observed_at advancing on its own would re-select the company forever).
+    parts.append(SETTLE)
     for table, columns, sql in ARTIFACTS:
         parts.append(_publish_pass(table, columns, sql, render_params))
     parts.append(_marked("counts_after_rerun", COUNTS_SQL))
+    parts.append(
+        _marked(
+            "scb_versions_after_rerun",
+            "SELECT company_id, toString(evidence_hash), activity_description_en, "
+            "toString(observed_at) FROM corpscout.se_company_info_scb "
+            "ORDER BY company_id, observed_at, evidence_hash",
+        )
+    )
 
     # Pass 3: ALPHA's SCB payload changes (same source_record_uid, new evidence_hash)
     # -- exactly one new version is appended; BETA and the other artifacts are untouched.
     parts.append(CHANGED_PAYLOAD_SQL)
+    parts.append(SETTLE)
     scb_table, scb_columns, scb_sql = ARTIFACTS[0]
     parts.append(_publish_pass(scb_table, scb_columns, scb_sql, render_params))
     parts.append(_marked("counts_after_changed_payload", COUNTS_SQL))
@@ -420,6 +455,7 @@ def _script(*, join_use_nulls: int) -> str:
     # only BETA's evidence changes -- exactly one new version is appended, carrying the
     # English text the review page and the model will read.
     parts.append(BETA_TRANSLATION_SQL)
+    parts.append(SETTLE)
     parts.append(_publish_pass(scb_table, scb_columns, scb_sql, render_params))
     parts.append(_marked("counts_after_beta_translation", COUNTS_SQL))
     parts.append(
@@ -434,6 +470,7 @@ def _script(*, join_use_nulls: int) -> str:
     # (its resolved_at is newer than every artifact) and reappears once include_pending=1
     # picks it up through PENDING_MODEL_SQL. BETA has no final row either way, so it is
     # selected in both scans.
+    parts.append(SETTLE)
     parts.append(FINAL_ROW_SQL)
     parts.append(
         _marked(
@@ -445,6 +482,33 @@ def _script(*, join_use_nulls: int) -> str:
         _marked(
             "changed_after_final_pending",
             _render(build_changed_companies_sql(), _changed_params(pending_model_only=0, include_pending=1)),
+        )
+    )
+    # resolve_all re-selects a settled company although nothing about its evidence moved.
+    parts.append(
+        _marked(
+            "changed_after_final_resolve_all",
+            _render(
+                build_changed_companies_sql(),
+                _changed_params(pending_model_only=0, include_pending=0, resolve_all=1),
+            ),
+        )
+    )
+
+    # Pass 5 -- the regression this harness exists to catch: a translation arrives for a
+    # company that is already published and settled. The appended version is stamped when it
+    # is appended, so it is newer than the final row's resolved_at and the change scan picks
+    # ALPHA up again. Stamped from the register's own updated_from_raw_at (one constant per
+    # bulk load, older than every resolved_at) it never would, and the English text would
+    # never reach se_company_info.
+    parts.append(ALPHA_TRANSLATION_SQL)
+    parts.append(SETTLE)
+    parts.append(_publish_pass(scb_table, scb_columns, scb_sql, render_params))
+    parts.append(_marked("counts_after_alpha_translation", COUNTS_SQL))
+    parts.append(
+        _marked(
+            "changed_after_alpha_translation",
+            _render(build_changed_companies_sql(), _changed_params(pending_model_only=0, include_pending=0)),
         )
     )
 
@@ -513,20 +577,21 @@ def test_000300_alters_a_table_that_already_holds_v1_rows(
 def test_the_next_run_appends_v2_versions_carrying_the_english_description(
     sections: dict[str, list[list[str]]],
 ) -> None:
-    """v2 hashes the English text, so every company is re-appended once -- and the v2 row
-    is the one FINAL keeps even though it shares (company_id, source_record_uid) *and*
-    observed_at with the v1 row it supersedes (ReplacingMergeTree breaks a version tie in
-    favour of the later insert). Getting that wrong would quietly serve Swedish."""
-    v1_hashes = {row[0]: row[1] for row in sections["v1_rows"]}
-    versions: dict[str, list[tuple[str, str]]] = {}
-    for company, evidence_hash, english in sections["scb_versions"]:
-        versions.setdefault(company, []).append((evidence_hash, english))
+    """v2 hashes the English text, so every company is re-appended once -- with a strictly
+    newer observed_at than the v1 row it supersedes, which is what makes FINAL keep it (and
+    what makes the change scan see it). No ReplacingMergeTree version tie is involved."""
+    v1 = {row[0]: (row[1], row[2]) for row in sections["v1_rows"]}
+    versions: dict[str, list[tuple[str, str, str]]] = {}
+    for company, evidence_hash, english, observed_at in sections["scb_versions"]:
+        versions.setdefault(company, []).append((evidence_hash, english, observed_at))
     assert set(versions) == {ALPHA, BETA, GAMMA}
     for company, rows in versions.items():
         assert len(rows) == 2, company
-        hashes = {hash_ for hash_, _ in rows}
-        assert v1_hashes[company] in hashes  # the pre-000300 version is still on disk
-        assert len(hashes) == 2  # and the appended one hashes differently (v2)
+        v1_hash, v1_stamp = v1[company]
+        (old_hash, _, old_stamp), (new_hash, _, new_stamp) = rows  # ordered by observed_at
+        assert (old_hash, old_stamp) == (v1_hash, v1_stamp)  # the pre-000300 row, untouched
+        assert new_hash != v1_hash  # the appended version hashes differently (v2)
+        assert new_stamp > v1_stamp  # ... and is observed later, so it wins by version
 
     final = {row[0]: (row[1], row[2]) for row in sections["scb_final"]}
     assert final[ALPHA] == ("IT-konsulter.", "IT consultants.")
@@ -557,14 +622,41 @@ def test_artifact_publishes_append_new_versions_and_are_idempotent(
     counts = _counts(sections["counts"])
     assert counts == {"se_company_info_scb": 6, "se_company_info_esef": 1, "se_company_info_wikidata": 1}
 
-    # Second pass, identical evidence: the anti-join lets nothing new through.
+    # Second pass, identical evidence: the anti-join lets nothing new through -- and the
+    # rows it skips keep the observed_at they were appended with, although the rerun's
+    # now64 is a later instant. A restamped row would look newer than the final that
+    # published it and re-select the company on every single run.
     assert _counts(sections["counts_after_rerun"]) == counts
+    assert sections["scb_versions_after_rerun"] == sections["scb_versions"]
 
     # Third pass, ALPHA's SCB payload changed: exactly one new version, nothing else.
     after_change = _counts(sections["counts_after_changed_payload"])
     assert after_change["se_company_info_scb"] == counts["se_company_info_scb"] + 1
     assert after_change["se_company_info_esef"] == counts["se_company_info_esef"]
     assert after_change["se_company_info_wikidata"] == counts["se_company_info_wikidata"]
+
+
+def test_a_translation_arriving_after_publication_re_selects_the_company(
+    sections: dict[str, list[list[str]]],
+) -> None:
+    """The regression 000300 would otherwise have shipped: the translator writes
+    text_translations between two runs, the SCB artifact appends the changed row -- and the
+    change scan has to see it. It only can because observed_at is the moment the version was
+    appended; se_companies.updated_from_raw_at is one constant per bulk load, older than
+    every resolved_at, so a version stamped with it is invisible to this scan forever."""
+    before = _counts(sections["counts_after_beta_translation"])
+    after = _counts(sections["counts_after_alpha_translation"])
+    assert after["se_company_info_scb"] == before["se_company_info_scb"] + 1
+    # ALPHA was settled (dropped by the default scan two sections earlier) and is back.
+    assert {row[0] for row in sections["changed_after_final_default"]} == {BETA, GAMMA}
+    assert {row[0] for row in sections["changed_after_alpha_translation"]} == {ALPHA, BETA, GAMMA}
+
+
+def test_resolve_all_re_selects_settled_companies(sections: dict[str, list[list[str]]]) -> None:
+    """For a rules-only change -- new merge logic, a new artifact column -- nothing about a
+    company's evidence moved, so only resolve_all can bring it back."""
+    assert {row[0] for row in sections["changed_after_final_default"]} == {BETA, GAMMA}
+    assert {row[0] for row in sections["changed_after_final_resolve_all"]} == {ALPHA, BETA, GAMMA}
 
 
 def test_changed_companies_scan_tracks_publication_and_pending_model(

@@ -29,6 +29,13 @@ def _added_columns(table: str) -> list[tuple[str, str | None]]:
     replays later ADD COLUMNs rather than each test hard-coding what they added.
     Migration file names sort in ledger order (zero-padded), and only ADD COLUMN is
     replayed: ADD CONSTRAINT (000299) and MODIFY COLUMN (000300) change no column list.
+
+    Format this relies on, for whoever writes the next ALTER: one clause per line, the
+    line starting with ``ADD COLUMN`` (optionally ``IF NOT EXISTS``) followed by the
+    column name, and ``AFTER <column>`` -- if the position matters -- ending that same
+    line (a trailing comma is fine). A clause wrapped across lines, or an ``AFTER`` that
+    is not last on its line, is read as "appended at the end" and the layout test will
+    say so.
     """
     added: list[tuple[str, str | None]] = []
     for path in sorted(MIGRATIONS_DIR.glob("[0-9]*.up.sql")):

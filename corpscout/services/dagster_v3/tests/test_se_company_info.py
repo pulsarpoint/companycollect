@@ -148,6 +148,11 @@ def test_changed_companies_sql_compares_artifact_versions_and_ledger_with_the_fi
     assert "ifNull(published.company_id, '') = ''" in sql
     assert f"artifacts.latest_observed_at > ifNull(published.resolved_at, {EPOCH_SQL})" in sql
     assert f"ifNull(ledger.latest_correction_at, {EPOCH_SQL}) > ifNull(published.resolved_at, {EPOCH_SQL})" in sql
+    # resolve_all re-resolves every in-scope company even though no evidence moved --
+    # for a rules-only change (new merge logic, a new artifact column) that no
+    # observed_at or ledger row reflects. It sits in the ordinary branch only, still
+    # paged and still capped by max_companies.
+    assert "OR %(resolve_all)s = 1" in sql
     assert f"%(pending_model_only)s = 1 AND {PENDING_SQL}" in sql
     # ... and, on a model-on ordinary run, "published with several sources but no
     # suggestion" is itself a change -- otherwise nothing about such a company ever
@@ -449,6 +454,9 @@ def test_a_model_on_run_also_re_selects_companies_still_owed_a_description() -> 
 
     model_on = _scan_parameters()
     assert model_on["include_pending"] == 1 and model_on["pending_model_only"] == 0
+    # resolve_all is off unless asked for: an ordinary run still resolves only what moved.
+    assert model_on["resolve_all"] == 0
+    assert _scan_parameters(resolve_all=True)["resolve_all"] == 1
     # Model off: there is nothing to retry, so the term must not select anything.
     assert _scan_parameters(resolve_multi_source_with_llm=False)["include_pending"] == 0
     # The dedicated pass selects exactly those companies through its own branch.
@@ -529,6 +537,8 @@ def test_the_config_caps_the_batch_at_the_query_size_limit() -> None:
     assert SECompanyInfoConfig().company_batch_size == 5_000
     with pytest.raises(ValueError):
         SECompanyInfoConfig(company_batch_size=5_001)
+    assert SECompanyInfoConfig().resolve_all is False
+    assert SECompanyInfoConfig(resolve_all=True).resolve_all is True
 
 
 def test_an_approval_survives_a_run_that_does_not_call_the_model() -> None:

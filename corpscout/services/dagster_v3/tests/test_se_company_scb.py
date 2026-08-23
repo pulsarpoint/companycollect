@@ -23,7 +23,15 @@ def test_scb_select_projects_envelope_then_payload_in_table_order() -> None:
         "ifNull(nullIf(companies.scb_source_record_uid, ''), companies.bolagsverket_source_record_uid) AS source_record_uid"
         in sql
     )
-    assert "companies.updated_from_raw_at AS observed_at" in sql
+    # observed_at is when THIS artifact observed the version, not the register's own
+    # stamp: se_companies.updated_from_raw_at is a single constant for a whole bulk load
+    # (one value across all 3.5M rows) and is older than every published resolved_at, so
+    # a version appended under it can never be seen as newer than the row it replaces --
+    # build_changed_companies_sql would return nothing and the change would never publish.
+    assert "now64(3, 'UTC') AS observed_at" in sql
+    # (the industries CTE still tie-breaks on ITS updated_from_raw_at -- that one orders
+    # SNI rows within a company, it never stamps the envelope)
+    assert "companies.updated_from_raw_at" not in sql
     assert "%(source_run_id)s AS source_run_id" in sql
     # industries is pre-aggregated to one row per company_id in its own CTE, then
     # joined 1:1 -- no outer GROUP BY over every companies column is needed to
