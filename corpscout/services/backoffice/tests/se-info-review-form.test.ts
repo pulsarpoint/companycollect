@@ -51,6 +51,50 @@ describe("company info review form", () => {
     expect(built).toEqual({ ok: false, error: "Nothing changed." });
   });
 
+  it("emptying the textarea without ticking clear points at the checkbox", () => {
+    const emptied = buildCorrectionInput(
+      form({
+        correction_kind: "override_field",
+        description: "",
+        original_description: "Old",
+        evidence_hash: "a".repeat(64),
+        reason: "r",
+      }),
+      params,
+    );
+    expect(emptied).toEqual({
+      ok: false,
+      error: "To clear the description, tick the box.",
+    });
+    // Both already empty: nothing was actually cleared, so the generic
+    // message still applies.
+    const alreadyEmpty = buildCorrectionInput(
+      form({
+        correction_kind: "override_field",
+        description: "",
+        original_description: "",
+        evidence_hash: "a".repeat(64),
+        reason: "r",
+      }),
+      params,
+    );
+    expect(alreadyEmpty).toEqual({ ok: false, error: "Nothing changed." });
+    // Ticking the box gets the specific "Nothing changed" case out of the
+    // way entirely -- it's a real, accepted change.
+    const ticked = buildCorrectionInput(
+      form({
+        correction_kind: "override_field",
+        description: "",
+        original_description: "Old",
+        clear_description: "yes",
+        evidence_hash: "a".repeat(64),
+        reason: "r",
+      }),
+      params,
+    );
+    expect(ticked).toMatchObject({ ok: true, input: { payload: { description: null } } });
+  });
+
   it("approve/reject carry suggestion_id; reject may carry a note; undo uses the zero hash", () => {
     expect(
       payloadFor(
@@ -99,10 +143,10 @@ describe("live override refusal (P7)", () => {
     created_at: "2026-08-22 12:00:00.000",
   };
 
-  it("refuses approve/reject while a live override stands, naming its id", () => {
+  it("refuses approve/reject while a live override stands, naming its 8-char id (matches the Ledger card)", () => {
     for (const kind of ["approve_suggestion", "reject_suggestion"]) {
       expect(liveOverrideRefusal(kind, [liveOverrideRow])).toBe(
-        `Undo the current override first (${CORRECTION_ID}).`,
+        `Undo the current override first (${CORRECTION_ID.slice(0, 8)}).`,
       );
     }
   });

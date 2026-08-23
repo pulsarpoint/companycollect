@@ -65,6 +65,19 @@ export function buildCorrectionInput(
   const kind = text(form, "correction_kind");
   const payload = payloadFor(form, kind);
   if (kind === "override_field" && Object.keys(payload).length === 0) {
+    // An emptied textarea with the clear checkbox left unticked looks
+    // identical to "nothing changed" once trimmed -- point the reviewer at
+    // the checkbox instead of the generic message so they know why the
+    // empty text didn't take.
+    const description = text(form, "description").trim();
+    const original = text(form, "original_description").trim();
+    if (
+      description === "" &&
+      original !== "" &&
+      text(form, "clear_description") !== "yes"
+    ) {
+      return { ok: false, error: "To clear the description, tick the box." };
+    }
     return { ok: false, error: "Nothing changed." };
   }
   return {
@@ -92,6 +105,9 @@ export function buildCorrectionInput(
  * ledger but never change what's published. Both the route action and the
  * workspace's button-disabling share this one check, and it stays pure so
  * the refusal message is unit-testable without a live ClickHouse.
+ *
+ * The message names the override by its 8-char prefix -- the same form the
+ * Ledger card shows on every row -- so the reviewer can actually find it.
  */
 export function liveOverrideRefusal(
   kind: string,
@@ -102,5 +118,5 @@ export function liveOverrideRefusal(
   }
   const liveId = liveOverrideCorrectionId(corrections);
   if (!liveId) return null;
-  return `Undo the current override first (${liveId}).`;
+  return `Undo the current override first (${liveId.slice(0, 8)}).`;
 }

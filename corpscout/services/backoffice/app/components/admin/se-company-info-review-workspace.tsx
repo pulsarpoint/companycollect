@@ -34,7 +34,7 @@ import {
 } from "~/components/ui/table";
 import { Textarea } from "~/components/ui/textarea";
 import type { SeCompanyInfoDetail } from "~/lib/se-company-info.server";
-import { liveOverrideCorrectionId } from "~/lib/se-info-corrections";
+import { liveOverrideRefusal } from "~/lib/se-info-review-form";
 
 export type SeCompanyInfoReviewResult =
   | { ok: true; correctionId: string }
@@ -63,7 +63,12 @@ function HiddenCommon({
   );
 }
 
-/** Best-effort parse of a suggestion's JSON body for a friendlier display. */
+/**
+ * Best-effort parse of a suggestion's JSON body for a friendlier display.
+ * Each field is guarded with its own `typeof === "string"` check -- an
+ * enrichment run that ever emits a non-string `description` (an object or
+ * array, say) must not crash SSR by handing React a non-renderable child.
+ */
 function parseSuggestion(raw: string): {
   description?: string;
   language?: string;
@@ -71,13 +76,19 @@ function parseSuggestion(raw: string): {
 } | null {
   try {
     const parsed: unknown = JSON.parse(raw);
-    if (parsed && typeof parsed === "object") {
-      return parsed as { description?: string; language?: string; rationale?: string };
-    }
+    if (!parsed || typeof parsed !== "object") return null;
+    const obj = parsed as Record<string, unknown>;
+    return {
+      description:
+        typeof obj.description === "string" ? obj.description : undefined,
+      language: typeof obj.language === "string" ? obj.language : undefined,
+      rationale:
+        typeof obj.rationale === "string" ? obj.rationale : undefined,
+    };
   } catch {
     // Not JSON (or malformed) -- the raw text still renders below.
+    return null;
   }
-  return null;
 }
 
 /** Shown when Dagster has not published this company into se_company_info. */
@@ -128,8 +139,10 @@ export function SeCompanyInfoReviewWorkspace({
   const busy = useNavigation().state !== "idle";
   // While a live override stands, Dagster's kind-ranking always lets it win
   // over any approve/reject, so offering those decisions here would be
-  // misleading -- disable them and point at the override instead.
-  const liveOverride = liveOverrideCorrectionId(corrections);
+  // misleading -- disable them and point at the override instead. The two
+  // kinds always share one answer (the check doesn't look at which kind was
+  // asked), so one call covers both buttons below.
+  const overrideRefusal = liveOverrideRefusal("approve_suggestion", corrections);
 
   return (
     <div className="flex flex-1 flex-col gap-6 p-4 md:p-6">
@@ -162,20 +175,27 @@ export function SeCompanyInfoReviewWorkspace({
           model {info.model_provider} · {info.model_name} · prompt{" "}
           {info.prompt_version} · resolved {info.resolved_at}
         </p>
-        {info.description ? (
-          <p className="text-sm">
-            {info.description}{" "}
-            <span className="text-xs text-muted-foreground">
-              ({info.description_language} · {info.description_source}
-              {info.description_sources.length > 0
-                ? ` · ${info.description_sources.join(", ")}`
-                : ""}
-              )
-            </span>
-          </p>
-        ) : (
-          <p className="text-sm text-muted-foreground">No description.</p>
-        )}
+        {info.description
+          ? (() => {
+              // description_source is the winning source; don't repeat it
+              // inside the full description_sources list.
+              const otherSources = info.description_sources.filter(
+                (source) => source !== info.description_source,
+              );
+              return (
+                <p className="text-sm">
+                  {info.description}{" "}
+                  <span className="text-xs text-muted-foreground">
+                    ({info.description_language} · {info.description_source}
+                    {otherSources.length > 0
+                      ? ` · ${otherSources.join(", ")}`
+                      : ""}
+                    )
+                  </span>
+                </p>
+              );
+            })()
+          : <p className="text-sm text-muted-foreground">No description.</p>}
       </header>
 
       {result?.ok ? (
@@ -321,6 +341,7 @@ export function SeCompanyInfoReviewWorkspace({
                           <Input
                             name="reason"
                             placeholder="Reason"
+                            aria-label="Reason"
                             required
                             className="w-56"
                           />
@@ -328,6 +349,7 @@ export function SeCompanyInfoReviewWorkspace({
                             <Input
                               name="note"
                               placeholder="Note (optional)"
+                              aria-label="Note"
                               className="w-48"
                             />
                           ) : null}
@@ -339,7 +361,7 @@ export function SeCompanyInfoReviewWorkspace({
                                 : "outline"
                             }
                             type="submit"
-                            disabled={busy || liveOverride !== null}
+                            disabled={busy || overrideRefusal !== null}
                             aria-busy={busy}
                           >
                             {kind === "approve_suggestion"
@@ -349,9 +371,9 @@ export function SeCompanyInfoReviewWorkspace({
                         </Form>
                       ),
                     )}
-                    {liveOverride ? (
+                    {overrideRefusal ? (
                       <span className="text-xs text-muted-foreground">
-                        Undo the current override first ({liveOverride}).
+                        {overrideRefusal}
                       </span>
                     ) : null}
                   </div>
@@ -399,7 +421,12 @@ export function SeCompanyInfoReviewWorkspace({
               <Checkbox name="clear_description" value="yes" />
               <span>Clear the description</span>
             </label>
-            <Input name="reason" placeholder="Reason" required />
+            <Input
+              name="reason"
+              placeholder="Reason"
+              aria-label="Reason"
+              required
+            />
             <Button type="submit" disabled={busy} aria-busy={busy}>
               Save override
             </Button>
@@ -429,6 +456,9 @@ export function SeCompanyInfoReviewWorkspace({
               <Badge variant={correction.is_current ? "default" : "outline"}>
                 {correction.correction_kind}
               </Badge>
+              <code className="font-mono text-xs text-muted-foreground">
+                {correction.correction_id.slice(0, 8)}
+              </code>
               {correction.is_stale ? (
                 <Badge variant="destructive">evidence changed</Badge>
               ) : null}
@@ -452,6 +482,7 @@ export function SeCompanyInfoReviewWorkspace({
                   <Input
                     name="reason"
                     placeholder="Why undo"
+                    aria-label="Why undo"
                     required
                     className="w-40"
                   />
