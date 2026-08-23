@@ -22,6 +22,14 @@ export interface SeCompanyInfoRow {
   company_id: string;
   legal_name: string;
   legal_form_code: string | null;
+  /**
+   * What the code is called, both languages, copied onto the row by Dagster
+   * from the curated corpscout.se_code_labels dictionary (migration 000306).
+   * '' when the dictionary does not name the code. Not Nullable: an absent
+   * label is the empty string, exactly as the artifact's LEFT JOIN miss wrote it.
+   */
+  legal_form_label_en: string;
+  legal_form_label_sv: string;
   status: string;
   incorporation_date: string | null;
   description: string | null;
@@ -125,6 +133,8 @@ export const INFO_SQL = `SELECT
   i.company_id AS company_id,
   i.legal_name AS legal_name,
   i.legal_form_code AS legal_form_code,
+  i.legal_form_label_en AS legal_form_label_en,
+  i.legal_form_label_sv AS legal_form_label_sv,
   toString(i.status) AS status,
   toString(i.incorporation_date) AS incorporation_date,
   i.description AS description,

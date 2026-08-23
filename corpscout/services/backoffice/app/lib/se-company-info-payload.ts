@@ -11,8 +11,9 @@
  * projected and displayed by editing one array, and can never be selected but
  * unlabelled (or labelled but unselected).
  *
- * The keys and their order mirror the DDL (migrations 000297 + 000300's
- * `activity_description_en`) minus the envelope every leg reads by name
+ * The keys and their order mirror the DDL (migrations 000297, 000300's
+ * `activity_description_en` and 000306's two legal-form labels) minus the
+ * envelope every leg reads by name
  * (`company_id`, `source_record_uid`, `observed_at`, `source_run_id`) and the
  * MATERIALIZED `evidence_hash`. ESEF is the one source whose display order
  * differs from its DDL order (entity name leads, the two JSON blobs trail);
@@ -50,6 +51,8 @@ export const ARTIFACT_PAYLOAD_FIELDS: Record<
     { key: "legal_name", label: "Legal name", kind: "text" },
     { key: "legal_name_raw", label: "Raw name", kind: "text" },
     { key: "legal_form_code", label: "Legal form", kind: "text" },
+    { key: "legal_form_label_sv", label: "Legal form (sv)", kind: "text" },
+    { key: "legal_form_label_en", label: "Legal form (en)", kind: "text" },
     { key: "status", label: "Status", kind: "text" },
     { key: "incorporation_date", label: "Registration date", kind: "text" },
     { key: "dissolution_date", label: "Dissolution date", kind: "text" },

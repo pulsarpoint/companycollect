@@ -9,6 +9,7 @@
  * being a fixed string.
  */
 import { chQuery } from "~/lib/clickhouse.server";
+import type { LegalFormLabels } from "~/lib/se-legal-form";
 import type { SortDir } from "~/lib/countries";
 import { clampPage, clampPageSize } from "~/lib/paging";
 import {
@@ -116,6 +117,14 @@ export interface SeCompanyInfoListRow {
   legal_name: string;
   status: string;
   legal_form_code: string;
+  /**
+   * What that code is called, both languages, copied onto the row by Dagster
+   * from the curated corpscout.se_code_labels dictionary (migration 000306).
+   * '' when the dictionary does not name the code -- the column shows the code
+   * itself then, never a blank cell.
+   */
+  legal_form_label_en: string;
+  legal_form_label_sv: string;
   /** "legal" (10-digit org number) | "sole" (12-digit personnummer-based id). */
   entity_type: string;
   /** 0 | 1 -- `description IS NOT NULL`, projected as UInt8 (see the SELECT). */
@@ -260,6 +269,8 @@ export const INFO_LIST_SELECT_SQL = `SELECT
   i.legal_name AS legal_name,
   toString(i.status) AS status,
   ifNull(i.legal_form_code, '') AS legal_form_code,
+  i.legal_form_label_en AS legal_form_label_en,
+  i.legal_form_label_sv AS legal_form_label_sv,
   if(length(i.company_id) = 12, 'sole', 'legal') AS entity_type,
   toUInt8(i.description IS NOT NULL) AS has_description
 FROM corpscout.se_company_info AS i FINAL`;
@@ -339,7 +350,13 @@ export const FILTER_OPTIONS_TTL_MS = 10 * 60 * 1000;
 
 export interface SeCompanyInfoFilterOptions {
   statuses: string[];
-  legalFormCodes: string[];
+  /**
+   * Every legal-form code IN USE (including '' for "no code"), each labelled
+   * from the curated dictionary. Codes come from the published rows and labels
+   * from corpscout.se_code_labels, so a code the dictionary does not name still
+   * appears -- with empty labels, which the option renderer falls back on.
+   */
+  legalForms: LegalFormLabels[];
 }
 
 export interface SeCompanyInfoCorrectionFilterOptions {
@@ -354,10 +371,38 @@ export interface SeCompanyInfoCorrectionFilterOptions {
  * per-row aggregation; `arraySort` makes the option order stable between
  * loads. legal_form_code is Nullable, so its NULL is folded into '' -- the
  * value the "none" option filters on.
+ *
+ * The legal-form LABELS come from the curated dictionary rather than from the
+ * rows' own copies of them: se_company_info carries one label pair per ROW, and
+ * during a label rollout the same code appears with the old pair on rows not
+ * yet re-resolved and the new pair on the rest -- a groupUniqArray over that
+ * would offer the same code twice. The dictionary has exactly one live row per
+ * code. It is read in the SAME statement (a scalar subquery over a 57-row
+ * table): the option lists of a page are one round trip, not two.
+ *
+ * The tuple is CAST to a NAMED tuple so JSONEachRow renders each entry as an
+ * object rather than a positional array -- a reordered CAST would then fail to
+ * type-check here instead of silently transposing code and label.
  */
-export const INFO_FILTER_OPTIONS_SQL = `SELECT
+export const INFO_FILTER_OPTIONS_SQL = `WITH legal_form_labels AS (
+  SELECT
+    l.code AS code,
+    argMax(l.label_sv, l.version) AS label_sv,
+    argMax(l.label_en, l.version) AS label_en
+  FROM corpscout.se_code_labels AS l
+  WHERE l.code_type = 'legal_form'
+  GROUP BY l.code
+)
+SELECT
   arraySort(groupUniqArray(toString(i.status))) AS statuses,
-  arraySort(groupUniqArray(ifNull(i.legal_form_code, ''))) AS legal_form_codes
+  arraySort(groupUniqArray(ifNull(i.legal_form_code, ''))) AS legal_form_codes,
+  (
+    SELECT groupArray(CAST(
+      (code, label_sv, label_en),
+      'Tuple(code String, label_sv String, label_en String)'
+    ))
+    FROM legal_form_labels
+  ) AS legal_form_labels
 FROM corpscout.se_company_info AS i FINAL`;
 
 /** The ledger's only data-driven discrete column: correction_kind and the
@@ -392,10 +437,21 @@ export async function loadSeCompanyInfoFilterOptions(): Promise<SeCompanyInfoFil
   const [row] = await chQuery<{
     statuses: string[];
     legal_form_codes: string[];
+    legal_form_labels: LegalFormLabels[];
   }>(INFO_FILTER_OPTIONS_SQL);
+  // The dictionary keyed by code, then one option per code IN USE: a curated
+  // code nobody carries is not an option (it would filter to nothing), and a
+  // code in use that the dictionary does not name still is -- unlabelled.
+  const labels = new Map(
+    (row?.legal_form_labels ?? []).map((entry) => [entry.code, entry]),
+  );
   const value: SeCompanyInfoFilterOptions = {
     statuses: row?.statuses ?? [],
-    legalFormCodes: row?.legal_form_codes ?? [],
+    legalForms: (row?.legal_form_codes ?? []).map((code) => ({
+      code,
+      label_sv: labels.get(code)?.label_sv ?? "",
+      label_en: labels.get(code)?.label_en ?? "",
+    })),
   };
   infoOptionsCache = { value, at: Date.now() };
   return value;

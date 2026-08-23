@@ -34,7 +34,9 @@ const detail: SeCompanyInfoDetail = {
   info: {
     company_id: COMPANY_ID,
     legal_name: "Alpha AB",
-    legal_form_code: "AB",
+    legal_form_code: "AB-ORGFO",
+    legal_form_label_en: "Limited company (aktiebolag)",
+    legal_form_label_sv: "Aktiebolag",
     status: "active",
     incorporation_date: "2001-02-03",
     description: "Alpha builds payment software.",
@@ -334,6 +336,27 @@ describe("company info review page", () => {
     }
     // The published card is the active one, and says so.
     expect(html).toContain(">active<");
+  });
+
+  it("names the legal form on the active card, in both languages, code as tooltip", () => {
+    // Task 19: legal_form_code mixes Bolagsverket text codes with SCB numbers,
+    // so the published row carries what the code is CALLED and the card shows
+    // that -- the Swedish official term with the English gloss beside it. It is
+    // copied from the register: no correction form touches it.
+    const html = render();
+    expect(html).toContain("Legal form");
+    expect(html).toContain('title="AB-ORGFO"');
+    expect(html).toContain("Aktiebolag");
+    expect(html).toContain(">Limited company (aktiebolag)<");
+  });
+
+  it("shows the bare code on the active card when the dictionary names nothing", () => {
+    const html = render({
+      ...detail,
+      info: { ...detail.info, legal_form_label_sv: "", legal_form_label_en: "" },
+    });
+    expect(html).toContain('title="AB-ORGFO"');
+    expect(html).toContain(">AB-ORGFO<");
   });
 
   it("shows every SCB payload column under its own label, empty ones as an em dash", () => {

@@ -18,6 +18,7 @@ import {
   parseListView,
   type SeCompanyInfoTableFilters,
 } from "~/lib/se-company-info-filters";
+import { legalFormOptionLabel } from "~/lib/se-legal-form";
 
 /** Every in-page link resolves against the route the table is rendered at. */
 const PATH = "/admin/se/company-info";
@@ -26,7 +27,9 @@ const ROW: SeCompanyInfoListRow = {
   company_id: "5565200028",
   legal_name: "Alpha AB",
   status: "active",
-  legal_form_code: "AB",
+  legal_form_code: "AB-ORGFO",
+  legal_form_label_en: "Limited company (aktiebolag)",
+  legal_form_label_sv: "Aktiebolag",
   entity_type: "legal",
   has_description: 1,
 };
@@ -39,7 +42,13 @@ const COUNTS: SeCompanyInfoListCounts = {
 
 const OPTIONS: SeCompanyInfoFilterOptions = {
   statuses: ["active", "dissolved"],
-  legalFormCodes: ["", "AB"],
+  legalForms: [
+    { code: "", label_sv: "", label_en: "" },
+    { code: "AB-ORGFO", label_sv: "Aktiebolag", label_en: "Limited company (aktiebolag)" },
+    // A code in use that the curated dictionary does not name: the option must
+    // still be offered, by its bare code.
+    { code: "ZZZ", label_sv: "", label_en: "" },
+  ],
 };
 
 const APPLIED_FILTERS: SeCompanyInfoTableFilters = {
@@ -47,7 +56,7 @@ const APPLIED_FILTERS: SeCompanyInfoTableFilters = {
   companyId: "5565200028",
   name: "Alpha",
   status: "active",
-  legalForm: "AB",
+  legalForm: "AB-ORGFO",
   entity: "legal",
   description: "yes",
 };
@@ -109,7 +118,11 @@ describe("SeCompanyInfoTable", () => {
     const html = render();
     expect(html).toContain("Alpha AB");
     expect(html).toContain("active");
-    expect(html).toContain(">AB<");
+    // The legal form reads as its OFFICIAL Swedish name with the English gloss
+    // muted beside it, the code as the cell's tooltip.
+    expect(html).toContain('title="AB-ORGFO"');
+    expect(html).toContain("Aktiebolag");
+    expect(html).toContain(">Limited company (aktiebolag)<");
     expect(html).toContain(">Legal<");
     expect(html).toContain(">yes<");
   });
@@ -207,7 +220,7 @@ describe("SeCompanyInfoTable filter sheet", () => {
   it("summarises each applied filter as a chip whose X re-navigates without that param", () => {
     const html = render({ filters: APPLIED_FILTERS });
     expect(html).toContain("Status active");
-    expect(html).toContain("Legal form AB");
+    expect(html).toContain("Legal form AB-ORGFO");
     expect(html).toContain("Entity Legal (10-digit)");
     expect(html).toContain("Description yes");
     expect(html).toContain('aria-label="Remove filter Description yes"');
@@ -283,11 +296,32 @@ describe("SeCompanyInfoFilterFields", () => {
     expect(optionValue("AB")).toBe("AB");
   });
 
+  it("labels a legal-form option by both of its names, with the code last", () => {
+    // A dropdown item has no tooltip, and two forms can read alike in one
+    // language, so the code is what tells them apart -- always last, after
+    // whichever names the curated dictionary has.
+    expect(
+      legalFormOptionLabel({
+        code: "AB-ORGFO",
+        label_sv: "Aktiebolag",
+        label_en: "Limited company (aktiebolag)",
+      }),
+    ).toBe("Aktiebolag — Limited company (aktiebolag) (AB-ORGFO)");
+    // A code the dictionary does not name is still selectable, by its code.
+    expect(
+      legalFormOptionLabel({ code: "ZZZ", label_sv: "", label_en: "" }),
+    ).toBe("ZZZ");
+    // ... and "no legal form code at all" keeps the shared "(none)" wording.
+    expect(
+      legalFormOptionLabel({ code: "", label_sv: "", label_en: "" }),
+    ).toBe("(none)");
+  });
+
   it("selects \"Any\" for an unset filter and the applied value otherwise", () => {
     expect(renderFields()).toContain('name="status" value="any"');
     const applied = renderFields(APPLIED_FILTERS);
     expect(applied).toContain('name="status" value="active"');
-    expect(applied).toContain('name="legalForm" value="AB"');
+    expect(applied).toContain('name="legalForm" value="AB-ORGFO"');
     expect(applied).toContain('name="entity" value="legal"');
     expect(applied).toContain('name="description" value="yes"');
     expect(applied).toContain('name="companyId" value="5565200028"');
@@ -299,7 +333,7 @@ describe("parseInfoFilters", () => {
 
   it("reads every filter from the URL", () => {
     const filters = parseInfoFilters(
-      at("?companyId=5565200028&name=Alpha&status=active&legalForm=AB&entity=legal&description=yes"),
+      at("?companyId=5565200028&name=Alpha&status=active&legalForm=AB-ORGFO&entity=legal&description=yes"),
     );
     expect(filters).toEqual(APPLIED_FILTERS);
     expect(infoFilterChips(filters)).toHaveLength(6);

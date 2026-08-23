@@ -145,6 +145,16 @@ describe("se_company_info list SQL shape", () => {
     expect(INFO_LIST_SELECT_SQL).toContain(
       "if(length(i.company_id) = 12, 'sole', 'legal') AS entity_type",
     );
+    // Task 19: the Legal form column reads as a NAME, so both labels travel
+    // with the code. They are the row's own copies (migration 000306), not a
+    // join -- the list must stay one scan.
+    expect(INFO_LIST_SELECT_SQL).toContain(
+      "i.legal_form_label_en AS legal_form_label_en",
+    );
+    expect(INFO_LIST_SELECT_SQL).toContain(
+      "i.legal_form_label_sv AS legal_form_label_sv",
+    );
+    expect(INFO_LIST_SELECT_SQL).not.toContain("se_code_labels");
     // Task 17: no description text crosses the wire for this list at all -- so
     // no snippet, and none of the provenance columns the detail page shows.
     for (const gone of [
@@ -487,7 +497,20 @@ describe("discrete filter options", () => {
 
   it("reads every data-driven option list of a table in ONE query, over FINAL", async () => {
     clickhouse.query.mockResolvedValueOnce([
-      { statuses: ["active", "dissolved"], legal_form_codes: ["", "AB"] },
+      {
+        statuses: ["active", "dissolved"],
+        legal_form_codes: ["", "AB-ORGFO", "ZZZ"],
+        legal_form_labels: [
+          {
+            code: "AB-ORGFO",
+            label_sv: "Aktiebolag",
+            label_en: "Limited company (aktiebolag)",
+          },
+          // Curated but carried by nobody -- not an option, it would filter to
+          // an empty list.
+          { code: "SCE-ORGFO", label_sv: "Europakooperativ", label_en: "SCE" },
+        ],
+      },
     ]);
 
     const options = await loadSeCompanyInfoFilterOptions();
@@ -502,15 +525,38 @@ describe("discrete filter options", () => {
     // Task 17: description_language is not a filter on this page any more, so
     // its option list is not read either.
     expect(INFO_FILTER_OPTIONS_SQL).not.toContain("description_language");
+    // The labels come from the curated dictionary, in the SAME statement -- a
+    // second round trip per page load would be the easy way to get this wrong,
+    // and reading them off the 3.5M published rows the subtle one (a label
+    // rollout leaves the same code carrying two different pairs).
+    expect(INFO_FILTER_OPTIONS_SQL).toContain("FROM corpscout.se_code_labels AS l");
+    expect(INFO_FILTER_OPTIONS_SQL).toContain("argMax(l.label_sv, l.version)");
+    expect(INFO_FILTER_OPTIONS_SQL).toContain("argMax(l.label_en, l.version)");
+    expect(INFO_FILTER_OPTIONS_SQL).toContain("l.code_type = 'legal_form'");
+    // A NAMED tuple, so JSONEachRow renders each entry as an object -- the
+    // shape the loader types its rows as.
+    expect(INFO_FILTER_OPTIONS_SQL).toContain(
+      "'Tuple(code String, label_sv String, label_en String)'",
+    );
+    // One option per code IN USE: '' (the "none" option) and the unlabelled
+    // ZZZ are kept, and the curated-but-unused SCE-ORGFO is not an option.
     expect(options).toEqual({
       statuses: ["active", "dissolved"],
-      legalFormCodes: ["", "AB"],
+      legalForms: [
+        { code: "", label_sv: "", label_en: "" },
+        {
+          code: "AB-ORGFO",
+          label_sv: "Aktiebolag",
+          label_en: "Limited company (aktiebolag)",
+        },
+        { code: "ZZZ", label_sv: "", label_en: "" },
+      ],
     });
   });
 
   it("serves the cached options within the TTL and re-reads after it", async () => {
     clickhouse.query.mockResolvedValue([
-      { statuses: ["active"], legal_form_codes: ["AB"] },
+      { statuses: ["active"], legal_form_codes: ["AB-ORGFO"], legal_form_labels: [] },
     ]);
     const now = Date.parse("2026-08-23T10:00:00Z");
     const clock = vi.spyOn(Date, "now").mockReturnValue(now);
@@ -544,7 +590,7 @@ describe("discrete filter options", () => {
     clickhouse.query.mockResolvedValue([]);
     expect(await loadSeCompanyInfoFilterOptions()).toEqual({
       statuses: [],
-      legalFormCodes: [],
+      legalForms: [],
     });
     resetSeCompanyInfoFilterOptionsCache();
     expect(await loadSeCompanyInfoCorrectionFilterOptions()).toEqual({ decidedBy: [] });

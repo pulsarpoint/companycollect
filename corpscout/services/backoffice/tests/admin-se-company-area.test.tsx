@@ -38,6 +38,8 @@ const shell: SeCompanyShell = {
   company_id: COMPANY_ID,
   legal_name: "Beijer Byggmaterial Aktiebolag",
   legal_form_code: "AB-ORGFO",
+  legal_form_label_en: "Limited company (aktiebolag)",
+  legal_form_label_sv: "Aktiebolag",
   status: "active",
   incorporation_date: "1915-04-06",
   published: true,
@@ -93,7 +95,13 @@ describe("company area header", () => {
     expect(html).toContain("Beijer Byggmaterial Aktiebolag");
     expect(html).toContain(COMPANY_ID);
     expect(html).toContain(">active<");
-    expect(html).toContain(">AB-ORGFO<");
+    // The legal form reads as its OFFICIAL Swedish name with the English gloss
+    // beside it; the code itself is the badge's tooltip, since AB-ORGFO says
+    // nothing on its own.
+    expect(html).toContain('title="AB-ORGFO"');
+    expect(html).toContain(">Aktiebolag<");
+    expect(html).toContain(">Limited company (aktiebolag)<");
+    expect(html).not.toContain(">AB-ORGFO<");
     expect(html).toContain(">Company<");
     expect(html).toContain("registered 1915-04-06");
     // Both links moved off the Info page in Task 18: they are about the
@@ -620,5 +628,39 @@ describe("company area routes", () => {
     expect(html).toContain("Beijer Byggmaterial Aktiebolag");
     expect(html).toContain("TAB CONTENT");
     expect(html).not.toContain("No company with this id in the register");
+  });
+});
+
+describe("company area header legal form", () => {
+  it("falls back to the bare code when the dictionary does not name the form", () => {
+    // A register code the curation has not caught up with must still be
+    // readable -- an empty badge would be worse than the code.
+    const html = render(
+      <SeCompanyHeader
+        shell={{ ...shell, legal_form_label_sv: "", legal_form_label_en: "" }}
+        tab="info"
+      />,
+      seCompanyTabPath(COMPANY_ID, "info"),
+    );
+    expect(html).toContain(">AB-ORGFO<");
+  });
+
+  it("shows no legal-form badge at all when the register recorded no code", () => {
+    const html = render(
+      <SeCompanyHeader
+        shell={{
+          ...shell,
+          legal_form_code: "",
+          legal_form_label_sv: "",
+          legal_form_label_en: "",
+        }}
+        tab="info"
+      />,
+      seCompanyTabPath(COMPANY_ID, "info"),
+    );
+    // The badge is gone, tooltip and all -- the legal NAME still ends in
+    // "Aktiebolag", so the absence is asserted on the code's own tooltip.
+    expect(html).not.toContain('title="AB-ORGFO"');
+    expect(html).not.toContain(">Limited company (aktiebolag)<");
   });
 });

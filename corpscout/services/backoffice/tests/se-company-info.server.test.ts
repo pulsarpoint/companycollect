@@ -24,7 +24,8 @@ const COMPANY = "5565200028";
 
 /**
  * The payload columns of each artifact table, straight from the DDL
- * (migration 000297 plus 000300's activity_description_en) minus the envelope
+ * (migration 000297, 000300's activity_description_en and 000306's two
+ * legal-form labels) minus the envelope
  * (company_id, source_record_uid, observed_at, source_run_id) and the
  * MATERIALIZED evidence_hash. Hand-copied here on purpose: it is the
  * independent statement of the schema that both the display list and the
@@ -36,6 +37,8 @@ const DDL_PAYLOAD_COLUMNS: Record<ArtifactSource, string[]> = {
     "legal_name",
     "legal_name_raw",
     "legal_form_code",
+    "legal_form_label_en",
+    "legal_form_label_sv",
     "status",
     "incorporation_date",
     "dissolution_date",
@@ -84,6 +87,11 @@ describe("company info queries", () => {
       // Task 14: the published row holds both languages natively (migration 000301).
       "i.description AS description",
       "i.description_sv AS description_sv",
+      // Task 19: what legal_form_code is CALLED, copied from the curated
+      // dictionary by Dagster (migration 000306). Plain String columns -- an
+      // absent label is '', which is what the artifact's join miss wrote.
+      "i.legal_form_label_en AS legal_form_label_en",
+      "i.legal_form_label_sv AS legal_form_label_sv",
     ]) {
       expect(INFO_SQL).toContain(c);
     }

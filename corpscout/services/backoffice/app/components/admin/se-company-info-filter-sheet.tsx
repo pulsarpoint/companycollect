@@ -1,6 +1,7 @@
 import { useState } from "react";
 import { Form, Link } from "react-router";
 import { ListFilterIcon, XIcon } from "lucide-react";
+import { legalFormOptionLabel } from "~/lib/se-legal-form";
 import { Badge } from "~/components/ui/badge";
 import { Button } from "~/components/ui/button";
 import { Input } from "~/components/ui/input";
@@ -145,6 +146,7 @@ export function SeCompanyInfoFilterFields({
   options: SeCompanyInfoFilterOptions;
   view: TableView;
 }) {
+  const byCode = new Map(options.legalForms.map((form) => [form.code, form]));
   return (
     <div className="flex flex-col gap-3 px-4">
       <ViewFields view={view} />
@@ -174,12 +176,19 @@ export function SeCompanyInfoFilterFields({
         />
       </Field>
       <Field label="Legal form">
+        {/* The option VALUE is the code the filter submits; its TEXT is what
+            the curated dictionary calls that code, in both languages, since a
+            bare AB-ORGFO or 71 is unreadable. */}
         <FilterSelect
           name="legalForm"
           label="Legal form"
           value={filters.legalForm}
-          options={options.legalFormCodes}
-          labelOf={optionLabel}
+          options={options.legalForms.map((form) => form.code)}
+          labelOf={(code) =>
+            legalFormOptionLabel(
+              byCode.get(code) ?? { code, label_sv: "", label_en: "" },
+            )
+          }
         />
       </Field>
       <Field label="Entity">

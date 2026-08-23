@@ -8,7 +8,9 @@ import { Alert, AlertDescription, AlertTitle } from "~/components/ui/alert";
 import {
   DefinitionList,
   EMPTY_VALUE,
+  text,
 } from "~/components/admin/definition-list";
+import { LegalForm } from "~/components/admin/legal-form";
 import { Badge } from "~/components/ui/badge";
 import { Button, buttonVariants } from "~/components/ui/button";
 import {
@@ -110,8 +112,9 @@ export function SeCompanyInfoNotPublished({
 }: {
   companyId: string;
 }) {
-  // No padding of its own: both callers (the company layout's 404 branch and
-  // the Info tab) render this inside the layout's padded container.
+  // No padding of its own: the Info tab -- its only caller since the layout
+  // began rendering SeCompanyNotFound for ids no table knows -- renders this
+  // inside the layout's padded container.
   return (
     <div className="flex flex-col gap-6">
       <Empty className="border">
@@ -333,29 +336,40 @@ function PublishedCard({ info }: { info: SeCompanyInfoRow }) {
         <DefinitionList
           valueClassName="break-all"
           entries={[
-            ["Incorporated", info.incorporation_date ?? ""],
-            ["NACE", info.primary_nace_code],
-            ["SNI", info.primary_sni_code],
-            ["Wikidata id", info.wikidata_id ?? ""],
-            ["LEI", info.lei ?? ""],
-            ["Description sources", sources],
+            // Copied from the register with the code it names, not written by
+            // the model and not overridable here: an override_field payload
+            // may only carry the descriptions.
+            [
+              "Legal form",
+              <LegalForm
+                key="legal-form"
+                form={{
+                  code: info.legal_form_code ?? "",
+                  label_sv: info.legal_form_label_sv,
+                  label_en: info.legal_form_label_en,
+                }}
+              />,
+            ],
+            ["Incorporated", text(info.incorporation_date ?? "")],
+            ["NACE", text(info.primary_nace_code)],
+            ["SNI", text(info.primary_sni_code)],
+            ["Wikidata id", text(info.wikidata_id ?? "")],
+            ["LEI", text(info.lei ?? "")],
+            ["Description sources", text(sources)],
             [
               "Description source records",
-              info.description_source_record_uids.join(", "),
+              text(info.description_source_record_uids.join(", ")),
             ],
-            ["Source records", info.source_record_uids.join(", ")],
-            ["Evidence set hash", info.evidence_set_hash],
-            ["Correction ids", info.correction_ids.join(", ")],
+            ["Source records", text(info.source_record_uids.join(", "))],
+            ["Evidence set hash", text(info.evidence_set_hash)],
+            ["Correction ids", text(info.correction_ids.join(", "))],
             [
               "Model",
               `${info.model_provider} · ${info.model_name} · prompt ${info.prompt_version}`,
             ],
-            ["Resolved at", info.resolved_at],
-            ["Run", info.source_run_id],
-          ].map(([label, value]) => [
-            label,
-            value === "" ? EMPTY_VALUE : value,
-          ])}
+            ["Resolved at", text(info.resolved_at)],
+            ["Run", text(info.source_run_id)],
+          ]}
         />
       </CardContent>
     </Card>

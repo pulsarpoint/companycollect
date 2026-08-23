@@ -29,6 +29,7 @@ import {
 import {
   SHELL_ENTITY_TYPE_SQL,
   SHELL_INFO_SQL,
+  SHELL_LEGAL_FORM_LABEL_SQL,
   SHELL_REGISTER_SQL,
   loadSeCompanyShell,
 } from "~/lib/se-company-shell.server";
@@ -41,6 +42,7 @@ const ALL_SQL: Array<[string, string]> = [
   ["SHELL_INFO_SQL", SHELL_INFO_SQL],
   ["SHELL_REGISTER_SQL", SHELL_REGISTER_SQL],
   ["SHELL_ENTITY_TYPE_SQL", SHELL_ENTITY_TYPE_SQL],
+  ["SHELL_LEGAL_FORM_LABEL_SQL", SHELL_LEGAL_FORM_LABEL_SQL],
   ["ADDRESS_ROWS_SQL", ADDRESS_ROWS_SQL],
   ["FINANCIALS_LATEST_SQL", FINANCIALS_LATEST_SQL],
   ["FINANCIAL_REPORTS_SQL", FINANCIAL_REPORTS_SQL],
@@ -187,6 +189,14 @@ describe("loadSeCompanyShell", () => {
           },
         ];
       }
+      if (sql === SHELL_LEGAL_FORM_LABEL_SQL) {
+        return [
+          {
+            label_en: "Limited company (aktiebolag)",
+            label_sv: "Aktiebolag",
+          },
+        ];
+      }
       return [{ entity_type_label: "Company", is_public_sector: 0 }];
     });
     const shell = await loadSeCompanyShell(COMPANY);
@@ -194,6 +204,38 @@ describe("loadSeCompanyShell", () => {
     expect(shell?.published).toBe(true);
     expect(shell?.entity_type_label).toBe("Company");
     expect(shell?.is_public_sector).toBe(false);
+    // Both labels come from the curated dictionary, keyed by the code -- the
+    // header renders for unpublished companies too, and se_companies carries
+    // the code only, so reading the published row's own copies would leave
+    // half the company area unlabelled.
+    expect(shell?.legal_form_label_sv).toBe("Aktiebolag");
+    expect(shell?.legal_form_label_en).toBe("Limited company (aktiebolag)");
+    expect(
+      clickhouse.query.mock.calls.find(
+        ([sql]) => sql === SHELL_LEGAL_FORM_LABEL_SQL,
+      )?.[1],
+    ).toEqual({ legalFormCode: "AB-ORGFO" });
+  });
+
+  it("leaves both labels empty when the dictionary does not name the code", async () => {
+    clickhouse.query.mockImplementation(async (sql: string) => {
+      if (sql === SHELL_INFO_SQL) {
+        return [
+          {
+            company_id: COMPANY,
+            legal_name: "Published AB",
+            legal_form_code: "ZZZ",
+            status: "active",
+            incorporation_date: "",
+          },
+        ];
+      }
+      return [];
+    });
+    const shell = await loadSeCompanyShell(COMPANY);
+    expect(shell?.legal_form_code).toBe("ZZZ");
+    expect(shell?.legal_form_label_sv).toBe("");
+    expect(shell?.legal_form_label_en).toBe("");
   });
 
   it("falls back to the register and says the company is not published", async () => {
@@ -215,12 +257,14 @@ describe("loadSeCompanyShell", () => {
     const shell = await loadSeCompanyShell(COMPANY);
     expect(shell?.legal_name).toBe("Register AB");
     expect(shell?.published).toBe(false);
-    // No legal form means no classification to look up, so no third query.
-    expect(
-      clickhouse.query.mock.calls.some(
-        ([sql]) => sql === SHELL_ENTITY_TYPE_SQL,
-      ),
-    ).toBe(false);
+    // No legal form means nothing to look it up BY, so neither by-code query
+    // is sent: not the classification and not the label dictionary.
+    for (const sql of [SHELL_ENTITY_TYPE_SQL, SHELL_LEGAL_FORM_LABEL_SQL]) {
+      expect(
+        clickhouse.query.mock.calls.some(([sent]) => sent === sql),
+      ).toBe(false);
+    }
+    expect(shell?.legal_form_label_sv).toBe("");
   });
 
   it("is null when neither table knows the id", async () => {

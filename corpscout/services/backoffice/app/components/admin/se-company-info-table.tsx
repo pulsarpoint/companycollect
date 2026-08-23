@@ -4,6 +4,7 @@ import { Badge } from "~/components/ui/badge";
 import { DataTable } from "~/components/data-table/data-table";
 import { DataTableColumnHeader } from "~/components/data-table/column-header";
 import { DataTablePagination } from "~/components/data-table/pagination";
+import { LegalForm } from "~/components/admin/legal-form";
 import { SeCompanyInfoFilterSheet } from "~/components/admin/se-company-info-filter-sheet";
 import type { SortDir } from "~/lib/countries";
 import type {
@@ -71,10 +72,18 @@ function buildColumns(
     {
       id: "legal_form_code",
       header: head("Legal form", "legal_form_code"),
+      // Sorted by the CODE (that is what INFO_SORT_COLUMNS orders on) but read
+      // as its name: the Swedish one, with the English muted beside it and the
+      // code itself on hover.
       cell: ({ row }) => (
-        <span className="text-muted-foreground text-xs">
-          {row.original.legal_form_code === "" ? "—" : row.original.legal_form_code}
-        </span>
+        <LegalForm
+          className="block max-w-[18rem] truncate text-xs"
+          form={{
+            code: row.original.legal_form_code,
+            label_sv: row.original.legal_form_label_sv,
+            label_en: row.original.legal_form_label_en,
+          }}
+        />
       ),
     },
     {

@@ -31,7 +31,19 @@ export function SeCompanyHeader({
       <div className="flex flex-wrap items-center gap-2">
         <Badge variant="secondary">{shell.status}</Badge>
         {shell.legal_form_code ? (
-          <Badge variant="secondary">{shell.legal_form_code}</Badge>
+          // The official Swedish name with the English gloss beside it, the
+          // code as the tooltip -- the code alone says nothing, since
+          // legal_form_code mixes Bolagsverket text codes with SCB numbers.
+          <Badge variant="secondary" title={shell.legal_form_code}>
+            {shell.legal_form_label_sv === ""
+              ? shell.legal_form_code
+              : shell.legal_form_label_sv}
+            {shell.legal_form_label_en === "" ? null : (
+              <span className="text-muted-foreground font-normal">
+                {shell.legal_form_label_en}
+              </span>
+            )}
+          </Badge>
         ) : null}
         {shell.entity_type_label ? (
           <Badge variant={shell.is_public_sector ? "secondary" : "outline"}>

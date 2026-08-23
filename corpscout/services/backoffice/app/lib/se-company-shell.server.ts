@@ -9,6 +9,15 @@ export interface SeCompanyShell {
   company_id: string;
   legal_name: string;
   legal_form_code: string;
+  /**
+   * What the code is called, both languages, from the curated
+   * corpscout.se_code_labels dictionary. Read by code rather than off the
+   * published row, exactly as `entity_type_label` is: the header renders for
+   * unpublished companies too (SHELL_REGISTER_SQL), and se_companies carries
+   * the code only. '' when the dictionary does not name the code.
+   */
+  legal_form_label_en: string;
+  legal_form_label_sv: string;
   status: string;
   incorporation_date: string;
   /**
@@ -35,6 +44,11 @@ interface SeCompanyShellQueryRow {
 interface SeEntityTypeQueryRow {
   entity_type_label: string;
   is_public_sector: number;
+}
+
+interface SeLegalFormLabelQueryRow {
+  label_en: string;
+  label_sv: string;
 }
 
 /**
@@ -73,6 +87,20 @@ FROM corpscout.company_entity_types AS t FINAL
 WHERE t.country_code = 'SE' AND t.legal_form_code = {legalFormCode:String}
 LIMIT 1`;
 
+/** The curated legal-form dictionary, newest curation for one code. argMax over
+ * `version` rather than FINAL: se_code_labels is a ReplacingMergeTree(version)
+ * and a re-seed appends a row per code, so argMax reads the correction without
+ * waiting for a merge -- the same shape the Dagster SCB artifact and
+ * corpscout.se_companies_translated use. The aggregate always returns exactly
+ * one row (both labels '' when no curated row matches); the LIMIT is the
+ * company area's blanket rule, not a real bound. */
+export const SHELL_LEGAL_FORM_LABEL_SQL = `SELECT
+  argMax(l.label_en, l.version) AS label_en,
+  argMax(l.label_sv, l.version) AS label_sv
+FROM corpscout.se_code_labels AS l
+WHERE l.code_type = 'legal_form' AND l.code = {legalFormCode:String}
+LIMIT 1`;
+
 /**
  * Loads the company header for `/admin/se/company/:companyId/*`.
  *
@@ -91,15 +119,24 @@ export async function loadSeCompanyShell(
   const published = infoRows[0];
   const row = published ?? registerRows[0];
   if (!row) return null;
-  const entityRows =
+  // Both lookups key on the same code, so a company without one skips both.
+  const [entityRows, labelRows] =
     row.legal_form_code === ""
-      ? []
-      : await chQuery<SeEntityTypeQueryRow>(SHELL_ENTITY_TYPE_SQL, {
-          legalFormCode: row.legal_form_code,
-        });
+      ? [[], []]
+      : await Promise.all([
+          chQuery<SeEntityTypeQueryRow>(SHELL_ENTITY_TYPE_SQL, {
+            legalFormCode: row.legal_form_code,
+          }),
+          chQuery<SeLegalFormLabelQueryRow>(SHELL_LEGAL_FORM_LABEL_SQL, {
+            legalFormCode: row.legal_form_code,
+          }),
+        ]);
   const entity = entityRows[0];
+  const label = labelRows[0];
   return {
     ...row,
+    legal_form_label_en: label?.label_en ?? "",
+    legal_form_label_sv: label?.label_sv ?? "",
     published: Boolean(published),
     entity_type_label: entity?.entity_type_label ?? "",
     is_public_sector: Number(entity?.is_public_sector ?? 0) === 1,
