@@ -5,7 +5,6 @@ from pathlib import Path
 from dagster_v3.defs.sweden_platsbanken.source import (
     discover_historical_archive_urls,
     resolve_jobstream_event_window,
-    sanitize_jobstream_jsonl,
     sync_jobstream_snapshot,
 )
 
@@ -94,65 +93,32 @@ def test_historical_catalog_keeps_complete_zip_archives_only() -> None:
     )
 
 
-def test_jobstream_snapshot_is_redacted_before_durable_storage(
-    tmp_path: Path,
-) -> None:
-    source_path = tmp_path / "source.jsonl"
-    target_path = tmp_path / "sanitized.jsonl"
-    source_path.write_text(
-        json.dumps(
-            {
-                "id": "31380149",
-                "headline": "Maskinoperatör",
-                "application_contacts": [
-                    {
-                        "name": "Personal Contact",
-                        "email": "person@example.se",
-                        "telephone": "0700000000",
-                    }
-                ],
-                "application_details": {
-                    "email": "person@example.se",
-                    "url": "https://example.se/apply",
-                },
-                "employer": {
-                    "name": "Example AB",
-                    "organization_number": "5563519437",
-                    "email": "person@example.se",
-                    "phone_number": "0700000000",
-                    "url": "https://example.se",
-                },
-            },
-            ensure_ascii=False,
-        )
-        + "\n",
-        encoding="utf-8",
-    )
-
-    row_count = sanitize_jobstream_jsonl(source_path, target_path)
-
-    assert row_count == 1
-    [record] = [
-        json.loads(line)
-        for line in target_path.read_text(encoding="utf-8").splitlines()
-    ]
-    assert "application_contacts" not in record
-    assert "application_details" not in record
-    assert "email" not in record["employer"]
-    assert "phone_number" not in record["employer"]
-    assert record["employer"]["organization_number"] == "5563519437"
-
-
-def test_snapshot_sync_persists_only_sanitized_jobstream_jsonl() -> None:
+def test_snapshot_sync_preserves_job_and_employer_contacts() -> None:
     body = (
         json.dumps(
             {
                 "id": "31380149",
-                "application_contacts": [{"name": "Personal Contact"}],
-                "application_details": {"email": "person@example.se"},
+                "application_contacts": [
+                    {
+                        "name": "Recruiter",
+                        "description": "Hiring manager",
+                        "email": "recruiter@example.se",
+                        "telephone": "0101234567",
+                        "contact_type": "contact",
+                    }
+                ],
+                "application_details": {
+                    "email": "jobs@example.se",
+                    "url": "https://example.se/apply",
+                    "other": "Apply through the portal",
+                    "reference": "JOB-42",
+                    "information": "Applications are reviewed continuously",
+                    "via_af": False,
+                },
                 "employer": {
                     "organization_number": "5563519437",
-                    "email": "person@example.se",
+                    "email": "company@example.se",
+                    "phone_number": "0107654321",
                 },
             }
         )
@@ -167,11 +133,15 @@ def test_snapshot_sync_persists_only_sanitized_jobstream_jsonl() -> None:
         session=_Session(_Response(body)),  # type: ignore[arg-type]
     )
 
+    assert store.objects[snapshot.object_key] == body
     persisted = json.loads(store.objects[snapshot.object_key])
     assert persisted["id"] == "31380149"
-    assert "application_contacts" not in persisted
-    assert "application_details" not in persisted
-    assert "email" not in persisted["employer"]
+    assert persisted["application_contacts"][0]["name"] == "Recruiter"
+    assert persisted["application_contacts"][0]["email"] == "recruiter@example.se"
+    assert persisted["application_details"]["url"] == "https://example.se/apply"
+    assert persisted["application_details"]["reference"] == "JOB-42"
+    assert persisted["employer"]["email"] == "company@example.se"
+    assert persisted["employer"]["phone_number"] == "0107654321"
     manifest = json.loads(store.objects[snapshot.manifest_key])
     assert manifest["record_count"] == 1
     assert manifest["object_key"] == snapshot.object_key

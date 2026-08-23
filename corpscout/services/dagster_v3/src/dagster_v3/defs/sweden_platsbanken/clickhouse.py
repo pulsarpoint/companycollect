@@ -78,18 +78,25 @@ def append_job_history_batch(
     versions_table: str,
     events_table: str,
     requirements_table: str,
+    contacts_table: str,
     log: Callable[..., object] | None = None,
 ) -> dict[str, int]:
     """Append one normalized raw-object batch without duplicating stable UIDs."""
     assert_clickhouse_tables_exist(
         clickhouse,
         database=tables.CLICKHOUSE_DATABASE,
-        tables=(tables.VERSIONS_TABLE, tables.EVENTS_TABLE, tables.REQUIREMENTS_TABLE),
+        tables=(
+            tables.VERSIONS_TABLE,
+            tables.EVENTS_TABLE,
+            tables.REQUIREMENTS_TABLE,
+            tables.CONTACTS_TABLE,
+        ),
     )
     source_tables = {
         tables.VERSIONS_TABLE: versions_table,
         tables.EVENTS_TABLE: events_table,
         tables.REQUIREMENTS_TABLE: requirements_table,
+        tables.CONTACTS_TABLE: contacts_table,
     }
     counts: dict[str, int] = {}
     with clickhouse.get_connection() as client:

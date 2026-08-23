@@ -9,11 +9,17 @@ from dagster_v3.defs.sweden_platsbanken.clickhouse import (
 )
 
 
-MIGRATION = (
+INITIAL_MIGRATION = (
     Path(__file__).resolve().parents[3]
     / "clickhouse"
     / "migrations"
     / "000302_corpscout_se_platsbanken_jobs.up.sql"
+)
+CONTACTS_MIGRATION = (
+    Path(__file__).resolve().parents[3]
+    / "clickhouse"
+    / "migrations"
+    / "000303_corpscout_se_platsbanken_job_contacts.up.sql"
 )
 
 
@@ -73,18 +79,33 @@ def test_monthly_rollup_keeps_hiring_activity_semantics() -> None:
 
 
 def test_migration_owns_every_exported_source_table_column() -> None:
-    sql = MIGRATION.read_text(encoding="utf-8")
+    sql = INITIAL_MIGRATION.read_text(encoding="utf-8")
+    contacts_sql = CONTACTS_MIGRATION.read_text(encoding="utf-8")
+    complete_sql = f"{sql}\n{contacts_sql}"
 
     contracts = {
         tables.VERSIONS_TABLE: tables.VERSION_COLUMNS,
         tables.EVENTS_TABLE: tables.EVENT_COLUMNS,
         tables.REQUIREMENTS_TABLE: tables.REQUIREMENT_COLUMNS,
+        tables.CONTACTS_TABLE: tables.CONTACT_COLUMNS,
     }
     for table_name, columns in contracts.items():
-        assert f"CREATE TABLE IF NOT EXISTS corpscout.{table_name}" in sql
+        table_sql = contacts_sql if table_name == tables.CONTACTS_TABLE else complete_sql
+        assert f"CREATE TABLE IF NOT EXISTS corpscout.{table_name}" in table_sql
         for column in columns:
-            assert f"    {column} " in sql
+            assert (
+                f"    {column} " in table_sql
+                or f"ADD COLUMN IF NOT EXISTS {column} " in table_sql
+            )
 
-    assert "application_contacts" not in sql
-    assert "employer_email" not in sql
-    assert "employer_phone" not in sql
+    for column in (
+        "application_email",
+        "application_url",
+        "application_other",
+        "application_reference",
+        "application_information",
+        "application_via_af",
+        "employer_email",
+        "employer_phone",
+    ):
+        assert f"ADD COLUMN IF NOT EXISTS {column} " in contacts_sql

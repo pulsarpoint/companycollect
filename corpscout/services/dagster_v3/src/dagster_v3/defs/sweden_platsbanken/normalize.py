@@ -112,6 +112,7 @@ def build_normalized_tables(
     versions_table: str,
     events_table: str,
     requirements_table: str,
+    contacts_table: str,
     log: Callable[..., object] | None = None,
 ) -> dict[str, int]:
     """Build versioned job facts, lifecycle events, and requirement facts."""
@@ -119,6 +120,7 @@ def build_normalized_tables(
     versions = f"{tables.DUCKDB_SCHEMA}.{versions_table}"
     events = f"{tables.DUCKDB_SCHEMA}.{events_table}"
     requirements = f"{tables.DUCKDB_SCHEMA}.{requirements_table}"
+    contacts = f"{tables.DUCKDB_SCHEMA}.{contacts_table}"
     employer_identity = sweden_identity_sql(
         "json_extract_string(raw_payload, '$.employer.organization_number')"
     )
@@ -166,6 +168,26 @@ def build_normalized_tables(
                     as employer_workplace,
                 coalesce(json_extract_string(raw_payload, '$.employer.url'), '')
                     as employer_url,
+                coalesce(json_extract_string(raw_payload, '$.application_details.email'), '')
+                    as application_email,
+                coalesce(json_extract_string(raw_payload, '$.application_details.url'), '')
+                    as application_url,
+                coalesce(json_extract_string(raw_payload, '$.application_details.other'), '')
+                    as application_other,
+                coalesce(json_extract_string(raw_payload, '$.application_details.reference'), '')
+                    as application_reference,
+                coalesce(json_extract_string(raw_payload, '$.application_details.information'), '')
+                    as application_information,
+                cast(
+                    try_cast(
+                        json_extract_string(raw_payload, '$.application_details.via_af')
+                        as boolean
+                    ) as utinyint
+                ) as application_via_af,
+                coalesce(json_extract_string(raw_payload, '$.employer.email'), '')
+                    as employer_email,
+                coalesce(json_extract_string(raw_payload, '$.employer.phone_number'), '')
+                    as employer_phone,
                 coalesce(json_extract_string(raw_payload, '$.headline'), '')
                     as headline_original,
                 coalesce(json_extract_string(raw_payload, '$.description.text'), '')
@@ -290,6 +312,14 @@ def build_normalized_tables(
             employer_name,
             employer_workplace,
             employer_url,
+            application_email,
+            application_url,
+            application_other,
+            application_reference,
+            application_information,
+            application_via_af,
+            employer_email,
+            employer_phone,
             headline_original,
             description_text_original,
             detected_language,
@@ -349,11 +379,13 @@ def build_normalized_tables(
     connection.execute(
         _requirements_sql(raw=raw, versions=versions, requirements=requirements)
     )
+    connection.execute(_contacts_sql(raw=raw, versions=versions, contacts=contacts))
 
     counts = {
         "versions": _count(connection, versions),
         "events": _count(connection, events),
         "requirements": _count(connection, requirements),
+        "contacts": _count(connection, contacts),
     }
     if log is not None:
         log("Built Platsbanken normalized tables: %s", counts)
@@ -595,6 +627,70 @@ def _requirements_sql(*, raw: str, versions: str, requirements: str) -> str:
         ingested_at
     from normalized
     where concept_id != ''
+    """
+
+
+def _contacts_sql(*, raw: str, versions: str, contacts: str) -> str:
+    return f"""
+    create or replace table {contacts} as
+    with contact_items as (
+        select
+            v.version_uid,
+            v.source_job_ad_id,
+            v.version_at,
+            cast(contact.key as usmallint) as contact_index,
+            contact.value as contact_value,
+            v.source_url,
+            v.source_object_key,
+            v.source_run_id,
+            v.source_line_number,
+            v.ingested_at
+        from {raw} as r
+        inner join {versions} as v
+            on v.source_run_id = r.source_run_id
+           and v.source_object_key = r.source_object_key
+           and v.source_line_number = r.source_line_number
+        cross join json_each(r.raw_payload, '$.application_contacts') as contact
+    ), normalized as (
+        select
+            version_uid,
+            source_job_ad_id,
+            version_at,
+            contact_index,
+            coalesce(json_extract_string(contact_value, '$.name'), '') as name,
+            coalesce(json_extract_string(contact_value, '$.description'), '')
+                as description,
+            coalesce(json_extract_string(contact_value, '$.email'), '') as email,
+            coalesce(json_extract_string(contact_value, '$.telephone'), '')
+                as telephone,
+            coalesce(json_extract_string(contact_value, '$.contact_type'), '')
+                as contact_type,
+            source_url,
+            source_object_key,
+            source_run_id,
+            source_line_number,
+            ingested_at
+        from contact_items
+    )
+    select
+        lower(sha256(concat_ws(
+            '|', version_uid, 'application_contact', cast(contact_index as varchar)
+        ))) as contact_uid,
+        version_uid,
+        source_job_ad_id,
+        version_at,
+        contact_index,
+        name,
+        description,
+        email,
+        telephone,
+        contact_type,
+        source_url,
+        source_object_key,
+        source_run_id,
+        source_line_number,
+        ingested_at
+    from normalized
     """
 
 

@@ -53,25 +53,14 @@ def discover_historical_archive_urls(
     return tuple(sorted(urls))
 
 
-def sanitize_jobstream_jsonl(source_path: Path, target_path: Path) -> int:
-    """Remove person-level application contacts before durable storage."""
+def count_jobstream_jsonl_records(source_path: Path) -> int:
+    """Validate a JobStream JSONL response and return its non-empty row count."""
     row_count = 0
-    with (
-        source_path.open(encoding="utf-8") as source,
-        target_path.open("w", encoding="utf-8") as target,
-    ):
+    with source_path.open(encoding="utf-8") as source:
         for line in source:
             if line.strip() == "":
                 continue
-            record = json.loads(line)
-            record.pop("application_contacts", None)
-            record.pop("application_details", None)
-            employer = record.get("employer")
-            if isinstance(employer, dict):
-                employer.pop("email", None)
-                employer.pop("phone_number", None)
-            target.write(json.dumps(record, ensure_ascii=False, separators=(",", ":")))
-            target.write("\n")
+            json.loads(line)
             row_count += 1
     return row_count
 
@@ -371,18 +360,17 @@ def _sync_jobstream_jsonl(
             prefix="sweden_platsbanken_jobstream_"
         ) as temp:
             raw_path = Path(temp) / "source.jsonl"
-            sanitized_path = Path(temp) / "sanitized.jsonl"
             _download_to_path(
                 session=http_session,
                 source_url=source_url,
                 target_path=raw_path,
                 accept="application/jsonl",
             )
-            record_count = sanitize_jobstream_jsonl(raw_path, sanitized_path)
+            record_count = count_jobstream_jsonl_records(raw_path)
             if record_count == 0 and not allow_empty:
                 raise ValueError(f"{source_url} returned zero JobStream records")
-            digest = _sha256_file(sanitized_path)
-            size_bytes = sanitized_path.stat().st_size
+            digest = _sha256_file(raw_path)
+            size_bytes = raw_path.stat().st_size
             object_key = (
                 f"{object_prefix}/retrieved_date={retrieved_at.date().isoformat()}/"
                 f"sha256={digest}/records.jsonl"
@@ -391,7 +379,7 @@ def _sync_jobstream_jsonl(
             if downloaded:
                 object_store.upload_file(
                     object_key,
-                    sanitized_path,
+                    raw_path,
                     bucket=tables.S3_BUCKET,
                 )
     finally:

@@ -21,22 +21,26 @@ HISTORICAL_RAW_TABLE = "historical_raw"
 HISTORICAL_VERSIONS_TABLE = "historical_job_ad_versions"
 HISTORICAL_EVENTS_TABLE = "historical_job_ad_events"
 HISTORICAL_REQUIREMENTS_TABLE = "historical_job_ad_requirements"
+HISTORICAL_CONTACTS_TABLE = "historical_job_ad_contacts"
 
 JOBSTREAM_SNAPSHOT_RAW_TABLE = "jobstream_snapshot_raw"
 JOBSTREAM_SNAPSHOT_VERSIONS_TABLE = "jobstream_snapshot_versions"
 JOBSTREAM_SNAPSHOT_EVENTS_TABLE = "jobstream_snapshot_events"
 JOBSTREAM_SNAPSHOT_REQUIREMENTS_TABLE = "jobstream_snapshot_requirements"
+JOBSTREAM_SNAPSHOT_CONTACTS_TABLE = "jobstream_snapshot_contacts"
 
 JOBSTREAM_EVENTS_RAW_TABLE = "jobstream_events_raw"
 JOBSTREAM_EVENTS_VERSIONS_TABLE = "jobstream_event_versions"
 JOBSTREAM_EVENTS_EVENTS_TABLE = "jobstream_event_events"
 JOBSTREAM_EVENTS_REQUIREMENTS_TABLE = "jobstream_event_requirements"
+JOBSTREAM_EVENTS_CONTACTS_TABLE = "jobstream_event_contacts"
 
 CLICKHOUSE_DATABASE = "corpscout"
 VERSIONS_TABLE = "se_platsbanken_job_ad_versions"
 EVENTS_TABLE = "se_platsbanken_job_ad_events"
 INTERVALS_TABLE = "se_platsbanken_job_ad_active_intervals"
 REQUIREMENTS_TABLE = "se_platsbanken_job_ad_requirement_versions"
+CONTACTS_TABLE = "se_platsbanken_job_ad_contact_versions"
 COMPANY_HISTORY_TABLE = "company_job_history"
 COMPANY_CURRENT_TABLE = "company_job_current"
 COMPANY_MONTHLY_TABLE = "company_hiring_monthly"
@@ -59,6 +63,14 @@ VERSION_COLUMNS = (
     "employer_name",
     "employer_workplace",
     "employer_url",
+    "application_email",
+    "application_url",
+    "application_other",
+    "application_reference",
+    "application_information",
+    "application_via_af",
+    "employer_email",
+    "employer_phone",
     "headline_original",
     "description_text_original",
     "detected_language",
@@ -141,8 +153,27 @@ REQUIREMENT_COLUMNS = (
     "ingested_at",
 )
 
+CONTACT_COLUMNS = (
+    "contact_uid",
+    "version_uid",
+    "source_job_ad_id",
+    "version_at",
+    "contact_index",
+    "name",
+    "description",
+    "email",
+    "telephone",
+    "contact_type",
+    "source_url",
+    "source_object_key",
+    "source_run_id",
+    "source_line_number",
+    "ingested_at",
+)
+
 APPEND_TABLES = (
     (VERSIONS_TABLE, VERSION_COLUMNS, "version_uid"),
     (EVENTS_TABLE, EVENT_COLUMNS, "event_uid"),
     (REQUIREMENTS_TABLE, REQUIREMENT_COLUMNS, "requirement_uid"),
+    (CONTACTS_TABLE, CONTACT_COLUMNS, "contact_uid"),
 )

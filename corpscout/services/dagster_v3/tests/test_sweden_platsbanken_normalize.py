@@ -95,9 +95,10 @@ def test_historical_record_becomes_version_lifecycle_and_requirements(
         versions_table=tables.HISTORICAL_VERSIONS_TABLE,
         events_table=tables.HISTORICAL_EVENTS_TABLE,
         requirements_table=tables.HISTORICAL_REQUIREMENTS_TABLE,
+        contacts_table=tables.HISTORICAL_CONTACTS_TABLE,
     )
 
-    assert counts == {"versions": 1, "events": 3, "requirements": 3}
+    assert counts == {"versions": 1, "events": 3, "requirements": 3, "contacts": 0}
     version = connection.execute(
         f"""
         select source_job_ad_id, source_record_id, employer_org_number,
@@ -178,9 +179,10 @@ def test_sparse_jobstream_removal_closes_history_without_erasing_content(
         versions_table=tables.JOBSTREAM_EVENTS_VERSIONS_TABLE,
         events_table=tables.JOBSTREAM_EVENTS_EVENTS_TABLE,
         requirements_table=tables.JOBSTREAM_EVENTS_REQUIREMENTS_TABLE,
+        contacts_table=tables.JOBSTREAM_EVENTS_CONTACTS_TABLE,
     )
 
-    assert counts == {"versions": 0, "events": 1, "requirements": 0}
+    assert counts == {"versions": 0, "events": 1, "requirements": 0, "contacts": 0}
     assert connection.execute(
         f"""
         select source_job_ad_id, event_type, is_active, active_to_basis,
@@ -226,6 +228,7 @@ def test_full_removed_archive_record_still_has_a_publication_event(
         versions_table=tables.HISTORICAL_VERSIONS_TABLE,
         events_table=tables.HISTORICAL_EVENTS_TABLE,
         requirements_table=tables.HISTORICAL_REQUIREMENTS_TABLE,
+        contacts_table=tables.HISTORICAL_CONTACTS_TABLE,
     )
 
     assert counts["versions"] == 1
@@ -254,7 +257,35 @@ def test_normalized_duckdb_columns_match_clickhouse_export_contract(
                 "publication_date": "2026-08-21T09:00:15",
                 "timestamp": 1787295615123,
                 "removed": False,
-                "employer": {"organization_number": "5563519437"},
+                "application_details": {
+                    "email": "jobs@example.se",
+                    "url": "https://example.se/apply",
+                    "other": "Apply online",
+                    "reference": "JOB-42",
+                    "information": "Applications reviewed continuously",
+                    "via_af": False,
+                },
+                "application_contacts": [
+                    {
+                        "name": "Recruiter",
+                        "description": "Hiring manager",
+                        "email": "recruiter@example.se",
+                        "telephone": "0101234567",
+                        "contact_type": "contact",
+                    },
+                    {
+                        "name": "Union Representative",
+                        "description": "Union contact",
+                        "email": "union@example.se",
+                        "telephone": "0109876543",
+                        "contact_type": "union",
+                    },
+                ],
+                "employer": {
+                    "organization_number": "5563519437",
+                    "email": "company@example.se",
+                    "phone_number": "0107654321",
+                },
             }
         ],
     )
@@ -275,6 +306,7 @@ def test_normalized_duckdb_columns_match_clickhouse_export_contract(
         versions_table=tables.JOBSTREAM_SNAPSHOT_VERSIONS_TABLE,
         events_table=tables.JOBSTREAM_SNAPSHOT_EVENTS_TABLE,
         requirements_table=tables.JOBSTREAM_SNAPSHOT_REQUIREMENTS_TABLE,
+        contacts_table=tables.JOBSTREAM_SNAPSHOT_CONTACTS_TABLE,
     )
 
     for table_name, expected_columns in (
@@ -284,6 +316,7 @@ def test_normalized_duckdb_columns_match_clickhouse_export_contract(
             tables.JOBSTREAM_SNAPSHOT_REQUIREMENTS_TABLE,
             tables.REQUIREMENT_COLUMNS,
         ),
+        (tables.JOBSTREAM_SNAPSHOT_CONTACTS_TABLE, tables.CONTACT_COLUMNS),
     ):
         columns = tuple(
             row[0]
@@ -298,3 +331,33 @@ def test_normalized_duckdb_columns_match_clickhouse_export_contract(
             ).fetchall()
         )
         assert columns == expected_columns
+
+    version_contact_fields = connection.execute(
+        f"""
+        select application_email, application_url, application_other,
+               application_reference, application_information,
+               application_via_af, employer_email, employer_phone
+        from {tables.DUCKDB_SCHEMA}.{tables.JOBSTREAM_SNAPSHOT_VERSIONS_TABLE}
+        """
+    ).fetchone()
+    assert version_contact_fields == (
+        "jobs@example.se",
+        "https://example.se/apply",
+        "Apply online",
+        "JOB-42",
+        "Applications reviewed continuously",
+        0,
+        "company@example.se",
+        "0107654321",
+    )
+    contacts = connection.execute(
+        f"""
+        select contact_index, name, description, email, telephone, contact_type
+        from {tables.DUCKDB_SCHEMA}.{tables.JOBSTREAM_SNAPSHOT_CONTACTS_TABLE}
+        order by contact_index
+        """
+    ).fetchall()
+    assert contacts == [
+        (0, "Recruiter", "Hiring manager", "recruiter@example.se", "0101234567", "contact"),
+        (1, "Union Representative", "Union contact", "union@example.se", "0109876543", "union"),
+    ]

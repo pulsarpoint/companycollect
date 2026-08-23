@@ -154,6 +154,7 @@ def sweden_platsbanken_historical_normalized_duckdb(
             versions_table=tables.HISTORICAL_VERSIONS_TABLE,
             events_table=tables.HISTORICAL_EVENTS_TABLE,
             requirements_table=tables.HISTORICAL_REQUIREMENTS_TABLE,
+            contacts_table=tables.HISTORICAL_CONTACTS_TABLE,
             log=context.log.info,
         )
     return dg.MaterializeResult(metadata=counts)
@@ -181,6 +182,7 @@ def sweden_platsbanken_historical_clickhouse(
             versions_table=tables.HISTORICAL_VERSIONS_TABLE,
             events_table=tables.HISTORICAL_EVENTS_TABLE,
             requirements_table=tables.HISTORICAL_REQUIREMENTS_TABLE,
+            contacts_table=tables.HISTORICAL_CONTACTS_TABLE,
             log=context.log.info,
         )
     return dg.MaterializeResult(metadata=counts)
@@ -190,8 +192,8 @@ def sweden_platsbanken_historical_clickhouse(
     group_name=tables.GROUP_NAME,
     kinds={"python", "jsonl", "s3"},
     description=(
-        "Stores a PII-sanitized JobStream snapshot for initial current-state "
-        "bootstrap. Person-level application contacts never reach object storage."
+        "Stores the complete JobStream snapshot for initial current-state bootstrap, "
+        "including the application and employer contacts published with each ad."
     ),
 )
 def sweden_platsbanken_jobstream_snapshot_s3(
@@ -220,7 +222,7 @@ def sweden_platsbanken_jobstream_snapshot_s3(
     group_name=tables.GROUP_NAME,
     kinds={"python", "jsonl", "s3", "duckdb"},
     pool=DUCKDB_POOL,
-    description="Loads the latest sanitized JobStream snapshot into DuckDB.",
+    description="Loads the latest complete JobStream snapshot into DuckDB.",
 )
 def sweden_platsbanken_jobstream_snapshot_raw_duckdb(
     sweden_platsbanken_duckdb: DuckDBResource,
@@ -267,6 +269,7 @@ def sweden_platsbanken_jobstream_snapshot_normalized_duckdb(
             versions_table=tables.JOBSTREAM_SNAPSHOT_VERSIONS_TABLE,
             events_table=tables.JOBSTREAM_SNAPSHOT_EVENTS_TABLE,
             requirements_table=tables.JOBSTREAM_SNAPSHOT_REQUIREMENTS_TABLE,
+            contacts_table=tables.JOBSTREAM_SNAPSHOT_CONTACTS_TABLE,
             log=context.log.info,
         )
     return dg.MaterializeResult(metadata=counts)
@@ -291,6 +294,7 @@ def sweden_platsbanken_jobstream_snapshot_clickhouse(
             versions_table=tables.JOBSTREAM_SNAPSHOT_VERSIONS_TABLE,
             events_table=tables.JOBSTREAM_SNAPSHOT_EVENTS_TABLE,
             requirements_table=tables.JOBSTREAM_SNAPSHOT_REQUIREMENTS_TABLE,
+            contacts_table=tables.JOBSTREAM_SNAPSHOT_CONTACTS_TABLE,
             log=context.log.info,
         )
     return dg.MaterializeResult(metadata=counts)
@@ -301,7 +305,7 @@ def sweden_platsbanken_jobstream_snapshot_clickhouse(
     group_name=tables.GROUP_NAME,
     kinds={"python", "jsonl", "s3"},
     description=(
-        "Stores the next PII-sanitized JobStream event window using a durable "
+        "Stores the next complete JobStream event window using a durable "
         "manifest cursor with a five-minute replay overlap."
     ),
 )
@@ -342,7 +346,7 @@ def sweden_platsbanken_jobstream_events_s3(
     group_name=tables.GROUP_NAME,
     kinds={"python", "jsonl", "s3", "duckdb"},
     pool=DUCKDB_POOL,
-    description="Loads the latest sanitized JobStream event batch into DuckDB.",
+    description="Loads the latest complete JobStream event batch into DuckDB.",
 )
 def sweden_platsbanken_jobstream_events_raw_duckdb(
     sweden_platsbanken_duckdb: DuckDBResource,
@@ -393,6 +397,7 @@ def sweden_platsbanken_jobstream_events_normalized_duckdb(
             versions_table=tables.JOBSTREAM_EVENTS_VERSIONS_TABLE,
             events_table=tables.JOBSTREAM_EVENTS_EVENTS_TABLE,
             requirements_table=tables.JOBSTREAM_EVENTS_REQUIREMENTS_TABLE,
+            contacts_table=tables.JOBSTREAM_EVENTS_CONTACTS_TABLE,
             log=context.log.info,
         )
     return dg.MaterializeResult(metadata=counts)
@@ -417,6 +422,7 @@ def sweden_platsbanken_jobstream_events_clickhouse(
             versions_table=tables.JOBSTREAM_EVENTS_VERSIONS_TABLE,
             events_table=tables.JOBSTREAM_EVENTS_EVENTS_TABLE,
             requirements_table=tables.JOBSTREAM_EVENTS_REQUIREMENTS_TABLE,
+            contacts_table=tables.JOBSTREAM_EVENTS_CONTACTS_TABLE,
             log=context.log.info,
         )
     return dg.MaterializeResult(metadata=counts)

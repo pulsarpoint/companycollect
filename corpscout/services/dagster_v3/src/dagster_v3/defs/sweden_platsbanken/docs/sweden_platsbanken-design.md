@@ -5,7 +5,8 @@
 - **Country / source**: Sweden — Arbetsförmedlingen JobTech Platsbanken
 - **Module**: `defs/sweden_platsbanken/` · DuckDB file
   `data/sweden_platsbanken_source.duckdb` · pool `sweden_platsbanken_duckdb`
-- **ClickHouse migration**: `000302_corpscout_se_platsbanken_jobs`
+- **ClickHouse migrations**: `000302_corpscout_se_platsbanken_jobs` and
+  `000303_corpscout_se_platsbanken_job_contacts`
 - **License/authentication**: CC0, no subscription or API key
 
 | dataset | URL | format | observed size/cadence | auth? |
@@ -47,10 +48,9 @@ stable UIDs.
   `read_json_objects(..., format='newline_delimited')` loads rows set-wise.
 - DuckDB raw tables retain the JSON payload, payload hash, source object key,
   source URL, run id, line number, and retrieval timestamp.
-- Official archive files are stored unchanged in RustFS. JobStream payloads are
-  sanitized before durable storage: `application_contacts`,
-  `application_details`, and employer email/phone are removed. The unsanitized
-  response exists only in a temporary directory for the duration of the asset.
+- Official archive files and JobStream JSONL responses are stored unchanged in
+  RustFS. This retains the source evidence needed to reproduce every normalized
+  job version, including application and employer contact fields.
 
 ## 4. Transform
 
@@ -59,7 +59,9 @@ Set-based DuckDB SQL produces:
 - one complete row per content version;
 - lifecycle events for publication, archive observation, JobStream upsert or
   snapshot observation, exact removal, and estimated historical scheduled end;
-- one row per versioned must-have/nice-to-have taxonomy requirement.
+- one row per versioned must-have/nice-to-have taxonomy requirement;
+- one row per application contact and job version, while scalar application
+  details and employer email/phone remain on the complete version row.
 
 Sparse JobStream removals produce an event but never a blank content version.
 Timestamps without offsets are interpreted in `Europe/Stockholm`; JobStream
@@ -72,6 +74,7 @@ epoch milliseconds and stored timestamps are UTC.
 | `se_platsbanken_job_ad_versions` | one complete source content version |
 | `se_platsbanken_job_ad_events` | one lifecycle event |
 | `se_platsbanken_job_ad_requirement_versions` | one taxonomy requirement per version |
+| `se_platsbanken_job_ad_contact_versions` | one published application contact per version |
 | `se_platsbanken_job_ad_active_intervals` | one contiguous active period |
 | `company_job_history` | one exact-matched company/ad active period |
 | `company_job_current` | active company/ad interval projection |
@@ -104,12 +107,16 @@ are proper nouns and are never translated.
 
 ## 6b. Contacts
 
-JobStream carries application-contact and employer-contact fields, but this is a
-jobs/labour-market source rather than an authoritative company-contact source.
-Person-level application contacts and potentially personal email/phone values
-are deliberately removed before durable storage. Employer website URL is kept
-as job provenance only; it does not feed the canonical company contacts/domain
-tables.
+JobStream application contacts are retained as versioned job-ad evidence with
+their published name, description, email, telephone, and contact type. Scalar
+application instructions and employer email/phone are retained on each complete
+job version. This makes both current and historical recruiting contacts
+queryable without treating them as permanent company attributes.
+
+These records prove only that a contact was published for a particular job ad
+at a particular time. They do not prove employment, residence, property
+ownership, or a current company role, and they do not automatically feed the
+canonical company-person or company-contact tables.
 
 ## 7. Currency
 
