@@ -255,14 +255,46 @@ _LEDGER_CREATED_AT_1 = "2026-08-22 09:00:00.000"
 _LEDGER_CREATED_AT_2 = "2026-08-22 09:00:01.000"
 
 
-def _build_ledger_test_sensor() -> dg.SensorDefinition:
+def _build_ledger_test_sensor(**kwargs) -> dg.SensorDefinition:
     job = dg.define_asset_job(
         "se_company_info_review_job", selection=dg.AssetSelection.assets(*_LEDGER_SENSOR_ASSETS)
     )
     return ledger_sensor(
         name="se_company_info_correction_sensor", table=_LEDGER_SENSOR_TABLE,
-        job=job, asset_names=_LEDGER_SENSOR_ASSETS,
+        job=job, asset_names=_LEDGER_SENSOR_ASSETS, **kwargs,
     )
+
+
+def test_ledger_sensor_merges_extra_config_into_every_assets_config(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A sensor-launched run carries only the config this factory writes, so an asset
+    whose config gates what the run DOES (se_company_info's `execute`, and the model
+    profile it may call) has to be told here -- otherwise the run silently falls back to
+    the asset's defaults and resolves nothing."""
+    client = _FakeLedgerClient()
+    client.append(_LEDGER_COMPANY_A, _LEDGER_ID_A, _LEDGER_CREATED_AT_1)
+    resource = _patch_ledger_clickhouse(monkeypatch, client)
+    context = dg.build_sensor_context(cursor=None, resources={"clickhouse": resource})
+
+    extra = {"execute": True, "llm": {"provider": "deepseek", "model": "m"}}
+    execution_data = _build_ledger_test_sensor(extra_config=extra).evaluate_tick(context)
+
+    assert execution_data.run_requests is not None
+    assert execution_data.run_requests[0].run_config == {
+        "ops": {
+            asset_name: {"config": {**extra, "company_ids": [_LEDGER_COMPANY_A]}}
+            for asset_name in _LEDGER_SENSOR_ASSETS
+        }
+    }
+    # The default stays exactly what it was: company_ids and nothing else.
+    plain = _build_ledger_test_sensor().evaluate_tick(
+        dg.build_sensor_context(cursor=None, resources={"clickhouse": resource})
+    )
+    assert plain.run_requests is not None
+    assert plain.run_requests[0].run_config["ops"][_LEDGER_SENSOR_ASSETS[0]]["config"] == {
+        "company_ids": [_LEDGER_COMPANY_A]
+    }
 
 
 def test_ledger_sensor_unchanged_cursor_skips_and_issues_only_the_cursor_query(

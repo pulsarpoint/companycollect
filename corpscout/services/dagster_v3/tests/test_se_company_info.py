@@ -19,7 +19,9 @@ import pytest
 from dagster_v3.defs.se_company.common import input_hash_for
 from dagster_v3.defs.se_company.info import (
     DESCRIPTION_PROMPT_VERSION,
+    SELECTION_COLUMNS,
     DescriptionSuggestion,
+    LlmProfileConfig,
     build_artifact_rows_sql,
     build_changed_companies_sql,
     build_description_request,
@@ -60,6 +62,15 @@ SCB_SWEDISH = "IT-konsulter."
 SCB_ENGLISH = "IT consultants."
 
 
+def _profile(model: str, **overrides) -> LlmProfileConfig:
+    return LlmProfileConfig(model=model, **overrides)
+
+
+# The profile every resolution test runs under: its model/provider names are what the
+# fake client, the observation row and the published row are then asserted against.
+PROFILE = _profile("fake-model", provider="fake-provider")
+
+
 def _scb_row(company_id: str, description: str = SCB_SWEDISH) -> tuple:
     return (
         "scb", company_id, f"scb:{company_id}", "a" * 64, NOW,
@@ -83,6 +94,16 @@ def _wikidata_row(company_id: str) -> tuple:
 
 
 ARTIFACT_ROWS = [_scb_row(COMPANY), _wikidata_row(COMPANY)]
+
+
+def _selected(company_id: str, **flags: int) -> tuple:
+    """One change-scan row: the company id followed by its reason flags, in
+    SELECTION_COLUMNS order. Written positionally from that tuple rather than by hand,
+    so a new reason column shifts every scripted row at once instead of silently
+    misaligning the metadata counts the loop reads by position."""
+    unknown = set(flags) - set(SELECTION_COLUMNS[1:])
+    assert not unknown, f"not scan columns: {sorted(unknown)}"
+    return (company_id, *(int(flags.get(name, 0)) for name in SELECTION_COLUMNS[1:]))
 
 
 def _outcome():
@@ -163,7 +184,9 @@ def test_changed_companies_sql_compares_artifact_versions_and_ledger_with_the_fi
     # suggestion" is itself a change -- otherwise nothing about such a company ever
     # changes again and only a manual pending_model_only pass would retry it.
     assert f"OR (%(include_pending)s = 1 AND {PENDING_SQL})" in sql
-    assert sql.count(PENDING_SQL) == 2  # one predicate, spelled the same in both branches
+    # One predicate, spelled the same in both WHERE branches AND in the projected
+    # reason flag -- all three come from the same Python constant.
+    assert sql.count(PENDING_SQL) == 3
     # A company that already carries an applied correction is NOT pending: a reviewer
     # has decided its description and the model would only be overridden again. Keyed
     # on the applied-correction list, never on description_source -- reject_suggestion
@@ -186,6 +209,33 @@ def test_changed_companies_sql_compares_artifact_versions_and_ledger_with_the_fi
     assert "\nORDER BY company_id" not in sql and "\n  AND company_id " not in sql
     # One page per call: the LIMIT is the page size, not the whole run's cap.
     assert "LIMIT %(page_size)s" in sql
+
+
+def test_the_scan_projects_why_each_company_was_selected() -> None:
+    """Every selected row says which reason(s) put it there, so a preview -- and a real
+    run's metadata -- can break the selection down without a second scan. The reasons are
+    the WHERE's own expressions (a SELECT-list alias is not guaranteed visible to WHERE at
+    the same level in ClickHouse), and they overlap: a never-published company also has
+    evidence newer than its epoch resolved_at."""
+    sql = build_changed_companies_sql()
+    assert SELECTION_COLUMNS == (
+        "company_id", "never_published", "new_evidence_scb", "new_evidence_esef",
+        "new_evidence_wikidata", "ledger_pending", "pending_model", "multi_source")
+    # Reason order IS the projection order -- the loop counts by position.
+    projected = re.search(r"SELECT artifacts\.company_id AS company_id,\n(.*?)\nFROM artifacts",
+                          sql, re.DOTALL)
+    assert projected is not None
+    assert [line.split(" AS ")[-1].strip() for line in projected.group(1).split(",\n")] == list(
+        SELECTION_COLUMNS[1:])
+    # Per-source freshness needs the union to carry which artifact each maximum came from.
+    for source in ("scb", "esef", "wikidata"):
+        assert f"SELECT '{source}' AS source, company_id, max(observed_at) AS source_observed_at" in sql
+        # NOT max(latest_observed_at): that is the outer aggregate's alias, and reusing
+        # the name makes ClickHouse 26.5 reject the query (ILLEGAL_AGGREGATION).
+        assert f"maxIf(source_observed_at, source = '{source}') AS {source}_observed_at" in sql
+        assert f"artifacts.{source}_observed_at > ifNull(published.resolved_at, {EPOCH_SQL})" in sql
+    # multi_source is the model-cost forecast, read off the LAST published resolution.
+    assert "ifNull(published.description_source_count, 0) > 1 AS multi_source" in sql
 
 
 def test_artifact_rows_sql_unions_the_three_artifacts_with_a_source_column() -> None:
@@ -228,7 +278,7 @@ def test_artifact_reads_are_derived_from_each_artifact_modules_column_list() -> 
 def test_description_request_is_json_only_and_lists_every_source() -> None:
     outcome = _outcome()
     assert outcome.needs_model
-    request = build_description_request(outcome, model="deepseek-v4-flash")
+    request = build_description_request(outcome, LlmProfileConfig())
     payload = json.loads(request["messages"][1]["content"])
     assert payload["company_id"] == COMPANY and payload["legal_name"] == "Alpha AB"
     assert [c["source"] for c in payload["sources"]] == ["wikidata", "scb"]
@@ -264,7 +314,7 @@ def test_an_untranslated_scb_company_sends_its_swedish_text_once() -> None:
         "legal_form_label": None, "industry_wikidata_id": None, "industry_label": None,
         "headquarters_label": None, "employee_count": None})
     payload = json.loads(build_description_request(
-        merge_company_info(COMPANY, [scb, wiki]), model="m")["messages"][1]["content"])
+        merge_company_info(COMPANY, [scb, wiki]), _profile("m"))["messages"][1]["content"])
     assert payload["sources"][1] == {"source": "scb", "text": SCB_SWEDISH}
 
 
@@ -281,9 +331,9 @@ def test_the_request_is_the_same_before_and_after_the_model_has_answered() -> No
         outcome, description="Merged text", description_sv="Sammanslagen text",
         description_source="llm", description_language="en", suggestion_id=uuid.uuid4(),
         model_provider="deepseek", model_name="deepseek-v4-flash", prompt_version="x")
-    assert build_description_request(answered, model="m") == build_description_request(outcome, model="m")
-    assert input_hash_for(build_description_request(answered, model="m"), DESCRIPTION_PROMPT_VERSION) == (
-        input_hash_for(build_description_request(outcome, model="m"), DESCRIPTION_PROMPT_VERSION))
+    assert build_description_request(answered, _profile("m")) == build_description_request(outcome, _profile("m"))
+    assert input_hash_for(build_description_request(answered, _profile("m")), DESCRIPTION_PROMPT_VERSION) == (
+        input_hash_for(build_description_request(outcome, _profile("m")), DESCRIPTION_PROMPT_VERSION))
 
 
 def test_parse_description_suggestion_validates_shape() -> None:
@@ -320,7 +370,7 @@ def test_initial_load_can_publish_multi_source_companies_without_the_model() -> 
 
     client = FakeClient(answers=[
         EXISTING_TABLES,        # assert_clickhouse_tables_exist
-        [(COMPANY,)],           # changed companies
+        [_selected(COMPANY)],   # changed companies
         ARTIFACT_ROWS,          # artifact rows
         [],                     # ledger
         [],                     # observations
@@ -330,8 +380,8 @@ def test_initial_load_can_publish_multi_source_companies_without_the_model() -> 
     ])
     metadata = materialize_se_company_info(
         clickhouse=FakeClickhouse(client), source_run_id="run", resolved_at=NOW,
-        company_ids=[COMPANY], max_companies=1, company_batch_size=1, timeout_seconds=10,
-        llm_client=None, llm_model=None, llm_provider=None, log=None,
+        company_ids=[COMPANY], max_companies=1, company_batch_size=1, execute=True,
+        llm_client=None, llm_profile=PROFILE, log=None,
         resolve_multi_source_with_llm=False)
 
     assert metadata["multi_source_count"] == 1 and metadata.get("llm_request_count", 0) == 0
@@ -372,14 +422,14 @@ def test_model_pass_records_the_observation_before_publishing_its_description() 
 
     llm = FakeLlm(GOOD_REPLY)
     client = FakeClient(answers=[
-        EXISTING_TABLES, [(COMPANY,)], ARTIFACT_ROWS, [], [],
+        EXISTING_TABLES, [_selected(COMPANY)], ARTIFACT_ROWS, [], [],
         [(1, 0)], [(0,)], [(1,)],   # observation publish
         [(1, 0)], [(0,)], [(1,)],   # final publish
     ])
     metadata = materialize_se_company_info(
         clickhouse=FakeClickhouse(client), source_run_id="run", resolved_at=NOW,
-        company_ids=[COMPANY], max_companies=1, company_batch_size=1, timeout_seconds=10,
-        llm_client=llm, llm_model="fake-model", llm_provider="fake-provider", log=None)
+        company_ids=[COMPANY], max_companies=1, company_batch_size=1, execute=True,
+        llm_client=llm, llm_profile=PROFILE, log=None)
 
     assert metadata["llm_request_count"] == 1 and metadata["observation_inserted_count"] == 1
     assert llm.completions.requests[0]["model"] == "fake-model"
@@ -437,7 +487,7 @@ def test_one_unusable_model_reply_only_costs_its_own_company() -> None:
                   GOOD_REPLY)
     client = FakeClient(answers=[
         EXISTING_TABLES,
-        [(COMPANY,), (OTHER_COMPANY,)],
+        [_selected(COMPANY), _selected(OTHER_COMPANY)],
         [*ARTIFACT_ROWS, _scb_row(OTHER_COMPANY), _wikidata_row(OTHER_COMPANY)],
         [], [],
         [(1, 0)], [(0,)], [(1,)],   # observation publish -- only the second company's
@@ -446,9 +496,8 @@ def test_one_unusable_model_reply_only_costs_its_own_company() -> None:
     logged: list[tuple] = []
     metadata = materialize_se_company_info(
         clickhouse=FakeClickhouse(client), source_run_id="run", resolved_at=NOW,
-        company_ids=[], max_companies=2, company_batch_size=2, timeout_seconds=10,
-        llm_client=llm, llm_model="fake-model", llm_provider="fake-provider",
-        log=lambda *args: logged.append(args))
+        company_ids=[], max_companies=2, company_batch_size=2, execute=True,
+        llm_client=llm, llm_profile=PROFILE, log=lambda *args: logged.append(args))
 
     assert metadata["model_failed_count"] == 1
     assert metadata["llm_request_count"] == 1 and metadata["observation_inserted_count"] == 1
@@ -473,17 +522,17 @@ def test_the_change_scan_is_paged_and_stops_on_a_short_page() -> None:
 
     client = FakeClient(answers=[
         EXISTING_TABLES,
-        [(OTHER_COMPANY,), (COMPANY,)],                     # page 1: full
+        [_selected(OTHER_COMPANY), _selected(COMPANY)],     # page 1: full
         [_scb_row(OTHER_COMPANY), _scb_row(COMPANY)], [], [],
         [(2, 0)], [(0,)], [(2,)],
-        [(THIRD_COMPANY,)],                                 # page 2: short -> stop
+        [_selected(THIRD_COMPANY)],                         # page 2: short -> stop
         [_scb_row(THIRD_COMPANY)], [], [],
         [(1, 0)], [(2,)], [(3,)],
     ])
     metadata = materialize_se_company_info(
         clickhouse=FakeClickhouse(client), source_run_id="run", resolved_at=NOW,
-        company_ids=[], max_companies=5, company_batch_size=2, timeout_seconds=10,
-        llm_client=None, llm_model=None, llm_provider=None, log=None)
+        company_ids=[], max_companies=5, company_batch_size=2, execute=True,
+        llm_client=FakeLlm(GOOD_REPLY), llm_profile=PROFILE, log=None)
 
     scans = _change_scans(client)
     assert [scan["after_company_id"] for scan in scans] == ["", COMPANY]  # keyset advances
@@ -499,8 +548,8 @@ def test_the_model_pass_refuses_to_run_with_the_model_switched_off() -> None:
     with pytest.raises(ValueError, match="pending_model_only"):
         materialize_se_company_info(
             clickhouse=FakeClickhouse(FakeClient(answers=[])), source_run_id="run", resolved_at=NOW,
-            company_ids=[], max_companies=1, company_batch_size=1, timeout_seconds=10,
-            llm_client=None, llm_model=None, llm_provider=None, log=None,
+            company_ids=[], max_companies=1, company_batch_size=1, execute=True,
+            llm_client=None, llm_profile=PROFILE, log=None,
             resolve_multi_source_with_llm=False, pending_model_only=True)
 
 
@@ -516,8 +565,8 @@ def test_a_model_on_run_also_re_selects_companies_still_owed_a_description() -> 
         client = FakeClient(answers=[EXISTING_TABLES, []])  # an empty scan: its parameters are the point
         materialize_se_company_info(
             clickhouse=FakeClickhouse(client), source_run_id="run", resolved_at=NOW,
-            company_ids=[], max_companies=5, company_batch_size=2, timeout_seconds=10,
-            llm_client=None, llm_model=None, llm_provider=None, log=None, **kwargs)
+            company_ids=[], max_companies=5, company_batch_size=2, execute=True,
+            llm_client=FakeLlm(GOOD_REPLY), llm_profile=PROFILE, log=None, **kwargs)
         return _change_scans(client)[0]
 
     model_on = _scan_parameters()
@@ -537,7 +586,7 @@ def test_model_calls_are_flushed_in_batches_so_a_crash_cannot_lose_a_whole_page(
 
     monkeypatch.setattr(info, "OBSERVATION_FLUSH_ROWS", 1)
     client = FakeClient(answers=[
-        EXISTING_TABLES, [(COMPANY,), (OTHER_COMPANY,)],
+        EXISTING_TABLES, [_selected(COMPANY), _selected(OTHER_COMPANY)],
         [*ARTIFACT_ROWS, _scb_row(OTHER_COMPANY), _wikidata_row(OTHER_COMPANY)], [], [],
         [(1, 0)], [(0,)], [(1,)],   # flush after the first company
         [(1, 0)], [(1,)], [(2,)],   # flush after the second
@@ -545,8 +594,8 @@ def test_model_calls_are_flushed_in_batches_so_a_crash_cannot_lose_a_whole_page(
     ])
     metadata = info.materialize_se_company_info(
         clickhouse=FakeClickhouse(client), source_run_id="run", resolved_at=NOW,
-        company_ids=[], max_companies=2, company_batch_size=2, timeout_seconds=10,
-        llm_client=FakeLlm(GOOD_REPLY), llm_model="fake-model", llm_provider="fake-provider", log=None)
+        company_ids=[], max_companies=2, company_batch_size=2, execute=True,
+        llm_client=FakeLlm(GOOD_REPLY), llm_profile=PROFILE, log=None)
 
     assert metadata["observation_inserted_count"] == 2 and metadata["llm_request_count"] == 2
     stages = [i for i, (sql, _) in enumerate(client.executed)
@@ -564,12 +613,12 @@ def test_the_cap_rather_than_exhaustion_is_reported_when_a_full_page_uses_it_up(
     from tests.test_se_company_common import FakeClickhouse, FakeClient
 
     client = FakeClient(answers=[
-        EXISTING_TABLES, [(COMPANY,)], ARTIFACT_ROWS, [], [], [(1, 0)], [(0,)], [(1,)]])
+        EXISTING_TABLES, [_selected(COMPANY)], ARTIFACT_ROWS, [], [], [(1, 0)], [(0,)], [(1,)]])
     logged: list[tuple] = []
     metadata = materialize_se_company_info(
         clickhouse=FakeClickhouse(client), source_run_id="run", resolved_at=NOW,
-        company_ids=[], max_companies=1, company_batch_size=1, timeout_seconds=10,
-        llm_client=None, llm_model=None, llm_provider=None,
+        company_ids=[], max_companies=1, company_batch_size=1, execute=True,
+        llm_client=None, llm_profile=PROFILE,
         log=lambda *args: logged.append(args), resolve_multi_source_with_llm=False)
 
     assert metadata["stopped_at_cap"] is True
@@ -589,8 +638,8 @@ def test_an_explicit_scope_is_chunked_so_the_rendered_query_stays_under_max_quer
     client = FakeClient(answers=[EXISTING_TABLES, [], [], []])  # one empty scan per chunk
     materialize_se_company_info(
         clickhouse=FakeClickhouse(client), source_run_id="run", resolved_at=NOW,
-        company_ids=scope, max_companies=1_000, company_batch_size=3, timeout_seconds=10,
-        llm_client=None, llm_model=None, llm_provider=None, log=None)
+        company_ids=scope, max_companies=1_000, company_batch_size=3, execute=True,
+        llm_client=FakeLlm(GOOD_REPLY), llm_profile=PROFILE, log=None)
 
     scans = _change_scans(client)
     assert [len(scan["company_ids"]) for scan in scans] == [3, 3, 1]
@@ -623,10 +672,10 @@ def test_an_approval_survives_a_run_that_does_not_call_the_model() -> None:
                   "language": "en", "rationale": "merged"}
     # The hash the model-off run must arrive at: same request, the STORED model name.
     stored_hash = input_hash_for(
-        build_description_request(_outcome(), model="stored-model"), DESCRIPTION_PROMPT_VERSION)
+        build_description_request(_outcome(), _profile("stored-model")), DESCRIPTION_PROMPT_VERSION)
 
     client = FakeClient(answers=[
-        EXISTING_TABLES, [(COMPANY,)], ARTIFACT_ROWS,
+        EXISTING_TABLES, [_selected(COMPANY)], ARTIFACT_ROWS,
         [(correction_id, COMPANY, "approve_suggestion", json.dumps({"suggestion_id": str(suggestion_id)}),
           evidence_set_hash_for(("a" * 64, "c" * 64)), None, NOW)],
         [(suggestion_id, COMPANY, stored_hash, json.dumps(suggestion),
@@ -635,8 +684,8 @@ def test_an_approval_survives_a_run_that_does_not_call_the_model() -> None:
     ])
     metadata = materialize_se_company_info(
         clickhouse=FakeClickhouse(client), source_run_id="run", resolved_at=NOW,
-        company_ids=[COMPANY], max_companies=1, company_batch_size=1, timeout_seconds=10,
-        llm_client=None, llm_model=None, llm_provider=None, log=None,
+        company_ids=[COMPANY], max_companies=1, company_batch_size=1, execute=True,
+        llm_client=None, llm_profile=PROFILE, log=None,
         resolve_multi_source_with_llm=False)
 
     assert metadata["stale_correction_count"] == 0 and metadata["applied_correction_count"] == 1
@@ -711,6 +760,266 @@ def test_a_truncated_model_response_is_reported_as_truncation_not_as_bad_json() 
                 usage=SimpleNamespace(prompt_tokens=300, completion_tokens=800))
 
     with pytest.raises(ValueError, match="truncated .*finish_reason=length.*completion_tokens=800"):
-        _request_description(_Truncating(), {"model": "m", "messages": []}, provider="p")
+        _request_description(_Truncating(), {"model": "m", "messages": []}, provider="p",
+                             prompt_version=DESCRIPTION_PROMPT_VERSION)
     # Two summaries plus reasoning_content: 4000 was sized for one.
-    assert build_description_request(_outcome(), "m")["max_tokens"] >= 6000
+    assert build_description_request(_outcome(), _profile("m"))["max_tokens"] >= 6000
+
+
+def test_a_run_without_execute_writes_nothing_calls_nothing_and_says_what_it_would_do() -> None:
+    """The gate the 2026-08-23 incident bought: a "Materialize" click in the Dagster UI
+    sends no config at all, so `execute` defaults to False and the run must be a report.
+    It still pages the change scan exactly as a real run does -- but every statement it
+    issues is a read, the model client it was handed is never touched, and no artifact
+    row, ledger row or stored observation is even fetched."""
+    from dagster_v3.defs.se_company.info import materialize_se_company_info
+    from tests.test_se_company_common import FakeClickhouse, FakeClient
+
+    llm = FakeLlm(GOOD_REPLY)
+    client = FakeClient(answers=[
+        EXISTING_TABLES,
+        [_selected(COMPANY, never_published=1, new_evidence_scb=1, new_evidence_wikidata=1),
+         _selected(OTHER_COMPANY, new_evidence_esef=1, ledger_pending=1, pending_model=1,
+                   multi_source=1)],
+        [],                     # page 2: exhausted
+        [(12, 640.0, 240.0)],   # observed token cost of this model
+    ])
+    metadata = materialize_se_company_info(
+        clickhouse=FakeClickhouse(client), source_run_id="run", resolved_at=NOW,
+        company_ids=[], max_companies=5, company_batch_size=2, execute=False,
+        llm_client=llm, llm_profile=PROFILE, log=None)
+
+    assert all(sql.lstrip().upper().startswith(("SELECT", "WITH")) for sql, _ in client.executed)
+    assert llm.completions.requests == []
+    assert not any(sql.startswith(("INSERT", "CREATE", "DROP", "ALTER")) for sql, _ in client.executed)
+    # The scan and only the scan: no artifact/ledger/observation reads for the page.
+    assert len(_change_scans(client)) == 2
+    assert not any("UNION ALL" in sql and "payload_json" in sql for sql, _ in client.executed)
+
+    assert metadata["preview"] is True
+    assert metadata["selected_company_count"] == 2
+    assert {reason: metadata[reason] for reason in (
+        "never_published", "new_evidence_scb", "new_evidence_esef", "new_evidence_wikidata",
+        "ledger_pending", "pending_model")} == {
+        "never_published": 1, "new_evidence_scb": 1, "new_evidence_esef": 1,
+        "new_evidence_wikidata": 1, "ledger_pending": 1, "pending_model": 1}
+    # One of the two was published with several description sources, so only that one
+    # would enter the model step; the estimate is that count times the observed averages.
+    assert metadata["would_call_model"] == 1
+    assert metadata["prompt_tokens_per_call"] == 640 and metadata["completion_tokens_per_call"] == 240
+    assert metadata["estimated_prompt_tokens"] == 640
+    assert metadata["estimated_completion_tokens"] == 240
+    assert metadata["llm_model"] == "fake-model" and metadata["llm_provider"] == "fake-provider"
+
+
+def test_a_preview_with_the_model_off_forecasts_no_calls_at_all() -> None:
+    from dagster_v3.defs.se_company.info import (
+        FALLBACK_COMPLETION_TOKENS,
+        FALLBACK_PROMPT_TOKENS,
+        materialize_se_company_info,
+    )
+    from tests.test_se_company_common import FakeClickhouse, FakeClient
+
+    def _preview(**kwargs) -> dict:
+        client = FakeClient(answers=[
+            EXISTING_TABLES,
+            [_selected(COMPANY, multi_source=1)],
+            [(0, None, None)],  # this model has never been called
+        ])
+        return materialize_se_company_info(
+            clickhouse=FakeClickhouse(client), source_run_id="run", resolved_at=NOW,
+            company_ids=[], max_companies=1, company_batch_size=1, execute=False,
+            llm_client=None, llm_profile=PROFILE, log=None, **kwargs)
+
+    # An unseen model has no observed average, so the forecast falls back to a flat
+    # per-call figure rather than reporting zero cost.
+    model_on = _preview()
+    assert model_on["would_call_model"] == 1
+    assert model_on["estimated_prompt_tokens"] == FALLBACK_PROMPT_TOKENS
+    assert model_on["estimated_completion_tokens"] == FALLBACK_COMPLETION_TOKENS
+    model_off = _preview(resolve_multi_source_with_llm=False)
+    assert model_off["would_call_model"] == 0
+    assert model_off["estimated_prompt_tokens"] == 0 and model_off["estimated_completion_tokens"] == 0
+
+
+def test_an_execute_run_that_may_call_the_model_refuses_to_start_without_a_client() -> None:
+    """The client is built by the asset, from the run's profile and the host's key, before
+    anything is read or written -- so materialize refuses a model-on execute run that has
+    none rather than discovering it half-way through a page."""
+    from dagster_v3.defs.se_company.info import materialize_se_company_info
+    from tests.test_se_company_common import FakeClickhouse, FakeClient
+
+    client = FakeClient(answers=[])
+    with pytest.raises(ValueError, match="LLM client"):
+        materialize_se_company_info(
+            clickhouse=FakeClickhouse(client), source_run_id="run", resolved_at=NOW,
+            company_ids=[], max_companies=1, company_batch_size=1, execute=True,
+            llm_client=None, llm_profile=PROFILE, log=None)
+    assert client.executed == []  # not even the table-existence check ran
+
+
+def test_the_api_key_is_read_from_the_host_by_provider_name(monkeypatch) -> None:
+    """The one thing the run config never carries. A provider whose key this host does
+    not have fails with the variable's name, before any write and before any call."""
+    from dagster_v3.defs.se_company.info import build_llm_client, llm_api_key_variable
+
+    assert llm_api_key_variable("deepseek") == "DEEPSEEK_API_KEY"
+    monkeypatch.setenv("DEEPSEEK_API_KEY", "   ")
+    with pytest.raises(ValueError, match="DEEPSEEK_API_KEY"):
+        build_llm_client(_profile("deepseek-v4-flash"), timeout_seconds=10)
+    monkeypatch.setenv("DEEPSEEK_API_KEY", "sk-test")
+    built = build_llm_client(_profile("deepseek-v4-flash", base_url="https://api.deepseek.com/"),
+                             timeout_seconds=30)
+    assert str(built.base_url).rstrip("/") == "https://api.deepseek.com"
+    monkeypatch.delenv("OTHER_API_KEY", raising=False)
+    with pytest.raises(ValueError, match="OTHER_API_KEY"):
+        build_llm_client(_profile("m", provider="other"), timeout_seconds=10)
+
+
+def test_the_run_config_profile_reaches_the_request_and_the_stored_observation() -> None:
+    """provider/model/temperature/max_tokens/prompt_version all come from the run's own
+    profile: the request carries them and the observation row records what answered, so a
+    later run can tell which model wrote a description."""
+    from dagster_v3.defs.se_company.info import OBSERVATION_COLUMNS, materialize_se_company_info
+    from tests.test_se_company_common import FakeClickhouse, FakeClient
+
+    profile = _profile("other-model", provider="other-provider", temperature=0.4,
+                       max_tokens=1_234, prompt_version="se-company-info-description-v9")
+    llm = FakeLlm(GOOD_REPLY)
+    client = FakeClient(answers=[
+        EXISTING_TABLES, [_selected(COMPANY)], ARTIFACT_ROWS, [], [],
+        [(1, 0)], [(0,)], [(1,)],
+        [(1, 0)], [(0,)], [(1,)],
+    ])
+    materialize_se_company_info(
+        clickhouse=FakeClickhouse(client), source_run_id="run", resolved_at=NOW,
+        company_ids=[COMPANY], max_companies=1, company_batch_size=1, execute=True,
+        llm_client=llm, llm_profile=profile, log=None)
+
+    request = llm.completions.requests[0]
+    assert request["model"] == "other-model"
+    assert request["temperature"] == 0.4 and request["max_tokens"] == 1_234
+    staged = next(params for sql, params in client.executed
+                  if sql.startswith("INSERT INTO `corpscout`.`_tmp_se_company_info_enrichment_observation_"))
+    observation = dict(zip(OBSERVATION_COLUMNS, staged[0], strict=True))
+    assert observation["model_provider"] == "other-provider"
+    assert observation["model_name"] == "other-model"
+    assert observation["prompt_version"] == "se-company-info-description-v9"
+
+
+def test_the_model_step_keeps_at_most_concurrency_calls_in_flight() -> None:
+    """concurrency > 1 issues that many description calls at once and no more. The fake
+    refuses to answer until exactly two calls are in flight, so a sequential model step
+    would deadlock the barrier and fail this test rather than quietly pass it."""
+    import threading
+
+    from dagster_v3.defs.se_company.info import INSERT_COLUMNS, materialize_se_company_info
+    from tests.test_se_company_common import FakeClickhouse, FakeClient
+
+    companies = [COMPANY, OTHER_COMPANY, THIRD_COMPANY, "5569999999"]
+
+    class _ConcurrentLlm:
+        def __init__(self, parallel: int) -> None:
+            self.barrier = threading.Barrier(parallel, timeout=10)
+            self.lock = threading.Lock()
+            self.in_flight = 0
+            self.max_in_flight = 0
+            self.requests: list[dict] = []
+            self.chat = SimpleNamespace(completions=self)
+
+        def create(self, **request):
+            with self.lock:
+                self.in_flight += 1
+                self.max_in_flight = max(self.max_in_flight, self.in_flight)
+                self.requests.append(request)
+            self.barrier.wait()
+            with self.lock:
+                self.in_flight -= 1
+            return SimpleNamespace(
+                choices=[SimpleNamespace(message=SimpleNamespace(content=GOOD_REPLY))],
+                usage=SimpleNamespace(prompt_tokens=11, completion_tokens=7))
+
+    llm = _ConcurrentLlm(parallel=2)
+    client = FakeClient(answers=[
+        EXISTING_TABLES,
+        [_selected(company) for company in companies],
+        [row for company in companies for row in (_scb_row(company), _wikidata_row(company))],
+        [], [],
+        [(4, 0)], [(0,)], [(4,)],   # one observation flush, all four calls
+        [(4, 0)], [(0,)], [(4,)],   # final publish
+    ])
+    metadata = materialize_se_company_info(
+        clickhouse=FakeClickhouse(client), source_run_id="run", resolved_at=NOW,
+        company_ids=[], max_companies=4, company_batch_size=4, execute=True,
+        llm_client=llm, llm_profile=_profile("fake-model", provider="fake-provider", concurrency=2),
+        log=None)
+
+    assert llm.max_in_flight == 2
+    assert metadata["llm_request_count"] == 4 and metadata["observation_inserted_count"] == 4
+    # Results are consumed in company order however they finished, so the published rows
+    # and the observation rows stay in scan order at any concurrency.
+    assert [dict(zip(INSERT_COLUMNS, row, strict=True))["company_id"] for row in _final_rows(client)] == companies
+    staged = next(params for sql, params in client.executed
+                  if sql.startswith("INSERT INTO `corpscout`.`_tmp_se_company_info_enrichment_observation_"))
+    assert [row[1] for row in staged] == companies
+
+
+def test_the_config_gates_the_run_and_pins_the_profile_the_automation_sends() -> None:
+    from dagster_v3.defs.se_company.info import (
+        DEFAULT_LLM_PROFILE,
+        SECompanyInfoConfig,
+        se_company_info_weekly,
+    )
+
+    # Preview by default: an empty config (a UI "Materialize" click) resolves nothing.
+    assert SECompanyInfoConfig().execute is False and SECompanyInfoConfig().llm is None
+    assert SECompanyInfoConfig(execute=True).execute is True
+    # The pinned profile IS the field defaults -- one set of values, asserted equal
+    # rather than kept in step by hand.
+    assert DEFAULT_LLM_PROFILE == LlmProfileConfig().model_dump()
+    assert DEFAULT_LLM_PROFILE["prompt_version"] == DESCRIPTION_PROMPT_VERSION
+    assert LlmProfileConfig().concurrency == 1
+    for bad in (0, 9):
+        with pytest.raises(ValueError):
+            LlmProfileConfig(concurrency=bad)
+    # The automated triggers must both spell out execute AND the profile: a
+    # sensor/schedule run carries only the config its definition writes. Read off an
+    # evaluated tick, which is the config the daemon would actually submit.
+    context = dg.build_schedule_context(
+        scheduled_execution_time=datetime(2026, 8, 24, 6, 50, tzinfo=UTC))
+    run_requests = se_company_info_weekly.evaluate_tick(context).run_requests
+    assert run_requests is not None and run_requests[0].run_config == {
+        "ops": {"se_company_info_clickhouse": {"config": {"execute": True, "llm": DEFAULT_LLM_PROFILE}}}}
+
+
+def test_the_correction_sensor_launches_a_real_run_not_a_preview(monkeypatch) -> None:
+    """A ledger row must actually re-resolve its company. Without execute in the sensor's
+    run config the review job would run the scan and write nothing -- the reviewer's
+    correction would sit unapplied forever, and nothing would look broken."""
+    from contextlib import contextmanager
+
+    import dagster as dg
+    from dagster_clickhouse import ClickhouseResource
+
+    from dagster_v3.defs.se_company.info import (
+        DEFAULT_LLM_PROFILE,
+        se_company_info_correction_sensor,
+    )
+    from tests.test_se_company_common import _FakeLedgerClient
+
+    ledger = _FakeLedgerClient()
+    ledger.append(COMPANY, str(uuid.UUID(int=7)), "2026-08-22 09:00:00.000")
+    resource = ClickhouseResource(host="localhost")
+
+    @contextmanager
+    def fake_get_connection(self):
+        yield ledger
+
+    monkeypatch.setattr(ClickhouseResource, "get_connection", fake_get_connection)
+    context = dg.build_sensor_context(cursor=None, resources={"clickhouse": resource})
+    execution_data = se_company_info_correction_sensor.evaluate_tick(context)
+
+    assert execution_data.run_requests is not None
+    assert execution_data.run_requests[0].run_config == {
+        "ops": {"se_company_info_clickhouse": {"config": {
+            "execute": True, "llm": DEFAULT_LLM_PROFILE, "company_ids": [COMPANY]}}}}

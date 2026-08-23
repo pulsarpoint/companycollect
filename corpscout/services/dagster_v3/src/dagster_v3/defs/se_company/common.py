@@ -344,6 +344,7 @@ def ledger_sensor(
     job: dg.JobDefinition,
     asset_names: Sequence[str],
     default_status: dg.DefaultSensorStatus = dg.DefaultSensorStatus.STOPPED,
+    extra_config: Mapping[str, Any] | None = None,
 ) -> dg.SensorDefinition:
     """A sensor that wakes every asset in ``asset_names`` for every company
     touched by a new row in ``table`` since the last cursor.
@@ -351,7 +352,15 @@ def ledger_sensor(
     Defaults to STOPPED -- callers turn a specific instance on once its
     downstream assets exist and have been verified (a later phase), never
     by changing this default.
+
+    ``extra_config`` is merged into every asset's op config beside
+    ``company_ids``. An asset whose config gates what the run does --
+    se_company_info's ``execute``, plus the model profile it is allowed to
+    call -- has to be told so here: a sensor-launched run carries only the
+    config this function writes, and anything left out falls back to the
+    asset's own defaults, which for that asset means resolving nothing.
     """
+    shared_config = dict(extra_config or {})
 
     @dg.sensor(
         name=name,
@@ -381,7 +390,7 @@ def ledger_sensor(
                     run_key=f"{table}:{cursor}",
                     run_config={
                         "ops": {
-                            asset: {"config": {"company_ids": list(company_ids)}}
+                            asset: {"config": {**shared_config, "company_ids": list(company_ids)}}
                             for asset in asset_names
                         }
                     },
