@@ -1,5 +1,6 @@
 import type { Route } from "./+types/admin-se-company-info-corrections";
 import { SeCompanyInfoCorrectionsTable } from "~/components/admin/se-company-info-corrections-table";
+import { clampPage, clampPageSize, DEFAULT_PAGE_SIZE } from "~/lib/paging";
 import {
   listSeCompanyInfoCorrectionsPage,
   type SeCompanyInfoCorrectionListFilters,
@@ -8,10 +9,6 @@ import {
 // Only `loader`, `meta` and the component live here -- any other export that
 // touched `~/lib/*.server` would keep that module in the client bundle and
 // break the production build (see CLAUDE.md).
-
-function clampPageSize(value: number): number {
-  return Math.min(200, Math.max(10, value));
-}
 
 function parseFilters(url: URL): SeCompanyInfoCorrectionListFilters {
   const q = (name: string) => url.searchParams.get(name) ?? "";
@@ -25,9 +22,9 @@ function parseFilters(url: URL): SeCompanyInfoCorrectionListFilters {
 export async function loader({ request }: Route.LoaderArgs) {
   const url = new URL(request.url);
   const filters = parseFilters(url);
-  const page = Math.max(1, Number.parseInt(url.searchParams.get("page") || "1", 10) || 1);
+  const page = clampPage(Number.parseInt(url.searchParams.get("page") || "1", 10));
   const pageSize = clampPageSize(
-    Number.parseInt(url.searchParams.get("pageSize") || "50", 10) || 50,
+    Number.parseInt(url.searchParams.get("pageSize") || String(DEFAULT_PAGE_SIZE), 10),
   );
 
   const listPage = await listSeCompanyInfoCorrectionsPage({ ...filters, page, pageSize });

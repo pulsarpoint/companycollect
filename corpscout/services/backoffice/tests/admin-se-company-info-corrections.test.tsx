@@ -126,6 +126,17 @@ describe("SeCompanyInfoCorrectionsTable", () => {
     expect(html).toContain('name="status" value="applied"');
   });
 
+  it("carries the current pageSize as a hidden field, so submitting a filter doesn't silently reset it", () => {
+    const html = render({ pageSize: 100 });
+    expect(html).toContain('type="hidden" name="pageSize" value="100"');
+  });
+
+  it("offers an explicit \"Any\" option on the kind and status selects, selected when no filter is set", () => {
+    const html = render();
+    expect(html).toContain('name="kind" value="any"');
+    expect(html).toContain('name="status" value="any"');
+  });
+
   it("shows the pager total and page", () => {
     const html = render();
     expect(html).toContain("12");

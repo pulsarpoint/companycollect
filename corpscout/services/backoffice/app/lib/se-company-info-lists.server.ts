@@ -9,18 +9,20 @@
  * being a fixed string.
  */
 import { chQuery } from "~/lib/clickhouse.server";
+import { clampPage, clampPageSize } from "~/lib/paging";
+import {
+  SE_INFO_CORRECTION_KINDS,
+  SE_INFO_CORRECTION_STATUSES,
+  type SeInfoCorrectionStatus,
+} from "~/lib/se-info-corrections";
+import { INFO_LIST_SOURCES } from "~/lib/se-company-info-sources";
 import { ZERO_EVIDENCE_HASH } from "~/lib/se-person-corrections";
 
-export { ZERO_EVIDENCE_HASH };
+export type { SeInfoCorrectionStatus };
 
 function nonEmpty(value: string | undefined): string | null {
   const trimmed = value?.trim() ?? "";
   return trimmed === "" ? null : trimmed;
-}
-
-function clampPageSize(pageSize: number): number {
-  const n = Math.trunc(pageSize);
-  return Math.min(200, Math.max(10, Number.isFinite(n) && n > 0 ? n : 50));
 }
 
 function pageParams(query: { page: number; pageSize: number }): {
@@ -28,8 +30,7 @@ function pageParams(query: { page: number; pageSize: number }): {
   offset: number;
 } {
   const limit = clampPageSize(query.pageSize);
-  const p = Math.trunc(query.page);
-  const page = Number.isFinite(p) && p > 0 ? p : 1;
+  const page = clampPage(query.page);
   return { limit, offset: (page - 1) * limit };
 }
 
@@ -67,9 +68,12 @@ export interface SeCompanyInfoListQuery extends SeCompanyInfoListFilters {
   pageSize: number;
 }
 
+/** No `total` here on purpose: the table's pagination total is derived from
+ * `loadSeCompanyInfoCounts`'s by-source breakdown (see the route), which the
+ * page already loads for the counts strip -- so listing a page of rows never
+ * needs its own separate `count()` scan. */
 export interface SeCompanyInfoListPage {
   rows: SeCompanyInfoListRow[];
-  total: number;
 }
 
 export interface SeCompanyInfoSourceCount {
@@ -82,17 +86,6 @@ export interface SeCompanyInfoListCounts {
   multiSourceCount: number;
   pendingModelCount: number;
 }
-
-/** description_source values the pipeline writes; 'none' is the UI's name
- * for the empty-string source (a row whose description has no source yet). */
-export const INFO_LIST_SOURCES = [
-  "scb",
-  "wikidata",
-  "esef",
-  "llm",
-  "reviewed",
-  "none",
-] as const;
 
 /**
  * WHERE predicates shared by the table query and its counts strip, so the
@@ -135,22 +128,21 @@ export function buildInfoListFilter(
   return { where, params };
 }
 
-/** description snippet is truncated in SQL (not just CSS) so 3.5M rows of
- * full description text never cross the wire for a page that only shows the
- * first 120 characters. */
+/** description snippet is truncated in SQL with substringUTF8 (not `substring`,
+ * which is byte-based and cuts a multi-byte character -- å/ä/ö -- in half,
+ * rendering U+FFFD) and not just CSS, so the full description text of 3.5M
+ * rows never crosses the wire for a page that only shows the first 120
+ * characters. */
 export const INFO_LIST_SELECT_SQL = `SELECT
   i.company_id AS company_id,
   i.legal_name AS legal_name,
   toString(i.status) AS status,
   toString(i.description_source) AS description_source,
   i.description_sources AS description_sources,
-  substring(ifNull(i.description, ''), 1, 120) AS description_snippet,
+  substringUTF8(ifNull(i.description, ''), 1, 120) AS description_snippet,
   toUInt8(i.suggestion_id IS NOT NULL) AS has_suggestion,
   length(i.correction_ids) AS corrections_count,
   toString(i.resolved_at) AS resolved_at
-FROM corpscout.se_company_info AS i FINAL`;
-
-export const INFO_LIST_COUNT_SQL = `SELECT toString(count()) AS total
 FROM corpscout.se_company_info AS i FINAL`;
 
 export const INFO_COUNTS_BY_SOURCE_SQL = `SELECT
@@ -177,30 +169,32 @@ function infoFilterClause(filters: SeCompanyInfoListFilters): {
   return { filter, where, params };
 }
 
+/** No count() query: the page's total is derived by the route from
+ * `loadSeCompanyInfoCounts`'s by-source breakdown, which shares this exact
+ * WHERE and is loaded alongside this call anyway for the counts strip -- one
+ * fewer FINAL scan over 3.5M rows per page load. */
 export async function listSeCompanyInfoPage(
   query: SeCompanyInfoListQuery,
 ): Promise<SeCompanyInfoListPage> {
   const { filter, params } = infoFilterClause(query);
   const { limit, offset } = pageParams(query);
 
-  const [rows, counted] = await Promise.all([
-    chQuery<SeCompanyInfoListRow>(
-      `${INFO_LIST_SELECT_SQL}
+  const rows = await chQuery<SeCompanyInfoListRow>(
+    `${INFO_LIST_SELECT_SQL}
 ${filter}
 ORDER BY i.company_id
 ${PAGE_LIMIT_OFFSET_SQL}`,
-      { ...params, limit, offset },
-    ),
-    chQuery<{ total: string }>(`${INFO_LIST_COUNT_SQL}\n${filter}`, params),
-  ]);
-  return { rows, total: Number(counted[0]?.total ?? 0) };
+    { ...params, limit, offset },
+  );
+  return { rows };
 }
 
 /**
  * Rows by description_source, plus the multi-source and pending-model
  * totals, all computed with the exact same WHERE as `listSeCompanyInfoPage`
  * (built once from the same filters) so the strip never drifts from the
- * table it sits above.
+ * table it sits above. Summing `bySource[].count` gives the table's
+ * pagination total (see `listSeCompanyInfoPage`'s doc comment).
  */
 export async function loadSeCompanyInfoCounts(
   filters: SeCompanyInfoListFilters,
@@ -230,15 +224,6 @@ ORDER BY i.description_source`,
 /* -------------------------------------------------------------------- */
 /* Page 2: /admin/se/company-info/corrections -- the correction ledger  */
 /* -------------------------------------------------------------------- */
-
-export type SeInfoCorrectionStatus = "undone" | "applied" | "stale" | "pending";
-
-export const SE_INFO_CORRECTION_STATUSES: readonly SeInfoCorrectionStatus[] = [
-  "pending",
-  "applied",
-  "stale",
-  "undone",
-];
 
 export interface SeCompanyInfoCorrectionListRow {
   correction_id: string;
@@ -284,7 +269,9 @@ export const UNDONE_CTE_SQL = `WITH undone AS (
  * a LEFT JOIN miss defaults it to [], so unlike evidence_set_hash it needs
  * no ifNull guard); then whether the evidence has moved since the row was
  * decided (guarded with ifNull -- a FixedString column turns Nullable on a
- * LEFT JOIN miss under join_use_nulls); else pending.
+ * LEFT JOIN miss under join_use_nulls); else pending. Branch ORDER matters:
+ * multiIf evaluates left to right and returns the first match, so undone
+ * must precede applied must precede stale must precede the pending default.
  */
 export const CORRECTION_STATUS_EXPR = `multiIf(
     c.correction_id IN (SELECT id FROM undone), 'undone',
@@ -293,6 +280,22 @@ export const CORRECTION_STATUS_EXPR = `multiIf(
       AND toString(c.evidence_hash) != ifNull(toString(p.evidence_set_hash), ''), 'stale',
     'pending'
   )`;
+
+/**
+ * The published row, scoped to only the companies actually present in the
+ * ledger before FINAL collapses it -- an unscoped `LEFT JOIN
+ * corpscout.se_company_info AS p FINAL` re-merges and reads the whole 3.5M
+ * -row/334MB table to decorate a handful of ledger rows. Scoping the join's
+ * own subquery to `company_id IN (SELECT company_id FROM
+ * se_company_info_correction)` first (verified byte-identical output, ~2.5MB
+ * read) keeps FINAL's merge work bounded to just those companies. Only the
+ * three columns CORRECTION_STATUS_EXPR reads are projected.
+ */
+export const SCOPED_PUBLISHED_JOIN_SQL = `LEFT JOIN (
+  SELECT company_id, correction_ids, evidence_set_hash
+  FROM corpscout.se_company_info FINAL
+  WHERE company_id IN (SELECT company_id FROM corpscout.se_company_info_correction)
+) AS p ON p.company_id = c.company_id`;
 
 export const CORRECTIONS_LIST_SELECT_SQL = `${UNDONE_CTE_SQL}
 SELECT
@@ -306,12 +309,12 @@ SELECT
   toString(c.supersedes_correction_id) AS supersedes_correction_id,
   ${CORRECTION_STATUS_EXPR} AS status
 FROM corpscout.se_company_info_correction AS c
-LEFT JOIN corpscout.se_company_info AS p FINAL ON p.company_id = c.company_id`;
+${SCOPED_PUBLISHED_JOIN_SQL}`;
 
 export const CORRECTIONS_LIST_COUNT_SQL = `${UNDONE_CTE_SQL}
 SELECT toString(count()) AS total
 FROM corpscout.se_company_info_correction AS c
-LEFT JOIN corpscout.se_company_info AS p FINAL ON p.company_id = c.company_id`;
+${SCOPED_PUBLISHED_JOIN_SQL}`;
 
 /** The status filter reuses CORRECTION_STATUS_EXPR verbatim as a WHERE
  * predicate (not a reference to the SELECT alias) -- ClickHouse does not
@@ -319,7 +322,10 @@ LEFT JOIN corpscout.se_company_info AS p FINAL ON p.company_id = c.company_id`;
  * level, so the same expression text is evaluated again rather than relied
  * on by name. zeroHash is always included: CORRECTION_STATUS_EXPR sits in
  * the SELECT list of every query built from CORRECTIONS_LIST_SELECT_SQL
- * regardless of which filters are set. */
+ * regardless of which filters are set. `kind`/`status` are whitelisted
+ * against the same enums the review page and its ledger use, so an
+ * unrecognized value (including the filter form's "any" sentinel) is
+ * silently treated as absent rather than filtering on literal garbage. */
 export function buildCorrectionsListFilter(
   filters: SeCompanyInfoCorrectionListFilters,
 ): { where: string[]; params: Record<string, unknown> } {
@@ -332,7 +338,7 @@ export function buildCorrectionsListFilter(
     params.companyId = companyId;
   }
   const kind = nonEmpty(filters.kind);
-  if (kind) {
+  if (kind && (SE_INFO_CORRECTION_KINDS as readonly string[]).includes(kind)) {
     where.push("c.correction_kind = {kind:String}");
     params.kind = kind;
   }

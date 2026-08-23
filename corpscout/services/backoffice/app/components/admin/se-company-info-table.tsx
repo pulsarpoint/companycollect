@@ -18,15 +18,18 @@ import type {
   SeCompanyInfoListCounts,
   SeCompanyInfoListRow,
 } from "~/lib/se-company-info-lists.server";
+import { INFO_LIST_SOURCES } from "~/lib/se-company-info-sources";
 
 const nf = new Intl.NumberFormat("en-US");
 
-// Mirrors INFO_LIST_SOURCES in se-company-info-lists.server.ts (the values
-// description_source actually takes). Kept as a local literal, not an
-// import, because a route component may not pull a value -- only a type --
-// out of a `.server` module (see CLAUDE.md): react-router's build strips
-// server-only modules from the client bundle entirely.
-const INFO_LIST_SOURCES = ["scb", "wikidata", "esef", "llm", "reviewed", "none"] as const;
+/** Sentinel `<Select>` value for "no filter" -- Base UI's Select treats an
+ * empty-string item value as reserved for the unselected/placeholder state,
+ * so an explicit, selectable "Any" option needs a real (non-"") value. Never
+ * submitted as a meaningful filter: buildInfoListFilter's whitelist check
+ * against INFO_LIST_SOURCES (source) or the exact "legal"/"sole" match
+ * (entity) already excludes anything else, "any" included, with no extra
+ * code needed server-side. */
+const ANY = "any";
 
 export interface SeCompanyInfoTableFilters {
   companyId: string;
@@ -166,13 +169,23 @@ function Field({ label, children }: { label: string; children: React.ReactNode }
   );
 }
 
-function FilterForm({ filters }: { filters: SeCompanyInfoTableFilters }) {
+function FilterForm({
+  filters,
+  pageSize,
+}: {
+  filters: SeCompanyInfoTableFilters;
+  pageSize: number;
+}) {
   return (
     <Form
       key={JSON.stringify(filters)}
       method="get"
       className="flex flex-wrap items-end gap-3"
     >
+      {/* A filter change resets `page` (deliberately -- no hidden field for
+       * it) but must not silently reset the reviewer's chosen page size back
+       * to the default. */}
+      <input type="hidden" name="pageSize" value={pageSize} />
       <Field label="Company id">
         <Input
           name="companyId"
@@ -190,11 +203,12 @@ function FilterForm({ filters }: { filters: SeCompanyInfoTableFilters }) {
         />
       </Field>
       <Field label="Source">
-        <Select name="source" defaultValue={filters.source === "" ? undefined : filters.source}>
+        <Select name="source" defaultValue={filters.source === "" ? ANY : filters.source}>
           <SelectTrigger className="w-32" size="sm">
-            <SelectValue placeholder="Any" />
+            <SelectValue />
           </SelectTrigger>
           <SelectContent>
+            <SelectItem value={ANY}>Any</SelectItem>
             {INFO_LIST_SOURCES.map((source) => (
               <SelectItem key={source} value={source}>
                 {source}
@@ -204,11 +218,12 @@ function FilterForm({ filters }: { filters: SeCompanyInfoTableFilters }) {
         </Select>
       </Field>
       <Field label="Entity">
-        <Select name="entity" defaultValue={filters.entity === "" ? undefined : filters.entity}>
+        <Select name="entity" defaultValue={filters.entity === "" ? ANY : filters.entity}>
           <SelectTrigger className="w-32" size="sm">
-            <SelectValue placeholder="Any" />
+            <SelectValue />
           </SelectTrigger>
           <SelectContent>
+            <SelectItem value={ANY}>Any</SelectItem>
             <SelectItem value="legal">Legal (10-digit)</SelectItem>
             <SelectItem value="sole">Sole trader (12-digit)</SelectItem>
           </SelectContent>
@@ -254,7 +269,7 @@ export function SeCompanyInfoTable({
 }) {
   return (
     <div className="flex flex-col gap-4">
-      <FilterForm filters={filters} />
+      <FilterForm filters={filters} pageSize={pageSize} />
       <CountsStrip counts={counts} />
       <DataTable
         columns={COLUMNS}

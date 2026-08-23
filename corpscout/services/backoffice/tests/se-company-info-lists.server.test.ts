@@ -11,12 +11,12 @@ import {
   CORRECTIONS_LIST_SELECT_SQL,
   INFO_COUNTS_BY_SOURCE_SQL,
   INFO_COUNTS_TOTALS_SQL,
-  INFO_LIST_COUNT_SQL,
   INFO_LIST_SELECT_SQL,
   listSeCompanyInfoCorrectionsPage,
   listSeCompanyInfoPage,
   loadSeCompanyInfoCounts,
   PAGE_LIMIT_OFFSET_SQL,
+  SCOPED_PUBLISHED_JOIN_SQL,
   UNDONE_CTE_SQL,
 } from "~/lib/se-company-info-lists.server";
 import { ZERO_EVIDENCE_HASH } from "~/lib/se-person-corrections";
@@ -63,12 +63,13 @@ describe("buildInfoListFilter", () => {
     expect(buildInfoListFilter({ source: "none" }).params).toEqual({ source: "" });
   });
 
-  it("ignores blank strings and unknown source values instead of filtering on them", () => {
+  it("ignores blank strings and unknown source values (including the filter form's 'any' sentinel) instead of filtering on them", () => {
     expect(buildInfoListFilter({ companyId: "  ", name: "" })).toEqual({
       where: [],
       params: {},
     });
     expect(buildInfoListFilter({ source: "bogus" })).toEqual({ where: [], params: {} });
+    expect(buildInfoListFilter({ source: "any" })).toEqual({ where: [], params: {} });
   });
 
   it("ANDs every set filter together, in a stable order", () => {
@@ -97,9 +98,14 @@ describe("buildInfoListFilter", () => {
 });
 
 describe("se_company_info list SQL shape", () => {
-  it("reads FINAL and every filter predicate appears only when its param is set", () => {
+  it("reads FINAL everywhere, truncates the snippet UTF-8-safely, and pages with named LIMIT/OFFSET params", () => {
     expect(INFO_LIST_SELECT_SQL).toContain("FROM corpscout.se_company_info AS i FINAL");
-    expect(INFO_LIST_COUNT_SQL).toContain("FROM corpscout.se_company_info AS i FINAL");
+    // substring() is byte-based and cuts a multi-byte character (å/ä/ö) in
+    // half, rendering U+FFFD -- substringUTF8 is required, not substring().
+    expect(INFO_LIST_SELECT_SQL).toContain("substringUTF8(ifNull(i.description, ''), 1, 120)");
+    expect(INFO_LIST_SELECT_SQL).not.toContain("substring(ifNull(i.description");
+    expect(INFO_COUNTS_BY_SOURCE_SQL).toContain("FROM corpscout.se_company_info AS i FINAL");
+    expect(INFO_COUNTS_TOTALS_SQL).toContain("FROM corpscout.se_company_info AS i FINAL");
     expect(PAGE_LIMIT_OFFSET_SQL).toBe("LIMIT {limit:UInt32} OFFSET {offset:UInt32}");
   });
 });
@@ -107,23 +113,21 @@ describe("se_company_info list SQL shape", () => {
 describe("listSeCompanyInfoPage", () => {
   beforeEach(() => clickhouse.query.mockReset());
 
-  it("reads FINAL, orders by company_id, and pages with named LIMIT/OFFSET params", async () => {
-    clickhouse.query.mockResolvedValueOnce([]).mockResolvedValueOnce([{ total: "3500000" }]);
+  it("reads FINAL, orders by company_id, pages with named LIMIT/OFFSET params, and runs no separate count() query", async () => {
+    clickhouse.query.mockResolvedValueOnce([]);
     const page = await listSeCompanyInfoPage({ page: 1, pageSize: 50 });
 
-    expect(page.total).toBe(3500000);
-    expect(clickhouse.query).toHaveBeenCalledTimes(2);
+    expect(page).toEqual({ rows: [] });
+    // Exactly one query: the row query. The pagination total comes from
+    // loadSeCompanyInfoCounts's by-source breakdown instead (see that
+    // function's doc comment) -- one fewer FINAL scan per page load.
+    expect(clickhouse.query).toHaveBeenCalledTimes(1);
     const [rowsSql, rowsParams] = clickhouse.query.mock.calls[0];
     expect(rowsSql).toContain("FROM corpscout.se_company_info AS i FINAL");
     expect(rowsSql).toContain("ORDER BY i.company_id");
     expect(rowsSql).toContain(PAGE_LIMIT_OFFSET_SQL);
     expect(rowsSql).not.toContain("WHERE");
     expect(rowsParams).toEqual({ limit: 50, offset: 0 });
-
-    const [countSql, countParams] = clickhouse.query.mock.calls[1];
-    expect(countSql).toContain("FROM corpscout.se_company_info AS i FINAL");
-    expect(countSql).not.toContain("WHERE");
-    expect(countParams).toEqual({});
   });
 
   it("clamps pageSize to [10, 200] and computes offset from page", async () => {
@@ -137,16 +141,15 @@ describe("listSeCompanyInfoPage", () => {
     expect(clickhouse.query.mock.calls[0][1]).toMatchObject({ limit: 200, offset: 200 });
   });
 
-  it("threads filters into both the row query and the count query identically", async () => {
+  it("threads filters into the row query", async () => {
     clickhouse.query.mockResolvedValue([]);
     await listSeCompanyInfoPage({ page: 2, pageSize: 50, source: "llm", multi: true });
 
     const [rowsSql, rowsParams] = clickhouse.query.mock.calls[0];
-    const [countSql, countParams] = clickhouse.query.mock.calls[1];
-    expect(rowsSql).toContain("WHERE toString(i.description_source) = {source:String} AND i.description_source_count > 1");
-    expect(countSql).toContain("WHERE toString(i.description_source) = {source:String} AND i.description_source_count > 1");
+    expect(rowsSql).toContain(
+      "WHERE toString(i.description_source) = {source:String} AND i.description_source_count > 1",
+    );
     expect(rowsParams).toEqual({ source: "llm", limit: 50, offset: 50 });
-    expect(countParams).toEqual({ source: "llm" });
   });
 });
 
@@ -186,6 +189,19 @@ describe("loadSeCompanyInfoCounts", () => {
     expect(totalsSql).toContain("empty(i.correction_ids)");
     expect(totalsParams).toEqual({});
   });
+
+  it("(route contract) summing bySource[].count reproduces the table's pagination total", async () => {
+    clickhouse.query
+      .mockResolvedValueOnce([
+        { description_source: "scb", count: "100" },
+        { description_source: "llm", count: "40" },
+        { description_source: "", count: "5" },
+      ])
+      .mockResolvedValueOnce([{ multi_source_count: "40", pending_model_count: "12" }]);
+    const counts = await loadSeCompanyInfoCounts({});
+    const total = counts.bySource.reduce((sum, entry) => sum + entry.count, 0);
+    expect(total).toBe(145);
+  });
 });
 
 describe("buildCorrectionsListFilter", () => {
@@ -210,8 +226,23 @@ describe("buildCorrectionsListFilter", () => {
     expect(statusFilter.params).toEqual({ zeroHash: ZERO_EVIDENCE_HASH, status: "applied" });
   });
 
-  it("ignores an unknown status instead of filtering on it", () => {
+  it("whitelists kind against SE_INFO_CORRECTION_KINDS, ignoring an unknown value (including 'any') instead of filtering on it", () => {
+    expect(buildCorrectionsListFilter({ kind: "bogus" })).toEqual({
+      where: [],
+      params: { zeroHash: ZERO_EVIDENCE_HASH },
+    });
+    expect(buildCorrectionsListFilter({ kind: "any" })).toEqual({
+      where: [],
+      params: { zeroHash: ZERO_EVIDENCE_HASH },
+    });
+  });
+
+  it("whitelists status against SE_INFO_CORRECTION_STATUSES, ignoring an unknown value (including 'any') instead of filtering on it", () => {
     expect(buildCorrectionsListFilter({ status: "bogus" })).toEqual({
+      where: [],
+      params: { zeroHash: ZERO_EVIDENCE_HASH },
+    });
+    expect(buildCorrectionsListFilter({ status: "any" })).toEqual({
       where: [],
       params: { zeroHash: ZERO_EVIDENCE_HASH },
     });
@@ -219,18 +250,39 @@ describe("buildCorrectionsListFilter", () => {
 });
 
 describe("se_company_info_correction list SQL shape", () => {
-  it("starts from the undone CTE, LEFT JOINs the published row FINAL, and guards the evidence_set_hash miss with ifNull", () => {
+  it("starts from the undone CTE, LEFT JOINs the published row scoped to ledger companies, and guards the evidence_set_hash miss with ifNull", () => {
     for (const sql of [CORRECTIONS_LIST_SELECT_SQL, CORRECTIONS_LIST_COUNT_SQL]) {
       expect(sql).toContain(UNDONE_CTE_SQL);
       expect(sql).toContain("FROM corpscout.se_company_info_correction AS c");
-      expect(sql).toContain("LEFT JOIN corpscout.se_company_info AS p FINAL ON p.company_id = c.company_id");
+      expect(sql).toContain(SCOPED_PUBLISHED_JOIN_SQL);
     }
+    // The join's own subquery must be scoped to companies that actually
+    // appear in the ledger -- an unscoped `LEFT JOIN se_company_info FINAL`
+    // re-merges and reads the whole 3.5M-row table to decorate a handful of
+    // ledger rows.
+    expect(SCOPED_PUBLISHED_JOIN_SQL).toContain(
+      "WHERE company_id IN (SELECT company_id FROM corpscout.se_company_info_correction)",
+    );
+    expect(SCOPED_PUBLISHED_JOIN_SQL).toContain("FROM corpscout.se_company_info FINAL");
     // correction_ids is Array(UUID): a LEFT JOIN miss defaults it to [], so
     // has() needs no ifNull -- only the FixedString evidence_set_hash does.
     expect(CORRECTION_STATUS_EXPR).toContain("has(p.correction_ids, c.correction_id)");
     expect(CORRECTION_STATUS_EXPR).toContain("ifNull(toString(p.evidence_set_hash), '')");
     expect(CORRECTION_STATUS_EXPR).toContain("{zeroHash:String}");
     expect(CORRECTION_STATUS_EXPR).not.toContain("ifNull(p.correction_ids");
+  });
+
+  it("evaluates multiIf branches in precedence order: undone, then applied, then stale, then the pending default", () => {
+    const undoneIdx = CORRECTION_STATUS_EXPR.indexOf("'undone'");
+    const appliedIdx = CORRECTION_STATUS_EXPR.indexOf("'applied'");
+    const staleIdx = CORRECTION_STATUS_EXPR.indexOf("'stale'");
+    const pendingIdx = CORRECTION_STATUS_EXPR.indexOf("'pending'");
+    for (const idx of [undoneIdx, appliedIdx, staleIdx, pendingIdx]) {
+      expect(idx).toBeGreaterThan(-1);
+    }
+    expect(undoneIdx).toBeLessThan(appliedIdx);
+    expect(appliedIdx).toBeLessThan(staleIdx);
+    expect(staleIdx).toBeLessThan(pendingIdx);
   });
 });
 
@@ -246,8 +298,9 @@ describe("listSeCompanyInfoCorrectionsPage", () => {
     expect(rowsSql).toContain("ORDER BY c.created_at DESC, c.correction_id DESC");
     expect(rowsSql).toContain(PAGE_LIMIT_OFFSET_SQL);
     // The CTE's own WHERE (scoping it to rows that supersede something,
-    // indented inside the WITH clause) is always present; it's the *outer*,
-    // unindented filter clause that must be absent when no list filter is set.
+    // indented inside the WITH clause) and the scoped join's own subquery
+    // WHERE are always present; it's the *outer*, unindented filter clause
+    // that must be absent when no list filter is set.
     expect(rowsSql).not.toContain("\nWHERE ");
     expect(rowsParams).toEqual({ zeroHash: ZERO_EVIDENCE_HASH, limit: 50, offset: 0 });
 

@@ -19,6 +19,23 @@ export const SE_INFO_CORRECTION_KINDS = [
 
 export type SeInfoCorrectionKind = (typeof SE_INFO_CORRECTION_KINDS)[number];
 
+/**
+ * A correction ledger row's status relative to the published row, as the
+ * `/admin/se/company-info/corrections` list computes it in SQL
+ * (`CORRECTION_STATUS_EXPR` in se-company-info-lists.server.ts). Declared
+ * here (client-safe) rather than in that `.server` module so the list's
+ * `<Select>` filter can import the value set directly instead of keeping a
+ * second copy.
+ */
+export const SE_INFO_CORRECTION_STATUSES = [
+  "pending",
+  "applied",
+  "stale",
+  "undone",
+] as const;
+
+export type SeInfoCorrectionStatus = (typeof SE_INFO_CORRECTION_STATUSES)[number];
+
 export class SeInfoCorrectionValidationError extends Error {
   constructor(message: string) {
     super(message);

@@ -17,19 +17,17 @@ import type {
   SeCompanyInfoCorrectionListRow,
   SeInfoCorrectionStatus,
 } from "~/lib/se-company-info-lists.server";
-import { SE_INFO_CORRECTION_KINDS } from "~/lib/se-info-corrections";
+import {
+  SE_INFO_CORRECTION_KINDS,
+  SE_INFO_CORRECTION_STATUSES,
+} from "~/lib/se-info-corrections";
 
-// Mirrors SE_INFO_CORRECTION_STATUSES in se-company-info-lists.server.ts.
-// Kept as a local literal, not an import, because a route component may not
-// pull a value -- only a type -- out of a `.server` module (see CLAUDE.md):
-// react-router's build strips server-only modules from the client bundle
-// entirely.
-const SE_INFO_CORRECTION_STATUSES: readonly SeInfoCorrectionStatus[] = [
-  "pending",
-  "applied",
-  "stale",
-  "undone",
-];
+/** Sentinel `<Select>` value for "no filter" -- see se-company-info-table.tsx's
+ * identical constant for why an explicit, selectable "Any" needs a non-""
+ * value. Never submitted as a meaningful filter: buildCorrectionsListFilter's
+ * whitelist checks against SE_INFO_CORRECTION_KINDS/SE_INFO_CORRECTION_STATUSES
+ * already exclude anything else, "any" included. */
+const ANY = "any";
 
 export interface SeCompanyInfoCorrectionsTableFilters {
   companyId: string;
@@ -162,13 +160,23 @@ function Field({ label, children }: { label: string; children: React.ReactNode }
   );
 }
 
-function FilterForm({ filters }: { filters: SeCompanyInfoCorrectionsTableFilters }) {
+function FilterForm({
+  filters,
+  pageSize,
+}: {
+  filters: SeCompanyInfoCorrectionsTableFilters;
+  pageSize: number;
+}) {
   return (
     <Form
       key={JSON.stringify(filters)}
       method="get"
       className="flex flex-wrap items-end gap-3"
     >
+      {/* A filter change resets `page` (deliberately -- no hidden field for
+       * it) but must not silently reset the reviewer's chosen page size back
+       * to the default. */}
+      <input type="hidden" name="pageSize" value={pageSize} />
       <Field label="Company id">
         <Input
           name="companyId"
@@ -178,11 +186,12 @@ function FilterForm({ filters }: { filters: SeCompanyInfoCorrectionsTableFilters
         />
       </Field>
       <Field label="Kind">
-        <Select name="kind" defaultValue={filters.kind === "" ? undefined : filters.kind}>
+        <Select name="kind" defaultValue={filters.kind === "" ? ANY : filters.kind}>
           <SelectTrigger className="w-44" size="sm">
-            <SelectValue placeholder="Any" />
+            <SelectValue />
           </SelectTrigger>
           <SelectContent>
+            <SelectItem value={ANY}>Any</SelectItem>
             {SE_INFO_CORRECTION_KINDS.map((kind) => (
               <SelectItem key={kind} value={kind}>
                 {kind}
@@ -192,11 +201,12 @@ function FilterForm({ filters }: { filters: SeCompanyInfoCorrectionsTableFilters
         </Select>
       </Field>
       <Field label="Status">
-        <Select name="status" defaultValue={filters.status === "" ? undefined : filters.status}>
+        <Select name="status" defaultValue={filters.status === "" ? ANY : filters.status}>
           <SelectTrigger className="w-32" size="sm">
-            <SelectValue placeholder="Any" />
+            <SelectValue />
           </SelectTrigger>
           <SelectContent>
+            <SelectItem value={ANY}>Any</SelectItem>
             {SE_INFO_CORRECTION_STATUSES.map((status) => (
               <SelectItem key={status} value={status}>
                 {status}
@@ -235,7 +245,7 @@ export function SeCompanyInfoCorrectionsTable({
 }) {
   return (
     <div className="flex flex-col gap-4">
-      <FilterForm filters={filters} />
+      <FilterForm filters={filters} pageSize={pageSize} />
       <DataTable
         columns={COLUMNS}
         data={rows}

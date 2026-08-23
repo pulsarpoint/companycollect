@@ -75,14 +75,17 @@ describe("SeCompanyInfoTable", () => {
     expect(html).toContain("llm");
     expect(html).toContain("llm, scb");
     expect(html).toContain("Alpha builds payment software.");
-    expect(html).toContain("yes");
-    expect(html).toContain("2");
+    // Scoped to the suggestion/corrections cells' own markup, not a bare
+    // "yes"/"2" that could trivially match unrelated text elsewhere on the
+    // page (a date, a class name, an "Any" option, ...).
+    expect(html).toContain(">yes<");
+    expect(html).toContain('<span class="tabular-nums">2</span>');
     expect(html).toContain("2026-08-22 09:00:00.000");
   });
 
-  it("shows the no-suggestion row as \"no\"", () => {
+  it("shows the no-suggestion row's badge as \"no\"", () => {
     const html = render({ rows: [{ ...ROW, has_suggestion: 0 }] });
-    expect(html).toContain("no");
+    expect(html).toContain(">no<");
   });
 
   it("renders the counts strip from the SAME filtered counts, not recomputed", () => {
@@ -118,6 +121,21 @@ describe("SeCompanyInfoTable", () => {
     expect(html).toContain('name="multi"');
     expect(html).toContain('name="corrected"');
     expect(html).toContain('checked=""');
+  });
+
+  it("carries the current pageSize as a hidden field, so submitting a filter doesn't silently reset it", () => {
+    const html = render({ pageSize: 100 });
+    expect(html).toContain('type="hidden" name="pageSize" value="100"');
+  });
+
+  it("offers an explicit \"Any\" option on the source and entity selects, selected when no filter is set", () => {
+    const html = render();
+    // Base UI's Select can't take "" as a real item value (reserved for the
+    // unselected/placeholder state), so "Any" is a real, selectable item
+    // with a sentinel value -- and it's what's selected by default when no
+    // filter is applied.
+    expect(html).toContain('name="source" value="any"');
+    expect(html).toContain('name="entity" value="any"');
   });
 
   it("renders an empty state when no rows match", () => {

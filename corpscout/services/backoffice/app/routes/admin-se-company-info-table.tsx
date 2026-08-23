@@ -1,5 +1,6 @@
 import type { Route } from "./+types/admin-se-company-info-table";
 import { SeCompanyInfoTable } from "~/components/admin/se-company-info-table";
+import { clampPage, clampPageSize, DEFAULT_PAGE_SIZE } from "~/lib/paging";
 import {
   listSeCompanyInfoPage,
   loadSeCompanyInfoCounts,
@@ -9,10 +10,6 @@ import {
 // Only `loader`, `meta` and the component live here -- any other export that
 // touched `~/lib/*.server` would keep that module in the client bundle and
 // break the production build (see CLAUDE.md).
-
-function clampPageSize(value: number): number {
-  return Math.min(200, Math.max(10, value));
-}
 
 function parseFilters(url: URL): SeCompanyInfoListFilters {
   const q = (name: string) => url.searchParams.get(name) ?? "";
@@ -30,17 +27,21 @@ function parseFilters(url: URL): SeCompanyInfoListFilters {
 export async function loader({ request }: Route.LoaderArgs) {
   const url = new URL(request.url);
   const filters = parseFilters(url);
-  const page = Math.max(1, Number.parseInt(url.searchParams.get("page") || "1", 10) || 1);
+  const page = clampPage(Number.parseInt(url.searchParams.get("page") || "1", 10));
   const pageSize = clampPageSize(
-    Number.parseInt(url.searchParams.get("pageSize") || "50", 10) || 50,
+    Number.parseInt(url.searchParams.get("pageSize") || String(DEFAULT_PAGE_SIZE), 10),
   );
 
   const [listPage, counts] = await Promise.all([
     listSeCompanyInfoPage({ ...filters, page, pageSize }),
     loadSeCompanyInfoCounts(filters),
   ]);
+  // listSeCompanyInfoPage no longer runs its own count() -- the table's
+  // pagination total is the sum of the counts strip's by-source breakdown,
+  // which shares this exact WHERE and is already loaded above for the strip.
+  const total = counts.bySource.reduce((sum, entry) => sum + entry.count, 0);
 
-  return { listPage, counts, filters, page, pageSize };
+  return { listPage, counts, total, filters, page, pageSize };
 }
 
 export function meta() {
@@ -48,7 +49,7 @@ export function meta() {
 }
 
 export default function AdminSeCompanyInfoTable({ loaderData }: Route.ComponentProps) {
-  const { listPage, counts, filters, page, pageSize } = loaderData;
+  const { listPage, counts, total, filters, page, pageSize } = loaderData;
   return (
     <div className="flex flex-1 flex-col gap-6 p-4 md:p-6">
       <header className="flex flex-col gap-2">
@@ -61,7 +62,7 @@ export default function AdminSeCompanyInfoTable({ loaderData }: Route.ComponentP
       </header>
       <SeCompanyInfoTable
         rows={listPage.rows}
-        total={listPage.total}
+        total={total}
         page={page}
         pageSize={pageSize}
         counts={counts}
