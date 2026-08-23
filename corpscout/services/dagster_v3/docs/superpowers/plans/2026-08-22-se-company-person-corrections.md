@@ -17,7 +17,7 @@
 - Corrections reference `person_id` / `draft_id` only — never names.
 - Precedence for a field: correction > approved or current suggestion > deterministic. Kind application order: `merge_persons`, `reassign_draft`, `split_person`, `approve_suggestion`, `reject_suggestion`, `override_field`, then `set_role`, `remove_role`. `undo` rows only supersede; they are never applied themselves.
 - A stale correction (spec §4.3) is never applied, never deleted, always counted in asset metadata.
-- `decided_by = 'backoffice'`; the backoffice writes only through `CLICKHOUSE_WRITE_USER` (role `corpscout_person_correction_writer`), which gets INSERT on the two new tables and nothing else.
+- `decided_by = 'backoffice'`; the backoffice writes with the shared `CLICKHOUSE_USER` (amended 2026-08-23: no separate writer user); the role `corpscout_person_correction_writer` still gets INSERT on the two new tables for any future least-privilege account.
 - Multi-source companies still auto-publish model output when no correction exists (review is an override, not a gate).
 - Hash conventions: `correction_set_hash` = `lower(hex(SHA256(arrayStringConcat(arraySort(arrayMap(id -> toString(id), ids)), '\n'))))` — sorted *strings*, so Python can reproduce it with `sorted(str(id) ...)`. `evidence_hash` is the published `se_company_person.draft_set_hash` read from ClickHouse; Python never recomputes `draft_set_hash`.
 - Dagster: no `from __future__ import annotations` in defs modules; `uv run` for every command; `uv run dg check defs` green before each commit. Python 3.14.

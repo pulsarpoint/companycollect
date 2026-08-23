@@ -23,19 +23,19 @@ describe("person correction ClickHouse writer", () => {
     clickhouse.insert.mockReset();
   });
 
-  it("fails closed without dedicated writer credentials", async () => {
-    vi.stubEnv("CLICKHOUSE_WRITE_USER", "");
-    vi.stubEnv("CLICKHOUSE_WRITE_PASSWORD", "");
+  it("fails closed without ClickHouse credentials", async () => {
+    vi.stubEnv("CLICKHOUSE_USER", "");
+    vi.stubEnv("CLICKHOUSE_PASSWORD", "");
 
     await expect(
       chInsertPersonCorrections([{ correction_id: "test" }]),
-    ).rejects.toThrow("dedicated ClickHouse writer credentials");
+    ).rejects.toThrow("CLICKHOUSE_USER and CLICKHOUSE_PASSWORD");
     expect(clickhouse.createClient).not.toHaveBeenCalled();
   });
 
-  it("uses dedicated credentials and the correction ledger only", async () => {
-    vi.stubEnv("CLICKHOUSE_WRITE_USER", "correction_writer");
-    vi.stubEnv("CLICKHOUSE_WRITE_PASSWORD", "writer-secret");
+  it("uses the shared credentials and the correction ledger only", async () => {
+    vi.stubEnv("CLICKHOUSE_USER", "correction_writer");
+    vi.stubEnv("CLICKHOUSE_PASSWORD", "writer-secret");
     clickhouse.createClient.mockReturnValue({ insert: clickhouse.insert });
     clickhouse.insert.mockResolvedValue(undefined);
 
@@ -64,8 +64,8 @@ describe("person correction ClickHouse writer", () => {
   });
 
   it("writes domain reviews only to the unified company domains table", async () => {
-    vi.stubEnv("CLICKHOUSE_WRITE_USER", "correction_writer");
-    vi.stubEnv("CLICKHOUSE_WRITE_PASSWORD", "writer-secret");
+    vi.stubEnv("CLICKHOUSE_USER", "correction_writer");
+    vi.stubEnv("CLICKHOUSE_PASSWORD", "writer-secret");
     clickhouse.createClient.mockReturnValue({ insert: clickhouse.insert });
     clickhouse.insert.mockResolvedValue(undefined);
 
@@ -80,8 +80,8 @@ describe("person correction ClickHouse writer", () => {
   });
 
   it("writes Sweden company-person corrections with the writer client", async () => {
-    vi.stubEnv("CLICKHOUSE_WRITE_USER", "correction_writer");
-    vi.stubEnv("CLICKHOUSE_WRITE_PASSWORD", "writer-secret");
+    vi.stubEnv("CLICKHOUSE_USER", "correction_writer");
+    vi.stubEnv("CLICKHOUSE_PASSWORD", "writer-secret");
     clickhouse.createClient.mockReturnValue({ insert: clickhouse.insert });
     clickhouse.insert.mockResolvedValue(undefined);
 
@@ -95,8 +95,8 @@ describe("person correction ClickHouse writer", () => {
   });
 
   it("writes Sweden company-info corrections with the writer client", async () => {
-    vi.stubEnv("CLICKHOUSE_WRITE_USER", "correction_writer");
-    vi.stubEnv("CLICKHOUSE_WRITE_PASSWORD", "writer-secret");
+    vi.stubEnv("CLICKHOUSE_USER", "correction_writer");
+    vi.stubEnv("CLICKHOUSE_PASSWORD", "writer-secret");
     clickhouse.createClient.mockReturnValue({ insert: clickhouse.insert });
     clickhouse.insert.mockResolvedValue(undefined);
 

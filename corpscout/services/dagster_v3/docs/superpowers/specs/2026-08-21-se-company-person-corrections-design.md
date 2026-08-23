@@ -133,8 +133,9 @@ GRANT INSERT ON corpscout.se_company_person_correction TO corpscout_person_corre
 GRANT INSERT ON corpscout.se_company_person_enrichment_observation TO corpscout_person_correction_writer;
 ```
 
-The backoffice writer account (`CLICKHOUSE_WRITE_USER`, provisioned by
-`pnpm provision:clickhouse-writer`) already holds this role; no new credentials. Dagster
+The backoffice writes with the same ClickHouse account as the Dagster pipelines
+(`CLICKHOUSE_USER`/`CLICKHOUSE_PASSWORD`; owner decision 2026-08-23 — no separate writer
+user). The role stays defined for any future least-privilege account. Dagster
 writes both tables with its own account.
 
 ## 3. Correction kinds

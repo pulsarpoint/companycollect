@@ -26,11 +26,14 @@ function getReadClient(): ClickHouseClient {
 
 function getWriteClient(): ClickHouseClient {
   if (!writeClient) {
-    const username = process.env.CLICKHOUSE_WRITE_USER?.trim() ?? "";
-    const password = process.env.CLICKHOUSE_WRITE_PASSWORD ?? "";
+    // Same account as the read client and as the Dagster pipelines (owner
+    // decision 2026-08-23: one ClickHouse credential set, no separate writer
+    // user). Writes still fail closed when no password is configured.
+    const username = process.env.CLICKHOUSE_USER?.trim() ?? "";
+    const password = process.env.CLICKHOUSE_PASSWORD ?? "";
     if (!username || !password) {
       throw new Error(
-        "Backoffice writes require dedicated ClickHouse writer credentials.",
+        "Backoffice writes require CLICKHOUSE_USER and CLICKHOUSE_PASSWORD.",
       );
     }
     writeClient = createClient({
