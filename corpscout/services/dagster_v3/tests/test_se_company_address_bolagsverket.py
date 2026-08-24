@@ -7,6 +7,7 @@ import pytest
 
 from dagster_v3.defs.se_company.bolagsverket import (
     SE_COMPANY_ADDRESS_BOLAGSVERKET_COLUMNS,
+    SE_COMPANY_ADDRESS_BOLAGSVERKET_SOURCE_COUNT_SQL,
     SE_COMPANY_ADDRESS_BOLAGSVERKET_SQL,
     se_company_address_bolagsverket_clickhouse,
 )
@@ -112,6 +113,13 @@ class _FakeClickhouse:
 
 
 def test_the_tripwire_passes_when_the_source_count_matches_staged() -> None:
+    """The tripwire count must apply every filter the main SELECT applies EXCEPT the
+    address_type pin -- that pin is exactly the invariant being measured, so repeating
+    it in the tripwire would make the two counts agree by construction and never
+    catch a second address_type (or a renamed one) slipping in upstream."""
+    assert "addresses.address_type = 'postal'" in SE_COMPANY_ADDRESS_BOLAGSVERKET_SQL
+    assert "address_type" not in SE_COMPANY_ADDRESS_BOLAGSVERKET_SOURCE_COUNT_SQL
+
     client = _FakeClient(
         existing_tables={"se_company_addresses_current", "se_company_address_bolagsverket"},
         # staged/invalid, existing, anti-join(inserted), total, tripwire source count
@@ -125,10 +133,12 @@ def test_the_tripwire_passes_when_the_source_count_matches_staged() -> None:
 
 
 def test_the_tripwire_raises_naming_both_counts_on_mismatch() -> None:
-    """I2: reproduces the reviewer's scenario -- the independently recounted source
-    rows do not match what got staged (e.g. a second address_type slipped past the
-    WHERE pin and ReplacingMergeTree silently collapsed it at stage-write time). No
-    ClickHouse error surfaces for that on its own; only this recount catches it."""
+    """I2: reproduces the reviewer's scenario -- the type-agnostic recount of source
+    rows does not match what got staged under the pinned type (e.g. a second
+    address_type slipped in under the same source_record_uid and ReplacingMergeTree
+    silently collapsed one of them at stage-write time, or the upstream literal was
+    renamed and the pinned SELECT now matches nothing). No ClickHouse error surfaces
+    for that on its own; only this recount catches it."""
     client = _FakeClient(
         existing_tables={"se_company_addresses_current", "se_company_address_bolagsverket"},
         answers=[[(5, 0)], [(10,)], [(3,)], [(13,)], [(7,)]],

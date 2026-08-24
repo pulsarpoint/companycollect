@@ -262,13 +262,22 @@ WHERE source_record_uid != ''""".replace(
 # table, independently of anything publish_with_stage's stage table may already have
 # collapsed. Compared against PublishCounts.staged (the row count observed on the stage
 # right after the SELECT above ran) once the asset's publish call returns; a mismatch
-# means the source held more matching rows than made it into the stage -- exactly the
-# silent-collapse scenario the reviewer reproduced -- and is worth failing the run over
-# rather than logging and moving on.
+# means the source held a different number of matching rows than made it into the stage
+# -- exactly the silent-collapse scenario the reviewer reproduced -- and is worth
+# failing the run over rather than logging and moving on.
+#
+# Deliberately NOT filtered on address_type: that pin is the invariant this tripwire
+# measures, so repeating it here would make the count agree with the pinned SELECT by
+# construction -- blind to a second address_type appearing under the same
+# source_record_uid (ReplacingMergeTree collapses it either way, both counts would read
+# the same lower number) and blind to the literal itself being renamed upstream (both
+# counts would read zero). The tripwire counts every row this source actually holds;
+# the pinned SELECT counts only the one type it expects. Under today's guaranteed
+# one-type-per-source invariant the two agree, so no false positives -- a second type or
+# a renamed type makes them disagree.
 SE_COMPANY_ADDRESS_SCB_SOURCE_COUNT_SQL = """SELECT count()
 FROM corpscout.se_company_addresses_current AS addresses
 WHERE addresses.source = %(source)s
-  AND addresses.address_type = %(address_type)s
   AND addresses.has_address = 1
   AND match(addresses.company_id, '{SE_COMPANY_ID_PATTERN}')
   AND addresses.source_record_uid != ''""".replace(
@@ -310,7 +319,7 @@ def se_company_address_scb_clickhouse(
         source_count = int(
             client.execute(
                 SE_COMPANY_ADDRESS_SCB_SOURCE_COUNT_SQL,
-                {"source": ADDRESS_SOURCE, "address_type": ADDRESS_TYPE},
+                {"source": ADDRESS_SOURCE},
             )[0][0]
         )
     context.log.info(
