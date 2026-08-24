@@ -22,7 +22,7 @@
 - **ClickHouse 26.5 rules.** Project columns explicitly, never `SELECT alias.*` after a second `USING` join. Guard every LEFT-JOIN miss of a **Nullable** column with `ifNull(...)`; gate every **non-Nullable** joined column behind a hit flag computed as `ifNull(<run id column>, '') != ''` — a bare `!= ''` is NULL under `join_use_nulls = 1`, and a bare read is the column's *type default* (0, 1970-01-01) under `join_use_nulls = 0`, which is exactly the Task 18 lesson the backoffice address query already carries in its own comment. Named parameters only (`%(name)s` in Dagster SQL, `{name:Type}` in backoffice SQL). No `;` inside `--` comments.
 - **Executed-SQL harness is a phase gate.** Every SQL constant this plan adds runs in `clickhouse-local` on the Docker 26.5 image, under BOTH `join_use_nulls = 0` and `join_use_nulls = 1`, and both settings must answer identically. Substring tests do not close phase 3.
 - **Dagster.** No `from __future__ import annotations`; `uv run` for every command from `corpscout/services/dagster_v3`; `uv run dg check defs` green and `uv run ruff check` clean before each commit.
-- **Migrations.** First line `CREATE DATABASE IF NOT EXISTS corpscout;` (grant-only migrations exempt), a `.down.sql` twin for every migration, registered in `EXPECTED_MIGRATIONS` / `EXPECTED_ACCESS_MIGRATIONS` in `tests/test_clickhouse_migrations.py`, and compatible with the DDL replay in `tests/se_company_ddl.py` (one clause per line; `ADD COLUMN … AFTER <column>` ends its line). Next numbers: **000307** (tables), **000308** (grants), **000309** (retirements, phase 8 only).
+- **Migrations.** First line `CREATE DATABASE IF NOT EXISTS corpscout;` (grant-only migrations exempt), a `.down.sql` twin for every migration, registered in `EXPECTED_MIGRATIONS` / `EXPECTED_ACCESS_MIGRATIONS` in `tests/test_clickhouse_migrations.py`, and compatible with the DDL replay in `tests/se_company_ddl.py` (one clause per line; `ADD COLUMN … AFTER <column>` ends its line). Next numbers: **000307** (tables), **000308** (grants), and for retirements (phase 8 only) the next free number (000312 at time of writing — esef took 000309–000311; re-check `ls corpscout/clickhouse/migrations | tail -1` before creating).
 - **Backoffice.** Named ClickHouse params only; route components never import values from `~/lib/*.server`; gates before each commit are `pnpm typecheck`, `npx react-router build`, and `rg -l clickhouse build/client` returning nothing. Run vitest **filtered to the files this plan touches** (`npx vitest run tests/<file> …`) — never unfiltered. `app/routes.ts`, `app/components/admin/admin-sidebar.tsx` and `app/routes/admin-layout.tsx` are tracked (committed cd1fcc00): edit AND commit them by explicit path like any other file.
 - **Commits** by explicit path only (the shared tree carries unrelated uncommitted work), with the trailer `Co-Authored-By: Claude Fable 5 <noreply@anthropic.com>`.
 - **Production is controller-only.** Applying migrations, deploying Dagster, launching backfills, starting the sensor/schedule and applying the retirement migration are Tasks 10a–10e and are marked **(controller)**. An implementing agent stops at the end of its phase and reports.
@@ -39,7 +39,7 @@
 | **5 — Initial load** *(controller)* | Task 10c | artifacts backfilled, final resolved for every company | artifact counts equal the per-source source counts; final rows ≥ companies; geocode coverage ≈ 2.09M identities; a second run is quiet |
 | **6 — Backoffice** | Tasks 7–8 | validator, writer, server module, Address tab with corrections, ledger list page | needs only phase 2; may run in parallel with phases 3–5 |
 | **7 — Switch on + e2e** *(controller)* | Task 10d | sensor + weekly schedule RUNNING; override / reject / undo verified on a real company | closes the datatype |
-| **8 — Retirements** *(controller-gated, LAST)* | Task 9 → Task 10e | migration 000309 drops `se_company_addresses_canonical_current` and `se_company_address_display_current`; dbt model removed | each drop carries a fresh `rg` zero-reader proof and a row-count snapshot in the migration comment |
+| **8 — Retirements** *(controller-gated, LAST)* | Task 9 → Task 10e | retirement migration (the next free number — 000312 at time of writing — esef took 000309–000311; re-check `ls corpscout/clickhouse/migrations | tail -1` before creating) drops `se_company_addresses_canonical_current` and `se_company_address_display_current`; dbt model removed | each drop carries a fresh `rg` zero-reader proof and a row-count snapshot in the migration comment |
 
 ---
 
@@ -3100,14 +3100,14 @@ git commit -m "feat(backoffice): address review UI and the address correction le
 
 ---
 
-### Task 9 (Phase 8): Retirement migration 000309 with inline zero-reader gates
+### Task 9 (Phase 8): Retirement migration (the next free number — 000312 at time of writing — esef took 000309–000311; re-check `ls corpscout/clickhouse/migrations | tail -1` before creating) with inline zero-reader gates
 
 **Do not start this task before Phase 7 has closed.** It is written last, reviewed by the controller, and applied by the controller (Task 10e). Its whole safety argument is that the final has been serving for a while and the tables below have no reader left.
 
 Two tables retire: `se_company_addresses_canonical_current` (the per-company canonical merge) and `se_company_address_display_current` (+ its dbt build model, whose geocode columns were never wired to anything). The legacy geocoder pair (`se_company_address_geocodes`, `se_company_address_geocode_results`) and the whole shared-identity chain (`se_addresses_current`, links, members, `se_address_geocodes_current`) **STAY** — the chain is the geocode augmentation source, and the legacy pair is the parity baseline the owner decides about separately.
 
 **Files:**
-- Create: `corpscout/clickhouse/migrations/000309_corpscout_retire_se_address_serving_tables.up.sql`, `.down.sql`
+- Create: `corpscout/clickhouse/migrations/<NNNNNN>_corpscout_retire_se_address_serving_tables.up.sql`, `.down.sql` (`<NNNNNN>` = the next free number — 000312 at time of writing — esef took 000309–000311; re-check `ls corpscout/clickhouse/migrations | tail -1` before creating)
 - Modify: `corpscout/services/dagster_v3/src/dagster_v3/defs/company_serving/tables.py` (remove the `ADDRESSES` `CurrentTable`)
 - Modify: `corpscout/services/dagster_v3/src/dagster_v3/defs/company_serving/dbt/models/company_section_presence_current_build.sql` (its `addresses` branch `ref`s the model being deleted)
 - Modify: `corpscout/services/dagster_v3/src/dagster_v3/defs/company_serving/dbt/models/schema.yml`
@@ -3162,7 +3162,7 @@ UNION ALL SELECT 'display', count() FROM corpscout.se_company_address_display_cu
 UNION ALL SELECT 'final_live', count() FROM corpscout.se_company_address FINAL WHERE is_current;
 ```
 
-- [ ] **Step 4: Write migration 000309**
+- [ ] **Step 4: Write the retirement migration** (the next free number — 000312 at time of writing — esef took 000309–000311; re-check `ls corpscout/clickhouse/migrations | tail -1` before creating)
 
 ```sql
 CREATE DATABASE IF NOT EXISTS corpscout;
@@ -3202,7 +3202,7 @@ DROP TABLE IF EXISTS corpscout.se_company_addresses_canonical_current;
 
 - [ ] **Step 5: Register and run the suite**
 
-Append `"000309_corpscout_retire_se_address_serving_tables",` to `EXPECTED_MIGRATIONS`. Then:
+Append `"<NNNNNN>_corpscout_retire_se_address_serving_tables",` (`<NNNNNN>` = the next free number — 000312 at time of writing — esef took 000309–000311; re-check `ls corpscout/clickhouse/migrations | tail -1` before creating) to `EXPECTED_MIGRATIONS`. Then:
 
 ```bash
 cd corpscout/services/dagster_v3
@@ -3215,8 +3215,10 @@ cd ../backoffice && npx vitest run tests/company-serving-sections.test.ts && pnp
 - [ ] **Step 6: Commit** (the migration is applied by the controller in Task 10e, not here)
 
 ```bash
-git add corpscout/clickhouse/migrations/000309_corpscout_retire_se_address_serving_tables.up.sql \
-        corpscout/clickhouse/migrations/000309_corpscout_retire_se_address_serving_tables.down.sql \
+# <NNNNNN> = the next free migration number (000312 at time of writing —
+# esef took 000309-000311; re-check `ls corpscout/clickhouse/migrations | tail -1` before creating)
+git add corpscout/clickhouse/migrations/<NNNNNN>_corpscout_retire_se_address_serving_tables.up.sql \
+        corpscout/clickhouse/migrations/<NNNNNN>_corpscout_retire_se_address_serving_tables.down.sql \
         corpscout/services/dagster_v3/src/dagster_v3/defs/company_serving/tables.py \
         corpscout/services/dagster_v3/src/dagster_v3/defs/company_serving/dbt/models/company_section_presence_current_build.sql \
         corpscout/services/dagster_v3/src/dagster_v3/defs/company_serving/dbt/models/schema.yml \
@@ -3289,7 +3291,7 @@ The artifact assets only copy from `corpscout.se_company_addresses_current`, whi
 
 - [ ] Re-run Task 9 Step 1's `rg` commands one final time; confirm the migration's comment still matches reality.
 - [ ] Deploy the code change (Task 9) FIRST, so nothing reads the tables at the moment they go.
-- [ ] Apply **000309**. Watch for ~10 minutes: `UNDROP TABLE` is available for about 480 seconds.
+- [ ] Apply the retirement migration (the next free number — 000312 at time of writing — esef took 000309–000311; re-check `ls corpscout/clickhouse/migrations | tail -1` before creating). Watch for ~10 minutes: `UNDROP TABLE` is available for about 480 seconds.
 - [ ] Verify `SELECT name FROM system.tables WHERE database = 'corpscout' AND name IN ('se_company_addresses_canonical_current', 'se_company_address_display_current')` returns nothing, and that the company page's addresses section still renders.
 
 ---
