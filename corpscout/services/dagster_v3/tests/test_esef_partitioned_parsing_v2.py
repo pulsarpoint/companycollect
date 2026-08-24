@@ -6,8 +6,10 @@ from pathlib import Path
 import duckdb
 from dagster import AssetKey
 
+from dagster_v3.defs.esef_filings import tables
 from dagster_v3.defs.esef_filings.partitioned_assets import (
     ESEF_PARSING_V2_ASSETS,
+    build_facts_partition_database,
 )
 from dagster_v3.defs.esef_filings.partitioned_publish import (
     ESEF_PARSING_V2_CLICKHOUSE_ASSETS,
@@ -47,10 +49,7 @@ EXPECTED_CLICKHOUSE_DEPENDENCIES = {
 
 
 def test_v2_duckdb_assets_are_independent_artifact_projections() -> None:
-    assets_by_name = {
-        asset.key.path[-1]: asset
-        for asset in ESEF_PARSING_V2_ASSETS
-    }
+    assets_by_name = {asset.key.path[-1]: asset for asset in ESEF_PARSING_V2_ASSETS}
 
     assert set(assets_by_name) == EXPECTED_DUCKDB_ASSETS
     assert len({asset.op.pool for asset in assets_by_name.values()}) == 5
@@ -65,8 +64,7 @@ def test_v2_duckdb_assets_are_independent_artifact_projections() -> None:
 
 def test_v2_clickhouse_assets_publish_only_their_matching_duckdb_output() -> None:
     assets_by_name = {
-        asset.key.path[-1]: asset
-        for asset in ESEF_PARSING_V2_CLICKHOUSE_ASSETS
+        asset.key.path[-1]: asset for asset in ESEF_PARSING_V2_CLICKHOUSE_ASSETS
     }
 
     assert set(assets_by_name) == set(EXPECTED_CLICKHOUSE_DEPENDENCIES)
@@ -74,9 +72,7 @@ def test_v2_clickhouse_assets_publish_only_their_matching_duckdb_output() -> Non
 
     for asset_name, duckdb_asset_name in EXPECTED_CLICKHOUSE_DEPENDENCIES.items():
         asset = assets_by_name[asset_name]
-        assert asset.asset_deps[AssetKey(asset_name)] == {
-            AssetKey(duckdb_asset_name)
-        }
+        assert asset.asset_deps[AssetKey(asset_name)] == {AssetKey(duckdb_asset_name)}
         assert asset.partitions_def is ESEF_PROCESSED_WEEK_PARTITIONS
         assert asset.backfill_policy.max_partitions_per_run == 1
 
@@ -136,6 +132,54 @@ def test_source_document_projection_writes_atomic_completed_partition(
     assert (expected_rows, actual_rows) == (1, 1)
 
 
+def test_empty_facts_partition_initializes_a_new_duckdb_before_checkpoint_read(
+    tmp_path: Path,
+) -> None:
+    partition_key = "2025-03-30"
+    result = {
+        "schema_version": 3,
+        "processed_week": partition_key,
+        "source_run_id": "artifact-run",
+        "extracted_at": "2025-04-01T00:00:00Z",
+        "source_document_ids": [],
+        "document_rows": [],
+        "candidate_rows": [],
+        "concept_label_rows": [],
+        "metadata": {},
+    }
+    object_store = _FakeObjectStore(
+        {
+            (
+                ESEF_DOCUMENT_BUCKET,
+                document_result_object_key(partition_key),
+            ): json.dumps(result).encode(),
+        }
+    )
+    target_path = tmp_path / "facts.duckdb"
+
+    metadata = build_facts_partition_database(
+        object_store=object_store,
+        partition_key=partition_key,
+        source_run_id="facts-run",
+        log_info=lambda *_args: None,
+        log_warning=lambda *_args: None,
+        target_path=target_path,
+    )
+
+    assert metadata["row_count"] == 0
+    assert target_path.exists()
+    with duckdb.connect(str(target_path), read_only=True) as connection:
+        [(actual_rows,)] = connection.execute(
+            f"select count(*) from {tables.QUALIFIED_FACTS_TABLE}"
+        ).fetchall()
+        [(expected_rows, status_rows)] = connection.execute(
+            f"select expected_row_count, actual_row_count "
+            f"from {QUALIFIED_PARTITION_STATUS_TABLE}"
+        ).fetchall()
+    assert actual_rows == 0
+    assert (expected_rows, status_rows) == (0, 0)
+
+
 def test_esef_v2_migration_creates_five_weekly_partitioned_tables() -> None:
     migration_path = (
         Path(__file__).resolve().parents[3]
@@ -143,11 +187,24 @@ def test_esef_v2_migration_creates_five_weekly_partitioned_tables() -> None:
         / "migrations"
         / "000309_corpscout_esef_parsing_v2.up.sql"
     )
-    migration_sql = migration_path.read_text()
+    migration_sql = migration_path.read_text(encoding="utf-8")
 
     assert migration_sql.count("CREATE TABLE IF NOT EXISTS corpscout.esef_") == 5
     assert migration_sql.count("PARTITION BY processed_week") == 5
     assert migration_sql.count("processed_week") >= 15
+
+
+def test_esef_v2_label_uid_default_converts_fixed_string_before_lowering() -> None:
+    migration_path = (
+        Path(__file__).resolve().parents[3]
+        / "clickhouse"
+        / "migrations"
+        / "000310_corpscout_esef_concept_label_uid_default.up.sql"
+    )
+
+    migration_sql = migration_path.read_text(encoding="utf-8")
+
+    assert "lowerUTF8(toString(package_sha256))" in migration_sql
 
 
 def _projection_row(projection: ResultProjection) -> dict[str, object]:

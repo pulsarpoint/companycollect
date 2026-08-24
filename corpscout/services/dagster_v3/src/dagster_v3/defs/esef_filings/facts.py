@@ -44,7 +44,9 @@ from datetime import date, timedelta
 from typing import Any
 
 from dagster_v3.defs.esef_filings import tables
-from dagster_v3.defs.esef_filings.artifact_contract import ARTIFACT_SCHEMA_VERSION
+from dagster_v3.defs.esef_filings.artifact_contract import (
+    SUPPORTED_FACT_ARTIFACT_SCHEMA_VERSIONS,
+)
 
 # OIM dimension keys that are NOT extension-taxonomy dimensions -- excluded
 # from the serialized `dimensions` column. `entity` is redundant with the
@@ -139,7 +141,7 @@ def iter_artifact_facts(
     fxo_id: str,
     period_end: str,
 ) -> Iterator[EsefFact]:
-    """Yield schema-v5 Arelle artifact facts through the serving row contract.
+    """Yield supported Arelle artifact facts through the serving row contract.
 
     ``artifact`` may be either the JSON mapping read from object storage or an
     ``EsefSegmentArtifact`` instance used by focused parser/parity tests. Fact
@@ -147,10 +149,11 @@ def iter_artifact_facts(
     package always produces the same ``esef_facts`` keys.
     """
     schema_version = _artifact_field(artifact, "schema_version")
-    if schema_version != ARTIFACT_SCHEMA_VERSION:
+    if schema_version not in SUPPORTED_FACT_ARTIFACT_SCHEMA_VERSIONS:
         raise ValueError(
             "ESEF Arelle artifact has an unsupported schema version: "
-            f"expected={ARTIFACT_SCHEMA_VERSION} actual={schema_version}"
+            f"supported={SUPPORTED_FACT_ARTIFACT_SCHEMA_VERSIONS} "
+            f"actual={schema_version}"
         )
     artifact_facts = _artifact_field(artifact, "facts")
     if not isinstance(artifact_facts, Mapping):
@@ -183,23 +186,26 @@ def iter_artifact_facts(
                 fact_key=fact_key,
                 used_fact_ids=used_fact_ids,
             )
-            yield fact_id, {
-                "value": _artifact_field(
-                    artifact_fact,
-                    "canonical_value",
-                    default=None,
-                ),
-                "decimals": _artifact_field(
-                    artifact_fact,
-                    "decimals",
-                    default=None,
-                ),
-                "dimensions": _artifact_field(
-                    artifact_fact,
-                    "oim_dimensions",
-                    default=None,
-                ),
-            }
+            yield (
+                fact_id,
+                {
+                    "value": _artifact_field(
+                        artifact_fact,
+                        "canonical_value",
+                        default=None,
+                    ),
+                    "decimals": _artifact_field(
+                        artifact_fact,
+                        "decimals",
+                        default=None,
+                    ),
+                    "dimensions": _artifact_field(
+                        artifact_fact,
+                        "oim_dimensions",
+                        default=None,
+                    ),
+                },
+            )
 
     yield from _iter_oim_fact_entries(
         artifact_entries(),
@@ -233,8 +239,7 @@ def _unique_artifact_fact_id(
             return candidate
         if suffix_length == len(fact_key):
             raise ValueError(
-                "ESEF Arelle artifact contains facts without a unique "
-                "deterministic ID"
+                "ESEF Arelle artifact contains facts without a unique deterministic ID"
             )
         suffix_length = min(suffix_length + 4, len(fact_key))
 

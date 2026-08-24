@@ -82,9 +82,7 @@ class _DisclosureParseResult:
     table_count: int
 
 
-_DISCLOSURE_INTEGER_COLUMNS = frozenset(
-    {"fiscal_year", "block_count", "table_count"}
-)
+_DISCLOSURE_INTEGER_COLUMNS = frozenset({"fiscal_year", "block_count", "table_count"})
 _DISCLOSURE_ARROW_SCHEMA = pa.schema(
     [
         pa.field(
@@ -117,6 +115,9 @@ def build_facts_partition_database(
     processed_week = date.fromisoformat(partition_key)
 
     def build(database_path: Path) -> dict[str, object]:
+        # The shared checkpoint reader opens READ_ONLY and needs a valid file.
+        with duckdb.connect(str(database_path)):
+            pass
         resource = duckdb_resource(database_path)
         metadata = run_esef_artifact_facts_partition(
             esef_filings_duckdb=resource,
@@ -211,7 +212,9 @@ def build_disclosures_partition_database(
                 source_document_count += 1
                 source_document_id = str(document.get("source_document_id", ""))
                 if source_document_id == "":
-                    raise ValueError("ESEF disclosure document has no source_document_id")
+                    raise ValueError(
+                        "ESEF disclosure document has no source_document_id"
+                    )
                 if source_document_id in seen_document_ids:
                     raise ValueError(
                         "ESEF disclosure result repeats source_document_id="
@@ -365,10 +368,14 @@ def _parse_disclosure_document(
             block_count += int(row["block_count"])
             table_count += int(row["table_count"])
             if len(rows) >= DISCLOSURE_BATCH_SIZE:
-                writer.write_table(pa.Table.from_pylist(rows, schema=_DISCLOSURE_ARROW_SCHEMA))
+                writer.write_table(
+                    pa.Table.from_pylist(rows, schema=_DISCLOSURE_ARROW_SCHEMA)
+                )
                 rows.clear()
         if rows:
-            writer.write_table(pa.Table.from_pylist(rows, schema=_DISCLOSURE_ARROW_SCHEMA))
+            writer.write_table(
+                pa.Table.from_pylist(rows, schema=_DISCLOSURE_ARROW_SCHEMA)
+            )
     return _DisclosureParseResult(
         output_path=str(output_path),
         row_count=row_count,

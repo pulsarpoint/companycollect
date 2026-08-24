@@ -89,9 +89,12 @@ def test_iter_oim_facts_consumes_fact_entries_lazily() -> None:
     assert len(list(rows)) == 5
 
 
-def test_iter_artifact_facts_reuses_oim_row_contract_with_deterministic_ids() -> None:
+@pytest.mark.parametrize("schema_version", [4, ARTIFACT_SCHEMA_VERSION])
+def test_iter_artifact_facts_reuses_oim_row_contract_with_deterministic_ids(
+    schema_version: int,
+) -> None:
     artifact = {
-        "schema_version": ARTIFACT_SCHEMA_VERSION,
+        "schema_version": schema_version,
         "facts": {
             "fact-key-a": {
                 "report_member": "reports/report.xhtml",
