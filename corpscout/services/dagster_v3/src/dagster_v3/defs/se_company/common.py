@@ -9,6 +9,7 @@ shared.
 
 import hashlib
 import json
+import re
 import uuid
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
@@ -26,6 +27,24 @@ from dagster_v3.defs.sweden_financial.clickhouse import (
 # Swedish company ids the pilot publishes: 10-digit organisationsnummer (legal entities) and
 # 12-digit personnummer-based ids (sole traders). Mirrors the has_company CHECK (migration 000299).
 SE_COMPANY_ID_PATTERN = "^([0-9]{10}|[0-9]{12})$"
+_SE_COMPANY_ID_RE = re.compile(SE_COMPANY_ID_PATTERN)
+
+
+def normalized_se_company_ids(company_ids: Sequence[str]) -> tuple[str, ...]:
+    """Sorted, de-duplicated, validated Swedish company ids.
+
+    Accepts both widths the se_company tables publish: a 10-digit organisationsnummer and
+    a 12-digit personnummer-based sole-trader id (the has_company CHECK, migration 000299).
+    company_people.draft.normalized_company_ids predates the sole traders and validates
+    10 digits only -- it is deliberately not reused here, and info.py's use of it is a
+    latent bug this datatype does not inherit.
+    """
+    normalized = tuple(sorted({company_id.strip() for company_id in company_ids}))
+    invalid = [company_id for company_id in normalized if _SE_COMPANY_ID_RE.fullmatch(company_id) is None]
+    if invalid:
+        raise ValueError(f"Sweden company ids must be 10 or 12 digits: {invalid[:5]}")
+    return normalized
+
 
 DATABASE = "corpscout"
 ZERO_UUID = "00000000-0000-0000-0000-000000000000"

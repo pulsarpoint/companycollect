@@ -16,26 +16,32 @@ import dagster as dg
 import pytest
 
 from dagster_v3.defs.se_company.address import (
+    ARTIFACT_COLUMNS,
     GEOCODE_COLUMNS,
     GEOCODE_PROJECTION,
     INSERT_COLUMNS,
+    METRIC_KEYS,
     PUBLISHED_COLUMNS,
     PUBLISHED_PROJECTION,
+    SE_COMPANY_ADDRESS_CORRECTION,
     SELECTION_REASONS,
     build_artifact_rows_sql,
     build_changed_companies_sql,
     build_geocodes_sql,
     build_published_rows_sql,
     materialize_se_company_address,
-    normalized_se_company_ids,
 )
 from dagster_v3.defs.se_company.address_rules import address_components, address_key_for
+from dagster_v3.defs.se_company.common import build_ledger_sql
 from tests.se_company_ddl import declared_columns
+
+EPOCH_SQL = "toDateTime64('1970-01-01 00:00:00', 3, 'UTC')"
+PUBLISHED_AT_SQL = f"ifNull(published.resolved_at, {EPOCH_SQL})"
 
 NOW = datetime(2026, 8, 24, 12, tzinfo=UTC)
 GEOCODED_AT = datetime(2026, 8, 20, 3, 15, tzinfo=UTC)
 COMPANY = "5565200028"
-SOLE_TRADER = "196408233412"
+OTHER_COMPANY = "5560125220"
 
 # assert_clickhouse_tables_exist runs its own SELECT against system.tables first, so every
 # scripted answer list starts with the tables it asks about.
@@ -95,6 +101,27 @@ PUBLISHED_ROWS = [
 ]
 
 
+def _where_disjuncts(sql: str) -> list[str]:
+    """The scan's WHERE, split into its OR-ed terms. Parsed out of the block rather than
+    substring-matched, so a DELETED term is caught -- a bare `assert term in sql` cannot
+    tell the WHERE apart from the reasons projection, which spells the same expressions."""
+    block = re.search(r"\nWHERE \(\n(.*?)\n      \)\n", sql, re.DOTALL)
+    assert block is not None, "the scan's WHERE block moved -- this parser needs updating"
+    return [term.strip() for term in re.split(r"\n\s+OR ", block.group(1))]
+
+
+def _projected_reasons(sql: str) -> list[tuple[str, str]]:
+    """(alias, expression) for every reason the scan projects, in projection order."""
+    block = re.search(r"SELECT artifacts\.company_id AS company_id,\n(.*?)\nFROM artifacts",
+                      sql, re.DOTALL)
+    assert block is not None, "the scan's projection moved -- this parser needs updating"
+    pairs = []
+    for line in block.group(1).split(",\n"):
+        expression, alias = line.strip().rsplit(" AS ", 1)
+        pairs.append((alias.strip(), expression.strip()))
+    return pairs
+
+
 def _selected(company_id: str, **flags: int) -> tuple:
     """One change-scan row: the company id followed by its reason flags, in the order
     build_changed_companies_sql projects them. Written positionally from SELECTION_REASONS
@@ -128,25 +155,57 @@ def test_insert_columns_are_the_final_ddl_minus_the_materialized_hash() -> None:
     ]
 
 
-def test_the_change_scan_reads_every_left_join_miss_through_ifnull() -> None:
-    """Bare comparisons work only while join_use_nulls = 0; under 1 a miss is NULL, the
-    WHERE is NULL for every never-published company and the scan returns nothing."""
-    sql = build_changed_companies_sql()
-    assert "ifNull(published.company_id, '') = '' AS never_published" in sql
-    assert "ifNull(published.resolved_at, toDateTime64('1970-01-01 00:00:00', 3, 'UTC'))" in sql
-    assert "ifNull(ledger.latest_correction_at," in sql
-    assert "ifNull(geocodes.latest_geocoded_at," in sql
+def test_every_where_disjunct_of_the_change_scan_is_pinned_exactly() -> None:
+    """WHAT SELECTS a company, term by term, as an exact list.
+
+    Substring asserts cannot do this job: every one of these expressions is ALSO spelled in
+    the reasons projection (deliberately -- they come from one Python constant), so
+    `assert term in sql` stays green when the term is deleted from the WHERE and the scan
+    silently stops selecting on it. Parsing the WHERE block and comparing the whole list
+    catches a deletion, an addition, a reordering and a flipped comparison at once.
+
+    Every LEFT JOIN miss is read through ifNull. Bare comparisons work only while
+    join_use_nulls = 0; under 1 a miss is NULL, the WHERE is NULL for every never-published
+    company, and the scan returns zero rows -- the pipeline would silently stop resolving.
+    """
+    assert _where_disjuncts(build_changed_companies_sql()) == [
+        # never published
+        "ifNull(published.company_id, '') = ''",
+        # a rules-only pass, and the CUTOFF that gives it memory. The direction is load
+        # bearing: `<` skips a company this pass has already rewritten, `>` would skip
+        # exactly the ones it still owes and the pass would never finish.
+        f"(%(resolve_all)s = 1 AND {PUBLISHED_AT_SQL} < "
+        "parseDateTime64BestEffort(%(resolve_all_before)s, 3, 'UTC'))",
+        # evidence newer than the published resolution
+        f"artifacts.latest_observed_at > {PUBLISHED_AT_SQL}",
+        # the geocode snapshot moved after it
+        f"ifNull(geocodes.latest_geocoded_at, {EPOCH_SQL}) > {PUBLISHED_AT_SQL}",
+        # the correction ledger gained a row after it
+        f"ifNull(ledger.latest_correction_at, {EPOCH_SQL}) > {PUBLISHED_AT_SQL}",
+    ]
 
 
-def test_the_change_scan_has_one_term_per_reason_including_the_geocode_one() -> None:
+def test_the_change_scan_projects_every_reason_in_the_order_the_loop_counts_them() -> None:
+    """The reasons projection and SELECTION_REASONS are read POSITIONALLY (row[offset]), so
+    the two orderings have to be one ordering -- swapping two lines in the SQL alone would
+    transpose every count in the metadata with nothing else looking wrong. Each alias's
+    expression is pinned too, so a reason cannot be fed by another reason's predicate."""
     sql = build_changed_companies_sql()
     assert SELECTION_REASONS == ("never_published", "new_evidence_bolagsverket",
                                  "new_evidence_scb", "new_geocode", "ledger_pending")
-    for reason in SELECTION_REASONS:
-        assert f" AS {reason}" in sql
-    assert "%(resolve_all)s = 1" in sql
-    assert "parseDateTime64BestEffort(%(resolve_all_before)s, 3, 'UTC')" in sql
-    assert "artifacts.company_id > %(after_company_id)s" in sql and "LIMIT %(page_size)s" in sql
+    assert _projected_reasons(sql) == [
+        ("never_published", "ifNull(published.company_id, '') = ''"),
+        ("new_evidence_bolagsverket", f"artifacts.bolagsverket_observed_at > {PUBLISHED_AT_SQL}"),
+        ("new_evidence_scb", f"artifacts.scb_observed_at > {PUBLISHED_AT_SQL}"),
+        ("new_geocode", f"ifNull(geocodes.latest_geocoded_at, {EPOCH_SQL}) > {PUBLISHED_AT_SQL}"),
+        ("ledger_pending", f"ifNull(ledger.latest_correction_at, {EPOCH_SQL}) > {PUBLISHED_AT_SQL}"),
+    ]
+    # Per-source freshness needs the union to carry which artifact each maximum came from.
+    for source in ("bolagsverket", "scb"):
+        assert f"maxIf(source_observed_at, source = '{source}') AS {source}_observed_at" in sql
+    # One page per call: the LIMIT is the page size, not the whole run's cap.
+    assert "AND artifacts.company_id > %(after_company_id)s" in sql
+    assert "ORDER BY artifacts.company_id" in sql and "LIMIT %(page_size)s" in sql
 
 
 def test_the_change_scan_needs_final_only_on_the_final_table() -> None:
@@ -178,11 +237,26 @@ def test_the_geocode_query_gates_every_non_nullable_joined_column() -> None:
     assert "ifNull(toString(geocodes.latitude), '') AS latitude" in sql
     assert "toString(geocodes.match_status), '') AS geocode_status" in sql
     assert re.findall(r"AS (\w+)", sql[: sql.index("\nFROM ")]) == list(GEOCODE_COLUMNS)
-    # An alias fed by the wrong source column would transpose the fact silently.
+    # Every alias, fed by its own source column. An alias wired to a neighbour would
+    # transpose the fact silently -- and half of these are same-typed text, so nothing
+    # downstream would notice. The map is exhaustive by assertion, not by good intentions.
+    sources = {
+        "company_id": "members.company_id",
+        # members.address_key IS the source observation's address_fingerprint -- the whole
+        # reason the artifacts carry it.
+        "address_fingerprint": "members.address_key",
+        "address_id": "links.address_id",
+        # The hit flag is the geocoder's RUN id, not a coordinate: an address can be
+        # classified (unmatched, foreign, postal-box) without a point.
+        "has_geocode": "geocodes.geocode_run_id",
+        "latitude": "geocodes.latitude",
+        "longitude": "geocodes.longitude",
+        "geocode_status": "geocodes.match_status",
+        "geocoded_at": "geocodes.matched_at",
+    }
+    assert set(sources) == set(GEOCODE_COLUMNS)
     for column, expression in GEOCODE_PROJECTION:
-        if column in ("latitude", "longitude", "geocode_status"):
-            assert re.search(rf"geocodes\.{'match_status' if column == 'geocode_status' else column}\b",
-                             expression), (column, expression)
+        assert sources[column] in expression, (column, expression)
 
 
 def test_the_artifact_read_contract_names_its_columns() -> None:
@@ -192,6 +266,11 @@ def test_the_artifact_read_contract_names_its_columns() -> None:
         assert f"FROM corpscout.se_company_address_{source} FINAL" in sql
     assert "'address_fingerprint', ifNull(toString(address_fingerprint), '')" in sql
     assert "*" not in sql
+    # The projection IS ARTIFACT_COLUMNS, in order, in every branch of the UNION -- the row
+    # mapper reads it by that name list, so a branch aliasing them differently would build
+    # a transposed ArtifactRow (and ClickHouse binds a UNION by position, not by name).
+    for branch in sql.split("\nUNION ALL\n"):
+        assert re.findall(r"AS (\w+)", branch[: branch.index("\nFROM ")]) == list(ARTIFACT_COLUMNS)
 
 
 def test_published_rows_are_read_final_and_carry_the_tombstone_flag() -> None:
@@ -211,34 +290,60 @@ def test_published_rows_are_read_final_and_carry_the_tombstone_flag() -> None:
         assert column not in PUBLISHED_COLUMNS
 
 
-def test_a_preview_writes_nothing_and_reads_nothing_but_the_scan() -> None:
-    """A bare Materialize click in the Dagster UI carries no config at all."""
+def test_a_preview_selects_companies_but_reads_nothing_else_and_writes_nothing() -> None:
+    """A bare Materialize click in the Dagster UI carries no config at all.
+
+    The scan page is deliberately NON-EMPTY: with an empty page the loop breaks before the
+    execute gate is ever reached, so the test would pass with the gate deleted -- it would
+    be asserting nothing about the gate at all.
+    """
     from tests.test_se_company_common import FakeClickhouse, FakeClient
 
-    client = FakeClient(answers=[EXISTING_TABLES, []])
+    client = FakeClient(answers=[
+        EXISTING_TABLES,
+        [_selected(COMPANY, never_published=1, new_geocode=1)],
+    ])
     metadata = materialize_se_company_address(
         clickhouse=FakeClickhouse(client), source_run_id="run-1", resolved_at=NOW,
         company_ids=[], max_companies=10, company_batch_size=10, execute=False, log=None)
 
-    assert metadata["preview"] is True and metadata["selected_company_count"] == 0
-    assert all("INSERT" not in sql for sql, _ in client.executed)
-    for reason in SELECTION_REASONS:
-        assert metadata[reason] == 0
+    # It really did select -- and reported why.
+    assert metadata["preview"] is True and metadata["selected_company_count"] == 1
+    assert metadata["never_published"] == 1 and metadata["new_geocode"] == 1
+    assert metadata["ledger_pending"] == 0 and metadata["new_evidence_scb"] == 0
+
+    statements = [sql for sql, _ in client.executed]
+    # ... and then did nothing else: the table check and the scan, in that order, full stop.
+    assert len(statements) == 2, statements
+    assert "system.tables" in statements[0]
+    assert statements[1] == build_changed_companies_sql()
+    for write in ("INSERT", "CREATE", "DROP", "ALTER", "TRUNCATE"):
+        assert not any(write in statement for statement in statements), write
+    for read in (build_artifact_rows_sql(), build_geocodes_sql(), build_published_rows_sql(),
+                 build_ledger_sql(SE_COMPANY_ADDRESS_CORRECTION)):
+        assert read not in statements
+    # An execute run that resolved nothing still returns the same metadata SHAPE.
+    for key in (*SELECTION_REASONS, *METRIC_KEYS):
+        assert key in metadata
 
 
-def test_company_ids_accept_sole_traders() -> None:
-    """se_companies carries 12-digit personnummer-based ids for enskild firma, and the
-    final's has_company CHECK admits them -- so a scoped run must too."""
-    assert normalized_se_company_ids([SOLE_TRADER, COMPANY]) == (SOLE_TRADER, COMPANY)
-    with pytest.raises(ValueError):
-        normalized_se_company_ids(["55652000"])
+def test_an_execute_run_that_selects_nothing_still_reports_every_counter() -> None:
+    """A defaultdict returns 0 on access but serialises only the keys someone touched, so a
+    quiet run would otherwise hand the backoffice a DIFFERENT metadata shape from a busy
+    one and every reader would have to guess whether a missing key means zero."""
+    from tests.test_se_company_common import FakeClickhouse, FakeClient
 
+    client = FakeClient(answers=[EXISTING_TABLES, []])
+    metadata = materialize_se_company_address(
+        clickhouse=FakeClickhouse(client), source_run_id="run", resolved_at=NOW,
+        company_ids=[COMPANY], max_companies=10, company_batch_size=10, execute=True, log=None)
 
-def test_normalized_se_company_ids_sorts_dedupes_and_rejects_non_ids() -> None:
-    assert normalized_se_company_ids([f" {COMPANY} ", COMPANY, SOLE_TRADER]) == (
-        SOLE_TRADER, COMPANY)
-    with pytest.raises(ValueError, match="10 or 12 digits"):
-        normalized_se_company_ids(["not-an-id"])
+    assert "preview" not in metadata
+    for key in (*SELECTION_REASONS, *METRIC_KEYS):
+        assert metadata[key] == 0, key
+    assert METRIC_KEYS == ("selected_company_count", "address_count", "tombstone_count",
+                           "geocoded_count", "applied_correction_count",
+                           "stale_correction_count", "inserted_count", "total_count")
 
 
 def test_a_resolution_publishes_the_whole_set_the_geocode_and_the_tombstone() -> None:
@@ -326,6 +431,39 @@ def test_the_coordinate_survives_a_duplicate_row_for_the_same_fingerprint(ungeoc
     assert postal["geocode_status"] == "exact" and postal["address_id"] == "c" * 64
 
 
+def test_the_page_log_line_reports_the_page_not_the_running_total() -> None:
+    """A line labelled "page:" that prints cumulative counters reads as a page that grew
+    every time -- which is exactly how a resolution bug hides in a long run's logs."""
+    from tests.test_se_company_common import FakeClickhouse, FakeClient
+
+    def _rows_for(company_id: str) -> list[tuple]:
+        return [(source, company_id, uid, evidence_hash, NOW, json.dumps(values))
+                for source, uid, evidence_hash, values in (
+                    ("bolagsverket", f"bv:{company_id}", "a" * 64, BOLAGSVERKET_VALUES),
+                    ("scb", f"scb:{company_id}", "b" * 64, SCB_VALUES))]
+
+    # company_batch_size 1 splits the scope into two single-company chunks, so the loop
+    # resolves two separate pages and logs twice.
+    page = lambda company_id: [  # noqa: E731 - a scripted answer block, not a helper
+        [_selected(company_id, never_published=1)], _rows_for(company_id), [], [], [],
+        [(2, 0)], [(0,)], [(2,)], [],
+    ]
+    client = FakeClient(answers=[EXISTING_TABLES, *page(COMPANY), *page(OTHER_COMPANY)])
+    logged: list[tuple] = []
+    metadata = materialize_se_company_address(
+        clickhouse=FakeClickhouse(client), source_run_id="run", resolved_at=NOW,
+        company_ids=[COMPANY, OTHER_COMPANY], max_companies=10, company_batch_size=1,
+        execute=True, log=lambda *args: logged.append(args))
+
+    pages = [args for args in logged if "se_company_address page:" in args[0]]
+    assert len(pages) == 2
+    # companies, rows, addresses, tombstones, geocoded, corrections, stale -- per page.
+    assert pages[0][1:] == (1, 2, 2, 0, 0, 0, 0)
+    assert pages[1][1:] == (1, 2, 2, 0, 0, 0, 0)  # NOT (1, 2, 4, ...) -- the run's total
+    # ... while the metadata IS the running total of both pages.
+    assert metadata["address_count"] == 4 and metadata["selected_company_count"] == 2
+
+
 def test_a_reject_correction_publishes_the_address_as_not_current() -> None:
     """The ledger runs before the set replacement, so a rejected key is its own tombstone:
     one row per key per resolution, carrying the correction that decided it."""
@@ -380,6 +518,41 @@ def test_the_cap_rather_than_exhaustion_is_reported_when_a_full_page_uses_it_up(
         company_ids=[], max_companies=1, company_batch_size=1, execute=False, log=None)
 
     assert metadata["stopped_at_cap"] is True and metadata["selected_company_count"] == 1
+
+
+def test_the_config_gates_the_run_and_bounds_the_weekly_population() -> None:
+    """The two bounds that decide what an automated run actually does.
+
+    Ruling A17: this datatype's weekly selection is NOT "the companies that changed". The
+    geocode snapshot is rebuilt whole every week, so new_geocode re-selects every company
+    linked to one of the ~2.09M address IDENTITIES -- more companies than identities, since
+    a shared address links many. And the scan has no memory: a run stopped by max_companies
+    restarts at the first company_id, so a cap below that population re-resolves the same
+    leading slice forever and never reaches the tail. The bound therefore has to admit an
+    effectively uncapped weekly run.
+    """
+    from dagster_v3.defs.se_company.address import SECompanyAddressConfig
+
+    # Preview by default: an empty config (a UI "Materialize" click) resolves nothing.
+    assert SECompanyAddressConfig().execute is False
+    assert SECompanyAddressConfig(execute=True).execute is True
+    assert SECompanyAddressConfig().company_ids == [] and SECompanyAddressConfig().resolve_all is False
+    assert SECompanyAddressConfig().resolve_all_before == ""
+
+    assert SECompanyAddressConfig().max_companies == 1_000_000
+    assert SECompanyAddressConfig(max_companies=5_000_000).max_companies == 5_000_000
+    for bad in (0, 5_000_001):
+        with pytest.raises(ValueError):
+            SECompanyAddressConfig(max_companies=bad)
+
+    # Both the scan page size and the chunk size for an explicit scope: the scan embeds the
+    # id list four times and clickhouse-driver substitutes them client-side, against
+    # ClickHouse's 262,144-byte default max_query_size.
+    assert build_changed_companies_sql().count("%(company_ids)s") == 4
+    assert SECompanyAddressConfig().company_batch_size == 5_000
+    for bad in (0, 5_001):
+        with pytest.raises(ValueError):
+            SECompanyAddressConfig(company_batch_size=bad)
 
 
 def test_the_asset_the_jobs_the_sensor_and_the_schedule_are_wired() -> None:

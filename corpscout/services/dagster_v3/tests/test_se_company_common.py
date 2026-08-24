@@ -10,6 +10,7 @@ from dagster_clickhouse import ClickhouseResource
 
 from dagster_v3.defs.se_company.common import (
     EPOCH,
+    SE_COMPANY_ID_PATTERN,
     ZERO_UUID,
     LedgerRow,
     ObservationResult,
@@ -23,6 +24,7 @@ from dagster_v3.defs.se_company.common import (
     input_hash_for,
     ledger_row_from_row,
     ledger_sensor,
+    normalized_se_company_ids,
     observation_from_row,
     publish_with_stage,
     reuse_or_call,
@@ -30,6 +32,28 @@ from dagster_v3.defs.se_company.common import (
 
 NOW = datetime(2026, 8, 22, 12, tzinfo=UTC)
 KIND_ORDER = {"override_field": 0, "approve_suggestion": 1, "reject_suggestion": 1}
+COMPANY = "5565200028"
+SOLE_TRADER = "196408233412"  # a 12-digit personnummer-based enskild firma id
+
+
+def test_company_ids_accept_sole_traders() -> None:
+    """se_companies carries 12-digit personnummer-based ids for enskild firma, and the
+    se_company finals' has_company CHECK admits them -- so a scoped run must too.
+    company_people.draft.normalized_company_ids validates 10 digits only, which is why
+    this exists rather than being reused from there."""
+    assert normalized_se_company_ids([SOLE_TRADER, COMPANY]) == (SOLE_TRADER, COMPANY)
+    assert SE_COMPANY_ID_PATTERN == "^([0-9]{10}|[0-9]{12})$"
+    for bad in ("55652000", "5565200028X", "55652000281", "", "556-520-0028"):
+        with pytest.raises(ValueError):
+            normalized_se_company_ids([bad])
+
+
+def test_normalized_se_company_ids_sorts_dedupes_and_rejects_non_ids() -> None:
+    assert normalized_se_company_ids([f" {COMPANY} ", COMPANY, SOLE_TRADER]) == (
+        SOLE_TRADER, COMPANY)
+    with pytest.raises(ValueError, match="10 or 12 digits"):
+        normalized_se_company_ids(["not-an-id"])
+
 
 
 class FakeClient:

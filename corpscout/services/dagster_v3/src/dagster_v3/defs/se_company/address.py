@@ -38,9 +38,8 @@ Assets
 """
 
 import json
-import re
 from collections import defaultdict
-from collections.abc import Callable, Sequence
+from collections.abc import Callable, Iterable, Sequence
 from datetime import UTC, datetime
 from typing import Any
 
@@ -57,11 +56,11 @@ from dagster_v3.defs.se_company.address_rules import (
 from dagster_v3.defs.se_company.bolagsverket import SE_COMPANY_ADDRESS_BOLAGSVERKET_COLUMNS
 from dagster_v3.defs.se_company.bolagsverket import TABLE as BOLAGSVERKET_TABLE
 from dagster_v3.defs.se_company.common import (
-    SE_COMPANY_ID_PATTERN,
     LedgerRow,
     build_ledger_sql,
     ledger_row_from_row,
     ledger_sensor,
+    normalized_se_company_ids,
     publish_with_stage,
 )
 from dagster_v3.defs.se_company.info_rules import ArtifactRow
@@ -78,29 +77,6 @@ GEOCODES_TABLE = "se_address_geocodes_current"
 # A LEFT JOIN miss reads as this instant, not as a bare NULL comparison.
 EPOCH_SQL = "toDateTime64('1970-01-01 00:00:00', 3, 'UTC')"
 
-_SE_COMPANY_ID_RE = re.compile(SE_COMPANY_ID_PATTERN)
-
-
-def normalized_se_company_ids(company_ids: Sequence[str]) -> tuple[str, ...]:
-    """Sorted, de-duplicated, validated Swedish company ids.
-
-    Accepts both widths the se_company tables publish: a 10-digit organisationsnummer and
-    a 12-digit personnummer-based sole-trader id (the has_company CHECK, migration 000299).
-    company_people.draft.normalized_company_ids predates the sole traders and validates
-    10 digits only -- it is deliberately not reused here, and info.py's use of it is a
-    latent bug this datatype does not inherit.
-
-    Lives in this module rather than common.py because this is its only caller today; the
-    Task 5 dispatch ruled common.py untouchable (see task-5-report.md). It moves to
-    common.py beside SE_COMPANY_ID_PATTERN the moment a second se_company datatype wants it.
-    """
-    normalized = tuple(sorted({company_id.strip() for company_id in company_ids}))
-    invalid = [company_id for company_id in normalized if _SE_COMPANY_ID_RE.fullmatch(company_id) is None]
-    if invalid:
-        raise ValueError(f"Sweden company ids must be 10 or 12 digits: {invalid[:5]}")
-    return normalized
-
-
 # This module's READ contract: the artifact modules' own positional insert lists (each
 # pinned to the migration by its own test) minus the envelope this module reads by name.
 # A renamed or dropped artifact column therefore fails loudly here instead of silently
@@ -113,6 +89,19 @@ ARTIFACT_READS: dict[str, tuple[str, ...]] = {
     "scb": tuple(column for column in SE_COMPANY_ADDRESS_SCB_COLUMNS
                  if column not in ARTIFACT_ENVELOPE),
 }
+# The artifact read contract: (column, expression) in projection order, the expressions
+# templated on the source literal and that source's payload map. Same shape as the geocode
+# and published contracts below, so all three SELECTs and all three row mappers are
+# generated from one list each and none can be read at the wrong offset.
+ARTIFACT_PROJECTION: tuple[tuple[str, str], ...] = (
+    ("source", "'{source}'"),
+    ("company_id", "company_id"),
+    ("source_record_uid", "source_record_uid"),
+    ("evidence_hash", "toString(evidence_hash)"),
+    ("observed_at", "observed_at"),
+    ("payload_json", "toJSONString(map({pairs}))"),
+)
+ARTIFACT_COLUMNS = tuple(column for column, _ in ARTIFACT_PROJECTION)
 
 # Why the scan picked a company, projected beside its id and counted per page. The reasons
 # OVERLAP by construction (a never-published company also has evidence newer than its epoch
@@ -121,6 +110,16 @@ ARTIFACT_READS: dict[str, tuple[str, ...]] = {
 SELECTION_REASONS = (
     "never_published", *(f"new_evidence_{source}" for source in ARTIFACT_TABLES),
     "new_geocode", "ledger_pending",
+)
+
+# Everything the metadata reports beside the selection reasons. Seeded to 0 like the
+# reasons are, so an execute run that selects nothing still returns the SAME metadata
+# SHAPE as one that resolved thousands -- a reader (the backoffice run panel, a later
+# comparison between two runs) never has to tell "this run wrote nothing" apart from
+# "this key did not exist yet".
+METRIC_KEYS = (
+    "selected_company_count", "address_count", "tombstone_count", "geocoded_count",
+    "applied_correction_count", "stale_correction_count", "inserted_count", "total_count",
 )
 
 # This module's WRITE contract: se_company_address insert columns in DDL order (the
@@ -169,7 +168,7 @@ PUBLISHED_PROJECTION: tuple[tuple[str, str], ...] = (
 PUBLISHED_COLUMNS = tuple(column for column, _ in PUBLISHED_PROJECTION)
 
 
-def _projection_sql(projection: Sequence[tuple[str, str]]) -> str:
+def _projection_sql(projection: Iterable[tuple[str, str]]) -> str:
     return ",\n    ".join(f"{expression} AS {column}" for column, expression in projection)
 
 
@@ -185,6 +184,13 @@ def build_changed_companies_sql() -> str:
     nothing is appended when a source stops carrying one, so nothing here can see it. See
     the module docstring for why that is accepted and what clears it.
 
+    ``artifacts`` is the DRIVING table -- every other CTE is LEFT JOINed onto it -- so a
+    company with no artifact row in either source is never selected, whatever the ledger or
+    the geocode snapshot says about it. A correction filed against a company neither source
+    carries an address for therefore sits unapplied, and the correction sensor's run would
+    report it as selected-nothing rather than as an error. Inherited from info.py's shape
+    and true of it too; a known property, not a defect of this scan.
+
     ``max(observed_at)`` per artifact and ``max(matched_at)`` per company need no FINAL --
     both ARE their table's version column (ReplacingMergeTree for the artifacts, a
     rebuilt-per-run snapshot for the geocodes), so an unmerged older duplicate can never be
@@ -197,13 +203,25 @@ def build_changed_companies_sql() -> str:
     NULL for every never-published company, and the scan returns zero rows -- the pipeline
     would silently stop resolving anything.
 
-    THE GEOCODE TERM IS DELIBERATELY BROAD. ``se_address_geocodes_current`` is rebuilt
-    whole by the weekly geocoding job, so ``matched_at`` moves for every identity even when
-    the outcome is unchanged, and this term therefore re-selects the geocoded population
-    (~2.09M identities) once a week. That is accepted: the resolution is deterministic,
-    model-free and cheap, republishing an unchanged address changes nothing a reader sees,
-    and the ``max_companies`` cap bounds any single run. What it buys is the guarantee the
-    spec asks for -- a re-geocode is evidence, and no company keeps a stale coordinate.
+    THE GEOCODE TERM IS DELIBERATELY BROAD, AND THAT SETS THE WEEKLY RUN'S SIZE.
+    ``se_address_geocodes_current`` is rebuilt whole by the weekly geocoding job, so
+    ``matched_at`` moves for every ADDRESS IDENTITY even when the outcome is unchanged, and
+    this term therefore re-selects every company linked to one of those ~2.09M identities,
+    once a week. (~2.09M counts identities, not companies: a shared address links many
+    companies to one identity, so the company count this term selects is the larger number.)
+    That is accepted: the resolution is deterministic, model-free and cheap, and
+    republishing an unchanged address changes nothing a reader sees.
+
+    What it is NOT is a population a cap can safely trim. This scan has no memory: it is
+    ordered by ``company_id`` and every run starts from the first id again, so a run stopped
+    by ``max_companies`` resumes at the START of the scan, not where it stopped -- a capped
+    weekly run would re-resolve the same leading slice forever and never reach the tail. The
+    weekly automated config must therefore run effectively UNCAPPED (``max_companies`` above
+    the selected population; the bound is 5,000,000), or, for a deliberately staged pass, use
+    ``resolve_all`` with an explicit ``resolve_all_before`` cutoff reused across the runs of
+    that pass -- which is the only mechanism here that does carry memory. What the geocode
+    term buys is the guarantee the spec asks for: a re-geocode is evidence, and no company
+    keeps a stale coordinate.
 
     ``resolve_all`` re-selects every in-scope company even though nothing moved -- for
     rules-only changes (new merge logic, a new artifact column) that no ``observed_at`` and
@@ -301,11 +319,14 @@ def build_artifact_rows_sql() -> str:
     selects = []
     for source, columns in ARTIFACT_READS.items():
         pairs = ", ".join(f"'{column}', ifNull(toString({column}), '')" for column in columns)
-        selects.append(f"""SELECT '{source}' AS source, company_id, source_record_uid, toString(evidence_hash) AS evidence_hash,
-        observed_at, toJSONString(map({pairs})) AS payload_json
-    FROM {DATABASE}.{ARTIFACT_TABLES[source]} FINAL
-    WHERE company_id IN %(company_ids)s""")
-    return "\n    UNION ALL\n    ".join(selects)
+        projection = _projection_sql(
+            (column, expression.format(source=source, pairs=pairs))
+            for column, expression in ARTIFACT_PROJECTION)
+        selects.append(f"""SELECT
+    {projection}
+FROM {DATABASE}.{ARTIFACT_TABLES[source]} FINAL
+WHERE company_id IN %(company_ids)s""")
+    return "\nUNION ALL\n".join(selects)
 
 
 def build_geocodes_sql() -> str:
@@ -351,11 +372,18 @@ FROM {DATABASE}.{SE_COMPANY_ADDRESS} AS published FINAL
 WHERE published.company_id IN %(company_ids)s"""
 
 
-def _artifact_row_from_row(row: Sequence[Any]) -> ArtifactRow:
-    """payload_json is a name->string map, so typed NULLs arrive as '' and numbers as text;
-    address_rules treats '' as missing."""
-    return ArtifactRow(source=str(row[0]), source_record_uid=str(row[2]), evidence_hash=str(row[3]),
-                       observed_at=row[4], values=json.loads(str(row[5])))
+def _artifact_row_from_row(row: Sequence[Any]) -> tuple[str, ArtifactRow]:
+    """(company_id, row). payload_json is a name->string map, so typed NULLs arrive as ''
+    and numbers as text; address_rules treats '' as missing.
+
+    Read by NAME through ARTIFACT_COLUMNS, like the geocode and published mappers: the
+    SELECT and this function are generated from one list, so neither can drift.
+    """
+    values = dict(zip(ARTIFACT_COLUMNS, row, strict=True))
+    return (str(values["company_id"]), ArtifactRow(
+        source=str(values["source"]), source_record_uid=str(values["source_record_uid"]),
+        evidence_hash=str(values["evidence_hash"]), observed_at=values["observed_at"],
+        values=json.loads(str(values["payload_json"]))))
 
 
 def _float(value: object) -> float | None:
@@ -444,7 +472,8 @@ def _resolve_page(
     with clickhouse.get_connection() as client:
         rows_by_company: dict[str, list[ArtifactRow]] = defaultdict(list)
         for row in client.execute(build_artifact_rows_sql(), params):
-            rows_by_company[str(row[1])].append(_artifact_row_from_row(row))
+            company_id, artifact_row = _artifact_row_from_row(row)
+            rows_by_company[company_id].append(artifact_row)
         geocodes_by_company: dict[str, dict[str, GeocodeFact]] = defaultdict(dict)
         for row in client.execute(build_geocodes_sql(), params):
             company_id, fingerprint, fact = _geocode_fact_from_row(row)
@@ -466,6 +495,10 @@ def _resolve_page(
             item = ledger_row_from_row(row)
             ledger_by_company[item.company_id].append(item)
 
+    # Page-local counters: what THIS page did. They are folded into the run's cumulative
+    # metrics below, but the log line reports the page, because a line labelled "page:"
+    # that prints running totals reads as a page that grew every time.
+    page: dict[str, int] = defaultdict(int)
     final_rows: list[tuple[Any, ...]] = []
     for company_id in companies:
         # The COMPOSED entry point, and only it: resolve_company_addresses applies
@@ -480,16 +513,19 @@ def _resolve_page(
             published=published_by_company.get(company_id, []),
             ledger=ledger_by_company.get(company_id, []),
         )
-        metrics["address_count"] += sum(1 for outcome in outcomes if outcome.is_current)
-        metrics["tombstone_count"] += sum(1 for outcome in outcomes if not outcome.is_current)
-        metrics["geocoded_count"] += sum(1 for outcome in outcomes
-                                         if outcome.is_current and outcome.latitude is not None)
-        metrics["applied_correction_count"] += sum(len(outcome.correction_ids) for outcome in outcomes)
-        metrics["stale_correction_count"] += len(stale)
+        page["address_count"] += sum(1 for outcome in outcomes if outcome.is_current)
+        page["tombstone_count"] += sum(1 for outcome in outcomes if not outcome.is_current)
+        page["geocoded_count"] += sum(1 for outcome in outcomes
+                                      if outcome.is_current and outcome.latitude is not None)
+        page["applied_correction_count"] += sum(len(outcome.correction_ids) for outcome in outcomes)
+        page["stale_correction_count"] += len(stale)
         if stale and log is not None:
             log("Stale corrections skipped: company=%s ids=%s", company_id, [str(item) for item in stale])
         final_rows.extend(_final_row(outcome, source_run_id=source_run_id, resolved_at=resolved_at)
                           for outcome in outcomes)
+
+    for key, value in page.items():
+        metrics[key] += value
 
     if final_rows:
         # new_versions_only stays off: the final is keyed by (company_id, address_key) and a
@@ -503,8 +539,10 @@ def _resolve_page(
         metrics["inserted_count"] += counts.inserted
         metrics["total_count"] = counts.total
     if log is not None:
-        log("se_company_address page: companies=%s rows=%s tombstones=%s geocoded=%s",
-            len(companies), len(final_rows), metrics["tombstone_count"], metrics["geocoded_count"])
+        log("se_company_address page: companies=%s rows=%s addresses=%s tombstones=%s "
+            "geocoded=%s corrections=%s stale=%s",
+            len(companies), len(final_rows), page["address_count"], page["tombstone_count"],
+            page["geocoded_count"], page["applied_correction_count"], page["stale_correction_count"])
 
 
 def materialize_se_company_address(
@@ -537,10 +575,10 @@ def materialize_se_company_address(
     chunks = [tuple(scope[start : start + company_batch_size])
               for start in range(0, len(scope), company_batch_size)] or [()]
     metrics: dict[str, int] = defaultdict(int)
-    # Seeded rather than left to the defaultdict: "no company was selected for this reason"
-    # must read as 0 in the metadata, not as a missing key.
-    for reason in SELECTION_REASONS:
-        metrics[reason] = 0
+    # Seeded rather than left to the defaultdict: "nothing happened for this counter" must
+    # read as 0 in the metadata, not as a missing key.
+    for key in (*SELECTION_REASONS, *METRIC_KEYS):
+        metrics[key] = 0
     stopped_at_cap = False
 
     for chunk in chunks:
@@ -592,7 +630,16 @@ class SECompanyAddressConfig(dg.Config):
     # launch all do.
     execute: bool = False
     company_ids: list[str] = Field(default_factory=list)
-    max_companies: int = Field(default=1_000_000, ge=1, le=1_000_000)
+    # Bounded at 5,000,000, not the info final's 1,000,000. This datatype's weekly
+    # selection is not "the companies that changed": the geocode snapshot is rebuilt whole
+    # every week, so new_geocode re-selects every company linked to one of the ~2.09M
+    # address IDENTITIES -- more companies than identities, since a shared address links
+    # many. A cap below that population does NOT sample it: the scan is ordered by
+    # company_id and has no memory, so a capped run resumes at the start and rewrites the
+    # same leading slice every week while the tail is never reached. The automated weekly
+    # config must run effectively uncapped; a deliberately staged pass uses resolve_all
+    # with an explicit resolve_all_before instead, which is the only memory there is.
+    max_companies: int = Field(default=1_000_000, ge=1, le=5_000_000)
     # Capped at 5,000: this is both the scan page size and the chunk size for an explicit
     # company_ids scope, and the scan embeds the id list four times client-side.
     company_batch_size: int = Field(default=5_000, ge=1, le=5_000)
