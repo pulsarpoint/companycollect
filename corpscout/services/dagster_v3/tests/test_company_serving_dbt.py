@@ -49,7 +49,6 @@ def test_company_serving_dbt_project_parses() -> None:
         "company_contract_current_build",
         "company_contract_summary_current_build",
         "se_company_industry_display_current_build",
-        "se_company_address_display_current_build",
         "company_serving_source_records_build",
         "company_serving_source_origins_build",
         "company_serving_source_links_build",
@@ -134,7 +133,6 @@ def test_serving_models_resolve_identity_and_evidence_offline() -> None:
         "company_description_current_build.sql",
         "company_contract_current_build.sql",
         "se_company_industry_display_current_build.sql",
-        "se_company_address_display_current_build.sql",
     ):
         model = (models / model_name).read_text()
         assert "source('corpscout', 'se_companies')" in model
@@ -155,5 +153,5 @@ def test_serving_project_declares_integrity_tests() -> None:
     schema = (DBT_DIR / "models" / "schema.yml").read_text()
     assert "test company_serving_unique_key" in generic_tests
     assert "test company_serving_sweden_anchor" in generic_tests
-    assert schema.count("company_serving_unique_key:") == 14
-    assert schema.count("company_serving_sweden_anchor") == 14
+    assert schema.count("company_serving_unique_key:") == 13
+    assert schema.count("company_serving_sweden_anchor") == 13

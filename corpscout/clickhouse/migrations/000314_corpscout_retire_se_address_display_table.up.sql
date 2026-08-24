@@ -1,0 +1,64 @@
+CREATE DATABASE IF NOT EXISTS corpscout;
+
+-- RETIREMENT, phase 8 of the se_company_address plan -- the display table only.
+-- Applied only after corpscout.se_company_address has been serving the backoffice
+-- Address tab and the correction sensor has been RUNNING (phase 7 closed 2026-08-24).
+--
+-- Gate 1 -- zero readers for se_company_address_display_current, re-verified immediately
+-- before writing this file with
+--   rg -n "se_company_address_display_current" corpscout --glob '!*.pyc'
+-- Every hit is migration 000267 (historical DDL, the ledger) or one of: the dbt model
+-- that builds it, that model's schema.yml entry, the company_serving CurrentTable entry,
+-- the section-presence model, the publish reconciliation, and two tests -- all of which
+-- are deleted or repointed in the same commit as this migration. The backoffice reader
+-- went away in phase 7, and tests/se-company-address.server.test.ts asserts that the
+-- Address tab does NOT reference this table.
+--
+-- company_section_presence now reads corpscout.se_company_addresses_current directly with
+-- the deleted model's own filter (has_address = 1 AND has_observation = 1) and its own key
+-- (address_key in that model WAS address_fingerprint), so the public company page's
+-- section presence is unchanged row for row. Its latest_observed_at for the addresses
+-- section now carries the source observation instant rather than the build instant -- a
+-- deliberate, accepted change, not a side effect.
+--
+-- Gate 1b -- corpscout.se_company_address_display_current_build is the dbt staging table
+-- the deleted model materializes (4,674,100 rows). It is not owned by this migration
+-- ledger -- no migration ever created it, dbt does, from
+-- se_company_address_display_current_build.sql with materialized='table'. Deleting that
+-- model in this same commit leaves the table an orphan that nothing writes and nothing
+-- reads, so it is reader-free by construction and is dropped here with the table it fed.
+--
+-- Gate 2 -- row counts at drop time (SELECT run on the host, 2026-08-24):
+--   se_company_address_display_current         4,674,100 rows
+--   se_company_address FINAL WHERE is_current  4,674,100 rows
+-- The final already serves exactly as many current rows as the display table holds.
+--
+-- NOT dropped, deliberately -- se_company_addresses_canonical_current stays. The plan
+-- paired it with the display table on the strength of a literal grep, but it is not
+-- reader-free: six ClickHouse read sites reach it through
+-- address_canonicalization.QUALIFIED_CLICKHOUSE_CANONICAL_ADDRESSES_TABLE, an indirection
+-- a grep for the table name cannot see --
+--   1. fetch_sweden_address_geocode_stats, the exact_match_rate_percent denominator
+--   2. the sweden_company_canonical_addresses_clickhouse publish itself
+--   3. all_current_addresses_classified, on the legacy geocode-results table
+--   4. all_source_observations_have_one_canonical_address
+--   5. all_company_addresses_link_to_one_shared_address, guarding the shared-address chain
+--      that the se_company_address final reads for geocodes on every resolution
+--   6. shared_geocoding_matches_company_baseline
+-- Sites 5 and 6 are built on normalized_street, normalized_postal_code and
+-- normalized_post_town, which exist only on the canonical table -- se_company_address_members_current
+-- never carried them -- so they cannot be repointed at anything that stays. Retiring the
+-- canonical table therefore belongs to the dedicated parity-baseline cleanup, where the
+-- cost of those two checks is weighed on purpose (controller ruling A19, 2026-08-24).
+--
+-- Also not dropped, deliberately: se_addresses_current, se_company_address_links_current,
+-- se_company_address_members_current and se_address_geocodes_current are the geocode
+-- augmentation source the final reads on every resolution. The legacy per-company geocoder
+-- pair (se_company_address_geocodes, se_company_address_geocode_results) is the parity
+-- baseline and is the owner's separate decision.
+--
+-- UNDROP window is about 480 seconds: if this turns out to be wrong, UNDROP TABLE within it.
+
+DROP TABLE IF EXISTS corpscout.se_company_address_display_current;
+
+DROP TABLE IF EXISTS corpscout.se_company_address_display_current_build;

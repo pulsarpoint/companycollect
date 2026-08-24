@@ -30,8 +30,15 @@ section_rows AS (
     SELECT '{{ var("country_code") }}', company_id, 'industries', classification_code, resolved_at
     FROM {{ ref('se_company_industry_display_current_build') }}
     UNION ALL
-    SELECT '{{ var("country_code") }}', company_id, 'addresses', address_key, resolved_at
-    FROM {{ ref('se_company_address_display_current_build') }}
+    -- se_company_address_display_current_build is retired (migration 000314). This reads
+    -- the source that model read, with its filter and its key (its address_key WAS
+    -- address_fingerprint), so presence is unchanged row for row. The one deliberate
+    -- change: latest_observed_at for this section is now the source observation instant
+    -- rather than the model's build instant.
+    SELECT '{{ var("country_code") }}', company_id, 'addresses',
+           toString(address_fingerprint), observed_at
+    FROM {{ source('corpscout', 'se_company_addresses_current') }}
+    WHERE has_address = 1 AND has_observation = 1
     UNION ALL
     SELECT links.country_code, links.company_id, 'sources', toString(links.source_record_uid), links.linked_at
     FROM {{ source('corpscout', 'company_source_record_links') }} AS links

@@ -99,12 +99,6 @@ models:
           key_columns: [company_id, is_primary, classification_system, classification_code]
       - company_serving_sweden_anchor
 
-  - name: se_company_address_display_current_build
-    data_tests:
-      - company_serving_unique_key:
-          key_columns: [company_id, address_type, source, address_key]
-      - company_serving_sweden_anchor
-
   - name: company_section_item_source_links_build
     data_tests:
       - company_serving_unique_key:
