@@ -7,7 +7,6 @@ from typing import Any
 
 import pytest
 from dagster import AssetKey
-from clickhouse_driver import Client
 
 from dagster_v3.defs.common.duckdb_resources import duckdb_resource
 from dagster_v3.defs.esef_filings import tables
@@ -435,7 +434,9 @@ def test_llm_enrichment_asset_depends_on_final_clickhouse_documents() -> None:
     output_key = AssetKey("esef_document_company_information_duckdb")
 
     assert esef_document_company_information_duckdb.asset_deps[output_key] == {
-        AssetKey("esef_source_documents_clickhouse")
+        AssetKey("esef_facts_clickhouse"),
+        AssetKey("esef_filings_clickhouse"),
+        AssetKey("esef_entity_registry_map_clickhouse"),
     }
 
 
@@ -448,6 +449,7 @@ def test_llm_clickhouse_publication_depends_on_enrichment_duckdb() -> None:
 
 
 def test_latest_document_selector_uses_one_final_xbrl_per_company() -> None:
+    artifact_key = artifact_object_key("a" * 64)
     clickhouse = _FakeClickHouse(
         [
             (
@@ -460,14 +462,15 @@ def test_latest_document_selector_uses_one_final_xbrl_per_company() -> None:
                 2024,
                 "https://example.test/aak.zip",
                 "packages/aak.zip",
-                artifact_object_key("a" * 64),
-                ARTIFACT_SCHEMA_VERSION,
+                "",
             )
         ]
     )
+    object_store = _FakeObjectStore({(ESEF_DOCUMENT_BUCKET, artifact_key): b"{}"})
 
     documents = _load_latest_source_documents(
         clickhouse,
+        object_store=object_store,
         model="deepseek-v4-flash",
         country_iso2="SE",
         company_ids={"5566692850"},
@@ -480,32 +483,18 @@ def test_latest_document_selector_uses_one_final_xbrl_per_company() -> None:
     sql, parameters = clickhouse.client.calls[0]
     assert "row_number() OVER" in sql
     assert "PARTITION BY country_iso2, company_id" in sql
-    assert "PARTITION BY country_iso2, company_id, source_document_id" in sql
-    assert "preferred_filing_artifact_rank = 1" in sql
-    assert "ORDER BY artifact_schema_version DESC" in sql
     assert "latest_company_report_rank = 1" in sql
-    assert "artifact_schema_version = 3" in sql
-    assert "ixbrl_segments/schema=v3/%%" in sql
-    assert "artifact_schema_version = 4" in sql
-    assert "ixbrl_segments/schema=v4/%%" in sql
-    assert "artifact_schema_version = 5" in sql
-    assert "ixbrl_segments/schema=v5/%%" in sql
+    assert "FROM corpscout.esef_filings AS filings FINAL" in sql
+    assert "FROM corpscout.esef_facts FINAL" in sql
+    assert "esef_entity_registry_map AS registry FINAL" in sql
     assert "esef_document_company_information" in sql
-    assert "esef_source_documents FINAL" not in sql
-    assert "esef_document_company_information FINAL" not in sql
+    assert "esef_source_documents" not in sql
     assert parameters["model_name"] == "deepseek-v4-flash"
     assert parameters["prompt_version"] == "esef-company-enrichment-v2"
     assert parameters["country_iso2"] == "SE"
     assert parameters["company_ids"] == ("5566692850",)
-    clickhouse_client = Client("localhost")
-    rendered_sql = clickhouse_client.substitute_params(
-        sql,
-        parameters,
-        clickhouse_client.connection.context,
-    )
-    assert "ixbrl_segments/schema=v3/%'" in rendered_sql
-    assert "ixbrl_segments/schema=v4/%'" in rendered_sql
-    assert "ixbrl_segments/schema=v5/%'" in rendered_sql
+    assert documents[0]["parsed_artifact_object_key"] == artifact_key
+    assert documents[0]["artifact_schema_version"] == ARTIFACT_SCHEMA_VERSION
 
 
 def test_latest_document_selector_requires_resolved_company_links() -> None:
@@ -514,6 +503,7 @@ def test_latest_document_selector_requires_resolved_company_links() -> None:
     assert (
         _load_latest_source_documents(
             clickhouse,
+            object_store=_FakeObjectStore({}),
             model="deepseek-v4-flash",
             country_iso2="",
             company_ids=set(),
@@ -524,8 +514,8 @@ def test_latest_document_selector_requires_resolved_company_links() -> None:
         == []
     )
     sql, _parameters = clickhouse.client.calls[0]
-    assert "company_id != ''" in sql
-    assert "country_iso2 != ''" in sql
+    assert "registry.registry_id != ''" in sql
+    assert "registry.country_iso2 != ''" in sql
 
 
 def test_company_id_selector_requires_country_identity_boundary() -> None:
@@ -596,7 +586,7 @@ def test_llm_asset_stores_source_document_information_and_reuses_artifact(
 
     first = run_esef_llm_enrichment(
         esef_filings_duckdb=database,
-        clickhouse=_FakeClickHouse([_source_document_clickhouse_row(input_key)]),
+        clickhouse=_FakeClickHouse([_source_document_clickhouse_row()]),
         object_store=object_store,
         client=_client_returning(_valid_response()),
         model="deepseek-v4-flash",
@@ -611,7 +601,7 @@ def test_llm_asset_stores_source_document_information_and_reuses_artifact(
     )
     second = run_esef_llm_enrichment(
         esef_filings_duckdb=database,
-        clickhouse=_FakeClickHouse([_source_document_clickhouse_row(input_key)]),
+        clickhouse=_FakeClickHouse([_source_document_clickhouse_row()]),
         object_store=object_store,
         client=SimpleNamespace(
             chat=SimpleNamespace(
@@ -689,7 +679,7 @@ def test_llm_asset_stores_source_document_information_and_reuses_artifact(
     assert row[9] == sha256(row[8].encode()).hexdigest()
 
 
-def _source_document_clickhouse_row(input_key: str) -> tuple[object, ...]:
+def _source_document_clickhouse_row() -> tuple[object, ...]:
     return (
         "AAK-2024",
         "a" * 64,
@@ -700,8 +690,7 @@ def _source_document_clickhouse_row(input_key: str) -> tuple[object, ...]:
         2024,
         "https://example.test/aak.zip",
         "packages/aak.zip",
-        input_key,
-        ARTIFACT_SCHEMA_VERSION,
+        "",
     )
 
 

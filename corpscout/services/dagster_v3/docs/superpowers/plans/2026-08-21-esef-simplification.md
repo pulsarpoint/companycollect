@@ -1,5 +1,10 @@
 # ESEF Pipeline Simplification Implementation Plan
 
+> Superseded on 2026-08-24 by
+> `src/dagster_v3/defs/esef_filings/docs/esef-parsing-migration-plan.md`.
+> This file is retained only as historical decision context; its target graph
+> and asset names are not current runtime contracts.
+
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
 **Goal:** Migrate `defs/esef_filings/` from a 27-asset, weekly-partitioned pipeline to a ~9-asset, unpartitioned sweep-and-diff pipeline, deleting the finished OIM migration scaffolding and ~30% accidental complexity along the way.

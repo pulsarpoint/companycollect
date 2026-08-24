@@ -24,9 +24,9 @@ from pydantic import Field
 from dagster_v3.defs.common.duckdb_resources import safe_duckdb_connection
 from dagster_v3.defs.common.resources import ObjectStoreResource
 from dagster_v3.defs.esef_filings import tables
+from dagster_v3.defs.esef_filings.artifact_contract import ARTIFACT_SCHEMA_VERSION
 from dagster_v3.defs.esef_filings.llm_enrichment import (
     PROMPT_VERSION,
-    SUPPORTED_ENRICHMENT_ARTIFACT_SCHEMA_VERSIONS,
     build_company_enrichment_request,
     build_enrichment_evidence,
     deepseek_settings,
@@ -38,10 +38,12 @@ from dagster_v3.defs.esef_filings.llm_enrichment import (
 )
 from dagster_v3.defs.esef_filings.segment_assets import (
     ESEF_DOCUMENT_BUCKET,
+    compatible_artifact_keys_by_digest,
     ensure_document_company_information_table,
 )
+from dagster_v3.defs.esef_filings.segment_parser import artifact_object_key
 
-GROUP_NAME = "esef_filings"
+GROUP_NAME = "esef_enrichment"
 _PROGRESS_INTERVAL = 25
 _NON_SPECIFIC_PERSON_ROLES = frozenset(
     {
@@ -102,6 +104,7 @@ def run_esef_llm_enrichment(
     selected_ids = {value.strip() for value in source_document_ids if value.strip()}
     documents = _load_latest_source_documents(
         clickhouse,
+        object_store=object_store,
         model=model,
         country_iso2=clean_country_iso2,
         company_ids=selected_company_ids,
@@ -324,6 +327,7 @@ def run_esef_llm_enrichment(
 def _load_latest_source_documents(
     clickhouse: ClickhouseResource,
     *,
+    object_store: Any,
     model: str,
     country_iso2: str,
     company_ids: set[str],
@@ -341,53 +345,30 @@ def _load_latest_source_documents(
         "fiscal_year",
         "package_url",
         "package_object_key",
-        "parsed_artifact_object_key",
-        "artifact_schema_version",
     )
-    compatible_artifact_filters = [
-        (
-            f"(artifact_schema_version = {schema_version} AND "
-            "parsed_artifact_object_key LIKE "
-            f"'esef_filings/ixbrl_segments/schema=v{schema_version}/%%')"
-        )
-        for schema_version in SUPPORTED_ENRICHMENT_ARTIFACT_SCHEMA_VERSIONS
-    ]
     document_filters = [
-        "extraction_status IN ('parsed', 'reused')",
-        "parsed_artifact_object_key != ''",
-        f"({' OR '.join(compatible_artifact_filters)})",
-        "company_id != ''",
-        "country_iso2 != ''",
+        "filings.package_sha256 != ''",
+        "registry.registry_id != ''",
+        "registry.country_iso2 != ''",
     ]
     parameters: dict[str, object] = {
         "model_name": model,
         "prompt_version": PROMPT_VERSION,
     }
     if country_iso2 != "":
-        document_filters.append("country_iso2 = %(country_iso2)s")
+        document_filters.append("registry.country_iso2 = %(country_iso2)s")
         parameters["country_iso2"] = country_iso2
     if company_ids:
-        document_filters.append("company_id IN %(company_ids)s")
+        document_filters.append("registry.registry_id IN %(company_ids)s")
         parameters["company_ids"] = tuple(sorted(company_ids))
 
     outer_filters = ["documents.latest_company_report_rank = 1"]
     if source_document_ids:
         outer_filters.append("documents.source_document_id IN %(source_document_ids)s")
         parameters["source_document_ids"] = tuple(sorted(source_document_ids))
-    if not refresh_existing:
-        outer_filters.append(
-            "(ifNull(existing.source_document_id, '') = '' OR "
-            "ifNull(existing.input_artifact_object_key, '') != "
-            "documents.parsed_artifact_object_key)"
-        )
-    limit_sql = ""
-    if max_documents is not None:
-        limit_sql = "LIMIT %(max_documents)s"
-        parameters["max_documents"] = max_documents
-
     select_columns = ", ".join(f"documents.{column}" for column in columns)
     query = f"""
-SELECT {select_columns}
+SELECT {select_columns}, ifNull(existing.input_artifact_object_key, '')
 FROM
 (
     SELECT
@@ -397,20 +378,31 @@ FROM
             ORDER BY period_end DESC, fiscal_year DESC,
                 source_processed_at DESC, source_document_id DESC
         ) AS latest_company_report_rank
-    FROM
-    (
+    FROM (
         SELECT
-            {", ".join(columns)},
-            source_processed_at,
-            row_number() OVER (
-                PARTITION BY country_iso2, company_id, source_document_id
-                ORDER BY artifact_schema_version DESC,
-                    source_processed_at DESC, parsed_artifact_object_key DESC
-            ) AS preferred_filing_artifact_rank
-        FROM {tables.QUALIFIED_ESEF_SOURCE_DOCUMENTS_TABLE}
+            filings.fxo_id AS source_document_id,
+            lowerUTF8(filings.package_sha256) AS package_sha256,
+            filings.lei AS lei,
+            upperUTF8(registry.country_iso2) AS country_iso2,
+            registry.registry_id AS company_id,
+            toString(filings.period_end) AS period_end,
+            toUInt16(toYear(filings.period_end)) AS fiscal_year,
+            filings.package_url AS package_url,
+            concat(
+                'esef_filings/report_packages/package_sha256=',
+                lowerUTF8(filings.package_sha256),
+                '/report-package.zip'
+            ) AS package_object_key,
+            toString(filings.processed_at) AS source_processed_at
+        FROM {tables.QUALIFIED_ESEF_FILINGS_TABLE} AS filings FINAL
+        INNER JOIN {tables.QUALIFIED_ESEF_ENTITY_REGISTRY_MAP_TABLE} AS registry FINAL
+            ON registry.lei = filings.lei
+        INNER JOIN (
+            SELECT DISTINCT fxo_id
+            FROM {tables.QUALIFIED_ESEF_FACTS_TABLE} FINAL
+        ) AS parsed_filings ON parsed_filings.fxo_id = filings.fxo_id
         WHERE {" AND ".join(document_filters)}
-    ) AS compatible_documents
-    WHERE preferred_filing_artifact_rank = 1
+    ) AS parsed_documents
 ) AS documents
 LEFT JOIN
 (
@@ -422,11 +414,63 @@ LEFT JOIN
 WHERE {" AND ".join(outer_filters)}
 ORDER BY documents.country_iso2, documents.company_id,
     documents.source_document_id
-{limit_sql}
 """
     with clickhouse.get_connection() as client:
         rows = client.execute(query, parameters)
-    return [dict(zip(columns, row, strict=True)) for row in rows]
+    documents = [
+        {
+            **dict(zip(columns, row[:-1], strict=True)),
+            "existing_input_artifact_object_key": str(row[-1]),
+        }
+        for row in rows
+    ]
+    documents = _resolve_parsed_artifacts(object_store, documents)
+    selected_documents: list[dict[str, object]] = []
+    for document in documents:
+        existing_artifact_key = document.pop("existing_input_artifact_object_key")
+        if (
+            refresh_existing
+            or existing_artifact_key != document["parsed_artifact_object_key"]
+        ):
+            selected_documents.append(document)
+    if max_documents is not None:
+        return selected_documents[:max_documents]
+    return selected_documents
+
+
+def _resolve_parsed_artifacts(
+    object_store: Any,
+    documents: list[dict[str, object]],
+) -> list[dict[str, object]]:
+    missing_digests: set[str] = set()
+    current_keys: dict[str, str] = {}
+    for document in documents:
+        digest = str(document["package_sha256"])
+        key = artifact_object_key(digest)
+        if object_store.exists(key, bucket=ESEF_DOCUMENT_BUCKET):
+            current_keys[digest] = key
+        else:
+            missing_digests.add(digest)
+    compatible_keys = compatible_artifact_keys_by_digest(
+        object_store,
+        package_sha256s=missing_digests,
+    )
+    for document in documents:
+        digest = str(document["package_sha256"])
+        if digest in current_keys:
+            schema_version = ARTIFACT_SCHEMA_VERSION
+            key = current_keys[digest]
+        elif digest in compatible_keys:
+            schema_version, key = compatible_keys[digest]
+        else:
+            raise ValueError(
+                "Missing parsed ESEF artifact for published facts: "
+                f"source_document_id={document['source_document_id']} "
+                f"package_sha256={digest}"
+            )
+        document["parsed_artifact_object_key"] = key
+        document["artifact_schema_version"] = schema_version
+    return documents
 
 
 def _source_specific_segment_artifact(
@@ -672,16 +716,18 @@ def _json_text(value: object) -> str:
     name="esef_document_company_information_duckdb",
     deps=[
         dg.AssetDep(
-            dg.AssetKey("esef_source_documents_clickhouse"),
+            dg.AssetKey("esef_facts_clickhouse"),
             partition_mapping=dg.AllPartitionMapping(),
-        )
+        ),
+        dg.AssetKey("esef_filings_clickhouse"),
+        dg.AssetKey("esef_entity_registry_map_clickhouse"),
     ],
     group_name=GROUP_NAME,
     kinds={"python", "s3", "duckdb", "llm", "xbrl", "deepseek"},
     pool="esef_filings_duckdb",
     metadata={"table": tables.QUALIFIED_ESEF_DOCUMENT_COMPANY_INFORMATION_TABLE},
     description=(
-        "Selects the latest final ClickHouse ESEF document per linked company, "
+        "Selects the latest ESEF filing with published facts per linked company, "
         "archives the exact content-addressed DeepSeek request in S3, and stores "
         "the raw response plus source-document-specific observations in DuckDB. "
         "Canonical company tables are not modified."

@@ -3,7 +3,7 @@
 Input (source layer): esef_document_company_information_clickhouse →
 corpscout.esef_document_company_information (the model-extracted company
 description per filing, all countries; several model versions per document may
-coexist) joined to corpscout.esef_source_documents for the filer's entity name.
+coexist).
 This module keeps Swedish issuers (country_iso2 = 'SE', 10-digit orgnr) with a
 non-empty description and writes the standard envelope followed by ESEF's own
 typed columns. source_record_uid is the filing's provenance uid, so one row per
@@ -11,10 +11,7 @@ filing version; the newest extraction per filing wins.
 
 Assets
   se_company_info_esef_clickhouse → corpscout.se_company_info_esef
-Downstream: info.py (description candidate; entity_name is evidence only —
-legal_name always comes from SCB, and no rule reads entity_name, which is why the
-join to the documents table is a LEFT one: a filing whose document row is missing
-must still contribute its description, not vanish).
+Downstream: info.py (description candidate; legal_name always comes from SCB).
 """
 
 from datetime import UTC, datetime
@@ -54,7 +51,7 @@ SE_COMPANY_INFO_ESEF_SQL = """WITH candidates AS (
         %(source_run_id)s AS source_run_id,
         info.source_document_id AS source_document_id,
         info.lei AS lei,
-        ifNull(documents.entity_name, '') AS entity_name,
+        '' AS entity_name,
         info.fiscal_year AS fiscal_year,
         info.company_description AS company_description,
         toString(info.description_language) AS description_language,
@@ -62,7 +59,6 @@ SE_COMPANY_INFO_ESEF_SQL = """WITH candidates AS (
         info.products_and_services_json AS products_and_services_json,
         info.business_segments_json AS business_segments_json
     FROM corpscout.esef_document_company_information AS info
-    LEFT JOIN corpscout.esef_source_documents AS documents ON documents.source_document_id = info.source_document_id
     WHERE info.country_iso2 = 'SE'
       AND match(info.company_id, '{SE_COMPANY_ID_PATTERN}')
       AND trim(info.company_description) != ''
@@ -82,10 +78,6 @@ FROM candidates""".replace("{SE_COMPANY_ID_PATTERN}", SE_COMPANY_ID_PATTERN)
     name="se_company_info_esef_clickhouse",
     deps=[
         dg.AssetKey("esef_document_company_information_clickhouse"),
-        dg.AssetDep(
-            dg.AssetKey("esef_source_documents_clickhouse"),
-            partition_mapping=dg.AllPartitionMapping(),
-        ),
     ],
     group_name=GROUP_NAME,
     kinds={"clickhouse", "python"},
@@ -102,7 +94,7 @@ def se_company_info_esef_clickhouse(
     assert_clickhouse_tables_exist(
         clickhouse,
         database=DATABASE,
-        tables=("esef_document_company_information", "esef_source_documents", TABLE),
+        tables=("esef_document_company_information", TABLE),
     )
     counts = publish_with_stage(
         clickhouse=clickhouse,

@@ -244,22 +244,34 @@ FROM source_rows""",
 def esef_source_record_sql() -> tuple[str, ...]:
     uid = clickhouse_file_source_record_uid_sql(
         record_kind="esef_report_package",
-        content_sha256_expression="package_sha256",
+        content_sha256_expression="filings.package_sha256",
     )
     source_rows = f"""
 SELECT
     {uid} AS source_record_uid,
-    source_document_id AS source_record_key,
-    package_sha256 AS payload_sha256,
-    package_url,
-    package_object_key,
-    country_iso2,
-    company_id,
-    lei,
-    source_run_id,
-    coalesce(parseDateTime64BestEffortOrNull(extracted_at), resolved_at) AS observed_at
-FROM corpscout.esef_source_documents
-WHERE package_sha256 != '' AND country_iso2 != '' AND company_id != ''
+    filings.fxo_id AS source_record_key,
+    lowerUTF8(filings.package_sha256) AS payload_sha256,
+    filings.package_url AS package_url,
+    concat(
+        'esef_filings/report_packages/package_sha256=',
+        lowerUTF8(filings.package_sha256),
+        '/report-package.zip'
+    ) AS package_object_key,
+    upperUTF8(registry.country_iso2) AS country_iso2,
+    registry.registry_id AS company_id,
+    filings.lei AS lei,
+    filings.source_run_id AS source_run_id,
+    coalesce(parseDateTime64BestEffortOrNull(filings.processed_at), filings.resolved_at)
+        AS observed_at
+FROM corpscout.esef_filings AS filings FINAL
+INNER JOIN corpscout.esef_entity_registry_map AS registry FINAL
+    ON registry.lei = filings.lei
+INNER JOIN (
+    SELECT DISTINCT fxo_id FROM corpscout.esef_facts FINAL
+) AS parsed_filings ON parsed_filings.fxo_id = filings.fxo_id
+WHERE filings.package_sha256 != ''
+  AND registry.country_iso2 != ''
+  AND registry.registry_id != ''
 """.strip()
     return (
         f"""INSERT INTO {tables.QUALIFIED_SOURCE_RECORDS_TABLE}

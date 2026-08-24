@@ -23,7 +23,6 @@ def test_registry_covers_the_known_scheduled_leaves() -> None:
     for expected in (
         "czech_ares_clickhouse_companies",
         "esef_filings_clickhouse",
-        "esef_source_documents_clickhouse",
         "esef_facts_clickhouse",
         "esef_document_contact_candidates_clickhouse",
         "esef_document_concept_labels_clickhouse",

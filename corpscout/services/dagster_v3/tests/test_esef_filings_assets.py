@@ -20,7 +20,6 @@ from zoneinfo import ZoneInfo
 
 import dagster as dg
 import duckdb
-import pyarrow as pa
 import pytest
 from dagster_duckdb import DuckDBResource
 
@@ -117,7 +116,7 @@ def _resources(tmp_path: Path) -> dict[str, object]:
 
 def _seed_filings_index(tmp_path: Path, records: list[EsefFilingRecord]) -> None:
     with _db_resource(tmp_path).get_connection() as connection:
-        assets.replace_esef_filings_index(
+        assets.upsert_esef_filings_index(
             connection=connection,
             records=records,
             source_url=assets.ESEF_INDEX_URL,
@@ -203,7 +202,7 @@ def test_empty_processed_window_is_valid_and_preserves_existing_rows(
     assert [row[0] for row in rows] == ["A-1", "A-2"]
 
 
-def test_replace_filings_index_arrow_load_preserves_exact_row_shape(
+def test_upsert_filings_index_arrow_load_preserves_exact_row_shape(
     tmp_path: Path,
 ) -> None:
     record = dataclass_replace(
@@ -223,7 +222,7 @@ def test_replace_filings_index_arrow_load_preserves_exact_row_shape(
     )
 
     with _db_resource(tmp_path).get_connection() as connection:
-        assets.replace_esef_filings_index(
+        assets.upsert_esef_filings_index(
             connection=connection,
             records=[record],
             source_url="https://example.test/index",
@@ -254,43 +253,6 @@ def test_replace_filings_index_arrow_load_preserves_exact_row_shape(
         "https://example.test/index",
         "exact-run",
     )
-
-
-def test_replace_filings_index_refuses_empty_and_rolls_back_arrow_failure(
-    tmp_path: Path,
-) -> None:
-    original = _record(fxo_id="ORIGINAL-1")
-    invalid = dataclass_replace(
-        _record(fxo_id="INVALID-1"),
-        error_count="not-an-integer",
-    )
-
-    with _db_resource(tmp_path).get_connection() as connection:
-        assets.replace_esef_filings_index(
-            connection=connection,
-            records=[original],
-            source_url=assets.ESEF_INDEX_URL,
-            source_run_id="seed-run",
-        )
-        with pytest.raises(ValueError, match="refusing to replace"):
-            assets.replace_esef_filings_index(
-                connection=connection,
-                records=[],
-                source_url=assets.ESEF_INDEX_URL,
-                source_run_id="empty-run",
-            )
-        with pytest.raises(pa.ArrowInvalid, match="convert"):
-            assets.replace_esef_filings_index(
-                connection=connection,
-                records=[invalid],
-                source_url=assets.ESEF_INDEX_URL,
-                source_run_id="invalid-run",
-            )
-        rows = connection.execute(
-            "select fxo_id, source_run_id from esef_filings.filings_index"
-        ).fetchall()
-
-    assert rows == [("ORIGINAL-1", "seed-run")]
 
 
 def test_upsert_filings_index_uses_fxo_id_identity_and_last_record_wins(
@@ -328,101 +290,6 @@ def test_upsert_filings_index_uses_fxo_id_identity_and_last_record_wins(
     ]
 
 
-class _CountingIndexConnection:
-    def __init__(self, connection: duckdb.DuckDBPyConnection) -> None:
-        self.connection = connection
-        self.insert_count = 0
-
-    def execute(self, statement: str, *args: Any, **kwargs: Any) -> Any:
-        normalized_statement = " ".join(statement.split()).lower()
-        if normalized_statement.startswith(
-            f"insert into {assets._FILINGS_INDEX_REPLACEMENT_TABLE}"
-        ):
-            self.insert_count += 1
-        return self.connection.execute(statement, *args, **kwargs)
-
-    def register(self, name: str, value: object) -> None:
-        self.connection.register(name, value)
-
-    def unregister(self, name: str) -> None:
-        self.connection.unregister(name)
-
-
-def test_replace_filings_index_loads_500k_rows_in_50k_arrow_batches(
-    tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    records = [_record(fxo_id="BULK-1")] * 500_000
-    batch_sizes: list[int] = []
-    original_arrow_table = assets._filings_index_arrow_table
-
-    def tracked_arrow_table(
-        batch: list[EsefFilingRecord],
-        *,
-        source_url: str,
-        source_run_id: str,
-    ) -> pa.Table:
-        batch_sizes.append(len(batch))
-        return original_arrow_table(
-            batch,
-            source_url=source_url,
-            source_run_id=source_run_id,
-        )
-
-    monkeypatch.setattr(assets, "_filings_index_arrow_table", tracked_arrow_table)
-
-    with duckdb.connect(str(tmp_path / "bulk-index.duckdb")) as connection:
-        counting_connection = _CountingIndexConnection(connection)
-        summary = assets.replace_esef_filings_index(
-            connection=counting_connection,
-            records=records,
-            source_url=assets.ESEF_INDEX_URL,
-            source_run_id="bulk-run",
-        )
-        row_count = connection.execute(
-            "select count(*) from esef_filings.filings_index"
-        ).fetchone()[0]
-
-    assert summary["row_count"] == 500_000
-    assert row_count == 500_000
-    assert batch_sizes == [assets._FILINGS_INDEX_INSERT_BATCH_SIZE] * 10
-    assert counting_connection.insert_count == 10
-
-
-def test_reconciliation_reports_new_and_removed_filing_months(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    _seed_filings_index(
-        tmp_path,
-        [
-            _record(fxo_id="KEEP-1", processed_at="2023-01-10 00:00:00"),
-            _record(fxo_id="REMOVED-1", processed_at="2023-02-10 00:00:00"),
-        ],
-    )
-    _patch_client(
-        monkeypatch,
-        [
-            _record(fxo_id="KEEP-1", processed_at="2023-01-10 00:00:00"),
-            _record(fxo_id="NEW-1", processed_at="2023-03-10 00:00:00"),
-        ],
-        last_reported_total=2,
-    )
-
-    result = dg.materialize(
-        [assets.esef_filings_index_reconciliation_duckdb],
-        resources=_resources(tmp_path),
-    )
-
-    assert result.success
-    metadata = result.asset_materializations_for_node(
-        "esef_filings_index_reconciliation_duckdb"
-    )[0].metadata
-    assert metadata["new_since_local_count"].value == 1
-    assert metadata["removed_upstream_count"].value == 1
-    assert metadata["affected_processed_months"].value == ["2023-02", "2023-03"]
-    assert [row[0] for row in _fetch_filings_index(tmp_path)] == ["KEEP-1", "NEW-1"]
-
-
 def test_incremental_index_upsert_preserves_other_processed_weeks(
     tmp_path: Path,
 ) -> None:
@@ -453,7 +320,7 @@ def test_incremental_index_upsert_preserves_other_processed_weeks(
 # --------------------------------------------------------------------------
 # Crawl-completeness guard (Finding M1): a nonzero crawl that's still far
 # short of the API's own reported total (`meta.count`) must be refused, the
-# same "before touching the existing table" discipline as reconciliation's
+# same "before touching the existing table" discipline as the index write
 # explicit empty-crawl guard.
 # --------------------------------------------------------------------------
 
@@ -963,20 +830,14 @@ def test_esef_filings_refresh_job_selects_weekly_ingest_evidence_and_exports() -
         "esef_filings_clickhouse",
         "esef_facts_clickhouse",
         "esef_entity_registry_map_clickhouse",
-        "esef_financial_metrics_clickhouse",
         "esef_document_extraction_manifest_s3",
         "esef_document_artifacts_s3",
-        "esef_source_documents_duckdb",
         "esef_document_contact_candidates_duckdb",
         "esef_document_concept_labels_duckdb",
         "esef_fact_disclosures_duckdb",
-        "esef_source_documents_clickhouse",
         "esef_document_contact_candidates_clickhouse",
         "esef_document_concept_labels_clickhouse",
-        "esef_document_concept_official_translations_clickhouse",
-        "esef_document_concept_translation_load",
         "esef_fact_disclosures_clickhouse",
-        "esef_company_source_records_clickhouse",
     }
 
 
@@ -1038,11 +899,9 @@ def test_esef_filings_backfill_job_selects_partitioned_assets_only() -> None:
         "esef_filing_facts_duckdb",
         "esef_document_extraction_manifest_s3",
         "esef_document_artifacts_s3",
-        "esef_source_documents_duckdb",
         "esef_document_contact_candidates_duckdb",
         "esef_document_concept_labels_duckdb",
         "esef_fact_disclosures_duckdb",
-        "esef_source_documents_clickhouse",
         "esef_facts_clickhouse",
         "esef_document_contact_candidates_clickhouse",
         "esef_document_concept_labels_clickhouse",
@@ -1075,21 +934,6 @@ def test_esef_filings_refresh_weekly_schedule_emits_last_closed_week() -> None:
     assert [request.run_key for request in execution_data.run_requests] == [
         "2026-07-05T00:00:00Z:2026-06-28",
     ]
-
-
-def test_esef_filings_reconciliation_job_and_schedule_are_registered() -> None:
-    repo = load_project_defs().get_repository_def()
-    job = repo.get_job("esef_filings_reconciliation_job")
-    schedule = repo.get_schedule_def("esef_filings_reconciliation_monthly")
-
-    assert {key.path[-1] for key in job.asset_layer.executable_asset_keys} == {
-        "esef_filings_index_reconciliation_duckdb"
-    }
-    assert job.partitions_def is None
-    assert schedule.job_name == "esef_filings_reconciliation_job"
-    assert schedule.cron_schedule == "25 5 2 * *"
-    assert schedule.execution_timezone == "Europe/Belgrade"
-    assert schedule.default_status == dg.DefaultScheduleStatus.STOPPED
 
 
 # ==========================================================================

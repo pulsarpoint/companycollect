@@ -28,7 +28,6 @@ from dagster_v3.defs.esef_filings.partitioned_storage import (
     DISCLOSURES_STORAGE,
     FACTS_STORAGE,
     CONTACT_CANDIDATES_PROJECTION,
-    SOURCE_DOCUMENTS_PROJECTION,
     atomic_partition_database,
     esef_partition_duckdb_path,
     write_partition_status,
@@ -385,29 +384,6 @@ def _parse_disclosure_document(
 
 
 @dg.asset(
-    name="esef_source_documents_duckdb",
-    deps=ARTIFACT_DEPENDENCY,
-    group_name=GROUP_NAME,
-    kinds={"python", "s3", "duckdb"},
-    partitions_def=ESEF_PROCESSED_WEEK_PARTITIONS,
-    backfill_policy=dg.BackfillPolicy.multi_run(max_partitions_per_run=1),
-    pool="esef_source_documents_duckdb",
-    description="Builds one isolated source-document DuckDB per processed week.",
-)
-def esef_source_documents_duckdb(
-    context: dg.AssetExecutionContext,
-    object_store: ObjectStoreResource,
-) -> dg.MaterializeResult:
-    return dg.MaterializeResult(
-        metadata=write_result_projection_partition(
-            object_store=object_store,
-            partition_key=context.partition_key,
-            projection=SOURCE_DOCUMENTS_PROJECTION,
-        )
-    )
-
-
-@dg.asset(
     name="esef_filing_facts_duckdb",
     deps=ARTIFACT_DEPENDENCY,
     group_name=GROUP_NAME,
@@ -504,7 +480,6 @@ def esef_fact_disclosures_duckdb(
 
 
 ESEF_PARSING_ASSETS = (
-    esef_source_documents_duckdb,
     esef_filing_facts_duckdb,
     esef_document_contact_candidates_duckdb,
     esef_document_concept_labels_duckdb,

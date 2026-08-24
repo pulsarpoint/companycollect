@@ -62,9 +62,6 @@ CLICKHOUSE_LEAVES: tuple[ClickhouseLeaf, ...] = (
     ClickhouseLeaf("czech_ares_clickhouse_industries", ("cz_industries",), MONTHLY),
     # ESEF schedules remain stopped while the canonical weekly parser is backfilled.
     ClickhouseLeaf("esef_filings_clickhouse", ("esef_filings",), None),
-    ClickhouseLeaf(
-        "esef_source_documents_clickhouse", ("esef_source_documents",), None
-    ),
     ClickhouseLeaf("esef_facts_clickhouse", ("esef_facts",), None),
     ClickhouseLeaf(
         "esef_document_contact_candidates_clickhouse",

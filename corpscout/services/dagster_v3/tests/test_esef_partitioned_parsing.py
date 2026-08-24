@@ -21,15 +21,14 @@ from dagster_v3.defs.esef_filings.segment_assets import (
     document_result_object_key,
 )
 from dagster_v3.defs.esef_filings.partitioned_storage import (
+    CONTACT_CANDIDATES_PROJECTION,
     QUALIFIED_PARTITION_STATUS_TABLE,
     ResultProjection,
-    SOURCE_DOCUMENTS_PROJECTION,
     write_result_projection_partition,
 )
 
 
 EXPECTED_DUCKDB_ASSETS = {
-    "esef_source_documents_duckdb",
     "esef_filing_facts_duckdb",
     "esef_document_contact_candidates_duckdb",
     "esef_document_concept_labels_duckdb",
@@ -37,7 +36,6 @@ EXPECTED_DUCKDB_ASSETS = {
 }
 
 EXPECTED_CLICKHOUSE_DEPENDENCIES = {
-    "esef_source_documents_clickhouse": "esef_source_documents_duckdb",
     "esef_facts_clickhouse": "esef_filing_facts_duckdb",
     "esef_document_contact_candidates_clickhouse": (
         "esef_document_contact_candidates_duckdb"
@@ -51,7 +49,7 @@ def test_duckdb_assets_are_independent_artifact_projections() -> None:
     assets_by_name = {asset.key.path[-1]: asset for asset in ESEF_PARSING_ASSETS}
 
     assert set(assets_by_name) == EXPECTED_DUCKDB_ASSETS
-    assert len({asset.op.pool for asset in assets_by_name.values()}) == 5
+    assert len({asset.op.pool for asset in assets_by_name.values()}) == 4
 
     for asset_name, asset in assets_by_name.items():
         assert asset.asset_deps[AssetKey(asset_name)] == {
@@ -61,19 +59,20 @@ def test_duckdb_assets_are_independent_artifact_projections() -> None:
         assert asset.backfill_policy.max_partitions_per_run == 1
 
 
-def test_clickhouse_assets_publish_only_their_matching_duckdb_output() -> None:
-    assets_by_name = {
-        asset.key.path[-1]: asset for asset in ESEF_PARSING_CLICKHOUSE_ASSETS
+def test_clickhouse_tables_are_published_by_one_four_output_operation() -> None:
+    [publication] = ESEF_PARSING_CLICKHOUSE_ASSETS
+
+    assert publication.keys == {
+        AssetKey(asset_name) for asset_name in EXPECTED_CLICKHOUSE_DEPENDENCIES
     }
-
-    assert set(assets_by_name) == set(EXPECTED_CLICKHOUSE_DEPENDENCIES)
-    assert len({asset.op.pool for asset in assets_by_name.values()}) == 5
-
+    assert publication.op.name == "esef_parsing_clickhouse"
+    assert publication.op.pool == "esef_parsing_clickhouse"
     for asset_name, duckdb_asset_name in EXPECTED_CLICKHOUSE_DEPENDENCIES.items():
-        asset = assets_by_name[asset_name]
-        assert asset.asset_deps[AssetKey(asset_name)] == {AssetKey(duckdb_asset_name)}
-        assert asset.partitions_def is ESEF_PROCESSED_WEEK_PARTITIONS
-        assert asset.backfill_policy.max_partitions_per_run == 1
+        assert publication.asset_deps[AssetKey(asset_name)] == {
+            AssetKey(duckdb_asset_name)
+        }
+    assert publication.partitions_def is ESEF_PROCESSED_WEEK_PARTITIONS
+    assert publication.backfill_policy.max_partitions_per_run == 1
 
 
 def test_processed_week_partition_is_seven_days() -> None:
@@ -82,7 +81,7 @@ def test_processed_week_partition_is_seven_days() -> None:
     assert window.end - window.start == timedelta(days=7)
 
 
-def test_source_document_projection_writes_atomic_completed_partition(
+def test_contact_projection_writes_atomic_completed_partition(
     tmp_path: Path,
 ) -> None:
     partition_key = "2025-03-30"
@@ -92,12 +91,12 @@ def test_source_document_projection_writes_atomic_completed_partition(
         "source_run_id": "run-1",
         "extracted_at": "2025-04-01T00:00:00Z",
         "source_document_ids": ["filing-1"],
-        "document_rows": [_projection_row(SOURCE_DOCUMENTS_PROJECTION)],
-        "candidate_rows": [],
+        "document_rows": [{}],
+        "candidate_rows": [_projection_row(CONTACT_CANDIDATES_PROJECTION)],
         "concept_label_rows": [],
         "metadata": {
             "source_document_row_count": 1,
-            "contact_candidate_row_count": 0,
+            "contact_candidate_row_count": 1,
             "concept_label_row_count": 0,
         },
     }
@@ -109,12 +108,12 @@ def test_source_document_projection_writes_atomic_completed_partition(
             ): json.dumps(result).encode(),
         }
     )
-    target_path = tmp_path / "source-documents.duckdb"
+    target_path = tmp_path / "contact-candidates.duckdb"
 
     metadata = write_result_projection_partition(
         object_store=object_store,
         partition_key=partition_key,
-        projection=SOURCE_DOCUMENTS_PROJECTION,
+        projection=CONTACT_CANDIDATES_PROJECTION,
         target_path=target_path,
     )
 
@@ -124,7 +123,7 @@ def test_source_document_projection_writes_atomic_completed_partition(
     with duckdb.connect(str(target_path), read_only=True) as connection:
         [(source_document_id, processed_week)] = connection.execute(
             "select source_document_id, processed_week "
-            "from esef_filings.esef_source_documents"
+            "from esef_filings.esef_document_contact_candidates"
         ).fetchall()
         [(expected_rows, actual_rows)] = connection.execute(
             f"select expected_row_count, actual_row_count "
@@ -143,12 +142,12 @@ def test_projection_rejects_producer_row_count_mismatch(tmp_path: Path) -> None:
         "source_run_id": "run-1",
         "extracted_at": "2025-04-01T00:00:00Z",
         "source_document_ids": ["filing-1"],
-        "document_rows": [_projection_row(SOURCE_DOCUMENTS_PROJECTION)],
-        "candidate_rows": [],
+        "document_rows": [{}],
+        "candidate_rows": [_projection_row(CONTACT_CANDIDATES_PROJECTION)],
         "concept_label_rows": [],
         "metadata": {
-            "source_document_row_count": 2,
-            "contact_candidate_row_count": 0,
+            "source_document_row_count": 1,
+            "contact_candidate_row_count": 2,
             "concept_label_row_count": 0,
         },
     }
@@ -160,13 +159,13 @@ def test_projection_rejects_producer_row_count_mismatch(tmp_path: Path) -> None:
             ): json.dumps(result).encode(),
         }
     )
-    target_path = tmp_path / "source-documents.duckdb"
+    target_path = tmp_path / "contact-candidates.duckdb"
 
     with pytest.raises(ValueError, match="partition is incomplete"):
         write_result_projection_partition(
             object_store=object_store,
             partition_key=partition_key,
-            projection=SOURCE_DOCUMENTS_PROJECTION,
+            projection=CONTACT_CANDIDATES_PROJECTION,
             target_path=target_path,
         )
 
@@ -285,6 +284,19 @@ def test_canonical_migration_replaces_legacy_tables_and_removes_v2_suffix() -> N
     for table in canonical_tables:
         assert f"DROP TABLE IF EXISTS corpscout.{table};" in migration_sql
         assert f"corpscout.{table}_v2 TO corpscout.{table}" in migration_sql
+
+
+def test_source_document_table_is_retired_after_canonical_promotion() -> None:
+    migration_path = (
+        Path(__file__).resolve().parents[3]
+        / "clickhouse"
+        / "migrations"
+        / "000315_corpscout_retire_esef_source_documents.up.sql"
+    )
+
+    migration_sql = migration_path.read_text(encoding="utf-8")
+
+    assert "DROP TABLE IF EXISTS corpscout.esef_source_documents;" in migration_sql
 
 
 def _projection_row(projection: ResultProjection) -> dict[str, object]:

@@ -19,7 +19,7 @@ from dagster_v3.defs.sweden_financial.clickhouse import (
 )
 from dagster_v3.defs.translator_load.resource import TranslatorResource
 
-GROUP_NAME = "esef_filings"
+GROUP_NAME = "esef_enrichment"
 
 _COMPANY_INFORMATION_TABLE_CONTRACT = (
     tables.ESEF_DOCUMENT_COMPANY_INFORMATION_TABLE,

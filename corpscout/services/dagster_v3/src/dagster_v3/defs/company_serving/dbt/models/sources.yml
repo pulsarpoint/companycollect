@@ -24,7 +24,7 @@ sources:
       - name: company_description_observations
       - name: esef_document_people
       - name: esef_document_contact_candidates
-      - name: esef_source_documents
+      - name: esef_filings
       - name: company_domain_suggestions_active
       - name: company_domain_suggestion_evidence_active
       - name: company_domains

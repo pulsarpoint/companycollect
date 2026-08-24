@@ -4,6 +4,7 @@ No ``from __future__ import annotations``: Dagster inspects asset annotations.
 """
 
 import uuid
+from collections.abc import Iterator
 from dataclasses import dataclass
 from typing import Any
 
@@ -21,7 +22,6 @@ from dagster_v3.defs.esef_filings.partitioned_storage import (
     CONTACT_CANDIDATES_STORAGE,
     DISCLOSURES_STORAGE,
     FACTS_STORAGE,
-    SOURCE_DOCUMENTS_STORAGE,
     require_completed_partition,
 )
 from dagster_v3.defs.esef_filings.publish import ESEF_FACTS_COLUMN_EXPRESSIONS
@@ -43,13 +43,6 @@ class PartitionPublishContract:
     column_expressions: dict[str, str] | None = None
 
 
-SOURCE_DOCUMENTS_CONTRACT = PartitionPublishContract(
-    dataset_name="source_documents",
-    storage_source=SOURCE_DOCUMENTS_STORAGE,
-    duckdb_table=tables.ESEF_SOURCE_DOCUMENTS_TABLE,
-    clickhouse_table=tables.ESEF_SOURCE_DOCUMENTS_TABLE,
-    columns=tables.ESEF_SOURCE_DOCUMENTS_PARTITION_EXPORT_COLUMNS,
-)
 FACTS_CONTRACT = PartitionPublishContract(
     dataset_name="facts",
     storage_source=FACTS_STORAGE,
@@ -153,108 +146,66 @@ def replace_esef_partition_clickhouse(
     }
 
 
-def _publish_result(
+PUBLISH_CONTRACTS = (
+    (dg.AssetKey("esef_facts_clickhouse"), FACTS_CONTRACT),
+    (
+        dg.AssetKey("esef_document_contact_candidates_clickhouse"),
+        CONTACT_CANDIDATES_CONTRACT,
+    ),
+    (dg.AssetKey("esef_document_concept_labels_clickhouse"), CONCEPT_LABELS_CONTRACT),
+    (dg.AssetKey("esef_fact_disclosures_clickhouse"), DISCLOSURES_CONTRACT),
+)
+
+
+@dg.multi_asset(
+    specs=[
+        dg.AssetSpec(
+            "esef_facts_clickhouse",
+            deps=["esef_filing_facts_duckdb"],
+            group_name=GROUP_NAME,
+            kinds={"duckdb", "clickhouse", "xbrl"},
+        ),
+        dg.AssetSpec(
+            "esef_document_contact_candidates_clickhouse",
+            deps=["esef_document_contact_candidates_duckdb"],
+            group_name=GROUP_NAME,
+            kinds={"duckdb", "clickhouse"},
+        ),
+        dg.AssetSpec(
+            "esef_document_concept_labels_clickhouse",
+            deps=["esef_document_concept_labels_duckdb"],
+            group_name=GROUP_NAME,
+            kinds={"duckdb", "clickhouse", "taxonomy"},
+        ),
+        dg.AssetSpec(
+            "esef_fact_disclosures_clickhouse",
+            deps=["esef_fact_disclosures_duckdb"],
+            group_name=GROUP_NAME,
+            kinds={"duckdb", "clickhouse", "xhtml"},
+        ),
+    ],
+    partitions_def=ESEF_PROCESSED_WEEK_PARTITIONS,
+    backfill_policy=dg.BackfillPolicy.multi_run(max_partitions_per_run=1),
+    pool="esef_parsing_clickhouse",
+)
+def esef_parsing_clickhouse(
     context: dg.AssetExecutionContext,
     clickhouse: ClickhouseResource,
-    contract: PartitionPublishContract,
-) -> dg.MaterializeResult:
-    return dg.MaterializeResult(
-        metadata=replace_esef_partition_clickhouse(
-            clickhouse=clickhouse,
-            partition_key=context.partition_key,
-            contract=contract,
-            log=context.log.info,
+) -> Iterator[dg.MaterializeResult]:
+    """Publish all four parsing outputs as one non-subsettable operation."""
+    for asset_key, contract in PUBLISH_CONTRACTS:
+        yield dg.MaterializeResult(
+            asset_key=asset_key,
+            metadata=replace_esef_partition_clickhouse(
+                clickhouse=clickhouse,
+                partition_key=context.partition_key,
+                contract=contract,
+                log=context.log.info,
+            ),
         )
-    )
 
 
-@dg.asset(
-    name="esef_source_documents_clickhouse",
-    deps=[dg.AssetKey("esef_source_documents_duckdb")],
-    group_name=GROUP_NAME,
-    kinds={"duckdb", "clickhouse"},
-    partitions_def=ESEF_PROCESSED_WEEK_PARTITIONS,
-    backfill_policy=dg.BackfillPolicy.multi_run(max_partitions_per_run=1),
-    pool="esef_source_documents_clickhouse",
-)
-def esef_source_documents_clickhouse(
-    context: dg.AssetExecutionContext,
-    clickhouse: ClickhouseResource,
-) -> dg.MaterializeResult:
-    return _publish_result(context, clickhouse, SOURCE_DOCUMENTS_CONTRACT)
-
-
-@dg.asset(
-    name="esef_facts_clickhouse",
-    deps=[dg.AssetKey("esef_filing_facts_duckdb")],
-    group_name=GROUP_NAME,
-    kinds={"duckdb", "clickhouse", "xbrl"},
-    partitions_def=ESEF_PROCESSED_WEEK_PARTITIONS,
-    backfill_policy=dg.BackfillPolicy.multi_run(max_partitions_per_run=1),
-    pool="esef_facts_clickhouse",
-)
-def esef_facts_clickhouse(
-    context: dg.AssetExecutionContext,
-    clickhouse: ClickhouseResource,
-) -> dg.MaterializeResult:
-    return _publish_result(context, clickhouse, FACTS_CONTRACT)
-
-
-@dg.asset(
-    name="esef_document_contact_candidates_clickhouse",
-    deps=[dg.AssetKey("esef_document_contact_candidates_duckdb")],
-    group_name=GROUP_NAME,
-    kinds={"duckdb", "clickhouse"},
-    partitions_def=ESEF_PROCESSED_WEEK_PARTITIONS,
-    backfill_policy=dg.BackfillPolicy.multi_run(max_partitions_per_run=1),
-    pool="esef_document_contact_candidates_clickhouse",
-)
-def esef_document_contact_candidates_clickhouse(
-    context: dg.AssetExecutionContext,
-    clickhouse: ClickhouseResource,
-) -> dg.MaterializeResult:
-    return _publish_result(context, clickhouse, CONTACT_CANDIDATES_CONTRACT)
-
-
-@dg.asset(
-    name="esef_document_concept_labels_clickhouse",
-    deps=[dg.AssetKey("esef_document_concept_labels_duckdb")],
-    group_name=GROUP_NAME,
-    kinds={"duckdb", "clickhouse", "taxonomy"},
-    partitions_def=ESEF_PROCESSED_WEEK_PARTITIONS,
-    backfill_policy=dg.BackfillPolicy.multi_run(max_partitions_per_run=1),
-    pool="esef_document_concept_labels_clickhouse",
-)
-def esef_document_concept_labels_clickhouse(
-    context: dg.AssetExecutionContext,
-    clickhouse: ClickhouseResource,
-) -> dg.MaterializeResult:
-    return _publish_result(context, clickhouse, CONCEPT_LABELS_CONTRACT)
-
-
-@dg.asset(
-    name="esef_fact_disclosures_clickhouse",
-    deps=[dg.AssetKey("esef_fact_disclosures_duckdb")],
-    group_name=GROUP_NAME,
-    kinds={"duckdb", "clickhouse", "xhtml"},
-    partitions_def=ESEF_PROCESSED_WEEK_PARTITIONS,
-    backfill_policy=dg.BackfillPolicy.multi_run(max_partitions_per_run=1),
-    pool="esef_fact_disclosures_clickhouse",
-)
-def esef_fact_disclosures_clickhouse(
-    context: dg.AssetExecutionContext,
-    clickhouse: ClickhouseResource,
-) -> dg.MaterializeResult:
-    return _publish_result(context, clickhouse, DISCLOSURES_CONTRACT)
-
-
-ESEF_PARSING_CLICKHOUSE_ASSETS = (
-    esef_source_documents_clickhouse,
-    esef_facts_clickhouse,
-    esef_document_contact_candidates_clickhouse,
-    esef_document_concept_labels_clickhouse,
-    esef_fact_disclosures_clickhouse,
-)
+ESEF_PARSING_CLICKHOUSE_ASSETS = (esef_parsing_clickhouse,)
 
 defs = dg.Definitions(
     assets=list(ESEF_PARSING_CLICKHOUSE_ASSETS),

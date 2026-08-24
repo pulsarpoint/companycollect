@@ -83,9 +83,9 @@ esef_sources AS (
         )) AS source_confidence,
         candidates.source_document_id AS source_record_id,
         coalesce(
-            nullIf(documents.viewer_url, ''),
-            nullIf(documents.report_url, ''),
-            nullIf(documents.package_url, ''),
+            nullIf(filings.viewer_url, ''),
+            nullIf(filings.report_url, ''),
+            nullIf(filings.package_url, ''),
             ''
         ) AS source_url,
         multiIf(
@@ -103,8 +103,8 @@ esef_sources AS (
     FROM {{ source('corpscout', 'esef_document_contact_candidates') }} AS candidates
     INNER JOIN companies
         ON companies.company_id = candidates.company_id
-    LEFT ANY JOIN {{ source('corpscout', 'esef_source_documents') }} AS documents
-        ON documents.source_document_id = candidates.source_document_id
+    LEFT ANY JOIN {{ source('corpscout', 'esef_filings') }} AS filings
+        ON filings.fxo_id = candidates.source_document_id
     WHERE candidates.country_iso2 = '{{ var("country_code") }}'
       AND candidates.candidate_kind = 'website'
       AND candidates.company_id != ''

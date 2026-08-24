@@ -525,9 +525,6 @@ def test_export_columns_match_migration_000149_column_order() -> None:
 def test_document_export_columns_match_migration_000243_column_order() -> None:
     sql = DOCUMENT_MIGRATION_FILE.read_text(encoding="utf-8")
     expected_by_table = {
-        tables.ESEF_SOURCE_DOCUMENTS_TABLE: (
-            tables.ESEF_SOURCE_DOCUMENTS_EXPORT_COLUMNS
-        ),
         tables.ESEF_DOCUMENT_CONTACT_CANDIDATES_TABLE: (
             tables.ESEF_DOCUMENT_CONTACT_CANDIDATES_EXPORT_COLUMNS
         ),
@@ -598,10 +595,6 @@ def test_concept_label_export_columns_match_migration_000246_column_order() -> N
 def test_partition_export_columns_match_promoted_table_contracts() -> None:
     sql = PARTITIONED_PARSING_MIGRATION_FILE.read_text(encoding="utf-8")
     expected_by_table = {
-        "esef_source_documents_v2": (
-            tables.ESEF_SOURCE_DOCUMENTS_PARTITION_EXPORT_COLUMNS,
-            {"source_record_uid"},
-        ),
         "esef_facts_v2": (tables.ESEF_FACTS_PARTITION_EXPORT_COLUMNS, set()),
         "esef_document_contact_candidates_v2": (
             tables.ESEF_DOCUMENT_CONTACT_CANDIDATES_PARTITION_EXPORT_COLUMNS,

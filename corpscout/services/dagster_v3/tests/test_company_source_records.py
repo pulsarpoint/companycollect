@@ -120,6 +120,9 @@ def test_selected_source_sql_preserves_independent_origins_and_company_links() -
     assert "finland_prh_xbrl" in finland_financial
     assert "'FI'" in finland_financial
     assert "verified_lei_registry_map" in esef
+    assert "corpscout.esef_facts FINAL" in esef
+    assert "corpscout.esef_filings AS filings FINAL" in esef
+    assert "esef_source_documents" not in esef
     assert "identifier_type = 'se_orgnr'" in wikidata
     assert "wikidata_verified_lei" in wikidata
 

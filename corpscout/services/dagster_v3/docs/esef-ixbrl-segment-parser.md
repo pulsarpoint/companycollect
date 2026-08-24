@@ -96,8 +96,9 @@ field change still fails the cutover gate.
 Launch `esef_filings_refresh_job` or `esef_filings_backfill_job` for a processed-week
 partition such as `2025-03-30`. The graph snapshots the compact source manifest, parses
 each unique SHA-256 package outside the DuckDB pool, and then publishes
-`esef_source_documents`, `esef_document_contact_candidates`, and
-`esef_document_concept_labels`. Concept-label rows contain only concepts used by
+`esef_facts`, `esef_document_contact_candidates`,
+`esef_document_concept_labels`, and `esef_fact_disclosures` through one
+four-output ClickHouse publication operation. Concept-label rows contain only concepts used by
 the document and retain the submitted-language and English taxonomy labels,
 namespace URI, extension status, source document, and source-record identity.
 Its run config accepts:
@@ -139,8 +140,9 @@ esef_filings/ixbrl_segments/schema=v5/parser=arelle-<version>/candidates=v3/pack
 
 ## Extract company enrichment with DeepSeek
 
-Materialize `esef_document_company_information_duckdb` after
-`esef_source_documents_clickhouse`. It uses the existing `DEEPSEEK_URL`,
+Materialize `esef_document_company_information_duckdb` after the four parsing
+outputs. It selects filings with published `esef_facts` and resolves the parsed
+artifact from S3. It uses the existing `DEEPSEEK_URL`,
 `DEEPSEEK_MODEL`, and `DEEPSEEK_API_KEY` environment variables. This paid asset is
 unpartitioned and is never included in the routine refresh or backfill. It reads the
 final ClickHouse source-document table and selects the newest parsed XBRL report for

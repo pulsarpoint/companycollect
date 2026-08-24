@@ -115,7 +115,6 @@ NEEDED_TABLES = frozenset(
         "se_industries",
         "text_translations",
         "se_code_labels",
-        "esef_source_documents",
         "esef_document_company_information",
         "wikidata_companies",
         "wikidata_company_identifiers",
@@ -136,7 +135,6 @@ BETA = "5560125220"  # Fallback path: no scb hash -- falls back to bolagsverket_
 GAMMA = "196408233412"  # Sole trader: 12-digit personnummer-based id, admitted by 000299.
 
 T_SEED = _literal(datetime(2026, 8, 1, tzinfo=UTC))
-T_ESEF_SOURCE = _literal(datetime(2025, 4, 1, tzinfo=UTC))
 T_ESEF_INFO = _literal(datetime(2025, 4, 2, tzinfo=UTC))
 T_CHANGED = _literal(datetime(2026, 8, 5, tzinfo=UTC))  # ALPHA's new SCB payload version.
 # ALPHA's final row resolves *now*: artifact observed_at is now64 at append time (scb.py),
@@ -224,19 +222,6 @@ INSERT INTO corpscout.text_translations
 VALUES
     ('corpscout.se_companies', 'activity_description', cityHash64('IT-konsulter.'), 'sv', 'en',
      'IT consultants.', 'translator', 'm', 1);
-
-INSERT INTO corpscout.esef_source_documents
-    (source_document_id, document_type, lei, entity_name, country_iso2, company_id, period_end,
-     fiscal_year, package_url, report_url, viewer_url, package_sha256, package_object_key,
-     package_size_bytes, parsed_artifact_object_key, artifact_schema_version, parser_name,
-     parser_version, archive_status, extraction_status, fact_count, text_fact_count,
-     numeric_fact_count, contact_candidate_count, website_candidate_count,
-     validation_error_count, validation_warning_count, source_processed_at, source_run_id,
-     extracted_at, resolved_at)
-VALUES
-    ('doc-1', 'annual', '5493001KJTIIGC8Y1R12', 'Alpha AB', 'SE', '{ALPHA}', '2024-12-31', 2024,
-     '', '', '', '', '', 0, '', 1, 'p', '1', 'ok', 'ok', 0, 0, 0, 0, 0, 0, 0,
-     '2025-04-01 00:00:00.000', 'fixture', '2025-04-01 00:00:00.000', {T_ESEF_SOURCE});
 
 INSERT INTO corpscout.esef_document_company_information
     (source_document_id, package_sha256, lei, country_iso2, company_id, period_end, fiscal_year,

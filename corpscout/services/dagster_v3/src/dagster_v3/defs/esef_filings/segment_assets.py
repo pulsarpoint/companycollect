@@ -250,19 +250,11 @@ def run_esef_document_manifest_partition(
         source_document_ids=selected_ids,
         max_documents=max_documents,
     )
-    existing_sizes = _load_existing_package_sizes(
-        esef_filings_duckdb,
-        source_document_ids=[str(row["source_document_id"]) for row in index_rows],
-    )
     object_store.ensure_bucket(ESEF_DOCUMENT_BUCKET)
     documents = [
         {
             **index_row,
             "company_id": _company_id_for_index_row(index_row, company_links),
-            "existing_package_size_bytes": existing_sizes.get(
-                str(index_row["source_document_id"]),
-                0,
-            ),
         }
         for index_row in index_rows
     ]
@@ -391,7 +383,7 @@ def run_esef_document_artifacts_partition(
                 current_key = artifact_object_key(digest)
                 if object_store.exists(current_key, bucket=ESEF_DOCUMENT_BUCKET):
                     current_artifact_keys_by_digest[digest] = current_key
-        compatible_artifacts_by_digest = _compatible_artifact_keys_by_digest(
+        compatible_artifacts_by_digest = compatible_artifact_keys_by_digest(
             object_store,
             package_sha256s=(
                 set(documents_by_digest) - set(current_artifact_keys_by_digest)
@@ -537,10 +529,7 @@ def run_esef_document_artifacts_partition(
                     archive_status = "downloaded"
                     downloaded_packages += 1
                 else:
-                    package_size_bytes = max(
-                        int(document["existing_package_size_bytes"])
-                        for document in grouped_documents
-                    )
+                    package_size_bytes = 0
                     archive_status = "reused"
                     reused_packages += 1
                 package_io_seconds += perf_counter() - io_started
@@ -680,7 +669,6 @@ def run_esef_document_artifacts_partition(
             "email_candidate_count": email_candidate_count,
             "phone_candidate_count": phone_candidate_count,
             "website_candidate_count": website_candidate_count,
-            "document_table": tables.QUALIFIED_ESEF_SOURCE_DOCUMENTS_TABLE,
             "contact_table": tables.QUALIFIED_ESEF_DOCUMENT_CONTACT_CANDIDATES_TABLE,
             "concept_label_table": tables.QUALIFIED_ESEF_DOCUMENT_CONCEPT_LABELS_TABLE,
         }
@@ -860,33 +848,6 @@ def _load_filing_index_rows(
         result = connection.execute(query, parameters)
         columns = [description[0] for description in result.description]
         return [dict(zip(columns, row, strict=True)) for row in result.fetchall()]
-
-
-def _load_existing_package_sizes(
-    esef_filings_duckdb: DuckDBResource,
-    *,
-    source_document_ids: Sequence[str],
-) -> dict[str, int]:
-    if not source_document_ids:
-        return {}
-    with safe_duckdb_connection(esef_filings_duckdb) as connection:
-        if not _duckdb_table_exists(
-            connection,
-            schema=tables.DLT_DATASET_NAME,
-            table=tables.ESEF_SOURCE_DOCUMENTS_TABLE,
-        ):
-            return {}
-        placeholders = ", ".join("?" for _ in source_document_ids)
-        rows = connection.execute(
-            "select source_document_id, package_size_bytes "
-            f"from {tables.DLT_DATASET_NAME}.{tables.ESEF_SOURCE_DOCUMENTS_TABLE} "
-            f"where source_document_id in ({placeholders})",
-            list(source_document_ids),
-        ).fetchall()
-    return {
-        str(source_document_id): int(size_bytes)
-        for source_document_id, size_bytes in rows
-    }
 
 
 def _company_id_for_index_row(
@@ -1218,7 +1179,7 @@ def _validated_artifact_file(
     return artifact
 
 
-def _compatible_artifact_keys_by_digest(
+def compatible_artifact_keys_by_digest(
     object_store: Any,
     *,
     package_sha256s: set[str],

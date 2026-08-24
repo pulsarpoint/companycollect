@@ -192,9 +192,11 @@ def finland_financial_company_source_records_clickhouse(
     name="esef_company_source_records_clickhouse",
     deps=[
         dg.AssetDep(
-            dg.AssetKey("esef_source_documents_clickhouse"),
+            dg.AssetKey("esef_facts_clickhouse"),
             partition_mapping=dg.AllPartitionMapping(),
-        )
+        ),
+        dg.AssetKey("esef_filings_clickhouse"),
+        dg.AssetKey("esef_entity_registry_map_clickhouse"),
     ],
     group_name=tables.GROUP_NAME,
     kinds={"clickhouse", "sql", "provenance", "xbrl"},

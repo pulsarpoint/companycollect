@@ -7,11 +7,8 @@ when its financial period ended years ago. Each index partition is fetched
 with an API-side processed-time filter and upserted by stable ``fxo_id``.
 
 ``esef_document_artifacts_s3`` downloads and parses each report package once.
-The independent partitioned assets project those artifacts into the canonical
-facts, source-document, contact, taxonomy-label, and disclosure datasets.
-
-``esef_filings_index_reconciliation_duckdb`` remains an unpartitioned full
-sweep for occasional reconciliation. It is not part of the weekly path.
+Four independent partitioned assets project those artifacts into facts,
+contact-candidate, taxonomy-label, and disclosure datasets.
 
 No `from __future__ import annotations` -- this module defines `@dg.asset`s
 and stringizing the `context: AssetExecutionContext` hint breaks Dagster's op
@@ -124,7 +121,6 @@ _FILINGS_INDEX_COLUMNS_SQL = ", ".join(
 )
 _FILINGS_INDEX_INSERT_BATCH_SIZE = 50_000
 _FILINGS_INDEX_BATCH_RELATION = "_esef_filings_index_batch"
-_FILINGS_INDEX_REPLACEMENT_TABLE = "_esef_filings_index_replacement"
 _FILINGS_INDEX_UPSERT_TABLE = "_esef_filings_index_upsert"
 _FILINGS_INDEX_ARROW_SCHEMA = pa.schema(
     [
@@ -290,52 +286,6 @@ def _filing_summary(records: Sequence[EsefFilingRecord]) -> dict[str, Any]:
     }
 
 
-def replace_esef_filings_index(
-    *,
-    connection: Any,
-    records: Sequence[EsefFilingRecord],
-    source_url: str,
-    source_run_id: str,
-) -> dict[str, Any]:
-    """Full-replace esef_filings.filings_index with `records`.
-
-    Refuses to touch the existing table on an empty crawl (raises
-    ValueError before any DB statement runs), and wraps the
-    create-or-replace + insert in one transaction so a mid-insert failure
-    rolls back to the prior table rather than leaving it half-replaced.
-    """
-    if not records:
-        raise ValueError(
-            "ESEF filings crawl returned 0 filings -- refusing to replace "
-            f"{QUALIFIED_FILINGS_INDEX_TABLE} (refuse-to-replace-on-empty)."
-        )
-    connection.execute("begin transaction")
-    try:
-        connection.execute(f"create schema if not exists {tables.DLT_DATASET_NAME}")
-        connection.execute(
-            f"create or replace temp table {_FILINGS_INDEX_REPLACEMENT_TABLE} "
-            f"({_FILINGS_INDEX_COLUMNS_SQL})"
-        )
-        _insert_filings_index_records(
-            connection=connection,
-            target_table=_FILINGS_INDEX_REPLACEMENT_TABLE,
-            records=records,
-            source_url=source_url,
-            source_run_id=source_run_id,
-        )
-        columns = ", ".join(tables.ESEF_FILINGS_EXPORT_COLUMNS)
-        connection.execute(
-            f"create or replace table {QUALIFIED_FILINGS_INDEX_TABLE} as "
-            f"select {columns} from {_FILINGS_INDEX_REPLACEMENT_TABLE}"
-        )
-        connection.execute("commit")
-    except Exception:
-        connection.execute("rollback")
-        raise
-
-    return _filing_summary(records)
-
-
 def upsert_esef_filings_index(
     *,
     connection: Any,
@@ -494,86 +444,6 @@ def esef_filings_index_duckdb(
             "duplicate_fxo_id_count": summary["duplicate_fxo_id_count"],
             "processed_window_start": partition_window.start.isoformat(),
             "processed_window_end": partition_window.end.isoformat(),
-            "duckdb_path": str(esef_filings_source_duckdb_path()),
-        }
-    )
-
-
-@dg.asset(
-    name="esef_filings_index_reconciliation_duckdb",
-    group_name=GROUP_NAME,
-    kinds={"python", "duckdb", "esef_filings"},
-    pool=ESEF_FILINGS_DUCKDB_POOL,
-    description=(
-        "Occasional full filings.xbrl.org sweep that atomically reconciles "
-        f"the cumulative DuckDB table {QUALIFIED_FILINGS_INDEX_TABLE}. Not "
-        "part of the weekly incremental path."
-    ),
-)
-def esef_filings_index_reconciliation_duckdb(
-    context: dg.AssetExecutionContext,
-    esef_filings_duckdb: DuckDBResource,
-) -> dg.MaterializeResult:
-    client = EsefFilingsClient()
-    records = list(client.iter_filings())
-    api_reported_total = client.last_reported_total
-    if not records:
-        raise ValueError(
-            "ESEF filings reconciliation returned 0 filings -- refusing to replace "
-            f"{QUALIFIED_FILINGS_INDEX_TABLE}."
-        )
-    _check_crawl_completeness(
-        crawled_count=len(records), api_reported_total=api_reported_total
-    )
-    with esef_filings_duckdb.get_connection() as connection:
-        [(table_exists,)] = connection.execute(
-            "select count(*) > 0 from information_schema.tables "
-            "where table_schema = ? and table_name = ?",
-            [tables.DLT_DATASET_NAME, FILINGS_INDEX_TABLE],
-        ).fetchall()
-        existing_processed_at_by_fxo_id = (
-            dict(
-                connection.execute(
-                    f"select fxo_id, processed_at from {QUALIFIED_FILINGS_INDEX_TABLE}"
-                ).fetchall()
-            )
-            if table_exists
-            else {}
-        )
-        existing_fxo_ids = set(existing_processed_at_by_fxo_id)
-        crawled_processed_at_by_fxo_id = {
-            record.fxo_id: record.processed_at for record in records
-        }
-        crawled_fxo_ids = set(crawled_processed_at_by_fxo_id)
-        new_fxo_ids = crawled_fxo_ids - existing_fxo_ids
-        removed_fxo_ids = existing_fxo_ids - crawled_fxo_ids
-        affected_processed_months = sorted(
-            {
-                processed_at[:7]
-                for fxo_id, processed_at in (
-                    crawled_processed_at_by_fxo_id | existing_processed_at_by_fxo_id
-                ).items()
-                if fxo_id in new_fxo_ids | removed_fxo_ids and processed_at
-            }
-        )
-        summary = replace_esef_filings_index(
-            connection=connection,
-            records=records,
-            source_url=ESEF_INDEX_URL,
-            source_run_id=context.run.run_id,
-        )
-    return dg.MaterializeResult(
-        metadata={
-            **summary,
-            "country_distribution_top10": dg.MetadataValue.json(
-                summary["country_distribution_top10"]
-            ),
-            "api_reported_total": api_reported_total,
-            "new_since_local_count": len(new_fxo_ids),
-            "removed_upstream_count": len(removed_fxo_ids),
-            "affected_processed_months": dg.MetadataValue.json(
-                affected_processed_months
-            ),
             "duckdb_path": str(esef_filings_source_duckdb_path()),
         }
     )
@@ -1505,7 +1375,7 @@ class EsefFinancialMetricsClickhouseExportConfig(dg.Config):
         ),
         dg.AssetKey("esef_filings_clickhouse"),
     ],
-    group_name=GROUP_NAME,
+    group_name="esef_financial_metrics",
     kinds={"python", "clickhouse", "esef_filings"},
     metadata={"table": tables.QUALIFIED_ESEF_FINANCIAL_METRICS_TABLE},
     description=(
@@ -1576,25 +1446,19 @@ ESEF_FILINGS_INGEST_SELECTION = dg.AssetSelection.assets(
     "esef_filings_index_duckdb",
     "esef_filings_clickhouse",
     "esef_entity_registry_map_clickhouse",
-    "esef_financial_metrics_clickhouse",
 )
 
 ESEF_DOCUMENT_EVIDENCE_SELECTION = dg.AssetSelection.assets(
     "esef_document_extraction_manifest_s3",
     "esef_document_artifacts_s3",
-    "esef_source_documents_duckdb",
     "esef_filing_facts_duckdb",
     "esef_document_contact_candidates_duckdb",
     "esef_document_concept_labels_duckdb",
     "esef_fact_disclosures_duckdb",
-    "esef_source_documents_clickhouse",
     "esef_facts_clickhouse",
     "esef_document_contact_candidates_clickhouse",
     "esef_document_concept_labels_clickhouse",
-    "esef_document_concept_official_translations_clickhouse",
-    "esef_document_concept_translation_load",
     "esef_fact_disclosures_clickhouse",
-    "esef_company_source_records_clickhouse",
 )
 
 ESEF_FILINGS_REFRESH_SELECTION = (
@@ -1607,12 +1471,10 @@ ESEF_FILINGS_BACKFILL_SELECTION = dg.AssetSelection.assets(
     "esef_filings_index_duckdb",
     "esef_document_extraction_manifest_s3",
     "esef_document_artifacts_s3",
-    "esef_source_documents_duckdb",
     "esef_filing_facts_duckdb",
     "esef_document_contact_candidates_duckdb",
     "esef_document_concept_labels_duckdb",
     "esef_fact_disclosures_duckdb",
-    "esef_source_documents_clickhouse",
     "esef_facts_clickhouse",
     "esef_document_contact_candidates_clickhouse",
     "esef_document_concept_labels_clickhouse",
@@ -1627,11 +1489,6 @@ esef_filings_refresh_job = dg.define_asset_job(
 esef_filings_backfill_job = dg.define_asset_job(
     "esef_filings_backfill_job",
     selection=ESEF_FILINGS_BACKFILL_SELECTION,
-)
-
-esef_filings_reconciliation_job = dg.define_asset_job(
-    "esef_filings_reconciliation_job",
-    selection=dg.AssetSelection.assets("esef_filings_index_reconciliation_duckdb"),
 )
 
 
@@ -1671,19 +1528,9 @@ esef_filings_refresh_weekly = dg.ScheduleDefinition(
     default_status=dg.DefaultScheduleStatus.STOPPED,
 )
 
-esef_filings_reconciliation_monthly = dg.ScheduleDefinition(
-    name="esef_filings_reconciliation_monthly",
-    job=esef_filings_reconciliation_job,
-    cron_schedule="25 5 2 * *",
-    execution_timezone=ESEF_FILINGS_TIMEZONE,
-    default_status=dg.DefaultScheduleStatus.STOPPED,
-)
-
-
 defs = dg.Definitions(
     assets=[
         esef_filings_index_duckdb,
-        esef_filings_index_reconciliation_duckdb,
         esef_filings_clickhouse,
         esef_entity_registry_map_clickhouse,
         esef_financial_metrics_clickhouse,
@@ -1692,11 +1539,9 @@ defs = dg.Definitions(
     jobs=[
         esef_filings_refresh_job,
         esef_filings_backfill_job,
-        esef_filings_reconciliation_job,
     ],
     schedules=[
         esef_filings_refresh_weekly,
-        esef_filings_reconciliation_monthly,
     ],
     resources={
         "esef_filings_duckdb": duckdb_resource(esef_filings_source_duckdb_path()),

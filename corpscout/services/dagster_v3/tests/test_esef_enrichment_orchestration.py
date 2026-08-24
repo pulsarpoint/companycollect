@@ -6,22 +6,25 @@ from dagster_v3.defs.esef_filings.enrichment_orchestration import (
 )
 
 
-def test_routine_weekly_refresh_includes_deterministic_document_evidence() -> None:
+def test_routine_weekly_refresh_stops_at_four_clickhouse_parsing_outputs() -> None:
     repo = _repository()
     refresh_job = repo.get_job("esef_filings_refresh_job")
     refresh_keys = refresh_job.asset_layer.executable_asset_keys
 
     assert AssetKey("esef_document_extraction_manifest_s3") in refresh_keys
-    assert AssetKey("esef_source_documents_duckdb") in refresh_keys
+    assert AssetKey("esef_filing_facts_duckdb") in refresh_keys
     assert AssetKey("esef_document_contact_candidates_duckdb") in refresh_keys
     assert AssetKey("esef_document_concept_labels_duckdb") in refresh_keys
+    assert AssetKey("esef_fact_disclosures_duckdb") in refresh_keys
+    assert AssetKey("esef_facts_clickhouse") in refresh_keys
+    assert AssetKey("esef_document_contact_candidates_clickhouse") in refresh_keys
+    assert AssetKey("esef_document_concept_labels_clickhouse") in refresh_keys
+    assert AssetKey("esef_fact_disclosures_clickhouse") in refresh_keys
     assert (
         AssetKey("esef_document_concept_official_translations_clickhouse")
-        in refresh_keys
+        not in refresh_keys
     )
-    assert AssetKey("esef_document_concept_translation_load") in refresh_keys
-    assert AssetKey("esef_fact_disclosures_duckdb") in refresh_keys
-    assert AssetKey("esef_company_source_records_clickhouse") in refresh_keys
+    assert AssetKey("esef_company_source_records_clickhouse") not in refresh_keys
     assert AssetKey("esef_document_company_information_duckdb") not in refresh_keys
     assert refresh_job.partitions_def is assets.ESEF_PROCESSED_WEEK_PARTITIONS
 
@@ -36,7 +39,7 @@ def test_paid_llm_job_is_explicit_and_unpartitioned() -> None:
         AssetKey("esef_document_company_information_clickhouse"),
         AssetKey("esef_document_observations_clickhouse"),
     }
-    assert AssetKey("esef_source_documents_clickhouse") not in llm_keys
+    assert AssetKey("esef_facts_clickhouse") not in llm_keys
     assert llm_job.partitions_def is None
 
 

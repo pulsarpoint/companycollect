@@ -33,12 +33,10 @@ from dagster_v3.defs.esef_filings.partitioned_assets import (
     esef_document_concept_labels_duckdb,
     esef_document_contact_candidates_duckdb,
     esef_filing_facts_duckdb,
-    esef_source_documents_duckdb,
 )
 from dagster_v3.defs.esef_filings.partitioned_storage import (
     CONCEPT_LABELS_PROJECTION,
     CONTACT_CANDIDATES_PROJECTION,
-    SOURCE_DOCUMENTS_PROJECTION,
     write_result_projection_partition,
 )
 from dagster_v3.defs.esef_filings.segment_cli import main as segment_cli_main
@@ -739,11 +737,9 @@ def test_document_asset_archives_parses_and_stores_source_linked_rows(
         source_run_id="parse-run",
         source_document_ids=["SAMPLE-2024"],
     )
-    source_documents_path = tmp_path / "source-documents.duckdb"
     contact_candidates_path = tmp_path / "contact-candidates.duckdb"
     concept_labels_path = tmp_path / "concept-labels.duckdb"
     for projection, target_path in (
-        (SOURCE_DOCUMENTS_PROJECTION, source_documents_path),
         (CONTACT_CANDIDATES_PROJECTION, contact_candidates_path),
         (CONCEPT_LABELS_PROJECTION, concept_labels_path),
     ):
@@ -813,12 +809,6 @@ def test_document_asset_archives_parses_and_stores_source_linked_rows(
         report_package_object_key(package_sha256),
     ) in object_store.objects
 
-    with duckdb.connect(str(source_documents_path), read_only=True) as connection:
-        document = connection.execute(
-            f"select source_document_id, country_iso2, company_id, fact_count, "
-            f"parsed_artifact_object_key from {tables.DLT_DATASET_NAME}."
-            f"{tables.ESEF_SOURCE_DOCUMENTS_TABLE}"
-        ).fetchone()
     with duckdb.connect(str(contact_candidates_path), read_only=True) as connection:
         candidates = connection.execute(
             f"select candidate_kind, normalized_value, evidence_json from "
@@ -833,13 +823,6 @@ def test_document_asset_archives_parses_and_stores_source_linked_rows(
             f"{tables.ESEF_DOCUMENT_CONCEPT_LABELS_TABLE} "
             "order by concept_qname, label_role, language"
         ).fetchall()
-    assert document == (
-        "SAMPLE-2024",
-        "SE",
-        "5566000000",
-        4,
-        artifact_key,
-    )
     assert {kind for kind, _value, _evidence in candidates} == {
         "email",
         "phone",
@@ -975,7 +958,7 @@ def test_compatible_artifact_lookup_reuses_v4_but_not_v3() -> None:
         }
     )
 
-    compatible = segment_assets._compatible_artifact_keys_by_digest(
+    compatible = segment_assets.compatible_artifact_keys_by_digest(
         object_store,
         package_sha256s={reusable_digest, incompatible_digest},
     )
@@ -1140,12 +1123,6 @@ def test_document_assets_use_processed_week_partitions_and_share_source_deps() -
         == artifact_dependency
     )
     assert (
-        esef_source_documents_duckdb.asset_deps[
-            AssetKey("esef_source_documents_duckdb")
-        ]
-        == artifact_dependency
-    )
-    assert (
         esef_document_contact_candidates_duckdb.asset_deps[
             AssetKey("esef_document_contact_candidates_duckdb")
         ]
@@ -1162,7 +1139,7 @@ def test_document_assets_use_processed_week_partitions_and_share_source_deps() -
             {
                 asset.op.pool
                 for asset in (
-                    esef_source_documents_duckdb,
+                    esef_filing_facts_duckdb,
                     esef_document_contact_candidates_duckdb,
                     esef_document_concept_labels_duckdb,
                 )

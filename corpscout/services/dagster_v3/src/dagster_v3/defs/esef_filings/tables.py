@@ -1,8 +1,8 @@
 """Contracts for the ESEF filings source (filings.xbrl.org).
 
 Column orders below are load-bearing against migrations
-000149_corpscout_esef_filings.up.sql and
-000243_corpscout_esef_source_documents.up.sql. Each *_EXPORT_COLUMNS tuple
+000149_corpscout_esef_filings.up.sql and the ESEF evidence migrations. Each
+*_EXPORT_COLUMNS tuple
 must match its migration's column order exactly, minus `resolved_at`
 (ClickHouse defaults it via `DEFAULT now64(3)`). See
 tests/test_esef_filings_client.py for the contract tests.
@@ -28,7 +28,6 @@ ESEF_FILINGS_TABLE = "esef_filings"
 ESEF_FACTS_TABLE = "esef_facts"
 ESEF_ENTITY_REGISTRY_MAP_TABLE = "esef_entity_registry_map"
 ESEF_FINANCIAL_METRICS_TABLE = "esef_financial_metrics"
-ESEF_SOURCE_DOCUMENTS_TABLE = "esef_source_documents"
 ESEF_DOCUMENT_CONTACT_CANDIDATES_TABLE = "esef_document_contact_candidates"
 ESEF_DOCUMENT_CONCEPT_LABELS_TABLE = "esef_document_concept_labels"
 ESEF_DOCUMENT_COMPANY_INFORMATION_TABLE = "esef_document_company_information"
@@ -43,7 +42,6 @@ QUALIFIED_ESEF_ENTITY_REGISTRY_MAP_TABLE = (
 QUALIFIED_ESEF_FINANCIAL_METRICS_TABLE = (
     f"{ESEF_DATABASE}.{ESEF_FINANCIAL_METRICS_TABLE}"
 )
-QUALIFIED_ESEF_SOURCE_DOCUMENTS_TABLE = f"{ESEF_DATABASE}.{ESEF_SOURCE_DOCUMENTS_TABLE}"
 QUALIFIED_ESEF_DOCUMENT_CONTACT_CANDIDATES_TABLE = (
     f"{ESEF_DATABASE}.{ESEF_DOCUMENT_CONTACT_CANDIDATES_TABLE}"
 )
@@ -146,41 +144,6 @@ ESEF_FINANCIAL_METRICS_EXPORT_COLUMNS = (
     "fx_source",
     "viewer_url",
     "source_run_id",
-)
-
-# One row per filings.xbrl.org report package. The stable source_document_id is
-# the upstream fxo_id and is also the join key used by esef_facts.
-ESEF_SOURCE_DOCUMENTS_EXPORT_COLUMNS = (
-    "source_document_id",
-    "document_type",
-    "lei",
-    "entity_name",
-    "country_iso2",
-    "company_id",
-    "period_end",
-    "fiscal_year",
-    "package_url",
-    "report_url",
-    "viewer_url",
-    "package_sha256",
-    "package_object_key",
-    "package_size_bytes",
-    "parsed_artifact_object_key",
-    "artifact_schema_version",
-    "parser_name",
-    "parser_version",
-    "archive_status",
-    "extraction_status",
-    "fact_count",
-    "text_fact_count",
-    "numeric_fact_count",
-    "contact_candidate_count",
-    "website_candidate_count",
-    "validation_error_count",
-    "validation_warning_count",
-    "source_processed_at",
-    "source_run_id",
-    "extracted_at",
 )
 
 # Queryable deterministic values. Evidence remains attached to each value so a
@@ -297,10 +260,6 @@ ESEF_FACT_DISCLOSURES_EXPORT_COLUMNS = (
 
 # Every parsed table carries its Dagster partition explicitly. One completed
 # weekly DuckDB file can therefore replace exactly one ClickHouse partition.
-ESEF_SOURCE_DOCUMENTS_PARTITION_EXPORT_COLUMNS = (
-    *ESEF_SOURCE_DOCUMENTS_EXPORT_COLUMNS,
-    "processed_week",
-)
 ESEF_FACTS_PARTITION_EXPORT_COLUMNS = (*ESEF_FACTS_EXPORT_COLUMNS, "processed_week")
 ESEF_DOCUMENT_CONTACT_CANDIDATES_PARTITION_EXPORT_COLUMNS = (
     *ESEF_DOCUMENT_CONTACT_CANDIDATES_EXPORT_COLUMNS,

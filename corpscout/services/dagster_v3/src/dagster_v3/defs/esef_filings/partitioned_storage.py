@@ -26,7 +26,6 @@ PARTITION_STATUS_TABLE = "_partition_status"
 QUALIFIED_PARTITION_STATUS_TABLE = f"{tables.DLT_DATASET_NAME}.{PARTITION_STATUS_TABLE}"
 ROW_BATCH_SIZE = 10_000
 
-SOURCE_DOCUMENTS_STORAGE = "esef_source_documents"
 FACTS_STORAGE = "esef_filing_facts"
 CONTACT_CANDIDATES_STORAGE = "esef_document_contact_candidates"
 CONCEPT_LABELS_STORAGE = "esef_document_concept_labels"
@@ -49,28 +48,6 @@ class ResultProjection:
         return f"{tables.DLT_DATASET_NAME}.{self.table}"
 
 
-SOURCE_DOCUMENTS_PROJECTION = ResultProjection(
-    dataset_name="source_documents",
-    storage_source=SOURCE_DOCUMENTS_STORAGE,
-    property_name="document_rows",
-    expected_row_count_property="source_document_row_count",
-    table=tables.ESEF_SOURCE_DOCUMENTS_TABLE,
-    columns=tables.ESEF_SOURCE_DOCUMENTS_PARTITION_EXPORT_COLUMNS,
-    integer_columns=frozenset(
-        {
-            "fiscal_year",
-            "package_size_bytes",
-            "artifact_schema_version",
-            "fact_count",
-            "text_fact_count",
-            "numeric_fact_count",
-            "contact_candidate_count",
-            "website_candidate_count",
-            "validation_error_count",
-            "validation_warning_count",
-        }
-    ),
-)
 CONTACT_CANDIDATES_PROJECTION = ResultProjection(
     dataset_name="contact_candidates",
     storage_source=CONTACT_CANDIDATES_STORAGE,
