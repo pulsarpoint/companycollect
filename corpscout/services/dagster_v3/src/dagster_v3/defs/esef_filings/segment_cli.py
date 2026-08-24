@@ -2,17 +2,14 @@
 
 import argparse
 import json
-import re
 import sys
 from collections.abc import Sequence
 from pathlib import Path
 
-from dagster_v3.defs.esef_filings.fact_parity import build_fact_parity_report
 from dagster_v3.defs.esef_filings.segment_parser import (
     EsefArtifactSource,
     artifact_json_bytes,
     artifact_object_key,
-    compare_artifact_to_oim,
     parse_esef_report_package,
 )
 
@@ -67,29 +64,12 @@ def main(argv: Sequence[str] | None = None) -> int:
             "error_count": artifact.quality.error_count,
             "warning_count": artifact.quality.warning_count,
         }
-        exit_code = 0
-        if arguments.reference_oim is not None:
-            reference = json.loads(arguments.reference_oim.read_text(encoding="utf-8"))
-            comparison = compare_artifact_to_oim(artifact, reference)
-            summary["reference_comparison"] = comparison
-            parity_report = build_fact_parity_report(
-                artifact,
-                reference,
-                lei=arguments.lei or arguments.fxo_id.partition("-")[0],
-                fxo_id=arguments.fxo_id,
-                period_end=arguments.period_end
-                or _period_end_from_fxo_id(arguments.fxo_id),
-                sample_limit=arguments.parity_sample_limit,
-            )
-            summary["fact_parity"] = parity_report
-            if not parity_report["ready_for_fact_cutover"]:
-                exit_code = 1
     except (OSError, ValueError, json.JSONDecodeError) as exc:
         print(f"ESEF parse failed: {exc}", file=sys.stderr)
         return 2
 
     print(json.dumps(summary, indent=2, ensure_ascii=False, sort_keys=True))
-    return exit_code
+    return 0
 
 
 def _argument_parser() -> argparse.ArgumentParser:
@@ -112,41 +92,11 @@ def _argument_parser() -> argparse.ArgumentParser:
     parser.add_argument("--source-run-id", default="")
     parser.add_argument("--expected-package-sha256", default="")
     parser.add_argument(
-        "--lei",
-        default="",
-        help="Reporting entity LEI; defaults to the first component of --fxo-id",
-    )
-    parser.add_argument(
-        "--period-end",
-        default="",
-        help="Filing period end (YYYY-MM-DD); defaults to the date in --fxo-id",
-    )
-    parser.add_argument(
-        "--reference-oim",
-        type=Path,
-        help="Optional xBRL-JSON reference used for exact fact-set verification",
-    )
-    parser.add_argument(
         "--skip-esef-validation",
         action="store_true",
         help="Load XBRL without running the ESEF validation plugin",
     )
-    parser.add_argument(
-        "--parity-sample-limit",
-        type=int,
-        default=5,
-        help="Maximum artifact-only and OIM-only fact samples in the parity report",
-    )
     return parser
-
-
-def _period_end_from_fxo_id(fxo_id: str) -> str:
-    match = re.search(r"-(\d{4}-\d{2}-\d{2})-", fxo_id)
-    if match is None:
-        raise ValueError(
-            "Cannot infer period_end from fxo_id; pass --period-end explicitly"
-        )
-    return match.group(1)
 
 
 if __name__ == "__main__":

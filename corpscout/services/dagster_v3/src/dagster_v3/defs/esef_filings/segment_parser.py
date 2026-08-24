@@ -547,47 +547,6 @@ def artifact_object_key(package_sha256: str) -> str:
     )
 
 
-def compare_artifact_to_oim(
-    artifact: EsefSegmentArtifact,
-    reference: Mapping[str, Any],
-) -> dict[str, int]:
-    """Compare parsed facts with an OIM xBRL-JSON reference as multisets."""
-    reference_facts = reference.get("facts")
-    if not isinstance(reference_facts, Mapping):
-        raise ValueError("OIM reference must contain a facts object")
-
-    artifact_signatures = sorted(
-        _oim_signature(
-            value=fact.canonical_value,
-            decimals=fact.decimals,
-            dimensions=fact.oim_dimensions,
-        )
-        for fact in artifact.facts.values()
-    )
-    reference_signatures = sorted(
-        _oim_signature(
-            value=entry.get("value"),
-            decimals=entry.get("decimals"),
-            dimensions=entry.get("dimensions"),
-        )
-        for entry in reference_facts.values()
-        if isinstance(entry, Mapping)
-    )
-    artifact_counts = _signature_counts(artifact_signatures)
-    reference_counts = _signature_counts(reference_signatures)
-    matched = sum(
-        min(count, reference_counts.get(signature, 0))
-        for signature, count in artifact_counts.items()
-    )
-    return {
-        "artifact_fact_count": len(artifact_signatures),
-        "reference_fact_count": len(reference_signatures),
-        "matched_fact_count": matched,
-        "artifact_only_count": len(artifact_signatures) - matched,
-        "reference_only_count": len(reference_signatures) - matched,
-    }
-
-
 def _prepare_report_package(
     package_path: Path,
     temp_dir: Path,
@@ -1517,54 +1476,3 @@ def _fact_signature(fact: EsefFact) -> str:
         },
         sort_keys=True,
     )
-
-
-def _oim_signature(
-    *,
-    value: Any,
-    decimals: Any,
-    dimensions: Any,
-) -> str:
-    normalized_decimals = _decimals(decimals)
-    normalized_dimensions = dict(dimensions) if isinstance(dimensions, Mapping) else {}
-    if normalized_dimensions.get("concept") == "xbrl:note":
-        normalized_dimensions.pop("noteId", None)
-    return json.dumps(
-        {
-            "value": _comparison_value(
-                value,
-                numeric=(
-                    normalized_decimals is not None or "unit" in normalized_dimensions
-                ),
-            ),
-            "decimals": normalized_decimals,
-            "dimensions": normalized_dimensions,
-        },
-        ensure_ascii=False,
-        separators=(",", ":"),
-        sort_keys=True,
-    )
-
-
-def _comparison_value(value: Any, *, numeric: bool) -> str | None:
-    if value is None:
-        return None
-    text = str(value)
-    if not numeric:
-        return text
-    try:
-        decimal_value = Decimal(text)
-    except ArithmeticError, ValueError:
-        return text
-    if not decimal_value.is_finite():
-        return str(decimal_value)
-    if decimal_value == 0:
-        return "0"
-    return str(decimal_value.normalize())
-
-
-def _signature_counts(signatures: Iterable[str]) -> dict[str, int]:
-    counts: dict[str, int] = {}
-    for signature in signatures:
-        counts[signature] = counts.get(signature, 0) + 1
-    return counts

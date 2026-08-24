@@ -1,4 +1,4 @@
-"""ESEF filing discovery + processed-week fact download/parse.
+"""ESEF filing discovery and derived ClickHouse datasets.
 
 The active ingest path is partitioned by the source's ``processed`` week,
 not by the filing's fiscal ``period_end``. This is the source clock that says
@@ -7,19 +7,11 @@ when its financial period ended years ago. Each index partition is fetched
 with an API-side processed-time filter and upserted by stable ``fxo_id``.
 
 ``esef_document_artifacts_s3`` downloads and parses each report package once.
-``esef_filing_facts_duckdb`` reads those schema-versioned Arelle artifacts;
-it never contacts filings.xbrl.org and checkpoints completed filings by
-parser contract so retries do not parse or insert them again. The older OIM
-JSON archive remains registered as an explicit comparison/fallback path.
+The independent partitioned assets project those artifacts into the canonical
+facts, source-document, contact, taxonomy-label, and disclosure datasets.
 
 ``esef_filings_index_reconciliation_duckdb`` remains an unpartitioned full
 sweep for occasional reconciliation. It is not part of the weekly path.
-
-`esef_report_xhtml_s3` is a sibling processed-week asset that archives each
-filing's rendered report XHTML to S3 -- a pure archive layer (no parsing,
-no DuckDB write of its own) that is the corpus for a future embeddings/
-LLM-search pass over annual reports. It only ever opens the local index
-read-only for scope resolution.
 
 No `from __future__ import annotations` -- this module defines `@dg.asset`s
 and stringizing the `context: AssetExecutionContext` hint breaks Dagster's op
@@ -50,13 +42,11 @@ import pyarrow as pa
 import pyarrow.parquet as pq
 from dagster_clickhouse import ClickhouseResource
 from dagster_duckdb import DuckDBResource
-from dlt.sources.helpers import requests as dlt_requests
 
 from dagster_v3.defs.common.duckdb_resources import (
     duckdb_resource,
     read_only_duckdb_connection,
 )
-from dagster_v3.defs.common.resources import ObjectStoreResource
 from dagster_v3.defs.esef_filings import facts, tables
 from dagster_v3.defs.esef_filings.artifact_contract import ARTIFACT_SCHEMA_VERSION
 from dagster_v3.defs.esef_filings.client import (
@@ -68,7 +58,6 @@ from dagster_v3.defs.esef_filings.metrics import (
     replace_esef_financial_metrics_clickhouse,
 )
 from dagster_v3.defs.esef_filings.publish import (
-    export_esef_facts_clickhouse,
     export_esef_filings_clickhouse,
     replace_esef_entity_registry_map_clickhouse,
 )
@@ -82,23 +71,8 @@ QUALIFIED_FILINGS_INDEX_TABLE = tables.QUALIFIED_FILINGS_INDEX_TABLE
 
 TOP_COUNTRY_LIMIT = 10
 
-# Both per-filing download loops (facts + report-XHTML) log a progress line
-# via `log_info` every this-many processed filings, plus once, unconditionally,
-# at loop completion -- a multi-hour partition run otherwise produces no
-# visible progress signal between the "N filings in scope" line at the start
-# and the final materialization metadata.
+# Long-running parsing loops emit progress after this many processed filings.
 _PROGRESS_LOG_INTERVAL = 100
-
-# S3 bucket + key layout for downloaded fact JSON (Task 4). fxo_id is
-# versioned upstream (a new filing version gets a new fxo_id), so the key is
-# stable per filing version -- an existing object never needs re-fetching.
-ESEF_FILINGS_FACTS_BUCKET = "source-esef-filings"
-ESEF_FACT_JSON_PREFIX = "esef_filings/fact_json/"
-
-# S3 key layout for archived rendered report XHTML (Task 9) -- same bucket as
-# the fact JSON above, different prefix. fxo_id is version-stable upstream
-# (verified live), so the key never needs re-fetching once an object exists.
-ESEF_REPORT_XHTML_PREFIX = "esef_filings/report_xhtml/"
 
 FACTS_TABLE = tables.FACTS_TABLE
 QUALIFIED_FACTS_TABLE = tables.QUALIFIED_FACTS_TABLE
@@ -106,10 +80,7 @@ FACTS_INGESTION_STATE_TABLE = "facts_ingestion_state"
 QUALIFIED_FACTS_INGESTION_STATE_TABLE = (
     f"{tables.DLT_DATASET_NAME}.{FACTS_INGESTION_STATE_TABLE}"
 )
-OIM_FACTS_PARSER_CONTRACT = "filings-xbrl-oim-v1"
-ARELLE_ARTIFACT_FACTS_PARSER_CONTRACT = (
-    f"arelle-artifact-v{ARTIFACT_SCHEMA_VERSION}"
-)
+ARELLE_ARTIFACT_FACTS_PARSER_CONTRACT = f"arelle-artifact-v{ARTIFACT_SCHEMA_VERSION}"
 
 ESEF_PROCESSED_WEEK_PARTITIONS = dg.TimeWindowPartitionsDefinition(
     start=datetime(2023, 1, 1),
@@ -233,14 +204,6 @@ def esef_filings_source_duckdb_path(
     *, root: str | Path = ESEF_FILINGS_DUCKDB_ROOT
 ) -> Path:
     return Path(root) / "esef_filings_source.duckdb"
-
-
-def _fact_json_object_key(fxo_id: str) -> str:
-    return f"{ESEF_FACT_JSON_PREFIX}fxo_id={fxo_id}/facts.json"
-
-
-def _report_xhtml_object_key(fxo_id: str) -> str:
-    return f"{ESEF_REPORT_XHTML_PREFIX}fxo_id={fxo_id}/report.xhtml"
 
 
 def _filings_index_arrow_table(
@@ -644,9 +607,6 @@ def _period_end_year(period_end: str | None) -> int | None:
         return None
 
 
-_IndexFilingRow = tuple[str, str, str | None, str | None, bool]
-
-
 def processed_week_bounds(partition_key: str) -> tuple[datetime, datetime]:
     window = ESEF_PROCESSED_WEEK_PARTITIONS.time_window_for_partition_key(partition_key)
     return window.start.astimezone(UTC), window.end.astimezone(UTC)
@@ -687,184 +647,6 @@ def _row_from_fact(
     )
 
 
-def _is_permanently_missing_upstream_error(exc: dlt_requests.HTTPError) -> bool:
-    """True for a 404/410 -- filings.xbrl.org's index advertised a `json_url`/
-    `report_url` for this filing, but the file itself no longer exists
-    upstream (observed 2026-07-21: several UA filings among others, which
-    starved the 2020/2021/2022 backfill partitions before this guard
-    existed -- see docs/esef_filings-design.md Sec 11).
-
-    Every OTHER `HTTPError` (5xx after the dlt client's own retries are
-    exhausted, or any other 4xx) must still propagate and fail the
-    partition loudly -- only a confirmed-permanent 404/410 is safe to skip
-    and count rather than raise.
-    """
-    response = exc.response
-    return response is not None and response.status_code in (404, 410)
-
-
-def _archive_filing_fact_json(
-    *,
-    client: Any,
-    object_store: Any,
-    temp_dir: Path,
-    fxo_id: str,
-    json_url: str,
-) -> bool:
-    """Archive one upstream fact JSON object, skipping an existing S3 key."""
-    object_key = _fact_json_object_key(fxo_id)
-    if object_store.exists(object_key, bucket=ESEF_FILINGS_FACTS_BUCKET):
-        return False
-
-    local_path = temp_dir / f"{sha256(fxo_id.encode()).hexdigest()}.json"
-    try:
-        client.download_json_facts(json_url, local_path)
-        object_store.upload_file(
-            object_key,
-            local_path,
-            bucket=ESEF_FILINGS_FACTS_BUCKET,
-        )
-    finally:
-        local_path.unlink(missing_ok=True)
-    return True
-
-
-def _log_fact_json_progress(
-    log_info: Callable[..., object],
-    *,
-    partition_key: str,
-    processed: int,
-    total: int,
-    downloaded: int,
-    reused: int,
-    skipped: int,
-    force: bool = False,
-) -> None:
-    if not force and processed % _PROGRESS_LOG_INTERVAL != 0:
-        return
-    log_info(
-        "ESEF fact JSON partition %s: %d/%d filings processed "
-        "(%d downloaded, %d reused, %d skipped)",
-        partition_key,
-        processed,
-        total,
-        downloaded,
-        reused,
-        skipped,
-    )
-
-
-def run_esef_filing_facts_json_partition(
-    *,
-    esef_filings_duckdb: DuckDBResource,
-    object_store: Any,
-    client: Any,
-    partition_key: str,
-    log_info: Callable[..., object],
-    log_warning: Callable[..., object],
-) -> dict[str, int | str]:
-    """Archive one processed week's upstream fact JSON files in S3."""
-    processed_from, processed_until = _processed_window_sql_values(partition_key)
-    with read_only_duckdb_connection(esef_filings_duckdb) as connection:
-        index_rows = connection.execute(
-            "select fxo_id, json_url, has_json_facts "
-            f"from {QUALIFIED_FILINGS_INDEX_TABLE} "
-            "where try_cast(processed_at as timestamp) >= try_cast(? as timestamp) "
-            "and try_cast(processed_at as timestamp) < try_cast(? as timestamp) "
-            "order by fxo_id",
-            [processed_from, processed_until],
-        ).fetchall()
-
-    object_store.ensure_bucket(ESEF_FILINGS_FACTS_BUCKET)
-    downloaded_count = 0
-    reused_count = 0
-    skipped_no_json = 0
-    skipped_upstream_missing = 0
-
-    with tempfile.TemporaryDirectory(prefix="esef_filings_fact_json_") as tmpdir:
-        temp_dir = Path(tmpdir)
-        for processed_count, (fxo_id, json_url, has_json_facts) in enumerate(
-            index_rows, start=1
-        ):
-            if not has_json_facts or not json_url:
-                skipped_no_json += 1
-                _log_fact_json_progress(
-                    log_info,
-                    partition_key=partition_key,
-                    processed=processed_count,
-                    total=len(index_rows),
-                    downloaded=downloaded_count,
-                    reused=reused_count,
-                    skipped=skipped_no_json + skipped_upstream_missing,
-                )
-                continue
-            try:
-                downloaded = _archive_filing_fact_json(
-                    client=client,
-                    object_store=object_store,
-                    temp_dir=temp_dir,
-                    fxo_id=fxo_id,
-                    json_url=json_url,
-                )
-            except dlt_requests.HTTPError as exc:
-                if not _is_permanently_missing_upstream_error(exc):
-                    raise
-                skipped_upstream_missing += 1
-                log_warning(
-                    "ESEF fact JSON download permanently missing upstream "
-                    "(status=%s): fxo_id=%s json_url=%s",
-                    exc.response.status_code if exc.response is not None else None,
-                    fxo_id,
-                    json_url,
-                )
-                _log_fact_json_progress(
-                    log_info,
-                    partition_key=partition_key,
-                    processed=processed_count,
-                    total=len(index_rows),
-                    downloaded=downloaded_count,
-                    reused=reused_count,
-                    skipped=skipped_no_json + skipped_upstream_missing,
-                )
-                continue
-            if downloaded:
-                downloaded_count += 1
-            else:
-                reused_count += 1
-            _log_fact_json_progress(
-                log_info,
-                partition_key=partition_key,
-                processed=processed_count,
-                total=len(index_rows),
-                downloaded=downloaded_count,
-                reused=reused_count,
-                skipped=skipped_no_json + skipped_upstream_missing,
-            )
-
-    if index_rows:
-        _log_fact_json_progress(
-            log_info,
-            partition_key=partition_key,
-            processed=len(index_rows),
-            total=len(index_rows),
-            downloaded=downloaded_count,
-            reused=reused_count,
-            skipped=skipped_no_json + skipped_upstream_missing,
-            force=True,
-        )
-
-    return {
-        "filings_in_scope": len(index_rows),
-        "downloaded_count": downloaded_count,
-        "reused_count": reused_count,
-        "skipped_no_json": skipped_no_json,
-        "skipped_upstream_missing": skipped_upstream_missing,
-        "partition_key": partition_key,
-        "processed_window_start": processed_from,
-        "processed_window_end": processed_until,
-    }
-
-
 # Bounds per-transaction uncommitted MVCC memory during the facts insert.
 # Production incident: large backfill partitions (millions of parsed
 # XBRL facts each) failed with `_duckdb.OutOfMemoryException: failed to pin
@@ -887,18 +669,6 @@ _FACTS_ARROW_TYPES = tuple(
     pa.int32() if column_type == "integer" else pa.string()
     for column_type in _FACTS_COLUMN_TYPES.values()
 )
-
-
-@dataclass(frozen=True)
-class _FactParseTask:
-    local_path: str
-    target_directory: str
-    file_prefix: str
-    lei: str
-    fxo_id: str
-    period_end: str
-    period_end_year: int
-    source_run_id: str
 
 
 @dataclass(frozen=True)
@@ -1048,54 +818,6 @@ def _write_fact_parquet_batch(
         compression="zstd",
     )
     return path, len(fact_rows)
-
-
-def _parse_filing_facts_worker(task: _FactParseTask) -> _FactParseResult:
-    """Normalize one local OIM JSON file into process-local Parquet batches."""
-    started = perf_counter()
-    local_path = Path(task.local_path)
-    try:
-        try:
-            payload = json.loads(local_path.read_text(encoding="utf-8"))
-        except (OSError, UnicodeDecodeError, json.JSONDecodeError) as exc:
-            return _FactParseResult(
-                fxo_id=task.fxo_id,
-                period_end_year=task.period_end_year,
-                fact_count=0,
-                fact_batches=(),
-                parse_seconds=perf_counter() - started,
-                parse_error=str(exc),
-            )
-
-        fact_batches = _spool_fact_rows_to_parquet(
-            (
-                _row_from_fact(
-                    fact,
-                    period_end_year=task.period_end_year,
-                    source_run_id=task.source_run_id,
-                )
-                for fact in facts.iter_oim_facts(
-                    payload,
-                    lei=task.lei,
-                    fxo_id=task.fxo_id,
-                    period_end=task.period_end,
-                )
-            ),
-            target_directory=Path(task.target_directory),
-            file_prefix=task.file_prefix,
-        )
-        return _FactParseResult(
-            fxo_id=task.fxo_id,
-            period_end_year=task.period_end_year,
-            fact_count=sum(row_count for _, row_count in fact_batches),
-            fact_batches=tuple(
-                (str(path), row_count) for path, row_count in fact_batches
-            ),
-            parse_seconds=perf_counter() - started,
-            parse_error="",
-        )
-    finally:
-        local_path.unlink(missing_ok=True)
 
 
 def _parse_artifact_facts_worker(
@@ -1350,7 +1072,7 @@ def _log_facts_progress(
     skipped: int,
     force: bool = False,
 ) -> None:
-    """Log one progress line for `run_esef_filing_facts_partition`'s loop.
+    """Log one progress line for the artifact-fact parsing loop.
 
     A no-op unless `processed` lands on `_PROGRESS_LOG_INTERVAL` or `force`
     is set -- `force=True` is used exactly once, after the loop ends, so the
@@ -1565,9 +1287,7 @@ def run_esef_artifact_facts_partition(
                 available_artifacts[artifact_object_key] = local_path
                 unique_artifact_s3_read_count += 1
 
-        pending: dict[
-            Future[_FactParseResult], tuple[_ArtifactFactDocument, str]
-        ] = {}
+        pending: dict[Future[_FactParseResult], tuple[_ArtifactFactDocument, str]] = {}
 
         def complete_parse_futures(
             completed: set[Future[_FactParseResult]],
@@ -1592,8 +1312,7 @@ def run_esef_artifact_facts_partition(
                 completed_filing_fact_counts[document.fxo_id] = parsed.fact_count
                 inserted_fact_row_count += parsed.fact_count
                 fact_batches.extend(
-                    (Path(path), row_count)
-                    for path, row_count in parsed.fact_batches
+                    (Path(path), row_count) for path, row_count in parsed.fact_batches
                 )
 
         with ProcessPoolExecutor(max_workers=_FACTS_PARSE_WORKERS) as parse_executor:
@@ -1607,8 +1326,7 @@ def run_esef_artifact_facts_partition(
                             local_path=str(local_path),
                             target_directory=str(spool_directory),
                             file_prefix=(
-                                "facts-"
-                                f"{sha256(document.fxo_id.encode()).hexdigest()}"
+                                f"facts-{sha256(document.fxo_id.encode()).hexdigest()}"
                             ),
                             lei=document.lei,
                             fxo_id=document.fxo_id,
@@ -1690,608 +1408,6 @@ def run_esef_artifact_facts_partition(
     }
 
 
-def run_esef_filing_facts_partition(
-    *,
-    esef_filings_duckdb: DuckDBResource,
-    object_store: Any,
-    partition_key: str,
-    source_run_id: str,
-    log_info: Callable[..., object],
-    log_warning: Callable[..., object],
-) -> dict[str, int | str]:
-    """Process filings that became available in one source processed week.
-
-    Split out from the `@dg.asset` function (which only wires up
-    context/resources and calls this) so tests can call it directly with
-    a plain duck-typed fake for `object_store` -- mirroring
-    sweden_financial's `extract_sweden_financial_report_xhtml_catalog`
-    pattern. This also sidesteps a real Dagster behavior worth knowing: a
-    `ConfigurableResource` instance built with an injected private
-    attribute (e.g. `ObjectStoreResource(s3_client=fake)`) does NOT survive
-    `dg.materialize`/`execute_in_process` -- Dagster reconstructs the
-    resource from its resolved pydantic config fields alone (observed:
-    `ObjectStoreResource.__init__` re-invoked with `s3_client=None`), so a
-    fake client injected that way is silently replaced by a real
-    `boto3.client(...)` inside the asset. Calling the plain function
-    directly (as the tests do) avoids that reconstruction entirely.
-    """
-    started = perf_counter()
-    processed_from, processed_until = _processed_window_sql_values(partition_key)
-    with read_only_duckdb_connection(esef_filings_duckdb) as connection:
-        index_rows = connection.execute(
-            "select lei, fxo_id, period_end, json_url, has_json_facts "
-            f"from {QUALIFIED_FILINGS_INDEX_TABLE} "
-            "where try_cast(processed_at as timestamp) >= try_cast(? as timestamp) "
-            "and try_cast(processed_at as timestamp) < try_cast(? as timestamp) "
-            "order by fxo_id",
-            [processed_from, processed_until],
-        ).fetchall()
-        [(state_exists,)] = connection.execute(
-            "select count(*) > 0 from information_schema.tables "
-            "where table_schema = ? and table_name = ?",
-            [tables.DLT_DATASET_NAME, FACTS_INGESTION_STATE_TABLE],
-        ).fetchall()
-        [(state_has_parser_contract,)] = connection.execute(
-            "select count(*) > 0 from information_schema.columns "
-            "where table_schema = ? and table_name = ? and column_name = ?",
-            [
-                tables.DLT_DATASET_NAME,
-                FACTS_INGESTION_STATE_TABLE,
-                "parser_contract",
-            ],
-        ).fetchall()
-        checkpointed_fact_counts = (
-            dict(
-                connection.execute(
-                    "select state.fxo_id, state.fact_count "
-                    f"from {QUALIFIED_FACTS_INGESTION_STATE_TABLE} state "
-                    f"join {QUALIFIED_FILINGS_INDEX_TABLE} index "
-                    "on index.fxo_id = state.fxo_id "
-                    "where try_cast(index.processed_at as timestamp) "
-                    ">= try_cast(? as timestamp) "
-                    "and try_cast(index.processed_at as timestamp) "
-                    "< try_cast(? as timestamp) "
-                    "and state.parser_contract = ?",
-                    [
-                        processed_from,
-                        processed_until,
-                        OIM_FACTS_PARSER_CONTRACT,
-                    ],
-                ).fetchall()
-            )
-            if state_exists and state_has_parser_contract
-            else {}
-        )
-
-    in_scope: list[_IndexFilingRow] = [
-        (lei, fxo_id, period_end, json_url, bool(has_json_facts))
-        for lei, fxo_id, period_end, json_url, has_json_facts in index_rows
-    ]
-    log_info(
-        "ESEF facts processed-week partition %s: %d filings in scope",
-        partition_key,
-        len(in_scope),
-    )
-
-    processed_count = 0
-    s3_read_count = 0
-    checkpointed_filing_count = 0
-    checkpointed_fact_row_count = 0
-    skipped_no_json = 0
-    skipped_invalid_period_end = 0
-    skipped_missing_raw_object = 0
-    parse_failed_count = 0
-    inserted_fact_row_count = 0
-    filing_ids_to_replace: list[str] = []
-    completed_filing_fact_counts: dict[str, int] = {}
-
-    # All fallible S3 I/O and process-based JSON parsing happens before the
-    # writable DuckDB connection opens below.
-    with tempfile.TemporaryDirectory(prefix="esef_filings_facts_") as tmpdir:
-        temp_dir = Path(tmpdir)
-        spool_directory = temp_dir / "fact_batches"
-        fact_batches: list[tuple[Path, int]] = []
-        pending: dict[Future[_FactParseResult], tuple[str, str | None]] = {}
-        s3_io_seconds = 0.0
-        worker_parse_seconds = 0.0
-
-        def download_filing(
-            filing: _IndexFilingRow,
-        ) -> tuple[str, int | None, str, float]:
-            _, fxo_id, period_end, json_url, has_json_facts = filing
-            period_end_year = _period_end_year(period_end)
-            if period_end_year is None:
-                return "invalid_period_end", None, "", 0.0
-            if not has_json_facts or not json_url:
-                return "no_json", period_end_year, "", 0.0
-            if fxo_id in checkpointed_fact_counts:
-                return "checkpointed", period_end_year, "", 0.0
-            object_key = _fact_json_object_key(fxo_id)
-            io_started = perf_counter()
-            if not object_store.exists(object_key, bucket=ESEF_FILINGS_FACTS_BUCKET):
-                return (
-                    "missing_raw_object",
-                    period_end_year,
-                    "",
-                    perf_counter() - io_started,
-                )
-            local_path = temp_dir / f"{sha256(fxo_id.encode()).hexdigest()}.json"
-            object_store.download_file(
-                object_key,
-                local_path,
-                bucket=ESEF_FILINGS_FACTS_BUCKET,
-            )
-            return (
-                "downloaded",
-                period_end_year,
-                str(local_path),
-                perf_counter() - io_started,
-            )
-
-        def complete_parse_futures(
-            completed: set[Future[_FactParseResult]],
-        ) -> None:
-            nonlocal inserted_fact_row_count
-            nonlocal parse_failed_count
-            nonlocal worker_parse_seconds
-            for future in completed:
-                fxo_id, json_url = pending.pop(future)
-                result = future.result()
-                worker_parse_seconds += result.parse_seconds
-                if result.parse_error != "":
-                    parse_failed_count += 1
-                    log_warning(
-                        "ESEF facts JSON parse failed: fxo_id=%s json_url=%s error=%s",
-                        fxo_id,
-                        json_url,
-                        result.parse_error,
-                    )
-                    continue
-                completed_filing_fact_counts[fxo_id] = result.fact_count
-                inserted_fact_row_count += result.fact_count
-                fact_batches.extend(
-                    (Path(path), row_count) for path, row_count in result.fact_batches
-                )
-
-        with (
-            ThreadPoolExecutor(max_workers=_FACTS_S3_READ_WORKERS) as s3_executor,
-            ProcessPoolExecutor(max_workers=_FACTS_PARSE_WORKERS) as parse_executor,
-        ):
-            download_results = s3_executor.map(
-                download_filing,
-                in_scope,
-                buffersize=_FACTS_S3_READ_WORKERS * 2,
-            )
-            for processed_count, (filing, download_result) in enumerate(
-                zip(in_scope, download_results, strict=True),
-                start=1,
-            ):
-                lei, fxo_id, period_end, json_url, _ = filing
-                status, period_end_year, local_path, filing_s3_seconds = download_result
-                s3_io_seconds += filing_s3_seconds
-                if status == "invalid_period_end":
-                    filing_ids_to_replace.append(fxo_id)
-                    skipped_invalid_period_end += 1
-                elif status == "no_json":
-                    filing_ids_to_replace.append(fxo_id)
-                    skipped_no_json += 1
-                elif status == "checkpointed":
-                    checkpointed_filing_count += 1
-                    checkpointed_fact_row_count += checkpointed_fact_counts[fxo_id]
-                elif status == "missing_raw_object":
-                    filing_ids_to_replace.append(fxo_id)
-                    skipped_missing_raw_object += 1
-                    log_warning(
-                        "ESEF archived fact JSON is missing: fxo_id=%s json_url=%s",
-                        fxo_id,
-                        json_url,
-                    )
-                else:
-                    assert status == "downloaded"
-                    assert period_end is not None
-                    assert period_end_year is not None
-                    filing_ids_to_replace.append(fxo_id)
-                    s3_read_count += 1
-                    future = parse_executor.submit(
-                        _parse_filing_facts_worker,
-                        _FactParseTask(
-                            local_path=local_path,
-                            target_directory=str(spool_directory),
-                            file_prefix=f"facts-{sha256(fxo_id.encode()).hexdigest()}",
-                            lei=lei,
-                            fxo_id=fxo_id,
-                            period_end=period_end,
-                            period_end_year=period_end_year,
-                            source_run_id=source_run_id,
-                        ),
-                    )
-                    pending[future] = (fxo_id, json_url)
-                    if len(pending) >= (
-                        _FACTS_PARSE_WORKERS * _FACTS_PARSE_BUFFER_MULTIPLIER
-                    ):
-                        completed, _ = wait(pending, return_when=FIRST_COMPLETED)
-                        complete_parse_futures(completed)
-                _log_facts_progress(
-                    log_info,
-                    partition_key=partition_key,
-                    processed=processed_count,
-                    total=len(in_scope),
-                    s3_read=s3_read_count,
-                    checkpointed=checkpointed_filing_count,
-                    skipped=(
-                        skipped_no_json
-                        + skipped_invalid_period_end
-                        + skipped_missing_raw_object
-                    ),
-                )
-
-            while pending:
-                completed, _ = wait(pending, return_when=FIRST_COMPLETED)
-                complete_parse_futures(completed)
-
-        fact_batches.sort(key=lambda batch: str(batch[0]))
-        spooled_fact_row_count = sum(row_count for _, row_count in fact_batches)
-        if spooled_fact_row_count != inserted_fact_row_count:
-            raise RuntimeError(
-                "ESEF fact spool row count does not match parsed row count: "
-                f"spooled={spooled_fact_row_count} parsed={inserted_fact_row_count}"
-            )
-
-        # Unconditional completion log -- always fires exactly once with the
-        # final tally, even when `processed_count` doesn't land on
-        # `_PROGRESS_LOG_INTERVAL` (the periodic logging above is silent for the
-        # remainder past the last interval boundary).
-        if in_scope:
-            _log_facts_progress(
-                log_info,
-                partition_key=partition_key,
-                processed=processed_count,
-                total=len(in_scope),
-                s3_read=s3_read_count,
-                checkpointed=checkpointed_filing_count,
-                skipped=(
-                    skipped_no_json
-                    + skipped_invalid_period_end
-                    + skipped_missing_raw_object
-                ),
-                force=True,
-            )
-
-        with esef_filings_duckdb.get_connection() as connection:
-            _replace_facts_for_filings(
-                connection=connection,
-                filing_ids=filing_ids_to_replace,
-                partition_key=partition_key,
-                fact_batches=fact_batches,
-                completed_filing_fact_counts=completed_filing_fact_counts,
-                source_run_id=source_run_id,
-                parser_contract=OIM_FACTS_PARSER_CONTRACT,
-                log_info=log_info,
-            )
-
-    return {
-        "filings_in_scope": len(in_scope),
-        "s3_read_count": s3_read_count,
-        "checkpointed_filing_count": checkpointed_filing_count,
-        "checkpointed_fact_row_count": checkpointed_fact_row_count,
-        "skipped_no_json": skipped_no_json,
-        "skipped_invalid_period_end": skipped_invalid_period_end,
-        "skipped_missing_raw_object": skipped_missing_raw_object,
-        "partition_key": partition_key,
-        "processed_window_start": processed_from,
-        "processed_window_end": processed_until,
-        "parse_failed_count": parse_failed_count,
-        "inserted_fact_row_count": inserted_fact_row_count,
-        "fact_row_count": checkpointed_fact_row_count + inserted_fact_row_count,
-        "parse_worker_count": _FACTS_PARSE_WORKERS,
-        "s3_io_seconds": int(s3_io_seconds),
-        "parse_worker_seconds": int(worker_parse_seconds),
-        "wall_seconds": int(perf_counter() - started),
-    }
-
-
-@dg.asset(
-    name="esef_filing_facts_json_s3",
-    group_name=GROUP_NAME,
-    kinds={"python", "s3", "json", "xbrl", "esef_filings"},
-    deps=["esef_filings_index_duckdb"],
-    partitions_def=ESEF_PROCESSED_WEEK_PARTITIONS,
-    backfill_policy=dg.BackfillPolicy.multi_run(max_partitions_per_run=1),
-    pool=ESEF_FILINGS_DUCKDB_POOL,
-    description=(
-        "Archives each in-scope filing's OIM xBRL-JSON export to S3, "
-        f"bucket={ESEF_FILINGS_FACTS_BUCKET}, prefix={ESEF_FACT_JSON_PREFIX}. "
-        "Existing keys are never downloaded again."
-    ),
-)
-def esef_filing_facts_json_s3(
-    context: dg.AssetExecutionContext,
-    esef_filings_duckdb: DuckDBResource,
-    object_store: ObjectStoreResource,
-) -> dg.MaterializeResult:
-    return dg.MaterializeResult(
-        metadata=run_esef_filing_facts_json_partition(
-            esef_filings_duckdb=esef_filings_duckdb,
-            object_store=object_store,
-            client=EsefFilingsClient(),
-            partition_key=context.partition_key,
-            log_info=context.log.info,
-            log_warning=context.log.warning,
-        )
-    )
-
-
-@dg.asset(
-    name="esef_filing_facts_duckdb",
-    group_name=GROUP_NAME,
-    kinds={"python", "duckdb", "s3", "xbrl", "esef_filings"},
-    deps=["esef_document_artifacts_s3"],
-    partitions_def=ESEF_PROCESSED_WEEK_PARTITIONS,
-    backfill_policy=dg.BackfillPolicy.multi_run(max_partitions_per_run=1),
-    pool=ESEF_FILINGS_DUCKDB_POOL,
-    description=(
-        "Publishes facts from the upstream schema-versioned Arelle artifacts "
-        f"into DuckDB table {QUALIFIED_FACTS_TABLE}. Never contacts "
-        "filings.xbrl.org; parser-specific checkpoints skip both S3 reads "
-        "and reinsertion."
-    ),
-)
-def esef_filing_facts_duckdb(
-    context: dg.AssetExecutionContext,
-    esef_filings_duckdb: DuckDBResource,
-    object_store: ObjectStoreResource,
-) -> dg.MaterializeResult:
-    metadata = run_esef_artifact_facts_partition(
-        esef_filings_duckdb=esef_filings_duckdb,
-        object_store=object_store,
-        partition_key=context.partition_key,
-        source_run_id=context.run.run_id,
-        log_info=context.log.info,
-        log_warning=context.log.warning,
-    )
-    return dg.MaterializeResult(
-        metadata={
-            **metadata,
-            "duckdb_path": str(esef_filings_source_duckdb_path()),
-        }
-    )
-
-
-def _archive_filing_report_xhtml(
-    *,
-    client: Any,
-    object_store: Any,
-    temp_dir: Path,
-    fxo_id: str,
-    report_url: str,
-) -> bool:
-    """Download one filing's rendered report XHTML to S3, skipping when the
-    object already exists.
-
-    Returns True when the object was freshly downloaded, False when it was
-    already present (skip-existing) -- fxo_id is version-stable upstream
-    (verified live), so an existing object is always the same bytes the
-    filing would produce again. There is no parsing here, so a reused object
-    never needs downloading back locally -- an existence check alone
-    suffices. A freshly downloaded local file is removed as soon as its
-    upload attempt finishes.
-    """
-    object_key = _report_xhtml_object_key(fxo_id)
-    if object_store.exists(object_key, bucket=ESEF_FILINGS_FACTS_BUCKET):
-        return False
-    local_path = temp_dir / f"{sha256(fxo_id.encode()).hexdigest()}.xhtml"
-    try:
-        client.download_json_facts(report_url, local_path)
-        object_store.upload_file(
-            object_key,
-            local_path,
-            bucket=ESEF_FILINGS_FACTS_BUCKET,
-        )
-    finally:
-        local_path.unlink(missing_ok=True)
-    return True
-
-
-def _log_report_xhtml_progress(
-    log_info: Callable[..., object],
-    *,
-    partition_key: str,
-    processed: int,
-    total: int,
-    downloaded: int,
-    reused: int,
-    skipped: int,
-    force: bool = False,
-) -> None:
-    """Log one progress line for `run_esef_report_xhtml_partition`'s loop.
-
-    Same interval/force semantics as `_log_facts_progress` (see its
-    docstring). `skipped` is `skipped_no_report_url +
-    skipped_upstream_missing` -- there is no parse step in this loop, so
-    every filing lands in exactly one of downloaded/reused/skipped.
-    """
-    if not force and processed % _PROGRESS_LOG_INTERVAL != 0:
-        return
-    log_info(
-        "ESEF report xhtml partition %s: %d/%d filings processed "
-        "(%d downloaded, %d reused, %d skipped)",
-        partition_key,
-        processed,
-        total,
-        downloaded,
-        reused,
-        skipped,
-    )
-
-
-def run_esef_report_xhtml_partition(
-    *,
-    esef_filings_duckdb: DuckDBResource,
-    object_store: Any,
-    client: Any,
-    partition_key: str,
-    log_info: Callable[..., object],
-    log_warning: Callable[..., object],
-) -> dict[str, int | str]:
-    """Archive reports that became available in one source processed week.
-
-    Pure S3 archive layer (no parsing) -- the corpus for a future
-    embeddings/LLM-search pass over annual reports. Unlike
-    `run_esef_filing_facts_partition`, this function never opens a writable
-    DuckDB connection at all: the local index is read once, read-only, for
-    scope resolution, and everything else is S3 I/O. Split out from the
-    `@dg.asset` function for the same reason as
-    `run_esef_filing_facts_partition` (see its docstring): a
-    `ConfigurableResource` built with an injected private attribute does not
-    survive `dg.materialize`, so tests call this plain function directly with
-    duck-typed fakes instead.
-    """
-    processed_from, processed_until = _processed_window_sql_values(partition_key)
-    with read_only_duckdb_connection(esef_filings_duckdb) as connection:
-        index_rows = connection.execute(
-            "select fxo_id, report_url "
-            f"from {QUALIFIED_FILINGS_INDEX_TABLE} "
-            "where try_cast(processed_at as timestamp) >= try_cast(? as timestamp) "
-            "and try_cast(processed_at as timestamp) < try_cast(? as timestamp) "
-            "order by fxo_id",
-            [processed_from, processed_until],
-        ).fetchall()
-
-    log_info(
-        "ESEF report XHTML processed-week partition %s: %d filings in scope",
-        partition_key,
-        len(index_rows),
-    )
-
-    object_store.ensure_bucket(ESEF_FILINGS_FACTS_BUCKET)
-
-    processed_count = 0
-    downloaded_count = 0
-    reused_count = 0
-    skipped_no_report_url = 0
-    skipped_upstream_missing = 0
-
-    with tempfile.TemporaryDirectory(prefix="esef_filings_report_xhtml_") as tmpdir:
-        temp_dir = Path(tmpdir)
-        for fxo_id, report_url in index_rows:
-            processed_count += 1
-            if not report_url:
-                skipped_no_report_url += 1
-                _log_report_xhtml_progress(
-                    log_info,
-                    partition_key=partition_key,
-                    processed=processed_count,
-                    total=len(index_rows),
-                    downloaded=downloaded_count,
-                    reused=reused_count,
-                    skipped=skipped_no_report_url + skipped_upstream_missing,
-                )
-                continue
-            try:
-                downloaded = _archive_filing_report_xhtml(
-                    client=client,
-                    object_store=object_store,
-                    temp_dir=temp_dir,
-                    fxo_id=fxo_id,
-                    report_url=report_url,
-                )
-            except dlt_requests.HTTPError as exc:
-                # Same permanently-missing-upstream-file guard as
-                # run_esef_filing_facts_partition (see that loop's comment) --
-                # the skip happens before _archive_filing_report_xhtml's
-                # `object_store.upload_file` call, so no phantom S3 object is
-                # left for a filing whose report.html 404s/410s upstream.
-                if not _is_permanently_missing_upstream_error(exc):
-                    raise
-                skipped_upstream_missing += 1
-                log_warning(
-                    "ESEF report XHTML download permanently missing upstream "
-                    "(status=%s): fxo_id=%s report_url=%s",
-                    exc.response.status_code if exc.response is not None else None,
-                    fxo_id,
-                    report_url,
-                )
-                _log_report_xhtml_progress(
-                    log_info,
-                    partition_key=partition_key,
-                    processed=processed_count,
-                    total=len(index_rows),
-                    downloaded=downloaded_count,
-                    reused=reused_count,
-                    skipped=skipped_no_report_url + skipped_upstream_missing,
-                )
-                continue
-            if downloaded:
-                downloaded_count += 1
-            else:
-                reused_count += 1
-            _log_report_xhtml_progress(
-                log_info,
-                partition_key=partition_key,
-                processed=processed_count,
-                total=len(index_rows),
-                downloaded=downloaded_count,
-                reused=reused_count,
-                skipped=skipped_no_report_url + skipped_upstream_missing,
-            )
-
-    # Unconditional completion log -- see the analogous comment in
-    # run_esef_filing_facts_partition.
-    if index_rows:
-        _log_report_xhtml_progress(
-            log_info,
-            partition_key=partition_key,
-            processed=processed_count,
-            total=len(index_rows),
-            downloaded=downloaded_count,
-            reused=reused_count,
-            skipped=skipped_no_report_url + skipped_upstream_missing,
-            force=True,
-        )
-
-    return {
-        "filings_in_scope": len(index_rows),
-        "downloaded_count": downloaded_count,
-        "reused_count": reused_count,
-        "skipped_no_report_url": skipped_no_report_url,
-        "skipped_upstream_missing": skipped_upstream_missing,
-        "partition_key": partition_key,
-        "processed_window_start": processed_from,
-        "processed_window_end": processed_until,
-    }
-
-
-@dg.asset(
-    name="esef_report_xhtml_s3",
-    group_name=GROUP_NAME,
-    kinds={"python", "s3", "xhtml", "esef_filings"},
-    deps=["esef_filings_index_duckdb"],
-    partitions_def=ESEF_PROCESSED_WEEK_PARTITIONS,
-    backfill_policy=dg.BackfillPolicy.multi_run(max_partitions_per_run=1),
-    pool=ESEF_FILINGS_DUCKDB_POOL,
-    description=(
-        "Archives each in-scope filing's rendered report XHTML to S3 "
-        f"(bucket={ESEF_FILINGS_FACTS_BUCKET}, prefix={ESEF_REPORT_XHTML_PREFIX}, "
-        "skip-existing). Pure archive layer -- no parsing -- the corpus for a "
-        "future embeddings/LLM-search pass over annual reports."
-    ),
-)
-def esef_report_xhtml_s3(
-    context: dg.AssetExecutionContext,
-    esef_filings_duckdb: DuckDBResource,
-    object_store: ObjectStoreResource,
-) -> dg.MaterializeResult:
-    metadata = run_esef_report_xhtml_partition(
-        esef_filings_duckdb=esef_filings_duckdb,
-        object_store=object_store,
-        client=EsefFilingsClient(),
-        partition_key=context.partition_key,
-        log_info=context.log.info,
-        log_warning=context.log.warning,
-    )
-    return dg.MaterializeResult(metadata=metadata)
-
-
 class EsefFilingsClickhouseExportConfig(dg.Config):
     # Shrink-guard override (Finding M1; see publish.py's module docstring
     # and sweden_financial/clickhouse.py's guard_against_clickhouse_table_shrink)
@@ -2341,59 +1457,6 @@ def esef_filings_clickhouse(
     )
 
 
-def _all_partition_deps(*asset_keys: str) -> list[dg.AssetDep]:
-    """Deps of an unpartitioned derived asset on partitioned upstream data
-    (mirrors sweden_financial/assets.py's helper of the same name)."""
-    return [
-        dg.AssetDep(dg.AssetKey(asset_key), partition_mapping=dg.AllPartitionMapping())
-        for asset_key in asset_keys
-    ]
-
-
-class EsefFactsClickhouseExportConfig(dg.Config):
-    # Shrink-guard override (Finding M1) -- MUST stay False by default. Only
-    # set True via explicit run config for a confirmed-intentional shrink of
-    # a populated esef_facts table, never as a standing default.
-    allow_shrink: bool = False
-
-
-@dg.asset(
-    name="esef_facts_clickhouse",
-    deps=_all_partition_deps("esef_filing_facts_duckdb"),
-    group_name=GROUP_NAME,
-    kinds={"python", "duckdb", "clickhouse", "esef_filings"},
-    pool=ESEF_FILINGS_DUCKDB_POOL,
-    metadata={"table": tables.QUALIFIED_ESEF_FACTS_TABLE},
-    description=(
-        "Full-replaces corpscout.esef_facts from DuckDB "
-        f"{QUALIFIED_FACTS_TABLE} (every processed-week partition) via the shared "
-        "stage+EXCHANGE ClickHouse exporter. Full replace is correct here -- "
-        "one DuckDB file holds the entire dataset, no split-file hazard. "
-        "Guarded against a replace that would shrink the table by more than "
-        "half (see guard_against_clickhouse_table_shrink)."
-    ),
-)
-def esef_facts_clickhouse(
-    context: dg.AssetExecutionContext,
-    config: EsefFactsClickhouseExportConfig,
-    esef_filings_duckdb: DuckDBResource,
-    clickhouse: ClickhouseResource,
-) -> dg.MaterializeResult:
-    with read_only_duckdb_connection(esef_filings_duckdb) as connection:
-        rows = export_esef_facts_clickhouse(
-            duckdb_connection=connection,
-            clickhouse=clickhouse,
-            log=context.log.info,
-            allow_shrink=config.allow_shrink,
-        )
-    return dg.MaterializeResult(
-        metadata={
-            "rows_exported": rows,
-            "clickhouse_table": tables.QUALIFIED_ESEF_FACTS_TABLE,
-        }
-    )
-
-
 @dg.asset(
     name="esef_entity_registry_map_clickhouse",
     deps=["esef_filings_clickhouse", "gleif_reference_clickhouse"],
@@ -2435,7 +1498,13 @@ class EsefFinancialMetricsClickhouseExportConfig(dg.Config):
 
 @dg.asset(
     name="esef_financial_metrics_clickhouse",
-    deps=["esef_facts_clickhouse", "esef_filings_clickhouse"],
+    deps=[
+        dg.AssetDep(
+            dg.AssetKey("esef_facts_clickhouse"),
+            partition_mapping=dg.AllPartitionMapping(),
+        ),
+        dg.AssetKey("esef_filings_clickhouse"),
+    ],
     group_name=GROUP_NAME,
     kinds={"python", "clickhouse", "esef_filings"},
     metadata={"table": tables.QUALIFIED_ESEF_FINANCIAL_METRICS_TABLE},
@@ -2505,10 +1574,7 @@ ESEF_FILINGS_TIMEZONE = "Europe/Belgrade"
 
 ESEF_FILINGS_INGEST_SELECTION = dg.AssetSelection.assets(
     "esef_filings_index_duckdb",
-    "esef_filing_facts_duckdb",
-    "esef_report_xhtml_s3",
     "esef_filings_clickhouse",
-    "esef_facts_clickhouse",
     "esef_entity_registry_map_clickhouse",
     "esef_financial_metrics_clickhouse",
 )
@@ -2517,12 +1583,12 @@ ESEF_DOCUMENT_EVIDENCE_SELECTION = dg.AssetSelection.assets(
     "esef_document_extraction_manifest_s3",
     "esef_document_artifacts_s3",
     "esef_source_documents_duckdb",
+    "esef_filing_facts_duckdb",
     "esef_document_contact_candidates_duckdb",
     "esef_document_concept_labels_duckdb",
-    "esef_fact_disclosure_inputs_s3",
-    "esef_fact_disclosure_artifacts_s3",
     "esef_fact_disclosures_duckdb",
     "esef_source_documents_clickhouse",
+    "esef_facts_clickhouse",
     "esef_document_contact_candidates_clickhouse",
     "esef_document_concept_labels_clickhouse",
     "esef_document_concept_official_translations_clickhouse",
@@ -2535,23 +1601,22 @@ ESEF_FILINGS_REFRESH_SELECTION = (
     ESEF_FILINGS_INGEST_SELECTION | ESEF_DOCUMENT_EVIDENCE_SELECTION
 )
 
-# UI-launched backfill: processed-week ingest and deterministic document assets.
-# Exports are deliberately excluded from the backfill job -- run
-# esef_filings_refresh_job (or the individual export assets) once after all
-# backfill partitions land, mirroring sweden_financial_backfill_job's
-# exports-excluded shape (its exports run in their own separate job instead).
+# UI-launched backfill: one run per processed week, including partition-scoped
+# publication. Unpartitioned enrichment and aggregate metrics run separately.
 ESEF_FILINGS_BACKFILL_SELECTION = dg.AssetSelection.assets(
     "esef_filings_index_duckdb",
-    "esef_filing_facts_duckdb",
-    "esef_report_xhtml_s3",
     "esef_document_extraction_manifest_s3",
     "esef_document_artifacts_s3",
     "esef_source_documents_duckdb",
+    "esef_filing_facts_duckdb",
     "esef_document_contact_candidates_duckdb",
     "esef_document_concept_labels_duckdb",
-    "esef_fact_disclosure_inputs_s3",
-    "esef_fact_disclosure_artifacts_s3",
     "esef_fact_disclosures_duckdb",
+    "esef_source_documents_clickhouse",
+    "esef_facts_clickhouse",
+    "esef_document_contact_candidates_clickhouse",
+    "esef_document_concept_labels_clickhouse",
+    "esef_fact_disclosures_clickhouse",
 )
 
 esef_filings_refresh_job = dg.define_asset_job(
@@ -2619,11 +1684,7 @@ defs = dg.Definitions(
     assets=[
         esef_filings_index_duckdb,
         esef_filings_index_reconciliation_duckdb,
-        esef_filing_facts_json_s3,
-        esef_filing_facts_duckdb,
-        esef_report_xhtml_s3,
         esef_filings_clickhouse,
-        esef_facts_clickhouse,
         esef_entity_registry_map_clickhouse,
         esef_financial_metrics_clickhouse,
     ],

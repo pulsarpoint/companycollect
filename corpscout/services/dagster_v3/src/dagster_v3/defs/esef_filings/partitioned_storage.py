@@ -1,4 +1,4 @@
-"""Per-processed-week DuckDB storage for the ESEF parsing v2 shadow path."""
+"""Per-processed-week DuckDB storage for canonical ESEF parsing outputs."""
 
 from __future__ import annotations
 
@@ -15,6 +15,7 @@ import pyarrow as pa
 from dagster_v3.defs.common.partition_duckdb import partition_duckdb_path
 from dagster_v3.defs.esef_filings import tables
 from dagster_v3.defs.esef_filings.segment_assets import (
+    esef_document_result_metadata,
     iter_esef_document_result_rows,
     local_esef_document_result,
     processed_week_bounds,
@@ -22,9 +23,7 @@ from dagster_v3.defs.esef_filings.segment_assets import (
 
 
 PARTITION_STATUS_TABLE = "_partition_status"
-QUALIFIED_PARTITION_STATUS_TABLE = (
-    f"{tables.DLT_DATASET_NAME}.{PARTITION_STATUS_TABLE}"
-)
+QUALIFIED_PARTITION_STATUS_TABLE = f"{tables.DLT_DATASET_NAME}.{PARTITION_STATUS_TABLE}"
 ROW_BATCH_SIZE = 10_000
 
 SOURCE_DOCUMENTS_STORAGE = "esef_source_documents"
@@ -39,6 +38,7 @@ class ResultProjection:
     dataset_name: str
     storage_source: str
     property_name: str
+    expected_row_count_property: str
     table: str
     columns: tuple[str, ...]
     integer_columns: frozenset[str]
@@ -53,8 +53,9 @@ SOURCE_DOCUMENTS_PROJECTION = ResultProjection(
     dataset_name="source_documents",
     storage_source=SOURCE_DOCUMENTS_STORAGE,
     property_name="document_rows",
+    expected_row_count_property="source_document_row_count",
     table=tables.ESEF_SOURCE_DOCUMENTS_TABLE,
-    columns=tables.ESEF_SOURCE_DOCUMENTS_V2_EXPORT_COLUMNS,
+    columns=tables.ESEF_SOURCE_DOCUMENTS_PARTITION_EXPORT_COLUMNS,
     integer_columns=frozenset(
         {
             "fiscal_year",
@@ -74,16 +75,18 @@ CONTACT_CANDIDATES_PROJECTION = ResultProjection(
     dataset_name="contact_candidates",
     storage_source=CONTACT_CANDIDATES_STORAGE,
     property_name="candidate_rows",
+    expected_row_count_property="contact_candidate_row_count",
     table=tables.ESEF_DOCUMENT_CONTACT_CANDIDATES_TABLE,
-    columns=tables.ESEF_DOCUMENT_CONTACT_CANDIDATES_V2_EXPORT_COLUMNS,
+    columns=tables.ESEF_DOCUMENT_CONTACT_CANDIDATES_PARTITION_EXPORT_COLUMNS,
     integer_columns=frozenset({"fiscal_year", "evidence_count"}),
 )
 CONCEPT_LABELS_PROJECTION = ResultProjection(
     dataset_name="taxonomy_labels",
     storage_source=CONCEPT_LABELS_STORAGE,
     property_name="concept_label_rows",
+    expected_row_count_property="concept_label_row_count",
     table=tables.ESEF_DOCUMENT_CONCEPT_LABELS_TABLE,
-    columns=tables.ESEF_DOCUMENT_CONCEPT_LABELS_V2_EXPORT_COLUMNS,
+    columns=tables.ESEF_DOCUMENT_CONCEPT_LABELS_PARTITION_EXPORT_COLUMNS,
     integer_columns=frozenset({"fiscal_year"}),
     boolean_columns=frozenset({"is_extension", "is_report_language"}),
 )
@@ -113,6 +116,10 @@ def write_result_projection_partition(
             object_store,
             partition_key=partition_key,
         ) as result_path:
+            result_metadata = esef_document_result_metadata(result_path)
+            expected_row_count = int(
+                result_metadata[projection.expected_row_count_property]
+            )
             source_document_count = sum(
                 1
                 for _row in iter_esef_document_result_rows(
@@ -140,13 +147,14 @@ def write_result_projection_partition(
             dataset_name=projection.dataset_name,
             processed_week=processed_week,
             source_document_count=source_document_count,
-            expected_row_count=actual_row_count,
+            expected_row_count=expected_row_count,
             actual_row_count=actual_row_count,
         )
         return {
             "dataset_name": projection.dataset_name,
             "partition_key": partition_key,
             "source_document_count": source_document_count,
+            "expected_row_count": expected_row_count,
             "row_count": actual_row_count,
             "table": projection.qualified_table,
         }

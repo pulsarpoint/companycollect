@@ -10,13 +10,12 @@ No ``from __future__ import annotations``: Dagster inspects asset annotations.
 import json
 import re
 import tempfile
-from collections.abc import Callable, Iterable, Iterator, Mapping, Sequence
+from collections.abc import Callable, Iterator, Mapping, Sequence
 from concurrent.futures import FIRST_COMPLETED, Future, ProcessPoolExecutor, wait
 from contextlib import contextmanager
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from hashlib import sha256
-from itertools import batched
 from pathlib import Path
 from time import perf_counter
 from typing import Any, TextIO
@@ -220,48 +219,6 @@ def load_esef_company_links(
         str(lei): (str(country_iso2).upper(), str(company_id))
         for lei, country_iso2, company_id in rows
     }
-
-
-def run_esef_document_extraction_partition(
-    *,
-    esef_filings_duckdb: DuckDBResource,
-    object_store: Any,
-    client: Any,
-    company_links: Mapping[str, tuple[str, str]],
-    partition_key: str,
-    source_run_id: str,
-    source_document_ids: Sequence[str],
-    max_documents: int | None,
-    refresh_existing: bool,
-    validate_esef: bool,
-    log_info: Callable[..., object],
-) -> dict[str, object]:
-    """Run all document stages directly for focused tests and local tools."""
-    run_esef_document_manifest_partition(
-        esef_filings_duckdb=esef_filings_duckdb,
-        object_store=object_store,
-        company_links=company_links,
-        partition_key=partition_key,
-        source_run_id=source_run_id,
-        source_document_ids=source_document_ids,
-        max_documents=max_documents,
-        log_info=log_info,
-    )
-    run_esef_document_artifacts_partition(
-        object_store=object_store,
-        client=client,
-        partition_key=partition_key,
-        source_run_id=source_run_id,
-        refresh_existing=refresh_existing,
-        validate_esef=validate_esef,
-        parse_workers=1,
-        log_info=log_info,
-    )
-    return run_esef_document_publication_partition(
-        esef_filings_duckdb=esef_filings_duckdb,
-        object_store=object_store,
-        partition_key=partition_key,
-    )
 
 
 def run_esef_document_manifest_partition(
@@ -729,51 +686,6 @@ def run_esef_document_artifacts_partition(
     return metadata
 
 
-def run_esef_document_publication_partition(
-    *,
-    esef_filings_duckdb: DuckDBResource,
-    object_store: Any,
-    partition_key: str,
-) -> dict[str, object]:
-    """Publish a file-backed extraction result in bounded DuckDB transactions."""
-    started = perf_counter()
-    with local_esef_document_result(
-        object_store,
-        partition_key=partition_key,
-    ) as result_path:
-        source_document_ids = [
-            str(value)
-            for value in _iter_document_result_items(
-                result_path,
-                "source_document_ids.item",
-            )
-        ]
-        _replace_document_partition_rows(
-            esef_filings_duckdb,
-            source_document_ids=source_document_ids,
-            document_rows=iter_esef_document_result_rows(
-                result_path,
-                property_name="document_rows",
-            ),
-            candidate_rows=iter_esef_document_result_rows(
-                result_path,
-                property_name="candidate_rows",
-            ),
-            concept_label_rows=iter_esef_document_result_rows(
-                result_path,
-                property_name="concept_label_rows",
-            ),
-        )
-        metadata = dict(
-            _mapping(
-                _document_result_value(result_path, "metadata"),
-                name="result metadata",
-            )
-        )
-    metadata["duckdb_publication_seconds"] = perf_counter() - started
-    return metadata
-
-
 @contextmanager
 def local_esef_document_result(
     object_store: Any,
@@ -811,6 +723,14 @@ def iter_esef_document_result_rows(
     """Yield one normalized result row at a time from a local result file."""
     for value in _iter_document_result_items(result_path, f"{property_name}.item"):
         yield _mapping(value, name=f"result {property_name} row")
+
+
+def esef_document_result_metadata(result_path: Path) -> Mapping[str, Any]:
+    """Read the producer's row-count contract from a local result file."""
+    return _mapping(
+        _document_result_value(result_path, "metadata"),
+        name="result metadata",
+    )
 
 
 def _iter_document_result_items(result_path: Path, prefix: str) -> Iterator[Any]:
@@ -1202,75 +1122,6 @@ def _is_report_language(language: str, report_languages: set[str]) -> bool:
     )
 
 
-def _replace_document_partition_rows(
-    esef_filings_duckdb: DuckDBResource,
-    *,
-    source_document_ids: Sequence[str],
-    document_rows: Iterable[Mapping[str, object]],
-    candidate_rows: Iterable[Mapping[str, object]],
-    concept_label_rows: Iterable[Mapping[str, object]],
-    insert_batch_size: int = _DOCUMENT_PUBLICATION_INSERT_BATCH_SIZE,
-) -> None:
-    if insert_batch_size < 1:
-        raise ValueError("ESEF document insert_batch_size must be positive")
-    with safe_duckdb_connection(esef_filings_duckdb) as connection:
-        _ensure_document_tables(connection)
-        if not source_document_ids:
-            return
-        connection.execute("begin transaction")
-        try:
-            connection.execute(
-                "create or replace temp table selected_esef_documents "
-                "(source_document_id varchar)"
-            )
-            connection.executemany(
-                "insert into selected_esef_documents values (?)",
-                [(source_document_id,) for source_document_id in source_document_ids],
-            )
-            connection.execute(
-                f"delete from {tables.DLT_DATASET_NAME}."
-                f"{tables.ESEF_DOCUMENT_CONCEPT_LABELS_TABLE} where "
-                "source_document_id in (select source_document_id from "
-                "selected_esef_documents)"
-            )
-            connection.execute(
-                f"delete from {tables.DLT_DATASET_NAME}."
-                f"{tables.ESEF_DOCUMENT_CONTACT_CANDIDATES_TABLE} where "
-                "source_document_id in (select source_document_id from "
-                "selected_esef_documents)"
-            )
-            connection.execute(
-                f"delete from {tables.DLT_DATASET_NAME}."
-                f"{tables.ESEF_SOURCE_DOCUMENTS_TABLE} where source_document_id "
-                "in (select source_document_id from selected_esef_documents)"
-            )
-            connection.execute("commit")
-        except Exception:
-            connection.execute("rollback")
-            raise
-        _insert_rows_in_committed_batches(
-            connection,
-            table=tables.ESEF_SOURCE_DOCUMENTS_TABLE,
-            columns=tables.ESEF_SOURCE_DOCUMENTS_EXPORT_COLUMNS,
-            rows=document_rows,
-            batch_size=insert_batch_size,
-        )
-        _insert_rows_in_committed_batches(
-            connection,
-            table=tables.ESEF_DOCUMENT_CONCEPT_LABELS_TABLE,
-            columns=tables.ESEF_DOCUMENT_CONCEPT_LABELS_EXPORT_COLUMNS,
-            rows=concept_label_rows,
-            batch_size=insert_batch_size,
-        )
-        _insert_rows_in_committed_batches(
-            connection,
-            table=tables.ESEF_DOCUMENT_CONTACT_CANDIDATES_TABLE,
-            columns=tables.ESEF_DOCUMENT_CONTACT_CANDIDATES_EXPORT_COLUMNS,
-            rows=candidate_rows,
-            batch_size=insert_batch_size,
-        )
-
-
 def ensure_document_company_information_table(connection: Any) -> None:
     connection.execute(f"create schema if not exists {tables.DLT_DATASET_NAME}")
     connection.execute(
@@ -1302,73 +1153,6 @@ def ensure_document_company_information_table(connection: Any) -> None:
             f"{tables.ESEF_DOCUMENT_COMPANY_INFORMATION_TABLE} "
             f"add column if not exists {column} varchar default ''"
         )
-
-
-def _ensure_document_tables(connection: Any) -> None:
-    connection.execute(f"create schema if not exists {tables.DLT_DATASET_NAME}")
-    connection.execute(
-        f"create table if not exists {tables.DLT_DATASET_NAME}."
-        f"{tables.ESEF_SOURCE_DOCUMENTS_TABLE} ("
-        "source_document_id varchar, document_type varchar, lei varchar, "
-        "entity_name varchar, country_iso2 varchar, company_id varchar, "
-        "period_end varchar, fiscal_year integer, package_url varchar, "
-        "report_url varchar, viewer_url varchar, package_sha256 varchar, "
-        "package_object_key varchar, package_size_bytes bigint, "
-        "parsed_artifact_object_key varchar, artifact_schema_version integer, "
-        "parser_name varchar, parser_version varchar, archive_status varchar, "
-        "extraction_status varchar, fact_count integer, text_fact_count integer, "
-        "numeric_fact_count integer, contact_candidate_count integer, "
-        "website_candidate_count integer, validation_error_count integer, "
-        "validation_warning_count integer, source_processed_at varchar, "
-        "source_run_id varchar, extracted_at varchar)"
-    )
-    connection.execute(
-        f"create table if not exists {tables.DLT_DATASET_NAME}."
-        f"{tables.ESEF_DOCUMENT_CONTACT_CANDIDATES_TABLE} ("
-        "candidate_id varchar, source_document_id varchar, package_sha256 varchar, "
-        "lei varchar, country_iso2 varchar, company_id varchar, period_end varchar, "
-        "fiscal_year integer, candidate_kind varchar, normalized_value varchar, "
-        "country_code varchar, registrable_domain varchar, hosts_json varchar, "
-        "normalized_urls_json varchar, suggested_roles_json varchar, "
-        "evidence_json varchar, evidence_count integer, extractor_versions_json varchar, "
-        "source_run_id varchar, extracted_at varchar)"
-    )
-    connection.execute(
-        f"create table if not exists {tables.DLT_DATASET_NAME}."
-        f"{tables.ESEF_DOCUMENT_CONCEPT_LABELS_TABLE} ("
-        "label_id varchar, source_document_id varchar, package_sha256 varchar, "
-        "lei varchar, country_iso2 varchar, company_id varchar, period_end varchar, "
-        "fiscal_year integer, concept_qname varchar, concept_namespace_uri varchar, "
-        "concept_local_name varchar, is_extension boolean, label_role varchar, "
-        "language varchar, label varchar, is_report_language boolean, "
-        "source_run_id varchar, extracted_at varchar)"
-    )
-    ensure_document_company_information_table(connection)
-
-
-def _insert_rows_in_committed_batches(
-    connection: Any,
-    *,
-    table: str,
-    columns: Sequence[str],
-    rows: Iterable[Mapping[str, object]],
-    batch_size: int,
-) -> None:
-    placeholders = ", ".join("?" for _ in columns)
-    statement = (
-        f"insert into {tables.DLT_DATASET_NAME}.{table} values ({placeholders})"
-    )
-    for row_batch in batched(rows, batch_size):
-        parameters = [
-            tuple(row[column] for column in columns) for row in row_batch
-        ]
-        connection.execute("begin transaction")
-        try:
-            connection.executemany(statement, parameters)
-            connection.execute("commit")
-        except Exception:
-            connection.execute("rollback")
-            raise
 
 
 def _duckdb_table_exists(connection: Any, *, schema: str, table: str) -> bool:
@@ -1517,78 +1301,9 @@ def esef_document_artifacts_s3(
     return dg.MaterializeResult(metadata=metadata)
 
 
-_DOCUMENT_ARTIFACT_DEPENDENCY = [dg.AssetKey("esef_document_artifacts_s3")]
-
-
-@dg.multi_asset(
-    specs=[
-        dg.AssetSpec(
-            "esef_source_documents_duckdb",
-            deps=_DOCUMENT_ARTIFACT_DEPENDENCY,
-            group_name=GROUP_NAME,
-            kinds={"python", "s3", "duckdb"},
-            metadata={"table": tables.QUALIFIED_ESEF_SOURCE_DOCUMENTS_TABLE},
-            description=(
-                "Publishes one source-provenance row per fxo_id from the completed "
-                "processed-week ESEF artifact result."
-            ),
-        ),
-        dg.AssetSpec(
-            "esef_document_contact_candidates_duckdb",
-            deps=_DOCUMENT_ARTIFACT_DEPENDENCY,
-            group_name=GROUP_NAME,
-            kinds={"python", "s3", "duckdb"},
-            metadata={"table": tables.QUALIFIED_ESEF_DOCUMENT_CONTACT_CANDIDATES_TABLE},
-            description=(
-                "Stores deterministic email, phone, website, and registrable-domain "
-                "candidates with evidence and their exact source_document_id."
-            ),
-        ),
-        dg.AssetSpec(
-            "esef_document_concept_labels_duckdb",
-            deps=_DOCUMENT_ARTIFACT_DEPENDENCY,
-            group_name=GROUP_NAME,
-            kinds={"python", "s3", "duckdb", "xbrl", "taxonomy"},
-            metadata={"table": tables.QUALIFIED_ESEF_DOCUMENT_CONCEPT_LABELS_TABLE},
-            description=(
-                "Stores document-scoped taxonomy labels for concepts used by each "
-                "ESEF report, including submitted-language and English labels."
-            ),
-        ),
-    ],
-    can_subset=False,
-    partitions_def=ESEF_PROCESSED_WEEK_PARTITIONS,
-    backfill_policy=dg.BackfillPolicy.multi_run(max_partitions_per_run=1),
-    pool="esef_filings_duckdb",
-)
-def esef_document_extraction_duckdb(
-    context: dg.AssetExecutionContext,
-    esef_filings_duckdb: DuckDBResource,
-    object_store: ObjectStoreResource,
-) -> Iterator[dg.MaterializeResult]:
-    metadata = run_esef_document_publication_partition(
-        esef_filings_duckdb=esef_filings_duckdb,
-        object_store=object_store,
-        partition_key=context.partition_key,
-    )
-    yield dg.MaterializeResult(
-        asset_key="esef_source_documents_duckdb",
-        metadata=metadata,
-    )
-    yield dg.MaterializeResult(
-        asset_key="esef_document_contact_candidates_duckdb",
-        metadata=metadata,
-    )
-    yield dg.MaterializeResult(
-        asset_key="esef_document_concept_labels_duckdb",
-        metadata=metadata,
-    )
-
-
 defs = dg.Definitions(
     assets=[
         esef_document_extraction_manifest_s3,
         esef_document_artifacts_s3,
-        esef_document_extraction_duckdb,
     ]
 )

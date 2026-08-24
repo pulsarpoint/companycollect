@@ -1,13 +1,12 @@
 import json
 import struct
-from contextlib import nullcontext
-from dataclasses import replace
 from datetime import timedelta
 from hashlib import sha256
 from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
+import duckdb
 import zipfile_deflate64 as zipfile
 from arelle.ModelValue import DateTime as ArelleDateTime
 from dagster import AssetKey
@@ -24,28 +23,33 @@ from dagster_v3.defs.esef_filings.segment_assets import (
     document_manifest_object_key,
     document_result_object_key,
     esef_document_artifacts_s3,
-    esef_document_extraction_duckdb,
     esef_document_extraction_manifest_s3,
     load_esef_document_result,
     report_package_object_key,
     run_esef_document_artifacts_partition,
-    run_esef_document_extraction_partition,
+    run_esef_document_manifest_partition,
+)
+from dagster_v3.defs.esef_filings.partitioned_assets import (
+    esef_document_concept_labels_duckdb,
+    esef_document_contact_candidates_duckdb,
+    esef_filing_facts_duckdb,
+    esef_source_documents_duckdb,
+)
+from dagster_v3.defs.esef_filings.partitioned_storage import (
+    CONCEPT_LABELS_PROJECTION,
+    CONTACT_CANDIDATES_PROJECTION,
+    SOURCE_DOCUMENTS_PROJECTION,
+    write_result_projection_partition,
 )
 from dagster_v3.defs.esef_filings.segment_cli import main as segment_cli_main
-from dagster_v3.defs.esef_filings.fact_parity import (
-    build_fact_parity_report,
-    iter_artifact_legacy_facts,
-)
 from dagster_v3.defs.esef_filings.contact_candidates import (
     TaggedContactValue,
     extract_contact_candidates,
 )
 from dagster_v3.defs.esef_filings.segment_parser import (
     EsefArtifactSource,
-    EsefSegmentArtifact,
     artifact_json_bytes,
     artifact_object_key,
-    compare_artifact_to_oim,
     parse_esef_report_package,
     write_artifact_json,
 )
@@ -684,472 +688,6 @@ def test_artifact_object_key_is_content_and_parser_versioned() -> None:
     )
 
 
-def test_compare_artifact_to_oim_reports_exact_fact_agreement(tmp_path: Path) -> None:
-    artifact = parse_esef_report_package(
-        _write_sample_report_package(tmp_path),
-        source=EsefArtifactSource(fxo_id="SAMPLE-2024"),
-        validate_esef=False,
-    )
-    reference = {
-        "facts": {
-            fact.source_fact_id: {
-                "value": (
-                    "1234500"
-                    if fact.source_fact_id == "revenue"
-                    else fact.canonical_value
-                ),
-                "decimals": fact.decimals,
-                "dimensions": {
-                    **fact.oim_dimensions,
-                    **(
-                        {"noteId": "reference-generated-note-id"}
-                        if fact.concept_qname == "xbrl:note"
-                        else {}
-                    ),
-                },
-            }
-            for fact in artifact.facts.values()
-        }
-    }
-
-    result = compare_artifact_to_oim(artifact, reference)
-
-    assert result == {
-        "artifact_fact_count": 4,
-        "reference_fact_count": 4,
-        "matched_fact_count": 4,
-        "artifact_only_count": 0,
-        "reference_only_count": 0,
-    }
-
-
-def test_fact_parity_report_checks_semantic_and_legacy_row_contracts(
-    tmp_path: Path,
-) -> None:
-    artifact = parse_esef_report_package(
-        _write_sample_report_package(tmp_path),
-        source=EsefArtifactSource(fxo_id="SAMPLE-2024"),
-        validate_esef=False,
-    )
-    reference = _reference_oim_from_artifact(artifact)
-
-    report = build_fact_parity_report(
-        artifact,
-        reference,
-        lei="549300SAMPLE000000001",
-        fxo_id="SAMPLE-2024",
-        period_end="2024-12-31",
-    )
-
-    assert report["semantic_facts"] == {
-        "artifact_fact_count": 4,
-        "reference_fact_count": 4,
-        "exact_matched_fact_count": 4,
-        "approved_difference_count": 0,
-        "matched_fact_count": 4,
-        "artifact_only_count": 0,
-        "reference_only_count": 0,
-        "raw_parity": True,
-        "parity": True,
-    }
-    assert report["legacy_rows"]["parity"] is True
-    assert report["legacy_rows"]["exact_row_parity"] is True
-    assert report["metrics"]["parity"] is True
-    assert report["ready_for_fact_cutover"] is True
-
-    assert set(report["field_mismatch_counts"]) == {
-        "concept",
-        "value",
-        "decimals",
-        "entity",
-        "period",
-        "unit",
-        "language",
-        "dimensions",
-    }
-    assert not any(report["field_mismatch_counts"].values())
-
-
-def test_fact_parity_normalizes_date_typed_midnight_values(tmp_path: Path) -> None:
-    parsed = parse_esef_report_package(
-        _write_sample_report_package(tmp_path),
-        source=EsefArtifactSource(fxo_id="SAMPLE-2025"),
-        validate_esef=False,
-    )
-    revenue_fact_key = next(
-        fact_key
-        for fact_key, fact in parsed.facts.items()
-        if fact.concept_qname == "sample:Revenue"
-    )
-    revenue_fact = parsed.facts[revenue_fact_key]
-    date_qname = "ifrs-full:DateOfEndOfReportingPeriod2013"
-    ifrs_namespace = "https://xbrl.ifrs.org/taxonomy/2024-03-27/ifrs-full"
-    artifact = replace(
-        parsed,
-        document=replace(
-            parsed.document,
-            namespaces={**parsed.document.namespaces, "ifrs-full": ifrs_namespace},
-        ),
-        concepts={
-            **parsed.concepts,
-            date_qname: replace(
-                parsed.concepts["sample:Revenue"],
-                qname=date_qname,
-                namespace=ifrs_namespace,
-                local_name="DateOfEndOfReportingPeriod2013",
-                type_qname="xbrli:dateItemType",
-                base_xsd_type="date",
-                balance="",
-                is_numeric=False,
-            ),
-        },
-        facts={
-            **parsed.facts,
-            revenue_fact_key: replace(
-                revenue_fact,
-                concept_qname=date_qname,
-                canonical_value="2025-12-31T00:00:00",
-                decimals=None,
-                unit=None,
-                is_numeric=False,
-                oim_dimensions={
-                    key: value
-                    for key, value in {
-                        **revenue_fact.oim_dimensions,
-                        "concept": date_qname,
-                    }.items()
-                    if key != "unit"
-                },
-            ),
-        },
-    )
-    reference = _reference_oim_from_artifact(artifact)
-    reference["facts"][revenue_fact.source_fact_id]["value"] = "2025-12-31"
-
-    report = build_fact_parity_report(
-        artifact,
-        reference,
-        lei="549300SAMPLE000000001",
-        fxo_id="SAMPLE-2025",
-        period_end="2025-12-31",
-    )
-
-    assert report["approved_differences"]["count"] == 0
-    assert report["semantic_facts"]["raw_parity"] is True
-    assert report["legacy_rows"]["raw_parity"] is True
-    assert report["metrics"]["raw_parity"] is True
-    assert report["ready_for_fact_cutover"] is True
-
-
-@pytest.mark.parametrize(
-    (
-        "canonical_value",
-        "decimals",
-        "fact_period",
-        "expected_employees",
-        "expected_metric_mismatches",
-    ),
-    [
-        (
-            "2243.0",
-            3,
-            "2025-01-01T00:00:00/2026-01-01T00:00:00",
-            2243,
-            ["employees"],
-        ),
-        (
-            "2.0",
-            0,
-            "2024-01-01T00:00:00/2025-01-01T00:00:00",
-            None,
-            [],
-        ),
-    ],
-)
-def test_fact_parity_approves_arelle_employee_numeric_promotion(
-    tmp_path: Path,
-    canonical_value: str,
-    decimals: int,
-    fact_period: str,
-    expected_employees: int | None,
-    expected_metric_mismatches: list[str],
-) -> None:
-    parsed = parse_esef_report_package(
-        _write_sample_report_package(tmp_path),
-        source=EsefArtifactSource(fxo_id="SAMPLE-2024"),
-        validate_esef=False,
-    )
-    revenue_fact_key = next(
-        fact_key
-        for fact_key, fact in parsed.facts.items()
-        if fact.concept_qname == "sample:Revenue"
-    )
-    revenue_fact = parsed.facts[revenue_fact_key]
-    employee_qname = "ifrs-full:AverageNumberOfEmployees"
-    ifrs_namespace = "https://xbrl.ifrs.org/taxonomy/2024-03-27/ifrs-full"
-    artifact = replace(
-        parsed,
-        document=replace(
-            parsed.document,
-            namespaces={**parsed.document.namespaces, "ifrs-full": ifrs_namespace},
-        ),
-        concepts={
-            **parsed.concepts,
-            employee_qname: replace(
-                parsed.concepts["sample:Revenue"],
-                qname=employee_qname,
-                namespace=ifrs_namespace,
-                local_name="AverageNumberOfEmployees",
-                type_qname="xbrli:pureItemType",
-                base_xsd_type="decimal",
-                balance="",
-            ),
-        },
-        facts={
-            **parsed.facts,
-            revenue_fact_key: replace(
-                revenue_fact,
-                concept_qname=employee_qname,
-                canonical_value=canonical_value,
-                decimals=decimals,
-                unit={"numerators": ["xbrli:pure"], "denominators": []},
-                oim_dimensions={
-                    **revenue_fact.oim_dimensions,
-                    "concept": employee_qname,
-                    "period": fact_period,
-                    "unit": "xbrli:pure",
-                },
-            ),
-        },
-    )
-    reference = _reference_oim_from_artifact(artifact)
-    reference_employee = reference["facts"][revenue_fact.source_fact_id]
-    reference_employee["dimensions"].pop("unit")
-
-    report = build_fact_parity_report(
-        artifact,
-        reference,
-        lei="549300SAMPLE000000001",
-        fxo_id="SAMPLE-2024",
-        period_end="2025-12-31",
-    )
-
-    assert report["approved_differences"]["count"] == 1
-    assert report["approved_differences"]["by_code"] == {
-        "ifrs-average-number-of-employees-pure-unit": 1,
-    }
-    assert report["semantic_facts"]["approved_difference_count"] == 1
-    assert report["semantic_facts"]["parity"] is True
-    assert report["legacy_rows"]["raw_parity"] is False
-    assert report["legacy_rows"]["approved_difference_count"] == 1
-    assert report["legacy_rows"]["parity"] is True
-    assert report["metrics"]["raw_mismatched_metrics"] == expected_metric_mismatches
-    assert (
-        report["metrics"]["approved_mismatched_metrics"] == expected_metric_mismatches
-    )
-    assert report["metrics"]["artifact"]["employees"] == expected_employees
-    assert report["metrics"]["reference"]["employees"] is None
-    assert report["metrics"]["parity"] is True
-    assert report["ready_for_fact_cutover"] is True
-
-    reference_employee["value"] = "999.0"
-    changed_value_report = build_fact_parity_report(
-        artifact,
-        reference,
-        lei="549300SAMPLE000000001",
-        fxo_id="SAMPLE-2024",
-        period_end="2025-12-31",
-    )
-    assert changed_value_report["approved_differences"]["count"] == 0
-    assert changed_value_report["semantic_facts"]["parity"] is False
-    assert changed_value_report["legacy_rows"]["parity"] is False
-    assert changed_value_report["ready_for_fact_cutover"] is False
-
-
-def test_fact_parity_report_resolves_equivalent_qname_prefixes(
-    tmp_path: Path,
-) -> None:
-    artifact = parse_esef_report_package(
-        _write_sample_report_package(tmp_path),
-        source=EsefArtifactSource(fxo_id="SAMPLE-2024"),
-        validate_esef=False,
-    )
-    reference = _reference_oim_from_artifact(artifact)
-    namespaces = reference["documentInfo"]["namespaces"]
-    namespaces["alternate"] = namespaces.pop("sample")
-    namespaces["money"] = namespaces.pop("iso4217")
-    namespaces["lei"] = namespaces.pop("scheme")
-    for entry in reference["facts"].values():
-        dimensions = entry["dimensions"]
-        if dimensions["concept"].startswith("sample:"):
-            dimensions["concept"] = dimensions["concept"].replace(
-                "sample:", "alternate:", 1
-            )
-        if dimensions.get("unit", "").startswith("iso4217:"):
-            dimensions["unit"] = dimensions["unit"].replace("iso4217:", "money:", 1)
-        if dimensions.get("entity", "").startswith("scheme:"):
-            dimensions["entity"] = dimensions["entity"].replace("scheme:", "lei:", 1)
-
-    report = build_fact_parity_report(
-        artifact,
-        reference,
-        lei="549300SAMPLE000000001",
-        fxo_id="SAMPLE-2024",
-        period_end="2024-12-31",
-    )
-
-    assert report["semantic_facts"]["parity"] is True
-    assert report["legacy_rows"]["parity"] is False
-    assert report["ready_for_fact_cutover"] is False
-
-
-def test_fact_parity_report_identifies_value_decimal_and_metric_changes(
-    tmp_path: Path,
-) -> None:
-    parsed = parse_esef_report_package(
-        _write_sample_report_package(tmp_path),
-        source=EsefArtifactSource(fxo_id="SAMPLE-2024"),
-        validate_esef=False,
-    )
-    revenue_fact_key = next(
-        fact_key
-        for fact_key, fact in parsed.facts.items()
-        if fact.concept_qname == "sample:Revenue"
-    )
-    sample_revenue = parsed.facts[revenue_fact_key]
-    ifrs_namespace = "https://xbrl.ifrs.org/taxonomy/2024-03-27/ifrs-full"
-    artifact = replace(
-        parsed,
-        document=replace(
-            parsed.document,
-            namespaces={**parsed.document.namespaces, "ifrs-full": ifrs_namespace},
-        ),
-        concepts={
-            **{
-                qname: concept
-                for qname, concept in parsed.concepts.items()
-                if qname != "sample:Revenue"
-            },
-            "ifrs-full:Revenue": replace(
-                parsed.concepts["sample:Revenue"],
-                qname="ifrs-full:Revenue",
-                namespace=ifrs_namespace,
-                is_extension=False,
-            ),
-        },
-        facts={
-            **parsed.facts,
-            revenue_fact_key: replace(
-                sample_revenue,
-                concept_qname="ifrs-full:Revenue",
-                oim_dimensions={
-                    **sample_revenue.oim_dimensions,
-                    "concept": "ifrs-full:Revenue",
-                },
-            ),
-        },
-    )
-    reference = _reference_oim_from_artifact(artifact)
-    reference_revenue = reference["facts"][sample_revenue.source_fact_id]
-    reference_revenue["value"] = "9999999"
-    reference_revenue["decimals"] = -2
-
-    report = build_fact_parity_report(
-        artifact,
-        reference,
-        lei="549300SAMPLE000000001",
-        fxo_id="SAMPLE-2024",
-        period_end="2024-12-31",
-    )
-
-    assert report["semantic_facts"]["parity"] is False
-    assert report["field_mismatch_counts"]["value"] == 1
-    assert report["field_mismatch_counts"]["decimals"] == 1
-    assert report["metrics"]["parity"] is False
-    assert report["metrics"]["mismatched_metrics"] == ["revenue"]
-    assert report["ready_for_fact_cutover"] is False
-
-
-def test_artifact_legacy_fact_ids_remain_unique_when_source_ids_repeat(
-    tmp_path: Path,
-) -> None:
-    parsed = parse_esef_report_package(
-        _write_sample_report_package(tmp_path),
-        source=EsefArtifactSource(fxo_id="SAMPLE-2024"),
-        validate_esef=False,
-    )
-    first_key, second_key = list(parsed.facts)[:2]
-    artifact = replace(
-        parsed,
-        facts={
-            **parsed.facts,
-            first_key: replace(parsed.facts[first_key], source_fact_id="repeated"),
-            second_key: replace(parsed.facts[second_key], source_fact_id="repeated"),
-        },
-    )
-
-    rows = list(
-        iter_artifact_legacy_facts(
-            artifact,
-            lei="549300SAMPLE000000001",
-            fxo_id="SAMPLE-2024",
-            period_end="2024-12-31",
-        )
-    )
-
-    assert len(rows) == 4
-    assert len({row.fact_id for row in rows}) == 4
-    assert "repeated" in {row.fact_id for row in rows}
-    assert any(row.fact_id.startswith("repeated#") for row in rows)
-
-
-def test_fact_parity_allows_deterministic_fact_id_changes_when_rows_still_match(
-    tmp_path: Path,
-) -> None:
-    artifact = parse_esef_report_package(
-        _write_sample_report_package(tmp_path),
-        source=EsefArtifactSource(fxo_id="SAMPLE-2024"),
-        validate_esef=False,
-    )
-    reference = _reference_oim_from_artifact(artifact)
-    reference["facts"] = {
-        f"generated-{index}": entry
-        for index, entry in enumerate(reference["facts"].values(), start=1)
-    }
-
-    report = build_fact_parity_report(
-        artifact,
-        reference,
-        lei="549300SAMPLE000000001",
-        fxo_id="SAMPLE-2024",
-        period_end="2024-12-31",
-    )
-
-    assert report["semantic_facts"]["parity"] is True
-    assert report["legacy_rows"]["parity"] is True
-    assert report["legacy_rows"]["exact_row_parity"] is False
-    assert report["legacy_rows"]["fact_id_inventory_match"] is False
-    assert report["ready_for_fact_cutover"] is True
-
-
-def _reference_oim_from_artifact(
-    artifact: EsefSegmentArtifact,
-) -> dict[str, object]:
-    return {
-        "documentInfo": {
-            "namespaces": dict(artifact.document.namespaces),
-        },
-        "facts": {
-            fact.source_fact_id: {
-                "value": fact.canonical_value,
-                "decimals": fact.decimals,
-                "dimensions": dict(fact.oim_dimensions),
-            }
-            for fact in artifact.facts.values()
-        },
-    }
-
-
 def test_cli_writes_reviewable_artifact(
     tmp_path: Path,
     capsys: pytest.CaptureFixture[str],
@@ -1184,42 +722,6 @@ def test_cli_writes_reviewable_artifact(
     assert summary["segment_fact_counts"]["business_profile"] == 1
 
 
-def test_cli_emits_detailed_fact_parity_report(
-    tmp_path: Path,
-    capsys: pytest.CaptureFixture[str],
-) -> None:
-    package_path = _write_sample_report_package(tmp_path)
-    artifact = parse_esef_report_package(
-        package_path,
-        source=EsefArtifactSource(fxo_id="SAMPLE-2024-12-31-ESEF-SE-0"),
-        validate_esef=False,
-    )
-    reference_path = tmp_path / "reference.json"
-    reference_path.write_text(
-        json.dumps(_reference_oim_from_artifact(artifact)),
-        encoding="utf-8",
-    )
-
-    exit_code = segment_cli_main(
-        [
-            str(package_path),
-            str(tmp_path / "artifact.json"),
-            "--fxo-id",
-            "SAMPLE-2024-12-31-ESEF-SE-0",
-            "--lei",
-            "549300SAMPLE000000001",
-            "--reference-oim",
-            str(reference_path),
-            "--skip-esef-validation",
-        ]
-    )
-
-    assert exit_code == 0
-    summary = json.loads(capsys.readouterr().out)
-    assert summary["fact_parity"]["ready_for_fact_cutover"] is True
-    assert summary["fact_parity"]["semantic_facts"]["matched_fact_count"] == 4
-
-
 def test_document_asset_archives_parses_and_stores_source_linked_rows(
     tmp_path: Path,
 ) -> None:
@@ -1230,31 +732,33 @@ def test_document_asset_archives_parses_and_stores_source_linked_rows(
     object_store = _FakeObjectStore({})
     client = _FakeDownloadClient(package_body)
 
-    first = run_esef_document_extraction_partition(
-        esef_filings_duckdb=database,
+    first = _run_document_artifact_stages(
+        database=database,
         object_store=object_store,
         client=client,
-        company_links={"549300SAMPLE000000001": ("SE", "5566000000")},
-        partition_key="2025-03-30",
         source_run_id="parse-run",
         source_document_ids=["SAMPLE-2024"],
-        max_documents=None,
-        refresh_existing=False,
-        validate_esef=False,
-        log_info=lambda *_args: None,
     )
-    second = run_esef_document_extraction_partition(
-        esef_filings_duckdb=database,
+    source_documents_path = tmp_path / "source-documents.duckdb"
+    contact_candidates_path = tmp_path / "contact-candidates.duckdb"
+    concept_labels_path = tmp_path / "concept-labels.duckdb"
+    for projection, target_path in (
+        (SOURCE_DOCUMENTS_PROJECTION, source_documents_path),
+        (CONTACT_CANDIDATES_PROJECTION, contact_candidates_path),
+        (CONCEPT_LABELS_PROJECTION, concept_labels_path),
+    ):
+        write_result_projection_partition(
+            object_store=object_store,
+            partition_key="2025-03-30",
+            projection=projection,
+            target_path=target_path,
+        )
+    second = _run_document_artifact_stages(
+        database=database,
         object_store=object_store,
         client=client,
-        company_links={"549300SAMPLE000000001": ("SE", "5566000000")},
-        partition_key="2025-03-30",
         source_run_id="parse-run-2",
         source_document_ids=["SAMPLE-2024"],
-        max_documents=None,
-        refresh_existing=False,
-        validate_esef=False,
-        log_info=lambda *_args: None,
     )
 
     assert first["parsed_package_count"] == 1
@@ -1278,18 +782,20 @@ def test_document_asset_archives_parses_and_stores_source_linked_rows(
         report_package_object_key(package_sha256),
     ) in object_store.objects
 
-    with database.get_connection() as connection:
+    with duckdb.connect(str(source_documents_path), read_only=True) as connection:
         document = connection.execute(
             f"select source_document_id, country_iso2, company_id, fact_count, "
             f"parsed_artifact_object_key from {tables.DLT_DATASET_NAME}."
             f"{tables.ESEF_SOURCE_DOCUMENTS_TABLE}"
         ).fetchone()
+    with duckdb.connect(str(contact_candidates_path), read_only=True) as connection:
         candidates = connection.execute(
             f"select candidate_kind, normalized_value, evidence_json from "
             f"{tables.DLT_DATASET_NAME}."
             f"{tables.ESEF_DOCUMENT_CONTACT_CANDIDATES_TABLE} "
             "order by candidate_kind, normalized_value"
         ).fetchall()
+    with duckdb.connect(str(concept_labels_path), read_only=True) as connection:
         concept_labels = connection.execute(
             f"select concept_qname, label_role, language, label, "
             f"is_report_language from {tables.DLT_DATASET_NAME}."
@@ -1354,7 +860,6 @@ def test_document_artifact_stage_accepts_schema_two_manifest() -> None:
         parse_workers=1,
         log_info=lambda *_args: None,
     )
-
     result = json.loads(
         object_store.objects[
             (ESEF_DOCUMENT_BUCKET, document_result_object_key(partition_key))
@@ -1416,49 +921,6 @@ def test_document_artifact_workers_are_recycled_after_each_package(
     ]
 
 
-def test_document_publication_inserts_rows_in_committed_batches() -> None:
-    connection = _RecordingDuckDBConnection()
-    database = _RecordingDuckDBResource(connection)
-
-    segment_assets._replace_document_partition_rows(
-        database,
-        source_document_ids=["document-1"],
-        document_rows=[
-            _export_row(
-                tables.ESEF_SOURCE_DOCUMENTS_EXPORT_COLUMNS,
-                source_document_id="document-1",
-            )
-        ],
-        candidate_rows=[
-            _export_row(
-                tables.ESEF_DOCUMENT_CONTACT_CANDIDATES_EXPORT_COLUMNS,
-                source_document_id="document-1",
-                ordinal=ordinal,
-            )
-            for ordinal in range(5)
-        ],
-        concept_label_rows=[
-            _export_row(
-                tables.ESEF_DOCUMENT_CONCEPT_LABELS_EXPORT_COLUMNS,
-                source_document_id="document-1",
-                ordinal=ordinal,
-            )
-            for ordinal in range(6)
-        ],
-        insert_batch_size=2,
-    )
-
-    data_batch_sizes = [
-        len(parameters)
-        for statement, parameters in connection.executemany_calls
-        if "selected_esef_documents" not in statement
-    ]
-    assert data_batch_sizes == [1, 2, 2, 2, 2, 2, 1]
-    assert connection.statements.count("begin transaction") == 8
-    assert connection.statements.count("commit") == 8
-    assert "rollback" not in connection.statements
-
-
 def test_document_result_rejects_schema_two() -> None:
     partition_key = "2025-03-30"
     object_store = _FakeObjectStore(
@@ -1491,18 +953,12 @@ def test_facts_cutover_reads_arelle_artifact_and_replaces_legacy_checkpoint(
     _seed_filing_index(database, package_sha256=package_sha256)
     object_store = _FakeObjectStore({})
 
-    run_esef_document_extraction_partition(
-        esef_filings_duckdb=database,
+    _run_document_artifact_stages(
+        database=database,
         object_store=object_store,
         client=_FakeDownloadClient(package_body),
-        company_links={"549300SAMPLE000000001": ("SE", "5566000000")},
-        partition_key="2025-03-30",
         source_run_id="artifact-run",
         source_document_ids=["SAMPLE-2024"],
-        max_documents=None,
-        refresh_existing=False,
-        validate_esef=False,
-        log_info=lambda *_args: None,
     )
     with database.get_connection() as connection:
         connection.execute(
@@ -1584,30 +1040,18 @@ def test_document_asset_parses_identical_packages_once_per_partition(
     object_store = _FakeObjectStore({})
     client = _FakeDownloadClient(package_body)
 
-    metadata = run_esef_document_extraction_partition(
-        esef_filings_duckdb=database,
+    metadata = _run_document_artifact_stages(
+        database=database,
         object_store=object_store,
         client=client,
-        company_links={"549300SAMPLE000000001": ("SE", "5566000000")},
-        partition_key="2025-03-30",
         source_run_id="deduplicated-run",
         source_document_ids=[],
-        max_documents=None,
-        refresh_existing=False,
-        validate_esef=False,
-        log_info=lambda *_args: None,
     )
 
     assert metadata["selected_document_count"] == 2
     assert metadata["unique_package_count"] == 1
     assert metadata["parsed_package_count"] == 1
     assert client.calls == ["https://example.test/sample.zip"]
-    with database.get_connection() as connection:
-        [(document_count,)] = connection.execute(
-            f"select count(*) from {tables.DLT_DATASET_NAME}."
-            f"{tables.ESEF_SOURCE_DOCUMENTS_TABLE}"
-        ).fetchall()
-    assert document_count == 2
 
 
 def test_document_assets_use_processed_week_partitions_and_share_source_deps() -> None:
@@ -1629,30 +1073,41 @@ def test_document_assets_use_processed_week_partitions_and_share_source_deps() -
     )
     assert esef_document_extraction_manifest_s3.op.pool == "esef_filings_duckdb"
     assert esef_document_artifacts_s3.op.pool == ESEF_ARELLE_POOL
-    assert {
-        dep.asset_key
-        for spec in assets.esef_filing_facts_duckdb.specs
-        for dep in spec.deps
-    } == artifact_dependency
     assert (
-        esef_document_extraction_duckdb.asset_deps[
+        esef_filing_facts_duckdb.asset_deps[AssetKey("esef_filing_facts_duckdb")]
+        == artifact_dependency
+    )
+    assert (
+        esef_source_documents_duckdb.asset_deps[
             AssetKey("esef_source_documents_duckdb")
         ]
         == artifact_dependency
     )
     assert (
-        esef_document_extraction_duckdb.asset_deps[
+        esef_document_contact_candidates_duckdb.asset_deps[
             AssetKey("esef_document_contact_candidates_duckdb")
         ]
         == artifact_dependency
     )
     assert (
-        esef_document_extraction_duckdb.asset_deps[
+        esef_document_concept_labels_duckdb.asset_deps[
             AssetKey("esef_document_concept_labels_duckdb")
         ]
         == artifact_dependency
     )
-    assert esef_document_extraction_duckdb.op.pool == "esef_filings_duckdb"
+    assert (
+        len(
+            {
+                asset.op.pool
+                for asset in (
+                    esef_source_documents_duckdb,
+                    esef_document_contact_candidates_duckdb,
+                    esef_document_concept_labels_duckdb,
+                )
+            }
+        )
+        == 3
+    )
 
 
 def _seed_filing_index(database: object, *, package_sha256: str) -> None:
@@ -1748,53 +1203,35 @@ class _FakeObjectStore:
         self.created_buckets.append(bucket)
 
 
-class _RecordingDuckDBConnection:
-    def __init__(self) -> None:
-        self.statements: list[str] = []
-        self.executemany_calls: list[tuple[str, list[tuple[object, ...]]]] = []
-
-    def execute(
-        self,
-        statement: str,
-        _parameters: object = None,
-    ) -> "_RecordingDuckDBConnection":
-        self.statements.append(statement)
-        return self
-
-    def executemany(
-        self,
-        statement: str,
-        parameters: list[tuple[object, ...]],
-    ) -> "_RecordingDuckDBConnection":
-        self.executemany_calls.append((statement, list(parameters)))
-        return self
-
-    def close(self) -> None:
-        return None
-
-
-class _RecordingDuckDBResource:
-    def __init__(self, connection: _RecordingDuckDBConnection) -> None:
-        self.connection = connection
-
-    def get_connection(self) -> object:
-        return nullcontext(self.connection)
-
-
-def _export_row(
-    columns: tuple[str, ...],
+def _run_document_artifact_stages(
     *,
-    source_document_id: str,
-    ordinal: int = 0,
+    database: object,
+    object_store: _FakeObjectStore,
+    client: _FakeDownloadClient,
+    source_run_id: str,
+    source_document_ids: list[str],
 ) -> dict[str, object]:
-    return {
-        column: (
-            source_document_id
-            if column == "source_document_id"
-            else f"{column}-{ordinal}"
-        )
-        for column in columns
-    }
+    partition_key = "2025-03-30"
+    run_esef_document_manifest_partition(
+        esef_filings_duckdb=database,
+        object_store=object_store,
+        company_links={"549300SAMPLE000000001": ("SE", "5566000000")},
+        partition_key=partition_key,
+        source_run_id=source_run_id,
+        source_document_ids=source_document_ids,
+        max_documents=None,
+        log_info=lambda *_args: None,
+    )
+    return run_esef_document_artifacts_partition(
+        object_store=object_store,
+        client=client,
+        partition_key=partition_key,
+        source_run_id=source_run_id,
+        refresh_existing=False,
+        validate_esef=False,
+        parse_workers=1,
+        log_info=lambda *_args: None,
+    )
 
 
 def _write_sample_report_package(

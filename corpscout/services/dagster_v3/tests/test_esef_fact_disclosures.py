@@ -2,23 +2,22 @@ import json
 from hashlib import sha256
 from pathlib import Path
 
-from dagster import AssetKey
+import duckdb
 
 from dagster_v3.defs.esef_filings import tables
-from dagster_v3.defs.esef_filings.disclosure_assets import (
-    esef_fact_disclosure_artifacts_s3,
-    esef_fact_disclosure_inputs_s3,
-    esef_fact_disclosures_duckdb,
-    parse_disclosure_inputs,
-    publish_disclosure_partition,
-    snapshot_disclosure_inputs,
-)
-from dagster_v3.defs.common.duckdb_resources import duckdb_resource
+from dagster_v3.defs.esef_filings.artifact_contract import ARTIFACT_SCHEMA_VERSION
 from dagster_v3.defs.esef_filings.disclosure_parser import (
     DISCLOSURE_PARSER_NAME,
     DISCLOSURE_PARSER_VERSION,
     disclosure_row,
     parse_esef_disclosure,
+)
+from dagster_v3.defs.esef_filings.partitioned_assets import (
+    build_disclosures_partition_database,
+)
+from dagster_v3.defs.esef_filings.segment_assets import (
+    ESEF_DOCUMENT_BUCKET,
+    document_result_object_key,
 )
 
 
@@ -111,76 +110,72 @@ def test_disclosure_row_is_deterministic_and_source_preserving() -> None:
     assert first["source_run_id"] == "run-1"
 
 
-def test_disclosure_assets_release_duckdb_during_parallel_parsing() -> None:
-    input_key = AssetKey("esef_fact_disclosure_inputs_s3")
-    artifact_key = AssetKey("esef_fact_disclosure_artifacts_s3")
-    output_key = AssetKey("esef_fact_disclosures_duckdb")
-
-    assert esef_fact_disclosure_inputs_s3.asset_deps[input_key] == {
-        AssetKey("esef_filing_facts_duckdb"),
-        AssetKey("esef_source_documents_duckdb"),
-    }
-    assert esef_fact_disclosure_inputs_s3.op.pool == "esef_filings_duckdb"
-    assert esef_fact_disclosure_artifacts_s3.asset_deps[artifact_key] == {input_key}
-    assert esef_fact_disclosure_artifacts_s3.op.pool == "esef_disclosure_parse"
-    assert esef_fact_disclosures_duckdb.asset_deps[output_key] == {artifact_key}
-    assert esef_fact_disclosures_duckdb.op.pool == "esef_filings_duckdb"
-
-
-def test_processed_week_pipeline_snapshots_parses_and_publishes(tmp_path: Path) -> None:
-    database = duckdb_resource(tmp_path / "esef.duckdb")
+def test_processed_week_pipeline_parses_artifacts_directly(tmp_path: Path) -> None:
+    partition_key = "2025-03-30"
     package_sha256 = "b" * 64
-    with database.get_connection() as connection:
-        connection.execute("create schema esef_filings")
-        connection.execute(
-            "create table esef_filings.esef_source_documents ("
-            "source_document_id varchar, package_sha256 varchar, lei varchar, "
-            "country_iso2 varchar, company_id varchar, period_end varchar, "
-            "fiscal_year integer, extraction_status varchar, "
-            "source_processed_at varchar)"
-        )
-        connection.execute(
-            "insert into esef_filings.esef_source_documents values "
-            "('sample-2024', ?, '549300SAMPLE000000001', 'SE', '5566000000', "
-            "'2024-12-31', 2024, 'parsed', '2025-04-01T00:00:00Z')",
-            [package_sha256],
-        )
-        connection.execute(
-            "create table esef_filings.facts (fxo_id varchar, fact_id varchar, "
-            "concept_qname varchar, concept_local_name varchar, language varchar, "
-            "raw_value varchar, value_kind varchar)"
-        )
-        connection.execute(
-            "insert into esef_filings.facts values "
-            "('sample-2024', 'fact-1', 'ifrs:DisclosureExplanatory', "
-            "'DisclosureExplanatory', 'en', "
-            "'<h2>BUSINESS</h2><p>Produces oils.</p>', 'text')"
-        )
     object_store = _MemoryObjectStore()
+    artifact_key = "esef_filings/artifacts/sample.json"
+    artifact = {
+        "schema_version": ARTIFACT_SCHEMA_VERSION,
+        "concepts": {"ifrs:DisclosureExplanatory": {"base_xsd_type": "string"}},
+        "facts": {
+            "fact-1": {
+                "fact_key": "fact-1",
+                "source_fact_id": "fact-1",
+                "report_member": "report.xhtml",
+                "ordinal": 1,
+                "canonical_value": "<h2>BUSINESS</h2><p>Produces oils.</p>",
+                "decimals": None,
+                "oim_dimensions": {
+                    "concept": "ifrs:DisclosureExplanatory",
+                    "language": "en",
+                },
+            }
+        },
+    }
+    result = {
+        "schema_version": 3,
+        "processed_week": partition_key,
+        "source_run_id": "artifact-run",
+        "extracted_at": "2025-04-01T00:00:00Z",
+        "source_document_ids": ["sample-2024"],
+        "document_rows": [
+            {
+                "source_document_id": "sample-2024",
+                "package_sha256": package_sha256,
+                "lei": "549300SAMPLE000000001",
+                "country_iso2": "SE",
+                "company_id": "5566000000",
+                "period_end": "2024-12-31",
+                "fiscal_year": 2024,
+                "extraction_status": "parsed",
+                "parsed_artifact_object_key": artifact_key,
+            }
+        ],
+        "candidate_rows": [],
+        "concept_label_rows": [],
+        "metadata": {},
+    }
+    object_store.objects[(ESEF_DOCUMENT_BUCKET, artifact_key)] = json.dumps(
+        artifact
+    ).encode()
+    object_store.objects[
+        (ESEF_DOCUMENT_BUCKET, document_result_object_key(partition_key))
+    ] = json.dumps(result).encode()
+    target_path = tmp_path / "disclosures.duckdb"
 
-    snapshot = snapshot_disclosure_inputs(
-        esef_filings_duckdb=database,
+    metadata = build_disclosures_partition_database(
         object_store=object_store,
-        partition_key="2025-03-30",
-        source_run_id="snapshot-run",
-    )
-    parsed = parse_disclosure_inputs(
-        object_store=object_store,
-        partition_key="2025-03-30",
+        partition_key=partition_key,
         source_run_id="parse-run",
         parse_workers=1,
-    )
-    published = publish_disclosure_partition(
-        esef_filings_duckdb=database,
-        object_store=object_store,
-        partition_key="2025-03-30",
+        target_path=target_path,
     )
 
-    assert snapshot["input_row_count"] == 1
-    assert parsed["output_row_count"] == 1
-    assert parsed["block_count"] == 2
-    assert published["table"] == tables.QUALIFIED_FACT_DISCLOSURES_TABLE
-    with database.get_connection() as connection:
+    assert metadata["row_count"] == 1
+    assert metadata["block_count"] == 2
+    assert metadata["table"] == tables.QUALIFIED_FACT_DISCLOSURES_TABLE
+    with duckdb.connect(str(target_path), read_only=True) as connection:
         row = connection.execute(
             "select source_document_id, source_record_uid, source_fact_id, "
             "plain_text, block_count from esef_filings.esef_fact_disclosures"
@@ -205,6 +200,9 @@ class _MemoryObjectStore:
 
     def download_file(self, key: str, path: Path, *, bucket: str) -> None:
         path.write_bytes(self.objects[(bucket, key)])
+
+    def exists(self, key: str, *, bucket: str) -> bool:
+        return (bucket, key) in self.objects
 
     def write_bytes(self, key: str, value: bytes, *, bucket: str) -> None:
         self.objects[(bucket, key)] = value

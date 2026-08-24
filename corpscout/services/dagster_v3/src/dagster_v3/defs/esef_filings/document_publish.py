@@ -3,9 +3,6 @@
 No ``from __future__ import annotations``: Dagster inspects asset annotations.
 """
 
-from collections.abc import Iterator
-from typing import Any
-
 import dagster as dg
 from dagster_clickhouse import ClickhouseResource
 from dagster_duckdb import DuckDBResource
@@ -24,33 +21,12 @@ from dagster_v3.defs.translator_load.resource import TranslatorResource
 
 GROUP_NAME = "esef_filings"
 
-_DOCUMENT_TABLE_CONTRACTS = (
-    (
-        tables.ESEF_SOURCE_DOCUMENTS_TABLE,
-        tables.ESEF_SOURCE_DOCUMENTS_EXPORT_COLUMNS,
-    ),
-    (
-        tables.ESEF_DOCUMENT_CONTACT_CANDIDATES_TABLE,
-        tables.ESEF_DOCUMENT_CONTACT_CANDIDATES_EXPORT_COLUMNS,
-    ),
-    (
-        tables.ESEF_DOCUMENT_CONCEPT_LABELS_TABLE,
-        tables.ESEF_DOCUMENT_CONCEPT_LABELS_EXPORT_COLUMNS,
-    ),
-    (
-        tables.ESEF_FACT_DISCLOSURES_TABLE,
-        tables.ESEF_FACT_DISCLOSURES_EXPORT_COLUMNS,
-    ),
-)
-
 _COMPANY_INFORMATION_TABLE_CONTRACT = (
     tables.ESEF_DOCUMENT_COMPANY_INFORMATION_TABLE,
     tables.ESEF_DOCUMENT_COMPANY_INFORMATION_EXPORT_COLUMNS,
 )
 
-_ESEF_CONCEPT_LABEL_SOURCE_TABLE = (
-    tables.QUALIFIED_ESEF_DOCUMENT_CONCEPT_LABELS_TABLE
-)
+_ESEF_CONCEPT_LABEL_SOURCE_TABLE = tables.QUALIFIED_ESEF_DOCUMENT_CONCEPT_LABELS_TABLE
 _ESEF_LANGUAGE_NAMES = {
     "bg": "Bulgarian",
     "cs": "Czech",
@@ -220,133 +196,14 @@ class EsefDocumentPublishConfig(dg.Config):
     allow_shrink: bool = False
 
 
-def replace_esef_document_tables_clickhouse(
-    *,
-    duckdb_connection: Any,
-    clickhouse: ClickhouseResource,
-    allow_shrink: bool,
-) -> dict[str, int]:
-    """Atomically replace all source-document tables from cumulative DuckDB."""
-    assert_clickhouse_tables_exist(
-        clickhouse,
-        database=tables.ESEF_DATABASE,
-        tables=tuple(table for table, _columns in _DOCUMENT_TABLE_CONTRACTS),
-    )
-    staged_counts = {
-        table: int(
-            duckdb_connection.execute(
-                f"select count(*) from {tables.DLT_DATASET_NAME}.{table}"
-            ).fetchone()[0]
-        )
-        for table, _columns in _DOCUMENT_TABLE_CONTRACTS
-    }
-    with clickhouse.get_connection() as client:
-        for table, _columns in _DOCUMENT_TABLE_CONTRACTS:
-            qualified_table = f"{tables.ESEF_DATABASE}.{table}"
-            guard_against_clickhouse_table_shrink(
-                qualified_table=qualified_table,
-                existing_row_count=clickhouse_table_row_count(
-                    client,
-                    qualified_table,
-                ),
-                staged_row_count=staged_counts[table],
-                allow_shrink=allow_shrink,
-            )
-        return replace_duckdb_connection_tables_in_clickhouse(
-            duckdb_connection=duckdb_connection,
-            clickhouse_client=client,
-            duckdb_schema=tables.DLT_DATASET_NAME,
-            clickhouse_database=tables.ESEF_DATABASE,
-            tables=_DOCUMENT_TABLE_CONTRACTS,
-            allow_empty_tables=(
-                tables.ESEF_DOCUMENT_CONTACT_CANDIDATES_TABLE,
-                tables.ESEF_DOCUMENT_CONCEPT_LABELS_TABLE,
-                tables.ESEF_FACT_DISCLOSURES_TABLE,
-            ),
-        )
-
-
-def _all_partitions(asset_key: str) -> dg.AssetDep:
-    return dg.AssetDep(
-        dg.AssetKey(asset_key),
-        partition_mapping=dg.AllPartitionMapping(),
-    )
-
-
-@dg.multi_asset(
-    specs=[
-        dg.AssetSpec(
-            "esef_source_documents_clickhouse",
-            deps=[_all_partitions("esef_source_documents_duckdb")],
-            group_name=GROUP_NAME,
-            kinds={"python", "duckdb", "clickhouse", "xbrl"},
-            metadata={"table": tables.QUALIFIED_ESEF_SOURCE_DOCUMENTS_TABLE},
-            description=(
-                "Publishes one auditable row per ESEF source package, linked to "
-                "country/company_id and the existing esef_facts fxo_id."
-            ),
-        ),
-        dg.AssetSpec(
-            "esef_document_contact_candidates_clickhouse",
-            deps=[_all_partitions("esef_document_contact_candidates_duckdb")],
-            group_name=GROUP_NAME,
-            kinds={"python", "duckdb", "clickhouse", "xbrl"},
-            metadata={"table": tables.QUALIFIED_ESEF_DOCUMENT_CONTACT_CANDIDATES_TABLE},
-            description=(
-                "Publishes deterministic email, phone, website, and domain values "
-                "without resolving them into canonical company contacts."
-            ),
-        ),
-        dg.AssetSpec(
-            "esef_document_concept_labels_clickhouse",
-            deps=[_all_partitions("esef_document_concept_labels_duckdb")],
-            group_name=GROUP_NAME,
-            kinds={"python", "duckdb", "clickhouse", "xbrl", "taxonomy"},
-            metadata={"table": tables.QUALIFIED_ESEF_DOCUMENT_CONCEPT_LABELS_TABLE},
-            description=(
-                "Publishes authoritative document-scoped taxonomy labels for "
-                "submitted-language and English ESEF concept names."
-            ),
-        ),
-        dg.AssetSpec(
-            "esef_fact_disclosures_clickhouse",
-            deps=[_all_partitions("esef_fact_disclosures_duckdb")],
-            group_name=GROUP_NAME,
-            kinds={"python", "duckdb", "clickhouse", "xhtml"},
-            metadata={"table": tables.QUALIFIED_ESEF_FACT_DISCLOSURES_TABLE},
-            description=(
-                "Publishes deterministic headings, paragraphs, and tables for "
-                "ESEF narrative facts with source-record and raw-value hashes."
-            ),
-        ),
-    ],
-    can_subset=False,
-    pool="esef_filings_duckdb",
-)
-def esef_document_information_clickhouse(
-    config: EsefDocumentPublishConfig,
-    esef_filings_duckdb: DuckDBResource,
-    clickhouse: ClickhouseResource,
-) -> Iterator[dg.MaterializeResult]:
-    with read_only_duckdb_connection(esef_filings_duckdb) as connection:
-        row_counts = replace_esef_document_tables_clickhouse(
-            duckdb_connection=connection,
-            clickhouse=clickhouse,
-            allow_shrink=config.allow_shrink,
-        )
-    for table, _columns in _DOCUMENT_TABLE_CONTRACTS:
-        yield dg.MaterializeResult(
-            asset_key=f"{table}_clickhouse",
-            metadata={
-                "row_count": row_counts[table],
-                "table": f"{tables.ESEF_DATABASE}.{table}",
-            },
-        )
-
-
 @dg.asset(
     name="esef_document_concept_official_translations_clickhouse",
-    deps=[dg.AssetKey("esef_document_concept_labels_clickhouse")],
+    deps=[
+        dg.AssetDep(
+            dg.AssetKey("esef_document_concept_labels_clickhouse"),
+            partition_mapping=dg.AllPartitionMapping(),
+        )
+    ],
     group_name=GROUP_NAME,
     kinds={"python", "clickhouse", "xbrl", "taxonomy"},
     description=(
@@ -392,9 +249,7 @@ def esef_document_concept_translation_load(
 ) -> dg.MaterializeResult:
     baseline_failed = translator.queue_stats().failed
     with clickhouse.get_connection() as client:
-        untranslated_rows = client.execute(
-            _esef_missing_concept_translation_scan_sql()
-        )
+        untranslated_rows = client.execute(_esef_missing_concept_translation_scan_sql())
 
     rows_by_language: dict[str, list[tuple[str, int]]] = {}
     unsupported_languages: set[str] = set()
@@ -450,9 +305,7 @@ def esef_document_concept_translation_load(
             },
         )
     if received > 0:
-        stats = translator.wait_for_queue_completion(
-            baseline_failed=baseline_failed
-        )
+        stats = translator.wait_for_queue_completion(baseline_failed=baseline_failed)
         context.log.info(
             "translator queue completed: input=%d pending=%d output=%d failed=%d",
             stats.input,
@@ -562,7 +415,6 @@ def esef_document_company_information_clickhouse(
 
 defs = dg.Definitions(
     assets=[
-        esef_document_information_clickhouse,
         esef_document_concept_official_translations_clickhouse,
         esef_document_concept_translation_load,
         esef_document_company_information_clickhouse,

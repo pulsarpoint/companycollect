@@ -60,9 +60,25 @@ CLICKHOUSE_LEAVES: tuple[ClickhouseLeaf, ...] = (
         MONTHLY,
     ),
     ClickhouseLeaf("czech_ares_clickhouse_industries", ("cz_industries",), MONTHLY),
-    # esef_filings — unscheduled in Task 5; jobs/schedule land in Task 7
+    # ESEF schedules remain stopped while the canonical weekly parser is backfilled.
     ClickhouseLeaf("esef_filings_clickhouse", ("esef_filings",), None),
+    ClickhouseLeaf(
+        "esef_source_documents_clickhouse", ("esef_source_documents",), None
+    ),
     ClickhouseLeaf("esef_facts_clickhouse", ("esef_facts",), None),
+    ClickhouseLeaf(
+        "esef_document_contact_candidates_clickhouse",
+        ("esef_document_contact_candidates",),
+        None,
+    ),
+    ClickhouseLeaf(
+        "esef_document_concept_labels_clickhouse",
+        ("esef_document_concept_labels",),
+        None,
+    ),
+    ClickhouseLeaf(
+        "esef_fact_disclosures_clickhouse", ("esef_fact_disclosures",), None
+    ),
     ClickhouseLeaf(
         "esef_entity_registry_map_clickhouse", ("esef_entity_registry_map",), None
     ),
@@ -211,7 +227,9 @@ CLICKHOUSE_LEAVES: tuple[ClickhouseLeaf, ...] = (
     # final, all refreshed by se_company_info_weekly (Mondays 06:50 UTC, RUNNING since
     # 2026-08-23), so a missed week turns the freshness check red.
     ClickhouseLeaf("se_company_info_scb_clickhouse", ("se_company_info_scb",), WEEKLY),
-    ClickhouseLeaf("se_company_info_esef_clickhouse", ("se_company_info_esef",), WEEKLY),
+    ClickhouseLeaf(
+        "se_company_info_esef_clickhouse", ("se_company_info_esef",), WEEKLY
+    ),
     ClickhouseLeaf(
         "se_company_info_wikidata_clickhouse", ("se_company_info_wikidata",), WEEKLY
     ),

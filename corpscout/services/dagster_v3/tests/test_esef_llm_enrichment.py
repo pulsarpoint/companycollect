@@ -32,7 +32,6 @@ from dagster_v3.defs.esef_filings.llm_enrichment_assets import (
 )
 from dagster_v3.defs.esef_filings.document_publish import (
     esef_document_company_information_clickhouse,
-    esef_document_information_clickhouse,
 )
 from dagster_v3.defs.esef_filings.segment_assets import ESEF_DOCUMENT_BUCKET
 from dagster_v3.defs.esef_filings.segment_parser import (
@@ -440,10 +439,9 @@ def test_llm_enrichment_asset_depends_on_final_clickhouse_documents() -> None:
     }
 
 
-def test_llm_clickhouse_publication_is_separate_from_routine_document_publish() -> None:
+def test_llm_clickhouse_publication_depends_on_enrichment_duckdb() -> None:
     company_information_key = AssetKey("esef_document_company_information_clickhouse")
 
-    assert company_information_key not in esef_document_information_clickhouse.keys
     assert esef_document_company_information_clickhouse.asset_deps[
         company_information_key
     ] == {AssetKey("esef_document_company_information_duckdb")}

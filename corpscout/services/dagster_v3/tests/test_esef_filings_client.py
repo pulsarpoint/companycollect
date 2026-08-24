@@ -35,6 +35,9 @@ CONCEPT_LABEL_MIGRATION_FILE = (
 LLM_PROVENANCE_MIGRATION_FILE = (
     MIGRATIONS_DIR / "000247_corpscout_esef_llm_provenance.up.sql"
 )
+PARTITIONED_PARSING_MIGRATION_FILE = (
+    MIGRATIONS_DIR / "000309_corpscout_esef_parsing_v2.up.sql"
+)
 assert MIGRATION_FILE.exists(), (
     f"migration file not found at {MIGRATION_FILE} — check the parents[] depth "
     "(tests/ -> dagster_v3 -> services -> corpscout -> clickhouse/migrations)"
@@ -544,9 +547,7 @@ def test_document_export_columns_match_migration_000243_column_order() -> None:
                 "llm_response_sha256",
             }
             assert tuple(
-                column
-                for column in export_columns
-                if column not in provenance_columns
+                column for column in export_columns if column not in provenance_columns
             ) == tuple(migration_columns[:-1])
         else:
             assert tuple(migration_columns[:-1]) == export_columns
@@ -592,3 +593,36 @@ def test_concept_label_export_columns_match_migration_000246_column_order() -> N
         )
         == tables.ESEF_DOCUMENT_CONCEPT_LABELS_EXPORT_COLUMNS
     )
+
+
+def test_partition_export_columns_match_promoted_table_contracts() -> None:
+    sql = PARTITIONED_PARSING_MIGRATION_FILE.read_text(encoding="utf-8")
+    expected_by_table = {
+        "esef_source_documents_v2": (
+            tables.ESEF_SOURCE_DOCUMENTS_PARTITION_EXPORT_COLUMNS,
+            {"source_record_uid"},
+        ),
+        "esef_facts_v2": (tables.ESEF_FACTS_PARTITION_EXPORT_COLUMNS, set()),
+        "esef_document_contact_candidates_v2": (
+            tables.ESEF_DOCUMENT_CONTACT_CANDIDATES_PARTITION_EXPORT_COLUMNS,
+            {"source_record_uid"},
+        ),
+        "esef_document_concept_labels_v2": (
+            tables.ESEF_DOCUMENT_CONCEPT_LABELS_PARTITION_EXPORT_COLUMNS,
+            {"source_record_uid"},
+        ),
+        "esef_fact_disclosures_v2": (
+            tables.ESEF_FACT_DISCLOSURES_PARTITION_EXPORT_COLUMNS,
+            set(),
+        ),
+    }
+
+    for table_name, (export_columns, defaulted_columns) in expected_by_table.items():
+        migration_columns = _migration_table_columns(sql, table_name)
+        assert migration_columns[-1] == "resolved_at"
+        explicit_columns = tuple(
+            column
+            for column in migration_columns[:-1]
+            if column not in defaulted_columns
+        )
+        assert explicit_columns == export_columns

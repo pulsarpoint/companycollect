@@ -12,6 +12,7 @@ from dagster_v3.defs.company_source_records.sql import (
     wikidata_source_record_sql,
 )
 
+
 def publish_company_source_records(
     *,
     clickhouse: ClickhouseResource,
@@ -115,9 +116,9 @@ def publish_esef_document_observations(
             )
         counts = {
             table: int(
-                client.execute(
-                    f"SELECT count() FROM {tables.DATABASE}.{table} FINAL"
-                )[0][0]
+                client.execute(f"SELECT count() FROM {tables.DATABASE}.{table} FINAL")[
+                    0
+                ][0]
             )
             for table in observation_tables
         }
@@ -189,7 +190,12 @@ def finland_financial_company_source_records_clickhouse(
 
 @dg.asset(
     name="esef_company_source_records_clickhouse",
-    deps=[dg.AssetKey("esef_source_documents_clickhouse")],
+    deps=[
+        dg.AssetDep(
+            dg.AssetKey("esef_source_documents_clickhouse"),
+            partition_mapping=dg.AllPartitionMapping(),
+        )
+    ],
     group_name=tables.GROUP_NAME,
     kinds={"clickhouse", "sql", "provenance", "xbrl"},
     metadata={"tables": [tables.QUALIFIED_SOURCE_RECORDS_TABLE]},

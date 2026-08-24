@@ -323,6 +323,7 @@ EXPECTED_MIGRATIONS = (
     "000310_corpscout_esef_concept_label_uid_default",
     "000311_corpscout_esef_v2_source_record_uid",
     "000312_corpscout_se_company_addresses_current_uid_default",
+    "000313_corpscout_esef_parsing_canonical",
 )
 
 NOOP_MIGRATIONS = {"000276_noop"}

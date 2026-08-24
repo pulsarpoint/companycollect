@@ -31,9 +31,18 @@ TABLE = "se_company_info_esef"
 # Positional insert list: the envelope (evidence_hash is MATERIALIZED, so omitted) then this
 # module's payload, in the order the migration declares them — pinned by the test.
 SE_COMPANY_INFO_ESEF_COLUMNS = (
-    "company_id", "source_record_uid", "observed_at", "source_run_id",
-    "source_document_id", "lei", "entity_name", "fiscal_year", "company_description",
-    "description_language", "description_confidence", "products_and_services_json",
+    "company_id",
+    "source_record_uid",
+    "observed_at",
+    "source_run_id",
+    "source_document_id",
+    "lei",
+    "entity_name",
+    "fiscal_year",
+    "company_description",
+    "description_language",
+    "description_confidence",
+    "products_and_services_json",
     "business_segments_json",
 )
 
@@ -73,7 +82,10 @@ FROM candidates""".replace("{SE_COMPANY_ID_PATTERN}", SE_COMPANY_ID_PATTERN)
     name="se_company_info_esef_clickhouse",
     deps=[
         dg.AssetKey("esef_document_company_information_clickhouse"),
-        dg.AssetKey("esef_source_documents_clickhouse"),
+        dg.AssetDep(
+            dg.AssetKey("esef_source_documents_clickhouse"),
+            partition_mapping=dg.AllPartitionMapping(),
+        ),
     ],
     group_name=GROUP_NAME,
     kinds={"clickhouse", "python"},
@@ -88,21 +100,30 @@ def se_company_info_esef_clickhouse(
 ) -> dg.MaterializeResult:
     """Select SE filings with a description → stage → validate → append new versions."""
     assert_clickhouse_tables_exist(
-        clickhouse, database=DATABASE,
+        clickhouse,
+        database=DATABASE,
         tables=("esef_document_company_information", "esef_source_documents", TABLE),
     )
     counts = publish_with_stage(
-        clickhouse=clickhouse, target=TABLE,
-        insert_columns=SE_COMPANY_INFO_ESEF_COLUMNS, select_sql=SE_COMPANY_INFO_ESEF_SQL,
+        clickhouse=clickhouse,
+        target=TABLE,
+        insert_columns=SE_COMPANY_INFO_ESEF_COLUMNS,
+        select_sql=SE_COMPANY_INFO_ESEF_SQL,
         select_parameters={"source_run_id": context.run_id},
         invalid_condition="trim(company_id) = '' OR trim(source_record_uid) = '' OR trim(company_description) = ''",
         new_versions_only=True,
     )
-    context.log.info("se_company_info_esef: appended=%s total=%s", counts.inserted, counts.total)
-    return dg.MaterializeResult(metadata={
-        "appended_count": counts.inserted, "total_count": counts.total,
-        "table": f"{DATABASE}.{TABLE}", "resolved_at": datetime.now(UTC).isoformat(),
-    })
+    context.log.info(
+        "se_company_info_esef: appended=%s total=%s", counts.inserted, counts.total
+    )
+    return dg.MaterializeResult(
+        metadata={
+            "appended_count": counts.inserted,
+            "total_count": counts.total,
+            "table": f"{DATABASE}.{TABLE}",
+            "resolved_at": datetime.now(UTC).isoformat(),
+        }
+    )
 
 
 defs = dg.Definitions(assets=[se_company_info_esef_clickhouse])

@@ -1,22 +1,6 @@
-"""OIM xBRL-JSON fact parsing for ESEF filings.
+"""Normalize canonical Arelle artifact facts into serving rows.
 
-filings.xbrl.org publishes each filing's inline-XBRL facts pre-extracted as
-"Open Information Model" xBRL-JSON (https://www.xbrl.org/Specification/oim-xbrl-json/REC-2021-10-13/oim-xbrl-json-REC-2021-10-13.html):
-a top-level ``"facts"`` dict keyed by an opaque fact id, each entry holding a
-``"value"`` (as a string), an optional ``"decimals"``, and a ``"dimensions"``
-dict whose well-known keys are ``concept``/``entity``/``period``/``unit``/
-``language``/``noteId`` -- anything else is an extension-taxonomy dimension
-(e.g. an axis/member pair) that goes verbatim into the ``dimensions`` output
-column.
-
-This module only parses an already-downloaded payload into ``EsefFact`` rows
--- it does no I/O. The asset in ``assets.py`` owns downloading the JSON
-(S3 skip-existing via ``EsefFilingsClient.download_json_facts``) and handles
-a whole-payload parse failure (malformed JSON) by counting and skipping the
-filing; this module only ever skips individual **fact entries** that are
-missing a usable ``dimensions.concept``.
-
-**OIM end-of-day date convention** (Finding C1 fix): XBRL 2.1 canonicalizes
+**XBRL end-of-day date convention**: XBRL 2.1 canonicalizes
 an "end of day" period boundary -- an instant, or a duration's end -- to
 midnight of the day AFTER the intended calendar date, and xBRL-JSON (OIM)
 preserves this literally rather than translating it back. A FY2022 filing
@@ -96,42 +80,6 @@ assert _ESEF_FACT_FIELD_NAMES == tables.ESEF_FACTS_EXPORT_COLUMNS[:-1], (
     f"(minus source_run_id): {_ESEF_FACT_FIELD_NAMES} != "
     f"{tables.ESEF_FACTS_EXPORT_COLUMNS[:-1]}"
 )
-
-
-def parse_oim_facts(
-    payload: dict[str, Any], *, lei: str, fxo_id: str, period_end: str
-) -> list[EsefFact]:
-    """Return all parsed facts for callers that need a materialized list."""
-    return list(
-        iter_oim_facts(
-            payload,
-            lei=lei,
-            fxo_id=fxo_id,
-            period_end=period_end,
-        )
-    )
-
-
-def iter_oim_facts(
-    payload: dict[str, Any], *, lei: str, fxo_id: str, period_end: str
-) -> Iterator[EsefFact]:
-    """Yield one filing's OIM xBRL-JSON payload as `EsefFact` rows.
-
-    Skips (without raising) any fact entry that isn't a dict, whose
-    `dimensions` isn't a dict, or whose `dimensions.concept` isn't a
-    non-empty string -- a fact with no concept can't be attributed to a
-    taxonomy element, so there is nothing meaningful to store.
-    """
-    facts_map = payload.get("facts")
-    if not isinstance(facts_map, dict):
-        return
-
-    yield from _iter_oim_fact_entries(
-        facts_map.items(),
-        lei=lei,
-        fxo_id=fxo_id,
-        period_end=period_end,
-    )
 
 
 def iter_artifact_facts(
@@ -226,7 +174,7 @@ def iter_artifact_facts(
                 },
             )
 
-    yield from _iter_oim_fact_entries(
+    yield from _iter_fact_entries(
         artifact_entries(),
         lei=lei,
         fxo_id=fxo_id,
@@ -279,7 +227,7 @@ def _unique_artifact_fact_id(
         suffix_length = min(suffix_length + 4, len(fact_key))
 
 
-def _iter_oim_fact_entries(
+def _iter_fact_entries(
     entries: Iterable[tuple[Any, Any]],
     *,
     lei: str,

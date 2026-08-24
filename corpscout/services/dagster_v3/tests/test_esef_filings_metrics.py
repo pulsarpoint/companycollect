@@ -11,8 +11,8 @@ this module's SELECT is only ever run against real ClickHouse in production.
 
 One exception: the anchor-predicate test near the bottom of this file
 (Finding C1) is EXECUTED against a real, in-memory DuckDB connection rather
-than asserted as SQL text -- it loads the real `facts_sample.json` fixture
-through the actual `facts.parse_oim_facts`, stages the parsed rows, and runs
+than asserted as SQL text -- it loads the real `facts_sample.json` values
+through the canonical artifact reader, stages the parsed rows, and runs
 the DuckDB translation of the ClickHouse `IN (d, addDays(d, -1))` tolerance
 to prove the anchor's behavior end-to-end, not just that some SQL substring
 is present.
@@ -393,8 +393,7 @@ def test_replace_esef_financial_metrics_clickhouse_stages_and_exchanges() -> Non
     count_reads = [
         i
         for i, s in enumerate(client.statements)
-        if s.strip().startswith("SELECT count() FROM")
-        and "WHERE period_end =" not in s
+        if s.strip().startswith("SELECT count() FROM") and "WHERE period_end =" not in s
     ]
     assert len(count_reads) == 2
     assert all(insert_index < i < exchange_index for i in count_reads)
@@ -485,9 +484,8 @@ def test_current_period_anchor_matches_current_year_excludes_prior_year_comparat
 ):
     """EXECUTED (DuckDB) regression for Finding C1 -- not just SQL text.
 
-    Loads the REAL `facts_sample.json` fixture through the fixed
-    `facts.parse_oim_facts` (Finding C1's parser fix, which undoes OIM's
-    midnight-next-day encoding), stages the parsed rows in an in-memory
+    Loads the REAL `facts_sample.json` values through the canonical artifact
+    fact reader, stages the parsed rows in an in-memory
     DuckDB table, and evaluates the DuckDB translation of the ClickHouse
     anchor predicate --
     ``period_instant/period_duration_end IN (period_end, period_end - 1 day)``,
@@ -502,11 +500,29 @@ def test_current_period_anchor_matches_current_year_excludes_prior_year_comparat
     """
     payload = json.loads((FIXTURES_DIR / "facts_sample.json").read_text())
     filing_period_end = "2022-12-31"
-    rows = esef_facts.parse_oim_facts(
-        payload,
-        lei="259400OOMJ31L0SWCY70",
-        fxo_id="259400OOMJ31L0SWCY70-2022-12-31-ESEF-PL-0",
-        period_end=filing_period_end,
+    artifact = {
+        "schema_version": 5,
+        "facts": {
+            fact_id: {
+                "source_fact_id": fact_id,
+                "report_member": "report.xhtml",
+                "ordinal": ordinal,
+                "canonical_value": entry["value"],
+                "decimals": entry.get("decimals"),
+                "oim_dimensions": entry["dimensions"],
+            }
+            for ordinal, (fact_id, entry) in enumerate(
+                payload["facts"].items(), start=1
+            )
+        },
+    }
+    rows = list(
+        esef_facts.iter_artifact_facts(
+            artifact,
+            lei="259400OOMJ31L0SWCY70",
+            fxo_id="259400OOMJ31L0SWCY70-2022-12-31-ESEF-PL-0",
+            period_end=filing_period_end,
+        )
     )
     assert rows  # sanity: the fixture must actually parse to something
 

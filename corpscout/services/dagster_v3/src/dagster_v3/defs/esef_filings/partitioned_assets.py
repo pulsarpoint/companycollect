@@ -1,4 +1,4 @@
-"""Independent weekly DuckDB outputs for the ESEF parsing v2 shadow path.
+"""Independent weekly DuckDB outputs for canonical ESEF parsing.
 
 No ``from __future__ import annotations``: Dagster inspects asset annotations.
 """
@@ -93,7 +93,7 @@ _DISCLOSURE_ARROW_SCHEMA = pa.schema(
             if column in _DISCLOSURE_INTEGER_COLUMNS
             else pa.string(),
         )
-        for column in tables.ESEF_FACT_DISCLOSURES_V2_EXPORT_COLUMNS
+        for column in tables.ESEF_FACT_DISCLOSURES_PARTITION_EXPORT_COLUMNS
     ]
 )
 
@@ -279,12 +279,12 @@ def build_disclosures_partition_database(
         write_rows(
             database_path=database_path,
             table=tables.ESEF_FACT_DISCLOSURES_TABLE,
-            columns=tables.ESEF_FACT_DISCLOSURES_V2_EXPORT_COLUMNS,
+            columns=tables.ESEF_FACT_DISCLOSURES_PARTITION_EXPORT_COLUMNS,
             integer_columns=_DISCLOSURE_INTEGER_COLUMNS,
             boolean_columns=frozenset(),
             rows=(),
         )
-        columns = ", ".join(tables.ESEF_FACT_DISCLOSURES_V2_EXPORT_COLUMNS)
+        columns = ", ".join(tables.ESEF_FACT_DISCLOSURES_PARTITION_EXPORT_COLUMNS)
         with duckdb.connect(str(database_path)) as connection:
             for result in parsed:
                 connection.execute(
@@ -385,16 +385,16 @@ def _parse_disclosure_document(
 
 
 @dg.asset(
-    name="esef_source_documents_duckdb_v2",
+    name="esef_source_documents_duckdb",
     deps=ARTIFACT_DEPENDENCY,
     group_name=GROUP_NAME,
     kinds={"python", "s3", "duckdb"},
     partitions_def=ESEF_PROCESSED_WEEK_PARTITIONS,
     backfill_policy=dg.BackfillPolicy.multi_run(max_partitions_per_run=1),
-    pool="esef_source_documents_v2_duckdb",
+    pool="esef_source_documents_duckdb",
     description="Builds one isolated source-document DuckDB per processed week.",
 )
-def esef_source_documents_duckdb_v2(
+def esef_source_documents_duckdb(
     context: dg.AssetExecutionContext,
     object_store: ObjectStoreResource,
 ) -> dg.MaterializeResult:
@@ -408,16 +408,16 @@ def esef_source_documents_duckdb_v2(
 
 
 @dg.asset(
-    name="esef_filing_facts_duckdb_v2",
+    name="esef_filing_facts_duckdb",
     deps=ARTIFACT_DEPENDENCY,
     group_name=GROUP_NAME,
     kinds={"python", "s3", "duckdb", "xbrl"},
     partitions_def=ESEF_PROCESSED_WEEK_PARTITIONS,
     backfill_policy=dg.BackfillPolicy.multi_run(max_partitions_per_run=1),
-    pool="esef_filing_facts_v2_duckdb",
+    pool="esef_filing_facts_duckdb",
     description="Builds one isolated XBRL-fact DuckDB per processed week.",
 )
-def esef_filing_facts_duckdb_v2(
+def esef_filing_facts_duckdb(
     context: dg.AssetExecutionContext,
     object_store: ObjectStoreResource,
 ) -> dg.MaterializeResult:
@@ -433,16 +433,16 @@ def esef_filing_facts_duckdb_v2(
 
 
 @dg.asset(
-    name="esef_document_contact_candidates_duckdb_v2",
+    name="esef_document_contact_candidates_duckdb",
     deps=ARTIFACT_DEPENDENCY,
     group_name=GROUP_NAME,
     kinds={"python", "s3", "duckdb"},
     partitions_def=ESEF_PROCESSED_WEEK_PARTITIONS,
     backfill_policy=dg.BackfillPolicy.multi_run(max_partitions_per_run=1),
-    pool="esef_document_contact_candidates_v2_duckdb",
+    pool="esef_document_contact_candidates_duckdb",
     description="Builds one isolated contact-candidate DuckDB per processed week.",
 )
-def esef_document_contact_candidates_duckdb_v2(
+def esef_document_contact_candidates_duckdb(
     context: dg.AssetExecutionContext,
     object_store: ObjectStoreResource,
 ) -> dg.MaterializeResult:
@@ -456,16 +456,16 @@ def esef_document_contact_candidates_duckdb_v2(
 
 
 @dg.asset(
-    name="esef_document_concept_labels_duckdb_v2",
+    name="esef_document_concept_labels_duckdb",
     deps=ARTIFACT_DEPENDENCY,
     group_name=GROUP_NAME,
     kinds={"python", "s3", "duckdb", "taxonomy"},
     partitions_def=ESEF_PROCESSED_WEEK_PARTITIONS,
     backfill_policy=dg.BackfillPolicy.multi_run(max_partitions_per_run=1),
-    pool="esef_document_concept_labels_v2_duckdb",
+    pool="esef_document_concept_labels_duckdb",
     description="Builds one isolated taxonomy-label DuckDB per processed week.",
 )
-def esef_document_concept_labels_duckdb_v2(
+def esef_document_concept_labels_duckdb(
     context: dg.AssetExecutionContext,
     object_store: ObjectStoreResource,
 ) -> dg.MaterializeResult:
@@ -479,16 +479,16 @@ def esef_document_concept_labels_duckdb_v2(
 
 
 @dg.asset(
-    name="esef_fact_disclosures_duckdb_v2",
+    name="esef_fact_disclosures_duckdb",
     deps=ARTIFACT_DEPENDENCY,
     group_name=GROUP_NAME,
     kinds={"python", "s3", "duckdb", "xhtml"},
     partitions_def=ESEF_PROCESSED_WEEK_PARTITIONS,
     backfill_policy=dg.BackfillPolicy.multi_run(max_partitions_per_run=1),
-    pool="esef_fact_disclosures_v2_duckdb",
+    pool="esef_fact_disclosures_duckdb",
     description="Builds disclosures directly from artifacts in an isolated weekly DuckDB.",
 )
-def esef_fact_disclosures_duckdb_v2(
+def esef_fact_disclosures_duckdb(
     context: dg.AssetExecutionContext,
     config: EsefPartitionedDisclosureConfig,
     object_store: ObjectStoreResource,
@@ -503,13 +503,13 @@ def esef_fact_disclosures_duckdb_v2(
     )
 
 
-ESEF_PARSING_V2_ASSETS = (
-    esef_source_documents_duckdb_v2,
-    esef_filing_facts_duckdb_v2,
-    esef_document_contact_candidates_duckdb_v2,
-    esef_document_concept_labels_duckdb_v2,
-    esef_fact_disclosures_duckdb_v2,
+ESEF_PARSING_ASSETS = (
+    esef_source_documents_duckdb,
+    esef_filing_facts_duckdb,
+    esef_document_contact_candidates_duckdb,
+    esef_document_concept_labels_duckdb,
+    esef_fact_disclosures_duckdb,
 )
 
 
-defs = dg.Definitions(assets=list(ESEF_PARSING_V2_ASSETS))
+defs = dg.Definitions(assets=list(ESEF_PARSING_ASSETS))

@@ -251,9 +251,7 @@ def run_esef_llm_enrichment(
         artifact_person_count = (
             len(artifact_people) if isinstance(artifact_people, list) else 0
         )
-        published_person_count = len(
-            json.loads(str(information_row["people_json"]))
-        )
+        published_person_count = len(json.loads(str(information_row["people_json"])))
         raw_person_candidate_count += artifact_person_count
         dropped_non_specific_person_candidate_count += (
             artifact_person_count - published_person_count
@@ -518,9 +516,7 @@ def _information_row(
         "llm_request_object_key": llm_request_object_key,
         "llm_request_sha256": llm_request_sha256,
         "llm_response_text": llm_response_text,
-        "llm_response_sha256": str(
-            model_metadata.get("raw_response_sha256", "")
-        ),
+        "llm_response_sha256": str(model_metadata.get("raw_response_sha256", "")),
         "model_provider": str(model_metadata.get("provider", "deepseek")),
         "model_name": str(model_metadata.get("name", model)),
         "prompt_version": str(
@@ -550,12 +546,12 @@ def _people_with_explicit_roles(value: object) -> list[object]:
         if not isinstance(item, Mapping):
             people.append(item)
             continue
-        normalized_name = " ".join(
-            str(item.get("name", "")).casefold().split()
-        ).strip(" .")
-        normalized_role = " ".join(
-            str(item.get("role", "")).casefold().split()
-        ).strip(" .")
+        normalized_name = " ".join(str(item.get("name", "")).casefold().split()).strip(
+            " ."
+        )
+        normalized_role = " ".join(str(item.get("role", "")).casefold().split()).strip(
+            " ."
+        )
         if normalized_role in _NON_SPECIFIC_PERSON_ROLES:
             continue
         if normalized_name == normalized_role:
@@ -674,7 +670,12 @@ def _json_text(value: object) -> str:
 
 @dg.asset(
     name="esef_document_company_information_duckdb",
-    deps=[dg.AssetKey("esef_source_documents_clickhouse")],
+    deps=[
+        dg.AssetDep(
+            dg.AssetKey("esef_source_documents_clickhouse"),
+            partition_mapping=dg.AllPartitionMapping(),
+        )
+    ],
     group_name=GROUP_NAME,
     kinds={"python", "s3", "duckdb", "llm", "xbrl", "deepseek"},
     pool="esef_filings_duckdb",

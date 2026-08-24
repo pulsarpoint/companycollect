@@ -231,7 +231,11 @@ def _parse_table(table: etree._Element) -> dict[str, Any] | None:
     if not rows:
         return None
     first_populated = [cell for cell in rows[0] if cell["text"] != ""]
-    title = str(first_populated[0]["text"]) if len(rows) > 1 and len(first_populated) == 1 else ""
+    title = (
+        str(first_populated[0]["text"])
+        if len(rows) > 1 and len(first_populated) == 1
+        else ""
+    )
     content_rows = rows[1:] if title else rows
     return {
         "type": "table",
@@ -260,8 +264,7 @@ def _header_row_count(rows: Sequence[Sequence[Mapping[str, object]]]) -> int:
         if len(populated) < max(2, (column_count + 1) // 2):
             continue
         numeric_count = sum(
-            _NUMERIC_CELL.fullmatch(re.sub(r"\s+", "", str(cell["text"])))
-            is not None
+            _NUMERIC_CELL.fullmatch(re.sub(r"\s+", "", str(cell["text"]))) is not None
             for cell in populated
         )
         if numeric_count / len(populated) >= 0.5:
@@ -281,9 +284,7 @@ def _document_plain_text(blocks: Sequence[Mapping[str, Any]]) -> str:
         ]
         values.append(
             "\n".join(
-                value
-                for value in (str(block["title"]), *table_rows)
-                if value != ""
+                value for value in (str(block["title"]), *table_rows) if value != ""
             )
         )
     return "\n\n".join(value for value in values if value != "")
