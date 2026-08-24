@@ -1,5 +1,7 @@
+import { useState } from "react";
 import type { Route } from "./+types/admin-se-company-info-table";
 import { SeCompanyInfoTable } from "~/components/admin/se-company-info-table";
+import { NO_ROWS_SELECTED, type RowSelection } from "~/lib/row-selection";
 import { parseInfoFilters, parseListView } from "~/lib/se-company-info-filters";
 import {
   listSeCompanyInfoPage,
@@ -49,6 +51,23 @@ export function meta() {
 
 export default function AdminSeCompanyInfoTable({ loaderData }: Route.ComponentProps) {
   const { listPage, counts, options, total, filters, view, sort } = loaderData;
+  // HAND-OFF CONTRACT (for the bulk-action sheet that follows this task):
+  // the picked companies live HERE, in the route component, and nowhere else.
+  // Filtering, sorting and paging are all search-param navigations of THIS
+  // route, which re-run the loader without unmounting this component -- so
+  // the selection survives them, which it would not if the table owned it.
+  //
+  //   `selection`     TanStack's RowSelectionState, keyed by company_id (the
+  //                   table passes `getRowId: row => row.company_id`), and so
+  //                   full of ids whose rows are not on screen.
+  //   `setSelection`  the OnChangeFn the table's checkboxes call; also what
+  //                   the toolbar's Clear resets.
+  //   `selectedRowIds(selection)` (~/lib/row-selection) turns it into the
+  //                   id list a bulk action would post.
+  //
+  // Whatever consumes the selection next takes this pair as props from here.
+  // Nothing but the table reads it today.
+  const [selection, setSelection] = useState<RowSelection>(NO_ROWS_SELECTED);
   return (
     <div className="flex flex-1 flex-col gap-6 p-4 md:p-6">
       <header className="flex flex-col gap-2">
@@ -71,6 +90,8 @@ export default function AdminSeCompanyInfoTable({ loaderData }: Route.ComponentP
         counts={counts}
         options={options}
         filters={filters}
+        selection={selection}
+        onSelectionChange={setSelection}
       />
     </div>
   );

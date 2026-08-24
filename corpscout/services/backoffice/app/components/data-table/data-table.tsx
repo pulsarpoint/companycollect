@@ -3,8 +3,10 @@ import {
   getCoreRowModel,
   useReactTable,
   type ColumnDef,
+  type OnChangeFn,
 } from "@tanstack/react-table";
 import { useNavigate } from "react-router";
+import type { RowSelection } from "~/lib/row-selection";
 import {
   Table,
   TableBody,
@@ -20,6 +22,7 @@ export function DataTable<TData>({
   emptyText = "No results.",
   minWidthClassName = "min-w-[56rem]",
   rowHref,
+  selection,
 }: {
   columns: ColumnDef<TData, unknown>[];
   data: TData[];
@@ -32,6 +35,23 @@ export function DataTable<TData>({
    * that land on an inner link, button or form control keep their own
    * behaviour. The URL is also exposed as `data-href` for tests. */
   rowHref?: (row: TData) => string;
+  /**
+   * Turns on TanStack's row-selection model, as ONE object so a half-wired
+   * table is a type error rather than a table whose ticks go nowhere.
+   *
+   * The state is owned above this component -- in the route component -- so
+   * that filtering, sorting and paging (all search-param navigations, which
+   * re-render this table with a different page of rows) keep the selection.
+   * The columns are what render the checkboxes; this only carries the state.
+   */
+  selection?: {
+    state: RowSelection;
+    onChange: OnChangeFn<RowSelection>;
+    /** A row's identity ACROSS pages. The selection outlives the rows it was
+     * made from, so this must be the row's own key (e.g. `company_id`), never
+     * the row index TanStack keys by when this is not given. */
+    getRowId: (row: TData) => string;
+  };
 }) {
   const navigate = useNavigate();
   const table = useReactTable({
@@ -41,6 +61,13 @@ export function DataTable<TData>({
     manualPagination: true,
     manualSorting: true,
     manualFiltering: true,
+    ...(selection
+      ? {
+          state: { rowSelection: selection.state },
+          onRowSelectionChange: selection.onChange,
+          getRowId: (row: TData) => selection.getRowId(row),
+        }
+      : {}),
   });
 
   return (

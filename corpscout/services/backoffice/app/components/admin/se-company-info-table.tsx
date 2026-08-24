@@ -1,6 +1,8 @@
-import type { ColumnDef } from "@tanstack/react-table";
+import type { ColumnDef, OnChangeFn } from "@tanstack/react-table";
 import { Link } from "react-router";
 import { Badge } from "~/components/ui/badge";
+import { Button } from "~/components/ui/button";
+import { Checkbox } from "~/components/ui/checkbox";
 import { EMPTY_VALUE } from "~/components/admin/definition-list";
 import { DataTable } from "~/components/data-table/data-table";
 import { DataTableColumnHeader } from "~/components/data-table/column-header";
@@ -8,6 +10,11 @@ import { DataTablePagination } from "~/components/data-table/pagination";
 import { LegalForm } from "~/components/admin/legal-form";
 import { SeCompanyInfoFilterSheet } from "~/components/admin/se-company-info-filter-sheet";
 import type { SortDir } from "~/lib/countries";
+import {
+  NO_ROWS_SELECTED,
+  selectedRowCount,
+  type RowSelection,
+} from "~/lib/row-selection";
 import type {
   SeCompanyInfoFilterOptions,
   SeCompanyInfoListCounts,
@@ -89,6 +96,91 @@ function PresenceCell({
   );
 }
 
+/**
+ * The multi-select column, always the FIRST one: a checkbox per row, plus one
+ * in the header that ticks -- or clears -- every row of the page being shown.
+ *
+ * Selection is TanStack's own row-selection model, keyed by `company_id`
+ * (DataTable's `selection.getRowId`) rather than by row index, and its state
+ * is owned by the route component. So the ids survive every search-param
+ * navigation -- filter, sort, page -- and the header speaks only for the rows
+ * it can see: `toggleAllPageRowsSelected` carries the rest of the selection
+ * forward, so "select all" on page 2 can never drop what page 1 picked.
+ */
+export function selectionColumn(): ColumnDef<SeCompanyInfoListRow, unknown> {
+  return {
+    id: "select",
+    header: ({ table }) => (
+      <Checkbox
+        aria-label="Select every company on this page"
+        checked={table.getIsAllPageRowsSelected()}
+        // TanStack's `getIsSomePageRowsSelected` is already false once the
+        // whole page is selected, so the two states cannot both be claimed:
+        // ticked when every row on the page is picked, mixed in between.
+        indeterminate={table.getIsSomePageRowsSelected()}
+        onCheckedChange={(checked) => table.toggleAllPageRowsSelected(checked)}
+      />
+    ),
+    cell: ({ row }) => (
+      // The whole row is a link (DataTable's `rowHref`), and the escape hatch
+      // that lets inner controls keep their own behaviour looks for
+      // `a, button, input, ...` -- which a Base UI checkbox, a
+      // `<span role="checkbox">`, is none of. Without stopping the event
+      // here, ticking a box would navigate away to that company's page.
+      <span
+        data-slot="row-select"
+        className="flex"
+        onClick={(event) => event.stopPropagation()}
+        onKeyDown={(event) => event.stopPropagation()}
+      >
+        <Checkbox
+          // Named after the company, not "Select row": a column of boxes that
+          // all read alike says nothing about which company each one picks --
+          // to a screen reader, or to a test.
+          aria-label={`Select ${row.original.legal_name}`}
+          checked={row.getIsSelected()}
+          onCheckedChange={(checked) => row.toggleSelected(checked)}
+        />
+      </span>
+    ),
+  };
+}
+
+/**
+ * How many companies are picked -- across every page visited, not just this
+ * one -- and the single control that empties the lot.
+ *
+ * Rendered as nothing at all while the count is zero: a "0 selected" chip
+ * would be permanent noise on a list nobody has ticked. The count comes from
+ * the selection itself rather than from the rows on screen, which is what
+ * makes it the cross-page total.
+ */
+export function SelectionIndicator({
+  selection,
+  onSelectionChange,
+}: {
+  selection: RowSelection;
+  onSelectionChange: OnChangeFn<RowSelection>;
+}) {
+  const count = selectedRowCount(selection);
+  if (count === 0) return null;
+  return (
+    <div data-slot="selection-indicator" className="flex items-center gap-1 text-sm">
+      <span className="font-medium tabular-nums">{nf.format(count)} selected</span>
+      <span aria-hidden="true" className="text-muted-foreground">
+        ·
+      </span>
+      <Button
+        variant="ghost"
+        size="sm"
+        onClick={() => onSelectionChange(NO_ROWS_SELECTED)}
+      >
+        Clear
+      </Button>
+    </div>
+  );
+}
+
 /** Every column sorts server-side, so the columns are built per render with
  * the sort the URL asked for. `sortKey` is typed against the query builder's
  * whitelist, so a header can never name a column the server would reject
@@ -106,6 +198,9 @@ function buildColumns(
     />
   );
   return [
+    // First, before the company id: the checkbox is what the eye starts a row
+    // on, and every list that grows a bulk action puts it there.
+    selectionColumn(),
     {
       id: "company_id",
       header: head("Company", "company_id"),
@@ -232,6 +327,8 @@ export function SeCompanyInfoTable({
   counts,
   filters,
   options,
+  selection,
+  onSelectionChange,
 }: {
   rows: SeCompanyInfoListRow[];
   total: number;
@@ -242,6 +339,11 @@ export function SeCompanyInfoTable({
   counts: SeCompanyInfoListCounts;
   filters: SeCompanyInfoTableFilters;
   options: SeCompanyInfoFilterOptions;
+  /** The picked companies and the setter that owns them, both from the route
+   * component -- this table is controlled, which is the whole reason a
+   * selection outlives the page of rows it was made on. */
+  selection: RowSelection;
+  onSelectionChange: OnChangeFn<RowSelection>;
 }) {
   return (
     <div className="flex flex-col gap-4">
@@ -250,7 +352,12 @@ export function SeCompanyInfoTable({
         view={{ sort, dir, pageSize }}
         options={options}
       />
-      <CountsStrip counts={counts} />
+      <div className="flex flex-wrap items-center justify-between gap-2">
+        <CountsStrip counts={counts} />
+        {/* Beside the counts rather than above the table: it is a fact about
+            the list, and it appears only once something is picked. */}
+        <SelectionIndicator selection={selection} onSelectionChange={onSelectionChange} />
+      </div>
       {/* One line, above the table, so the Sources letters can be read without
           hovering each badge. Built from the same catalog the letters are. */}
       <p className="text-muted-foreground text-xs">{PROFILE_SOURCES_LEGEND}</p>
@@ -263,6 +370,14 @@ export function SeCompanyInfoTable({
         // only thing that makes them scannable. The wrapper scrolls, not the page.
         minWidthClassName="min-w-[72rem]"
         rowHref={(row) => `/admin/se/company/${encodeURIComponent(row.company_id)}/info`}
+        // Keyed by company_id, never by row index: page 2's third row is a
+        // different company from page 1's third row, and the selection is
+        // read long after both pages are gone.
+        selection={{
+          state: selection,
+          onChange: onSelectionChange,
+          getRowId: (row) => row.company_id,
+        }}
       />
       <DataTablePagination total={total} page={page} pageSize={pageSize} itemsLabel="companies" />
     </div>

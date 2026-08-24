@@ -1,7 +1,20 @@
+import type { ReactElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { createMemoryRouter, RouterProvider } from "react-router";
 import { describe, expect, it } from "vitest";
-import { SeCompanyInfoTable } from "~/components/admin/se-company-info-table";
+import {
+  functionalUpdate,
+  type CellContext,
+  type ColumnDef,
+  type HeaderContext,
+  type Table,
+} from "@tanstack/react-table";
+import { DataTable } from "~/components/data-table/data-table";
+import {
+  SeCompanyInfoTable,
+  SelectionIndicator,
+  selectionColumn,
+} from "~/components/admin/se-company-info-table";
 import { SeCompanyInfoFilterFields } from "~/components/admin/se-company-info-filter-sheet";
 import type {
   SeCompanyInfoFilterOptions,
@@ -23,6 +36,12 @@ import {
   profileSourceParts,
   type SeCompanyInfoTableFilters,
 } from "~/lib/se-company-info-filters";
+import {
+  NO_ROWS_SELECTED,
+  selectedRowCount,
+  selectedRowIds,
+  type RowSelection,
+} from "~/lib/row-selection";
 import { legalFormOptionLabel } from "~/lib/se-legal-form";
 
 /** Every in-page link resolves against the route the table is rendered at. */
@@ -43,6 +62,23 @@ const ROW: SeCompanyInfoListRow = {
   has_domains: 1,
   profile_sources: "BSEW",
 };
+
+/** Two more companies, so a page can be part-selected and a selection can
+ * name a company that is NOT on the page being rendered. */
+const ROW_B: SeCompanyInfoListRow = {
+  ...ROW,
+  company_id: "5560125220",
+  legal_name: "Beta AB",
+};
+
+const ROW_C: SeCompanyInfoListRow = {
+  ...ROW,
+  company_id: "5567890123",
+  legal_name: "Gamma AB",
+};
+
+/** The header checkbox names itself; the row ones name their company. */
+const SELECT_PAGE = "Select every company on this page";
 
 const COUNTS: SeCompanyInfoListCounts = {
   total: 1595,
@@ -88,6 +124,8 @@ function render(props: Partial<Parameters<typeof SeCompanyInfoTable>[0]> = {}) {
             counts={COUNTS}
             filters={EMPTY_INFO_FILTERS}
             options={OPTIONS}
+            selection={NO_ROWS_SELECTED}
+            onSelectionChange={() => {}}
             {...props}
           />
         ),
@@ -266,6 +304,293 @@ describe("SeCompanyInfoTable", () => {
   it("renders an empty state when no rows match", () => {
     const html = render({ rows: [], total: 0 });
     expect(html).toContain("No companies match these filters.");
+  });
+});
+
+type Row = SeCompanyInfoListRow;
+
+/** The state of the checkbox that names itself `label`: "true", "false", or
+ * the "mixed" a Base UI checkbox reports while it is indeterminate. The
+ * labels here have no regex-special characters in them. */
+function checkboxState(html: string, label: string): string | undefined {
+  return html.match(
+    new RegExp(`<span[^>]*aria-checked="([^"]*)"[^>]*aria-label="${label}"`),
+  )?.[1];
+}
+
+type CheckboxProps = {
+  checked: boolean;
+  indeterminate?: boolean;
+  onCheckedChange: (checked: boolean) => void;
+};
+
+type SelectCellProps = {
+  onClick: (event: { stopPropagation: () => void }) => void;
+  onKeyDown: (event: { stopPropagation: () => void }) => void;
+  children: ReactElement<CheckboxProps>;
+};
+
+/**
+ * The page's selection wiring, rendered for real: the REAL select column
+ * inside the REAL `DataTable`, plus a spy column that hands the TanStack
+ * instance back.
+ *
+ * These tests render to a string -- there is no DOM here to click -- so the
+ * checkboxes' handlers are invoked directly. They are invoked through the real
+ * contexts of a real table, though, so what a tick does to the selection is
+ * real: which keys survive a select-all is TanStack's answer, not a fake's,
+ * and a `DataTable` that stopped passing `onRowSelectionChange` on would leave
+ * `selectionNow()` unchanged and fail these tests.
+ */
+function mountSelectable(rows: Row[], initial: RowSelection) {
+  let selection = initial;
+  const captured: Table<Row>[] = [];
+  const columns: ColumnDef<Row, unknown>[] = [
+    selectionColumn(),
+    {
+      id: "capture",
+      header: (context) => {
+        captured.push(context.table);
+        return null;
+      },
+      cell: () => null,
+    },
+  ];
+  const router = createMemoryRouter(
+    [
+      {
+        path: "*",
+        element: (
+          <DataTable
+            columns={columns}
+            data={rows}
+            rowHref={(row) => `/admin/se/company/${row.company_id}/info`}
+            selection={{
+              state: selection,
+              onChange: (updater) => {
+                selection = functionalUpdate(updater, selection);
+              },
+              getRowId: (row) => row.company_id,
+            }}
+          />
+        ),
+      },
+    ],
+    { initialEntries: [PATH] },
+  );
+  const html = renderToStaticMarkup(<RouterProvider router={router} />);
+  const table = captured[0];
+  if (!table) throw new Error("the spy column never rendered: no table to drive");
+  return { html, table, selectionNow: () => selection };
+}
+
+/** The header checkbox's own props, from the real header context. */
+function headerCheckbox(table: Table<Row>): CheckboxProps {
+  const header = table
+    .getHeaderGroups()[0]
+    .headers.find((candidate) => candidate.column.id === "select");
+  if (!header) throw new Error("the select column has no header");
+  const renderHeader = header.column.columnDef.header as (
+    context: HeaderContext<Row, unknown>,
+  ) => ReactElement<CheckboxProps>;
+  return renderHeader(header.getContext()).props;
+}
+
+/** One row's select cell: the wrapper whose handlers keep the click off the
+ * row, and the checkbox inside it. */
+function selectCell(table: Table<Row>, companyId: string) {
+  const cell = table
+    .getRow(companyId)
+    .getVisibleCells()
+    .find((candidate) => candidate.column.id === "select");
+  if (!cell) throw new Error(`no select cell for ${companyId}`);
+  const renderCell = cell.column.columnDef.cell as (
+    context: CellContext<Row, unknown>,
+  ) => ReactElement<SelectCellProps>;
+  const wrapper = renderCell(cell.getContext()).props;
+  return { wrapper, checkbox: wrapper.children.props };
+}
+
+describe("SeCompanyInfoTable selection", () => {
+  it("puts the checkbox column FIRST, one box per row and one in the header", () => {
+    const html = render({ rows: [ROW, ROW_B] });
+    expect(html).toContain('data-slot="row-select"');
+    // Before the company id's own cell -- note the row's `data-href` carries
+    // that URL too, so the id is compared by the text the link shows.
+    expect(html.indexOf('data-slot="row-select"')).toBeLessThan(
+      html.indexOf(">5565200028<"),
+    );
+    expect(html.indexOf(`aria-label="${SELECT_PAGE}"`)).toBeLessThan(
+      html.indexOf(">Company<"),
+    );
+    // Each row's box names its company: a page of identical "Select row"
+    // labels tells a screen reader (and a test) nothing.
+    expect(html).toContain('aria-label="Select Alpha AB"');
+    expect(html).toContain('aria-label="Select Beta AB"');
+  });
+
+  it("ticks exactly the companies the selection names", () => {
+    const html = render({ rows: [ROW, ROW_B], selection: { "5565200028": true } });
+    expect(checkboxState(html, "Select Alpha AB")).toBe("true");
+    expect(checkboxState(html, "Select Beta AB")).toBe("false");
+  });
+
+  it("reads the page back in the header checkbox: none, some, all", () => {
+    const rows = [ROW, ROW_B];
+    expect(checkboxState(render({ rows }), SELECT_PAGE)).toBe("false");
+    expect(
+      checkboxState(render({ rows, selection: { "5565200028": true } }), SELECT_PAGE),
+    ).toBe("mixed");
+    expect(
+      checkboxState(
+        render({ rows, selection: { "5565200028": true, "5560125220": true } }),
+        SELECT_PAGE,
+      ),
+    ).toBe("true");
+  });
+
+  it("keeps a selection across pages: keyed by company id, counted over the lot", () => {
+    const selection: RowSelection = { "5565200028": true, "5567890123": true };
+    // Page one shows Alpha and Beta; Gamma is picked and not on it.
+    const page1 = render({ rows: [ROW, ROW_B], selection });
+    expect(checkboxState(page1, "Select Alpha AB")).toBe("true");
+    expect(checkboxState(page1, "Select Beta AB")).toBe("false");
+    expect(checkboxState(page1, SELECT_PAGE)).toBe("mixed");
+    // The company that is off-page still counts -- the indicator is the
+    // cross-page total, not what this page happens to show.
+    expect(page1).toContain("2 selected");
+
+    // The SAME selection with the next page's rows: what the route component
+    // holds while a search-param navigation re-runs the loader.
+    const page2 = render({ rows: [ROW_C], selection });
+    expect(checkboxState(page2, "Select Gamma AB")).toBe("true");
+    // This page is now wholly picked while the total is unchanged: the header
+    // speaks for the page, the indicator for the whole selection.
+    expect(checkboxState(page2, SELECT_PAGE)).toBe("true");
+    expect(page2).toContain("2 selected");
+  });
+
+  it('shows "N selected · Clear" only once something is picked', () => {
+    const empty = render({ rows: [ROW, ROW_B] });
+    expect(empty).not.toContain('data-slot="selection-indicator"');
+    expect(empty).not.toMatch(/\d+ selected/);
+    expect(empty).not.toContain(">Clear<");
+
+    const picked = render({ rows: [ROW, ROW_B], selection: { "5565200028": true } });
+    expect(picked).toContain('data-slot="selection-indicator"');
+    expect(picked).toContain("1 selected");
+    expect(picked).toContain(">Clear<");
+    // Not the filter sheet's "Clear all", which stays absent with no filters.
+    expect(picked).not.toContain("Clear all");
+  });
+
+  it("clears the WHOLE selection, including the pages not on screen", () => {
+    expect(
+      SelectionIndicator({ selection: NO_ROWS_SELECTED, onSelectionChange: () => {} }),
+    ).toBeNull();
+
+    const selection: RowSelection = { "5565200028": true, "5567890123": true };
+    const applied: RowSelection[] = [];
+    const element = SelectionIndicator({
+      selection,
+      onSelectionChange: (updater) => {
+        applied.push(functionalUpdate(updater, selection));
+      },
+    }) as ReactElement<{
+      children: ReactElement<{ children?: unknown; onClick?: () => void }>[];
+    }> | null;
+    if (!element) throw new Error("the indicator hid a non-empty selection");
+    const clear = element.props.children.find((child) => child.props.children === "Clear");
+    expect(clear).toBeDefined();
+    clear?.props.onClick?.();
+    expect(applied).toEqual([{}]);
+  });
+});
+
+describe("SeCompanyInfoTable selection handlers", () => {
+  it("picks one company at a time, on top of what is already picked", () => {
+    const { table, selectionNow } = mountSelectable([ROW, ROW_B], { "5567890123": true });
+    expect(selectCell(table, "5560125220").checkbox.checked).toBe(false);
+    selectCell(table, "5560125220").checkbox.onCheckedChange(true);
+    expect(selectionNow()).toEqual({ "5567890123": true, "5560125220": true });
+  });
+
+  it("unticks that company and nothing else", () => {
+    const { table, selectionNow } = mountSelectable([ROW, ROW_B], {
+      "5565200028": true,
+      "5567890123": true,
+    });
+    const cell = selectCell(table, "5565200028");
+    expect(cell.checkbox.checked).toBe(true);
+    cell.checkbox.onCheckedChange(false);
+    expect(selectionNow()).toEqual({ "5567890123": true });
+    expect(selectedRowIds(selectionNow())).toEqual(["5567890123"]);
+  });
+
+  it("selects every row of THIS page from the header, keeping the other pages' picks", () => {
+    const { table, selectionNow } = mountSelectable([ROW, ROW_B], { "5567890123": true });
+    expect(headerCheckbox(table).checked).toBe(false);
+    headerCheckbox(table).onCheckedChange(true);
+    expect(selectionNow()).toEqual({
+      "5567890123": true,
+      "5565200028": true,
+      "5560125220": true,
+    });
+    expect(selectedRowCount(selectionNow())).toBe(3);
+  });
+
+  it("clears THIS page from the header, and only this page", () => {
+    const { table, selectionNow } = mountSelectable([ROW, ROW_B], {
+      "5565200028": true,
+      "5560125220": true,
+      "5567890123": true,
+    });
+    const header = headerCheckbox(table);
+    expect(header.checked).toBe(true);
+    expect(header.indeterminate).toBe(false);
+    header.onCheckedChange(false);
+    expect(selectionNow()).toEqual({ "5567890123": true });
+  });
+
+  it("goes indeterminate while only part of the page is picked", () => {
+    const header = headerCheckbox(
+      mountSelectable([ROW, ROW_B], { "5565200028": true }).table,
+    );
+    expect(header.checked).toBe(false);
+    expect(header.indeterminate).toBe(true);
+  });
+
+  it("keeps the click off the row: ticking a box must never open a company", () => {
+    const { html, table } = mountSelectable([ROW, ROW_B], NO_ROWS_SELECTED);
+    // The row is still a link ...
+    expect(html).toContain('data-href="/admin/se/company/5565200028/info"');
+    // ... and the checkbox is NOT one of the inner controls DataTable exempts
+    // from that navigation: Base UI renders a <span role="checkbox">, which is
+    // no anchor, button or input, so the cell must stop the event itself.
+    expect(html).toMatch(/<span[^>]*role="checkbox"/);
+    const { wrapper } = selectCell(table, "5565200028");
+    const stopped: string[] = [];
+    wrapper.onClick({ stopPropagation: () => stopped.push("click") });
+    wrapper.onKeyDown({ stopPropagation: () => stopped.push("keydown") });
+    expect(stopped).toEqual(["click", "keydown"]);
+  });
+});
+
+describe("row selection helpers", () => {
+  it("lists and counts the ids that are actually ticked", () => {
+    expect(selectedRowIds({ "5565200028": true, "5567890123": true })).toEqual([
+      "5565200028",
+      "5567890123",
+    ]);
+    expect(selectedRowCount({ "5565200028": true, "5567890123": true })).toBe(2);
+    // An explicit `false` is not a selection: TanStack deletes a row's key
+    // when it is unticked, but a state built anywhere else can carry one.
+    expect(selectedRowIds({ "5565200028": true, "5560125220": false })).toEqual([
+      "5565200028",
+    ]);
+    expect(selectedRowCount({ "5560125220": false })).toBe(0);
+    expect(NO_ROWS_SELECTED).toEqual({});
+    expect(selectedRowCount(NO_ROWS_SELECTED)).toBe(0);
   });
 });
 
