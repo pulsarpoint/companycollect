@@ -19,8 +19,9 @@ CREATE DATABASE IF NOT EXISTS corpscout;
 --
 -- address_fingerprint is payload, not decoration: it is the source observation's own key
 -- (se_company_addresses_current.address_fingerprint), and it is what
--- se_company_address_members_current.address_key holds, so it is the ONLY way from a
--- merged address back into the shared-identity geocode chain.
+-- se_company_address_members_current.address_key holds: the route from a source
+-- observation into the shared-identity geocode chain. The final does not store it --
+-- only the resolve step, reading artifact rows, can make that hop.
 
 CREATE TABLE IF NOT EXISTS corpscout.se_company_address_bolagsverket
 (
