@@ -272,13 +272,24 @@ export function parseInfoFilters(url: URL): SeCompanyInfoTableFilters {
   };
 }
 
+/**
+ * Both correction ledgers (`se_company_info_correction` and
+ * `se_company_address_correction`) carry the same four filters and differ only
+ * in the kinds a reviewer may decide, so the enums are arguments rather than a
+ * second copy of this function. They default to the info ledger's, which is the
+ * only caller that omits them.
+ */
 export function parseCorrectionFilters(
   url: URL,
+  enums: {
+    kinds?: readonly string[];
+    statuses?: readonly string[];
+  } = {},
 ): SeCompanyInfoCorrectionsTableFilters {
   return {
     companyId: filterValue(url, "companyId"),
-    kind: filterValue(url, "kind", SE_INFO_CORRECTION_KINDS),
-    status: filterValue(url, "status", SE_INFO_CORRECTION_STATUSES),
+    kind: filterValue(url, "kind", enums.kinds ?? SE_INFO_CORRECTION_KINDS),
+    status: filterValue(url, "status", enums.statuses ?? SE_INFO_CORRECTION_STATUSES),
     decidedBy: filterValue(url, "decidedBy"),
   };
 }

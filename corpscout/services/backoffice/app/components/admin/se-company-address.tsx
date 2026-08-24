@@ -1,5 +1,9 @@
-import { MapPinIcon } from "lucide-react";
+import { CheckCircle2Icon, MapPinIcon, TriangleAlertIcon } from "lucide-react";
+import { Form, useNavigation } from "react-router";
+import { Alert, AlertDescription, AlertTitle } from "~/components/ui/alert";
 import { Badge } from "~/components/ui/badge";
+import { Button } from "~/components/ui/button";
+import { Checkbox } from "~/components/ui/checkbox";
 import {
   DefinitionList,
   EMPTY_VALUE,
@@ -19,12 +23,38 @@ import {
   EmptyMedia,
   EmptyTitle,
 } from "~/components/ui/empty";
-import { correctionStatus } from "~/lib/se-address-corrections";
+import { Input } from "~/components/ui/input";
+import {
+  correctionStatus,
+  OVERRIDABLE_FIELDS,
+  ZERO_EVIDENCE_HASH,
+} from "~/lib/se-address-corrections";
+import {
+  ADDRESS_FIELD_LABELS,
+  liveOverrideRefusal,
+} from "~/lib/se-address-review-form";
 import type {
   SeCompanyAddressCorrectionRow,
   SeCompanyAddressDetail,
   SeCompanyAddressRow,
 } from "~/lib/se-company-address.server";
+
+/**
+ * Every published address of one company, and the reviewer's decisions on them.
+ *
+ * Only LIVE rows carry decision forms. The removed section offers undo alone: an
+ * override written against a row a reject has tombstoned is the stale trap this
+ * page must not create -- Dagster drops it on the next run without telling
+ * anyone. (A reject written outside this page with no address_key in its payload
+ * has no subject at all: address_rules.py skips it silently, so the ledger shows
+ * it pending for ever. Nothing here can fix that; the ledger list is where it
+ * would be spotted.)
+ */
+
+export type SeCompanyAddressReviewResult =
+  | { ok: true; correctionId: string }
+  | { ok: false; error: string }
+  | null;
 
 /** The register's own address-type keys, spelled for a reader. An unknown key
  * falls through unchanged rather than being hidden. */
@@ -53,10 +83,139 @@ function displayAddress(row: SeCompanyAddressRow): string {
     .join(", ");
 }
 
+/**
+ * What every non-undo decision posts: the kind, the address_key it decides, and
+ * the evidence hash the reviewer actually SAW. The append re-reads the named row
+ * and refuses a decision whose hash has moved, so a page left open while Dagster
+ * republished cannot silently decide different evidence.
+ */
+function HiddenDecision({
+  kind,
+  addressKey,
+  evidenceHash,
+}: {
+  kind: string;
+  addressKey: string;
+  evidenceHash: string;
+}) {
+  return (
+    <>
+      <input type="hidden" name="kind" value={kind} />
+      <input type="hidden" name="address_key" value={addressKey} />
+      <input type="hidden" name="evidence_hash" value={evidenceHash} />
+    </>
+  );
+}
+
+/**
+ * The override form for one row: one input per overridable field, each with the
+ * text it was rendered with (diffed server-side, so an untouched field never
+ * enters the payload) and its own clear box (an emptied input is not a decision;
+ * clearing a field is an explicit null).
+ *
+ * address_type is not here on purpose: it is part of address_key, so changing it
+ * would move the row to a different identity -- reject the address instead.
+ */
+function OverrideForm({
+  row,
+  refusal,
+  busy,
+}: {
+  row: SeCompanyAddressRow;
+  refusal: string | null;
+  busy: boolean;
+}) {
+  const closed = refusal !== null;
+  return (
+    <div className="flex flex-col gap-2 border-t pt-3">
+      <span className="text-xs font-medium uppercase tracking-wide text-muted-foreground">
+        Override fields
+      </span>
+      <Form method="post" className="flex flex-col gap-3">
+        <HiddenDecision
+          kind="override_field"
+          addressKey={row.address_key}
+          evidenceHash={row.evidence_set_hash}
+        />
+        <div className="grid gap-3 md:grid-cols-2">
+          {OVERRIDABLE_FIELDS.map((field) => (
+            <div key={field} className="flex flex-col gap-1">
+              <input type="hidden" name={`original_${field}`} value={row[field]} />
+              <Input
+                name={field}
+                defaultValue={row[field]}
+                aria-label={ADDRESS_FIELD_LABELS[field]}
+                placeholder={ADDRESS_FIELD_LABELS[field]}
+                disabled={closed}
+              />
+              <label className="flex items-center gap-2 text-xs text-muted-foreground">
+                <Checkbox name={`clear_${field}`} value="yes" disabled={closed} />
+                <span>Clear {ADDRESS_FIELD_LABELS[field].toLowerCase()}</span>
+              </label>
+            </div>
+          ))}
+        </div>
+        <div className="flex flex-wrap items-center gap-2">
+          <Input
+            name="reason"
+            placeholder="Reason"
+            aria-label="Reason"
+            required
+            className="w-64"
+            disabled={closed}
+          />
+          <Button type="submit" size="sm" disabled={busy || closed} aria-busy={busy}>
+            Save override
+          </Button>
+          {refusal ? (
+            <span className="text-xs text-muted-foreground">{refusal}</span>
+          ) : null}
+        </div>
+      </Form>
+    </div>
+  );
+}
+
+/** "This is not an address of this company": Dagster republishes the row
+ * is_current = false. It decides nothing but the key -- a reject carrying any
+ * other payload field is skipped as malformed. */
+function RejectForm({ row, busy }: { row: SeCompanyAddressRow; busy: boolean }) {
+  return (
+    <Form method="post" className="flex flex-wrap items-center gap-2 border-t pt-3">
+      <HiddenDecision
+        kind="reject_address"
+        addressKey={row.address_key}
+        evidenceHash={row.evidence_set_hash}
+      />
+      <Input
+        name="reason"
+        placeholder="Why reject"
+        aria-label="Why reject"
+        required
+        className="w-64"
+      />
+      <Button size="sm" variant="outline" type="submit" disabled={busy} aria-busy={busy}>
+        Reject address
+      </Button>
+    </Form>
+  );
+}
+
+/**
+ * This row's ledger, newest first, with an undo on every live decision --
+ * including on a removed card, which is the only way a rejected address comes
+ * back.
+ *
+ * An undo cannot itself be undone: it supersedes a correction, and superseding
+ * the superseder would leave the pipeline reading a chain nothing in
+ * effective_ledger walks.
+ */
 function CorrectionList({
   corrections,
+  busy,
 }: {
   corrections: SeCompanyAddressCorrectionRow[];
+  busy: boolean;
 }) {
   if (corrections.length === 0) return null;
   return (
@@ -66,9 +225,40 @@ function CorrectionList({
           <div className="flex flex-wrap items-center gap-2">
             <Badge variant="outline">{correction.correction_kind}</Badge>
             <Badge variant="secondary">{correctionStatus(correction)}</Badge>
+            <code className="font-mono text-xs text-muted-foreground">
+              {correction.correction_id.slice(0, 8)}
+            </code>
             <span className="text-muted-foreground text-xs">
               {correction.decided_by} · {correction.created_at}
             </span>
+            {correction.is_current === 1 && correction.correction_kind !== "undo" ? (
+              <Form method="post" className="ml-auto flex items-center gap-2">
+                <input type="hidden" name="kind" value="undo" />
+                {/* Undo supersedes a decision, not evidence. */}
+                <input type="hidden" name="evidence_hash" value={ZERO_EVIDENCE_HASH} />
+                <input
+                  type="hidden"
+                  name="supersedes_correction_id"
+                  value={correction.correction_id}
+                />
+                <Input
+                  name="reason"
+                  placeholder="Why undo"
+                  aria-label="Why undo"
+                  required
+                  className="w-40"
+                />
+                <Button
+                  size="sm"
+                  variant="ghost"
+                  type="submit"
+                  disabled={busy}
+                  aria-busy={busy}
+                >
+                  Undo
+                </Button>
+              </Form>
+            ) : null}
           </div>
           <p className="text-muted-foreground break-words">{correction.reason}</p>
         </li>
@@ -80,9 +270,19 @@ function CorrectionList({
 function AddressCard({
   row,
   corrections,
+  overrideRefusal,
+  decidable,
+  busy,
 }: {
   row: SeCompanyAddressRow;
   corrections: SeCompanyAddressCorrectionRow[];
+  /** Non-null when a live override already decides this row; the form closes
+   * and says so instead of writing a second one nobody would ever see. */
+  overrideRefusal: string | null;
+  /** Live rows can be overridden and rejected. A tombstoned one can only be
+   * undone -- see the module comment. */
+  decidable: boolean;
+  busy: boolean;
 }) {
   const hasPoint = row.latitude !== "" && row.longitude !== "";
   const line = displayAddress(row);
@@ -201,9 +401,33 @@ function AddressCard({
             ]}
           />
         </details>
-        <CorrectionList corrections={corrections} />
+        {decidable ? (
+          <>
+            <OverrideForm row={row} refusal={overrideRefusal} busy={busy} />
+            <RejectForm row={row} busy={busy} />
+          </>
+        ) : null}
+        <CorrectionList corrections={corrections} busy={busy} />
       </CardContent>
     </Card>
+  );
+}
+
+/** Shown when no source has published an address for this company and no
+ * reviewer has decided anything about one. */
+export function SeCompanyAddressEmpty() {
+  return (
+    <Empty className="border">
+      <EmptyHeader>
+        <EmptyMedia variant="icon">
+          <MapPinIcon />
+        </EmptyMedia>
+        <EmptyTitle>No address recorded</EmptyTitle>
+        <EmptyDescription>
+          No source has published an address for this company yet.
+        </EmptyDescription>
+      </EmptyHeader>
+    </Empty>
   );
 }
 
@@ -218,10 +442,14 @@ function AddressCard({
  */
 export function SeCompanyAddressTab({
   detail,
+  result,
 }: {
   detail: SeCompanyAddressDetail;
+  result: SeCompanyAddressReviewResult;
 }) {
   const { addresses, removed, corrections } = detail;
+  // One click is one ledger row: block every submit while one is in flight.
+  const busy = useNavigation().state !== "idle";
   // An undo names a correction, not an address, so it is grouped under the
   // address of the correction it supersedes -- otherwise every undo would fall
   // out of the card whose history it belongs to.
@@ -238,28 +466,43 @@ export function SeCompanyAddressTab({
   const orphaned = corrections.filter((correction) => !carded.has(keyOf(correction)));
 
   if (addresses.length === 0 && removed.length === 0 && corrections.length === 0) {
-    return (
-      <Empty className="border">
-        <EmptyHeader>
-          <EmptyMedia variant="icon">
-            <MapPinIcon />
-          </EmptyMedia>
-          <EmptyTitle>No address recorded</EmptyTitle>
-          <EmptyDescription>
-            No source has published an address for this company yet.
-          </EmptyDescription>
-        </EmptyHeader>
-      </Empty>
-    );
+    return <SeCompanyAddressEmpty />;
   }
   return (
     <div className="flex flex-col gap-6">
+      {result?.ok ? (
+        <Alert>
+          <CheckCircle2Icon />
+          <AlertTitle>Saved</AlertTitle>
+          <AlertDescription>
+            Correction {result.correctionId} is in the ledger. Queued for the
+            next Dagster address run; reload to see the result once it lands.
+          </AlertDescription>
+        </Alert>
+      ) : null}
+      {result && !result.ok ? (
+        <Alert variant="destructive">
+          <TriangleAlertIcon />
+          <AlertTitle>Not saved</AlertTitle>
+          <AlertDescription>{result.error}</AlertDescription>
+        </Alert>
+      ) : null}
       <section className="flex flex-col gap-4">
         {addresses.map((row) => (
           <AddressCard
             key={row.address_key}
             row={row}
             corrections={forKey(row.address_key)}
+            // The whole ledger, not this card's slice: liveOverrideCorrectionId
+            // picks the row's own overrides out of it, and needs every undo to
+            // know which of them still stands.
+            overrideRefusal={liveOverrideRefusal(
+              "override_field",
+              row.address_key,
+              corrections,
+            )}
+            decidable
+            busy={busy}
           />
         ))}
       </section>
@@ -272,7 +515,8 @@ export function SeCompanyAddressTab({
             <p className="text-sm text-muted-foreground">
               Addresses this company no longer has: rejected by a reviewer, or
               no longer carried by any source. Kept so the decision stays
-              visible and can be undone.
+              visible and can be undone — undo is the only decision offered
+              here, since anything else would be dropped on the next run.
             </p>
           </div>
           {removed.map((row) => (
@@ -280,6 +524,9 @@ export function SeCompanyAddressTab({
               key={row.address_key}
               row={row}
               corrections={forKey(row.address_key)}
+              overrideRefusal={null}
+              decidable={false}
+              busy={busy}
             />
           ))}
         </section>
@@ -293,7 +540,7 @@ export function SeCompanyAddressTab({
               since dropped) is applied the moment it is written -- Dagster has
               no row to stamp it on. It has no card to sit under, and hiding it
               would leave a decision nobody can see or undo. */}
-          <CorrectionList corrections={orphaned} />
+          <CorrectionList corrections={orphaned} busy={busy} />
         </section>
       )}
     </div>

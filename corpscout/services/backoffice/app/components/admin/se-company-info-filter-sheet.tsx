@@ -215,14 +215,24 @@ export function SeCompanyInfoFilterFields({
   );
 }
 
+/**
+ * Shared by BOTH correction ledgers: the four filters are the ledger shape, not
+ * the info list's, and only the kinds a reviewer may decide differ -- so they
+ * are props defaulting to the info ledger's enum. (The "Info" in the name is
+ * the info list's; renaming it would churn that page and its tests for nothing.)
+ */
 export function SeCompanyInfoCorrectionsFilterFields({
   filters,
   options,
   view,
+  kinds = SE_INFO_CORRECTION_KINDS,
+  statuses = SE_INFO_CORRECTION_STATUSES,
 }: {
   filters: SeCompanyInfoCorrectionsTableFilters;
   options: SeCompanyInfoCorrectionFilterOptions;
   view: TableView;
+  kinds?: readonly string[];
+  statuses?: readonly string[];
 }) {
   return (
     <div className="flex flex-col gap-3 px-4">
@@ -236,14 +246,14 @@ export function SeCompanyInfoCorrectionsFilterFields({
         />
       </Field>
       <Field label="Kind">
-        <FilterSelect name="kind" label="Kind" value={filters.kind} options={SE_INFO_CORRECTION_KINDS} />
+        <FilterSelect name="kind" label="Kind" value={filters.kind} options={kinds} />
       </Field>
       <Field label="Status">
         <FilterSelect
           name="status"
           label="Status"
           value={filters.status}
-          options={SE_INFO_CORRECTION_STATUSES}
+          options={statuses}
         />
       </Field>
       <Field label="Decided by">
@@ -355,10 +365,15 @@ export function SeCompanyInfoCorrectionsFilterSheet({
   filters,
   view,
   options,
+  kinds,
+  statuses,
 }: {
   filters: SeCompanyInfoCorrectionsTableFilters;
   view: TableView;
   options: SeCompanyInfoCorrectionFilterOptions;
+  /** The ledger's own kinds/statuses; the info ledger's when omitted. */
+  kinds?: readonly string[];
+  statuses?: readonly string[];
 }) {
   return (
     <FilterBar
@@ -372,6 +387,8 @@ export function SeCompanyInfoCorrectionsFilterSheet({
         filters={filters}
         options={options}
         view={view}
+        kinds={kinds}
+        statuses={statuses}
       />
       <SheetActions clearHref={correctionsListSearch(EMPTY_CORRECTION_FILTERS, view)} />
     </FilterBar>

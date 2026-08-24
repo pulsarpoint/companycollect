@@ -5,8 +5,14 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 // One hoisted ClickHouse mock covers every `.server` module reachable from the
 // route modules imported below, so the loaders can be exercised end-to-end
 // (loader -> component) without a live database.
-const clickhouse = vi.hoisted(() => ({ query: vi.fn() }));
-vi.mock("~/lib/clickhouse.server", () => ({ chQuery: clickhouse.query }));
+const clickhouse = vi.hoisted(() => ({ query: vi.fn(), insertAddressCorrections: vi.fn() }));
+vi.mock("~/lib/clickhouse.server", () => ({
+  chQuery: clickhouse.query,
+  // Mocking the module replaces every export, so the writer the address
+  // module imports has to be here too -- otherwise it is silently undefined
+  // for any test that ever reaches an append.
+  chInsertSeCompanyAddressCorrections: clickhouse.insertAddressCorrections,
+}));
 
 import AdminSwedenCompanyLayout, {
   shouldRevalidate,
@@ -186,6 +192,7 @@ describe("address tab", () => {
   it("shows one card per published address, its sources, and its geocode with a map link", () => {
     const html = render(
       <SeCompanyAddressTab
+        result={null}
         detail={{
           ...emptyDetail,
           addresses: [
@@ -227,7 +234,7 @@ describe("address tab", () => {
 
   it("says so when no source recorded an address", () => {
     const html = render(
-      <SeCompanyAddressTab detail={emptyDetail} />,
+      <SeCompanyAddressTab detail={emptyDetail} result={null} />,
       seCompanyTabPath(COMPANY_ID, "address"),
     );
     expect(html).toContain("No address recorded");
@@ -241,6 +248,7 @@ describe("address tab", () => {
   it("keeps a rejected address visible in its own section, with the decision that removed it", () => {
     const html = render(
       <SeCompanyAddressTab
+        result={null}
         detail={{
           addresses: [address],
           removed: [
@@ -271,6 +279,7 @@ describe("address tab", () => {
     const html = render(
       <SeCompanyAddressTab
         detail={{ addresses: [address], removed: [], corrections: [correction] }}
+        result={null}
       />,
       seCompanyTabPath(COMPANY_ID, "address"),
     );
@@ -286,7 +295,7 @@ describe("address tab", () => {
       .mockResolvedValueOnce([]);
     const detail = await loadSeCompanyAddresses(COMPANY_ID);
     const html = render(
-      <SeCompanyAddressTab detail={detail} />,
+      <SeCompanyAddressTab detail={detail} result={null} />,
       seCompanyTabPath(COMPANY_ID, "address"),
     );
     expect(html).toContain("Postal address");
