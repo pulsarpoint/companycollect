@@ -12,7 +12,7 @@
 
 ## Global Constraints
 
-- **Migrations.** First line `CREATE DATABASE IF NOT EXISTS corpscout;` in every `.up.sql`; a `.down.sql` twin for every migration; **no `;` anywhere inside a `--` comment** (golang-migrate splits the file on `;`, so a semicolon in prose truncates the statement); registered in `EXPECTED_MIGRATIONS` in `tests/test_clickhouse_migrations.py` (this plan adds no grants, so `EXPECTED_ACCESS_MIGRATIONS` is untouched). **Next free number is 000316 at time of writing** — 000315 (`retire_esef_source_documents`) has landed; re-check with `ls corpscout/clickhouse/migrations | tail -1` before creating any file and shift the whole run if another session took a number.
+- **Migrations.** First line `CREATE DATABASE IF NOT EXISTS corpscout;` in every `.up.sql`; a `.down.sql` twin for every migration; **no `;` anywhere inside a `--` comment** (golang-migrate splits the file on `;`, so a semicolon in prose truncates the statement); registered in `EXPECTED_MIGRATIONS` in `tests/test_clickhouse_migrations.py` (this plan adds no grants, so `EXPECTED_ACCESS_MIGRATIONS` is untouched). **Next free number is 000317 at time of writing** — 000316 (`esef_disclosures`) landed after this plan's first draft, which is exactly why the re-check is the authoritative instruction and the numbers written here are not: run `ls corpscout/clickhouse/migrations | tail -1` before creating any file and shift this plan's whole run (store, legacy drop, canonical drop) by the same amount if another session has taken a number again.
 - **Reviewers execute SQL.** Every SQL constant this plan adds runs in `clickhouse-local` on the Docker `clickhouse/clickhouse-server:26.5` image, under BOTH `join_use_nulls = 0` and `join_use_nulls = 1`, and both settings must answer identically. Substring tests do not close a task that ships SQL.
 - **ClickHouse 26.5 rules.** Project columns explicitly, never `SELECT alias.*` after a second `USING` join. Guard every LEFT-JOIN miss of a **Nullable** column with `ifNull(...)`; gate every **non-Nullable** joined column behind a hit flag computed as `ifNull(<run id column>, '') != ''` — a bare `!= ''` is NULL under `join_use_nulls = 1` and reads as the column's *type default* under `join_use_nulls = 0`. Named parameters only (`%(name)s`).
 - **Dagster.** No `from __future__ import annotations` in any file this plan creates or rewrites (`clickhouse/resolved.py` and `sweden_company/address_geocoding.py` carry one today; `resolved.py` is not rewritten here and `address_geocoding.py` is deleted). `uv run` for every command from `corpscout/services/dagster_v3`; `uv run dg check defs` green and `uv run ruff check src/dagster_v3/defs` clean before each commit.
@@ -28,8 +28,8 @@
 
 | phase | tasks | deliverable | stop/verify |
 |---|---|---|---|
-| **1 — Store DDL** | Task 1 | migration 000316 + layout tests committed | `uv run pytest tests/test_sweden_company_address_geocoding.py tests/test_clickhouse_migrations.py` green |
-| **2 — Apply 000316** *(controller)* | Task 12a | `corpscout.se_address_geocodes` exists, empty | `SELECT count() FROM corpscout.se_address_geocodes` returns 0 |
+| **1 — Store DDL** | Task 1 | migration 000317 + layout tests committed | `uv run pytest tests/test_sweden_company_address_geocoding.py tests/test_clickhouse_migrations.py` green |
+| **2 — Apply 000317** *(controller)* | Task 12a | `corpscout.se_address_geocodes` exists, empty | `SELECT count() FROM corpscout.se_address_geocodes` returns 0 |
 | **3 — Rules** | Task 2 | `geocode_store.py`: versioned-read SQL + pure twin + taxonomy | `uv run pytest tests/test_sweden_geocode_store.py` green, mutations caught |
 | **4 — Write path** | Task 3 | promotion threads `policy_version`/`reference_md5`, appends to the store, dual-writes `_current` unchanged | `uv run pytest tests/test_sweden_company_address_geocoding.py tests/test_address_resolution.py` green |
 | **5 — Deploy + backfill** *(controller)* | Tasks 12b, 12c | code deployed; one full append of today's serving rows stamped policy v5 | store row count ≈ 2.09M, one `policy_version`, one `reference_md5` |
@@ -38,18 +38,18 @@
 | **8 — Adoption** | Task 6 | the one-shot import asset + job, owner-gated, not scheduled | `uv run pytest tests/test_sweden_geocode_legacy_adoption.py` green |
 | **9 — Import run** *(controller)* | Task 12e | the import executed, sample verified, count recorded | adopted identities all read `legacy_adopted` through the versioned read |
 | **10 — Checks** | Task 7 | §4.5's six-check disposition + the stats-helper split | all seven checks pass on the host after 12d |
-| **11 — Legacy retirement** | Task 8 → Task 12f | code removed, then migration 000317 drops the legacy pair | fresh zero-reader proof, row counts in the comment, UNDROP watch |
-| **12 — Final repoint** | Tasks 9, 10, 11 | canonical publish retired (migration 000318), `se_company_address` reads the store, harness extended | `npm`-free: `uv run pytest tests/test_se_company_address*.py` green |
-| **13 — Canonical drop + close** *(controller)* | Task 12g | 000318 applied, one weekly cycle observed | Monday address run shrinks to churn-sized selection |
+| **11 — Legacy retirement** | Task 8 → Task 12f | code removed, then migration 000318 drops the legacy pair | fresh zero-reader proof, row counts in the comment, UNDROP watch |
+| **12 — Final repoint** | Tasks 9, 10, 11 | canonical publish retired (migration 000319), `se_company_address` reads the store, harness extended | `npm`-free: `uv run pytest tests/test_se_company_address*.py` green |
+| **13 — Canonical drop + close** *(controller)* | Task 12g | 000319 applied, one weekly cycle observed | Monday address run shrinks to churn-sized selection |
 
 **Ordering note (deliberate deviation from the spec's §6 numbering).** §6 lists the legacy retirement before the check relocations. That order is not executable: checks 5 and 6 read the legacy pair through `fetch_sweden_address_geocode_stats` (`address_geocoding_assets.py:56-86`, used at `:1090` and `:1135`), so the pair cannot be dropped while they still read it. Task 7 (all six checks + the stats split) therefore lands **before** Task 8 (legacy retirement), and Task 9 (canonical publish retirement) after both — which is also the order that makes each drop's zero-reader grep come out clean.
 
 ---
 
-### Task 1: Migration 000316 — the versioned outcome store
+### Task 1: Migration 000317 — the versioned outcome store
 
 **Files:**
-- Create: `corpscout/clickhouse/migrations/000316_corpscout_se_address_geocodes_store.up.sql`, `.down.sql`
+- Create: `corpscout/clickhouse/migrations/000317_corpscout_se_address_geocodes_store.up.sql`, `.down.sql`
 - Modify: `corpscout/services/dagster_v3/tests/test_clickhouse_migrations.py` (append to `EXPECTED_MIGRATIONS` after `"000315_corpscout_retire_esef_source_documents"`)
 - Test: `corpscout/services/dagster_v3/tests/test_sweden_company_address_geocoding.py` (append; this file already owns the migration-shape tests for 000275/000277/000278 at `:2249-2320`, and the store is the same subsystem)
 
@@ -76,10 +76,10 @@ def test_sweden_address_geocode_store_migration_is_versioned_and_replacing() -> 
         Path(__file__).resolve().parents[3] / "clickhouse" / "migrations"
     )
     up = (
-        migration_directory / "000316_corpscout_se_address_geocodes_store.up.sql"
+        migration_directory / "000317_corpscout_se_address_geocodes_store.up.sql"
     ).read_text(encoding="utf-8")
     down = (
-        migration_directory / "000316_corpscout_se_address_geocodes_store.down.sql"
+        migration_directory / "000317_corpscout_se_address_geocodes_store.down.sql"
     ).read_text(encoding="utf-8")
 
     assert up.startswith("CREATE DATABASE IF NOT EXISTS corpscout;")
@@ -122,7 +122,7 @@ def test_sweden_address_geocode_store_carries_every_serving_column() -> None:
         Path(__file__).resolve().parents[3] / "clickhouse" / "migrations"
     )
     store = (
-        migration_directory / "000316_corpscout_se_address_geocodes_store.up.sql"
+        migration_directory / "000317_corpscout_se_address_geocodes_store.up.sql"
     ).read_text(encoding="utf-8")
     serving = (
         migration_directory / "000275_corpscout_se_address_geocodes_current.up.sql"
@@ -147,7 +147,7 @@ cd corpscout/services/dagster_v3
 uv run pytest tests/test_sweden_company_address_geocoding.py -k geocode_store -q
 ```
 
-Expected: two failures, both `FileNotFoundError` on `000316_corpscout_se_address_geocodes_store.up.sql`.
+Expected: two failures, both `FileNotFoundError` on `000317_corpscout_se_address_geocodes_store.up.sql`.
 
 - [ ] **Step 3: Re-check the next free number, then write the migration**
 
@@ -155,9 +155,9 @@ Expected: two failures, both `FileNotFoundError` on `000316_corpscout_se_address
 ls /Users/graovic/pulsarpoint/ppoint/companycollect/corpscout/clickhouse/migrations | tail -1
 ```
 
-Expected `000315_corpscout_retire_esef_source_documents.up.sql` — if a higher number appears, another session took 000316: shift this file and every later migration in this plan by the same amount and say so in the report.
+Expected `000316_corpscout_esef_disclosures.up.sql`. If a higher number appears, another session has taken 000317: shift this file and every later migration in this plan (000318, 000319) by the same amount, shift the `EXPECTED_MIGRATIONS` insertion point with it, and say so in the report. This has already happened once — esef took 000316 between this plan's drafting and its review — so treat it as likely, not exceptional.
 
-`corpscout/clickhouse/migrations/000316_corpscout_se_address_geocodes_store.up.sql`:
+`corpscout/clickhouse/migrations/000317_corpscout_se_address_geocodes_store.up.sql`:
 
 ```sql
 CREATE DATABASE IF NOT EXISTS corpscout;
@@ -217,10 +217,10 @@ ENGINE = ReplacingMergeTree(matched_at)
 ORDER BY (address_id, policy_version, reference_md5);
 ```
 
-`corpscout/clickhouse/migrations/000316_corpscout_se_address_geocodes_store.down.sql`:
+`corpscout/clickhouse/migrations/000317_corpscout_se_address_geocodes_store.down.sql`:
 
 ```sql
--- Reverts 000316. The store is append-only and holds outcomes no other table keeps once
+-- Reverts 000317. The store is append-only and holds outcomes no other table keeps once
 -- the transition is complete -- re-materializing the geocoding job after reverting the code
 -- refills it for the CURRENT policy and reference only. Adopted legacy_adopted_v1 rows are
 -- NOT reproducible by any asset and would have to be re-imported by hand.
@@ -232,10 +232,10 @@ DROP TABLE IF EXISTS corpscout.se_address_geocodes;
 
 - [ ] **Step 4: Register the migration**
 
-In `tests/test_clickhouse_migrations.py`, append to `EXPECTED_MIGRATIONS` after `"000315_corpscout_retire_esef_source_documents",` (line 328):
+In `tests/test_clickhouse_migrations.py`, append to `EXPECTED_MIGRATIONS` after the current last entry — `"000316_corpscout_esef_disclosures",` (line 329 as of this writing) — not after a line number copied from this plan:
 
 ```python
-    "000316_corpscout_se_address_geocodes_store",
+    "000317_corpscout_se_address_geocodes_store",
 ```
 
 - [ ] **Step 5: Run**
@@ -252,8 +252,8 @@ Expected: all green, ruff clean.
 
 ```bash
 cd /Users/graovic/pulsarpoint/ppoint/companycollect
-git add corpscout/clickhouse/migrations/000316_corpscout_se_address_geocodes_store.up.sql \
-        corpscout/clickhouse/migrations/000316_corpscout_se_address_geocodes_store.down.sql \
+git add corpscout/clickhouse/migrations/000317_corpscout_se_address_geocodes_store.up.sql \
+        corpscout/clickhouse/migrations/000317_corpscout_se_address_geocodes_store.down.sql \
         corpscout/services/dagster_v3/tests/test_clickhouse_migrations.py \
         corpscout/services/dagster_v3/tests/test_sweden_company_address_geocoding.py
 git commit -m "feat(sweden_company): add the versioned Sweden address geocode store
@@ -593,7 +593,7 @@ def test_current_outcome_is_none_for_an_identity_with_no_rows() -> None:
 ```python
 """The Sweden address geocode store: its ClickHouse contract and its ONE read rule.
 
-The store (`corpscout.se_address_geocodes`, migration 000316) holds one row per
+The store (`corpscout.se_address_geocodes`, migration 000317) holds one row per
 (address identity, matcher, reference snapshot). "The current outcome for an identity" is
 therefore a READ RULE over several rows, not a table -- and that rule lives here exactly
 once, as SQL for the ClickHouse consumers and as a pure function for the demand scan.
@@ -682,7 +682,7 @@ VALID_STATUSES = (
 )
 
 STORE_KEY_COLUMNS = ("address_id", "policy_version", "reference_md5")
-# Migration 000316's declaration order. The append binds these positionally.
+# Migration 000317's declaration order. The append binds these positionally.
 STORE_COLUMNS = (
     *STORE_KEY_COLUMNS,
     "address_identity_run_id",
@@ -958,6 +958,7 @@ Spec §6 step 1. The serving table is still rebuilt exactly as today; the store 
 - Modify: `src/dagster_v3/defs/sweden_company/address_resolution_promotion.py` (thread `policy_version` and `reference_md5` through the stage, split the stage into the serving table and the append table, extend the invariants)
 - Modify: `src/dagster_v3/defs/sweden_company/address_resolution_assets.py` (pass the policy version into the promotion call — it already has it at `:126`)
 - Modify: `src/dagster_v3/defs/sweden_company/address_geocoding_assets.py` (new asset `sweden_address_geocode_store_clickhouse`, new asset `sweden_address_geocode_store_backfill_clickhouse` with its `execute` gate and its own job, both registered in `defs` and in the four job selections)
+- Modify: `corpscout/services/dagster_v3/tests/test_address_resolution.py` (Step 3 gives `_create_sweden_shadow_fixture` its `source_md5` keyword)
 - Test: `corpscout/services/dagster_v3/tests/test_sweden_geocode_store_append.py` (new), and `tests/test_sweden_company_address_geocoding.py` (job/graph shape)
 
 **Interfaces (Tasks 4–6 consume):**
@@ -1024,25 +1025,36 @@ def test_the_append_regression_query_looks_for_rows_that_would_swallow_this_run(
     assert "(address_id, policy_version, reference_md5) IN (" in sql
 
 
-@pytest.fixture()
-def connection() -> duckdb.DuckDBPyConnection:
+def _promotable(source_md5: str | None = "osm-snapshot-md5") -> duckdb.DuckDBPyConnection:
+    """A connection carrying a complete, promotable Sweden shadow run.
+
+    `_create_sweden_shadow_fixture` is the ONE seeding helper for this pipeline and it
+    already lives in tests/test_address_resolution.py -- imported rather than re-invented,
+    because a second fixture would drift from the five promotion tests that share it. Step 3
+    gives it the `source_md5` keyword this file needs; nothing else about it changes.
+    """
+    from tests.test_address_resolution import _create_sweden_shadow_fixture
+
     connection = duckdb.connect()
-    connection.execute("create schema if not exists sweden_company_enrichment")
-    yield connection
-    connection.close()
+    _create_sweden_shadow_fixture(connection, source_md5=source_md5)
+    return connection
 
 
-def test_promotion_writes_both_tables_with_their_own_shapes(connection) -> None:
-    """Built on the same fixture set tests/test_address_resolution.py uses for promotion --
-    see that file's `_seed_promotable_shadow` helper, which this test imports rather than
-    re-inventing so the two stay in step."""
-    from tests.test_address_resolution import seed_promotable_shadow
+def _promote(connection: duckdb.DuckDBPyConnection) -> dict[str, object]:
     from dagster_v3.defs.sweden_company.address_resolution_promotion import (
         replace_current_geocodes_from_address_resolution_shadow,
     )
+    from dagster_v3.defs.sweden_company.address_resolution_shadow import (
+        replace_sweden_address_resolution_shadow,
+    )
 
-    seed_promotable_shadow(connection, source_md5="md5-alpha")
-    counts = replace_current_geocodes_from_address_resolution_shadow(
+    replace_sweden_address_resolution_shadow(
+        connection=connection,
+        evaluation_run_id="shadow-run",
+        evaluated_at=datetime(2026, 8, 24, tzinfo=UTC),
+        log=None,
+    )
+    return replace_current_geocodes_from_address_resolution_shadow(
         connection=connection,
         geocode_run_id="run-1",
         matched_at=datetime(2026, 8, 24, tzinfo=UTC),
@@ -1050,41 +1062,42 @@ def test_promotion_writes_both_tables_with_their_own_shapes(connection) -> None:
         log=None,
     )
 
-    assert counts["reference_md5"] == "md5-alpha"
-    assert counts["appended_rows"] == counts["rows"]
-    # DuckDB's `describe` returns (column_name, column_type, ...), so index 0 is the name.
-    serving = [row[0] for row in connection.execute(
-        "describe sweden_company_enrichment.se_address_geocodes_current").fetchall()]
-    appended = [row[0] for row in connection.execute(
-        f"describe {QUALIFIED_DUCKDB_GEOCODE_APPEND_TABLE}").fetchall()]
-    assert serving == list(SERVING_COLUMNS)
-    assert appended == list(STORE_COLUMNS)
-    [(policies, references)] = connection.execute(
-        f"select count(distinct policy_version), count(distinct reference_md5)"
-        f" from {QUALIFIED_DUCKDB_GEOCODE_APPEND_TABLE}").fetchall()
-    assert int(policies) == 1 and int(references) == 1
+
+def test_promotion_writes_both_tables_with_their_own_shapes() -> None:
+    with _promotable(source_md5="md5-alpha") as connection:
+        counts = _promote(connection)
+
+        assert counts["reference_md5"] == "md5-alpha"
+        assert counts["appended_rows"] == counts["rows"]
+        # DuckDB's `describe` returns (column_name, column_type, ...) -- index 0 is the name.
+        serving = [row[0] for row in connection.execute(
+            "describe sweden_company_enrichment.se_address_geocodes_current").fetchall()]
+        appended = [row[0] for row in connection.execute(
+            f"describe {QUALIFIED_DUCKDB_GEOCODE_APPEND_TABLE}").fetchall()]
+        assert serving == list(SERVING_COLUMNS)
+        assert appended == list(STORE_COLUMNS)
+        [(policies, references)] = connection.execute(
+            "select count(distinct policy_version), count(distinct reference_md5)"
+            f" from {QUALIFIED_DUCKDB_GEOCODE_APPEND_TABLE}").fetchall()
+        assert int(policies) == 1 and int(references) == 1
 
 
-def test_promotion_refuses_an_outcome_with_no_reference_identity(connection) -> None:
+def test_promotion_refuses_an_outcome_with_no_reference_identity() -> None:
     """The versioning contract's hard half: an outcome with no reference_md5 is not
-    attributable, and the store's sorting key would carry an empty string forever."""
-    from tests.test_address_resolution import seed_promotable_shadow
-    from dagster_v3.defs.sweden_company.address_resolution_promotion import (
-        replace_current_geocodes_from_address_resolution_shadow,
-    )
+    attributable, and the store's sorting key would carry an empty string for ever.
 
-    seed_promotable_shadow(connection, source_md5=None)
-    with pytest.raises(ValueError, match="reference"):
-        replace_current_geocodes_from_address_resolution_shadow(
-            connection=connection,
-            geocode_run_id="run-1",
-            matched_at=datetime(2026, 8, 24, tzinfo=UTC),
-            expected_policy_version=POLICY,
-            log=None,
-        )
+    The message is matched EXACTLY, not on the word "reference". A NULL source_md5 also
+    trips the pre-existing provenance invariant, whose message ("missing OSM snapshot
+    provenance") contains no such word -- so a loose match would pass whichever raise fired
+    and would tell us nothing about the new one. Step 3 puts the reference raise FIRST for
+    the same reason: the more specific diagnosis should be the one an operator sees.
+    """
+    with _promotable(source_md5=None) as connection:
+        with pytest.raises(
+            ValueError, match="Promoted geocodes are missing the OSM reference identity"
+        ):
+            _promote(connection)
 ```
-
-> **Note on the third and fourth tests.** `tests/test_address_resolution.py` currently seeds its promotion fixtures inline (`:780-800` builds `se_address_geocodes_current`, and the promotion tests around `:280-430` seed the shadow tables). Step 3 extracts that seeding into a module-level `seed_promotable_shadow(connection, *, source_md5)` helper in that file — `source_md5` threaded into the OSM address-points fixture so the `None` case is reachable — and rewrites the existing promotion tests to call it. Same fixtures, one definition, and that file is listed in this task's commit for exactly that reason.
 
 Also append to `tests/test_sweden_company_address_geocoding.py`, inside the existing job-shape test (`:1990-2127`), after the `weekly_job` assertion block:
 
@@ -1113,7 +1126,40 @@ Also append to `tests/test_sweden_company_address_geocoding.py`, inside the exis
 
 - [ ] **Step 2: Run to verify failure** — `uv run pytest tests/test_sweden_geocode_store_append.py -q` → `ImportError` on `build_geocode_store_backfill_sql`
 
-- [ ] **Step 3: Thread the version columns through promotion**
+- [ ] **Step 3: Give the shared shadow fixture a `source_md5` keyword**
+
+`tests/test_address_resolution.py:513` already owns `_create_sweden_shadow_fixture(connection)`, the one seeding helper for this pipeline — all five promotion tests (`:253`, `:302`, `:344`, `:392`, `:490`) and the shadow and diagnostics tests (`:155`, `:429`) call it. Task 3's new tests need that same fixture with a controllable OSM snapshot identity, so the helper gains one keyword instead of a rival fixture being written beside it:
+
+```python
+def _create_sweden_shadow_fixture(
+    connection: duckdb.DuckDBPyConnection,
+    *,
+    source_md5: str | None = "osm-snapshot-md5",
+) -> None:
+```
+
+The fixture's `sweden_address_osm.address_points` insert hard-codes the literal
+`'osm-snapshot-md5'` in every row. Replace it with a one-row bound relation the insert
+selects from, so one placeholder covers every row and the `None` case is reachable:
+
+```python
+    connection.execute(
+        "create or replace temporary table _sweden_shadow_snapshot as select ?::varchar as source_md5",
+        [source_md5],
+    )
+```
+
+and in the `address_points` insert, swap the literal for
+`(select source_md5 from _sweden_shadow_snapshot)`. Every existing caller keeps working
+untouched, because the default is the literal they already relied on.
+
+**One spelling, one home.** The helper is `_create_sweden_shadow_fixture` everywhere; this
+plan introduces no second name for it. `tests/test_sweden_geocode_store_append.py` imports
+it directly — the same cross-test-module import the clickhouse-local harnesses already use
+for `_clickhouse_local_command` — which is why `tests/test_address_resolution.py` is in this
+task's Files list and its commit.
+
+- [ ] **Step 4: Thread the version columns through promotion**
 
 In `address_resolution_promotion.py`, import the store module beside the others and change three places.
 
@@ -1200,7 +1246,9 @@ The return dict at `:100-107` gains two keys:
     }
 ```
 
-`_assert_promoted_geocode_invariants` gains the version terms. Change its signature to `(connection: Any, table_name: str, *, expected_policy_version: str) -> None`, add two aggregates to the existing single SELECT — `count(*) filter (where reference_md5 = '')` as `missing_reference` and `count(*) filter (where policy_version != '{expected_policy_version}')` as `wrong_policy` — and two raises beside the existing ones:
+`_assert_promoted_geocode_invariants` gains the version terms. Change its signature to `(connection: Any, table_name: str, *, expected_policy_version: str) -> None`, add two aggregates to the existing single SELECT — `count(*) filter (where reference_md5 = '')` as `missing_reference` and `count(*) filter (where policy_version != '{expected_policy_version}')` as `wrong_policy` — and two raises.
+
+**Their order is not free choice.** `reference_md5` is `coalesce(provenance.source_md5, '')`, so a NULL `source_md5` trips BOTH the new `missing_reference` term and the pre-existing `missing_provenance` term at `:415-416`, whose message (`"Promoted geocodes are missing OSM snapshot provenance"`) says nothing about a reference identity. Put the two new raises **immediately before** the `missing_provenance` raise, so the more specific diagnosis is the one an operator sees and the one Step 1's test matches exactly:
 
 ```python
     if int(missing_reference) != 0:
@@ -1210,11 +1258,13 @@ The return dict at `:100-107` gains two keys:
             "Promoted geocodes do not carry the expected address-resolution policy "
             f"{expected_policy_version}"
         )
+    if int(missing_provenance) != 0:
+        raise ValueError("Promoted geocodes are missing OSM snapshot provenance")
 ```
 
 The `expected_policy_version` interpolation is safe here for the same reason `_quoted` is: it comes from `SWEDEN_ADDRESS_RESOLUTION_POLICY.version`, a module constant, never from data.
 
-- [ ] **Step 4: Add the ClickHouse append asset and the backfill**
+- [ ] **Step 5: Add the ClickHouse append asset and the backfill**
 
 In `address_geocoding_assets.py`, add the import and two key constants beside the existing ones at `:22-38`:
 
@@ -1441,7 +1491,7 @@ from dagster_v3.defs.sweden_company.address_resolution_policy import (
 )
 ```
 
-- [ ] **Step 5: Register the assets and the job**
+- [ ] **Step 6: Register the assets and the job**
 
 Add `GEOCODE_STORE_ASSET_KEY` to the selections of `sweden_company_address_geocoding_job` (`:1155`), `sweden_shared_address_geocoding_job` (`:1186`), `sweden_company_address_geocoding_weekly_job` (`:1202`) and — in `address_resolution_assets.py` — `sweden_address_resolution_publish_job` (`:239`, add the string `"sweden_address_geocode_store_clickhouse"` to its `dg.AssetSelection.assets(...)` call). Add both new assets to `defs.assets` at `:1241-1251`, and the new job:
 
@@ -1459,7 +1509,7 @@ sweden_address_geocode_store_backfill_job = dg.define_asset_job(
 
 registered in `defs.jobs` at `:1261-1266`.
 
-- [ ] **Step 6: Run**
+- [ ] **Step 7: Run**
 
 ```bash
 cd corpscout/services/dagster_v3
@@ -1470,7 +1520,7 @@ uv run dg check defs && uv run ruff check src/dagster_v3/defs/sweden_company
 
 Expected: all green. In the Dagster UI after the controller deploys, `sweden_address_geocode_store_clickhouse` sits between `sweden_address_resolution_current_duckdb` and nothing.
 
-- [ ] **Step 7: Commit**
+- [ ] **Step 8: Commit**
 
 ```bash
 cd /Users/graovic/pulsarpoint/ppoint/companycollect
@@ -1501,7 +1551,9 @@ Spec §6 step 2, §4.2, §4.3. This is the task that delivers goal 1 (matching c
 - Modify: `src/dagster_v3/defs/sweden_company/address_geocoding_assets.py` (the demand asset; remove `sweden_shared_address_osm_matches_duckdb` and `SHARED_GEOCODE_DUCKDB_ASSET_KEY` from three job selections and from `defs`)
 - Modify: `src/dagster_v3/defs/sweden_company/shared_address_geocoding.py` (delete the matcher; keep the table names and `ADDRESS_GEOCODE_COLUMNS`)
 - Create: `corpscout/services/dagster_v3/tests/test_sweden_geocode_demand.py`
-- Modify: `corpscout/services/dagster_v3/tests/test_sweden_company_address_geocoding.py` (delete the join matcher's seven scenario blocks; update the job-shape test)
+- Modify: `corpscout/services/dagster_v3/tests/test_address_resolution.py` (the shared fixture gains the pending table and the previous-outcomes table; one gate test retargets its mutation)
+- Modify: `corpscout/services/dagster_v3/tests/test_sweden_geocode_store_append.py` (verify only — it inherits the fixture change; listed because this task is responsible for it staying green)
+- Modify: `corpscout/services/dagster_v3/tests/test_sweden_company_address_geocoding.py` (gut six join-matcher scenario blocks, delete the seventh, update the job-shape test)
 
 **Interfaces (Tasks 5–11 consume):**
 - `geocode_demand.PENDING_IDENTITIES_TABLE = "se_address_pending_identities"`, `QUALIFIED_DUCKDB_PENDING_IDENTITIES_TABLE`
@@ -1530,9 +1582,16 @@ rg -n "QUALIFIED_DUCKDB_ADDRESS_GEOCODES_TABLE|se_address_geocodes_current" \
 | 1 | `address_resolution_shadow.py:526-553` `_replace_comparison` | `INNER JOIN … current ON current.address_id = shadow.query_document_id`, projecting `current.match_status AS current_status`. Feeds `..._comparison_shadow`, the `largest_transitions` metadata (`_shadow_counts`, `:602-611`) and the `comparisons == results` invariant (`:587-588`). | Repoint at the store's previous **resolver** outcome (Step 5). The comparison then reports resolver-vs-previously-served instead of resolver-vs-join-matcher, which is the more meaningful transition report and the only one that still exists once the join matcher is gone. |
 | 2 | `address_resolution_promotion.py:162-215` `_assert_shadow_is_promotable`'s postcode-conflict gate | `INNER JOIN … current`, projecting `current.match_status`, `current.match_method`, `current.match_confidence`, `current.candidate_record_ids`. A real safety gate: it can REFUSE promotion. | Repoint at the same previous-resolver-outcome table (Step 6). The gate's question — "would this postcode-conflict street fallback replace a still-supported building match or a stronger street result?" — becomes a question about what is actually being served, which is what it was always trying to ask. |
 
-The remaining hits (`promotion.py:70,85,106`, `shared_address_geocoding.py:86,98,106,111,189,594`, `address_geocoding_assets.py:407`) are the promotion's own write of the serving table and the join matcher's writes and self-reads — not reads of the join matcher's values by anything else.
+Everything else the `rg` returns is accounted for here, and none of it is a reader of the join matcher's values:
 
-**STOP AND REPORT if the `rg` shows a reader that is not in the table above.** A new one appeared since 2026-08-24 and the deletion is not safe. Otherwise proceed: this task deletes the matcher AND repoints its two readers in the same commit, which is what "delete" has to mean here.
+| hits | what they are |
+|---|---|
+| `address_resolution_promotion.py:70,85,106` | the promotion's own **write** of the serving table, and its own read-back of what it just wrote |
+| `shared_address_geocoding.py:86,98,106,111,189,594` | the join matcher writing and self-reading its own output — the code being deleted |
+| `address_geocoding_assets.py:407` | the join matcher asset's metadata |
+| **`se_company/address.py:12,76,207,241` and `se_company/address_rules.py:65`** | **the `se_company_address` final's references to `se_address_geocodes_current`, the SERVING table — a different table from the DuckDB one this gate is about, in a different database, written by the promotion and not by the join matcher.** `:76` is the `GEOCODES_TABLE` constant, `:12`, `:207` and `:241` are docstrings, `address_rules.py:65` is a docstring. Task 10 repoints all five at the store; none of them is a join-matcher reader and none of them blocks this deletion |
+
+**STOP AND REPORT if the `rg` shows a hit that is not in one of the two tables above.** A new reader appeared since 2026-08-24 and the deletion is not safe. Otherwise proceed: this task deletes the matcher AND repoints its two readers in the same commit, which is what "delete" has to mean here.
 
 **Also record what the repoint changes, because it is a real semantic change, not a refactor.** Today `current_status` in the comparison table is the JOIN matcher's answer for this run; after Step 5 it is the previous run's RESOLVER answer. The `largest_transitions` metadata therefore stops reporting "resolver vs the old matcher" and starts reporting "resolver vs last week" — week one after the deploy will show a large, one-off transition table, and that is expected, not a regression.
 
@@ -2047,19 +2106,30 @@ documents ARE the pending set now — so add one term rather than changing one:
 
 In `address_resolution_promotion.py`:
 
-1. Short-circuit at the top of `replace_current_geocodes_from_address_resolution_shadow`, before `_assert_shadow_is_promotable`:
+1. Short-circuit at the top of `replace_current_geocodes_from_address_resolution_shadow`, before `_assert_shadow_is_promotable`. Build the promotion stage first, then derive an empty append table from it, then return:
 
 ```python
     pending = geocode_demand.pending_identity_count(connection)
     if pending == 0:
         _log(log, "Sweden address resolution: nothing pending, nothing to promote")
+        # The stage's inner joins yield zero rows against an empty pending set, so building
+        # it costs nothing -- and it is the only place the append table's shape is defined,
+        # so deriving the empty table from it cannot drift from the real path. The table
+        # must exist and be correctly typed even on the very first run after deploy: the
+        # ClickHouse append asset downstream reads it unconditionally and appends 0 rows.
+        _replace_promotion_stage(
+            connection,
+            geocode_run_id=geocode_run_id,
+            matched_at=matched_at,
+            policy_version=expected_policy_version,
+        )
         connection.execute(
             f"""
             create or replace table {
                 geocode_store.QUALIFIED_DUCKDB_GEOCODE_APPEND_TABLE
             } as
             select {", ".join(geocode_store.STORE_COLUMNS)}
-            from {geocode_store.QUALIFIED_DUCKDB_GEOCODE_APPEND_TABLE}
+            from {PROMOTION_STAGE_TABLE}
             where false
             """
         )
@@ -2070,32 +2140,9 @@ In `address_resolution_promotion.py`:
                 "append_table": geocode_store.QUALIFIED_DUCKDB_GEOCODE_APPEND_TABLE}
 ```
 
-The `where false` rewrite empties the append table in place rather than dropping it, so the ClickHouse append asset downstream finds a correctly-typed empty table and appends 0 rows. On the very first run after deploy the table does not exist yet — guard it with `create table if not exists` semantics by wrapping in a `try` is NOT the pattern here; instead create it from the store's column list when it is absent:
-
-```python
-        _ensure_empty_append_table(connection)
-```
-
-with
-
-```python
-def _ensure_empty_append_table(connection: Any) -> None:
-    """An empty, correctly-typed append table for a run that promoted nothing.
-
-    Derived from the shadow-era stage projection rather than hand-typed: building the stage
-    with a `where false` predicate costs nothing and cannot drift from the real shape.
-    """
-    connection.execute(
-        f"""
-        create or replace table {geocode_store.QUALIFIED_DUCKDB_GEOCODE_APPEND_TABLE} as
-        select {", ".join(geocode_store.STORE_COLUMNS)}
-        from {PROMOTION_STAGE_TABLE}
-        where false
-        """
-    )
-```
-
-and call `_replace_promotion_stage(...)` before it in the short-circuit branch as well — with an empty pending set the stage's inner joins yield zero rows, so building it is free and the schema comes from the same projection the real path uses. Replace the `_ensure_empty_append_table` call site accordingly: build the stage, then create the append table from it, then return.
+The serving table is deliberately NOT rebuilt on this path: with nothing promoted its
+contents are already correct, and rewriting it would restamp nothing but would burn the
+whole table for no reason.
 
 2. Repoint the postcode-conflict gate. In `_assert_shadow_is_promotable` (`:162-215`) replace
 
@@ -2263,16 +2310,93 @@ resolver's policy replaces (`address_resolution_policy.py:12-13` carries the sam
 thresholds and `resolution.py:711-738` applies them), and they are pinned in
 `tests/test_address_resolution.py`. Say so in the deleting commit.
 
-- [ ] **Step 8: Delete the join matcher's tests**
+- [ ] **Step 8: Update and delete the tests this task breaks**
 
-In `tests/test_sweden_company_address_geocoding.py`, seven tests call
-`replace_sweden_shared_address_osm_matches` and then assert on
-`sweden_company_enrichment.se_address_geocodes_current`: at `:1018-…` (inside
+Three test files break here. All three are in this task's Files list and its commit — a task
+that changes a function's preconditions owns the tests that assert them.
+
+**(a) `tests/test_address_resolution.py` — the shared fixture, plus one retarget.**
+
+Every test in this file runs `_create_sweden_shadow_fixture(connection)` and then the
+shadow, the promotion, or both. Three of this task's edits change what those functions read:
+`_replace_query_documents` now filters on the pending table, both promotion invariants now
+count against it, and the comparison and the postcode-conflict gate now read
+`se_address_geocodes_previous`. So the fixture grows two tables and loses one:
+
+```python
+        create table sweden_company_enrichment.se_address_pending_identities (
+            address_id varchar,
+            pending_reason varchar
+        );
+        insert into sweden_company_enrichment.se_address_pending_identities values
+            ('exact', 'no_outcome'),
+            ('typo', 'no_outcome'),
+            ('road', 'no_outcome'),
+            ('abbreviation', 'no_outcome'),
+            ('distance-two', 'no_outcome'),
+            ('nonexistent', 'no_outcome'),
+            ('short-policy', 'no_outcome'),
+            ('postcode-conflict', 'no_outcome');
+```
+
+and the stub `se_address_geocodes_current` at `:786-804` — which exists ONLY to feed the
+postcode-conflict gate and the comparison, never to be read as a serving table — becomes
+`se_address_geocodes_previous` with the eight `PREVIOUS_OUTCOME_COLUMNS` in that order:
+
+```python
+        create table sweden_company_enrichment.se_address_geocodes_previous (
+            address_id varchar,
+            policy_version varchar default 'se-address-resolution-policy-v5',
+            reference_md5 varchar default 'osm-snapshot-md5',
+            match_status varchar,
+            match_method varchar default '',
+            match_confidence double default 0.0,
+            candidate_record_ids varchar[] default [],
+            matched_at timestamptz default '2026-08-10 00:00:00+00'
+        );
+```
+
+with the same eight `('<id>', 'unmatched')` inserts naming `(address_id, match_status)`
+explicitly, exactly as they do today. The promotion still WRITES
+`se_address_geocodes_current` (this task keeps the dual write), so every assertion that
+reads it back — `:278-299`, `:379-389`, `:416-426` — is unchanged and must stay unchanged.
+
+One test needs a retarget: `test_sweden_shadow_promotion_replaces_invalid_legacy_building_match`
+(`:344`) mutates the pre-promotion outcome at `:359-369` to simulate a still-supported
+building match. That mutation must now target `se_address_geocodes_previous`, because that
+is what the gate reads:
+
+```python
+            update sweden_company_enrichment.se_address_geocodes_previous
+```
+
+Its final assertion at `:379-389` still reads `se_address_geocodes_current` and still expects
+`matched_street` / `street_requested_house_missing_postcode_conflict` — the gate's decision
+is unchanged, only the table it consults. `test_sweden_shadow_promotion_allows_postcode_conflict_refresh`
+(`:392`) needs no edit at all: it never mutates, so the gate sees the fixture's `unmatched`
+rows and the CASE's `when override.current_match_status in ('unmatched', 'ambiguous') then
+false` arm passes it, which is the behaviour that test exists to pin.
+
+**(b) `tests/test_sweden_geocode_store_append.py` — free, but verify.** Its `_promotable`
+helper calls the same fixture, so it inherits the pending table and needs no edit. Run it
+and confirm; if the promotion short-circuits instead of promoting, the pending rows did not
+land and the fixture edit is wrong.
+
+**(c) `tests/test_sweden_company_address_geocoding.py` — the join matcher's own tests.**
+
+Seven tests call `replace_sweden_shared_address_osm_matches`. **Six of them also exercise
+the legacy per-company matcher and keep that half** — at `:1018-…` (inside
 `test_sweden_company_address_matching_only_accepts_unique_exact_osm_rows`), `:1263`,
-`:1406`, `:1561`, `:1716`, `:1849` and `:1938-1990`. In each, delete the import, the
+`:1406`, `:1561`, `:1716` and `:1849`. In each, delete the import, the
 `replace_sweden_shared_address_osm_matches(...)` call, its `assert … counts == {...}` block
-and every subsequent query against `se_address_geocodes_current`. The legacy-matcher half
-of each test stays (it retires in Task 8) and every canonical/members/links assertion stays.
+and every subsequent query against `se_address_geocodes_current`; the legacy-matcher half
+stays (it retires in Task 8) and every canonical/members/links assertion stays.
+
+**The seventh, `test_apartment_unit_is_retained_but_excluded_from_osm_match_keys` (`:1933`),
+is DELETED outright.** It calls the join matcher and nothing else (`:1938` imports it,
+`:1980` calls it), so gutting it the way the other six are gutted would leave an empty test
+body. It is the join matcher's test in full, and it goes with the join matcher. Task 8 does
+not touch it — by then it does not exist.
 
 **These assertions are not being relocated, they are being retired with the code they
 covered.** They pin the JOIN matcher's classification ladder — count-and-spread only, no
@@ -2324,6 +2448,8 @@ git add corpscout/services/dagster_v3/src/dagster_v3/defs/sweden_company/geocode
         corpscout/services/dagster_v3/src/dagster_v3/defs/sweden_company/address_resolution_assets.py \
         corpscout/services/dagster_v3/src/dagster_v3/defs/sweden_company/address_geocoding_assets.py \
         corpscout/services/dagster_v3/tests/test_sweden_geocode_demand.py \
+        corpscout/services/dagster_v3/tests/test_address_resolution.py \
+        corpscout/services/dagster_v3/tests/test_sweden_geocode_store_append.py \
         corpscout/services/dagster_v3/tests/test_sweden_company_address_geocoding.py
 git commit -m "feat(sweden_company): match only the Sweden address identities that are due
 
@@ -2395,6 +2521,10 @@ def test_the_parity_check_compares_content_and_not_only_counts() -> None:
     assert "cityHash64" in DERIVED_PARITY_SQL
     assert "UNION ALL" in DERIVED_PARITY_SQL
     assert "'derived'" in DERIVED_PARITY_SQL and "'store'" in DERIVED_PARITY_SQL
+    assert ") AS store_read" in DERIVED_PARITY_SQL
+    # Substring assertions are all this test can do -- Task 11 EXECUTES this constant against
+    # ClickHouse 26.5, which is what actually closes it under the plan's SQL constraint.
+    assert build_current_geocodes_sql(columns=SERVING_COLUMNS) in DERIVED_PARITY_SQL
     for column in ("address_id", "match_status", "latitude", "longitude", "matched_at"):
         assert DERIVED_PARITY_SQL.count(column) >= 2, column
     # Nullable columns are read through ifNull on BOTH sides, so the two checksums are
@@ -2453,7 +2583,12 @@ DERIVED_PARITY_SQL = (
         "derived", shared_address_geocoding.QUALIFIED_CLICKHOUSE_ADDRESS_GEOCODES_TABLE
     )
     + "\nUNION ALL\n"
-    + _parity_side_sql("store", f"(\n{build_derived_current_geocodes_sql()}\n)")
+    # The subquery is ALIASED. An unaliased `FROM ( ... LIMIT 1 BY ... )` is the one shape in
+    # this plan ClickHouse has no other reason to parse, and Task 11 executes this constant
+    # precisely so the question is settled by the engine rather than by confidence.
+    + _parity_side_sql(
+        "store", f"(\n{build_derived_current_geocodes_sql()}\n) AS store_read"
+    )
 )
 
 
@@ -2633,6 +2768,7 @@ Spec §4.4 and §6 step 3. The resolver refuses ~19,413 companies' addresses as 
 **Interfaces (Tasks 8, 12e consume):**
 - `geocode_legacy_adoption.ADOPTION_CANDIDATES_SQL: str` — the dry run's measurement
 - `geocode_legacy_adoption.ADOPTION_INSERT_SQL: str` — the write
+- `geocode_legacy_adoption.ADOPTION_DISAGREEMENT_SQL: str` — the identities the rule refuses, counted beside the adoption count so the number is explainable
 - `geocode_legacy_adoption.ADOPTION_SAMPLE_SQL: str` — the controller's verification sample
 - Asset key `sweden_address_geocode_legacy_adoption_clickhouse`, config `SwedenGeocodeLegacyAdoptionConfig(execute: bool = False)`, job `sweden_address_geocode_legacy_adoption_job`
 
@@ -2706,13 +2842,21 @@ def test_the_insert_stamps_the_adoption_version_and_writes_every_store_column() 
         assert f"legacy.{column}" in ADOPTION_INSERT_SQL or f"any(legacy.{column})" in ADOPTION_INSERT_SQL
 
 
-@pytest.fixture(scope="module")
-def sections() -> dict[str, list[list[str]]]:
-    """Runs the fixture, the import and the read rule end to end in clickhouse-local."""
+@pytest.fixture(scope="module", params=(0, 1), ids=("join_use_nulls_off", "join_use_nulls_on"))
+def sections(request: pytest.FixtureRequest) -> dict[str, list[list[str]]]:
+    """Runs the fixture, the import and the read rule end to end in clickhouse-local.
+
+    Both `join_use_nulls` settings, like every other harness in this plan: the selection is
+    two INNER JOINs and a joined HAVING, and the read rule the last two sections exercise is
+    LEFT-joined by its consumers. A miss reads as the column's type default under 0 and as
+    NULL under 1, so a rule that adopts the right identities under one setting can adopt a
+    different set under the other -- and this import is a one-shot that writes a permanent
+    store, so there is no second chance to notice.
+    """
     command = _clickhouse_local_command()
     try:
-        completed = subprocess.run(command, input=_script(), capture_output=True,
-                                   text=True, timeout=600)
+        completed = subprocess.run(command, input=_script(join_use_nulls=request.param),
+                                   capture_output=True, text=True, timeout=600)
     except (OSError, subprocess.TimeoutExpired) as exc:  # pragma: no cover - env
         pytest.skip(f"clickhouse-local is unusable here: {exc}")
     assert completed.returncode == 0, completed.stderr or completed.stdout
@@ -2755,14 +2899,15 @@ def test_a_later_resolver_success_outranks_the_adopted_row(sections) -> None:
     assert served[ADOPTABLE] == (POLICY, "matched_exact")
 ```
 
-`_script()` builds: migration 000271 + 000277 (the legacy results table), 000274 (links),
-000316 (the store), the five fixtures above, an `INSERT` of the resolver outcomes into the
-store, `_render(ADOPTION_INSERT_SQL, {...})`, then three marked sections — `adopted`
-(the store's `legacy_adopted_v1` rows), `served` (`build_current_geocodes_sql` projected to
+`_script(*, join_use_nulls: int)` builds: `"SET join_use_nulls = 1;"` when the parameter is
+1, then migration 000271 + 000277 (the legacy results table), 000274 (links), 000317 (the
+store), the five fixtures above, an `INSERT` of the resolver outcomes into the store,
+`_render(ADOPTION_INSERT_SQL, {...})`, then the marked sections — `adopted` (the store's
+`legacy_adopted_v1` rows), `served` (`build_current_geocodes_sql` projected to
 `address_id, policy_version, match_status`), an append of a later resolver `matched_exact`
 for `ADOPTABLE`, and `served_after_resolver_success`. Follow
 `tests/test_se_company_address_clickhouse_local.py:120-144` for the per-statement migration
-replay and `:260-262` for `_marked`.
+replay, `:260-262` for `_marked` and `:321-325` for the settings prologue.
 
 - [ ] **Step 2: Run to verify failure** — `uv run pytest tests/test_sweden_geocode_legacy_adoption.py -q` → `ModuleNotFoundError`
 
@@ -3143,26 +3288,110 @@ def test_the_baseline_check_is_gone() -> None:
     assert not hasattr(address_geocoding_assets, "SwedenAddressGeocodeStats")
 ```
 
-And, in `tests/test_sweden_company_address_geocoding.py`, add the DuckDB relocation tests
-beside the existing canonical/shared scenario tests — after the canonical build in
-`test_shared_address_link_collapses_canonical_care_of_variants` (`:854`), assert the new
-terms raise on a mutated snapshot:
+And, in `tests/test_sweden_company_address_geocoding.py`, add the relocation tests beside
+the existing canonical/shared scenario tests, **in that file's own idiom**: it imports no
+`pytest`, defines no fixtures, and every test builds its own connection with the module-level
+`_osm_connection()` helper (`:360`) and imports the code under test inside the test body
+(`:854-860` is the pattern). Two consequences the test has to respect:
+
+- **No `pytest.raises`** — there is no `pytest` import in the file and adding one for a
+  single assertion would put two idioms in one module. Use the explicit
+  `try` / `except` / `else` form, which is what "assert this raises" looks like without the
+  helper.
+- **`_assert_canonical_address_invariants` reads a temporary relation.** Its first query
+  counts `_sweden_company_address_observations` (`address_canonicalization.py:419`), which
+  `_load_current_company_addresses` creates with `create or replace temporary table` on the
+  connection. A DuckDB temporary table lives for the connection's session, so it is still
+  there after `replace_sweden_company_canonical_addresses` returns — which is exactly why
+  the test drives the PUBLIC build first and only then calls the private assertion. Calling
+  the assertion on a bare connection would fail on a missing relation and prove nothing.
 
 ```python
-def test_the_canonical_build_refuses_a_member_total_that_disagrees(connection) -> None:
+def test_the_canonical_build_refuses_a_member_total_that_disagrees() -> None:
     """Check 1's ClickHouse half compared member_count sums across two published tables.
-    Asserting it in the build instead aborts before the bad snapshot is ever published --
-    and it is the same arithmetic, on the same rows, one step earlier."""
+    Asserting it inside the build instead aborts before the bad snapshot is ever published --
+    same arithmetic, same rows, one step earlier.
+
+    The build runs first for two reasons: it populates the canonical and member tables, and
+    it leaves the temporary _sweden_company_address_observations relation on the connection,
+    which the invariant reads as its source-observation denominator.
+    """
     from dagster_v3.defs.sweden_company.address_canonicalization import (
         _assert_canonical_address_invariants,
+        replace_sweden_company_canonical_addresses,
     )
 
+    connection = _osm_connection()
+    replace_sweden_company_canonical_addresses(
+        connection=connection,
+        clickhouse_client=_AddressClickHouseClient(),
+        normalization_run_id="canonical-run",
+        normalized_at=datetime(2026, 8, 24, tzinfo=UTC),
+    )
+    # A clean snapshot passes -- without this the mutated case below could be passing for
+    # any reason at all.
+    _assert_canonical_address_invariants(connection)
+
     connection.execute(
-        "update sweden_company_enrichment.se_company_addresses_canonical_current "
-        "set member_count = member_count + 1")
-    with pytest.raises(ValueError, match="member"):
+        """
+        update sweden_company_enrichment.se_company_addresses_canonical_current
+        set member_count = member_count + 1
+        """
+    )
+    try:
         _assert_canonical_address_invariants(connection)
+    except ValueError as error:
+        assert "member_count" in str(error)
+    else:
+        raise AssertionError(
+            "a canonical member_count total that disagrees with the member rows must abort "
+            "the build"
+        )
+
+
+def test_the_shared_build_refuses_an_unknown_link_review_status() -> None:
+    """Check 2's review-status allowlist, relocated the same way. The ClickHouse half keeps
+    its own copy of this term -- the two tables it compares both survive -- but the DuckDB
+    assertion is what stops a bad snapshot being published in the first place."""
+    from dagster_v3.defs.sweden_company.address_canonicalization import (
+        replace_sweden_company_canonical_addresses,
+    )
+    from dagster_v3.defs.sweden_company.shared_addresses import (
+        _assert_shared_address_invariants,
+        replace_sweden_shared_addresses,
+    )
+
+    connection = _osm_connection()
+    replace_sweden_company_canonical_addresses(
+        connection=connection,
+        clickhouse_client=_AddressClickHouseClient(),
+        normalization_run_id="canonical-run",
+        normalized_at=datetime(2026, 8, 24, tzinfo=UTC),
+    )
+    replace_sweden_shared_addresses(
+        connection=connection,
+        company_address_link_reviews=(),
+        address_identity_run_id="address-identity-run",
+        address_identity_built_at=datetime(2026, 8, 24, 1, tzinfo=UTC),
+    )
+    _assert_shared_address_invariants(connection)
+
+    connection.execute(
+        """
+        update sweden_company_enrichment.se_company_address_links_current
+        set review_status = 'maybe'
+        """
+    )
+    try:
+        _assert_shared_address_invariants(connection)
+    except ValueError as error:
+        assert "review status" in str(error)
+    else:
+        raise AssertionError("an unknown link review status must abort the build")
 ```
+
+Both tests reuse `_AddressClickHouseClient` (`:8`), the fake this file already feeds to the
+canonical build.
 
 - [ ] **Step 2: Run to verify failure** — `uv run pytest tests/test_sweden_geocode_checks.py -q` → `ImportError` on `EXACT_MATCH_RATE_SQL`
 
@@ -3324,7 +3553,8 @@ def sweden_address_geocode_store_complete_check(
     The old check demanded ONE row per identity and ONE geocode run across the whole table.
     Both are now wrong by design: several attributable outcomes per identity is the store
     working, and a demand-driven run appends only what it matched, so a table spanning many
-    runs is the normal state. What survives unchanged is everything about a single row --
+    runs is the normal state. Uniqueness moves to the key TRIPLE, which is the grain that
+    replaced them and the only version of that term which can still fail. What survives unchanged is everything about a single row --
     the status allowlist, the coordinate/precision agreement, the provenance -- plus the two
     new key columns, which must never be empty because an outcome that cannot be attributed
     is exactly what this design set out to eliminate.
@@ -3346,8 +3576,10 @@ def sweden_address_geocode_store_complete_check(
         ] = client.execute(STORE_INVARIANTS_SQL)
         [(identities_without_outcome,)] = client.execute(STORE_COVERAGE_SQL)
     passed = (
+        # The one term that carries the store's grain: one row per (identity, matcher,
+        # reference). `count() >= uniqExact(address_id)` over the same table was the obvious
+        # thing to write here and is a tautology -- it cannot fail, whatever the store holds.
         int(rows) == int(unique_keys)
-        and int(rows) >= int(identities)
         and int(identities_without_outcome) == 0
         and int(invalid_statuses) == 0
         and int(missing_versions) == 0
@@ -3375,10 +3607,14 @@ def sweden_address_geocode_store_complete_check(
     )
 ```
 
-`rows == unique_keys` is the ReplacingMergeTree contract stated as an assertion: duplicate
-key triples mean the engine has un-merged parts the versioned read has to rank around, which
-is safe but is worth knowing about; a persistent inequality means the append path is writing
-the same key twice in one run, which is a bug.
+`rows == unique_keys` is the ReplacingMergeTree contract stated as an assertion, and it is
+the term that discriminates: duplicate key triples mean the engine has un-merged parts the
+versioned read has to rank around, which is safe but is worth knowing about, and a persistent
+inequality means the append path is writing the same key twice in one run, which is a bug.
+`identities` is reported but is deliberately NOT in `passed` — comparing it with `rows` over
+the same table can only ever hold, and a term that cannot fail is worse than no term because
+it reads like coverage. Coverage is `identities_without_outcome`, which anti-joins from the
+identity side and therefore can.
 
 - [ ] **Step 6: Delete check 4, split the stats helper, repoint checks 5 and 6**
 
@@ -3560,7 +3796,7 @@ Co-Authored-By: Claude Fable 5 <noreply@anthropic.com>"
 
 ---
 
-### Task 8: Retire the legacy per-company matcher and its pair (code, then migration 000317)
+### Task 8: Retire the legacy per-company matcher and its pair (code, then migration 000318)
 
 Spec §4.4's tail and §6 step 3. **Do not start this task before Task 12e has closed** — the adoption import must have run and been verified, because the rows it reads are the ones this task drops. Its measured identity count goes into the migration's comment.
 
@@ -3570,7 +3806,7 @@ Spec §4.4's tail and §6 step 3. **Do not start this task before Task 12e has c
 - Modify: `src/dagster_v3/defs/sweden_company/address_geocoding_assets.py` (three assets, one check, one config, one job, the imports and the job selections)
 - Modify: `src/dagster_v3/defs/common/clickhouse_checks.py` (two freshness leaves go; one for the store arrives)
 - Modify: `corpscout/services/dagster_v3/tests/test_sweden_company_address_geocoding.py`, `tests/test_se_company_address.py` (leaf assertions)
-- Create: `corpscout/clickhouse/migrations/000317_corpscout_retire_se_company_address_geocode_pair.up.sql`, `.down.sql`
+- Create: `corpscout/clickhouse/migrations/000318_corpscout_retire_se_company_address_geocode_pair.up.sql`, `.down.sql`
 - Modify: `corpscout/services/dagster_v3/tests/test_clickhouse_migrations.py`
 
 **Interfaces:** consumes Task 6's measured counts (from the 12e report). Produces two fewer ClickHouse tables, three fewer assets, one fewer asset check.
@@ -3658,16 +3894,21 @@ change, adding:
 
 - [ ] **Step 5: Delete the legacy matcher's tests**
 
-In `tests/test_sweden_company_address_geocoding.py`, the six scenario tests at `:911`,
-`:1255`, `:1398`, `:1553`, `:1708`, `:1841` and `:1933` exist to exercise
+In `tests/test_sweden_company_address_geocoding.py`, **six** scenario tests exercise
 `address_geocoding.replace_sweden_company_address_osm_matches` against a hand-built OSM
-fixture. After Task 4 stripped their shared-matcher halves, what remains in each is the
-legacy matcher's own ladder. Delete the six tests whose only remaining subject is that
-matcher; keep `test_shared_address_link_collapses_canonical_care_of_variants` (`:854`) and
-the canonical/members/links assertions that Task 4 preserved inside
-`test_sweden_company_address_matching_only_accepts_unique_exact_osm_rows` (`:911`) —
-rename that one to `test_the_canonical_and_shared_address_chain_is_built_from_source_observations`
-and delete everything in it below the links assertions.
+fixture: `:911`, `:1255`, `:1398`, `:1553`, `:1708` and `:1841`. (Task 4 already deleted the
+seventh join-matcher test, `test_apartment_unit_is_retained_but_excluded_from_osm_match_keys`
+at `:1933` — it never called the legacy matcher at all, so it is not this task's to remove.
+Line numbers will have shifted after Task 4's edits; find the tests by the
+`replace_sweden_company_address_osm_matches` call, not by the number.)
+
+After Task 4 stripped their shared-matcher halves, what remains in each is the legacy
+matcher's own ladder. Delete the five whose only remaining subject is that matcher —
+`:1255`, `:1398`, `:1553`, `:1708`, `:1841` — and keep the sixth, `:911`, for the
+canonical/members/links assertions Task 4 preserved in it: rename it to
+`test_the_canonical_and_shared_address_chain_is_built_from_source_observations` and delete
+everything in it below the links assertions. `test_shared_address_link_collapses_canonical_care_of_variants`
+(`:854`) never touched either matcher and is untouched here.
 
 Same reasoning as Task 4 Step 8: these tests pin a matcher's ladder, and the matcher is
 gone. The resolver's ladder is pinned in `tests/test_address_resolution.py` and the store's
@@ -3683,11 +3924,11 @@ UNION ALL SELECT 'adopted', count() FROM corpscout.se_address_geocodes
     WHERE policy_version = 'legacy_adopted_v1';
 ```
 
-- [ ] **Step 7: Write migration 000317**
+- [ ] **Step 7: Write migration 000318**
 
 Re-check the next free number first (`ls corpscout/clickhouse/migrations | tail -1`).
 
-`000317_corpscout_retire_se_company_address_geocode_pair.up.sql`:
+`000318_corpscout_retire_se_company_address_geocode_pair.up.sql`:
 
 ```sql
 CREATE DATABASE IF NOT EXISTS corpscout;
@@ -3751,7 +3992,7 @@ weekly geocoding job."*
 
 - [ ] **Step 8: Register and run**
 
-Append `"000317_corpscout_retire_se_company_address_geocode_pair",` to `EXPECTED_MIGRATIONS`.
+Append `"000318_corpscout_retire_se_company_address_geocode_pair",` to `EXPECTED_MIGRATIONS`.
 
 ```bash
 cd corpscout/services/dagster_v3
@@ -3766,8 +4007,8 @@ cd ../backoffice && npx vitest run tests/company-serving-sections.test.ts
 
 ```bash
 cd /Users/graovic/pulsarpoint/ppoint/companycollect
-git add corpscout/clickhouse/migrations/000317_corpscout_retire_se_company_address_geocode_pair.up.sql \
-        corpscout/clickhouse/migrations/000317_corpscout_retire_se_company_address_geocode_pair.down.sql \
+git add corpscout/clickhouse/migrations/000318_corpscout_retire_se_company_address_geocode_pair.up.sql \
+        corpscout/clickhouse/migrations/000318_corpscout_retire_se_company_address_geocode_pair.down.sql \
         corpscout/services/dagster_v3/src/dagster_v3/defs/sweden_company/address_geocoding_assets.py \
         corpscout/services/dagster_v3/src/dagster_v3/defs/common/clickhouse_checks.py \
         corpscout/services/dagster_v3/tests/test_clickhouse_migrations.py \
@@ -3783,14 +4024,14 @@ Co-Authored-By: Claude Fable 5 <noreply@anthropic.com>"
 
 ---
 
-### Task 9: Retire the canonical ClickHouse publish (code, then migration 000318)
+### Task 9: Retire the canonical ClickHouse publish (code, then migration 000319)
 
 Spec §4.5's tail and §6 step 5. This is the "dedicated parity-baseline cleanup" that migration `000314`'s comment deferred this table to: *"Retiring the canonical table therefore belongs to the dedicated parity-baseline cleanup, where the cost of those two checks is weighed on purpose (controller ruling A19, 2026-08-24)."* The six readers 000314 enumerated are exactly the six this plan has been dismantling.
 
 **Files:**
 - Modify: `src/dagster_v3/defs/sweden_company/address_geocoding_assets.py` (the publish becomes members-only; check 1's ClickHouse half goes)
 - Modify: `src/dagster_v3/defs/sweden_company/address_canonicalization.py` (delete the two now-unused ClickHouse constants)
-- Create: `corpscout/clickhouse/migrations/000318_corpscout_retire_se_company_addresses_canonical.up.sql`, `.down.sql`
+- Create: `corpscout/clickhouse/migrations/000319_corpscout_retire_se_company_addresses_canonical.up.sql`, `.down.sql`
 - Modify: `corpscout/services/dagster_v3/tests/test_clickhouse_migrations.py`, `tests/test_sweden_company_address_geocoding.py`
 
 **Interfaces:** `sweden_company_canonical_addresses_clickhouse` **keeps its asset key and its place in the graph** — it publishes members only. Renaming it would churn the weekly job, the freshness leaves and three tests for no gain, and members is what the downstream `se_company_address` final joins through. `address_canonicalization.QUALIFIED_CLICKHOUSE_CANONICAL_ADDRESSES_TABLE` and `CANONICAL_ADDRESS_COLUMNS` are deleted; `QUALIFIED_CANONICAL_ADDRESSES_TABLE` (the DuckDB one) stays, because the DuckDB canonical build stays — the members bridge derives from it (spec §3).
@@ -3907,11 +4148,11 @@ UNION ALL SELECT 'members', count() FROM corpscout.se_company_address_members_cu
 UNION ALL SELECT 'links', count() FROM corpscout.se_company_address_links_current;
 ```
 
-- [ ] **Step 6: Write migration 000318**
+- [ ] **Step 6: Write migration 000319**
 
 Re-check the next free number first.
 
-`000318_corpscout_retire_se_company_addresses_canonical.up.sql`:
+`000319_corpscout_retire_se_company_addresses_canonical.up.sql`:
 
 ```sql
 CREATE DATABASE IF NOT EXISTS corpscout;
@@ -3926,7 +4167,7 @@ CREATE DATABASE IF NOT EXISTS corpscout;
 --      se_company_address_links_current and a freshness helper reading se_address_geocodes
 --   2. the sweden_company_canonical_addresses_clickhouse publish itself, narrowed in the
 --      same commit as this migration to publish only se_company_address_members_current
---   3. all_current_addresses_classified, retired with the legacy geocode pair in 000317
+--   3. all_current_addresses_classified, retired with the legacy geocode pair in 000318
 --   4. all_source_observations_have_one_canonical_address, whose arithmetic now runs inside
 --      address_canonicalization._assert_canonical_address_invariants against the DuckDB
 --      canonical table -- which is NOT retired and still holds every row this check read
@@ -3965,7 +4206,7 @@ the table from the DuckDB canonical build, which was never retired."*
 
 - [ ] **Step 7: Register and run**
 
-Append `"000318_corpscout_retire_se_company_addresses_canonical",` to `EXPECTED_MIGRATIONS`.
+Append `"000319_corpscout_retire_se_company_addresses_canonical",` to `EXPECTED_MIGRATIONS`.
 
 ```bash
 cd corpscout/services/dagster_v3
@@ -3979,8 +4220,8 @@ cd ../backoffice && npx vitest run tests/company-serving-sections.test.ts
 
 ```bash
 cd /Users/graovic/pulsarpoint/ppoint/companycollect
-git add corpscout/clickhouse/migrations/000318_corpscout_retire_se_company_addresses_canonical.up.sql \
-        corpscout/clickhouse/migrations/000318_corpscout_retire_se_company_addresses_canonical.down.sql \
+git add corpscout/clickhouse/migrations/000319_corpscout_retire_se_company_addresses_canonical.up.sql \
+        corpscout/clickhouse/migrations/000319_corpscout_retire_se_company_addresses_canonical.down.sql \
         corpscout/services/dagster_v3/src/dagster_v3/defs/sweden_company/address_geocoding_assets.py \
         corpscout/services/dagster_v3/src/dagster_v3/defs/sweden_company/address_canonicalization.py \
         corpscout/services/dagster_v3/tests/test_clickhouse_migrations.py \
@@ -4001,6 +4242,7 @@ Spec §4.6 and §6 step 4. The final's schema does not change — `address_id`, 
 
 **Files:**
 - Modify: `src/dagster_v3/defs/se_company/address.py`
+- Modify: `src/dagster_v3/defs/se_company/address_rules.py` (one docstring line — `GeocodeFact`'s chain description ends at `se_address_geocodes_current`)
 - Modify: `corpscout/services/dagster_v3/tests/test_se_company_address.py`
 
 **Interfaces:** `build_geocodes_sql()` and `build_changed_companies_sql()` keep their names, signatures and output contracts (`GEOCODE_COLUMNS`, `SELECTION_REASONS`). `GEOCODES_TABLE` is replaced by an import of `geocode_store`.
@@ -4049,7 +4291,7 @@ def test_the_geocode_cte_reads_the_store_and_does_not_alias_a_table_with_its_own
     """
     sql = build_changed_companies_sql()
     assert "corpscout.se_address_geocodes AS geocodes" not in sql
-    assert "corpscout.se_address_geocodes AS points" in sql
+    assert "corpscout.se_address_geocodes AS points\n" in sql
     assert "max(points.matched_at) AS latest_geocoded_at" in sql
     assert "se_address_geocodes_current" not in sql
     # Raw, not ranked: no second copy of the read rule lives in this module.
@@ -4117,11 +4359,16 @@ from dagster_v3.defs.sweden_company import geocode_store
 ```
 
 ```python
-# The geocode store, read through sweden_company's ONE versioned-read rule. Imported rather
-# than re-expressed: a second ranking here would let this final and the serving table
-# disagree about which outcome is current while both looked internally consistent, which
-# spec section 8 names as this design's sharpest risk.
-GEOCODE_STORE_TABLE = geocode_store.QUALIFIED_CLICKHOUSE_GEOCODE_STORE_TABLE
+# The geocode store is named ONCE, in geocode_store, and this module does not re-declare it
+# under any spelling: `geocode_store.GEOCODE_STORE_TABLE` is the bare name (what
+# assert_clickhouse_tables_exist looks up in system.tables) and
+# `geocode_store.QUALIFIED_CLICKHOUSE_GEOCODE_STORE_TABLE` is the qualified one (what SQL
+# reads). A local alias for either would put one identifier with two values in one file,
+# and a later edit dropping the `geocode_store.` prefix would silently swap them.
+#
+# The read rule is likewise imported rather than re-expressed: a second ranking here would
+# let this final and the serving table disagree about which outcome is current while both
+# looked internally consistent, which spec section 8 names as this design's sharpest risk.
 # What the versioned read is allowed to look at for one page of companies. It constrains
 # address_id, the store's sorting-key leading column, so a page prunes to a few parts
 # instead of ranking all 2.09M identities.
@@ -4179,7 +4426,8 @@ and its docstring gains a paragraph after the existing LEFT-JOIN-gating one:
 geocodes AS (
     SELECT links.company_id AS company_id, max(points.matched_at) AS latest_geocoded_at
     FROM {DATABASE}.{LINKS_TABLE} AS links
-    INNER JOIN {GEOCODE_STORE_TABLE} AS points ON points.address_id = links.address_id
+    INNER JOIN {geocode_store.QUALIFIED_CLICKHOUSE_GEOCODE_STORE_TABLE} AS points
+        ON points.address_id = links.address_id
     WHERE (%(all_companies)s = 1 OR links.company_id IN %(company_ids)s)
     GROUP BY links.company_id
 ),
@@ -4217,7 +4465,46 @@ Finally, the asset's precondition (`:567-569`) swaps `GEOCODES_TABLE` for
         MEMBERS_TABLE, LINKS_TABLE, geocode_store.GEOCODE_STORE_TABLE))
 ```
 
-- [ ] **Step 4: Run**
+- [ ] **Step 4: Rewrite the three prose references the code change leaves behind**
+
+The `GEOCODES_TABLE` constant is not the only place this module names the serving table.
+Three docstrings describe the chain as ending there, and a stale docstring beside a repointed
+query is worse than no docstring — it is the thing a reader trusts.
+
+`address.py:10-13` (the module header's `Geocode:` line):
+
+```
+Geocode: se_company_address_members_current -> se_company_address_links_current ->
+corpscout.se_address_geocodes read through sweden_company/geocode_store's versioned read,
+keyed by the source observation's address_fingerprint, resolved at resolve time and stored
+on the row. An identity can hold several attributable outcomes -- one per (matcher, OSM
+snapshot) -- and which one is current is that rule, not a row.
+```
+
+`address.py:241` (inside `build_changed_companies_sql`'s docstring, the `AS points`
+paragraph):
+
+```
+    The geocode CTE joins ``se_address_geocodes AS points``, not ``AS geocodes``: the CTE is
+    itself called ``geocodes`` and the outer query reads it by that name, so reusing the name
+    inside its own body would be one identifier with two meanings and an analyzer-dependent
+    query.
+```
+
+`address_rules.py:62-65` (`GeocodeFact`'s docstring, the chain it is keyed by):
+
+```
+    Keyed by that observation's ``address_fingerprint``: the chain runs
+    ``se_company_addresses_current.address_fingerprint`` ->
+    ``se_company_address_members_current.address_key`` -> ``canonical_address_key`` ->
+    ``se_company_address_links_current.address_id`` -> ``se_address_geocodes``, whose
+    current outcome per identity is a read rule rather than a row.
+```
+
+That is the whole of `address_rules.py`'s change — one docstring, no logic — which is why it
+is in this task's Files list and its commit rather than being left to drift.
+
+- [ ] **Step 5: Run**
 
 ```bash
 cd corpscout/services/dagster_v3
@@ -4227,13 +4514,17 @@ uv run dg check defs && uv run ruff check src/dagster_v3/defs/se_company
 rg -n "se_address_geocodes_current" src/dagster_v3/defs/se_company/
 ```
 
-Expected: green; the final `rg` returns nothing.
+Expected: green, and the final `rg` returns **nothing**. It returns five hits today —
+`address.py:12` (module docstring), `:76` (the `GEOCODES_TABLE` constant), `:207` and `:241`
+(docstrings) and `address_rules.py:65` (docstring) — and Steps 3 and 4 between them rewrite
+all five. A surviving hit means one of them was missed, not that the expectation is wrong.
 
-- [ ] **Step 5: Commit**
+- [ ] **Step 6: Commit**
 
 ```bash
 cd /Users/graovic/pulsarpoint/ppoint/companycollect
 git add corpscout/services/dagster_v3/src/dagster_v3/defs/se_company/address.py \
+        corpscout/services/dagster_v3/src/dagster_v3/defs/se_company/address_rules.py \
         corpscout/services/dagster_v3/tests/test_se_company_address.py
 git commit -m "feat(se_company): read Sweden geocodes through the store's versioned read
 
@@ -4250,7 +4541,7 @@ Spec §7. Two harnesses, because there are two SQL surfaces and they run on two 
 - Create: `corpscout/services/dagster_v3/tests/test_sweden_geocode_store_clickhouse_local.py`
 - Modify: `corpscout/services/dagster_v3/tests/test_se_company_address_clickhouse_local.py`
 
-**Interfaces:** consumes `geocode_store.build_current_geocodes_sql`, `build_current_resolver_geocodes_sql`, `STORE_COLUMNS`, `SERVING_COLUMNS`; `address_geocoding_assets.build_derived_current_geocodes_sql`, `STORE_INVARIANTS_SQL`, `STORE_COVERAGE_SQL`, `EXACT_MATCH_RATE_SQL`, `SNAPSHOT_FRESHNESS_SQL`, `build_store_append_regression_sql`; `se_company.address.build_geocodes_sql`, `build_changed_companies_sql`.
+**Interfaces:** consumes `geocode_store.build_current_geocodes_sql`, `build_current_resolver_geocodes_sql`, `STORE_COLUMNS`, `SERVING_COLUMNS`; `address_geocoding_assets.build_derived_current_geocodes_sql`, `DERIVED_PARITY_SQL`, `STORE_INVARIANTS_SQL`, `STORE_COVERAGE_SQL`, `EXACT_MATCH_RATE_SQL`, `SNAPSHOT_FRESHNESS_SQL`, `build_store_append_regression_sql`; `se_company.address.build_geocodes_sql`, `build_changed_companies_sql`.
 
 - [ ] **Step 1: Write the store harness**
 
@@ -4289,6 +4580,7 @@ from pathlib import Path
 import pytest
 
 from dagster_v3.defs.sweden_company.address_geocoding_assets import (
+    DERIVED_PARITY_SQL,
     EXACT_MATCH_RATE_SQL,
     SNAPSHOT_FRESHNESS_SQL,
     STORE_COVERAGE_SQL,
@@ -4313,7 +4605,7 @@ MIGRATIONS = (
     "000275_corpscout_se_address_geocodes_current.up.sql",
     "000277_corpscout_se_address_geocode_spread.up.sql",
     "000278_corpscout_se_address_components.up.sql",
-    "000316_corpscout_se_address_geocodes_store.up.sql",
+    "000317_corpscout_se_address_geocodes_store.up.sql",
 )
 NEEDED_TABLES = frozenset({
     "se_addresses_current",
@@ -4351,6 +4643,8 @@ The marked sections and what each proves:
 | `store_rows_after_reappend` | `SELECT count() FROM corpscout.se_address_geocodes` | unchanged **after** `OPTIMIZE TABLE corpscout.se_address_geocodes FINAL` — the ReplacingMergeTree contract, made deterministic by forcing the merge rather than hoping for one |
 | `regression_probe` | `build_store_append_regression_sql()` rendered with `RUN_B` and `T_A` | non-zero — an append stamped `T_A` for a key that already holds `T_B` WOULD be swallowed, and the guard sees it. Rendered with `T_B`, zero |
 | `derived` | `build_derived_current_geocodes_sql()` | 26 columns, five rows, and the same `(address_id, match_status)` pairs as `served` — the derivation and the read are one expression |
+| `parity_clean` | `INSERT INTO corpscout.se_address_geocodes_current (SERVING_COLUMNS) build_derived_current_geocodes_sql()`, then `DERIVED_PARITY_SQL` | two rows, `derived` and `store`, **identical in all three columns**. This is the only place `DERIVED_PARITY_SQL` is ever executed — it is the plan's one unaliased-subquery shape (now aliased `AS store_read`) and the only proof that `FROM ( … LIMIT 1 BY … ) AS x` parses and aggregates on 26.5 |
+| `parity_drifted` | `ALTER TABLE corpscout.se_address_geocodes_current UPDATE match_status = 'unmatched', latitude = NULL, longitude = NULL WHERE address_id = '{SETTLED}'` (with `SETTINGS mutations_sync = 2` so it is synchronous), then `DERIVED_PARITY_SQL` again | the two rows now differ in `content_hash` while `rows` and `identities` still MATCH. That is the mutation probe: a stale `EXCHANGE` leaves a plausible row count and the wrong rows, so a counts-only check would pass here and the check would be decorative |
 | `invariants` | `STORE_INVARIANTS_SQL` | `rows == unique_keys` after the OPTIMIZE, zero for every violation counter |
 | `coverage` | `STORE_COVERAGE_SQL` | 0 — every identity has an outcome |
 | `rate` | `EXACT_MATCH_RATE_SQL` | links counted, and only the four servable-exact identities in the numerator |
@@ -4377,6 +4671,26 @@ def test_a_newer_resolver_ambiguous_DOES_unseat_an_older_resolver_exact(sections
     the current snapshot no longer supports, for ever, with nothing selecting it again."""
     served = {row[0]: row[3] for row in sections["served"]}
     assert served[REGRESSED] == "ambiguous"
+
+
+def test_the_parity_check_agrees_on_a_freshly_derived_table(sections) -> None:
+    """DERIVED_PARITY_SQL, executed. Its `store` side is the plan's only
+    `FROM ( … LIMIT 1 BY … ) AS x` construct, and a subquery that will not parse is not the
+    sort of thing to find out about from a red asset check on the host."""
+    sides = {row[0]: row[1:] for row in sections["parity_clean"]}
+    assert set(sides) == {"derived", "store"}
+    assert sides["derived"] == sides["store"]
+    assert int(sides["store"][0]) == 5
+
+
+def test_the_parity_check_notices_content_drift_that_counts_would_miss(sections) -> None:
+    """The mutation probe. One row's status and coordinates change and nothing else does:
+    both sides still report five rows and five identities, and ONLY the content hash moves.
+    Delete `cityHash64` from the query and this test is the one that fails."""
+    sides = {row[0]: row[1:] for row in sections["parity_drifted"]}
+    derived, store = sides["derived"], sides["store"]
+    assert derived[0] == store[0] and derived[1] == store[1]
+    assert derived[2] != store[2]
 ```
 
 The module-scoped `sections` fixture and the `params=(0, 1)` / `ids=("join_use_nulls_off",
@@ -4387,7 +4701,7 @@ The module-scoped `sections` fixture and the `params=(0, 1)` / `ids=("join_use_n
 
 In `tests/test_se_company_address_clickhouse_local.py`:
 
-1. `MIGRATIONS` (`:74-83`) gains `"000316_corpscout_se_address_geocodes_store.up.sql"` after
+1. `MIGRATIONS` (`:74-83`) gains `"000317_corpscout_se_address_geocodes_store.up.sql"` after
    `000278`, and `NEEDED_TABLES` (`:84-94`) gains `"se_address_geocodes"`.
    `se_address_geocodes_current` **stays in both** — the backoffice public-page section
    server still reads it (`services/backoffice/tests/company-serving-sections.test.ts:54`),
@@ -4454,9 +4768,9 @@ Co-Authored-By: Claude Fable 5 <noreply@anthropic.com>"
 
 ---
 
-### Task 12a (Phase 2): Apply migration 000316 — **controller**
+### Task 12a (Phase 2): Apply migration 000317 — **controller**
 
-- [ ] Apply **000316** with the same golang-migrate path used for 000307–000315. Do this BEFORE deploying any code — Task 3's store-append asset calls `assert_clickhouse_tables_exist` on it.
+- [ ] Apply **000317** (or whatever number Task 1 actually took) with the same golang-migrate path used for 000307–000316. Do this BEFORE deploying any code — Task 3's store-append asset calls `assert_clickhouse_tables_exist` on it.
 - [ ] Verify:
   ```sql
   SELECT name, engine, sorting_key FROM system.tables
@@ -4533,12 +4847,12 @@ Co-Authored-By: Claude Fable 5 <noreply@anthropic.com>"
 - [ ] Record `adopted_identities`, `contributing_companies`, `refused_disagreeing_identities` and the date — Task 8's migration comment needs all four, and they replace its `<N_IDENTITIES>` / `<N_COMPANIES>` / `<N_REFUSED>` / `<DATE>` placeholders.
 - [ ] Stop and report.
 
-### Task 12f (Phase 11): Apply migration 000317 — **controller**
+### Task 12f (Phase 11): Apply migration 000318 — **controller**
 
 - [ ] Re-run Task 8 Step 1's three `rg` commands one final time and confirm the migration's comment still matches reality.
 - [ ] **Deploy the code change first** (`light_sync.yml`), so nothing reads the tables at the moment they go. Confirm the three legacy assets and the adoption asset are gone from the UI and that the weekly job has 12 assets.
 - [ ] Take the Task 8 Step 6 row-count snapshot and paste it into the migration comment; commit that edit by explicit path before applying.
-- [ ] Apply **000317**. Watch for ~10 minutes: `UNDROP TABLE` is available for about 480 seconds.
+- [ ] Apply **000318**. Watch for ~10 minutes: `UNDROP TABLE` is available for about 480 seconds.
 - [ ] Verify:
   ```sql
   SELECT name FROM system.tables WHERE database = 'corpscout'
@@ -4548,11 +4862,11 @@ Co-Authored-By: Claude Fable 5 <noreply@anthropic.com>"
   Expected: no rows from the first; the adopted count unchanged from 12e.
 - [ ] Stop and report.
 
-### Task 12g (Phase 13): Apply migration 000318 and close the project — **controller**
+### Task 12g (Phase 13): Apply migration 000319 and close the project — **controller**
 
 - [ ] Re-run Task 9 Step 1's two `rg` commands. Deploy Tasks 9, 10 and 11's code **first** (`light_sync.yml`).
 - [ ] Confirm in the UI: `sweden_company_canonical_addresses_clickhouse` publishes members only (its metadata has `source_members` and no `canonical_addresses`); `se_company_address_clickhouse` loads without error.
-- [ ] Take the Task 9 Step 5 snapshot, paste it into the migration comment, commit by explicit path, then apply **000318**. UNDROP watch, ~10 minutes.
+- [ ] Take the Task 9 Step 5 snapshot, paste it into the migration comment, commit by explicit path, then apply **000319**. UNDROP watch, ~10 minutes.
 - [ ] Verify:
   ```sql
   SELECT name FROM system.tables WHERE database = 'corpscout'
@@ -4610,7 +4924,9 @@ Spec §4.3 asserts nothing reads the join matcher's output between its write and
 
 ### Placeholder scan
 
-No `TBD` and no `TODO` anywhere. Four deliberate placeholders, all of them gate output the controller fills at execution and reviews before a destructive step:
+No `TBD` and no `TODO` anywhere. **The three migration numbers are not placeholders but they are not promises either** — 000317 / 000318 / 000319 are correct as of this amendment (esef took 000316 between the first draft and the pre-flight scan, which is exactly the failure mode the re-check instruction exists for). Every task that creates a migration re-checks `ls corpscout/clickhouse/migrations | tail -1` first, and the `EXPECTED_MIGRATIONS` insertion point is described as "after the current last entry", not by a line number.
+
+Four deliberate placeholders, all of them gate output the controller fills at execution and reviews before a destructive step:
 
 - Task 8's migration comment: `<N_COMPANIES>`, `<N_IDENTITIES>`, `<N_REFUSED>`, `<DATE>` (from Task 12e) and its `<N>` row counts (from Task 12f).
 - Task 9's migration comment: `<DATE>` and three `<N>` row counts (from Task 12g).
@@ -4626,6 +4942,8 @@ Names flow forward and are never re-declared:
 - `StoredOutcome(address_id, policy_version, reference_md5, match_status, matched_at)` is produced by Task 2 and consumed by Task 4's `pending_reason` — the same five fields the demand rule reasons about, and the same five the loaded DuckDB table carries as its first four columns plus `matched_at`.
 - `PREVIOUS_OUTCOME_COLUMNS` (Task 4) is the superset needed by all three of its consumers: the demand rule (`policy_version`, `reference_md5`, `match_status`), the repointed comparison (`match_status`) and the repointed postcode gate (`match_status`, `match_method`, `match_confidence`, `candidate_record_ids`). The DuckDB `create table` in `load_current_resolver_outcomes` declares those eight columns in that order and `_insert_previous_outcome_batch` binds eight `?` — they must stay in step, and the fixture in `tests/test_sweden_geocode_demand.py` declares the same eight so a drift fails there first.
 - The promotion's return dict grows `reference_md5`, `appended_rows` (Task 3) and `short_circuit`, `pending_identities` (Task 4); `address_resolution_assets.py:130-138` spreads every scalar into metadata, so all four surface without touching the asset — but `shadow_status_counts` and `largest_transitions` must exist in the shadow's short-circuit dict because `:93-96` reads them by key. Task 4 Step 5 supplies both.
+- **Test fixtures have one home too.** `_create_sweden_shadow_fixture` (`tests/test_address_resolution.py:513`) is the only seeding helper for the shadow/promotion path: Task 3 gives it a `source_md5` keyword, Task 4 gives it the pending-identities and previous-outcomes tables, and `tests/test_sweden_geocode_store_append.py` imports it rather than growing a rival. Both tasks list that file and commit it, because a task that changes a function's preconditions owns the fixture that satisfies them.
+- **`GEOCODE_STORE_TABLE` is defined once.** `geocode_store.GEOCODE_STORE_TABLE` is the bare name (what `assert_clickhouse_tables_exist` looks up in `system.tables`) and `geocode_store.QUALIFIED_CLICKHOUSE_GEOCODE_STORE_TABLE` is the qualified one (what SQL reads). `se_company/address.py` uses both through the module prefix and declares neither locally — one identifier, one value, no file in which dropping a prefix silently swaps a qualified name for a bare one.
 - Asset keys added: `sweden_address_geocode_store_clickhouse`, `sweden_address_geocode_store_backfill_clickhouse` (Task 3), `sweden_address_geocode_demand_duckdb` (Task 4), `sweden_address_geocode_legacy_adoption_clickhouse` (Task 6, deleted in Task 8). Removed: `sweden_shared_address_osm_matches_duckdb` (Task 4), `sweden_company_address_osm_matches_duckdb`, `sweden_company_address_geocodes_clickhouse`, `sweden_company_address_geocode_results_clickhouse` (Task 8). `sweden_address_geocodes_clickhouse` and `sweden_company_canonical_addresses_clickhouse` keep their keys throughout — their bodies change, the graph does not churn, and the freshness leaves and job selections stay readable.
 
 ### Type consistency
@@ -4636,6 +4954,28 @@ Names flow forward and are never re-declared:
 - `pending_reason` returns `str` — `""` for "not pending" rather than `None`, so the DuckDB CASE and the Python twin have the same shape and the SQL can filter on `pending_reason != ''`.
 - The demand asset's `rematch_all` is bound as `?::boolean` in DuckDB and typed `bool` in the config; `PENDING_REASONS` is a tuple of the four literals the CASE can emit, and Task 4's parametrized test asserts every returned reason is in it.
 - `candidate_count` is `UInt16` in the store and `usmallint` in DuckDB (the promotion already clamps to 65535 at `:275-287`); the adoption import re-casts the legacy `UInt16` explicitly with `toUInt16(...)`, and `match_confidence` with `toFloat32(...)`, because `any()` over a `Float64` legacy column would otherwise widen the insert.
+
+### Amendments after the pre-flight scan (rulings B1–B13)
+
+The plan was scanned document-against-document before execution; 13 findings came back, all amendable, none structural. What changed:
+
+| ruling | change |
+|---|---|
+| B1 | Every migration number shifted one — 000317 (store), 000318 (legacy drop), 000319 (canonical drop) — including both harness `MIGRATIONS` lists, Task 12a and the two Task-1 test bodies. The `EXPECTED_MIGRATIONS` insertion point is now described relative to the current last entry rather than by line number, and the Global Constraint says outright that the numbers written here are not authoritative — the re-check is. |
+| B2 | Task 4 gained `tests/test_address_resolution.py` and `tests/test_sweden_geocode_store_append.py` in its Files list and its commit, and Step 8 now spells out the fixture edit (add `se_address_pending_identities`, turn the `se_address_geocodes_current` stub into `se_address_geocodes_previous` with the eight `PREVIOUS_OUTCOME_COLUMNS`) and the single `update` retarget in `test_sweden_shadow_promotion_replaces_invalid_legacy_building_match`. A task that changes a function's preconditions owns the tests that assert them. |
+| B3 | The dead-output gate's "everything else" prose became a second table, with `se_company/address.py:12,76,207,241` and `address_rules.py:65` named explicitly as **serving-table** references — a different table, in a different database, written by the promotion and not by the join matcher. The gate still STOPs on any hit outside the two tables. |
+| B4 | `test_apartment_unit_is_retained_but_excluded_from_osm_match_keys` is join-matcher-only, so Task 4 **deletes** it rather than gutting it to an empty body; Task 8's list is the real six, found by call site rather than by line number, since Task 4's edits move them. |
+| B5 | Task 10 now owns the three prose references the repoint leaves behind (`address.py:12`, `address.py:241`, `address_rules.py:65`), with the replacement text written out; `address_rules.py` entered its Files list and its commit for that one docstring; the `rg` expectation says which five hits exist today and that all five are rewritten. |
+| B6 | The local `GEOCODE_STORE_TABLE` alias is gone from `se_company/address.py` — the module uses `geocode_store.…` directly, and a comment says why a local alias is not an option. |
+| B7 | `DERIVED_PARITY_SQL`'s store side is now aliased `AS store_read`, and Task 11's harness executes it twice: `parity_clean` (both sides identical) and `parity_drifted` (a synchronous `ALTER … UPDATE` moves one row's status and coordinates, so rows and identities still match and only the content hash moves). That second section is what makes the check able to fail, and it is the plan's only proof that `FROM ( … LIMIT 1 BY … ) AS x` parses on 26.5. |
+| B8 | Task 6's harness is parametrized `params=(0, 1)` like every other harness here, and `_script` takes `join_use_nulls`. |
+| B9 | Task 3 states that the two new raises go **immediately before** the pre-existing `missing_provenance` raise, with the surrounding code shown, and its test matches the new message in full rather than on the word "reference" — which the old raise does not contain, so a loose match proved nothing. |
+| B10 | `seed_promotable_shadow` never existed. Task 3 gained an explicit numbered step that extends the real helper, `_create_sweden_shadow_fixture`, with one keyword — one spelling, one home, and every existing caller unaffected because the default is the literal they already relied on. |
+| B11 | Task 4 Step 6 item 1 is one version: build the promotion stage first (free against an empty pending set), derive the empty append table from it, return. The self-referential `create or replace … from itself where false` snippet and the `_ensure_empty_append_table` detour are gone. |
+| B12 | Task 7's relocation tests are rewritten in the target file's actual idiom — `_osm_connection()`, no `pytest` import, `try`/`except`/`else` instead of `pytest.raises`, imports inside the test body — and they drive the public build first, which is what leaves the temporary `_sweden_company_address_observations` relation the invariant reads on the connection. A second test covers check 2's relocated review-status term the same way. |
+| B13 | Check 3's `rows >= identities` term is gone from `passed`. `count() == uniqExact((address_id, policy_version, reference_md5))` is the discriminating term and stays; `identities` is metadata only, with a comment saying that a term which cannot fail is worse than no term because it reads like coverage. |
+
+Nothing in the rulings changed the design: the store's shape, the two-stage read rule, the three-term demand rule, the retirement order and the gate discipline are as reviewed.
 
 ### Known deliberate costs, called out where they are paid
 
