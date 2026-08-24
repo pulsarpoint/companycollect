@@ -7,18 +7,31 @@ Two companies. ALPHA has both sources: a Bolagsverket 'postal' row and an SCB
 one that shows why both rows are published (the address types differ, so the keys differ).
 Its Bolagsverket observation is linked and geocoded; its SCB observation is linked but NOT
 geocoded, which is the LEFT JOIN miss build_geocodes_sql has to gate rather than ifNull.
-BETA has only an SCB row and no address identity at all, so it exercises the "no link"
-path through the INNER JOIN.
+BETA has only an SCB row, and that row IS normalized into a members row -- but its
+canonical address never reached an address identity, so no links row exists for it. That
+is what makes the members -> links INNER join load-bearing: a company with no members row
+at all would survive an INNER -> LEFT mutation unnoticed, and BETA would not be testing
+anything.
 
 The publish sequence (stage -> validate -> LEFT ANTI JOIN copy -> drop stage) mirrors
 publish_with_stage(..., new_versions_only=True); common.py has no separate SQL-string
 builder for that anti-join -- it is inlined in the function -- so _publish_pass copies the
-shape verbatim, exactly as the info harness does.
+shape verbatim, exactly as the info harness does. Three passes: the first publishes, the
+second re-runs unchanged evidence and must append nothing, and the third runs after the
+register CORRECTS one Bolagsverket field and must append exactly one new version for that
+source and nothing for the other.
+
+Each publishing pass also emits the two numbers the asset's tripwire compares -- the row
+count on the stage, and SE_COMPANY_ADDRESS_*_SOURCE_COUNT_SQL run against the source table
+-- so both shipped tripwire constants are EXECUTED here rather than only substring-tested.
 
 Set replacement is proved as a STORAGE round-trip here (the rules' decision is a table test
 in tests/test_se_company_address_rules.py): a key published is_current = true, then
 republished is_current = false with a newer resolved_at, disappears from
 `FINAL ... WHERE is_current`; published true again with a newer stamp still, it comes back.
+And the guarantee address.py's scan docstring headlines -- "a re-geocode is evidence, and
+no company keeps a stale coordinate" -- is closed end to end: a settled company is woken
+again by nothing but a new row in se_address_geocodes_current.
 
 The whole script runs twice, once under default settings and once with
 `SET join_use_nulls = 1` prepended: every LEFT JOIN miss in the scan and in the geocode
@@ -41,10 +54,12 @@ from dagster_v3.defs.se_company.address import (
 )
 from dagster_v3.defs.se_company.bolagsverket import (
     SE_COMPANY_ADDRESS_BOLAGSVERKET_COLUMNS,
+    SE_COMPANY_ADDRESS_BOLAGSVERKET_SOURCE_COUNT_SQL,
     SE_COMPANY_ADDRESS_BOLAGSVERKET_SQL,
 )
 from dagster_v3.defs.se_company.scb import (
     SE_COMPANY_ADDRESS_SCB_COLUMNS,
+    SE_COMPANY_ADDRESS_SCB_SOURCE_COUNT_SQL,
     SE_COMPANY_ADDRESS_SCB_SQL,
 )
 from tests.se_company_ddl import declared_columns
@@ -88,6 +103,7 @@ ALPHA = "5565200028"
 BETA = "196408233412"  # sole trader: 12-digit id, admitted by the has_company CHECK
 T_SEED = _literal(datetime(2026, 8, 1, tzinfo=UTC))
 T_GEOCODE = _literal(datetime(2026, 8, 2, tzinfo=UTC))
+T_CHANGED = _literal(datetime(2026, 8, 5, tzinfo=UTC))  # ALPHA's corrected Bolagsverket row.
 # DateTime64(3) has millisecond resolution and consecutive statements can share one, so
 # every point where a stamp must be strictly newer than the previous one is separated by a
 # real pause. FORMAT Null keeps sleep's own row out of the marked-section stream.
@@ -95,7 +111,10 @@ SETTLE = "SELECT sleep(0.05) FORMAT Null;\n"
 ALPHA_FP_BOLAGSVERKET, ALPHA_FP_SCB, BETA_FP = "a" * 64, "b" * 64, "c" * 64
 CANONICAL_KEY, ADDRESS_ID = "d" * 64, "e" * 64
 CANONICAL_KEY_SCB, ADDRESS_ID_SCB = "f" * 64, "1" * 64
+# BETA's canonical address: a members row, deliberately WITHOUT a links row.
+CANONICAL_KEY_BETA = "2" * 64
 ALPHA_KEY = "7" * 64
+ALPHA_CARE_OF_V2 = "Bengt Andersson"  # no slash: toJSONString would escape one, TSV again
 
 
 def _schema_statements(migrations: tuple[str, ...]) -> list[str]:
@@ -125,6 +144,17 @@ def _schema_statements(migrations: tuple[str, ...]) -> list[str]:
     return statements
 
 
+# The artifact tables are ReplacingMergeTree(observed_at) keyed by (company_id,
+# source_record_uid), and what the third publish pass asserts is that a CHANGED payload
+# leaves TWO versions of one key in the table -- a plain count(), which a background merge
+# collapsing those two versions would quietly turn into one. Every read of these tables
+# that has to see one row per key uses FINAL, so stopping merges changes no answer here; it
+# only removes a race the assertion would otherwise lose at random.
+STOP_MERGES_SQL = (
+    "SYSTEM STOP MERGES corpscout.se_company_address_bolagsverket;\n"
+    "SYSTEM STOP MERGES corpscout.se_company_address_scb;"
+)
+
 FIXTURE = f"""
 INSERT INTO corpscout.se_company_addresses_current
     (company_id, address_type, source, raw_address, street_address, care_of, postal_code,
@@ -153,7 +183,9 @@ VALUES
     ('{ALPHA}', '{CANONICAL_KEY}', '{ALPHA_FP_BOLAGSVERKET}', 'postal', 'bolagsverket', '', '',
      'Storgatan 1', '', '11122', 'Stockholm', 'SE', 'uid-bv-1', 'fixture', {T_SEED}, 'norm-1', {T_SEED}),
     ('{ALPHA}', '{CANONICAL_KEY_SCB}', '{ALPHA_FP_SCB}', 'visiting_or_postal', 'scb', '', '',
-     'Storgatan 1', 'c/o Anna', '11122', 'Stockholm', 'SE', 'uid-scb-1', 'fixture', {T_SEED}, 'norm-1', {T_SEED});
+     'Storgatan 1', 'c/o Anna', '11122', 'Stockholm', 'SE', 'uid-scb-1', 'fixture', {T_SEED}, 'norm-1', {T_SEED}),
+    ('{BETA}', '{CANONICAL_KEY_BETA}', '{BETA_FP}', 'visiting_or_postal', 'scb', '', '',
+     'Lillgatan 2', '', '22100', 'Lund', 'SE', 'uid-scb-2', 'fixture', {T_SEED}, 'norm-1', {T_SEED});
 
 INSERT INTO corpscout.se_company_address_links_current
     (company_id, address_id, canonical_address_key, address_types, address_sources, evidence_count,
@@ -171,10 +203,54 @@ VALUES
      0.99, 59.33, 18.06, 'osm', 'building', 1, 'geo-1', {T_GEOCODE});
 """
 
+# The register CORRECTS ALPHA's Bolagsverket record: same company, same source_record_uid,
+# same address identity -- one payload field different, so the MATERIALIZED evidence_hash
+# differs and the anti-join must let exactly one new version through.
+#
+# The row is REPLACED, not re-inserted beside the old one: the snapshot is a plain
+# MergeTree keyed by (company_id, address_type, source) with no version column, so a second
+# INSERT would leave two rows for one key, the artifact SELECT would emit two rows with the
+# same (company_id, source_record_uid), and ReplacingMergeTree would collapse them on the
+# stage -- which is precisely the silent-collapse failure the source-count tripwire exists
+# to catch, not the case under test here. The lightweight DELETE is synchronous; an
+# `ALTER TABLE ... UPDATE` mutation is not (and is rejected outright on a key column).
+CHANGED_PAYLOAD_SQL = f"""
+DELETE FROM corpscout.se_company_addresses_current
+WHERE company_id = '{ALPHA}' AND address_type = 'postal' AND source = 'bolagsverket';
+
+INSERT INTO corpscout.se_company_addresses_current
+    (company_id, address_type, source, raw_address, street_address, care_of, postal_code,
+     post_town, country_code, source_run_id, source_record_id, source_payload_hash,
+     source_record_uid, updated_from_raw_at, has_address, address_fingerprint,
+     observation_fingerprint, observed_at, has_observation)
+VALUES
+    ('{ALPHA}', 'postal', 'bolagsverket', 'Storgatan 1, 111 22 Stockholm', 'Storgatan 1',
+     '{ALPHA_CARE_OF_V2}', '111 22', 'Stockholm', NULL, 'fixture-v2', 'bv-1', 'hash-bv-1-v2',
+     'uid-bv-1', {T_CHANGED}, 1, '{ALPHA_FP_BOLAGSVERKET}', '{ALPHA_FP_BOLAGSVERKET}',
+     {T_CHANGED}, 1);
+"""
+
+# The weekly geocoding job answers for ALPHA's SCB identity, which had no coordinate before.
+# matched_at is now64 -- later than ALPHA's published resolved_at -- so the scan's geocode
+# term is the ONLY thing that can select ALPHA again at that point.
+NEW_GEOCODE_SQL = f"""
+INSERT INTO corpscout.se_address_geocodes_current
+    (address_id, address_identity_run_id, normalized_match_key, match_status, candidate_count,
+     candidate_record_ids, candidate_record_urls, match_method, match_confidence, latitude, longitude,
+     geocode_provider, geocode_precision, coordinate_supporting_point_count, geocode_run_id, matched_at)
+VALUES
+    ('{ADDRESS_ID_SCB}', 'ident-1', 'storgatan 1|11122|stockholm', 'matched_exact', 1, [], [], 'exact',
+     0.98, 59.34, 18.07, 'osm', 'building', 1, 'geo-2', now64(3, 'UTC'));
+"""
+
+# (source, table, insert columns, artifact SELECT, tripwire source-count SELECT). The
+# source name is carried so each pass can label its own marked sections, and so the
+# tripwire's %(source)s is bound to the same literal the SELECT filters on.
 ARTIFACTS = (
-    ("se_company_address_bolagsverket", SE_COMPANY_ADDRESS_BOLAGSVERKET_COLUMNS,
-     SE_COMPANY_ADDRESS_BOLAGSVERKET_SQL),
-    ("se_company_address_scb", SE_COMPANY_ADDRESS_SCB_COLUMNS, SE_COMPANY_ADDRESS_SCB_SQL),
+    ("bolagsverket", "se_company_address_bolagsverket", SE_COMPANY_ADDRESS_BOLAGSVERKET_COLUMNS,
+     SE_COMPANY_ADDRESS_BOLAGSVERKET_SQL, SE_COMPANY_ADDRESS_BOLAGSVERKET_SOURCE_COUNT_SQL),
+    ("scb", "se_company_address_scb", SE_COMPANY_ADDRESS_SCB_COLUMNS,
+     SE_COMPANY_ADDRESS_SCB_SQL, SE_COMPANY_ADDRESS_SCB_SOURCE_COUNT_SQL),
 )
 COUNTS_SQL = (
     "SELECT 'bolagsverket', count() FROM corpscout.se_company_address_bolagsverket"
@@ -185,12 +261,18 @@ def _marked(label: str, query: str) -> str:
     return f"SELECT '@@{label}';\n{query} FORMAT TSV;\n"
 
 
-def _publish_pass(table: str, columns: tuple[str, ...], select_sql: str, params: dict[str, object]) -> str:
+def _publish_pass(table: str, columns: tuple[str, ...], select_sql: str,
+                  params: dict[str, object], *, staged_label: str = "") -> str:
     """Mirrors publish_with_stage(..., new_versions_only=True) in se_company/common.py:
     stage <- SELECT, then copy into the target only the rows whose (company_id,
     source_record_uid, evidence_hash) is not already there, via a LEFT ANTI JOIN. The
     anti-join text is copied verbatim from that function, which has no SQL-string builder
-    to import."""
+    to import.
+
+    ``staged_label`` emits the stage's row count at the same point the function reads it
+    (right after the SELECT lands, before the copy) -- the ``PublishCounts.staged`` the
+    asset's tripwire compares its own source count against.
+    """
     col_list = ", ".join(columns)
     stage_cols = ", ".join(f"stage.{column}" for column in columns)
     stage = f"corpscout._tmp_{table}"
@@ -200,12 +282,24 @@ def _publish_pass(table: str, columns: tuple[str, ...], select_sql: str, params:
         "ON existing.company_id = stage.company_id "
         "AND existing.source_record_uid = stage.source_record_uid "
         "AND existing.evidence_hash = stage.evidence_hash")
+    staged = _marked(staged_label, f"SELECT count() FROM {stage}") if staged_label else ""
     return (
         f"DROP TABLE IF EXISTS {stage};\n"
         f"CREATE TABLE {stage} AS corpscout.{table};\n"
         f"INSERT INTO {stage} ({col_list})\n{_render(select_sql, params)};\n"
-        f"INSERT INTO corpscout.{table} ({col_list})\nSELECT {stage_cols} {anti_join};\n"
+        + staged
+        + f"INSERT INTO corpscout.{table} ({col_list})\nSELECT {stage_cols} {anti_join};\n"
         f"DROP TABLE {stage};\n")
+
+
+def _publish_and_measure(artifact: tuple[str, str, tuple[str, ...], str, str],
+                         params: dict[str, object], *, suffix: str) -> str:
+    """One publish pass plus the two numbers the asset's tripwire compares: the staged row
+    count, and the shipped *_SOURCE_COUNT_SQL run verbatim against the source table."""
+    source, table, columns, select_sql, count_sql = artifact
+    return (
+        _publish_pass(table, columns, select_sql, params, staged_label=f"staged_{source}{suffix}")
+        + _marked(f"source_count_{source}{suffix}", _render(count_sql, {"source": source})))
 
 
 def _changed_params(*, resolve_all: int = 0, resolve_all_before: str = "2099-12-31 23:59:59") -> dict[str, object]:
@@ -230,16 +324,25 @@ def _script(*, join_use_nulls: int) -> str:
     if join_use_nulls:
         parts.append("SET join_use_nulls = 1;")
     parts.append(";\n".join(_schema_statements(MIGRATIONS)) + ";")
+    parts.append(STOP_MERGES_SQL)
     parts.append(FIXTURE)
 
-    for table, columns, sql in ARTIFACTS:
-        parts.append(_publish_pass(table, columns, sql, render_params))
+    for artifact in ARTIFACTS:
+        parts.append(_publish_and_measure(artifact, render_params, suffix=""))
     parts.append(_marked("counts", COUNTS_SQL))
     parts.append(SETTLE)
     # Second pass, same evidence: the anti-join must append nothing.
-    for table, columns, sql in ARTIFACTS:
+    for _, table, columns, sql, _count_sql in ARTIFACTS:
         parts.append(_publish_pass(table, columns, sql, render_params))
     parts.append(_marked("counts_after_rerun", COUNTS_SQL))
+
+    # Third pass, one CORRECTED Bolagsverket field: exactly one new version for that
+    # source, nothing for the other.
+    parts.append(CHANGED_PAYLOAD_SQL)
+    parts.append(SETTLE)
+    for artifact in ARTIFACTS:
+        parts.append(_publish_and_measure(artifact, render_params, suffix="_after_change"))
+    parts.append(_marked("counts_after_changed_payload", COUNTS_SQL))
 
     parts.append(_marked("changed_empty_final",
                          _render(build_changed_companies_sql(), _changed_params())))
@@ -254,10 +357,12 @@ def _script(*, join_use_nulls: int) -> str:
                          + ") ORDER BY company_id, address_fingerprint"))
 
     # Set replacement, as a storage round-trip. ALPHA_KEY is published current, then
-    # tombstoned, then published current again -- each with a strictly newer resolved_at.
+    # tombstoned, then published current again -- each with a strictly newer resolved_at,
+    # and the first of them strictly newer than the third publish pass's observed_at.
     columns = ", ".join(INSERT_COLUMNS)
     live_sql = ("SELECT company_id, toString(address_key), is_current FROM corpscout.se_company_address"
                 " FINAL WHERE is_current ORDER BY company_id, address_key")
+    parts.append(SETTLE)
     parts.append(f"INSERT INTO corpscout.se_company_address ({columns}) VALUES "
                  + _final_row_values(ALPHA, ALPHA_KEY, is_current="true",
                                      resolved_at="now64(3, 'UTC')") + ";")
@@ -281,6 +386,12 @@ def _script(*, join_use_nulls: int) -> str:
     parts.append(_marked("changed_resolve_all",
                          _render(build_changed_companies_sql(),
                                  _changed_params(resolve_all=1))))
+
+    # ... and then the weekly geocoding job answers for an identity ALPHA is linked to.
+    parts.append(SETTLE)
+    parts.append(NEW_GEOCODE_SQL)
+    parts.append(_marked("changed_after_regeocode",
+                         _render(build_changed_companies_sql(), _changed_params())))
     return "\n".join(parts) + "\n"
 
 
@@ -304,6 +415,10 @@ def sections(request: pytest.FixtureRequest) -> dict[str, list[list[str]]]:
     return result
 
 
+def _counts(rows: list[list[str]]) -> dict[str, int]:
+    return {source: int(count) for source, count in rows}
+
+
 def test_artifacts_publish_only_addressed_rows_and_are_idempotent(
     sections: dict[str, list[list[str]]],
 ) -> None:
@@ -320,12 +435,49 @@ def test_artifacts_publish_only_addressed_rows_and_are_idempotent(
     assert sorted(sections["counts_after_rerun"]) == sorted(sections["counts"])
 
 
+def test_changed_evidence_appends_exactly_one_new_version(
+    sections: dict[str, list[list[str]]],
+) -> None:
+    """The register corrected ONE Bolagsverket field. evidence_hash is MATERIALIZED over
+    the payload, so the anti-join no longer matches that row and must let exactly one new
+    version through -- while the untouched SCB artifact must not grow at all. Dropping
+    evidence_hash from the anti-join key makes both counts stand still and fails here."""
+    before = _counts(sections["counts_after_rerun"])
+    after = _counts(sections["counts_after_changed_payload"])
+    assert after["bolagsverket"] == before["bolagsverket"] + 1
+    assert after["scb"] == before["scb"]
+
+
+def test_the_tripwire_counts_the_rows_the_stage_actually_holds(
+    sections: dict[str, list[list[str]]],
+) -> None:
+    """Both shipped SE_COMPANY_ADDRESS_*_SOURCE_COUNT_SQL constants, run verbatim against
+    the replayed schema and compared to the staged count exactly as each asset compares
+    them. Deliberately checked again after the corrected payload: replacing a source row
+    must leave the source holding one row for that source, not two."""
+    for suffix in ("", "_after_change"):
+        for source in ("bolagsverket", "scb"):
+            assert sections[f"source_count_{source}{suffix}"] == sections[f"staged_{source}{suffix}"]
+    assert sections["staged_bolagsverket"] == [["1"]]
+    assert sections["staged_scb"] == [["2"]]
+    assert sections["staged_bolagsverket_after_change"] == [["1"]]
+
+
 def test_the_artifact_payload_carries_the_fingerprint_the_geocode_join_needs(
     sections: dict[str, list[list[str]]],
 ) -> None:
+    """The full page, not one row of it: a branch reading the wrong artifact table, or a
+    dropped `company_id IN` filter, changes this key set."""
+    assert [(row[0], row[1], row[2]) for row in sections["artifact_rows"]] == [
+        ("bolagsverket", ALPHA, "uid-bv-1"),
+        ("scb", BETA, "uid-scb-2"),
+        ("scb", ALPHA, "uid-scb-1"),
+    ]
     payloads = {(row[0], row[1]): row[3] for row in sections["artifact_rows"]}
     assert ALPHA_FP_BOLAGSVERKET in payloads[("bolagsverket", ALPHA)]
     assert '"city":"Stockholm"' in payloads[("bolagsverket", ALPHA)]
+    # FINAL picks the CORRECTED version, not the one the first pass published.
+    assert f'"care_of":"{ALPHA_CARE_OF_V2}"' in payloads[("bolagsverket", ALPHA)]
 
 
 def test_the_geocode_lookup_gates_the_miss_instead_of_reading_a_type_default(
@@ -341,8 +493,12 @@ def test_the_geocode_lookup_gates_the_miss_instead_of_reading_a_type_default(
     assert rows[ALPHA_FP_SCB][3] == "0"
     assert rows[ALPHA_FP_SCB][5] == ""
     assert rows[ALPHA_FP_SCB][4] == ""  # latitude, a genuinely Nullable source column
-    # Never linked: absent entirely (the members -> links join is INNER).
+    # Normalized but never linked: BETA HAS a members row, and its canonical address has
+    # no links row, so the members -> links INNER join is what drops it. That is the point
+    # of giving BETA a members row at all -- without one, an INNER -> LEFT mutation would
+    # leave this assertion green.
     assert BETA_FP not in rows
+    assert len(rows) == 2
 
 
 def test_the_scan_selects_every_company_before_anything_is_published(
@@ -375,7 +531,29 @@ def test_a_published_company_is_quiet_until_resolve_all_asks_for_it(
     """ALPHA's final rows are newer than every artifact and than the geocode snapshot, so
     only the resolve_all disjunct can select it again."""
     assert ALPHA not in [row[0] for row in sections["changed_after_publish"]]
-    assert ALPHA in [row[0] for row in sections["changed_resolve_all"]]
+    selected = {row[0]: row for row in sections["changed_resolve_all"]}
+    assert ALPHA in selected
+    # ... and it is selected by that disjunct ALONE: every reason flag reads 0.
+    assert selected[ALPHA][1:] == ["0", "0", "0", "0", "0"]
+
+
+def test_a_re_geocode_wakes_a_published_company(
+    sections: dict[str, list[list[str]]],
+) -> None:
+    """The guarantee the scan's docstring headlines: `se_address_geocodes_current` is
+    rebuilt whole every week, and a company whose linked identity gained a newer
+    `matched_at` must be resolved again so no reader keeps a stale coordinate. ALPHA is
+    settled and quiet in `changed_after_publish`; nothing changes here but one new geocode
+    row, and it is the new_geocode reason -- not any other term -- that brings it back."""
+    assert ALPHA not in [row[0] for row in sections["changed_after_publish"]]
+    selected = {row[0]: row for row in sections["changed_after_regeocode"]}
+    assert ALPHA in selected
+    reasons = dict(zip(
+        ("never_published", "new_evidence_bolagsverket", "new_evidence_scb", "new_geocode",
+         "ledger_pending"),
+        selected[ALPHA][1:], strict=True))
+    assert reasons == {"never_published": "0", "new_evidence_bolagsverket": "0",
+                       "new_evidence_scb": "0", "new_geocode": "1", "ledger_pending": "0"}
 
 
 def test_the_deployed_final_columns_are_what_the_ddl_replay_says(
