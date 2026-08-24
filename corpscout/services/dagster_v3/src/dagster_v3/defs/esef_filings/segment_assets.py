@@ -10,16 +10,19 @@ No ``from __future__ import annotations``: Dagster inspects asset annotations.
 import json
 import re
 import tempfile
-from collections.abc import Callable, Iterator, Mapping, Sequence
+from collections.abc import Callable, Iterable, Iterator, Mapping, Sequence
 from concurrent.futures import FIRST_COMPLETED, Future, ProcessPoolExecutor, wait
+from contextlib import contextmanager
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from hashlib import sha256
+from itertools import batched
 from pathlib import Path
 from time import perf_counter
-from typing import Any
+from typing import Any, TextIO
 
 import dagster as dg
+import ijson
 from dagster_clickhouse import ClickhouseResource
 from dagster_duckdb import DuckDBResource
 from pydantic import Field
@@ -35,9 +38,9 @@ from dagster_v3.defs.esef_filings.client import EsefFilingsClient
 from dagster_v3.defs.esef_filings.segment_parser import (
     ARTIFACT_SCHEMA_VERSION,
     EsefArtifactSource,
-    artifact_json_bytes,
     artifact_object_key,
     parse_esef_report_package,
+    write_artifact_json,
 )
 
 GROUP_NAME = "esef_filings"
@@ -53,6 +56,8 @@ _SUPPORTED_DOCUMENT_MANIFEST_SCHEMA_VERSIONS = (2, _DOCUMENT_MANIFEST_SCHEMA_VER
 _DOCUMENT_RESULT_SCHEMA_VERSION = 3
 _DEFAULT_DOCUMENT_PARSE_WORKERS = 4
 _MAX_DOCUMENT_PARSE_WORKERS = 8
+_DOCUMENT_PARSE_TASKS_PER_CHILD = 1
+_DOCUMENT_PUBLICATION_INSERT_BATCH_SIZE = 25_000
 
 
 class EsefDocumentManifestConfig(dg.Config):
@@ -97,6 +102,22 @@ class _ScheduledDocumentParse:
     local_package: Path
 
 
+class _JsonlRowSpool:
+    """Append JSON rows to disk while retaining only row counts in memory."""
+
+    def __init__(self, path: Path) -> None:
+        self.path = path
+        self._handle: TextIO = path.open("w", encoding="utf-8", newline="")
+
+    def append(self, row: Mapping[str, object]) -> None:
+        self._handle.write(_json_text(row))
+        self._handle.write("\n")
+
+    def close(self) -> None:
+        if not self._handle.closed:
+            self._handle.close()
+
+
 def _parse_document_package_worker(task: _DocumentParseTask) -> _DocumentParseResult:
     parse_started = perf_counter()
     parsed = parse_esef_report_package(
@@ -107,13 +128,13 @@ def _parse_document_package_worker(task: _DocumentParseTask) -> _DocumentParseRe
     parse_seconds = perf_counter() - parse_started
 
     serialization_started = perf_counter()
-    serialized_artifact = artifact_json_bytes(parsed)
-    Path(task.artifact_path).write_bytes(serialized_artifact)
+    write_artifact_json(parsed, task.artifact_path)
+    artifact_size_bytes = Path(task.artifact_path).stat().st_size
     return _DocumentParseResult(
         artifact_path=task.artifact_path,
         parse_seconds=parse_seconds,
         serialization_seconds=perf_counter() - serialization_started,
-        artifact_size_bytes=len(serialized_artifact),
+        artifact_size_bytes=artifact_size_bytes,
     )
 
 
@@ -132,6 +153,57 @@ def document_manifest_object_key(partition_key: str) -> str:
 def document_result_object_key(partition_key: str) -> str:
     processed_week_bounds(partition_key)
     return f"{ESEF_DOCUMENT_RESULT_PREFIX}processed_week={partition_key}/result.json"
+
+
+def _write_document_result_file(
+    result_path: Path,
+    *,
+    partition_key: str,
+    source_run_id: str,
+    extracted_at: str,
+    source_document_ids: Sequence[str],
+    document_rows_path: Path,
+    candidate_rows_path: Path,
+    concept_label_rows_path: Path,
+    metadata: Mapping[str, object],
+) -> None:
+    with result_path.open("w", encoding="utf-8", newline="") as result:
+        result.write('{"schema_version":')
+        result.write(str(_DOCUMENT_RESULT_SCHEMA_VERSION))
+        result.write(',"processed_week":')
+        result.write(_json_text(partition_key))
+        result.write(',"source_run_id":')
+        result.write(_json_text(source_run_id))
+        result.write(',"extracted_at":')
+        result.write(_json_text(extracted_at))
+        result.write(',"source_document_ids":')
+        result.write(_json_text(source_document_ids))
+        for property_name, spool_path in (
+            ("document_rows", document_rows_path),
+            ("candidate_rows", candidate_rows_path),
+            ("concept_label_rows", concept_label_rows_path),
+        ):
+            result.write(",")
+            result.write(_json_text(property_name))
+            result.write(":")
+            _write_jsonl_array(result, spool_path)
+        result.write(',"metadata":')
+        result.write(_json_text(metadata))
+        result.write("}")
+
+
+def _write_jsonl_array(result: TextIO, rows_path: Path) -> None:
+    result.write("[")
+    separator = ""
+    with rows_path.open("r", encoding="utf-8") as rows:
+        for serialized_row in rows:
+            serialized_row = serialized_row.rstrip("\n")
+            if serialized_row == "":
+                continue
+            result.write(separator)
+            result.write(serialized_row)
+            separator = ","
+    result.write("]")
 
 
 def load_esef_company_links(
@@ -294,9 +366,6 @@ def run_esef_document_artifacts_partition(
         for value in _list(manifest.get("documents"), name="manifest documents")
     ]
     extracted_at = datetime.now(UTC).isoformat().replace("+00:00", "Z")
-    document_rows: list[dict[str, object]] = []
-    candidate_rows: list[dict[str, object]] = []
-    concept_label_rows: list[dict[str, object]] = []
     downloaded_packages = 0
     reused_packages = 0
     parsed_packages = 0
@@ -310,6 +379,12 @@ def run_esef_document_artifacts_partition(
     parse_seconds = 0.0
     serialization_seconds = 0.0
     artifact_size_bytes = 0
+    document_row_count = 0
+    candidate_row_count = 0
+    concept_label_row_count = 0
+    email_candidate_count = 0
+    phone_candidate_count = 0
+    website_candidate_count = 0
 
     log_info(
         "ESEF processed week %s: %s source documents selected; %s parse workers",
@@ -318,118 +393,139 @@ def run_esef_document_artifacts_partition(
         parse_workers,
     )
 
-    documents_by_digest: dict[str, list[dict[str, object]]] = {}
-    for document in documents:
-        package_url = str(document["package_url"])
-        package_sha256 = str(document["package_sha256"])
-        if package_url != "" and package_sha256 != "":
-            digest = _validated_sha256(package_sha256)
-            documents_by_digest.setdefault(digest, []).append(document)
-            continue
-        document_rows.append(
-            _unavailable_document_row(
-                document,
-                company_id=str(document["company_id"]),
-                fiscal_year=int(document["fiscal_year"]),
-                source_run_id=source_run_id,
-                extracted_at=extracted_at,
-            )
-        )
-        skipped_packages += 1
-        processed_documents += 1
-
-    def append_artifact_rows(
-        artifact_documents: Sequence[Mapping[str, object]],
-        *,
-        artifact: Mapping[str, Any],
-        package_object_key: str,
-        package_size_bytes: int,
-        parsed_artifact_object_key: str,
-        archive_status: str,
-        extraction_status: str,
-    ) -> None:
-        for document in artifact_documents:
-            company_id = str(document["company_id"])
-            document_rows.append(
-                _document_row(
-                    document,
-                    artifact=artifact,
-                    company_id=company_id,
-                    fiscal_year=int(document["fiscal_year"]),
-                    package_object_key=package_object_key,
-                    package_size_bytes=package_size_bytes,
-                    parsed_artifact_object_key=parsed_artifact_object_key,
-                    archive_status=archive_status,
-                    extraction_status=extraction_status,
-                    source_run_id=source_run_id,
-                    extracted_at=extracted_at,
-                )
-            )
-            candidate_rows.extend(
-                _contact_candidate_rows(
-                    document,
-                    artifact=artifact,
-                    company_id=company_id,
-                    fiscal_year=int(document["fiscal_year"]),
-                    source_run_id=source_run_id,
-                    extracted_at=extracted_at,
-                )
-            )
-            concept_label_rows.extend(
-                _concept_label_rows(
-                    document,
-                    artifact=artifact,
-                    company_id=company_id,
-                    fiscal_year=int(document["fiscal_year"]),
-                    source_run_id=source_run_id,
-                    extracted_at=extracted_at,
-                )
-            )
-
-    pending: dict[Future[_DocumentParseResult], _ScheduledDocumentParse] = {}
-
-    def complete_futures(completed: set[Future[_DocumentParseResult]]) -> None:
-        nonlocal artifact_size_bytes
-        nonlocal artifact_upload_seconds
-        nonlocal parse_seconds
-        nonlocal parsed_packages
-        nonlocal processed_documents
-        nonlocal serialization_seconds
-        for future in completed:
-            scheduled = pending.pop(future)
-            result = future.result()
-            serialized_artifact = Path(result.artifact_path).read_bytes()
-            artifact = _validated_artifact_json(
-                serialized_artifact,
-                expected_package_sha256=scheduled.digest,
-            )
-            upload_started = perf_counter()
-            object_store.write_bytes(
-                scheduled.parsed_artifact_object_key,
-                serialized_artifact,
-                bucket=ESEF_DOCUMENT_BUCKET,
-            )
-            artifact_upload_seconds += perf_counter() - upload_started
-            append_artifact_rows(
-                scheduled.documents,
-                artifact=artifact,
-                package_object_key=scheduled.package_object_key,
-                package_size_bytes=scheduled.package_size_bytes,
-                parsed_artifact_object_key=scheduled.parsed_artifact_object_key,
-                archive_status=scheduled.archive_status,
-                extraction_status="parsed",
-            )
-            parse_seconds += result.parse_seconds
-            serialization_seconds += result.serialization_seconds
-            artifact_size_bytes += result.artifact_size_bytes
-            parsed_packages += 1
-            processed_documents += len(scheduled.documents)
-            scheduled.local_package.unlink(missing_ok=True)
-            Path(result.artifact_path).unlink(missing_ok=True)
-
     with tempfile.TemporaryDirectory(prefix="esef_document_extraction_") as temp_name:
         temp_root = Path(temp_name)
-        with ProcessPoolExecutor(max_workers=parse_workers) as executor:
+        document_spool = _JsonlRowSpool(temp_root / "document_rows.jsonl")
+        candidate_spool = _JsonlRowSpool(temp_root / "candidate_rows.jsonl")
+        concept_label_spool = _JsonlRowSpool(temp_root / "concept_label_rows.jsonl")
+
+        documents_by_digest: dict[str, list[dict[str, object]]] = {}
+        for document in documents:
+            package_url = str(document["package_url"])
+            package_sha256 = str(document["package_sha256"])
+            if package_url != "" and package_sha256 != "":
+                digest = _validated_sha256(package_sha256)
+                documents_by_digest.setdefault(digest, []).append(document)
+                continue
+            document_spool.append(
+                _unavailable_document_row(
+                    document,
+                    company_id=str(document["company_id"]),
+                    fiscal_year=int(document["fiscal_year"]),
+                    source_run_id=source_run_id,
+                    extracted_at=extracted_at,
+                )
+            )
+            document_row_count += 1
+            skipped_packages += 1
+            processed_documents += 1
+
+        def append_artifact_rows(
+            artifact_documents: Sequence[Mapping[str, object]],
+            *,
+            artifact: Mapping[str, Any],
+            package_object_key: str,
+            package_size_bytes: int,
+            parsed_artifact_object_key: str,
+            archive_status: str,
+            extraction_status: str,
+        ) -> None:
+            nonlocal candidate_row_count
+            nonlocal concept_label_row_count
+            nonlocal document_row_count
+            nonlocal email_candidate_count
+            nonlocal phone_candidate_count
+            nonlocal website_candidate_count
+
+            for document in artifact_documents:
+                company_id = str(document["company_id"])
+                document_spool.append(
+                    _document_row(
+                        document,
+                        artifact=artifact,
+                        company_id=company_id,
+                        fiscal_year=int(document["fiscal_year"]),
+                        package_object_key=package_object_key,
+                        package_size_bytes=package_size_bytes,
+                        parsed_artifact_object_key=parsed_artifact_object_key,
+                        archive_status=archive_status,
+                        extraction_status=extraction_status,
+                        source_run_id=source_run_id,
+                        extracted_at=extracted_at,
+                    )
+                )
+                document_row_count += 1
+                for candidate_row in _contact_candidate_rows(
+                    document,
+                    artifact=artifact,
+                    company_id=company_id,
+                    fiscal_year=int(document["fiscal_year"]),
+                    source_run_id=source_run_id,
+                    extracted_at=extracted_at,
+                ):
+                    candidate_spool.append(candidate_row)
+                    candidate_row_count += 1
+                    candidate_kind = candidate_row["candidate_kind"]
+                    email_candidate_count += candidate_kind == "email"
+                    phone_candidate_count += candidate_kind == "phone"
+                    website_candidate_count += candidate_kind == "website"
+                for concept_label_row in _concept_label_rows(
+                    document,
+                    artifact=artifact,
+                    company_id=company_id,
+                    fiscal_year=int(document["fiscal_year"]),
+                    source_run_id=source_run_id,
+                    extracted_at=extracted_at,
+                ):
+                    concept_label_spool.append(concept_label_row)
+                    concept_label_row_count += 1
+
+        pending: dict[Future[_DocumentParseResult], _ScheduledDocumentParse] = {}
+
+        def complete_futures(completed: set[Future[_DocumentParseResult]]) -> None:
+            nonlocal artifact_size_bytes
+            nonlocal artifact_upload_seconds
+            nonlocal parse_seconds
+            nonlocal parsed_packages
+            nonlocal processed_documents
+            nonlocal serialization_seconds
+            for future in completed:
+                scheduled = pending.pop(future)
+                result = future.result()
+                artifact_path = Path(result.artifact_path)
+                artifact = _validated_artifact_file(
+                    artifact_path,
+                    expected_package_sha256=scheduled.digest,
+                )
+                upload_started = perf_counter()
+                object_store.upload_file(
+                    scheduled.parsed_artifact_object_key,
+                    artifact_path,
+                    bucket=ESEF_DOCUMENT_BUCKET,
+                )
+                artifact_upload_seconds += perf_counter() - upload_started
+                append_artifact_rows(
+                    scheduled.documents,
+                    artifact=artifact,
+                    package_object_key=scheduled.package_object_key,
+                    package_size_bytes=scheduled.package_size_bytes,
+                    parsed_artifact_object_key=scheduled.parsed_artifact_object_key,
+                    archive_status=scheduled.archive_status,
+                    extraction_status="parsed",
+                )
+                del artifact
+                parse_seconds += result.parse_seconds
+                serialization_seconds += result.serialization_seconds
+                artifact_size_bytes += result.artifact_size_bytes
+                parsed_packages += 1
+                processed_documents += len(scheduled.documents)
+                scheduled.local_package.unlink(missing_ok=True)
+                artifact_path.unlink(missing_ok=True)
+
+        with ProcessPoolExecutor(
+            max_workers=parse_workers,
+            max_tasks_per_child=_DOCUMENT_PARSE_TASKS_PER_CHILD,
+        ) as executor:
             for digest, grouped_documents in documents_by_digest.items():
                 representative = grouped_documents[0]
                 package_key = report_package_object_key(digest)
@@ -470,13 +566,15 @@ def run_esef_document_artifacts_partition(
 
                 if not refresh_existing and artifact_exists:
                     artifact_read_started = perf_counter()
-                    serialized_artifact = object_store.read_bytes(
+                    local_artifact = temp_root / f"{digest}.artifact.json"
+                    object_store.download_file(
                         parsed_key,
+                        local_artifact,
                         bucket=ESEF_DOCUMENT_BUCKET,
                     )
                     artifact_read_seconds += perf_counter() - artifact_read_started
-                    artifact = _validated_artifact_json(
-                        serialized_artifact,
+                    artifact = _validated_artifact_file(
+                        local_artifact,
                         expected_package_sha256=digest,
                     )
                     append_artifact_rows(
@@ -488,10 +586,12 @@ def run_esef_document_artifacts_partition(
                         archive_status=archive_status,
                         extraction_status="reused",
                     )
-                    artifact_size_bytes += len(serialized_artifact)
+                    del artifact
+                    artifact_size_bytes += local_artifact.stat().st_size
                     reused_artifacts += 1
                     processed_documents += len(grouped_documents)
                     local_package.unlink(missing_ok=True)
+                    local_artifact.unlink(missing_ok=True)
                 else:
                     if not local_package.exists():
                         download_started = perf_counter()
@@ -558,74 +658,65 @@ def run_esef_document_artifacts_partition(
                     len(documents),
                 )
 
-    elapsed = perf_counter() - started
-    metadata: dict[str, object] = {
-        "partition_key": partition_key,
-        "fiscal_years": sorted(
-            {int(document["fiscal_year"]) for document in documents}
-        ),
-        "selected_document_count": len(documents),
-        "unique_package_count": len(documents_by_digest),
-        "source_document_row_count": len(document_rows),
-        "contact_candidate_row_count": len(candidate_rows),
-        "concept_label_row_count": len(concept_label_rows),
-        "downloaded_package_count": downloaded_packages,
-        "reused_package_count": reused_packages,
-        "parsed_package_count": parsed_packages,
-        "reused_artifact_count": reused_artifacts,
-        "skipped_package_count": skipped_packages,
-        "parse_worker_count": parse_workers,
-        "wall_seconds": elapsed,
-        "package_io_seconds": package_io_seconds,
-        "artifact_read_seconds": artifact_read_seconds,
-        "artifact_upload_seconds": artifact_upload_seconds,
-        "parse_worker_seconds": parse_seconds,
-        "serialization_worker_seconds": serialization_seconds,
-        "artifact_size_bytes": artifact_size_bytes,
-        "email_candidate_count": sum(
-            row["candidate_kind"] == "email" for row in candidate_rows
-        ),
-        "phone_candidate_count": sum(
-            row["candidate_kind"] == "phone" for row in candidate_rows
-        ),
-        "website_candidate_count": sum(
-            row["candidate_kind"] == "website" for row in candidate_rows
-        ),
-        "document_table": tables.QUALIFIED_ESEF_SOURCE_DOCUMENTS_TABLE,
-        "contact_table": tables.QUALIFIED_ESEF_DOCUMENT_CONTACT_CANDIDATES_TABLE,
-        "concept_label_table": tables.QUALIFIED_ESEF_DOCUMENT_CONCEPT_LABELS_TABLE,
-    }
-    result = {
-        "schema_version": _DOCUMENT_RESULT_SCHEMA_VERSION,
-        "processed_week": partition_key,
-        "source_run_id": source_run_id,
-        "extracted_at": extracted_at,
-        "source_document_ids": [
-            str(document["source_document_id"]) for document in documents
-        ],
-        "document_rows": sorted(
-            document_rows,
-            key=lambda row: str(row["source_document_id"]),
-        ),
-        "candidate_rows": sorted(
-            candidate_rows,
-            key=lambda row: (str(row["source_document_id"]), str(row["candidate_id"])),
-        ),
-        "concept_label_rows": sorted(
-            concept_label_rows,
-            key=lambda row: (str(row["source_document_id"]), str(row["label_id"])),
-        ),
-        "metadata": metadata,
-    }
-    result_bytes = _json_text(result).encode("utf-8")
-    result_key = document_result_object_key(partition_key)
-    object_store.write_bytes(
-        result_key,
-        result_bytes,
-        bucket=ESEF_DOCUMENT_BUCKET,
-    )
-    metadata["result_object_key"] = result_key
-    metadata["result_size_bytes"] = len(result_bytes)
+        document_spool.close()
+        candidate_spool.close()
+        concept_label_spool.close()
+
+        elapsed = perf_counter() - started
+        metadata: dict[str, object] = {
+            "partition_key": partition_key,
+            "fiscal_years": sorted(
+                {int(document["fiscal_year"]) for document in documents}
+            ),
+            "selected_document_count": len(documents),
+            "unique_package_count": len(documents_by_digest),
+            "source_document_row_count": document_row_count,
+            "contact_candidate_row_count": candidate_row_count,
+            "concept_label_row_count": concept_label_row_count,
+            "downloaded_package_count": downloaded_packages,
+            "reused_package_count": reused_packages,
+            "parsed_package_count": parsed_packages,
+            "reused_artifact_count": reused_artifacts,
+            "skipped_package_count": skipped_packages,
+            "parse_worker_count": parse_workers,
+            "parse_tasks_per_worker": _DOCUMENT_PARSE_TASKS_PER_CHILD,
+            "wall_seconds": elapsed,
+            "package_io_seconds": package_io_seconds,
+            "artifact_read_seconds": artifact_read_seconds,
+            "artifact_upload_seconds": artifact_upload_seconds,
+            "parse_worker_seconds": parse_seconds,
+            "serialization_worker_seconds": serialization_seconds,
+            "artifact_size_bytes": artifact_size_bytes,
+            "email_candidate_count": email_candidate_count,
+            "phone_candidate_count": phone_candidate_count,
+            "website_candidate_count": website_candidate_count,
+            "document_table": tables.QUALIFIED_ESEF_SOURCE_DOCUMENTS_TABLE,
+            "contact_table": tables.QUALIFIED_ESEF_DOCUMENT_CONTACT_CANDIDATES_TABLE,
+            "concept_label_table": tables.QUALIFIED_ESEF_DOCUMENT_CONCEPT_LABELS_TABLE,
+        }
+        result_path = temp_root / "result.json"
+        _write_document_result_file(
+            result_path,
+            partition_key=partition_key,
+            source_run_id=source_run_id,
+            extracted_at=extracted_at,
+            source_document_ids=[
+                str(document["source_document_id"]) for document in documents
+            ],
+            document_rows_path=document_spool.path,
+            candidate_rows_path=candidate_spool.path,
+            concept_label_rows_path=concept_label_spool.path,
+            metadata=metadata,
+        )
+        result_key = document_result_object_key(partition_key)
+        object_store.upload_file(
+            result_key,
+            result_path,
+            bucket=ESEF_DOCUMENT_BUCKET,
+        )
+        metadata["result_object_key"] = result_key
+        metadata["result_size_bytes"] = result_path.stat().st_size
+
     log_info(
         "ESEF processed week %s: artifact stage completed in %.2fs "
         "(parsed=%s reused=%s workers=%s)",
@@ -644,44 +735,94 @@ def run_esef_document_publication_partition(
     object_store: Any,
     partition_key: str,
 ) -> dict[str, object]:
-    """Publish a compact extraction result with one short DuckDB write lock."""
+    """Publish a file-backed extraction result in bounded DuckDB transactions."""
     started = perf_counter()
-    result = load_esef_document_result(
+    with local_esef_document_result(
         object_store,
         partition_key=partition_key,
-    )
-    source_document_ids = [
-        str(value)
-        for value in _list(
-            result.get("source_document_ids"),
-            name="result source_document_ids",
+    ) as result_path:
+        source_document_ids = [
+            str(value)
+            for value in _iter_document_result_items(
+                result_path,
+                "source_document_ids.item",
+            )
+        ]
+        _replace_document_partition_rows(
+            esef_filings_duckdb,
+            source_document_ids=source_document_ids,
+            document_rows=iter_esef_document_result_rows(
+                result_path,
+                property_name="document_rows",
+            ),
+            candidate_rows=iter_esef_document_result_rows(
+                result_path,
+                property_name="candidate_rows",
+            ),
+            concept_label_rows=iter_esef_document_result_rows(
+                result_path,
+                property_name="concept_label_rows",
+            ),
         )
-    ]
-    document_rows = [
-        _mapping(value, name="result document row")
-        for value in _list(result.get("document_rows"), name="result document rows")
-    ]
-    candidate_rows = [
-        _mapping(value, name="result candidate row")
-        for value in _list(result.get("candidate_rows"), name="result candidate rows")
-    ]
-    concept_label_rows = [
-        _mapping(value, name="result concept label row")
-        for value in _list(
-            result.get("concept_label_rows"),
-            name="result concept label rows",
+        metadata = dict(
+            _mapping(
+                _document_result_value(result_path, "metadata"),
+                name="result metadata",
+            )
         )
-    ]
-    _replace_document_partition_rows(
-        esef_filings_duckdb,
-        source_document_ids=source_document_ids,
-        document_rows=document_rows,
-        candidate_rows=candidate_rows,
-        concept_label_rows=concept_label_rows,
-    )
-    metadata = dict(_mapping(result.get("metadata"), name="result metadata"))
     metadata["duckdb_publication_seconds"] = perf_counter() - started
     return metadata
+
+
+@contextmanager
+def local_esef_document_result(
+    object_store: Any,
+    *,
+    partition_key: str,
+) -> Iterator[Path]:
+    """Download and validate a result while keeping its rows file-backed."""
+    with tempfile.TemporaryDirectory(prefix="esef_document_result_") as temp_name:
+        result_path = Path(temp_name) / "result.json"
+        object_store.download_file(
+            document_result_object_key(partition_key),
+            result_path,
+            bucket=ESEF_DOCUMENT_BUCKET,
+        )
+        schema_version = _document_result_value(result_path, "schema_version")
+        if schema_version != _DOCUMENT_RESULT_SCHEMA_VERSION:
+            raise ValueError(
+                "ESEF document result has an unsupported schema version: "
+                f"expected={[_DOCUMENT_RESULT_SCHEMA_VERSION]} "
+                f"actual={schema_version!r}"
+            )
+        processed_week = _document_result_value(result_path, "processed_week")
+        if processed_week != partition_key:
+            raise ValueError(
+                "ESEF document result processed week does not match its key"
+            )
+        yield result_path
+
+
+def iter_esef_document_result_rows(
+    result_path: Path,
+    *,
+    property_name: str,
+) -> Iterator[Mapping[str, Any]]:
+    """Yield one normalized result row at a time from a local result file."""
+    for value in _iter_document_result_items(result_path, f"{property_name}.item"):
+        yield _mapping(value, name=f"result {property_name} row")
+
+
+def _iter_document_result_items(result_path: Path, prefix: str) -> Iterator[Any]:
+    with result_path.open("rb") as result:
+        yield from ijson.items(result, prefix, use_float=True)
+
+
+def _document_result_value(result_path: Path, prefix: str) -> Any:
+    value = next(_iter_document_result_items(result_path, prefix), None)
+    if value is None:
+        raise ValueError(f"ESEF document result is missing {prefix}")
+    return value
 
 
 def load_esef_document_result(
@@ -924,7 +1065,7 @@ def _contact_candidate_rows(
     fiscal_year: int,
     source_run_id: str,
     extracted_at: str,
-) -> list[dict[str, object]]:
+) -> Iterator[dict[str, object]]:
     parser = _mapping(artifact.get("parser"), name="parser")
     extractor_versions = _mapping(
         parser.get("candidate_extractor_versions", {}),
@@ -942,59 +1083,47 @@ def _contact_candidate_rows(
         "source_run_id": source_run_id,
         "extracted_at": extracted_at,
     }
-    rows: list[dict[str, object]] = []
     for value in _list(artifact.get("contact_candidates"), name="contact_candidates"):
         candidate = _mapping(value, name="contact candidate")
         kind = str(candidate["kind"])
         normalized_value = str(candidate["normalized_value"])
-        rows.append(
-            {
-                "candidate_id": _candidate_id(
-                    str(index_row["source_document_id"]), kind, normalized_value
-                ),
-                **common,
-                "candidate_kind": kind,
-                "normalized_value": normalized_value,
-                "country_code": str(candidate.get("country_code", "")),
-                "registrable_domain": "",
-                "hosts_json": "[]",
-                "normalized_urls_json": "[]",
-                "suggested_roles_json": _json_text(
-                    candidate.get("suggested_roles", [])
-                ),
-                "evidence_json": _json_text(candidate.get("evidence", [])),
-                "evidence_count": len(
-                    _list(candidate.get("evidence", []), name="evidence")
-                ),
-            }
-        )
+        yield {
+            "candidate_id": _candidate_id(
+                str(index_row["source_document_id"]), kind, normalized_value
+            ),
+            **common,
+            "candidate_kind": kind,
+            "normalized_value": normalized_value,
+            "country_code": str(candidate.get("country_code", "")),
+            "registrable_domain": "",
+            "hosts_json": "[]",
+            "normalized_urls_json": "[]",
+            "suggested_roles_json": _json_text(candidate.get("suggested_roles", [])),
+            "evidence_json": _json_text(candidate.get("evidence", [])),
+            "evidence_count": len(
+                _list(candidate.get("evidence", []), name="evidence")
+            ),
+        }
     for value in _list(artifact.get("website_candidates"), name="website_candidates"):
         candidate = _mapping(value, name="website candidate")
         domain = str(candidate["registrable_domain"])
-        rows.append(
-            {
-                "candidate_id": _candidate_id(
-                    str(index_row["source_document_id"]), "website", domain
-                ),
-                **common,
-                "candidate_kind": "website",
-                "normalized_value": domain,
-                "country_code": "",
-                "registrable_domain": domain,
-                "hosts_json": _json_text(candidate.get("hosts", [])),
-                "normalized_urls_json": _json_text(
-                    candidate.get("normalized_urls", [])
-                ),
-                "suggested_roles_json": _json_text(
-                    candidate.get("suggested_roles", [])
-                ),
-                "evidence_json": _json_text(candidate.get("evidence", [])),
-                "evidence_count": len(
-                    _list(candidate.get("evidence", []), name="evidence")
-                ),
-            }
-        )
-    return rows
+        yield {
+            "candidate_id": _candidate_id(
+                str(index_row["source_document_id"]), "website", domain
+            ),
+            **common,
+            "candidate_kind": "website",
+            "normalized_value": domain,
+            "country_code": "",
+            "registrable_domain": domain,
+            "hosts_json": _json_text(candidate.get("hosts", [])),
+            "normalized_urls_json": _json_text(candidate.get("normalized_urls", [])),
+            "suggested_roles_json": _json_text(candidate.get("suggested_roles", [])),
+            "evidence_json": _json_text(candidate.get("evidence", [])),
+            "evidence_count": len(
+                _list(candidate.get("evidence", []), name="evidence")
+            ),
+        }
 
 
 def _concept_label_rows(
@@ -1005,7 +1134,7 @@ def _concept_label_rows(
     fiscal_year: int,
     source_run_id: str,
     extracted_at: str,
-) -> list[dict[str, object]]:
+) -> Iterator[dict[str, object]]:
     document = _mapping(artifact.get("document"), name="document")
     report_languages = {
         str(language).strip().lower()
@@ -1024,7 +1153,6 @@ def _concept_label_rows(
         "source_run_id": source_run_id,
         "extracted_at": extracted_at,
     }
-    rows: list[dict[str, object]] = []
     for concept_qname, concept_value in sorted(concepts.items()):
         if str(concept_qname) == "xbrl:note":
             continue
@@ -1042,29 +1170,26 @@ def _concept_label_rows(
                 label = str(label_value).strip()
                 if language == "" or label == "":
                     continue
-                rows.append(
-                    {
-                        "label_id": _concept_label_id(
-                            str(index_row["source_document_id"]),
-                            str(concept_qname),
-                            label_role,
-                            language,
-                        ),
-                        **common,
-                        "concept_qname": str(concept_qname),
-                        "concept_namespace_uri": str(concept.get("namespace", "")),
-                        "concept_local_name": str(concept.get("local_name", "")),
-                        "is_extension": bool(concept.get("is_extension", False)),
-                        "label_role": label_role,
-                        "language": language,
-                        "label": label,
-                        "is_report_language": _is_report_language(
-                            language,
-                            report_languages,
-                        ),
-                    }
-                )
-    return rows
+                yield {
+                    "label_id": _concept_label_id(
+                        str(index_row["source_document_id"]),
+                        str(concept_qname),
+                        label_role,
+                        language,
+                    ),
+                    **common,
+                    "concept_qname": str(concept_qname),
+                    "concept_namespace_uri": str(concept.get("namespace", "")),
+                    "concept_local_name": str(concept.get("local_name", "")),
+                    "is_extension": bool(concept.get("is_extension", False)),
+                    "label_role": label_role,
+                    "language": language,
+                    "label": label,
+                    "is_report_language": _is_report_language(
+                        language,
+                        report_languages,
+                    ),
+                }
 
 
 def _is_report_language(language: str, report_languages: set[str]) -> bool:
@@ -1081,10 +1206,13 @@ def _replace_document_partition_rows(
     esef_filings_duckdb: DuckDBResource,
     *,
     source_document_ids: Sequence[str],
-    document_rows: Sequence[Mapping[str, object]],
-    candidate_rows: Sequence[Mapping[str, object]],
-    concept_label_rows: Sequence[Mapping[str, object]],
+    document_rows: Iterable[Mapping[str, object]],
+    candidate_rows: Iterable[Mapping[str, object]],
+    concept_label_rows: Iterable[Mapping[str, object]],
+    insert_batch_size: int = _DOCUMENT_PUBLICATION_INSERT_BATCH_SIZE,
 ) -> None:
+    if insert_batch_size < 1:
+        raise ValueError("ESEF document insert_batch_size must be positive")
     with safe_duckdb_connection(esef_filings_duckdb) as connection:
         _ensure_document_tables(connection)
         if not source_document_ids:
@@ -1116,28 +1244,31 @@ def _replace_document_partition_rows(
                 f"{tables.ESEF_SOURCE_DOCUMENTS_TABLE} where source_document_id "
                 "in (select source_document_id from selected_esef_documents)"
             )
-            _insert_rows(
-                connection,
-                table=tables.ESEF_SOURCE_DOCUMENTS_TABLE,
-                columns=tables.ESEF_SOURCE_DOCUMENTS_EXPORT_COLUMNS,
-                rows=document_rows,
-            )
-            _insert_rows(
-                connection,
-                table=tables.ESEF_DOCUMENT_CONCEPT_LABELS_TABLE,
-                columns=tables.ESEF_DOCUMENT_CONCEPT_LABELS_EXPORT_COLUMNS,
-                rows=concept_label_rows,
-            )
-            _insert_rows(
-                connection,
-                table=tables.ESEF_DOCUMENT_CONTACT_CANDIDATES_TABLE,
-                columns=tables.ESEF_DOCUMENT_CONTACT_CANDIDATES_EXPORT_COLUMNS,
-                rows=candidate_rows,
-            )
             connection.execute("commit")
         except Exception:
             connection.execute("rollback")
             raise
+        _insert_rows_in_committed_batches(
+            connection,
+            table=tables.ESEF_SOURCE_DOCUMENTS_TABLE,
+            columns=tables.ESEF_SOURCE_DOCUMENTS_EXPORT_COLUMNS,
+            rows=document_rows,
+            batch_size=insert_batch_size,
+        )
+        _insert_rows_in_committed_batches(
+            connection,
+            table=tables.ESEF_DOCUMENT_CONCEPT_LABELS_TABLE,
+            columns=tables.ESEF_DOCUMENT_CONCEPT_LABELS_EXPORT_COLUMNS,
+            rows=concept_label_rows,
+            batch_size=insert_batch_size,
+        )
+        _insert_rows_in_committed_batches(
+            connection,
+            table=tables.ESEF_DOCUMENT_CONTACT_CANDIDATES_TABLE,
+            columns=tables.ESEF_DOCUMENT_CONTACT_CANDIDATES_EXPORT_COLUMNS,
+            rows=candidate_rows,
+            batch_size=insert_batch_size,
+        )
 
 
 def ensure_document_company_information_table(connection: Any) -> None:
@@ -1215,20 +1346,29 @@ def _ensure_document_tables(connection: Any) -> None:
     ensure_document_company_information_table(connection)
 
 
-def _insert_rows(
+def _insert_rows_in_committed_batches(
     connection: Any,
     *,
     table: str,
     columns: Sequence[str],
-    rows: Sequence[Mapping[str, object]],
+    rows: Iterable[Mapping[str, object]],
+    batch_size: int,
 ) -> None:
-    if not rows:
-        return
     placeholders = ", ".join("?" for _ in columns)
-    connection.executemany(
-        f"insert into {tables.DLT_DATASET_NAME}.{table} values ({placeholders})",
-        [tuple(row[column] for column in columns) for row in rows],
+    statement = (
+        f"insert into {tables.DLT_DATASET_NAME}.{table} values ({placeholders})"
     )
+    for row_batch in batched(rows, batch_size):
+        parameters = [
+            tuple(row[column] for column in columns) for row in row_batch
+        ]
+        connection.execute("begin transaction")
+        try:
+            connection.executemany(statement, parameters)
+            connection.execute("commit")
+        except Exception:
+            connection.execute("rollback")
+            raise
 
 
 def _duckdb_table_exists(connection: Any, *, schema: str, table: str) -> bool:
@@ -1241,12 +1381,13 @@ def _duckdb_table_exists(connection: Any, *, schema: str, table: str) -> bool:
     )
 
 
-def _validated_artifact_json(
-    serialized_artifact: bytes,
+def _validated_artifact_file(
+    artifact_path: Path,
     *,
     expected_package_sha256: str,
 ) -> Mapping[str, Any]:
-    value = json.loads(serialized_artifact)
+    with artifact_path.open("r", encoding="utf-8") as handle:
+        value = json.load(handle)
     artifact = _mapping(value, name="artifact")
     if artifact.get("schema_version") != ARTIFACT_SCHEMA_VERSION:
         raise ValueError("Stored ESEF artifact has an unsupported schema version")

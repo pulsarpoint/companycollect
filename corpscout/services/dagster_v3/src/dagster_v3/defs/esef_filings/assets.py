@@ -1426,19 +1426,12 @@ def run_esef_artifact_facts_partition(
     """
     from dagster_v3.defs.esef_filings.segment_assets import (
         ESEF_DOCUMENT_BUCKET,
-        load_esef_document_result,
+        iter_esef_document_result_rows,
+        local_esef_document_result,
     )
 
     started = perf_counter()
     processed_from, processed_until = _processed_window_sql_values(partition_key)
-    result = load_esef_document_result(
-        object_store,
-        partition_key=partition_key,
-    )
-    raw_document_rows = result.get("document_rows")
-    if not isinstance(raw_document_rows, list):
-        raise ValueError("ESEF document result document_rows must be an array")
-
     checkpointed_fact_counts = _load_fact_checkpoints(
         esef_filings_duckdb,
         parser_contract=ARELLE_ARTIFACT_FACTS_PARSER_CONTRACT,
@@ -1451,42 +1444,49 @@ def run_esef_artifact_facts_partition(
     skipped_missing_artifact_key = 0
     seen_filing_ids: set[str] = set()
 
-    for raw_document in raw_document_rows:
-        if not isinstance(raw_document, Mapping):
-            raise ValueError("ESEF document result contains a non-object row")
-        fxo_id = str(raw_document.get("source_document_id", ""))
-        if fxo_id == "":
-            raise ValueError("ESEF document result row has no source_document_id")
-        if fxo_id in seen_filing_ids:
-            raise ValueError(f"ESEF document result repeats source_document_id={fxo_id}")
-        seen_filing_ids.add(fxo_id)
-        if fxo_id in checkpointed_fact_counts:
-            checkpointed_filing_count += 1
-            checkpointed_fact_row_count += checkpointed_fact_counts[fxo_id]
-            continue
+    with local_esef_document_result(
+        object_store,
+        partition_key=partition_key,
+    ) as result_path:
+        for raw_document in iter_esef_document_result_rows(
+            result_path,
+            property_name="document_rows",
+        ):
+            fxo_id = str(raw_document.get("source_document_id", ""))
+            if fxo_id == "":
+                raise ValueError("ESEF document result row has no source_document_id")
+            if fxo_id in seen_filing_ids:
+                raise ValueError(
+                    f"ESEF document result repeats source_document_id={fxo_id}"
+                )
+            seen_filing_ids.add(fxo_id)
+            if fxo_id in checkpointed_fact_counts:
+                checkpointed_filing_count += 1
+                checkpointed_fact_row_count += checkpointed_fact_counts[fxo_id]
+                continue
 
-        period_end = str(raw_document.get("period_end", ""))
-        period_end_year = _period_end_year(period_end)
-        if period_end_year is None:
-            filing_ids_to_replace.append(fxo_id)
-            skipped_invalid_period_end += 1
-            continue
-        artifact_object_key = str(
-            raw_document.get("parsed_artifact_object_key", "")
-        )
-        if artifact_object_key == "":
-            filing_ids_to_replace.append(fxo_id)
-            skipped_missing_artifact_key += 1
-            continue
-        documents.append(
-            _ArtifactFactDocument(
-                artifact_object_key=artifact_object_key,
-                lei=str(raw_document.get("lei", "")),
-                fxo_id=fxo_id,
-                period_end=period_end,
-                period_end_year=period_end_year,
+            period_end = str(raw_document.get("period_end", ""))
+            period_end_year = _period_end_year(period_end)
+            if period_end_year is None:
+                filing_ids_to_replace.append(fxo_id)
+                skipped_invalid_period_end += 1
+                continue
+            artifact_object_key = str(
+                raw_document.get("parsed_artifact_object_key", "")
             )
-        )
+            if artifact_object_key == "":
+                filing_ids_to_replace.append(fxo_id)
+                skipped_missing_artifact_key += 1
+                continue
+            documents.append(
+                _ArtifactFactDocument(
+                    artifact_object_key=artifact_object_key,
+                    lei=str(raw_document.get("lei", "")),
+                    fxo_id=fxo_id,
+                    period_end=period_end,
+                    period_end_year=period_end_year,
+                )
+            )
 
     documents_by_artifact: dict[str, list[_ArtifactFactDocument]] = {}
     for document in documents:
@@ -1506,7 +1506,7 @@ def run_esef_artifact_facts_partition(
         "ESEF artifact facts processed-week partition %s: %d documents in scope, "
         "%d unique artifacts",
         partition_key,
-        len(raw_document_rows),
+        len(seen_filing_ids),
         len(documents_by_artifact),
     )
 
@@ -1654,12 +1654,12 @@ def run_esef_artifact_facts_partition(
         + skipped_missing_artifact_key
         + skipped_missing_artifact_object
     )
-    if raw_document_rows:
+    if seen_filing_ids:
         _log_facts_progress(
             log_info,
             partition_key=partition_key,
-            processed=len(raw_document_rows),
-            total=len(raw_document_rows),
+            processed=len(seen_filing_ids),
+            total=len(seen_filing_ids),
             s3_read=unique_artifact_s3_read_count,
             checkpointed=checkpointed_filing_count,
             skipped=skipped_count,
@@ -1667,7 +1667,7 @@ def run_esef_artifact_facts_partition(
         )
 
     return {
-        "filings_in_scope": len(raw_document_rows),
+        "filings_in_scope": len(seen_filing_ids),
         "unique_artifact_count": len(documents_by_artifact),
         "unique_artifact_s3_read_count": unique_artifact_s3_read_count,
         "s3_read_count": unique_artifact_s3_read_count,

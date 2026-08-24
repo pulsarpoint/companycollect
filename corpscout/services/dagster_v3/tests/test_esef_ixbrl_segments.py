@@ -1,15 +1,19 @@
 import json
-import zipfile
+import struct
+from contextlib import nullcontext
 from dataclasses import replace
 from datetime import timedelta
 from hashlib import sha256
 from pathlib import Path
 
 import pytest
+import zipfile_deflate64 as zipfile
 from dagster import AssetKey
 
 from dagster_v3.defs.common.duckdb_resources import duckdb_resource
 from dagster_v3.defs.esef_filings import assets
+from dagster_v3.defs.esef_filings import segment_assets
+from dagster_v3.defs.esef_filings import segment_parser
 from dagster_v3.defs.esef_filings import tables
 from dagster_v3.defs.esef_filings.segment_assets import (
     ESEF_ARELLE_POOL,
@@ -41,6 +45,7 @@ from dagster_v3.defs.esef_filings.segment_parser import (
     artifact_object_key,
     compare_artifact_to_oim,
     parse_esef_report_package,
+    write_artifact_json,
 )
 from dagster_v3.defs.esef_filings.visible_sections import extract_visible_sections
 from dagster_v3.defs.esef_filings.website_candidates import (
@@ -464,6 +469,19 @@ def test_artifact_json_is_deterministic(tmp_path: Path) -> None:
     assert artifact_json_bytes(first) == artifact_json_bytes(second)
 
 
+def test_streamed_artifact_json_matches_canonical_bytes(tmp_path: Path) -> None:
+    artifact = parse_esef_report_package(
+        _write_sample_report_package(tmp_path),
+        source=EsefArtifactSource(fxo_id="SAMPLE-2024"),
+        validate_esef=False,
+    )
+    artifact_path = tmp_path / "artifact.json"
+
+    write_artifact_json(artifact, artifact_path)
+
+    assert artifact_path.read_bytes() == artifact_json_bytes(artifact)
+
+
 def test_esef_validation_loads_the_report_package_entrypoint(tmp_path: Path) -> None:
     artifact = parse_esef_report_package(
         _write_sample_report_package(tmp_path),
@@ -474,6 +492,117 @@ def test_esef_validation_loads_the_report_package_entrypoint(tmp_path: Path) -> 
     assert artifact.quality.fact_count == 4
     assert artifact.parser.validation_profile == "ESEF"
     assert artifact.document.report_members == ["sample/reports/sample.xhtml"]
+
+
+@pytest.mark.parametrize("validate_esef", [False, True])
+def test_parse_report_package_normalizes_backslash_archive_paths_for_arelle(
+    tmp_path: Path,
+    validate_esef: bool,
+) -> None:
+    package_path = _write_sample_report_package(
+        tmp_path,
+        backslash_metadata_and_taxonomy_paths=True,
+    )
+    source_bytes = package_path.read_bytes()
+    source_sha256 = sha256(source_bytes).hexdigest()
+
+    artifact = parse_esef_report_package(
+        package_path,
+        source=EsefArtifactSource(
+            fxo_id="BACKSLASH-PACKAGE",
+            expected_package_sha256=source_sha256,
+        ),
+        validate_esef=validate_esef,
+    )
+
+    repair_messages = [
+        message
+        for message in artifact.quality.validation_messages
+        if message.code == "corpscout:archivePathSeparatorsNormalized"
+    ]
+    assert artifact.quality.fact_count == 4
+    assert artifact.package_sha256 == source_sha256
+    assert package_path.read_bytes() == source_bytes
+    assert len(repair_messages) == 1
+    assert repair_messages[0].level == "error"
+    assert "5 ZIP member path(s)" in repair_messages[0].message
+
+
+@pytest.mark.parametrize("validate_esef", [False, True])
+def test_parse_report_package_supports_deflate64_ancillary_members(
+    tmp_path: Path,
+    validate_esef: bool,
+) -> None:
+    package_path = _write_sample_report_package(
+        tmp_path,
+        deflate64_ancillary_pdf=True,
+    )
+    source_bytes = package_path.read_bytes()
+
+    artifact = parse_esef_report_package(
+        package_path,
+        source=EsefArtifactSource(fxo_id="DEFLATE64-ANCILLARY-PDF"),
+        validate_esef=validate_esef,
+    )
+
+    normalization_messages = [
+        message
+        for message in artifact.quality.validation_messages
+        if message.code == "corpscout:archiveTopLevelMembersIgnored"
+    ]
+    assert artifact.quality.fact_count == 4
+    assert package_path.read_bytes() == source_bytes
+    assert len(normalization_messages) == 1
+    assert "1 ZIP member(s)" in normalization_messages[0].message
+
+
+def test_parse_report_package_surfaces_arelle_load_diagnostics(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    package_path = _write_sample_report_package(tmp_path)
+
+    class NoModelSession:
+        def __enter__(self) -> NoModelSession:
+            return self
+
+        def __exit__(self, *_args: object) -> None:
+            return None
+
+        def run(self, *_args: object, **_kwargs: object) -> None:
+            return None
+
+        def get_models(self) -> list[object]:
+            return []
+
+        def get_logs(self, _format: str) -> str:
+            return json.dumps(
+                {
+                    "log": [
+                        {
+                            "code": "tpe:invalidArchiveFormat",
+                            "level": "error",
+                            "message": {
+                                "text": f"Invalid source package {package_path}"
+                            },
+                        }
+                    ]
+                }
+            )
+
+    monkeypatch.setattr(segment_parser, "Session", NoModelSession)
+
+    with pytest.raises(ValueError) as error:
+        parse_esef_report_package(
+            package_path,
+            source=EsefArtifactSource(fxo_id="INVALID-PACKAGE"),
+            validate_esef=True,
+        )
+
+    message = str(error.value)
+    assert "Arelle diagnostics: tpe:invalidArchiveFormat" in message
+    assert "<source-package>" in message
+    assert str(package_path) not in message
 
 
 def test_parse_report_package_accepts_inline_xbrl_outside_reports_directory(
@@ -513,6 +642,24 @@ def test_parse_report_package_rejects_unsafe_zip_member(tmp_path: Path) -> None:
         parse_esef_report_package(
             package_path,
             source=EsefArtifactSource(fxo_id="UNSAFE"),
+            validate_esef=False,
+        )
+
+
+def test_parse_report_package_rejects_duplicate_normalized_paths(
+    tmp_path: Path,
+) -> None:
+    package_path = tmp_path / "duplicate-normalized-paths.zip"
+    with zipfile.ZipFile(package_path, "w") as package:
+        package.writestr("reports\\report.xhtml", _REPORT_XHTML)
+        package.writestr("reports/report.xhtml", _REPORT_XHTML)
+
+    with pytest.raises(
+        ValueError, match="duplicate paths after separator normalization"
+    ):
+        parse_esef_report_package(
+            package_path,
+            source=EsefArtifactSource(fxo_id="DUPLICATE-PATHS"),
             validate_esef=False,
         )
 
@@ -907,6 +1054,9 @@ def test_document_asset_archives_parses_and_stores_source_linked_rows(
     assert second["reused_artifact_count"] == 1
     assert second["reused_package_count"] == 1
     assert client.calls == ["https://example.test/sample.zip"]
+    result_key = document_result_object_key("2025-03-30")
+    assert (ESEF_DOCUMENT_BUCKET, result_key) in object_store.uploaded_files
+    assert (ESEF_DOCUMENT_BUCKET, result_key) in object_store.downloaded_files
     artifact_key = artifact_object_key(package_sha256)
     artifact = json.loads(object_store.objects[(ESEF_DOCUMENT_BUCKET, artifact_key)])
     assert artifact["source"]["company_id"] == "5566000000"
@@ -1001,6 +1151,100 @@ def test_document_artifact_stage_accepts_schema_two_manifest() -> None:
     assert metadata["selected_document_count"] == 0
     assert result["schema_version"] == 3
     assert result["concept_label_rows"] == []
+
+
+def test_document_artifact_workers_are_recycled_after_each_package(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    partition_key = "2025-03-30"
+    object_store = _FakeObjectStore(
+        {
+            (
+                ESEF_DOCUMENT_BUCKET,
+                document_manifest_object_key(partition_key),
+            ): json.dumps(
+                {
+                    "schema_version": 3,
+                    "processed_week": partition_key,
+                    "documents": [],
+                }
+            ).encode("utf-8")
+        }
+    )
+    executor_arguments: list[dict[str, int]] = []
+
+    class RecordingExecutor:
+        def __init__(self, **kwargs: int) -> None:
+            executor_arguments.append(kwargs)
+
+        def __enter__(self) -> "RecordingExecutor":
+            return self
+
+        def __exit__(self, *_args: object) -> None:
+            return None
+
+    monkeypatch.setattr(segment_assets, "ProcessPoolExecutor", RecordingExecutor)
+
+    run_esef_document_artifacts_partition(
+        object_store=object_store,
+        client=_FakeDownloadClient(b""),
+        partition_key=partition_key,
+        source_run_id="worker-recycling-run",
+        refresh_existing=False,
+        validate_esef=False,
+        parse_workers=4,
+        log_info=lambda *_args: None,
+    )
+
+    assert executor_arguments == [
+        {
+            "max_workers": 4,
+            "max_tasks_per_child": segment_assets._DOCUMENT_PARSE_TASKS_PER_CHILD,
+        }
+    ]
+
+
+def test_document_publication_inserts_rows_in_committed_batches() -> None:
+    connection = _RecordingDuckDBConnection()
+    database = _RecordingDuckDBResource(connection)
+
+    segment_assets._replace_document_partition_rows(
+        database,
+        source_document_ids=["document-1"],
+        document_rows=[
+            _export_row(
+                tables.ESEF_SOURCE_DOCUMENTS_EXPORT_COLUMNS,
+                source_document_id="document-1",
+            )
+        ],
+        candidate_rows=[
+            _export_row(
+                tables.ESEF_DOCUMENT_CONTACT_CANDIDATES_EXPORT_COLUMNS,
+                source_document_id="document-1",
+                ordinal=ordinal,
+            )
+            for ordinal in range(5)
+        ],
+        concept_label_rows=[
+            _export_row(
+                tables.ESEF_DOCUMENT_CONCEPT_LABELS_EXPORT_COLUMNS,
+                source_document_id="document-1",
+                ordinal=ordinal,
+            )
+            for ordinal in range(6)
+        ],
+        insert_batch_size=2,
+    )
+
+    data_batch_sizes = [
+        len(parameters)
+        for statement, parameters in connection.executemany_calls
+        if "selected_esef_documents" not in statement
+    ]
+    assert data_batch_sizes == [1, 2, 2, 2, 2, 2, 1]
+    assert connection.statements.count("begin transaction") == 8
+    assert connection.statements.count("commit") == 8
+    assert "rollback" not in connection.statements
 
 
 def test_document_result_rejects_schema_two() -> None:
@@ -1240,6 +1484,8 @@ class _FakeObjectStore:
     def __init__(self, objects: dict[tuple[str, str], bytes]) -> None:
         self.objects = objects
         self.created_buckets: list[str] = []
+        self.uploaded_files: list[tuple[str, str]] = []
+        self.downloaded_files: list[tuple[str, str]] = []
 
     def list_keys(self, prefix: str, bucket: str | None = None) -> list[str]:
         return sorted(
@@ -1268,6 +1514,7 @@ class _FakeObjectStore:
         bucket: str | None = None,
     ) -> None:
         assert bucket is not None
+        self.uploaded_files.append((bucket, key))
         self.objects[(bucket, key)] = source_path.read_bytes()
 
     def download_file(
@@ -1277,6 +1524,7 @@ class _FakeObjectStore:
         bucket: str | None = None,
     ) -> None:
         assert bucket is not None
+        self.downloaded_files.append((bucket, key))
         target_path.write_bytes(self.objects[(bucket, key)])
 
     def exists(self, key: str, bucket: str | None = None) -> bool:
@@ -1288,16 +1536,73 @@ class _FakeObjectStore:
         self.created_buckets.append(bucket)
 
 
+class _RecordingDuckDBConnection:
+    def __init__(self) -> None:
+        self.statements: list[str] = []
+        self.executemany_calls: list[tuple[str, list[tuple[object, ...]]]] = []
+
+    def execute(
+        self,
+        statement: str,
+        _parameters: object = None,
+    ) -> "_RecordingDuckDBConnection":
+        self.statements.append(statement)
+        return self
+
+    def executemany(
+        self,
+        statement: str,
+        parameters: list[tuple[object, ...]],
+    ) -> "_RecordingDuckDBConnection":
+        self.executemany_calls.append((statement, list(parameters)))
+        return self
+
+    def close(self) -> None:
+        return None
+
+
+class _RecordingDuckDBResource:
+    def __init__(self, connection: _RecordingDuckDBConnection) -> None:
+        self.connection = connection
+
+    def get_connection(self) -> object:
+        return nullcontext(self.connection)
+
+
+def _export_row(
+    columns: tuple[str, ...],
+    *,
+    source_document_id: str,
+    ordinal: int = 0,
+) -> dict[str, object]:
+    return {
+        column: (
+            source_document_id
+            if column == "source_document_id"
+            else f"{column}-{ordinal}"
+        )
+        for column in columns
+    }
+
+
 def _write_sample_report_package(
     tmp_path: Path,
     *,
     report_member: str = "sample/reports/sample.xhtml",
+    backslash_metadata_and_taxonomy_paths: bool = False,
+    deflate64_ancillary_pdf: bool = False,
 ) -> Path:
     package_path = tmp_path / "sample-report-package.zip"
     package_root = "sample"
+
+    def archive_member(path: str) -> str:
+        if backslash_metadata_and_taxonomy_paths:
+            return path.replace("/", "\\")
+        return path
+
     with zipfile.ZipFile(package_path, "w") as package:
         package.writestr(
-            f"{package_root}/META-INF/reportPackage.json",
+            archive_member(f"{package_root}/META-INF/reportPackage.json"),
             json.dumps(
                 {
                     "documentInfo": {
@@ -1307,26 +1612,78 @@ def _write_sample_report_package(
             ),
         )
         package.writestr(
-            f"{package_root}/META-INF/catalog.xml",
+            archive_member(f"{package_root}/META-INF/catalog.xml"),
             _CATALOG_XML,
         )
         package.writestr(
-            f"{package_root}/META-INF/taxonomyPackage.xml",
+            archive_member(f"{package_root}/META-INF/taxonomyPackage.xml"),
             _TAXONOMY_PACKAGE_XML,
         )
         package.writestr(
-            f"{package_root}/taxonomy/sample.xsd",
+            archive_member(f"{package_root}/taxonomy/sample.xsd"),
             _TAXONOMY_XSD,
         )
         package.writestr(
-            f"{package_root}/taxonomy/sample-labels.xml",
+            archive_member(f"{package_root}/taxonomy/sample-labels.xml"),
             _LABEL_LINKBASE_XML,
         )
         package.writestr(
             report_member,
             _REPORT_XHTML,
         )
+        if deflate64_ancillary_pdf:
+            package.writestr(
+                "annual-report.pdf",
+                b"%PDF-1.7\nSample annual report\n",
+                compress_type=zipfile.ZIP_DEFLATED,
+            )
+    if deflate64_ancillary_pdf:
+        _replace_zip_member_compression_method(
+            package_path,
+            member_name="annual-report.pdf",
+            compression_method=zipfile.ZIP_DEFLATED64,
+        )
     return package_path
+
+
+def _replace_zip_member_compression_method(
+    package_path: Path,
+    *,
+    member_name: str,
+    compression_method: int,
+) -> None:
+    archive = bytearray(package_path.read_bytes())
+    patched_header_count = 0
+    for signature, method_offset, name_length_offset, name_offset in (
+        (b"PK\x03\x04", 8, 26, 30),
+        (b"PK\x01\x02", 10, 28, 46),
+    ):
+        header_offset = 0
+        while (header_offset := archive.find(signature, header_offset)) >= 0:
+            name_length = struct.unpack_from(
+                "<H",
+                archive,
+                header_offset + name_length_offset,
+            )[0]
+            encoded_name = archive[
+                header_offset + name_offset : header_offset + name_offset + name_length
+            ]
+            if encoded_name.decode("utf-8") == member_name:
+                struct.pack_into(
+                    "<H",
+                    archive,
+                    header_offset + method_offset,
+                    compression_method,
+                )
+                patched_header_count += 1
+            header_offset += len(signature)
+
+    if patched_header_count != 2:
+        raise AssertionError(
+            f"Expected local and central ZIP headers for {member_name!r}, "
+            f"patched {patched_header_count}"
+        )
+    package_path.write_bytes(archive)
 
 
 _CATALOG_XML = """<?xml version="1.0" encoding="UTF-8"?>

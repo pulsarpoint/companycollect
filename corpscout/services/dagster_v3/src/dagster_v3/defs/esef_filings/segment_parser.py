@@ -9,9 +9,8 @@ import json
 import shutil
 import stat
 import tempfile
-import zipfile
 from collections.abc import Iterable, Mapping
-from dataclasses import asdict, dataclass, field, replace
+from dataclasses import dataclass, field, fields, is_dataclass, replace
 from datetime import date, datetime
 from decimal import Decimal
 from hashlib import sha256
@@ -26,6 +25,7 @@ from arelle.ModelXbrl import ModelXbrl
 from arelle.RuntimeOptions import RuntimeOptions
 from arelle.api.Session import Session
 from lxml import etree
+import zipfile_deflate64 as zipfile
 
 from dagster_v3.defs.esef_filings.artifact_contract import ARTIFACT_SCHEMA_VERSION
 from dagster_v3.defs.esef_filings.contact_candidates import (
@@ -323,6 +323,14 @@ class _ParsedModels:
     namespaces: dict[str, str] = field(default_factory=dict)
 
 
+@dataclass(frozen=True)
+class _PreparedReportPackage:
+    report_members: list[str]
+    arelle_package_path: Path
+    repaired_member_count: int
+    excluded_top_level_member_count: int
+
+
 def parse_esef_report_package(
     package_path: str | Path,
     *,
@@ -343,17 +351,50 @@ def parse_esef_report_package(
 
     with tempfile.TemporaryDirectory(prefix="esef_ixbrl_segments_") as temp_dir_name:
         temp_dir = Path(temp_dir_name)
-        report_members = _extract_report_package(resolved_package_path, temp_dir)
+        prepared_package = _prepare_report_package(resolved_package_path, temp_dir)
         parsed = _parse_report_members(
-            package_path=resolved_package_path,
+            package_path=prepared_package.arelle_package_path,
             temp_dir=temp_dir,
-            report_members=report_members,
+            report_members=prepared_package.report_members,
             package_sha256=package_sha256,
             validate_esef=validate_esef,
         )
+        if prepared_package.repaired_member_count > 0:
+            parsed.validation_messages.append(
+                EsefValidationMessage(
+                    code="corpscout:archivePathSeparatorsNormalized",
+                    level="error",
+                    message=(
+                        "Normalized "
+                        f"{prepared_package.repaired_member_count} ZIP member path(s) "
+                        "containing backslashes for Arelle; the original source "
+                        "archive bytes and SHA-256 were preserved."
+                    ),
+                )
+            )
+        if prepared_package.excluded_top_level_member_count > 0:
+            parsed.validation_messages.append(
+                EsefValidationMessage(
+                    code="corpscout:archiveTopLevelMembersIgnored",
+                    level="error",
+                    message=(
+                        "Ignored "
+                        f"{prepared_package.excluded_top_level_member_count} ZIP "
+                        "member(s) outside the report package root for Arelle; the "
+                        "original source archive bytes and SHA-256 were preserved."
+                    ),
+                )
+            )
+        if (
+            prepared_package.repaired_member_count > 0
+            or prepared_package.excluded_top_level_member_count > 0
+        ):
+            parsed.validation_messages.sort(
+                key=lambda message: (message.level, message.code, message.message)
+            )
         report_paths = {
             report_member: temp_dir.joinpath(*PurePosixPath(report_member).parts)
-            for report_member in report_members
+            for report_member in prepared_package.report_members
         }
         report_languages = _report_languages(report_paths.values())
         tagged_facts = [
@@ -413,7 +454,7 @@ def parse_esef_report_package(
             validation_profile="ESEF" if validate_esef else "XBRL load only"
         ),
         document=_document_from_facts(
-            report_members=report_members,
+            report_members=prepared_package.report_members,
             facts=parsed.facts.values(),
             taxonomy_entrypoints=parsed.taxonomy_entrypoints,
             namespaces=parsed.namespaces,
@@ -455,12 +496,41 @@ def parse_esef_report_package(
 
 def artifact_json_bytes(artifact: EsefSegmentArtifact) -> bytes:
     """Serialize an artifact canonically for stable hashes and S3 idempotency."""
-    return json.dumps(
-        asdict(artifact),
+    return (
+        _ArtifactJsonEncoder(
+            ensure_ascii=False,
+            separators=(",", ":"),
+            sort_keys=True,
+        )
+        .encode(artifact)
+        .encode("utf-8")
+    )
+
+
+def write_artifact_json(
+    artifact: EsefSegmentArtifact,
+    target_path: str | Path,
+) -> None:
+    """Write canonical artifact JSON without constructing a second object tree."""
+    encoder = _ArtifactJsonEncoder(
         ensure_ascii=False,
         separators=(",", ":"),
         sort_keys=True,
-    ).encode("utf-8")
+    )
+    with Path(target_path).open("w", encoding="utf-8", newline="") as handle:
+        handle.writelines(encoder.iterencode(artifact))
+
+
+class _ArtifactJsonEncoder(json.JSONEncoder):
+    """Expose dataclass fields lazily to the standard streaming JSON encoder."""
+
+    def default(self, value: object) -> object:
+        if is_dataclass(value) and not isinstance(value, type):
+            return {
+                definition.name: getattr(value, definition.name)
+                for definition in fields(value)
+            }
+        return super().default(value)
 
 
 def artifact_object_key(package_sha256: str) -> str:
@@ -518,7 +588,42 @@ def compare_artifact_to_oim(
     }
 
 
-def _extract_report_package(package_path: Path, temp_dir: Path) -> list[str]:
+def _prepare_report_package(
+    package_path: Path,
+    temp_dir: Path,
+) -> _PreparedReportPackage:
+    report_members, repaired_member_count = _extract_report_package(
+        package_path,
+        temp_dir,
+    )
+    excluded_top_level_members = _top_level_members_outside_report_package(
+        package_path,
+        report_members,
+    )
+    if repaired_member_count == 0 and not excluded_top_level_members:
+        return _PreparedReportPackage(
+            report_members=report_members,
+            arelle_package_path=package_path,
+            repaired_member_count=0,
+            excluded_top_level_member_count=0,
+        )
+
+    return _PreparedReportPackage(
+        report_members=report_members,
+        arelle_package_path=_write_arelle_compatible_package(
+            package_path,
+            temp_dir,
+            excluded_members=excluded_top_level_members,
+        ),
+        repaired_member_count=repaired_member_count,
+        excluded_top_level_member_count=len(excluded_top_level_members),
+    )
+
+
+def _extract_report_package(
+    package_path: Path,
+    temp_dir: Path,
+) -> tuple[list[str], int]:
     with zipfile.ZipFile(package_path) as package:
         members = package.infolist()
         if len(members) > MAX_PACKAGE_FILES:
@@ -534,9 +639,11 @@ def _extract_report_package(package_path: Path, temp_dir: Path) -> list[str]:
 
         report_members: list[str] = []
         nonstandard_html_members: list[tuple[str, Path]] = []
+        extracted_member_names: set[str] = set()
+        repaired_member_count = 0
         for member in members:
-            normalized_name = member.filename.replace("\\", "/")
-            member_path = PurePosixPath(normalized_name)
+            separator_normalized_name = member.filename.replace("\\", "/")
+            member_path = PurePosixPath(separator_normalized_name)
             if member_path.is_absolute() or ".." in member_path.parts:
                 raise ValueError(
                     f"ESEF package contains an unsafe path: {member.filename}"
@@ -551,9 +658,18 @@ def _extract_report_package(package_path: Path, temp_dir: Path) -> list[str]:
                 raise ValueError(
                     f"ESEF package contains an unsupported symbolic link: {member.filename}"
                 )
-            if member.is_dir():
+            if member.filename != separator_normalized_name:
+                repaired_member_count += 1
+            if member.is_dir() or separator_normalized_name.endswith("/"):
                 continue
 
+            normalized_name = member_path.as_posix()
+            if normalized_name in extracted_member_names:
+                raise ValueError(
+                    "ESEF package contains duplicate paths after separator "
+                    f"normalization: {normalized_name}"
+                )
+            extracted_member_names.add(normalized_name)
             target_path = temp_dir.joinpath(*member_path.parts)
             target_path.parent.mkdir(parents=True, exist_ok=True)
             with (
@@ -569,7 +685,7 @@ def _extract_report_package(package_path: Path, temp_dir: Path) -> list[str]:
                 nonstandard_html_members.append((normalized_name, target_path))
 
     if report_members:
-        return sorted(report_members)
+        return sorted(report_members), repaired_member_count
 
     report_members = [
         member_name
@@ -579,7 +695,74 @@ def _extract_report_package(package_path: Path, temp_dir: Path) -> list[str]:
 
     if not report_members:
         raise ValueError("ESEF report package contains no report XHTML members")
-    return sorted(report_members)
+    return sorted(report_members), repaired_member_count
+
+
+def _top_level_members_outside_report_package(
+    package_path: Path,
+    report_members: Iterable[str],
+) -> frozenset[str]:
+    report_member_paths = [PurePosixPath(member) for member in report_members]
+    package_roots = {member.parts[0] for member in report_member_paths}
+    if len(package_roots) != 1 or any(
+        len(member.parts) < 3 or member.parts[1].lower() != "reports"
+        for member in report_member_paths
+    ):
+        return frozenset()
+
+    package_root = next(iter(package_roots))
+    excluded_members: set[str] = set()
+    with zipfile.ZipFile(package_path) as package:
+        for member in package.infolist():
+            normalized_name = member.filename.replace("\\", "/")
+            if member.is_dir() or normalized_name.endswith("/"):
+                continue
+            if PurePosixPath(normalized_name).parts[0] != package_root:
+                excluded_members.add(normalized_name)
+    return frozenset(excluded_members)
+
+
+def _write_arelle_compatible_package(
+    source_package_path: Path,
+    temp_dir: Path,
+    *,
+    excluded_members: frozenset[str],
+) -> Path:
+    with tempfile.NamedTemporaryFile(
+        prefix="arelle_normalized_",
+        suffix=".zip",
+        dir=temp_dir,
+        delete=False,
+    ) as normalized_package_file:
+        normalized_package_path = Path(normalized_package_file.name)
+
+    with (
+        zipfile.ZipFile(source_package_path) as source_package,
+        zipfile.ZipFile(
+            normalized_package_path,
+            mode="w",
+            compression=zipfile.ZIP_DEFLATED,
+            allowZip64=True,
+        ) as normalized_package,
+    ):
+        for member in source_package.infolist():
+            separator_normalized_name = member.filename.replace("\\", "/")
+            if member.is_dir() or separator_normalized_name.endswith("/"):
+                continue
+            normalized_name = PurePosixPath(separator_normalized_name).as_posix()
+            if normalized_name in excluded_members:
+                continue
+            with (
+                source_package.open(member) as source_file,
+                normalized_package.open(
+                    normalized_name,
+                    mode="w",
+                    force_zip64=True,
+                ) as target_file,
+            ):
+                shutil.copyfileobj(source_file, target_file)
+
+    return normalized_package_path
 
 
 def _contains_inline_xbrl_namespace(report_path: Path) -> bool:
@@ -588,9 +771,7 @@ def _contains_inline_xbrl_namespace(report_path: Path) -> bool:
     with report_path.open("rb") as report:
         while chunk := report.read(64 * 1024):
             searchable = previous_tail + chunk
-            if any(
-                marker in searchable for marker in _INLINE_XBRL_NAMESPACE_MARKERS
-            ):
+            if any(marker in searchable for marker in _INLINE_XBRL_NAMESPACE_MARKERS):
                 return True
             previous_tail = searchable[-longest_marker:]
     return False
@@ -639,12 +820,15 @@ def _parse_report_members(
         with _ARELLE_SESSION_LOCK, Session() as session:
             session.run(options, logFileName="logToBuffer")
             models = session.get_models()
-            parsed.validation_messages.extend(
-                _validation_messages(session.get_logs("json"), temp_dir)
+            session_messages = _validation_messages(
+                session.get_logs("json"),
+                temp_dir=temp_dir,
+                package_path=package_path,
             )
+            parsed.validation_messages.extend(session_messages)
             if not models:
                 raise ValueError(
-                    f"Arelle could not load ESEF report member: {report_member}"
+                    _arelle_load_error_message(report_member, session_messages)
                 )
             model = models[-1]
             _merge_model(
@@ -1237,7 +1421,12 @@ def _oim_unit(unit: Mapping[str, list[str]]) -> str:
     return f"{numerators}/{denominators}" if denominators else numerators
 
 
-def _validation_messages(log_json: str, temp_dir: Path) -> list[EsefValidationMessage]:
+def _validation_messages(
+    log_json: str,
+    *,
+    temp_dir: Path,
+    package_path: Path,
+) -> list[EsefValidationMessage]:
     payload = json.loads(log_json)
     records = payload.get("log", []) if isinstance(payload, Mapping) else []
     result: list[EsefValidationMessage] = []
@@ -1247,8 +1436,17 @@ def _validation_messages(log_json: str, temp_dir: Path) -> list[EsefValidationMe
         message = record.get("message", {})
         text = message.get("text", "") if isinstance(message, Mapping) else message
         portable_text = str(text)
-        for temporary_prefix in {str(temp_dir), str(temp_dir.resolve())}:
-            portable_text = portable_text.replace(temporary_prefix, "<package>")
+        replacements = {
+            str(temp_dir): "<package>",
+            str(temp_dir.resolve()): "<package>",
+            str(package_path): "<source-package>",
+            str(package_path.resolve()): "<source-package>",
+        }
+        for temporary_prefix in sorted(replacements, key=len, reverse=True):
+            portable_text = portable_text.replace(
+                temporary_prefix,
+                replacements[temporary_prefix],
+            )
         result.append(
             EsefValidationMessage(
                 code=str(record.get("code", "")),
@@ -1257,6 +1455,26 @@ def _validation_messages(log_json: str, temp_dir: Path) -> list[EsefValidationMe
             )
         )
     return result
+
+
+def _arelle_load_error_message(
+    report_member: str,
+    messages: Iterable[EsefValidationMessage],
+) -> str:
+    diagnostics: list[str] = []
+    for message in messages:
+        if message.level.lower() != "error":
+            continue
+        text = " ".join(message.message.split())
+        diagnostic = f"{message.code}: {text}" if message.code != "" else text
+        diagnostics.append(diagnostic[:500])
+        if len(diagnostics) == 3:
+            break
+
+    base_message = f"Arelle could not load ESEF report member: {report_member}"
+    if not diagnostics:
+        return base_message
+    return f"{base_message}. Arelle diagnostics: {'; '.join(diagnostics)}"
 
 
 def _portable_uri(uri: str, *, temp_dir: Path, package_path: Path) -> str:
