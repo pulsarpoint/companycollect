@@ -1,3 +1,4 @@
+import re
 from datetime import UTC, datetime
 from pathlib import Path
 
@@ -2276,6 +2277,80 @@ def test_sweden_shared_address_geocode_migration_keeps_complete_outcomes() -> No
         "address_kind LowCardinality(String)",
     ):
         assert duplicated_address_column not in migration
+
+
+def test_sweden_address_geocode_store_migration_is_versioned_and_replacing() -> None:
+    """The store's whole point is that one identity can hold several attributable outcomes.
+
+    Engine and sorting key are asserted as exact strings: a ReplacingMergeTree without
+    matched_at as its version column silently keeps an arbitrary row per key, and a sorting
+    key missing policy_version or reference_md5 would collapse two different matchers'
+    answers into one row -- both are the failure this table exists to make impossible.
+    """
+    migration_directory = (
+        Path(__file__).resolve().parents[3] / "clickhouse" / "migrations"
+    )
+    up = (
+        migration_directory / "000317_corpscout_se_address_geocodes_store.up.sql"
+    ).read_text(encoding="utf-8")
+    down = (
+        migration_directory / "000317_corpscout_se_address_geocodes_store.down.sql"
+    ).read_text(encoding="utf-8")
+
+    assert up.startswith("CREATE DATABASE IF NOT EXISTS corpscout;")
+    assert "CREATE TABLE IF NOT EXISTS corpscout.se_address_geocodes\n" in up
+    assert "ENGINE = ReplacingMergeTree(matched_at)" in up
+    assert "ORDER BY (address_id, policy_version, reference_md5)" in up
+    assert "DROP TABLE IF EXISTS corpscout.se_address_geocodes;" in down
+    # The store is NOT the serving table under another name.
+    assert "se_address_geocodes_current" not in up
+
+    for column in (
+        "address_id FixedString(64)",
+        "policy_version LowCardinality(String)",
+        "reference_md5 String",
+        "address_identity_run_id String",
+        "match_status LowCardinality(String)",
+        "candidate_record_urls Array(String)",
+        "match_confidence Float32",
+        "latitude Nullable(Float64)",
+        "coordinate_supporting_point_count UInt32",
+        "coordinate_spread_meters Nullable(Float64)",
+        "source_md5 Nullable(String)",
+        "source_snapshot_at Nullable(DateTime64(3, 'UTC'))",
+        "geocode_run_id String",
+        "matched_at DateTime64(3, 'UTC')",
+    ):
+        assert column in up
+    # The two key columns are never Nullable -- a NULL in a sorting key is a trap.
+    assert "policy_version Nullable" not in up and "reference_md5 Nullable" not in up
+
+
+def test_sweden_address_geocode_store_carries_every_serving_column() -> None:
+    """The store is 000275's shape plus 000277's spread plus the two version columns.
+
+    Read out of the two migration files rather than hand-listed: a column added to the
+    serving table by a later migration and forgotten here would leave the store unable to
+    derive `_current`, and this test is the only place that would notice.
+    """
+    migration_directory = (
+        Path(__file__).resolve().parents[3] / "clickhouse" / "migrations"
+    )
+    store = (
+        migration_directory / "000317_corpscout_se_address_geocodes_store.up.sql"
+    ).read_text(encoding="utf-8")
+    serving = (
+        migration_directory / "000275_corpscout_se_address_geocodes_current.up.sql"
+    ).read_text(encoding="utf-8")
+
+    serving_columns = re.findall(r"^    (\w+) ", serving, re.MULTILINE)
+    store_columns = re.findall(r"^    (\w+) ", store, re.MULTILINE)
+    assert serving_columns, "the 000275 column parser needs updating"
+    assert set(serving_columns) | {"coordinate_spread_meters"} | {
+        "policy_version",
+        "reference_md5",
+    } == set(store_columns)
+    assert store_columns[:3] == ["address_id", "policy_version", "reference_md5"]
 
 
 def test_sweden_address_geocode_spread_migration_updates_both_outcome_tables() -> None:
