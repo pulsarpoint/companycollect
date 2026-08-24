@@ -92,12 +92,15 @@ store), replacing the weekly-swapped `se_address_geocodes_current` as the source
 - Engine: `ReplacingMergeTree(matched_at)` `ORDER BY (address_id, policy_version,
   reference_md5)`. One row per (identity, matcher, reference); recomputation with the same
   triple replaces (idempotent); a new policy or reference version appends beside the old.
-- The read rule ("current outcome per identity"): newest `matched_at` per `address_id`
-  across versions, with `legacy_adopted_v1` outranked by any same-or-newer resolver outcome
-  that is GEOCODED (a resolver `ambiguous` does not beat an adopted exact — that is the
-  point of the import). Implemented as a small versioned-read SQL fragment used by both
-  consumers (the `se_company_address` final's geocode read and the checks); exact expression
-  is a plan-time decision, pinned by tests.
+- The read rule ("current outcome per identity") is TWO-STAGE, because a single
+  newest-wins ordering is cyclic over (adopted@T1, resolver-geocoded@T2,
+  resolver-ambiguous@T3): stage 1 keeps one row per (address_id, family) — family =
+  adopted vs resolver — ranked by (matched_at, reference_md5, policy_version); stage 2
+  chooses between the two survivors by (servable, matched_at, is_resolver, reference_md5,
+  policy_version), so a resolver `ambiguous` never displaces an adopted exact, while any
+  geocoded resolver outcome does. Both stages are total orders; no FINAL in the read,
+  ever. One SQL fragment + one pure Python twin, shared by all consumers; exact text
+  lives in the plan and is pinned by tests.
 - `se_address_geocodes_current` (CH) is retired at the end of the rollout (§6). During
   transition it is derived FROM the store (same stage+EXCHANGE publish, but computed by the
   versioned read) so downstream consumers migrate on their own schedule.
@@ -110,14 +113,17 @@ serving table (`address_resolution_promotion.py:67-74` is the code that changes)
 
 The weekly resolver run matches exactly:
 
-1. **New identities**: `address_id`s present in `se_addresses_current` (this week's identity
-   rebuild) with NO outcome in the store for the current `(policy_version, reference_md5)`
-   — for a stable reference this is register churn (thousands), because unchanged addresses
-   keep their fingerprint and already have an outcome.
-2. **The retry pool** — outcomes whose status is in the non-geocoded set (`ambiguous`,
-   `unmatched`, `invalid_address`, …) — ONLY when the reference changed (`source_md5` of the
-   fresh OSM snapshot differs from the outcome's `reference_md5`) or `policy_version`
-   bumped. Unchanged reference + unchanged policy ⇒ retry pool is skipped entirely.
+Three DISJOINT terms over each identity's current RESOLVER outcome (a naive
+"no outcome at the current (policy, reference)" rule would re-select everything on any
+reference bump):
+1. **`no_outcome`** — identities in `se_addresses_current` with no resolver outcome at
+   all: register churn (thousands/week).
+2. **`policy_changed`** — `policy_version` bumped: a full rematch by definition (routed
+   through the golden gate).
+3. **`reference_changed`** — fresh OSM `source_md5` differs from the outcome's
+   `reference_md5` AND the outcome is non-geocoded (`ambiguous`, `unmatched`, …): the
+   retry pool. Geocoded outcomes are NOT re-matched on a reference bump.
+Unchanged reference + unchanged policy + no new identities ⇒ zero matching work.
 3. **Nothing else.** A full re-match is an explicit operator action: bump `policy_version`
    (which routes everything through the golden gate) or run a `rematch_all`-style config on
    the matching asset (the same explicit-pass pattern as the finals' `resolve_all`).
@@ -134,11 +140,15 @@ match anything — it is cheap and is the safety net for policy changes.
 ### 4.3 Matcher retirements
 
 - **Join matcher** (`shared_address_geocoding.py` matching path +
-  `sweden_shared_address_osm_matches_duckdb` asset): DELETED. Precondition (verify during
-  implementation, stop-and-report if false): nothing reads its output table between its
-  write and the promotion overwrite — including the shadow's comparison tables
-  (`address_resolution_shadow.py` `..._comparison_shadow`) and diagnostics. Its invariant
-  suite (`shared_address_geocoding.py:504-606`) is ported to the store's append path where
+  `sweden_shared_address_osm_matches_duckdb` asset): DELETED. The original "nothing reads
+  its output" assumption was verified FALSE during planning: two readers exist —
+  `address_resolution_shadow.py:549` (`_replace_comparison`) and
+  `address_resolution_promotion.py:174` (the postcode-conflict gate) INNER JOIN it. Both
+  are repointed at the store's previous RESOLVER outcome in the same commit that deletes
+  the matcher — an accepted semantic change: the comparison becomes "resolver vs last
+  week" instead of "resolver vs the old matcher". Any THIRD reader found at
+  implementation time is stop-and-report. Its invariant suite
+  (`shared_address_geocoding.py:504-606`) is ported to the store's append path where
   still meaningful.
 - **Legacy per-company matcher** (`address_geocoding.py`, its asset, and the publish pair):
   retired AFTER the one-time import (4.4). With both gone, the weekly job builds OSM
@@ -151,8 +161,10 @@ A one-shot asset/script (run once, kept in the repo as the record):
 - Selection rule: legacy `se_company_address_geocode_results` rows with
   `match_status = 'matched_exact'` AND `match_confidence = 1.0`, joined to the current
   store/current table where the resolver outcome for the same identity is NON-geocoded
-  (`ambiguous`/`unmatched`). Join path: legacy is keyed `(company_id, canonical_address_key)`;
-  map via `se_company_address_members_current` (canonical_address_key → address_id).
+  (`ambiguous`/`unmatched`). Join path: legacy is keyed `(company_id, canonical_address_key)`; the
+  canonical_address_key → address_id map lives ONLY on `se_company_address_links_current`
+  (members carries no address_id — verified during planning), so the import joins
+  through links.
   Measured population 2026-08-24: ~19,413 companies; the identity-level count is a plan-time
   measurement.
 - Written as store rows with `policy_version = 'legacy_adopted_v1'`,
@@ -225,8 +237,12 @@ matched_at)` fully determines provenance. Consequences the implementation must h
 4. **Final repoint**: `se_company_address` reads the store; observe one weekly cycle
    (expect: Monday address run shrinks to churn-sized selection).
 5. **Canonical publish retirement**: checks relocated per 4.5, then the drop migration.
-6. **Cleanup**: retire the transitional `se_address_geocodes_current` derivation once
-   nothing reads the table (fresh zero-reader gate), drop it by migration.
+6. **Cleanup — DEFERRED out of this project**: retiring the transitional
+   `se_address_geocodes_current` requires the backoffice public-page section server to
+   repoint first (`company-serving-sections.test.ts:54` pins the read); it opens as its
+   own gated follow-up with the zero-reader discipline. Ordering amendment: the checks
+   relocation must land BEFORE the legacy drop — checks 5 and 6 read the legacy pair
+   through `fetch_sweden_address_geocode_stats`.
 
 Steps 3, 5, 6 carry drop migrations: each follows the address plan's gate discipline
 (zero-reader proof incl. constant-indirection grep, row-count snapshot, UNDROP watch,
