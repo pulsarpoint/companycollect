@@ -510,7 +510,18 @@ def test_sweden_shadow_promotion_rejects_wrong_policy_version() -> None:
             raise AssertionError("Promotion must reject a stale policy version")
 
 
-def _create_sweden_shadow_fixture(connection: duckdb.DuckDBPyConnection) -> None:
+def _create_sweden_shadow_fixture(
+    connection: duckdb.DuckDBPyConnection,
+    *,
+    source_md5: str | None = "osm-snapshot-md5",
+) -> None:
+    # One bound relation carries the OSM snapshot identity into every address point, so a
+    # caller can seed a run whose provenance carries no MD5 at all.
+    connection.execute(
+        "create or replace temporary table _sweden_shadow_snapshot as"
+        " select ?::varchar as source_md5",
+        [source_md5],
+    )
     connection.execute(
         """
         create schema sweden_company_enrichment;
@@ -653,7 +664,7 @@ def _create_sweden_shadow_fixture(connection: duckdb.DuckDBPyConnection) -> None
             source_record_url varchar,
             source_url varchar default 'https://download.geofabrik.de/europe/sweden-latest.osm.pbf',
             source_object_key varchar default 'raw/sweden-test.osm.pbf',
-            source_md5 varchar default 'osm-snapshot-md5',
+            source_md5 varchar,
             source_snapshot_at timestamptz default '2026-08-16 00:00:00+00',
             source_retrieved_at timestamptz default '2026-08-16 01:00:00+00'
         );
@@ -769,6 +780,8 @@ def _create_sweden_shadow_fixture(connection: duckdb.DuckDBPyConnection) -> None
                 17.9973,
                 'https://www.openstreetmap.org/node/7'
             );
+        update sweden_address_osm.address_points
+        set source_md5 = (select source_md5 from _sweden_shadow_snapshot);
 
         create table sweden_address_osm.street_segments (
             source_record_id varchar,

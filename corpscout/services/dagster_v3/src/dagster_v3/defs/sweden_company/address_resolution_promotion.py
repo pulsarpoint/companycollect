@@ -4,6 +4,7 @@ from typing import Any
 
 from dagster_v3.defs.sweden_address_osm import tables as osm_tables
 from dagster_v3.defs.sweden_company import (
+    geocode_store,
     shared_address_geocoding,
     shared_addresses,
 )
@@ -50,14 +51,34 @@ def replace_current_geocodes_from_address_resolution_shadow(
             connection,
             geocode_run_id=geocode_run_id,
             matched_at=matched_at,
+            policy_version=expected_policy_version,
         )
-        _assert_promoted_geocode_invariants(connection, PROMOTION_STAGE_TABLE)
+        _assert_promoted_geocode_invariants(
+            connection,
+            PROMOTION_STAGE_TABLE,
+            expected_policy_version=expected_policy_version,
+        )
+        # The serving table keeps its 26-column shape: se_address_geocodes_current is
+        # published to ClickHouse by column list, and a stray column would break the export.
         connection.execute(
             f"""
             create or replace table {
                 shared_address_geocoding.QUALIFIED_DUCKDB_ADDRESS_GEOCODES_TABLE
             } as
-            select * from {PROMOTION_STAGE_TABLE}
+            select {", ".join(geocode_store.SERVING_COLUMNS)}
+            from {PROMOTION_STAGE_TABLE}
+            """
+        )
+        # ... and the append table carries the two version columns as well. It is a separate
+        # persistent table, not the temporary stage, because the ClickHouse append asset
+        # opens its own DuckDB connection and a temporary table would not be there.
+        connection.execute(
+            f"""
+            create or replace table {
+                geocode_store.QUALIFIED_DUCKDB_GEOCODE_APPEND_TABLE
+            } as
+            select {", ".join(geocode_store.STORE_COLUMNS)}
+            from {PROMOTION_STAGE_TABLE}
             """
         )
         connection.execute("commit")
@@ -85,13 +106,22 @@ def replace_current_geocodes_from_address_resolution_shadow(
         from {QUALIFIED_SHADOW_RESULTS_TABLE}
         """
     ).fetchall()
+    [(reference_md5, appended_rows)] = connection.execute(
+        f"""
+        select first(reference_md5), count(*)
+        from {geocode_store.QUALIFIED_DUCKDB_GEOCODE_APPEND_TABLE}
+        """
+    ).fetchall()
     return {
         "rows": int(rows),
         "geolocated": int(geolocated),
         "evaluation_run_id": str(evaluation_run_id),
         "policy_version": expected_policy_version,
+        "reference_md5": str(reference_md5),
+        "appended_rows": int(appended_rows),
         "status_counts": status_counts,
         "table": shared_address_geocoding.QUALIFIED_DUCKDB_ADDRESS_GEOCODES_TABLE,
+        "append_table": geocode_store.QUALIFIED_DUCKDB_GEOCODE_APPEND_TABLE,
     }
 
 
@@ -235,6 +265,7 @@ def _replace_promotion_stage(
     *,
     geocode_run_id: str,
     matched_at: datetime,
+    policy_version: str,
 ) -> None:
     connection.execute(
         f"""
@@ -253,6 +284,8 @@ def _replace_promotion_stage(
         create or replace temporary table {PROMOTION_STAGE_TABLE} as
         select
             cast(address.address_id as varchar) as address_id,
+            ?::varchar as policy_version,
+            coalesce(provenance.source_md5, '') as reference_md5,
             address.address_identity_run_id,
             concat_ws(
                 '|',
@@ -331,11 +364,16 @@ def _replace_promotion_stage(
             on result.query_document_id = query.document_id
         cross join _sweden_address_resolution_osm_provenance provenance
         """,
-        [geocode_run_id, matched_at],
+        [policy_version, geocode_run_id, matched_at],
     )
 
 
-def _assert_promoted_geocode_invariants(connection: Any, table_name: str) -> None:
+def _assert_promoted_geocode_invariants(
+    connection: Any,
+    table_name: str,
+    *,
+    expected_policy_version: str,
+) -> None:
     [
         (
             result_rows,
@@ -347,6 +385,8 @@ def _assert_promoted_geocode_invariants(connection: Any, table_name: str) -> Non
             unexpected_coordinates,
             invalid_precision,
             missing_provenance,
+            missing_reference,
+            wrong_policy,
         )
     ] = connection.execute(
         f"""
@@ -383,6 +423,10 @@ def _assert_promoted_geocode_invariants(connection: Any, table_name: str) -> Non
                    or source_md5 is null
                    or source_snapshot_at is null
                    or source_retrieved_at is null
+            ),
+            count(*) filter (where reference_md5 = ''),
+            count(*) filter (
+                where policy_version != '{expected_policy_version}'
             )
         from {table_name}
         """
@@ -400,6 +444,15 @@ def _assert_promoted_geocode_invariants(connection: Any, table_name: str) -> Non
         raise ValueError("Promoted coordinates disagree with resolution status")
     if int(invalid_precision) != 0:
         raise ValueError("Promoted precision disagrees with resolution status")
+    # These two come BEFORE the provenance raise: a NULL source_md5 trips both, and the
+    # reference identity is the more specific diagnosis for an operator to read.
+    if int(missing_reference) != 0:
+        raise ValueError("Promoted geocodes are missing the OSM reference identity")
+    if int(wrong_policy) != 0:
+        raise ValueError(
+            "Promoted geocodes do not carry the expected address-resolution policy "
+            f"{expected_policy_version}"
+        )
     if int(missing_provenance) != 0:
         raise ValueError("Promoted geocodes are missing OSM snapshot provenance")
 

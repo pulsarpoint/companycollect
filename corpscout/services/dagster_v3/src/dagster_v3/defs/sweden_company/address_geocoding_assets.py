@@ -15,8 +15,12 @@ from dagster_v3.defs.sweden_address_osm import tables as osm_tables
 from dagster_v3.defs.sweden_company import (
     address_canonicalization,
     address_geocoding,
+    geocode_store,
     shared_address_geocoding,
     shared_addresses,
+)
+from dagster_v3.defs.sweden_company.address_resolution_policy import (
+    SWEDEN_ADDRESS_RESOLUTION_POLICY,
 )
 
 GROUP_NAME = "sweden_company"
@@ -31,6 +35,8 @@ SHARED_GEOCODE_CLICKHOUSE_ASSET_KEY = "sweden_address_geocodes_clickhouse"
 ADDRESS_RESOLUTION_GOLDEN_ASSET_KEY = "sweden_address_resolution_golden_evaluation"
 ADDRESS_RESOLUTION_SHADOW_ASSET_KEY = "sweden_address_resolution_shadow_duckdb"
 ADDRESS_RESOLUTION_CURRENT_ASSET_KEY = "sweden_address_resolution_current_duckdb"
+GEOCODE_STORE_ASSET_KEY = "sweden_address_geocode_store_clickhouse"
+GEOCODE_STORE_BACKFILL_ASSET_KEY = "sweden_address_geocode_store_backfill_clickhouse"
 WEEKLY_CRON_SCHEDULE = "5 4 * * 2"
 WEEKLY_EXECUTION_TIMEZONE = "Europe/Stockholm"
 MAX_OSM_SNAPSHOT_AGE = timedelta(days=9)
@@ -482,6 +488,207 @@ def sweden_address_geocodes_clickhouse(
             "table": (
                 shared_address_geocoding.QUALIFIED_CLICKHOUSE_ADDRESS_GEOCODES_TABLE
             ),
+        }
+    )
+
+
+def build_store_append_regression_sql() -> str:
+    """Rows that would swallow the outcomes this run just appended.
+
+    ReplacingMergeTree(matched_at) keeps the LARGEST matched_at per key. A pre-existing row
+    for one of this run's key triples carrying a newer instant makes this run's outcome
+    invisible the moment it lands -- a silent no-op no row count would show. Equal instants
+    are this run's own rows and are content-identical by the versioning contract, so the
+    comparison is strictly greater-than.
+    """
+    return f"""SELECT count()
+FROM {geocode_store.QUALIFIED_CLICKHOUSE_GEOCODE_STORE_TABLE}
+WHERE (address_id, policy_version, reference_md5) IN (
+        SELECT address_id, policy_version, reference_md5
+        FROM {geocode_store.QUALIFIED_CLICKHOUSE_GEOCODE_STORE_TABLE}
+        WHERE geocode_run_id = %(geocode_run_id)s
+      )
+  AND matched_at > %(matched_at)s"""
+
+
+def build_geocode_store_backfill_sql() -> str:
+    """The one-time append of today's serving rows as policy-v5 outcomes.
+
+    matched_at is COPIED from the serving row, never restamped. That instant is what the
+    outcome actually claims, and copying it is what makes a second backfill run replace each
+    row with byte-identical content instead of bumping 2.09M versions. source_md5 is
+    promoted to the reference_md5 key role -- the pre-flight below refuses to run if any
+    serving row is missing it, because an empty key column is not attributable.
+    """
+    carried = ",\n    ".join(
+        column for column in geocode_store.SERVING_COLUMNS if column != "address_id"
+    )
+    columns = ", ".join(geocode_store.STORE_COLUMNS)
+    return f"""INSERT INTO {
+        geocode_store.QUALIFIED_CLICKHOUSE_GEOCODE_STORE_TABLE
+    } ({columns})
+SELECT
+    address_id,
+    %(policy_version)s AS policy_version,
+    ifNull(source_md5, '') AS reference_md5,
+    {carried}
+FROM {shared_address_geocoding.QUALIFIED_CLICKHOUSE_ADDRESS_GEOCODES_TABLE}"""
+
+
+GEOCODE_STORE_BACKFILL_SQL = build_geocode_store_backfill_sql()
+
+BACKFILL_PREFLIGHT_SQL = f"""SELECT
+    count(),
+    countIf(isNull(source_md5) OR source_md5 = '')
+FROM {shared_address_geocoding.QUALIFIED_CLICKHOUSE_ADDRESS_GEOCODES_TABLE}"""
+
+
+@dg.asset(
+    name=GEOCODE_STORE_ASSET_KEY,
+    deps=[dg.AssetKey(ADDRESS_RESOLUTION_CURRENT_ASSET_KEY)],
+    group_name=GROUP_NAME,
+    kinds={"python", "duckdb", "clickhouse", "openstreetmap"},
+    pool=osm_tables.DUCKDB_POOL,
+    metadata={"table": geocode_store.QUALIFIED_CLICKHOUSE_GEOCODE_STORE_TABLE},
+    description=(
+        "Appends this run's resolved Sweden address outcomes to the permanent "
+        "versioned geocode store, stamped with the resolver policy and the OSM "
+        "reference snapshot they were computed against."
+    ),
+)
+def sweden_address_geocode_store_clickhouse(
+    context: dg.AssetExecutionContext,
+    sweden_address_osm_duckdb: DuckDBResource,
+    clickhouse: ClickhouseResource,
+) -> dg.MaterializeResult:
+    assert_clickhouse_tables_exist(
+        clickhouse,
+        database=geocode_store.CLICKHOUSE_DATABASE,
+        tables=(geocode_store.GEOCODE_STORE_TABLE,),
+    )
+    with sweden_address_osm_duckdb.get_connection() as connection:
+        [(appended, matched_at, policy_versions, references)] = connection.execute(
+            f"""
+            select
+                count(*),
+                max(matched_at),
+                count(distinct policy_version),
+                count(distinct reference_md5)
+            from {geocode_store.QUALIFIED_DUCKDB_GEOCODE_APPEND_TABLE}
+            """
+        ).fetchall()
+        if int(policy_versions) > 1 or int(references) > 1:
+            raise ValueError(
+                "One promotion appends outcomes for one policy and one reference"
+            )
+        with clickhouse.get_connection() as clickhouse_client:
+            rows = export_duckdb_connection_table_to_clickhouse(
+                duckdb_connection=connection,
+                clickhouse_client=clickhouse_client,
+                duckdb_schema=geocode_store.ENRICHMENT_SCHEMA,
+                duckdb_table=geocode_store.GEOCODE_APPEND_TABLE,
+                clickhouse_database=geocode_store.CLICKHOUSE_DATABASE,
+                clickhouse_table=geocode_store.GEOCODE_STORE_TABLE,
+                columns=geocode_store.STORE_COLUMNS,
+                truncate=False,
+                log=context.log.info,
+            )
+            [(regressions,)] = clickhouse_client.execute(
+                build_store_append_regression_sql(),
+                {"geocode_run_id": context.run_id, "matched_at": matched_at},
+            )
+            [(store_rows, store_identities)] = clickhouse_client.execute(
+                f"""
+                SELECT count(), uniqExact(address_id)
+                FROM {geocode_store.QUALIFIED_CLICKHOUSE_GEOCODE_STORE_TABLE}
+                """
+            )
+    if int(regressions) != 0:
+        raise ValueError(
+            f"{regressions} stored outcomes are newer than this run's appended rows "
+            "for the same identity, policy and reference"
+        )
+    return dg.MaterializeResult(
+        metadata={
+            "appended_rows": rows,
+            "expected_appended_rows": int(appended),
+            "store_rows": int(store_rows),
+            "store_identities": int(store_identities),
+            "table": geocode_store.QUALIFIED_CLICKHOUSE_GEOCODE_STORE_TABLE,
+        }
+    )
+
+
+class SwedenGeocodeStoreBackfillConfig(dg.Config):
+    """A bare Materialize click is a preview -- it reports what a real run would append."""
+
+    execute: bool = False
+
+
+@dg.asset(
+    name=GEOCODE_STORE_BACKFILL_ASSET_KEY,
+    deps=[dg.AssetKey(SHARED_GEOCODE_CLICKHOUSE_ASSET_KEY)],
+    group_name=GROUP_NAME,
+    kinds={"python", "clickhouse"},
+    metadata={"table": geocode_store.QUALIFIED_CLICKHOUSE_GEOCODE_STORE_TABLE},
+    description=(
+        "One-time append of the whole current Sweden serving geocode table into the "
+        "versioned store, stamped with the resolver policy that produced it and each "
+        "row's own OSM snapshot MD5. Idempotent: a second run replaces each row with "
+        "identical content."
+    ),
+)
+def sweden_address_geocode_store_backfill_clickhouse(
+    context: dg.AssetExecutionContext,
+    config: SwedenGeocodeStoreBackfillConfig,
+    clickhouse: ClickhouseResource,
+) -> dg.MaterializeResult:
+    assert_clickhouse_tables_exist(
+        clickhouse,
+        database=geocode_store.CLICKHOUSE_DATABASE,
+        tables=(
+            geocode_store.GEOCODE_STORE_TABLE,
+            shared_address_geocoding.ADDRESS_GEOCODES_TABLE,
+        ),
+    )
+    policy_version = SWEDEN_ADDRESS_RESOLUTION_POLICY.version
+    with clickhouse.get_connection() as client:
+        [(serving_rows, missing_reference)] = client.execute(BACKFILL_PREFLIGHT_SQL)
+        if int(serving_rows) == 0:
+            raise ValueError("The Sweden serving geocode table is empty")
+        if int(missing_reference) != 0:
+            raise ValueError(
+                f"{missing_reference} serving rows carry no OSM snapshot MD5 and "
+                "cannot be given a reference identity"
+            )
+        if not config.execute:
+            return dg.MaterializeResult(
+                metadata={
+                    "preview": True,
+                    "serving_rows": int(serving_rows),
+                    "policy_version": policy_version,
+                }
+            )
+        client.execute(GEOCODE_STORE_BACKFILL_SQL, {"policy_version": policy_version})
+        [(store_rows, store_identities, policies)] = client.execute(
+            f"""
+            SELECT count(), uniqExact(address_id), uniqExact(policy_version)
+            FROM {geocode_store.QUALIFIED_CLICKHOUSE_GEOCODE_STORE_TABLE}
+            """
+        )
+    context.log.info(
+        "Backfilled %s serving rows into the geocode store as %s",
+        serving_rows,
+        policy_version,
+    )
+    return dg.MaterializeResult(
+        metadata={
+            "preview": False,
+            "serving_rows": int(serving_rows),
+            "store_rows": int(store_rows),
+            "store_identities": int(store_identities),
+            "store_policy_versions": int(policies),
+            "policy_version": policy_version,
         }
     )
 
@@ -1164,6 +1371,7 @@ sweden_company_address_geocoding_job = dg.define_asset_job(
         ADDRESS_RESOLUTION_SHADOW_ASSET_KEY,
         ADDRESS_RESOLUTION_CURRENT_ASSET_KEY,
         SHARED_GEOCODE_CLICKHOUSE_ASSET_KEY,
+        GEOCODE_STORE_ASSET_KEY,
         "sweden_company_address_osm_matches_duckdb",
         GEOCODE_ASSET_KEY,
         GEOCODE_RESULT_ASSET_KEY,
@@ -1191,6 +1399,7 @@ sweden_shared_address_geocoding_job = dg.define_asset_job(
         ADDRESS_RESOLUTION_SHADOW_ASSET_KEY,
         ADDRESS_RESOLUTION_CURRENT_ASSET_KEY,
         SHARED_GEOCODE_CLICKHOUSE_ASSET_KEY,
+        GEOCODE_STORE_ASSET_KEY,
     ),
     tags={"country": "SE", "pipeline": "shared_address_geocoding"},
     description=(
@@ -1213,6 +1422,7 @@ sweden_company_address_geocoding_weekly_job = dg.define_asset_job(
         ADDRESS_RESOLUTION_SHADOW_ASSET_KEY,
         ADDRESS_RESOLUTION_CURRENT_ASSET_KEY,
         SHARED_GEOCODE_CLICKHOUSE_ASSET_KEY,
+        GEOCODE_STORE_ASSET_KEY,
         "sweden_company_address_osm_matches_duckdb",
         GEOCODE_ASSET_KEY,
         GEOCODE_RESULT_ASSET_KEY,
@@ -1221,6 +1431,16 @@ sweden_company_address_geocoding_weekly_job = dg.define_asset_job(
     description=(
         "Refreshes the Sweden Geofabrik snapshot and OSM address index, then "
         "rematches current company addresses and publishes exact geocodes."
+    ),
+)
+
+sweden_address_geocode_store_backfill_job = dg.define_asset_job(
+    name="sweden_address_geocode_store_backfill_job",
+    selection=dg.AssetSelection.assets(GEOCODE_STORE_BACKFILL_ASSET_KEY),
+    tags={"country": "SE", "pipeline": "address_geocode_store_backfill"},
+    description=(
+        "One-time append of the current Sweden serving geocode table into the "
+        "versioned store. Requires execute: true -- a bare materialization previews."
     ),
 )
 
@@ -1245,6 +1465,8 @@ defs = dg.Definitions(
         sweden_shared_addresses_clickhouse,
         sweden_shared_address_osm_matches_duckdb,
         sweden_address_geocodes_clickhouse,
+        sweden_address_geocode_store_clickhouse,
+        sweden_address_geocode_store_backfill_clickhouse,
         sweden_company_address_osm_matches_duckdb,
         sweden_company_address_geocodes_clickhouse,
         sweden_company_address_geocode_results_clickhouse,
@@ -1263,6 +1485,7 @@ defs = dg.Definitions(
         sweden_shared_address_identity_job,
         sweden_shared_address_geocoding_job,
         sweden_company_address_geocoding_weekly_job,
+        sweden_address_geocode_store_backfill_job,
     ],
     schedules=[sweden_company_address_geocoding_weekly],
 )

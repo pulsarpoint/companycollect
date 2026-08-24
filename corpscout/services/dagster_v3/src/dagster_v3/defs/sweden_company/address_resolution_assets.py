@@ -238,7 +238,11 @@ sweden_address_resolution_shadow_job = dg.define_asset_job(
 
 sweden_address_resolution_publish_job = dg.define_asset_job(
     name="sweden_address_resolution_publish_job",
-    selection=dg.AssetSelection.assets(PROMOTION_ASSET_KEY, CLICKHOUSE_ASSET_KEY),
+    selection=dg.AssetSelection.assets(
+        PROMOTION_ASSET_KEY,
+        CLICKHOUSE_ASSET_KEY,
+        "sweden_address_geocode_store_clickhouse",
+    ),
     tags={"country": "SE", "pipeline": "address_resolution_publish"},
     description=(
         "Promotes the already-materialized, policy-gated Sweden resolver shadow "

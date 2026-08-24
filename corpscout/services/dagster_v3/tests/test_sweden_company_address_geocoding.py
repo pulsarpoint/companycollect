@@ -2083,6 +2083,7 @@ def test_sweden_company_address_geocoding_assets_are_company_enhancements() -> N
         "sweden_address_resolution_shadow_duckdb",
         "sweden_address_resolution_current_duckdb",
         "sweden_address_geocodes_clickhouse",
+        "sweden_address_geocode_store_clickhouse",
         "sweden_company_address_osm_matches_duckdb",
         "sweden_company_address_geocodes_clickhouse",
         "sweden_company_address_geocode_results_clickhouse",
@@ -2099,12 +2100,14 @@ def test_sweden_company_address_geocoding_assets_are_company_enhancements() -> N
         "sweden_address_resolution_shadow_duckdb",
         "sweden_address_resolution_current_duckdb",
         "sweden_address_geocodes_clickhouse",
+        "sweden_address_geocode_store_clickhouse",
     }
     assert {
         key.path[-1] for key in resolution_publish_job.asset_layer.executable_asset_keys
     } == {
         "sweden_address_resolution_current_duckdb",
         "sweden_address_geocodes_clickhouse",
+        "sweden_address_geocode_store_clickhouse",
     }
     assert {key.path[-1] for key in weekly_job.asset_layer.executable_asset_keys} == {
         "sweden_osm_pbf_s3",
@@ -2118,10 +2121,42 @@ def test_sweden_company_address_geocoding_assets_are_company_enhancements() -> N
         "sweden_address_resolution_shadow_duckdb",
         "sweden_address_resolution_current_duckdb",
         "sweden_address_geocodes_clickhouse",
+        "sweden_address_geocode_store_clickhouse",
         "sweden_company_address_osm_matches_duckdb",
         "sweden_company_address_geocodes_clickhouse",
         "sweden_company_address_geocode_results_clickhouse",
     }
+    store = repo.asset_graph.get(
+        dg.AssetKey("sweden_address_geocode_store_clickhouse")
+    )
+    assert store.group_name == "sweden_company"
+    assert store.parent_keys == {dg.AssetKey("sweden_address_resolution_current_duckdb")}
+    assert store.pools == {"sweden_address_osm_duckdb"}
+    # The store append rides in every job that promotes, so a promotion is never published
+    # to the serving table without the attributable row landing beside it.
+    for job_name in (
+        "sweden_company_address_geocoding_job",
+        "sweden_shared_address_geocoding_job",
+        "sweden_address_resolution_publish_job",
+        "sweden_company_address_geocoding_weekly_job",
+    ):
+        assert "sweden_address_geocode_store_clickhouse" in {
+            key.path[-1]
+            for key in repo.get_job(job_name).asset_layer.executable_asset_keys
+        }
+    # The backfill is a one-shot: its own job, no schedule, and it is in no other job.
+    backfill_job = repo.get_job("sweden_address_geocode_store_backfill_job")
+    assert {
+        key.path[-1] for key in backfill_job.asset_layer.executable_asset_keys
+    } == {"sweden_address_geocode_store_backfill_clickhouse"}
+    for job_name in (
+        "sweden_company_address_geocoding_weekly_job",
+        "sweden_company_address_geocoding_job",
+    ):
+        assert "sweden_address_geocode_store_backfill_clickhouse" not in {
+            key.path[-1]
+            for key in repo.get_job(job_name).asset_layer.executable_asset_keys
+        }
     assert schedule.job.name == "sweden_company_address_geocoding_weekly_job"
     assert schedule.cron_schedule == "5 4 * * 2"
     assert schedule.execution_timezone == "Europe/Stockholm"
