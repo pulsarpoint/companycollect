@@ -72,12 +72,41 @@ describe("validateSeAddressCorrection", () => {
    * that can never go stale -- the same rule se-info-corrections.ts enforces.
    */
   it("forbids the zero hash on the kinds that decide a published row", () => {
-    for (const kind of ["override_field", "reject_address"]) {
+    // Each kind carries the payload IT allows, and the message is asserted:
+    // a reject carrying care_of trips the payload-key gate first, so the hash
+    // guard on that branch would go untested (deleting it kept the suite green).
+    for (const [kind, payload] of [
+      ["override_field", { address_key: KEY, care_of: "c/o Anna" }],
+      ["reject_address", { address_key: KEY }],
+    ] as const) {
       expect(() => validateSeAddressCorrection({
-        ...base, kind, evidenceHash: ZERO_EVIDENCE_HASH,
-        payload: { address_key: KEY, care_of: "c/o Anna" },
-      })).toThrow(SeAddressCorrectionValidationError);
+        ...base, kind, evidenceHash: ZERO_EVIDENCE_HASH, payload,
+      })).toThrow(/evidence hash/i);
     }
+  });
+
+  /**
+   * Dagster's effective_ledger ranks by ADDRESS_KIND_ORDER and silently drops a
+   * kind that list does not name, so a validator that let one through would
+   * record a decision the pipeline never applies and never reports stale --
+   * a reviewer's call vanishing without a trace.
+   */
+  it("refuses a kind the ledger does not define", () => {
+    expect(() => validateSeAddressCorrection({
+      ...base, kind: "delete_address", payload: { address_key: KEY },
+    })).toThrow(/unknown correction kind/i);
+  });
+
+  /**
+   * A non-string value is malformed, not a decision: address_rules.py skips the
+   * whole correction. Refusing it here is what keeps the trim-to-null rule
+   * ("" means clear) from turning {care_of: 123} into an explicit CLEAR of a
+   * field the reviewer never meant to touch.
+   */
+  it("refuses an override value that is neither a string nor null", () => {
+    expect(() => validateSeAddressCorrection({
+      ...base, kind: "override_field", payload: { address_key: KEY, care_of: 123 },
+    })).toThrow(/must be a string or null/i);
   });
 
   it("requires a reason on every kind and caps it", () => {
