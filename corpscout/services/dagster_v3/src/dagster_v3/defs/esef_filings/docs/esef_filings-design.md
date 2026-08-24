@@ -41,7 +41,7 @@ The weekly result object fans out to four independently materializable assets:
 | `esef_filing_facts_duckdb` | facts | Normalized numeric and text XBRL facts |
 | `esef_document_contact_candidates_duckdb` | contact candidates | Auditable email, phone, and website observations |
 | `esef_document_concept_labels_duckdb` | taxonomy labels | Extension and standard concept labels by language and role |
-| `esef_fact_disclosures_duckdb` | disclosures | Structured blocks and plain text derived directly from narrative facts |
+| `esef_disclosures_duckdb` | disclosures | Tagged narrative facts plus visible XHTML sections, with segment, concept, period, page, and anchor provenance |
 
 Each asset writes an atomic DuckDB file dedicated to one processed week. No
 two assets write the same file, so their Dagster pools allow parallel work.
@@ -56,7 +56,7 @@ outputs together:
 - `esef_facts_clickhouse`;
 - `esef_document_contact_candidates_clickhouse`;
 - `esef_document_concept_labels_clickhouse`; and
-- `esef_fact_disclosures_clickhouse`.
+- `esef_disclosures_clickhouse`.
 
 The operation validates every DuckDB completion row, exports to temporary tables,
 checks the staged row count, replaces exactly the requested
@@ -65,10 +65,12 @@ temporary table. A rerun is therefore idempotent and cannot delete another
 week.
 
 Aggregate and enrichment assets depend on the four ClickHouse outputs. Filing
-identity and package URLs come from `esef_filings`; parsed facts gate company
-source records and LLM enrichment; official taxonomy translation consumes
-`esef_document_concept_labels_clickhouse`; financial metrics consume
-`esef_facts_clickhouse`.
+identity and package URLs come from `esef_filings`; official taxonomy translation
+consumes `esef_document_concept_labels_clickhouse`; financial metrics consume
+`esef_facts_clickhouse`; and `esef_document_company_information_clickhouse`
+reconstructs bounded model evidence directly from `esef_disclosures` and concept
+labels. The exact model request and response remain content-addressed in S3, but
+there is no enrichment DuckDB or second ClickHouse publisher.
 
 ## Data quality invariants
 

@@ -26,7 +26,7 @@ def test_registry_covers_the_known_scheduled_leaves() -> None:
         "esef_facts_clickhouse",
         "esef_document_contact_candidates_clickhouse",
         "esef_document_concept_labels_clickhouse",
-        "esef_fact_disclosures_clickhouse",
+        "esef_disclosures_clickhouse",
         "esef_entity_registry_map_clickhouse",
         "esef_financial_metrics_clickhouse",
         "estonia_ar_clickhouse_companies",

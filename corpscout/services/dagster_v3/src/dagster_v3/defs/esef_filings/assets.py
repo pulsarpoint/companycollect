@@ -1454,11 +1454,11 @@ ESEF_DOCUMENT_EVIDENCE_SELECTION = dg.AssetSelection.assets(
     "esef_filing_facts_duckdb",
     "esef_document_contact_candidates_duckdb",
     "esef_document_concept_labels_duckdb",
-    "esef_fact_disclosures_duckdb",
+    "esef_disclosures_duckdb",
     "esef_facts_clickhouse",
     "esef_document_contact_candidates_clickhouse",
     "esef_document_concept_labels_clickhouse",
-    "esef_fact_disclosures_clickhouse",
+    "esef_disclosures_clickhouse",
 )
 
 ESEF_FILINGS_REFRESH_SELECTION = (
@@ -1474,11 +1474,11 @@ ESEF_FILINGS_BACKFILL_SELECTION = dg.AssetSelection.assets(
     "esef_filing_facts_duckdb",
     "esef_document_contact_candidates_duckdb",
     "esef_document_concept_labels_duckdb",
-    "esef_fact_disclosures_duckdb",
+    "esef_disclosures_duckdb",
     "esef_facts_clickhouse",
     "esef_document_contact_candidates_clickhouse",
     "esef_document_concept_labels_clickhouse",
-    "esef_fact_disclosures_clickhouse",
+    "esef_disclosures_clickhouse",
 )
 
 esef_filings_refresh_job = dg.define_asset_job(

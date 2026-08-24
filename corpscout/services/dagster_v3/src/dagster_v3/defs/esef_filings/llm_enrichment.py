@@ -29,7 +29,7 @@ MAX_VISIBLE_EVIDENCE_ITEM_CHARS = 6_000
 MAX_VISIBLE_EVIDENCE_CHARS = 32_000
 MAX_OUTPUT_TOKENS = 8_000
 
-_EVIDENCE_SEGMENTS = (
+ENRICHMENT_EVIDENCE_SEGMENTS = (
     "identity",
     "business_profile",
     "people_and_audit",
@@ -45,7 +45,7 @@ _VISIBLE_SECTION_SEGMENTS = {
     "person_profiles": "people_and_audit",
     "company_overview": "business_profile",
 }
-_VISIBLE_SECTION_TYPE_ORDER = tuple(_VISIBLE_SECTION_SEGMENTS)
+ENRICHMENT_VISIBLE_SECTION_TYPES = tuple(_VISIBLE_SECTION_SEGMENTS)
 
 
 class EsefEnrichmentSource(BaseModel):
@@ -272,7 +272,7 @@ def build_enrichment_evidence(
     remaining_chars = max_evidence_chars - sum(
         len(item.text) for item in visible_evidence
     )
-    for segment_name in _EVIDENCE_SEGMENTS:
+    for segment_name in ENRICHMENT_EVIDENCE_SEGMENTS:
         references = segments.get(segment_name, [])
         if not isinstance(references, list):
             raise ValueError(f"ESEF segment {segment_name} must be a list")
@@ -378,7 +378,7 @@ def _visible_section_evidence(
         return []
 
     sections_by_type: dict[str, list[Mapping[str, Any]]] = {
-        section_type: [] for section_type in _VISIBLE_SECTION_TYPE_ORDER
+        section_type: [] for section_type in ENRICHMENT_VISIBLE_SECTION_TYPES
     }
     for section_index, section_value in enumerate(section_values):
         section = _mapping(
@@ -444,7 +444,7 @@ def _visible_section_evidence(
     ordered_sections: list[Mapping[str, Any]] = []
     seen_source_text: set[str] = set()
     for section_ordinal in range(2):
-        for section_type in _VISIBLE_SECTION_TYPE_ORDER:
+        for section_type in ENRICHMENT_VISIBLE_SECTION_TYPES:
             candidates = sections_by_type[section_type]
             if section_ordinal >= len(candidates):
                 continue

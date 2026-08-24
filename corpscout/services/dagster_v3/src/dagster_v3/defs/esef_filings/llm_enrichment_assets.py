@@ -2,30 +2,31 @@
 
 The asset selects each linked company's latest parsed report from final
 ClickHouse state. Its exact model request is content-addressed in S3, and the
-model output is stored against the source document in DuckDB before ClickHouse
-publication. It never writes a canonical company description, person, contact,
-or company row.
+source-document result is written atomically back to ClickHouse. It never
+writes a canonical company description, person, contact, or company row.
 
 No ``from __future__ import annotations``: Dagster inspects asset annotations.
 """
 
 import json
+import uuid
 from collections.abc import Callable, Mapping, Sequence
 from datetime import UTC, datetime
 from hashlib import sha256
 from typing import Any
+from urllib.parse import quote
 
 import dagster as dg
 from dagster_clickhouse import ClickhouseResource
-from dagster_duckdb import DuckDBResource
 from openai import OpenAI
 from pydantic import Field
 
-from dagster_v3.defs.common.duckdb_resources import safe_duckdb_connection
+from dagster_v3.defs.clickhouse.resolved import assert_clickhouse_tables_exist
 from dagster_v3.defs.common.resources import ObjectStoreResource
 from dagster_v3.defs.esef_filings import tables
-from dagster_v3.defs.esef_filings.artifact_contract import ARTIFACT_SCHEMA_VERSION
 from dagster_v3.defs.esef_filings.llm_enrichment import (
+    ENRICHMENT_EVIDENCE_SEGMENTS,
+    ENRICHMENT_VISIBLE_SECTION_TYPES,
     PROMPT_VERSION,
     build_company_enrichment_request,
     build_enrichment_evidence,
@@ -38,12 +39,9 @@ from dagster_v3.defs.esef_filings.llm_enrichment import (
 )
 from dagster_v3.defs.esef_filings.segment_assets import (
     ESEF_DOCUMENT_BUCKET,
-    compatible_artifact_keys_by_digest,
-    ensure_document_company_information_table,
 )
-from dagster_v3.defs.esef_filings.segment_parser import artifact_object_key
 
-GROUP_NAME = "esef_enrichment"
+GROUP_NAME = "esef_filings"
 _PROGRESS_INTERVAL = 25
 _NON_SPECIFIC_PERSON_ROLES = frozenset(
     {
@@ -69,7 +67,6 @@ class EsefLlmEnrichmentConfig(dg.Config):
 
 def run_esef_llm_enrichment(
     *,
-    esef_filings_duckdb: DuckDBResource,
     clickhouse: ClickhouseResource,
     object_store: Any,
     client: OpenAI,
@@ -104,14 +101,13 @@ def run_esef_llm_enrichment(
     selected_ids = {value.strip() for value in source_document_ids if value.strip()}
     documents = _load_latest_source_documents(
         clickhouse,
-        object_store=object_store,
         model=model,
         country_iso2=clean_country_iso2,
         company_ids=selected_company_ids,
         source_document_ids=selected_ids,
         max_documents=max_documents,
-        refresh_existing=(refresh_existing or reprocess_existing_without_model),
     )
+    artifacts = _load_disclosure_artifacts(clickhouse, documents=documents)
     object_store.ensure_bucket(ESEF_DOCUMENT_BUCKET)
     extracted_at = datetime.now(UTC).isoformat().replace("+00:00", "Z")
     information_rows: list[dict[str, object]] = []
@@ -126,27 +122,16 @@ def run_esef_llm_enrichment(
     dropped_non_specific_person_candidate_count = 0
     citation_adjustment_count = 0
     dropped_invalid_citation_candidate_count = 0
+    processed_documents: list[dict[str, object]] = []
 
     log_info(
-        "ESEF LLM latest-company selector: %s source documents selected",
+        "ESEF LLM latest-company selector: %s source documents considered",
         len(documents),
     )
     for index, document in enumerate(documents, start=1):
-        input_key = str(document["parsed_artifact_object_key"])
-        if not object_store.exists(input_key, bucket=ESEF_DOCUMENT_BUCKET):
-            raise ValueError(
-                "Missing upstream ESEF parsed artifact; materialize "
-                f"esef_document_artifacts_s3 first: {input_key}"
-            )
-        segment_artifact = _source_specific_segment_artifact(
-            json.loads(
-                object_store.read_bytes(
-                    input_key,
-                    bucket=ESEF_DOCUMENT_BUCKET,
-                )
-            ),
-            document=document,
-        )
+        source_document_id = str(document["source_document_id"])
+        input_key = _disclosure_input_key(source_document_id)
+        segment_artifact = artifacts[source_document_id]
         try:
             evidence_input = build_enrichment_evidence(
                 segment_artifact,
@@ -155,6 +140,13 @@ def run_esef_llm_enrichment(
         except ValueError as exc:
             if str(exc) != "ESEF segment artifact contains no LLM enrichment evidence":
                 raise
+            if (
+                not refresh_existing
+                and not reprocess_existing_without_model
+                and str(document["existing_extraction_status"]) == "no_evidence"
+            ):
+                continue
+            document["input_artifact_object_key"] = input_key
             information_rows.append(
                 _no_evidence_row(
                     document,
@@ -163,6 +155,7 @@ def run_esef_llm_enrichment(
                     extracted_at=extracted_at,
                 )
             )
+            processed_documents.append(document)
             no_evidence_count += 1
             continue
 
@@ -173,6 +166,13 @@ def run_esef_llm_enrichment(
         )
         request_bytes = enrichment_request_json_bytes(request_payload)
         request_sha256 = sha256(request_bytes).hexdigest()
+        if (
+            not refresh_existing
+            and not reprocess_existing_without_model
+            and str(document["existing_request_sha256"]) == request_sha256
+        ):
+            continue
+
         request_key = enrichment_request_object_key(
             request_sha256,
             model=model,
@@ -216,7 +216,7 @@ def run_esef_llm_enrichment(
                 evidence_input=evidence_input,
                 result=result,
                 model=model,
-                input_artifact_key=f"s3://{ESEF_DOCUMENT_BUCKET}/{input_key}",
+                input_artifact_key=input_key,
                 llm_request_object_key=request_key,
                 llm_request_sha256=request_sha256,
                 generated_at=extracted_at,
@@ -271,6 +271,7 @@ def run_esef_llm_enrichment(
                     and adjustment.get("action") == "candidate_dropped"
                 )
         information_rows.append(information_row)
+        processed_documents.append(document)
         prompt_token_count += int(information_row["prompt_tokens"])
         completion_token_count += int(information_row["completion_tokens"])
         if index == 1 or index % _PROGRESS_INTERVAL == 0 or index == len(documents):
@@ -280,9 +281,12 @@ def run_esef_llm_enrichment(
                 len(documents),
             )
 
-    _replace_information_rows(
-        esef_filings_duckdb,
-        source_document_ids=[str(row["source_document_id"]) for row in documents],
+    _replace_information_rows_clickhouse(
+        clickhouse,
+        source_document_ids=[
+            str(document["source_document_id"])
+            for document in processed_documents
+        ],
         model=model,
         rows=information_rows,
     )
@@ -291,11 +295,13 @@ def run_esef_llm_enrichment(
         "selection_country_iso2": clean_country_iso2,
         "llm_model": model,
         "reprocess_existing_without_model": reprocess_existing_without_model,
-        "selected_document_count": len(documents),
+        "candidate_document_count": len(documents),
+        "selected_document_count": len(processed_documents),
+        "unchanged_document_count": len(documents) - len(processed_documents),
         "selected_company_count": len(
             {
                 (str(document["country_iso2"]), str(document["company_id"]))
-                for document in documents
+                for document in processed_documents
             }
         ),
         "information_row_count": len(information_rows),
@@ -327,13 +333,11 @@ def run_esef_llm_enrichment(
 def _load_latest_source_documents(
     clickhouse: ClickhouseResource,
     *,
-    object_store: Any,
     model: str,
     country_iso2: str,
     company_ids: set[str],
     source_document_ids: set[str],
     max_documents: int | None,
-    refresh_existing: bool,
 ) -> list[dict[str, object]]:
     columns = (
         "source_document_id",
@@ -344,22 +348,28 @@ def _load_latest_source_documents(
         "period_end",
         "fiscal_year",
         "package_url",
-        "package_object_key",
+        "artifact_schema_version",
     )
     document_filters = [
-        "filings.package_sha256 != ''",
-        "registry.registry_id != ''",
-        "registry.country_iso2 != ''",
+        "disclosures.package_sha256 != ''",
+        "disclosures.company_id != ''",
+        "disclosures.country_iso2 != ''",
+        "((disclosures.disclosure_kind = 'tagged_fact' AND disclosures.segment IN "
+        "%(evidence_segments)s) OR "
+        "(disclosures.disclosure_kind = 'visible_section' AND "
+        "disclosures.section_type IN %(visible_section_types)s))",
     ]
     parameters: dict[str, object] = {
         "model_name": model,
         "prompt_version": PROMPT_VERSION,
+        "evidence_segments": ENRICHMENT_EVIDENCE_SEGMENTS,
+        "visible_section_types": ENRICHMENT_VISIBLE_SECTION_TYPES,
     }
     if country_iso2 != "":
-        document_filters.append("registry.country_iso2 = %(country_iso2)s")
+        document_filters.append("disclosures.country_iso2 = %(country_iso2)s")
         parameters["country_iso2"] = country_iso2
     if company_ids:
-        document_filters.append("registry.registry_id IN %(company_ids)s")
+        document_filters.append("disclosures.company_id IN %(company_ids)s")
         parameters["company_ids"] = tuple(sorted(company_ids))
 
     outer_filters = ["documents.latest_company_report_rank = 1"]
@@ -368,7 +378,10 @@ def _load_latest_source_documents(
         parameters["source_document_ids"] = tuple(sorted(source_document_ids))
     select_columns = ", ".join(f"documents.{column}" for column in columns)
     query = f"""
-SELECT {select_columns}, ifNull(existing.input_artifact_object_key, '')
+SELECT
+    {select_columns},
+    ifNull(existing.llm_request_sha256, ''),
+    ifNull(existing.extraction_status, '')
 FROM
 (
     SELECT
@@ -380,36 +393,37 @@ FROM
         ) AS latest_company_report_rank
     FROM (
         SELECT
-            filings.fxo_id AS source_document_id,
-            lowerUTF8(filings.package_sha256) AS package_sha256,
-            filings.lei AS lei,
-            upperUTF8(registry.country_iso2) AS country_iso2,
-            registry.registry_id AS company_id,
-            toString(filings.period_end) AS period_end,
-            toUInt16(toYear(filings.period_end)) AS fiscal_year,
-            filings.package_url AS package_url,
-            concat(
-                'esef_filings/report_packages/package_sha256=',
-                lowerUTF8(filings.package_sha256),
-                '/report-package.zip'
-            ) AS package_object_key,
-            toString(filings.processed_at) AS source_processed_at
-        FROM {tables.QUALIFIED_ESEF_FILINGS_TABLE} AS filings FINAL
-        INNER JOIN {tables.QUALIFIED_ESEF_ENTITY_REGISTRY_MAP_TABLE} AS registry FINAL
-            ON registry.lei = filings.lei
-        INNER JOIN (
-            SELECT DISTINCT fxo_id
-            FROM {tables.QUALIFIED_ESEF_FACTS_TABLE} FINAL
-        ) AS parsed_filings ON parsed_filings.fxo_id = filings.fxo_id
+            disclosures.source_document_id AS source_document_id,
+            argMax(disclosures.package_sha256, disclosures.resolved_at)
+                AS package_sha256,
+            argMax(disclosures.lei, disclosures.resolved_at) AS lei,
+            argMax(disclosures.country_iso2, disclosures.resolved_at)
+                AS country_iso2,
+            argMax(disclosures.company_id, disclosures.resolved_at) AS company_id,
+            argMax(toString(disclosures.period_end), disclosures.resolved_at)
+                AS period_end,
+            argMax(disclosures.fiscal_year, disclosures.resolved_at)
+                AS fiscal_year,
+            argMax(filings.package_url, filings.processed_at) AS package_url,
+            max(disclosures.artifact_schema_version) AS artifact_schema_version,
+            toString(max(filings.processed_at)) AS source_processed_at
+        FROM {tables.QUALIFIED_ESEF_DISCLOSURES_TABLE} AS disclosures FINAL
+        INNER JOIN {tables.QUALIFIED_ESEF_FILINGS_TABLE} AS filings FINAL
+            ON filings.fxo_id = disclosures.source_document_id
         WHERE {" AND ".join(document_filters)}
+        GROUP BY disclosures.source_document_id
     ) AS parsed_documents
 ) AS documents
 LEFT JOIN
 (
-    SELECT source_document_id, input_artifact_object_key
-    FROM {tables.QUALIFIED_ESEF_DOCUMENT_COMPANY_INFORMATION_TABLE}
+    SELECT
+        source_document_id,
+        argMax(llm_request_sha256, resolved_at) AS llm_request_sha256,
+        argMax(extraction_status, resolved_at) AS extraction_status
+    FROM {tables.QUALIFIED_ESEF_DOCUMENT_COMPANY_INFORMATION_TABLE} FINAL
     WHERE model_name = %(model_name)s
       AND prompt_version = %(prompt_version)s
+    GROUP BY source_document_id
 ) AS existing USING (source_document_id)
 WHERE {" AND ".join(outer_filters)}
 ORDER BY documents.country_iso2, documents.company_id,
@@ -419,87 +433,191 @@ ORDER BY documents.country_iso2, documents.company_id,
         rows = client.execute(query, parameters)
     documents = [
         {
-            **dict(zip(columns, row[:-1], strict=True)),
-            "existing_input_artifact_object_key": str(row[-1]),
+            **dict(zip(columns, row[:-2], strict=True)),
+            "existing_request_sha256": str(row[-2]),
+            "existing_extraction_status": str(row[-1]),
         }
         for row in rows
     ]
-    documents = _resolve_parsed_artifacts(object_store, documents)
-    selected_documents: list[dict[str, object]] = []
-    for document in documents:
-        existing_artifact_key = document.pop("existing_input_artifact_object_key")
-        if (
-            refresh_existing
-            or existing_artifact_key != document["parsed_artifact_object_key"]
-        ):
-            selected_documents.append(document)
     if max_documents is not None:
-        return selected_documents[:max_documents]
-    return selected_documents
-
-
-def _resolve_parsed_artifacts(
-    object_store: Any,
-    documents: list[dict[str, object]],
-) -> list[dict[str, object]]:
-    missing_digests: set[str] = set()
-    current_keys: dict[str, str] = {}
-    for document in documents:
-        digest = str(document["package_sha256"])
-        key = artifact_object_key(digest)
-        if object_store.exists(key, bucket=ESEF_DOCUMENT_BUCKET):
-            current_keys[digest] = key
-        else:
-            missing_digests.add(digest)
-    compatible_keys = compatible_artifact_keys_by_digest(
-        object_store,
-        package_sha256s=missing_digests,
-    )
-    for document in documents:
-        digest = str(document["package_sha256"])
-        if digest in current_keys:
-            schema_version = ARTIFACT_SCHEMA_VERSION
-            key = current_keys[digest]
-        elif digest in compatible_keys:
-            schema_version, key = compatible_keys[digest]
-        else:
-            raise ValueError(
-                "Missing parsed ESEF artifact for published facts: "
-                f"source_document_id={document['source_document_id']} "
-                f"package_sha256={digest}"
-            )
-        document["parsed_artifact_object_key"] = key
-        document["artifact_schema_version"] = schema_version
+        return documents[:max_documents]
     return documents
 
 
-def _source_specific_segment_artifact(
-    value: Any,
+def _load_disclosure_artifacts(
+    clickhouse: ClickhouseResource,
     *,
+    documents: Sequence[Mapping[str, object]],
+) -> dict[str, dict[str, Any]]:
+    if not documents:
+        return {}
+    source_document_ids = tuple(
+        sorted(str(document["source_document_id"]) for document in documents)
+    )
+    disclosure_columns = tables.ESEF_DISCLOSURES_EXPORT_COLUMNS
+    disclosure_query = f"""
+SELECT {", ".join(disclosure_columns)}
+FROM {tables.QUALIFIED_ESEF_DISCLOSURES_TABLE} FINAL
+WHERE source_document_id IN %(source_document_ids)s
+ORDER BY source_document_id, disclosure_kind, report_member,
+    anchor_visual_order, source_fact_key, segment, disclosure_id
+"""
+    label_query = f"""
+SELECT
+    source_document_id,
+    concept_qname,
+    language,
+    argMax(label, tuple(is_report_language, resolved_at, label_id)) AS label
+FROM {tables.QUALIFIED_ESEF_DOCUMENT_CONCEPT_LABELS_TABLE} FINAL
+WHERE source_document_id IN %(source_document_ids)s
+  AND label != ''
+GROUP BY source_document_id, concept_qname, language
+ORDER BY source_document_id, concept_qname, language
+"""
+    parameters = {"source_document_ids": source_document_ids}
+    with clickhouse.get_connection() as client:
+        disclosure_values = client.execute(disclosure_query, parameters)
+        label_values = client.execute(label_query, parameters)
+
+    labels: dict[tuple[str, str], dict[str, str]] = {}
+    for source_document_id, concept_qname, language, label in label_values:
+        labels.setdefault(
+            (str(source_document_id), str(concept_qname)),
+            {},
+        )[str(language)] = str(label)
+
+    artifacts = {
+        str(document["source_document_id"]): _empty_disclosure_artifact(document)
+        for document in documents
+    }
+    for values in disclosure_values:
+        row = dict(zip(disclosure_columns, values, strict=True))
+        source_document_id = str(row["source_document_id"])
+        if source_document_id not in artifacts:
+            raise ValueError(
+                "ESEF disclosure query returned an unselected source document: "
+                f"{source_document_id}"
+            )
+        artifact = artifacts[source_document_id]
+        if str(row["disclosure_kind"]) == "tagged_fact":
+            _add_tagged_fact_to_artifact(
+                artifact,
+                row=row,
+                labels=labels.get(
+                    (source_document_id, str(row["concept_qname"])),
+                    {},
+                ),
+            )
+        elif str(row["disclosure_kind"]) == "visible_section":
+            _add_visible_section_to_artifact(artifact, row=row)
+        else:
+            raise ValueError(
+                "Unsupported ESEF disclosure_kind: "
+                f"{row['disclosure_kind']}"
+            )
+    return artifacts
+
+
+def _empty_disclosure_artifact(
     document: Mapping[str, object],
 ) -> dict[str, Any]:
-    artifact = dict(_mapping(value, name="segment artifact"))
-    artifact_schema_version = artifact.get("schema_version")
-    expected_schema_version = document.get("artifact_schema_version")
-    if artifact_schema_version != expected_schema_version:
-        raise ValueError(
-            "ESEF segment artifact schema does not match source-document metadata: "
-            f"expected={expected_schema_version} actual={artifact_schema_version}"
-        )
-    source = dict(_mapping(artifact.get("source"), name="segment artifact source"))
-    source.update(
-        {
-            "fxo_id": str(document["source_document_id"]),
+    source_document_id = str(document["source_document_id"])
+    return {
+        "schema_version": int(document["artifact_schema_version"]),
+        "package_sha256": str(document["package_sha256"]),
+        "source": {
+            "fxo_id": source_document_id,
             "country": str(document["country_iso2"]),
             "company_id": str(document["company_id"]),
             "source_url": str(document["package_url"]),
-            "object_key": (
-                f"s3://{ESEF_DOCUMENT_BUCKET}/{document['package_object_key']}"
-            ),
+            "object_key": _disclosure_input_key(source_document_id),
+        },
+        "concepts": {},
+        "facts": {},
+        "segments": {},
+        "visible_sections": [],
+    }
+
+
+def _add_tagged_fact_to_artifact(
+    artifact: dict[str, Any],
+    *,
+    row: Mapping[str, object],
+    labels: Mapping[str, str],
+) -> None:
+    fact_key = str(row["source_fact_key"] or row["source_fact_id"])
+    if fact_key == "":
+        raise ValueError("ESEF tagged disclosure has no source fact key")
+    concept_qname = str(row["concept_qname"])
+    if concept_qname == "":
+        raise ValueError("ESEF tagged disclosure has no concept qname")
+    concepts = artifact["concepts"]
+    concepts.setdefault(
+        concept_qname,
+        {
+            "local_name": str(row["concept_local_name"]),
+            "labels": dict(labels),
+        },
+    )
+    facts = artifact["facts"]
+    facts.setdefault(
+        fact_key,
+        {
+            "fact_key": fact_key,
+            "source_fact_id": str(row["source_fact_id"]),
+            "report_member": str(row["report_member"]),
+            "concept_qname": concept_qname,
+            "canonical_value": str(row["plain_text"]),
+            "language": str(row["language"]),
+            "is_nil": False,
+            "is_numeric": False,
+            "period": _json_mapping(row["period_json"], name="period_json"),
+        },
+    )
+    segment = str(row["segment"])
+    if segment == "":
+        return
+    reference = {
+        "fact_key": fact_key,
+        "selection_reason": str(row["selection_reason"]),
+    }
+    segment_references = artifact["segments"].setdefault(segment, [])
+    if reference not in segment_references:
+        segment_references.append(reference)
+
+
+def _add_visible_section_to_artifact(
+    artifact: dict[str, Any],
+    *,
+    row: Mapping[str, object],
+) -> None:
+    text = str(row["plain_text"])
+    original_character_count = int(row["original_character_count"])
+    artifact["visible_sections"].append(
+        {
+            "section_type": str(row["section_type"]),
+            "report_member": str(row["report_member"]),
+            "heading": "",
+            "text": text,
+            "page_id": str(row["page_id"]),
+            "printed_page_number": str(row["printed_page_number"]),
+            "anchor_xpath": str(row["anchor_xpath"]),
+            "anchor_visual_order": int(row["anchor_visual_order"]),
+            "extraction_method": str(row["extraction_method"]),
+            "language": str(row["language"]),
+            "original_character_count": original_character_count,
+            "included_character_count": len(text),
+            "truncated": original_character_count > len(text),
+            "text_sha256": str(row["text_sha256"]),
         }
     )
-    artifact["source"] = source
-    return artifact
+
+
+def _disclosure_input_key(source_document_id: str) -> str:
+    return (
+        f"clickhouse://{tables.QUALIFIED_ESEF_DISCLOSURES_TABLE}/"
+        f"source_document_id={quote(source_document_id, safe='')}"
+    )
 
 
 def _information_row(
@@ -625,7 +743,7 @@ def _no_evidence_row(
         "business_segments_json": "[]",
         "material_group_relationships_json": "[]",
         "enrichment_artifact_object_key": "",
-        "input_artifact_object_key": str(document["parsed_artifact_object_key"]),
+        "input_artifact_object_key": str(document["input_artifact_object_key"]),
         "llm_request_object_key": "",
         "llm_request_sha256": "",
         "llm_response_text": "",
@@ -653,54 +771,60 @@ def _information_identity(document: Mapping[str, object]) -> dict[str, object]:
     }
 
 
-def _replace_information_rows(
-    esef_filings_duckdb: DuckDBResource,
+def _replace_information_rows_clickhouse(
+    clickhouse: ClickhouseResource,
     *,
     source_document_ids: Sequence[str],
     model: str,
     rows: Sequence[Mapping[str, object]],
 ) -> None:
-    with safe_duckdb_connection(esef_filings_duckdb) as connection:
-        ensure_document_company_information_table(connection)
-        if not source_document_ids:
-            return
-        connection.execute("begin transaction")
+    if not source_document_ids:
+        return
+    table = tables.ESEF_DOCUMENT_COMPANY_INFORMATION_TABLE
+    assert_clickhouse_tables_exist(
+        clickhouse,
+        database=tables.ESEF_DATABASE,
+        tables=(table,),
+    )
+    target = f"`{tables.ESEF_DATABASE}`.`{table}`"
+    stage_name = f"_tmp_{table}_{uuid.uuid4().hex}"
+    stage = f"`{tables.ESEF_DATABASE}`.`{stage_name}`"
+    parameters = {
+        "source_document_ids": tuple(sorted(set(source_document_ids))),
+        "model_name": model,
+        "prompt_version": PROMPT_VERSION,
+    }
+    with clickhouse.get_connection() as client:
+        client.execute(f"CREATE TABLE {stage} AS {target}")
         try:
-            connection.execute(
-                "create or replace temp table selected_esef_llm_documents "
-                "(source_document_id varchar)"
-            )
-            connection.executemany(
-                "insert into selected_esef_llm_documents values (?)",
-                [(source_document_id,) for source_document_id in source_document_ids],
-            )
-            connection.execute(
-                f"delete from {tables.DLT_DATASET_NAME}."
-                f"{tables.ESEF_DOCUMENT_COMPANY_INFORMATION_TABLE} where "
-                "source_document_id in (select source_document_id from "
-                "selected_esef_llm_documents) and model_name = ? and prompt_version = ?",
-                [model, PROMPT_VERSION],
+            client.execute(
+                f"INSERT INTO {stage} SELECT * FROM {target} WHERE NOT ("
+                "source_document_id IN %(source_document_ids)s "
+                "AND model_name = %(model_name)s "
+                "AND prompt_version = %(prompt_version)s)",
+                parameters,
             )
             if rows:
                 columns = tables.ESEF_DOCUMENT_COMPANY_INFORMATION_EXPORT_COLUMNS
-                placeholders = ", ".join("?" for _ in columns)
-                connection.executemany(
-                    f"insert into {tables.DLT_DATASET_NAME}."
-                    f"{tables.ESEF_DOCUMENT_COMPANY_INFORMATION_TABLE} "
-                    f"({', '.join(columns)}) values "
-                    f"({placeholders})",
+                client.execute(
+                    f"INSERT INTO {stage} ({', '.join(columns)}) VALUES",
                     [tuple(row[column] for column in columns) for row in rows],
                 )
-            connection.execute("commit")
-        except Exception:
-            connection.execute("rollback")
-            raise
+            client.execute(f"EXCHANGE TABLES {stage} AND {target}")
+        finally:
+            client.execute(f"DROP TABLE IF EXISTS {stage}")
 
 
 def _mapping(value: Any, *, name: str) -> Mapping[str, Any]:
     if not isinstance(value, Mapping):
         raise ValueError(f"ESEF {name} must be an object")
     return value
+
+
+def _json_mapping(value: object, *, name: str) -> dict[str, str]:
+    parsed = json.loads(str(value))
+    mapping = _mapping(parsed, name=name)
+    return {str(key): str(item) for key, item in mapping.items()}
 
 
 def _json_text(value: object) -> str:
@@ -713,36 +837,36 @@ def _json_text(value: object) -> str:
 
 
 @dg.asset(
-    name="esef_document_company_information_duckdb",
+    name="esef_document_company_information_clickhouse",
     deps=[
         dg.AssetDep(
-            dg.AssetKey("esef_facts_clickhouse"),
+            dg.AssetKey("esef_disclosures_clickhouse"),
+            partition_mapping=dg.AllPartitionMapping(),
+        ),
+        dg.AssetDep(
+            dg.AssetKey("esef_document_concept_labels_clickhouse"),
             partition_mapping=dg.AllPartitionMapping(),
         ),
         dg.AssetKey("esef_filings_clickhouse"),
-        dg.AssetKey("esef_entity_registry_map_clickhouse"),
     ],
     group_name=GROUP_NAME,
-    kinds={"python", "s3", "duckdb", "llm", "xbrl", "deepseek"},
-    pool="esef_filings_duckdb",
+    kinds={"python", "s3", "clickhouse", "llm", "xbrl", "deepseek"},
+    pool="esef_document_company_information_clickhouse",
     metadata={"table": tables.QUALIFIED_ESEF_DOCUMENT_COMPANY_INFORMATION_TABLE},
     description=(
-        "Selects the latest ESEF filing with published facts per linked company, "
-        "archives the exact content-addressed DeepSeek request in S3, and stores "
-        "the raw response plus source-document-specific observations in DuckDB. "
-        "Canonical company tables are not modified."
+        "Selects the latest canonical ESEF disclosures per company, archives "
+        "the exact content-addressed DeepSeek request in S3, and atomically "
+        "writes source-document observations to ClickHouse."
     ),
 )
-def esef_document_company_information_duckdb(
+def esef_document_company_information_clickhouse(
     context: dg.AssetExecutionContext,
     config: EsefLlmEnrichmentConfig,
-    esef_filings_duckdb: DuckDBResource,
     clickhouse: ClickhouseResource,
     object_store: ObjectStoreResource,
 ) -> dg.MaterializeResult:
     settings = deepseek_settings()
     metadata = run_esef_llm_enrichment(
-        esef_filings_duckdb=esef_filings_duckdb,
         clickhouse=clickhouse,
         object_store=object_store,
         client=OpenAI(
@@ -765,4 +889,4 @@ def esef_document_company_information_duckdb(
     return dg.MaterializeResult(metadata=metadata)
 
 
-defs = dg.Definitions(assets=[esef_document_company_information_duckdb])
+defs = dg.Definitions(assets=[esef_document_company_information_clickhouse])

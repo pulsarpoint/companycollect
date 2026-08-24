@@ -29,10 +29,13 @@ esef_filings_index_duckdb
        -> esef_filing_facts_duckdb
        -> esef_document_contact_candidates_duckdb
        -> esef_document_concept_labels_duckdb
-       -> esef_fact_disclosures_duckdb
+       -> esef_disclosures_duckdb
 
 all four DuckDB assets
   -> esef_parsing_clickhouse (one operation, four ClickHouse asset outputs)
+
+esef_disclosures_clickhouse + esef_document_concept_labels_clickhouse
+  -> esef_document_company_information_clickhouse
 ```
 
 Each DuckDB output is an isolated file for one `processed_week`. This permits
@@ -54,7 +57,7 @@ one partition, and verifies the published partition count.
 ## Deployment order
 
 1. Stop ESEF schedules and confirm no active ESEF runs.
-2. Apply ClickHouse migration `000313`.
+2. Apply ClickHouse migrations through `000316`.
 3. Deploy Dagster code.
 4. Materialize one closed processed week through all four DuckDB assets and the
    four-output ClickHouse publication operation.

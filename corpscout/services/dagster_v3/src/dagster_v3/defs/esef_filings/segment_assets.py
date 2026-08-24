@@ -1116,39 +1116,6 @@ def _is_report_language(language: str, report_languages: set[str]) -> bool:
     )
 
 
-def ensure_document_company_information_table(connection: Any) -> None:
-    connection.execute(f"create schema if not exists {tables.DLT_DATASET_NAME}")
-    connection.execute(
-        f"create table if not exists {tables.DLT_DATASET_NAME}."
-        f"{tables.ESEF_DOCUMENT_COMPANY_INFORMATION_TABLE} ("
-        "source_document_id varchar, package_sha256 varchar, lei varchar, "
-        "country_iso2 varchar, company_id varchar, period_end varchar, "
-        "fiscal_year integer, extraction_status varchar, company_description varchar, "
-        "description_language varchar, description_confidence double, "
-        "description_evidence_ids_json varchar, people_json varchar, "
-        "products_and_services_json varchar, customer_markets_json varchar, "
-        "operating_geographies_json varchar, business_segments_json varchar, "
-        "material_group_relationships_json varchar, "
-        "enrichment_artifact_object_key varchar, input_artifact_object_key varchar, "
-        "llm_request_object_key varchar, llm_request_sha256 varchar, "
-        "llm_response_text varchar, llm_response_sha256 varchar, "
-        "model_provider varchar, model_name varchar, prompt_version varchar, "
-        "prompt_tokens bigint, completion_tokens bigint, input_character_count bigint, "
-        "source_run_id varchar, extracted_at varchar)"
-    )
-    for column in (
-        "llm_request_object_key",
-        "llm_request_sha256",
-        "llm_response_text",
-        "llm_response_sha256",
-    ):
-        connection.execute(
-            f"alter table {tables.DLT_DATASET_NAME}."
-            f"{tables.ESEF_DOCUMENT_COMPANY_INFORMATION_TABLE} "
-            f"add column if not exists {column} varchar default ''"
-        )
-
-
 def _duckdb_table_exists(connection: Any, *, schema: str, table: str) -> bool:
     return bool(
         connection.execute(

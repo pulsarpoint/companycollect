@@ -10,11 +10,33 @@ from typing import Any
 from lxml import etree, html
 
 from dagster_v3.defs.company_source_records.identity import file_source_record_uid
-from dagster_v3.defs.esef_filings import tables
 
 
 DISCLOSURE_PARSER_NAME = "lxml_html_disclosure"
 DISCLOSURE_PARSER_VERSION = "1"
+VISIBLE_SECTION_PARSER_NAME = "corpscout-visible-sections"
+VISIBLE_SECTION_TYPES = frozenset(
+    {
+        "board_composition",
+        "executive_management",
+        "board_committees",
+        "auditor_appointment",
+        "annual_report_signatures",
+        "company_contact",
+        "person_profiles",
+        "ownership_and_listing",
+        "company_overview",
+    }
+)
+VISIBLE_SECTION_SEGMENTS = {
+    "board_composition": "people_and_audit",
+    "executive_management": "people_and_audit",
+    "board_committees": "people_and_audit",
+    "auditor_appointment": "people_and_audit",
+    "annual_report_signatures": "people_and_audit",
+    "person_profiles": "people_and_audit",
+    "company_overview": "business_profile",
+}
 
 _BLOCK_ELEMENTS = frozenset(
     {
@@ -66,7 +88,8 @@ def disclosure_row(
     raw_value = str(source["raw_value"])
     raw_value_sha256 = sha256(raw_value.encode("utf-8")).hexdigest()
     source_document_id = str(source["source_document_id"])
-    fact_id = str(source["fact_id"])
+    source_fact_id = str(source["source_fact_id"])
+    source_fact_key = str(source["source_fact_key"])
     package_sha256 = str(source["package_sha256"]).lower()
     source_record_uid = file_source_record_uid(
         record_kind="esef_report_package",
@@ -77,7 +100,9 @@ def disclosure_row(
             (
                 source_record_uid,
                 source_document_id,
-                fact_id,
+                source_fact_key,
+                str(source["segment"]),
+                str(source["selection_reason"]),
                 raw_value_sha256,
                 DISCLOSURE_PARSER_VERSION,
             )
@@ -87,10 +112,13 @@ def disclosure_row(
     table_count = sum(block["type"] == "table" for block in disclosure.blocks)
     return {
         "disclosure_id": disclosure_id,
+        "disclosure_kind": "tagged_fact",
         "source_document_id": source_document_id,
         "source_record_uid": source_record_uid,
-        "source_fact_id": fact_id,
+        "source_fact_id": source_fact_id,
+        "source_fact_key": source_fact_key,
         "package_sha256": package_sha256,
+        "artifact_schema_version": int(source["artifact_schema_version"]),
         "lei": str(source["lei"]),
         "country_iso2": str(source["country_iso2"]).upper(),
         "company_id": str(source["company_id"]),
@@ -99,11 +127,22 @@ def disclosure_row(
         "concept_qname": str(source["concept_qname"]),
         "concept_local_name": str(source["concept_local_name"]),
         "language": str(source["language"]),
-        "raw_value_sha256": raw_value_sha256,
+        "segment": str(source["segment"]),
+        "selection_reason": str(source["selection_reason"]),
+        "report_member": str(source["report_member"]),
+        "period_json": _json_text(source["period"]),
+        "section_type": "",
+        "page_id": "",
+        "printed_page_number": "",
+        "anchor_xpath": "",
+        "anchor_visual_order": 0,
+        "extraction_method": "tagged_fact",
+        "text_sha256": sha256(disclosure.plain_text.encode("utf-8")).hexdigest(),
         "parser_name": DISCLOSURE_PARSER_NAME,
         "parser_version": DISCLOSURE_PARSER_VERSION,
         "blocks_json": _json_text(disclosure.blocks),
         "plain_text": disclosure.plain_text,
+        "original_character_count": len(disclosure.plain_text),
         "block_count": len(disclosure.blocks),
         "table_count": table_count,
         "source_run_id": source_run_id,
@@ -111,19 +150,79 @@ def disclosure_row(
     }
 
 
-def ensure_disclosure_table(connection: Any) -> None:
-    connection.execute(f"create schema if not exists {tables.DLT_DATASET_NAME}")
-    connection.execute(
-        f"create table if not exists {tables.QUALIFIED_FACT_DISCLOSURES_TABLE} ("
-        "disclosure_id varchar, source_document_id varchar, "
-        "source_record_uid varchar, source_fact_id varchar, package_sha256 varchar, "
-        "lei varchar, country_iso2 varchar, company_id varchar, period_end varchar, "
-        "fiscal_year integer, concept_qname varchar, concept_local_name varchar, "
-        "language varchar, raw_value_sha256 varchar, parser_name varchar, "
-        "parser_version varchar, blocks_json varchar, plain_text varchar, "
-        "block_count integer, table_count integer, source_run_id varchar, "
-        "extracted_at varchar)"
+def visible_section_disclosure_row(
+    source: Mapping[str, object],
+    section: Mapping[str, object],
+    *,
+    parser_version: str,
+    source_run_id: str,
+    extracted_at: str,
+) -> dict[str, object]:
+    """Build one persisted disclosure row from a visible XHTML section."""
+    text = str(section["text"])
+    text_sha256 = sha256(text.encode("utf-8")).hexdigest()
+    if text_sha256 != str(section["text_sha256"]):
+        raise ValueError("ESEF visible-section text SHA-256 does not match text")
+    section_type = str(section["section_type"])
+    if section_type not in VISIBLE_SECTION_TYPES:
+        raise ValueError(f"Unsupported ESEF visible-section type: {section_type}")
+    package_sha256 = str(source["package_sha256"]).lower()
+    source_document_id = str(source["source_document_id"])
+    source_record_uid = file_source_record_uid(
+        record_kind="esef_report_package",
+        content_sha256=package_sha256,
     )
+    disclosure_id = sha256(
+        "\0".join(
+            (
+                source_record_uid,
+                source_document_id,
+                section_type,
+                str(section["report_member"]),
+                str(section["anchor_xpath"]),
+                text_sha256,
+                parser_version,
+            )
+        ).encode("utf-8")
+    ).hexdigest()
+    return {
+        "disclosure_id": disclosure_id,
+        "disclosure_kind": "visible_section",
+        "source_document_id": source_document_id,
+        "source_record_uid": source_record_uid,
+        "source_fact_id": "",
+        "source_fact_key": "",
+        "package_sha256": package_sha256,
+        "artifact_schema_version": int(source["artifact_schema_version"]),
+        "lei": str(source["lei"]),
+        "country_iso2": str(source["country_iso2"]).upper(),
+        "company_id": str(source["company_id"]),
+        "period_end": str(source["period_end"]),
+        "fiscal_year": int(source["fiscal_year"]),
+        "concept_qname": "",
+        "concept_local_name": "",
+        "language": str(section.get("language", "")),
+        "segment": VISIBLE_SECTION_SEGMENTS.get(section_type, ""),
+        "selection_reason": f"visible-section:{section_type}",
+        "report_member": str(section["report_member"]),
+        "period_json": "{}",
+        "section_type": section_type,
+        "page_id": str(section.get("page_id", "")),
+        "printed_page_number": str(section.get("printed_page_number", "")),
+        "anchor_xpath": str(section["anchor_xpath"]),
+        "anchor_visual_order": int(section["anchor_visual_order"]),
+        "extraction_method": str(section["extraction_method"]),
+        "text_sha256": text_sha256,
+        "parser_name": VISIBLE_SECTION_PARSER_NAME,
+        "parser_version": parser_version,
+        "blocks_json": "[]",
+        "plain_text": text,
+        "original_character_count": int(section["original_character_count"]),
+        "block_count": 1,
+        "table_count": 0,
+        "source_run_id": source_run_id,
+        "extracted_at": extracted_at,
+    }
 
 
 def _collect_blocks(

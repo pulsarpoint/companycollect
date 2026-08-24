@@ -68,9 +68,9 @@ CONCEPT_LABELS_CONTRACT = PartitionPublishContract(
 DISCLOSURES_CONTRACT = PartitionPublishContract(
     dataset_name="disclosures",
     storage_source=DISCLOSURES_STORAGE,
-    duckdb_table=tables.ESEF_FACT_DISCLOSURES_TABLE,
-    clickhouse_table=tables.ESEF_FACT_DISCLOSURES_TABLE,
-    columns=tables.ESEF_FACT_DISCLOSURES_PARTITION_EXPORT_COLUMNS,
+    duckdb_table=tables.ESEF_DISCLOSURES_TABLE,
+    clickhouse_table=tables.ESEF_DISCLOSURES_TABLE,
+    columns=tables.ESEF_DISCLOSURES_PARTITION_EXPORT_COLUMNS,
 )
 
 
@@ -153,7 +153,7 @@ PUBLISH_CONTRACTS = (
         CONTACT_CANDIDATES_CONTRACT,
     ),
     (dg.AssetKey("esef_document_concept_labels_clickhouse"), CONCEPT_LABELS_CONTRACT),
-    (dg.AssetKey("esef_fact_disclosures_clickhouse"), DISCLOSURES_CONTRACT),
+    (dg.AssetKey("esef_disclosures_clickhouse"), DISCLOSURES_CONTRACT),
 )
 
 
@@ -178,8 +178,8 @@ PUBLISH_CONTRACTS = (
             kinds={"duckdb", "clickhouse", "taxonomy"},
         ),
         dg.AssetSpec(
-            "esef_fact_disclosures_clickhouse",
-            deps=["esef_fact_disclosures_duckdb"],
+            "esef_disclosures_clickhouse",
+            deps=["esef_disclosures_duckdb"],
             group_name=GROUP_NAME,
             kinds={"duckdb", "clickhouse", "xhtml"},
         ),

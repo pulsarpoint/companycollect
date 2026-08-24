@@ -20,9 +20,12 @@ from pydantic import Field
 
 from dagster_v3.defs.common.duckdb_resources import duckdb_resource
 from dagster_v3.defs.common.resources import ObjectStoreResource
-from dagster_v3.defs.esef_filings import facts, tables
+from dagster_v3.defs.esef_filings import tables
 from dagster_v3.defs.esef_filings.assets import run_esef_artifact_facts_partition
-from dagster_v3.defs.esef_filings.disclosure_parser import disclosure_row
+from dagster_v3.defs.esef_filings.disclosure_parser import (
+    disclosure_row,
+    visible_section_disclosure_row,
+)
 from dagster_v3.defs.esef_filings.partitioned_storage import (
     CONCEPT_LABELS_PROJECTION,
     DISCLOSURES_STORAGE,
@@ -39,6 +42,9 @@ from dagster_v3.defs.esef_filings.segment_assets import (
     ESEF_PROCESSED_WEEK_PARTITIONS,
     iter_esef_document_result_rows,
     local_esef_document_result,
+)
+from dagster_v3.defs.esef_filings.visible_sections import (
+    VISIBLE_SECTION_EXTRACTOR_VERSION,
 )
 
 
@@ -81,7 +87,16 @@ class _DisclosureParseResult:
     table_count: int
 
 
-_DISCLOSURE_INTEGER_COLUMNS = frozenset({"fiscal_year", "block_count", "table_count"})
+_DISCLOSURE_INTEGER_COLUMNS = frozenset(
+    {
+        "artifact_schema_version",
+        "fiscal_year",
+        "anchor_visual_order",
+        "original_character_count",
+        "block_count",
+        "table_count",
+    }
+)
 _DISCLOSURE_ARROW_SCHEMA = pa.schema(
     [
         pa.field(
@@ -92,7 +107,7 @@ _DISCLOSURE_ARROW_SCHEMA = pa.schema(
             if column in _DISCLOSURE_INTEGER_COLUMNS
             else pa.string(),
         )
-        for column in tables.ESEF_FACT_DISCLOSURES_PARTITION_EXPORT_COLUMNS
+        for column in tables.ESEF_DISCLOSURES_PARTITION_EXPORT_COLUMNS
     ]
 )
 
@@ -277,17 +292,17 @@ def build_disclosures_partition_database(
 
         write_rows(
             database_path=database_path,
-            table=tables.ESEF_FACT_DISCLOSURES_TABLE,
-            columns=tables.ESEF_FACT_DISCLOSURES_PARTITION_EXPORT_COLUMNS,
+            table=tables.ESEF_DISCLOSURES_TABLE,
+            columns=tables.ESEF_DISCLOSURES_PARTITION_EXPORT_COLUMNS,
             integer_columns=_DISCLOSURE_INTEGER_COLUMNS,
             boolean_columns=frozenset(),
             rows=(),
         )
-        columns = ", ".join(tables.ESEF_FACT_DISCLOSURES_PARTITION_EXPORT_COLUMNS)
+        columns = ", ".join(tables.ESEF_DISCLOSURES_PARTITION_EXPORT_COLUMNS)
         with duckdb.connect(str(database_path)) as connection:
             for result in parsed:
                 connection.execute(
-                    f"insert into {tables.QUALIFIED_FACT_DISCLOSURES_TABLE} "
+                    f"insert into {tables.QUALIFIED_DISCLOSURES_TABLE} "
                     f"({columns}) select {columns} from read_parquet(?)",
                     [result.output_path],
                 )
@@ -312,7 +327,7 @@ def build_disclosures_partition_database(
             "row_count": row_count,
             "block_count": block_count,
             "table_count": table_count,
-            "table": tables.QUALIFIED_FACT_DISCLOSURES_TABLE,
+            "table": tables.QUALIFIED_DISCLOSURES_TABLE,
         }
 
     metadata = atomic_partition_database(destination, build)
@@ -324,6 +339,23 @@ def _parse_disclosure_document(
 ) -> _DisclosureParseResult:
     with Path(task.artifact_path).open("r", encoding="utf-8") as handle:
         artifact = json.load(handle)
+    artifact_schema_version = int(artifact["schema_version"])
+    artifact_facts = _artifact_mapping(artifact.get("facts"), name="facts")
+    artifact_concepts = _artifact_mapping(
+        artifact.get("concepts", {}),
+        name="concepts",
+    )
+    segment_metadata = _segment_metadata_by_fact_key(artifact)
+    common_source: dict[str, object] = {
+        "source_document_id": task.source_document_id,
+        "package_sha256": task.package_sha256,
+        "artifact_schema_version": artifact_schema_version,
+        "lei": task.lei,
+        "country_iso2": task.country_iso2,
+        "company_id": task.company_id,
+        "period_end": task.period_end,
+        "fiscal_year": task.fiscal_year,
+    }
     rows: list[dict[str, object]] = []
     row_count = 0
     block_count = 0
@@ -334,30 +366,93 @@ def _parse_disclosure_document(
         _DISCLOSURE_ARROW_SCHEMA,
         compression="zstd",
     ) as writer:
-        for fact in facts.iter_artifact_facts(
-            artifact,
-            lei=task.lei,
-            fxo_id=task.source_document_id,
-            period_end=task.period_end,
-        ):
-            if fact.value_kind != "text" or fact.raw_value.strip() == "":
+        ordered_facts = sorted(
+            artifact_facts.items(),
+            key=lambda item: (
+                str(_artifact_mapping(item[1], name="fact").get("report_member", "")),
+                int(_artifact_mapping(item[1], name="fact").get("ordinal", 0)),
+                str(_artifact_mapping(item[1], name="fact").get("fact_key", item[0])),
+            ),
+        )
+        for stored_fact_key, fact_value in ordered_facts:
+            fact = _artifact_mapping(fact_value, name="fact")
+            dimensions = _artifact_mapping(
+                fact.get("oim_dimensions", {}),
+                name="fact oim_dimensions",
+            )
+            if fact.get("is_nil") is True or fact.get("is_numeric") is True:
                 continue
-            source: Mapping[str, object] = {
-                "source_document_id": task.source_document_id,
-                "package_sha256": task.package_sha256,
-                "lei": task.lei,
-                "country_iso2": task.country_iso2,
-                "company_id": task.company_id,
-                "period_end": task.period_end,
-                "fiscal_year": task.fiscal_year,
-                "fact_id": fact.fact_id,
-                "concept_qname": fact.concept_qname,
-                "concept_local_name": fact.concept_local_name,
-                "language": fact.language,
-                "raw_value": fact.raw_value,
-            }
-            row = disclosure_row(
-                source,
+            if str(dimensions.get("unit", "")) != "":
+                continue
+            raw_value = str(fact.get("canonical_value") or "")
+            if raw_value.strip() == "":
+                continue
+            fact_key = str(fact.get("fact_key", stored_fact_key))
+            concept_qname = str(
+                fact.get("concept_qname") or dimensions.get("concept", "")
+            )
+            concept = _artifact_mapping(
+                artifact_concepts.get(concept_qname, {}),
+                name="concept",
+            )
+            references = segment_metadata.get(fact_key) or [("", "")]
+            for segment, selection_reason in references:
+                source: Mapping[str, object] = {
+                    **common_source,
+                    "source_fact_id": str(fact.get("source_fact_id") or fact_key),
+                    "source_fact_key": fact_key,
+                    "concept_qname": concept_qname,
+                    "concept_local_name": str(
+                        concept.get("local_name")
+                        or concept_qname.rsplit(":", 1)[-1]
+                    ),
+                    "language": str(
+                        fact.get("language") or dimensions.get("language", "")
+                    ),
+                    "segment": segment,
+                    "selection_reason": selection_reason,
+                    "report_member": str(fact.get("report_member", "")),
+                    "period": _artifact_mapping(
+                        fact.get("period", {}),
+                        name="fact period",
+                    ),
+                    "raw_value": raw_value,
+                }
+                row = disclosure_row(
+                    source,
+                    source_run_id=task.source_run_id,
+                    extracted_at=task.extracted_at,
+                )
+                row["processed_week"] = task.processed_week
+                rows.append(row)
+                row_count += 1
+                block_count += int(row["block_count"])
+                table_count += int(row["table_count"])
+                if len(rows) >= DISCLOSURE_BATCH_SIZE:
+                    writer.write_table(
+                        pa.Table.from_pylist(rows, schema=_DISCLOSURE_ARROW_SCHEMA)
+                    )
+                    rows.clear()
+        parser = _artifact_mapping(artifact.get("parser", {}), name="parser")
+        extractor_versions = _artifact_mapping(
+            parser.get("candidate_extractor_versions", {}),
+            name="candidate_extractor_versions",
+        )
+        visible_section_parser_version = str(
+            extractor_versions.get(
+                "corpscout-visible-sections",
+                VISIBLE_SECTION_EXTRACTOR_VERSION,
+            )
+        )
+        visible_sections = artifact.get("visible_sections", [])
+        if not isinstance(visible_sections, list):
+            raise ValueError("ESEF artifact visible_sections must be a list")
+        for section_value in visible_sections:
+            section = _artifact_mapping(section_value, name="visible section")
+            row = visible_section_disclosure_row(
+                common_source,
+                section,
+                parser_version=visible_section_parser_version,
                 source_run_id=task.source_run_id,
                 extracted_at=task.extracted_at,
             )
@@ -381,6 +476,34 @@ def _parse_disclosure_document(
         block_count=block_count,
         table_count=table_count,
     )
+
+
+def _artifact_mapping(value: object, *, name: str) -> Mapping[str, Any]:
+    if not isinstance(value, Mapping):
+        raise ValueError(f"ESEF artifact {name} must be an object")
+    return value
+
+
+def _segment_metadata_by_fact_key(
+    artifact: Mapping[str, object],
+) -> dict[str, list[tuple[str, str]]]:
+    segments = _artifact_mapping(artifact.get("segments", {}), name="segments")
+    metadata: dict[str, list[tuple[str, str]]] = {}
+    for segment_name in sorted(segments):
+        references = segments[segment_name]
+        if not isinstance(references, list):
+            raise ValueError(f"ESEF artifact segment {segment_name} must be a list")
+        for reference_value in references:
+            reference = _artifact_mapping(reference_value, name="segment reference")
+            fact_key = str(reference["fact_key"])
+            segment_reference = (
+                segment_name,
+                str(reference.get("selection_reason", "")),
+            )
+            fact_references = metadata.setdefault(fact_key, [])
+            if segment_reference not in fact_references:
+                fact_references.append(segment_reference)
+    return metadata
 
 
 @dg.asset(
@@ -455,16 +578,19 @@ def esef_document_concept_labels_duckdb(
 
 
 @dg.asset(
-    name="esef_fact_disclosures_duckdb",
+    name="esef_disclosures_duckdb",
     deps=ARTIFACT_DEPENDENCY,
     group_name=GROUP_NAME,
     kinds={"python", "s3", "duckdb", "xhtml"},
     partitions_def=ESEF_PROCESSED_WEEK_PARTITIONS,
     backfill_policy=dg.BackfillPolicy.multi_run(max_partitions_per_run=1),
-    pool="esef_fact_disclosures_duckdb",
-    description="Builds disclosures directly from artifacts in an isolated weekly DuckDB.",
+    pool="esef_disclosures_duckdb",
+    description=(
+        "Builds tagged facts and visible XHTML disclosure evidence in an "
+        "isolated weekly DuckDB."
+    ),
 )
-def esef_fact_disclosures_duckdb(
+def esef_disclosures_duckdb(
     context: dg.AssetExecutionContext,
     config: EsefPartitionedDisclosureConfig,
     object_store: ObjectStoreResource,
@@ -483,7 +609,7 @@ ESEF_PARSING_ASSETS = (
     esef_filing_facts_duckdb,
     esef_document_contact_candidates_duckdb,
     esef_document_concept_labels_duckdb,
-    esef_fact_disclosures_duckdb,
+    esef_disclosures_duckdb,
 )
 
 

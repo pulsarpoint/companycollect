@@ -32,7 +32,7 @@ EXPECTED_DUCKDB_ASSETS = {
     "esef_filing_facts_duckdb",
     "esef_document_contact_candidates_duckdb",
     "esef_document_concept_labels_duckdb",
-    "esef_fact_disclosures_duckdb",
+    "esef_disclosures_duckdb",
 }
 
 EXPECTED_CLICKHOUSE_DEPENDENCIES = {
@@ -41,7 +41,7 @@ EXPECTED_CLICKHOUSE_DEPENDENCIES = {
         "esef_document_contact_candidates_duckdb"
     ),
     "esef_document_concept_labels_clickhouse": ("esef_document_concept_labels_duckdb"),
-    "esef_fact_disclosures_clickhouse": "esef_fact_disclosures_duckdb",
+    "esef_disclosures_clickhouse": "esef_disclosures_duckdb",
 }
 
 

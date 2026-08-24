@@ -834,10 +834,10 @@ def test_esef_filings_refresh_job_selects_weekly_ingest_evidence_and_exports() -
         "esef_document_artifacts_s3",
         "esef_document_contact_candidates_duckdb",
         "esef_document_concept_labels_duckdb",
-        "esef_fact_disclosures_duckdb",
+        "esef_disclosures_duckdb",
         "esef_document_contact_candidates_clickhouse",
         "esef_document_concept_labels_clickhouse",
-        "esef_fact_disclosures_clickhouse",
+        "esef_disclosures_clickhouse",
     }
 
 
@@ -901,11 +901,11 @@ def test_esef_filings_backfill_job_selects_partitioned_assets_only() -> None:
         "esef_document_artifacts_s3",
         "esef_document_contact_candidates_duckdb",
         "esef_document_concept_labels_duckdb",
-        "esef_fact_disclosures_duckdb",
+        "esef_disclosures_duckdb",
         "esef_facts_clickhouse",
         "esef_document_contact_candidates_clickhouse",
         "esef_document_concept_labels_clickhouse",
-        "esef_fact_disclosures_clickhouse",
+        "esef_disclosures_clickhouse",
     }
     assert job.partitions_def is assets.ESEF_PROCESSED_WEEK_PARTITIONS
 

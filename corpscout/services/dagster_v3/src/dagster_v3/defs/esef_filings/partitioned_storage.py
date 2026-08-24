@@ -29,7 +29,7 @@ ROW_BATCH_SIZE = 10_000
 FACTS_STORAGE = "esef_filing_facts"
 CONTACT_CANDIDATES_STORAGE = "esef_document_contact_candidates"
 CONCEPT_LABELS_STORAGE = "esef_document_concept_labels"
-DISCLOSURES_STORAGE = "esef_fact_disclosures"
+DISCLOSURES_STORAGE = "esef_disclosures"
 
 
 @dataclass(frozen=True)

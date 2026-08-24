@@ -73,9 +73,7 @@ CLICKHOUSE_LEAVES: tuple[ClickhouseLeaf, ...] = (
         ("esef_document_concept_labels",),
         None,
     ),
-    ClickhouseLeaf(
-        "esef_fact_disclosures_clickhouse", ("esef_fact_disclosures",), None
-    ),
+    ClickhouseLeaf("esef_disclosures_clickhouse", ("esef_disclosures",), None),
     ClickhouseLeaf(
         "esef_entity_registry_map_clickhouse", ("esef_entity_registry_map",), None
     ),

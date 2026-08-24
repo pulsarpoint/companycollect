@@ -5,26 +5,11 @@ No ``from __future__ import annotations``: Dagster inspects asset annotations.
 
 import dagster as dg
 from dagster_clickhouse import ClickhouseResource
-from dagster_duckdb import DuckDBResource
 
-from dagster_v3.defs.clickhouse.resolved import (
-    assert_clickhouse_tables_exist,
-    replace_duckdb_connection_tables_in_clickhouse,
-)
-from dagster_v3.defs.common.duckdb_resources import read_only_duckdb_connection
 from dagster_v3.defs.esef_filings import tables
-from dagster_v3.defs.sweden_financial.clickhouse import (
-    clickhouse_table_row_count,
-    guard_against_clickhouse_table_shrink,
-)
 from dagster_v3.defs.translator_load.resource import TranslatorResource
 
-GROUP_NAME = "esef_enrichment"
-
-_COMPANY_INFORMATION_TABLE_CONTRACT = (
-    tables.ESEF_DOCUMENT_COMPANY_INFORMATION_TABLE,
-    tables.ESEF_DOCUMENT_COMPANY_INFORMATION_EXPORT_COLUMNS,
-)
+GROUP_NAME = "esef_filings"
 
 _ESEF_CONCEPT_LABEL_SOURCE_TABLE = tables.QUALIFIED_ESEF_DOCUMENT_CONCEPT_LABELS_TABLE
 _ESEF_LANGUAGE_NAMES = {
@@ -192,10 +177,6 @@ def _esef_language_name(language: str) -> str | None:
     return _ESEF_LANGUAGE_NAMES.get(language.lower().split("-", maxsplit=1)[0])
 
 
-class EsefDocumentPublishConfig(dg.Config):
-    allow_shrink: bool = False
-
-
 @dg.asset(
     name="esef_document_concept_official_translations_clickhouse",
     deps=[
@@ -358,65 +339,9 @@ def esef_document_concept_translation_coverage(
     )
 
 
-@dg.asset(
-    name="esef_document_company_information_clickhouse",
-    deps=[dg.AssetKey("esef_document_company_information_duckdb")],
-    group_name=GROUP_NAME,
-    kinds={"python", "duckdb", "clickhouse", "llm", "xbrl"},
-    pool="esef_filings_duckdb",
-    metadata={"table": tables.QUALIFIED_ESEF_DOCUMENT_COMPANY_INFORMATION_TABLE},
-    description=(
-        "Publishes exact request/response provenance and evidence-linked LLM "
-        "company-information observations for each source XBRL document."
-    ),
-)
-def esef_document_company_information_clickhouse(
-    config: EsefDocumentPublishConfig,
-    esef_filings_duckdb: DuckDBResource,
-    clickhouse: ClickhouseResource,
-) -> dg.MaterializeResult:
-    table, columns = _COMPANY_INFORMATION_TABLE_CONTRACT
-    with read_only_duckdb_connection(esef_filings_duckdb) as connection:
-        staged_count = int(
-            connection.execute(
-                f"select count(*) from {tables.DLT_DATASET_NAME}.{table}"
-            ).fetchone()[0]
-        )
-        assert_clickhouse_tables_exist(
-            clickhouse,
-            database=tables.ESEF_DATABASE,
-            tables=(table,),
-        )
-        with clickhouse.get_connection() as client:
-            guard_against_clickhouse_table_shrink(
-                qualified_table=f"{tables.ESEF_DATABASE}.{table}",
-                existing_row_count=clickhouse_table_row_count(
-                    client,
-                    f"{tables.ESEF_DATABASE}.{table}",
-                ),
-                staged_row_count=staged_count,
-                allow_shrink=config.allow_shrink,
-            )
-            row_counts = replace_duckdb_connection_tables_in_clickhouse(
-                duckdb_connection=connection,
-                clickhouse_client=client,
-                duckdb_schema=tables.DLT_DATASET_NAME,
-                clickhouse_database=tables.ESEF_DATABASE,
-                tables=((table, columns),),
-                allow_empty_tables=(table,),
-            )
-    return dg.MaterializeResult(
-        metadata={
-            "row_count": row_counts[table],
-            "table": f"{tables.ESEF_DATABASE}.{table}",
-        }
-    )
-
-
 defs = dg.Definitions(
     assets=[
         esef_document_concept_official_translations_clickhouse,
         esef_document_concept_translation_load,
-        esef_document_company_information_clickhouse,
     ]
 )

@@ -27,7 +27,7 @@ DOCUMENT_MIGRATION_FILE = (
     MIGRATIONS_DIR / "000243_corpscout_esef_source_documents.up.sql"
 )
 DISCLOSURE_MIGRATION_FILE = (
-    MIGRATIONS_DIR / "000245_corpscout_esef_fact_disclosures.up.sql"
+    MIGRATIONS_DIR / "000316_corpscout_esef_disclosures.up.sql"
 )
 CONCEPT_LABEL_MIGRATION_FILE = (
     MIGRATIONS_DIR / "000246_corpscout_esef_document_concept_labels.up.sql"
@@ -563,16 +563,16 @@ def test_llm_provenance_migration_adds_request_and_response_columns() -> None:
         assert f"ADD COLUMN IF NOT EXISTS {column} String" in sql
 
 
-def test_disclosure_export_columns_match_migration_000245_column_order() -> None:
+def test_disclosure_export_columns_match_migration_000316_column_order() -> None:
     sql = DISCLOSURE_MIGRATION_FILE.read_text(encoding="utf-8")
     migration_columns = _migration_table_columns(
         sql,
-        tables.ESEF_FACT_DISCLOSURES_TABLE,
+        tables.ESEF_DISCLOSURES_TABLE,
     )
 
     assert migration_columns[-1] == "resolved_at"
     assert tuple(migration_columns[:-1]) == (
-        tables.ESEF_FACT_DISCLOSURES_EXPORT_COLUMNS
+        tables.ESEF_DISCLOSURES_PARTITION_EXPORT_COLUMNS
     )
 
 
@@ -603,10 +603,6 @@ def test_partition_export_columns_match_promoted_table_contracts() -> None:
         "esef_document_concept_labels_v2": (
             tables.ESEF_DOCUMENT_CONCEPT_LABELS_PARTITION_EXPORT_COLUMNS,
             {"source_record_uid"},
-        ),
-        "esef_fact_disclosures_v2": (
-            tables.ESEF_FACT_DISCLOSURES_PARTITION_EXPORT_COLUMNS,
-            set(),
         ),
     }
 

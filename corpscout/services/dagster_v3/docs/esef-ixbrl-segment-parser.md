@@ -97,7 +97,7 @@ Launch `esef_filings_refresh_job` or `esef_filings_backfill_job` for a processed
 partition such as `2025-03-30`. The graph snapshots the compact source manifest, parses
 each unique SHA-256 package outside the DuckDB pool, and then publishes
 `esef_facts`, `esef_document_contact_candidates`,
-`esef_document_concept_labels`, and `esef_fact_disclosures` through one
+`esef_document_concept_labels`, and `esef_disclosures` through one
 four-output ClickHouse publication operation. Concept-label rows contain only concepts used by
 the document and retain the submitted-language and English taxonomy labels,
 namespace URI, extension status, source document, and source-record identity.
@@ -140,25 +140,23 @@ esef_filings/ixbrl_segments/schema=v5/parser=arelle-<version>/candidates=v3/pack
 
 ## Extract company enrichment with DeepSeek
 
-Materialize `esef_document_company_information_duckdb` after the four parsing
-outputs. It selects filings with published `esef_facts` and resolves the parsed
-artifact from S3. It uses the existing `DEEPSEEK_URL`,
+Materialize `esef_document_company_information_clickhouse` after the four
+parsing outputs. It selects each company's latest report from canonical
+`esef_disclosures`, joins document-scoped concept labels, and reconstructs the
+bounded evidence input directly from ClickHouse. It uses the existing `DEEPSEEK_URL`,
 `DEEPSEEK_MODEL`, and `DEEPSEEK_API_KEY` environment variables. This paid asset is
 unpartitioned and is never included in the routine refresh or backfill. It reads the
-final ClickHouse source-document table and selects the newest parsed XBRL report for
-each resolved `(country_iso2, company_id)`. The parser produces schema-v5 artifacts.
-This downstream consumer also accepts validated schema-v3 and schema-v4 artifacts
-already stored in the source-document table. Those versions retain the tagged facts,
-concepts, segments, and source fields still accepted by prompt v2; schema v5 adds the
-visible-section evidence available only to prompt v2. A source-document row is eligible only when its recorded schema
-version matches its versioned object-key path. When the same filing has multiple
-versions, v5 is selected before v4 and v3, and only then does latest-report ranking run.
+final ClickHouse disclosure state and selects the newest report for each resolved
+`(country_iso2, company_id)`. Schema-v5 rows include both selected tagged facts and
+visible sections. Migrated legacy disclosure rows remain queryable but do not become
+model inputs until their processed-week partition is rebuilt from the existing parsed
+artifact, because the legacy table did not retain semantic segment references.
 For example,
 this configuration processes the latest eligible report for selected Swedish companies:
 
 ```yaml
 ops:
-  esef_document_company_information_duckdb:
+  esef_document_company_information_clickhouse:
     config:
       country_iso2: "SE"
       company_ids: ["5566692850", "5565200028"]
@@ -174,7 +172,7 @@ company. `country_iso2`, `company_ids`, `source_document_ids`, and `max_document
 optional operational bounds. `company_ids` requires `country_iso2`, because company
 identity is country-scoped. A `source_document_ids` filter is applied after latest-report
 ranking, so it cannot accidentally select an older filing for a company. A document is
-skipped when the current model and prompt already processed the same parsed artifact,
+skipped when the current model and prompt already processed the same canonical request,
 unless `refresh_existing` is true.
 
 The model stage extracts these candidate fields:
@@ -222,11 +220,11 @@ esef_filings/llm_company_enrichment_requests/schema=v1/prompt=esef-company-enric
 esef_filings/llm_company_enrichment/schema=v1/prompt=esef-company-enrichment-v2/model=<model>/package_sha256=<package-hash>/request_sha256=<request-hash>/artifact.json
 ```
 
-These remain source-document observations. `esef_document_information_clickhouse`
-publishes the routine document, deterministic-contact, taxonomy-label, and disclosure
-tables. The separate `esef_document_company_information_clickhouse` asset copies the
-cumulative DuckDB LLM rows to ClickHouse, including the request key/hash and exact raw
-response/hash for each XBRL source document. `esef_document_observations_clickhouse`
+These remain source-document observations. The four-output parsing publisher writes
+the deterministic facts, contacts, labels, and disclosures. The separate direct
+`esef_document_company_information_clickhouse` asset atomically writes the request
+key/hash and exact raw response/hash for each XBRL source document.
+`esef_document_observations_clickhouse`
 normalizes descriptions, people, products, markets, geographies, segments, and group
 relationships for UI joins. A separate resolver can later rank values
 across sources; these assets never update canonical company descriptions,

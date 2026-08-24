@@ -1,15 +1,15 @@
 import json
 from contextlib import contextmanager
 from hashlib import sha256
-from pathlib import Path
 from types import SimpleNamespace
 from typing import Any
 
 import pytest
 from dagster import AssetKey
 
-from dagster_v3.defs.common.duckdb_resources import duckdb_resource
 from dagster_v3.defs.esef_filings import tables
+from dagster_v3.defs.esef_filings.artifact_contract import ARTIFACT_SCHEMA_VERSION
+from dagster_v3.defs.esef_filings.disclosure_parser import parse_esef_disclosure
 from dagster_v3.defs.esef_filings.llm_enrichment import (
     EsefCompanyEnrichment,
     SUPPORTED_ENRICHMENT_ARTIFACT_SCHEMA_VERSIONS,
@@ -23,20 +23,13 @@ from dagster_v3.defs.esef_filings.llm_enrichment import (
     request_company_enrichment,
 )
 from dagster_v3.defs.esef_filings.llm_enrichment_assets import (
+    _load_disclosure_artifacts,
     _load_latest_source_documents,
     _people_with_explicit_roles,
-    _source_specific_segment_artifact,
-    esef_document_company_information_duckdb,
+    esef_document_company_information_clickhouse,
     run_esef_llm_enrichment,
 )
-from dagster_v3.defs.esef_filings.document_publish import (
-    esef_document_company_information_clickhouse,
-)
 from dagster_v3.defs.esef_filings.segment_assets import ESEF_DOCUMENT_BUCKET
-from dagster_v3.defs.esef_filings.segment_parser import (
-    ARTIFACT_SCHEMA_VERSION,
-    artifact_object_key,
-)
 
 
 def test_build_enrichment_evidence_decodes_text_blocks_and_excludes_numbers() -> None:
@@ -173,14 +166,6 @@ def test_build_enrichment_evidence_rejects_unsupported_schema_versions(
         match=r"expected one of \[3, 4, 5\]",
     ):
         build_enrichment_evidence(artifact, max_evidence_chars=20_000)
-
-
-def test_source_artifact_schema_must_match_selected_document_metadata() -> None:
-    with pytest.raises(ValueError, match="expected=3 actual=5"):
-        _source_specific_segment_artifact(
-            _segment_artifact(),
-            document={"artifact_schema_version": 3},
-        )
 
 
 def test_request_company_enrichment_uses_deepseek_json_mode_and_validates_evidence() -> (
@@ -431,52 +416,28 @@ def test_deepseek_settings_use_existing_repository_environment(
 
 
 def test_llm_enrichment_asset_depends_on_final_clickhouse_documents() -> None:
-    output_key = AssetKey("esef_document_company_information_duckdb")
+    output_key = AssetKey("esef_document_company_information_clickhouse")
 
-    assert esef_document_company_information_duckdb.asset_deps[output_key] == {
-        AssetKey("esef_facts_clickhouse"),
+    assert esef_document_company_information_clickhouse.asset_deps[output_key] == {
+        AssetKey("esef_disclosures_clickhouse"),
+        AssetKey("esef_document_concept_labels_clickhouse"),
         AssetKey("esef_filings_clickhouse"),
-        AssetKey("esef_entity_registry_map_clickhouse"),
     }
-
-
-def test_llm_clickhouse_publication_depends_on_enrichment_duckdb() -> None:
-    company_information_key = AssetKey("esef_document_company_information_clickhouse")
-
-    assert esef_document_company_information_clickhouse.asset_deps[
-        company_information_key
-    ] == {AssetKey("esef_document_company_information_duckdb")}
+    assert esef_document_company_information_clickhouse.group_names_by_key[
+        output_key
+    ] == "esef_filings"
 
 
 def test_latest_document_selector_uses_one_final_xbrl_per_company() -> None:
-    artifact_key = artifact_object_key("a" * 64)
-    clickhouse = _FakeClickHouse(
-        [
-            (
-                "AAK-2024",
-                "a" * 64,
-                "549300GK4LGIDDWJWL07",
-                "SE",
-                "5566692850",
-                "2024-12-31",
-                2024,
-                "https://example.test/aak.zip",
-                "packages/aak.zip",
-                "",
-            )
-        ]
-    )
-    object_store = _FakeObjectStore({(ESEF_DOCUMENT_BUCKET, artifact_key): b"{}"})
+    clickhouse = _FakeClickHouse([[_source_document_clickhouse_row()]])
 
     documents = _load_latest_source_documents(
         clickhouse,
-        object_store=object_store,
         model="deepseek-v4-flash",
         country_iso2="SE",
         company_ids={"5566692850"},
         source_document_ids=set(),
         max_documents=10,
-        refresh_existing=False,
     )
 
     assert [document["source_document_id"] for document in documents] == ["AAK-2024"]
@@ -484,44 +445,64 @@ def test_latest_document_selector_uses_one_final_xbrl_per_company() -> None:
     assert "row_number() OVER" in sql
     assert "PARTITION BY country_iso2, company_id" in sql
     assert "latest_company_report_rank = 1" in sql
-    assert "FROM corpscout.esef_filings AS filings FINAL" in sql
-    assert "FROM corpscout.esef_facts FINAL" in sql
-    assert "esef_entity_registry_map AS registry FINAL" in sql
+    assert "corpscout.esef_filings AS filings FINAL" in sql
+    assert "FROM corpscout.esef_disclosures AS disclosures FINAL" in sql
+    assert "disclosures.segment IN" in sql
     assert "esef_document_company_information" in sql
     assert "esef_source_documents" not in sql
     assert parameters["model_name"] == "deepseek-v4-flash"
     assert parameters["prompt_version"] == "esef-company-enrichment-v2"
     assert parameters["country_iso2"] == "SE"
     assert parameters["company_ids"] == ("5566692850",)
-    assert documents[0]["parsed_artifact_object_key"] == artifact_key
     assert documents[0]["artifact_schema_version"] == ARTIFACT_SCHEMA_VERSION
 
 
 def test_latest_document_selector_requires_resolved_company_links() -> None:
-    clickhouse = _FakeClickHouse([])
+    clickhouse = _FakeClickHouse([[]])
 
     assert (
         _load_latest_source_documents(
             clickhouse,
-            object_store=_FakeObjectStore({}),
             model="deepseek-v4-flash",
             country_iso2="",
             company_ids=set(),
             source_document_ids=set(),
             max_documents=None,
-            refresh_existing=False,
         )
         == []
     )
     sql, _parameters = clickhouse.client.calls[0]
-    assert "registry.registry_id != ''" in sql
-    assert "registry.country_iso2 != ''" in sql
+    assert "disclosures.company_id != ''" in sql
+    assert "disclosures.country_iso2 != ''" in sql
+
+
+def test_clickhouse_disclosures_reconstruct_llm_evidence() -> None:
+    document = _source_document_mapping()
+    clickhouse = _FakeClickHouse(
+        [
+            [_disclosure_clickhouse_row()],
+            [("AAK-2024", "sample:Description", "en", "Company description")],
+        ]
+    )
+
+    artifacts = _load_disclosure_artifacts(clickhouse, documents=[document])
+    evidence_input = build_enrichment_evidence(
+        artifacts["AAK-2024"],
+        max_evidence_chars=20_000,
+    )
+
+    [evidence] = evidence_input.evidence
+    assert evidence.segment == "business_profile"
+    assert evidence.concept_label == "Company description"
+    assert evidence.text == "AAK makes plant-based oils and fats."
+    assert evidence_input.source.source_object_key.startswith(
+        "clickhouse://corpscout.esef_disclosures/"
+    )
 
 
 def test_company_id_selector_requires_country_identity_boundary() -> None:
     with pytest.raises(ValueError, match="company_ids require country_iso2"):
         run_esef_llm_enrichment(
-            esef_filings_duckdb=None,  # type: ignore[arg-type]
             clickhouse=None,  # type: ignore[arg-type]
             object_store=None,
             client=None,  # type: ignore[arg-type]
@@ -540,7 +521,6 @@ def test_company_id_selector_requires_country_identity_boundary() -> None:
 def test_llm_reprocessing_modes_are_mutually_exclusive() -> None:
     with pytest.raises(ValueError, match="cannot both be enabled"):
         run_esef_llm_enrichment(
-            esef_filings_duckdb=None,  # type: ignore[arg-type]
             clickhouse=None,  # type: ignore[arg-type]
             object_store=None,
             client=None,  # type: ignore[arg-type]
@@ -572,21 +552,21 @@ def test_people_filter_rejects_group_name_used_as_its_own_role() -> None:
     assert _people_with_explicit_roles(people) == [people[1]]
 
 
-def test_llm_asset_stores_source_document_information_and_reuses_artifact(
-    tmp_path: Path,
-) -> None:
+def test_llm_asset_reads_disclosures_and_writes_clickhouse_directly() -> None:
     package_sha256 = "a" * 64
-    input_key = artifact_object_key(package_sha256)
-    database = duckdb_resource(tmp_path / "esef.duckdb")
-    object_store = _FakeObjectStore(
-        {
-            (ESEF_DOCUMENT_BUCKET, input_key): json.dumps(_segment_artifact()).encode(),
-        }
+    disclosure_rows, label_rows = _segment_artifact_clickhouse_rows()
+    clickhouse = _FakeClickHouse(
+        [
+            [_source_document_clickhouse_row()],
+            disclosure_rows,
+            label_rows,
+            [(tables.ESEF_DOCUMENT_COMPANY_INFORMATION_TABLE,)],
+        ]
     )
+    object_store = _FakeObjectStore({})
 
-    first = run_esef_llm_enrichment(
-        esef_filings_duckdb=database,
-        clickhouse=_FakeClickHouse([_source_document_clickhouse_row()]),
+    metadata = run_esef_llm_enrichment(
+        clickhouse=clickhouse,
         object_store=object_store,
         client=_client_returning(_valid_response()),
         model="deepseek-v4-flash",
@@ -599,41 +579,10 @@ def test_llm_asset_stores_source_document_information_and_reuses_artifact(
         max_evidence_chars=64_000,
         log_info=lambda *_args: None,
     )
-    second = run_esef_llm_enrichment(
-        esef_filings_duckdb=database,
-        clickhouse=_FakeClickHouse([_source_document_clickhouse_row()]),
-        object_store=object_store,
-        client=SimpleNamespace(
-            chat=SimpleNamespace(
-                completions=SimpleNamespace(
-                    create=lambda **_kwargs: (_ for _ in ()).throw(
-                        AssertionError("model must not be called")
-                    )
-                )
-            )
-        ),
-        model="deepseek-v4-flash",
-        source_run_id="llm-run-2",
-        source_document_ids=["AAK-2024"],
-        country_iso2="",
-        company_ids=[],
-        max_documents=None,
-        refresh_existing=False,
-        max_evidence_chars=64_000,
-        log_info=lambda *_args: None,
-        reprocess_existing_without_model=True,
-    )
-    assert first["enriched_document_count"] == 1
-    assert first["reused_enrichment_count"] == 0
-    assert first["person_candidate_count"] == 1
-    assert first["raw_person_candidate_count"] == 2
-    assert first["dropped_non_specific_person_candidate_count"] == 1
-    assert first["description_candidate_count"] == 1
-    assert second["enriched_document_count"] == 0
-    assert second["reused_enrichment_count"] == 1
-    assert second["reprocess_existing_without_model"] is True
-    assert first["selection_method"] == "latest_xbrl_per_company"
-    assert first["selected_company_count"] == 1
+
+    assert metadata["enriched_document_count"] == 1
+    assert metadata["information_row_count"] == 1
+    assert metadata["selected_company_count"] == 1
     request_keys = [
         key
         for bucket, key in object_store.objects
@@ -649,34 +598,29 @@ def test_llm_asset_stores_source_document_information_and_reuses_artifact(
     )
     artifact = json.loads(object_store.objects[(ESEF_DOCUMENT_BUCKET, output_key)])
     assert artifact["source_run_id"] == "llm-run-1"
-    assert artifact["source"]["input_artifact_key"] == (
-        f"s3://{ESEF_DOCUMENT_BUCKET}/{input_key}"
+    assert artifact["source"]["input_artifact_key"].startswith(
+        "clickhouse://corpscout.esef_disclosures/"
     )
     assert artifact["enrichment"]["company_description"]["language"] == "en"
     assert len(artifact["enrichment"]["people"]) == 2
-    assert object_store.created_buckets == [ESEF_DOCUMENT_BUCKET] * 2
-    with database.get_connection() as connection:
-        row = connection.execute(
-            f"select source_document_id, country_iso2, company_id, "
-            f"company_description, people_json, extraction_status, "
-            f"llm_request_object_key, llm_request_sha256, llm_response_text, "
-            f"llm_response_sha256 from "
-            f"{tables.DLT_DATASET_NAME}."
-            f"{tables.ESEF_DOCUMENT_COMPANY_INFORMATION_TABLE}"
-        ).fetchone()
-    assert row[:4] == (
-        "AAK-2024",
-        "SE",
-        "5566692850",
-        "AAK develops plant-based oils and fats used in food, nutrition, and personal-care products.",
+    assert object_store.created_buckets == [ESEF_DOCUMENT_BUCKET]
+    information_insert = next(
+        parameters
+        for sql, parameters in clickhouse.client.calls
+        if "esef_document_company_information" in sql
+        and " VALUES" in sql
     )
-    assert json.loads(row[4])[0]["name"] == "Anna Andersson"
-    assert len(json.loads(row[4])) == 1
-    assert row[5] == "reused"
-    assert row[6] == request_keys[0]
-    assert row[7] == request_sha256
-    assert json.loads(row[8]) == _valid_response()
-    assert row[9] == sha256(row[8].encode()).hexdigest()
+    [inserted_values] = information_insert
+    inserted = dict(
+        zip(
+            tables.ESEF_DOCUMENT_COMPANY_INFORMATION_EXPORT_COLUMNS,
+            inserted_values,
+            strict=True,
+        )
+    )
+    assert inserted["source_document_id"] == "AAK-2024"
+    assert inserted["input_artifact_object_key"].startswith("clickhouse://")
+    assert json.loads(str(inserted["people_json"]))[0]["name"] == "Anna Andersson"
 
 
 def _source_document_clickhouse_row() -> tuple[object, ...]:
@@ -689,9 +633,115 @@ def _source_document_clickhouse_row() -> tuple[object, ...]:
         "2024-12-31",
         2024,
         "https://example.test/aak.zip",
-        "packages/aak.zip",
+        ARTIFACT_SCHEMA_VERSION,
+        "",
         "",
     )
+
+
+def _source_document_mapping() -> dict[str, object]:
+    values = _source_document_clickhouse_row()
+    columns = (
+        "source_document_id",
+        "package_sha256",
+        "lei",
+        "country_iso2",
+        "company_id",
+        "period_end",
+        "fiscal_year",
+        "package_url",
+        "artifact_schema_version",
+        "existing_request_sha256",
+        "existing_extraction_status",
+    )
+    return dict(zip(columns, values, strict=True))
+
+
+def _disclosure_clickhouse_row(
+    *,
+    fact_key: str = "description-fact",
+    concept_qname: str = "sample:Description",
+    concept_local_name: str = "Description",
+    segment: str = "business_profile",
+    selection_reason: str = "concept:Description",
+    plain_text: str = "AAK makes plant-based oils and fats.",
+) -> tuple[object, ...]:
+    values: dict[str, object] = {
+        "disclosure_id": sha256(fact_key.encode()).hexdigest(),
+        "disclosure_kind": "tagged_fact",
+        "source_document_id": "AAK-2024",
+        "source_record_uid": "b" * 64,
+        "source_fact_id": fact_key,
+        "source_fact_key": fact_key,
+        "package_sha256": "a" * 64,
+        "artifact_schema_version": ARTIFACT_SCHEMA_VERSION,
+        "lei": "549300GK4LGIDDWJWL07",
+        "country_iso2": "SE",
+        "company_id": "5566692850",
+        "period_end": "2024-12-31",
+        "fiscal_year": 2024,
+        "concept_qname": concept_qname,
+        "concept_local_name": concept_local_name,
+        "language": "en",
+        "segment": segment,
+        "selection_reason": selection_reason,
+        "report_member": "reports/aak.xhtml",
+        "period_json": '{"end":"2024-12-31","start":"2024-01-01"}',
+        "section_type": "",
+        "page_id": "",
+        "printed_page_number": "",
+        "anchor_xpath": "",
+        "anchor_visual_order": 0,
+        "extraction_method": "tagged_fact",
+        "text_sha256": sha256(plain_text.encode()).hexdigest(),
+        "parser_name": "lxml_html_disclosure",
+        "parser_version": "1",
+        "blocks_json": "[]",
+        "plain_text": plain_text,
+        "original_character_count": len(plain_text),
+        "block_count": 1,
+        "table_count": 0,
+        "source_run_id": "parse-run",
+        "extracted_at": "2026-08-01T10:00:00Z",
+    }
+    return tuple(values[column] for column in tables.ESEF_DISCLOSURES_EXPORT_COLUMNS)
+
+
+def _segment_artifact_clickhouse_rows(
+) -> tuple[list[tuple[object, ...]], list[tuple[object, ...]]]:
+    artifact = _segment_artifact()
+    facts = artifact["facts"]
+    concepts = artifact["concepts"]
+    disclosure_rows: list[tuple[object, ...]] = []
+    label_rows: list[tuple[object, ...]] = []
+    for segment, references in artifact["segments"].items():
+        if segment == "financial_highlights":
+            continue
+        for reference in references:
+            fact_key = reference["fact_key"]
+            fact = facts[fact_key]
+            concept_qname = fact["concept_qname"]
+            concept = concepts[concept_qname]
+            plain_text = parse_esef_disclosure(fact["canonical_value"]).plain_text
+            disclosure_rows.append(
+                _disclosure_clickhouse_row(
+                    fact_key=fact_key,
+                    concept_qname=concept_qname,
+                    concept_local_name=concept["local_name"],
+                    segment=segment,
+                    selection_reason=reference["selection_reason"],
+                    plain_text=plain_text,
+                )
+            )
+            label_rows.append(
+                (
+                    "AAK-2024",
+                    concept_qname,
+                    "en",
+                    concept["labels"]["en"],
+                )
+            )
+    return disclosure_rows, label_rows
 
 
 def _client_returning(response_data: dict[str, Any]) -> SimpleNamespace:
@@ -954,22 +1004,22 @@ class _FakeObjectStore:
 
 
 class _FakeClickHouseClient:
-    def __init__(self, rows: list[tuple[object, ...]]) -> None:
-        self.rows = rows
-        self.calls: list[tuple[str, dict[str, object]]] = []
+    def __init__(self, responses: list[list[tuple[object, ...]]]) -> None:
+        self.responses = list(responses)
+        self.calls: list[tuple[str, object]] = []
 
     def execute(
         self,
         sql: str,
-        parameters: dict[str, object],
+        parameters: object = None,
     ) -> list[tuple[object, ...]]:
         self.calls.append((sql, parameters))
-        return self.rows
+        return self.responses.pop(0) if self.responses else []
 
 
 class _FakeClickHouse:
-    def __init__(self, rows: list[tuple[object, ...]]) -> None:
-        self.client = _FakeClickHouseClient(rows)
+    def __init__(self, responses: list[list[tuple[object, ...]]]) -> None:
+        self.client = _FakeClickHouseClient(responses)
 
     @contextmanager
     def get_connection(self):

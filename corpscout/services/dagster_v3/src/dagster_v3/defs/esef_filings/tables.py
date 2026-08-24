@@ -31,8 +31,8 @@ ESEF_FINANCIAL_METRICS_TABLE = "esef_financial_metrics"
 ESEF_DOCUMENT_CONTACT_CANDIDATES_TABLE = "esef_document_contact_candidates"
 ESEF_DOCUMENT_CONCEPT_LABELS_TABLE = "esef_document_concept_labels"
 ESEF_DOCUMENT_COMPANY_INFORMATION_TABLE = "esef_document_company_information"
-ESEF_FACT_DISCLOSURES_TABLE = "esef_fact_disclosures"
-QUALIFIED_FACT_DISCLOSURES_TABLE = f"{DLT_DATASET_NAME}.{ESEF_FACT_DISCLOSURES_TABLE}"
+ESEF_DISCLOSURES_TABLE = "esef_disclosures"
+QUALIFIED_DISCLOSURES_TABLE = f"{DLT_DATASET_NAME}.{ESEF_DISCLOSURES_TABLE}"
 
 QUALIFIED_ESEF_FILINGS_TABLE = f"{ESEF_DATABASE}.{ESEF_FILINGS_TABLE}"
 QUALIFIED_ESEF_FACTS_TABLE = f"{ESEF_DATABASE}.{ESEF_FACTS_TABLE}"
@@ -51,7 +51,7 @@ QUALIFIED_ESEF_DOCUMENT_CONCEPT_LABELS_TABLE = (
 QUALIFIED_ESEF_DOCUMENT_COMPANY_INFORMATION_TABLE = (
     f"{ESEF_DATABASE}.{ESEF_DOCUMENT_COMPANY_INFORMATION_TABLE}"
 )
-QUALIFIED_ESEF_FACT_DISCLOSURES_TABLE = f"{ESEF_DATABASE}.{ESEF_FACT_DISCLOSURES_TABLE}"
+QUALIFIED_ESEF_DISCLOSURES_TABLE = f"{ESEF_DATABASE}.{ESEF_DISCLOSURES_TABLE}"
 
 # corpscout.esef_filings column order minus resolved_at (CH default).
 ESEF_FILINGS_EXPORT_COLUMNS = (
@@ -231,14 +231,18 @@ ESEF_DOCUMENT_COMPANY_INFORMATION_EXPORT_COLUMNS = (
     "extracted_at",
 )
 
-# Deterministically parsed structure for one narrative fact. The raw source
-# value remains in esef_facts and is verified through raw_value_sha256.
-ESEF_FACT_DISCLOSURES_EXPORT_COLUMNS = (
+# Deterministic narrative evidence used by both serving and LLM extraction.
+# Tagged XBRL facts and visible XHTML sections share one sparse row contract;
+# disclosure_kind says which source-specific fields are populated.
+ESEF_DISCLOSURES_EXPORT_COLUMNS = (
     "disclosure_id",
+    "disclosure_kind",
     "source_document_id",
     "source_record_uid",
     "source_fact_id",
+    "source_fact_key",
     "package_sha256",
+    "artifact_schema_version",
     "lei",
     "country_iso2",
     "company_id",
@@ -247,11 +251,22 @@ ESEF_FACT_DISCLOSURES_EXPORT_COLUMNS = (
     "concept_qname",
     "concept_local_name",
     "language",
-    "raw_value_sha256",
+    "segment",
+    "selection_reason",
+    "report_member",
+    "period_json",
+    "section_type",
+    "page_id",
+    "printed_page_number",
+    "anchor_xpath",
+    "anchor_visual_order",
+    "extraction_method",
+    "text_sha256",
     "parser_name",
     "parser_version",
     "blocks_json",
     "plain_text",
+    "original_character_count",
     "block_count",
     "table_count",
     "source_run_id",
@@ -269,7 +284,7 @@ ESEF_DOCUMENT_CONCEPT_LABELS_PARTITION_EXPORT_COLUMNS = (
     *ESEF_DOCUMENT_CONCEPT_LABELS_EXPORT_COLUMNS,
     "processed_week",
 )
-ESEF_FACT_DISCLOSURES_PARTITION_EXPORT_COLUMNS = (
-    *ESEF_FACT_DISCLOSURES_EXPORT_COLUMNS,
+ESEF_DISCLOSURES_PARTITION_EXPORT_COLUMNS = (
+    *ESEF_DISCLOSURES_EXPORT_COLUMNS,
     "processed_week",
 )
