@@ -264,7 +264,10 @@ export async function action({ request }: Route.ActionArgs): Promise<PipelineRes
       }
       // The numbers are re-read here rather than taken from the sheet the operator
       // is looking at: a confirmation must restate what is true now, not what was
-      // true when it was opened.
+      // true when it was opened. For a SCOPED run this read is a liveness gate
+      // and nothing more -- it proves ClickHouse can still answer before a paid
+      // run is offered; the scoped lines below are built from the picked ids,
+      // never from these unscoped counts.
       const statsResult = await statsView();
       if (!statsResult.stats) {
         return refused(`The selection counts are unavailable, so nothing is confirmed: ${statsResult.error}`);

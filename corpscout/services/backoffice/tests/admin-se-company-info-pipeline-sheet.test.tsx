@@ -19,7 +19,10 @@ import { AdminSidebar } from "~/components/admin/admin-sidebar";
 import AdminLayout from "~/routes/admin-layout";
 import { SidebarProvider } from "~/components/ui/sidebar";
 import {
+  NOTHING_FETCHED,
+  openSheet,
   SeCompanyInfoPipelinePanel,
+  withFetched,
   type PipelineFormComponent,
   type PipelineResult,
   type PipelineView,
@@ -199,6 +202,10 @@ describe("the pipeline sheet's panel", () => {
     // Reviewer ruling: a pick can lie outside the current filter, so what a
     // launch covers is stated, never implied -- and stated above every control
     // that starts one, the confirmation panel's included.
+    //
+    // Asserted on the scope block's OWN marker: the confirmation's lines talk
+    // about the scope too, so a search for the phrase would find that line and
+    // pass no matter where the block itself sits.
     const html = renderPanel({
       selectedIds: PICKED,
       result: {
@@ -208,16 +215,66 @@ describe("the pipeline sheet's panel", () => {
         confirmation: {
           intent: "launch-resolve",
           title: "Re-resolve changed companies",
-          lines: ["Scoped to 2 selected companies; …"],
+          lines: ["Only the ones the change scan still selects are resolved."],
           fields: { company_ids: PICKED.join(","), max_companies: "1000" },
         },
         launched: null,
       },
     });
-    const scope = html.indexOf("2 selected companies");
+    const scope = html.indexOf('data-slot="pipeline-scope"');
     expect(scope).toBeGreaterThan(-1);
+    // The block itself says the scope, and it comes before both launch paths.
+    expect(html.slice(scope, scope + 400)).toContain("2 selected companies");
     expect(scope).toBeLessThan(html.indexOf("Launch this run"));
     expect(scope).toBeLessThan(html.indexOf("Review…"));
+  });
+
+  it("withdraws the launch when the picks no longer match what was confirmed", () => {
+    // A confirmation names counts, not ids: reviewed for A and B, it reads
+    // exactly like one reviewed for C and D. So the button goes away rather
+    // than launching a paid run over companies nobody looked at.
+    const html = renderPanel({
+      selectedIds: ["5567890123", "5569999999"],
+      result: {
+        kind: "result",
+        ok: true,
+        error: "",
+        confirmation: {
+          intent: "launch-resolve",
+          title: "Re-resolve changed companies",
+          lines: ["Scoped to 2 selected companies."],
+          fields: { company_ids: PICKED.join(","), max_companies: "1000" },
+        },
+        launched: null,
+      },
+    });
+    expect(html).toContain('data-slot="pipeline-scope-changed"');
+    expect(html).toContain("The picks changed since this was reviewed");
+    // Neither the button nor the fields it would have posted survive.
+    expect(html).not.toContain("Launch this run");
+    expect(html).not.toContain('name="intent" value="launch-resolve"');
+    expect(html).not.toContain('value="5560125220,5565200028"');
+  });
+
+  it("leaves an artifact refresh launchable: it has no scope to go stale", () => {
+    const html = renderPanel({
+      selectedIds: PICKED,
+      result: {
+        kind: "result",
+        ok: true,
+        error: "",
+        confirmation: {
+          intent: "launch-artifact",
+          title: "Refresh the esef artifact",
+          lines: ["Runs se_company_info_esef_clickhouse and nothing else."],
+          fields: { artifact: "esef" },
+        },
+        launched: null,
+      },
+    });
+    expect(html).toContain("Launch this run");
+    expect(html).toContain('name="artifact" value="esef"');
+    expect(html).not.toContain('data-slot="pipeline-scope-changed"');
   });
 
   it("replays the confirmed fields into the launch, scope and all", () => {
@@ -302,6 +359,64 @@ describe("the pipeline sheet's panel", () => {
     expect(html).toContain("Reading the change scan…");
     expect(html).not.toContain("Re-resolve changed companies");
     expect(html).not.toContain("1,240");
+  });
+});
+
+describe("one opening of the sheet never shows the last one's answers", () => {
+  const CONFIRMED: PipelineResult = {
+    kind: "result",
+    ok: true,
+    error: "",
+    confirmation: {
+      intent: "launch-resolve",
+      title: "Re-resolve changed companies",
+      lines: ["Scoped to 2 selected companies."],
+      fields: { company_ids: PICKED.join(","), max_companies: "1000" },
+    },
+    launched: null,
+  };
+
+  it("drops the previous opening's confirmation the moment the sheet reopens", () => {
+    // The sequence that would otherwise launch a paid run over the wrong
+    // companies: pick A and B, Review, close, pick C and D, reopen. For the
+    // seconds the change scan takes, the old confirmation would still be on
+    // screen with a live Launch button, under a scope block already saying
+    // "2 selected companies" -- about C and D.
+    const fetcher = { reset: vi.fn() };
+    let opening = withFetched(NOTHING_FETCHED, VIEW);
+    opening = withFetched(opening, CONFIRMED);
+    // First opening: the launch is live and belongs to A and B.
+    expect(renderPanel({ ...opening, selectedIds: PICKED })).toContain("Launch this run");
+
+    // ... close, re-pick, reopen. This is the sheet's own open handler.
+    opening = openSheet(fetcher);
+    expect(fetcher.reset).toHaveBeenCalledTimes(1);
+    expect(opening).toEqual(NOTHING_FETCHED);
+
+    const reopened = renderPanel({
+      ...opening,
+      selectedIds: ["5567890123", "5569999999"],
+      loading: true,
+    });
+    expect(reopened).not.toContain("Launch this run");
+    expect(reopened).not.toContain("Re-resolve changed companies — confirm");
+    // ... and it says what it is doing instead, for the new picks.
+    expect(reopened).toContain("Reading the change scan…");
+    expect(reopened).toContain("2 selected companies");
+  });
+
+  it("keeps a confirmation beside the numbers, but never past a fresh scan", () => {
+    // One fetcher carries both answers: a confirmation must not blank the
+    // counts it is about ...
+    const withResult = withFetched(withFetched(NOTHING_FETCHED, VIEW), CONFIRMED);
+    expect(withResult.view).toBe(VIEW);
+    expect(withResult.result).toBe(CONFIRMED);
+    // ... and a view loaded afterwards supersedes it: those numbers are newer
+    // than the confirmation, so the confirmation is no longer what they mean.
+    expect(withFetched(withResult, VIEW).result).toBeNull();
+    // Nothing fetched changes nothing.
+    expect(withFetched(withResult, null)).toBe(withResult);
+    expect(withFetched(NOTHING_FETCHED, undefined)).toBe(NOTHING_FETCHED);
   });
 });
 

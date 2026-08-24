@@ -312,4 +312,15 @@ describe("the route is not a page any more", () => {
       (await get("http://backoffice/admin/se/company-info/pipeline", "*/*")).kind,
     ).toBe("view");
   });
+
+  it("serves DATA when the two signals disagree: a `.data` URL asking for html", async () => {
+    // The one case that decides which signal is in charge. `.data` is the
+    // framework's own marker for a data request, so it wins: a fetcher whose
+    // request happened to inherit a document Accept must be answered, never
+    // redirected -- a redirect there is the navigation-out-of-the-sheet
+    // catastrophe the second signal exists to prevent.
+    const view = await get(DATA_URL, BROWSER_ACCEPT);
+    expect(view.kind).toBe("view");
+    expect(view.stats?.selection.changedCount).toBe(1_240);
+  });
 });

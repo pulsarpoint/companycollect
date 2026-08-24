@@ -655,6 +655,31 @@ describe("SeCompanyInfoTable sorting", () => {
   });
 });
 
+describe("SeCompanyInfoTable pipeline sheet", () => {
+  it("opens the Pipeline beside Filters, badged with the number picked", () => {
+    // The last mile of the scope: the trigger is the only place the selection
+    // is visible before the sheet is opened, and the only proof the table
+    // actually hands its selection to the sheet -- a sheet given the empty
+    // selection renders exactly the same as one that is given none, and every
+    // scoped launch would silently become a 3.5M-company run.
+    const html = render({
+      rows: [ROW, ROW_B],
+      selection: { "5565200028": true, "5567890123": true },
+    });
+    expect(html).toContain(">Pipeline<");
+    expect(html).toContain('aria-label="2 selected companies picked"');
+    // Filters is still its neighbour, and comes first.
+    expect(html.indexOf(">Filters<")).toBeLessThan(html.indexOf(">Pipeline<"));
+  });
+
+  it("badges nothing while nothing is picked", () => {
+    const html = render();
+    expect(html).toContain(">Pipeline<");
+    expect(html).not.toContain("companies picked");
+    expect(html).not.toContain("company picked");
+  });
+});
+
 describe("SeCompanyInfoTable filter sheet", () => {
   it("opens the filters from one button, badged with the number applied", () => {
     expect(render()).toContain("Filters");

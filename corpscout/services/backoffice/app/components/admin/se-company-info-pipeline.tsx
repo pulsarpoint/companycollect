@@ -38,6 +38,7 @@ import {
   artifactSelectItems,
   describeCompanyScope,
   formatCompanyIdScope,
+  parseCompanyIdScope,
   INFO_ARTIFACT_SOURCES,
   MAX_COMPANIES,
   MAX_CONCURRENCY,
@@ -107,6 +108,54 @@ export interface PipelineResult {
 }
 
 export type PipelineResource = PipelineView | PipelineResult;
+
+/* -------------------------------------------------------------------- */
+/* One opening of the sheet                                              */
+/* -------------------------------------------------------------------- */
+
+/**
+ * What THIS opening of the sheet has been told so far.
+ *
+ * Kept as its own value, rather than read straight off the fetcher, because a
+ * fetcher keeps its `data` until it is asked for something else: reopening the
+ * sheet would otherwise show the previous opening's confirmation -- live Launch
+ * button and all -- for the two or three seconds the change scan takes to come
+ * back. The picks may have changed in between, and a confirmation names counts
+ * rather than ids, so nothing on screen would say so.
+ */
+export interface PipelineOpening {
+  view: PipelineView | null;
+  result: PipelineResult | null;
+}
+
+/** What an opening starts from, every time. */
+export const NOTHING_FETCHED: PipelineOpening = { view: null, result: null };
+
+/**
+ * Fold one fetcher payload into the opening.
+ *
+ * A result is added BESIDE the view (one fetcher carries both answers, so a
+ * confirmation must not blank the numbers it is about), while a freshly loaded
+ * view supersedes any result: those numbers were read after it.
+ */
+export function withFetched(
+  opening: PipelineOpening,
+  data: PipelineResource | null | undefined,
+): PipelineOpening {
+  if (!data) return opening;
+  if (data.kind === "view") return { view: data, result: null };
+  return { ...opening, result: data };
+}
+
+/**
+ * Opening the sheet: the fetcher's retained data is dropped and the opening
+ * starts empty. Both halves matter -- clearing only ours would leave the
+ * fetcher free to re-deliver the old payload on its next state change.
+ */
+export function openSheet(fetcher: { reset: () => void }): PipelineOpening {
+  fetcher.reset();
+  return NOTHING_FETCHED;
+}
 
 /**
  * The fetcher's `Form`, as the panel uses it: a post to the pipeline route.
@@ -290,13 +339,30 @@ function ScopeBlock({ selectedIds }: { selectedIds: string[] }) {
   );
 }
 
+/**
+ * The confirmed run, and the button that starts it.
+ *
+ * The launch is withdrawn -- button and hidden fields both -- as soon as the
+ * confirmed scope stops matching what is picked on the list. A confirmation
+ * names COUNTS, not ids, so "2 selected companies" reads identically for two
+ * different pairs of companies: without this, a confirmation reviewed for one
+ * pair could be launched against another and nothing on screen would say so.
+ * An artifact refresh carries no scope field at all and takes none, so it is
+ * never withdrawn.
+ */
 function ConfirmationPanel({
   confirmation,
+  selectedIds,
   Form,
 }: {
   confirmation: PipelineConfirmation;
+  selectedIds: string[];
   Form: PipelineFormComponent;
 }) {
+  const confirmedScope = confirmation.fields.company_ids;
+  const stale =
+    confirmedScope !== undefined &&
+    confirmedScope !== formatCompanyIdScope(selectedIds);
   return (
     <Alert>
       <AlertTitle>{confirmation.title} — confirm</AlertTitle>
@@ -306,18 +372,27 @@ function ConfirmationPanel({
             <li key={line}>{line}</li>
           ))}
         </ul>
-        <Form method="post" action={SE_COMPANY_INFO_PIPELINE_PATH} className="mt-3 flex items-center gap-2">
-          <input type="hidden" name="intent" value={confirmation.intent} />
-          {Object.entries(confirmation.fields).map(([name, value]) => (
-            <input key={name} type="hidden" name={name} value={value} />
-          ))}
-          <Button type="submit" size="sm">
-            Launch this run
-          </Button>
-          <span className="text-muted-foreground text-xs">
-            Nothing has been launched yet.
-          </span>
-        </Form>
+        {stale ? (
+          <p data-slot="pipeline-scope-changed" className="mt-3 text-sm font-medium">
+            The picks changed since this was reviewed, so there is nothing to
+            launch here: it was reviewed for{" "}
+            {describeCompanyScope(parseCompanyIdScope(confirmedScope))}, and the
+            list now has {describeCompanyScope(selectedIds)}. Review again.
+          </p>
+        ) : (
+          <Form method="post" action={SE_COMPANY_INFO_PIPELINE_PATH} className="mt-3 flex items-center gap-2">
+            <input type="hidden" name="intent" value={confirmation.intent} />
+            {Object.entries(confirmation.fields).map(([name, value]) => (
+              <input key={name} type="hidden" name={name} value={value} />
+            ))}
+            <Button type="submit" size="sm">
+              Launch this run
+            </Button>
+            <span className="text-muted-foreground text-xs">
+              Nothing has been launched yet.
+            </span>
+          </Form>
+        )}
       </AlertDescription>
     </Alert>
   );
@@ -435,7 +510,11 @@ export function SeCompanyInfoPipelinePanel({
       ) : null}
 
       {result?.confirmation ? (
-        <ConfirmationPanel confirmation={result.confirmation} Form={Form} />
+        <ConfirmationPanel
+          confirmation={result.confirmation}
+          selectedIds={selectedIds}
+          Form={Form}
+        />
       ) : null}
 
       {stats === null ? (
@@ -770,8 +849,14 @@ export function SeCompanyInfoPipelineSheet({ selection }: { selection: RowSelect
   const [open, setOpen] = useState(false);
   const fetcher = useFetcher<PipelineResource>();
   const loaded = useRef(false);
-  const [view, setView] = useState<PipelineView | null>(null);
+  const [opening, setOpening] = useState<PipelineOpening>(NOTHING_FETCHED);
   const selectedIds = selectedRowIds(selection);
+
+  /** What is on screen is only ever what THIS opening has fetched. */
+  const onOpenChange = (next: boolean) => {
+    if (next) setOpening(openSheet(fetcher));
+    setOpen(next);
+  };
 
   useEffect(() => {
     // Re-read on every opening rather than once per mount: this component stays
@@ -788,19 +873,25 @@ export function SeCompanyInfoPipelineSheet({ selection }: { selection: RowSelect
     fetcher.load(SE_COMPANY_INFO_PIPELINE_PATH);
   }, [fetcher, open]);
 
+  // Only ever on a CHANGE of `fetcher.data`: the payload the opening was reset
+  // away from is the same object it already was, so it can never come back.
   useEffect(() => {
-    if (fetcher.data?.kind === "view") setView(fetcher.data);
+    setOpening((current) => withFetched(current, fetcher.data));
   }, [fetcher.data]);
 
-  const result = fetcher.data?.kind === "result" ? fetcher.data : null;
-
   return (
-    <Sheet open={open} onOpenChange={setOpen}>
+    <Sheet open={open} onOpenChange={onOpenChange}>
       <SheetTrigger render={<Button variant="outline" size="sm" />}>
         <PlayIcon data-icon="inline-start" />
         Pipeline
         {selectedIds.length > 0 ? (
-          <Badge variant="secondary" className="ml-1 px-1.5">
+          // The scope, before the sheet is even opened. Labelled, because "2"
+          // beside a button called Pipeline says nothing on its own.
+          <Badge
+            variant="secondary"
+            className="ml-1 px-1.5"
+            aria-label={`${describeCompanyScope(selectedIds)} picked`}
+          >
             {nf.format(selectedIds.length)}
           </Badge>
         ) : null}
@@ -817,8 +908,8 @@ export function SeCompanyInfoPipelineSheet({ selection }: { selection: RowSelect
         </SheetHeader>
         <div className="min-h-0 flex-1 overflow-y-auto px-4 pb-4">
           <SeCompanyInfoPipelinePanel
-            view={view}
-            result={result}
+            view={opening.view}
+            result={opening.result}
             selectedIds={selectedIds}
             loading={fetcher.state !== "idle"}
             Form={fetcher.Form}
