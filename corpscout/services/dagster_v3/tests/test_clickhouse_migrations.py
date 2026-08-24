@@ -319,6 +319,7 @@ EXPECTED_MIGRATIONS = (
     "000305_corpscout_se_code_labels_swedish",
     "000306_corpscout_se_company_info_legal_form_label",
     "000307_corpscout_se_company_address",
+    "000309_corpscout_esef_parsing_v2",
 )
 
 NOOP_MIGRATIONS = {"000276_noop"}
