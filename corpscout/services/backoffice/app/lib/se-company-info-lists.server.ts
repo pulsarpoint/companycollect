@@ -309,7 +309,8 @@ export const DATATYPE_PRESENCE_EXPR: Record<ProfileDatatypeKey, string> = {
  * 'wikidata' or 'esef_filing' is evidence about a WEBSITE, not a register that
  * built the company profile, and 'common_crawl_identity' has no letter at all;
  * the Domains presence column is where that datatype speaks. (Live check
- * 2026-08-24: folding them in would move ~810 companies from S to SW.)
+ * 2026-08-24, corrected by review 2026-08-25: folding them in would move ZERO companies --
+ * every published company with a wikidata-sourced domain already carries W via wikidata_id.)
  *
  * Keyed by ProfileSourceValue, so adding a source to the catalog without a
  * predicate here is a type error rather than a silently missing letter.
