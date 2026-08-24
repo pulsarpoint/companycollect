@@ -19,7 +19,12 @@ import {
   EmptyMedia,
   EmptyTitle,
 } from "~/components/ui/empty";
-import type { SeCompanyAddressRow } from "~/lib/se-company-address.server";
+import { correctionStatus } from "~/lib/se-address-corrections";
+import type {
+  SeCompanyAddressCorrectionRow,
+  SeCompanyAddressDetail,
+  SeCompanyAddressRow,
+} from "~/lib/se-company-address.server";
 
 /** The register's own address-type keys, spelled for a reader. An unknown key
  * falls through unchanged rather than being hidden. */
@@ -39,8 +44,51 @@ function openStreetMapHref(latitude: string, longitude: string): string {
   return `https://www.openstreetmap.org/?mlat=${latitude}&mlon=${longitude}#map=18/${latitude}/${longitude}`;
 }
 
-function AddressCard({ row }: { row: SeCompanyAddressRow }) {
+/** One published address as a line a reader recognises, from the parts the
+ * final stores. */
+function displayAddress(row: SeCompanyAddressRow): string {
+  const locality = [row.postal_code, row.city].filter((part) => part !== "").join(" ");
+  return [row.care_of, row.street_address, locality]
+    .filter((part) => part !== "")
+    .join(", ");
+}
+
+function CorrectionList({
+  corrections,
+}: {
+  corrections: SeCompanyAddressCorrectionRow[];
+}) {
+  if (corrections.length === 0) return null;
+  return (
+    <ul className="flex flex-col gap-2 border-t pt-3 text-sm">
+      {corrections.map((correction) => (
+        <li key={correction.correction_id} className="flex flex-col gap-1">
+          <div className="flex flex-wrap items-center gap-2">
+            <Badge variant="outline">{correction.correction_kind}</Badge>
+            <Badge variant="secondary">{correctionStatus(correction)}</Badge>
+            <span className="text-muted-foreground text-xs">
+              {correction.decided_by} · {correction.created_at}
+            </span>
+          </div>
+          <p className="text-muted-foreground break-words">{correction.reason}</p>
+        </li>
+      ))}
+    </ul>
+  );
+}
+
+function AddressCard({
+  row,
+  corrections,
+}: {
+  row: SeCompanyAddressRow;
+  corrections: SeCompanyAddressCorrectionRow[];
+}) {
   const hasPoint = row.latitude !== "" && row.longitude !== "";
+  const line = displayAddress(row);
+  // A correction whose evidence no longer matches this row was dropped by
+  // Dagster: say so on the card, not only in the ledger list.
+  const hasStale = corrections.some((correction) => correction.is_stale === 1);
   return (
     <Card>
       <CardHeader>
@@ -48,19 +96,16 @@ function AddressCard({ row }: { row: SeCompanyAddressRow }) {
           <CardTitle className="text-base">
             {addressTypeLabel(row.address_type)}
           </CardTitle>
-          <Badge variant="outline">{row.source}</Badge>
-          {row.is_canonical_source ? (
-            <Badge variant="secondary">canonical source</Badge>
-          ) : null}
-          {row.is_foreign ? <Badge variant="outline">foreign</Badge> : null}
-          {row.has_address ? null : (
-            <Badge variant="outline">no address recorded</Badge>
-          )}
+          {/* In the row's own order: precedence between sources is visible. */}
+          {row.sources.map((source) => (
+            <Badge key={source} variant="outline">
+              {source}
+            </Badge>
+          ))}
+          {hasStale ? <Badge variant="secondary">evidence changed</Badge> : null}
         </div>
         <CardDescription>
-          {row.display_address === ""
-            ? "This source recorded no displayable address."
-            : row.display_address}
+          {line === "" ? "This address has no displayable text." : line}
         </CardDescription>
       </CardHeader>
       <CardContent className="flex flex-col gap-3">
@@ -70,13 +115,8 @@ function AddressCard({ row }: { row: SeCompanyAddressRow }) {
             ["Care of", text(row.care_of)],
             ["Street", text(row.street_address)],
             ["Postal code", text(row.postal_code)],
-            ["Post town", text(row.post_town)],
-            ["Country (source)", text(row.country_code)],
-            ["Country (resolved)", text(row.resolved_country_code)],
-            [
-              "Raw address",
-              <span className="break-all">{text(row.raw_address)}</span>,
-            ],
+            ["City", text(row.city)],
+            ["Country", text(row.country_code)],
             [
               "Normalized",
               <span className="break-all font-mono text-xs">
@@ -89,39 +129,24 @@ function AddressCard({ row }: { row: SeCompanyAddressRow }) {
                 {row.address_key.slice(0, 12)}
               </code>,
             ],
-            ["Observed", text(row.observed_at)],
-            ["Updated from raw", text(row.updated_from_raw_at)],
           ]}
         />
         <div className="flex flex-col gap-1 border-t pt-3">
           <span className="text-xs font-medium uppercase tracking-wide text-muted-foreground">
-            Canonical address and geocode
+            Geocode
           </span>
-          {/* A row that address identity has not folded into a canonical
-              address yet has nothing downstream to show, and a grid of em
-              dashes reads as "the geocoder failed" rather than "it has not
-              run". Say which one it is. */}
-          {row.has_link ? (
+          {/* An address that never reached the geocoder has nothing to show,
+              and a grid of em dashes reads as "the geocoder failed" rather
+              than "it never ran". Say which one it is. */}
+          {row.geocode_status === "" ? (
+            <p className="text-sm text-muted-foreground">
+              This address has not been geocoded.
+            </p>
+          ) : (
             <DefinitionList
               valueClassName="break-words"
               entries={[
-                ["Canonical address", text(row.canonical_display_address)],
-                [
-                  "Address id",
-                  row.address_id === "" ? (
-                    EMPTY_VALUE
-                  ) : (
-                    <code className="font-mono text-xs">
-                      {row.address_id.slice(0, 12)}
-                    </code>
-                  ),
-                ],
-                ["Link review", text(row.link_review_status)],
                 ["Geocode status", text(row.geocode_status)],
-                ["Geocode precision", text(row.geocode_precision)],
-                ["Geocode provider", text(row.geocode_provider)],
-                ["Match method", text(row.geocode_match_method)],
-                ["Match confidence", text(row.geocode_match_confidence)],
                 [
                   "Coordinates",
                   hasPoint ? (
@@ -138,31 +163,81 @@ function AddressCard({ row }: { row: SeCompanyAddressRow }) {
                   ),
                 ],
                 ["Geocoded at", text(row.geocoded_at)],
+                [
+                  "Address id",
+                  row.address_id === "" ? (
+                    EMPTY_VALUE
+                  ) : (
+                    <code className="font-mono text-xs">
+                      {row.address_id.slice(0, 12)}
+                    </code>
+                  ),
+                ],
               ]}
             />
-          ) : (
-            <p className="text-sm text-muted-foreground">
-              Not linked to a canonical address yet, so there is nothing to
-              geocode against.
-            </p>
           )}
         </div>
+        <details className="border-t pt-3 text-sm">
+          <summary className="cursor-pointer text-xs font-medium uppercase tracking-wide text-muted-foreground">
+            Provenance
+          </summary>
+          <DefinitionList
+            className="mt-2"
+            valueClassName="break-all"
+            entries={[
+              [
+                "Source records",
+                row.source_record_uids.length === 0
+                  ? EMPTY_VALUE
+                  : row.source_record_uids.join(", "),
+              ],
+              ["Resolved at", text(row.resolved_at)],
+              [
+                "Evidence set",
+                <code className="font-mono text-xs">
+                  {row.evidence_set_hash.slice(0, 12)}
+                </code>,
+              ],
+            ]}
+          />
+        </details>
+        <CorrectionList corrections={corrections} />
       </CardContent>
     </Card>
   );
 }
 
 /**
- * Every registered address of this company, one card per (type, source) --
- * the register's own grain. Two sources agreeing is a fact worth seeing, so
- * they are not merged here.
+ * Every published address of this company, one card per address_key -- the
+ * datatype's own grain. Two sources agreeing on an address share one row and
+ * show both badges.
+ *
+ * Tombstoned rows get their own section (ruling A8): a rejected address that
+ * simply vanished would take its correction with it, and the undo that brings
+ * it back would be unreachable.
  */
 export function SeCompanyAddressTab({
-  addresses,
+  detail,
 }: {
-  addresses: SeCompanyAddressRow[];
+  detail: SeCompanyAddressDetail;
 }) {
-  if (addresses.length === 0) {
+  const { addresses, removed, corrections } = detail;
+  // An undo names a correction, not an address, so it is grouped under the
+  // address of the correction it supersedes -- otherwise every undo would fall
+  // out of the card whose history it belongs to.
+  const keyById = new Map(
+    corrections.map((correction) => [correction.correction_id, correction.address_key]),
+  );
+  const keyOf = (correction: SeCompanyAddressCorrectionRow): string =>
+    correction.address_key !== ""
+      ? correction.address_key
+      : keyById.get(correction.supersedes_correction_id ?? "") ?? "";
+  const forKey = (key: string) =>
+    corrections.filter((correction) => keyOf(correction) === key);
+  const carded = new Set([...addresses, ...removed].map((row) => row.address_key));
+  const orphaned = corrections.filter((correction) => !carded.has(keyOf(correction)));
+
+  if (addresses.length === 0 && removed.length === 0 && corrections.length === 0) {
     return (
       <Empty className="border">
         <EmptyHeader>
@@ -178,13 +253,49 @@ export function SeCompanyAddressTab({
     );
   }
   return (
-    <section className="flex flex-col gap-4">
-      {addresses.map((row) => (
-        <AddressCard
-          key={`${row.address_type}:${row.source}:${row.address_key}`}
-          row={row}
-        />
-      ))}
-    </section>
+    <div className="flex flex-col gap-6">
+      <section className="flex flex-col gap-4">
+        {addresses.map((row) => (
+          <AddressCard
+            key={row.address_key}
+            row={row}
+            corrections={forKey(row.address_key)}
+          />
+        ))}
+      </section>
+      {removed.length === 0 ? null : (
+        <section className="flex flex-col gap-4">
+          <div className="flex flex-col gap-1">
+            <h2 className="text-sm font-medium uppercase tracking-wide text-muted-foreground">
+              Removed / rejected
+            </h2>
+            <p className="text-sm text-muted-foreground">
+              Addresses this company no longer has: rejected by a reviewer, or
+              no longer carried by any source. Kept so the decision stays
+              visible and can be undone.
+            </p>
+          </div>
+          {removed.map((row) => (
+            <AddressCard
+              key={row.address_key}
+              row={row}
+              corrections={forKey(row.address_key)}
+            />
+          ))}
+        </section>
+      )}
+      {orphaned.length === 0 ? null : (
+        <section className="flex flex-col gap-2">
+          <h2 className="text-sm font-medium uppercase tracking-wide text-muted-foreground">
+            Corrections without an address
+          </h2>
+          {/* A reject naming a key this company never published (or has long
+              since dropped) is applied the moment it is written -- Dagster has
+              no row to stamp it on. It has no card to sit under, and hiding it
+              would leave a decision nobody can see or undo. */}
+          <CorrectionList corrections={orphaned} />
+        </section>
+      )}
+    </div>
   );
 }

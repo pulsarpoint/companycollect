@@ -152,6 +152,19 @@ export async function chInsertSeCompanyInfoCorrections<T extends object>(
   });
 }
 
+/** Append reviewer decisions to the Sweden company-address correction ledger;
+ * Dagster's sensor picks them up. */
+export async function chInsertSeCompanyAddressCorrections<T extends object>(
+  values: T[],
+): Promise<void> {
+  if (values.length === 0) return;
+  await getWriteClient().insert({
+    table: "se_company_address_correction",
+    values,
+    format: "JSONEachRow",
+  });
+}
+
 /**
  * Append model suggestions produced by a one-off script or a synchronous
  * per-person re-run in the backoffice. Dagster remains the normal producer.

@@ -3,11 +3,16 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 // One hoisted chQuery for every tab loader: the SQL each one sends is the
 // contract these tests pin, so the mock records the calls rather than
 // standing in for a live ClickHouse.
-const clickhouse = vi.hoisted(() => ({ query: vi.fn() }));
-vi.mock("~/lib/clickhouse.server", () => ({ chQuery: clickhouse.query }));
+const clickhouse = vi.hoisted(() => ({ insert: vi.fn(), query: vi.fn() }));
+vi.mock("~/lib/clickhouse.server", () => ({
+  chInsertSeCompanyAddressCorrections: clickhouse.insert,
+  chQuery: clickhouse.query,
+}));
 
 import {
-  ADDRESS_ROWS_SQL,
+  ADDRESSES_SQL,
+  CORRECTIONS_SQL as ADDRESS_CORRECTIONS_SQL,
+  REMOVED_SQL,
   loadSeCompanyAddresses,
 } from "~/lib/se-company-address.server";
 import {
@@ -43,7 +48,9 @@ const ALL_SQL: Array<[string, string]> = [
   ["SHELL_REGISTER_SQL", SHELL_REGISTER_SQL],
   ["SHELL_ENTITY_TYPE_SQL", SHELL_ENTITY_TYPE_SQL],
   ["SHELL_LEGAL_FORM_LABEL_SQL", SHELL_LEGAL_FORM_LABEL_SQL],
-  ["ADDRESS_ROWS_SQL", ADDRESS_ROWS_SQL],
+  ["ADDRESSES_SQL", ADDRESSES_SQL],
+  ["REMOVED_SQL", REMOVED_SQL],
+  ["ADDRESS_CORRECTIONS_SQL", ADDRESS_CORRECTIONS_SQL],
   ["FINANCIALS_LATEST_SQL", FINANCIALS_LATEST_SQL],
   ["FINANCIAL_REPORTS_SQL", FINANCIAL_REPORTS_SQL],
   ["PEOPLE_SQL", PEOPLE_SQL],
@@ -104,55 +111,33 @@ describe("company area SQL", () => {
       "corpscout.company_person_role_type AS t FINAL",
     );
     expect(COMPANY_DOMAINS_SQL).toContain("corpscout.company_domains AS d FINAL");
+    // The address final is a ReplacingMergeTree on resolved_at, so both of its
+    // reads take FINAL; the ledger it joins nothing to is a plain MergeTree.
+    for (const sql of [ADDRESSES_SQL, REMOVED_SQL]) {
+      expect(sql).toContain("corpscout.se_company_address AS a FINAL");
+    }
+    expect(ADDRESS_CORRECTIONS_SQL).not.toContain("FINAL");
 
     // Snapshot tables: no FINAL anywhere in the statements that read them.
-    expect(ADDRESS_ROWS_SQL).not.toContain("FINAL");
     expect(FINANCIALS_LATEST_SQL).not.toContain("FINAL");
   });
 
   /**
-   * ClickHouse fills a LEFT JOIN miss with each column's *type default*, not
-   * NULL, so `ifNull` cannot see one: `match_confidence` (Float32) reads 0 and
-   * `matched_at` (DateTime64) reads 1970-01-01. Each joined side therefore
-   * needs a `has_*` flag tested against a column that is never empty on a real
-   * row, and every column from that side gated on it. The behaviour this
-   * protects is exercised end-to-end in tests/admin-se-company-area.test.tsx
-   * ("shows nothing rather than type defaults ..."); this pins the mechanism,
-   * because a projection added later would silently reintroduce the bug.
+   * The address tab used to read a six-table LEFT JOIN chain
+   * (se_company_addresses_current -> display -> members -> links ->
+   * se_addresses_current -> geocodes), and ClickHouse's habit of filling a
+   * LEFT JOIN miss with each column's *type default* rather than NULL put a
+   * geocode confidence of 0 taken on 1970-01-01 on the page. The datatype
+   * removed the reason for the chain: the geocode is resolved once and stored
+   * on the published row. Pin that, so nobody re-adds a join here.
    */
-  it("gates every joined-side column of the address chain on its own hit flag", () => {
-    const projection = ADDRESS_ROWS_SQL.split("\nFROM ")[0];
-    for (const [alias, flag] of [
-      ["d.", "has_display"],
-      ["l.", "has_link"],
-      ["ca.", "has_canonical"],
-      ["g.", "has_geocode"],
-    ]) {
-      // Split into whole projected expressions, not lines: a multi-line one
-      // (is_canonical_source) carries its gate on a different line than its
-      // alias reference.
-      const gate = `AS ${flag}`;
-      const projected = projection
-        .split(/,\n(?=  \S)/)
-        .filter((expr) => expr.includes(alias) && !expr.includes(gate));
-      expect(projected.length, alias).toBeGreaterThan(0);
-      for (const line of projected) {
-        // Either gated on the flag, or an ifNull over a genuinely Nullable
-        // SOURCE column (g.latitude / g.longitude), which is a different case.
-        const gated = line.includes(flag);
-        const nullableSource = /ifNull\(toString\(g\.(latitude|longitude)\)/.test(
-          line,
-        );
-        expect(gated || nullableSource, `${alias} ${line}`).toBe(true);
-      }
+  it("reads the address final on its own, with no join chain behind it", () => {
+    for (const sql of [ADDRESSES_SQL, REMOVED_SQL]) {
+      expect(sql).not.toContain("JOIN");
+      expect(sql).not.toContain("se_company_addresses_current");
+      expect(sql).not.toContain("se_address_geocodes_current");
+      expect(sql).toContain("toString(a.geocode_status) AS geocode_status");
     }
-    // And the two columns that actually broke are gated, not ifNull'd.
-    expect(ADDRESS_ROWS_SQL).toContain(
-      "if(has_geocode, toString(g.match_confidence), '')",
-    );
-    expect(ADDRESS_ROWS_SQL).toContain(
-      "if(has_geocode, toString(g.matched_at), '')",
-    );
   });
 
   it("filters the role join in a subquery, not in an outer WHERE", () => {
@@ -273,11 +258,13 @@ describe("loadSeCompanyShell", () => {
 });
 
 describe("tab loaders", () => {
-  it("reads addresses with the company id as a parameter", async () => {
+  it("reads the live rows, the tombstones and the ledger of one company", async () => {
     await loadSeCompanyAddresses(COMPANY);
-    expect(clickhouse.query).toHaveBeenCalledWith(ADDRESS_ROWS_SQL, {
-      companyId: COMPANY,
-    });
+    const sent = clickhouse.query.mock.calls.map(([sql]) => sql as string);
+    expect(sent).toEqual([ADDRESSES_SQL, REMOVED_SQL, ADDRESS_CORRECTIONS_SQL]);
+    for (const [, params] of clickhouse.query.mock.calls) {
+      expect(params).toMatchObject({ companyId: COMPANY });
+    }
   });
 
   it("reads domains with the company id as a parameter", async () => {

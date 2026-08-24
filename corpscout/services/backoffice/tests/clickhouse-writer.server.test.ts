@@ -12,6 +12,7 @@ vi.mock("@clickhouse/client", () => ({
 import {
   chInsertCompanyDomains,
   chInsertPersonCorrections,
+  chInsertSeCompanyAddressCorrections,
   chInsertSeCompanyInfoCorrections,
   chInsertSeCompanyPersonCorrections,
 } from "~/lib/clickhouse.server";
@@ -107,5 +108,33 @@ describe("person correction ClickHouse writer", () => {
       values: [{ correction_id: "test" }],
       format: "JSONEachRow",
     });
+  });
+
+  it("writes Sweden company-address corrections with the writer client", async () => {
+    vi.stubEnv("CLICKHOUSE_USER", "correction_writer");
+    vi.stubEnv("CLICKHOUSE_PASSWORD", "writer-secret");
+    clickhouse.createClient.mockReturnValue({ insert: clickhouse.insert });
+    clickhouse.insert.mockResolvedValue(undefined);
+
+    await chInsertSeCompanyAddressCorrections([{ correction_id: "test" }]);
+
+    expect(clickhouse.insert).toHaveBeenCalledWith({
+      table: "se_company_address_correction",
+      values: [{ correction_id: "test" }],
+      format: "JSONEachRow",
+    });
+  });
+
+  // An empty batch is a normal caller state (nothing was decided), and an
+  // INSERT with no rows would still open a connection and a part.
+  it("no-ops on an empty address batch", async () => {
+    vi.stubEnv("CLICKHOUSE_USER", "correction_writer");
+    vi.stubEnv("CLICKHOUSE_PASSWORD", "writer-secret");
+    clickhouse.createClient.mockReturnValue({ insert: clickhouse.insert });
+
+    await chInsertSeCompanyAddressCorrections([]);
+
+    expect(clickhouse.insert).not.toHaveBeenCalled();
+    expect(clickhouse.createClient).not.toHaveBeenCalled();
   });
 });

@@ -1,142 +1,264 @@
-import { chQuery } from "~/lib/clickhouse.server";
+import { randomUUID } from "node:crypto";
+import {
+  chInsertSeCompanyAddressCorrections,
+  chQuery,
+} from "~/lib/clickhouse.server";
+import {
+  SeAddressCorrectionValidationError,
+  validateSeAddressCorrection,
+  ZERO_EVIDENCE_HASH,
+  type SeAddressCorrectionInput,
+} from "~/lib/se-address-corrections";
+
+export { ZERO_EVIDENCE_HASH };
+const CORRECTION_ACTOR = "backoffice";
 
 /**
- * One registered address observation: a (company, address type, source)
- * triple, joined to everything the address pipeline later derived from it.
+ * One published address of one company: a row of corpscout.se_company_address
+ * (migration 000307), which is the whole story -- the register text, the
+ * geocode augmentation, the provenance and the applied corrections all travel
+ * on it.
  *
- * Every field is a string because the query collapses joined-side misses to
- * "" rather than mapping them in TypeScript -- including latitude/longitude,
- * so "no coordinate" is one value ("") rather than null, 0 and undefined.
- * The `has_*` flags say which joined side actually matched; see ADDRESS_ROWS_SQL.
+ * Every field is text because the query collapses a Nullable miss to "" rather
+ * than mapping it in TypeScript, so "absent" is one value ("") rather than
+ * null, 0 and undefined.
  */
 export interface SeCompanyAddressRow {
+  /** sha256 of the normalized (type, care-of, street, postal, city, country)
+   * tuple, computed in Dagster's address_rules.py. The subject of every
+   * correction on this row. */
+  address_key: string;
   address_type: string;
-  source: string;
-  /** 1 when the normalization has produced a display row for this observation. */
-  has_display: number;
-  /** 1 when address identity has folded this observation into a canonical address. */
-  has_link: number;
-  has_canonical: number;
-  /** 1 when the canonical address has been through the geocoder. */
-  has_geocode: number;
-  raw_address: string;
-  display_address: string;
   care_of: string;
   street_address: string;
-  postal_code: string;
-  post_town: string;
-  /** As the register recorded it. */
-  country_code: string;
-  /** As the normalization resolved it (a foreign address keeps its own code). */
-  resolved_country_code: string;
-  is_foreign: number;
   normalized_address: string;
-  has_address: number;
-  /** sha256 of the normalized address; `address_fingerprint` in the source
-   * table, `address_key` in the display and member tables. */
-  address_key: string;
-  observed_at: string;
-  updated_from_raw_at: string;
-  /** The canonical address identity this observation was folded into. */
+  postal_code: string;
+  city: string;
+  country_code: string;
+  /** The shared-identity address this row's geocode came from; "" when the
+   * address never reached the chain. */
   address_id: string;
-  canonical_address_key: string;
-  canonical_display_address: string;
-  /** 1 when this source is the one the canonical address is displayed from. */
-  is_canonical_source: number;
-  link_review_status: string;
-  geocode_status: string;
-  geocode_precision: string;
-  geocode_provider: string;
-  geocode_match_method: string;
-  geocode_match_confidence: string;
   latitude: string;
   longitude: string;
+  /** "" means the address never reached the geocoder at all. */
+  geocode_status: string;
   geocoded_at: string;
+  /** Every source that carried this address, in the pipeline's precedence order. */
+  sources: string[];
+  source_record_uids: string[];
+  /** What a correction on this row has to echo back; the pipeline compares the
+   * two to decide whether the decision still applies. */
+  evidence_set_hash: string;
+  /** The corrections Dagster actually applied to this row. Cleared on a
+   * tombstone that a disappearance wrote, kept on one a reject wrote. */
+  correction_ids: string[];
+  resolved_at: string;
+}
+
+export interface SeCompanyAddressCorrectionRow {
+  correction_id: string;
+  correction_kind: string;
+  payload: string;
+  /** The address_key this correction decides, lifted out of the payload so the
+   * page can group a correction under its address card. */
+  address_key: string;
+  evidence_hash: string;
+  reason: string;
+  decided_by: string;
+  supersedes_correction_id: string | null;
+  created_at: string;
+  is_current: number;
+  is_stale: number;
+  is_applied: number;
+}
+
+export interface SeCompanyAddressDetail {
+  /** The company's live addresses (is_current). */
+  addresses: SeCompanyAddressRow[];
+  /**
+   * Tombstoned rows (is_current = false): rejected by a reviewer, or no longer
+   * carried by any source. Ruling A8 -- a rejected address that vanished from
+   * the page would take its correction with it, and the undo that brings it
+   * back would be unreachable.
+   */
+  removed: SeCompanyAddressRow[];
+  corrections: SeCompanyAddressCorrectionRow[];
 }
 
 /**
- * Registered addresses with their normalization and geocoding, keyed the way
- * the pipeline keys them.
+ * Every column of the final, aliased explicitly, all as text so "absent" is
+ * one value. Shared by the live and the tombstone read so a column can never
+ * be present in one list and missing from the other.
  *
- * The join chain is the real one and cannot be shortened: the geocoder works
- * on *canonical* addresses (`se_addresses_current.address_id`, one row per
- * distinct address across all companies), not on a company's own observation.
- * Getting from one to the other goes through the member table (observation
- * `address_key` -> `canonical_address_key`) and then the link table
- * (`canonical_address_key` -> `address_id`), so a company row that has not
- * been through address identity yet simply carries empty derived fields
- * instead of dropping out.
- *
- * MISSES ARE GATED, NOT ifNull'd. ClickHouse fills a LEFT JOIN miss with each
- * column's *type default*, not NULL, so `ifNull` is blind to it: on a miss
- * `g.match_confidence` (Float32) reads 0 and `g.matched_at` (DateTime64) reads
- * 1970-01-01, and the page rendered both as if the geocoder had answered.
- * Each joined side therefore carries a `has_*` flag tested against a column
- * that is never empty on a real row -- the run id that stamped it, or the
- * display table's own `source` -- and every column from that side is wrapped
- * in `if(has_..., ..., '')`. `ifNull` stays only where the SOURCE column is
- * genuinely Nullable (a.care_of, g.latitude), which is a different question.
- *
- * Every joined table here is a plain MergeTree snapshot rebuilt per run
- * (checked against system.tables), so none of them takes FINAL -- adding it
- * would be a full-table dedup pass for no change in the result.
+ * NO JOINS, deliberately. This used to be a six-table LEFT JOIN chain
+ * (se_company_addresses_current -> _display_current -> _members_current ->
+ * _links_current -> se_addresses_current -> se_address_geocodes_current) with
+ * a `has_*` flag per joined side, because ClickHouse fills a LEFT JOIN miss
+ * with each column's TYPE DEFAULT and the page rendered a confidence of 0
+ * taken on 1970-01-01. The datatype removed the reason for all of it: the
+ * geocode is read once at resolve time and stored on the published row. The
+ * old statement is in git history; do not re-add it.
  */
-export const ADDRESS_ROWS_SQL = `SELECT
+const ADDRESS_PROJECTION = `SELECT
+  toString(a.address_key) AS address_key,
   toString(a.address_type) AS address_type,
-  toString(a.source) AS source,
-  toUInt8(d.source != '') AS has_display,
-  toUInt8(l.address_identity_run_id != '') AS has_link,
-  toUInt8(ca.address_identity_run_id != '') AS has_canonical,
-  toUInt8(g.geocode_run_id != '') AS has_geocode,
-  ifNull(a.raw_address, '') AS raw_address,
-  if(has_display, d.display_address, '') AS display_address,
   ifNull(a.care_of, '') AS care_of,
   ifNull(a.street_address, '') AS street_address,
+  ifNull(a.normalized_address, '') AS normalized_address,
   ifNull(a.postal_code, '') AS postal_code,
-  ifNull(a.post_town, '') AS post_town,
-  ifNull(toString(a.country_code), '') AS country_code,
-  if(has_display, toString(d.resolved_country_code), '') AS resolved_country_code,
-  toUInt8(has_display AND d.is_foreign) AS is_foreign,
-  a.normalized_address AS normalized_address,
-  toUInt8(a.has_address) AS has_address,
-  toString(a.address_fingerprint) AS address_key,
-  toString(a.observed_at) AS observed_at,
-  toString(a.updated_from_raw_at) AS updated_from_raw_at,
-  if(has_link, toString(l.address_id), '') AS address_id,
-  if(has_link, toString(l.canonical_address_key), '') AS canonical_address_key,
-  if(has_link, toString(l.review_status), '') AS link_review_status,
-  if(has_canonical, ca.canonical_display_address, '') AS canonical_display_address,
-  toUInt8(
-    has_canonical
-    AND toString(ca.representative_address_source) = toString(a.source)
-  ) AS is_canonical_source,
-  if(has_geocode, toString(g.match_status), '') AS geocode_status,
-  if(has_geocode, toString(g.geocode_precision), '') AS geocode_precision,
-  if(has_geocode, toString(g.geocode_provider), '') AS geocode_provider,
-  if(has_geocode, toString(g.match_method), '') AS geocode_match_method,
-  if(has_geocode, toString(g.match_confidence), '') AS geocode_match_confidence,
-  ifNull(toString(g.latitude), '') AS latitude,
-  ifNull(toString(g.longitude), '') AS longitude,
-  if(has_geocode, toString(g.matched_at), '') AS geocoded_at
-FROM corpscout.se_company_addresses_current AS a
-LEFT JOIN corpscout.se_company_address_display_current AS d
-  ON d.company_id = a.company_id AND d.address_key = a.address_fingerprint
-LEFT JOIN corpscout.se_company_address_members_current AS m
-  ON m.company_id = a.company_id AND m.address_key = a.address_fingerprint
-LEFT JOIN corpscout.se_company_address_links_current AS l
-  ON l.company_id = a.company_id
- AND l.canonical_address_key = m.canonical_address_key
-LEFT JOIN corpscout.se_addresses_current AS ca
-  ON ca.address_id = l.address_id
-LEFT JOIN corpscout.se_address_geocodes_current AS g
-  ON g.address_id = l.address_id
+  ifNull(a.city, '') AS city,
+  ifNull(a.country_code, '') AS country_code,
+  ifNull(toString(a.address_id), '') AS address_id,
+  ifNull(toString(a.latitude), '') AS latitude,
+  ifNull(toString(a.longitude), '') AS longitude,
+  toString(a.geocode_status) AS geocode_status,
+  ifNull(toString(a.geocoded_at), '') AS geocoded_at,
+  a.sources AS sources,
+  a.source_record_uids AS source_record_uids,
+  toString(a.evidence_set_hash) AS evidence_set_hash,
+  arrayMap(x -> toString(x), a.correction_ids) AS correction_ids,
+  toString(a.resolved_at) AS resolved_at`;
+
+/** FINAL is not decoration here: se_company_address is a ReplacingMergeTree on
+ * resolved_at, so without it a re-resolved address comes back once per run. */
+export const ADDRESSES_SQL = `${ADDRESS_PROJECTION}
+FROM corpscout.se_company_address AS a FINAL
 WHERE a.company_id = {companyId:String}
-ORDER BY a.address_type, a.source
+  AND a.is_current
+ORDER BY a.address_type, a.address_key
 LIMIT 100`;
 
-/** Every registered address of one company, newest normalization attached. */
+/** The same rows with the flag inverted: what this company no longer has. */
+export const REMOVED_SQL = `${ADDRESS_PROJECTION}
+FROM corpscout.se_company_address AS a FINAL
+WHERE a.company_id = {companyId:String}
+  AND NOT a.is_current
+ORDER BY a.address_type, a.address_key
+LIMIT 100`;
+
+/**
+ * The company's correction ledger, with each row's standing against what is
+ * published now.
+ *
+ * `is_applied` has two branches, and the second is not an optimisation. Dagster
+ * stamps a correction's id onto the row it decided, but a `reject_address`
+ * naming a key the resolution did not produce has NO row to stamp: address_rules.py
+ * skips it without recording it stale (ruling A11). Reading membership of
+ * `correction_ids` alone would then leave such a reject "pending" for ever, so
+ * the absence of its key from the live set IS the applied signal.
+ *
+ * `is_stale` is a live, NOT-applied correction whose evidence hash matches no
+ * live row of this company -- which covers both "the evidence moved on" and
+ * "the address it named is gone". The zero hash is undo's own marker and is
+ * never stale. Applied is checked first because a decision that landed is not
+ * waiting for anything: only tombstoned rows keep the old hash, and counting
+ * theirs would instead make a correction with nowhere to land look fresh for ever.
+ */
+export const CORRECTIONS_SQL = `WITH superseded AS (
+  SELECT supersedes_correction_id AS id
+  FROM corpscout.se_company_address_correction
+  WHERE company_id = {companyId:String} AND supersedes_correction_id IS NOT NULL
+)
+SELECT
+  toString(c.correction_id) AS correction_id,
+  c.correction_kind AS correction_kind,
+  c.payload AS payload,
+  JSONExtractString(c.payload, 'address_key') AS address_key,
+  toString(c.evidence_hash) AS evidence_hash,
+  c.reason AS reason,
+  c.decided_by AS decided_by,
+  toString(c.supersedes_correction_id) AS supersedes_correction_id,
+  toString(c.created_at) AS created_at,
+  toUInt8(c.correction_id NOT IN (SELECT id FROM superseded)) AS is_current,
+  toUInt8(
+    has({appliedIds:Array(String)}, toString(c.correction_id))
+    OR (
+      c.correction_kind = 'reject_address'
+      AND address_key != ''
+      AND NOT has({liveAddressKeys:Array(String)}, address_key)
+    )
+  ) AS is_applied,
+  toUInt8(
+    is_current
+    AND NOT is_applied
+    AND toString(c.evidence_hash) != {zeroHash:String}
+    AND NOT has({evidenceSetHashes:Array(String)}, toString(c.evidence_hash))
+  ) AS is_stale
+FROM corpscout.se_company_address_correction AS c
+WHERE c.company_id = {companyId:String}
+ORDER BY c.created_at DESC, c.correction_id DESC
+LIMIT 200`;
+
+/**
+ * Every published address of one company -- live and tombstoned -- with the
+ * correction ledger that decided them.
+ *
+ * A company with no published address returns empty lists rather than null: it
+ * is a normal pipeline state (nothing resolved yet), and its ledger may still
+ * carry a reject of an address that has since gone.
+ */
 export async function loadSeCompanyAddresses(
   companyId: string,
-): Promise<SeCompanyAddressRow[]> {
-  return chQuery<SeCompanyAddressRow>(ADDRESS_ROWS_SQL, { companyId });
+): Promise<SeCompanyAddressDetail> {
+  const [addresses, removed] = await Promise.all([
+    chQuery<SeCompanyAddressRow>(ADDRESSES_SQL, { companyId }),
+    chQuery<SeCompanyAddressRow>(REMOVED_SQL, { companyId }),
+  ]);
+  const corrections = await chQuery<SeCompanyAddressCorrectionRow>(CORRECTIONS_SQL, {
+    companyId,
+    zeroHash: ZERO_EVIDENCE_HASH,
+    evidenceSetHashes: addresses.map((row) => row.evidence_set_hash),
+    liveAddressKeys: addresses.map((row) => row.address_key),
+    // Both lists: a reject's id lives on the row it tombstoned, so reading
+    // only the live rows would lose it.
+    appliedIds: [...addresses, ...removed].flatMap((row) => row.correction_ids),
+  });
+  return { addresses, removed, corrections };
+}
+
+function correctionTimestamp(): string {
+  return new Date().toISOString().replace("T", " ").replace("Z", "");
+}
+
+/**
+ * Appends one reviewer decision to the ledger. Except for `undo` (which names
+ * a correction, not a row), the named address is re-read first: the page may
+ * have been open while Dagster republished it, and a decision echoing a hash
+ * that has moved would be dropped as stale on the next run without ever
+ * telling the reviewer.
+ */
+export async function appendSeCompanyAddressCorrection(
+  input: SeAddressCorrectionInput,
+): Promise<{ correctionId: string }> {
+  const draft = validateSeAddressCorrection(input);
+  if (draft.correction_kind !== "undo") {
+    const addressKey = JSON.parse(draft.payload).address_key as string;
+    const [current] = await chQuery<{ evidence_set_hash: string }>(
+      `SELECT toString(a.evidence_set_hash) AS evidence_set_hash
+       FROM corpscout.se_company_address AS a FINAL
+       WHERE a.company_id = {companyId:String}
+         AND a.address_key = {addressKey:String}
+         AND a.is_current
+       LIMIT 1`,
+      { companyId: draft.company_id, addressKey },
+    );
+    if (!current) {
+      throw new SeAddressCorrectionValidationError("This address is not published.");
+    }
+    if (current.evidence_set_hash !== draft.evidence_hash) {
+      throw new SeAddressCorrectionValidationError(
+        "The evidence changed while you were reviewing. Reload and decide again.",
+      );
+    }
+  }
+  const correctionId = randomUUID();
+  await chInsertSeCompanyAddressCorrections([
+    {
+      correction_id: correctionId,
+      ...draft,
+      decided_by: CORRECTION_ACTOR,
+      created_at: correctionTimestamp(),
+    },
+  ]);
+  return { correctionId };
 }

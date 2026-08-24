@@ -6,11 +6,11 @@ import { loadSeCompanyAddresses } from "~/lib/se-company-address.server";
 // admin-se-company-layout.tsx for why.
 
 export async function loader({ params }: Route.LoaderArgs) {
-  return { addresses: await loadSeCompanyAddresses(params.companyId) };
+  return { detail: await loadSeCompanyAddresses(params.companyId) };
 }
 
 export default function AdminSwedenCompanyAddress({
   loaderData,
 }: Route.ComponentProps) {
-  return <SeCompanyAddressTab addresses={loaderData.addresses} />;
+  return <SeCompanyAddressTab detail={loaderData.detail} />;
 }
