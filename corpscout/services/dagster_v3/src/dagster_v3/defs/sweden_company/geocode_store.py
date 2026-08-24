@@ -205,11 +205,16 @@ def build_current_resolver_geocodes_sql(
     resolver `ambiguous` behind it, and that ambiguous is what decides whether the identity
     belongs in the retry pool. Ranking the served answer here would make every adopted
     identity look permanently settled and the resolver would never try it again.
+
+    ``address_filter_sql`` is parenthesized before it is ANDed with the adopted-exclusion.
+    AND binds tighter than OR, so an unparenthesized ``a OR b`` caller filter would leave
+    the exclusion attached to ``b`` alone and adopted rows would leak back into the resolver
+    view through the first disjunct -- a wrong answer, not a syntax error.
     """
     projection = ",\n    ".join(columns)
     filters = [RESOLVER_ONLY_FILTER_SQL]
     if address_filter_sql:
-        filters.insert(0, address_filter_sql)
+        filters.insert(0, f"({address_filter_sql})")
     where = "\nWHERE " + "\n  AND ".join(filters)
     return (
         f"SELECT\n    {projection}\n"
@@ -225,7 +230,14 @@ def is_geocoded(match_status: str) -> bool:
 
 @dataclass(frozen=True)
 class StoredOutcome:
-    """One stored row, reduced to what the ranks and the demand scan need."""
+    """One stored row, reduced to what the ranks and the demand scan need.
+
+    ``matched_at`` must carry the store's millisecond precision and no more: the SQL rank
+    compares ``DateTime64(3, 'UTC')``, so a datetime holding sub-millisecond microseconds
+    ranks differently here from the way the row it stands for ranks in ClickHouse. Outcomes
+    read back out of the store get that for free; a caller stamping its own instant must
+    truncate to milliseconds.
+    """
 
     address_id: str
     policy_version: str

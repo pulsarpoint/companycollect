@@ -169,7 +169,22 @@ def test_the_resolver_only_read_is_stage_one_over_the_resolver_family() -> None:
     # One stage only -- no candidates subquery, no servable component.
     assert "candidates" not in sql and "is_adopted" not in sql
     filtered = build_current_resolver_geocodes_sql(address_filter_sql="address_id = 'x'")
-    assert f"WHERE address_id = 'x'\n  AND {RESOLVER_ONLY_FILTER_SQL}" in filtered
+    assert f"WHERE (address_id = 'x')\n  AND {RESOLVER_ONLY_FILTER_SQL}" in filtered
+
+
+def test_the_resolver_only_read_parenthesizes_the_caller_filter() -> None:
+    """AND binds tighter than OR.
+
+    An unparenthesized `a OR b` caller filter would leave the adopted-exclusion attached to
+    `b` alone, and adopted rows would come back through the first disjunct -- the read would
+    answer, and answer wrongly. Every filter this builder is given is caller-supplied text,
+    so the builder is the only place that can guarantee the grouping.
+    """
+    sql = build_current_resolver_geocodes_sql(
+        columns=("address_id",),
+        address_filter_sql="address_id = 'x' OR address_id = 'y'")
+    assert (f"WHERE (address_id = 'x' OR address_id = 'y')\n  AND {RESOLVER_ONLY_FILTER_SQL}"
+            in sql)
 
 
 @pytest.mark.parametrize(
@@ -219,6 +234,13 @@ def test_the_resolver_only_read_is_stage_one_over_the_resolver_family() -> None:
         ("equal instants in one family break on reference_md5",
          [_outcome(POLICY, MD5_A, "matched_exact", T1), _outcome(POLICY, MD5_B, "matched_exact", T1)],
          (POLICY, MD5_B)),
+        # ... and reference_md5 is spelled BEFORE policy_version in that tuple, on both
+        # sides of the rule. Swapping the two is invisible unless a case makes the two
+        # orders disagree, and on collision-heavy data it moves hundreds of served rows.
+        ("equal instants break on reference_md5 before policy_version",
+         [_outcome(OLD_POLICY, MD5_B, "matched_exact", T1),
+          _outcome(POLICY, MD5_A, "matched_exact", T1)],
+         (OLD_POLICY, MD5_B)),
     ],
 )
 def test_current_outcome_ranks_the_way_the_rule_says(
