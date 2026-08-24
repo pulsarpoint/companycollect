@@ -12,24 +12,12 @@ from dagster_v3.defs.sweden_company.address_resolution_shadow import (
     QUALIFIED_SHADOW_REFERENCE_DOCUMENTS_TABLE,
     QUALIFIED_SHADOW_RESULTS_TABLE,
 )
+from dagster_v3.defs.sweden_company.geocode_store import (
+    GEOCODED_STATUSES,
+    VALID_STATUSES,
+)
 
 PROMOTION_STAGE_TABLE = "_sweden_address_resolution_geocodes_next"
-GEOCODED_STATUSES = (
-    "matched_exact",
-    "matched_corrected",
-    "matched_site",
-    "matched_area",
-    "matched_street",
-)
-VALID_STATUSES = (
-    *GEOCODED_STATUSES,
-    "ambiguous",
-    "unmatched",
-    "invalid_address",
-    "foreign_address",
-    "postal_box",
-    "property_identifier",
-)
 POSTCODE_CONFLICT_STREET_STRATEGIES = (
     "street_without_house_postcode_conflict",
     "street_requested_house_missing_postcode_conflict",
