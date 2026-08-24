@@ -207,6 +207,25 @@ def test_esef_v2_label_uid_default_converts_fixed_string_before_lowering() -> No
     assert "lowerUTF8(toString(package_sha256))" in migration_sql
 
 
+def test_esef_v2_source_record_uid_matches_production_contracts() -> None:
+    migration_directory = (
+        Path(__file__).resolve().parents[3] / "clickhouse" / "migrations"
+    )
+
+    migration_sql = (
+        migration_directory / "000311_corpscout_esef_v2_source_record_uid.up.sql"
+    ).read_text(encoding="utf-8")
+    down_sql = (
+        migration_directory / "000311_corpscout_esef_v2_source_record_uid.down.sql"
+    ).read_text(encoding="utf-8")
+
+    assert migration_sql.count("ADD COLUMN IF NOT EXISTS source_record_uid String") == 2
+    assert "ALTER TABLE corpscout.esef_source_documents_v2" in migration_sql
+    assert "ALTER TABLE corpscout.esef_document_contact_candidates_v2" in migration_sql
+    assert migration_sql.count("lowerUTF8(toString(package_sha256))") == 2
+    assert down_sql.count("DROP COLUMN IF EXISTS source_record_uid") == 2
+
+
 def _projection_row(projection: ResultProjection) -> dict[str, object]:
     row: dict[str, object] = {}
     for column in projection.columns:
