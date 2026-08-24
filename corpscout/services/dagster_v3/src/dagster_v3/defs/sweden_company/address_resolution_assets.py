@@ -73,6 +73,14 @@ def sweden_address_resolution_shadow_duckdb(
     context: dg.AssetExecutionContext,
     sweden_address_osm_duckdb: DuckDBResource,
 ) -> dg.MaterializeResult:
+    """Score the pending Sweden address identities against the OSM reference index.
+
+    PRECONDITION: sweden_address_geocode_demand_duckdb must have run against this same
+    DuckDB at least once. It writes se_address_pending_identities, which this asset
+    reads first; on a DuckDB where the demand asset has never run, that read fails with
+    a DuckDB CatalogException naming that table, and the fix is to materialize the
+    demand asset, not to repair anything here.
+    """
     evaluation = _evaluate_golden_corpus()
     _raise_for_golden_failures(evaluation)
     evaluated_at = datetime.now(UTC)
@@ -117,6 +125,12 @@ def sweden_address_resolution_current_duckdb(
     context: dg.AssetExecutionContext,
     sweden_address_osm_duckdb: DuckDBResource,
 ) -> dg.MaterializeResult:
+    """Promote the shadow run's outcomes for the pending identities to the serving table.
+
+    Carries the same precondition as the shadow: se_address_pending_identities must
+    exist, or this raises a DuckDB CatalogException naming it. With nothing pending it
+    promotes nothing and leaves both the serving and hand-off tables untouched.
+    """
     matched_at = datetime.now(UTC)
     with sweden_address_osm_duckdb.get_connection() as connection:
         counts = replace_current_geocodes_from_address_resolution_shadow(
@@ -231,8 +245,10 @@ sweden_address_resolution_shadow_job = dg.define_asset_job(
     selection=dg.AssetSelection.assets(GOLDEN_ASSET_KEY, SHADOW_ASSET_KEY),
     tags={"country": "SE", "pipeline": "address_resolution_shadow"},
     description=(
-        "Gates the shared resolver on Sweden's golden corpus, then evaluates all "
-        "current Sweden addresses in shadow mode without changing serving data."
+        "Gates the shared resolver on Sweden's golden corpus, then evaluates the "
+        "pending Sweden address identities in shadow mode without changing serving "
+        "data. This job does not include the demand asset, so running it alone "
+        "matches whatever pending set the DuckDB already holds."
     ),
 )
 

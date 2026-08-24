@@ -2,6 +2,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 
 import duckdb
+import pytest
 
 from dagster_v3.defs.address_resolution.golden import (
     evaluate_golden_address_resolution_corpus,
@@ -439,6 +440,85 @@ def test_sweden_shadow_promotion_allows_postcode_conflict_refresh() -> None:
             "street_requested_house_missing_postcode_conflict",
             "refresh-promotion-test-run",
         )
+
+
+def test_a_partial_pending_week_scopes_every_stage_to_the_pending_set() -> None:
+    """The ordinary week: some identities are due, most are not, and one of the due ones is
+    brand new.
+
+    Every stage has to narrow to the same three rows -- query documents, results, the
+    comparison, and the promoted geocodes -- and the comparison has to survive an identity
+    with no previous outcome at all. A fixture where pending IS the whole universe cannot
+    see any of that: the scope predicate, the queries==pending invariant and the LEFT join
+    all look correct when the two sets coincide.
+    """
+    pending = ("exact", "typo", "nonexistent")
+    with duckdb.connect(":memory:") as connection:
+        _create_sweden_shadow_fixture(connection)
+        connection.execute(
+            "delete from sweden_company_enrichment.se_address_pending_identities"
+            " where address_id not in ('exact', 'typo', 'nonexistent')"
+        )
+        # 'typo' is register churn: pending with no resolver outcome behind it. An INNER
+        # comparison join drops it and the one-comparison-per-result invariant fires.
+        connection.execute(
+            "delete from sweden_company_enrichment.se_address_geocodes_previous"
+            " where address_id = 'typo'"
+        )
+
+        counts = replace_sweden_address_resolution_shadow(
+            connection=connection,
+            evaluation_run_id="shadow-test-run",
+            evaluated_at=datetime(2026, 8, 17, tzinfo=UTC),
+            log=None,
+        )
+        promoted = replace_current_geocodes_from_address_resolution_shadow(
+            connection=connection,
+            geocode_run_id="promotion-test-run",
+            matched_at=datetime(2026, 8, 17, 1, tzinfo=UTC),
+            expected_policy_version=SWEDEN_ADDRESS_RESOLUTION_POLICY.version,
+        )
+
+        assert counts["pending_identities"] == len(pending)
+        assert counts["short_circuit"] is False
+        assert (
+            counts["query_documents"]
+            == counts["results"]
+            == connection.execute(
+                "select count(*) from"
+                " sweden_company_enrichment.se_address_resolution_comparison_shadow"
+            ).fetchone()[0]
+            == len(pending)
+        )
+        assert connection.execute(
+            "select address_id from"
+            " sweden_company_enrichment.se_address_resolution_comparison_shadow"
+            " where current_status = ''"
+        ).fetchall() == [("typo",)]
+        assert promoted["rows"] == len(pending)
+        assert connection.execute(
+            "select address_id from"
+            " sweden_company_enrichment.se_address_geocodes_current order by address_id"
+        ).fetchall() == [(address_id,) for address_id in sorted(pending)]
+
+        # ... and the invariant that pins the scope is real, not decorative. A pending set
+        # computed against an address universe that has since been rebuilt names an
+        # identity the query documents cannot produce, and the run must stop rather than
+        # promote a set that silently disagrees with what was asked for.
+        connection.execute(
+            "insert into sweden_company_enrichment.se_address_pending_identities"
+            " values ('vanished', 'no_outcome')"
+        )
+        with pytest.raises(
+            ValueError,
+            match="Shadow query documents must be exactly the pending Sweden identities",
+        ):
+            replace_sweden_address_resolution_shadow(
+                connection=connection,
+                evaluation_run_id="shadow-test-run",
+                evaluated_at=datetime(2026, 8, 17, tzinfo=UTC),
+                log=None,
+            )
 
 
 def test_sweden_unmatched_diagnostics_explain_typo_and_osm_coverage() -> None:

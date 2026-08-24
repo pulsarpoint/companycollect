@@ -633,6 +633,11 @@ def sweden_address_geocode_store_clickhouse(
     is instead a silent no-op -- promotion was asked for outcomes and produced none -- and
     it raises.
 
+    PRECONDITION, shared with the shadow and the promotion: se_address_pending_identities
+    must exist in this DuckDB, which means sweden_address_geocode_demand_duckdb must have
+    run against it at least once. Where it has not, the pending read above fails with a
+    DuckDB CatalogException naming that table; materialize the demand asset.
+
     The DuckDB hand-off table is a persistent copy of the promotion and is never cleaned up
     here -- deliberately. The ClickHouse asset opens its own connection, so a temporary
     table would not survive to be read, and leaving it in place is what lets a failed
