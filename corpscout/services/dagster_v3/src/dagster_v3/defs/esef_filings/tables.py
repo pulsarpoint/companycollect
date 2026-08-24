@@ -31,6 +31,10 @@ ESEF_FINANCIAL_METRICS_TABLE = "esef_financial_metrics"
 ESEF_DOCUMENT_CONTACT_CANDIDATES_TABLE = "esef_document_contact_candidates"
 ESEF_DOCUMENT_CONCEPT_LABELS_TABLE = "esef_document_concept_labels"
 ESEF_DOCUMENT_COMPANY_INFORMATION_TABLE = "esef_document_company_information"
+COMPANY_DESCRIPTION_OBSERVATIONS_TABLE = "company_description_observations"
+ESEF_DOCUMENT_PEOPLE_TABLE = "esef_document_people"
+ESEF_DOCUMENT_BUSINESS_ITEMS_TABLE = "esef_document_business_items"
+ESEF_DOCUMENT_GROUP_RELATIONSHIPS_TABLE = "esef_document_group_relationships"
 ESEF_DISCLOSURES_TABLE = "esef_disclosures"
 QUALIFIED_DISCLOSURES_TABLE = f"{DLT_DATASET_NAME}.{ESEF_DISCLOSURES_TABLE}"
 
@@ -50,6 +54,16 @@ QUALIFIED_ESEF_DOCUMENT_CONCEPT_LABELS_TABLE = (
 )
 QUALIFIED_ESEF_DOCUMENT_COMPANY_INFORMATION_TABLE = (
     f"{ESEF_DATABASE}.{ESEF_DOCUMENT_COMPANY_INFORMATION_TABLE}"
+)
+QUALIFIED_COMPANY_DESCRIPTION_OBSERVATIONS_TABLE = (
+    f"{ESEF_DATABASE}.{COMPANY_DESCRIPTION_OBSERVATIONS_TABLE}"
+)
+QUALIFIED_ESEF_DOCUMENT_PEOPLE_TABLE = f"{ESEF_DATABASE}.{ESEF_DOCUMENT_PEOPLE_TABLE}"
+QUALIFIED_ESEF_DOCUMENT_BUSINESS_ITEMS_TABLE = (
+    f"{ESEF_DATABASE}.{ESEF_DOCUMENT_BUSINESS_ITEMS_TABLE}"
+)
+QUALIFIED_ESEF_DOCUMENT_GROUP_RELATIONSHIPS_TABLE = (
+    f"{ESEF_DATABASE}.{ESEF_DOCUMENT_GROUP_RELATIONSHIPS_TABLE}"
 )
 QUALIFIED_ESEF_DISCLOSURES_TABLE = f"{ESEF_DATABASE}.{ESEF_DISCLOSURES_TABLE}"
 
@@ -227,6 +241,91 @@ ESEF_DOCUMENT_COMPANY_INFORMATION_EXPORT_COLUMNS = (
     "prompt_tokens",
     "completion_tokens",
     "input_character_count",
+    "source_run_id",
+    "extracted_at",
+)
+
+# Typed serving projections derived independently from one ESEF document's
+# company-information result. Their order matches migration 000244.
+ESEF_COMPANY_DESCRIPTION_OBSERVATION_COLUMNS = (
+    "observation_uid",
+    "source_record_uid",
+    "country_code",
+    "company_id",
+    "description_kind",
+    "text_original",
+    "language_original",
+    "text_en",
+    "extraction_method",
+    "confidence",
+    "evidence_ids",
+    "source_field",
+    "source_date",
+    "model_provider",
+    "model_name",
+    "prompt_version",
+    "source_run_id",
+    "extracted_at",
+)
+
+ESEF_DOCUMENT_PEOPLE_COLUMNS = (
+    "candidate_uid",
+    "source_record_uid",
+    "source_document_id",
+    "country_code",
+    "company_id",
+    "fiscal_year",
+    "name",
+    "role",
+    "role_category",
+    "organization",
+    "status",
+    "effective_from",
+    "effective_to",
+    "confidence",
+    "evidence_ids",
+    "model_provider",
+    "model_name",
+    "prompt_version",
+    "source_run_id",
+    "extracted_at",
+)
+
+ESEF_DOCUMENT_BUSINESS_ITEM_COLUMNS = (
+    "candidate_uid",
+    "source_record_uid",
+    "source_document_id",
+    "country_code",
+    "company_id",
+    "fiscal_year",
+    "item_kind",
+    "name",
+    "geography_type",
+    "confidence",
+    "evidence_ids",
+    "model_provider",
+    "model_name",
+    "prompt_version",
+    "source_run_id",
+    "extracted_at",
+)
+
+ESEF_DOCUMENT_GROUP_RELATIONSHIP_COLUMNS = (
+    "candidate_uid",
+    "source_record_uid",
+    "source_document_id",
+    "country_code",
+    "company_id",
+    "fiscal_year",
+    "related_company_name",
+    "relationship_type",
+    "ownership_percentage",
+    "jurisdiction",
+    "confidence",
+    "evidence_ids",
+    "model_provider",
+    "model_name",
+    "prompt_version",
     "source_run_id",
     "extracted_at",
 )

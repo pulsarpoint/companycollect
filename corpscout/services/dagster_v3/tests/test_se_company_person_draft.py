@@ -96,7 +96,7 @@ def test_draft_asset_is_wired_directly_to_source_assets() -> None:
 
     assert draft.parent_keys == {
         dg.AssetKey("se_financial_report_signatories_clickhouse"),
-        dg.AssetKey("esef_document_observations_clickhouse"),
+        dg.AssetKey("esef_document_people_clickhouse"),
         dg.AssetKey("sweden_company_companies_clickhouse"),
         dg.AssetKey("company_identifier_clickhouse"),
         dg.AssetKey("wikidata_company_identifiers"),

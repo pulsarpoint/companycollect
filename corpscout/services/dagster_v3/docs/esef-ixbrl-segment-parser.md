@@ -224,9 +224,11 @@ These remain source-document observations. The four-output parsing publisher wri
 the deterministic facts, contacts, labels, and disclosures. The separate direct
 `esef_document_company_information_clickhouse` asset atomically writes the request
 key/hash and exact raw response/hash for each XBRL source document.
-`esef_document_observations_clickhouse`
-normalizes descriptions, people, products, markets, geographies, segments, and group
-relationships for UI joins. A separate resolver can later rank values
+Four independent `esef_filings` assets project that result into
+`company_description_observations`, `esef_document_people`,
+`esef_document_business_items`, and `esef_document_group_relationships` for UI
+joins. Each projection reads the company-information table directly and can be
+materialized or retried separately. A separate resolver can later rank values
 across sources; these assets never update canonical company descriptions,
 contacts, people, or relationships.
 

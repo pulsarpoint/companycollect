@@ -4,7 +4,6 @@ from dagster_clickhouse import ClickhouseResource
 from dagster_v3.defs.clickhouse.resolved import assert_clickhouse_tables_exist
 from dagster_v3.defs.company_source_records import tables
 from dagster_v3.defs.company_source_records.sql import (
-    esef_document_observation_sql,
     esef_source_record_sql,
     finland_financial_source_record_sql,
     sweden_financial_source_record_sql,
@@ -75,54 +74,6 @@ def publish_company_source_records(
         "source_record_count": int(source_rows[1]),
         "company_link_count": int(linked_rows),
     }
-
-
-def publish_esef_document_observations(
-    *, clickhouse: ClickhouseResource
-) -> dict[str, int]:
-    observation_tables = (
-        tables.DESCRIPTION_OBSERVATIONS_TABLE,
-        tables.ESEF_DOCUMENT_PEOPLE_TABLE,
-        tables.ESEF_DOCUMENT_BUSINESS_ITEMS_TABLE,
-        tables.ESEF_DOCUMENT_GROUP_RELATIONSHIPS_TABLE,
-    )
-    assert_clickhouse_tables_exist(
-        clickhouse,
-        database=tables.DATABASE,
-        tables=(tables.SOURCE_RECORDS_TABLE, *observation_tables),
-    )
-    with clickhouse.get_connection() as client:
-        for statement in esef_document_observation_sql():
-            client.execute(statement)
-        orphan_count = client.execute(
-            "SELECT count() FROM ("
-            "SELECT source_record_uid FROM "
-            f"{tables.QUALIFIED_DESCRIPTION_OBSERVATIONS_TABLE} FINAL "
-            "WHERE extraction_method = 'llm_extraction' "
-            "UNION ALL SELECT source_record_uid FROM "
-            f"{tables.QUALIFIED_ESEF_DOCUMENT_PEOPLE_TABLE} FINAL "
-            "UNION ALL SELECT source_record_uid FROM "
-            f"{tables.QUALIFIED_ESEF_DOCUMENT_BUSINESS_ITEMS_TABLE} FINAL "
-            "UNION ALL SELECT source_record_uid FROM "
-            f"{tables.QUALIFIED_ESEF_DOCUMENT_GROUP_RELATIONSHIPS_TABLE} FINAL"
-            ") AS observations ANTI JOIN "
-            f"{tables.QUALIFIED_SOURCE_RECORDS_TABLE} AS records FINAL "
-            "USING (source_record_uid)",
-        )[0][0]
-        if orphan_count != 0:
-            raise ValueError(
-                "ESEF document observations contain "
-                f"{orphan_count} missing source-record references"
-            )
-        counts = {
-            table: int(
-                client.execute(f"SELECT count() FROM {tables.DATABASE}.{table} FINAL")[
-                    0
-                ][0]
-            )
-            for table in observation_tables
-        }
-    return counts
 
 
 @dg.asset(
@@ -215,31 +166,6 @@ def esef_company_source_records_clickhouse(
 
 
 @dg.asset(
-    name="esef_document_observations_clickhouse",
-    deps=[
-        dg.AssetKey("esef_document_company_information_clickhouse"),
-        dg.AssetKey("esef_company_source_records_clickhouse"),
-    ],
-    group_name=tables.GROUP_NAME,
-    kinds={"clickhouse", "sql", "provenance", "llm", "xbrl"},
-    metadata={
-        "tables": [
-            tables.QUALIFIED_DESCRIPTION_OBSERVATIONS_TABLE,
-            tables.QUALIFIED_ESEF_DOCUMENT_PEOPLE_TABLE,
-            tables.QUALIFIED_ESEF_DOCUMENT_BUSINESS_ITEMS_TABLE,
-            tables.QUALIFIED_ESEF_DOCUMENT_GROUP_RELATIONSHIPS_TABLE,
-        ]
-    },
-)
-def esef_document_observations_clickhouse(
-    clickhouse: ClickhouseResource,
-) -> dg.MaterializeResult:
-    return dg.MaterializeResult(
-        metadata=publish_esef_document_observations(clickhouse=clickhouse)
-    )
-
-
-@dg.asset(
     name="wikidata_company_source_records_clickhouse",
     deps=[dg.AssetKey("wikidata_snapshot_complete")],
     group_name=tables.GROUP_NAME,
@@ -264,7 +190,6 @@ defs = dg.Definitions(
         sweden_financial_company_source_records_clickhouse,
         finland_financial_company_source_records_clickhouse,
         esef_company_source_records_clickhouse,
-        esef_document_observations_clickhouse,
         wikidata_company_source_records_clickhouse,
     ]
 )

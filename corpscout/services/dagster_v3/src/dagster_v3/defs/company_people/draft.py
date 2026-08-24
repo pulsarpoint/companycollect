@@ -462,7 +462,7 @@ class SECompanyPersonDraftConfig(dg.Config):
 
 _SOURCE_ASSET_DEPS = (
     dg.AssetKey("se_financial_report_signatories_clickhouse"),
-    dg.AssetKey("esef_document_observations_clickhouse"),
+    dg.AssetKey("esef_document_people_clickhouse"),
     dg.AssetKey("sweden_company_companies_clickhouse"),
     dg.AssetKey("company_identifier_clickhouse"),
     dg.AssetKey("wikidata_company_identifiers"),

@@ -8,7 +8,6 @@ from dagster_v3.defs.company_source_records.identity import (
     structured_source_record_uid,
 )
 from dagster_v3.defs.company_source_records.sql import (
-    esef_document_observation_sql,
     esef_source_record_sql,
     finland_financial_source_record_sql,
     sweden_financial_source_record_sql,
@@ -125,34 +124,6 @@ def test_selected_source_sql_preserves_independent_origins_and_company_links() -
     assert "esef_source_documents" not in esef
     assert "identifier_type = 'se_orgnr'" in wikidata
     assert "wikidata_verified_lei" in wikidata
-
-
-def test_esef_llm_arrays_are_normalized_into_typed_observations() -> None:
-    statements = esef_document_observation_sql()
-    combined_sql = "\n".join(statements)
-
-    assert len(statements) == 4
-    assert "company_description_observations" in statements[0]
-    assert "esef_document_people" in statements[1]
-    assert "esef_document_business_items" in statements[2]
-    assert "esef_document_group_relationships" in statements[3]
-    for json_column in (
-        "people_json",
-        "products_and_services_json",
-        "customer_markets_json",
-        "operating_geographies_json",
-        "business_segments_json",
-        "material_group_relationships_json",
-    ):
-        assert json_column in combined_sql
-    assert "evidence_ids" in combined_sql
-    assert "prompt_version" in combined_sql
-    assert "model_name" in combined_sql
-    assert "ARRAY JOIN" in combined_sql
-    assert "DELETE" not in combined_sql
-    assert "ALTER TABLE" not in combined_sql
-    assert "parseDate32BestEffortOrNull" not in combined_sql
-    assert combined_sql.count("toDate32(parseDateTimeBestEffortOrNull(") == 3
 
 
 def test_wikidata_uses_compound_company_snapshot_and_separate_person_records() -> None:
