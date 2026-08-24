@@ -687,8 +687,15 @@ se_company_address_review_job = dg.define_asset_job(
     "se_company_address_review_job", selection=dg.AssetSelection.assets("se_company_address_clickhouse"))
 # Both automated triggers must resolve for real, so both spell execute out: a sensor-launched
 # or scheduled run carries only the config written here, and anything left out falls back to
-# the asset's own defaults -- which for this asset means resolving nothing.
-AUTOMATED_RUN_CONFIG: dict[str, Any] = {"execute": True}
+# the asset's own defaults -- which for this asset means resolving nothing. The weekly
+# schedule reuses this same dict, so a scheduled run would also fall back to max_companies'
+# default of 1,000,000 -- below the weekly new_geocode population (~2.09M address identities,
+# more companies than that), and the scan restarts from the top every run, so a capped weekly
+# run would rewrite the same leading slice forever instead of ever reaching the tail (Ruling
+# A17, documented on SECompanyAddressConfig.max_companies above). max_companies is set here to
+# run effectively uncapped. The correction sensor's runs are scoped by company_ids regardless
+# of this cap, so sharing the same value there is harmless.
+AUTOMATED_RUN_CONFIG: dict[str, Any] = {"execute": True, "max_companies": 5_000_000}
 se_company_address_correction_sensor = ledger_sensor(
     name="se_company_address_correction_sensor", table=SE_COMPANY_ADDRESS_CORRECTION,
     job=se_company_address_review_job, asset_names=("se_company_address_clickhouse",),

@@ -557,7 +557,7 @@ def test_the_config_gates_the_run_and_bounds_the_weekly_population() -> None:
 
 def test_the_asset_the_jobs_the_sensor_and_the_schedule_are_wired() -> None:
     from dagster_v3.definitions import defs as load_defs
-    from dagster_v3.defs.common.clickhouse_checks import CLICKHOUSE_LEAVES
+    from dagster_v3.defs.common.clickhouse_checks import CLICKHOUSE_LEAVES, WEEKLY
 
     repository = load_defs().get_repository_def()
     asset = repository.asset_graph.get(dg.AssetKey("se_company_address_clickhouse"))
@@ -587,16 +587,17 @@ def test_the_asset_the_jobs_the_sensor_and_the_schedule_are_wired() -> None:
         scheduled_execution_time=datetime(2026, 8, 24, 6, 55, tzinfo=UTC))
     run_requests = schedule.evaluate_tick(context).run_requests
     assert run_requests is not None and run_requests[0].run_config == {
-        "ops": {"se_company_address_clickhouse": {"config": {"execute": True}}}}
+        "ops": {"se_company_address_clickhouse": {
+            "config": {"execute": True, "max_companies": 5_000_000}}}}
 
-    # Ruling A10: all three leaves registered, freshness deliberately off until the weekly
-    # schedule is switched on -- a freshness check on a STOPPED schedule is permanent noise.
+    # Ruling A10: all three leaves registered; freshness now tracks the weekly schedule the
+    # same as the info leaves above, ahead of the schedule itself switching on.
     leaves = {leaf.asset_key: leaf for leaf in CLICKHOUSE_LEAVES}
     assert leaves["se_company_address_clickhouse"].tables == ("se_company_address",)
     assert leaves["se_company_address_bolagsverket_clickhouse"].tables == (
         "se_company_address_bolagsverket",)
     assert leaves["se_company_address_scb_clickhouse"].tables == ("se_company_address_scb",)
-    assert all(leaves[key].max_age is None for key in (
+    assert all(leaves[key].max_age == WEEKLY for key in (
         "se_company_address_clickhouse", "se_company_address_bolagsverket_clickhouse",
         "se_company_address_scb_clickhouse"))
 
@@ -625,9 +626,12 @@ def test_the_correction_sensor_launches_a_real_run_not_a_preview(monkeypatch) ->
     execution_data = se_company_address_correction_sensor.evaluate_tick(context)
 
     assert execution_data.run_requests is not None
+    # max_companies rides along from AUTOMATED_RUN_CONFIG, shared with the schedule -- it is
+    # inert here since company_ids already bounds the run to the ledger's touched companies.
     assert execution_data.run_requests[0].run_config == {
         "ops": {"se_company_address_clickhouse": {
-            "config": {"execute": True, "company_ids": [COMPANY]}}}}
+            "config": {"execute": True, "max_companies": 5_000_000,
+                       "company_ids": [COMPANY]}}}}
 
 
 def test_the_module_documents_the_stale_address_property_and_its_mitigation() -> None:
