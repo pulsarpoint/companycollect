@@ -29,7 +29,7 @@ from typing import Any
 
 from dagster_v3.defs.esef_filings import tables
 from dagster_v3.defs.esef_filings.artifact_contract import (
-    SUPPORTED_FACT_ARTIFACT_SCHEMA_VERSIONS,
+    SUPPORTED_CORE_OUTPUT_ARTIFACT_SCHEMA_VERSIONS,
 )
 
 # OIM dimension keys that are NOT extension-taxonomy dimensions -- excluded
@@ -97,10 +97,10 @@ def iter_artifact_facts(
     package always produces the same ``esef_facts`` keys.
     """
     schema_version = _artifact_field(artifact, "schema_version")
-    if schema_version not in SUPPORTED_FACT_ARTIFACT_SCHEMA_VERSIONS:
+    if schema_version not in SUPPORTED_CORE_OUTPUT_ARTIFACT_SCHEMA_VERSIONS:
         raise ValueError(
             "ESEF Arelle artifact has an unsupported schema version: "
-            f"supported={SUPPORTED_FACT_ARTIFACT_SCHEMA_VERSIONS} "
+            f"supported={SUPPORTED_CORE_OUTPUT_ARTIFACT_SCHEMA_VERSIONS} "
             f"actual={schema_version}"
         )
     artifact_facts = _artifact_field(artifact, "facts")

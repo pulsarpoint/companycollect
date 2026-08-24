@@ -29,13 +29,17 @@ from pydantic import Field
 from dagster_v3.defs.common.duckdb_resources import safe_duckdb_connection
 from dagster_v3.defs.common.resources import ObjectStoreResource
 from dagster_v3.defs.esef_filings import tables
+from dagster_v3.defs.esef_filings.artifact_contract import (
+    ARTIFACT_SCHEMA_VERSION,
+    SUPPORTED_CORE_OUTPUT_ARTIFACT_SCHEMA_VERSIONS,
+)
 from dagster_v3.defs.esef_filings.assets import (
     ESEF_PROCESSED_WEEK_PARTITIONS,
     processed_week_bounds,
 )
 from dagster_v3.defs.esef_filings.client import EsefFilingsClient
 from dagster_v3.defs.esef_filings.segment_parser import (
-    ARTIFACT_SCHEMA_VERSION,
+    ARTIFACT_PREFIX,
     EsefArtifactSource,
     artifact_object_key,
     parse_esef_report_package,
@@ -50,6 +54,9 @@ ESEF_DOCUMENT_MANIFEST_PREFIX = "esef_filings/document_extraction_manifests/"
 ESEF_DOCUMENT_RESULT_PREFIX = "esef_filings/document_extraction_results/"
 _PROGRESS_INTERVAL = 25
 _SHA256_PATTERN = re.compile(r"^[0-9a-fA-F]{64}$")
+_ARTIFACT_PACKAGE_DIGEST_PATTERN = re.compile(
+    r"/package_sha256=([0-9a-f]{64})/artifact\.json$"
+)
 _DOCUMENT_MANIFEST_SCHEMA_VERSION = 3
 _SUPPORTED_DOCUMENT_MANIFEST_SCHEMA_VERSIONS = (2, _DOCUMENT_MANIFEST_SCHEMA_VERSION)
 _DOCUMENT_RESULT_SCHEMA_VERSION = 3
@@ -327,6 +334,7 @@ def run_esef_document_artifacts_partition(
     reused_packages = 0
     parsed_packages = 0
     reused_artifacts = 0
+    reused_artifact_schema_counts: dict[str, int] = {}
     skipped_packages = 0
     processed_documents = 0
     next_progress = 1
@@ -376,6 +384,21 @@ def run_esef_document_artifacts_partition(
             document_row_count += 1
             skipped_packages += 1
             processed_documents += 1
+
+        current_artifact_keys_by_digest: dict[str, str] = {}
+        if not refresh_existing:
+            for digest in documents_by_digest:
+                current_key = artifact_object_key(digest)
+                if object_store.exists(current_key, bucket=ESEF_DOCUMENT_BUCKET):
+                    current_artifact_keys_by_digest[digest] = current_key
+        compatible_artifacts_by_digest = _compatible_artifact_keys_by_digest(
+            object_store,
+            package_sha256s=(
+                set(documents_by_digest) - set(current_artifact_keys_by_digest)
+                if not refresh_existing
+                else set()
+            ),
+        )
 
         def append_artifact_rows(
             artifact_documents: Sequence[Mapping[str, object]],
@@ -487,14 +510,15 @@ def run_esef_document_artifacts_partition(
                 representative = grouped_documents[0]
                 package_key = report_package_object_key(digest)
                 parsed_key = artifact_object_key(digest)
+                reusable_artifact = (
+                    (ARTIFACT_SCHEMA_VERSION, current_artifact_keys_by_digest[digest])
+                    if digest in current_artifact_keys_by_digest
+                    else compatible_artifacts_by_digest.get(digest)
+                )
                 local_package = temp_root / f"{digest}.zip"
                 io_started = perf_counter()
                 package_exists = object_store.exists(
                     package_key,
-                    bucket=ESEF_DOCUMENT_BUCKET,
-                )
-                artifact_exists = object_store.exists(
-                    parsed_key,
                     bucket=ESEF_DOCUMENT_BUCKET,
                 )
 
@@ -521,11 +545,12 @@ def run_esef_document_artifacts_partition(
                     reused_packages += 1
                 package_io_seconds += perf_counter() - io_started
 
-                if not refresh_existing and artifact_exists:
+                if not refresh_existing and reusable_artifact is not None:
+                    artifact_schema_version, reusable_artifact_key = reusable_artifact
                     artifact_read_started = perf_counter()
                     local_artifact = temp_root / f"{digest}.artifact.json"
                     object_store.download_file(
-                        parsed_key,
+                        reusable_artifact_key,
                         local_artifact,
                         bucket=ESEF_DOCUMENT_BUCKET,
                     )
@@ -533,19 +558,24 @@ def run_esef_document_artifacts_partition(
                     artifact = _validated_artifact_file(
                         local_artifact,
                         expected_package_sha256=digest,
+                        supported_schema_versions=(artifact_schema_version,),
                     )
                     append_artifact_rows(
                         grouped_documents,
                         artifact=artifact,
                         package_object_key=package_key,
                         package_size_bytes=package_size_bytes,
-                        parsed_artifact_object_key=parsed_key,
+                        parsed_artifact_object_key=reusable_artifact_key,
                         archive_status=archive_status,
                         extraction_status="reused",
                     )
                     del artifact
                     artifact_size_bytes += local_artifact.stat().st_size
                     reused_artifacts += 1
+                    schema_key = str(artifact_schema_version)
+                    reused_artifact_schema_counts[schema_key] = (
+                        reused_artifact_schema_counts.get(schema_key, 0) + 1
+                    )
                     processed_documents += len(grouped_documents)
                     local_package.unlink(missing_ok=True)
                     local_artifact.unlink(missing_ok=True)
@@ -634,6 +664,9 @@ def run_esef_document_artifacts_partition(
             "reused_package_count": reused_packages,
             "parsed_package_count": parsed_packages,
             "reused_artifact_count": reused_artifacts,
+            "reused_artifact_schema_counts": dict(
+                sorted(reused_artifact_schema_counts.items())
+            ),
             "skipped_package_count": skipped_packages,
             "parse_worker_count": parse_workers,
             "parse_tasks_per_worker": _DOCUMENT_PARSE_TASKS_PER_CHILD,
@@ -1169,15 +1202,47 @@ def _validated_artifact_file(
     artifact_path: Path,
     *,
     expected_package_sha256: str,
+    supported_schema_versions: tuple[int, ...] = (ARTIFACT_SCHEMA_VERSION,),
 ) -> Mapping[str, Any]:
     with artifact_path.open("r", encoding="utf-8") as handle:
         value = json.load(handle)
     artifact = _mapping(value, name="artifact")
-    if artifact.get("schema_version") != ARTIFACT_SCHEMA_VERSION:
-        raise ValueError("Stored ESEF artifact has an unsupported schema version")
+    if artifact.get("schema_version") not in supported_schema_versions:
+        raise ValueError(
+            "Stored ESEF artifact has an unsupported schema version: "
+            f"expected={list(supported_schema_versions)} "
+            f"actual={artifact.get('schema_version')!r}"
+        )
     if artifact.get("package_sha256") != expected_package_sha256:
         raise ValueError("Stored ESEF artifact package SHA-256 does not match its key")
     return artifact
+
+
+def _compatible_artifact_keys_by_digest(
+    object_store: Any,
+    *,
+    package_sha256s: set[str],
+) -> dict[str, tuple[int, str]]:
+    """Find persisted core-output artifacts when the current v5 key is absent."""
+    if not package_sha256s:
+        return {}
+
+    compatible: dict[str, tuple[int, str]] = {}
+    for schema_version in SUPPORTED_CORE_OUTPUT_ARTIFACT_SCHEMA_VERSIONS:
+        if schema_version == ARTIFACT_SCHEMA_VERSION:
+            continue
+        prefix = f"{ARTIFACT_PREFIX}/schema=v{schema_version}/"
+        for key in object_store.list_keys(prefix, bucket=ESEF_DOCUMENT_BUCKET):
+            digest_match = _ARTIFACT_PACKAGE_DIGEST_PATTERN.search(key)
+            if digest_match is None:
+                continue
+            digest = digest_match.group(1)
+            if digest not in package_sha256s:
+                continue
+            existing = compatible.get(digest)
+            if existing is None or key > existing[1]:
+                compatible[digest] = (schema_version, key)
+    return compatible
 
 
 def _verify_package_hash(package_path: Path, *, expected_sha256: str) -> None:

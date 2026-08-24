@@ -760,6 +760,30 @@ def test_document_asset_archives_parses_and_stores_source_linked_rows(
         source_run_id="parse-run-2",
         source_document_ids=["SAMPLE-2024"],
     )
+    artifact_key = artifact_object_key(package_sha256)
+    artifact = json.loads(object_store.objects[(ESEF_DOCUMENT_BUCKET, artifact_key)])
+    assert artifact["source"]["company_id"] == "5566000000"
+    assert artifact["source"]["source_run_id"] == "parse-run"
+
+    compatible_v4_key = artifact_key.replace("/schema=v5/", "/schema=v4/")
+    compatible_v4_artifact = {**artifact, "schema_version": 4}
+    compatible_v4_artifact.pop("visible_sections")
+    object_store.objects.pop((ESEF_DOCUMENT_BUCKET, artifact_key))
+    object_store.objects[(ESEF_DOCUMENT_BUCKET, compatible_v4_key)] = json.dumps(
+        compatible_v4_artifact
+    ).encode("utf-8")
+    third = _run_document_artifact_stages(
+        database=database,
+        object_store=object_store,
+        client=client,
+        source_run_id="v4-reuse-run",
+        source_document_ids=["SAMPLE-2024"],
+    )
+    compatible_result = json.loads(
+        object_store.objects[
+            (ESEF_DOCUMENT_BUCKET, document_result_object_key("2025-03-30"))
+        ]
+    )
 
     assert first["parsed_package_count"] == 1
     assert first["downloaded_package_count"] == 1
@@ -768,15 +792,22 @@ def test_document_asset_archives_parses_and_stores_source_linked_rows(
     assert first["website_candidate_count"] == 3
     assert first["concept_label_row_count"] == 2
     assert second["reused_artifact_count"] == 1
+    assert second["reused_artifact_schema_counts"] == {"5": 1}
     assert second["reused_package_count"] == 1
+    assert third["parsed_package_count"] == 0
+    assert third["reused_artifact_count"] == 1
+    assert third["reused_artifact_schema_counts"] == {"4": 1}
+    assert third["reused_package_count"] == 1
     assert client.calls == ["https://example.test/sample.zip"]
+    assert (ESEF_DOCUMENT_BUCKET, artifact_key) not in object_store.objects
+    assert compatible_result["document_rows"][0]["artifact_schema_version"] == 4
+    assert (
+        compatible_result["document_rows"][0]["parsed_artifact_object_key"]
+        == compatible_v4_key
+    )
     result_key = document_result_object_key("2025-03-30")
     assert (ESEF_DOCUMENT_BUCKET, result_key) in object_store.uploaded_files
     assert (ESEF_DOCUMENT_BUCKET, result_key) in object_store.downloaded_files
-    artifact_key = artifact_object_key(package_sha256)
-    artifact = json.loads(object_store.objects[(ESEF_DOCUMENT_BUCKET, artifact_key)])
-    assert artifact["source"]["company_id"] == "5566000000"
-    assert artifact["source"]["source_run_id"] == "parse-run"
     assert (
         ESEF_DOCUMENT_BUCKET,
         report_package_object_key(package_sha256),
@@ -919,6 +950,37 @@ def test_document_artifact_workers_are_recycled_after_each_package(
             "max_tasks_per_child": segment_assets._DOCUMENT_PARSE_TASKS_PER_CHILD,
         }
     ]
+
+
+def test_compatible_artifact_lookup_reuses_v4_but_not_v3() -> None:
+    reusable_digest = "a" * 64
+    incompatible_digest = "b" * 64
+    older_v4_key = (
+        "esef_filings/ixbrl_segments/schema=v4/parser=arelle-2.40.0/"
+        f"candidates=v2/package_sha256={reusable_digest}/artifact.json"
+    )
+    preferred_v4_key = (
+        "esef_filings/ixbrl_segments/schema=v4/parser=arelle-2.43.1/"
+        f"candidates=v3/package_sha256={reusable_digest}/artifact.json"
+    )
+    v3_key = (
+        "esef_filings/ixbrl_segments/schema=v3/parser=arelle-2.40.0/"
+        f"candidates=v2/package_sha256={incompatible_digest}/artifact.json"
+    )
+    object_store = _FakeObjectStore(
+        {
+            (ESEF_DOCUMENT_BUCKET, older_v4_key): b"{}",
+            (ESEF_DOCUMENT_BUCKET, preferred_v4_key): b"{}",
+            (ESEF_DOCUMENT_BUCKET, v3_key): b"{}",
+        }
+    )
+
+    compatible = segment_assets._compatible_artifact_keys_by_digest(
+        object_store,
+        package_sha256s={reusable_digest, incompatible_digest},
+    )
+
+    assert compatible == {reusable_digest: (4, preferred_v4_key)}
 
 
 def test_document_result_rejects_schema_two() -> None:
