@@ -30,6 +30,9 @@ def test_the_candidates_cte_pins_care_of_and_street_address_to_their_own_express
     sql = SE_COMPANY_ADDRESS_SCB_SQL
     assert "addresses.care_of AS care_of" in sql
     assert "addresses.street_address AS street_address" in sql
+    # Same reasoning for country_code: the trailing `country_code AS country_code`
+    # would not notice the CTE's CAST being dropped or the source column swapped.
+    assert "CAST(addresses.country_code AS Nullable(String)) AS country_code" in sql
 
 
 def test_the_where_pins_the_source_pipelines_single_address_type() -> None:
@@ -48,6 +51,7 @@ def test_the_select_reads_only_the_scb_rows() -> None:
     assert "addresses.source = 'scb'" in sql
     assert "addresses.has_address = 1" in sql
     assert "addresses.post_town AS city" in sql
+    assert "toString(addresses.address_fingerprint) AS address_fingerprint" in sql
     assert "match(addresses.company_id, '^([0-9]{10}|[0-9]{12})$')" in sql
     assert "now64(3, 'UTC') AS observed_at" in sql
     assert "updated_from_raw_at" not in sql

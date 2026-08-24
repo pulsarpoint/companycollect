@@ -42,6 +42,9 @@ def test_the_candidates_cte_pins_care_of_and_street_address_to_their_own_express
     sql = SE_COMPANY_ADDRESS_BOLAGSVERKET_SQL
     assert "addresses.care_of AS care_of" in sql
     assert "addresses.street_address AS street_address" in sql
+    # Same reasoning for country_code: the trailing `country_code AS country_code`
+    # would not notice the CTE's CAST being dropped or the source column swapped.
+    assert "CAST(addresses.country_code AS Nullable(String)) AS country_code" in sql
 
 
 def test_the_where_pins_the_source_pipelines_single_address_type() -> None:

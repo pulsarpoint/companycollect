@@ -185,7 +185,8 @@ def se_company_address_bolagsverket_clickhouse(
             f"address_type={ADDRESS_TYPE!r} -- the source pipeline may be emitting more "
             "than one address row per company for this source, which "
             "ReplacingMergeTree's ORDER BY (company_id, source_record_uid) would "
-            "silently collapse."
+            "silently collapse -- or the pinned address_type no longer matches "
+            "what the source emits."
         )
     context.log.info(
         "se_company_address_bolagsverket: appended=%s total=%s", counts.inserted, counts.total
