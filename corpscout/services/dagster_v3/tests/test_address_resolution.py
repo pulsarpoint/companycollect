@@ -314,6 +314,21 @@ def test_sweden_shadow_promotion_rejects_postcode_conflict_match_override() -> N
             matched_at=datetime(2026, 8, 17, 1, tzinfo=UTC),
             expected_policy_version=SWEDEN_ADDRESS_RESOLUTION_POLICY.version,
         )
+        # The gate consults the store's PREVIOUS resolver outcome, not the row the first
+        # promotion just wrote, so the still-supported building match this test is about
+        # is seeded there. 'osm/exact' is the candidate the fixture's OSM reference still
+        # carries for Vaxtorpsgrand 26, which is what makes it "still supported".
+        connection.execute(
+            """
+            update sweden_company_enrichment.se_address_geocodes_previous
+            set
+                match_status = 'matched_exact',
+                match_method = 'parsed_full_exact',
+                match_confidence = 1.0,
+                candidate_record_ids = ['osm/exact']
+            where address_id = 'exact'
+            """
+        )
         connection.execute(
             """
             update sweden_company_enrichment.se_address_resolution_results_shadow
@@ -358,7 +373,7 @@ def test_sweden_shadow_promotion_replaces_invalid_legacy_building_match() -> Non
         )
         connection.execute(
             """
-            update sweden_company_enrichment.se_address_geocodes_current
+            update sweden_company_enrichment.se_address_geocodes_previous
             set
                 match_status = 'matched_exact',
                 match_method = 'country_street_house_exact_unique',
@@ -796,14 +811,31 @@ def _create_sweden_shadow_fixture(
             ('road/3', 'Saknadsvägen', 59.2781, 17.9971, ''),
                 ('road/4', 'Karl Johansgatan', 57.6944, 11.9202, '');
 
-        create table sweden_company_enrichment.se_address_geocodes_current (
+        create table sweden_company_enrichment.se_address_pending_identities (
             address_id varchar,
+            pending_reason varchar
+        );
+        insert into sweden_company_enrichment.se_address_pending_identities values
+            ('exact', 'no_outcome'),
+            ('typo', 'no_outcome'),
+            ('road', 'no_outcome'),
+            ('abbreviation', 'no_outcome'),
+            ('distance-two', 'no_outcome'),
+            ('nonexistent', 'no_outcome'),
+            ('short-policy', 'no_outcome'),
+            ('postcode-conflict', 'no_outcome');
+
+        create table sweden_company_enrichment.se_address_geocodes_previous (
+            address_id varchar,
+            policy_version varchar default 'se-address-resolution-policy-v5',
+            reference_md5 varchar default 'osm-snapshot-md5',
             match_status varchar,
             match_method varchar default '',
-            match_confidence float default 0.0,
-            candidate_record_ids varchar[] default []
+            match_confidence double default 0.0,
+            candidate_record_ids varchar[] default [],
+            matched_at timestamptz default '2026-08-10 00:00:00+00'
         );
-        insert into sweden_company_enrichment.se_address_geocodes_current (
+        insert into sweden_company_enrichment.se_address_geocodes_previous (
             address_id,
             match_status
         ) values

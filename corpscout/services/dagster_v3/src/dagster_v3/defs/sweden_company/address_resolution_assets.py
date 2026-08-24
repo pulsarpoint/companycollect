@@ -54,7 +54,7 @@ def sweden_address_resolution_golden_evaluation() -> dg.MaterializeResult:
 @dg.asset(
     deps=[
         dg.AssetKey(GOLDEN_ASSET_KEY),
-        dg.AssetKey("sweden_shared_address_osm_matches_duckdb"),
+        dg.AssetKey("sweden_address_geocode_demand_duckdb"),
     ],
     group_name=GROUP_NAME,
     kinds={"python", "duckdb", "openstreetmap"},
@@ -64,9 +64,9 @@ def sweden_address_resolution_golden_evaluation() -> dg.MaterializeResult:
         "comparison_table": QUALIFIED_SHADOW_COMPARISON_TABLE,
     },
     description=(
-        "Builds the reusable resolver's Sweden search indexes and scores all current "
-        "shared addresses without changing serving tables, then compares every "
-        "outcome with the production matcher."
+        "Builds the reusable resolver's Sweden search indexes and scores the address "
+        "identities the demand scan selected, without changing serving tables, then "
+        "compares every outcome with the one the store already held for it."
     ),
 )
 def sweden_address_resolution_shadow_duckdb(

@@ -4,6 +4,7 @@ from typing import Any
 
 from dagster_v3.defs.sweden_address_osm import tables as osm_tables
 from dagster_v3.defs.sweden_company import (
+    geocode_demand,
     geocode_store,
     shared_address_geocoding,
     shared_addresses,
@@ -40,6 +41,31 @@ def replace_current_geocodes_from_address_resolution_shadow(
     log: Callable[[str], object] | None = None,
 ) -> dict[str, object]:
     """Promote one complete, policy-compatible shadow run to the serving table."""
+    pending = geocode_demand.pending_identity_count(connection)
+    if pending == 0:
+        _log(log, "Sweden address resolution: nothing pending, nothing to promote")
+        # NOTHING IS WRITTEN ON THIS PATH -- not the serving table, not the hand-off table.
+        # The serving table's contents are already correct with nothing promoted, and
+        # rewriting it would restamp nothing while burning the whole table. The hand-off
+        # table is left exactly as the last promoting run left it, because the ClickHouse
+        # append asset decides from the SAME pending set that there is nothing to append
+        # and never reads it. Deriving an empty-but-correctly-typed hand-off table from
+        # the promotion stage is not an option here: the stage's inner joins name the
+        # shadow's query-document and result tables, and a shadow that short-circuited on
+        # this very same empty pending set has not created them at all on a DuckDB that
+        # has never held a matching run.
+        return {
+            "rows": 0,
+            "geolocated": 0,
+            "evaluation_run_id": "",
+            "policy_version": expected_policy_version,
+            "reference_md5": "",
+            "appended_rows": 0,
+            "status_counts": {},
+            "short_circuit": True,
+            "table": shared_address_geocoding.QUALIFIED_DUCKDB_ADDRESS_GEOCODES_TABLE,
+            "append_table": geocode_store.QUALIFIED_DUCKDB_GEOCODE_APPEND_TABLE,
+        }
     _assert_shadow_is_promotable(
         connection,
         expected_policy_version=expected_policy_version,
@@ -120,6 +146,7 @@ def replace_current_geocodes_from_address_resolution_shadow(
         "reference_md5": str(reference_md5),
         "appended_rows": int(appended_rows),
         "status_counts": status_counts,
+        "short_circuit": False,
         "table": shared_address_geocoding.QUALIFIED_DUCKDB_ADDRESS_GEOCODES_TABLE,
         "append_table": geocode_store.QUALIFIED_DUCKDB_GEOCODE_APPEND_TABLE,
     }
@@ -151,14 +178,17 @@ def _assert_shadow_is_promotable(
         from {shared_addresses.QUALIFIED_SHARED_ADDRESSES_TABLE}
         """
     ).fetchall()
+    [(pending_rows,)] = connection.execute(
+        f"select count(*) from {geocode_demand.QUALIFIED_DUCKDB_PENDING_IDENTITIES_TABLE}"
+    ).fetchall()
     [(set_mismatches,)] = connection.execute(
         f"""
         select count(*)
         from (
             select address.address_id, shadow.query_document_id
             from (
-                select cast(address_id as varchar) as address_id
-                from {shared_addresses.QUALIFIED_SHARED_ADDRESSES_TABLE}
+                select address_id
+                from {geocode_demand.QUALIFIED_DUCKDB_PENDING_IDENTITIES_TABLE}
             ) address
             full outer join (
                 select query_document_id
@@ -189,9 +219,9 @@ def _assert_shadow_is_promotable(
                 current.candidate_record_ids as current_candidate_record_ids
             from {QUALIFIED_SHADOW_RESULTS_TABLE} shadow
             inner join {
-                shared_address_geocoding.QUALIFIED_DUCKDB_ADDRESS_GEOCODES_TABLE
+                geocode_store.QUALIFIED_DUCKDB_PREVIOUS_OUTCOMES_TABLE
             } current
-                on cast(current.address_id as varchar) = shadow.query_document_id
+                on current.address_id = shadow.query_document_id
             where shadow.match_strategy in (
                     {_quoted(POSTCODE_CONFLICT_STREET_STRATEGIES)}
                   )
@@ -237,11 +267,11 @@ def _assert_shadow_is_promotable(
         raise ValueError("Current Sweden address IDs must be unique before promotion")
     if int(address_identity_runs) != 1:
         raise ValueError("Current Sweden addresses must belong to one identity run")
-    if int(result_rows) != int(unique_results) or int(result_rows) != int(address_rows):
-        raise ValueError("Shadow results must contain one row per current address")
+    if int(result_rows) != int(unique_results) or int(result_rows) != int(pending_rows):
+        raise ValueError("Shadow results must contain one row per pending identity")
     if int(set_mismatches) != 0:
         raise ValueError(
-            "Shadow results and current Sweden addresses must have equal IDs"
+            "Shadow results and pending Sweden identities must have equal IDs"
         )
     if int(policy_versions) != 1 or int(unexpected_policy_rows) != 0:
         raise ValueError(
@@ -431,11 +461,11 @@ def _assert_promoted_geocode_invariants(
         from {table_name}
         """
     ).fetchall()
-    [(address_rows,)] = connection.execute(
-        f"select count(*) from {shared_addresses.QUALIFIED_SHARED_ADDRESSES_TABLE}"
+    [(pending_rows,)] = connection.execute(
+        f"select count(*) from {geocode_demand.QUALIFIED_DUCKDB_PENDING_IDENTITIES_TABLE}"
     ).fetchall()
-    if int(result_rows) != int(unique_results) or int(result_rows) != int(address_rows):
-        raise ValueError("Promoted geocodes must contain one row per current address")
+    if int(result_rows) != int(unique_results) or int(result_rows) != int(pending_rows):
+        raise ValueError("Promoted geocodes must contain one row per pending identity")
     if int(identity_runs) != 1 or int(geocode_runs) != 1:
         raise ValueError("Promoted geocodes must contain one identity and geocode run")
     if int(invalid_coordinates) != 0:

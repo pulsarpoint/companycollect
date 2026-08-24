@@ -17,7 +17,8 @@ from dagster_v3.defs.sweden_address_osm import address_matching
 from dagster_v3.defs.sweden_address_osm import tables as osm_tables
 from dagster_v3.defs.sweden_company import (
     address_canonicalization,
-    shared_address_geocoding,
+    geocode_demand,
+    geocode_store,
     shared_addresses,
 )
 from dagster_v3.defs.sweden_company.address_resolution_policy import (
@@ -67,10 +68,28 @@ def replace_sweden_address_resolution_shadow(
     evaluated_at: datetime,
     log: Callable[..., object] | None,
 ) -> dict[str, object]:
-    """Build a non-serving Sweden resolution index, result, and comparison."""
+    """Build a non-serving Sweden resolution index, result, and comparison.
+
+    Scoped to the pending identities the demand scan selected. An unchanged week selects
+    none, and then this function does nothing at all -- which is the point of the whole
+    exercise, so the check comes before the first table is written.
+    """
     connection.execute(
         f"create schema if not exists {address_canonicalization.ENRICHMENT_SCHEMA}"
     )
+    pending = geocode_demand.pending_identity_count(connection)
+    if pending == 0:
+        # Nothing to match: no query documents, no OSM building or street reference index,
+        # no candidate generation. The shadow tables keep the last matching run's contents,
+        # which is what they already do between runs -- they have never been a per-run
+        # artefact of a run that matched nothing.
+        _log(log, "Sweden address resolution: no pending identities, skipping matching")
+        return {
+            "pending_identities": 0,
+            "short_circuit": True,
+            "shadow_status_counts": {},
+            "largest_transitions": [],
+        }
     _log(log, "Building Sweden address-resolution query search documents")
     _replace_query_documents(connection)
     _log(log, "Building Sweden address-resolution query street variants")
@@ -123,7 +142,11 @@ def replace_sweden_address_resolution_shadow(
     )
     _replace_comparison(connection)
     _assert_shadow_invariants(connection)
-    return _shadow_counts(connection)
+    return {
+        **_shadow_counts(connection),
+        "pending_identities": pending,
+        "short_circuit": False,
+    }
 
 
 def replace_sweden_address_resolution_unmatched_diagnostics(
@@ -175,6 +198,10 @@ def _replace_query_documents(connection: Any) -> None:
                 cast(address_id as varchar) as source_record_id,
                 ''::varchar as source_record_url
             from {shared_addresses.QUALIFIED_SHARED_ADDRESSES_TABLE}
+            where cast(address_id as varchar) in (
+                select address_id
+                from {geocode_demand.QUALIFIED_DUCKDB_PENDING_IDENTITIES_TABLE}
+            )
         """,
     )
 
@@ -524,12 +551,20 @@ def _replace_road_street_inputs(connection: Any) -> None:
 
 
 def _replace_comparison(connection: Any) -> None:
+    """This run's answer against the one the store already held for the same identity.
+
+    The join is LEFT because a pending identity may have no previous resolver outcome at
+    all -- `no_outcome` is one of the four reasons it is here -- and an INNER join would
+    drop exactly the new identities a demand-driven run cares most about, breaking the
+    one-comparison-per-result invariant below. `''` is the honest current_status for "there
+    was nothing here before", and the transition report treats it as its own class.
+    """
     connection.execute(
         f"""
         create or replace table {QUALIFIED_SHADOW_COMPARISON_TABLE} as
         select
             shadow.query_document_id as address_id,
-            current.match_status as current_status,
+            coalesce(current.match_status, '') as current_status,
             shadow.resolution_status as shadow_status,
             shadow.geocode_precision as shadow_precision,
             shadow.match_confidence as shadow_confidence,
@@ -545,10 +580,10 @@ def _replace_comparison(connection: Any) -> None:
             shadow.evaluation_run_id,
             shadow.evaluated_at
         from {QUALIFIED_SHADOW_RESULTS_TABLE} shadow
-        inner join {
-            shared_address_geocoding.QUALIFIED_DUCKDB_ADDRESS_GEOCODES_TABLE
+        left join {
+            geocode_store.QUALIFIED_DUCKDB_PREVIOUS_OUTCOMES_TABLE
         } current
-            on cast(current.address_id as varchar) = shadow.query_document_id
+            on current.address_id = shadow.query_document_id
         """
     )
 
@@ -569,6 +604,9 @@ def _assert_shadow_invariants(connection: Any) -> None:
     [(comparisons,)] = connection.execute(
         f"select count(*) from {QUALIFIED_SHADOW_COMPARISON_TABLE}"
     ).fetchall()
+    [(pending,)] = connection.execute(
+        f"select count(*) from {geocode_demand.QUALIFIED_DUCKDB_PENDING_IDENTITIES_TABLE}"
+    ).fetchall()
     [(variant_documents, expected_variant_documents)] = connection.execute(
         f"""
         select
@@ -582,10 +620,14 @@ def _assert_shadow_invariants(connection: Any) -> None:
     ).fetchall()
     if int(queries) != int(distinct_queries):
         raise ValueError("Shadow query search-document IDs must be unique")
+    if int(queries) != int(pending):
+        raise ValueError(
+            "Shadow query documents must be exactly the pending Sweden identities"
+        )
     if int(results) != int(distinct_results) or int(results) != int(queries):
         raise ValueError("Every shadow query must have one resolution result")
     if int(comparisons) != int(results):
-        raise ValueError("Every shadow result must compare with the current matcher")
+        raise ValueError("Every shadow result must compare with the previous outcome")
     if int(variant_documents) != int(expected_variant_documents):
         raise ValueError("Every parsed query street must have a search variant")
 

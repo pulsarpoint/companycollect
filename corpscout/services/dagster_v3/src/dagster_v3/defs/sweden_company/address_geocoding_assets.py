@@ -15,6 +15,7 @@ from dagster_v3.defs.sweden_address_osm import tables as osm_tables
 from dagster_v3.defs.sweden_company import (
     address_canonicalization,
     address_geocoding,
+    geocode_demand,
     geocode_store,
     shared_address_geocoding,
     shared_addresses,
@@ -30,7 +31,7 @@ CANONICAL_DUCKDB_ASSET_KEY = "sweden_company_canonical_addresses_duckdb"
 CANONICAL_CLICKHOUSE_ASSET_KEY = "sweden_company_canonical_addresses_clickhouse"
 SHARED_ADDRESSES_DUCKDB_ASSET_KEY = "sweden_shared_addresses_duckdb"
 SHARED_ADDRESSES_CLICKHOUSE_ASSET_KEY = "sweden_shared_addresses_clickhouse"
-SHARED_GEOCODE_DUCKDB_ASSET_KEY = "sweden_shared_address_osm_matches_duckdb"
+GEOCODE_DEMAND_ASSET_KEY = "sweden_address_geocode_demand_duckdb"
 SHARED_GEOCODE_CLICKHOUSE_ASSET_KEY = "sweden_address_geocodes_clickhouse"
 ADDRESS_RESOLUTION_GOLDEN_ASSET_KEY = "sweden_address_resolution_golden_evaluation"
 ADDRESS_RESOLUTION_SHADOW_ASSET_KEY = "sweden_address_resolution_shadow_duckdb"
@@ -381,7 +382,15 @@ def sweden_shared_addresses_clickhouse(
     )
 
 
+class SwedenGeocodeDemandConfig(dg.Config):
+    """`rematch_all` is the explicit operator action of spec 4.2 item 3 -- the same
+    spelled-out-in-config pattern the se_company finals use for `resolve_all`."""
+
+    rematch_all: bool = False
+
+
 @dg.asset(
+    name=GEOCODE_DEMAND_ASSET_KEY,
     deps=[
         dg.AssetKey(SHARED_ADDRESSES_CLICKHOUSE_ASSET_KEY),
         dg.AssetKey("sweden_osm_addresses_duckdb"),
@@ -389,31 +398,49 @@ def sweden_shared_addresses_clickhouse(
     group_name=GROUP_NAME,
     kinds={"python", "duckdb", "clickhouse", "openstreetmap"},
     pool=osm_tables.DUCKDB_POOL,
+    metadata={"table": geocode_demand.QUALIFIED_DUCKDB_PENDING_IDENTITIES_TABLE},
     description=(
-        "Matches every distinct Sweden address identity to OSM once, retaining "
-        "exact building, approximate site, area, or street, ambiguous, unmatched, "
-        "invalid, foreign, and postal-box outcomes."
+        "Decides which Sweden address identities this run must match: those with no "
+        "resolver outcome, those whose outcome came from a different policy version, "
+        "and non-geocoded outcomes whose OSM reference snapshot has moved."
     ),
 )
-def sweden_shared_address_osm_matches_duckdb(
+def sweden_address_geocode_demand_duckdb(
     context: dg.AssetExecutionContext,
+    config: SwedenGeocodeDemandConfig,
     sweden_address_osm_duckdb: DuckDBResource,
+    clickhouse: ClickhouseResource,
 ) -> dg.MaterializeResult:
-    matched_at = datetime.now(UTC)
+    assert_clickhouse_tables_exist(
+        clickhouse,
+        database=geocode_store.CLICKHOUSE_DATABASE,
+        tables=(geocode_store.GEOCODE_STORE_TABLE,),
+    )
     with sweden_address_osm_duckdb.get_connection() as connection:
-        counts = shared_address_geocoding.replace_sweden_shared_address_osm_matches(
+        reference_md5 = geocode_demand.fresh_reference_md5(connection)
+        with clickhouse.get_connection() as clickhouse_client:
+            loaded = geocode_demand.load_current_resolver_outcomes(
+                connection=connection,
+                clickhouse_client=clickhouse_client,
+                log=context.log.info,
+            )
+        counts = geocode_demand.replace_pending_address_identities(
             connection=connection,
-            geocode_run_id=context.run_id,
-            matched_at=matched_at,
+            policy_version=SWEDEN_ADDRESS_RESOLUTION_POLICY.version,
+            reference_md5=reference_md5,
+            rematch_all=config.rematch_all,
             log=context.log.info,
         )
     return dg.MaterializeResult(
         metadata={
-            **counts,
-            "duckdb_table": (
-                shared_address_geocoding.QUALIFIED_DUCKDB_ADDRESS_GEOCODES_TABLE
-            ),
-            "matched_at": matched_at.isoformat(),
+            **{
+                key: value
+                for key, value in counts.items()
+                if not isinstance(value, dict | list)
+            },
+            "loaded_previous_outcomes": loaded,
+            "reason_counts": dg.MetadataValue.json(counts["reason_counts"]),
+            "table": geocode_demand.QUALIFIED_DUCKDB_PENDING_IDENTITIES_TABLE,
         }
     )
 
@@ -580,9 +607,8 @@ FROM {shared_address_geocoding.QUALIFIED_CLICKHOUSE_ADDRESS_GEOCODES_TABLE}"""
     description=(
         "Appends the promoted Sweden address outcomes to the permanent versioned "
         "geocode store, stamped with the resolver policy and the OSM reference "
-        "snapshot they were computed against. Until the demand scan lands, one "
-        "promotion re-appends every current address identity under a single "
-        "run-wide matched_at."
+        "snapshot they were computed against. One promotion appends only the "
+        "identities the demand scan selected, so an unchanged week appends nothing."
     ),
 )
 def sweden_address_geocode_store_clickhouse(
@@ -592,20 +618,25 @@ def sweden_address_geocode_store_clickhouse(
 ) -> dg.MaterializeResult:
     """Append one promotion's outcomes to the versioned store.
 
-    WHAT THIS APPENDS TODAY IS THE WHOLE UNIVERSE, NOT THE OUTCOMES THIS RUN COMPUTED.
-    Promotion still evaluates every current address identity and stamps them all with one
-    run-wide `matched_at`, so each weekly run appends ~2.09M rows whose instant says
-    "re-decided today" even where nothing changed. Spec section 5's per-outcome matched_at
-    -- an instant that means "this outcome was actually computed then" -- arrives with the
-    demand scan in the next task; the migration comment describes that end state, and this
-    docstring describes the interim one. The rows are correct meanwhile: same key triple,
-    same content, so ReplacingMergeTree collapses each re-append on merge.
+    WHAT THIS APPENDS IS THE OUTCOMES THIS RUN ACTUALLY COMPUTED. The demand scan upstream
+    selects the identities that are due and the promotion evaluates only those, so spec
+    section 5's per-outcome `matched_at` -- an instant that means "this outcome was really
+    decided then" -- now holds: an identity nobody re-decided keeps the instant its stored
+    outcome already carries, because no newer row for it is written at all.
 
-    The DuckDB hand-off table is a persistent full copy of the promotion and is never
-    cleaned up here -- deliberately. The ClickHouse asset opens its own connection, so a
-    temporary table would not survive to be read, and leaving it in place is what lets a
-    failed ClickHouse leg be retried without re-running the promotion. A later task may
-    drop it after a confirmed export; until then it costs one address-universe copy on disk.
+    THE PENDING SET, NOT THE HAND-OFF TABLE, DECIDES WHETHER THERE IS WORK. With nothing
+    pending this asset appends nothing and returns -- the expected end of a week in which
+    no address changed, no identity appeared and the OSM snapshot held still. It does not
+    even look at the hand-off table then, because the promotion leaves that table as the
+    last PROMOTING run left it, and re-appending those rows under this run's name would
+    restamp outcomes nobody re-decided. With identities pending, an empty hand-off table
+    is instead a silent no-op -- promotion was asked for outcomes and produced none -- and
+    it raises.
+
+    The DuckDB hand-off table is a persistent copy of the promotion and is never cleaned up
+    here -- deliberately. The ClickHouse asset opens its own connection, so a temporary
+    table would not survive to be read, and leaving it in place is what lets a failed
+    ClickHouse leg be retried without re-running the promotion.
     """
     assert_clickhouse_tables_exist(
         clickhouse,
@@ -613,6 +644,24 @@ def sweden_address_geocode_store_clickhouse(
         tables=(geocode_store.GEOCODE_STORE_TABLE,),
     )
     with sweden_address_osm_duckdb.get_connection() as connection:
+        # The pending set is read BEFORE the hand-off table, not after: on an unchanged
+        # week the promotion writes no hand-off table at all, so there may be nothing
+        # there to count -- or, worse, last week's rows, which are already in the store
+        # and must not be appended a second time under this run's name.
+        if geocode_demand.pending_identity_count(connection) == 0:
+            context.log.info(
+                "No Sweden address identities were pending; appending nothing to the "
+                "geocode store"
+            )
+            return dg.MaterializeResult(
+                metadata={
+                    "appended_rows": 0,
+                    "expected_appended_rows": 0,
+                    "geocode_run_id": "",
+                    "short_circuit": True,
+                    "table": geocode_store.QUALIFIED_CLICKHOUSE_GEOCODE_STORE_TABLE,
+                }
+            )
         [
             (appended, matched_at, policy_versions, references, runs, append_run_id)
         ] = connection.execute(
@@ -627,9 +676,9 @@ def sweden_address_geocode_store_clickhouse(
             from {geocode_store.QUALIFIED_DUCKDB_GEOCODE_APPEND_TABLE}
             """
         ).fetchall()
-        # An empty hand-off table is not a quiet success: max(matched_at) would be None,
-        # the driver would render it as NULL, and `> NULL` answers NULL for every row --
-        # the regression guard below would pass while measuring nothing at all.
+        # Identities WERE pending, so an empty hand-off table here is a silent no-op the
+        # guard below cannot catch: max(matched_at) would be None, the driver would render
+        # it NULL, and `> NULL` answers NULL for every row.
         if int(appended) == 0:
             raise ValueError(
                 "The Sweden geocode append table is empty; promotion produced no "
@@ -679,6 +728,7 @@ def sweden_address_geocode_store_clickhouse(
             "appended_rows": rows,
             "expected_appended_rows": int(appended),
             "geocode_run_id": str(append_run_id),
+            "short_circuit": False,
             "store_rows": int(store_rows),
             "store_identities": int(store_identities),
             "table": geocode_store.QUALIFIED_CLICKHOUSE_GEOCODE_STORE_TABLE,
@@ -1441,7 +1491,7 @@ sweden_company_address_geocoding_job = dg.define_asset_job(
         CANONICAL_CLICKHOUSE_ASSET_KEY,
         SHARED_ADDRESSES_DUCKDB_ASSET_KEY,
         SHARED_ADDRESSES_CLICKHOUSE_ASSET_KEY,
-        SHARED_GEOCODE_DUCKDB_ASSET_KEY,
+        GEOCODE_DEMAND_ASSET_KEY,
         ADDRESS_RESOLUTION_GOLDEN_ASSET_KEY,
         ADDRESS_RESOLUTION_SHADOW_ASSET_KEY,
         ADDRESS_RESOLUTION_CURRENT_ASSET_KEY,
@@ -1469,7 +1519,7 @@ sweden_shared_address_identity_job = dg.define_asset_job(
 sweden_shared_address_geocoding_job = dg.define_asset_job(
     name="sweden_shared_address_geocoding_job",
     selection=dg.AssetSelection.assets(
-        SHARED_GEOCODE_DUCKDB_ASSET_KEY,
+        GEOCODE_DEMAND_ASSET_KEY,
         ADDRESS_RESOLUTION_GOLDEN_ASSET_KEY,
         ADDRESS_RESOLUTION_SHADOW_ASSET_KEY,
         ADDRESS_RESOLUTION_CURRENT_ASSET_KEY,
@@ -1478,8 +1528,9 @@ sweden_shared_address_geocoding_job = dg.define_asset_job(
     ),
     tags={"country": "SE", "pipeline": "shared_address_geocoding"},
     description=(
-        "Matches current shared Sweden addresses to the existing OSM index and "
-        "publishes one classified geocoding outcome per address identity."
+        "Selects the Sweden address identities that are due, matches those against "
+        "the existing OSM index, and publishes one classified geocoding outcome per "
+        "identity it decided."
     ),
 )
 
@@ -1492,7 +1543,7 @@ sweden_company_address_geocoding_weekly_job = dg.define_asset_job(
         CANONICAL_CLICKHOUSE_ASSET_KEY,
         SHARED_ADDRESSES_DUCKDB_ASSET_KEY,
         SHARED_ADDRESSES_CLICKHOUSE_ASSET_KEY,
-        SHARED_GEOCODE_DUCKDB_ASSET_KEY,
+        GEOCODE_DEMAND_ASSET_KEY,
         ADDRESS_RESOLUTION_GOLDEN_ASSET_KEY,
         ADDRESS_RESOLUTION_SHADOW_ASSET_KEY,
         ADDRESS_RESOLUTION_CURRENT_ASSET_KEY,
@@ -1538,7 +1589,7 @@ defs = dg.Definitions(
         sweden_company_canonical_addresses_clickhouse,
         sweden_shared_addresses_duckdb,
         sweden_shared_addresses_clickhouse,
-        sweden_shared_address_osm_matches_duckdb,
+        sweden_address_geocode_demand_duckdb,
         sweden_address_geocodes_clickhouse,
         sweden_address_geocode_store_clickhouse,
         sweden_address_geocode_store_backfill_clickhouse,

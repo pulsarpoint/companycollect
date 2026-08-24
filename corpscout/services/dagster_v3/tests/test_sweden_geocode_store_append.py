@@ -364,10 +364,101 @@ def test_the_append_asset_raises_when_stored_outcomes_are_newer() -> None:
             _run_store_append(connection, client)
 
 
+def test_an_unchanged_week_appends_nothing_and_raises_nothing() -> None:
+    """Goal 1 and spec section 5's per-outcome matched_at, proven end to end.
+
+    Nothing pending means the shadow builds no index, the promotion promotes nothing, and
+    THIS asset appends zero rows without raising -- so every identity keeps the matched_at
+    its stored outcome already carries. Executed through the real shadow, the real
+    promotion and the real export helper: a run that appended even one restamped row, or
+    an asset that treated the empty hand-off as a failure, dies here.
+    """
+    with _promotable() as connection:
+        connection.execute(
+            "delete from sweden_company_enrichment.se_address_pending_identities"
+        )
+        counts = _promote(connection, matched_at=MS_MOMENT)
+        assert counts["short_circuit"] is True
+        assert counts["rows"] == 0 and counts["appended_rows"] == 0
+        # Nothing was written at all -- not even an empty hand-off table. The append asset
+        # below decides from the pending set, so it never reaches for one.
+        with pytest.raises(duckdb.CatalogException):
+            connection.execute(
+                f"select count(*) from {QUALIFIED_DUCKDB_GEOCODE_APPEND_TABLE}"
+            )
+        client = _store_client()
+
+        result = _run_store_append(connection, client)
+
+        assert not [sql for sql in client.statements if sql.startswith("INSERT INTO")]
+        assert client.inserted_rows == []
+        assert result.metadata["appended_rows"] == 0
+        assert result.metadata["short_circuit"] is True
+
+
+def test_an_unchanged_week_does_not_re_append_the_last_promoting_run() -> None:
+    """The stale-hand-off trap. The hand-off table survives between runs, so on a week that
+    promotes nothing it still holds LAST week's rows -- already in the store. Reading it
+    instead of the pending set would re-append every one of them under a new run, restamped,
+    which is exactly the per-outcome matched_at guarantee going backwards."""
+    with _promotable() as connection:
+        _promote(connection, matched_at=MS_MOMENT)
+        assert (
+            connection.execute(
+                f"select count(*) from {QUALIFIED_DUCKDB_GEOCODE_APPEND_TABLE}"
+            ).fetchone()[0]
+            == 8
+        )
+        connection.execute(
+            "delete from sweden_company_enrichment.se_address_pending_identities"
+        )
+        client = _store_client()
+
+        result = _run_store_append(connection, client)
+
+        assert not [sql for sql in client.statements if sql.startswith("INSERT INTO")]
+        assert result.metadata["short_circuit"] is True
+
+
+def test_the_shadow_short_circuits_before_it_builds_any_reference_index() -> None:
+    """Where the saving actually is: with nothing pending the OSM reference index -- the
+    expensive half of a run -- is never built at all."""
+    from dagster_v3.defs.sweden_company.address_resolution_shadow import (
+        QUALIFIED_SHADOW_REFERENCE_DOCUMENTS_TABLE,
+        replace_sweden_address_resolution_shadow,
+    )
+
+    with _promotable() as connection:
+        connection.execute(
+            "delete from sweden_company_enrichment.se_address_pending_identities"
+        )
+
+        counts = replace_sweden_address_resolution_shadow(
+            connection=connection,
+            evaluation_run_id="shadow-run",
+            evaluated_at=datetime(2026, 8, 24, tzinfo=UTC),
+            log=None,
+        )
+
+        assert counts == {
+            "pending_identities": 0,
+            "short_circuit": True,
+            "shadow_status_counts": {},
+            "largest_transitions": [],
+        }
+        with pytest.raises(duckdb.CatalogException):
+            connection.execute(
+                f"select count(*) from {QUALIFIED_SHADOW_REFERENCE_DOCUMENTS_TABLE}"
+            )
+
+
 def test_the_append_asset_refuses_an_empty_hand_off_table() -> None:
     """An empty hand-off table is the second silent-no-op route: `max(matched_at)` is None,
     the driver renders NULL, and `> NULL` is NULL for every row -- the guard would pass
-    having measured nothing."""
+    having measured nothing.
+
+    The pending set is what separates this from the unchanged-week case above: here eight
+    identities were due and promotion produced nothing for them, which is a bug."""
     with _promotable() as connection:
         _promote(connection)
         connection.execute(
