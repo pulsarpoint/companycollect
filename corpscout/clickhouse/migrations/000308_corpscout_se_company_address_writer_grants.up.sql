@@ -1,0 +1,2 @@
+GRANT INSERT ON corpscout.se_company_address_correction
+TO corpscout_person_correction_writer;

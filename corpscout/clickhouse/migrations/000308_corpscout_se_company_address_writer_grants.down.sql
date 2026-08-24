@@ -1,0 +1,2 @@
+REVOKE INSERT ON corpscout.se_company_address_correction
+FROM corpscout_person_correction_writer;

@@ -318,6 +318,7 @@ EXPECTED_MIGRATIONS = (
     "000304_corpscout_se_company_info_llm_enhanced",
     "000305_corpscout_se_code_labels_swedish",
     "000306_corpscout_se_company_info_legal_form_label",
+    "000307_corpscout_se_company_address",
 )
 
 NOOP_MIGRATIONS = {"000276_noop"}
@@ -326,6 +327,7 @@ EXPECTED_ACCESS_MIGRATIONS = (
     "000241_corpscout_person_correction_writer_role",
     "000296_corpscout_se_company_person_correction_writer_grants",
     "000298_corpscout_se_company_info_writer_grants",
+    "000308_corpscout_se_company_address_writer_grants",
 )
 
 OBSOLETE_CLICKHOUSE_DATABASE_REFERENCES = (
