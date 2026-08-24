@@ -78,7 +78,7 @@ Reference facts that shape the design:
 
 ### 4.1 The versioned outcome store
 
-New ClickHouse table `corpscout.se_address_geocode_outcomes` (append-only; the permanent
+New ClickHouse table `corpscout.se_address_geocodes` (append-only; the permanent
 store), replacing the weekly-swapped `se_address_geocodes_current` as the source of truth:
 
 - Columns: everything `se_address_geocodes_current` carries today (identity, match fields,
@@ -213,7 +213,7 @@ matched_at)` fully determines provenance. Consequences the implementation must h
 
 ## 6. Rollout order (each step verifiable, stoppable, owner-gated where marked)
 
-1. **Store + write path**: migration creates `se_address_geocode_outcomes`; promotion
+1. **Store + write path**: migration creates `se_address_geocodes`; promotion
    appends to it (while STILL rebuilding `se_address_geocodes_current` unchanged — dual
    write). Backfill: one full append of the current serving table's rows stamped
    `policy_version = 'se-address-resolution-policy-v5'` + their existing `source_md5`.
