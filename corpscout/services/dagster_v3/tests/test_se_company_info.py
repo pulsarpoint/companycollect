@@ -37,6 +37,7 @@ NOW = datetime(2026, 8, 22, 12, tzinfo=UTC)
 COMPANY = "5565200028"
 OTHER_COMPANY = "5560125220"
 THIRD_COMPANY = "5567890123"
+SOLE_TRADER = "196408233412"  # a 12-digit personnummer-based enskild firma id
 EPOCH_SQL = "toDateTime64('1970-01-01 00:00:00', 3, 'UTC')"
 # "Still owed a description", as both branches of the change scan must spell it.
 PENDING_SQL = ("ifNull(published.description_source_count, 0) > 1"
@@ -681,6 +682,23 @@ def test_an_explicit_scope_is_chunked_so_the_rendered_query_stays_under_max_quer
     assert sorted(sum((list(scan["company_ids"]) for scan in scans), [])) == sorted(scope)
     assert all(scan["all_companies"] == 0 for scan in scans)
     assert all(scan["after_company_id"] == "" for scan in scans)  # each chunk pages from its start
+
+
+def test_a_scoped_run_accepts_a_twelve_digit_sole_trader_id() -> None:
+    """se_companies publishes 12-digit personnummer-based ids for enskild firma and the
+    final's has_company CHECK admits them, so naming one in company_ids must not raise.
+    company_people.draft.normalized_company_ids validates 10 digits only, so the scope
+    normalizes through se_company.common.normalized_se_company_ids instead."""
+    from dagster_v3.defs.se_company.info import materialize_se_company_info
+    from tests.test_se_company_common import FakeClickhouse, FakeClient
+
+    client = FakeClient(answers=[EXISTING_TABLES, []])  # one empty scan for the one chunk
+    materialize_se_company_info(
+        clickhouse=FakeClickhouse(client), source_run_id="run", resolved_at=NOW,
+        company_ids=[SOLE_TRADER], max_companies=1, company_batch_size=1, execute=True,
+        llm_client=FakeLlm(GOOD_REPLY), llm_profile=PROFILE, log=None)
+
+    assert [list(scan["company_ids"]) for scan in _change_scans(client)] == [[SOLE_TRADER]]
 
 
 def test_the_config_caps_the_batch_at_the_query_size_limit() -> None:

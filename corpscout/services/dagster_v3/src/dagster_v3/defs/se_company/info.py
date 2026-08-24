@@ -47,7 +47,6 @@ from openai import OpenAI, OpenAIError
 from pydantic import BaseModel, ConfigDict, Field, ValidationError
 
 from dagster_v3.defs.clickhouse.resolved import assert_clickhouse_tables_exist
-from dagster_v3.defs.company_people.draft import normalized_company_ids
 from dagster_v3.defs.se_company.common import (
     ObservationResult,
     StoredObservation,
@@ -56,6 +55,7 @@ from dagster_v3.defs.se_company.common import (
     input_hash_for,
     ledger_row_from_row,
     ledger_sensor,
+    normalized_se_company_ids,
     observation_from_row,
     publish_with_stage,
     reuse_or_call,
@@ -779,7 +779,7 @@ def materialize_se_company_info(
     # Always bound, even with resolve_all off: the scan's parseDateTime64BestEffort is
     # parsed regardless of the flag beside it, so '' would be an error, not a no-op.
     resolve_all_cutoff = resolve_all_before.strip() or _clickhouse_stamp(resolved_at)
-    scope = normalized_company_ids(company_ids)
+    scope = normalized_se_company_ids(company_ids)
     assert_clickhouse_tables_exist(clickhouse, database=DATABASE, tables=(
         *ARTIFACT_TABLES.values(), SE_COMPANY_INFO, SE_COMPANY_INFO_CORRECTION, SE_COMPANY_INFO_OBSERVATION))
     # Both scan queries embed %(company_ids)s three times and clickhouse-driver

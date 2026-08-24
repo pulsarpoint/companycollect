@@ -37,8 +37,9 @@ def normalized_se_company_ids(company_ids: Sequence[str]) -> tuple[str, ...]:
     Accepts both widths the se_company tables publish: a 10-digit organisationsnummer and
     a 12-digit personnummer-based sole-trader id (the has_company CHECK, migration 000299).
     company_people.draft.normalized_company_ids predates the sole traders and validates
-    10 digits only -- it is deliberately not reused here, and info.py's use of it is a
-    latent bug this datatype does not inherit.
+    10 digits only -- it is deliberately not reused here, and se_company.info was moved
+    onto this helper because validating a scoped run's ids at 10 digits rejected the
+    sole traders that final publishes.
     """
     normalized = tuple(sorted({company_id.strip() for company_id in company_ids}))
     invalid = [company_id for company_id in normalized if _SE_COMPANY_ID_RE.fullmatch(company_id) is None]
