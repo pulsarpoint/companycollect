@@ -10,6 +10,7 @@ vi.mock("~/lib/clickhouse.server", () => ({
 }));
 
 import {
+  ADDRESS_STATUS_INPUTS_SQL,
   ADDRESSES_SQL,
   CORRECTIONS_SQL as ADDRESS_CORRECTIONS_SQL,
   REMOVED_SQL,
@@ -51,6 +52,7 @@ const ALL_SQL: Array<[string, string]> = [
   ["ADDRESSES_SQL", ADDRESSES_SQL],
   ["REMOVED_SQL", REMOVED_SQL],
   ["ADDRESS_CORRECTIONS_SQL", ADDRESS_CORRECTIONS_SQL],
+  ["ADDRESS_STATUS_INPUTS_SQL", ADDRESS_STATUS_INPUTS_SQL],
   ["FINANCIALS_LATEST_SQL", FINANCIALS_LATEST_SQL],
   ["FINANCIAL_REPORTS_SQL", FINANCIAL_REPORTS_SQL],
   ["PEOPLE_SQL", PEOPLE_SQL],
@@ -81,12 +83,22 @@ describe("company area SQL", () => {
     }
   });
 
-  it("bounds every statement", () => {
+  /**
+   * Every statement that returns ROWS is bounded. The one exception is named
+   * rather than skipped: ADDRESS_STATUS_INPUTS_SQL is a per-company aggregate
+   * with no GROUP BY, so it returns exactly one row whatever it reads, and
+   * bounding it is the very bug review T7-m5 fixed -- a LIMIT there caps the
+   * applied-correction ids and flips an applied decision to stale.
+   */
+  it("bounds every statement that returns rows", () => {
     for (const [name, sql] of ALL_SQL) {
+      if (sql === ADDRESS_STATUS_INPUTS_SQL) continue;
       expect(sql, name).toMatch(/LIMIT \d+/);
       const limit = Number(/LIMIT (\d+)/.exec(sql)?.[1] ?? "0");
       expect(limit, name).toBeLessThanOrEqual(900);
     }
+    expect(ADDRESS_STATUS_INPUTS_SQL).not.toMatch(/LIMIT/);
+    expect(ADDRESS_STATUS_INPUTS_SQL).not.toContain("GROUP BY");
   });
 
   // FINAL is not decoration: without it a ReplacingMergeTree hands back every
@@ -113,7 +125,7 @@ describe("company area SQL", () => {
     expect(COMPANY_DOMAINS_SQL).toContain("corpscout.company_domains AS d FINAL");
     // The address final is a ReplacingMergeTree on resolved_at, so both of its
     // reads take FINAL; the ledger it joins nothing to is a plain MergeTree.
-    for (const sql of [ADDRESSES_SQL, REMOVED_SQL]) {
+    for (const sql of [ADDRESSES_SQL, REMOVED_SQL, ADDRESS_STATUS_INPUTS_SQL]) {
       expect(sql).toContain("corpscout.se_company_address AS a FINAL");
     }
     expect(ADDRESS_CORRECTIONS_SQL).not.toContain("FINAL");
@@ -261,7 +273,12 @@ describe("tab loaders", () => {
   it("reads the live rows, the tombstones and the ledger of one company", async () => {
     await loadSeCompanyAddresses(COMPANY);
     const sent = clickhouse.query.mock.calls.map(([sql]) => sql as string);
-    expect(sent).toEqual([ADDRESSES_SQL, REMOVED_SQL, ADDRESS_CORRECTIONS_SQL]);
+    expect(sent).toEqual([
+      ADDRESSES_SQL,
+      REMOVED_SQL,
+      ADDRESS_STATUS_INPUTS_SQL,
+      ADDRESS_CORRECTIONS_SQL,
+    ]);
     for (const [, params] of clickhouse.query.mock.calls) {
       expect(params).toMatchObject({ companyId: COMPANY });
     }

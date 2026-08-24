@@ -137,22 +137,93 @@ ORDER BY a.address_type, a.address_key
 LIMIT 100`;
 
 /**
+ * The two SETS every status branch below is answered against, aggregated over
+ * EVERY published row of the company. Deliberately its own statement rather
+ * than something folded out of the two paged lists above: those carry a display
+ * LIMIT, and a company past that many rows would drop a stamped correction's id
+ * out of `applied_correction_ids` and silently flip it from applied to stale.
+ * Nothing here is paged, and nothing needs to be -- one company publishes a
+ * handful of addresses, so this is one row holding two small arrays.
+ *
+ * `key_evidence` maps each published `address_key` to the `evidence_set_hash`
+ * of its row, and its KEY SET is this backoffice's reconstruction of the
+ * resolution's produced set (Dagster's `by_key` in `apply_address_ledger`):
+ *
+ * - live rows are produced rows, trivially;
+ * - a tombstoned row with a non-empty `correction_ids` was tombstoned by a
+ *   REJECT -- `apply_address_ledger` runs before `with_set_replacement`, so a
+ *   rejected key stays in the produced set as `is_current = false` and keeps
+ *   the ids that decided it. It is still a row corrections are compared
+ *   against, so its hash still counts;
+ * - a tombstoned row with an EMPTY `correction_ids` is a disappearance
+ *   tombstone: `with_set_replacement` clears the ids exactly because the key
+ *   left the produced set. Its hash must not count, or a correction with
+ *   nowhere to land would look fresh for ever.
+ *
+ * One row per key: the final is a ReplacingMergeTree ordered by
+ * (company_id, address_key), so FINAL leaves each key its newest version and
+ * the CAST to Map can never see a duplicate.
+ */
+export const ADDRESS_STATUS_INPUTS_SQL = `SELECT
+  groupUniqArrayArray(arrayMap(x -> toString(x), a.correction_ids)) AS applied_correction_ids,
+  CAST(
+    groupArrayIf(
+      (toString(a.address_key), toString(a.evidence_set_hash)),
+      a.is_current OR notEmpty(a.correction_ids)
+    ),
+    'Map(String, String)'
+  ) AS key_evidence
+FROM corpscout.se_company_address AS a FINAL
+WHERE a.company_id = {companyId:String}`;
+
+/**
  * The company's correction ledger, with each row's standing against what is
- * published now.
+ * published now. Every branch mirrors Dagster's `apply_address_ledger`
+ * (se_company/address_rules.py), which is the authority -- this statement only
+ * reports what that function will decide on its next run.
+ *
+ * The comparison is PER ADDRESS KEY. `apply_address_ledger` looks a
+ * correction's `address_key` up in the produced set and compares its
+ * `evidence_hash` against THAT row's `evidence_set_hash`; a correction naming
+ * key A while carrying key B's hash is stale there, and would read "pending"
+ * here if the hash were merely looked for somewhere in the company's set.
+ * `{keyEvidence}` is that per-key lookup, so `mapContains` answers "did the
+ * resolution produce this key" and the map index answers "is this the hash of
+ * the row it names".
  *
  * `is_applied` has two branches, and the second is not an optimisation. Dagster
  * stamps a correction's id onto the row it decided, but a `reject_address`
- * naming a key the resolution did not produce has NO row to stamp: address_rules.py
- * skips it without recording it stale (ruling A11). Reading membership of
- * `correction_ids` alone would then leave such a reject "pending" for ever, so
- * the absence of its key from the live set IS the applied signal.
+ * naming a key the resolution did not produce has NO row to stamp:
+ * address_rules.py skips it without recording it stale (ruling A11). Reading
+ * membership of `correction_ids` alone would then leave such a reject "pending"
+ * for ever, so the absence of its key from the produced set IS the applied
+ * signal.
  *
- * `is_stale` is a live, NOT-applied correction whose evidence hash matches no
- * live row of this company -- which covers both "the evidence moved on" and
- * "the address it named is gone". The zero hash is undo's own marker and is
- * never stale. Applied is checked first because a decision that landed is not
- * waiting for anything: only tombstoned rows keep the old hash, and counting
- * theirs would instead make a correction with nowhere to land look fresh for ever.
+ * `is_stale` is a live, NOT-applied correction of a kind the ledger knows,
+ * naming a key, whose evidence has moved on -- either the key is not in the
+ * produced set at all (`apply_address_ledger`: "the text had nowhere to land")
+ * or the row it names now hashes to something else. The zero hash is undo's own
+ * marker and is never compared. Applied is checked first because a decision
+ * that landed is not waiting for anything. The kind list is `ADDRESS_KIND_ORDER`:
+ * `effective_ledger` drops every other kind before staleness is ever considered,
+ * and the ledger table has no CHECK on `correction_kind`, so a row written
+ * outside this backoffice can carry one.
+ *
+ * Two things this SQL cannot mirror, both of which err toward "pending" and are
+ * corrected by the next run's own verdict:
+ *
+ * - Dagster compares against the hash of the artifacts it is resolving NOW,
+ *   while the map holds the hash of the row last PUBLISHED. A correction
+ *   written after the artifacts moved but before the next resolve reads pending
+ *   here and stale there.
+ * - a reject-tombstoned row whose key the sources have since stopped carrying
+ *   is not republished (`with_set_replacement` only tombstones rows that were
+ *   current), so it keeps its old hash and stays in the map. A correction
+ *   naming it reads pending here where Dagster, not producing the key any more,
+ *   calls it stale.
+ *
+ * Neither can hide a decision or invent one -- pending only ever means "Dagster
+ * has not spoken about this yet", which is what the reviewer is waiting on.
  */
 export const CORRECTIONS_SQL = `WITH superseded AS (
   SELECT supersedes_correction_id AS id
@@ -175,43 +246,63 @@ SELECT
     OR (
       c.correction_kind = 'reject_address'
       AND address_key != ''
-      AND NOT has({liveAddressKeys:Array(String)}, address_key)
+      AND NOT mapContains({keyEvidence:Map(String, String)}, address_key)
     )
   ) AS is_applied,
   toUInt8(
     is_current
     AND NOT is_applied
+    AND address_key != ''
+    AND c.correction_kind IN ('reject_address', 'override_field')
     AND toString(c.evidence_hash) != {zeroHash:String}
-    AND NOT has({evidenceSetHashes:Array(String)}, toString(c.evidence_hash))
+    AND (
+      NOT mapContains({keyEvidence:Map(String, String)}, address_key)
+      OR {keyEvidence:Map(String, String)}[address_key] != toString(c.evidence_hash)
+    )
   ) AS is_stale
 FROM corpscout.se_company_address_correction AS c
 WHERE c.company_id = {companyId:String}
 ORDER BY c.created_at DESC, c.correction_id DESC
 LIMIT 200`;
 
+/** One row, whatever the company has published: what ADDRESS_STATUS_INPUTS_SQL
+ * returns. `key_evidence` arrives as a plain object because ClickHouse renders
+ * a Map as a JSON object, and goes back out as one -- the client formats an
+ * object query parameter as ClickHouse's own `{'k':'v'}` map literal. */
+interface SeCompanyAddressStatusInputs {
+  applied_correction_ids: string[];
+  key_evidence: Record<string, string>;
+}
+
 /**
  * Every published address of one company -- live and tombstoned -- with the
  * correction ledger that decided them.
  *
+ * Three reads go out together and the ledger follows, because its status
+ * branches need the aggregates. The aggregates are NOT taken from `addresses`
+ * and `removed`: those two carry a display LIMIT, so a company past it would
+ * lose a stamped correction's id and report an applied decision as stale.
+ *
  * A company with no published address returns empty lists rather than null: it
  * is a normal pipeline state (nothing resolved yet), and its ledger may still
- * carry a reject of an address that has since gone.
+ * carry a reject of an address that has since gone. The aggregate has no
+ * GROUP BY, so it answers with one row of empties rather than none -- the
+ * fallback below is belt and braces.
  */
 export async function loadSeCompanyAddresses(
   companyId: string,
 ): Promise<SeCompanyAddressDetail> {
-  const [addresses, removed] = await Promise.all([
+  const [addresses, removed, statusInputs] = await Promise.all([
     chQuery<SeCompanyAddressRow>(ADDRESSES_SQL, { companyId }),
     chQuery<SeCompanyAddressRow>(REMOVED_SQL, { companyId }),
+    chQuery<SeCompanyAddressStatusInputs>(ADDRESS_STATUS_INPUTS_SQL, { companyId }),
   ]);
+  const inputs = statusInputs[0];
   const corrections = await chQuery<SeCompanyAddressCorrectionRow>(CORRECTIONS_SQL, {
     companyId,
     zeroHash: ZERO_EVIDENCE_HASH,
-    evidenceSetHashes: addresses.map((row) => row.evidence_set_hash),
-    liveAddressKeys: addresses.map((row) => row.address_key),
-    // Both lists: a reject's id lives on the row it tombstoned, so reading
-    // only the live rows would lose it.
-    appliedIds: [...addresses, ...removed].flatMap((row) => row.correction_ids),
+    keyEvidence: inputs?.key_evidence ?? {},
+    appliedIds: inputs?.applied_correction_ids ?? [],
   });
   return { addresses, removed, corrections };
 }
