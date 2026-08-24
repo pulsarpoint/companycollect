@@ -43,9 +43,14 @@ def test_every_artifact_payload_column_is_hashed_into_the_evidence(table: str) -
     """A payload column outside evidence_hash would change silently: the anti-join
     would never append a version for it and no downstream run would ever see it."""
     block = table_block(table)
+    assert block.count("CREATE TABLE") == 1 and block.rstrip().endswith(";")
     payload = [column for column in declared_columns(table)
                if column not in ENVELOPE]
-    hashed = block[block.index("MATERIALIZED") : block.index("CONSTRAINT")]
+    # Slice ends at the hash expression's own closing parens, NOT at CONSTRAINT: a
+    # constraint-bounded slice also contains the payload declarations themselves,
+    # which made this assertion vacuous (review finding, mutation-proven).
+    start = block.index("MATERIALIZED")
+    hashed = block[start : block.index("))))", start) + 4]
     for column in payload:
         assert column in hashed, f"{table}.{column} is not part of evidence_hash"
 
@@ -55,8 +60,10 @@ def test_the_final_carries_the_geocode_augmentation_and_the_tombstone_flag() -> 
     block = table_block("se_company_address")
 
     assert columns[:2] == ["company_id", "address_key"]
-    for column in ("address_id", "latitude", "longitude", "geocode_status", "geocoded_at", "is_current"):
-        assert column in columns
+    # The geocode block and the tombstone flag are order-pinned: publish binds positionally.
+    g = columns.index("address_id")
+    assert columns[g : g + 6] == [
+        "address_id", "latitude", "longitude", "geocode_status", "geocoded_at", "is_current"]
     assert tuple(columns[-len(ADDRESS_FINAL_PROVENANCE):]) == ADDRESS_FINAL_PROVENANCE
     assert "evidence_set_hash FixedString(64) MATERIALIZED" in block
     assert "arraySort(arrayMap(x -> toString(x), evidence_hashes))" in block
