@@ -1533,9 +1533,11 @@ def test_sweden_company_address_geocoding_assets_are_company_enhancements() -> N
     }
     assert demand.pools == {"sweden_address_osm_duckdb"}
     assert shared_geocode_clickhouse.parent_keys == {
-        dg.AssetKey("sweden_address_resolution_current_duckdb")
+        dg.AssetKey("sweden_address_geocode_store_clickhouse")
     }
-    assert shared_geocode_clickhouse.pools == {"sweden_address_osm_duckdb"}
+    # It no longer touches DuckDB, so it no longer holds the serialising OSM pool -- which
+    # is the point: the derivation runs beside the DuckDB stages rather than behind them.
+    assert shared_geocode_clickhouse.pools == set()
     assert resolution_shadow.parent_keys == {
         dg.AssetKey("sweden_address_resolution_golden_evaluation"),
         dg.AssetKey("sweden_address_geocode_demand_duckdb"),

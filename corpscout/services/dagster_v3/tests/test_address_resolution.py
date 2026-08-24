@@ -451,6 +451,13 @@ def test_a_partial_pending_week_scopes_every_stage_to_the_pending_set() -> None:
     with no previous outcome at all. A fixture where pending IS the whole universe cannot
     see any of that: the scope predicate, the queries==pending invariant and the LEFT join
     all look correct when the two sets coincide.
+
+    The DuckDB `se_address_geocodes_current` this asserts on is the promotion's OWN copy of
+    what it decided, and pending-scoped is the right shape for it. It stopped being the
+    served table when `sweden_address_geocodes_clickhouse` became a projection of the
+    versioned store: the ClickHouse serving table is derived from every stored identity, so
+    a week like this one leaves it complete rather than three rows long, which
+    tests/test_sweden_geocode_derivation.py proves against a real ClickHouse.
     """
     pending = ("exact", "typo", "nonexistent")
     with duckdb.connect(":memory:") as connection:
@@ -496,9 +503,16 @@ def test_a_partial_pending_week_scopes_every_stage_to_the_pending_set() -> None:
             " where current_status = ''"
         ).fetchall() == [("typo",)]
         assert promoted["rows"] == len(pending)
+        # The promotion decided three identities, so its own two outputs hold three rows --
+        # the hand-off the store append reads, and this local copy. Neither is the serving
+        # table any more; see the docstring.
         assert connection.execute(
             "select address_id from"
             " sweden_company_enrichment.se_address_geocodes_current order by address_id"
+        ).fetchall() == [(address_id,) for address_id in sorted(pending)]
+        assert connection.execute(
+            "select address_id from"
+            " sweden_company_enrichment.se_address_geocodes_append order by address_id"
         ).fetchall() == [(address_id,) for address_id in sorted(pending)]
 
         # ... and the invariant that pins the scope is real, not decorative. A pending set
