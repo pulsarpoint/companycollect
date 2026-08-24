@@ -40,6 +40,7 @@ GEOCODE_STORE_BACKFILL_ASSET_KEY = "sweden_address_geocode_store_backfill_clickh
 WEEKLY_CRON_SCHEDULE = "5 4 * * 2"
 WEEKLY_EXECUTION_TIMEZONE = "Europe/Stockholm"
 MAX_OSM_SNAPSHOT_AGE = timedelta(days=9)
+_EPOCH = datetime(1970, 1, 1, tzinfo=UTC)
 MIN_EXACT_MATCH_RATE_PERCENT = 5.0
 MAX_EXACT_MATCH_RATE_CHANGE_PERCENTAGE_POINTS = 2.0
 
@@ -500,6 +501,16 @@ def build_store_append_regression_sql() -> str:
     invisible the moment it lands -- a silent no-op no row count would show. Equal instants
     are this run's own rows and are content-identical by the versioning contract, so the
     comparison is strictly greater-than.
+
+    THE COMPARISON IS IN INTEGER MILLISECONDS, NOT DATETIMES, AND THAT IS NOT A STYLE
+    CHOICE. `clickhouse_driver` binds a datetime parameter through `escape_datetime`, which
+    is `strftime('%Y-%m-%d %H:%M:%S')` after `astimezone(server_tz)`: the sub-second part is
+    DROPPED and the rendered literal is in the server's timezone, not the column's. Against
+    a millisecond-stamped `DateTime64(3, 'UTC')` column that truncated literal is strictly
+    smaller than this run's own rows, so every one of them counts as a regression and the
+    asset raises on essentially every run. `toUnixTimestamp64Milli` is the column's own tick
+    count, and an int parameter is rendered verbatim -- exact on both sides, timezone-free
+    by construction. `epoch_milliseconds` below is the other half of the pair.
     """
     return f"""SELECT count()
 FROM {geocode_store.QUALIFIED_CLICKHOUSE_GEOCODE_STORE_TABLE}
@@ -508,7 +519,23 @@ WHERE (address_id, policy_version, reference_md5) IN (
         FROM {geocode_store.QUALIFIED_CLICKHOUSE_GEOCODE_STORE_TABLE}
         WHERE geocode_run_id = %(geocode_run_id)s
       )
-  AND matched_at > %(matched_at)s"""
+  AND toUnixTimestamp64Milli(matched_at) > %(matched_at_ms)s"""
+
+
+def epoch_milliseconds(value: datetime) -> int:
+    """A DuckDB instant as the exact tick a `DateTime64(3, 'UTC')` column stores for it.
+
+    `clickhouse_driver` writes a datetime as `int(timestamp()) * 1000 + microsecond // 1000`
+    -- floor, not round -- so flooring the same instant here reproduces the stored tick
+    bit-for-bit and this run's own rows compare EQUAL, never greater.
+
+    DuckDB hands back TIMESTAMPTZ values in the SESSION's timezone, not UTC (a machine set
+    to Europe/Belgrade returns 14:00+02:00 for a 12:00Z instant). Subtracting an aware
+    epoch is offset-proof, so the tick is the same however the value arrives; the naive
+    branch is defensive only.
+    """
+    stamped = value if value.tzinfo is not None else value.replace(tzinfo=UTC)
+    return (stamped - _EPOCH) // timedelta(milliseconds=1)
 
 
 def build_geocode_store_backfill_sql() -> str:
@@ -551,9 +578,11 @@ FROM {shared_address_geocoding.QUALIFIED_CLICKHOUSE_ADDRESS_GEOCODES_TABLE}"""
     pool=osm_tables.DUCKDB_POOL,
     metadata={"table": geocode_store.QUALIFIED_CLICKHOUSE_GEOCODE_STORE_TABLE},
     description=(
-        "Appends this run's resolved Sweden address outcomes to the permanent "
-        "versioned geocode store, stamped with the resolver policy and the OSM "
-        "reference snapshot they were computed against."
+        "Appends the promoted Sweden address outcomes to the permanent versioned "
+        "geocode store, stamped with the resolver policy and the OSM reference "
+        "snapshot they were computed against. Until the demand scan lands, one "
+        "promotion re-appends every current address identity under a single "
+        "run-wide matched_at."
     ),
 )
 def sweden_address_geocode_store_clickhouse(
@@ -561,25 +590,55 @@ def sweden_address_geocode_store_clickhouse(
     sweden_address_osm_duckdb: DuckDBResource,
     clickhouse: ClickhouseResource,
 ) -> dg.MaterializeResult:
+    """Append one promotion's outcomes to the versioned store.
+
+    WHAT THIS APPENDS TODAY IS THE WHOLE UNIVERSE, NOT THE OUTCOMES THIS RUN COMPUTED.
+    Promotion still evaluates every current address identity and stamps them all with one
+    run-wide `matched_at`, so each weekly run appends ~2.09M rows whose instant says
+    "re-decided today" even where nothing changed. Spec section 5's per-outcome matched_at
+    -- an instant that means "this outcome was actually computed then" -- arrives with the
+    demand scan in the next task; the migration comment describes that end state, and this
+    docstring describes the interim one. The rows are correct meanwhile: same key triple,
+    same content, so ReplacingMergeTree collapses each re-append on merge.
+
+    The DuckDB hand-off table is a persistent full copy of the promotion and is never
+    cleaned up here -- deliberately. The ClickHouse asset opens its own connection, so a
+    temporary table would not survive to be read, and leaving it in place is what lets a
+    failed ClickHouse leg be retried without re-running the promotion. A later task may
+    drop it after a confirmed export; until then it costs one address-universe copy on disk.
+    """
     assert_clickhouse_tables_exist(
         clickhouse,
         database=geocode_store.CLICKHOUSE_DATABASE,
         tables=(geocode_store.GEOCODE_STORE_TABLE,),
     )
     with sweden_address_osm_duckdb.get_connection() as connection:
-        [(appended, matched_at, policy_versions, references)] = connection.execute(
+        [
+            (appended, matched_at, policy_versions, references, runs, append_run_id)
+        ] = connection.execute(
             f"""
             select
                 count(*),
                 max(matched_at),
                 count(distinct policy_version),
-                count(distinct reference_md5)
+                count(distinct reference_md5),
+                count(distinct geocode_run_id),
+                first(geocode_run_id)
             from {geocode_store.QUALIFIED_DUCKDB_GEOCODE_APPEND_TABLE}
             """
         ).fetchall()
-        if int(policy_versions) > 1 or int(references) > 1:
+        # An empty hand-off table is not a quiet success: max(matched_at) would be None,
+        # the driver would render it as NULL, and `> NULL` answers NULL for every row --
+        # the regression guard below would pass while measuring nothing at all.
+        if int(appended) == 0:
             raise ValueError(
-                "One promotion appends outcomes for one policy and one reference"
+                "The Sweden geocode append table is empty; promotion produced no "
+                "outcomes to append"
+            )
+        if int(policy_versions) > 1 or int(references) > 1 or int(runs) > 1:
+            raise ValueError(
+                "One promotion appends outcomes for one policy, one reference and "
+                "one geocode run"
             )
         with clickhouse.get_connection() as clickhouse_client:
             rows = export_duckdb_connection_table_to_clickhouse(
@@ -593,9 +652,16 @@ def sweden_address_geocode_store_clickhouse(
                 truncate=False,
                 log=context.log.info,
             )
+            # The run id comes from the rows themselves, never from context.run_id:
+            # this asset can materialize on its own over a hand-off table an earlier run
+            # wrote, and keying the guard off THIS run's id would then match no rows and
+            # pass vacuously. The invariants above guarantee the column is single-valued.
             [(regressions,)] = clickhouse_client.execute(
                 build_store_append_regression_sql(),
-                {"geocode_run_id": context.run_id, "matched_at": matched_at},
+                {
+                    "geocode_run_id": str(append_run_id),
+                    "matched_at_ms": epoch_milliseconds(matched_at),
+                },
             )
             [(store_rows, store_identities)] = clickhouse_client.execute(
                 f"""
@@ -612,6 +678,7 @@ def sweden_address_geocode_store_clickhouse(
         metadata={
             "appended_rows": rows,
             "expected_appended_rows": int(appended),
+            "geocode_run_id": str(append_run_id),
             "store_rows": int(store_rows),
             "store_identities": int(store_identities),
             "table": geocode_store.QUALIFIED_CLICKHOUSE_GEOCODE_STORE_TABLE,
@@ -643,6 +710,14 @@ def sweden_address_geocode_store_backfill_clickhouse(
     config: SwedenGeocodeStoreBackfillConfig,
     clickhouse: ClickhouseResource,
 ) -> dg.MaterializeResult:
+    """Import today's serving table into the store once, as policy-v5 outcomes.
+
+    The default run WRITES NOTHING: it reports what a real run would append and returns.
+    Only `execute: true` inserts, which is what keeps a stray Materialize click on a
+    2.09M-row table harmless. Re-running with the gate on is safe -- every row keeps the
+    serving row's own `matched_at`, so a second import replaces each row with identical
+    content instead of bumping 2.09M versions.
+    """
     assert_clickhouse_tables_exist(
         clickhouse,
         database=geocode_store.CLICKHOUSE_DATABASE,
