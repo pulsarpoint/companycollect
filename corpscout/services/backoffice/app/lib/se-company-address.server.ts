@@ -217,13 +217,24 @@ WHERE a.company_id = {companyId:String}`;
  *   written after the artifacts moved but before the next resolve reads pending
  *   here and stale there.
  * - a reject-tombstoned row whose key the sources have since stopped carrying
- *   is not republished (`with_set_replacement` only tombstones rows that were
- *   current), so it keeps its old hash and stays in the map. A correction
- *   naming it reads pending here where Dagster, not producing the key any more,
- *   calls it stale.
+ *   is never republished (`with_set_replacement` only tombstones rows that were
+ *   CURRENT), so it freezes: it keeps both its old hash and every id stamped on
+ *   it. Two things follow. A correction naming that key reads pending here
+ *   where Dagster, no longer producing the key, calls it stale. And a
+ *   correction that HAD been applied to the key before the reject -- an
+ *   `override_field` whose id still rides the frozen tombstone next to the
+ *   reject's -- reads applied here, where `apply_address_ledger` now returns it
+ *   as stale: a stamped id is this page's applied signal, and nothing clears it
+ *   from a row that is never rewritten.
  *
- * Neither can hide a decision or invent one -- pending only ever means "Dagster
- * has not spoken about this yet", which is what the reviewer is waiting on.
+ * The first divergence, and the first half of the second, err toward "pending",
+ * which only ever means "Dagster has not spoken about this yet". The second
+ * half does not: it shows a decision as landed after the pipeline stopped
+ * applying it, and is the one shape where this page and the pipeline disagree
+ * about a verdict rather than about its timing. It is also inert -- the row is
+ * frozen either way, so only the pipeline's own stale log and metric ever see
+ * the other answer -- but "pending is always the safe direction" is not true of
+ * it, and a reader should not be told that it is.
  */
 export const CORRECTIONS_SQL = `WITH superseded AS (
   SELECT supersedes_correction_id AS id

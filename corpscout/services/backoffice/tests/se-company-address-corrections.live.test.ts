@@ -117,6 +117,21 @@ const LEDGER_FIXTURE = [
   ledgerRow(id("7"), "override_field", override(REJECTED_KEY), REJECTED_HASH),
   // The text had nowhere to land.
   ledgerRow(id("8"), "override_field", override(VANISHED_KEY), VANISHED_HASH),
+  // Malformed: no address_key at all, so Dagster's _payload_key returns None
+  // and the loop moves on. It carries a live-looking hash, so only the
+  // skip-empty-key guard keeps it out of stale.
+  ledgerRow(id("9"), "override_field", '{"care_of":"x"}', LIVE_HASH),
+  // A kind effective_ledger drops before staleness is ever considered. It
+  // names a produced key and carries the WRONG hash, so only the kind guard
+  // keeps it out of stale -- and the ledger table has no CHECK on
+  // correction_kind, so a row written outside this backoffice can carry one.
+  ledgerRow(id("a"), "approve_suggestion", override(LIVE_KEY), OTHER_HASH),
+  // The same malformed shape on the OTHER side of the derivation: a reject
+  // with no address_key. `_payload_key` returns None before the kind is ever
+  // looked at, so it is skipped -- where the applied branch, which treats "the
+  // key is not in the produced set" as a reject's applied signal, would
+  // otherwise call the empty key "not produced" and report it landed.
+  ledgerRow(id("b"), "reject_address", "{}", LIVE_HASH),
 ].join("\n    UNION ALL ");
 
 /**
@@ -130,6 +145,11 @@ const LEDGER_FIXTURE = [
  *   pending because apply_address_ledger runs before with_set_replacement, so
  *   the rejected key is still in the produced set; a live-rows-only hash set
  *   misses REJECTED_HASH and reads stale.
+ *
+ * The last three are the executed test for the pipeline-alignment guards, one
+ * row per guard. The first two carry a hash that does not match the row they
+ * would be compared against, so deleting either guard turns that row stale
+ * here; the third is a malformed reject, which without its guard reads applied.
  */
 const EXPECTED_STATUSES = [
   "undone", // 1111...
@@ -140,6 +160,9 @@ const EXPECTED_STATUSES = [
   "pending", // 6666... undo, zero hash, never compared
   "pending", // 7777... reject-tombstoned key, its own hash
   "stale", // 8888... nowhere to land
+  "pending", // 9999... no address_key: skipped, never stale
+  "pending", // aaaa... a kind effective_ledger drops: never stale
+  "pending", // bbbb... a reject with no address_key: skipped, never applied
 ];
 
 /** Substitutes a synthesised table for a real one, and refuses to run a test
