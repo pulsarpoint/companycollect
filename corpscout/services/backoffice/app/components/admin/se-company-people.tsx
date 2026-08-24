@@ -1,3 +1,4 @@
+import { CompanySourceStrip } from "~/components/admin/company-source-strip";
 import { UsersRoundIcon } from "lucide-react";
 import { Link } from "react-router";
 import { EMPTY_VALUE } from "~/components/admin/definition-list";
@@ -74,82 +75,94 @@ export function SeCompanyPeopleTab({
     (person) => person.roles.length === 0,
   ).length;
   return (
-    <Card>
-      <CardHeader>
-        <div className="flex flex-wrap items-center gap-2">
-          {/* One count sentence rather than a title plus two count badges:
-              "how many, and how many are incomplete" is one fact. */}
-          <CardTitle className="text-base">
-            {people.length} {people.length === 1 ? "person" : "people"}
-            {withoutRoles > 0 ? ` · ${withoutRoles} without a role` : ""}
-          </CardTitle>
-        </div>
-        <CardDescription>
-          Published rows from se_company_person, with the roles resolved into
-          se_company_person_role. A person with no role has evidence but no
-          role the curation could place yet.
-        </CardDescription>
-      </CardHeader>
-      <CardContent>
-        <Table>
-          <TableHeader>
-            <TableRow>
-              <TableHead>Name</TableHead>
-              <TableHead>Roles</TableHead>
-              <TableHead className="text-right">Drafts</TableHead>
-              <TableHead className="text-right">Corrections</TableHead>
-              <TableHead>Updated</TableHead>
-            </TableRow>
-          </TableHeader>
-          <TableBody>
-            {people.map((person) => (
-              <TableRow key={person.person_id}>
-                <TableCell>
-                  <Link
-                    className="underline underline-offset-2"
-                    to={`/admin/se/people/person/${encodeURIComponent(companyId)}/${encodeURIComponent(person.person_id)}`}
-                  >
-                    {person.name}
-                  </Link>
-                  {person.merged_into_person_id === "" ? null : (
-                    <Badge className="ml-2" variant="outline">
-                      merged
-                    </Badge>
-                  )}
-                  {person.description === "" ? null : (
-                    <p className="text-xs text-muted-foreground">
-                      {person.description}
-                    </p>
-                  )}
-                </TableCell>
-                <TableCell>
-                  {person.roles.length === 0 ? (
-                    EMPTY_VALUE
-                  ) : (
-                    <div className="flex flex-wrap gap-1">
-                      {person.roles.map((role) => (
-                        <RoleBadge
-                          key={`${role.role_code}:${role.fiscal_year}`}
-                          role={role}
-                        />
-                      ))}
-                    </div>
-                  )}
-                </TableCell>
-                <TableCell className="text-right tabular-nums">
-                  {person.draft_count}
-                </TableCell>
-                <TableCell className="text-right tabular-nums">
-                  {person.correction_count}
-                </TableCell>
-                <TableCell className="text-xs tabular-nums">
-                  {person.updated_at}
-                </TableCell>
+    <div className="flex flex-col gap-4">
+      {/* The registers behind the ROLES, which is the only provenance the
+          published person rows carry (se_company_person has no source column;
+          se_company_person_role.sources does). A company whose people have no
+          resolved role yet therefore shows an em dash here -- the same "no
+          role the curation could place" the count sentence below reports. */}
+      <CompanySourceStrip
+        sources={people.flatMap((person) =>
+          person.roles.flatMap((role) => role.sources),
+        )}
+      />
+      <Card>
+        <CardHeader>
+          <div className="flex flex-wrap items-center gap-2">
+            {/* One count sentence rather than a title plus two count badges:
+                "how many, and how many are incomplete" is one fact. */}
+            <CardTitle className="text-base">
+              {people.length} {people.length === 1 ? "person" : "people"}
+              {withoutRoles > 0 ? ` · ${withoutRoles} without a role` : ""}
+            </CardTitle>
+          </div>
+          <CardDescription>
+            Published rows from se_company_person, with the roles resolved into
+            se_company_person_role. A person with no role has evidence but no
+            role the curation could place yet.
+          </CardDescription>
+        </CardHeader>
+        <CardContent>
+          <Table>
+            <TableHeader>
+              <TableRow>
+                <TableHead>Name</TableHead>
+                <TableHead>Roles</TableHead>
+                <TableHead className="text-right">Drafts</TableHead>
+                <TableHead className="text-right">Corrections</TableHead>
+                <TableHead>Updated</TableHead>
               </TableRow>
-            ))}
-          </TableBody>
-        </Table>
-      </CardContent>
-    </Card>
+            </TableHeader>
+            <TableBody>
+              {people.map((person) => (
+                <TableRow key={person.person_id}>
+                  <TableCell>
+                    <Link
+                      className="underline underline-offset-2"
+                      to={`/admin/se/people/person/${encodeURIComponent(companyId)}/${encodeURIComponent(person.person_id)}`}
+                    >
+                      {person.name}
+                    </Link>
+                    {person.merged_into_person_id === "" ? null : (
+                      <Badge className="ml-2" variant="outline">
+                        merged
+                      </Badge>
+                    )}
+                    {person.description === "" ? null : (
+                      <p className="text-xs text-muted-foreground">
+                        {person.description}
+                      </p>
+                    )}
+                  </TableCell>
+                  <TableCell>
+                    {person.roles.length === 0 ? (
+                      EMPTY_VALUE
+                    ) : (
+                      <div className="flex flex-wrap gap-1">
+                        {person.roles.map((role) => (
+                          <RoleBadge
+                            key={`${role.role_code}:${role.fiscal_year}`}
+                            role={role}
+                          />
+                        ))}
+                      </div>
+                    )}
+                  </TableCell>
+                  <TableCell className="text-right tabular-nums">
+                    {person.draft_count}
+                  </TableCell>
+                  <TableCell className="text-right tabular-nums">
+                    {person.correction_count}
+                  </TableCell>
+                  <TableCell className="text-xs tabular-nums">
+                    {person.updated_at}
+                  </TableCell>
+                </TableRow>
+              ))}
+            </TableBody>
+          </Table>
+        </CardContent>
+      </Card>
+    </div>
   );
 }

@@ -537,6 +537,79 @@ describe("domains tab", () => {
   });
 });
 
+describe("the Sources strip every tab opens with", () => {
+  // Task 20: the list page says 'BSEW' in letters; each tab has to say the
+  // same thing in words, derived from what that tab ALREADY loaded -- no tab
+  // gained a query for this. One register, one name, across all five.
+  it("names the registers behind the addresses -- including a tombstoned one's", () => {
+    const html = render(
+      <SeCompanyAddressTab
+        result={null}
+        detail={{
+          ...emptyDetail,
+          addresses: [{ ...address, sources: ["scb"] }],
+          // A rejected address is still evidence Bolagsverket held one, and
+          // its card is still on the page -- so the strip must name it.
+          removed: [
+            { ...address, address_key: "e".repeat(64), sources: ["bolagsverket"] },
+          ],
+        }}
+      />,
+      seCompanyTabPath(COMPANY_ID, "address"),
+    );
+    expect(html).toContain('data-source-strip="Bolagsverket,SCB"');
+  });
+
+  it("names only the financial sources that actually filed years", () => {
+    const html = render(
+      <SeCompanyFinancialTab companyId={COMPANY_ID} detail={financials} />,
+      seCompanyTabPath(COMPANY_ID, "financial"),
+    );
+    // The fixture's ESEF view returned no years, so it is not a source card
+    // and must not be a name in the strip either.
+    expect(html).toContain('data-source-strip="Bolagsverket"');
+  });
+
+  it("names the registers behind the people's ROLES, and says nothing when no role resolved", () => {
+    const html = render(
+      <SeCompanyPeopleTab companyId={COMPANY_ID} people={people} />,
+      seCompanyTabPath(COMPANY_ID, "people"),
+    );
+    expect(html).toContain('data-source-strip="Bolagsverket"');
+
+    // se_company_person carries no source column of its own: a company whose
+    // published people have no resolved role has nothing to name, and says so
+    // with the em dash rather than inventing a register.
+    const roleless = render(
+      <SeCompanyPeopleTab
+        companyId={COMPANY_ID}
+        people={people.map((person) => ({ ...person, roles: [] }))}
+      />,
+      seCompanyTabPath(COMPANY_ID, "people"),
+    );
+    expect(roleless).toContain('data-source-strip=""');
+  });
+
+  it("folds the domain register's own spelling onto the catalog's name", () => {
+    const html = render(
+      <SeCompanyDomainsTab
+        companyId={COMPANY_ID}
+        domains={[
+          { ...domain, source_names: ["esef_filing", "common_crawl_identity"] },
+          domain,
+        ]}
+      />,
+      seCompanyTabPath(COMPANY_ID, "domains"),
+    );
+    // 'esef_filing' is ESEF; 'common_crawl_identity' has no letter but is
+    // still named in prose; and the catalog's order wins over arrival order.
+    expect(html).toContain('data-source-strip="ESEF,Wikidata,Common Crawl"');
+    // The per-row evidence still shows the RAW token -- the strip summarises,
+    // it does not rewrite what the register recorded.
+    expect(html).toContain(">esef_filing<");
+  });
+});
+
 describe("tab labels", () => {
   it("is exactly Info, Address, Financial, People, Domains, in that order", () => {
     expect(SE_COMPANY_TABS.map((tab) => tab.label)).toEqual([

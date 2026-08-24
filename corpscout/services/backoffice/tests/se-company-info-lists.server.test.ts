@@ -6,6 +6,8 @@ vi.mock("~/lib/clickhouse.server", () => ({ chQuery: clickhouse.query }));
 import {
   buildCorrectionsListFilter,
   buildInfoListFilter,
+  COMPANY_SETS,
+  DATATYPE_PRESENCE_EXPR,
   CORRECTION_FILTER_OPTIONS_SQL,
   CORRECTION_SORT_COLUMNS,
   CORRECTION_STATUS_EXPR,
@@ -32,6 +34,10 @@ import {
   SCOPED_PUBLISHED_JOIN_SQL,
   UNDONE_CTE_SQL,
 } from "~/lib/se-company-info-lists.server";
+import {
+  PROFILE_DATATYPES,
+  PROFILE_SOURCES,
+} from "~/lib/se-company-info-filters";
 import { ZERO_EVIDENCE_HASH } from "~/lib/se-person-corrections";
 
 describe("buildInfoListFilter", () => {
@@ -78,22 +84,26 @@ describe("buildInfoListFilter", () => {
       params: {},
     });
     // Sources: one predicate per source a profile can be built from, reusing
-    // the very term the S/E/W letter is derived from -- so a row the column
-    // marks E is exactly a row `?source=esef` returns, forever.
-    expect(buildInfoListFilter({ source: "esef" })).toEqual({
-      where: [PROFILE_SOURCE_PREDICATES.esef],
-      params: {},
-    });
-    expect(buildInfoListFilter({ source: "wikidata" })).toEqual({
-      where: [PROFILE_SOURCE_PREDICATES.wikidata],
-      params: {},
-    });
+    // the very term the B/S/E/W letter is derived from -- so a row the column
+    // marks E is exactly a row `?source=esef` returns, forever. Every catalog
+    // source is covered here, so a new one cannot arrive filter-less.
+    for (const source of PROFILE_SOURCES) {
+      expect(buildInfoListFilter({ source: source.value })).toEqual({
+        where: [PROFILE_SOURCE_PREDICATES[source.value]],
+        params: {},
+      });
+    }
     // SCB is the register base (owner ruling): every published row has it, so
     // its predicate is the tautology the 'S' letter is, kept for uniformity.
     expect(buildInfoListFilter({ source: "scb" })).toEqual({
       where: ["1"],
       params: {},
     });
+    // ...and no other source is a tautology: a filter that returned every
+    // company would be worse than no filter at all.
+    for (const source of ["bolagsverket", "esef", "wikidata"] as const) {
+      expect(PROFILE_SOURCE_PREDICATES[source]).not.toBe("1");
+    }
   });
 
   it("whitelists the source filter against the profile-source catalog instead of interpolating it", () => {
@@ -209,33 +219,137 @@ describe("se_company_info list SQL shape", () => {
     expect(PAGE_LIMIT_OFFSET_SQL).toBe("LIMIT {limit:UInt32} OFFSET {offset:UInt32}");
   });
 
-  it("derives the Sources letters in one pinned expression, S first, then E, then W", () => {
+  it("derives the Sources letters in one pinned expression: B, then S, then E, then W", () => {
     // Pinned WHOLE, not by fragments: this string is the column, the sort key
     // and (term by term) the filter, so a silent edit to any part of it -- a
-    // dropped OR arm, a swapped letter, a reordered concat -- must fail here.
-    // ESEF's arm carries `lei IS NOT NULL` because se_company_info.lei is
-    // written ONLY from the ESEF artifact (info_rules.py: `lei=_text(
+    // dropped OR arm, a swapped letter, a reordered concat, a table swapped
+    // for a cheaper-looking one -- must fail here.
+    //
+    // The letters are the UNION across all five datatypes, which is the whole
+    // point of the column: 'E' is earned by an ESEF-sourced FILING (404
+    // companies) far more often than by the description artifact (2), and 'B'
+    // exists at all only because Bolagsverket writes addresses, accounts and
+    // people but never a description.
+    //
+    // `lei IS NOT NULL` is belt and braces, NOT coverage: se_company_info.lei
+    // is written only from the ESEF artifact (info_rules.py: `lei=_text(
     // esef.values.get("lei")) if esef else None`, and no correction kind can
-    // set it), so a LEI is proof of an ESEF filing even when that filing
-    // carried no description. Wikidata's arm is the mirror image: wikidata_id
-    // is written only from the Wikidata artifact.
+    // set it), but every ESEF merge participation also writes 'esef' into
+    // description_sources today, so the two arms name the same rows. It guards
+    // a future filing that carries a LEI and no description. Wikidata's own
+    // arm is the mirror image: wikidata_id is written only from the Wikidata
+    // artifact, and a Wikidata row may contribute no description.
     expect(PROFILE_SOURCES_EXPR).toBe(
       `concat(
+  if((i.company_id IN (SELECT company_id FROM corpscout.se_company_address FINAL WHERE is_current AND has(sources, 'bolagsverket')) OR i.company_id IN (SELECT company_id FROM corpscout.se_bolagsverket_financial_metrics) OR i.company_id IN (SELECT company_id FROM corpscout.se_company_person_role WHERE has(sources, 'bolagsverket'))), 'B', ''),
   if(1, 'S', ''),
-  if((has(i.description_sources, 'esef') OR i.lei IS NOT NULL), 'E', ''),
+  if((has(i.description_sources, 'esef') OR i.lei IS NOT NULL OR i.company_id IN (SELECT ci.company_id FROM corpscout.company_identifier AS ci WHERE ci.issuer_scheme = 'lei' AND ci.country_code = 'SE' AND ci.is_current = 1 AND ci.issuer_id IN (SELECT upperUTF8(trimBoth(m.lei)) FROM corpscout.esef_financial_metrics AS m)) OR i.company_id IN (SELECT company_id FROM corpscout.se_company_person_role WHERE has(sources, 'esef'))), 'E', ''),
   if((i.wikidata_id IS NOT NULL OR has(i.description_sources, 'wikidata')), 'W', '')
 )`,
     );
-    // One predicate per catalog source, and the concat is built FROM them, so
-    // column and filter cannot drift apart.
-    expect(Object.keys(PROFILE_SOURCE_PREDICATES)).toEqual([
-      "scb",
-      "esef",
-      "wikidata",
-    ]);
-    for (const predicate of Object.values(PROFILE_SOURCE_PREDICATES)) {
-      expect(PROFILE_SOURCES_EXPR).toContain(`if(${predicate}, '`);
+    // One predicate per catalog source, in the catalog's order, and the concat
+    // is built FROM them, so column and filter cannot drift apart.
+    expect(Object.keys(PROFILE_SOURCE_PREDICATES)).toEqual(
+      PROFILE_SOURCES.map((source) => source.value),
+    );
+    for (const source of PROFILE_SOURCES) {
+      expect(PROFILE_SOURCES_EXPR).toContain(
+        `if(${PROFILE_SOURCE_PREDICATES[source.value]}, '${source.letter}', '')`,
+      );
     }
+  });
+
+  it("reads every datatype's presence from that datatype's OWN final table, once", () => {
+    // Each set is the table the matching tab reads (see the per-tab server
+    // modules), so "the list says Address ✓" and "the Address tab has cards"
+    // cannot disagree.
+    expect(COMPANY_SETS.address).toBe(
+      "SELECT company_id FROM corpscout.se_company_address FINAL WHERE is_current",
+    );
+    expect(COMPANY_SETS.people).toBe(
+      "SELECT company_id FROM corpscout.se_company_person",
+    );
+    // company_domains is the UNIFIED register: without the country filter this
+    // column would tick for a foreign company that happens to share an id.
+    expect(COMPANY_SETS.domains).toBe(
+      "SELECT company_id FROM corpscout.company_domains WHERE country_code = 'SE'",
+    );
+    // FINAL only where a flag is flipped in place by a later part. address's
+    // is_current is (a tombstoned address must not read as live); the other
+    // three tables never withdraw a row, so paying for a merge would be waste.
+    expect(COMPANY_SETS.address).toContain("FINAL");
+    expect(COMPANY_SETS.addressBolagsverket).toContain("FINAL");
+    for (const set of [
+      COMPANY_SETS.people,
+      COMPANY_SETS.domains,
+      COMPANY_SETS.financialBolagsverket,
+      COMPANY_SETS.financialEsef,
+    ]) {
+      expect(set).not.toContain("FINAL");
+    }
+    // ESEF financials are keyed by LEI, so they reach a company through
+    // company_identifier exactly as se_financials_esef_current's own INNER
+    // JOIN does -- scoped to SE and to the current identifier, or a foreign
+    // issuer's LEI would tick a Swedish company's row.
+    expect(COMPANY_SETS.financialEsef).toContain("corpscout.company_identifier");
+    expect(COMPANY_SETS.financialEsef).toContain("ci.issuer_scheme = 'lei'");
+    expect(COMPANY_SETS.financialEsef).toContain("ci.country_code = 'SE'");
+    expect(COMPANY_SETS.financialEsef).toContain("ci.is_current = 1");
+    expect(COMPANY_SETS.financialEsef).toContain(
+      "corpscout.esef_financial_metrics",
+    );
+  });
+
+  it("gives every catalog datatype a presence expression built from those sets", () => {
+    // Keyed by the client-safe catalog, so a datatype shown as a column always
+    // has SQL behind it (the Record type is the compile-time half of this).
+    expect(Object.keys(DATATYPE_PRESENCE_EXPR)).toEqual(
+      PROFILE_DATATYPES.map((datatype) => datatype.key),
+    );
+    expect(DATATYPE_PRESENCE_EXPR.has_address).toBe(
+      `i.company_id IN (${COMPANY_SETS.address})`,
+    );
+    expect(DATATYPE_PRESENCE_EXPR.has_people).toBe(
+      `i.company_id IN (${COMPANY_SETS.people})`,
+    );
+    expect(DATATYPE_PRESENCE_EXPR.has_domains).toBe(
+      `i.company_id IN (${COMPANY_SETS.domains})`,
+    );
+    // Financial presence is the OR of the two REGISTER arms -- the same two
+    // source views the Financial tab renders -- and is spelled with the very
+    // sets the B and E letters use. That is what makes the invariant hold:
+    // a row can never show Financial ✓ with neither B nor E among its letters.
+    expect(DATATYPE_PRESENCE_EXPR.has_financial).toBe(
+      `(i.company_id IN (${COMPANY_SETS.financialBolagsverket})` +
+        ` OR i.company_id IN (${COMPANY_SETS.financialEsef}))`,
+    );
+    expect(PROFILE_SOURCE_PREDICATES.bolagsverket).toContain(
+      `i.company_id IN (${COMPANY_SETS.financialBolagsverket})`,
+    );
+    expect(PROFILE_SOURCE_PREDICATES.esef).toContain(
+      `i.company_id IN (${COMPANY_SETS.financialEsef})`,
+    );
+  });
+
+  it("projects one UInt8 presence column per catalog datatype, and reads description_sources only inside has()", () => {
+    for (const datatype of PROFILE_DATATYPES) {
+      expect(INFO_LIST_SELECT_SQL).toContain(
+        `toUInt8(${DATATYPE_PRESENCE_EXPR[datatype.key]}) AS ${datatype.key},`,
+      );
+    }
+    // EVERY mention of description_sources in the list SELECT sits inside a
+    // has() term -- the array itself must never be projected. A weaker
+    // `not.toContain("i.description_sources AS")` pin would pass on
+    // `arraySort(i.description_sources) AS x`, which would put a 300-byte
+    // array on every one of 50 rows.
+    const term = "description_sources";
+    for (let at = INFO_LIST_SELECT_SQL.indexOf(term); at !== -1;
+         at = INFO_LIST_SELECT_SQL.indexOf(term, at + 1)) {
+      expect(INFO_LIST_SELECT_SQL.slice(at - "has(i.".length, at)).toBe("has(i.");
+    }
+    // ...and it IS read: a pin that passes because the column vanished proves
+    // nothing.
+    expect(INFO_LIST_SELECT_SQL).toContain(term);
   });
 });
 
@@ -255,7 +369,11 @@ describe("listSeCompanyInfoPage", () => {
     expect(rowsSql).toContain("FROM corpscout.se_company_info AS i FINAL");
     expect(rowsSql).toContain("ORDER BY i.company_id");
     expect(rowsSql).toContain(PAGE_LIMIT_OFFSET_SQL);
-    expect(rowsSql).not.toContain("WHERE");
+    // The presence sets have WHERE clauses of their own (is_current, the SE
+    // scope), all of them INLINE inside a subquery; it is the *outer*,
+    // line-starting filter clause that must be absent when nothing is filtered
+    // -- the same distinction the corrections list's CTE forced.
+    expect(rowsSql).not.toContain("\nWHERE ");
     expect(rowsParams).toEqual({ limit: 50, offset: 0 });
   });
 
@@ -495,10 +613,19 @@ describe("server-side sorting", () => {
     expect(infoOrderBySql("entity_type", "asc")).toBe(
       "ORDER BY length(i.company_id) ASC, i.company_id ASC",
     );
-    // Sources sorts by the derived string itself: 'S' < 'SE' < 'SEW' < 'SW'.
+    // Sources sorts by the derived string itself: 'BS' < 'BSE' < 'S' < 'SW'.
     expect(infoOrderBySql("profile_sources", "desc")).toBe(
       `ORDER BY ${PROFILE_SOURCES_EXPR} DESC, i.company_id ASC`,
     );
+    // Every presence column sorts by the SAME expression it is projected from,
+    // never by its SELECT alias (ClickHouse does not guarantee an alias is
+    // visible to ORDER BY at the same level) -- so "which companies have no
+    // domains" is one header click over 3.5M rows.
+    for (const datatype of PROFILE_DATATYPES) {
+      expect(infoOrderBySql(datatype.key, "asc")).toBe(
+        `ORDER BY ${DATATYPE_PRESENCE_EXPR[datatype.key]} ASC, i.company_id ASC`,
+      );
+    }
     // The default sort IS the tiebreak column, so it appears once.
     expect(infoOrderBySql("company_id", "asc")).toBe("ORDER BY i.company_id ASC");
     expect(correctionsOrderBySql("company_id", "asc")).toBe(
@@ -545,6 +672,10 @@ describe("server-side sorting", () => {
       "legal_form_code",
       "entity_type",
       "has_description",
+      "has_address",
+      "has_financial",
+      "has_people",
+      "has_domains",
       "profile_sources",
     ]);
     expect(Object.keys(CORRECTION_SORT_COLUMNS)).toEqual([

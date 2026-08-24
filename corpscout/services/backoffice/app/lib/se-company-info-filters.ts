@@ -35,16 +35,24 @@ export const NONE_FILTER_VALUE = "none";
 /**
  * Every source a Swedish company profile can be built from, in the ONE
  * canonical order the whole feature uses: the letters of the Sources column
- * ('S', 'SW', 'SEW'), the legend that explains them, the filter's options and
- * -- via `PROFILE_SOURCE_PREDICATES` in the lists server module, which keys
- * off `value` -- the SQL that derives them. Order is pinned here and nowhere
+ * ('BS', 'BSEW'), the legend that explains them, the filter's options and --
+ * via `PROFILE_SOURCE_PREDICATES` in the lists server module, which keys off
+ * `value` -- the SQL that derives them. Order is pinned here and nowhere
  * else, so a row can never be labelled in one order and sorted in another.
  *
- * `value` is what travels in the URL and what `se_company_info
- * .description_sources` calls the source; `letter` is the badge; `label` is
- * what a reader sees in the legend, the chip and the badge's tooltip.
+ * This is a GLOBAL alphabet, not the description's: a letter is earned by any
+ * of the five datatypes (info, address, financial, people, domains) carrying
+ * that register, which is why Bolagsverket is here at all -- it writes
+ * addresses, annual accounts and people, but never a company description.
+ *
+ * `value` is what travels in the URL and what the pipelines' own `sources` /
+ * `description_sources` arrays call the register; `letter` is the badge;
+ * `label` is what a reader sees in the legend, the chip and the tooltip.
  */
 export const PROFILE_SOURCES = [
+  // Bolagsverket is the registration authority: it carries the address the
+  // register text comes from, the annual accounts and the role evidence.
+  { value: "bolagsverket", letter: "B", label: "Bolagsverket" },
   // SCB is the register base: se_company_info publishes nothing without an SCB
   // row (info_rules.py returns None), so every listed company has this one.
   { value: "scb", letter: "S", label: "SCB" },
@@ -84,7 +92,7 @@ export interface ProfileSourcePart {
 }
 
 /**
- * The derived `profile_sources` string ('S' | 'SE' | 'SEW' | ...) as one
+ * The derived `profile_sources` string ('BS' | 'SW' | 'BSEW' | ...) as one
  * labelled part per letter, in the string's own (already canonical) order.
  *
  * A letter the catalog does not name -- a source the server started emitting
@@ -98,6 +106,40 @@ export function profileSourceParts(profileSources: string): ProfileSourcePart[] 
     label: PROFILE_SOURCE_BY_LETTER.get(letter)?.label ?? letter,
   }));
 }
+
+/**
+ * The catalog's name for a source VALUE ("wikidata" -> "Wikidata"), falling
+ * back to the value itself for one it does not name.
+ *
+ * ONE function for every place a value is shown to a reader: the filter
+ * sheet's `<Select>` options, the applied-filter chip and the detail tabs'
+ * Sources strip. Two hand-rolled `find(...)?.label ?? value` expressions is
+ * exactly how a renamed source ends up spelled two ways on one page.
+ */
+export function profileSourceLabel(value: string): string {
+  return PROFILE_SOURCE_BY_VALUE.get(value)?.label ?? value;
+}
+
+/**
+ * The five datatypes a Swedish company profile is assembled from, as the
+ * presence columns of `/admin/se/company-info`: `key` is the list row's own
+ * column (and therefore its `?sort=` value), `label` is the column header.
+ *
+ * Description is NOT here: it is a column of se_company_info itself, answered
+ * by `has_description` without touching another table, and it predates this
+ * catalog. These four each cost a set over their datatype's own final table,
+ * which is why they are one list -- the server keys its presence SQL by these
+ * keys, so a datatype added here without an expression is a type error rather
+ * than a column of blanks.
+ */
+export const PROFILE_DATATYPES = [
+  { key: "has_address", label: "Address" },
+  { key: "has_financial", label: "Financial" },
+  { key: "has_people", label: "People" },
+  { key: "has_domains", label: "Domains" },
+] as const;
+
+export type ProfileDatatypeKey = (typeof PROFILE_DATATYPES)[number]["key"];
 
 /** Task 17 (owner addendum 2026-08-23): the company-info list filters
  * COMPANIES. Its description-PROVENANCE filters (language, suggestion,
@@ -183,8 +225,7 @@ export function infoFilterChips(
   }
   if (filters.source) {
     // Named, not spelled: the chip says "Source Wikidata", not "wikidata".
-    const label = PROFILE_SOURCE_BY_VALUE.get(filters.source)?.label ?? filters.source;
-    chips.push(chip("source", `Source ${label}`));
+    chips.push(chip("source", `Source ${profileSourceLabel(filters.source)}`));
   }
   return chips;
 }

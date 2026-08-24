@@ -1,3 +1,4 @@
+import { CompanySourceStrip } from "~/components/admin/company-source-strip";
 import { CoinsIcon } from "lucide-react";
 import { Link } from "react-router";
 import { Badge } from "~/components/ui/badge";
@@ -447,6 +448,12 @@ export function SeCompanyFinancialTab({
   }
   return (
     <section className="flex flex-col gap-4">
+      {/* The registers that actually filed figures -- the source views that
+          returned years, not the ones this app knows how to read. A source
+          card below is exactly a name in this strip. */}
+      <CompanySourceStrip
+        sources={sourcesWithYears.map((source) => source.source_id)}
+      />
       {detail.latest ? (
         <LatestCard latest={detail.latest} companyId={companyId} />
       ) : null}

@@ -1,3 +1,4 @@
+import { CompanySourceStrip } from "~/components/admin/company-source-strip";
 import { GlobeIcon } from "lucide-react";
 import { Link } from "react-router";
 import { Badge } from "~/components/ui/badge";
@@ -164,6 +165,13 @@ export function SeCompanyDomainsTab({
   }
   return (
     <section className="flex flex-col gap-4">
+      {/* company_domains names its own suggesters ('common_crawl_identity',
+          'wikidata', 'esef_filing'), which is a different vocabulary from the
+          register letters on the list page -- the strip maps the two that ARE
+          registers onto their catalog names and shows the rest as they are. */}
+      <CompanySourceStrip
+        sources={domains.flatMap((row) => row.source_names)}
+      />
       <div className="text-sm">
         <Link
           className="underline underline-offset-2"

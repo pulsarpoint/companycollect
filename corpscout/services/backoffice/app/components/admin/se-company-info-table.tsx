@@ -15,8 +15,10 @@ import type {
   SeCompanyInfoSortKey,
 } from "~/lib/se-company-info-lists.server";
 import {
+  PROFILE_DATATYPES,
   PROFILE_SOURCES_LEGEND,
   profileSourceParts,
+  type ProfileDatatypeKey,
   type SeCompanyInfoTableFilters,
 } from "~/lib/se-company-info-filters";
 
@@ -31,10 +33,10 @@ const ENTITY_LABELS: Record<string, string> = {
 
 /**
  * Which registers built this company's profile, one monospace letter each in
- * the catalog's canonical order (S, E, W). Monospace and one badge per letter
- * so the column scans vertically: an 'S' row and an 'SEW' row line up, and the
- * legend above the table names every letter. Each badge carries its source's
- * full name as a tooltip, so the letters never have to be memorised.
+ * the catalog's canonical order (B, S, E, W). Monospace and one badge per
+ * letter so the column scans vertically: an 'S' row and a 'BSEW' row line up,
+ * and the legend above the table names every letter. Each badge carries its
+ * source's full name as a tooltip, so the letters never have to be memorised.
  */
 function ProfileSources({ profileSources }: { profileSources: string }) {
   const parts = profileSourceParts(profileSources);
@@ -53,6 +55,36 @@ function ProfileSources({ profileSources }: { profileSources: string }) {
           {part.letter}
         </Badge>
       ))}
+    </span>
+  );
+}
+
+/**
+ * One datatype's presence on this company: a check when the datatype's own
+ * final table has a row for it, the shared em dash when it does not.
+ *
+ * The dash is `EMPTY_VALUE` itself rather than a second muted dash of its own,
+ * so "nothing here" looks identical in this column and in every definition
+ * list on the detail pages. Both states carry the column's name in the title
+ * and in `data-presence`/`data-present`: four adjacent one-glyph cells are
+ * unreadable to a screen reader (and indistinguishable to a test) otherwise.
+ */
+function PresenceCell({
+  datatype,
+  label,
+  present,
+}: {
+  datatype: ProfileDatatypeKey;
+  label: string;
+  present: number;
+}) {
+  return (
+    <span
+      data-presence={datatype}
+      data-present={present ? "yes" : "no"}
+      title={`${label}: ${present ? "yes" : "no"}`}
+    >
+      {present ? "✓" : EMPTY_VALUE}
     </span>
   );
 }
@@ -140,11 +172,27 @@ function buildColumns(
         </Badge>
       ),
     },
+    // One column per datatype, built FROM the catalog so the headers, the
+    // sort keys and the projected columns are one list: a datatype cannot be
+    // shown without being sortable, or sortable without being shown.
+    ...PROFILE_DATATYPES.map(
+      (datatype): ColumnDef<SeCompanyInfoListRow, unknown> => ({
+        id: datatype.key,
+        header: head(datatype.label, datatype.key),
+        cell: ({ row }) => (
+          <PresenceCell
+            datatype={datatype.key}
+            label={datatype.label}
+            present={row.original[datatype.key]}
+          />
+        ),
+      }),
+    ),
     {
-      // Which REGISTERS built the profile -- not where the published text came
-      // from. Sorted server-side by the same derived string it shows, so the
-      // multi-source companies (rare: ~2.4k Wikidata, a handful of ESEF today)
-      // can be brought to the top of 3.5M rows in one click.
+      // Which REGISTERS built the profile, across every datatype -- not where
+      // the published text came from. Sorted server-side by the same derived
+      // string it shows, so the rarer profiles (~3.1k Wikidata, ~400 ESEF
+      // today) can be brought to the top of 3.5M rows in one click.
       id: "profile_sources",
       header: head("Sources", "profile_sources"),
       cell: ({ row }) => <ProfileSources profileSources={row.original.profile_sources} />,
@@ -210,7 +258,10 @@ export function SeCompanyInfoTable({
         columns={buildColumns(sort, dir)}
         data={rows}
         emptyText="No companies match these filters."
-        minWidthClassName="min-w-[48rem]"
+        // Four presence columns wider than it was: below this the header row
+        // wraps and the checks stop lining up down the column, which is the
+        // only thing that makes them scannable. The wrapper scrolls, not the page.
+        minWidthClassName="min-w-[72rem]"
         rowHref={(row) => `/admin/se/company/${encodeURIComponent(row.company_id)}/info`}
       />
       <DataTablePagination total={total} page={page} pageSize={pageSize} itemsLabel="companies" />

@@ -35,8 +35,8 @@ import {
   infoListSearch,
   optionLabel,
   optionValue,
-  PROFILE_SOURCES,
   PROFILE_SOURCE_VALUES,
+  profileSourceLabel,
   selectValue,
   type FilterChip,
   type SeCompanyInfoCorrectionsTableFilters,
@@ -214,19 +214,19 @@ export function SeCompanyInfoFilterFields({
         />
       </Field>
       <Field label="Source">
-        {/* Which registers built the profile. The option VALUE is the source's
-            own name (what se_company_info.description_sources calls it, and
-            what the URL carries); its TEXT is what a reader calls it. SCB is
-            offered even though every company has it -- the three sources read
-            as one list, and the column's own 'S' says the same thing. */}
+        {/* Which registers built the profile, in ANY datatype -- the same
+            question the Sources column's letters answer, and the same
+            predicates. The option VALUE is the register's own name (what the
+            pipelines' `sources` arrays call it, and what the URL carries); its
+            TEXT is what a reader calls it. SCB is offered even though every
+            company has it -- the four sources read as one list, and the
+            column's own 'S' says the same thing. */}
         <FilterSelect
           name="source"
           label="Source"
           value={filters.source}
           options={PROFILE_SOURCE_VALUES}
-          labelOf={(value) =>
-            PROFILE_SOURCES.find((source) => source.value === value)?.label ?? value
-          }
+          labelOf={profileSourceLabel}
         />
       </Field>
     </div>

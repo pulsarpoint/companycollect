@@ -4,6 +4,7 @@ import { Alert, AlertDescription, AlertTitle } from "~/components/ui/alert";
 import { Badge } from "~/components/ui/badge";
 import { Button } from "~/components/ui/button";
 import { Checkbox } from "~/components/ui/checkbox";
+import { CompanySourceStrip } from "~/components/admin/company-source-strip";
 import {
   DefinitionList,
   EMPTY_VALUE,
@@ -470,6 +471,12 @@ export function SeCompanyAddressTab({
   }
   return (
     <div className="flex flex-col gap-6">
+      {/* Every source that carried any address this tab shows, live or
+          tombstoned: a rejected address is still evidence a register held it,
+          and dropping it would make the strip disagree with the cards below. */}
+      <CompanySourceStrip
+        sources={[...addresses, ...removed].flatMap((row) => row.sources)}
+      />
       {result?.ok ? (
         <Alert>
           <CheckCircle2Icon />

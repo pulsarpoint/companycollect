@@ -5,6 +5,7 @@ import {
 } from "lucide-react";
 import { Form, useNavigation } from "react-router";
 import { Alert, AlertDescription, AlertTitle } from "~/components/ui/alert";
+import { CompanySourceStrip } from "~/components/admin/company-source-strip";
 import {
   DefinitionList,
   EMPTY_VALUE,
@@ -416,6 +417,12 @@ export function SeCompanyInfoReviewWorkspace({
     // the sub-menu up into admin-se-company-layout.tsx, which renders this
     // tab inside its own padded container.
     <div className="flex flex-col gap-6">
+      {/* The artifact legs this company actually has (scb / esef / wikidata),
+          which is the same set the "Sources" section below groups its cards
+          by -- named once at the top so all five tabs open the same way. */}
+      <CompanySourceStrip
+        sources={artifacts.map((artifact) => artifact.source)}
+      />
       {result?.ok ? (
         <Alert>
           <CheckCircle2Icon />

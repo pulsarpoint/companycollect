@@ -16,8 +16,10 @@ import {
   optionValue,
   parseInfoFilters,
   parseListView,
+  PROFILE_DATATYPES,
   PROFILE_SOURCES,
   PROFILE_SOURCES_LEGEND,
+  profileSourceLabel,
   profileSourceParts,
   type SeCompanyInfoTableFilters,
 } from "~/lib/se-company-info-filters";
@@ -35,7 +37,11 @@ const ROW: SeCompanyInfoListRow = {
   legal_form_label_sv: "Aktiebolag",
   entity_type: "legal",
   has_description: 1,
-  profile_sources: "SEW",
+  has_address: 1,
+  has_financial: 1,
+  has_people: 0,
+  has_domains: 1,
+  profile_sources: "BSEW",
 };
 
 const COUNTS: SeCompanyInfoListCounts = {
@@ -145,26 +151,73 @@ describe("SeCompanyInfoTable", () => {
   });
 
   it("shows which sources built the profile, one monospace letter each, under a legend", () => {
-    // Owner ruling: S is unconditional (SCB is the register base), E and W are
-    // earned. This fixture company has all three.
+    // Owner ruling: S is unconditional (SCB is the register base); B, E and W
+    // are earned by ANY datatype. This fixture company has all four.
     const html = render();
     expect(html).toContain(PROFILE_SOURCES_LEGEND);
-    expect(html).toContain("Sources: S = SCB · E = ESEF · W = Wikidata");
-    for (const [letter, label] of [["S", "SCB"], ["E", "ESEF"], ["W", "Wikidata"]]) {
+    expect(html).toContain(
+      "Sources: B = Bolagsverket · S = SCB · E = ESEF · W = Wikidata",
+    );
+    for (const [letter, label] of [
+      ["B", "Bolagsverket"],
+      ["S", "SCB"],
+      ["E", "ESEF"],
+      ["W", "Wikidata"],
+    ]) {
       expect(html).toContain(`title="${label}"`);
       expect(html).toContain(`>${letter}</span>`);
     }
-    // Monospace, so 'S' and 'SEW' line up down the column.
+    // Monospace, so 'BS' and 'BSEW' line up down the column.
     expect(html).toContain("font-mono");
   });
 
-  it("shows only the letters a company has -- the S-only majority stays one letter", () => {
-    const html = render({ rows: [{ ...ROW, profile_sources: "S" }] });
+  it("shows only the letters a company has -- the BS majority stays two letters", () => {
+    const html = render({ rows: [{ ...ROW, profile_sources: "BS" }] });
+    expect(html).toContain('title="Bolagsverket"');
     expect(html).toContain('title="SCB"');
     expect(html).not.toContain('title="ESEF"');
     expect(html).not.toContain('title="Wikidata"');
     // The legend is the table's, not the row's: it stands whatever the rows say.
     expect(html).toContain(PROFILE_SOURCES_LEGEND);
+  });
+
+  it("ticks a datatype the company has and em-dashes one it does not, per column", () => {
+    // Four one-glyph cells in a row: each carries its own column name, so a
+    // check that moved to the wrong column fails here rather than reading as
+    // "some datatype is present".
+    const html = render();
+    expect(html).toContain('data-presence="has_address" data-present="yes"');
+    expect(html).toContain('data-presence="has_financial" data-present="yes"');
+    expect(html).toContain('data-presence="has_people" data-present="no"');
+    expect(html).toContain('data-presence="has_domains" data-present="yes"');
+    expect(html).toContain('title="People: no"');
+    expect(html).toContain('title="Address: yes"');
+    // The absent one says so with the SHARED em dash, not a blank cell.
+    expect(html).toContain("—");
+    // ...and every datatype of the catalog has a header of its own (the sort
+    // icon follows the label, so the "<" closes the sort chevron's <svg>).
+    for (const datatype of PROFILE_DATATYPES) {
+      expect(html).toContain(`>${datatype.label}<svg`);
+    }
+  });
+
+  it("inverts every tick for a company that has nothing but its register row", () => {
+    const html = render({
+      rows: [
+        {
+          ...ROW,
+          has_address: 0,
+          has_financial: 0,
+          has_people: 1,
+          has_domains: 0,
+          profile_sources: "S",
+        },
+      ],
+    });
+    expect(html).toContain('data-presence="has_address" data-present="no"');
+    expect(html).toContain('data-presence="has_financial" data-present="no"');
+    expect(html).toContain('data-presence="has_people" data-present="yes"');
+    expect(html).toContain('data-presence="has_domains" data-present="no"');
   });
 
   it("says nothing about the description's provenance -- that is the detail page's job", () => {
@@ -176,6 +229,12 @@ describe("SeCompanyInfoTable", () => {
     for (const gone of [
       ">LLM<",
       ">Language<",
+      // Singular, and it is NOT the "Sources" column: a description-provenance
+      // column called "Source" (which is what this page used to have) would
+      // match this and nothing else does -- the header below renders as
+      // ">Sources</a>", and the filter sheet's own "Source" field label is not
+      // in this markup at all (Base UI renders the sheet through a portal).
+      ">Source<",
       ">Suggestion<",
       ">Corrections<",
       ">Resolved<",
@@ -221,6 +280,7 @@ describe("SeCompanyInfoTable sorting", () => {
       "legal_form_code",
       "entity_type",
       "has_description",
+      ...PROFILE_DATATYPES.map((datatype) => datatype.key),
       "profile_sources",
     ]) {
       expect(html).toContain(`href="${PATH}?sort=${key}&amp;dir=asc"`);
@@ -234,6 +294,7 @@ describe("SeCompanyInfoTable sorting", () => {
     expect(html).toContain(`href="${PATH}?sort=legal_name&amp;dir=desc"`);
     // Another column still offers its own first click, unaffected.
     expect(html).toContain(`href="${PATH}?sort=has_description&amp;dir=asc"`);
+    expect(html).toContain(`href="${PATH}?sort=has_domains&amp;dir=asc"`);
     expect(html).toContain(`href="${PATH}?sort=profile_sources&amp;dir=asc"`);
   });
 });
@@ -305,7 +366,8 @@ describe("SeCompanyInfoFilterFields", () => {
     }
     // Task 17: the description-PROVENANCE filters are still gone. `source` is
     // back with an entirely different meaning -- which registers built the
-    // profile (scb/esef/wikidata), not where the published text came from.
+    // profile, in any datatype (bolagsverket/scb/esef/wikidata), not where the
+    // published text came from.
     for (const gone of ['name="language"', 'name="suggestion"',
                         'name="multi"', 'name="corrected"']) {
       expect(html).not.toContain(gone);
@@ -369,17 +431,34 @@ describe("SeCompanyInfoFilterFields", () => {
   });
 });
 
+describe("profileSourceLabel", () => {
+  it("names a source value, and is what BOTH the chip and the sheet name it with", () => {
+    // One lookup, so a renamed source cannot read one way in the filter
+    // dropdown and another way in the chip that summarises it.
+    for (const source of PROFILE_SOURCES) {
+      expect(profileSourceLabel(source.value)).toBe(source.label);
+      expect(infoFilterChips({ ...EMPTY_INFO_FILTERS, source: source.value })).toEqual([
+        { param: "source", label: `Source ${source.label}` },
+      ]);
+    }
+    expect(profileSourceLabel("bolagsverket")).toBe("Bolagsverket");
+    // A value the catalog does not name is shown, not swallowed.
+    expect(profileSourceLabel("llm")).toBe("llm");
+  });
+});
+
 describe("profileSourceParts", () => {
   it("reads the derived string left to right, naming each letter", () => {
-    expect(profileSourceParts("SEW")).toEqual([
+    expect(profileSourceParts("BSEW")).toEqual([
+      { letter: "B", label: "Bolagsverket" },
       { letter: "S", label: "SCB" },
       { letter: "E", label: "ESEF" },
       { letter: "W", label: "Wikidata" },
     ]);
     expect(profileSourceParts("S")).toEqual([{ letter: "S", label: "SCB" }]);
-    expect(profileSourceParts("SW")).toEqual([
+    expect(profileSourceParts("BS")).toEqual([
+      { letter: "B", label: "Bolagsverket" },
       { letter: "S", label: "SCB" },
-      { letter: "W", label: "Wikidata" },
     ]);
   });
 
@@ -394,8 +473,10 @@ describe("profileSourceParts", () => {
   });
 
   it("legends exactly the letters it can render, in the order they appear", () => {
-    expect(PROFILE_SOURCES_LEGEND).toBe("Sources: S = SCB · E = ESEF · W = Wikidata");
-    expect(PROFILE_SOURCES.map((source) => source.letter).join("")).toBe("SEW");
+    expect(PROFILE_SOURCES_LEGEND).toBe(
+      "Sources: B = Bolagsverket · S = SCB · E = ESEF · W = Wikidata",
+    );
+    expect(PROFILE_SOURCES.map((source) => source.letter).join("")).toBe("BSEW");
   });
 });
 

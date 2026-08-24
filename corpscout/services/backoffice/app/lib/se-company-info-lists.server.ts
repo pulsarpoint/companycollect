@@ -20,7 +20,9 @@ import {
 import {
   ANY_FILTER_VALUE,
   NONE_FILTER_VALUE,
+  PROFILE_DATATYPES,
   PROFILE_SOURCES,
+  type ProfileDatatypeKey,
   type ProfileSourceValue,
 } from "~/lib/se-company-info-filters";
 import { ZERO_EVIDENCE_HASH } from "~/lib/se-person-corrections";
@@ -131,11 +133,20 @@ export interface SeCompanyInfoListRow {
   entity_type: string;
   /** 0 | 1 -- `description IS NOT NULL`, projected as UInt8 (see the SELECT). */
   has_description: number;
+  /** 0 | 1 -- has a live row in corpscout.se_company_address. */
+  has_address: number;
+  /** 0 | 1 -- has annual accounts from Bolagsverket or ESEF. */
+  has_financial: number;
+  /** 0 | 1 -- has a published row in corpscout.se_company_person. */
+  has_people: number;
+  /** 0 | 1 -- has a Swedish row in the unified corpscout.company_domains. */
+  has_domains: number;
   /**
    * Which registers built this profile, as the catalog's letters in canonical
-   * order: 'S' (SCB, always), then 'E' (ESEF), then 'W' (Wikidata). Derived in
-   * SQL (PROFILE_SOURCES_EXPR) rather than assembled here, so the same string
-   * is what the column shows AND what the header sorts by.
+   * order: 'B' (Bolagsverket), 'S' (SCB, always), 'E' (ESEF), 'W' (Wikidata).
+   * The UNION across all five datatypes, not the description's provenance:
+   * derived in SQL (PROFILE_SOURCES_EXPR) rather than assembled here, so the
+   * same string is what the column shows AND what the header sorts by.
    */
   profile_sources: string;
 }
@@ -151,9 +162,11 @@ export interface SeCompanyInfoListFilters {
   entity?: string;
   /** "yes" | "no" -- anything else (including the select's "any") is absent. */
   description?: string;
-  /** A key of PROFILE_SOURCE_PREDICATES ("scb" | "esef" | "wikidata") --
-   * anything else (a stale value, the select's "any") is absent. Plain
-   * `string` for the same reason `entity` is. */
+  /** A key of PROFILE_SOURCE_PREDICATES ("bolagsverket" | "scb" | "esef" |
+   * "wikidata") -- anything else (a stale value, the select's "any") is
+   * absent. Plain `string` for the same reason `entity` is. It asks "has this
+   * register in ANY datatype", which is exactly what the column's letters say.
+   */
   source?: string;
 }
 
@@ -169,41 +182,161 @@ export interface SeCompanyInfoListQuery extends SeCompanyInfoListFilters {
 /* -------------------------------------------------------------------- */
 
 /**
- * One SQL predicate per source of `PROFILE_SOURCES` -- "this company HAS that
- * source". They are the single definition of a source's presence: the Sources
- * column's letters are built from them (see PROFILE_SOURCES_EXPR) and the
- * `?source=` filter pushes the very same text as its WHERE predicate, so the
- * letter a row shows and the rows a filter returns can never disagree.
+ * One SET of company ids per datatype-and-register question this page asks,
+ * each read from that datatype's OWN final/serving table and each spelled
+ * exactly once. Everything downstream -- the four presence columns, the four
+ * source predicates, the Sources letters, the `?source=` filter -- is built by
+ * naming a member of this record, so a table or a flag can only be wrong here.
  *
+ * They are used as `company_id IN (<set>)` (see `hasCompanyIn`) rather than as
+ * LEFT JOINs: ClickHouse builds each distinct subquery into one hash set once
+ * per query and probes it per row, while a LEFT JOIN onto the 3.5M-row
+ * `se_company_info ... FINAL` on the left is the very shape that made
+ * PEOPLE_ROLES_SQL fail with NOT_FOUND_COLUMN_IN_BLOCK (see
+ * se-company-people.server.ts). Two members with the SAME text are one set at
+ * runtime, which is why the ESEF and Bolagsverket financial arms are reused
+ * verbatim by `has_financial` instead of being spelled a second way.
+ *
+ * Which table is authoritative for which register, verified read-only against
+ * the pipelines that write them (2026-08-24):
+ *
+ * - address: `se_company_address.sources` is written by se_company/address.py,
+ *   whose ARTIFACT_TABLES map is exactly {bolagsverket, scb} -- so 'bolagsverket'
+ *   in that array is the register itself, not a guess. FINAL is not optional:
+ *   `is_current` is flipped in place by a later part when an address is
+ *   tombstoned, so a pre-merge part would report a removed address as live.
+ * - financial (Bolagsverket): se_bolagsverket_financial_metrics is the table
+ *   `company_financials_latest/sql.py` builds SE's se_company_financials_latest
+ *   FROM (`SOURCES["se"]["table"]`), and the one se_financials_bolagsverket_current
+ *   -- the view the Financial tab renders -- aggregates. Reading the metrics
+ *   directly is self-evidently Bolagsverket's; the serving table has no source
+ *   column at all. Live check: both name the same 577,645 companies.
+ * - financial (ESEF): esef_financial_metrics is keyed by LEI, so it reaches a
+ *   company through corpscout.company_identifier exactly as
+ *   se_financials_esef_current's own INNER JOIN does (issuer_scheme 'lei',
+ *   country SE, is_current). Live check: this predicate and the view both name
+ *   404 companies.
+ * - people: se_company_person is the published row (no is_current, no
+ *   tombstone -- a row is never withdrawn, so no FINAL is needed to answer
+ *   "does this company have one"), and se_company_person_role.sources is the
+ *   people datatype's own provenance, written by company_people/roles.py as
+ *   `groupUniqArray(roles.source)` over drafts whose `source` literal is
+ *   'bolagsverket' or 'esef' (company_people/draft.py). The DRAFT layer carries
+ *   the same registers at much larger scale, but it is evidence, not a final,
+ *   and adds nothing here: live check 2026-08-24 found exactly 1 company whose
+ *   Bolagsverket people are not already Bolagsverket by address or accounts,
+ *   and 0 for ESEF and Wikidata.
+ * - domains: company_domains is the UNIFIED register, so it is filtered to
+ *   'SE' here exactly as se-company-domains.server.ts does. Its own
+ *   source_names ('common_crawl_identity', 'wikidata', 'esef_filing') are NOT
+ *   folded into the letters -- see PROFILE_SOURCE_PREDICATES.
+ */
+export const COMPANY_SETS = {
+  address: `SELECT company_id FROM corpscout.se_company_address FINAL WHERE is_current`,
+  addressBolagsverket: `SELECT company_id FROM corpscout.se_company_address FINAL WHERE is_current AND has(sources, 'bolagsverket')`,
+  financialBolagsverket: `SELECT company_id FROM corpscout.se_bolagsverket_financial_metrics`,
+  financialEsef: `SELECT ci.company_id FROM corpscout.company_identifier AS ci WHERE ci.issuer_scheme = 'lei' AND ci.country_code = 'SE' AND ci.is_current = 1 AND ci.issuer_id IN (SELECT upperUTF8(trimBoth(m.lei)) FROM corpscout.esef_financial_metrics AS m)`,
+  people: `SELECT company_id FROM corpscout.se_company_person`,
+  peopleBolagsverket: `SELECT company_id FROM corpscout.se_company_person_role WHERE has(sources, 'bolagsverket')`,
+  peopleEsef: `SELECT company_id FROM corpscout.se_company_person_role WHERE has(sources, 'esef')`,
+  domains: `SELECT company_id FROM corpscout.company_domains WHERE country_code = 'SE'`,
+} as const;
+
+/** "This list row's company is in that set." The alias is the list query's
+ * own `i`, so every derived expression below is valid in its SELECT, its
+ * WHERE and its ORDER BY alike. */
+function hasCompanyIn(set: string): string {
+  return `i.company_id IN (${set})`;
+}
+
+/** `(a OR b OR ...)`, parenthesised so it can be dropped into a concat arm, a
+ * WHERE clause or an ORDER BY term without changing what it means. */
+function anyOf(...terms: readonly string[]): string {
+  return `(${terms.join(" OR ")})`;
+}
+
+/**
+ * The four presence columns, one expression per datatype, keyed by the
+ * client-safe catalog's own keys -- so a datatype added to PROFILE_DATATYPES
+ * without an expression here is a compile error, never a column of blanks.
+ *
+ * `has_financial` is deliberately the OR of the two REGISTER arms rather than
+ * a third read of se_company_financials_latest: those two views are exactly
+ * what the Financial tab renders (SOURCE_VIEWS in se-company-financial.server
+ * .ts), and defining it this way makes an invariant hold by construction --
+ * a row can never show Financial ✓ with neither B nor E among its letters.
+ */
+export const DATATYPE_PRESENCE_EXPR: Record<ProfileDatatypeKey, string> = {
+  has_address: hasCompanyIn(COMPANY_SETS.address),
+  has_financial: anyOf(
+    hasCompanyIn(COMPANY_SETS.financialBolagsverket),
+    hasCompanyIn(COMPANY_SETS.financialEsef),
+  ),
+  has_people: hasCompanyIn(COMPANY_SETS.people),
+  has_domains: hasCompanyIn(COMPANY_SETS.domains),
+};
+
+/**
+ * One SQL predicate per source of `PROFILE_SOURCES` -- "this company HAS that
+ * register, in ANY of its five datatypes". They are the single definition of a
+ * source's presence: the Sources column's letters are built from them (see
+ * PROFILE_SOURCES_EXPR) and the `?source=` filter pushes the very same text as
+ * its WHERE predicate, so the letter a row shows and the rows a filter returns
+ * can never disagree.
+ *
+ * - bolagsverket: the address it registered, the annual accounts it holds, or
+ *   the roles its people evidence carried. Near-universal in practice (2.86M
+ *   of 3.52M companies) -- that is the register's reach, not a bug.
  * - scb: the tautology, on the owner's ruling that SCB is the register base.
  *   It is true by construction, not by luck: info_rules.py's merge returns
  *   None without an SCB row, so an `se_company_info` row without SCB behind it
  *   cannot exist. Kept as a real predicate so the filter has one uniform shape.
- * - esef: `lei IS NOT NULL` is a legitimate second arm because
- *   se_company_info.lei is written ONLY from the ESEF artifact -- info_rules
- *   .py sets `lei=_text(esef.values.get("lei")) if esef else None` and no
- *   correction kind can write it (override_field accepts description /
- *   description_sv only). So a LEI is proof of an ESEF filing even when that
- *   filing carried no description, which the description_sources arm alone
- *   would miss. (Wikidata's own artifact matches companies BY lei, but never
- *   writes this column.)
- * - wikidata: the mirror image -- wikidata_id comes only from the Wikidata
- *   artifact, and a Wikidata row may exist without contributing a description.
+ * - esef: the description artifact, an ESEF-sourced filing behind the
+ *   Financial tab, or ESEF role evidence. The FILING arm is what makes this
+ *   letter worth anything: description_sources names ESEF for 2 companies,
+ *   while 404 have ESEF financials. `lei IS NOT NULL` is kept as belt and
+ *   braces, NOT for coverage -- se_company_info.lei is written only from the
+ *   ESEF artifact (info_rules.py: `lei=_text(esef.values.get("lei")) if esef
+ *   else None`, and no correction kind can set it), but today every ESEF merge
+ *   participation also writes 'esef' into description_sources, so the two arms
+ *   name the same 2 companies. It guards a future filing that carries a LEI
+ *   and no description.
+ * - wikidata: the mirror image -- wikidata_id is written only from the
+ *   Wikidata artifact, and a Wikidata row may exist without contributing a
+ *   description.
+ *
+ * NOT folded in: company_domains.source_names. A domain suggested by
+ * 'wikidata' or 'esef_filing' is evidence about a WEBSITE, not a register that
+ * built the company profile, and 'common_crawl_identity' has no letter at all;
+ * the Domains presence column is where that datatype speaks. (Live check
+ * 2026-08-24: folding them in would move ~810 companies from S to SW.)
  *
  * Keyed by ProfileSourceValue, so adding a source to the catalog without a
  * predicate here is a type error rather than a silently missing letter.
  */
 export const PROFILE_SOURCE_PREDICATES: Record<ProfileSourceValue, string> = {
+  bolagsverket: anyOf(
+    hasCompanyIn(COMPANY_SETS.addressBolagsverket),
+    hasCompanyIn(COMPANY_SETS.financialBolagsverket),
+    hasCompanyIn(COMPANY_SETS.peopleBolagsverket),
+  ),
   scb: "1",
-  esef: "(has(i.description_sources, 'esef') OR i.lei IS NOT NULL)",
-  wikidata: "(i.wikidata_id IS NOT NULL OR has(i.description_sources, 'wikidata'))",
+  esef: anyOf(
+    "has(i.description_sources, 'esef')",
+    "i.lei IS NOT NULL",
+    hasCompanyIn(COMPANY_SETS.financialEsef),
+    hasCompanyIn(COMPANY_SETS.peopleEsef),
+  ),
+  wikidata: anyOf(
+    "i.wikidata_id IS NOT NULL",
+    "has(i.description_sources, 'wikidata')",
+  ),
 };
 
 /**
- * The Sources column itself: one compact string per row ('S', 'SE', 'SW',
- * 'SEW'), assembled in the catalog's canonical order so it needs no sorting
- * and so sorting the LIST by it groups like profiles together
- * ('S' < 'SE' < 'SEW' < 'SW').
+ * The Sources column itself: one compact string per row ('BS', 'SW', 'BSEW'),
+ * assembled in the catalog's canonical order so it needs no sorting and so
+ * sorting the LIST by it groups like profiles together.
  *
  * Built by mapping the catalog rather than spelled out, so the column, the
  * legend above the table and the filter options are one list in one order.
@@ -230,6 +363,12 @@ export const INFO_SORT_COLUMNS = {
   legal_form_code: "i.legal_form_code",
   entity_type: "length(i.company_id)",
   has_description: "(i.description IS NOT NULL)",
+  // Each presence column sorts by the very IN-set expression it is projected
+  // from, so "show me the companies with no address" is one header click.
+  has_address: DATATYPE_PRESENCE_EXPR.has_address,
+  has_financial: DATATYPE_PRESENCE_EXPR.has_financial,
+  has_people: DATATYPE_PRESENCE_EXPR.has_people,
+  has_domains: DATATYPE_PRESENCE_EXPR.has_domains,
   profile_sources: PROFILE_SOURCES_EXPR,
 } as const;
 
@@ -333,7 +472,12 @@ export function buildInfoListFilter(
 /** No description TEXT crosses the wire for this list: the page shows whether
  * there is one, not what it says, so 3.5M descriptions stay in ClickHouse.
  * entity_type is derived from the id length -- 000299 admitted 12-digit
- * personnummer-based sole-trader ids beside the 10-digit org numbers. */
+ * personnummer-based sole-trader ids beside the 10-digit org numbers.
+ *
+ * The presence columns are projected FROM the catalog, in its order, so the
+ * SELECT cannot offer a column the header row does not name (or vice versa),
+ * and each is a UInt8 for the same reason has_description is: one predictable
+ * JSON shape rather than whatever the driver makes of a boolean. */
 export const INFO_LIST_SELECT_SQL = `SELECT
   i.company_id AS company_id,
   i.legal_name AS legal_name,
@@ -343,6 +487,10 @@ export const INFO_LIST_SELECT_SQL = `SELECT
   i.legal_form_label_sv AS legal_form_label_sv,
   if(length(i.company_id) = 12, 'sole', 'legal') AS entity_type,
   toUInt8(i.description IS NOT NULL) AS has_description,
+${PROFILE_DATATYPES.map(
+  (datatype) =>
+    `  toUInt8(${DATATYPE_PRESENCE_EXPR[datatype.key]}) AS ${datatype.key},`,
+).join("\n")}
   ${PROFILE_SOURCES_EXPR} AS profile_sources
 FROM corpscout.se_company_info AS i FINAL`;
 

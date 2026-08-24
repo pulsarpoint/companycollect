@@ -453,6 +453,21 @@ describe("company info review page", () => {
   it("says so when a company has no artifacts at all", () => {
     const html = render({ ...detail, artifacts: [] });
     expect(html).toContain("No source artifacts.");
+    // ...and the strip at the top says the same thing, rather than claiming a
+    // register the page then fails to show a card for.
+    expect(html).toContain('data-source-strip=""');
+  });
+
+  it("opens with the same Sources strip the other four tabs do, from the artifact legs", () => {
+    // Task 20: derived from `artifacts`, which the hub already loaded -- the
+    // strip added no query. Named in the profile catalog's order (S before E
+    // before W), not in the order ClickHouse's UNION handed the legs over.
+    const html = render();
+    expect(html).toContain('data-source-strip="SCB,ESEF,Wikidata"');
+    // The strip is ABOVE the per-source cards it summarises.
+    expect(html.indexOf("data-source-strip")).toBeLessThan(
+      html.indexOf("SCB register"),
+    );
   });
 
   it("annotates the English text with its language and every contributing source", () => {
