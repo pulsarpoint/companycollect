@@ -6,11 +6,15 @@
  * toString(), a dynamically built WHERE, and its PAGE_LIMIT_OFFSET_SQL, which is
  * imported rather than re-spelled so the two lists can never page differently.
  *
- * The published side is joined AGGREGATED PER COMPANY, which is the one real
- * difference from the info ledger: a company has several address rows, so
- * "applied" and "stale" are answered against sets rather than against a single
- * row. Applied ids come from every row (a reject's id lives on the tombstone it
- * wrote); the key and hash sets come from the live rows only.
+ * The published side is joined PER (company_id, address_key), which is the one
+ * real difference from the info ledger: a company has several address rows, so
+ * a correction is answered against the ONE row it names rather than against the
+ * company. That is what Dagster's `apply_address_ledger` does (it looks the
+ * payload's `address_key` up in the produced set), and the derivation here is
+ * the same one se-company-address.server.ts computes for a single company --
+ * same four statuses, same precedence, same branches. The two modules must move
+ * together: the tab module carries the full reasoning and the divergence notes,
+ * this one is that reasoning with the company scope removed.
  */
 import { chQuery } from "~/lib/clickhouse.server";
 import type { SortDir } from "~/lib/countries";
@@ -146,36 +150,65 @@ export const ADDRESS_UNDONE_CTE_SQL = `WITH undone AS (
 )`;
 
 /**
- * The published side, one row per company: the ids Dagster stamped on ANY of
- * that company's address rows, and the key/evidence sets of its LIVE ones.
+ * The published side, one row per (company_id, address_key): THE row each
+ * correction names. No GROUP BY and none needed -- the final is a
+ * ReplacingMergeTree ordered by (company_id, address_key), so FINAL already
+ * leaves each key its newest version.
+ *
+ * `is_produced` is the membership test every status branch turns on: this
+ * backoffice's reconstruction of the produced set `apply_address_ledger` looks
+ * a correction up in. A live row is produced trivially; a tombstoned row with a
+ * non-empty `correction_ids` was tombstoned by a REJECT, and the ledger runs
+ * before `with_set_replacement`, so a rejected key stays in the produced set
+ * and its hash still decides staleness; a tombstoned row with EMPTY ids is a
+ * disappearance tombstone, whose ids `with_set_replacement` cleared exactly
+ * because the key left the produced set.
  *
  * Scoped to the companies actually present in the ledger before FINAL collapses
  * anything, for the same reason the info list scopes its own join: an unscoped
  * `FROM corpscout.se_company_address FINAL` re-merges the whole table to
- * decorate a handful of ledger rows. Every projected column is an Array, which
- * a LEFT JOIN miss fills with [] -- a company whose corrections have no
- * published row at all reads as "nothing applied, nothing live", which is the
- * truth.
+ * decorate a handful of ledger rows.
+ *
+ * A LEFT JOIN miss fills each column with its TYPE DEFAULT, which is the truth
+ * here rather than an accident: a correction naming a key nothing published
+ * gets `is_produced = 0`, no applied ids and an empty hash -- "this company
+ * never published the address you named". `join_use_nulls` stays off for that
+ * reason; every branch below reads the defaults deliberately.
  */
 export const ADDRESS_SCOPED_PUBLISHED_JOIN_SQL = `LEFT JOIN (
   SELECT
     company_id,
-    groupUniqArrayArray(arrayMap(x -> toString(x), correction_ids)) AS applied_correction_ids,
-    groupUniqArrayIf(toString(address_key), is_current) AS live_address_keys,
-    groupUniqArrayIf(toString(evidence_set_hash), is_current) AS live_evidence_hashes
+    toString(address_key) AS address_key,
+    arrayMap(x -> toString(x), correction_ids) AS applied_correction_ids,
+    toString(evidence_set_hash) AS evidence_set_hash,
+    is_current OR notEmpty(correction_ids) AS is_produced
   FROM corpscout.se_company_address FINAL
   WHERE company_id IN (SELECT company_id FROM corpscout.se_company_address_correction)
-  GROUP BY company_id
-) AS p ON p.company_id = c.company_id`;
+) AS p ON p.company_id = c.company_id AND p.address_key = ${ADDRESS_KEY_EXPR}`;
 
 /**
- * Status precedence mirrors the Address tab's own (see
- * se-company-address.server.ts): an undo always wins; then applied, which has
- * the second branch ruling A11 forces -- a `reject_address` naming a key the
- * resolution did not produce has NO row for Dagster to stamp, so the absence of
- * its key from the live set IS the applied signal; then stale, a live,
- * not-applied correction whose evidence matches no live row of the company (the
- * zero hash is undo's own marker and is never stale); else pending.
+ * Status precedence is the Address tab's own, branch for branch (see
+ * CORRECTIONS_SQL in se-company-address.server.ts, which carries the full
+ * derivation): an undo always wins; then applied, which has the second branch
+ * ruling A11 forces -- a `reject_address` naming a key the resolution did not
+ * produce has NO row for Dagster to stamp, so the absence of its key from the
+ * produced set IS the applied signal; then stale; else pending.
+ *
+ * Stale is a live, not-applied correction of a kind the ledger knows, naming a
+ * key, whose evidence has moved on -- either the key is not in the produced set
+ * at all (`apply_address_ledger`: "the text had nowhere to land") or the row it
+ * names now hashes to something else. Three guards make that the same question
+ * `apply_address_ledger` asks: the zero hash is undo's own marker and is never
+ * compared; a correction with no `address_key` is skipped, not stale (Dagster's
+ * `_payload_key` returns None and the loop moves on); and a kind
+ * `effective_ledger` drops is never considered at all, which matters because
+ * the ledger table has no CHECK on `correction_kind`, so a row written outside
+ * this backoffice can carry one.
+ *
+ * The hash comparison is PER KEY. Reading `has(<the company's live hashes>,
+ * ...)` instead -- which this list used to do -- calls a correction naming key A
+ * while carrying key B's hash "pending" where Dagster calls it stale, and calls
+ * a correction against a reject-tombstoned row "stale" where Dagster applies it.
  *
  * Branch ORDER matters: multiIf returns the first match, and applied must
  * precede stale so a decision that landed is never reported as waiting.
@@ -186,10 +219,15 @@ export const ADDRESS_CORRECTION_STATUS_EXPR = `multiIf(
       OR (
         c.correction_kind = 'reject_address'
         AND ${ADDRESS_KEY_EXPR} != ''
-        AND NOT has(p.live_address_keys, ${ADDRESS_KEY_EXPR})
+        AND NOT p.is_produced
       ), 'applied',
-    toString(c.evidence_hash) != {zeroHash:String}
-      AND NOT has(p.live_evidence_hashes, toString(c.evidence_hash)), 'stale',
+    ${ADDRESS_KEY_EXPR} != ''
+      AND c.correction_kind IN ('reject_address', 'override_field')
+      AND toString(c.evidence_hash) != {zeroHash:String}
+      AND (
+        NOT p.is_produced
+        OR p.evidence_set_hash != toString(c.evidence_hash)
+      ), 'stale',
     'pending'
   )`;
 
