@@ -34,6 +34,12 @@ GROUP_NAME = "se_company_bolagsverket"
 DATABASE = "corpscout"
 TABLE = "se_company_address_bolagsverket"
 SOURCE = "bolagsverket"
+# The one address_type normalized_duckdb.py's bolagsverket_addresses CTE ever emits
+# (a hard-coded literal, address_rank = 1 -- one row per company). Pinned in the
+# WHERE below and re-checked by the tripwire so a change to that upstream assumption
+# fails loudly here instead of silently losing rows to ReplacingMergeTree collapsing
+# two same-keyed versions (see the SQL comment and the tripwire below).
+ADDRESS_TYPE = "postal"
 SOURCE_TABLE = "se_company_addresses_current"
 # Positional insert list: the envelope (evidence_hash is MATERIALIZED, so omitted) then
 # this module's payload, in the order the migration declares them -- pinned by the test.
@@ -60,6 +66,14 @@ SE_COMPANY_ADDRESS_BOLAGSVERKET_COLUMNS = (
 # is not an address. They are also exactly the rows whose MATERIALIZED normalized_address
 # is '' by construction (migration 000265).
 #
+# address_type = '{ADDRESS_TYPE}' pins the one type this source has ever emitted (see
+# ADDRESS_TYPE above). The artifact's ORDER BY (company_id, source_record_uid) is only a
+# unique key because of that one-row-per-company invariant; without this filter, a second
+# address_type slipping into the source table would not error here -- it would just let
+# ReplacingMergeTree collapse the extra row at stage-write time (same ORDER BY key, two
+# versions), so the staged count would silently come out lower than the source actually
+# holds. The tripwire below is the independent check for exactly that.
+#
 # post_town is the register's name for the column; the datatype publishes it as `city`,
 # which is what every other country's address shape calls it. country_code is
 # LowCardinality(Nullable(String)) in the source and Nullable(String) in the artifact, so
@@ -80,6 +94,7 @@ SE_COMPANY_ADDRESS_BOLAGSVERKET_SQL = """WITH candidates AS (
         CAST(addresses.country_code AS Nullable(String)) AS country_code
     FROM corpscout.se_company_addresses_current AS addresses
     WHERE addresses.source = '{SOURCE}'
+      AND addresses.address_type = '{ADDRESS_TYPE}'
       AND addresses.has_address = 1
       AND match(addresses.company_id, '{SE_COMPANY_ID_PATTERN}')
 )
@@ -93,7 +108,24 @@ SELECT
 FROM candidates
 WHERE source_record_uid != ''""".replace(
     "{SE_COMPANY_ID_PATTERN}", SE_COMPANY_ID_PATTERN
-).replace("{SOURCE}", SOURCE)
+).replace("{SOURCE}", SOURCE).replace("{ADDRESS_TYPE}", ADDRESS_TYPE)
+
+# Tripwire (I2): recomputes the candidates CTE's own filters directly against the source
+# table, independently of anything publish_with_stage's stage table may already have
+# collapsed. Compared against PublishCounts.staged (the row count observed on the stage
+# right after the SELECT above ran) once the asset's publish call returns; a mismatch
+# means the source held more matching rows than made it into the stage -- exactly the
+# silent-collapse scenario the reviewer reproduced -- and is worth failing the run over
+# rather than logging and moving on.
+SE_COMPANY_ADDRESS_BOLAGSVERKET_SOURCE_COUNT_SQL = """SELECT count()
+FROM corpscout.se_company_addresses_current AS addresses
+WHERE addresses.source = %(source)s
+  AND addresses.address_type = %(address_type)s
+  AND addresses.has_address = 1
+  AND match(addresses.company_id, '{SE_COMPANY_ID_PATTERN}')
+  AND addresses.source_record_uid != ''""".replace(
+    "{SE_COMPANY_ID_PATTERN}", SE_COMPANY_ID_PATTERN
+)
 
 
 @dg.asset(
@@ -126,6 +158,26 @@ def se_company_address_bolagsverket_clickhouse(
         ),
         new_versions_only=True,
     )
+    with clickhouse.get_connection() as client:
+        source_count = int(
+            client.execute(
+                SE_COMPANY_ADDRESS_BOLAGSVERKET_SOURCE_COUNT_SQL,
+                {"source": SOURCE, "address_type": ADDRESS_TYPE},
+            )[0][0]
+        )
+    context.log.info(
+        "se_company_address_bolagsverket: staged=%s source_count=%s",
+        counts.staged, source_count,
+    )
+    if source_count != counts.staged:
+        raise ValueError(
+            f"se_company_address_bolagsverket: staged count {counts.staged} does not "
+            f"match source count {source_count} for source={SOURCE!r} "
+            f"address_type={ADDRESS_TYPE!r} -- the source pipeline may be emitting more "
+            "than one address row per company for this source, which "
+            "ReplacingMergeTree's ORDER BY (company_id, source_record_uid) would "
+            "silently collapse."
+        )
     context.log.info(
         "se_company_address_bolagsverket: appended=%s total=%s", counts.inserted, counts.total
     )
