@@ -8,7 +8,6 @@ import {
   FlagIcon,
   ListChecksIcon,
   MapPinIcon,
-  PlayIcon,
   Rows3Icon,
   Settings2Icon,
   SlidersHorizontalIcon,
@@ -71,12 +70,6 @@ const COUNTRY_NAVIGATION = [
         title: "Info corrections",
         to: "/admin/se/company-info/corrections",
         icon: ListChecksIcon,
-        exact: true,
-      },
-      {
-        title: "Pipeline",
-        to: "/admin/se/company-info/pipeline",
-        icon: PlayIcon,
         exact: true,
       },
       {

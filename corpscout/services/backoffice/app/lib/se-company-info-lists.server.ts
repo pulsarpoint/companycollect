@@ -406,7 +406,7 @@ export interface SeCompanyInfoListPage {
 
 /** The counts strip: how many companies match, and how many of them have a
  * published description. Nothing about the model or the review queue -- the
- * Pipeline page owns those numbers. */
+ * Pipeline sheet owns those numbers. */
 export interface SeCompanyInfoListCounts {
   total: number;
   withDescription: number;

@@ -8,7 +8,7 @@
  * paging, because it counts every company at once rather than returning a page,
  * and it aggregates the reasons instead of projecting them per row.
  *
- * When the Dagster scan changes, this changes with it -- a Pipeline page that
+ * When the Dagster scan changes, this changes with it -- a Pipeline sheet that
  * promises "1,240 companies would be re-resolved" and then launches a run that
  * picks a different set is worse than showing nothing. The reason expressions are
  * therefore single constants here too, spelled once and reused by both the
@@ -16,14 +16,16 @@
  *
  * Cost: one FINAL read of `se_company_info` (3.5M rows) joined to the three
  * artifacts' per-company maxima -- the same work the Dagster scan does on every
- * run. It is an admin page, loaded by hand, so that is affordable; it is not
- * something to put behind an auto-refresh.
+ * run. That is why the Pipeline sheet fetches this when it is OPENED and the
+ * companies list's own loader never touches it: affordable per deliberate
+ * opening, not per page view, and never behind an auto-refresh.
  */
 import { chQuery } from "~/lib/clickhouse.server";
 import {
   clampConcurrency,
   clampMaxCompanies,
   INFO_ARTIFACT_SOURCES,
+  normalizeCompanyIdScope,
   type InfoArtifact,
 } from "~/lib/se-company-info-pipeline";
 
@@ -67,6 +69,11 @@ export interface InfoRunOptions {
    * calls the model. `pendingModelOnly` requires this to be true. */
   useModel: boolean;
   pendingModelOnly?: boolean;
+  /** The companies picked on the list, or [] for "every changed company".
+   * Mirrors SECompanyInfoConfig.company_ids: the scan is narrowed to these ids
+   * and still applies its change predicate to them, so a picked company that has
+   * not changed is not re-resolved. */
+  companyIds?: readonly string[];
   llm: PipelineLlmProfile;
 }
 
@@ -84,6 +91,10 @@ export function buildInfoRunConfig(options: InfoRunOptions): Record<string, unkn
         config: {
           execute: true,
           max_companies: clampMaxCompanies(options.maxCompanies),
+          // Always spelled out, empty list and all: the config a run records is
+          // then the whole answer to "what did this cover?", with no reader
+          // having to know what the asset's default scope would have been.
+          company_ids: normalizeCompanyIdScope(options.companyIds ?? []),
           resolve_multi_source_with_llm: options.useModel,
           pending_model_only: options.pendingModelOnly ?? false,
           llm: {
@@ -266,7 +277,7 @@ function num(row: Record<string, string> | undefined, column: string): number {
 }
 
 /**
- * Every number the Pipeline page shows, in three reads.
+ * Every number the Pipeline sheet shows, in three reads.
  */
 export async function loadSeCompanyInfoPipelineStats(
   options: { queryImpl?: PipelineQuery } = {},

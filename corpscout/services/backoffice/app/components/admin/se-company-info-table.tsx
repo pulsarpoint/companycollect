@@ -9,6 +9,7 @@ import { DataTableColumnHeader } from "~/components/data-table/column-header";
 import { DataTablePagination } from "~/components/data-table/pagination";
 import { LegalForm } from "~/components/admin/legal-form";
 import { SeCompanyInfoFilterSheet } from "~/components/admin/se-company-info-filter-sheet";
+import { SeCompanyInfoPipelineSheet } from "~/components/admin/se-company-info-pipeline";
 import type { SortDir } from "~/lib/countries";
 import {
   NO_ROWS_SELECTED,
@@ -136,8 +137,10 @@ export function selectionColumn(): ColumnDef<SeCompanyInfoListRow, unknown> {
         <Checkbox
           // Named after the company, not "Select row": a column of boxes that
           // all read alike says nothing about which company each one picks --
-          // to a screen reader, or to a test.
-          aria-label={`Select ${row.original.legal_name}`}
+          // to a screen reader, or to a test. The id is part of the name
+          // because legal names are not unique (Sweden has many an "Alpha AB"),
+          // and it is the id the selection is actually keyed by.
+          aria-label={`Select ${row.original.legal_name} (${row.original.company_id})`}
           checked={row.getIsSelected()}
           onCheckedChange={(checked) => row.toggleSelected(checked)}
         />
@@ -297,7 +300,7 @@ function buildColumns(
 
 /** What the filtered list contains, in the list's own terms: how many
  * companies, and how many of them have a description. The model/review numbers
- * belong to the Pipeline page, which is where they can be acted on. */
+ * belong to the Pipeline sheet, which is where they can be acted on. */
 function CountsStrip({ counts }: { counts: SeCompanyInfoListCounts }) {
   return (
     <div className="flex flex-wrap items-center gap-2 text-sm">
@@ -347,11 +350,18 @@ export function SeCompanyInfoTable({
 }) {
   return (
     <div className="flex flex-col gap-4">
-      <SeCompanyInfoFilterSheet
-        filters={filters}
-        view={{ sort, dir, pageSize }}
-        options={options}
-      />
+      {/* The two sheets this list opens, on one line: Filters on the left with
+          its chips, Pipeline on the right. The pipeline reads the selection --
+          which is why it is rendered from here, where the route component's
+          `selection` already arrives -- and loads nothing until it is opened. */}
+      <div className="flex flex-wrap items-start justify-between gap-2">
+        <SeCompanyInfoFilterSheet
+          filters={filters}
+          view={{ sort, dir, pageSize }}
+          options={options}
+        />
+        <SeCompanyInfoPipelineSheet selection={selection} />
+      </div>
       <div className="flex flex-wrap items-center justify-between gap-2">
         <CountsStrip counts={counts} />
         {/* Beside the counts rather than above the table: it is a fact about

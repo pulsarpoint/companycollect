@@ -1,12 +1,13 @@
 /**
- * The Pipeline page's action: what a confirmation says, and what a launch then
+ * The pipeline resource route: what its loader answers, and what a launch then
  * sends to Dagster.
  *
  * These launches spend money, so the assertions are on the exact run config and
  * tags that cross the boundary -- `execute: true` above all, since a run without
- * it is a preview that writes nothing. Dagster, ClickHouse and the settings
- * database are faked at their module boundaries; the run-config builder, the
- * artifact asset names and the action's own branching are real.
+ * it is a preview that writes nothing, and the `company_ids` scope, which is the
+ * whole of what a reviewer's picks change about a run. Dagster, ClickHouse and
+ * the settings database are faked at their module boundaries; the run-config
+ * builder, the artifact asset names and the action's own branching are real.
  */
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { LlmProfile } from "~/lib/llm-settings.server";
@@ -43,10 +44,6 @@ const PROFILE: LlmProfile = {
   updatedAt: "2026-08-01T00:00:00.000Z",
 };
 
-vi.mock("~/components/admin/se-company-info-pipeline", () => ({
-  SeCompanyInfoPipeline: () => null,
-}));
-
 vi.mock("~/lib/llm-settings.server", () => ({
   listLlmProfiles: () => [PROFILE],
 }));
@@ -66,20 +63,31 @@ vi.mock("~/lib/se-company-info-pipeline.server", async (importOriginal) => ({
   loadSeCompanyInfoPipelineStats: () => loadStats(),
 }));
 
-const { action } = await import("~/routes/admin-se-company-info-pipeline");
+const { action, loader } = await import("~/routes/admin-se-company-info-pipeline");
 
 type ActionResult = Awaited<ReturnType<typeof action>>;
+
+/** The URL a fetcher actually posts to: React Router 8 fetches route data at
+ * `<path>.data`, and the loader below tells a document GET from a data request
+ * by exactly that suffix. */
+const DATA_URL = "http://backoffice/admin/se/company-info/pipeline.data";
 
 function post(fields: Record<string, string>): Promise<ActionResult> {
   const body = new FormData();
   for (const [key, value] of Object.entries(fields)) body.append(key, value);
   return action({
-    request: new Request("http://backoffice/admin/se/company-info/pipeline", {
-      method: "POST",
-      body,
-    }),
+    request: new Request(DATA_URL, { method: "POST", body }),
   } as unknown as Parameters<typeof action>[0]);
 }
+
+function get(url: string, accept: string) {
+  return loader({
+    request: new Request(url, { headers: { Accept: accept } }),
+  } as unknown as Parameters<typeof loader>[0]);
+}
+
+const BROWSER_ACCEPT =
+  "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8";
 
 const RESOLVE_FIELDS = {
   use_model: "1",
@@ -137,6 +145,45 @@ describe("launching a confirmed run", () => {
       prompt_version: "se-company-info-description-v3",
       concurrency: 2,
     });
+    // Nothing was picked on the list, and the config says which run that is.
+    expect(config.company_ids).toEqual([]);
+  });
+
+  it("scopes the launch to the picked companies, exactly as confirmed", async () => {
+    // What the sheet posts: the selection as ONE field. It has to survive the
+    // confirm step -- the launch rebuilds the run from the replayed fields, so
+    // a scope that fell out here would start an unbounded run instead.
+    const picked = "5560125220,5565200028";
+    const fields = await confirmResolve({ company_ids: picked });
+    expect(fields.company_ids).toBe(picked);
+
+    const result = await post({ intent: "launch-resolve", ...fields });
+    expect(result.ok).toBe(true);
+    const [input] = launchRun.mock.calls[0] as unknown as [
+      { runConfig: { ops: Record<string, { config: Record<string, unknown> }> } },
+    ];
+    const config = input.runConfig.ops.se_company_info_clickhouse.config;
+    expect(config.company_ids).toEqual(["5560125220", "5565200028"]);
+    // The scope narrows the run; it does not turn the safety flags off.
+    expect(config.execute).toBe(true);
+    expect(config.max_companies).toBe(1_000);
+  });
+
+  it("scopes a model pass the same way, and drops blanks and repeats", async () => {
+    const confirmed = await post({
+      intent: "confirm-model-pass",
+      ...RESOLVE_FIELDS,
+      company_ids: "5560125220,,5560125220,5565200028",
+    });
+    expect(confirmed.confirmation?.fields.company_ids).toBe("5560125220,5565200028");
+
+    await post({ intent: "launch-model-pass", ...confirmed.confirmation!.fields });
+    const [input] = launchRun.mock.calls[0] as unknown as [
+      { runConfig: { ops: Record<string, { config: Record<string, unknown> }> } },
+    ];
+    const config = input.runConfig.ops.se_company_info_clickhouse.config;
+    expect(config.company_ids).toEqual(["5560125220", "5565200028"]);
+    expect(config.pending_model_only).toBe(true);
   });
 
   it("binds an artifact refresh to its own asset", async () => {
@@ -192,6 +239,31 @@ describe("the confirmation step", () => {
     expect(launchRun).not.toHaveBeenCalled();
   });
 
+  it("says what a SCOPED run covers instead of the scan's total", async () => {
+    // 1,240 companies match the scan, but this run is two picked ids: claiming
+    // the scan's number for it would be a lie about what is being agreed to.
+    const result = await post({
+      intent: "confirm-resolve",
+      ...RESOLVE_FIELDS,
+      company_ids: "5560125220,5565200028",
+    });
+    expect(result.confirmation?.lines[0]).toContain("2 selected companies");
+    expect(result.confirmation?.lines[0]).toContain(
+      "only the ones the change scan still selects are resolved",
+    );
+    expect(result.confirmation?.lines[0]).not.toContain("1,240");
+    // ... and the model line stops promising a call count it cannot know.
+    expect(result.confirmation?.lines[1]).not.toContain("340");
+  });
+
+  it("tells an artifact refresh apart: it takes no company scope at all", async () => {
+    const result = await post({ intent: "confirm-artifact", artifact: "scb" });
+    expect(result.confirmation?.fields).toEqual({ artifact: "scb" });
+    expect(result.confirmation?.lines.join(" ")).toContain(
+      "takes no company scope",
+    );
+  });
+
   it("refuses a model run whose provider cannot name a key variable", async () => {
     const result = await post({
       intent: "confirm-resolve",
@@ -200,5 +272,44 @@ describe("the confirmation step", () => {
     });
     expect(result.ok).toBe(false);
     expect(result.error).toMatch(/LLM profile/);
+  });
+});
+
+describe("the route is not a page any more", () => {
+  it("redirects a person who navigates to the old URL back to the list", async () => {
+    // A document GET: no `.data` suffix, and a browser's Accept. The redirect is
+    // thrown, so it never becomes a JSON body -- and nothing is read on the way,
+    // which is the point: the change scan costs a FINAL read of 3.5M rows.
+    await expect(
+      get("http://backoffice/admin/se/company-info/pipeline", BROWSER_ACCEPT),
+    ).rejects.toSatisfy((thrown: unknown) => {
+      expect(thrown).toBeInstanceOf(Response);
+      const response = thrown as Response;
+      expect(response.status).toBe(302);
+      expect(response.headers.get("Location")).toBe("/admin/se/company-info");
+      return true;
+    });
+    expect(loadStats).not.toHaveBeenCalled();
+  });
+
+  it("answers the sheet's fetcher, which asks for `<path>.data`", async () => {
+    const view = await get(DATA_URL, "*/*");
+    expect(view.kind).toBe("view");
+    expect(view.stats?.selection.changedCount).toBe(1_240);
+    expect(view.profiles[0].name).toBe("DeepSeek production");
+    // The key variable the Dagster host will read, beside the stored one.
+    expect(view.profiles[0].dagsterApiKeyVariable).toBe("DEEPSEEK_API_KEY");
+    expect(loadStats).toHaveBeenCalledTimes(1);
+  });
+
+  it("serves data whenever the request is not plainly a navigation", async () => {
+    // The failure that keeps the sheet working: a fetch with no Accept header,
+    // or one that asks for anything, is answered with data rather than bounced
+    // into a navigation the fetcher cannot follow.
+    const view = await get(DATA_URL, "");
+    expect(view.kind).toBe("view");
+    expect(
+      (await get("http://backoffice/admin/se/company-info/pipeline", "*/*")).kind,
+    ).toBe("view");
   });
 });

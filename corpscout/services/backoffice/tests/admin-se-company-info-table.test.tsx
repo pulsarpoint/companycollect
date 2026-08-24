@@ -77,8 +77,13 @@ const ROW_C: SeCompanyInfoListRow = {
   legal_name: "Gamma AB",
 };
 
-/** The header checkbox names itself; the row ones name their company. */
+/** The header checkbox names itself; the row ones name their company AND its
+ * id -- legal names repeat across the register, ids do not. */
 const SELECT_PAGE = "Select every company on this page";
+
+function selectLabel(row: SeCompanyInfoListRow): string {
+  return `Select ${row.legal_name} (${row.company_id})`;
+}
 
 const COUNTS: SeCompanyInfoListCounts = {
   total: 1595,
@@ -290,7 +295,7 @@ describe("SeCompanyInfoTable", () => {
     expect(html).toContain("1,540");
     expect(html).toContain("Without description");
     expect(html).toContain("55");
-    // The model/review totals moved to the Pipeline page.
+    // The model/review totals moved to the Pipeline sheet.
     expect(html).not.toContain("Multi-source");
     expect(html).not.toContain("Pending model");
   });
@@ -310,11 +315,13 @@ describe("SeCompanyInfoTable", () => {
 type Row = SeCompanyInfoListRow;
 
 /** The state of the checkbox that names itself `label`: "true", "false", or
- * the "mixed" a Base UI checkbox reports while it is indeterminate. The
- * labels here have no regex-special characters in them. */
+ * the "mixed" a Base UI checkbox reports while it is indeterminate. A row's
+ * label carries its company id in brackets, so the label is escaped rather
+ * than spliced into the pattern raw. */
 function checkboxState(html: string, label: string): string | undefined {
+  const escaped = label.replaceAll(/[.*+?^${}()|[\]\\]/g, "\\$&");
   return html.match(
-    new RegExp(`<span[^>]*aria-checked="([^"]*)"[^>]*aria-label="${label}"`),
+    new RegExp(`<span[^>]*aria-checked="([^"]*)"[^>]*aria-label="${escaped}"`),
   )?.[1];
 }
 
@@ -425,14 +432,26 @@ describe("SeCompanyInfoTable selection", () => {
     );
     // Each row's box names its company: a page of identical "Select row"
     // labels tells a screen reader (and a test) nothing.
-    expect(html).toContain('aria-label="Select Alpha AB"');
-    expect(html).toContain('aria-label="Select Beta AB"');
+    expect(html).toContain(`aria-label="${selectLabel(ROW)}"`);
+    expect(html).toContain(`aria-label="${selectLabel(ROW_B)}"`);
+    expect(html).toContain('aria-label="Select Alpha AB (5565200028)"');
+  });
+
+  it("tells two companies of the SAME legal name apart by the id in the label", () => {
+    // Legal names repeat across the register; the ids the selection is keyed by
+    // do not, so both boxes have to be nameable on their own.
+    const twin = { ...ROW_B, legal_name: ROW.legal_name };
+    const html = render({ rows: [ROW, twin], selection: { [twin.company_id]: true } });
+    expect(html).toContain(`aria-label="${selectLabel(ROW)}"`);
+    expect(html).toContain(`aria-label="${selectLabel(twin)}"`);
+    expect(checkboxState(html, selectLabel(ROW))).toBe("false");
+    expect(checkboxState(html, selectLabel(twin))).toBe("true");
   });
 
   it("ticks exactly the companies the selection names", () => {
     const html = render({ rows: [ROW, ROW_B], selection: { "5565200028": true } });
-    expect(checkboxState(html, "Select Alpha AB")).toBe("true");
-    expect(checkboxState(html, "Select Beta AB")).toBe("false");
+    expect(checkboxState(html, selectLabel(ROW))).toBe("true");
+    expect(checkboxState(html, selectLabel(ROW_B))).toBe("false");
   });
 
   it("reads the page back in the header checkbox: none, some, all", () => {
@@ -453,8 +472,8 @@ describe("SeCompanyInfoTable selection", () => {
     const selection: RowSelection = { "5565200028": true, "5567890123": true };
     // Page one shows Alpha and Beta; Gamma is picked and not on it.
     const page1 = render({ rows: [ROW, ROW_B], selection });
-    expect(checkboxState(page1, "Select Alpha AB")).toBe("true");
-    expect(checkboxState(page1, "Select Beta AB")).toBe("false");
+    expect(checkboxState(page1, selectLabel(ROW))).toBe("true");
+    expect(checkboxState(page1, selectLabel(ROW_B))).toBe("false");
     expect(checkboxState(page1, SELECT_PAGE)).toBe("mixed");
     // The company that is off-page still counts -- the indicator is the
     // cross-page total, not what this page happens to show.
@@ -463,7 +482,7 @@ describe("SeCompanyInfoTable selection", () => {
     // The SAME selection with the next page's rows: what the route component
     // holds while a search-param navigation re-runs the loader.
     const page2 = render({ rows: [ROW_C], selection });
-    expect(checkboxState(page2, "Select Gamma AB")).toBe("true");
+    expect(checkboxState(page2, selectLabel(ROW_C))).toBe("true");
     // This page is now wholly picked while the total is unchanged: the header
     // speaks for the page, the indicator for the whole selection.
     expect(checkboxState(page2, SELECT_PAGE)).toBe("true");
@@ -508,6 +527,18 @@ describe("SeCompanyInfoTable selection", () => {
 });
 
 describe("SeCompanyInfoTable selection handlers", () => {
+  it("hands the selection to TanStack as CONTROLLED state, never as a seed", () => {
+    // The state belongs to the route component: `state.rowSelection` IS the
+    // object passed in, and nothing was handed to `initialState`. Seeding
+    // `initialState` instead reads identically on this first render and then
+    // ignores every later selection prop -- filtering or paging the list would
+    // quietly restore the ticks it was mounted with.
+    const initial: RowSelection = { "5565200028": true };
+    const { table } = mountSelectable([ROW, ROW_B], initial);
+    expect(table.options.state?.rowSelection).toBe(initial);
+    expect(table.options.initialState?.rowSelection).toBeUndefined();
+  });
+
   it("picks one company at a time, on top of what is already picked", () => {
     const { table, selectionNow } = mountSelectable([ROW, ROW_B], { "5567890123": true });
     expect(selectCell(table, "5560125220").checkbox.checked).toBe(false);

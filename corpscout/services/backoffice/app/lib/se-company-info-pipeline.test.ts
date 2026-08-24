@@ -4,8 +4,11 @@ import {
   clampConcurrency,
   clampMaxCompanies,
   dagsterApiKeyVariable,
+  describeCompanyScope,
+  formatCompanyIdScope,
   INFO_ARTIFACT_SOURCES,
   isInfoArtifact,
+  parseCompanyIdScope,
   MAX_COMPANIES,
   MAX_CONCURRENCY,
   MIN_COMPANIES,
@@ -100,5 +103,43 @@ describe("the client-safe pipeline helpers", () => {
     // the browser. Asset names (and the ClickHouse reads behind them) belong in
     // se-company-info-pipeline.server.ts.
     expect(INFO_ARTIFACT_SOURCES.join(" ")).not.toContain("clickhouse");
+  });
+});
+
+describe("the company scope a launch carries", () => {
+  it("round-trips the picked ids through one form field", () => {
+    const picked = ["5560125220", "5565200028"];
+    expect(formatCompanyIdScope(picked)).toBe("5560125220,5565200028");
+    expect(parseCompanyIdScope(formatCompanyIdScope(picked))).toEqual(picked);
+    // Nothing picked is the ordinary run, and reads as an empty field rather
+    // than as a scope of one blank id.
+    expect(formatCompanyIdScope([])).toBe("");
+    expect(parseCompanyIdScope("")).toEqual([]);
+  });
+
+  it("drops blanks and repeats, and keeps the order they were picked in", () => {
+    // A replayed field must not be able to GROW the scope between the
+    // confirmation and the launch, and a stray comma must not become an id
+    // that matches no company (or, worse, one that does).
+    expect(parseCompanyIdScope(" 5565200028 ,,5560125220,5565200028,")).toEqual([
+      "5565200028",
+      "5560125220",
+    ]);
+  });
+
+  it("says what a launch covers, in the words the sheet shows", () => {
+    expect(describeCompanyScope([])).toBe("all changed companies");
+    expect(describeCompanyScope(["5565200028"])).toBe("1 selected company");
+    expect(describeCompanyScope(["5565200028", "5560125220"])).toBe(
+      "2 selected companies",
+    );
+    // Counted after normalising, so the phrase can never claim more companies
+    // than the run is scoped to.
+    expect(describeCompanyScope(["5565200028", "5565200028", ""])).toBe(
+      "1 selected company",
+    );
+    expect(describeCompanyScope(new Array(1500).fill(0).map((_, index) => `${index}`))).toBe(
+      "1,500 selected companies",
+    );
   });
 });

@@ -179,6 +179,9 @@ describe("buildInfoRunConfig", () => {
           config: {
             execute: true,
             max_companies: 1000,
+            // An unscoped run says so explicitly: [] is "every changed
+            // company", and it is in the config Dagster stores either way.
+            company_ids: [],
             resolve_multi_source_with_llm: true,
             pending_model_only: false,
             llm: {
@@ -194,6 +197,22 @@ describe("buildInfoRunConfig", () => {
         },
       },
     });
+  });
+
+  it("scopes the run to the picked companies, normalised the way the form sent them", () => {
+    // The reviewer's ticks arrive as one replayed field, so the config has to
+    // be built from exactly those ids -- blanks dropped, duplicates collapsed,
+    // the picked order kept.
+    const config = buildInfoRunConfig({
+      maxCompanies: 1000,
+      useModel: true,
+      companyIds: [" 5560125220 ", "5565200028", "5560125220", ""],
+      llm: PROFILE,
+    }) as { ops: Record<string, { config: { company_ids: string[] } }> };
+    expect(config.ops[INFO_ASSET].config.company_ids).toEqual([
+      "5560125220",
+      "5565200028",
+    ]);
   });
 
   it("never carries a credential of any kind", () => {

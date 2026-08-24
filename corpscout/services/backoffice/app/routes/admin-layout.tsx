@@ -53,7 +53,6 @@ function AdminBreadcrumbs() {
   const onCompanyInfoCorrectionsPage =
     pathname === "/admin/se/company-info/corrections";
   const onCompanyInfoTablePage = pathname === "/admin/se/company-info";
-  const onCompanyInfoPipelinePage = pathname === "/admin/se/company-info/pipeline";
   const onCompanyAddressCorrectionsPage =
     pathname === "/admin/se/company-address/corrections";
 
@@ -73,34 +72,6 @@ function AdminBreadcrumbs() {
           <BreadcrumbSeparator className="hidden sm:block" />
           <BreadcrumbItem>
             <BreadcrumbPage>Address corrections</BreadcrumbPage>
-          </BreadcrumbItem>
-        </BreadcrumbList>
-      </Breadcrumb>
-    );
-  }
-
-  if (onCompanyInfoPipelinePage) {
-    return (
-      <Breadcrumb>
-        <BreadcrumbList>
-          <BreadcrumbItem className="hidden sm:block">
-            <BreadcrumbLink render={<Link to="/admin/se/people" />}>
-              Admin
-            </BreadcrumbLink>
-          </BreadcrumbItem>
-          <BreadcrumbSeparator className="hidden sm:block" />
-          <BreadcrumbItem className="hidden sm:block">
-            <BreadcrumbPage>Sweden</BreadcrumbPage>
-          </BreadcrumbItem>
-          <BreadcrumbSeparator className="hidden sm:block" />
-          <BreadcrumbItem>
-            <BreadcrumbLink render={<Link to="/admin/se/company-info" />}>
-              Company info
-            </BreadcrumbLink>
-          </BreadcrumbItem>
-          <BreadcrumbSeparator />
-          <BreadcrumbItem>
-            <BreadcrumbPage>Pipeline</BreadcrumbPage>
           </BreadcrumbItem>
         </BreadcrumbList>
       </Breadcrumb>

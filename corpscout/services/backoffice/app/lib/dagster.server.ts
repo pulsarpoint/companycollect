@@ -4,7 +4,7 @@
  * whether the schedule and the sensor are actually on.
  *
  * Everything here is one POST to `DAGSTER_GRAPHQL_URL` (the Dagster webserver's
- * `/graphql`, reachable from this host). Nothing is cached: a Pipeline page load
+ * `/graphql`, reachable from this host). Nothing is cached: a Pipeline sheet load
  * is rare and a stale run status is worse than a slow one.
  *
  * Secrets never travel this way. The run config a caller passes carries the model

@@ -1,4 +1,6 @@
-import { Form, Link } from "react-router";
+import { useEffect, useRef, useState } from "react";
+import { Link, useFetcher } from "react-router";
+import { PlayIcon } from "lucide-react";
 import { Alert, AlertDescription, AlertTitle } from "~/components/ui/alert";
 import { Badge } from "~/components/ui/badge";
 import { Button } from "~/components/ui/button";
@@ -14,6 +16,14 @@ import {
   SelectValue,
 } from "~/components/ui/select";
 import {
+  Sheet,
+  SheetContent,
+  SheetDescription,
+  SheetHeader,
+  SheetTitle,
+  SheetTrigger,
+} from "~/components/ui/sheet";
+import {
   Table,
   TableBody,
   TableCell,
@@ -22,18 +32,35 @@ import {
   TableRow,
 } from "~/components/ui/table";
 import type { InstigatorStates } from "~/lib/dagster.server";
+import { selectedRowIds, type RowSelection } from "~/lib/row-selection";
 import type { SeCompanyInfoPipelineStats } from "~/lib/se-company-info-pipeline.server";
 import {
   artifactSelectItems,
+  describeCompanyScope,
+  formatCompanyIdScope,
   INFO_ARTIFACT_SOURCES,
   MAX_COMPANIES,
   MAX_CONCURRENCY,
   MIN_COMPANIES,
   MIN_CONCURRENCY,
   profileSelectItems,
+  SE_COMPANY_INFO_PIPELINE_PATH,
   type PipelineConfirmation,
   type PipelineProfileOption,
 } from "~/lib/se-company-info-pipeline";
+
+/**
+ * The pipeline, as a sheet on the companies list.
+ *
+ * Everything the standalone Pipeline page showed lives here -- the change-scan
+ * counts, the artifact freshness, the observed model cost, the three runs it can
+ * start and the recent-runs table -- with one difference that is the reason for
+ * the move: the counts are a FINAL read of a 3.5M row table, so they are loaded
+ * by a `useFetcher` when the sheet is OPENED, never by the list's own loader.
+ *
+ * The same fetcher posts the launches back to the resource route's action, so a
+ * launch never navigates away from the list and never loses the selection.
+ */
 
 const nf = new Intl.NumberFormat("en-US");
 
@@ -54,6 +81,46 @@ export interface PipelineLaunched {
   url: string | null;
   job: string;
 }
+
+/** What the resource route's LOADER answers with: everything the sheet renders
+ * before anything is launched. */
+export interface PipelineView {
+  kind: "view";
+  stats: SeCompanyInfoPipelineStats | null;
+  statsError: string;
+  profiles: PipelineProfileOption[];
+  runs: PipelineRunRow[];
+  instigators: InstigatorStates | null;
+  dagsterError: string;
+}
+
+/** ... and what its ACTION answers with. Both travel through one fetcher, so
+ * they are told apart by `kind` rather than by which of two fetchers replied:
+ * the view is kept on screen while a confirmation or a launched run is added to
+ * it, instead of the numbers disappearing the moment something is posted. */
+export interface PipelineResult {
+  kind: "result";
+  ok: boolean;
+  error: string;
+  confirmation: PipelineConfirmation | null;
+  launched: PipelineLaunched | null;
+}
+
+export type PipelineResource = PipelineView | PipelineResult;
+
+/**
+ * The fetcher's `Form`, as the panel uses it: a post to the pipeline route.
+ *
+ * Typed as the narrow shape rather than as `FetcherWithComponents["Form"]` so a
+ * test can render the panel with a plain `<form>` -- the panel is pure markup
+ * over the data it is handed, and nothing about it needs a live router.
+ */
+export type PipelineFormComponent = React.ComponentType<{
+  method: "post";
+  action: string;
+  className?: string;
+  children: React.ReactNode;
+}>;
 
 /** Dagster reports seconds since the epoch as a float. */
 function instant(seconds: number | null): string {
@@ -181,10 +248,54 @@ function MaxCompaniesField({ defaultValue }: { defaultValue: number }) {
   );
 }
 
+/** The picked companies, carried into a resolve or model-pass launch. Rendered
+ * even when nothing is picked ("" = every changed company), so the field the
+ * action reads is the same one in both cases. */
+function CompanyScopeField({ selectedIds }: { selectedIds: string[] }) {
+  return (
+    <input type="hidden" name="company_ids" value={formatCompanyIdScope(selectedIds)} />
+  );
+}
+
+/**
+ * What the launches below cover, said before any of them can be pressed.
+ *
+ * Never implied by the ticks on the list: a selection is a set of company ids
+ * that outlives filtering, sorting and paging, so most of the picked companies
+ * are usually NOT among the rows on screen -- and some may not match the filter
+ * at all. The scope therefore states itself here, at the top of the sheet,
+ * above every Review and Launch button in the DOM.
+ */
+function ScopeBlock({ selectedIds }: { selectedIds: string[] }) {
+  const scoped = selectedIds.length > 0;
+  return (
+    <div
+      data-slot="pipeline-scope"
+      className="bg-muted/40 flex flex-col gap-1 rounded-md border p-3"
+    >
+      <div className="flex items-baseline gap-2">
+        <span className="text-muted-foreground text-xs">A run from here covers</span>
+        <span className="text-sm font-semibold">{describeCompanyScope(selectedIds)}</span>
+      </div>
+      <p className="text-muted-foreground text-xs">
+        {scoped
+          ? "The companies ticked on the list, including the ones the current filter or page does not show. Of those, only the ones the change scan still selects are resolved."
+          : "Nothing is ticked on the list, so a run selects every company the change scan finds, up to its stop-after cap."}
+      </p>
+      <p className="text-muted-foreground text-xs">
+        Refreshing an artifact re-reads its whole source and takes no company
+        scope, whatever is picked.
+      </p>
+    </div>
+  );
+}
+
 function ConfirmationPanel({
   confirmation,
+  Form,
 }: {
   confirmation: PipelineConfirmation;
+  Form: PipelineFormComponent;
 }) {
   return (
     <Alert>
@@ -195,7 +306,7 @@ function ConfirmationPanel({
             <li key={line}>{line}</li>
           ))}
         </ul>
-        <Form method="post" className="mt-3 flex items-center gap-2">
+        <Form method="post" action={SE_COMPANY_INFO_PIPELINE_PATH} className="mt-3 flex items-center gap-2">
           <input type="hidden" name="intent" value={confirmation.intent} />
           {Object.entries(confirmation.fields).map(([name, value]) => (
             <input key={name} type="hidden" name={name} value={value} />
@@ -212,62 +323,77 @@ function ConfirmationPanel({
   );
 }
 
-export function SeCompanyInfoPipeline({
-  stats,
-  statsError,
-  profiles,
-  runs,
-  instigators,
-  dagsterError,
-  confirmation,
-  launched,
-  error,
+/**
+ * Everything inside the sheet, as pure markup over the data it is handed.
+ *
+ * Exported separately from the sheet that wraps it because a Base UI dialog
+ * renders through a portal, which produces nothing at all during SSR: a test
+ * asserting on the panel renders it directly (the same split the filter sheet
+ * uses for its fields).
+ */
+export function SeCompanyInfoPipelinePanel({
+  view,
+  result,
+  selectedIds,
+  loading,
+  Form,
 }: {
-  stats: SeCompanyInfoPipelineStats | null;
-  statsError: string;
-  profiles: PipelineProfileOption[];
-  runs: PipelineRunRow[];
-  instigators: InstigatorStates | null;
-  dagsterError: string;
-  confirmation: PipelineConfirmation | null;
-  launched: PipelineLaunched | null;
-  error: string;
+  view: PipelineView | null;
+  result: PipelineResult | null;
+  /** The companies picked on the list, from the route component's selection. */
+  selectedIds: string[];
+  loading: boolean;
+  Form: PipelineFormComponent;
 }) {
+  if (!view) {
+    return (
+      <div className="flex flex-col gap-3 p-1">
+        <ScopeBlock selectedIds={selectedIds} />
+        <p className="text-muted-foreground text-sm">
+          {loading
+            ? "Reading the change scan…"
+            : "The change scan has not been read yet."}
+        </p>
+      </div>
+    );
+  }
+
+  const { stats, statsError, profiles, runs, instigators, dagsterError } = view;
   const mismatched = profiles.filter(
     (profile) => profile.apiKeyEnvironmentVariable !== profile.dagsterApiKeyVariable,
   );
 
   return (
-    <div className="flex flex-1 flex-col gap-6 p-4 md:p-6">
-      <header className="flex flex-col gap-2">
-        <h1 className="text-2xl font-semibold tracking-tight">Pipeline</h1>
-        <p className="text-muted-foreground text-sm">
-          What a se_company_info run would do right now, what has run recently,
-          and the three runs this page can start. Every launch from here sends
-          <code className="mx-1">execute: true</code> and an explicit model
-          profile — a Materialize click in the Dagster UI does not, and is a
-          preview that writes nothing.
-        </p>
-        <div className="flex flex-wrap items-center gap-2">
-          {instigators === null ? (
-            <Badge variant="outline">automation status unavailable</Badge>
-          ) : (
-            <>
-              {instigators.schedules.map((schedule) => (
-                <InstigatorBadge
-                  key={schedule.name}
-                  name={schedule.name}
-                  status={schedule.status}
-                  detail={schedule.cronSchedule}
-                />
-              ))}
-              {instigators.sensors.map((sensor) => (
-                <InstigatorBadge key={sensor.name} name={sensor.name} status={sensor.status} />
-              ))}
-            </>
-          )}
-        </div>
-      </header>
+    <div className="flex flex-col gap-4">
+      <p className="text-muted-foreground text-sm">
+        What a se_company_info run would do right now, what has run recently, and
+        the three runs this sheet can start. Every launch from here sends
+        <code className="mx-1">execute: true</code> and an explicit model profile
+        — a Materialize click in the Dagster UI does not, and is a preview that
+        writes nothing.
+      </p>
+
+      <ScopeBlock selectedIds={selectedIds} />
+
+      <div className="flex flex-wrap items-center gap-2">
+        {instigators === null ? (
+          <Badge variant="outline">automation status unavailable</Badge>
+        ) : (
+          <>
+            {instigators.schedules.map((schedule) => (
+              <InstigatorBadge
+                key={schedule.name}
+                name={schedule.name}
+                status={schedule.status}
+                detail={schedule.cronSchedule}
+              />
+            ))}
+            {instigators.sensors.map((sensor) => (
+              <InstigatorBadge key={sensor.name} name={sensor.name} status={sensor.status} />
+            ))}
+          </>
+        )}
+      </div>
 
       {dagsterError ? (
         <Alert variant="destructive">
@@ -279,43 +405,45 @@ export function SeCompanyInfoPipeline({
         </Alert>
       ) : null}
 
-      {error ? (
+      {result?.error ? (
         <Alert variant="destructive">
           <AlertTitle>That did not run</AlertTitle>
-          <AlertDescription>{error}</AlertDescription>
+          <AlertDescription>{result.error}</AlertDescription>
         </Alert>
       ) : null}
 
-      {launched ? (
+      {result?.launched ? (
         <Alert>
-          <AlertTitle>Launched on {launched.job}</AlertTitle>
+          <AlertTitle>Launched on {result.launched.job}</AlertTitle>
           <AlertDescription>
             Run{" "}
-            {launched.url ? (
+            {result.launched.url ? (
               <a
                 className="font-mono underline underline-offset-2"
-                href={launched.url}
+                href={result.launched.url}
                 target="_blank"
                 rel="noreferrer"
               >
-                {launched.runId}
+                {result.launched.runId}
               </a>
             ) : (
-              <span className="font-mono">{launched.runId}</span>
+              <span className="font-mono">{result.launched.runId}</span>
             )}{" "}
-            is queued. Reload this page to see it in the runs table.
+            is queued. Close and re-open this sheet to see it in the runs table.
           </AlertDescription>
         </Alert>
       ) : null}
 
-      {confirmation ? <ConfirmationPanel confirmation={confirmation} /> : null}
+      {result?.confirmation ? (
+        <ConfirmationPanel confirmation={result.confirmation} Form={Form} />
+      ) : null}
 
       {stats === null ? (
         <Card>
           <CardHeader>
             <CardTitle>Selection counts unavailable</CardTitle>
             <CardDescription>
-              ClickHouse did not answer, so this page cannot say what a run would
+              ClickHouse did not answer, so this sheet cannot say what a run would
               select — and the actions below refuse to confirm anything until it
               does.
             </CardDescription>
@@ -325,7 +453,7 @@ export function SeCompanyInfoPipeline({
           </CardContent>
         </Card>
       ) : (
-      <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-4">
+      <div className="grid gap-4 md:grid-cols-2">
         <Card>
           <CardHeader>
             <CardTitle>Changed companies</CardTitle>
@@ -452,18 +580,23 @@ export function SeCompanyInfoPipeline({
         </Alert>
       ) : null}
 
-      <div className="grid gap-4 lg:grid-cols-3">
+      <div className="grid gap-4">
         <Card>
           <CardHeader>
             <CardTitle>Re-resolve changed companies</CardTitle>
             <CardDescription>
               Everything the ordinary run picks up: new evidence, new ledger rows,
-              never-published companies.
+              never-published companies — within the scope above.
             </CardDescription>
           </CardHeader>
           <CardContent>
-            <Form method="post" className="flex flex-wrap items-end gap-3">
+            <Form
+              method="post"
+              action={SE_COMPANY_INFO_PIPELINE_PATH}
+              className="flex flex-wrap items-end gap-3"
+            >
               <input type="hidden" name="intent" value="confirm-resolve" />
+              <CompanyScopeField selectedIds={selectedIds} />
               <MaxCompaniesField defaultValue={1000} />
               <label className="flex items-center gap-2 pb-1.5 text-sm">
                 <Checkbox name="use_model" value="1" defaultChecked />
@@ -483,12 +616,17 @@ export function SeCompanyInfoPipeline({
             <CardTitle>Run the model pass</CardTitle>
             <CardDescription>
               Only the companies published with several description sources and no
-              suggestion yet.
+              suggestion yet — within the scope above.
             </CardDescription>
           </CardHeader>
           <CardContent>
-            <Form method="post" className="flex flex-wrap items-end gap-3">
+            <Form
+              method="post"
+              action={SE_COMPANY_INFO_PIPELINE_PATH}
+              className="flex flex-wrap items-end gap-3"
+            >
               <input type="hidden" name="intent" value="confirm-model-pass" />
+              <CompanyScopeField selectedIds={selectedIds} />
               <MaxCompaniesField defaultValue={500} />
               <ProfileSelect profiles={profiles} />
               <ConcurrencyField />
@@ -503,11 +641,16 @@ export function SeCompanyInfoPipeline({
           <CardHeader>
             <CardTitle>Refresh an artifact</CardTitle>
             <CardDescription>
-              Re-reads one source into its artifact table; no model, no final write.
+              Re-reads one source into its artifact table; no model, no final
+              write, no company scope.
             </CardDescription>
           </CardHeader>
           <CardContent>
-            <Form method="post" className="flex flex-wrap items-end gap-3">
+            <Form
+              method="post"
+              action={SE_COMPANY_INFO_PIPELINE_PATH}
+              className="flex flex-wrap items-end gap-3"
+            >
               <input type="hidden" name="intent" value="confirm-artifact" />
               <Field label="Artifact">
                 <Select items={artifactSelectItems()} name="artifact" defaultValue="scb">
@@ -611,5 +754,77 @@ export function SeCompanyInfoPipeline({
         </CardContent>
       </Card>
     </div>
+  );
+}
+
+/**
+ * The Pipeline button beside the list's Filters button, and the sheet it opens.
+ *
+ * ONE fetcher does both halves: `load` when the sheet opens (never before --
+ * that is what keeps the change scan off the list's loader) and the launches
+ * the panel's forms post to the same route's action. The loader's answer is
+ * kept in state so a posted confirmation adds to the numbers on screen instead
+ * of replacing them, which is what a single fetcher's `data` would otherwise do.
+ */
+export function SeCompanyInfoPipelineSheet({ selection }: { selection: RowSelection }) {
+  const [open, setOpen] = useState(false);
+  const fetcher = useFetcher<PipelineResource>();
+  const loaded = useRef(false);
+  const [view, setView] = useState<PipelineView | null>(null);
+  const selectedIds = selectedRowIds(selection);
+
+  useEffect(() => {
+    // Re-read on every opening rather than once per mount: this component stays
+    // mounted across every filter, sort and page navigation of the list, and a
+    // change scan from an hour ago is not what the reviewer is being asked
+    // about. The ref is what stops the effect re-firing on each fetcher state
+    // change while the sheet is open.
+    if (!open) {
+      loaded.current = false;
+      return;
+    }
+    if (loaded.current) return;
+    loaded.current = true;
+    fetcher.load(SE_COMPANY_INFO_PIPELINE_PATH);
+  }, [fetcher, open]);
+
+  useEffect(() => {
+    if (fetcher.data?.kind === "view") setView(fetcher.data);
+  }, [fetcher.data]);
+
+  const result = fetcher.data?.kind === "result" ? fetcher.data : null;
+
+  return (
+    <Sheet open={open} onOpenChange={setOpen}>
+      <SheetTrigger render={<Button variant="outline" size="sm" />}>
+        <PlayIcon data-icon="inline-start" />
+        Pipeline
+        {selectedIds.length > 0 ? (
+          <Badge variant="secondary" className="ml-1 px-1.5">
+            {nf.format(selectedIds.length)}
+          </Badge>
+        ) : null}
+      </SheetTrigger>
+      <SheetContent
+        side="right"
+        className="flex w-full flex-col sm:max-w-3xl data-[side=right]:sm:max-w-3xl"
+      >
+        <SheetHeader>
+          <SheetTitle>Pipeline</SheetTitle>
+          <SheetDescription>
+            The se_company_info change scan, and the runs it can start.
+          </SheetDescription>
+        </SheetHeader>
+        <div className="min-h-0 flex-1 overflow-y-auto px-4 pb-4">
+          <SeCompanyInfoPipelinePanel
+            view={view}
+            result={result}
+            selectedIds={selectedIds}
+            loading={fetcher.state !== "idle"}
+            Form={fetcher.Form}
+          />
+        </div>
+      </SheetContent>
+    </Sheet>
   );
 }

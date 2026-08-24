@@ -51,11 +51,13 @@ export function meta() {
 
 export default function AdminSeCompanyInfoTable({ loaderData }: Route.ComponentProps) {
   const { listPage, counts, options, total, filters, view, sort } = loaderData;
-  // HAND-OFF CONTRACT (for the bulk-action sheet that follows this task):
-  // the picked companies live HERE, in the route component, and nowhere else.
-  // Filtering, sorting and paging are all search-param navigations of THIS
-  // route, which re-run the loader without unmounting this component -- so
-  // the selection survives them, which it would not if the table owned it.
+  // The picked companies live HERE, in the route component, because that is
+  // where the Pipeline sheet's consumer can reach them: the sheet renders
+  // beside the table's Filters button and needs the same `selection` the
+  // checkboxes write to. Filtering, sorting and paging are all search-param
+  // navigations of THIS route, which re-run the loader without unmounting this
+  // component, so the ticks survive them -- a side effect of the placement, not
+  // a store: nothing here persists a selection past a reload.
   //
   //   `selection`     TanStack's RowSelectionState, keyed by company_id (the
   //                   table passes `getRowId: row => row.company_id`), and so
@@ -63,10 +65,7 @@ export default function AdminSeCompanyInfoTable({ loaderData }: Route.ComponentP
   //   `setSelection`  the OnChangeFn the table's checkboxes call; also what
   //                   the toolbar's Clear resets.
   //   `selectedRowIds(selection)` (~/lib/row-selection) turns it into the
-  //                   id list a bulk action would post.
-  //
-  // Whatever consumes the selection next takes this pair as props from here.
-  // Nothing but the table reads it today.
+  //                   id list the pipeline launches post as `company_ids`.
   const [selection, setSelection] = useState<RowSelection>(NO_ROWS_SELECTED);
   return (
     <div className="flex flex-1 flex-col gap-6 p-4 md:p-6">

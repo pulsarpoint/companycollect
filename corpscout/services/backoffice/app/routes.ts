@@ -112,9 +112,12 @@ export default [
       "se/company-info/corrections",
       "routes/admin-se-company-info-corrections.tsx",
     ),
+    // Not a page: the resource route behind the companies list's Pipeline
+    // sheet. Its loader answers that sheet's fetcher and redirects anyone who
+    // navigates to the old URL back to the list.
     route(
       "se/company-info/pipeline",
-      "routes/admin-se-company-info-pipeline.tsx",
+      "routes/admin-se-company-info-pipeline.ts",
     ),
     route(
       "se/company-address/corrections",
