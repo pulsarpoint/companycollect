@@ -123,27 +123,40 @@ def test_an_address_with_no_link_at_all_publishes_without_a_geocode() -> None:
     assert outcomes[0].address_id is None and outcomes[0].geocode_status == ""
 
 
-def _published(key: str, *, is_current: bool = True) -> AddressOutcome:
+def _published(key: str, *, is_current: bool = True,
+               correction_ids: tuple[uuid.UUID, ...] = ()) -> AddressOutcome:
     return AddressOutcome(company_id=COMPANY, address_key=key, address_type="postal",
                           care_of=None, street_address="Gone 1", normalized_address="gone 1",
                           postal_code="11122", city="Stockholm", country_code=None,
                           sources=("scb",), source_record_uids=("uid-scb",),
                           evidence_hashes=("s" * 64,), address_fingerprints=("fp-scb",),
-                          is_current=is_current)
+                          is_current=is_current, correction_ids=correction_ids)
 
 
 def test_a_key_that_disappears_is_republished_as_a_tombstone_with_its_own_provenance() -> None:
     live = merge_company_addresses(COMPANY, [_row("bolagsverket")])
-    rows = with_set_replacement(live, [_published("d" * 64), *live])
+    rows = with_set_replacement(live, [_published("d" * 64, correction_ids=(uuid.UUID(int=9),)), *live])
     tombstones = [row for row in rows if not row.is_current]
     assert [row.address_key for row in tombstones] == ["d" * 64]
     assert tombstones[0].source_record_uids == ("uid-scb",)  # has_evidence still holds
+    # The correction decided a LIVE address. Carrying its id onto the tombstone would claim
+    # a reviewer decided this resolution, which never happened -- this resolution produced
+    # no row for that key at all.
+    assert tombstones[0].correction_ids == ()
 
 
 def test_an_address_that_comes_back_is_current_again_and_a_tombstone_is_not_republished() -> None:
     live = merge_company_addresses(COMPANY, [_row("bolagsverket")])
     rows = with_set_replacement(live, [_published(live[0].address_key, is_current=False)])
     assert [(row.address_key, row.is_current) for row in rows] == [(live[0].address_key, True)]
+
+
+def test_a_key_already_published_as_a_tombstone_is_not_republished() -> None:
+    """Nothing about it changed. Re-writing every dead address of every company on every
+    weekly resolution would grow the final for no reason."""
+    live = merge_company_addresses(COMPANY, [_row("bolagsverket")])
+    rows = with_set_replacement(live, [_published("d" * 64, is_current=False)])
+    assert [row.address_key for row in rows] == [live[0].address_key]
 
 
 def _correction(index: int, kind: str, payload: dict, *, evidence: str, supersedes: int | None = None) -> LedgerRow:
@@ -176,7 +189,11 @@ def test_reject_address_publishes_the_row_as_a_tombstone() -> None:
     assert updated[0].is_current is False and updated[0].correction_ids == (uuid.UUID(int=2),)
 
 
-def test_override_outranks_a_reject_decided_after_it() -> None:
+def test_a_reject_and_an_override_of_the_same_row_are_both_honoured() -> None:
+    """A reviewer who does both means both: the reject decides whether the row is published,
+    the override decides what it says, and they write different fields. (Their relative rank
+    in ADDRESS_KIND_ORDER is inert for exactly that reason -- what the map decides is
+    MEMBERSHIP, tested by the bogus_kind row in the never-abort case below.)"""
     outcomes = merge_company_addresses(COMPANY, [_row("bolagsverket")])
     key, evidence = outcomes[0].address_key, evidence_set_hash_for(outcomes[0].evidence_hashes)
     updated, _ = apply_address_ledger(outcomes, [
@@ -218,6 +235,49 @@ def test_stale_malformed_undone_and_unknown_corrections_never_abort_a_run() -> N
     # produce, which is inert, not stale.
     assert [item.int for item in stale] == [1]
     assert updated[0].correction_ids == ()
+
+
+def test_a_correction_decides_only_the_row_it_names() -> None:
+    """A company has SEVERAL addresses -- the whole difference from se_company_info, where
+    one company is one row and a correction has nothing to miss. Here every payload names an
+    address_key, and a correction that leaked onto the company's other rows would rewrite or
+    retire an address no reviewer ever looked at."""
+    outcomes = merge_company_addresses(COMPANY, [
+        _row("bolagsverket", care_of="c/o Anna"),
+        _row("scb", address_type="visiting_or_postal", care_of="c/o Bo"),
+    ])
+    assert len(outcomes) == 2
+    target = next(outcome for outcome in outcomes if outcome.sources == ("bolagsverket",))
+    other = next(outcome for outcome in outcomes if outcome.sources == ("scb",))
+    evidence = evidence_set_hash_for(target.evidence_hashes)
+
+    updated, stale = apply_address_ledger(outcomes, [
+        _correction(1, "override_field", {"address_key": target.address_key, "care_of": "c/o Reviewer"},
+                    evidence=evidence),
+        _correction(2, "reject_address", {"address_key": target.address_key}, evidence=evidence)])
+
+    assert stale == ()
+    by_key = {row.address_key: row for row in updated}
+    assert by_key[target.address_key].care_of == "c/o Reviewer"
+    assert by_key[target.address_key].is_current is False
+    assert by_key[target.address_key].correction_ids == (uuid.UUID(int=1), uuid.UUID(int=2))
+    # The address nobody decided is published exactly as the merge computed it.
+    assert by_key[other.address_key].care_of == "c/o Bo"
+    assert by_key[other.address_key].is_current is True
+    assert by_key[other.address_key].correction_ids == ()
+
+
+def test_a_correction_carrying_the_zero_evidence_hash_is_never_stale() -> None:
+    """The zero hash is 'evidence not applicable' -- a decision the reviewer did not pin to
+    one resolution's evidence set. It applies whatever that row's evidence has become, so it
+    survives the next artifact version instead of going stale on it."""
+    outcomes = merge_company_addresses(COMPANY, [_row("bolagsverket")])
+    assert evidence_set_hash_for(outcomes[0].evidence_hashes) != ZERO_HASH
+    updated, stale = apply_address_ledger(outcomes, [
+        _correction(1, "override_field", {"address_key": outcomes[0].address_key, "care_of": "c/o Reviewer"},
+                    evidence=ZERO_HASH)])
+    assert stale == ()
+    assert updated[0].care_of == "c/o Reviewer" and updated[0].correction_ids == (uuid.UUID(int=1),)
 
 
 def test_the_pipeline_applies_the_ledger_before_the_set_replacement() -> None:

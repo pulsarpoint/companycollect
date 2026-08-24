@@ -21,15 +21,22 @@ from datetime import datetime
 from typing import Any
 
 from dagster_v3.defs.se_company.common import LedgerRow, effective_ledger
-from dagster_v3.defs.se_company.info_rules import ArtifactRow, evidence_set_hash_for
+# _text is info_rules' own trim-to-None helper, imported rather than re-declared for the
+# same reason ArtifactRow and evidence_set_hash_for are: a second copy drifts (this module's
+# first draft folded 0 to None where info_rules folds it to "0"), and "what counts as empty
+# text" has to mean one thing across the whole se_company layer.
+from dagster_v3.defs.se_company.info_rules import ArtifactRow, _text, evidence_set_hash_for
 
 # Bolagsverket is the registration authority for a company's postal address, so its text
 # wins wherever both sources describe the same address. A source not named here sorts last,
 # alphabetically -- a new artifact is never silently promoted above these two.
 ADDRESS_SOURCE_PRIORITY = ("bolagsverket", "scb")
-# override_field ranks AFTER reject_address, so a live override's field values survive a
-# reject decided in the same batch while the reject still tombstones the row: the two
-# decide different things and both are honoured. Within one kind, later (by created_at) wins.
+# The kinds this ledger knows. MEMBERSHIP is what this map decides: effective_ledger drops
+# every kind it does not name, so an unknown correction is ignored instead of applied. The
+# relative ranks are inert today -- reject_address writes only is_current and override_field
+# only text fields, so the two commute and flipping the ranks changes nothing -- and are kept
+# in the order a reader would expect if a future kind ever wrote a column another kind writes.
+# Within one kind, later (by created_at) wins.
 ADDRESS_KIND_ORDER = {"reject_address": 0, "override_field": 1}
 # The text fields a reviewer may decide. address_type is NOT among them: it is part of
 # address_key, so overriding it would move the row to a different identity -- reject the
@@ -105,11 +112,6 @@ def _norm(value: object) -> str:
 
 def _digits(value: object) -> str:
     return _NON_DIGIT.sub("", str(value or ""))
-
-
-def _text(value: object) -> str | None:
-    cleaned = str(value or "").strip()
-    return cleaned or None
 
 
 def address_components(values: Mapping[str, Any]) -> tuple[str, str, str, str, str, str]:
@@ -390,6 +392,14 @@ def resolve_company_addresses(
     set replacement leaves the published row for that key alone (one row per key per
     resolution) and the ReplacingMergeTree retires it on ``resolved_at``. Undo the reject
     and the key is produced current again.
+
+    The geocode is attached BEFORE the ledger, deliberately: a row whose ``street_address``
+    an ``override_field`` rewrites still publishes the coordinate the chain resolved from
+    the SOURCE text. The geocode belongs to the source observation -- it is looked up by
+    that observation's ``address_fingerprint``, which no correction can change -- so a
+    reviewer's wording never silently re-points a coordinate at a place nothing geocoded. A
+    reviewer who means a DIFFERENT place rejects the address instead; the corrected one
+    arrives from a source, with its own fingerprint and its own geocode.
 
     address.py calls this and nothing else; the four steps stay public because each is a
     rule with its own table test.
