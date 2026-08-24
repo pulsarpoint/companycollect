@@ -158,6 +158,9 @@ def iter_artifact_facts(
     artifact_facts = _artifact_field(artifact, "facts")
     if not isinstance(artifact_facts, Mapping):
         raise ValueError("ESEF Arelle artifact facts must be an object")
+    artifact_concepts = _artifact_field(artifact, "concepts", default={})
+    if not isinstance(artifact_concepts, Mapping):
+        artifact_concepts = {}
 
     ordered_facts = sorted(
         artifact_facts.items(),
@@ -186,24 +189,40 @@ def iter_artifact_facts(
                 fact_key=fact_key,
                 used_fact_ids=used_fact_ids,
             )
+            dimensions = _artifact_field(
+                artifact_fact,
+                "oim_dimensions",
+                default=None,
+            )
+            concept_qname = (
+                str(dimensions.get("concept", ""))
+                if isinstance(dimensions, Mapping)
+                else ""
+            )
+            concept = artifact_concepts.get(concept_qname)
             yield (
                 fact_id,
                 {
-                    "value": _artifact_field(
-                        artifact_fact,
-                        "canonical_value",
-                        default=None,
+                    "value": normalize_artifact_fact_value(
+                        _artifact_field(
+                            artifact_fact,
+                            "canonical_value",
+                            default=None,
+                        ),
+                        base_xsd_type=str(
+                            _artifact_field(
+                                concept,
+                                "base_xsd_type",
+                                default="",
+                            )
+                        ),
                     ),
                     "decimals": _artifact_field(
                         artifact_fact,
                         "decimals",
                         default=None,
                     ),
-                    "dimensions": _artifact_field(
-                        artifact_fact,
-                        "oim_dimensions",
-                        default=None,
-                    ),
+                    "dimensions": dimensions,
                 },
             )
 
@@ -219,6 +238,22 @@ def _artifact_field(value: Any, name: str, *, default: Any = None) -> Any:
     if isinstance(value, Mapping):
         return value.get(name, default)
     return getattr(value, name, default)
+
+
+def normalize_artifact_fact_value(
+    value: str | None,
+    *,
+    base_xsd_type: str,
+) -> str | None:
+    """Normalize date-typed values emitted by older Arelle artifacts."""
+    if base_xsd_type.casefold() != "date" or not isinstance(value, str):
+        return value
+    date_text = value[:10]
+    try:
+        date.fromisoformat(date_text)
+    except ValueError:
+        return value
+    return date_text
 
 
 def _unique_artifact_fact_id(

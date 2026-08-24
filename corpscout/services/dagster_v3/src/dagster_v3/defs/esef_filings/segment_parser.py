@@ -1332,6 +1332,8 @@ def _canonical_value(fact: Any) -> str | None:
         integer_part, fractional_part = f"{value:f}".split(".")
         return f"{integer_part}.{fractional_part.rstrip('0') or '0'}"
     if isinstance(value, datetime):
+        if bool(getattr(value, "dateOnly", False)):
+            return value.date().isoformat()
         return value.isoformat(timespec="seconds")
     if isinstance(value, date):
         return value.isoformat()

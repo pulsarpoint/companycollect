@@ -5,9 +5,11 @@ from dataclasses import replace
 from datetime import timedelta
 from hashlib import sha256
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 import zipfile_deflate64 as zipfile
+from arelle.ModelValue import DateTime as ArelleDateTime
 from dagster import AssetKey
 
 from dagster_v3.defs.common.duckdb_resources import duckdb_resource
@@ -155,6 +157,16 @@ def test_parse_report_package_resolves_continuations_and_selects_segments(
     assert board_section.heading == "Board of Directors"
     assert "Anna Andersson — Chair" in board_section.text
     assert board_section.extraction_method == "semantic_section"
+
+
+def test_arelle_date_values_keep_their_date_only_lexical_form() -> None:
+    fact = SimpleNamespace(
+        isNil=False,
+        xValue=ArelleDateTime(2025, 12, 31, dateOnly=True),
+        value="2025-12-31",
+    )
+
+    assert segment_parser._canonical_value(fact) == "2025-12-31"
 
 
 def test_visible_sections_reconstruct_positioned_page_order_and_provenance(
@@ -732,15 +744,19 @@ def test_fact_parity_report_checks_semantic_and_legacy_row_contracts(
     assert report["semantic_facts"] == {
         "artifact_fact_count": 4,
         "reference_fact_count": 4,
+        "exact_matched_fact_count": 4,
+        "approved_difference_count": 0,
         "matched_fact_count": 4,
         "artifact_only_count": 0,
         "reference_only_count": 0,
+        "raw_parity": True,
         "parity": True,
     }
     assert report["legacy_rows"]["parity"] is True
     assert report["legacy_rows"]["exact_row_parity"] is True
     assert report["metrics"]["parity"] is True
     assert report["ready_for_fact_cutover"] is True
+
     assert set(report["field_mismatch_counts"]) == {
         "concept",
         "value",
@@ -752,6 +768,202 @@ def test_fact_parity_report_checks_semantic_and_legacy_row_contracts(
         "dimensions",
     }
     assert not any(report["field_mismatch_counts"].values())
+
+
+def test_fact_parity_normalizes_date_typed_midnight_values(tmp_path: Path) -> None:
+    parsed = parse_esef_report_package(
+        _write_sample_report_package(tmp_path),
+        source=EsefArtifactSource(fxo_id="SAMPLE-2025"),
+        validate_esef=False,
+    )
+    revenue_fact_key = next(
+        fact_key
+        for fact_key, fact in parsed.facts.items()
+        if fact.concept_qname == "sample:Revenue"
+    )
+    revenue_fact = parsed.facts[revenue_fact_key]
+    date_qname = "ifrs-full:DateOfEndOfReportingPeriod2013"
+    ifrs_namespace = "https://xbrl.ifrs.org/taxonomy/2024-03-27/ifrs-full"
+    artifact = replace(
+        parsed,
+        document=replace(
+            parsed.document,
+            namespaces={**parsed.document.namespaces, "ifrs-full": ifrs_namespace},
+        ),
+        concepts={
+            **parsed.concepts,
+            date_qname: replace(
+                parsed.concepts["sample:Revenue"],
+                qname=date_qname,
+                namespace=ifrs_namespace,
+                local_name="DateOfEndOfReportingPeriod2013",
+                type_qname="xbrli:dateItemType",
+                base_xsd_type="date",
+                balance="",
+                is_numeric=False,
+            ),
+        },
+        facts={
+            **parsed.facts,
+            revenue_fact_key: replace(
+                revenue_fact,
+                concept_qname=date_qname,
+                canonical_value="2025-12-31T00:00:00",
+                decimals=None,
+                unit=None,
+                is_numeric=False,
+                oim_dimensions={
+                    key: value
+                    for key, value in {
+                        **revenue_fact.oim_dimensions,
+                        "concept": date_qname,
+                    }.items()
+                    if key != "unit"
+                },
+            ),
+        },
+    )
+    reference = _reference_oim_from_artifact(artifact)
+    reference["facts"][revenue_fact.source_fact_id]["value"] = "2025-12-31"
+
+    report = build_fact_parity_report(
+        artifact,
+        reference,
+        lei="549300SAMPLE000000001",
+        fxo_id="SAMPLE-2025",
+        period_end="2025-12-31",
+    )
+
+    assert report["approved_differences"]["count"] == 0
+    assert report["semantic_facts"]["raw_parity"] is True
+    assert report["legacy_rows"]["raw_parity"] is True
+    assert report["metrics"]["raw_parity"] is True
+    assert report["ready_for_fact_cutover"] is True
+
+
+@pytest.mark.parametrize(
+    (
+        "canonical_value",
+        "decimals",
+        "fact_period",
+        "expected_employees",
+        "expected_metric_mismatches",
+    ),
+    [
+        (
+            "2243.0",
+            3,
+            "2025-01-01T00:00:00/2026-01-01T00:00:00",
+            2243,
+            ["employees"],
+        ),
+        (
+            "2.0",
+            0,
+            "2024-01-01T00:00:00/2025-01-01T00:00:00",
+            None,
+            [],
+        ),
+    ],
+)
+def test_fact_parity_approves_arelle_employee_numeric_promotion(
+    tmp_path: Path,
+    canonical_value: str,
+    decimals: int,
+    fact_period: str,
+    expected_employees: int | None,
+    expected_metric_mismatches: list[str],
+) -> None:
+    parsed = parse_esef_report_package(
+        _write_sample_report_package(tmp_path),
+        source=EsefArtifactSource(fxo_id="SAMPLE-2024"),
+        validate_esef=False,
+    )
+    revenue_fact_key = next(
+        fact_key
+        for fact_key, fact in parsed.facts.items()
+        if fact.concept_qname == "sample:Revenue"
+    )
+    revenue_fact = parsed.facts[revenue_fact_key]
+    employee_qname = "ifrs-full:AverageNumberOfEmployees"
+    ifrs_namespace = "https://xbrl.ifrs.org/taxonomy/2024-03-27/ifrs-full"
+    artifact = replace(
+        parsed,
+        document=replace(
+            parsed.document,
+            namespaces={**parsed.document.namespaces, "ifrs-full": ifrs_namespace},
+        ),
+        concepts={
+            **parsed.concepts,
+            employee_qname: replace(
+                parsed.concepts["sample:Revenue"],
+                qname=employee_qname,
+                namespace=ifrs_namespace,
+                local_name="AverageNumberOfEmployees",
+                type_qname="xbrli:pureItemType",
+                base_xsd_type="decimal",
+                balance="",
+            ),
+        },
+        facts={
+            **parsed.facts,
+            revenue_fact_key: replace(
+                revenue_fact,
+                concept_qname=employee_qname,
+                canonical_value=canonical_value,
+                decimals=decimals,
+                unit={"numerators": ["xbrli:pure"], "denominators": []},
+                oim_dimensions={
+                    **revenue_fact.oim_dimensions,
+                    "concept": employee_qname,
+                    "period": fact_period,
+                    "unit": "xbrli:pure",
+                },
+            ),
+        },
+    )
+    reference = _reference_oim_from_artifact(artifact)
+    reference_employee = reference["facts"][revenue_fact.source_fact_id]
+    reference_employee["dimensions"].pop("unit")
+
+    report = build_fact_parity_report(
+        artifact,
+        reference,
+        lei="549300SAMPLE000000001",
+        fxo_id="SAMPLE-2024",
+        period_end="2025-12-31",
+    )
+
+    assert report["approved_differences"]["count"] == 1
+    assert report["approved_differences"]["by_code"] == {
+        "ifrs-average-number-of-employees-pure-unit": 1,
+    }
+    assert report["semantic_facts"]["approved_difference_count"] == 1
+    assert report["semantic_facts"]["parity"] is True
+    assert report["legacy_rows"]["raw_parity"] is False
+    assert report["legacy_rows"]["approved_difference_count"] == 1
+    assert report["legacy_rows"]["parity"] is True
+    assert report["metrics"]["raw_mismatched_metrics"] == expected_metric_mismatches
+    assert (
+        report["metrics"]["approved_mismatched_metrics"] == expected_metric_mismatches
+    )
+    assert report["metrics"]["artifact"]["employees"] == expected_employees
+    assert report["metrics"]["reference"]["employees"] is None
+    assert report["metrics"]["parity"] is True
+    assert report["ready_for_fact_cutover"] is True
+
+    reference_employee["value"] = "999.0"
+    changed_value_report = build_fact_parity_report(
+        artifact,
+        reference,
+        lei="549300SAMPLE000000001",
+        fxo_id="SAMPLE-2024",
+        period_end="2025-12-31",
+    )
+    assert changed_value_report["approved_differences"]["count"] == 0
+    assert changed_value_report["semantic_facts"]["parity"] is False
+    assert changed_value_report["legacy_rows"]["parity"] is False
+    assert changed_value_report["ready_for_fact_cutover"] is False
 
 
 def test_fact_parity_report_resolves_equivalent_qname_prefixes(

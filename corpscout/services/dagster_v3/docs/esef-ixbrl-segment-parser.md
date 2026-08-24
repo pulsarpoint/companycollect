@@ -82,6 +82,15 @@ are not cutover blockers when the stored values and metrics match: OIM exporters
 may invent IDs for XHTML facts that have no source `id`, while the Arelle artifact
 uses a deterministic report-member/fact-key fallback.
 
+The report also exposes narrowly approved semantic corrections instead of hiding
+them as normalization. The only approved rule is
+`ifrs-average-number-of-employees-pure-unit`: Arelle may promote
+`ifrs-full:AverageNumberOfEmployees` from legacy unitless text to a numeric
+`xbrli:pure` fact when the value, decimals, entity, period, language, and
+dimensions are otherwise identical. The raw mismatch and affected `employees`
+metric remain visible in the report. A different employee value or any other
+field change still fails the cutover gate.
+
 ## Materialize source documents and deterministic candidates
 
 Launch `esef_filings_refresh_job` or `esef_filings_backfill_job` for a processed-week

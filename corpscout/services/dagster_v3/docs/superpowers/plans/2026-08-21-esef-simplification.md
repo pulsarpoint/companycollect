@@ -145,6 +145,27 @@ WHERE b.revenue_amount_original != m.revenue_amount_original LIMIT 20;
 
 Expected: empty (or explainable diffs only). Record the verdict + counts in this plan file under G1. **G1 passes → Phases 1b and 2 unlock.**
 
+#### G1 fact-variance decision (2026-08-24)
+
+The `2026-04-19` shadow partition produced 34,069 facts in both paths. Three
+semantic rows differed:
+
+- `ifrs-full:DateOfEndOfReportingPeriod2013` used `2025-12-31` in OIM and
+  `2025-12-31T00:00:00` in the Arelle artifact. Date-typed artifact values are
+  normalized to `YYYY-MM-DD` when created and when an existing schema-v5
+  artifact is projected into `esef_facts`.
+- Two `ifrs-full:AverageNumberOfEmployees` facts (`2243.0`, decimals 3, and
+  `2.0`, decimals 0) were unitless text in OIM but numeric `xbrli:pure` facts in
+  Arelle. This is an approved data-quality correction: the parity report records
+  the approval and raw metric mismatch while allowing the cutover gate to pass.
+  Approval requires the value and every semantic field except unit to match, so
+  it cannot mask a changed employee count.
+
+The separate `2025-05-04` shadow partition matched all 536 facts semantically.
+Operational `source_run_id` differences and deterministic fact-ID differences
+are tracked separately and are not semantic fact variances. This variance
+decision does not by itself mark the full-corpus G1 gate complete.
+
 ---
 
 # Phase 1a — Bug fixes and dead-code deletions safe before G1

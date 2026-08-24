@@ -147,6 +147,55 @@ def test_iter_artifact_facts_reuses_oim_row_contract_with_deterministic_ids(
     assert all(row.decimals == -5 for row in rows)
 
 
+@pytest.mark.parametrize(
+    ("base_xsd_type", "expected_value"),
+    [
+        ("date", "2025-12-31"),
+        ("string", "2025-12-31T00:00:00"),
+    ],
+)
+def test_iter_artifact_facts_normalizes_only_date_typed_midnight_values(
+    base_xsd_type: str,
+    expected_value: str,
+) -> None:
+    concept_qname = "ifrs-full:DateOfEndOfReportingPeriod2013"
+    artifact = {
+        "schema_version": ARTIFACT_SCHEMA_VERSION,
+        "concepts": {
+            concept_qname: {
+                "base_xsd_type": base_xsd_type,
+            },
+        },
+        "facts": {
+            "date-fact-key": {
+                "report_member": "reports/report.xhtml",
+                "ordinal": 1,
+                "source_fact_id": "reporting-period-end",
+                "canonical_value": "2025-12-31T00:00:00",
+                "decimals": None,
+                "oim_dimensions": {
+                    "concept": concept_qname,
+                    "entity": "lei:549300SAMPLE000000001",
+                    "period": "2025-01-01T00:00:00/2026-01-01T00:00:00",
+                },
+            },
+        },
+    }
+
+    row = next(
+        facts.iter_artifact_facts(
+            artifact,
+            lei=LEI,
+            fxo_id=FXO_ID,
+            period_end="2025-12-31",
+        )
+    )
+
+    assert row.raw_value == expected_value
+    assert row.value_kind == "text"
+    assert row.amount_original is None
+
+
 def test_iter_artifact_facts_rejects_unknown_artifact_schema() -> None:
     with pytest.raises(ValueError, match="unsupported schema version"):
         list(

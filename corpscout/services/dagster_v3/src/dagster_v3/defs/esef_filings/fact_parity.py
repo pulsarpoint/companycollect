@@ -28,6 +28,16 @@ _PARITY_FIELDS = (
     "language",
     "dimensions",
 )
+_AVERAGE_EMPLOYEES_CONCEPT = "AverageNumberOfEmployees"
+_AVERAGE_EMPLOYEES_APPROVAL_CODE = "ifrs-average-number-of-employees-pure-unit"
+_IFRS_NAMESPACE_PREFIXES = (
+    "https://xbrl.ifrs.org/",
+    "http://xbrl.ifrs.org/",
+)
+_XBRLI_PURE_UNIT = (
+    (("http://www.xbrl.org/2003/instance", "pure"),),
+    (),
+)
 
 
 @dataclass(frozen=True)
@@ -87,16 +97,31 @@ def build_fact_parity_report(
 
     artifact_facts = _normalized_artifact_facts(artifact)
     reference_facts = _normalized_reference_facts(reference)
-    artifact_remaining, reference_remaining, matched_count = _unmatched_facts(
+    (
+        raw_artifact_remaining,
+        raw_reference_remaining,
+        exact_matched_count,
+    ) = _unmatched_facts(
         artifact_facts,
         reference_facts,
     )
+    effective_reference_facts = [
+        _promote_reference_employee_fact(fact) for fact in reference_facts
+    ]
+    artifact_remaining, reference_remaining, matched_count = _unmatched_facts(
+        artifact_facts,
+        effective_reference_facts,
+    )
+    approved_difference_count = max(matched_count - exact_matched_count, 0)
     semantic_summary = {
         "artifact_fact_count": len(artifact_facts),
         "reference_fact_count": len(reference_facts),
+        "exact_matched_fact_count": exact_matched_count,
+        "approved_difference_count": approved_difference_count,
         "matched_fact_count": matched_count,
         "artifact_only_count": len(artifact_remaining),
         "reference_only_count": len(reference_remaining),
+        "raw_parity": not raw_artifact_remaining and not raw_reference_remaining,
         "parity": not artifact_remaining and not reference_remaining,
     }
 
@@ -137,6 +162,7 @@ def build_fact_parity_report(
         "package_sha256": artifact.package_sha256,
         "semantic_facts": semantic_summary,
         "field_mismatch_counts": field_mismatch_counts,
+        "approved_differences": _approved_difference_summary(approved_difference_count),
         "legacy_rows": legacy_summary,
         "metrics": metric_summary,
         "samples": {
@@ -183,7 +209,12 @@ def _normalized_artifact_facts(
             _normalized_fact(
                 fact_id=fact.source_fact_id,
                 concept=concept_identity,
-                value=fact.canonical_value,
+                value=legacy_facts.normalize_artifact_fact_value(
+                    fact.canonical_value,
+                    base_xsd_type=(
+                        concept.base_xsd_type if concept is not None else ""
+                    ),
+                ),
                 decimals=fact.decimals,
                 dimensions=fact.oim_dimensions,
                 namespaces=namespaces,
@@ -370,6 +401,38 @@ def _unmatched_facts(
     return artifact_remaining, reference_remaining, matched_count
 
 
+def _promote_reference_employee_fact(fact: _NormalizedFact) -> _NormalizedFact:
+    namespace, local_name = fact.concept
+    if (
+        local_name != _AVERAGE_EMPLOYEES_CONCEPT
+        or not namespace.startswith(_IFRS_NAMESPACE_PREFIXES)
+        or fact.unit != ((), ())
+        or fact.decimals is None
+        or fact.value is None
+    ):
+        return fact
+    try:
+        amount = decimal.Decimal(fact.value)
+    except decimal.InvalidOperation, ValueError:
+        return fact
+    if not amount.is_finite() or amount < 0:
+        return fact
+    return dataclasses.replace(fact, unit=_XBRLI_PURE_UNIT)
+
+
+def _approved_difference_summary(
+    approved_difference_count: int,
+) -> dict[str, object]:
+    return {
+        "count": approved_difference_count,
+        "by_code": (
+            {_AVERAGE_EMPLOYEES_APPROVAL_CODE: approved_difference_count}
+            if approved_difference_count
+            else {}
+        ),
+    }
+
+
 def _field_mismatch_counts(
     artifact_facts: list[_NormalizedFact],
     reference_facts: list[_NormalizedFact],
@@ -485,29 +548,73 @@ def _legacy_row_summary(
     reference_storage_signatures = Counter(
         _legacy_row_signature(row, include_fact_id=False) for row in reference_rows
     )
+    effective_reference_rows = [
+        _promote_reference_employee_row(row) for row in reference_rows
+    ]
+    effective_reference_storage_signatures = Counter(
+        _legacy_row_signature(row, include_fact_id=False)
+        for row in effective_reference_rows
+    )
     matched_exact_row_count = _matched_counter_count(
         artifact_exact_signatures, reference_exact_signatures
     )
-    matched_storage_row_count = _matched_counter_count(
+    raw_matched_storage_row_count = _matched_counter_count(
         artifact_storage_signatures, reference_storage_signatures
+    )
+    matched_storage_row_count = _matched_counter_count(
+        artifact_storage_signatures,
+        effective_reference_storage_signatures,
     )
     fact_id_inventory_match = Counter(row.fact_id for row in artifact_rows) == Counter(
         row.fact_id for row in reference_rows
     )
     exact_row_parity = artifact_exact_signatures == reference_exact_signatures
     storage_row_parity = artifact_storage_signatures == reference_storage_signatures
+    effective_storage_row_parity = (
+        artifact_storage_signatures == effective_reference_storage_signatures
+    )
     return {
         "artifact_row_count": len(artifact_rows),
         "reference_row_count": len(reference_rows),
         "matched_row_count": matched_storage_row_count,
         "matched_exact_row_count": matched_exact_row_count,
         "matched_row_without_fact_id_count": matched_storage_row_count,
+        "approved_difference_count": max(
+            matched_storage_row_count - raw_matched_storage_row_count,
+            0,
+        ),
         "artifact_only_count": len(artifact_rows) - matched_storage_row_count,
         "reference_only_count": len(reference_rows) - matched_storage_row_count,
         "fact_id_inventory_match": fact_id_inventory_match,
         "exact_row_parity": exact_row_parity,
-        "parity": storage_row_parity,
+        "raw_parity": storage_row_parity,
+        "parity": effective_storage_row_parity,
     }
+
+
+def _promote_reference_employee_row(
+    row: legacy_facts.EsefFact,
+) -> legacy_facts.EsefFact:
+    if (
+        row.concept_qname != f"ifrs-full:{_AVERAGE_EMPLOYEES_CONCEPT}"
+        or row.unit != ""
+        or row.value_kind != "text"
+        or row.amount_original is not None
+        or row.decimals is None
+    ):
+        return row
+    try:
+        amount = decimal.Decimal(row.raw_value)
+    except decimal.InvalidOperation, ValueError:
+        return row
+    if not amount.is_finite() or amount < 0:
+        return row
+    return dataclasses.replace(
+        row,
+        unit="xbrli:pure",
+        value_kind="numeric",
+        amount_original=amount,
+    )
 
 
 def _legacy_row_signature(
@@ -541,15 +648,35 @@ def _metric_summary(
 ) -> dict[str, object]:
     artifact_metrics = _metric_snapshot(artifact_rows, period_end=period_end)
     reference_metrics = _metric_snapshot(reference_rows, period_end=period_end)
-    mismatched_metrics = sorted(
+    raw_mismatched_metrics = sorted(
         metric_name
         for metric_name in artifact_metrics.keys() | reference_metrics.keys()
         if artifact_metrics.get(metric_name) != reference_metrics.get(metric_name)
     )
+    effective_reference_rows = [
+        _promote_reference_employee_row(row) for row in reference_rows
+    ]
+    effective_reference_metrics = _metric_snapshot(
+        effective_reference_rows,
+        period_end=period_end,
+    )
+    mismatched_metrics = sorted(
+        metric_name
+        for metric_name in artifact_metrics.keys() | effective_reference_metrics.keys()
+        if artifact_metrics.get(metric_name)
+        != effective_reference_metrics.get(metric_name)
+    )
+    approved_mismatched_metrics = sorted(
+        set(raw_mismatched_metrics) - set(mismatched_metrics)
+    )
     return {
         "artifact": artifact_metrics,
         "reference": reference_metrics,
+        "effective_reference": effective_reference_metrics,
+        "raw_mismatched_metrics": raw_mismatched_metrics,
+        "approved_mismatched_metrics": approved_mismatched_metrics,
         "mismatched_metrics": mismatched_metrics,
+        "raw_parity": not raw_mismatched_metrics,
         "parity": not mismatched_metrics,
     }
 
