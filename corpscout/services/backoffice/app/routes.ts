@@ -117,6 +117,10 @@ export default [
       "routes/admin-se-company-info-pipeline.tsx",
     ),
     route(
+      "se/company-address/corrections",
+      "routes/admin-se-company-address-corrections.tsx",
+    ),
+    route(
       "se/people/llm-input/:draftTwoId",
       "routes/admin-se-people-llm-input.tsx",
     ),
