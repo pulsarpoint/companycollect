@@ -1,3 +1,4 @@
+import type { ReactElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { createMemoryRouter, RouterProvider } from "react-router";
 import { beforeEach, describe, expect, it, vi } from "vitest";
@@ -30,6 +31,7 @@ import type {
 } from "~/lib/se-company-address.server";
 import type { SeCompanyAddressCorrectionListRow } from "~/lib/se-company-address-lists.server";
 import { EMPTY_CORRECTION_FILTERS } from "~/lib/se-company-info-filters";
+import { SeCompanyInfoCorrectionsFilterSheet } from "~/components/admin/se-company-info-filter-sheet";
 
 const COMPANY_ID = "5560125220";
 const KEY = "f".repeat(64);
@@ -122,9 +124,9 @@ function formContaining(html: string, ...needles: string[]): string {
   throw new Error(`no <form> containing ${needles.join(" + ")}`);
 }
 
-const OVERRIDE = 'name="kind" value="override_field"';
-const REJECT = 'name="kind" value="reject_address"';
-const UNDO = 'name="kind" value="undo"';
+const OVERRIDE = 'name="correction_kind" value="override_field"';
+const REJECT = 'name="correction_kind" value="reject_address"';
+const UNDO = 'name="correction_kind" value="undo"';
 
 function count(html: string, needle: string): number {
   return html.split(needle).length - 1;
@@ -300,7 +302,7 @@ describe("admin-se-company-address action", () => {
     });
 
     const result = await postAction({
-      kind: "override_field",
+      correction_kind: "override_field",
       address_key: KEY,
       evidence_hash: HASH,
       reason: "Care-of was wrong.",
@@ -329,7 +331,7 @@ describe("admin-se-company-address action", () => {
     });
 
     const result = await postAction({
-      kind: "override_field",
+      correction_kind: "override_field",
       address_key: KEY,
       evidence_hash: HASH,
       reason: "Again.",
@@ -350,7 +352,7 @@ describe("admin-se-company-address action", () => {
     });
 
     const rejected = await postAction({
-      kind: "reject_address",
+      correction_kind: "reject_address",
       address_key: KEY,
       evidence_hash: HASH,
       reason: "Not this company's address.",
@@ -366,7 +368,7 @@ describe("admin-se-company-address action", () => {
     });
 
     await postAction({
-      kind: "undo",
+      correction_kind: "undo",
       supersedes_correction_id: OVERRIDE_CORRECTION_ID,
       reason: "Wrong call.",
     });
@@ -389,7 +391,7 @@ describe("admin-se-company-address action", () => {
     );
     expect(
       await postAction({
-        kind: "reject_address",
+        correction_kind: "reject_address",
         address_key: KEY,
         evidence_hash: HASH,
         reason: "Gone.",
@@ -401,7 +403,7 @@ describe("admin-se-company-address action", () => {
     );
     await expect(
       postAction({
-        kind: "reject_address",
+        correction_kind: "reject_address",
         address_key: KEY,
         evidence_hash: HASH,
         reason: "Gone.",
@@ -411,11 +413,11 @@ describe("admin-se-company-address action", () => {
 
   it("refuses a malformed post before it reaches ClickHouse", async () => {
     expect(
-      await postAction({ kind: "delete_address", address_key: KEY, reason: "x" }),
+      await postAction({ correction_kind: "delete_address", address_key: KEY, reason: "x" }),
     ).toEqual({ ok: false, error: "Unknown correction kind." });
     expect(
       await postAction({
-        kind: "override_field",
+        correction_kind: "override_field",
         address_key: KEY,
         evidence_hash: HASH,
         reason: "x",
@@ -499,5 +501,33 @@ describe("address corrections ledger table", () => {
     expect(html).toContain("not an address of this company");
     expect(html).toContain(`undo ${OVERRIDE_CORRECTION_ID.slice(0, 8)}`);
     expect(html).toContain(">—<");
+  });
+
+  /**
+   * The filter sheet is shared with the info ledger (SeCompanyInfoCorrectionsFilterSheet);
+   * only the `kinds`/`statuses` props tell the two apart, and the Select's own
+   * option list never reaches static markup (Base UI's popup only mounts once
+   * opened -- see SelectPortal), so the props actually passed in are inspected
+   * directly instead of grepping rendered HTML. Guards against those props
+   * regressing to the info ledger's defaults, which would offer filters this
+   * ledger cannot decide.
+   */
+  it("passes this ledger's own kinds to the shared filter sheet, not the info ledger's", () => {
+    const tree = SeCompanyAddressCorrectionsTable({
+      rows: [listRow],
+      total: 1,
+      page: 1,
+      pageSize: 50,
+      sort: "created_at",
+      dir: "desc",
+      filters: EMPTY_CORRECTION_FILTERS,
+      options: { decidedBy: ["backoffice"] },
+    }) as ReactElement<{ children: ReactElement[] }>;
+    const sheet = tree.props.children.find(
+      (child): child is ReactElement<{ kinds: readonly string[] }> =>
+        child.type === SeCompanyInfoCorrectionsFilterSheet,
+    );
+    expect(sheet?.props.kinds).toContain("reject_address");
+    expect(sheet?.props.kinds).not.toContain("approve_suggestion");
   });
 });

@@ -1,6 +1,7 @@
 import type { ColumnDef } from "@tanstack/react-table";
 import { Link } from "react-router";
 import { Badge } from "~/components/ui/badge";
+import { EMPTY_VALUE } from "~/components/admin/definition-list";
 import { DataTable } from "~/components/data-table/data-table";
 import { DataTableColumnHeader } from "~/components/data-table/column-header";
 import { DataTablePagination } from "~/components/data-table/pagination";
@@ -126,7 +127,7 @@ function buildColumns(
         const key = row.original.address_key;
         // An undo names a correction, not an address, and a malformed row names
         // nothing at all -- neither has a card to link to.
-        if (key === "") return <span className="text-muted-foreground">—</span>;
+        if (key === "") return EMPTY_VALUE;
         return (
           <Link
             to={`/admin/se/company/${encodeURIComponent(row.original.company_id)}/address`}

@@ -95,7 +95,7 @@ export function buildCorrectionInput(
   form: FormData,
   context: { companyId: string },
 ): SeAddressCorrectionRequest {
-  const kind = text(form, "kind");
+  const kind = text(form, "correction_kind");
   // Refused here as well as in the validator: an unknown kind reaches Dagster's
   // effective_ledger, which ranks by ADDRESS_KIND_ORDER and drops what that list
   // does not name -- a reviewer's decision vanishing in silence.

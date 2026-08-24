@@ -100,7 +100,7 @@ function HiddenDecision({
 }) {
   return (
     <>
-      <input type="hidden" name="kind" value={kind} />
+      <input type="hidden" name="correction_kind" value={kind} />
       <input type="hidden" name="address_key" value={addressKey} />
       <input type="hidden" name="evidence_hash" value={evidenceHash} />
     </>
@@ -233,7 +233,7 @@ function CorrectionList({
             </span>
             {correction.is_current === 1 && correction.correction_kind !== "undo" ? (
               <Form method="post" className="ml-auto flex items-center gap-2">
-                <input type="hidden" name="kind" value="undo" />
+                <input type="hidden" name="correction_kind" value="undo" />
                 {/* Undo supersedes a decision, not evidence. */}
                 <input type="hidden" name="evidence_hash" value={ZERO_EVIDENCE_HASH} />
                 <input

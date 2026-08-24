@@ -20,7 +20,7 @@ function form(entries: Record<string, string>): FormData {
 
 /** The hidden fields every override form on the page carries. */
 const overrideBase = {
-  kind: "override_field",
+  correction_kind: "override_field",
   address_key: KEY,
   evidence_hash: HASH,
   reason: "Care-of was wrong.",
@@ -125,7 +125,7 @@ describe("buildCorrectionInput", () => {
   it("sends a reject as the address key alone", () => {
     const built = buildCorrectionInput(
       form({
-        kind: "reject_address",
+        correction_kind: "reject_address",
         address_key: KEY,
         evidence_hash: HASH,
         reason: "The accountant's address, not the company's.",
@@ -153,7 +153,7 @@ describe("buildCorrectionInput", () => {
   it("forces the zero evidence hash on undo and carries the superseded id", () => {
     const built = buildCorrectionInput(
       form({
-        kind: "undo",
+        correction_kind: "undo",
         evidence_hash: HASH,
         address_key: KEY,
         supersedes_correction_id: CORRECTION_ID,
@@ -177,7 +177,7 @@ describe("buildCorrectionInput", () => {
   it("refuses a kind the ledger does not define, before building any payload", () => {
     expect(
       buildCorrectionInput(
-        form({ kind: "delete_address", address_key: KEY, evidence_hash: HASH, reason: "x" }),
+        form({ correction_kind: "delete_address", address_key: KEY, evidence_hash: HASH, reason: "x" }),
         params,
       ),
     ).toEqual({ ok: false, error: "Unknown correction kind." });
