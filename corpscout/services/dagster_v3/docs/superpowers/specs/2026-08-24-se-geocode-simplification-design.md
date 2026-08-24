@@ -97,8 +97,10 @@ store), replacing the weekly-swapped `se_address_geocodes_current` as the source
   resolver-ambiguous@T3): stage 1 keeps one row per (address_id, family) — family =
   adopted vs resolver — ranked by (matched_at, reference_md5, policy_version); stage 2
   chooses between the two survivors by (servable, matched_at, is_resolver, reference_md5,
-  policy_version), so a resolver `ambiguous` never displaces an adopted exact, while any
-  geocoded resolver outcome does. Both stages are total orders; no FINAL in the read,
+  policy_version), so a resolver `ambiguous` never displaces an adopted exact, while a
+  geocoded resolver outcome that is still its family's newest does (a resolver exact later
+  superseded by a resolver ambiguous is eliminated inside its own family first — the
+  adopted row then wins, and the resolver view keeps the identity in the retry pool). Both stages are total orders; no FINAL in the read,
   ever. One SQL fragment + one pure Python twin, shared by all consumers; exact text
   lives in the plan and is pinned by tests.
 - `se_address_geocodes_current` (CH) is retired at the end of the rollout (§6). During
