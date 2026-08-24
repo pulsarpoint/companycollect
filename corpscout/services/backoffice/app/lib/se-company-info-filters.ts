@@ -32,9 +32,78 @@ export const ANY_FILTER_VALUE = "any";
  * and is mapped back to '' in SQL. */
 export const NONE_FILTER_VALUE = "none";
 
+/**
+ * Every source a Swedish company profile can be built from, in the ONE
+ * canonical order the whole feature uses: the letters of the Sources column
+ * ('S', 'SW', 'SEW'), the legend that explains them, the filter's options and
+ * -- via `PROFILE_SOURCE_PREDICATES` in the lists server module, which keys
+ * off `value` -- the SQL that derives them. Order is pinned here and nowhere
+ * else, so a row can never be labelled in one order and sorted in another.
+ *
+ * `value` is what travels in the URL and what `se_company_info
+ * .description_sources` calls the source; `letter` is the badge; `label` is
+ * what a reader sees in the legend, the chip and the badge's tooltip.
+ */
+export const PROFILE_SOURCES = [
+  // SCB is the register base: se_company_info publishes nothing without an SCB
+  // row (info_rules.py returns None), so every listed company has this one.
+  { value: "scb", letter: "S", label: "SCB" },
+  { value: "esef", letter: "E", label: "ESEF" },
+  { value: "wikidata", letter: "W", label: "Wikidata" },
+] as const;
+
+export type ProfileSourceValue = (typeof PROFILE_SOURCES)[number]["value"];
+
+/** The URL whitelist: exactly the catalog's values, nothing else. */
+export const PROFILE_SOURCE_VALUES: readonly string[] = PROFILE_SOURCES.map(
+  (source) => source.value,
+);
+
+/** Both lookups are keyed by plain `string`: they answer questions asked with
+ * whatever arrived (a letter from a server-derived string, a value from the
+ * URL), and "not a source we know" is a real, handled answer in each. */
+type ProfileSource = (typeof PROFILE_SOURCES)[number];
+
+const PROFILE_SOURCE_BY_LETTER = new Map<string, ProfileSource>(
+  PROFILE_SOURCES.map((source) => [source.letter, source]),
+);
+
+const PROFILE_SOURCE_BY_VALUE = new Map<string, ProfileSource>(
+  PROFILE_SOURCES.map((source) => [source.value, source]),
+);
+
+/** One line above the table, built from the catalog so it can only ever
+ * describe the letters the column actually renders. */
+export const PROFILE_SOURCES_LEGEND = `Sources: ${PROFILE_SOURCES.map(
+  (source) => `${source.letter} = ${source.label}`,
+).join(" · ")}`;
+
+export interface ProfileSourcePart {
+  letter: string;
+  label: string;
+}
+
+/**
+ * The derived `profile_sources` string ('S' | 'SE' | 'SEW' | ...) as one
+ * labelled part per letter, in the string's own (already canonical) order.
+ *
+ * A letter the catalog does not name -- a source the server started emitting
+ * before this bundle knew about it -- is kept and labelled after itself:
+ * dropping it would quietly under-report what a company was built from, which
+ * is exactly what this column exists to prevent.
+ */
+export function profileSourceParts(profileSources: string): ProfileSourcePart[] {
+  return [...profileSources].map((letter) => ({
+    letter,
+    label: PROFILE_SOURCE_BY_LETTER.get(letter)?.label ?? letter,
+  }));
+}
+
 /** Task 17 (owner addendum 2026-08-23): the company-info list filters
- * COMPANIES. Its description-provenance filters (source, language, suggestion,
- * multi-source, has-corrections) are gone -- that story is the detail page's. */
+ * COMPANIES. Its description-PROVENANCE filters (language, suggestion,
+ * multi-source, has-corrections) are gone -- that story is the detail page's.
+ * `source` is a company-level filter, not one of them: it asks which registers
+ * built the profile, never where the published text came from. */
 export interface SeCompanyInfoTableFilters {
   companyId: string;
   name: string;
@@ -44,6 +113,8 @@ export interface SeCompanyInfoTableFilters {
   entity: string;
   /** "" | "yes" | "no" -- whether the company has a published description. */
   description: string;
+  /** "" | one of PROFILE_SOURCE_VALUES -- companies that HAVE that source. */
+  source: string;
 }
 
 export const EMPTY_INFO_FILTERS: SeCompanyInfoTableFilters = {
@@ -53,6 +124,7 @@ export const EMPTY_INFO_FILTERS: SeCompanyInfoTableFilters = {
   legalForm: "",
   entity: "",
   description: "",
+  source: "",
 };
 
 export interface SeCompanyInfoCorrectionsTableFilters {
@@ -109,6 +181,11 @@ export function infoFilterChips(
   if (filters.description) {
     chips.push(chip("description", `Description ${filters.description}`));
   }
+  if (filters.source) {
+    // Named, not spelled: the chip says "Source Wikidata", not "wikidata".
+    const label = PROFILE_SOURCE_BY_VALUE.get(filters.source)?.label ?? filters.source;
+    chips.push(chip("source", `Source ${label}`));
+  }
   return chips;
 }
 
@@ -157,6 +234,7 @@ export function infoListSearch(
       ["legalForm", filters.legalForm],
       ["entity", filters.entity],
       ["description", filters.description],
+      ["source", filters.source],
     ],
     view,
     omit,
@@ -269,6 +347,9 @@ export function parseInfoFilters(url: URL): SeCompanyInfoTableFilters {
     legalForm: filterValue(url, "legalForm"),
     entity: filterValue(url, "entity", ENTITY_VALUES),
     description: filterValue(url, "description", YES_NO_VALUES),
+    // Whitelisted against the catalog: a stale `?source=llm` from the removed
+    // description-provenance filter names no source and is simply dropped.
+    source: filterValue(url, "source", PROFILE_SOURCE_VALUES),
   };
 }
 

@@ -1,6 +1,7 @@
 import type { ColumnDef } from "@tanstack/react-table";
 import { Link } from "react-router";
 import { Badge } from "~/components/ui/badge";
+import { EMPTY_VALUE } from "~/components/admin/definition-list";
 import { DataTable } from "~/components/data-table/data-table";
 import { DataTableColumnHeader } from "~/components/data-table/column-header";
 import { DataTablePagination } from "~/components/data-table/pagination";
@@ -13,7 +14,11 @@ import type {
   SeCompanyInfoListRow,
   SeCompanyInfoSortKey,
 } from "~/lib/se-company-info-lists.server";
-import type { SeCompanyInfoTableFilters } from "~/lib/se-company-info-filters";
+import {
+  PROFILE_SOURCES_LEGEND,
+  profileSourceParts,
+  type SeCompanyInfoTableFilters,
+} from "~/lib/se-company-info-filters";
 
 const nf = new Intl.NumberFormat("en-US");
 
@@ -23,6 +28,34 @@ const ENTITY_LABELS: Record<string, string> = {
   legal: "Legal",
   sole: "Sole trader",
 };
+
+/**
+ * Which registers built this company's profile, one monospace letter each in
+ * the catalog's canonical order (S, E, W). Monospace and one badge per letter
+ * so the column scans vertically: an 'S' row and an 'SEW' row line up, and the
+ * legend above the table names every letter. Each badge carries its source's
+ * full name as a tooltip, so the letters never have to be memorised.
+ */
+function ProfileSources({ profileSources }: { profileSources: string }) {
+  const parts = profileSourceParts(profileSources);
+  // Cannot happen while SCB is the register base, but a blank cell would read
+  // as "unknown" rather than "none" -- say it with the shared em dash instead.
+  if (parts.length === 0) return EMPTY_VALUE;
+  return (
+    <span className="flex gap-1">
+      {parts.map((part) => (
+        <Badge
+          key={part.letter}
+          variant="outline"
+          className="px-1.5 font-mono text-xs"
+          title={part.label}
+        >
+          {part.letter}
+        </Badge>
+      ))}
+    </span>
+  );
+}
 
 /** Every column sorts server-side, so the columns are built per render with
  * the sort the URL asked for. `sortKey` is typed against the query builder's
@@ -107,6 +140,15 @@ function buildColumns(
         </Badge>
       ),
     },
+    {
+      // Which REGISTERS built the profile -- not where the published text came
+      // from. Sorted server-side by the same derived string it shows, so the
+      // multi-source companies (rare: ~2.4k Wikidata, a handful of ESEF today)
+      // can be brought to the top of 3.5M rows in one click.
+      id: "profile_sources",
+      header: head("Sources", "profile_sources"),
+      cell: ({ row }) => <ProfileSources profileSources={row.original.profile_sources} />,
+    },
   ];
 }
 
@@ -161,6 +203,9 @@ export function SeCompanyInfoTable({
         options={options}
       />
       <CountsStrip counts={counts} />
+      {/* One line, above the table, so the Sources letters can be read without
+          hovering each badge. Built from the same catalog the letters are. */}
+      <p className="text-muted-foreground text-xs">{PROFILE_SOURCES_LEGEND}</p>
       <DataTable
         columns={buildColumns(sort, dir)}
         data={rows}

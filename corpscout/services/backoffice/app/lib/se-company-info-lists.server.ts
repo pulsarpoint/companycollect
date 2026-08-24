@@ -20,6 +20,8 @@ import {
 import {
   ANY_FILTER_VALUE,
   NONE_FILTER_VALUE,
+  PROFILE_SOURCES,
+  type ProfileSourceValue,
 } from "~/lib/se-company-info-filters";
 import { ZERO_EVIDENCE_HASH } from "~/lib/se-person-corrections";
 
@@ -129,6 +131,13 @@ export interface SeCompanyInfoListRow {
   entity_type: string;
   /** 0 | 1 -- `description IS NOT NULL`, projected as UInt8 (see the SELECT). */
   has_description: number;
+  /**
+   * Which registers built this profile, as the catalog's letters in canonical
+   * order: 'S' (SCB, always), then 'E' (ESEF), then 'W' (Wikidata). Derived in
+   * SQL (PROFILE_SOURCES_EXPR) rather than assembled here, so the same string
+   * is what the column shows AND what the header sorts by.
+   */
+  profile_sources: string;
 }
 
 export interface SeCompanyInfoListFilters {
@@ -142,6 +151,10 @@ export interface SeCompanyInfoListFilters {
   entity?: string;
   /** "yes" | "no" -- anything else (including the select's "any") is absent. */
   description?: string;
+  /** A key of PROFILE_SOURCE_PREDICATES ("scb" | "esef" | "wikidata") --
+   * anything else (a stale value, the select's "any") is absent. Plain
+   * `string` for the same reason `entity` is. */
+  source?: string;
 }
 
 export interface SeCompanyInfoListQuery extends SeCompanyInfoListFilters {
@@ -151,12 +164,61 @@ export interface SeCompanyInfoListQuery extends SeCompanyInfoListFilters {
   dir?: string;
 }
 
+/* -------------------------------------------------------------------- */
+/* The Sources column: which registers built this company's profile      */
+/* -------------------------------------------------------------------- */
+
+/**
+ * One SQL predicate per source of `PROFILE_SOURCES` -- "this company HAS that
+ * source". They are the single definition of a source's presence: the Sources
+ * column's letters are built from them (see PROFILE_SOURCES_EXPR) and the
+ * `?source=` filter pushes the very same text as its WHERE predicate, so the
+ * letter a row shows and the rows a filter returns can never disagree.
+ *
+ * - scb: the tautology, on the owner's ruling that SCB is the register base.
+ *   It is true by construction, not by luck: info_rules.py's merge returns
+ *   None without an SCB row, so an `se_company_info` row without SCB behind it
+ *   cannot exist. Kept as a real predicate so the filter has one uniform shape.
+ * - esef: `lei IS NOT NULL` is a legitimate second arm because
+ *   se_company_info.lei is written ONLY from the ESEF artifact -- info_rules
+ *   .py sets `lei=_text(esef.values.get("lei")) if esef else None` and no
+ *   correction kind can write it (override_field accepts description /
+ *   description_sv only). So a LEI is proof of an ESEF filing even when that
+ *   filing carried no description, which the description_sources arm alone
+ *   would miss. (Wikidata's own artifact matches companies BY lei, but never
+ *   writes this column.)
+ * - wikidata: the mirror image -- wikidata_id comes only from the Wikidata
+ *   artifact, and a Wikidata row may exist without contributing a description.
+ *
+ * Keyed by ProfileSourceValue, so adding a source to the catalog without a
+ * predicate here is a type error rather than a silently missing letter.
+ */
+export const PROFILE_SOURCE_PREDICATES: Record<ProfileSourceValue, string> = {
+  scb: "1",
+  esef: "(has(i.description_sources, 'esef') OR i.lei IS NOT NULL)",
+  wikidata: "(i.wikidata_id IS NOT NULL OR has(i.description_sources, 'wikidata'))",
+};
+
+/**
+ * The Sources column itself: one compact string per row ('S', 'SE', 'SW',
+ * 'SEW'), assembled in the catalog's canonical order so it needs no sorting
+ * and so sorting the LIST by it groups like profiles together
+ * ('S' < 'SE' < 'SEW' < 'SW').
+ *
+ * Built by mapping the catalog rather than spelled out, so the column, the
+ * legend above the table and the filter options are one list in one order.
+ */
+export const PROFILE_SOURCES_EXPR = `concat(\n${PROFILE_SOURCES.map(
+  (source) =>
+    `  if(${PROFILE_SOURCE_PREDICATES[source.value]}, '${source.letter}', '')`,
+).join(",\n")}\n)`;
+
 /**
  * Every column a header may sort by, mapped to the expression that sorts it.
  * The keys are exactly the columns of `SeCompanyInfoListRow` (the component's
  * `sortKey`s are typed against them), and a request naming anything else falls
- * back to the default -- nothing from the request is ever interpolated. The two
- * computed columns sort by their own expression rather than by the SELECT alias:
+ * back to the default -- nothing from the request is ever interpolated. Every
+ * computed column sorts by its own expression rather than by the SELECT alias:
  * ClickHouse does not guarantee an alias is visible to ORDER BY at the same
  * query level. `entity_type` sorts by the id length it is derived from, which
  * orders legal (10) before sole (12) -- the same order the labels do.
@@ -168,6 +230,7 @@ export const INFO_SORT_COLUMNS = {
   legal_form_code: "i.legal_form_code",
   entity_type: "length(i.company_id)",
   has_description: "(i.description IS NOT NULL)",
+  profile_sources: PROFILE_SOURCES_EXPR,
 } as const;
 
 export type SeCompanyInfoSortKey = keyof typeof INFO_SORT_COLUMNS;
@@ -257,6 +320,13 @@ export function buildInfoListFilter(
   } else if (filters.description === "no") {
     where.push("i.description IS NULL");
   }
+  // The value NAMES a predicate, it never becomes one: an unknown source (the
+  // select's "any", a stale `?source=llm`, anything hand-typed) simply finds
+  // no entry and adds nothing, so no filter value ever reaches SQL as text.
+  const source = nonEmpty(filters.source);
+  if (source !== null && Object.hasOwn(PROFILE_SOURCE_PREDICATES, source)) {
+    where.push(PROFILE_SOURCE_PREDICATES[source as ProfileSourceValue]);
+  }
   return { where, params };
 }
 
@@ -272,7 +342,8 @@ export const INFO_LIST_SELECT_SQL = `SELECT
   i.legal_form_label_en AS legal_form_label_en,
   i.legal_form_label_sv AS legal_form_label_sv,
   if(length(i.company_id) = 12, 'sole', 'legal') AS entity_type,
-  toUInt8(i.description IS NOT NULL) AS has_description
+  toUInt8(i.description IS NOT NULL) AS has_description,
+  ${PROFILE_SOURCES_EXPR} AS profile_sources
 FROM corpscout.se_company_info AS i FINAL`;
 
 /** One scan for all three numbers: the strip's totals and the table's own

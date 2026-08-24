@@ -24,6 +24,8 @@ import {
   loadSeCompanyInfoCounts,
   loadSeCompanyInfoFilterOptions,
   PAGE_LIMIT_OFFSET_SQL,
+  PROFILE_SOURCE_PREDICATES,
+  PROFILE_SOURCES_EXPR,
   resetSeCompanyInfoFilterOptionsCache,
   resolveCorrectionsSort,
   resolveInfoSort,
@@ -75,6 +77,32 @@ describe("buildInfoListFilter", () => {
       where: ["i.description IS NULL"],
       params: {},
     });
+    // Sources: one predicate per source a profile can be built from, reusing
+    // the very term the S/E/W letter is derived from -- so a row the column
+    // marks E is exactly a row `?source=esef` returns, forever.
+    expect(buildInfoListFilter({ source: "esef" })).toEqual({
+      where: [PROFILE_SOURCE_PREDICATES.esef],
+      params: {},
+    });
+    expect(buildInfoListFilter({ source: "wikidata" })).toEqual({
+      where: [PROFILE_SOURCE_PREDICATES.wikidata],
+      params: {},
+    });
+    // SCB is the register base (owner ruling): every published row has it, so
+    // its predicate is the tautology the 'S' letter is, kept for uniformity.
+    expect(buildInfoListFilter({ source: "scb" })).toEqual({
+      where: ["1"],
+      params: {},
+    });
+  });
+
+  it("whitelists the source filter against the profile-source catalog instead of interpolating it", () => {
+    // The value names a KEY of the predicate map, never SQL text: an unknown
+    // source (a stale ?source=llm from the removed provenance filter, the
+    // select's own sentinel, an injection attempt) adds no predicate at all.
+    for (const source of ["llm", "any", "none", "", "  ", "esef') OR 1=(1"]) {
+      expect(buildInfoListFilter({ source })).toEqual({ where: [], params: {} });
+    }
   });
 
   it("treats the select's 'any' sentinel and a blank as absent on every data-driven filter", () => {
@@ -84,6 +112,7 @@ describe("buildInfoListFilter", () => {
       { legalForm: "any" },
       { description: "any" },
       { description: "maybe" },
+      { source: "any" },
     ]) {
       expect(buildInfoListFilter(filters)).toEqual({ where: [], params: {} });
     }
@@ -101,7 +130,6 @@ describe("buildInfoListFilter", () => {
     // from this page -- they belong to the detail page, which keeps the whole
     // description story. A stale URL naming them must simply not filter.
     const stale = {
-      source: "llm",
       language: "en",
       suggestion: "yes",
       multi: true,
@@ -118,6 +146,7 @@ describe("buildInfoListFilter", () => {
       status: "active",
       legalForm: "AB",
       description: "yes",
+      source: "wikidata",
     });
     expect(where).toEqual([
       "i.company_id = {companyId:String}",
@@ -126,6 +155,7 @@ describe("buildInfoListFilter", () => {
       "toString(i.status) = {status:String}",
       "ifNull(i.legal_form_code, '') = {legalForm:String}",
       "i.description IS NOT NULL",
+      "(i.wikidata_id IS NOT NULL OR has(i.description_sources, 'wikidata'))",
     ]);
     expect(params).toEqual({
       companyId: "5565200028",
@@ -155,12 +185,19 @@ describe("se_company_info list SQL shape", () => {
       "i.legal_form_label_sv AS legal_form_label_sv",
     );
     expect(INFO_LIST_SELECT_SQL).not.toContain("se_code_labels");
+    // Sources: ONE derived string per row, not the arrays it is derived from.
+    expect(INFO_LIST_SELECT_SQL).toContain(
+      `${PROFILE_SOURCES_EXPR} AS profile_sources`,
+    );
     // Task 17: no description text crosses the wire for this list at all -- so
     // no snippet, and none of the provenance columns the detail page shows.
+    // description_sources is READ (inside the has() terms above) but never
+    // projected: the reviewer gets 'SEW', not a 300-byte array per row.
     for (const gone of [
       "substringUTF8",
-      "description_source",
-      "description_sources",
+      "i.description_sources AS",
+      "description_source_record_uids",
+      "description_source_count",
       "description_language",
       "suggestion_id",
       "correction_ids",
@@ -170,6 +207,35 @@ describe("se_company_info list SQL shape", () => {
     }
     expect(INFO_COUNTS_SQL).toContain("FROM corpscout.se_company_info AS i FINAL");
     expect(PAGE_LIMIT_OFFSET_SQL).toBe("LIMIT {limit:UInt32} OFFSET {offset:UInt32}");
+  });
+
+  it("derives the Sources letters in one pinned expression, S first, then E, then W", () => {
+    // Pinned WHOLE, not by fragments: this string is the column, the sort key
+    // and (term by term) the filter, so a silent edit to any part of it -- a
+    // dropped OR arm, a swapped letter, a reordered concat -- must fail here.
+    // ESEF's arm carries `lei IS NOT NULL` because se_company_info.lei is
+    // written ONLY from the ESEF artifact (info_rules.py: `lei=_text(
+    // esef.values.get("lei")) if esef else None`, and no correction kind can
+    // set it), so a LEI is proof of an ESEF filing even when that filing
+    // carried no description. Wikidata's arm is the mirror image: wikidata_id
+    // is written only from the Wikidata artifact.
+    expect(PROFILE_SOURCES_EXPR).toBe(
+      `concat(
+  if(1, 'S', ''),
+  if((has(i.description_sources, 'esef') OR i.lei IS NOT NULL), 'E', ''),
+  if((i.wikidata_id IS NOT NULL OR has(i.description_sources, 'wikidata')), 'W', '')
+)`,
+    );
+    // One predicate per catalog source, and the concat is built FROM them, so
+    // column and filter cannot drift apart.
+    expect(Object.keys(PROFILE_SOURCE_PREDICATES)).toEqual([
+      "scb",
+      "esef",
+      "wikidata",
+    ]);
+    for (const predicate of Object.values(PROFILE_SOURCE_PREDICATES)) {
+      expect(PROFILE_SOURCES_EXPR).toContain(`if(${predicate}, '`);
+    }
   });
 });
 
@@ -429,6 +495,10 @@ describe("server-side sorting", () => {
     expect(infoOrderBySql("entity_type", "asc")).toBe(
       "ORDER BY length(i.company_id) ASC, i.company_id ASC",
     );
+    // Sources sorts by the derived string itself: 'S' < 'SE' < 'SEW' < 'SW'.
+    expect(infoOrderBySql("profile_sources", "desc")).toBe(
+      `ORDER BY ${PROFILE_SOURCES_EXPR} DESC, i.company_id ASC`,
+    );
     // The default sort IS the tiebreak column, so it appears once.
     expect(infoOrderBySql("company_id", "asc")).toBe("ORDER BY i.company_id ASC");
     expect(correctionsOrderBySql("company_id", "asc")).toBe(
@@ -475,6 +545,7 @@ describe("server-side sorting", () => {
       "legal_form_code",
       "entity_type",
       "has_description",
+      "profile_sources",
     ]);
     expect(Object.keys(CORRECTION_SORT_COLUMNS)).toEqual([
       "created_at",

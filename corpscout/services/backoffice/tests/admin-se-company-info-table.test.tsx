@@ -16,6 +16,9 @@ import {
   optionValue,
   parseInfoFilters,
   parseListView,
+  PROFILE_SOURCES,
+  PROFILE_SOURCES_LEGEND,
+  profileSourceParts,
   type SeCompanyInfoTableFilters,
 } from "~/lib/se-company-info-filters";
 import { legalFormOptionLabel } from "~/lib/se-legal-form";
@@ -32,6 +35,7 @@ const ROW: SeCompanyInfoListRow = {
   legal_form_label_sv: "Aktiebolag",
   entity_type: "legal",
   has_description: 1,
+  profile_sources: "SEW",
 };
 
 const COUNTS: SeCompanyInfoListCounts = {
@@ -59,6 +63,7 @@ const APPLIED_FILTERS: SeCompanyInfoTableFilters = {
   legalForm: "AB-ORGFO",
   entity: "legal",
   description: "yes",
+  source: "esef",
 };
 
 function render(props: Partial<Parameters<typeof SeCompanyInfoTable>[0]> = {}) {
@@ -139,13 +144,36 @@ describe("SeCompanyInfoTable", () => {
     expect(html).toContain(">Sole trader<");
   });
 
+  it("shows which sources built the profile, one monospace letter each, under a legend", () => {
+    // Owner ruling: S is unconditional (SCB is the register base), E and W are
+    // earned. This fixture company has all three.
+    const html = render();
+    expect(html).toContain(PROFILE_SOURCES_LEGEND);
+    expect(html).toContain("Sources: S = SCB · E = ESEF · W = Wikidata");
+    for (const [letter, label] of [["S", "SCB"], ["E", "ESEF"], ["W", "Wikidata"]]) {
+      expect(html).toContain(`title="${label}"`);
+      expect(html).toContain(`>${letter}</span>`);
+    }
+    // Monospace, so 'S' and 'SEW' line up down the column.
+    expect(html).toContain("font-mono");
+  });
+
+  it("shows only the letters a company has -- the S-only majority stays one letter", () => {
+    const html = render({ rows: [{ ...ROW, profile_sources: "S" }] });
+    expect(html).toContain('title="SCB"');
+    expect(html).not.toContain('title="ESEF"');
+    expect(html).not.toContain('title="Wikidata"');
+    // The legend is the table's, not the row's: it stands whatever the rows say.
+    expect(html).toContain(PROFILE_SOURCES_LEGEND);
+  });
+
   it("says nothing about the description's provenance -- that is the detail page's job", () => {
-    // Task 17 (owner addendum): this list is a COMPANIES list. No source, no
-    // language, no snippet, no suggestion/correction counts, no resolved stamp.
+    // Task 17 (owner addendum): this list is a COMPANIES list. The Sources
+    // column says which REGISTERS built the profile; it says nothing about
+    // which of them the published TEXT came from, whether a model wrote it, or
+    // what language it is in -- that whole story stays on the detail page.
     const html = render();
     for (const gone of [
-      ">Source<",
-      ">Sources<",
       ">LLM<",
       ">Language<",
       ">Suggestion<",
@@ -193,6 +221,7 @@ describe("SeCompanyInfoTable sorting", () => {
       "legal_form_code",
       "entity_type",
       "has_description",
+      "profile_sources",
     ]) {
       expect(html).toContain(`href="${PATH}?sort=${key}&amp;dir=asc"`);
     }
@@ -205,6 +234,7 @@ describe("SeCompanyInfoTable sorting", () => {
     expect(html).toContain(`href="${PATH}?sort=legal_name&amp;dir=desc"`);
     // Another column still offers its own first click, unaffected.
     expect(html).toContain(`href="${PATH}?sort=has_description&amp;dir=asc"`);
+    expect(html).toContain(`href="${PATH}?sort=profile_sources&amp;dir=asc"`);
   });
 });
 
@@ -212,9 +242,9 @@ describe("SeCompanyInfoTable filter sheet", () => {
   it("opens the filters from one button, badged with the number applied", () => {
     expect(render()).toContain("Filters");
     const html = render({ filters: APPLIED_FILTERS });
-    // Six filters are set on APPLIED_FILTERS, and the badge says so.
-    expect(infoFilterChips(APPLIED_FILTERS)).toHaveLength(6);
-    expect(html).toContain(">6<");
+    // Seven filters are set on APPLIED_FILTERS, and the badge says so.
+    expect(infoFilterChips(APPLIED_FILTERS)).toHaveLength(7);
+    expect(html).toContain(">7<");
   });
 
   it("summarises each applied filter as a chip whose X re-navigates without that param", () => {
@@ -223,6 +253,9 @@ describe("SeCompanyInfoTable filter sheet", () => {
     expect(html).toContain("Legal form AB-ORGFO");
     expect(html).toContain("Entity Legal (10-digit)");
     expect(html).toContain("Description yes");
+    // The source chip reads as the source's NAME, not its URL value.
+    expect(html).toContain("Source ESEF");
+    expect(html).toContain('aria-label="Remove filter Source ESEF"');
     expect(html).toContain('aria-label="Remove filter Description yes"');
 
     // The chip's link is the same URL minus that one param -- with the sort and
@@ -233,6 +266,7 @@ describe("SeCompanyInfoTable filter sheet", () => {
       "description",
     );
     expect(withoutDescription).not.toContain("description=");
+    expect(withoutDescription).toContain("source=esef");
     expect(withoutDescription).toContain("companyId=5565200028");
     expect(withoutDescription).toContain("sort=company_id");
     expect(withoutDescription).toContain("pageSize=50");
@@ -261,14 +295,18 @@ describe("SeCompanyInfoTable filter sheet", () => {
 describe("SeCompanyInfoFilterFields", () => {
   it("offers a field for every filter, including one select per discrete column", () => {
     const html = renderFields();
-    for (const name of ["companyId", "name", "status", "legalForm", "entity", "description"]) {
+    for (const name of ["companyId", "name", "status", "legalForm", "entity", "description",
+                        "source"]) {
       expect(html).toContain(`name="${name}"`);
     }
-    for (const label of ["Company id", "Name", "Status", "Legal form", "Entity", "Description"]) {
+    for (const label of ["Company id", "Name", "Status", "Legal form", "Entity", "Description",
+                         "Source"]) {
       expect(html).toContain(label);
     }
-    // Task 17: the description-provenance filters are gone from this page.
-    for (const gone of ['name="source"', 'name="language"', 'name="suggestion"',
+    // Task 17: the description-PROVENANCE filters are still gone. `source` is
+    // back with an entirely different meaning -- which registers built the
+    // profile (scb/esef/wikidata), not where the published text came from.
+    for (const gone of ['name="language"', 'name="suggestion"',
                         'name="multi"', 'name="corrected"']) {
       expect(html).not.toContain(gone);
     }
@@ -279,7 +317,8 @@ describe("SeCompanyInfoFilterFields", () => {
     expect(html).toContain('type="hidden" name="dir" value="asc"');
     // A Base UI select's trigger is a button whose only text is the current
     // value, so the visible <Label> above it names nothing to a screen reader.
-    for (const label of ["Company id", "Name", "Status", "Legal form", "Entity", "Description"]) {
+    for (const label of ["Company id", "Name", "Status", "Legal form", "Entity", "Description",
+                         "Source"]) {
       expect(html).toContain(`aria-label="${label}"`);
     }
   });
@@ -319,12 +358,44 @@ describe("SeCompanyInfoFilterFields", () => {
 
   it("selects \"Any\" for an unset filter and the applied value otherwise", () => {
     expect(renderFields()).toContain('name="status" value="any"');
+    expect(renderFields()).toContain('name="source" value="any"');
     const applied = renderFields(APPLIED_FILTERS);
     expect(applied).toContain('name="status" value="active"');
     expect(applied).toContain('name="legalForm" value="AB-ORGFO"');
     expect(applied).toContain('name="entity" value="legal"');
     expect(applied).toContain('name="description" value="yes"');
+    expect(applied).toContain('name="source" value="esef"');
     expect(applied).toContain('name="companyId" value="5565200028"');
+  });
+});
+
+describe("profileSourceParts", () => {
+  it("reads the derived string left to right, naming each letter", () => {
+    expect(profileSourceParts("SEW")).toEqual([
+      { letter: "S", label: "SCB" },
+      { letter: "E", label: "ESEF" },
+      { letter: "W", label: "Wikidata" },
+    ]);
+    expect(profileSourceParts("S")).toEqual([{ letter: "S", label: "SCB" }]);
+    expect(profileSourceParts("SW")).toEqual([
+      { letter: "S", label: "SCB" },
+      { letter: "W", label: "Wikidata" },
+    ]);
+  });
+
+  it("shows a letter it cannot name rather than dropping it, and nothing for no sources", () => {
+    // A letter this build does not know (a source added server-side first) is
+    // still data about the company: it is shown, named after itself.
+    expect(profileSourceParts("SX")).toEqual([
+      { letter: "S", label: "SCB" },
+      { letter: "X", label: "X" },
+    ]);
+    expect(profileSourceParts("")).toEqual([]);
+  });
+
+  it("legends exactly the letters it can render, in the order they appear", () => {
+    expect(PROFILE_SOURCES_LEGEND).toBe("Sources: S = SCB · E = ESEF · W = Wikidata");
+    expect(PROFILE_SOURCES.map((source) => source.letter).join("")).toBe("SEW");
   });
 });
 
@@ -333,10 +404,18 @@ describe("parseInfoFilters", () => {
 
   it("reads every filter from the URL", () => {
     const filters = parseInfoFilters(
-      at("?companyId=5565200028&name=Alpha&status=active&legalForm=AB-ORGFO&entity=legal&description=yes"),
+      at(
+        "?companyId=5565200028&name=Alpha&status=active&legalForm=AB-ORGFO&entity=legal&description=yes&source=esef",
+      ),
     );
     expect(filters).toEqual(APPLIED_FILTERS);
-    expect(infoFilterChips(filters)).toHaveLength(6);
+    expect(infoFilterChips(filters)).toHaveLength(7);
+    // Round trip: the parsed filters rebuild the very search string they came
+    // from (order is the sheet's, `page` deliberately dropped).
+    expect(infoListSearch(filters, { sort: "company_id", dir: "asc", pageSize: 50 })).toBe(
+      "?companyId=5565200028&name=Alpha&status=active&legalForm=AB-ORGFO&entity=legal" +
+        "&description=yes&source=esef&sort=company_id&dir=asc&pageSize=50",
+    );
   });
 
   it("drops a value the query builder would ignore, so no chip claims a filter the table does not have", () => {
@@ -348,7 +427,12 @@ describe("parseInfoFilters", () => {
       "?description=any",
       "?description=",
       "?entity=sideways",
+      // `source` is whitelisted against the profile-source catalog, so the
+      // removed provenance filter's values -- and anything else -- are dropped.
       "?source=llm",
+      "?source=bogus",
+      "?source=any",
+      "?source=",
       "?language=en",
       "?suggestion=yes",
       "?multi=1",
@@ -357,6 +441,16 @@ describe("parseInfoFilters", () => {
       const filters = parseInfoFilters(at(search));
       expect(filters).toEqual(EMPTY_INFO_FILTERS);
       expect(infoFilterChips(filters)).toEqual([]);
+    }
+  });
+
+  it("keeps every source of the catalog, and describes it by name in the chip", () => {
+    for (const source of PROFILE_SOURCES) {
+      const filters = parseInfoFilters(at(`?source=${source.value}`));
+      expect(filters.source).toBe(source.value);
+      expect(infoFilterChips(filters)).toEqual([
+        { param: "source", label: `Source ${source.label}` },
+      ]);
     }
   });
 
