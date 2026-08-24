@@ -1,9 +1,10 @@
 """Shared helpers for the Sweden company data layers.
 
-Four things repeat across every artifact and final asset and live here:
+Five things repeat across every artifact and final asset and live here:
 publishing through a stage table, reading/ordering a correction ledger,
-reusing a stored model observation by input hash, and the sensor factory
-that turns a ledger's new rows into a scoped run request. Nothing else is
+reusing a stored model observation by input hash, the sensor factory that
+turns a ledger's new rows into a scoped run request, and normalizing a
+scoped run's company ids against the published id pattern. Nothing else is
 shared.
 """
 
