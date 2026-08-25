@@ -35,6 +35,10 @@ from typing import Any
 
 from dagster_v3.defs.sweden_address_osm import tables as osm_tables
 from dagster_v3.defs.sweden_company import shared_addresses
+from dagster_v3.defs.sweden_company.clickhouse_streaming import (
+    MAX_PAGE_EXECUTION_SECONDS,
+    harden_clickhouse_socket,
+)
 from dagster_v3.defs.sweden_company.geocode_store import (
     ENRICHMENT_SCHEMA,
     GEOCODED_STATUSES,
@@ -74,15 +78,8 @@ PREVIOUS_OUTCOME_COLUMNS = (
 # turns each page into an index-pruned range scan of the tail rather than an OFFSET walk.
 QUERY_BATCH_SIZE = 100_000
 PROGRESS_LOG_ROW_INTERVAL = 500_000
-# The ClickHouse server aborts a page that runs past this instead of the client blocking on a
-# dead socket forever. Each page is a few seconds of work; five minutes is pure headroom.
-MAX_PAGE_EXECUTION_SECONDS = 300
-# clickhouse-driver socket timeouts, set on the connection before its first query (they are
-# applied when the socket connects). send_receive_timeout bounds a stalled recv; tcp_keepalive
-# (idle_seconds, interval_seconds, probes) makes a silently dropped peer -- the Errno 104 the
-# incident also saw -- surface in ~2 minutes rather than never.
-SOCKET_SEND_RECEIVE_TIMEOUT_SECONDS = 300
-TCP_KEEPALIVE = (60, 15, 4)
+# Per-page execution bound + socket hardening live in clickhouse_streaming so this load and the
+# canonical-address load cannot drift apart; re-exported here for the query settings below.
 
 
 def pending_reason(
@@ -163,7 +160,7 @@ def load_current_resolver_outcomes(
     keeps the newest per identity, and ``address_id`` is unique in that reduced set, so a
     strict ``>`` cursor neither drops nor repeats an identity at a page boundary.
     """
-    _harden_clickhouse_socket(clickhouse_client)
+    harden_clickhouse_socket(clickhouse_client)
     create_empty_previous_outcomes_table(connection)
     started_at = time.monotonic()
     loaded_rows = 0
@@ -313,21 +310,6 @@ def _outcome_page_sql(*, has_cursor: bool) -> str:
         "ORDER BY address_id\n"
         f"LIMIT {QUERY_BATCH_SIZE}"
     )
-
-
-def _harden_clickhouse_socket(clickhouse_client: Any) -> None:
-    """Give the driver connection a bounded socket timeout and TCP keepalive.
-
-    Set before the first query, so it lands when clickhouse-driver connects the socket. A
-    fake client (or any object without a ``connection``) is left untouched.
-    """
-    connection = getattr(clickhouse_client, "connection", None)
-    if connection is None:
-        return
-    if hasattr(connection, "send_receive_timeout"):
-        connection.send_receive_timeout = SOCKET_SEND_RECEIVE_TIMEOUT_SECONDS
-    if hasattr(connection, "tcp_keepalive"):
-        connection.tcp_keepalive = TCP_KEEPALIVE
 
 
 def _insert_previous_outcome_batch(
