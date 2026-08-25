@@ -23,10 +23,25 @@ sources:
       - name: country_person_match
       - name: se_financial_report_signatories
       - name: esef_document_company_information
+        meta:
+          dagster:
+            asset_key: [esef_document_company_information_clickhouse]
       - name: esef_document_people
+        meta:
+          dagster:
+            asset_key: [esef_document_people_clickhouse]
       - name: esef_document_contact_candidates
+        meta:
+          dagster:
+            asset_key: [esef_document_contact_candidates_clickhouse]
       - name: esef_filings
+        meta:
+          dagster:
+            asset_key: [esef_filings_clickhouse]
       - name: esef_entity_registry_map
+        meta:
+          dagster:
+            asset_key: [esef_entity_registry_map_clickhouse]
       - name: company_domain_suggestions_active
       - name: company_domain_suggestion_evidence_active
       - name: company_domains

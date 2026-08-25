@@ -48,7 +48,7 @@ from dagster_v3.defs.esef_filings.visible_sections import (
 )
 
 
-GROUP_NAME = "esef_filings"
+GROUP_NAME = "esef"
 ARTIFACT_DEPENDENCY = [dg.AssetKey("esef_document_artifacts_s3")]
 DEFAULT_DISCLOSURE_PARSE_WORKERS = 4
 MAX_DISCLOSURE_PARSE_WORKERS = 8

@@ -48,7 +48,7 @@ def test_esef_company_information_projections_are_separate_esef_assets() -> None
 
     for asset_key in expected_assets:
         node = repository.asset_graph.get(asset_key)
-        assert node.group_name == "esef_filings"
+        assert node.group_name == "esef"
         assert node.parent_keys == {
             AssetKey("esef_document_company_information_clickhouse")
         }

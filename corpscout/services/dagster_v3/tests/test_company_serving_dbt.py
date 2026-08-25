@@ -80,6 +80,42 @@ def test_shared_dbt_sources_are_dependency_only_specs(monkeypatch) -> None:
     assert model_spec.metadata == base_spec.metadata
 
 
+def test_partitioned_esef_sources_feed_serving_models_from_all_weeks(
+    monkeypatch,
+) -> None:
+    base_spec = dg.AssetSpec(
+        key="company_contact_current_build",
+        deps=[
+            "esef_document_contact_candidates_clickhouse",
+            "esef_filings_clickhouse",
+        ],
+    )
+    monkeypatch.setattr(
+        DbtProjectComponent,
+        "get_asset_spec",
+        lambda _self, _manifest, _unique_id, _project: base_spec,
+    )
+    component = object.__new__(CompanyServingDbtComponent)
+
+    model_spec = component.get_asset_spec(
+        {}, "model.company_serving.company_contact_current_build", None
+    )
+    dependencies = {dependency.asset_key: dependency for dependency in model_spec.deps}
+
+    assert isinstance(
+        dependencies[
+            dg.AssetKey("esef_document_contact_candidates_clickhouse")
+        ].partition_mapping,
+        dg.AllPartitionMapping,
+    )
+    assert (
+        dependencies[
+            dg.AssetKey("esef_filings_clickhouse")
+        ].partition_mapping
+        is None
+    )
+
+
 def test_serving_models_resolve_identity_and_evidence_offline() -> None:
     models = DBT_DIR / "models"
     external_ids = (

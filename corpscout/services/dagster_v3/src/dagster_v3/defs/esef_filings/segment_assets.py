@@ -46,7 +46,7 @@ from dagster_v3.defs.esef_filings.segment_parser import (
     write_artifact_json,
 )
 
-GROUP_NAME = "esef_filings"
+GROUP_NAME = "esef"
 ESEF_DOCUMENT_BUCKET = "source-esef-filings"
 ESEF_ARELLE_POOL = "esef_arelle"
 ESEF_REPORT_PACKAGE_PREFIX = "esef_filings/report_packages/"

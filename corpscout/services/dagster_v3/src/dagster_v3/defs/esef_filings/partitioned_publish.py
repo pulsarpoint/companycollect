@@ -30,7 +30,7 @@ from dagster_v3.defs.esef_filings.segment_assets import (
 )
 
 
-GROUP_NAME = "esef_filings"
+GROUP_NAME = "esef"
 
 
 @dataclass(frozen=True)

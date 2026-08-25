@@ -59,7 +59,7 @@ from dagster_v3.defs.esef_filings.publish import (
     replace_esef_entity_registry_map_clickhouse,
 )
 
-GROUP_NAME = "esef_filings"
+GROUP_NAME = "esef"
 ESEF_FILINGS_DUCKDB_POOL = "esef_filings_duckdb"
 ESEF_FILINGS_DUCKDB_ROOT = Path("data")
 
@@ -1374,8 +1374,9 @@ class EsefFinancialMetricsClickhouseExportConfig(dg.Config):
             partition_mapping=dg.AllPartitionMapping(),
         ),
         dg.AssetKey("esef_filings_clickhouse"),
+        dg.AssetKey("exchange_rates_v2_clickhouse"),
     ],
-    group_name="esef_financial_metrics",
+    group_name=GROUP_NAME,
     kinds={"python", "clickhouse", "esef_filings"},
     metadata={"table": tables.QUALIFIED_ESEF_FINANCIAL_METRICS_TABLE},
     description=(

@@ -4,9 +4,22 @@
 
 The ESEF source discovers filings from filings.xbrl.org, archives each report
 package by content hash, parses the package once with Arelle, and publishes
-four reusable datasets to ClickHouse. Downstream features consume the
-ClickHouse tables; they do not reopen parser DuckDB files or parse report
-packages again.
+source-owned datasets to ClickHouse. Downstream features consume the ClickHouse
+tables; they do not reopen parser DuckDB files or parse report packages again.
+
+## Source ownership boundary
+
+Every asset that acquires, parses, enriches, projects, or publishes information
+obtained from ESEF belongs to the Dagster `esef` group. This includes semantic
+outputs such as financial metrics and company-information projections even when
+they run separately from the weekly parser job. Dagster jobs and dependencies
+define execution boundaries; the group defines source ownership.
+
+S3 artifacts and weekly DuckDB files are internal processing contracts. The
+source's public boundary is its independently queryable ClickHouse tables.
+External reference inputs such as GLEIF and exchange rates remain owned by their
+respective source groups and are declared as upstream dependencies. Systems that
+consume ESEF ClickHouse tables remain outside the ESEF source boundary.
 
 ## Partition clock
 

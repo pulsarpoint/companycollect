@@ -11,7 +11,7 @@ from dagster_clickhouse import ClickhouseResource
 from dagster_v3.defs.clickhouse.resolved import assert_clickhouse_tables_exist
 from dagster_v3.defs.esef_filings import tables
 
-GROUP_NAME = "esef_filings"
+GROUP_NAME = "esef"
 _COMPANY_INFORMATION_ASSET = dg.AssetKey("esef_document_company_information_clickhouse")
 _EXTRACTED_AT_SQL = (
     "coalesce(parseDateTime64BestEffortOrNull(info.extracted_at), info.resolved_at)"

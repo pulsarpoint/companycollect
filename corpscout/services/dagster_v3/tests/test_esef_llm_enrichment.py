@@ -425,7 +425,7 @@ def test_llm_enrichment_asset_depends_on_final_clickhouse_documents() -> None:
     }
     assert esef_document_company_information_clickhouse.group_names_by_key[
         output_key
-    ] == "esef_filings"
+    ] == "esef"
 
 
 def test_latest_document_selector_uses_one_final_xbrl_per_company() -> None:

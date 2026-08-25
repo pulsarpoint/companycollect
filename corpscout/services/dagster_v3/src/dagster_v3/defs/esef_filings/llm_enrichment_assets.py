@@ -41,7 +41,7 @@ from dagster_v3.defs.esef_filings.segment_assets import (
     ESEF_DOCUMENT_BUCKET,
 )
 
-GROUP_NAME = "esef_filings"
+GROUP_NAME = "esef"
 _PROGRESS_INTERVAL = 25
 _NON_SPECIFIC_PERSON_ROLES = frozenset(
     {

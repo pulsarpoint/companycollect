@@ -9,7 +9,7 @@ from dagster_clickhouse import ClickhouseResource
 from dagster_v3.defs.esef_filings import tables
 from dagster_v3.defs.translator_load.resource import TranslatorResource
 
-GROUP_NAME = "esef_filings"
+GROUP_NAME = "esef"
 
 _ESEF_CONCEPT_LABEL_SOURCE_TABLE = tables.QUALIFIED_ESEF_DOCUMENT_CONCEPT_LABELS_TABLE
 _ESEF_LANGUAGE_NAMES = {

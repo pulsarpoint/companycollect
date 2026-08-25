@@ -6,6 +6,10 @@ import dagster as dg
 from dagster.components.utils.defs_state import DefsStateConfig
 from dagster_dbt import DbtProject, DbtProjectComponent
 
+_ALL_PARTITIONS_SOURCE_KEYS = {
+    dg.AssetKey("esef_document_contact_candidates_clickhouse"),
+}
+
 
 class CompanyServingDbtComponent(DbtProjectComponent):
     """Build one country's company-serving projections."""
@@ -22,7 +26,18 @@ class CompanyServingDbtComponent(DbtProjectComponent):
             # Generated source-file references differ by component state path, so
             # leave source ownership metadata to the canonical asset definition.
             return spec.replace_attributes(metadata={})
-        return spec
+        return spec.replace_attributes(
+            deps=[
+                dg.AssetDep(
+                    dependency.asset_key,
+                    partition_mapping=dg.AllPartitionMapping(),
+                    metadata=dependency.metadata,
+                )
+                if dependency.asset_key in _ALL_PARTITIONS_SOURCE_KEYS
+                else dependency
+                for dependency in spec.deps
+            ]
+        )
 
     @property
     def defs_state_config(self) -> DefsStateConfig:

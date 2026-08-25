@@ -819,6 +819,37 @@ def test_replace_facts_retry_deletes_a_partially_committed_batch_run(
 # ==========================================================================
 
 
+def test_all_esef_assets_share_source_owned_group() -> None:
+    asset_graph = load_project_defs().get_repository_def().asset_graph
+    esef_asset_keys = {
+        key
+        for key in asset_graph.get_all_asset_keys()
+        if key.path[-1].startswith("esef_")
+    }
+
+    assert esef_asset_keys
+    assert {
+        asset_graph.get(asset_key).group_name for asset_key in esef_asset_keys
+    } == {"esef"}
+    for canonical_table in (
+        "esef_document_company_information",
+        "esef_document_people",
+        "esef_document_contact_candidates",
+        "esef_filings",
+        "esef_entity_registry_map",
+    ):
+        assert not asset_graph.has(dg.AssetKey(["corpscout", canonical_table]))
+
+    financial_metrics = asset_graph.get(
+        dg.AssetKey("esef_financial_metrics_clickhouse")
+    )
+    assert financial_metrics.parent_keys == {
+        dg.AssetKey("esef_facts_clickhouse"),
+        dg.AssetKey("esef_filings_clickhouse"),
+        dg.AssetKey("exchange_rates_v2_clickhouse"),
+    }
+
+
 def test_esef_filings_refresh_job_selects_weekly_ingest_evidence_and_exports() -> None:
     repo = load_project_defs().get_repository_def()
     job = repo.get_job("esef_filings_refresh_job")
