@@ -238,7 +238,7 @@ export interface SeCompanyInfoListQuery extends SeCompanyInfoListFilters {
  *   reason financialBolagsverket/financialEsef need none: a row that still
  *   exists in the table (merged or not) was never a live row hidden behind a
  *   flag, it either still has a filed report or it and its rows are gone.
- *   This is the arm that closes the reconciliation gap the owner ruled on: 287
+ *   This is the arm that closes the reconciliation gap the owner ruled on: 199 (live-verified; the ~287 estimate double-counted 87 companies the raw-metric arms already cover)
  *   companies have a row here with neither a Bolagsverket nor an ESEF
  *   extracted metric, so before this arm the list showed them "—" while their
  *   Financial tab rendered a Filed reports card.
@@ -297,7 +297,7 @@ function anyOf(...terms: readonly string[]): string {
  * Owner ruling (2026-08-24 addendum, applied 2026-08-25): ✓ means ANY
  * financial data -- extracted figures OR filed/parsed reports -- not "has
  * extracted metrics", so the list can never show "—" for a company whose
- * Financial tab renders a card. This is a deliberate widening: before it, 287
+ * Financial tab renders a card. This is a deliberate widening: before it, 199 (live-verified)
  * companies with a parsed filing but zero extracted metrics showed "—" here
  * while their tab showed a Filed reports card, contradicting the list.
  *

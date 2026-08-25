@@ -331,7 +331,7 @@ describe("se_company_info list SQL shape", () => {
     // arm (owner ruling 2026-08-24 addendum: ✓ means ANY financial data, not
     // just extracted figures, so the list can't show "—" under a Filed
     // reports card). Pinned WHOLE: dropping any arm -- especially the reports
-    // arm regressing the 287-company reconciliation gap back open -- fails
+    // arm regressing the 199-company reconciliation gap back open -- fails
     // this test, not just a `.toContain`.
     expect(DATATYPE_PRESENCE_EXPR.has_financial).toBe(
       `(i.company_id IN (${COMPANY_SETS.financialBolagsverket})` +
