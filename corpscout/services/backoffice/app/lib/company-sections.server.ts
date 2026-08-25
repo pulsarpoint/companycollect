@@ -3,7 +3,6 @@ import {
   normalizeCountryPersonName,
   resolveCountryPersonProfilesForCompany,
 } from "~/lib/people.server";
-import { COMPANY_SOURCE_RECORD_ORIGINS_QUERY } from "~/lib/queries.server";
 import type {
   EvidenceOrigin,
   AddressRow,
@@ -80,18 +79,10 @@ interface SectionEvidenceLinkRow {
   relationship_kind: string;
   match_method: string;
   match_confidence: number | string;
-}
-
-interface SectionEvidenceRow {
-  source_record_uid: string;
   record_kind: string;
   content_sha256: string;
-  earliest_seen_at: string;
-  latest_seen_at: string;
-}
-
-interface SectionEvidenceOriginRow {
-  source_record_uid: string;
+  first_seen_at: string;
+  last_seen_at: string;
   source_slug: string;
   source_record_key: string;
   source_url: string;
@@ -108,64 +99,35 @@ async function getSectionEvidence(
 ): Promise<Map<string, EvidenceRef[]>> {
   const links = await chQuery<SectionEvidenceLinkRow>(
     `SELECT item_key, toString(source_record_uid) AS source_record_uid,
-       relationship_kind, match_method, toFloat64(match_confidence) AS match_confidence
+       relationship_kind, match_method, toFloat64(match_confidence) AS match_confidence,
+       record_kind, content_sha256, toString(first_seen_at) AS first_seen_at,
+       toString(last_seen_at) AS last_seen_at, source_slug, source_record_key,
+       source_url, source_object_key, payload_sha256,
+       toString(retrieved_at) AS retrieved_at, source_run_id
      FROM corpscout.company_section_item_source_links
      PREWHERE country_code = {country:String} AND company_id = {id:String}
      WHERE section = {section:String}`,
     { country: countryCode, id: companyId, section },
   );
   if (links.length === 0) return new Map();
-
-  // Resolve the small company-scoped UID set explicitly. A JOIN makes
-  // ClickHouse build the right-hand side from all company_source_records
-  // (millions of rows) even though the links CTE contains only a handful of
-  // UIDs. The array predicate follows the table's source_record_uid sorting
-  // key and therefore reads only the relevant key ranges.
-  const sourceRecordUids = [
-    ...new Set(links.map((link) => link.source_record_uid)),
-  ];
-  const [rows, originRows] = await Promise.all([
-    chQuery<SectionEvidenceRow>(
-      `SELECT toString(source_record_uid) AS source_record_uid,
-         argMax(record_kind, last_seen_at) AS record_kind,
-         argMax(content_sha256, last_seen_at) AS content_sha256,
-         toString(min(first_seen_at)) AS earliest_seen_at,
-         toString(max(last_seen_at)) AS latest_seen_at
-       FROM corpscout.company_source_records
-       PREWHERE source_record_uid IN {source_record_uids:Array(String)}
-       GROUP BY source_record_uid`,
-      { source_record_uids: sourceRecordUids },
-    ),
-    chQuery<SectionEvidenceOriginRow>(COMPANY_SOURCE_RECORD_ORIGINS_QUERY, {
-      sourceRecordUids,
-    }),
-  ]);
-  const recordsByUid = new Map(rows.map((row) => [row.source_record_uid, row]));
-  const originsByUid = new Map<string, EvidenceOrigin[]>();
-  for (const origin of originRows) {
-    const origins = originsByUid.get(origin.source_record_uid) ?? [];
-    origins.push({
-      sourceSlug: origin.source_slug,
-      sourceRecordKey: origin.source_record_key,
-      sourceUrl: origin.source_url,
-      sourceObjectKey: origin.source_object_key,
-      payloadSha256: origin.payload_sha256,
-      retrievedAt: origin.retrieved_at,
-      sourceRunId: origin.source_run_id,
-    });
-    originsByUid.set(origin.source_record_uid, origins);
-  }
   const byItem = new Map<string, EvidenceRef[]>();
   for (const link of links) {
-    const row = recordsByUid.get(link.source_record_uid);
-    if (!row) continue;
+    const origin: EvidenceOrigin = {
+      sourceSlug: link.source_slug,
+      sourceRecordKey: link.source_record_key,
+      sourceUrl: link.source_url,
+      sourceObjectKey: link.source_object_key,
+      payloadSha256: link.payload_sha256,
+      retrievedAt: link.retrieved_at,
+      sourceRunId: link.source_run_id,
+    };
     const evidence: EvidenceRef = {
-      sourceRecordUid: row.source_record_uid,
-      recordKind: row.record_kind,
-      contentSha256: row.content_sha256,
-      firstSeenAt: row.earliest_seen_at,
-      lastSeenAt: row.latest_seen_at,
-      origins: originsByUid.get(row.source_record_uid) ?? [],
+      sourceRecordUid: link.source_record_uid,
+      recordKind: link.record_kind,
+      contentSha256: link.content_sha256,
+      firstSeenAt: link.first_seen_at,
+      lastSeenAt: link.last_seen_at,
+      origins: [origin],
       connectionKind: link.relationship_kind,
       extractionMethod: link.match_method,
       confidence: Number(link.match_confidence),
@@ -703,39 +665,14 @@ async function getSourcesSection(
   id: string,
 ): Promise<Extract<CompanySectionData, { section: "sources" }>> {
   const rows = await chQuery<SourceRecordRow>(
-    `WITH linked AS (
-       SELECT DISTINCT toString(source_record_uid) AS source_record_uid
-       FROM corpscout.company_source_record_links
-       PREWHERE country_code = {country:String} AND company_id = {id:String}
-     ), records AS (
-       SELECT source_record_uid, argMax(record_kind, last_seen_at) AS record_kind,
-         argMax(content_sha256, last_seen_at) AS content_sha256,
-         min(first_seen_at) AS earliest_seen_at,
-         max(last_seen_at) AS latest_seen_at
-       FROM corpscout.company_source_records
-       PREWHERE source_record_uid IN (SELECT source_record_uid FROM linked)
-       GROUP BY source_record_uid
-     ), origins AS (
-       SELECT source_record_uid, source_slug, source_record_key, source_url,
-         source_object_key, argMax(payload_sha256, retrieved_at) AS payload_sha256,
-         max(retrieved_at) AS latest_retrieved_at,
-         argMax(source_run_id, retrieved_at) AS source_run_id
-       FROM corpscout.company_source_record_origins
-       PREWHERE source_record_uid IN (SELECT source_record_uid FROM linked)
-       GROUP BY source_record_uid, source_slug, source_record_key, source_url,
-         source_object_key
-     )
-     SELECT toString(records.source_record_uid) AS source_record_uid,
-       records.record_kind, records.content_sha256,
-       toString(records.earliest_seen_at) AS first_seen_at,
-       toString(records.latest_seen_at) AS last_seen_at,
-       origins.source_slug, origins.source_record_key, origins.source_url,
-       origins.source_object_key, origins.payload_sha256,
-       toString(origins.latest_retrieved_at) AS retrieved_at, origins.source_run_id
-     FROM records
-     LEFT JOIN origins
-       ON origins.source_record_uid = records.source_record_uid
-     ORDER BY records.latest_seen_at DESC, origins.source_slug, origins.source_record_key`,
+    `SELECT DISTINCT toString(source_record_uid) AS source_record_uid,
+       record_kind, content_sha256, toString(first_seen_at) AS first_seen_at,
+       toString(last_seen_at) AS last_seen_at, source_slug, source_record_key,
+       source_url, source_object_key, payload_sha256,
+       toString(retrieved_at) AS retrieved_at, source_run_id
+     FROM corpscout.company_section_item_source_links
+     PREWHERE country_code = {country:String} AND company_id = {id:String}
+     ORDER BY last_seen_at DESC, source_slug, source_record_key`,
     { country, id },
   );
   const records = new Map<string, CompanySourceRecord>();

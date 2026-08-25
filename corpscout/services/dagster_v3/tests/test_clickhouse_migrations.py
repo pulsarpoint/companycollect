@@ -6,7 +6,6 @@ from dagster_v3.defs.brazil_companies.pgfn import tables as brazil_pgfn_tables
 from dagster_v3.defs.brazil_companies.rfb import tables as brazil_rfb_tables
 from dagster_v3.defs.brazil_financial.cvm import tables as brazil_fin_cvm_tables
 from dagster_v3.defs.company_contracts import tables as company_contracts_tables
-from dagster_v3.defs.company_source_records import tables as source_record_tables
 from dagster_v3.defs.company_signals import tables as company_signals_tables
 from dagster_v3.defs.domains import tables as domain_tables
 from dagster_v3.defs.exchange_rates_v2 import tables as exchange_rate_tables
@@ -328,6 +327,7 @@ EXPECTED_MIGRATIONS = (
     "000315_corpscout_retire_esef_source_documents",
     "000316_corpscout_esef_disclosures",
     "000317_corpscout_se_address_geocodes_store",
+    "000318_corpscout_company_serving_source_lineage",
     "000319_corpscout_retire_se_company_address_geocode_pair",
 )
 
@@ -3033,17 +3033,56 @@ def test_company_source_record_migration_covers_shared_contracts() -> None:
     sql = _migration_sql("000244_corpscout_company_source_records.up.sql")
     down_sql = _migration_sql("000244_corpscout_company_source_records.down.sql")
     columns_by_table = {
-        source_record_tables.SOURCE_RECORDS_TABLE: (
-            source_record_tables.SOURCE_RECORD_COLUMNS
+        "company_source_records": (
+            "source_record_uid",
+            "identity_kind",
+            "record_kind",
+            "content_sha256",
+            "schema_version",
+            "first_seen_at",
+            "last_seen_at",
         ),
-        source_record_tables.SOURCE_RECORD_ORIGINS_TABLE: (
-            source_record_tables.SOURCE_RECORD_ORIGIN_COLUMNS
+        "company_source_record_origins": (
+            "source_record_uid",
+            "source_slug",
+            "source_record_key",
+            "source_url",
+            "source_object_key",
+            "payload_sha256",
+            "retrieved_at",
+            "source_run_id",
         ),
-        source_record_tables.SOURCE_RECORD_LINKS_TABLE: (
-            source_record_tables.SOURCE_RECORD_LINK_COLUMNS
+        "company_source_record_links": (
+            "source_record_uid",
+            "country_code",
+            "company_id",
+            "relationship_kind",
+            "match_method",
+            "match_confidence",
+            "matched_identifier_scheme",
+            "matched_identifier_value",
+            "source_run_id",
+            "linked_at",
         ),
-        source_record_tables.DESCRIPTION_OBSERVATIONS_TABLE: (
-            source_record_tables.DESCRIPTION_OBSERVATION_COLUMNS
+        "company_description_observations": (
+            "observation_uid",
+            "source_record_uid",
+            "country_code",
+            "company_id",
+            "description_kind",
+            "text_original",
+            "language_original",
+            "text_en",
+            "extraction_method",
+            "confidence",
+            "evidence_ids",
+            "source_field",
+            "source_date",
+            "model_provider",
+            "model_name",
+            "prompt_version",
+            "source_run_id",
+            "extracted_at",
         ),
     }
 
@@ -3067,6 +3106,41 @@ def test_company_source_record_migration_covers_shared_contracts() -> None:
     assert "company-source-record-v1\\nfile\\nesef_report_package" in sql
     assert "bolagsverket_source_record_uid" in sql
     assert "scb_source_record_uid" in sql
+
+
+def test_company_serving_lineage_migration_makes_serving_rows_self_contained() -> None:
+    sql = _migration_sql("000318_corpscout_company_serving_source_lineage.up.sql")
+    down_sql = _migration_sql(
+        "000318_corpscout_company_serving_source_lineage.down.sql"
+    )
+
+    for column in (
+        "source_record_uid",
+        "evidence_ids",
+        "source_field",
+        "model_provider",
+        "model_name",
+        "prompt_version",
+    ):
+        assert f"ADD COLUMN IF NOT EXISTS {column}" in sql
+        assert f"DROP COLUMN IF EXISTS {column}" in down_sql
+
+    for column in (
+        "record_kind",
+        "content_sha256",
+        "first_seen_at",
+        "last_seen_at",
+        "source_slug",
+        "source_record_key",
+        "source_url",
+        "source_object_key",
+        "payload_sha256",
+        "retrieved_at",
+    ):
+        assert f"ADD COLUMN IF NOT EXISTS {column}" in sql
+        assert f"DROP COLUMN IF EXISTS {column}" in down_sql
+
+    assert "DROP TABLE" not in sql
 
 
 def test_esef_source_record_uid_repair_casts_fixed_string_hashes() -> None:

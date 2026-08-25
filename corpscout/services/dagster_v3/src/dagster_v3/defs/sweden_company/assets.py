@@ -324,7 +324,6 @@ sweden_company_refresh_job = dg.define_asset_job(
         "sweden_company_addresses_clickhouse",
         "sweden_company_industries_clickhouse",
         "sweden_company_industry_history_clickhouse",
-        "sweden_registry_company_source_records_clickhouse",
     ).upstream(),
 )
 

@@ -12,7 +12,6 @@ import dagster as dg
 
 ESEF_DOCUMENT_LLM_SELECTION = dg.AssetSelection.assets(
     "esef_document_company_information_clickhouse",
-    "esef_company_description_observations_clickhouse",
     "esef_document_people_clickhouse",
     "esef_document_business_items_clickhouse",
     "esef_document_group_relationships_clickhouse",

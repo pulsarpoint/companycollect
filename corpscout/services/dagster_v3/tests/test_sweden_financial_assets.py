@@ -45,7 +45,6 @@ def test_sweden_financial_backfill_and_current_assets_are_separate() -> None:
         "sweden_financial_current_facts_clickhouse",
         "se_bolagsverket_financial_observations_clickhouse",
         "se_bolagsverket_financial_metrics_clickhouse",
-        "sweden_financial_company_source_records_clickhouse",
         "se_financial_facts_concepts",
         "se_financial_taxonomy_concepts",
         "se_financial_taxonomy_official_translations",
@@ -154,7 +153,6 @@ def test_sweden_financial_backfill_and_current_assets_are_separate() -> None:
         "se_bolagsverket_financial_observations_clickhouse",
         "se_financial_report_signatories_clickhouse",
         "se_company_audits_clickhouse",
-        "sweden_financial_company_source_records_clickhouse",
     }
 
     backfill_clickhouse_job_asset_keys = {
@@ -167,7 +165,6 @@ def test_sweden_financial_backfill_and_current_assets_are_separate() -> None:
         "sweden_financial_backfill_facts_usd_duckdb",
         "sweden_financial_backfill_reports_clickhouse",
         "sweden_financial_backfill_facts_clickhouse",
-        "sweden_financial_company_source_records_clickhouse",
     }
 
     context_period_backfill_job_asset_keys = {
@@ -193,7 +190,6 @@ def test_sweden_financial_backfill_and_current_assets_are_separate() -> None:
         "sweden_financial_current_facts_usd_duckdb",
         "sweden_financial_current_reports_clickhouse",
         "sweden_financial_current_facts_clickhouse",
-        "sweden_financial_company_source_records_clickhouse",
     }
 
     # The backfill exports are partition-scoped upserts mirroring their

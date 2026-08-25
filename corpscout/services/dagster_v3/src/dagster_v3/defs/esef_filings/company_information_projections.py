@@ -9,9 +9,6 @@ import dagster as dg
 from dagster_clickhouse import ClickhouseResource
 
 from dagster_v3.defs.clickhouse.resolved import assert_clickhouse_tables_exist
-from dagster_v3.defs.company_source_records.identity import (
-    clickhouse_observation_uid_sql,
-)
 from dagster_v3.defs.esef_filings import tables
 
 GROUP_NAME = "esef_filings"
@@ -19,42 +16,6 @@ _COMPANY_INFORMATION_ASSET = dg.AssetKey("esef_document_company_information_clic
 _EXTRACTED_AT_SQL = (
     "coalesce(parseDateTime64BestEffortOrNull(info.extracted_at), info.resolved_at)"
 )
-
-
-def esef_company_description_observation_sql() -> str:
-    observation_uid = clickhouse_observation_uid_sql(
-        source_record_uid_expression="info.source_record_uid",
-        observation_kind="company_description",
-        natural_key_expression=(
-            "concat(info.source_document_id, ':', info.prompt_version, ':', "
-            "info.model_name)"
-        ),
-    )
-    return f"""INSERT INTO {tables.QUALIFIED_COMPANY_DESCRIPTION_OBSERVATIONS_TABLE}
-({", ".join(tables.ESEF_COMPANY_DESCRIPTION_OBSERVATION_COLUMNS)})
-SELECT
-    {observation_uid},
-    info.source_record_uid,
-    info.country_iso2,
-    info.company_id,
-    'annual_report_profile',
-    info.company_description,
-    info.description_language,
-    if(info.description_language = 'en', info.company_description, NULL),
-    'llm_extraction',
-    toFloat32(info.description_confidence),
-    JSONExtract(info.description_evidence_ids_json, 'Array(String)'),
-    concat('corpscout.esef_document_company_information:', info.source_document_id),
-    toDate32(parseDateTimeBestEffortOrNull(info.period_end)),
-    info.model_provider,
-    info.model_name,
-    info.prompt_version,
-    info.source_run_id,
-    {_EXTRACTED_AT_SQL}
-FROM {tables.QUALIFIED_ESEF_DOCUMENT_COMPANY_INFORMATION_TABLE} AS info
-WHERE info.extraction_status IN ('enriched', 'reused')
-  AND info.company_description != ''
-  AND info.source_record_uid != ''"""
 
 
 def esef_document_people_sql() -> str:
@@ -159,13 +120,17 @@ WHERE info.extraction_status IN ('enriched', 'reused')
 
 
 def _candidate_uid_sql(*, item_kind_expression: str) -> str:
-    return clickhouse_observation_uid_sql(
-        source_record_uid_expression="info.source_record_uid",
-        observation_kind="esef_typed_candidate",
-        natural_key_expression=(
-            "concat(info.prompt_version, ':', info.model_name, ':', "
-            f"{item_kind_expression}, ':', item_json)"
-        ),
+    natural_key = (
+        "concat(info.prompt_version, ':', info.model_name, ':', "
+        f"{item_kind_expression}, ':', item_json)"
+    )
+    return (
+        "lower(hex(SHA256(concat("
+        "'company-source-record-v1\\nobservation\\n', "
+        "toString(info.source_record_uid), "
+        "'\\nesef_typed_candidate\\n', "
+        f"toString({natural_key})"
+        "))))"
     )
 
 
@@ -192,23 +157,6 @@ def _publish_projection(
             "table": f"{tables.ESEF_DATABASE}.{table_name}",
             "row_count": row_count,
         }
-    )
-
-
-@dg.asset(
-    name="esef_company_description_observations_clickhouse",
-    deps=[_COMPANY_INFORMATION_ASSET],
-    group_name=GROUP_NAME,
-    kinds={"clickhouse", "sql", "llm", "xbrl"},
-    metadata={"table": tables.QUALIFIED_COMPANY_DESCRIPTION_OBSERVATIONS_TABLE},
-)
-def esef_company_description_observations_clickhouse(
-    clickhouse: ClickhouseResource,
-) -> dg.MaterializeResult:
-    return _publish_projection(
-        clickhouse=clickhouse,
-        table_name=tables.COMPANY_DESCRIPTION_OBSERVATIONS_TABLE,
-        statement=esef_company_description_observation_sql(),
     )
 
 
@@ -265,7 +213,6 @@ def esef_document_group_relationships_clickhouse(
 
 defs = dg.Definitions(
     assets=[
-        esef_company_description_observations_clickhouse,
         esef_document_people_clickhouse,
         esef_document_business_items_clickhouse,
         esef_document_group_relationships_clickhouse,

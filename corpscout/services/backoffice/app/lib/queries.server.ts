@@ -2380,29 +2380,6 @@ interface CompanySourceRecordQueryRow {
   source_run_id: string;
 }
 
-interface CompanySourceRecordUidRow {
-  source_record_uid: string;
-}
-
-interface CompanySourceRecordMetadataRow {
-  source_record_uid: string;
-  record_kind: string;
-  content_sha256: string;
-  first_seen_at: string;
-  last_seen_at: string;
-}
-
-interface CompanySourceRecordOriginRow {
-  source_record_uid: string;
-  source_slug: string;
-  source_record_key: string;
-  source_url: string;
-  source_object_key: string;
-  payload_sha256: string;
-  retrieved_at: string;
-  source_run_id: string;
-}
-
 interface DescriptionObservationQueryRow {
   observation_uid: string;
   source_record_uid: string;
@@ -2482,98 +2459,34 @@ interface SourceContactQueryRow {
   extracted_at: string;
 }
 
-export const COMPANY_SOURCE_RECORD_UIDS_QUERY = `
-SELECT DISTINCT toString(source_record_uid) AS source_record_uid
-FROM corpscout.company_source_record_links
-PREWHERE country_code = {country:String} AND company_id = {id:String}`;
-
-export const COMPANY_SOURCE_RECORD_METADATA_QUERY = `
-SELECT
+export const COMPANY_SOURCE_RECORDS_QUERY = `
+SELECT DISTINCT
   toString(source_record_uid) AS source_record_uid,
-  argMax(record_kind, company_source_records.last_seen_at) AS record_kind,
-  argMax(content_sha256, company_source_records.last_seen_at) AS content_sha256,
-  toString(min(first_seen_at)) AS first_seen_at,
-  toString(max(company_source_records.last_seen_at)) AS last_seen_at
-FROM corpscout.company_source_records
-PREWHERE source_record_uid IN {sourceRecordUids:Array(String)}
-GROUP BY source_record_uid`;
-
-export const COMPANY_SOURCE_RECORD_ORIGINS_QUERY = `
-SELECT
-  toString(source_record_uid) AS source_record_uid,
+  record_kind,
+  content_sha256,
+  toString(first_seen_at) AS first_seen_at,
+  toString(last_seen_at) AS last_seen_at,
   source_slug,
   source_record_key,
   source_url,
   source_object_key,
-  argMax(payload_sha256, company_source_record_origins.retrieved_at) AS payload_sha256,
-  toString(max(company_source_record_origins.retrieved_at)) AS retrieved_at,
-  argMax(source_run_id, company_source_record_origins.retrieved_at) AS source_run_id
-FROM corpscout.company_source_record_origins
-PREWHERE source_record_uid IN {sourceRecordUids:Array(String)}
-GROUP BY
-  source_record_uid,
-  source_slug,
-  source_record_key,
-  source_url,
-  source_object_key`;
+  payload_sha256,
+  toString(retrieved_at) AS retrieved_at,
+  source_run_id
+FROM corpscout.company_section_item_source_links
+PREWHERE country_code = {country:String} AND company_id = {id:String}
+ORDER BY last_seen_at DESC, source_slug, source_record_key`;
 
 async function getCompanySourceRecordRows(params: {
   country: string;
   id: string;
 }): Promise<CompanySourceRecordQueryRow[]> {
-  const linkedRows = await chQuery<CompanySourceRecordUidRow>(
-    COMPANY_SOURCE_RECORD_UIDS_QUERY,
-    params,
-  );
-  const sourceRecordUids = linkedRows.map((row) => row.source_record_uid);
-  if (sourceRecordUids.length === 0) return [];
-
-  const [records, origins] = await Promise.all([
-    chQuery<CompanySourceRecordMetadataRow>(
-      COMPANY_SOURCE_RECORD_METADATA_QUERY,
-      { sourceRecordUids },
-    ),
-    chQuery<CompanySourceRecordOriginRow>(COMPANY_SOURCE_RECORD_ORIGINS_QUERY, {
-      sourceRecordUids,
-    }),
-  ]);
-  const originsByUid = new Map<string, CompanySourceRecordOriginRow[]>();
-  for (const origin of origins) {
-    const existing = originsByUid.get(origin.source_record_uid) ?? [];
-    existing.push(origin);
-    originsByUid.set(origin.source_record_uid, existing);
-  }
-
-  return records
-    .flatMap((record) => {
-      const recordOrigins = originsByUid.get(record.source_record_uid);
-      if (!recordOrigins || recordOrigins.length === 0) {
-        return [
-          {
-            ...record,
-            source_slug: "",
-            source_record_key: "",
-            source_url: "",
-            source_object_key: "",
-            payload_sha256: "",
-            retrieved_at: "",
-            source_run_id: "",
-          },
-        ];
-      }
-      return recordOrigins.map((origin) => ({ ...record, ...origin }));
-    })
-    .sort(
-      (left, right) =>
-        right.last_seen_at.localeCompare(left.last_seen_at) ||
-        left.source_slug.localeCompare(right.source_slug) ||
-        left.source_record_key.localeCompare(right.source_record_key),
-    );
+  return chQuery<CompanySourceRecordQueryRow>(COMPANY_SOURCE_RECORDS_QUERY, params);
 }
 
 export const COMPANY_DESCRIPTION_OBSERVATIONS_QUERY = `
 SELECT
-  toString(observation_uid) AS observation_uid,
+  toString(description_id) AS observation_uid,
   toString(source_record_uid) AS source_record_uid,
   description_kind,
   text_original,
@@ -2588,7 +2501,7 @@ SELECT
   model_name,
   prompt_version,
   toString(extracted_at) AS extracted_at
-FROM corpscout.company_description_observations FINAL
+FROM corpscout.company_description_current
 WHERE country_code = {country:String} AND company_id = {id:String}
 ORDER BY extracted_at DESC, observation_uid`;
 
@@ -2919,14 +2832,12 @@ async function getSwedenFinancialSourceRows(
 const COMPANY_EVIDENCE_SCHEMA_QUERY = `
 SELECT toUInt8(
   countIf(name IN (
-    'company_source_records',
-    'company_source_record_origins',
-    'company_source_record_links',
-    'company_description_observations',
+    'company_section_item_source_links',
+    'company_description_current',
     'esef_document_people',
     'esef_document_business_items',
     'esef_document_group_relationships'
-  )) = 7
+  )) = 5
   AND (
     SELECT count()
     FROM system.columns

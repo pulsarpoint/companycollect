@@ -159,6 +159,12 @@ DESCRIPTIONS = CurrentTable(
         "source_date",
         "extraction_method",
         "confidence",
+        "source_record_uid",
+        "evidence_ids",
+        "source_field",
+        "model_provider",
+        "model_name",
+        "prompt_version",
         "extracted_at",
         "resolved_at",
     ),
@@ -282,6 +288,16 @@ SOURCE_LINKS = CurrentTable(
         "match_confidence",
         "source_run_id",
         "linked_at",
+        "record_kind",
+        "content_sha256",
+        "first_seen_at",
+        "last_seen_at",
+        "source_slug",
+        "source_record_key",
+        "source_url",
+        "source_object_key",
+        "payload_sha256",
+        "retrieved_at",
     ),
     (*SHARED_KEY, "section", "item_key", "source_record_uid"),
 )
@@ -335,8 +351,3 @@ VALID_SECTIONS = (
     "sources",
     "technology",
 )
-SYNTHETIC_SOURCE_MODELS = {
-    "company_source_records": "company_serving_source_records_build",
-    "company_source_record_origins": "company_serving_source_origins_build",
-    "company_source_record_links": "company_serving_source_links_build",
-}

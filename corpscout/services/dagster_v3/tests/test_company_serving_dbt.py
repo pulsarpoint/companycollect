@@ -49,9 +49,6 @@ def test_company_serving_dbt_project_parses() -> None:
         "company_contract_current_build",
         "company_contract_summary_current_build",
         "se_company_industry_display_current_build",
-        "company_serving_source_records_build",
-        "company_serving_source_origins_build",
-        "company_serving_source_links_build",
         "company_section_item_source_links_build",
         "company_section_presence_current_build",
     }
@@ -102,9 +99,12 @@ def test_serving_models_resolve_identity_and_evidence_offline() -> None:
     assert "'registry-person|'" in management
     assert "observed_name_normalized" not in management
     assert "company_section_item_source_links" not in source_links
-    assert "ref('company_serving_source_links_build')" in presence
-    assert "FROM evidence_links AS links\nINNER JOIN company_anchors AS anchors" in source_links
-    assert "FROM section_rows AS rows\nINNER JOIN company_anchors AS anchors" in presence
+    assert "ref('company_section_item_source_links_build')" in presence
+    assert "FROM evidence_links AS links" in source_links
+    assert "INNER JOIN company_anchors AS anchors" in source_links
+    assert (
+        "FROM section_rows AS rows\nINNER JOIN company_anchors AS anchors" in presence
+    )
     assert "ref('company_domains_build')" in source_links
     assert "has(current.source_names, 'wikidata')" in source_links
     assert "has(current.source_names, 'esef_filing')" in source_links
@@ -118,14 +118,17 @@ def test_serving_models_resolve_identity_and_evidence_offline() -> None:
     assert "reviewed_evidence_fingerprint" in company_domains
     assert "domains_without_current_source" in company_domains
     assert "existing.review_status != 'unreviewed'" not in company_domains
-    source_records = (models / "company_serving_source_records_build.sql").read_text()
-    assert "gleif_lei_record" in source_records
-    assert "contract" in source_records
+    assert "gleif_lei_record" in source_links
+    assert "record_kind" in source_links
+    assert "payload_sha256" in source_links
     assert "concat('SE', company_id, '01')" not in external_ids
     assert "issuer_scheme = 'vat'" in external_ids
-    assert external_ids.count(
-        "INNER JOIN companies\n        ON companies.company_id = identifiers.company_id"
-    ) == 2
+    assert (
+        external_ids.count(
+            "INNER JOIN companies\n        ON companies.company_id = identifiers.company_id"
+        )
+        == 2
+    )
 
     assert company_domains.count("INNER JOIN companies") == 4
 
@@ -137,6 +140,15 @@ def test_serving_models_resolve_identity_and_evidence_offline() -> None:
         model = (models / model_name).read_text()
         assert "source('corpscout', 'se_companies')" in model
         assert "INNER JOIN company_anchors AS anchors" in model
+
+    combined_serving_sql = "\n".join(path.read_text() for path in models.glob("*.sql"))
+    for retired_table in (
+        "company_source_records",
+        "company_source_record_origins",
+        "company_source_record_links",
+        "company_description_observations",
+    ):
+        assert retired_table not in combined_serving_sql
 
 
 def test_serving_project_declares_integrity_tests() -> None:

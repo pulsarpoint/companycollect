@@ -35,7 +35,6 @@ def test_paid_llm_job_is_explicit_and_unpartitioned() -> None:
 
     assert llm_keys == {
         AssetKey("esef_document_company_information_clickhouse"),
-        AssetKey("esef_company_description_observations_clickhouse"),
         AssetKey("esef_document_people_clickhouse"),
         AssetKey("esef_document_business_items_clickhouse"),
         AssetKey("esef_document_group_relationships_clickhouse"),

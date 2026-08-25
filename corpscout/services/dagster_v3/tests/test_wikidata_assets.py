@@ -226,7 +226,7 @@ def test_wikidata_canonical_contacts_asset_in_publish_job() -> None:
     }
 
     assert "wikidata_clickhouse_canonical_contacts" in job_asset_keys
-    assert "wikidata_company_source_records_clickhouse" in job_asset_keys
+    assert "wikidata_company_source_records_clickhouse" not in job_asset_keys
 
 
 def test_wikidata_raw_domain_asset_dependencies_are_split() -> None:

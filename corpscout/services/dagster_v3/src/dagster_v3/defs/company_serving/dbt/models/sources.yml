@@ -5,6 +5,8 @@ sources:
     schema: corpscout
     tables:
       - name: se_companies
+      - name: se_companies_translated
+      - name: se_financial_reports
       - name: company_identifier
       - name: gleif_lei_records
       - name: gleif_lei_addresses
@@ -17,14 +19,14 @@ sources:
       - name: wikidata_company_domains
       - name: wikidata_company_people
       - name: wikidata_persons
-      - name: wikidata_company_source_snapshots
       - name: country_person_observation
       - name: country_person_match
       - name: se_financial_report_signatories
-      - name: company_description_observations
+      - name: esef_document_company_information
       - name: esef_document_people
       - name: esef_document_contact_candidates
       - name: esef_filings
+      - name: esef_entity_registry_map
       - name: company_domain_suggestions_active
       - name: company_domain_suggestion_evidence_active
       - name: company_domains
@@ -34,7 +36,4 @@ sources:
       - name: se_industries
       - name: nace_categories
       - name: se_company_addresses_current
-      - name: company_source_records
-      - name: company_source_record_origins
-      - name: company_source_record_links
       - name: company_domain_current

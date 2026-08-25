@@ -9,7 +9,7 @@ from typing import Any
 
 from lxml import etree, html
 
-from dagster_v3.defs.company_source_records.identity import file_source_record_uid
+from dagster_v3.defs.esef_filings.source_identity import file_source_record_uid
 
 
 DISCLOSURE_PARSER_NAME = "lxml_html_disclosure"

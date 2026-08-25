@@ -4,7 +4,7 @@ Input (source layer): sweden_company_addresses_clickhouse ->
 corpscout.se_company_addresses_current, the rename-swap snapshot of the append-only
 se_company_addresses history: one row per (company, address_type, source), with the
 register's own provenance (source_run_id, source_record_id, source_payload_hash and the
-derived source_record_uid that joins company_source_records).
+derived source_record_uid used by typed serving evidence links).
 
 This module keeps the Bolagsverket half of that snapshot -- address_type 'postal', the
 registered postal address, the register being the registration authority for it -- and

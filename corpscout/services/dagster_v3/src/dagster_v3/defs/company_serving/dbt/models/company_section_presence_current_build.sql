@@ -40,13 +40,8 @@ section_rows AS (
     FROM {{ source('corpscout', 'se_company_addresses_current') }}
     WHERE has_address = 1 AND has_observation = 1
     UNION ALL
-    SELECT links.country_code, links.company_id, 'sources', toString(links.source_record_uid), links.linked_at
-    FROM {{ source('corpscout', 'company_source_record_links') }} AS links
-    INNER JOIN company_anchors AS anchors ON anchors.company_id = links.company_id
-    WHERE links.country_code = '{{ var("country_code") }}'
-    UNION ALL
     SELECT country_code, company_id, 'sources', source_record_uid, linked_at
-    FROM {{ ref('company_serving_source_links_build') }}
+    FROM {{ ref('company_section_item_source_links_build') }}
     UNION ALL
     SELECT country_code, company_id, 'technology', root_domain, resolved_at
     FROM {{ ref('company_domain_current_build') }}

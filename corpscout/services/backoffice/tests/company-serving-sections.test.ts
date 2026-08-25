@@ -19,6 +19,9 @@ describe("Sweden company sections", () => {
       "wikidata_company_identifiers",
       "wikidata_company_people",
       "country_person_observation",
+      "company_source_records",
+      "company_source_record_origins",
+      "company_source_record_links",
       "company_description_observations",
       "company_contract_facts",
       "commoncrawl_",
@@ -33,11 +36,9 @@ describe("Sweden company sections", () => {
 
   it("resolves section evidence from company-scoped source-record keys", () => {
     expect(sectionServer).toContain(
-      "source_record_uid IN {source_record_uids:Array(String)}",
+      "FROM corpscout.company_section_item_source_links",
     );
-    expect(sectionServer).not.toContain(
-      "INNER JOIN corpscout.company_source_records",
-    );
+    expect(sectionServer).toContain("record_kind, content_sha256");
   });
 
   it("composes company-address relationships with address-owned data", () => {
@@ -77,14 +78,11 @@ describe("Sweden company sections", () => {
     );
   });
 
-  it("keeps aggregate output aliases distinct from their input columns", () => {
-    // ClickHouse expands aliases throughout a SELECT. Reusing last_seen_at or
-    // retrieved_at for max(...) makes argMax(..., <column>) a nested aggregate.
-    expect(sectionServer).toContain("AS earliest_seen_at");
-    expect(sectionServer).toContain("AS latest_seen_at");
-    expect(sectionServer).toContain("AS latest_retrieved_at");
-    expect(sectionServer).not.toMatch(/max\(last_seen_at\) AS last_seen_at/);
-    expect(sectionServer).not.toMatch(/max\(retrieved_at\) AS retrieved_at/);
+  it("reads source lineage directly from the serving link", () => {
+    expect(sectionServer).toContain("toString(first_seen_at) AS first_seen_at");
+    expect(sectionServer).toContain("toString(last_seen_at) AS last_seen_at");
+    expect(sectionServer).toContain("toString(retrieved_at) AS retrieved_at");
+    expect(sectionServer).not.toContain("argMax(");
   });
 
   it("loads only present sections and isolates them behind lazy resources", () => {

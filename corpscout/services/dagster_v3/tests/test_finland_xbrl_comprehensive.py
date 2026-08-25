@@ -93,12 +93,8 @@ def test_parser_preserves_contexts_units_and_complete_fact_provenance() -> None:
 
 
 def test_statement_key_preserves_separate_registration_events() -> None:
-    first = statement_key_for(
-        "0176460-0", "2025-12-31", "2026-05-20", "a" * 64
-    )
-    second = statement_key_for(
-        "0176460-0", "2025-12-31", "2026-05-21", "a" * 64
-    )
+    first = statement_key_for("0176460-0", "2025-12-31", "2026-05-20", "a" * 64)
+    second = statement_key_for("0176460-0", "2025-12-31", "2026-05-21", "a" * 64)
 
     assert first != second
 
@@ -137,20 +133,19 @@ def test_finland_publish_graph_uses_clickhouse_facts_directly() -> None:
         "fi_xbrl_facts_ch",
         "fi_xbrl_taxonomy_codes_ch",
         "fi_financial_metrics_ch",
-        "finland_financial_company_source_records_clickhouse",
     ):
         assert dg.AssetKey(key) in keys
 
     assert dg.AssetKey("fi_financial_metrics_parquet") not in keys
     assert dg.AssetKey("fi_financial_metrics_usd_parquet") not in keys
+    assert (
+        dg.AssetKey("finland_financial_company_source_records_clickhouse") not in keys
+    )
     assert graph.get(dg.AssetKey("fi_financial_metrics_ch")).parent_keys >= {
         dg.AssetKey("fi_financial_statements_ch"),
         dg.AssetKey("fi_xbrl_contexts_ch"),
         dg.AssetKey("fi_xbrl_facts_ch"),
     }
-    assert graph.get(
-        dg.AssetKey("finland_financial_company_source_records_clickhouse")
-    ).parent_keys == {dg.AssetKey("fi_financial_statements_ch")}
 
 
 def test_finland_comprehensive_clickhouse_migration() -> None:
@@ -168,7 +163,9 @@ def test_finland_comprehensive_clickhouse_migration() -> None:
         "fi_xbrl_taxonomy_codes",
     ):
         assert f"CREATE TABLE IF NOT EXISTS corpscout.{table}" in migration
-    assert "CREATE OR REPLACE VIEW corpscout.fi_financial_facts_with_source" in migration
+    assert (
+        "CREATE OR REPLACE VIEW corpscout.fi_financial_facts_with_source" in migration
+    )
     assert "xml_source_uri" in migration
     assert "taxonomy_entrypoint" in migration
 

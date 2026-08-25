@@ -12,9 +12,7 @@ import type {
 } from "~/lib/queries.server";
 import {
   COMPANY_DESCRIPTION_OBSERVATIONS_QUERY,
-  COMPANY_SOURCE_RECORD_METADATA_QUERY,
-  COMPANY_SOURCE_RECORD_ORIGINS_QUERY,
-  COMPANY_SOURCE_RECORD_UIDS_QUERY,
+  COMPANY_SOURCE_RECORDS_QUERY,
   ESEF_DOCUMENT_BUSINESS_ITEMS_QUERY,
   ESEF_DOCUMENT_CONTACTS_QUERY,
   ESEF_DOCUMENT_PEOPLE_QUERY,
@@ -149,22 +147,15 @@ describe("source-preserving company information", () => {
   });
 
   it("queries source-record evidence through company-keyed lookups", () => {
-    expect(COMPANY_SOURCE_RECORD_UIDS_QUERY).toContain(
-      "company_source_record_links",
+    expect(COMPANY_SOURCE_RECORDS_QUERY).toContain(
+      "company_section_item_source_links",
     );
-    expect(COMPANY_SOURCE_RECORD_UIDS_QUERY).toContain(
+    expect(COMPANY_SOURCE_RECORDS_QUERY).toContain(
       "country_code = {country:String} AND company_id = {id:String}",
     );
-    expect(COMPANY_SOURCE_RECORD_METADATA_QUERY).toContain(
-      "company_source_records",
-    );
-    expect(COMPANY_SOURCE_RECORD_ORIGINS_QUERY).toContain(
-      "company_source_record_origins",
-    );
-    expect(COMPANY_SOURCE_RECORD_METADATA_QUERY).not.toContain(" JOIN ");
-    expect(COMPANY_SOURCE_RECORD_ORIGINS_QUERY).not.toContain(" JOIN ");
+    expect(COMPANY_SOURCE_RECORDS_QUERY).not.toContain(" JOIN ");
     expect(COMPANY_DESCRIPTION_OBSERVATIONS_QUERY).toContain(
-      "company_description_observations FINAL",
+      "company_description_current",
     );
     expect(ESEF_DOCUMENT_PEOPLE_QUERY).toContain("esef_document_people FINAL");
     expect(ESEF_DOCUMENT_BUSINESS_ITEMS_QUERY).toContain(

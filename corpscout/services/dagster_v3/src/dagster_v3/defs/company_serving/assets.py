@@ -13,8 +13,7 @@ class PublishCompanyServingConfig(dg.Config):
 
 
 @dg.asset(
-    deps=[contract.build_model for contract in tables.CURRENT_TABLES]
-    + list(tables.SYNTHETIC_SOURCE_MODELS.values()),
+    deps=[contract.build_model for contract in tables.CURRENT_TABLES],
     group_name="company_serving",
     kinds={"dbt", "clickhouse"},
     partitions_def=COUNTRY_PARTITIONS,
@@ -39,8 +38,7 @@ def company_serving_current(
         clickhouse,
         database=tables.CLICKHOUSE_DATABASE,
         tables=tuple(contract.name for contract in tables.CURRENT_TABLES)
-        + tuple(tables.HISTORY_TABLES.values())
-        + tuple(tables.SYNTHETIC_SOURCE_MODELS),
+        + tuple(tables.HISTORY_TABLES.values()),
     )
     with clickhouse.get_connection() as client:
         metrics = publish_company_serving_country(

@@ -1,7 +1,6 @@
 from dagster import AssetKey
 
 from dagster_v3.defs.esef_filings.company_information_projections import (
-    esef_company_description_observation_sql,
     esef_document_business_items_sql,
     esef_document_group_relationships_sql,
     esef_document_people_sql,
@@ -10,9 +9,6 @@ from dagster_v3.defs.esef_filings.company_information_projections import (
 
 def test_esef_company_information_has_one_sql_projection_per_serving_table() -> None:
     statements = {
-        "company_description_observations": (
-            esef_company_description_observation_sql()
-        ),
         "esef_document_people": esef_document_people_sql(),
         "esef_document_business_items": esef_document_business_items_sql(),
         "esef_document_group_relationships": (esef_document_group_relationships_sql()),
@@ -45,7 +41,6 @@ def test_esef_company_information_projections_are_separate_esef_assets() -> None
 
     repository = load_defs().get_repository_def()
     expected_assets = {
-        AssetKey("esef_company_description_observations_clickhouse"),
         AssetKey("esef_document_people_clickhouse"),
         AssetKey("esef_document_business_items_clickhouse"),
         AssetKey("esef_document_group_relationships_clickhouse"),
@@ -61,3 +56,12 @@ def test_esef_company_information_projections_are_separate_esef_assets() -> None
     assert not repository.asset_graph.has(
         AssetKey("esef_document_observations_clickhouse")
     )
+    for retired_asset in (
+        "sweden_registry_company_source_records_clickhouse",
+        "sweden_financial_company_source_records_clickhouse",
+        "finland_financial_company_source_records_clickhouse",
+        "esef_company_source_records_clickhouse",
+        "wikidata_company_source_records_clickhouse",
+        "esef_company_description_observations_clickhouse",
+    ):
+        assert not repository.asset_graph.has(AssetKey(retired_asset))

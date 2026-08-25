@@ -37,10 +37,6 @@ def publish_company_serving_country(
     primary_error: BaseException | None = None
 
     try:
-        # These are append-only, deterministic evidence identities. The dbt
-        # presence build includes the same source-link model directly, so its
-        # counts remain stable before and after this canonical evidence append.
-        _append_synthetic_source_evidence(client)
         _log(log, "Company serving stage build started: country=%s", country_code)
         for contract in tables.CURRENT_TABLES:
             stage = stages[contract.name]
@@ -274,12 +270,9 @@ def _validate_sections(client: Any, presence_stage: str) -> None:
 def _validate_source_links(client: Any, link_stage: str) -> None:
     missing = _scalar(
         client,
-        f"SELECT count() FROM {link_stage} AS links LEFT JOIN ("
-        "SELECT source_record_uid FROM corpscout.company_source_records "
-        "UNION DISTINCT SELECT source_record_uid "
-        "FROM corpscout.company_serving_source_records_build"
-        ") AS records USING (source_record_uid) "
-        "WHERE ifNull(toString(records.source_record_uid), '') = ''",
+        f"SELECT count() FROM {link_stage} "
+        "WHERE source_record_uid = '' OR record_kind = '' "
+        "OR source_slug = '' OR source_record_key = '' OR payload_sha256 = ''",
     )
     if missing:
         raise ValueError(f"Section evidence stage has {missing} missing source records")
@@ -344,11 +337,9 @@ def _validate_presence_counts(
             "WHERE addresses.has_address = 1 AND addresses.has_observation = 1"
         ),
         "sources": (
-            "SELECT countDistinct(tuple(links.company_id, links.source_record_uid)) "
-            "FROM corpscout.company_source_record_links AS links "
-            f"INNER JOIN (SELECT DISTINCT company_id FROM {stages[tables.EXTERNAL_IDENTIFIERS.name]}) AS anchors "
-            "ON anchors.company_id = links.company_id "
-            f"WHERE links.country_code = '{country_code}'"
+            "SELECT countDistinct(tuple(company_id, source_record_uid)) "
+            f"FROM {stages[tables.SOURCE_LINKS.name]} "
+            f"WHERE country_code = '{country_code}'"
         ),
         "technology": (
             "SELECT countDistinct(tuple(company_id, root_domain)) "
@@ -369,72 +360,6 @@ def _validate_presence_counts(
                 f"Section-presence reconciliation failed for {section}: "
                 f"expected={expected} actual={actual}"
             )
-
-
-def _append_synthetic_source_evidence(client: Any) -> None:
-    record_columns = (
-        "source_record_uid",
-        "identity_kind",
-        "record_kind",
-        "content_sha256",
-        "schema_version",
-        "first_seen_at",
-        "last_seen_at",
-    )
-    origin_columns = (
-        "source_record_uid",
-        "source_slug",
-        "source_record_key",
-        "source_url",
-        "source_object_key",
-        "payload_sha256",
-        "retrieved_at",
-        "source_run_id",
-    )
-    link_columns = (
-        "source_record_uid",
-        "country_code",
-        "company_id",
-        "relationship_kind",
-        "match_method",
-        "match_confidence",
-        "matched_identifier_scheme",
-        "matched_identifier_value",
-        "source_run_id",
-        "linked_at",
-    )
-    specifications = (
-        (
-            "company_source_records",
-            "company_serving_source_records_build",
-            record_columns,
-            ("source_record_uid",),
-        ),
-        (
-            "company_source_record_origins",
-            "company_serving_source_origins_build",
-            origin_columns,
-            ("source_record_uid", "source_slug", "source_record_key"),
-        ),
-        (
-            "company_source_record_links",
-            "company_serving_source_links_build",
-            link_columns,
-            ("source_record_uid", "country_code", "company_id", "relationship_kind"),
-        ),
-    )
-    for target, model, columns, keys in specifications:
-        joined = " AND ".join(
-            f"isNotDistinctFrom(existing.{key}, staged.{key})" for key in keys
-        )
-        names = ", ".join(columns)
-        selected = ", ".join(f"staged.{column}" for column in columns)
-        client.execute(
-            f"INSERT INTO corpscout.{target} ({names}) SELECT {selected} "
-            f"FROM corpscout.{model} AS staged "
-            f"LEFT JOIN corpscout.{target} AS existing ON {joined} "
-            f"WHERE ifNull(toString(existing.{keys[0]}), '') = ''"
-        )
 
 
 def _append_changed_observations(
