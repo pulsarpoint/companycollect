@@ -203,6 +203,14 @@ CLICKHOUSE_LEAVES: tuple[ClickhouseLeaf, ...] = (
         "sweden_company_addresses_clickhouse", ("se_company_addresses",), WEEKLY
     ),
     ClickhouseLeaf("sweden_company_industries_clickhouse", ("se_industries",), WEEKLY),
+    # The members bridge. Its publish asset carried one asset check until the canonical
+    # ClickHouse table it also read retired; without a leaf it would now carry none at all,
+    # and se_company_address joins through this table on every resolution.
+    ClickhouseLeaf(
+        "sweden_company_canonical_addresses_clickhouse",
+        ("se_company_address_members_current",),
+        WEEKLY,
+    ),
     # The legacy per-company geocode pair retired with
     # address_geocoding_assets.LEGACY_PAIR_RETIREMENT_DROP_SQL; the versioned store is the
     # weekly Sweden geocode leaf in its place.

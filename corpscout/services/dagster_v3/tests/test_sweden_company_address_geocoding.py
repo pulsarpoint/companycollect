@@ -1849,17 +1849,29 @@ def test_the_retirement_drops_live_as_pinned_sql_outside_the_ledger() -> None:
 def test_no_drop_migration_file_carries_these_retirements() -> None:
     """The ledger is walked blind, so the gated drops must not be findable in it.
 
-    This is the regression test for the ruling: a future task that "just adds the drop
-    migration back" trips here rather than on a production table.
+    This is the regression test for the ruling, and it is the ruling's only teeth: a future
+    task that "just adds the drop migration back" has to trip here rather than on a
+    production table. So it matches DROP TABLE FORMS, not one spelling -- the likeliest way
+    back in is someone pasting CANONICAL_RETIREMENT_DROP_SQL[0] into an up file, and those
+    constants carry no trailing semicolon.
+
+    EXIT CONDITION: delete this guard and add a plain drop migration only once 12f and 12g
+    are recorded as executed in the ledger. Until then a rebuilt-from-ledger environment
+    recreates these tables from 000270/000271/000273 and nothing ever drops them again --
+    the guard is what keeps the only legal remedy pointed at the pinned SQL.
     """
     migrations = Path(__file__).resolve().parents[3] / "clickhouse" / "migrations"
     # Up files only: 000270, 000271 and 000273's DOWN files legitimately drop these tables,
     # because that is what reverting the migration that CREATED them means.
-    for path in migrations.glob("*.up.sql"):
-        sql = path.read_text(encoding="utf-8")
-        for table in (
-            "corpscout.se_company_addresses_canonical_current",
-            "corpscout.se_company_address_geocodes",
-            "corpscout.se_company_address_geocode_results",
-        ):
-            assert f"DROP TABLE IF EXISTS {table};" not in sql, f"{path.name}: {table}"
+    up_files = sorted(migrations.glob("*.up.sql"))
+    assert up_files, "no migration up files found -- this guard would pass vacuously"
+    pattern = re.compile(
+        r"drop\s+table\s+(?:if\s+exists\s+)?(?:corpscout\.)?"
+        r"(se_company_addresses_canonical_current"
+        r"|se_company_address_geocodes"
+        r"|se_company_address_geocode_results)\b",
+        re.IGNORECASE,
+    )
+    for path in up_files:
+        found = pattern.search(path.read_text(encoding="utf-8"))
+        assert found is None, f"{path.name} drops {found.group(1)}"

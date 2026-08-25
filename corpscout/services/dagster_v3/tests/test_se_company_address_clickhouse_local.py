@@ -158,12 +158,12 @@ def _store_row(address_id: str, *, policy_version: str, reference_md5: str, stat
 def _schema_statements(migrations: tuple[str, ...]) -> list[str]:
     """CREATE/ALTER TABLE statements for NEEDED_TABLES only, in migration order.
 
-    Several of these files also touch tables this pipeline never read and that the
+    Several of these files also touch tables this pipeline does not read and that the
     register retires by controller-run SQL rather than by migration --
     se_company_address_geocode_results and se_company_addresses_canonical_current, both
     pinned in address_geocoding_assets. Applying their DDL here would grow the script to
-    rebuild tables the register has dropped, and 000277's ALTER on the legacy results table
-    would fail since it is never created here.
+    rebuild tables that are on their way out, and 000277's ALTER on the legacy results
+    table would fail since it is never created here.
     """
     statements: list[str] = []
     for name in migrations:

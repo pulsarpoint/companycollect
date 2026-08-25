@@ -91,6 +91,20 @@ MAX_EXACT_MATCH_RATE_CHANGE_PERCENTAGE_POINTS = 2.0
 # The last one is read by FOUR backoffice modules -- app/lib/address-quality.server.ts,
 # app/lib/address-companies.server.ts, app/lib/company-sections.server.ts and
 # app/lib/se-company-address.server.ts -- so it retires behind its own gate, if ever.
+#
+# BEFORE YOU RUN EITHER SET, record the row counts beside the ledger entry for the apply.
+# A drop that leaves the ledger also leaves the ledger's record of what it destroyed, and
+# these counts are the only evidence of what the tables held at that instant:
+#   SELECT 'canonical', count() FROM corpscout.se_company_addresses_canonical_current
+#   UNION ALL SELECT 'members', count() FROM corpscout.se_company_address_members_current
+#   UNION ALL SELECT 'links',   count() FROM corpscout.se_company_address_links_current
+#   UNION ALL SELECT 'legacy_geocodes', count() FROM corpscout.se_company_address_geocodes
+#   UNION ALL SELECT 'legacy_results', count() FROM corpscout.se_company_address_geocode_results
+#
+# AFTER YOU RUN EITHER SET, you have about 480 seconds: if the drop turns out to be wrong,
+# UNDROP TABLE <name> within that window and the rows come back. Past it they do not, and
+# the canonical table's only remedy is re-widening the publish and re-materializing it from
+# the DuckDB build.
 LEGACY_PAIR_RETIREMENT_DROP_SQL = (
     "DROP TABLE IF EXISTS corpscout.se_company_address_geocode_results",
     "DROP TABLE IF EXISTS corpscout.se_company_address_geocodes",

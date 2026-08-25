@@ -46,6 +46,7 @@ def test_registry_covers_the_known_scheduled_leaves() -> None:
         "sweden_company_companies_clickhouse",
         "sweden_address_geocode_store_clickhouse",
         "sweden_address_geocodes_clickhouse",
+        "sweden_company_canonical_addresses_clickhouse",
         "sweden_shared_addresses_clickhouse",
         "sweden_financial_backfill_reports_clickhouse",
         "sweden_financial_current_facts_clickhouse",
@@ -73,6 +74,17 @@ def test_registry_covers_the_known_scheduled_leaves() -> None:
     )
     assert derived.tables == ("se_address_geocodes_current",)
     assert derived.max_age == chk.WEEKLY
+
+    # The members publish lost its only asset check when the canonical ClickHouse table
+    # retired, so this leaf is now the whole of what watches it -- and the se_company_address
+    # final joins through that table on every resolution.
+    members = next(
+        leaf
+        for leaf in chk.CLICKHOUSE_LEAVES
+        if leaf.asset_key == "sweden_company_canonical_addresses_clickhouse"
+    )
+    assert members.tables == ("se_company_address_members_current",)
+    assert members.max_age == chk.WEEKLY
 
 
 def test_every_leaf_has_a_row_count_check_and_scheduled_leaves_freshness() -> None:
