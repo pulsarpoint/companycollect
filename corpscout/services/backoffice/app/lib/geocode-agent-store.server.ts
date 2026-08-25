@@ -92,6 +92,7 @@ function runParams(value: unknown): GeocodeAgentRunParams {
     focus: typeof record.focus === "string" ? record.focus : "",
     maxIterations: count(record.maxIterations),
     maxRowsPerQuery: count(record.maxRowsPerQuery),
+    maxRunMinutes: count(record.maxRunMinutes),
   };
 }
 

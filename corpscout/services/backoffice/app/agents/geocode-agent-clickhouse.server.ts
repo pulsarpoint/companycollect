@@ -47,6 +47,10 @@ function getAgentClient(maxRows: number): ClickHouseClient {
         max_result_rows: String(maxRows),
         // Truncate rather than throw: a wide result is still useful evidence.
         result_overflow_mode: "break",
+        // The agent writes its own aggregates over multi-million-row tables;
+        // progress headers keep a slow one from being cut by an idle timeout.
+        send_progress_in_http_headers: 1,
+        http_headers_progress_interval_ms: "10000",
         readonly: "1",
       },
     });

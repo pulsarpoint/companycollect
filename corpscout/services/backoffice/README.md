@@ -124,6 +124,11 @@ Guardrails, all enforced in application code rather than in the prompt:
   by `app/agents/geocode-analysis-contract.ts` and written by the app.
 - It never writes the geocode store, deploys, or triggers Dagster. An accepted
   suggestion is a work item for a golden-gated policy bump.
+- Its Codex process runs read-only in an empty temp directory with no network,
+  no approvals, `mcp_servers={}`, and an allowlisted environment (PATH, HOME,
+  proxies) -- the backoffice's own credentials are never in scope for it. Set
+  `GEOCODE_AGENT_CODEX_HOME` to keep the host operator's own Codex config out
+  of the agent's session entirely.
 
 Runs take minutes: the action inserts a queued row and returns, and the panel
 polls `/admin/se/company-info/geocoding/agent` until the run is terminal.

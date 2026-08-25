@@ -14,7 +14,12 @@ import type { GeocodeAgentPanel, GeocodeAgentRun } from "~/agents/geocode-analys
 const RUN: GeocodeAgentRun = {
   id: "11111111-1111-4111-8111-111111111111",
   countryCode: "SE",
-  params: { focus: "box addresses", maxIterations: 12, maxRowsPerQuery: 200 },
+  params: {
+    focus: "box addresses",
+    maxIterations: 12,
+    maxRowsPerQuery: 200,
+    maxRunMinutes: 30,
+  },
   status: "queued",
   model: "",
   threadId: "",

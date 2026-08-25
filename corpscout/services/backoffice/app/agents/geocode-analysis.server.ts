@@ -123,6 +123,10 @@ export const DEFAULT_MAX_RUN_MINUTES = 30;
 export interface GeocodeAgentConfig {
   /** Empty when the host authenticates the Codex CLI itself (~/.codex/auth.json). */
   apiKey: string;
+  /** CODEX_HOME for the agent's process. Point it at a directory of its own to
+   * keep the host operator's ~/.codex/config.toml -- MCP servers, plugins,
+   * skills -- out of the agent's session entirely. */
+  codexHome: string;
   /** Empty means "whatever the Codex CLI defaults to". */
   model: string;
   baseUrl: string;
@@ -145,6 +149,7 @@ export function readGeocodeAgentConfig(
       env.CODEX_API_KEY?.trim() ||
       env.OPENAI_API_KEY?.trim() ||
       "",
+    codexHome: env.GEOCODE_AGENT_CODEX_HOME?.trim() || env.CODEX_HOME?.trim() || "",
     model: env.GEOCODE_AGENT_MODEL?.trim() ?? "",
     baseUrl: env.GEOCODE_AGENT_BASE_URL?.trim() ?? "",
     reasoningEffort: env.GEOCODE_AGENT_REASONING_EFFORT?.trim() ?? "",
@@ -161,12 +166,9 @@ export function readGeocodeAgentConfig(
  * A missing key is NOT an exception at trigger time: the run row is created
  * and immediately failed with this message, so the tab shows why.
  */
-export function geocodeAgentCredentialProblem(
-  config: GeocodeAgentConfig,
-  env: NodeJS.ProcessEnv = process.env,
-): string {
+export function geocodeAgentCredentialProblem(config: GeocodeAgentConfig): string {
   if (config.apiKey !== "") return "";
-  const codexHome = env.CODEX_HOME?.trim() || join(homedir(), ".codex");
+  const codexHome = config.codexHome || join(homedir(), ".codex");
   if (existsSync(join(codexHome, "auth.json"))) return "";
   return `No Codex credentials. Set GEOCODE_AGENT_API_KEY in the backoffice environment (see .env.example), or sign the Codex CLI in on this host so ${codexHome}/auth.json exists.`;
 }
@@ -182,10 +184,12 @@ export interface AgentTurnResult {
 }
 
 /** One conversation with the model. `run` is called repeatedly: the Codex
- * thread carries its own history, so each call sends only what is new. */
+ * thread carries its own history, so each call sends only what is new.
+ * `signal` is the run's remaining wall-clock budget; aborting it kills the
+ * model process rather than leaving the turn to hang. */
 export interface AgentThread {
   readonly id: string;
-  run(input: string): Promise<AgentTurnResult>;
+  run(input: string, options?: { signal?: AbortSignal }): Promise<AgentTurnResult>;
 }
 
 /** The seam the unit tests replace: no Codex process, no network. */
@@ -212,6 +216,57 @@ function modelReasoningEffort(value: string): ModelReasoningEffort | undefined {
 }
 
 /**
+ * The variables the Codex process is allowed to see. Everything else --
+ * CLICKHOUSE_PASSWORD, the S3 keys, BACKOFFICE_POSTGRES_URL, every other API
+ * key in the backoffice's environment -- is withheld: a model process that
+ * cannot read a credential cannot leak one, whatever it is persuaded to do.
+ *
+ * The Codex CLI needs PATH and a home to resolve its own binary, config and
+ * credentials, and proxy variables when the host reaches the API through one.
+ */
+const AGENT_ENV_ALLOWLIST = [
+  "PATH",
+  "HOME",
+  "USER",
+  "LOGNAME",
+  "SHELL",
+  "TMPDIR",
+  "LANG",
+  "LC_ALL",
+  "HTTP_PROXY",
+  "HTTPS_PROXY",
+  "NO_PROXY",
+  "http_proxy",
+  "https_proxy",
+  "no_proxy",
+];
+
+export function agentProcessEnv(
+  config: GeocodeAgentConfig,
+  env: NodeJS.ProcessEnv = process.env,
+): Record<string, string> {
+  const allowed: Record<string, string> = {};
+  for (const key of AGENT_ENV_ALLOWLIST) {
+    const value = env[key];
+    if (typeof value === "string" && value !== "") allowed[key] = value;
+  }
+  if (config.codexHome !== "") allowed.CODEX_HOME = config.codexHome;
+  return allowed;
+}
+
+/**
+ * Config overrides applied on top of whatever `config.toml` the CODEX_HOME in
+ * use happens to carry.
+ *
+ * `mcp_servers={}` is the important one: an operator's own ~/.codex/config.toml
+ * may register MCP servers (browsers, REPLs, remote control), and those would
+ * become tools of THIS thread too -- a capability this design does not grant.
+ * The clean separation is a dedicated GEOCODE_AGENT_CODEX_HOME; this override
+ * is the belt for the host that shares one.
+ */
+const AGENT_CONFIG_OVERRIDES = ["mcp_servers={}"];
+
+/**
  * The real factory: a Codex thread locked down to nothing but thinking.
  *
  * - `sandboxMode: "read-only"` and a fresh empty working directory: the agent
@@ -230,6 +285,8 @@ export function codexThreadFactory(config: GeocodeAgentConfig): AgentThreadFacto
       const codex = new Codex({
         ...(config.apiKey ? { apiKey: config.apiKey } : {}),
         ...(config.baseUrl ? { baseUrl: config.baseUrl } : {}),
+        env: agentProcessEnv(config),
+        configOverrides: AGENT_CONFIG_OVERRIDES,
       });
       const thread = codex.startThread({
         ...(config.model ? { model: config.model } : {}),
@@ -246,9 +303,13 @@ export function codexThreadFactory(config: GeocodeAgentConfig): AgentThreadFacto
           get id() {
             return thread.id ?? "";
           },
-          async run(input: string): Promise<AgentTurnResult> {
+          async run(
+            input: string,
+            runOptions: { signal?: AbortSignal } = {},
+          ): Promise<AgentTurnResult> {
             const turn = await thread.run(input, {
               outputSchema: AGENT_TURN_OUTPUT_SCHEMA,
+              ...(runOptions.signal ? { signal: runOptions.signal } : {}),
             });
             return {
               text: turn.finalResponse,
@@ -435,10 +496,26 @@ export async function executeGeocodeAnalysisRun(
     });
     let invalidAnswers = 0;
     const maxIterations = run.params.maxIterations || DEFAULT_MAX_ITERATIONS;
+    // One deadline for the whole run, spent turn by turn. `maxRunMinutes` is 0
+    // only for a row written before this budget existed; those runs keep the
+    // old behaviour of waiting on the model indefinitely.
+    const deadline =
+      run.params.maxRunMinutes > 0
+        ? Date.now() + run.params.maxRunMinutes * 60_000
+        : 0;
 
     while (iterations < maxIterations) {
       iterations += 1;
-      const turn = await session.thread.run(input);
+      const remainingMs = deadline === 0 ? 0 : deadline - Date.now();
+      if (deadline !== 0 && remainingMs <= 0) {
+        return fail(
+          `The run passed its ${run.params.maxRunMinutes}-minute budget after ${iterations - 1} turns. Raise GEOCODE_AGENT_MAX_RUN_MINUTES or narrow the focus.`,
+        );
+      }
+      const turn = await session.thread.run(
+        input,
+        deadline === 0 ? {} : { signal: AbortSignal.timeout(remainingMs) },
+      );
       inputTokens += turn.inputTokens;
       outputTokens += turn.outputTokens;
       threadId = session.thread.id || threadId;
@@ -592,6 +669,7 @@ export async function startGeocodeAnalysisRun(
     focus: (input.focus ?? "").trim().slice(0, 2_000),
     maxIterations: config.maxIterations,
     maxRowsPerQuery: AGENT_MAX_ROWS_PER_QUERY,
+    maxRunMinutes: config.maxRunMinutes,
   };
   const run = await createGeocodeAgentRun({ countryCode, params });
 

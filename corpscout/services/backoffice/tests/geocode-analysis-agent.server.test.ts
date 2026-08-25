@@ -1,6 +1,6 @@
 import { mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import type {
   AgentMemoryDraft,
   AgentSuggestionDraft,
@@ -16,6 +16,7 @@ import type { AgentQueryOutcome } from "~/agents/geocode-agent-clickhouse.server
 import {
   DEFAULT_MAX_ITERATIONS,
   executeGeocodeAnalysisRun,
+  agentProcessEnv,
   geocodeAgentCredentialProblem,
   geocodeAgentCountry,
   readGeocodeAgentConfig,
@@ -86,10 +87,12 @@ function fakeStore(
  * is recorded so the tests can assert what the agent actually saw. */
 function fakeThreads(answers: string[]): AgentThreadFactory & {
   prompts: string[];
+  signals: Array<AbortSignal | undefined>;
   closed: boolean;
 } {
   const state = {
     prompts: [] as string[],
+    signals: [] as Array<AbortSignal | undefined>,
     closed: false,
     model: "fake-model",
     async start() {
@@ -97,8 +100,9 @@ function fakeThreads(answers: string[]): AgentThreadFactory & {
       return {
         thread: {
           id: "thread-1",
-          async run(input: string) {
+          async run(input: string, options: { signal?: AbortSignal } = {}) {
             state.prompts.push(input);
+            state.signals.push(options.signal);
             const text = answers[turn] ?? answers[answers.length - 1] ?? "";
             turn += 1;
             return { text, inputTokens: 10, outputTokens: 5 };
@@ -137,7 +141,7 @@ function run(overrides: Partial<GeocodeAgentRun> = {}): GeocodeAgentRun {
   return {
     id: "11111111-1111-1111-1111-111111111111",
     countryCode: "SE",
-    params: { focus: "", maxIterations: 4, maxRowsPerQuery: 200 },
+    params: { focus: "", maxIterations: 4, maxRowsPerQuery: 200, maxRunMinutes: 30 },
     status: "queued",
     model: "",
     threadId: "",
@@ -279,7 +283,14 @@ describe("executeGeocodeAnalysisRun: the happy path", () => {
     const threads = fakeThreads([FINAL_TURN]);
 
     await executeGeocodeAnalysisRun(
-      run({ params: { focus: "ignore box addresses", maxIterations: 4, maxRowsPerQuery: 200 } }),
+      run({
+        params: {
+          focus: "ignore box addresses",
+          maxIterations: 4,
+          maxRowsPerQuery: 200,
+          maxRunMinutes: 30,
+        },
+      }),
       deps(store, threads),
     );
 
@@ -355,7 +366,9 @@ describe("executeGeocodeAnalysisRun: guardrails", () => {
     const threads = fakeThreads([QUERY_TURN]);
 
     const summary = await executeGeocodeAnalysisRun(
-      run({ params: { focus: "", maxIterations: 2, maxRowsPerQuery: 200 } }),
+      run({
+        params: { focus: "", maxIterations: 2, maxRowsPerQuery: 200, maxRunMinutes: 30 },
+      }),
       deps(store, threads),
     );
 
@@ -364,6 +377,54 @@ describe("executeGeocodeAnalysisRun: guardrails", () => {
     expect(store.failed?.errorMessage).toMatch(/used all 2 turns/);
     // The last turn is announced as the last one.
     expect(threads.prompts[1]).toContain("This is your LAST turn");
+  });
+
+  it("hands each turn the run's remaining wall-clock budget", async () => {
+    const store = fakeStore();
+    const threads = fakeThreads([FINAL_TURN]);
+    await executeGeocodeAnalysisRun(run(), deps(store, threads));
+    expect(threads.signals[0]).toBeInstanceOf(AbortSignal);
+    expect(threads.signals[0]?.aborted).toBe(false);
+  });
+
+  it("fails the run when the wall-clock budget runs out between turns", async () => {
+    // Only Date is faked: AbortSignal.timeout keeps its real timer, so the
+    // turn itself is unaffected -- what is being tested is the loop noticing
+    // that the budget is gone before it spends another one.
+    vi.useFakeTimers({ toFake: ["Date"] });
+    try {
+      const store = fakeStore();
+      let turns = 0;
+      const threads: AgentThreadFactory = {
+        model: "fake-model",
+        async start() {
+          return {
+            thread: {
+              id: "thread-slow",
+              async run() {
+                turns += 1;
+                vi.setSystemTime(Date.now() + 2 * 60_000);
+                return { text: QUERY_TURN, inputTokens: 1, outputTokens: 1 };
+              },
+            },
+            close: async () => undefined,
+          };
+        },
+      };
+
+      const summary = await executeGeocodeAnalysisRun(
+        run({
+          params: { focus: "", maxIterations: 6, maxRowsPerQuery: 200, maxRunMinutes: 1 },
+        }),
+        deps(store, threads),
+      );
+
+      expect(turns).toBe(1);
+      expect(summary.status).toBe("failed");
+      expect(store.failed?.errorMessage).toMatch(/1-minute budget/);
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it("fails a country that has no profile without ever starting a thread", async () => {
@@ -404,6 +465,7 @@ describe("configuration", () => {
   it("falls back to the Codex-native key names and sane caps", () => {
     expect(readGeocodeAgentConfig({} as NodeJS.ProcessEnv)).toEqual({
       apiKey: "",
+      codexHome: "",
       model: "",
       baseUrl: "",
       reasoningEffort: "",
@@ -428,14 +490,39 @@ describe("configuration", () => {
   it("reports a missing credential as a message, never as an exception", () => {
     const emptyCodexHome = mkdtempSync(`${tmpdir()}/codex-home-`);
     const env = { CODEX_HOME: emptyCodexHome } as NodeJS.ProcessEnv;
-    const problem = geocodeAgentCredentialProblem(readGeocodeAgentConfig(env), env);
+    const problem = geocodeAgentCredentialProblem(readGeocodeAgentConfig(env));
     expect(problem).toMatch(/GEOCODE_AGENT_API_KEY/);
     expect(
       geocodeAgentCredentialProblem(
-        readGeocodeAgentConfig({ GEOCODE_AGENT_API_KEY: "k" } as NodeJS.ProcessEnv),
-        env,
+        readGeocodeAgentConfig({
+          ...env,
+          GEOCODE_AGENT_API_KEY: "k",
+        } as NodeJS.ProcessEnv),
       ),
     ).toBe("");
+  });
+
+  it("hands the Codex process an allowlisted environment, not the backoffice's", () => {
+    const config = readGeocodeAgentConfig({
+      GEOCODE_AGENT_CODEX_HOME: "/srv/agent-codex",
+    } as NodeJS.ProcessEnv);
+    const passed = agentProcessEnv(config, {
+      PATH: "/usr/bin",
+      HOME: "/home/app",
+      HTTPS_PROXY: "http://proxy:3128",
+      // None of these may reach a model process.
+      CLICKHOUSE_PASSWORD: "secret",
+      BACKOFFICE_POSTGRES_URL: "postgres://user:pw@host/db",
+      OPENROUTER_API: "sk-secret",
+      CORPSCOUT_S3_SECRET_KEY: "secret",
+    } as NodeJS.ProcessEnv);
+
+    expect(passed).toEqual({
+      PATH: "/usr/bin",
+      HOME: "/home/app",
+      HTTPS_PROXY: "http://proxy:3128",
+      CODEX_HOME: "/srv/agent-codex",
+    });
   });
 
   it("wires Sweden and nothing else, by country code", () => {

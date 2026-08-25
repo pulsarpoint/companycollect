@@ -58,6 +58,10 @@ export interface GeocodeAgentRunParams {
   focus: string;
   maxIterations: number;
   maxRowsPerQuery: number;
+  /** Wall-clock budget for the whole run. The loop aborts the model process
+   * when it is spent, so a hung turn cannot hold the country's single active
+   * run slot open until the stale-run reaper notices. */
+  maxRunMinutes: number;
 }
 
 export interface GeocodeAgentSuggestionExample {
