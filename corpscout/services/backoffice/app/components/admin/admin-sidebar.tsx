@@ -8,6 +8,7 @@ import {
   FlagIcon,
   ListChecksIcon,
   MapPinIcon,
+  MapPinnedIcon,
   Rows3Icon,
   Settings2Icon,
   SlidersHorizontalIcon,
@@ -70,6 +71,12 @@ const COUNTRY_NAVIGATION = [
         title: "Info corrections",
         to: "/admin/se/company-info/corrections",
         icon: ListChecksIcon,
+        exact: true,
+      },
+      {
+        title: "Geocoding",
+        to: "/admin/se/company-info/geocoding",
+        icon: MapPinnedIcon,
         exact: true,
       },
       {

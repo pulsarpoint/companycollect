@@ -112,6 +112,13 @@ export default [
       "se/company-info/corrections",
       "routes/admin-se-company-info-corrections.tsx",
     ),
+    // Sibling view of the companies list, same navigation shape as
+    // /corrections: a top-level route reached from the sidebar, not a tab of
+    // the list page itself (that page has no tab primitive).
+    route(
+      "se/company-info/geocoding",
+      "routes/admin-se-company-info-geocoding.tsx",
+    ),
     // Not a page: the resource route behind the companies list's Pipeline
     // sheet. Its loader answers that sheet's fetcher and redirects anyone who
     // navigates to the old URL back to the list.
