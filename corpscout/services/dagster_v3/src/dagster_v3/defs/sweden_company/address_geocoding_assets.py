@@ -1583,6 +1583,7 @@ sweden_company_address_geocoding_weekly_job = dg.define_asset_job(
     selection=dg.AssetSelection.assets(
         "sweden_osm_pbf_s3",
         "sweden_osm_addresses_duckdb",
+        "sweden_osm_addresses_clickhouse",
         CANONICAL_DUCKDB_ASSET_KEY,
         CANONICAL_CLICKHOUSE_ASSET_KEY,
         SHARED_ADDRESSES_DUCKDB_ASSET_KEY,
