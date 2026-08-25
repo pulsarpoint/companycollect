@@ -70,10 +70,47 @@ export const GEOCODING_PUBLISHED_ADDRESS_SQL = `SELECT
     a.address_key ASC
   LIMIT 1 BY a.company_id`;
 
-/** Reused verbatim by both the row query and the counts query, so a company
- * neither can ever disagree about which address is "published" for it. */
+/**
+ * Reused verbatim by both the row query and the counts query -- INCLUDING the
+ * se_company_info join below -- so the two can never disagree about which
+ * companies are even IN the population the counts strip and the table page
+ * both describe. Before this, GEOCODING_COUNTS_SQL counted `published` alone
+ * while the row list additionally INNER JOINed se_company_info; a company
+ * with a published address but no se_company_info row (0 live today,
+ * unguarded) would have counted in the strip and the pagination total while
+ * never appearing as a row. `published_companies` is the one FROM both
+ * queries below now share -- the same fix listSeCompanyInfoPage and
+ * loadSeCompanyInfoCounts already apply by sharing one WHERE built from the
+ * same filters (se-company-info-lists.server.ts): count and rows must read
+ * literally the same set, not two independently-assembled ones that happen
+ * to agree today.
+ *
+ * The join itself: se_company_info is the same "company info" spine the
+ * sibling /admin/se/company-info list itself reads its `legal_name` from
+ * (INFO_LIST_SELECT_SQL), so this tab's Company column cannot show a
+ * different name than the row this company's own line on the main list
+ * shows. INNER, not LEFT: live-checked 2026-08-25, every one of the
+ * 3,523,532 companies with a published address also has an se_company_info
+ * row (0 orphans) -- info_rules.py's merge already requires an SCB row for
+ * se_company_info to exist at all, and SCB reach among addressed companies
+ * is total in practice. A future orphan would surface as a company silently
+ * missing from this tab (from both the strip and the rows, now that they
+ * share this CTE) rather than one rendering a blank name -- the loud
+ * failure, not the quiet one.
+ */
 export const GEOCODING_PUBLISHED_CTE_SQL = `WITH published AS (
 ${GEOCODING_PUBLISHED_ADDRESS_SQL}
+),
+published_companies AS (
+  SELECT
+    p.company_id AS company_id,
+    i.legal_name AS legal_name,
+    p.street_address AS street_address,
+    p.postal_code AS postal_code,
+    p.city AS city,
+    p.geocode_status AS geocode_status
+  FROM published AS p
+  INNER JOIN corpscout.se_company_info AS i FINAL ON i.company_id = p.company_id
 )`;
 
 /* -------------------------------------------------------------------- */
@@ -85,15 +122,20 @@ ${GEOCODING_PUBLISHED_ADDRESS_SQL}
  * (dagster_v3/defs/sweden_company/geocode_store.py, `GEOCODED_STATUSES`)
  * calls a successful match. `postal_box` and `property_identifier` are valid
  * outcomes there (VALID_STATUSES) but NOT geocoded ones -- geocode_store.py's
- * own `is_geocoded_status` returns `match_status in GEOCODED_STATUSES`, which
+ * own `is_geocoded` returns `match_status in GEOCODED_STATUSES`, which
  * excludes both -- so this tab's "unmatched" bucket carries them alongside
  * `unmatched`, `invalid_address` and `foreign_address`. Live-checked
  * 2026-08-25 against corpscout.se_company_address (is_current): every one of
- * these eleven statuses (ten non-empty plus '') is actually carried by a
+ * these twelve statuses (eleven non-empty plus '') is actually carried by a
  * published row, so the multiIf below has no branch that can silently swallow
  * a status this tab has never seen.
+ *
+ * Drift-pinned against the Python source itself, not just this comment: see
+ * tests/se-company-geocoding-list.server.test.ts's "GEOCODED_MATCH_STATUSES
+ * drift pin" describe block, which reads geocode_store.py off disk and
+ * fails if this array and `GEOCODED_STATUSES` there ever disagree.
  */
-const GEOCODED_MATCH_STATUSES = [
+export const GEOCODED_MATCH_STATUSES = [
   "matched_exact",
   "matched_corrected",
   "matched_site",
@@ -103,9 +145,9 @@ const GEOCODED_MATCH_STATUSES = [
 
 /**
  * `column` is the SQL text naming the geocode_status expression to classify
- * -- `p.geocode_status` in every query below, `published`'s own output
- * column in each case, so the row list and the counts strip read the exact
- * same text and can never diverge on where a status falls.
+ * -- `p.geocode_status` in every query below, `published_companies`'s own
+ * output column in each case, so the row list and the counts strip read the
+ * exact same text and can never diverge on where a status falls.
  *
  * Branch order matters (multiIf returns the first match): the empty-string
  * check must precede the `IN` check, since '' is never a member of
@@ -121,8 +163,8 @@ export function geocodeClassExpr(column: string): string {
   )`;
 }
 
-/** The expression every query below filters and projects: `published`
- * aliased as `p`, which every query FROMs or JOINs it as. */
+/** The expression every query below filters and projects: `published_companies`
+ * aliased as `p`, which both the row list and the counts query FROM. */
 export const GEOCODE_STATUS_CLASS_EXPR = geocodeClassExpr("p.geocode_status");
 
 /**
@@ -179,32 +221,22 @@ export interface SeCompanyGeocodingListPage {
 }
 
 /**
- * The company's own name, joined from se_company_info -- the same "company
- * info" spine the sibling /admin/se/company-info list itself reads its
- * `legal_name` from (INFO_LIST_SELECT_SQL), so this tab's Company column
- * cannot show a different name than the row this company's own line on the
- * main list shows.
- *
- * INNER JOIN, not LEFT: live-checked 2026-08-25, every one of the 3,523,532
- * companies with a published address also has an se_company_info row (0
- * orphans) -- info_rules.py's merge already requires an SCB row for
- * se_company_info to exist at all, and SCB reach among addressed companies is
- * total in practice. An INNER JOIN costs nothing here that a LEFT JOIN
- * wouldn't, and a future orphan would surface as a company silently missing
- * from this tab rather than one rendering a blank name -- the loud failure,
- * not the quiet one.
+ * The row list: every column `published_companies` already carries, plus the
+ * computed class. FROMs the shared CTE directly (see
+ * GEOCODING_PUBLISHED_CTE_SQL's own doc comment for why the se_company_info
+ * join lives there and not here) -- this query adds no join of its own, so it
+ * reads exactly the same population GEOCODING_COUNTS_SQL counts.
  */
 export const GEOCODING_LIST_SELECT_SQL = `${GEOCODING_PUBLISHED_CTE_SQL}
 SELECT
   p.company_id AS company_id,
-  i.legal_name AS legal_name,
+  p.legal_name AS legal_name,
   p.street_address AS street_address,
   p.postal_code AS postal_code,
   p.city AS city,
   p.geocode_status AS geocode_status,
   ${GEOCODE_STATUS_CLASS_EXPR} AS geocode_class
-FROM published AS p
-INNER JOIN corpscout.se_company_info AS i FINAL ON i.company_id = p.company_id`;
+FROM published_companies AS p`;
 
 function pageParams(query: { page: number; pageSize: number }): {
   limit: number;
@@ -246,9 +278,10 @@ export interface SeCompanyGeocodingCounts {
   noOutcome: number;
 }
 
-/** One scan of `published` for every number the strip shows, and for the
- * chosen filter's own pagination total (`total` when `filter` is "all", the
- * matching field otherwise -- see `countForFilter`). */
+/** One scan of `published_companies` -- the SAME FROM the row list reads --
+ * for every number the strip shows, and for the chosen filter's own
+ * pagination total (`total` when `filter` is "all", the matching field
+ * otherwise -- see `countForFilter`). */
 export const GEOCODING_COUNTS_SQL = `${GEOCODING_PUBLISHED_CTE_SQL}
 SELECT
   toString(count()) AS total,
@@ -257,7 +290,7 @@ SELECT
   toString(countIf(${GEOCODE_LIST_FILTER_SQL.ambiguous})) AS ambiguous,
   toString(countIf(${GEOCODE_LIST_FILTER_SQL.unmatched})) AS unmatched,
   toString(countIf(${GEOCODE_LIST_FILTER_SQL.no_outcome})) AS no_outcome
-FROM published AS p`;
+FROM published_companies AS p`;
 
 export async function loadSeCompanyGeocodingCounts(): Promise<SeCompanyGeocodingCounts> {
   const [row] = await chQuery<{

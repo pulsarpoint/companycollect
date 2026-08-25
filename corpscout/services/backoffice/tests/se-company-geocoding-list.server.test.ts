@@ -1,3 +1,4 @@
+import { readFileSync } from "node:fs";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 const clickhouse = vi.hoisted(() => ({ query: vi.fn() }));
@@ -8,6 +9,7 @@ import {
   GEOCODE_LIST_FILTER_SQL,
   GEOCODE_STATUS_CLASS_EXPR,
   geocodeClassExpr,
+  GEOCODED_MATCH_STATUSES,
   GEOCODING_COUNTS_SQL,
   GEOCODING_LIST_SELECT_SQL,
   GEOCODING_PUBLISHED_ADDRESS_SQL,
@@ -46,11 +48,43 @@ describe("GEOCODING_PUBLISHED_ADDRESS_SQL: the per-company primary-address pick"
   });
 
   it("is reused verbatim by the shared CTE both the row list and the counts query start from", () => {
-    expect(GEOCODING_PUBLISHED_CTE_SQL).toBe(
-      `WITH published AS (\n${GEOCODING_PUBLISHED_ADDRESS_SQL}\n)`,
-    );
+    // Two CTEs, not one: `published` is the raw per-company address pick,
+    // `published_companies` folds in the se_company_info join. Pinned whole
+    // so the join can never be re-added to one query's FROM without the
+    // other -- see the fix below.
+    expect(GEOCODING_PUBLISHED_CTE_SQL).toBe(`WITH published AS (
+${GEOCODING_PUBLISHED_ADDRESS_SQL}
+),
+published_companies AS (
+  SELECT
+    p.company_id AS company_id,
+    i.legal_name AS legal_name,
+    p.street_address AS street_address,
+    p.postal_code AS postal_code,
+    p.city AS city,
+    p.geocode_status AS geocode_status
+  FROM published AS p
+  INNER JOIN corpscout.se_company_info AS i FINAL ON i.company_id = p.company_id
+)`);
     expect(GEOCODING_LIST_SELECT_SQL).toContain(GEOCODING_PUBLISHED_CTE_SQL);
     expect(GEOCODING_COUNTS_SQL).toContain(GEOCODING_PUBLISHED_CTE_SQL);
+  });
+
+  it("gives the row list and the counts query the exact same FROM -- neither adds a join of its own", () => {
+    // The fix this pins: GEOCODING_COUNTS_SQL used to count `published` alone
+    // (pre-join) while GEOCODING_LIST_SELECT_SQL additionally INNER JOINed
+    // se_company_info, so an orphaned address (0 today, unguarded) would have
+    // counted in the header strip and the pagination total while never
+    // appearing as a row. Both queries must FROM `published_companies` --
+    // the CTE that already carries the join -- and neither may spell
+    // "INNER JOIN" a second time outside GEOCODING_PUBLISHED_CTE_SQL.
+    expect(GEOCODING_LIST_SELECT_SQL).toContain("FROM published_companies AS p");
+    expect(GEOCODING_COUNTS_SQL).toContain("FROM published_companies AS p");
+    for (const sql of [GEOCODING_LIST_SELECT_SQL, GEOCODING_COUNTS_SQL]) {
+      const afterCte = sql.slice(GEOCODING_PUBLISHED_CTE_SQL.length);
+      expect(afterCte).not.toContain("JOIN");
+      expect(afterCte).not.toContain("FROM published AS p");
+    }
   });
 });
 
@@ -112,11 +146,8 @@ describe("GEOCODE_LIST_FILTER_SQL", () => {
 });
 
 describe("GEOCODING_LIST_SELECT_SQL", () => {
-  it("joins the company's own legal_name from se_company_info FINAL and projects the computed class alongside the raw status", () => {
-    expect(GEOCODING_LIST_SELECT_SQL).toContain(
-      "INNER JOIN corpscout.se_company_info AS i FINAL ON i.company_id = p.company_id",
-    );
-    expect(GEOCODING_LIST_SELECT_SQL).toContain("i.legal_name AS legal_name");
+  it("reads legal_name and every address column off published_companies (the se_company_info join lives in the shared CTE, not here) and projects the computed class alongside the raw status", () => {
+    expect(GEOCODING_LIST_SELECT_SQL).toContain("p.legal_name AS legal_name");
     expect(GEOCODING_LIST_SELECT_SQL).toContain(
       `${GEOCODE_STATUS_CLASS_EXPR} AS geocode_class`,
     );
@@ -172,7 +203,7 @@ describe("listSeCompanyGeocodingPage", () => {
 describe("loadSeCompanyGeocodingCounts", () => {
   beforeEach(() => clickhouse.query.mockReset());
 
-  it("counts total and every class in ONE scan of `published`", async () => {
+  it("counts total and every class in ONE scan of `published_companies`", async () => {
     clickhouse.query.mockResolvedValueOnce([
       {
         total: "3523532",
@@ -228,5 +259,76 @@ describe("countForFilter", () => {
     expect(countForFilter(counts, "ambiguous")).toBe(2);
     expect(countForFilter(counts, "unmatched")).toBe(4);
     expect(countForFilter(counts, "no_outcome")).toBe(1);
+  });
+});
+
+describe("GEOCODED_MATCH_STATUSES drift pin (cross-language)", () => {
+  // Reads Dagster's own source off disk, the same idiom
+  // company-serving-sections.test.ts already uses for pinning against a
+  // sibling module's source text. GEOCODED_MATCH_STATUSES is a hand-copy of
+  // geocode_store.py's GEOCODED_STATUSES tuple (dagster_v3/defs/
+  // sweden_company/geocode_store.py); a Python-side status added to that
+  // tuple without a matching TS-side update would silently classify as
+  // 'unmatched' here instead of 'geocoded'. This test is what catches that --
+  // not the doc comment.
+  const geocodeStorePy = readFileSync(
+    new URL(
+      "../../dagster_v3/src/dagster_v3/defs/sweden_company/geocode_store.py",
+      import.meta.url,
+    ),
+    "utf8",
+  );
+
+  /**
+   * Extracts the quoted string literals inside `GEOCODED_STATUSES = ( ... )`.
+   * Anti-vacuous by construction: a regex that fails to match the
+   * declaration, or matches it but finds no quoted values inside, THROWS --
+   * it never returns `[]` and lets a subsequent `toEqual([])` pass for the
+   * wrong reason (the extraction breaking, not the two sides agreeing).
+   */
+  function extractGeocodedStatuses(source: string): string[] {
+    const declaration = source.match(/GEOCODED_STATUSES\s*=\s*\(([^)]*)\)/);
+    if (!declaration) {
+      throw new Error(
+        "Could not find `GEOCODED_STATUSES = ( ... )` in geocode_store.py -- " +
+          "the drift-pin extraction regex needs updating (the Python source " +
+          "changed shape), not a silent pass.",
+      );
+    }
+    const values = [...declaration[1].matchAll(/["']([A-Za-z0-9_]+)["']/g)].map(
+      (m) => m[1],
+    );
+    if (values.length === 0) {
+      throw new Error(
+        "`GEOCODED_STATUSES = ( ... )` matched but no quoted values were " +
+          "extracted from it -- the drift-pin extraction regex needs " +
+          "updating, not a silent pass.",
+      );
+    }
+    return values;
+  }
+
+  it("extracts a non-empty list from geocode_store.py before comparing anything (extraction itself is proven, not assumed)", () => {
+    const extracted = extractGeocodedStatuses(geocodeStorePy);
+    expect(extracted.length).toBeGreaterThan(0);
+  });
+
+  it("extraction throws on a declaration shape it cannot find (the anti-vacuous guard actually guards)", () => {
+    expect(() => extractGeocodedStatuses("# no GEOCODED_STATUSES here")).toThrow(
+      /Could not find/,
+    );
+    expect(() =>
+      extractGeocodedStatuses("GEOCODED_STATUSES = (\n    # nothing quoted\n)"),
+    ).toThrow(/no quoted values/);
+  });
+
+  it("matches Dagster's GEOCODED_STATUSES exactly -- same set, same size, no TS-side status Python doesn't have or vice versa", () => {
+    const fromPython = extractGeocodedStatuses(geocodeStorePy);
+    expect(new Set(fromPython)).toEqual(new Set(GEOCODED_MATCH_STATUSES));
+    // Set equality alone would not catch a duplicate on either side (e.g. a
+    // status listed twice) hiding a real count mismatch, so pin the length
+    // too -- as unlikely as that dedup gap is, it's what set equality alone
+    // cannot see.
+    expect(fromPython.length).toBe(GEOCODED_MATCH_STATUSES.length);
   });
 });
