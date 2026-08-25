@@ -86,6 +86,10 @@ class Candidate:
     # (expand a guessed suffix, THEN fuzzy-match it to a near-namesake) that turns a
     # decisive match into a spurious near-tie (Strandbergsgatan vs Strindbergsgatan).
     exact_expanded_only: bool = False
+    # Strictly-additive v7 mode: v6 glued suffixes keep fuzzy; these NEW glued abbreviations
+    # (and their punctuated forms) plus the separate-word definite map are added exact-only.
+    additive_new_glued: Mapping[str, str] | None = None
+    additive_separate: Mapping[str, str] | None = None
 
 
 _FUZZY_POSTINGS_SRC = res._replace_fuzzy_street_postings
@@ -108,7 +112,7 @@ def _fuzzy_postings_exact_expanded(
         "'parsed'::varchar" if reference_documents else "street_variant_kind"
     )
     expanded_filter = (
-        "" if reference_documents else "and street_variant_kind != 'suffix_expansion'"
+        "" if reference_documents else "and street_variant_kind != 'suffix_exact'"
     )
     connection.execute(
         f"""
@@ -327,6 +331,102 @@ def build_query_docs(
 # --------------------------------------------------------------------------- #
 
 
+def build_additive_variants(
+    con: Any,
+    *,
+    query_table: str,
+    variant_table: str,
+    new_glued_map: Mapping[str, str],
+    separate_map: Mapping[str, str],
+) -> None:
+    """Variant table where v6-glued suffix variants keep the fuzzy-eligible
+    'suffix_expansion' kind (unchanged behaviour) and every NEW suffix/definite variant is
+    tagged 'suffix_exact' (exact-only). v7 is therefore a strict superset of v6: it never
+    removes a v6 match, and its own additions can only match a reference exactly.
+    """
+    import pyarrow as pa
+
+    # 1. v6 base variants (parsed + libpostal + v6 glued suffix_expansion), unchanged.
+    base = "_v7_add_base"
+    replace_address_street_variants(
+        con,
+        document_table=query_table,
+        variant_table=base,
+        languages_by_country=SWEDEN_STREET_VARIANT_LANGUAGES,
+        suffix_expansions_by_country=BASE_SUFFIX,
+    )
+    # 2. NEW variants per distinct street = (new glued + punctuated + separate) MINUS v6.
+    v6_fn = sd.expanded_street_suffix_variants
+    full_fn = make_expansion_fn(separate_map)
+    full_map = {"SE": {**new_glued_map, **{f"{a}.": e for a, e in new_glued_map.items()}}}
+    rows = con.execute(
+        f"select distinct country_code, street_name from {query_table} "
+        "where street_name != ''"
+    ).fetchall()
+    countries: list[str] = []
+    streets: list[str] = []
+    expanded: list[str] = []
+    for cc, street in rows:
+        cc = str(cc)
+        street = str(street)
+        v6 = set(v6_fn(street, BASE_SUFFIX.get(cc, {})))
+        for variant in full_fn(street, full_map.get(cc, {})):
+            if variant not in v6 and variant != street:
+                countries.append(cc)
+                streets.append(street)
+                expanded.append(variant)
+    reg = "_v7_add_new_rows"
+    con.register(reg, pa.table(
+        {"country_code": countries, "street_name": streets, "expanded_street": expanded}
+    ))
+    compact = sd._compact_text_sql("n.expanded_street")
+    try:
+        con.execute(
+            f"""
+            create or replace temporary table _v7_add_new as
+            select
+                d.document_id, d.index_scope, d.country_code,
+                n.expanded_street as street_variant,
+                {compact} as normalized_street_variant,
+                'suffix_exact'::varchar as variant_kind,
+                3::utinyint as variant_rank
+            from {query_table} d
+            inner join {reg} n
+                on n.country_code = d.country_code and n.street_name = d.street_name
+            """
+        )
+    finally:
+        con.unregister(reg)
+    # 3. Union, dedup per (document, normalized variant) preferring the lower rank so a
+    #    v6/parsed/libpostal form always wins over a duplicate suffix_exact, then rebuild
+    #    deletion signatures.
+    sig = sd._deletion_signatures_sql("normalized_street_variant")
+    con.execute(
+        f"""
+        create or replace table {variant_table} as
+        with unioned as (
+            select document_id, index_scope, country_code, street_variant,
+                   normalized_street_variant, variant_kind, variant_rank
+            from {base}
+            union all
+            select document_id, index_scope, country_code, street_variant,
+                   normalized_street_variant, variant_kind, variant_rank
+            from _v7_add_new
+        ), dedup as (
+            select *
+            from unioned
+            where normalized_street_variant != ''
+            qualify row_number() over (
+                partition by document_id, normalized_street_variant
+                order by variant_rank, street_variant
+            ) = 1
+        )
+        select *, {sig} as street_deletion_signatures
+        from dedup
+        """
+    )
+
+
 def run_candidate(
     con: Any,
     *,
@@ -337,20 +437,30 @@ def run_candidate(
     variant_table = f"{ENRICHMENT_SCHEMA}._v7_variants_{label}"
     candidate_table = f"{ENRICHMENT_SCHEMA}._v7_candidates_{label}"
     result_table = f"{ENRICHMENT_SCHEMA}.v7_results_{label}"
-    original_fn = sd.expanded_street_suffix_variants
-    if candidate.expansion_fn is not None:
-        sd.expanded_street_suffix_variants = candidate.expansion_fn
-    try:
-        replace_address_street_variants(
+    additive = candidate.additive_new_glued is not None
+    if additive:
+        build_additive_variants(
             con,
-            document_table=query_table,
+            query_table=query_table,
             variant_table=variant_table,
-            languages_by_country=SWEDEN_STREET_VARIANT_LANGUAGES,
-            suffix_expansions_by_country=candidate.suffix_map,
+            new_glued_map=candidate.additive_new_glued or {},
+            separate_map=candidate.additive_separate or {},
         )
-    finally:
-        sd.expanded_street_suffix_variants = original_fn
-    if candidate.exact_expanded_only:
+    else:
+        original_fn = sd.expanded_street_suffix_variants
+        if candidate.expansion_fn is not None:
+            sd.expanded_street_suffix_variants = candidate.expansion_fn
+        try:
+            replace_address_street_variants(
+                con,
+                document_table=query_table,
+                variant_table=variant_table,
+                languages_by_country=SWEDEN_STREET_VARIANT_LANGUAGES,
+                suffix_expansions_by_country=candidate.suffix_map,
+            )
+        finally:
+            sd.expanded_street_suffix_variants = original_fn
+    if candidate.exact_expanded_only or additive:
         res._replace_fuzzy_street_postings = _fuzzy_postings_exact_expanded
     try:
         replace_address_resolution_candidates(
@@ -392,11 +502,19 @@ def yield_vs_baseline(con: Any, *, baseline: str, cand: str) -> dict[str, int]:
             where c.resolution_status in ({_GEO})
               and b.resolution_status not in ({_GEO})"""
     ).fetchall()
+    [(lost,)] = con.execute(
+        f"""select count(*) from {cand} c join {baseline} b
+            on b.query_document_id=c.query_document_id
+            where b.resolution_status in ({_GEO})
+              and c.resolution_status not in ({_GEO})"""
+    ).fetchall()
     return {
         "pending": int(pending),
         "baseline_matched": int(base_m),
         "candidate_matched": int(cand_m),
         "newly": int(newly),
+        "lost": int(lost),
+        "net": int(newly) - int(lost),
     }
 
 
@@ -531,6 +649,22 @@ def build_candidates() -> list[Candidate]:
         Candidate("g7_v7_full", _punctuated(_sm(extra_all)), pol,
                   make_expansion_fn(SEPARATE_DEFINITE_MAP), exact_expanded_only=True)
     )
+    # G8 STRICTLY-ADDITIVE v7: v6 glued stays fuzzy-eligible (never loses a v6 match);
+    # NEW variants are exact-only. This is the recommended shape.
+    v6 = dict(BASE_SUFFIX["SE"])
+    cands.append(  # punctuated v6 (v./g./gr.) only, additive exact-only
+        Candidate("g8_punct_additive", BASE_SUFFIX, pol,
+                  additive_new_glued=v6, additive_separate={})
+    )
+    cands.append(  # punctuated v6 + separate-word definite, additive  (RECOMMENDED v7)
+        Candidate("g8_v7_recommended", BASE_SUFFIX, pol,
+                  additive_new_glued=v6, additive_separate=SEPARATE_DEFINITE_MAP)
+    )
+    cands.append(  # + extra abbreviations too, to confirm they are still harmful here
+        Candidate("g8_v7_plus_extra", BASE_SUFFIX, pol,
+                  additive_new_glued={**v6, **extra_all},
+                  additive_separate=SEPARATE_DEFINITE_MAP)
+    )
     return cands
 
 
@@ -569,9 +703,10 @@ def explore(con: Any, *, only: str | None) -> None:
         wanted = set(only.split(","))
         cands = [c for c in cands if c.name in wanted]
 
-    print("\n" + "=" * 100)
-    print(f"{'candidate':26} {'+yield':>8} {'reg_flip':>9} {'reg_rec':>8} {'reg_tot':>8}  verdict")
-    print("=" * 100)
+    print("\n" + "=" * 112)
+    print(f"{'candidate':24} {'+new':>7} {'-lost':>7} {'net':>7} "
+          f"{'reg_flip':>9} {'reg_rec':>8} {'reg_tot':>8}  verdict")
+    print("=" * 112)
     results: dict[str, dict] = {}
     for c in cands:
         t = time.monotonic()
@@ -579,12 +714,16 @@ def explore(con: Any, *, only: str | None) -> None:
         ry = run_candidate(con, query_table=yq, label=f"{c.name}_yield", candidate=c)
         y = yield_vs_baseline(con, baseline=base_yield, cand=ry)
         r = regressions(con, baseline=base_ctrl, cand=rc)
-        verdict = "ACCEPT" if (y["newly"] > 0 and r["regressions"] == 0) else (
-            "reject:regress" if r["regressions"] > 0 else "reject:no-yield")
+        # SAFE = adds net yield, breaks no control match, and loses no v6 unmatched match.
+        safe = y["net"] > 0 and r["regressions"] == 0 and y["lost"] == 0
+        verdict = "ACCEPT" if safe else (
+            "reject:regress" if r["regressions"] > 0 else
+            "reject:v6-loss" if y["lost"] > 0 else "reject:no-yield")
         results[c.name] = {**y, **r, "verdict": verdict, "secs": time.monotonic()-t}
-        print(f"{c.name:26} {y['newly']:>8} {r['flip']:>9} {r['record']:>8} "
-              f"{r['regressions']:>8}  {verdict}  ({results[c.name]['secs']:.0f}s)")
-    print("=" * 100)
+        print(f"{c.name:24} {y['newly']:>7} {y['lost']:>7} {y['net']:>7} "
+              f"{r['flip']:>9} {r['record']:>8} {r['regressions']:>8}  {verdict}  "
+              f"({results[c.name]['secs']:.0f}s)")
+    print("=" * 112)
     # regression detail for any regressing candidate
     for c in cands:
         if results[c.name]["regressions"] > 0:
