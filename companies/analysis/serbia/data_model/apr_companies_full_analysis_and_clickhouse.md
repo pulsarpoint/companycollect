@@ -15,12 +15,14 @@ numbers are unique and valid eight-digit strings. The source is suitable for a
 strict typed load, provided the raw response is retained and every new snapshot
 passes schema and population checks before publication.
 
-The recommended ClickHouse design is:
+The finalized ClickHouse design is:
 
-1. `rs_apr_company_snapshot_runs` — one manifest row per downloaded snapshot;
-2. `rs_apr_company_observations` — append-only company state by snapshot date;
-3. `rs_apr_companies_current` — an atomically replaced serving table containing
-   exactly the latest accepted complete snapshot.
+1. `rs_apr_company_history` — company state by accepted snapshot date; and
+2. `rs_apr_company` — a serving table containing exactly the latest accepted
+   complete snapshot.
+
+Snapshot-run manifests remain in DuckDB and object storage. They are operational
+ingestion metadata, not a ClickHouse data product.
 
 Do not store the raw 58 MB JSON body in ClickHouse. Preserve it in object/file
 storage with its metadata and SHA-256, transform it to a typed canonical artifact,
@@ -216,107 +218,76 @@ SP3 + SP4 would be an indicative **4,677,190 RSD** one-off price at the publishe
 per-entity rates, before confirming scope, VAT, contract terms, and eligible
 records with APR.
 
-## Proposed ClickHouse tables
+## Final ClickHouse tables
 
-### 1. Snapshot manifest
-
-This records what was downloaded and whether it was accepted. It makes every
-serving row traceable to a source artifact.
-
-```sql
-CREATE TABLE IF NOT EXISTS corpscout.rs_apr_company_snapshot_runs
-(
-    source_run_id String,
-    snapshot_date Date32,
-    source_url String,
-    source_object_key String,
-    payload_sha256 FixedString(64),
-    payload_bytes UInt64,
-    record_count UInt64,
-    schema_fingerprint FixedString(64),
-    run_status LowCardinality(String),
-    retrieved_at DateTime64(3, 'UTC'),
-    updated_at DateTime64(3, 'UTC'),
-    accepted_at Nullable(DateTime64(3, 'UTC'))
-)
-ENGINE = ReplacingMergeTree(updated_at)
-ORDER BY (snapshot_date, source_run_id);
-```
-
-Recommended `run_status` values are `downloaded`, `validated`, `accepted`, and
-`rejected`. Keep rejection details in orchestration metadata/logs rather than a
-wide free-text column in the analytical table.
-
-### 2. Historical observations
+### 1. Company history
 
 One row represents one company's state in one accepted complete APR snapshot.
 
 ```sql
-CREATE TABLE IF NOT EXISTS corpscout.rs_apr_company_observations
+CREATE TABLE IF NOT EXISTS corpscout.rs_apr_company_history
 (
     company_id String,
     registration_number String,
     legal_name String,
     municipality_code LowCardinality(String),
-    municipality_name LowCardinality(String),
-    source_status LowCardinality(String),
+    municipality_name_original LowCardinality(String),
+    source_status_original LowCardinality(String),
     status LowCardinality(String),
-    is_active UInt8,
+    is_active Bool,
     incorporation_date Date32,
-    legal_form LowCardinality(String),
+    legal_form_original LowCardinality(String),
     primary_activity_code LowCardinality(String),
-
     source_run_id String,
     source_record_id String,
-    source_payload_hash FixedString(64),
-    source_record_uid FixedString(64) DEFAULT lower(hex(SHA256(concat(
-        'company-source-record-v1\nstructured\n',
-        'serbia_apr_companies\nregistry_company\n',
-        source_record_id, '\n', lowerUTF8(source_payload_hash)
-    )))),
+    source_record_number UInt64,
+    source_record_uid FixedString(64),
     state_fingerprint FixedString(64),
     snapshot_date Date32,
+    source_url String,
+    source_bucket LowCardinality(String),
+    source_object_key String,
     updated_from_raw_at DateTime64(3, 'UTC'),
     observed_at DateTime64(3, 'UTC')
 )
-ENGINE = ReplacingMergeTree(observed_at)
+ENGINE = MergeTree
 PARTITION BY toYear(snapshot_date)
 ORDER BY (company_id, snapshot_date);
 ```
 
-`source_record_id` is the matčni broj. `source_payload_hash` is a deterministic
-SHA-256 of the canonicalized source record; `state_fingerprint` hashes the typed
-business state. Keeping both concepts allows provenance identity to remain stable
-even if mapper implementation details later change. Annual partitioning avoids
-creating one tiny partition for each monthly snapshot while still enabling useful
-pruning.
+`source_record_id` is the matični broj. `source_record_uid` identifies the
+structured source record and `state_fingerprint` hashes the typed business state.
+The raw JSON and per-row payload hash remain DuckDB-only. Annual partitioning
+avoids one small partition per monthly snapshot while retaining useful pruning.
 
-### 3. Latest accepted snapshot
+### 2. Current company
 
 This is the low-latency serving table. It deliberately uses `MergeTree`, not a
 view requiring `FINAL` or `argMax` on every query.
 
 ```sql
-CREATE TABLE IF NOT EXISTS corpscout.rs_apr_companies_current
+CREATE TABLE IF NOT EXISTS corpscout.rs_apr_company
 (
     company_id String,
     registration_number String,
     legal_name String,
     municipality_code LowCardinality(String),
-    municipality_name LowCardinality(String),
-    source_status LowCardinality(String),
+    municipality_name_original LowCardinality(String),
+    source_status_original LowCardinality(String),
     status LowCardinality(String),
-    is_active UInt8,
+    is_active Bool,
     incorporation_date Date32,
-    legal_form LowCardinality(String),
+    legal_form_original LowCardinality(String),
     primary_activity_code LowCardinality(String),
-
     source_run_id String,
     source_record_id String,
-    source_payload_hash FixedString(64),
+    source_record_number UInt64,
     source_record_uid FixedString(64),
     state_fingerprint FixedString(64),
     snapshot_date Date32,
+    source_url String,
+    source_bucket LowCardinality(String),
+    source_object_key String,
     updated_from_raw_at DateTime64(3, 'UTC'),
     observed_at DateTime64(3, 'UTC')
 )
@@ -324,11 +295,11 @@ ENGINE = MergeTree
 ORDER BY company_id;
 ```
 
-For each accepted run, build `rs_apr_companies_current__staging`, validate it,
-then atomically swap it with `rs_apr_companies_current` using `EXCHANGE TABLES`.
-This guarantees that records missing from the newest complete feed do not remain
-in the current table. It also prevents readers from seeing a partially loaded
-snapshot.
+For each accepted run, the publisher stages both tables before exchanging them
+with `rs_apr_company_history` and `rs_apr_company`. Each target exchange is
+atomic, and a later exchange failure triggers a compensating exchange of any
+earlier target. This ensures records missing from the newest complete feed do
+not remain in the current table and readers never see a partially loaded table.
 
 ### Optional reference tables
 
@@ -342,7 +313,7 @@ code-list sources are acquired:
 ### Future paid representatives tables
 
 If SP3/SP4 are contracted, representatives are one-to-many and should not be
-added as arrays or repeated company rows in `rs_apr_companies_current`. Create a
+added as arrays or repeated company rows in `rs_apr_company`. Create a
 separate observation/current pair keyed by a deterministic representative
 identity, for example:
 
@@ -360,11 +331,10 @@ data, retention, access control, and lawful-purpose review are mandatory.
 APR GET
   -> immutable raw JSON + HTTP metadata + SHA-256
   -> validate envelope and full population
-  -> canonical typed rows (prefer Parquet)
-  -> append accepted rows to observations
-  -> build and validate current staging table
-  -> atomic EXCHANGE TABLES
-  -> mark snapshot run accepted
+  -> canonical typed DuckDB rows
+  -> retain snapshot catalog in DuckDB only
+  -> build complete history and current ClickHouse staging tables
+  -> EXCHANGE each validated target with compensating rollback
 ```
 
 Use the embedded snapshot date, not retrieval time, as the business observation

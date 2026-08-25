@@ -2,14 +2,19 @@ from collections.abc import Iterator
 from datetime import UTC, datetime
 
 import dagster as dg
+from dagster_clickhouse import ClickhouseResource
 from dagster_duckdb import DuckDBResource
 
 from dagster_v3.defs.common.duckdb_resources import (
     duckdb_resource,
+    read_only_duckdb_connection,
     safe_duckdb_connection,
 )
 from dagster_v3.defs.common.resources import ObjectStoreResource
 from dagster_v3.defs.serbia_apr_companies import tables
+from dagster_v3.defs.serbia_apr_companies.clickhouse import (
+    replace_serbia_apr_companies_clickhouse,
+)
 from dagster_v3.defs.serbia_apr_companies.duckdb import (
     replace_serbia_apr_companies_duckdb,
 )
@@ -149,10 +154,93 @@ def serbia_apr_companies_duckdb_load(
         )
 
 
+@dg.multi_asset(
+    name="serbia_apr_companies_clickhouse_publish",
+    specs=[
+        dg.AssetSpec(
+            tables.COMPANY_HISTORY_ASSET,
+            deps=[tables.COMPANY_OBSERVATIONS_ASSET],
+            group_name=tables.GROUP_NAME,
+            kinds={"python", "duckdb", "clickhouse", "apr"},
+            tags=tables.CLICKHOUSE_ASSET_TAGS,
+            metadata={
+                "table": (
+                    f"{tables.CLICKHOUSE_DATABASE}.{tables.COMPANY_HISTORY_TABLE}"
+                )
+            },
+            description=(
+                "Complete APR company state history, with one row per company "
+                "and accepted source snapshot."
+            ),
+        ),
+        dg.AssetSpec(
+            tables.COMPANY_ASSET,
+            deps=[tables.COMPANIES_CURRENT_ASSET],
+            group_name=tables.GROUP_NAME,
+            kinds={"python", "duckdb", "clickhouse", "apr"},
+            tags=tables.CLICKHOUSE_ASSET_TAGS,
+            metadata={"table": f"{tables.CLICKHOUSE_DATABASE}.{tables.COMPANY_TABLE}"},
+            description=(
+                "Latest complete APR company population for low-latency serving, "
+                "published with the history table in one non-subsettable operation."
+            ),
+        ),
+    ],
+    pool=tables.DUCKDB_POOL,
+    can_subset=False,
+)
+def serbia_apr_companies_clickhouse_publish(
+    context: dg.AssetExecutionContext,
+    clickhouse: ClickhouseResource,
+    serbia_apr_companies_duckdb: DuckDBResource,
+) -> Iterator[dg.MaterializeResult]:
+    with read_only_duckdb_connection(serbia_apr_companies_duckdb) as connection:
+        counts = replace_serbia_apr_companies_clickhouse(
+            duckdb_connection=connection,
+            clickhouse=clickhouse,
+            log=context.log.info,
+        )
+        history_min_date, history_max_date, history_snapshot_count = connection.execute(
+            f"""
+            select min(snapshot_date), max(snapshot_date), count(distinct snapshot_date)
+            from {tables.DUCKDB_SCHEMA}.{tables.COMPANY_OBSERVATIONS_TABLE}
+            """
+        ).fetchone()
+        current_min_date, current_max_date, current_company_count = connection.execute(
+            f"""
+            select min(snapshot_date), max(snapshot_date), count(distinct company_id)
+            from {tables.DUCKDB_SCHEMA}.{tables.COMPANIES_CURRENT_TABLE}
+            """
+        ).fetchone()
+
+    metadata_by_asset = {
+        tables.COMPANY_HISTORY_ASSET: {
+            "row_count": counts[tables.COMPANY_HISTORY_TABLE],
+            "min_snapshot_date": str(history_min_date),
+            "max_snapshot_date": str(history_max_date),
+            "snapshot_count": int(history_snapshot_count),
+            "table": f"{tables.CLICKHOUSE_DATABASE}.{tables.COMPANY_HISTORY_TABLE}",
+        },
+        tables.COMPANY_ASSET: {
+            "row_count": counts[tables.COMPANY_TABLE],
+            "distinct_company_count": int(current_company_count),
+            "snapshot_date": str(current_max_date),
+            "single_snapshot": current_min_date == current_max_date,
+            "table": f"{tables.CLICKHOUSE_DATABASE}.{tables.COMPANY_TABLE}",
+        },
+    }
+    for asset_name, metadata in metadata_by_asset.items():
+        yield dg.MaterializeResult(
+            asset_key=dg.AssetKey(asset_name),
+            metadata=metadata,
+        )
+
+
 defs = dg.Definitions(
     assets=[
         serbia_apr_companies_raw_snapshot_s3,
         serbia_apr_companies_duckdb_load,
+        serbia_apr_companies_clickhouse_publish,
     ],
     resources={
         "serbia_apr_companies_object_store": ObjectStoreResource(

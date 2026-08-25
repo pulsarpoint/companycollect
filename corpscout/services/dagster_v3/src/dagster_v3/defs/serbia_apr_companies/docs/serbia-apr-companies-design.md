@@ -29,18 +29,20 @@ This is a non-partitioned full-snapshot download. One request returns the whole
 register, so API partitions and pagination would add bookkeeping without
 reducing source work.
 
-The source now has two implemented durable boundaries:
+The source has three implemented durable boundaries:
 
 ```text
 APR complete JSON GET -> validated temporary file -> content-addressed S3 object
 content-addressed S3 object -> typed Arrow batches -> three atomic DuckDB tables
+DuckDB history/current -> staged ClickHouse pair -> serving tables
 ```
 
 The DuckDB load is one non-subsettable multi-asset because one validation and
 parse operation produces a snapshot catalog, historical observations, and the
-current population together. ClickHouse company-table publication is not
-implemented in this pass. The separately implemented paid representative and
-beneficial-owner pipelines remain different source boundaries.
+current population together. A second non-subsettable multi-asset publishes
+history and current to ClickHouse. The separately implemented paid
+representative and beneficial-owner pipelines remain different source
+boundaries.
 
 ## 3. Download, validation, and object storage
 
@@ -115,9 +117,9 @@ The map key is preserved as `company_id`, `registration_number`,
 
 Each company row also records the source run/object, record ordinal, raw JSON,
 payload hash, stable source-record UID, business-state fingerprint, snapshot
-date, retrieval time, and DuckDB load time. Raw JSON and hashes deliberately
-remain in this source database; a later ClickHouse publication can expose only
-the serving fields it needs.
+date, retrieval time, and DuckDB load time. Raw JSON and the per-row payload
+hash remain in DuckDB; ClickHouse receives the serving and lightweight
+provenance fields only.
 
 Before publication the loader rejects invalid identifiers/codes, missing or
 empty required fields, unknown APR status labels, future incorporation dates,
@@ -126,14 +128,35 @@ count differences, and snapshot-date differences. Staging is validated first;
 all three durable tables then commit or roll back together. Re-running one raw
 manifest replaces that snapshot's observations instead of duplicating them.
 
-ClickHouse DDL and publication remain a later migration-owned pass.
-
 The raw open feed contains company identity, municipality, current status,
 incorporation date, legal form, and primary KD2010 activity code. It does not
 contain PIB/VAT, street address, email, phone, representatives, founders, or
 beneficial owners.
 
-## 5. Cross-cutting assessments
+## 5. ClickHouse model and publication
+
+Migration `000321_corpscout_rs_apr_company` owns two tables:
+
+- `corpscout.rs_apr_company_history`: one row per company per accepted APR
+  snapshot, annually partitioned by `snapshot_date`; and
+- `corpscout.rs_apr_company`: one row per company from the newest complete
+  snapshot, ordered by `company_id` for serving reads.
+
+The DuckDB `snapshot_runs` catalog is not published to ClickHouse. Every
+serving row already contains the source run, snapshot date, object location,
+record ID, stable record UID, and state fingerprint needed for provenance.
+
+`serbia_apr_companies_clickhouse_publish` depends independently on the DuckDB
+history and current assets, but is non-subsettable. It creates both ClickHouse
+staging tables first, loads them in batches, exchanges each target atomically,
+and compensates by exchanging earlier targets back if a later exchange fails.
+Empty DuckDB inputs are rejected before any serving table is exchanged.
+
+The ClickHouse tables exclude `raw_entity` and `source_payload_hash`. Those
+high-volume audit fields remain available in the rebuildable DuckDB source
+database and immutable S3 snapshot.
+
+## 6. Cross-cutting assessments
 
 - **Contacts**: none in this endpoint. Canonical contact/domain tables belong
   in the future normalized company pass and will be empty unless a separate
@@ -146,19 +169,21 @@ beneficial owners.
 - **Personal data**: the open company snapshot contains organization records,
   not officers or beneficial owners; the asset is tagged `personal_data=false`.
 
-## 6. Scheduling and deployment
+## 7. Scheduling and deployment
 
-No schedule is registered yet. Once the full S3-to-DuckDB chain has been
-manually materialized in the deployed environment, the complete refresh job
-should run monthly after APR publishes a new `DatumPreseka`, with the schedule
+No schedule is registered yet. The full S3-to-DuckDB-to-ClickHouse chain is
+manually materialized before automation. A later complete refresh job should
+run monthly after APR publishes a new `DatumPreseka`, with the schedule
 initially stopped.
 
-## 7. Verification
+## 8. Verification
 
 - Unit tests cover content-addressing, S3 reuse, immutable run manifests,
   streaming JSON validation, population guards, whole-download retry, newest
   manifest selection, typed parsing, Cyrillic and leading-zero preservation,
-  idempotency, rollback on source drift, and Dagster lineage/pool registration.
+  idempotency, rollback on source drift, ClickHouse DDL/export column order,
+  empty-source protection, paired publication, and Dagster lineage/pool
+  registration.
 - Definition loading is checked with `uv run dg check defs`.
 - Live verification of the DuckDB parser uses the downloaded 133,634-company
   object and checks all three table counts and representative typed values.
