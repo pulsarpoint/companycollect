@@ -1,5 +1,5 @@
 import time
-from collections.abc import Callable, Iterator, Sequence
+from collections.abc import Callable, Sequence
 from datetime import datetime
 from typing import Any
 
@@ -8,6 +8,10 @@ import pyarrow as pa
 from dagster_v3.defs.sweden_company.address_parsing import (
     ParsedStreetAddress,
     parse_sweden_street_address,
+)
+from dagster_v3.defs.sweden_company.clickhouse_streaming import (
+    MAX_PAGE_EXECUTION_SECONDS,
+    harden_clickhouse_socket,
 )
 
 ENRICHMENT_SCHEMA = "sweden_company_enrichment"
@@ -27,7 +31,12 @@ QUALIFIED_CLICKHOUSE_ADDRESS_MEMBERS_TABLE = (
     f"{CLICKHOUSE_DATABASE}.{ADDRESS_MEMBERS_TABLE}"
 )
 
-QUERY_BATCH_SIZE = 25_000
+# One page of the current-address read. Each page is its own bounded query+insert; the loader
+# NEVER opens one unbounded 4.67M-row stream over a single long-lived connection -- that read
+# (the demand scan's twin, fixed the same way) RESET (Errno 104) / HUNG for hours, holding the
+# DuckDB pool. company_id leads both the cursor tuple and the source table's primary key, so
+# each page prunes already-processed companies rather than OFFSET-walking.
+QUERY_BATCH_SIZE = 100_000
 PROGRESS_LOG_ROW_INTERVAL = 500_000
 _ARROW_RELATION = "_sweden_company_address_observation_batch"
 
@@ -78,7 +87,12 @@ ADDRESS_MEMBER_COLUMNS = (
     "normalized_at",
 )
 
-CURRENT_COMPANY_ADDRESSES_SQL = """
+# The projected shape of one current company-address observation, WITHOUT ordering, keyset
+# bound or LIMIT -- _company_addresses_page_sql adds those per page. Columns are in the exact
+# positional order _insert_company_address_batch expects (SOURCE_ADDRESS_INPUT_COLUMNS):
+# company_id, address_key, address_type, address_source are row[0..3], which is also the cursor
+# tuple below.
+_CURRENT_COMPANY_ADDRESSES_SELECT = """
 SELECT
     company_id,
     toString(address_fingerprint) AS address_key,
@@ -96,8 +110,44 @@ SELECT
 FROM corpscout.se_company_addresses_current
 WHERE has_address = 1
   AND has_observation = 1
-ORDER BY company_id, address_key
 """
+
+
+def _company_addresses_page_sql(*, has_cursor: bool) -> str:
+    """The current-address read, keyset-bounded to one page.
+
+    The page key is the FULL ``(company_id, address_key, address_type, source)`` tuple, not
+    ``(company_id, address_key)``. ``se_company_addresses_current``'s grain -- its MergeTree
+    ORDER BY and dedup key -- is ``(company_id, address_type, source)``, so ``address_key``
+    (``toString(address_fingerprint)``) is only *incidentally* unique per company: two rows
+    that differ in ``address_type`` or ``source`` can carry an identical address and thus an
+    identical fingerprint. Paging on ``(company_id, address_key)`` alone with a strict ``>``
+    cursor would silently drop every such collision row that straddled a page boundary. The
+    four-tuple is a superset of the grain, hence *structurally* unique, so a strict ``>`` cursor
+    neither drops nor repeats a row at a boundary; its leading ``(company_id, address_key)``
+    reproduces the exact order the single-query read emitted.
+
+    The cursor is a ClickHouse tuple comparison against bound params (``%(after_*)s``) -- the
+    previous page's last row is never string-formatted into the SQL -- on the raw column
+    expressions (``toString(address_fingerprint)``, ``source``) so it matches the aliased
+    ORDER BY value-for-value. ``company_id`` leads the tuple and the table primary key, so the
+    comparison prunes already-processed companies instead of an OFFSET walk. All four cursor
+    values are plain strings, so neither the clickhouse-driver LIKE nor datetime %-escaping
+    hazard applies.
+    """
+    cursor_sql = (
+        "  AND (company_id, toString(address_fingerprint), address_type, source)"
+        " > (%(after_company_id)s, %(after_address_key)s,"
+        " %(after_address_type)s, %(after_address_source)s)\n"
+        if has_cursor
+        else ""
+    )
+    return (
+        f"{_CURRENT_COMPANY_ADDRESSES_SELECT.rstrip()}\n"
+        f"{cursor_sql}"
+        "ORDER BY company_id, address_key, address_type, source\n"
+        f"LIMIT {QUERY_BATCH_SIZE}"
+    )
 
 
 def replace_sweden_company_canonical_addresses(
@@ -525,25 +575,29 @@ def _load_current_company_addresses(
         )
         """
     )
+    harden_clickhouse_socket(clickhouse_client)
     started_at = time.monotonic()
     loaded_rows = 0
-    batch: list[Sequence[object]] = []
-    for row in _iter_clickhouse_rows(clickhouse_client):
-        batch.append(row)
-        if len(batch) < QUERY_BATCH_SIZE:
-            continue
-        _insert_company_address_batch(connection, batch)
-        loaded_rows += len(batch)
-        batch.clear()
-        if loaded_rows % PROGRESS_LOG_ROW_INTERVAL == 0:
+    next_log_at = PROGRESS_LOG_ROW_INTERVAL
+    after: tuple[str, str, str, str] | None = None
+    while True:
+        page = _read_company_addresses_page(clickhouse_client, after=after)
+        if not page:
+            break
+        _insert_company_address_batch(connection, page)
+        loaded_rows += len(page)
+        last = page[-1]
+        after = (str(last[0]), str(last[1]), str(last[2]), str(last[3]))
+        if loaded_rows >= next_log_at:
             _log(
                 log,
                 "Loading current Sweden address observations: rows=%d elapsed_seconds=%.1f",
                 loaded_rows,
                 time.monotonic() - started_at,
             )
-    _insert_company_address_batch(connection, batch)
-    loaded_rows += len(batch)
+            next_log_at += PROGRESS_LOG_ROW_INTERVAL
+        if len(page) < QUERY_BATCH_SIZE:
+            break
     if loaded_rows == 0:
         raise ValueError("Sweden company address source returned zero current rows")
     _log(
@@ -554,15 +608,38 @@ def _load_current_company_addresses(
     )
 
 
-def _iter_clickhouse_rows(clickhouse_client: Any) -> Iterator[Sequence[object]]:
-    execute_iter = getattr(clickhouse_client, "execute_iter", None)
-    if callable(execute_iter):
-        yield from execute_iter(
-            CURRENT_COMPANY_ADDRESSES_SQL,
-            settings={"max_block_size": QUERY_BATCH_SIZE},
+def _read_company_addresses_page(
+    clickhouse_client: Any,
+    *,
+    after: tuple[str, str, str, str] | None,
+) -> list[Sequence[object]]:
+    """One bounded page of the current-address read, above the ``after`` cursor tuple.
+
+    The ``max_execution_time`` setting makes the ClickHouse server abort a page that overruns
+    instead of the client blocking on a dead socket; ``max_block_size`` caps how many rows the
+    server buffers before it starts returning the page.
+    """
+    sql = _company_addresses_page_sql(has_cursor=after is not None)
+    params = (
+        {
+            "after_company_id": after[0],
+            "after_address_key": after[1],
+            "after_address_type": after[2],
+            "after_address_source": after[3],
+        }
+        if after is not None
+        else None
+    )
+    return list(
+        clickhouse_client.execute(
+            sql,
+            params,
+            settings={
+                "max_execution_time": MAX_PAGE_EXECUTION_SECONDS,
+                "max_block_size": QUERY_BATCH_SIZE,
+            },
         )
-        return
-    yield from clickhouse_client.execute(CURRENT_COMPANY_ADDRESSES_SQL)
+    )
 
 
 def _insert_company_address_batch(
