@@ -1357,13 +1357,12 @@ def test_sweden_company_address_geocoding_assets_are_company_enhancements() -> N
         "sweden_address_resolution_shadow_duckdb",
         "sweden_address_resolution_current_duckdb",
         "sweden_address_geocode_store_clickhouse",
-        "sweden_osm_addresses_clickhouse",
     }
     # The legacy per-company matcher and its two publish assets retired with the pair
     # (LEGACY_PAIR_RETIREMENT_DROP_SQL), and sweden_address_geocodes_clickhouse -- the
     # weekly rebuild of the serving table -- retired with migration 000320, which made
     # corpscout.se_address_geocodes_current a refreshable materialized view over the same
-    # store. The weekly job is twelve assets now, and none of these four names may come
+    # store. The weekly job is eleven assets now, and none of these four names may come
     # back into the graph: each one would be a second writer for a table ClickHouse owns.
     for retired in (
         "sweden_company_address_osm_matches_duckdb",

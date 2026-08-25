@@ -22,7 +22,7 @@ ClickHouse   se_addresses_current  2.09M identities (WITH normalized_street /
 ClickHouse   sweden_osm_pbf_s3   Geofabrik SE PBF synced to S3
      │
      ▼  sweden_osm_addresses_duckdb  [DuckDB]  st_readosm + spatial → address_points + street_segments
-     │     (also now published to CH: se_osm_address_points / se_osm_street_segments)
+     │     (OSM index stays in DuckDB only -- see note below on the reverted CH publish)
      ▼
 DuckDB   sweden_address_geocode_demand_duckdb   → se_address_pending_identities (what needs matching)
      │
