@@ -1,0 +1,104 @@
+{
+  "source_slug": "apr_companies",
+  "source_url": "https://openapi.apr.gov.rs/api/opendata/companies",
+  "license": "sodl",
+  "snapshot": {
+    "date": "2026-07-31",
+    "retrieved_date": "2026-08-24",
+    "bytes": 57673691,
+    "sha256": "ce68aecfd0ec7fc9c8abe7293f7b4101f4e67ac2812dd6ac266519a76aef3d6c",
+    "record_count": 133634
+  },
+  "shape": {
+    "envelope_fields": ["DatumPreseka", "Podaci"],
+    "record_container": "object_keyed_by_maticni_broj",
+    "record_fields": [
+      "PoslovnoIme",
+      "SifraOpstine",
+      "NazivOpstine",
+      "NazivStatus",
+      "DatumOsnivanja",
+      "NazivPravneForme",
+      "SifraDelatnosti"
+    ]
+  },
+  "identity": {
+    "distinct_registration_numbers": 133634,
+    "invalid_eight_digit_registration_numbers": 0,
+    "leading_zero_registration_numbers": 17775,
+    "lexicographic_min": "00003506",
+    "lexicographic_max": "29516901"
+  },
+  "completeness": {
+    "records_with_all_expected_fields": 133634,
+    "missing_values": 0,
+    "null_values": 0,
+    "empty_values": 0,
+    "non_string_record_values": 0
+  },
+  "cardinality": {
+    "PoslovnoIme": 133632,
+    "SifraOpstine": 192,
+    "NazivOpstine": 192,
+    "NazivStatus": 4,
+    "DatumOsnivanja": 10836,
+    "NazivPravneForme": 13,
+    "SifraDelatnosti": 571
+  },
+  "dates": {
+    "invalid": 0,
+    "earliest": "1918-12-22",
+    "latest": "2026-07-31",
+    "after_snapshot": 0,
+    "recommended_clickhouse_type": "Date32"
+  },
+  "name_quality": {
+    "min_length": 8,
+    "max_length": 397,
+    "names_with_cyrillic_code_points": 10602,
+    "leading_or_trailing_whitespace": 1582,
+    "repeated_whitespace": 7789,
+    "control_or_format_character_records": 2,
+    "duplicate_normalized_name_groups": 2,
+    "records_in_duplicate_normalized_name_groups": 4
+  },
+  "status_distribution": [
+    {"source": "Активан", "canonical": "active", "count": 125005},
+    {"source": "У ликвидацији", "canonical": "liquidation", "count": 6185},
+    {"source": "У стечају", "canonical": "bankruptcy", "count": 1360},
+    {"source": "У принудној ликвидацији", "canonical": "compulsory_liquidation", "count": 1084}
+  ],
+  "legal_form_distribution": [
+    {"value": "Друштво са ограниченом одговорношћу", "count": 126093},
+    {"value": "Задруга", "count": 3102},
+    {"value": "Представништво страног привредног друштва", "count": 1281},
+    {"value": "Огранак страног привредног друштва", "count": 914},
+    {"value": "Акционарско друштво", "count": 709},
+    {"value": "Ортачко друштво", "count": 611},
+    {"value": "Јавно предузеће", "count": 538},
+    {"value": "Друштвено предузеће", "count": 117},
+    {"value": "Командитно друштво", "count": 105},
+    {"value": "Отворено акционарско друштво", "count": 98},
+    {"value": "Задружни савез", "count": 32},
+    {"value": "Друго", "count": 31},
+    {"value": "Затворено акционарско друштво", "count": 3}
+  ],
+  "not_present": [
+    "pib_or_vat",
+    "street_address",
+    "contacts",
+    "representatives",
+    "procurists",
+    "board_members",
+    "founders_or_shareholders",
+    "beneficial_owners",
+    "sole_traders",
+    "event_history",
+    "dissolution_date"
+  ],
+  "recommended_tables": [
+    "corpscout.rs_apr_company_snapshot_runs",
+    "corpscout.rs_apr_company_observations",
+    "corpscout.rs_apr_companies_current"
+  ]
+}

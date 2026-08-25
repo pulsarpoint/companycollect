@@ -19,7 +19,7 @@ class CrawlResponse(BaseModel):
     markdown: str
 
 
-@app.post("/crawl", response_model=CrawlResponse)
+@app.post("/rats_crawl", response_model=CrawlResponse)
 async def crawl() -> CrawlResponse:
     """Crawl the fixed Ratsit company page in the local Chromium instance."""
     try:
@@ -32,6 +32,22 @@ async def crawl() -> CrawlResponse:
         ) from error
 
     return CrawlResponse(url=RATSIT_URL, markdown=markdown)
+
+
+@app.post("/rats_crawl", response_model=CrawlResponse)
+async def crawl() -> CrawlResponse:
+    """Crawl the fixed Ratsit company page in the local Chromium instance."""
+    try:
+        markdown = await crawl_ratsit_markdown()
+    except (PlaywrightError, RuntimeError) as error:
+        LOGGER.exception("Ratsit crawl failed")
+        raise HTTPException(
+            status_code=502,
+            detail="Ratsit crawl failed; check the local Chromium service",
+        ) from error
+
+    return CrawlResponse(url=RATSIT_URL, markdown=markdown)
+
 
 
 if __name__ == "__main__":

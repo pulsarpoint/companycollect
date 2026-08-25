@@ -28,6 +28,15 @@ configuration changed, so an unchanged run never restarts ClickHouse.
 
 Data lives on the host at `/opt/clickhouse/data/clickhouse`.
 
+## System log retention
+
+The high-volume `system.text_log`, `system.trace_log`, `system.part_log`,
+`system.processors_profile_log`, and `system.query_log` tables retain two days
+of data. The policy is defined in `config.d/system-log-retention.xml` and is
+mounted read-only into the ClickHouse container. It applies only to ClickHouse
+internal logs; application tables, including every Common Crawl partition, are
+unaffected.
+
 ## Backups
 
 A `clickhouse-backup` sidecar (Altinity, watch mode) continuously backs up

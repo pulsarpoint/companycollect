@@ -1,0 +1,62 @@
+{
+  "country": "Serbia",
+  "country_slug": "serbia",
+  "source_slug": "apr_public_search",
+  "source_identity": "serbia_apr_public_search",
+  "source_package": "aprpublicsearch",
+  "env_prefix": "APR_PUBLIC_SEARCH",
+  "implementation_status": "planning_only",
+  "source": {
+    "source_name": "APR Public Company Search",
+    "source_type": "official_registry_search_ui",
+    "organization": "Agencija za privredne registre (APR)",
+    "source_url": "https://pretraga.apr.gov.rs/search",
+    "license": "APR website terms",
+    "access": "manual public search",
+    "data_freshness": "current",
+    "attribution": "APR"
+  },
+  "access": {
+    "requires_authentication": false,
+    "requires_payment": false,
+    "credential_env_vars": []
+  },
+  "transport": {
+    "access_mode": "manual_ui_only",
+    "base_url": null,
+    "download_url": null,
+    "http_method": null,
+    "headers_required": [],
+    "formats": ["html"],
+    "compression": null,
+    "encoding": "utf-8",
+    "record_path": null,
+    "total_results_path": null,
+    "pagination": {"type": "not_applicable", "page_param": null, "page_start": null, "page_size": null, "page_size_param": null, "next_page_path": null},
+    "rate_limit": "CAPTCHA protected; automated collection prohibited"
+  },
+  "snapshot": {"strategy": "none", "file_extension": null, "preserve_raw_download": false},
+  "parsing": {
+    "record_type_hint": null,
+    "date_formats": [],
+    "datetime_formats": [],
+    "number_formats": [],
+    "malformed_record_policy": "not_applicable",
+    "notes": "Do not implement a crawler. Use the catalog only as semantic evidence for the contracted SP3/SP4 mapper."
+  },
+  "keys": {"primary_keys": ["maticni_broj"], "join_keys": ["maticni_broj"], "dedupe_keys": []},
+  "mapping_rules": {
+    "officers": "Semantic evidence only: section + function + representation authority. Do not ingest from the UI.",
+    "owners": "Do not map members into beneficial owners. Beneficial ownership belongs to APR CEV."
+  },
+  "fixture_requirements": [],
+  "live_test_plan": {
+    "smoke": "No automated live test permitted.",
+    "full": "No automated ingestion permitted."
+  },
+  "blockers": [
+    "APR prohibits automated collection from the public search interface.",
+    "The UI is CAPTCHA protected.",
+    "Personal identifiers must not be copied from the UI."
+  ]
+}

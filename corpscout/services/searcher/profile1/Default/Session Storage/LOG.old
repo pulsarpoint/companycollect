@@ -1,2 +1,3 @@
-2026/08/15-20:12:54.917 2b865fce Creating DB /Users/graovic/pulsarpoint/ppoint/companycollect/corpscout/services/searcher/profile1/Default/Session Storage since it was missing.
-2026/08/15-20:12:54.919 2b865fce Reusing MANIFEST /Users/graovic/pulsarpoint/ppoint/companycollect/corpscout/services/searcher/profile1/Default/Session Storage/MANIFEST-000001
+2026/08/15-20:13:45.912 2b866d23 Reusing MANIFEST /Users/graovic/pulsarpoint/ppoint/companycollect/corpscout/services/searcher/profile1/Default/Session Storage/MANIFEST-000001
+2026/08/15-20:13:45.912 2b866d23 Recovering log #3
+2026/08/15-20:13:45.913 2b866d23 Reusing old log /Users/graovic/pulsarpoint/ppoint/companycollect/corpscout/services/searcher/profile1/Default/Session Storage/000003.log 

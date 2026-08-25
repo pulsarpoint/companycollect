@@ -1,7 +1,7 @@
 {
   "country": "Serbia",
   "country_slug": "serbia",
-  "country_profile_version": "2026-06-14",
+  "country_profile_version": "2026-08-24",
   "registration": {
     "maticni_broj": "21141666"
   },
@@ -41,14 +41,16 @@
       "unit": "thousands"
     }
   ],
-  "officers": [
-    { "name": "[PLANNING-ONLY — paid APR web service; not in open data]", "role": null }
-  ],
-  "beneficial_owners": [
-    { "name": "[PLANNING-ONLY — paid APR web service; personal data]", "basis": null }
-  ],
+  "officers": {
+    "availability": "not_acquired",
+    "records": []
+  },
+  "beneficial_owners": {
+    "availability": "not_acquired",
+    "records": []
+  },
   "source_provenance": [
-    { "source_slug": "apr_companies", "section": "registration/legal_identity/status/activity/incorporation/registered_location", "source_url": "https://openapi.apr.gov.rs/api/opendata/companies", "access": "public", "license": "public_domain", "retrieved_at": "2026-05-31" },
-    { "source_slug": "apr_financial_statements", "section": "financial_statements", "source_url": "https://openapi.apr.gov.rs/api/opendata/companies/financial-statements", "access": "public", "license": "public_domain", "retrieved_at": "2026-05-31" }
+    { "source_slug": "apr_companies", "section": "registration/legal_identity/status/activity/incorporation/registered_location", "source_url": "https://openapi.apr.gov.rs/api/opendata/companies", "access": "public", "license": "sodl", "retrieved_at": "2026-07-31" },
+    { "source_slug": "apr_financial_statements", "section": "financial_statements", "source_url": "https://openapi.apr.gov.rs/api/opendata/companies/financial-statements", "access": "public", "license": "sodl", "retrieved_at": "2026-05-31" }
   ]
 }

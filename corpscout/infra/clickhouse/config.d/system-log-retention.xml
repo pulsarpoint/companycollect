@@ -1,0 +1,18 @@
+<clickhouse>
+    <!-- Keep detailed operational logs briefly without allowing them to grow without bound. -->
+    <query_log>
+        <ttl>event_date + INTERVAL 2 DAY DELETE</ttl>
+    </query_log>
+    <trace_log>
+        <ttl>event_date + INTERVAL 2 DAY DELETE</ttl>
+    </trace_log>
+    <part_log>
+        <ttl>event_date + INTERVAL 2 DAY DELETE</ttl>
+    </part_log>
+    <text_log>
+        <ttl>event_date + INTERVAL 2 DAY DELETE</ttl>
+    </text_log>
+    <processors_profile_log>
+        <ttl>event_date + INTERVAL 2 DAY DELETE</ttl>
+    </processors_profile_log>
+</clickhouse>

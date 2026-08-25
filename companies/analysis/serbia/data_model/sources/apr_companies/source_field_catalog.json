@@ -6,7 +6,7 @@
   "source_type": "official_registry",
   "organization": "Agencija za privredne registre (APR) / Serbian Business Registers Agency",
   "source_url": "https://openapi.apr.gov.rs/api/opendata/companies",
-  "license": "public_domain",
+  "license": "sodl",
   "access": "public",
   "data_freshness": "monthly (DatumPreseka)",
   "record_shape": "envelope_with_records_keyed_by_maticni_broj",
@@ -28,7 +28,7 @@
       "language": "n/a",
       "limitations": null,
       "source_confidence": "high",
-      "analysis_notes": "Company id. Note: PIB (tax id) is NOT in the open feed."
+      "analysis_notes": "Company id. Full-snapshot scan: 133,634 distinct valid 8-digit values; 17,775 have leading zeroes. Keep as String. PIB (tax id) is NOT in the open feed."
     },
     {
       "path": "Podaci.<maticni_broj>.PoslovnoIme",
@@ -41,10 +41,10 @@
       "nullable": false,
       "repeatable": false,
       "code_list": null,
-      "language": "Serbian Latin",
+      "language": "Serbian Latin/Cyrillic/mixed",
       "limitations": "Current name only.",
       "source_confidence": "high",
-      "analysis_notes": "Main display name."
+      "analysis_notes": "Preserve exactly. Full scan: 133,632 distinct; length 8-397; 10,602 contain Cyrillic; 1,582 have edge whitespace; 7,789 repeated whitespace; two contain control/format characters."
     },
     {
       "path": "Podaci.<maticni_broj>.SifraOpstine",
@@ -54,13 +54,13 @@
       "data_type": "string",
       "semantic_type": "geography",
       "example_values": ["70670", "70483"],
-      "nullable": true,
+      "nullable": false,
       "repeatable": false,
       "code_list": "RZS/APR municipality code list",
       "language": "n/a",
       "limitations": "Needs municipality lookup.",
       "source_confidence": "high",
-      "analysis_notes": null
+      "analysis_notes": "Full scan: 192 distinct; every value is exactly five digits; code/name mapping is one-to-one in this snapshot."
     },
     {
       "path": "Podaci.<maticni_broj>.NazivOpstine",
@@ -70,13 +70,13 @@
       "data_type": "string",
       "semantic_type": "geography",
       "example_values": ["КРУШЕВАЦ", "ГОРЊИ МИЛАНОВАЦ"],
-      "nullable": true,
+      "nullable": false,
       "repeatable": false,
       "code_list": null,
       "language": "Serbian Cyrillic",
       "limitations": "Cyrillic script.",
       "source_confidence": "high",
-      "analysis_notes": "Only municipality — no street address."
+      "analysis_notes": "Only municipality — no street address. Full scan: 192 distinct; code/name mapping is one-to-one in this snapshot."
     },
     {
       "path": "Podaci.<maticni_broj>.NazivStatus",
@@ -102,13 +102,13 @@
       "data_type": "date",
       "semantic_type": "date",
       "example_values": ["2015-10-09", "1989-09-14"],
-      "nullable": true,
+      "nullable": false,
       "repeatable": false,
       "code_list": null,
       "language": "n/a",
       "limitations": "ISO YYYY-MM-DD.",
       "source_confidence": "high",
-      "analysis_notes": null
+      "analysis_notes": "Full scan: all values valid ISO dates, range 1918-12-22 to 2026-07-31. Use ClickHouse Date32."
     },
     {
       "path": "Podaci.<maticni_broj>.NazivPravneForme",
@@ -134,13 +134,13 @@
       "data_type": "string",
       "semantic_type": "activity",
       "example_values": ["4322", "1812"],
-      "nullable": true,
+      "nullable": false,
       "repeatable": false,
       "code_list": "KD2010 (≈ NACE Rev.2)",
       "language": "n/a",
       "limitations": "Code only; needs KD2010 lookup for a label.",
       "source_confidence": "high",
-      "analysis_notes": null
+      "analysis_notes": "Full scan: 571 distinct; every value is exactly four digits."
     }
   ]
 }

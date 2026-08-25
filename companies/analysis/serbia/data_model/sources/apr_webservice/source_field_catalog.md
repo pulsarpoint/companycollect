@@ -23,15 +23,19 @@
 |---|---|---|---|---|---|
 | pib | PIB | Tax id (9-digit) | string | identifier | planning-only; the key open gap |
 | preduzetnici[] | preduzetnici | Sole traders | array | identifier | planning-only; not in open data |
-| zastupnici[] | zastupnici/direktori | Directors | array | person | planning-only; PII |
-| stvarni_vlasnici[] | stvarni vlasnici | Beneficial owners | array | ownership | planning-only; PII |
-| finansijski_izvestaji_istorija[] | RGFI history | Multi-year financials | array | financial | planning-only |
+| zakonski_zastupnici[] | SP3: Zakonski zastupnici | Legal/statutory representatives | array | person/relationship | planning-only; paid; personal data |
+| ostali_zastupnici[] | SP4: Ostali zastupnici / prokuristi / odbori | Other representatives, procurists and boards | array | person/relationship | planning-only; paid; personal data |
 
 ## Interpretation Notes
 
-- This paid web service is the route to everything the open feed lacks: **PIB
-  (tax id/VAT)**, **sole traders (preduzetnici)**, **directors/representatives**,
-  **beneficial owners** (Central Register of Beneficial Owners), and **multi-year
-  financial history**.
+- This paid status-register web service is the route to **PIB**, **sole traders**
+  and **representatives**. Beneficial ownership is deliberately excluded from
+  this catalog because it is a separate APR CEV source and contract. APR
+  explicitly says financial-statement-register data is not
+  available through this status-register web service.
+- Manual inspection of one public company record confirmed the representative
+  concepts `name`, `function_title`, masked `JMBG` availability and
+  `represents_independently`. These are semantic targets only; the SP3/SP4
+  transport field names remain unknown.
 - Keep entirely **planning-only**; do not synthesise values. Free for state
   bodies, otherwise per contract.

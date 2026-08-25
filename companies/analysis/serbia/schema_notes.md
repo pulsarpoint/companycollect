@@ -1,94 +1,143 @@
 # Serbia — Schema Notes
 
-All APR open-data payloads share the same envelope:
+## APR Companies Open Data API
+
+Envelope:
 
 ```json
 {
-  "DatumPreseka": "2026-05-31",          // snapshot date (ISO YYYY-MM-DD)
-  "Podaci": { "<maticni_broj>": { ... } } // map keyed by 8-digit registration number
+  "DatumPreseka": "2026-07-31",
+  "Podaci": {
+    "<maticni_broj>": { "...": "..." }
+  }
 }
 ```
 
-- **Primary key:** `matični broj` (MB) — 8-digit company registration number, the
-  map key. It is the join key across all three datasets.
-- **Encoding:** UTF-8. `PoslovnoIme` is Latin; `NazivOpstine`, `NazivStatus`,
-  `NazivPravneForme` are **Cyrillic**.
-- **Dates:** ISO `YYYY-MM-DD`.
+- Primary key: eight-digit `matični broj`, stored as text to preserve leading
+  zeroes.
+- Encoding: UTF-8.
+- Dates: ISO `YYYY-MM-DD`.
+- Snapshot semantics: `DatumPreseka` describes the registry cut-off date.
 
-## 1. Companies — `/api/opendata/companies`
+Observed record fields:
 
-| Field | Meaning | Example |
+| Field | Meaning | Internal mapping |
 |---|---|---|
-| `PoslovnoIme` | Full business name | `GRAFIČKO PREDUZEĆE GRAFOPRINT D O O GORNJI MILANOVAC` |
-| `SifraOpstine` | Municipality code (registered seat) | `70483` |
-| `NazivOpstine` | Municipality name (Cyrillic) | `ГОРЊИ МИЛАНОВАЦ` |
-| `NazivStatus` | Status | `Активан`, `У стечају`, `У ликвидацији`, `У принудној ликвидацији` |
-| `DatumOsnivanja` | Incorporation date | `1989-09-14` |
-| `NazivPravneForme` | Legal form | `Друштво са ограниченом одговорношћу` |
-| `SifraDelatnosti` | Activity code (KD2010 / NACE-aligned) | `1812` |
+| `PoslovnoIme` | Business name | `legal_name` |
+| `SifraOpstine` | Municipality code | `municipality_code` |
+| `NazivOpstine` | Municipality name | `municipality` |
+| `NazivStatus` | Registry status | `status` after controlled mapping |
+| `DatumOsnivanja` | Incorporation date | `incorporation_date` |
+| `NazivPravneForme` | Legal form | `company_type` |
+| `SifraDelatnosti` | Registered activity code | `activity_code` |
 
-Observed distribution (133,357 records, 2026-05-31):
-- Legal forms: DOO (LLC) 125,780; Zadruga (cooperative) 3,108; foreign rep. office
-  1,284; foreign branch 920; AD (joint-stock) 716; partnership 618; public
-  enterprise 539; …
-- Statuses: Активан 124,931; У ликвидацији 6,226; У стечају 1,314; У принудној
-  ликвидацији 886.
+Fields not present: PIB/VAT, full registered address, dissolution date,
+representatives, directors, procurists, members/founders and beneficial owners.
 
-## 2. Financial statements — `/api/opendata/companies/financial-statements`
+## Proposed company projection
 
-| Field | Meaning |
+```text
+company_id                 <- maticni broj
+registration_number        <- maticni broj
+tax_id                     <- null in open API; available in paid SP2
+legal_name                 <- PoslovnoIme
+company_type               <- NazivPravneForme
+status                     <- mapped NazivStatus
+incorporation_date         <- DatumOsnivanja
+registered_address         <- null in open API; paid SP3
+municipality_code          <- SifraOpstine
+municipality               <- NazivOpstine
+activity_code              <- SifraDelatnosti
+country                    <- Serbia
+source_snapshot_date       <- DatumPreseka
+source_retrieved_at        <- collector timestamp
+raw_record                 <- full source object
+```
+
+## Proposed representative relationship
+
+The exact APR leaf schema is not public, so the following is an internal target
+model rather than a claim about APR field names:
+
+```text
+company_id
+representative_source_id       nullable until APR schema is known
+representative_name
+representative_kind            legal | other | procurist | board | branch
+function_title
+person_or_legal_entity
+authority_mode                 individual | joint | countersignature | unknown
+valid_from                     nullable
+valid_to                       nullable
+is_current
+source_group                   SP3 | SP4 | SP6 | web_service
+source_snapshot_or_event_at
+source_retrieved_at
+raw_record
+```
+
+Manual inspection of one public record on 2026-08-25 confirmed visible fields
+for name (`Име и презиме`), function (`Функција`), a masked JMBG reveal control,
+and independent representation (`Самостално заступа`). The actual person name
+was redacted and JMBG was not revealed. These labels validate the target
+semantics but do not establish the paid SP3/SP4 transport paths.
+
+Do not manufacture a stable person ID from a name. Prefer an APR-provided
+relationship/person identifier. If none exists, version the relationship per
+company and retain the raw event/snapshot so identity reconciliation can be
+revisited.
+
+## Representative source mapping
+
+| APR group | Intended use |
 |---|---|
-| `GodinaFi` | Reporting year of the statement (int) |
-| `PoslovnoIme` | Business name as at statement date |
-| `SifraOpstine` / `NazivOpstine` | Municipality code / name |
-| `PoslovnaImovina` | Business assets |
-| `Kapital` | Capital |
-| `Gubitak` | Loss (accumulated) |
-| `UkupniPrihodi` | Total revenue |
-| `NetoDobitak` | Net profit |
-| `NetoGubitak` | Net loss |
-| `ProsecanBrojZaposlenih` | Average number of employees |
+| SP3 `Zakonski zastupnici` | Legal/statutory representatives |
+| SP4 `Ostali zastupnici` | Other representatives |
+| SP4 `Prokuristi`, `Grupna prokura` | Procurists and joint procura |
+| SP4 board groups | Director/supervisory/executive/management boards |
+| SP5 `Članovi osnivači` | Founders/members, not representatives |
+| SP6 `Zastupnici ogranaka` | Branch representatives |
 
-Join to companies on the MB key.
+## Proposed beneficial-owner relationship
 
-## 3. NGO — `/api/opendata/ngo`
+Beneficial ownership is a separate APR CEV source, not an SP3/SP4 relationship.
+The live portal requires eID/SSO, so this target is based on APR's current law
+and public documentation rather than a copied record:
 
-| Field | Meaning |
-|---|---|
-| `Naziv` | Name |
-| `SifraMesta` | Place code |
-| `SifraDelatnosti` | Activity code |
-| `DatumOsnivanja` | Founding date |
-| `TipLica` | Entity type (e.g. `Удружење`, foundation, endowment) |
-| `OblastiOstvarivanjaCiljeva` | Array of objects: areas/goals (Naziv + Opis) |
+```text
+company_id
+owner_uid
+source_person_key
+person_kind                     domestic | foreign | refugee_or_displaced
+name
+personal_identifier_kind
+personal_identifier_hmac        optional keyed HMAC; raw value forbidden
+personal_identifier_issuing_country_code
+birth_date / birth_place / birth_country_code
+residence_country_code / stay_country_code / citizenship_country_codes
+basis_code / basis_label_raw
+ownership_percentage / voting_rights_percentage
+acquired_on / registered_on / documents_registered_on
+has_supporting_documents / supporting_document_count
+trust_*
+has_discrepancy / discrepancy_note
+is_present / observed_at / source envelope
+```
 
-## Mapping to internal company model
+Use explicit availability around both people collections. `not_acquired` and
+`access_restricted` must not be interpreted as a confirmed empty result.
 
-| Internal field | Source (companies API) |
-|---|---|
-| `company_id` | MB (map key) |
-| `registration_number` | MB |
-| `tax_id` / `vat_id` | **not available** (open feed has no PIB) |
-| `legal_name` | `PoslovnoIme` |
-| `normalized_name` | derived (uppercase/trim of `PoslovnoIme`) |
-| `company_type` | `NazivPravneForme` |
-| `status` | `NazivStatus` (map: Активан→active, У стечају→bankruptcy, У ликвидацији→liquidation, У принудној ликвидацији→compulsory_liquidation) |
-| `incorporation_date` | `DatumOsnivanja` |
-| `dissolution_date` | **not available** |
-| `registered_address` | **not available** (only municipality, not street) |
-| `municipality` | `NazivOpstine` (+ `SifraOpstine`) |
-| `region` | derive from municipality code if needed |
-| `country` | `Serbia` (constant) |
-| `source_url` | `https://openapi.apr.gov.rs/api/opendata/companies` |
-| `source_name` | `APR Registar privrednih drustava` |
-| `source_retrieved_at` | download timestamp / `DatumPreseka` |
-| `raw_record` | full source object |
+## Validation rules
 
-Financials (revenue, profit, assets, employees) come from the financial-statements
-dataset joined on MB.
-
-## Reference code lists to obtain
-
-- `SifraOpstine` / `SifraMesta` → municipality/place lookup (RZS / APR code list).
-- `SifraDelatnosti` → KD2010 (Serbian classification of activities, NACE Rev.2
-  aligned) lookup for human-readable activity names.
+- Reject a payload without `DatumPreseka` or `Podaci`.
+- Treat registration numbers as strings and validate eight digits where the
+  register guarantees that format.
+- Alert when the nested field set changes; do not silently discard new fields.
+- Preserve the previous raw snapshot and content hash.
+- For representative changes, model deletions/replacements explicitly; never
+  infer that a missing row is historical without APR's change semantics.
+- Never store raw JMBG, passport, identity-card, foreigner-number or
+  refugee-card values in ClickHouse. If approved identity linking is necessary,
+  transform with a secret-keyed HMAC-SHA256 before loading.
+- Never infer statutory beneficial ownership from the public-search `Čланови`
+  membership/shareholder section.

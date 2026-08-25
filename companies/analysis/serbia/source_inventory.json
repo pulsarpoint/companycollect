@@ -2,131 +2,266 @@
   {
     "country": "Serbia",
     "country_slug": "serbia",
-    "source_name": "APR Registar privrednih drustava (Companies) - Open Data API",
+    "source_name": "APR Companies Open Data API",
     "source_type": "official_registry",
-    "organization": "Agencija za privredne registre (APR) / Serbian Business Registers Agency",
+    "organization": "Agencija za privredne registre (APR)",
     "status": "recommended",
     "url": "https://data.gov.rs/sr/datasets/api-za-registar-privrednikh-drushtava/",
     "bulk_download_url": "https://openapi.apr.gov.rs/api/opendata/companies",
     "api_base_url": "https://openapi.apr.gov.rs/api/opendata/companies",
-    "formats": ["json"],
-    "license": "public_domain",
+    "formats": [
+      "json"
+    ],
+    "license": "Serbian Open Data License (sodl / SODL_1_0)",
     "access": "public",
     "requires_authentication": false,
     "requires_payment": false,
-    "rate_limits": "unknown (single GET returns full ~57MB snapshot)",
-    "fields_observed": ["maticni_broj (key)", "PoslovnoIme", "SifraOpstine", "NazivOpstine", "NazivStatus", "DatumOsnivanja", "NazivPravneForme", "SifraDelatnosti"],
-    "data_freshness": "monthly (DatumPreseka 2026-05-31 at retrieval)",
-    "record_count": 133357,
-    "downloaded_files": ["raw/api/apr_companies_full.json"],
-    "notes": "Official national company registry, public domain. Keyed by maticni broj. No PIB/VAT, no directors/shareholders, no entrepreneurs in this open feed."
+    "rate_limits": "unknown; one GET returns the complete snapshot",
+    "fields_observed": [
+      "maticni_broj (Podaci map key)",
+      "PoslovnoIme",
+      "SifraOpstine",
+      "NazivOpstine",
+      "NazivStatus",
+      "DatumOsnivanja",
+      "NazivPravneForme",
+      "SifraDelatnosti"
+    ],
+    "data_freshness": "monthly; live DatumPreseka 2026-07-31",
+    "record_count": 133634,
+    "downloaded_files": [
+      "raw/api/apr_companies_2026-07-31.json",
+      "raw/api/apr_companies_2026-07-31.json.metadata.json",
+      "raw/pages/data_gov_rs_apr_companies_2026-08-24.html"
+    ],
+    "notes": "Official company backbone. No PIB, street address, representatives, directors, procurists, members, entrepreneurs or beneficial owners."
   },
   {
     "country": "Serbia",
     "country_slug": "serbia",
-    "source_name": "APR Registar finansijskih izvestaja (Financial Statements) - Open Data API",
+    "source_name": "APR Status and Other Business Data — one-off delivery",
+    "source_type": "official_registry_delivery",
+    "organization": "Agencija za privredne registre (APR)",
+    "status": "blocked_by_payment",
+    "url": "https://www.apr.gov.rs/usluge/epodaci-na-zahtev-korisnika/statusni-i-drugi-poslovni-podaci.2410.html",
+    "bulk_download_url": null,
+    "api_base_url": null,
+    "formats": [
+      "xls",
+      "xlsx",
+      "mdb"
+    ],
+    "license": "APR paid-service terms",
+    "access": "request",
+    "requires_authentication": false,
+    "requires_payment": true,
+    "rate_limits": null,
+    "fields_observed": [
+      "SP2 expanded company base including PIB",
+      "SP3 legal representatives",
+      "SP4 other representatives, boards and procurists",
+      "SP5 members/founders and ownership",
+      "SP6 branch representatives and procurists"
+    ],
+    "data_freshness": "current extract at fulfillment time; confirm with APR",
+    "record_count": null,
+    "downloaded_files": [
+      "raw/pages/apr_status_data_2026-08-24.html",
+      "raw/pages/apr_data_sets_2026.pdf"
+    ],
+    "notes": "Recommended representative backfill route after purchase. SP3-SP6 require SP2. Published 2026 prices are 25 RSD/entity for SP2 and 5 RSD/entity for each add-on."
+  },
+  {
+    "country": "Serbia",
+    "country_slug": "serbia",
+    "source_name": "APR Automated Data Delivery Web Service",
+    "source_type": "official_registry_web_service",
+    "organization": "Agencija za privredne registre (APR)",
+    "status": "blocked_by_payment",
+    "url": "https://www.apr.gov.rs/usluge/epodaci-na-zahtev-korisnika/automatizovano-izdavanje-podataka-%28veb-servis%29.2413.html",
+    "bulk_download_url": null,
+    "api_base_url": null,
+    "formats": [
+      "web_service"
+    ],
+    "license": "contract",
+    "access": "authenticated contracted access",
+    "requires_authentication": true,
+    "requires_payment": true,
+    "rate_limits": "per contract; not publicly documented",
+    "fields_observed": [
+      "all publicly available status-register data groups",
+      "daily/time-period changes",
+      "selected groups by maticni_broj"
+    ],
+    "data_freshness": "continuous/daily changes",
+    "record_count": null,
+    "downloaded_files": [
+      "raw/pages/apr_automated_data_delivery_2026-08-24.html"
+    ],
+    "notes": "Recommended incremental representative route after contract. Exact protocol, schema, authentication and fees must be requested from apr-podaci@apr.gov.rs."
+  },
+  {
+    "country": "Serbia",
+    "country_slug": "serbia",
+    "source_name": "APR Public Company Search",
+    "source_type": "official_registry_search_ui",
+    "organization": "Agencija za privredne registre (APR)",
+    "status": "sample_only",
+    "url": "https://pretraga.apr.gov.rs/search",
+    "bulk_download_url": null,
+    "api_base_url": null,
+    "formats": [
+      "html"
+    ],
+    "license": "APR website terms",
+    "access": "manual public search",
+    "requires_authentication": false,
+    "requires_payment": false,
+    "rate_limits": "reCAPTCHA; automated collection prohibited",
+    "data_freshness": "current",
+    "record_count": null,
+    "downloaded_files": [],
+    "fields_observed": [
+      "Физичка лица законски заступници (natural-person legal representatives section)",
+      "Име и презиме (name; inspected value redacted)",
+      "Функција (function; observed Директор)",
+      "ЈМБГ reveal control (value not revealed or copied)",
+      "Самостално заступа (represents independently)",
+      "separate other-representative/director/board/procurist/member sections"
+    ],
+    "notes": "One company was manually inspected on 2026-08-25 for semantic validation only. Use for human spot checks; APR explicitly prohibits applications/scripts and other automatic tools. Company members must not be inferred to be statutory beneficial owners."
+  },
+  {
+    "country": "Serbia",
+    "country_slug": "serbia",
+    "source_name": "APR Central Register of Beneficial Owners (CEV)",
+    "source_type": "official_beneficial_ownership_register",
+    "organization": "Agencija za privredne registre (APR)",
+    "status": "blocked_by_authentication",
+    "url": "https://www.apr.gov.rs/registri/centralna-evidencija-stvarnih-vlasnika/o-evidenciji.2399.html",
+    "bulk_download_url": null,
+    "api_base_url": null,
+    "formats": [
+      "eID_portal",
+      "contracted_web_service"
+    ],
+    "license": "contract / statutory access terms",
+    "access": "restricted eID portal; separate contracted automated service",
+    "requires_authentication": true,
+    "requires_payment": true,
+    "rate_limits": "per contract; not publicly documented",
+    "fields_observed": [
+      "personal name and identity regime",
+      "JMBG or foreign/refugee identity-document fields",
+      "birth, residence and citizenship fields",
+      "beneficial-ownership basis code (OSV/TR)",
+      "ownership/voting percentages where applicable",
+      "acquisition and recording dates",
+      "trust context",
+      "supporting-document metadata",
+      "discrepancy notes"
+    ],
+    "data_freshness": "current register; delivery SLA per contract",
+    "record_count": null,
+    "downloaded_files": [],
+    "notes": "No owner record was accessed. The portal redirected to APR eID/SSO. Fields were cataloged from APR's current public documentation and the 2025 Act. This is not SP3/SP4; privacy/security review is required before ingestion."
+  },
+  {
+    "country": "Serbia",
+    "country_slug": "serbia",
+    "source_name": "APR Financial Statements Open Data API",
     "source_type": "official_registry",
     "organization": "Agencija za privredne registre (APR)",
-    "status": "recommended",
+    "status": "useful_secondary_source",
     "url": "https://data.gov.rs/sr/datasets/api-za-registar-finansijskikh-izveshtaja-baza-fi-za-privredna-drushtva/",
     "bulk_download_url": "https://openapi.apr.gov.rs/api/opendata/companies/financial-statements",
     "api_base_url": "https://openapi.apr.gov.rs/api/opendata/companies/financial-statements",
-    "formats": ["json"],
-    "license": "public_domain",
+    "formats": [
+      "json"
+    ],
+    "license": "Serbian Open Data License (sodl)",
     "access": "public",
     "requires_authentication": false,
     "requires_payment": false,
     "rate_limits": "unknown",
-    "fields_observed": ["maticni_broj (key)", "GodinaFi", "PoslovnoIme", "SifraOpstine", "NazivOpstine", "PoslovnaImovina", "Kapital", "Gubitak", "UkupniPrihodi", "NetoDobitak", "NetoGubitak", "ProsecanBrojZaposlenih"],
-    "data_freshness": "monthly (DatumPreseka 2026-05-31 at retrieval)",
+    "fields_observed": [
+      "maticni_broj (key)",
+      "GodinaFi",
+      "PoslovnoIme",
+      "financial values",
+      "ProsecanBrojZaposlenih"
+    ],
+    "data_freshness": "monthly",
     "record_count": 123455,
-    "downloaded_files": ["raw/api/apr_financial_statements_full.json"],
-    "notes": "Latest available annual financial statement (RGFI) per company. Join to companies on maticni broj."
+    "downloaded_files": [
+      "raw/api/apr_financial_statements.json"
+    ],
+    "notes": "Join to companies on maticni broj. Does not provide representatives."
   },
   {
     "country": "Serbia",
     "country_slug": "serbia",
-    "source_name": "APR Registar udruzenja, zaduzbina i fondacija (NGOs) - Open Data API",
+    "source_name": "APR NGO Open Data API",
     "source_type": "official_registry",
     "organization": "Agencija za privredne registre (APR)",
     "status": "useful_secondary_source",
     "url": "https://data.gov.rs/sr/datasets/api-za-registar-zaduzbina-i-fondacija-registar-predstavnistava-stranih-zaduzbina-i-fondacija-registar-udruzenja-i-registar-stranih-udruzenja/",
     "bulk_download_url": "https://openapi.apr.gov.rs/api/opendata/ngo",
     "api_base_url": "https://openapi.apr.gov.rs/api/opendata/ngo",
-    "formats": ["json"],
-    "license": "public_domain",
+    "formats": [
+      "json"
+    ],
+    "license": "Serbian Open Data License (sodl)",
     "access": "public",
     "requires_authentication": false,
     "requires_payment": false,
     "rate_limits": "unknown",
-    "fields_observed": ["maticni_broj (key)", "Naziv", "SifraMesta", "SifraDelatnosti", "DatumOsnivanja", "TipLica", "OblastiOstvarivanjaCiljeva"],
-    "data_freshness": "monthly (DatumPreseka 2026-05-31 at retrieval)",
+    "fields_observed": [
+      "maticni_broj (key)",
+      "Naziv",
+      "SifraMesta",
+      "SifraDelatnosti",
+      "DatumOsnivanja",
+      "TipLica",
+      "OblastiOstvarivanjaCiljeva"
+    ],
+    "data_freshness": "monthly",
     "record_count": 40547,
-    "downloaded_files": ["raw/api/apr_ngo_full.json"],
-    "notes": "Associations, foundations, endowments and foreign equivalents. Not commercial companies but useful for full legal-entity coverage."
+    "downloaded_files": [
+      "raw/api/apr_ngo.json"
+    ],
+    "notes": "Useful for non-company legal entities, not commercial-company representatives."
   },
   {
     "country": "Serbia",
     "country_slug": "serbia",
-    "source_name": "APR Automated Data Delivery Web-Service (veb-servis)",
-    "source_type": "official_registry",
-    "organization": "Agencija za privredne registre (APR)",
-    "status": "blocked_by_payment",
-    "url": "https://www.apr.gov.rs/usluge/epodaci-na-zahtev-korisnika/automatizovano-izdavanje-podataka-(veb-servis).2413.html",
-    "bulk_download_url": null,
-    "api_base_url": null,
-    "formats": ["web-service"],
-    "license": "contract / terms of use",
-    "access": "restricted",
-    "requires_authentication": true,
-    "requires_payment": true,
-    "rate_limits": "per contract",
-    "fields_observed": [],
-    "data_freshness": "real-time / continuous",
-    "record_count": null,
-    "downloaded_files": [],
-    "notes": "Covers ALL status registers incl. entrepreneurs (preduzetnici) and Central Register of Beneficial Owners. Free for state bodies; paid for banks/businesses. Contact apr-podaci@apr.gov.rs. Use this for data the open API omits."
-  },
-  {
-    "country": "Serbia",
-    "country_slug": "serbia",
-    "source_name": "OpenCorporates - Serbian Business Registrations Agency (register 224)",
+    "source_name": "OpenCorporates Serbia",
     "source_type": "aggregator",
     "organization": "OpenCorporates",
     "status": "useful_secondary_source",
     "url": "https://opencorporates.com/registers/224",
     "bulk_download_url": null,
     "api_base_url": "https://api.opencorporates.com/",
-    "formats": ["json", "html"],
-    "license": "restricted (OpenCorporates terms; bulk requires agreement)",
-    "access": "public (search) / restricted (bulk/API)",
+    "formats": [
+      "json",
+      "html"
+    ],
+    "license": "OpenCorporates terms",
+    "access": "public search; restricted API/bulk",
     "requires_authentication": true,
     "requires_payment": true,
-    "rate_limits": "API tier dependent",
-    "fields_observed": ["company_number", "name", "status", "address", "officers"],
+    "rate_limits": "tier dependent",
+    "fields_observed": [
+      "company_number",
+      "name",
+      "status",
+      "address",
+      "officers"
+    ],
     "data_freshness": "varies",
     "record_count": null,
-    "notes": "Mirror of APR data with English UI. Use only for cross-check; prefer the primary APR source."
-  },
-  {
-    "country": "Serbia",
-    "country_slug": "serbia",
-    "source_name": "Statistical Office of the Republic of Serbia - Open Data",
-    "source_type": "statistical_office",
-    "organization": "Republicki zavod za statistiku (RZS)",
-    "status": "not_company_data",
-    "url": "https://opendata.stat.gov.rs/odata/?id=en-us",
-    "bulk_download_url": null,
-    "api_base_url": "https://data.stat.gov.rs/",
-    "formats": ["json", "csv", "odata"],
-    "license": "open (statistical)",
-    "access": "public",
-    "requires_authentication": false,
-    "requires_payment": false,
-    "rate_limits": null,
-    "fields_observed": ["aggregate employment/business-demography by activity and municipality"],
-    "data_freshness": "periodic",
-    "record_count": null,
-    "notes": "Aggregate business statistics only, NOT an entity-level company list. Useful context, not for company records."
+    "downloaded_files": [],
+    "notes": "Fallback comparison only. Officer coverage and freshness were not established; prefer APR."
   }
 ]

@@ -6,7 +6,7 @@
 - Source type: official_registry
 - Organization: Agencija za privredne registre (APR) — Registar udruženja, zadužbina i fondacija
 - URL: https://openapi.apr.gov.rs/api/opendata/ngo
-- License: public_domain
+- License: Serbian Open Data License (`sodl`)
 - Access: public (plain GET)
 - Freshness: monthly (DatumPreseka 2026-05-31)
 - Record shape: JSON `{DatumPreseka, Podaci:{<maticni_broj>:{...}}}`

@@ -15,6 +15,14 @@
         group: root
         mode: "0755"
 
+    - name: Create ClickHouse config override directory
+      ansible.builtin.file:
+        path: "{{ clickhouse_dir }}/config.d"
+        state: directory
+        owner: root
+        group: root
+        mode: "0755"
+
     - name: Remove stray editor swap file
       ansible.builtin.file:
         path: "{{ clickhouse_dir }}/.swp"
@@ -25,6 +33,15 @@
       ansible.builtin.copy:
         src: docker-compose.yml
         dest: "{{ clickhouse_dir }}/docker-compose.yml"
+        owner: root
+        group: root
+        mode: "0644"
+      notify: Apply compose
+
+    - name: Copy system log retention configuration
+      ansible.builtin.copy:
+        src: config.d/system-log-retention.xml
+        dest: "{{ clickhouse_dir }}/config.d/system-log-retention.xml"
         owner: root
         group: root
         mode: "0644"

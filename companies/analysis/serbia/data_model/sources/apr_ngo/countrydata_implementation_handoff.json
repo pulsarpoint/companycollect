@@ -11,7 +11,7 @@
     "source_type": "official_registry",
     "organization": "Agencija za privredne registre (APR)",
     "source_url": "https://openapi.apr.gov.rs/api/opendata/ngo",
-    "license": "public_domain",
+    "license": "sodl",
     "access": "public",
     "data_freshness": "monthly",
     "attribution": "Agencija za privredne registre (APR) — data.gov.rs"

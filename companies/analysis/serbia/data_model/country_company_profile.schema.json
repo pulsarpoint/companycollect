@@ -1,7 +1,7 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "title": "Serbia Company Profile",
-  "description": "Country-specific company profile for Serbia. APR (Serbian Business Registers Agency) publishes the company register and the latest annual financial statements as public-domain JSON open-data APIs, both keyed on the matični broj (8-digit registration number) and refreshed monthly. The open feed gives identity, status, legal form, incorporation date, municipality, activity (KD2010), plus a one-year financial summary — but NOT PIB/VAT, street address, directors, shareholders, beneficial owners, sole traders, or multi-year history; those require the paid APR web service. Join companies ↔ financials on matični broj.",
+  "description": "Country-specific company profile for Serbia. APR publishes the company register and latest annual financial statements as open JSON, keyed on the 8-digit matični broj. Representatives require SP3/SP4 status data; beneficial owners are a separate restricted APR CEV source. Availability wrappers distinguish 'not acquired' from a confirmed empty result.",
   "type": "object",
   "required": ["country", "country_slug", "registration", "source_provenance"],
   "properties": {
@@ -33,7 +33,7 @@
     "legal_identity": {
       "type": "object",
       "properties": {
-        "legal_name": { "type": ["string", "null"], "description": "PoslovnoIme (Latin).", "x-source": "apr_companies", "x-source-path": "PoslovnoIme" },
+        "legal_name": { "type": ["string", "null"], "description": "PoslovnoIme as supplied; values can be Latin, Cyrillic, or mixed script.", "x-source": "apr_companies", "x-source-path": "PoslovnoIme" },
         "legal_form": { "type": ["string", "null"], "description": "NazivPravneForme (Cyrillic; DOO, AD, Zadruga, …).", "x-source": "apr_companies", "x-source-path": "NazivPravneForme" }
       }
     },
@@ -87,18 +87,98 @@
       }
     },
     "officers": {
-      "type": "array",
-      "description": "PLANNING-ONLY. Directors/representatives — not in open data (paid APR web service). PERSONAL DATA.",
+      "type": "object",
+      "description": "Representatives, directors, board members and procurists. SP3/SP4 target model; not present in APR Companies Open Data.",
       "x-source": "apr_webservice",
       "x-access": "paid",
-      "items": { "type": "object", "properties": { "name": { "type": "string", "x-personal-data": true }, "role": { "type": ["string", "null"] } } }
+      "required": ["availability", "records"],
+      "properties": {
+        "availability": {
+          "type": "string",
+          "description": "Acquisition state. Only complete/partial/not_applicable can make an empty records array meaningful as an observed result.",
+          "enum": ["not_acquired", "complete", "partial", "not_applicable", "access_restricted"]
+        },
+        "records": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": ["relationship_uid", "party_kind", "name", "relationship_kind", "role_code"],
+            "properties": {
+              "relationship_uid": {"type": "string", "pattern": "^[0-9a-f]{64}$", "description": "Stable mapper-owned relationship key; do not derive from name alone."},
+              "source_person_key": {"type": ["string", "null"], "description": "Source-stable person key if APR supplies one."},
+              "party_kind": {"type": "string", "enum": ["natural_person", "legal_entity", "unknown"]},
+              "name": {"type": "string", "x-personal-data": true},
+              "relationship_kind": {"type": "string", "description": "Raw/normalized APR section, such as legal representative, director or procurist."},
+              "role_code": {"type": "string", "description": "Canonical company_person_role_type value."},
+              "function_title": {"type": ["string", "null"]},
+              "represents_independently": {"type": ["boolean", "null"]},
+              "representation_method_raw": {"type": ["string", "null"]},
+              "personal_identifier_kind": {"type": ["string", "null"], "description": "Identifier type only; raw JMBG/passport/card value is forbidden."},
+              "personal_identifier_hmac": {"type": ["string", "null"], "pattern": "^[0-9a-f]{64}$", "x-restricted": true, "description": "Optional keyed HMAC-SHA256; never a plain hash or raw identifier."},
+              "source_effective_from": {"type": ["string", "null"], "format": "date"},
+              "source_effective_to": {"type": ["string", "null"], "format": "date"},
+              "source_record_uid": {"type": ["string", "null"], "description": "APR delivery record key/envelope value once known."},
+              "observed_at": {"type": ["string", "null"], "format": "date-time"}
+            }
+          }
+        }
+      }
     },
     "beneficial_owners": {
-      "type": "array",
-      "description": "PLANNING-ONLY. Central Register of Beneficial Owners — not in open data (paid APR web service). PERSONAL DATA.",
-      "x-source": "apr_webservice",
-      "x-access": "paid",
-      "items": { "type": "object", "properties": { "name": { "type": "string", "x-personal-data": true }, "basis": { "type": ["string", "null"] } } }
+      "type": "object",
+      "description": "Separate APR Central Register of Beneficial Owners (CEV) target model. It is not part of SP3/SP4 or the open company feed.",
+      "x-source": "apr_beneficial_owners",
+      "x-access": "restricted",
+      "required": ["availability", "records"],
+      "properties": {
+        "availability": {
+          "type": "string",
+          "description": "Acquisition state. not_acquired/access_restricted must never be interpreted as a confirmed absence of owners.",
+          "enum": ["not_acquired", "complete", "partial", "not_applicable", "access_restricted"]
+        },
+        "records": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": ["owner_uid", "person_kind", "name", "basis_code"],
+            "properties": {
+              "owner_uid": {"type": "string", "pattern": "^[0-9a-f]{64}$", "description": "Stable mapper-owned owner-relationship key; do not derive from name alone."},
+              "source_person_key": {"type": ["string", "null"]},
+              "person_kind": {"type": "string", "enum": ["domestic_person", "foreign_person", "refugee_or_displaced_person"]},
+              "name": {"type": "string", "x-personal-data": true},
+              "personal_identifier_kind": {"type": ["string", "null"], "description": "Type only; raw JMBG/passport/card values are forbidden."},
+              "personal_identifier_hmac": {"type": ["string", "null"], "pattern": "^[0-9a-f]{64}$", "x-restricted": true},
+              "personal_identifier_issuing_country_code": {"type": ["string", "null"], "pattern": "^[A-Z]{2}$"},
+              "birth_date": {"type": ["string", "null"], "format": "date", "x-restricted": true},
+              "birth_place": {"type": ["string", "null"], "x-restricted": true},
+              "birth_country_code": {"type": ["string", "null"], "pattern": "^[A-Z]{2}$"},
+              "residence_country_code": {"type": ["string", "null"], "pattern": "^[A-Z]{2}$"},
+              "stay_country_code": {"type": ["string", "null"], "pattern": "^[A-Z]{2}$"},
+              "citizenship_country_codes": {"type": "array", "items": {"type": "string", "pattern": "^[A-Z]{2}$"}},
+              "basis_code": {"type": "string", "description": "Normalized APR OSV/TR code."},
+              "basis_label_raw": {"type": ["string", "null"]},
+              "ownership_percentage": {"type": ["number", "null"], "minimum": 0, "maximum": 100},
+              "voting_rights_percentage": {"type": ["number", "null"], "minimum": 0, "maximum": 100},
+              "acquired_on": {"type": ["string", "null"], "format": "date"},
+              "registered_on": {"type": ["string", "null"], "format": "date"},
+              "documents_registered_on": {"type": ["string", "null"], "format": "date"},
+              "has_supporting_documents": {"type": "boolean"},
+              "supporting_document_count": {"type": "integer", "minimum": 0},
+              "has_discrepancy": {"type": "boolean"},
+              "discrepancy_note": {"type": ["string", "null"], "x-restricted": true},
+              "trust_legal_form": {"type": ["string", "null"]},
+              "trust_name": {"type": ["string", "null"]},
+              "trust_registered_address": {"type": ["string", "null"]},
+              "trust_identifier_kind": {"type": ["string", "null"]},
+              "trust_identifier_value": {"type": ["string", "null"], "x-restricted": true},
+              "trust_origin_country_code": {"type": ["string", "null"], "pattern": "^[A-Z]{2}$"},
+              "trust_relationship_kind": {"type": ["string", "null"]},
+              "source_record_uid": {"type": ["string", "null"]},
+              "observed_at": {"type": ["string", "null"], "format": "date-time"}
+            }
+          }
+        }
+      }
     },
     "source_provenance": {
       "type": "array",

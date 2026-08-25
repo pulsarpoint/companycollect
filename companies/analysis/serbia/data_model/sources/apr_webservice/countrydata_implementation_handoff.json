@@ -19,7 +19,7 @@
   "access": {
     "requires_authentication": true,
     "requires_payment": true,
-    "credential_env_vars": ["APR_WEBSERVICE_USER", "APR_WEBSERVICE_PASSWORD"]
+    "credential_env_vars": []
   },
   "transport": {
     "access_mode": "unknown",
@@ -47,12 +47,12 @@
   "keys": { "primary_keys": ["maticni_broj"], "join_keys": ["maticni_broj", "pib"], "dedupe_keys": ["maticni_broj"] },
   "mapping_rules": {
     "tax_id": "Planning-only: PIB.",
-    "owners": "Planning-only: stvarni_vlasnici[] (beneficial owners).",
-    "officers": "Planning-only: zastupnici[]/direktori.",
-    "financials": "Planning-only: multi-year RGFI history.",
+    "owners": "Not supplied by SP3/SP4. Integrate the separate apr_beneficial_owners source; never infer CEV ownership from company members.",
+    "officers": "Planning-only: SP3 legal representatives and SP4 other representatives/procurists/boards.",
+    "financials": "Not available through this status-register web service according to APR.",
     "sole_traders": "Planning-only: preduzetnici[] (separate register)."
   },
-  "fixture_requirements": ["planning-only: synthetic record with PIB + directors + beneficial owners + multi-year financials"],
+  "fixture_requirements": ["planning-only: synthetic record only after APR supplies the actual SP3/SP4 schema"],
   "live_test_plan": {
     "smoke": "Not applicable — paid/contract.",
     "full": "Not applicable — requires an APR contract and credentials."
@@ -60,6 +60,8 @@
   "blockers": [
     "Requires authentication + payment (contract). Free for state bodies only.",
     "Contact apr-podaci@apr.gov.rs.",
-    "Personal data (directors, beneficial owners) — GDPR-equivalent handling."
+    "Exact protocol, authentication, field schema and rate limits are not publicly documented.",
+    "Representative personal data requires documented lawful handling.",
+    "Beneficial ownership is a separate APR CEV source and contract, not an SP3/SP4 field group."
   ]
 }

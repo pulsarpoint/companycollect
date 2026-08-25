@@ -1,0 +1,82 @@
+{
+  "country": "Serbia",
+  "country_slug": "serbia",
+  "source_slug": "apr_beneficial_owners",
+  "source_identity": "serbia_apr_beneficial_owners",
+  "source_package": "aprbeneficialowners",
+  "env_prefix": "APR_BENEFICIAL_OWNERS",
+  "implementation_status": "blocked_authentication",
+  "source": {
+    "source_name": "APR Central Register of Beneficial Owners (CEV)",
+    "source_type": "official_beneficial_ownership_register",
+    "organization": "Agencija za privredne registre (APR)",
+    "source_url": "https://www.apr.gov.rs/registri/centralna-evidencija-stvarnih-vlasnika/o-evidenciji.2399.html",
+    "license": "contract / statutory access terms",
+    "access": "restricted eID portal / separate contracted web service",
+    "data_freshness": "current register; delivery SLA per contract",
+    "attribution": "APR"
+  },
+  "access": {
+    "requires_authentication": true,
+    "requires_payment": true,
+    "credential_env_vars": []
+  },
+  "transport": {
+    "access_mode": "unknown_contracted_web_service",
+    "base_url": null,
+    "download_url": null,
+    "http_method": null,
+    "headers_required": [],
+    "formats": ["web-service"],
+    "compression": null,
+    "encoding": "utf-8",
+    "record_path": null,
+    "total_results_path": null,
+    "pagination": {"type": "unknown", "page_param": null, "page_start": null, "page_size": null, "page_size_param": null, "next_page_path": null},
+    "rate_limit": "per contract"
+  },
+  "snapshot": {
+    "strategy": "contract_dependent",
+    "file_extension": null,
+    "preserve_raw_download": true
+  },
+  "parsing": {
+    "record_type_hint": "AprBeneficialOwnerRecord",
+    "date_formats": [],
+    "datetime_formats": [],
+    "number_formats": [],
+    "malformed_record_policy": "quarantine",
+    "notes": "Implement only after APR supplies the service specification and privacy/security review approves processing. Raw source preservation must use encrypted restricted storage, not the normal open-data bucket."
+  },
+  "keys": {
+    "primary_keys": ["maticni_broj", "owner_uid"],
+    "join_keys": ["maticni_broj"],
+    "dedupe_keys": ["maticni_broj", "owner_uid", "state_fingerprint"]
+  },
+  "mapping_rules": {
+    "company_id": "Map APR matični broj as an 8-digit string.",
+    "owner_uid": "Stable SHA-256 relationship key from source identity + normalized person key + basis discriminator; do not build it from a name alone.",
+    "personal_identifiers": "Normalize only in a protected transform, emit keyed HMAC-SHA256, then discard the raw identifier before ClickHouse.",
+    "basis": "Preserve raw APR code/label; normalize known OSV/TR code variants separately.",
+    "percentages": "Parse as Decimal(5,2), nullable, 0..100.",
+    "country_codes": "Map the APR code list to ISO-3166-1 alpha-2 while retaining raw source payload in restricted storage.",
+    "history": "Append immutable observations and resolve a ReplacingMergeTree current row with explicit is_current tombstones.",
+    "members": "Never infer beneficial ownership from the public-search Članovi section."
+  },
+  "fixture_requirements": [
+    "After contracting, create redacted/synthetic fixtures for each person_kind.",
+    "Cover OSV1 percentage, OSV2/OSV3 control, OSV4/TR trust, OSV5 foundation and OSV6/OSV7 fallback bases.",
+    "Cover identifier omission, source deletion/tombstone, discrepancy and supporting-document metadata.",
+    "Do not commit real names, JMBG, passport/card numbers, birth details or supporting documents."
+  ],
+  "live_test_plan": {
+    "smoke": "With approved test credentials, fetch one APR-provided test entity; assert key mapping and that no raw personal identifier reaches logs, artifacts or ClickHouse.",
+    "full": "Reconcile source counts, basis-code coverage, tombstones and duplicate owner keys; test HMAC determinism in the protected transform and verify column-level access controls."
+  },
+  "blockers": [
+    "The CEV portal requires APR eID/SSO and no user credentials were supplied.",
+    "The contracted automated-delivery protocol, schema, change semantics and fees are not publicly documented.",
+    "A lawful basis, data-protection impact review, retention policy and access controls are required before ingesting personal data.",
+    "APR must confirm whether discrepancy and supporting-document metadata are included in the contracted service."
+  ]
+}

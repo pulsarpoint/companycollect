@@ -11,7 +11,7 @@
     "source_type": "official_registry",
     "organization": "Agencija za privredne registre (APR)",
     "source_url": "https://openapi.apr.gov.rs/api/opendata/companies",
-    "license": "public_domain",
+    "license": "sodl",
     "access": "public",
     "data_freshness": "monthly",
     "attribution": "Agencija za privredne registre (APR) — data.gov.rs"
@@ -41,8 +41,8 @@
     "date_formats": ["2006-01-02"],
     "datetime_formats": [],
     "number_formats": [],
-    "malformed_record_policy": "log_warn_and_continue",
-    "notes": "Top-level object: {DatumPreseka, Podaci}. Podaci is a map keyed by maticni_broj — stream as a map, do not assume an array. ~57MB; use a streaming JSON decoder over Podaci. Cyrillic in status/legal-form/municipality."
+    "malformed_record_policy": "reject_snapshot",
+    "notes": "Top-level object: {DatumPreseka, Podaci}. Podaci is a map keyed by maticni_broj — stream as a map, do not assume an array. ~58MB; use a streaming JSON decoder over Podaci. The complete 2026-07-31 scan had no missing/null/empty fields. Use Date32 for incorporation dates because the minimum is 1918-12-22. Preserve source names because they can contain mixed scripts and whitespace/control artifacts."
   },
   "keys": { "primary_keys": ["maticni_broj"], "join_keys": ["maticni_broj"], "dedupe_keys": ["maticni_broj"] },
   "mapping_rules": {
@@ -63,7 +63,25 @@
   ],
   "live_test_plan": {
     "smoke": "GET the endpoint, decode {DatumPreseka, Podaci}, sample 100 map entries.",
-    "full": "Stream the full Podaci map monthly, key snapshots by DatumPreseka, upsert by maticni_broj."
+    "full": "Stream the full Podaci map, key observations by (maticni_broj, DatumPreseka), append accepted history, then rebuild and atomically exchange the current table from the newest complete accepted snapshot."
+  },
+  "quality_contract": {
+    "expected_record_fields": ["PoslovnoIme", "SifraOpstine", "NazivOpstine", "NazivStatus", "DatumOsnivanja", "NazivPravneForme", "SifraDelatnosti"],
+    "registration_number_regex": "^[0-9]{8}$",
+    "municipality_code_regex": "^[0-9]{5}$",
+    "activity_code_regex": "^[0-9]{4}$",
+    "require_non_empty_source_fields": true,
+    "record_count_review_threshold_percent": 5,
+    "unknown_status_policy": "reject_until_mapped"
+  },
+  "clickhouse": {
+    "proposal_document": "companies/analysis/serbia/data_model/apr_companies_full_analysis_and_clickhouse.md",
+    "tables": [
+      "corpscout.rs_apr_company_snapshot_runs",
+      "corpscout.rs_apr_company_observations",
+      "corpscout.rs_apr_companies_current"
+    ],
+    "current_publication_strategy": "staging_table_then_atomic_exchange"
   },
   "blockers": []
 }

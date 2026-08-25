@@ -5,11 +5,11 @@ from playwright.async_api import Page, async_playwright
 
 
 CDP_URL = "http://127.0.0.1:9222"
-RATSIT_URL = "https://www.ratsit.se/5562434182-T.I.R._Byggnads_Aktiebolaget_Rajaharju"
 CONTENT_SELECTOR = "main .main-inner"
 
 
-async def fetch_ratsit_markdown(page: Page) -> str:
+async def fetch_ratsit_markdown(page: Page, company_id: str) -> str:
+    RATSIT_URL = f"https://www.ratsit.se/{company_id}"
     response = await page.goto(
         RATSIT_URL,
         wait_until="domcontentloaded",
@@ -29,7 +29,7 @@ async def fetch_ratsit_markdown(page: Page) -> str:
     ).strip()
 
 
-async def crawl_ratsit_markdown() -> str:
+async def crawl_ratsit_markdown(company_id: str) -> str:
     """Crawl the fixed Ratsit company page through the local Chromium instance."""
     async with async_playwright() as playwright:
         browser = await playwright.chromium.connect_over_cdp(
@@ -41,13 +41,13 @@ async def crawl_ratsit_markdown() -> str:
 
         page = await browser.contexts[0].new_page()
         try:
-            return await fetch_ratsit_markdown(page)
+            return await fetch_ratsit_markdown(page, company_id)
         finally:
             await page.close()
 
 
 async def main() -> None:
-    print(await crawl_ratsit_markdown())
+    print(await crawl_ratsit_markdown("5562434182"))
 
 
 if __name__ == "__main__":
