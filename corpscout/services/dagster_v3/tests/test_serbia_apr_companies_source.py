@@ -7,6 +7,8 @@ import pytest
 
 from dagster_v3.defs.serbia_apr_companies import tables
 from dagster_v3.defs.serbia_apr_companies.resources import (
+    APR_INTERMEDIATE_CA_PATH,
+    apr_companies_http_session,
     sync_apr_companies_snapshot,
 )
 
@@ -176,6 +178,17 @@ def test_snapshot_refuses_an_implausibly_small_company_population() -> None:
             minimum_record_count=3,
             download_attempts=1,
         )
+
+
+def test_http_session_pins_apr_intermediate_without_disabling_tls() -> None:
+    session = apr_companies_http_session()
+    try:
+        assert session.verify == str(APR_INTERMEDIATE_CA_PATH)
+        assert APR_INTERMEDIATE_CA_PATH.read_text(encoding="ascii").startswith(
+            "-----BEGIN CERTIFICATE-----"
+        )
+    finally:
+        session.close()
 
 
 def test_raw_snapshot_asset_is_registered_as_the_open_data_source_boundary() -> None:

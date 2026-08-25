@@ -17,6 +17,12 @@ The live response verified on 2026-08-25 contained 133,634 companies and was
 `HEAD` for this endpoint and its `GET` response supplied neither
 `Content-Length` nor `Last-Modified`.
 
+APR also omits its leaf certificate's issuer intermediate from the TLS
+handshake. The asset pins the advertised SSL2BUY EMEA intermediate (SHA-256
+fingerprint `58:F0:F7:56:75:8E:93:FB:0B:6B:17:A3:6A:38:50:47:5D:68:BC:0D:6C:99:CB:E2:2A:1B:18:35:1C:89:FF:1F`), whose signature was verified against
+Certifi's trusted Sectigo Public Server Authentication Root R46. TLS and
+hostname verification remain enabled; the asset never uses `verify=False`.
+
 ## 2. Ingest mode and why
 
 This is a non-partitioned full-snapshot download. One request returns the whole

@@ -22,6 +22,10 @@ DOWNLOAD_CHUNK_BYTES = 1024 * 1024
 MINIMUM_SNAPSHOT_BYTES = 10_000_000
 MINIMUM_RECORD_COUNT = 100_000
 USER_AGENT = "Corpscout/1.0 (Serbia APR companies open-data ingestion)"
+APR_INTERMEDIATE_CA_PATH = (
+    Path(__file__).with_name("certificates")
+    / "ssl2buy-emea-rsa-domain-validation-secure-server-ca.pem"
+)
 
 
 @dataclass(frozen=True)
@@ -51,6 +55,9 @@ def apr_companies_http_session() -> requests.Session:
             "User-Agent": USER_AGENT,
         }
     )
+    # APR serves only its leaf certificate. Pin its issuer intermediate so
+    # requests can build the chain while keeping hostname/TLS verification on.
+    client.session.verify = str(APR_INTERMEDIATE_CA_PATH)
     return client.session
 
 
