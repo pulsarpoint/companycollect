@@ -4,6 +4,9 @@ import {
   AgentOutputError,
   MAX_MEMORY_CONTENT_LENGTH,
   MAX_QUERIES_PER_TURN,
+  MAX_SUGGESTION_DESCRIPTION_LENGTH,
+  MAX_SUGGESTION_PATTERN_LENGTH,
+  MAX_SUGGESTION_YIELD_BASIS_LENGTH,
   MAX_SUGGESTIONS_PER_RUN,
   parseAgentTurnOutput,
 } from "~/agents/geocode-analysis-contract";
@@ -170,6 +173,53 @@ describe("parseAgentTurnOutput: final turns", () => {
         }),
       ),
     ).toThrow(new RegExp(`At most ${MAX_SUGGESTIONS_PER_RUN} suggestions`));
+  });
+
+  it("clips suggestion free text, which the next run's prompt has to carry", () => {
+    const output = parseAgentTurnOutput(
+      finalPayload({
+        suggestions: [
+          {
+            pattern: "p".repeat(MAX_SUGGESTION_PATTERN_LENGTH + 50),
+            description: "d".repeat(MAX_SUGGESTION_DESCRIPTION_LENGTH + 50),
+            expected_yield: 1,
+            yield_basis: "y".repeat(MAX_SUGGESTION_YIELD_BASIS_LENGTH + 50),
+            confidence: "low",
+            examples: [],
+          },
+        ],
+      }),
+    );
+    if (output.action !== "final") throw new Error("expected a final turn");
+    expect(output.suggestions[0]?.pattern).toHaveLength(MAX_SUGGESTION_PATTERN_LENGTH);
+    expect(output.suggestions[0]?.description).toHaveLength(
+      MAX_SUGGESTION_DESCRIPTION_LENGTH,
+    );
+    expect(output.suggestions[0]?.yieldBasis).toHaveLength(
+      MAX_SUGGESTION_YIELD_BASIS_LENGTH,
+    );
+  });
+
+  it("clamps an implausible yield instead of failing the run at the INSERT", () => {
+    // expected_yield is a bigint column at the end of a minutes-long run; a
+    // hallucinated 1e30 must not be what discards the report.
+    const output = parseAgentTurnOutput(
+      finalPayload({
+        suggestions: [
+          {
+            pattern: "p",
+            description: "d",
+            expected_yield: 1e30,
+            yield_basis: "",
+            confidence: "low",
+            examples: [{ address: "a", geocode_status: "", count: 1e30, note: "" }],
+          },
+        ],
+      }),
+    );
+    if (output.action !== "final") throw new Error("expected a final turn");
+    expect(output.suggestions[0]?.expectedYield).toBe(Number.MAX_SAFE_INTEGER);
+    expect(output.suggestions[0]?.examples[0]?.count).toBe(Number.MAX_SAFE_INTEGER);
   });
 
   it("refuses a suggestion with a negative yield or a missing pattern", () => {

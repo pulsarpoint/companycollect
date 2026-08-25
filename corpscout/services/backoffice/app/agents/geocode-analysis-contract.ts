@@ -130,6 +130,12 @@ export const MAX_SUGGESTIONS_PER_RUN = 25;
 export const MAX_MEMORY_ENTRIES_PER_RUN = 20;
 export const MAX_MEMORY_KEY_LENGTH = 120;
 export const MAX_MEMORY_CONTENT_LENGTH = 8_000;
+/** Suggestions are read back into the NEXT run's prompt as well as rendered,
+ * so their free text is capped for the same reason memory is: unbounded text
+ * from one run becomes unbounded prompt in every run after it. */
+export const MAX_SUGGESTION_PATTERN_LENGTH = 200;
+export const MAX_SUGGESTION_DESCRIPTION_LENGTH = 4_000;
+export const MAX_SUGGESTION_YIELD_BASIS_LENGTH = 2_000;
 export const MAX_REPORT_LENGTH = 200_000;
 export const MAX_EXAMPLES_PER_SUGGESTION = 20;
 
@@ -300,7 +306,10 @@ function asCount(value: unknown, field: string): number {
   if (typeof numeric !== "number" || !Number.isFinite(numeric) || numeric < 0) {
     throw new AgentOutputError(`"${field}" must be a non-negative number.`);
   }
-  return Math.round(numeric);
+  // Clamped, not rejected: an implausible count is a bad estimate, not a
+  // reason to throw away an otherwise good report -- and an unclamped one
+  // would fail the bigint INSERT at the very end of a minutes-long run.
+  return Math.min(Math.round(numeric), Number.MAX_SAFE_INTEGER);
 }
 
 function asRecord(value: unknown, field: string): Record<string, unknown> {
@@ -407,13 +416,16 @@ export function parseAgentTurnOutput(rawText: string): AgentTurnOutput {
         };
       });
     return {
-      pattern,
-      description,
+      pattern: pattern.slice(0, MAX_SUGGESTION_PATTERN_LENGTH),
+      description: description.slice(0, MAX_SUGGESTION_DESCRIPTION_LENGTH),
       expectedYield: asCount(
         record.expected_yield ?? 0,
         `suggestions[${index}].expected_yield`,
       ),
-      yieldBasis: asString(record.yield_basis ?? "", `suggestions[${index}].yield_basis`),
+      yieldBasis: asString(
+        record.yield_basis ?? "",
+        `suggestions[${index}].yield_basis`,
+      ).slice(0, MAX_SUGGESTION_YIELD_BASIS_LENGTH),
       confidence,
       examples,
     };
