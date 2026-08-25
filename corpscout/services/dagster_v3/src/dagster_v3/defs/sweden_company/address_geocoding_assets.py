@@ -167,9 +167,13 @@ def previous_exact_match_rate_percent(
 
     `dg.AssetCheckEvaluation` is public, and the guard is a positive statement about what
     this needs rather than an enumeration of what it does not. Filtering the query by
-    status instead would need a private import AND would drop FAILED evaluations, which
-    carry a perfectly good rate -- this check is a WARN, so a week it failed is exactly the
-    week worth comparing the next one against.
+    status instead would need a private import, and invites a narrower filter than
+    intended: the natural constant (COMPLETED_...STATUSES = {FAILED, SUCCEEDED}) keeps
+    FAILED evaluations, but a hand-written {SUCCEEDED} filter would drop them -- and a
+    FAILED evaluation carries a perfectly good rate. Keeping it is deliberate: a drift
+    alarm's baseline must be the last MEASURED value, not the last approved one, or a
+    genuine step makes the check fire forever against a frozen baseline. This check is a
+    WARN, so a week it failed is exactly the week worth comparing the next one against.
 
     An evaluation is written after the check body returns, so the current run's own record
     is normally absent; `run_id` is still compared, because a check retried inside one run

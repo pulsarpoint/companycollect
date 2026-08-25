@@ -422,11 +422,14 @@ def _assert_canonical_address_invariants(connection: Any) -> None:
     live, and it survives the retirement of the canonical ClickHouse publish (spec
     section 4.5), which is where that check read its rows.
 
-    "Same normalization run on both tables" is asserted as two single-run terms plus the
-    member-total equality below: members and canonical each hold exactly one run id, and
-    the member_count total ties the two tables to the same rows. Two tables that each span
-    one run and account for each other row-for-row cannot be from different runs without
-    one of those terms disagreeing.
+    "Same normalization run on both tables" is a DERIVATION FACT, not an inference from
+    the counts: the canonical build takes its normalization_run_id off the member rows it
+    groups (first(normalization_run_id order by representative_rank), below), and both
+    tables are written in one transaction of one call -- so single-valued members forces
+    canonical to carry the same id. The two single-run terms assert that single-valuedness;
+    no cross-table id comparison is needed here. (The retired ClickHouse check DID need
+    one, because it read two separately exported tables where a partial publish can mix
+    snapshots -- that seam does not exist inside this transaction.)
 
     EVERY CANONICAL-SIDE AGGREGATE IS TAKEN OVER THE CANONICAL TABLE, NOT OVER THE JOIN.
     A canonical row with no member rows is exactly the corruption these terms exist to
