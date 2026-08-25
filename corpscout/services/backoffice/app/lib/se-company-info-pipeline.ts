@@ -133,8 +133,8 @@ export interface PipelineConfirmation {
  * is spelled once here so the sheet's `fetcher.load`, every form's `action` and
  * the loader's own document-request redirect cannot drift apart.
  */
-export const SE_COMPANY_INFO_LIST_PATH = "/admin/se/company-info";
-export const SE_COMPANY_INFO_PIPELINE_PATH = "/admin/se/company-info/pipeline";
+export const SE_COMPANY_INFO_LIST_PATH = "/admin/se/companies";
+export const SE_COMPANY_INFO_PIPELINE_PATH = "/admin/se/companies/pipeline";
 
 /* -------------------------------------------------------------------- */
 /* The picked companies, as a form field                                 */

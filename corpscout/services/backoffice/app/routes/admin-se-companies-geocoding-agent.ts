@@ -8,7 +8,7 @@
  * is live. `no-store` because the whole point is freshness.
  */
 import { loadGeocodeAgentPanel } from "~/agents/geocode-analysis.server";
-import type { Route } from "./+types/admin-se-company-info-geocoding-agent";
+import type { Route } from "./+types/admin-se-companies-geocoding-agent";
 
 export async function loader({ request }: Route.LoaderArgs) {
   // Country is a parameter everywhere in the agent; this endpoint sits under

@@ -1,5 +1,5 @@
 import { redirect } from "react-router";
-import type { Route } from "./+types/admin-se-company-info-pipeline";
+import type { Route } from "./+types/admin-se-companies-pipeline";
 import type {
   PipelineResult,
   PipelineView,

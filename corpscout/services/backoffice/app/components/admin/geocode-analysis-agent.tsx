@@ -59,7 +59,7 @@ import {
 
 /** The resource route the poll fetcher loads. Same file the tab's own loader
  * calls, so a polled panel and a revalidated one are the same payload. */
-export const GEOCODE_AGENT_POLL_PATH = "/admin/se/company-info/geocoding/agent";
+export const GEOCODE_AGENT_POLL_PATH = "/admin/se/companies/geocoding/agent";
 const POLL_INTERVAL_MS = 4_000;
 
 const nf = new Intl.NumberFormat("en-US");

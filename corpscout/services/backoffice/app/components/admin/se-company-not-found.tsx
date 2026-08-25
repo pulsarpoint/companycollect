@@ -38,7 +38,7 @@ export function SeCompanyNotFound({ companyId }: { companyId: string }) {
             Router, the same way SeCompanyInfoNotPublished does. */}
         <a
           className={buttonVariants({ variant: "outline" })}
-          href="/admin/se/company-info"
+          href="/admin/se/companies"
         >
           Back to the company list
         </a>
