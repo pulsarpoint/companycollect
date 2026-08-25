@@ -1,0 +1,69 @@
+CREATE DATABASE IF NOT EXISTS corpscout;
+
+-- RETIREMENT -- the Sweden legacy per-company address geocoder's output pair.
+--
+-- These two tables were the parity baseline for a second matcher that ran every week
+-- alongside the resolver, keyed per company rather than per address identity. The matcher
+-- is deleted in the same commit as this migration (defs/sweden_company/address_geocoding.py
+-- and its three assets), so nothing writes them either.
+--
+-- Gate 0 -- ORDERING PRECONDITION, not a note. The decisions worth keeping must be
+-- imported BEFORE this migration is applied: the adoption import
+-- (defs/sweden_company/geocode_legacy_adoption.py, asset
+-- sweden_address_geocode_legacy_adoption_clickhouse) reads
+-- se_company_address_geocode_results as its SOURCE. Plan step 12e runs it with
+-- execute: true and verifies it, and only then does 12f apply this file. The resolver
+-- refuses <N_COMPANIES> companies' addresses as ambiguous that this matcher resolved
+-- matched_exact at confidence 1.0 on identical street text. Those became <N_IDENTITIES>
+-- versioned legacy_adopted_v1 rows in corpscout.se_address_geocodes on <DATE>, adopted
+-- only where every contributing company row agreed on the coordinate -- <N_REFUSED>
+-- identities were refused for disagreeing. geocode_store's read rule serves an adopted row
+-- only while the identity's resolver outcome is non-geocoded, so a future resolver
+-- improvement outranks it without anything being deleted or merged.
+--
+-- Gate 1 -- zero readers, re-verified immediately before writing this file with
+--   rg -n "se_company_address_geocodes|se_company_address_geocode_results" corpscout --glob '!*.pyc'
+--   rg -n "address_geocoding\.(QUALIFIED_)?CLICKHOUSE" corpscout --glob '!*.pyc'
+-- The second grep is the one that matters -- every ClickHouse read of these tables went
+-- through address_geocoding.QUALIFIED_CLICKHOUSE_TABLE and
+-- address_geocoding.QUALIFIED_CLICKHOUSE_RESULTS_TABLE, which a grep for the table names
+-- alone does not see. Every hit is accounted for:
+--   * defs/sweden_company/address_geocoding.py, the matcher module -- DELETED
+--   * defs/sweden_company/address_geocoding_assets.py -- the three assets
+--     (sweden_company_address_osm_matches_duckdb,
+--     sweden_company_address_geocodes_clickhouse,
+--     sweden_company_address_geocode_results_clickhouse) and the one asset check
+--     (all_current_addresses_classified, whose canonical read retires with it) -- DELETED
+--   * defs/common/clickhouse_checks.py -- two ClickhouseLeaf freshness entries naming
+--     both tables by ASSET KEY, in a list far from any sweden_company import. This is the
+--     constant-indirection class of hit that neither grep above reaches, and the same
+--     class 000314 was burned by -- REMOVED, replaced by one leaf for the store
+--   * defs/sweden_company/geocode_legacy_adoption.py -- the one-shot import, which reads
+--     the results table as its SOURCE. It STAYS, deliberately: it is the record of where
+--     the store's legacy_adopted_v1 rows came from, it is in its own job on no schedule,
+--     and its assert_clickhouse_tables_exist names se_company_address_geocode_results, so
+--     a Materialize click after this drop fails loudly by name instead of mid-query
+--   * migrations 000270, 000271, 000272, 000277, 000314 -- historical DDL, the ledger
+--   * services/backoffice/tests/company-serving-sections.test.ts -- two not.toContain
+--     assertions, which assert the public page does NOT read these tables
+--   * defs/sweden_address_geocoding/ -- the Lantmateriet module, which matches only on the
+--     path fragment "address_geocoding" and touches neither table
+--
+-- Gate 2 -- row counts at drop time (SELECT run on the host, <DATE>):
+--   se_company_address_geocodes         <N> rows
+--   se_company_address_geocode_results  <N> rows
+--   se_address_geocodes                 <N> rows
+--   ... of which legacy_adopted_v1      <N> rows
+--
+-- NOT dropped, deliberately: corpscout.se_addresses_current,
+-- se_company_address_links_current, se_company_address_members_current and
+-- se_address_geocodes_current all stay. The first three are the identity chain, which keeps
+-- its weekly whole rebuild by design. se_address_geocodes_current is now DERIVED from
+-- se_address_geocodes by the versioned read and still has readers -- the backoffice public
+-- page section server among them -- so it retires in its own change, behind its own gate.
+--
+-- UNDROP window is about 480 seconds: if this turns out to be wrong, UNDROP TABLE within it.
+
+DROP TABLE IF EXISTS corpscout.se_company_address_geocode_results;
+
+DROP TABLE IF EXISTS corpscout.se_company_address_geocodes;

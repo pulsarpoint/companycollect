@@ -600,6 +600,15 @@ def test_the_asset_the_jobs_the_sensor_and_the_schedule_are_wired() -> None:
     assert all(leaves[key].max_age == WEEKLY for key in (
         "se_company_address_clickhouse", "se_company_address_bolagsverket_clickhouse",
         "se_company_address_scb_clickhouse"))
+    # The Sweden geocode leaves moved with the tables. The legacy per-company pair retired
+    # (migration 000319), and the versioned store took its place as the weekly leaf. These
+    # entries name tables by ASSET KEY, far from any sweden_company import, so a grep for
+    # the dropped table names does not reach them -- which is why they are pinned here.
+    assert leaves["sweden_address_geocode_store_clickhouse"].tables == (
+        "se_address_geocodes",)
+    assert leaves["sweden_address_geocode_store_clickhouse"].max_age == WEEKLY
+    assert "sweden_company_address_geocodes_clickhouse" not in leaves
+    assert "sweden_company_address_geocode_results_clickhouse" not in leaves
 
 
 def test_the_correction_sensor_launches_a_real_run_not_a_preview(monkeypatch) -> None:

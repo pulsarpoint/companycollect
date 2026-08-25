@@ -203,14 +203,11 @@ CLICKHOUSE_LEAVES: tuple[ClickhouseLeaf, ...] = (
         "sweden_company_addresses_clickhouse", ("se_company_addresses",), WEEKLY
     ),
     ClickhouseLeaf("sweden_company_industries_clickhouse", ("se_industries",), WEEKLY),
+    # The legacy per-company geocode pair retired with migration 000319; the versioned
+    # store is the weekly Sweden geocode leaf in its place.
     ClickhouseLeaf(
-        "sweden_company_address_geocodes_clickhouse",
-        ("se_company_address_geocodes",),
-        WEEKLY,
-    ),
-    ClickhouseLeaf(
-        "sweden_company_address_geocode_results_clickhouse",
-        ("se_company_address_geocode_results",),
+        "sweden_address_geocode_store_clickhouse",
+        ("se_address_geocodes",),
         WEEKLY,
     ),
     ClickhouseLeaf(

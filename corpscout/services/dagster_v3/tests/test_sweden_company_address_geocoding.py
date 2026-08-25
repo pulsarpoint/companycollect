@@ -1108,13 +1108,17 @@ def test_the_shared_build_refuses_an_unknown_link_review_status() -> None:
         raise AssertionError("an unknown link review status must abort the build")
 
 
-def test_sweden_company_address_matching_only_accepts_unique_exact_osm_rows() -> None:
+def test_the_canonical_and_shared_address_chain_is_built_from_source_observations() -> (
+    None
+):
+    """Source observations -> canonical addresses -> shared identities -> company links.
+
+    The legacy per-company OSM matcher this test used to drive is retired (migration
+    000319); the resolver's own ladder is pinned in tests/test_address_resolution.py.
+    What is left here is the identity chain, which stays.
+    """
     from dagster_v3.defs.sweden_company.address_canonicalization import (
         replace_sweden_company_canonical_addresses,
-    )
-    from dagster_v3.defs.sweden_company.address_geocoding import (
-        ELIGIBLE_OSM_MATCH_KEY_SQL,
-        replace_sweden_company_address_osm_matches,
     )
 
     connection = _osm_connection()
@@ -1215,511 +1219,12 @@ def test_sweden_company_address_matching_only_accepts_unique_exact_osm_rows() ->
         "backoffice-user",
         "Registry and website agree",
     )
-    counts = replace_sweden_company_address_osm_matches(
-        connection=connection,
-        source_run_id="geocode-run",
-        matched_at=datetime(2026, 8, 12, 20, 0, tzinfo=UTC),
-    )
-
-    assert counts == {
-        "addresses": 7,
-        "matched_exact": 2,
-        "matched_site": 0,
-        "matched_area": 0,
-        "matched_street": 0,
-        "ambiguous": 1,
-        "unmatched": 1,
-        "invalid_address": 1,
-        "foreign_address": 1,
-        "postal_box": 1,
-    }
-    results = connection.execute(
-        """
-        select company_id, match_status, candidate_count, latitude, longitude
-        from sweden_company_enrichment.address_osm_match_results
-        order by company_id
-        """
-    ).fetchall()
-    assert results == [
-        ("ambiguous-company", "ambiguous", 2, None, None),
-        ("exact-company", "matched_exact", 1, 59.331, 18.061),
-        ("foreign-company", "foreign_address", 0, None, None),
-        ("invalid-company", "invalid_address", 0, None, None),
-        ("postal-box-company", "postal_box", 0, 59.203, 17.83),
-        ("second-exact-company", "matched_exact", 1, 59.331, 18.061),
-        ("unmatched-company", "unmatched", 0, None, None),
-    ]
-    geocode = connection.execute(
-        """
-        select
-            geocode_provider,
-            geocode_precision,
-            match_method,
-            match_confidence,
-            source_record_id,
-            source_record_url,
-            source_snapshot_at,
-            source_run_id
-        from sweden_company_enrichment.address_geocodes
-        """
-    ).fetchone()
-    assert geocode is not None
-    assert geocode[:6] == (
-        "openstreetmap",
-        "building",
-        "postal_code_street_house_exact_unique",
-        1.0,
-        "way/100",
-        "https://www.openstreetmap.org/way/100",
-    )
-    assert geocode[6] == datetime(2026, 8, 11, 23, 11, 37, tzinfo=UTC)
-    assert geocode[7] == "geocode-run"
-
-    outcomes = connection.execute(
-        """
-        select
-            company_id,
-            candidate_record_urls,
-            source_url,
-            source_snapshot_at,
-            geocode_precision,
-            coordinate_locality,
-            coordinate_supporting_point_count
-        from sweden_company_enrichment.address_osm_match_results
-        where company_id in ('ambiguous-company', 'postal-box-company')
-        order by company_id
-        """
-    ).fetchall()
-    assert outcomes[0][0] == "ambiguous-company"
-    assert outcomes[0][1] == [
-        "https://www.openstreetmap.org/node/200",
-        "https://www.openstreetmap.org/node/201",
-    ]
-    assert outcomes[1][0] == "postal-box-company"
-    assert outcomes[1][1] == []
-    assert outcomes[1][4:] == ("city", "Tumba", 3)
-    assert all(
-        outcome[2] == "https://download.geofabrik.de/europe/sweden-latest.osm.pbf"
-        for outcome in outcomes
-    )
-    assert all(
-        outcome[3] == datetime(2026, 8, 11, 23, 11, 37, tzinfo=UTC)
-        for outcome in outcomes
-    )
-
-    join_plan = connection.execute(
-        f"""
-        explain select company.company_id, osm.source_record_id
-        from _sweden_company_address_keys company
-        left join _sweden_osm_match_candidates osm
-            on osm.normalized_match_key = {ELIGIBLE_OSM_MATCH_KEY_SQL}
-        """
-    ).fetchone()
-    assert join_plan is not None
-    assert "HASH_JOIN" in join_plan[1]
-    assert "BLOCKWISE_NL_JOIN" not in join_plan[1]
-
-    city_join_plan = connection.execute(
-        """
-        explain select company.company_id, city.locality
-        from _sweden_company_address_keys company
-        left join _sweden_osm_city_centroids city
-            on city.normalized_city = case
-                when company.eligibility = 'postal_box'
-                    then company.normalized_post_town
-                else null
-            end
-        """
-    ).fetchone()
-    assert city_join_plan is not None
-    assert "HASH_JOIN" in city_join_plan[1]
-    assert "BLOCKWISE_NL_JOIN" not in city_join_plan[1]
-
-
-def test_osm_without_postcode_matches_exact_city_address() -> None:
-    from dagster_v3.defs.sweden_company.address_canonicalization import (
-        replace_sweden_company_canonical_addresses,
-    )
-    from dagster_v3.defs.sweden_company.address_geocoding import (
-        replace_sweden_company_address_osm_matches,
-    )
-    from dagster_v3.defs.sweden_company.shared_addresses import (
-        replace_sweden_shared_addresses,
-    )
-
-    connection = _osm_connection()
-    _add_postcode_less_osm_addresses(connection)
-    replace_sweden_company_canonical_addresses(
-        connection=connection,
-        clickhouse_client=_CityAddressFallbackClickHouseClient(),
-        normalization_run_id="canonical-city-run",
-        normalized_at=datetime(2026, 8, 14, 16, 30, tzinfo=UTC),
-    )
-    replace_sweden_shared_addresses(
-        connection=connection,
-        company_address_link_reviews=(),
-        address_identity_run_id="address-city-run",
-        address_identity_built_at=datetime(2026, 8, 14, 16, 45, tzinfo=UTC),
-    )
-
-    company_counts = replace_sweden_company_address_osm_matches(
-        connection=connection,
-        source_run_id="company-city-geocode-run",
-        matched_at=datetime(2026, 8, 14, 17, 15, tzinfo=UTC),
-    )
-    assert company_counts == {
-        "addresses": 2,
-        "matched_exact": 1,
-        "matched_site": 0,
-        "matched_area": 0,
-        "matched_street": 0,
-        "ambiguous": 1,
-        "unmatched": 0,
-        "invalid_address": 0,
-        "foreign_address": 0,
-        "postal_box": 0,
-    }
-    company_results = connection.execute(
-        """
-        select
-            company_id,
-            match_status,
-            candidate_count,
-            match_method,
-            latitude,
-            longitude,
-            candidate_record_urls
-        from sweden_company_enrichment.address_osm_match_results
-        order by company_id
-        """
-    ).fetchall()
-    assert company_results == [
-        (
-            "city-ambiguous-company",
-            "ambiguous",
-            2,
-            "",
-            None,
-            None,
-            [
-                "https://www.openstreetmap.org/node/400",
-                "https://www.openstreetmap.org/node/401",
-            ],
-        ),
-        (
-            "city-fallback-company",
-            "matched_exact",
-            1,
-            "city_street_house_exact_unique",
-            56.2464248,
-            12.8953268,
-            ["https://www.openstreetmap.org/node/1406025093"],
-        ),
-    ]
-
-
-def test_contextless_osm_address_matches_unique_street_and_house_in_sweden() -> None:
-    from dagster_v3.defs.sweden_company.address_canonicalization import (
-        replace_sweden_company_canonical_addresses,
-    )
-    from dagster_v3.defs.sweden_company.address_geocoding import (
-        replace_sweden_company_address_osm_matches,
-    )
-    from dagster_v3.defs.sweden_company.shared_addresses import (
-        replace_sweden_shared_addresses,
-    )
-
-    connection = _osm_connection()
-    _add_contextless_osm_addresses(connection)
-    replace_sweden_company_canonical_addresses(
-        connection=connection,
-        clickhouse_client=_CountryAddressFallbackClickHouseClient(),
-        normalization_run_id="canonical-country-run",
-        normalized_at=datetime(2026, 8, 15, 10, 15, tzinfo=UTC),
-    )
-    replace_sweden_shared_addresses(
-        connection=connection,
-        company_address_link_reviews=(),
-        address_identity_run_id="address-country-run",
-        address_identity_built_at=datetime(2026, 8, 15, 10, 30, tzinfo=UTC),
-    )
-
-    company_counts = replace_sweden_company_address_osm_matches(
-        connection=connection,
-        source_run_id="company-country-geocode-run",
-        matched_at=datetime(2026, 8, 15, 11, 0, tzinfo=UTC),
-    )
-    house_number_components = connection.execute(
-        """
-        select normalized_street_house
-        from _sweden_osm_address_match_components
-        where source_record_id = 'way/141568897'
-        order by normalized_street_house
-        """
-    ).fetchall()
-    assert house_number_components == [
-        ("abrahamsbergsvgen25",),
-        ("abrahamsbergsvgen27",),
-    ]
-
-    assert company_counts == {
-        "addresses": 2,
-        "matched_exact": 1,
-        "matched_site": 0,
-        "matched_area": 0,
-        "matched_street": 0,
-        "ambiguous": 1,
-        "unmatched": 0,
-        "invalid_address": 0,
-        "foreign_address": 0,
-        "postal_box": 0,
-    }
-    company_results = connection.execute(
-        """
-        select
-            company_id,
-            match_status,
-            candidate_count,
-            match_method,
-            latitude,
-            longitude,
-            candidate_record_urls
-        from sweden_company_enrichment.address_osm_match_results
-        order by company_id
-        """
-    ).fetchall()
-    assert company_results == [
-        (
-            "country-fallback-ambiguous-company",
-            "ambiguous",
-            2,
-            "",
-            None,
-            None,
-            [
-                "https://www.openstreetmap.org/node/500",
-                "https://www.openstreetmap.org/node/501",
-            ],
-        ),
-        (
-            "country-fallback-company",
-            "matched_exact",
-            1,
-            "country_street_house_exact_unique",
-            59.3349608,
-            17.9517855,
-            ["https://www.openstreetmap.org/way/141568897"],
-        ),
-    ]
-
-
-def test_spatial_candidate_clusters_produce_approximate_locations() -> None:
-    from dagster_v3.defs.sweden_company.address_canonicalization import (
-        replace_sweden_company_canonical_addresses,
-    )
-    from dagster_v3.defs.sweden_company.address_geocoding import (
-        replace_sweden_company_address_osm_matches,
-    )
-    from dagster_v3.defs.sweden_company.shared_addresses import (
-        replace_sweden_shared_addresses,
-    )
-
-    connection = _osm_connection()
-    _add_spatial_candidate_osm_addresses(connection)
-    replace_sweden_company_canonical_addresses(
-        connection=connection,
-        clickhouse_client=_SpatialCandidateClickHouseClient(),
-        normalization_run_id="canonical-spatial-run",
-        normalized_at=datetime(2026, 8, 15, 12, 15, tzinfo=UTC),
-    )
-    replace_sweden_shared_addresses(
-        connection=connection,
-        company_address_link_reviews=(),
-        address_identity_run_id="address-spatial-run",
-        address_identity_built_at=datetime(2026, 8, 15, 12, 30, tzinfo=UTC),
-    )
-
-    company_counts = replace_sweden_company_address_osm_matches(
-        connection=connection,
-        source_run_id="company-spatial-geocode-run",
-        matched_at=datetime(2026, 8, 15, 13, 0, tzinfo=UTC),
-    )
-    assert company_counts == {
-        "addresses": 2,
-        "matched_exact": 0,
-        "matched_site": 1,
-        "matched_area": 1,
-        "matched_street": 0,
-        "ambiguous": 0,
-        "unmatched": 0,
-        "invalid_address": 0,
-        "foreign_address": 0,
-        "postal_box": 0,
-    }
-    company_results = connection.execute(
-        """
-        select
-            company_id,
-            match_status,
-            match_method,
-            geocode_precision,
-            coordinate_supporting_point_count,
-            coordinate_spread_meters,
-            latitude,
-            longitude
-        from sweden_company_enrichment.address_osm_match_results
-        order by company_id
-        """
-    ).fetchall()
-    assert company_results[0][:5] == (
-        "area-company",
-        "matched_area",
-        "postal_code_street_house_candidate_median",
-        "area",
-        2,
-    )
-    assert 100 < company_results[0][5] < 1_000
-    assert company_results[0][6:] == (59.802, 17.6025)
-    assert company_results[1][:5] == (
-        "site-company",
-        "matched_site",
-        "postal_code_street_house_candidate_median",
-        "site",
-        2,
-    )
-    assert 0 < company_results[1][5] <= 100
-    assert company_results[1][6:] == (59.00025, 18.00025)
-    assert connection.execute(
-        "select count(*) from sweden_company_enrichment.address_geocodes"
-    ).fetchone() == (0,)
-
-
-def test_missing_house_uses_flagged_compact_street_location() -> None:
-    from dagster_v3.defs.sweden_company.address_canonicalization import (
-        replace_sweden_company_canonical_addresses,
-    )
-    from dagster_v3.defs.sweden_company.address_geocoding import (
-        replace_sweden_company_address_osm_matches,
-    )
-    from dagster_v3.defs.sweden_company.shared_addresses import (
-        replace_sweden_shared_addresses,
-    )
-
-    connection = _osm_connection()
-    _add_street_fallback_osm_addresses(connection)
-    replace_sweden_company_canonical_addresses(
-        connection=connection,
-        clickhouse_client=_StreetFallbackClickHouseClient(),
-        normalization_run_id="canonical-street-run",
-        normalized_at=datetime(2026, 8, 16, 11, 30, tzinfo=UTC),
-    )
-    replace_sweden_shared_addresses(
-        connection=connection,
-        company_address_link_reviews=(),
-        address_identity_run_id="address-street-run",
-        address_identity_built_at=datetime(2026, 8, 16, 11, 45, tzinfo=UTC),
-    )
-
-    company_counts = replace_sweden_company_address_osm_matches(
-        connection=connection,
-        source_run_id="company-street-geocode-run",
-        matched_at=datetime(2026, 8, 16, 12, 15, tzinfo=UTC),
-    )
-    assert company_counts == {
-        "addresses": 2,
-        "matched_exact": 0,
-        "matched_site": 0,
-        "matched_area": 0,
-        "matched_street": 1,
-        "ambiguous": 0,
-        "unmatched": 1,
-        "invalid_address": 0,
-        "foreign_address": 0,
-        "postal_box": 0,
-    }
-    company_street = connection.execute(
-        """
-        select
-            match_status,
-            match_method,
-            match_confidence,
-            geocode_precision,
-            coordinate_supporting_point_count,
-            latitude,
-            longitude
-        from sweden_company_enrichment.address_osm_match_results
-        where company_id = 'street-fallback-company'
-        """
-    ).fetchone()
-    assert company_street is not None
-    assert company_street[:2] == (
-        "matched_street",
-        "postal_code_street_address_point_median",
-    )
-    assert abs(company_street[2] - 0.4) < 0.001
-    assert company_street[3:] == (
-        "street",
-        6,
-        57.6815,
-        11.976175,
-    )
-
-
-def test_missing_house_uses_flagged_nearby_road_geometry() -> None:
-    from dagster_v3.defs.sweden_company.address_canonicalization import (
-        replace_sweden_company_canonical_addresses,
-    )
-    from dagster_v3.defs.sweden_company.address_geocoding import (
-        replace_sweden_company_address_osm_matches,
-    )
-    from dagster_v3.defs.sweden_company.shared_addresses import (
-        replace_sweden_shared_addresses,
-    )
-
-    connection = _osm_connection()
-    _add_road_geometry_fallback_osm_data(connection)
-    replace_sweden_company_canonical_addresses(
-        connection=connection,
-        clickhouse_client=_RoadGeometryFallbackClickHouseClient(),
-        normalization_run_id="canonical-road-run",
-        normalized_at=datetime(2026, 8, 16, 16, 30, tzinfo=UTC),
-    )
-    replace_sweden_shared_addresses(
-        connection=connection,
-        company_address_link_reviews=(),
-        address_identity_run_id="address-road-run",
-        address_identity_built_at=datetime(2026, 8, 16, 16, 45, tzinfo=UTC),
-    )
-
-    company_counts = replace_sweden_company_address_osm_matches(
-        connection=connection,
-        source_run_id="company-road-geocode-run",
-        matched_at=datetime(2026, 8, 16, 17, 15, tzinfo=UTC),
-    )
-    assert company_counts["matched_street"] == 1
-    assert company_counts["unmatched"] == 0
-    company_result = connection.execute(
-        """
-        select match_status, match_method, geocode_precision, latitude, longitude
-        from sweden_company_enrichment.address_osm_match_results
-        """
-    ).fetchone()
-    assert company_result == (
-        "matched_street",
-        "nearby_postcode_street_road_segment_median",
-        "street",
-        58.7552,
-        16.9979,
-    )
 
 
 def test_sweden_company_address_geocoding_assets_are_company_enhancements() -> None:
     from dagster_v3.definitions import defs as load_defs
 
     repo = load_defs().get_repository_def()
-    matches = repo.asset_graph.get(
-        dg.AssetKey("sweden_company_address_osm_matches_duckdb")
-    )
     canonical_duckdb = repo.asset_graph.get(
         dg.AssetKey("sweden_company_canonical_addresses_duckdb")
     )
@@ -1741,9 +1246,6 @@ def test_sweden_company_address_geocoding_assets_are_company_enhancements() -> N
     )
     resolution_current = repo.asset_graph.get(
         dg.AssetKey("sweden_address_resolution_current_duckdb")
-    )
-    published = repo.asset_graph.get(
-        dg.AssetKey("sweden_company_address_geocodes_clickhouse")
     )
     job = repo.get_job("sweden_company_address_geocoding_job")
     shared_job = repo.get_job("sweden_shared_address_identity_job")
@@ -1783,17 +1285,6 @@ def test_sweden_company_address_geocoding_assets_are_company_enhancements() -> N
     assert resolution_current.parent_keys == {
         dg.AssetKey("sweden_address_resolution_shadow_duckdb")
     }
-    assert matches.group_name == "sweden_company"
-    assert matches.parent_keys == {
-        dg.AssetKey("sweden_company_canonical_addresses_clickhouse"),
-        dg.AssetKey("sweden_osm_addresses_duckdb"),
-    }
-    assert matches.pools == {"sweden_address_osm_duckdb"}
-    assert published.group_name == "sweden_company"
-    assert published.parent_keys == {
-        dg.AssetKey("sweden_company_address_osm_matches_duckdb")
-    }
-    assert published.pools == {"sweden_address_osm_duckdb"}
     assert {key.path[-1] for key in job.asset_layer.executable_asset_keys} == {
         "sweden_company_canonical_addresses_duckdb",
         "sweden_company_canonical_addresses_clickhouse",
@@ -1805,9 +1296,6 @@ def test_sweden_company_address_geocoding_assets_are_company_enhancements() -> N
         "sweden_address_resolution_current_duckdb",
         "sweden_address_geocodes_clickhouse",
         "sweden_address_geocode_store_clickhouse",
-        "sweden_company_address_osm_matches_duckdb",
-        "sweden_company_address_geocodes_clickhouse",
-        "sweden_company_address_geocode_results_clickhouse",
     }
     assert {key.path[-1] for key in shared_job.asset_layer.executable_asset_keys} == {
         "sweden_shared_addresses_duckdb",
@@ -1843,10 +1331,18 @@ def test_sweden_company_address_geocoding_assets_are_company_enhancements() -> N
         "sweden_address_resolution_current_duckdb",
         "sweden_address_geocodes_clickhouse",
         "sweden_address_geocode_store_clickhouse",
+    }
+    # The legacy per-company matcher and its two publish assets retired with the pair
+    # (migration 000319), so the weekly job is twelve assets, not fifteen, and the three
+    # names below must never come back into it.
+    for retired in (
         "sweden_company_address_osm_matches_duckdb",
         "sweden_company_address_geocodes_clickhouse",
         "sweden_company_address_geocode_results_clickhouse",
-    }
+    ):
+        assert retired not in {
+            key.path[-1] for key in repo.asset_graph.get_all_asset_keys()
+        }, retired
     store = repo.asset_graph.get(
         dg.AssetKey("sweden_address_geocode_store_clickhouse")
     )
@@ -1973,6 +1469,47 @@ def test_sweden_company_address_city_fallback_migration_keeps_method_details() -
     assert "corpscout.se_company_address_geocode_results" in migration
     assert "coordinate_locality Nullable(String)" in migration
     assert "coordinate_supporting_point_count UInt32" in migration
+
+
+def test_sweden_legacy_geocode_pair_retirement_drops_only_the_pair() -> None:
+    """The drop is the ledger entry for two tables and nothing else.
+
+    The identity chain and the derived serving table share the prefix and are NOT this
+    migration's to touch -- se_address_geocodes_current in particular still has readers and
+    retires behind its own gate. The down file recreates both tables empty, which is the
+    only honest restore: no asset writes them any more.
+    """
+    migrations = Path(__file__).resolve().parents[3] / "clickhouse" / "migrations"
+    name = "000319_corpscout_retire_se_company_address_geocode_pair"
+    up = (migrations / f"{name}.up.sql").read_text(encoding="utf-8")
+    down = (migrations / f"{name}.down.sql").read_text(encoding="utf-8")
+
+    assert up.count("DROP TABLE IF EXISTS") == 2
+    for table in (
+        "corpscout.se_company_address_geocodes",
+        "corpscout.se_company_address_geocode_results",
+    ):
+        assert f"DROP TABLE IF EXISTS {table};" in up
+        assert f"CREATE TABLE IF NOT EXISTS {table}" in down
+    for kept in (
+        "corpscout.se_addresses_current",
+        "corpscout.se_company_address_links_current",
+        "corpscout.se_company_address_members_current",
+        "corpscout.se_address_geocodes_current",
+        "corpscout.se_address_geocodes",
+    ):
+        assert f"DROP TABLE IF EXISTS {kept};" not in up
+    # The import that read the dropped table has to run BEFORE the drop, and the comment
+    # is where 12f looks for that ordering.
+    assert "geocode_legacy_adoption" in up
+    assert "12e" in up and "12f" in up
+    # The three coordinate columns 000272 and 000277 added are part of the restored shape.
+    for column in (
+        "coordinate_locality Nullable(String)",
+        "coordinate_supporting_point_count UInt32",
+        "coordinate_spread_meters Nullable(Float64)",
+    ):
+        assert column in down
 
 
 def test_sweden_company_canonical_address_migration_preserves_source_members() -> None:

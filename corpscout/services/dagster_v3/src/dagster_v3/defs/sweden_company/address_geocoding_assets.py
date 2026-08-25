@@ -15,7 +15,6 @@ from dagster_v3.defs.clickhouse.resolved import (
 from dagster_v3.defs.sweden_address_osm import tables as osm_tables
 from dagster_v3.defs.sweden_company import (
     address_canonicalization,
-    address_geocoding,
     geocode_demand,
     geocode_legacy_adoption,
     geocode_store,
@@ -31,8 +30,6 @@ from dagster_v3.defs.sweden_financial.clickhouse import (
 )
 
 GROUP_NAME = "sweden_company"
-GEOCODE_ASSET_KEY = "sweden_company_address_geocodes_clickhouse"
-GEOCODE_RESULT_ASSET_KEY = "sweden_company_address_geocode_results_clickhouse"
 CANONICAL_DUCKDB_ASSET_KEY = "sweden_company_canonical_addresses_duckdb"
 CANONICAL_CLICKHOUSE_ASSET_KEY = "sweden_company_canonical_addresses_clickhouse"
 SHARED_ADDRESSES_DUCKDB_ASSET_KEY = "sweden_shared_addresses_duckdb"
@@ -1051,17 +1048,16 @@ class SwedenGeocodeLegacyAdoptionConfig(dg.Config):
 
 @dg.asset(
     name=LEGACY_ADOPTION_ASSET_KEY,
-    deps=[
-        dg.AssetKey(GEOCODE_STORE_ASSET_KEY),
-        dg.AssetKey(GEOCODE_RESULT_ASSET_KEY),
-    ],
+    deps=[dg.AssetKey(GEOCODE_STORE_ASSET_KEY)],
     group_name=GROUP_NAME,
     kinds={"python", "clickhouse"},
     metadata={"table": geocode_store.QUALIFIED_CLICKHOUSE_GEOCODE_STORE_TABLE},
     description=(
         "One-time import of the retired per-company matcher's exact decisions for "
         "Sweden address identities the resolver refuses, as versioned "
-        "legacy_adopted_v1 outcomes. Requires execute: true."
+        "legacy_adopted_v1 outcomes. Requires execute: true. It has run, and its "
+        "source table was dropped afterwards by migration 000319 -- this asset is "
+        "kept as the record of the import, and can no longer execute."
     ),
 )
 def sweden_address_geocode_legacy_adoption_clickhouse(
@@ -1072,9 +1068,14 @@ def sweden_address_geocode_legacy_adoption_clickhouse(
     """Import the legacy matcher's trapped exact decisions once, as adopted outcomes.
 
     The default run WRITES NOTHING: it reports the identities a real run would adopt and
-    the identities the rule refuses, then returns. Only `execute: true` inserts. This is
-    the one asset in the geocoding chain whose input tables are about to be dropped, so a
-    stray Materialize click has to be harmless and the real run has to be deliberate.
+    the identities the rule refuses, then returns. Only `execute: true` inserts.
+
+    IT HAS RUN, AND IT STAYS AS THE RECORD OF THAT RUN. Its source table retires with the
+    legacy matcher (migration 000319), which the import had to precede -- so after the drop
+    this asset can no longer do anything, by construction. It is kept because it is where a
+    reader looks for "where did the store's legacy_adopted_v1 rows come from", and because
+    the assert below names se_company_address_geocode_results: a Materialize click after
+    the drop fails on that name rather than somewhere inside a three-way join.
 
     `matched_at` is ONE instant for the whole import, bound as a parameter. That is the
     single place in this plan where a run-wide stamp is correct: every adopted row
@@ -1096,7 +1097,7 @@ def sweden_address_geocode_legacy_adoption_clickhouse(
         database=geocode_store.CLICKHOUSE_DATABASE,
         tables=(
             geocode_store.GEOCODE_STORE_TABLE,
-            address_geocoding.CLICKHOUSE_RESULTS_TABLE,
+            geocode_legacy_adoption.CLICKHOUSE_RESULTS_TABLE,
             shared_addresses.COMPANY_ADDRESS_LINKS_TABLE,
         ),
     )
@@ -1125,6 +1126,17 @@ def sweden_address_geocode_legacy_adoption_clickhouse(
                 geocode_legacy_adoption.ADOPTION_STATUS_BREAKDOWN_SQL
             )
         }
+        # The breakdown is a wrapper around the same selection the adoption count reads,
+        # and 12e reads the two together as one population seen two ways. A narrowing
+        # added to the wrapper alone would leave both queries answering about different
+        # sets, and no assertion over either number on its own can see that.
+        if sum(by_resolver_status.values()) != int(adoptable):
+            raise ValueError(
+                "The Sweden adoption status breakdown accounts for "
+                f"{sum(by_resolver_status.values())} of {int(adoptable)} adoptable "
+                "identities -- the split and the adoption count no longer describe one "
+                "population"
+            )
         measurements = {
             "adoptable_identities": int(adoptable),
             "adoptable_by_resolver_status": dg.MetadataValue.json(by_resolver_status),
@@ -1138,9 +1150,7 @@ def sweden_address_geocode_legacy_adoption_clickhouse(
             "refused_disagreeing_identities": int(disagreeing),
         }
         if not config.execute:
-            return dg.MaterializeResult(
-                metadata={"preview": True, **measurements}
-            )
+            return dg.MaterializeResult(metadata={"preview": True, **measurements})
         if int(adoptable) == 0:
             raise ValueError(
                 "No Sweden legacy exact decisions are adoptable -- refusing to run an "
@@ -1184,175 +1194,6 @@ def sweden_address_geocode_legacy_adoption_clickhouse(
             "imported_at": imported_at.isoformat(),
             "sample": dg.MetadataValue.json([list(map(str, row)) for row in sample]),
         }
-    )
-
-
-@dg.asset(
-    deps=[
-        dg.AssetKey(CANONICAL_CLICKHOUSE_ASSET_KEY),
-        dg.AssetKey("sweden_osm_addresses_duckdb"),
-    ],
-    group_name=GROUP_NAME,
-    kinds={"python", "duckdb", "clickhouse", "openstreetmap"},
-    pool=osm_tables.DUCKDB_POOL,
-    description=(
-        "Matches canonical Swedish company addresses to the national OSM address "
-        "index by postal code, street, and house number, with city and Sweden-wide "
-        "fallbacks for incomplete OSM records. Spatially compact candidates and "
-        "same-postcode streets produce flagged approximate markers; separated "
-        "candidates remain ambiguous."
-    ),
-)
-def sweden_company_address_osm_matches_duckdb(
-    context: dg.AssetExecutionContext,
-    sweden_address_osm_duckdb: DuckDBResource,
-) -> dg.MaterializeResult:
-    matched_at = datetime.now(UTC)
-    with sweden_address_osm_duckdb.get_connection() as connection:
-        counts = address_geocoding.replace_sweden_company_address_osm_matches(
-            connection=connection,
-            source_run_id=context.run_id,
-            matched_at=matched_at,
-            log=context.log.info,
-        )
-    return dg.MaterializeResult(
-        metadata={
-            **counts,
-            "duckdb_table": address_geocoding.QUALIFIED_MATCH_RESULTS_TABLE,
-            "matched_geocodes_table": address_geocoding.QUALIFIED_GEOCODES_TABLE,
-            "matched_at": matched_at.isoformat(),
-        }
-    )
-
-
-@dg.asset(
-    deps=[dg.AssetKey("sweden_company_address_osm_matches_duckdb")],
-    group_name=GROUP_NAME,
-    kinds={"python", "duckdb", "clickhouse", "openstreetmap"},
-    pool=osm_tables.DUCKDB_POOL,
-    metadata={"table": address_geocoding.QUALIFIED_CLICKHOUSE_TABLE},
-    description=(
-        "Atomically replaces the Sweden company address geocode table "
-        "with only unique exact OSM matches and their complete source provenance."
-    ),
-)
-def sweden_company_address_geocodes_clickhouse(
-    context: dg.AssetExecutionContext,
-    sweden_address_osm_duckdb: DuckDBResource,
-    clickhouse: ClickhouseResource,
-) -> dg.MaterializeResult:
-    assert_clickhouse_tables_exist(
-        clickhouse,
-        database=address_geocoding.CLICKHOUSE_DATABASE,
-        tables=(address_geocoding.CLICKHOUSE_TABLE,),
-    )
-    with sweden_address_osm_duckdb.get_connection() as connection:
-        with clickhouse.get_connection() as clickhouse_client:
-            rows = export_duckdb_connection_table_to_clickhouse(
-                duckdb_connection=connection,
-                clickhouse_client=clickhouse_client,
-                duckdb_schema=address_geocoding.ENRICHMENT_SCHEMA,
-                duckdb_table=address_geocoding.GEOCODES_TABLE,
-                clickhouse_database=address_geocoding.CLICKHOUSE_DATABASE,
-                clickhouse_table=address_geocoding.CLICKHOUSE_TABLE,
-                columns=address_geocoding.CLICKHOUSE_EXPORT_COLUMNS,
-                truncate=True,
-                log=context.log.info,
-            )
-    # The stats block this used to publish is gone with the helper that fed it: it read
-    # the canonical ClickHouse table for a denominator, and the rate it reported is now
-    # the store check's to report. This asset is deleted whole with the legacy pair; until
-    # then it publishes what it actually wrote.
-    return dg.MaterializeResult(
-        metadata={
-            "rows": rows,
-            "table": address_geocoding.QUALIFIED_CLICKHOUSE_TABLE,
-        }
-    )
-
-
-@dg.asset(
-    deps=[dg.AssetKey(GEOCODE_ASSET_KEY)],
-    group_name=GROUP_NAME,
-    kinds={"python", "duckdb", "clickhouse", "openstreetmap"},
-    pool=osm_tables.DUCKDB_POOL,
-    metadata={"table": address_geocoding.QUALIFIED_CLICKHOUSE_RESULTS_TABLE},
-    description=(
-        "Atomically replaces the Sweden company address geocoding outcome table "
-        "with one classified result per current address, including exact, "
-        "approximate-site, approximate-area, approximate-street, ambiguous, "
-        "unmatched, invalid, foreign, and postal-box outcomes."
-    ),
-)
-def sweden_company_address_geocode_results_clickhouse(
-    context: dg.AssetExecutionContext,
-    sweden_address_osm_duckdb: DuckDBResource,
-    clickhouse: ClickhouseResource,
-) -> dg.MaterializeResult:
-    assert_clickhouse_tables_exist(
-        clickhouse,
-        database=address_geocoding.CLICKHOUSE_DATABASE,
-        tables=(address_geocoding.CLICKHOUSE_RESULTS_TABLE,),
-    )
-    with sweden_address_osm_duckdb.get_connection() as connection:
-        with clickhouse.get_connection() as clickhouse_client:
-            rows = export_duckdb_connection_table_to_clickhouse(
-                duckdb_connection=connection,
-                clickhouse_client=clickhouse_client,
-                duckdb_schema=address_geocoding.ENRICHMENT_SCHEMA,
-                duckdb_table=address_geocoding.MATCH_RESULTS_TABLE,
-                clickhouse_database=address_geocoding.CLICKHOUSE_DATABASE,
-                clickhouse_table=address_geocoding.CLICKHOUSE_RESULTS_TABLE,
-                columns=address_geocoding.CLICKHOUSE_RESULTS_EXPORT_COLUMNS,
-                truncate=True,
-                log=context.log.info,
-            )
-    return dg.MaterializeResult(
-        metadata={
-            "rows": rows,
-            "table": address_geocoding.QUALIFIED_CLICKHOUSE_RESULTS_TABLE,
-        }
-    )
-
-
-@dg.asset_check(
-    asset=sweden_company_address_geocode_results_clickhouse,
-    name="all_current_addresses_classified",
-    description=(
-        "Fails when the outcome table is not a one-to-one classification of "
-        "the current Sweden company-address set."
-    ),
-)
-def sweden_company_address_geocode_results_complete_check(
-    clickhouse: ClickhouseResource,
-) -> dg.AssetCheckResult:
-    with clickhouse.get_connection() as client:
-        [(result_rows, unique_results, source_run_count)] = client.execute(
-            f"""
-            SELECT
-                count(),
-                uniqExact(tuple(company_id, address_key)),
-                uniqExact(source_run_id)
-            FROM {address_geocoding.QUALIFIED_CLICKHOUSE_RESULTS_TABLE}
-            """
-        )
-        [(company_addresses,)] = client.execute(
-            f"""
-            SELECT count()
-            FROM {address_canonicalization.QUALIFIED_CLICKHOUSE_CANONICAL_ADDRESSES_TABLE}
-            """
-        )
-    return dg.AssetCheckResult(
-        passed=(
-            int(result_rows) == int(company_addresses) == int(unique_results)
-            and int(source_run_count) == 1
-        ),
-        metadata={
-            "company_addresses": int(company_addresses),
-            "result_rows": int(result_rows),
-            "unique_results": int(unique_results),
-            "source_run_count": int(source_run_count),
-        },
     )
 
 
@@ -1802,9 +1643,6 @@ sweden_company_address_geocoding_job = dg.define_asset_job(
         ADDRESS_RESOLUTION_CURRENT_ASSET_KEY,
         SHARED_GEOCODE_CLICKHOUSE_ASSET_KEY,
         GEOCODE_STORE_ASSET_KEY,
-        "sweden_company_address_osm_matches_duckdb",
-        GEOCODE_ASSET_KEY,
-        GEOCODE_RESULT_ASSET_KEY,
     ),
 )
 
@@ -1854,14 +1692,12 @@ sweden_company_address_geocoding_weekly_job = dg.define_asset_job(
         ADDRESS_RESOLUTION_CURRENT_ASSET_KEY,
         SHARED_GEOCODE_CLICKHOUSE_ASSET_KEY,
         GEOCODE_STORE_ASSET_KEY,
-        "sweden_company_address_osm_matches_duckdb",
-        GEOCODE_ASSET_KEY,
-        GEOCODE_RESULT_ASSET_KEY,
     ),
     tags={"country": "SE", "pipeline": "address_geocoding"},
     description=(
         "Refreshes the Sweden Geofabrik snapshot and OSM address index, then "
-        "rematches current company addresses and publishes exact geocodes."
+        "resolves the Sweden address identities that are due and appends their "
+        "outcomes to the versioned geocode store."
     ),
 )
 
@@ -1910,9 +1746,6 @@ defs = dg.Definitions(
         sweden_address_geocode_store_clickhouse,
         sweden_address_geocode_store_backfill_clickhouse,
         sweden_address_geocode_legacy_adoption_clickhouse,
-        sweden_company_address_osm_matches_duckdb,
-        sweden_company_address_geocodes_clickhouse,
-        sweden_company_address_geocode_results_clickhouse,
     ],
     asset_checks=[
         sweden_company_canonical_addresses_complete_check,
@@ -1922,7 +1755,6 @@ defs = dg.Definitions(
         sweden_address_geocode_store_complete_check,
         sweden_company_address_exact_match_rate_check,
         sweden_company_address_osm_snapshot_freshness_check,
-        sweden_company_address_geocode_results_complete_check,
     ],
     jobs=[
         sweden_company_address_geocoding_job,

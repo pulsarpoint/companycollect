@@ -6,6 +6,12 @@ resolved `matched_exact` at confidence 1.0 on identical street text (measured on
 with the matcher. This module moves them into the versioned store as `legacy_adopted_v1`
 outcomes so they stay attributable, rankable and reversible.
 
+IT HAS RUN, AND ITS SOURCE IS GONE. The import is a one-shot that ran BEFORE migration
+000319 dropped the pair -- that ordering is the migration's own stated precondition. The
+module and its asset stay as the record of where the store's `legacy_adopted_v1` rows came
+from; a Materialize click after the drop fails in assert_clickhouse_tables_exist, naming
+se_company_address_geocode_results, which is exactly the answer such a click deserves.
+
 REVERSIBLE, NOT MERGED. An adopted row is distinguishable by its policy_version forever.
 geocode_store's read rule serves it only while the identity's resolver outcome is
 non-geocoded -- the moment a resolver run answers, the resolver's row outranks it and the
@@ -70,9 +76,6 @@ street fallback taking over.
 """
 
 from dagster_v3.defs.sweden_company import shared_addresses
-from dagster_v3.defs.sweden_company.address_geocoding import (
-    QUALIFIED_CLICKHOUSE_RESULTS_TABLE,
-)
 from dagster_v3.defs.sweden_company.geocode_store import (
     GEOCODED_STATUSES,
     LEGACY_ADOPTED_MATCH_METHOD,
@@ -82,6 +85,15 @@ from dagster_v3.defs.sweden_company.geocode_store import (
     STORE_COLUMNS,
     build_current_resolver_geocodes_sql,
 )
+
+# The retired matcher's results table, named here rather than imported. The module that
+# owned these constants (defs/sweden_company/address_geocoding.py) is deleted in the same
+# commit as migration 000319, which drops the table itself -- this module outlives both as
+# the record of what the import read. The name stays spelled out so the asset's
+# assert_clickhouse_tables_exist can fail by name after the drop rather than mid-query.
+CLICKHOUSE_DATABASE = "corpscout"
+CLICKHOUSE_RESULTS_TABLE = "se_company_address_geocode_results"
+QUALIFIED_CLICKHOUSE_RESULTS_TABLE = f"{CLICKHOUSE_DATABASE}.{CLICKHOUSE_RESULTS_TABLE}"
 
 _GEOCODED = ", ".join(f"'{status}'" for status in GEOCODED_STATUSES)
 

@@ -29,10 +29,6 @@ import dagster as dg
 import pytest
 
 from dagster_v3.defs.sweden_company import shared_addresses
-from dagster_v3.defs.sweden_company.address_geocoding import (
-    CLICKHOUSE_RESULTS_EXPORT_COLUMNS,
-    QUALIFIED_CLICKHOUSE_RESULTS_TABLE,
-)
 from dagster_v3.defs.sweden_company.address_geocoding_assets import (
     SwedenGeocodeLegacyAdoptionConfig,
     epoch_milliseconds,
@@ -44,7 +40,9 @@ from dagster_v3.defs.sweden_company.geocode_legacy_adoption import (
     ADOPTION_DISAGREEMENT_SQL,
     ADOPTION_INSERT_SQL,
     ADOPTION_SAMPLE_SQL,
+    ADOPTION_MEASUREMENT_SQL,
     ADOPTION_STATUS_BREAKDOWN_SQL,
+    QUALIFIED_CLICKHOUSE_RESULTS_TABLE,
 )
 from dagster_v3.defs.sweden_company.geocode_store import (
     LEGACY_ADOPTED_MATCH_METHOD,
@@ -345,6 +343,22 @@ def test_a_bare_materialize_measures_and_writes_nothing() -> None:
     }
 
 
+def test_the_preview_refuses_a_breakdown_that_leaves_identities_unaccounted() -> None:
+    """The breakdown is a WRAPPER around the candidate selection, and the owner reads its
+    split beside the adoption count at 12e as one population seen two ways. A narrowing
+    added to the wrapper alone -- a filter, a join, a GROUP BY that drops a status -- keeps
+    both queries answering, just about different sets. Nothing else in this file can see
+    that, because every other assertion checks one number at a time."""
+    client = _FakeClickhouseClient(by_status=(("ambiguous", 19_000),))
+
+    with pytest.raises(ValueError, match="accounts for 19000 of 19413"):
+        _run_import(client)
+
+    assert not any(
+        statement.startswith("INSERT INTO") for statement in client.statements
+    )
+
+
 def test_the_gated_run_inserts_once_and_reports_what_it_wrote() -> None:
     client = _FakeClickhouseClient()
 
@@ -488,6 +502,47 @@ _STORE_DEFAULTS: dict[str, str] = {
     "matched_at": _literal(T_RESOLVER),
 }
 
+# The retired results table's columns, verbatim from the matcher module that used to own
+# the tuple. Spelled out here because that module retires with the table (migration
+# 000319) and this harness is the last thing that has to know the shape of what the import
+# read -- `_row` asserts the defaults below cover exactly these columns, so a column the
+# 000271/000272/000277 DDL has and this list does not is caught rather than defaulted.
+_LEGACY_COLUMNS = (
+    "company_id",
+    "address_key",
+    "address_type",
+    "address_source",
+    "registry_source_record_uid",
+    "street_address",
+    "postal_code",
+    "post_town",
+    "country_code",
+    "normalized_match_key",
+    "match_status",
+    "candidate_count",
+    "candidate_record_ids",
+    "candidate_record_urls",
+    "match_method",
+    "match_confidence",
+    "latitude",
+    "longitude",
+    "geocode_provider",
+    "geocode_precision",
+    "coordinate_method",
+    "coordinate_locality",
+    "coordinate_supporting_point_count",
+    "coordinate_spread_meters",
+    "source_record_id",
+    "source_record_url",
+    "source_url",
+    "source_object_key",
+    "source_md5",
+    "source_snapshot_at",
+    "source_retrieved_at",
+    "source_run_id",
+    "matched_at",
+)
+
 _LEGACY_DEFAULTS: dict[str, str] = {
     "company_id": "",
     "address_key": "",
@@ -557,7 +612,7 @@ def _store_row(address_id: str, **overrides: str) -> str:
 def _legacy_row(company_id: str, address_key: str, **overrides: str) -> str:
     return _row(
         _LEGACY_DEFAULTS,
-        CLICKHOUSE_RESULTS_EXPORT_COLUMNS,
+        _LEGACY_COLUMNS,
         company_id=f"'{company_id}'",
         address_key=f"'{address_key}'",
         **overrides,
@@ -612,6 +667,11 @@ _MEMBERSHIP = (
     ("5560000006", SHARED, "e" * 64),
     ("5560000007", SHARED, "e" * 64),
     ("5560000008", SHARED, "e" * 64),
+    # 5560000001 again, at its SECOND adopted identity -- a company with a postal and a
+    # visiting address, which is the ordinary case. It is what makes the DISTINCT company
+    # count differ from the sum of the per-identity counts: without it both are four and
+    # a `sum(companies)` mistaken for a company count would pass this harness.
+    ("5560000001", SHARED, "e" * 64),
     ("5560000009", WEAK_EXACT, "f" * 64),
     ("5560000010", NO_COORDINATE, "0" * 64),
     ("5560000011", NO_STORE_ROW, "9" * 64),
@@ -638,7 +698,12 @@ def _fixture_statements() -> list[str]:
         # Three companies, one identity, one agreed coordinate.
         *(
             _legacy_row(company, "e" * 64, **_at((58.41, 15.62)))
-            for company in ("5560000006", "5560000007", "5560000008")
+            for company in (
+                "5560000006",
+                "5560000007",
+                "5560000008",
+                "5560000001",
+            )
         ),
         # `matched_exact` is not enough on its own: the legacy matcher also emitted exact
         # matches BELOW full confidence, and only a 1.0 decision is trusted enough to
@@ -669,7 +734,7 @@ def _fixture_statements() -> list[str]:
         _store_row(NO_COORDINATE),
     ]
     return [
-        f"INSERT INTO {LEGACY} ({', '.join(CLICKHOUSE_RESULTS_EXPORT_COLUMNS)}) VALUES\n"
+        f"INSERT INTO {LEGACY} ({', '.join(_LEGACY_COLUMNS)}) VALUES\n"
         + ",\n".join(legacy_rows),
         f"INSERT INTO {LINKS} "
         f"({', '.join(shared_addresses.COMPANY_ADDRESS_LINK_COLUMNS)}) VALUES\n"
@@ -797,6 +862,7 @@ def _script(*, join_use_nulls: int) -> str:
     parts.extend(f"{statement};" for statement in _schema_statements())
     parts.extend(f"{statement};" for statement in _fixture_statements())
     parts.append(_marked("candidates", ADOPTION_CANDIDATES_SQL))
+    parts.append(_marked("measurement", ADOPTION_MEASUREMENT_SQL))
     parts.append(_marked("disagreement", ADOPTION_DISAGREEMENT_SQL))
     parts.append(_marked("breakdown", ADOPTION_STATUS_BREAKDOWN_SQL))
     parts.append(_marked("company_count", ADOPTION_COMPANY_COUNT_SQL))
@@ -869,7 +935,7 @@ def test_a_shared_identity_is_adopted_exactly_once(sections) -> None:
     import has to get right."""
     assert [row[0] for row in sections["adopted"]].count(SHARED) == 1
     candidates = {row[0]: (row[1], row[2]) for row in sections["candidates"]}
-    assert candidates[SHARED] == ("3", "3")
+    assert candidates[SHARED] == ("4", "4")
     assert candidates[ADOPTABLE] == ("1", "1")
     assert set(candidates) == {ADOPTABLE, SHARED}
 
@@ -881,20 +947,27 @@ def test_the_refused_disagreement_is_counted_and_not_adopted(sections) -> None:
 def test_the_import_adopts_through_the_resolver_statuses_it_reports(sections) -> None:
     """The preview's breakdown, executed: the split the owner reads at 12e is produced by
     the same selection that produces the adoption count, so the two cannot disagree."""
-    assert {row[0]: int(row[1]) for row in sections["breakdown"]} == {
-        "ambiguous": 1,
-        "unmatched": 1,
-    }
+    breakdown = {row[0]: int(row[1]) for row in sections["breakdown"]}
+    assert breakdown == {"ambiguous": 1, "unmatched": 1}
+    # The breakdown is a wrapper around the candidate selection, and a narrowing added to
+    # the wrapper alone would leave a split that no longer describes the population the
+    # adoption count describes. The asset raises on exactly this mismatch; here it is
+    # executed against the real selection.
+    assert sum(breakdown.values()) == len(sections["candidates"])
+    assert sum(breakdown.values()) == int(sections["measurement"][0][0])
 
 
 def test_the_company_count_counts_companies_and_not_pairs(sections) -> None:
-    """ADOPTABLE contributes one company, SHARED three -- four distinct companies across
-    two adopted identities, while the per-identity counts sum to four as well. The number
-    that matters is that the flattened count is a uniqExact over company ids, which the
-    disagreeing and refused identities never enter."""
-    assert sections["company_count"] == [["4"]]
+    """5560000001 sits at BOTH adopted identities, so the two numbers genuinely differ:
+    four distinct companies, five company-address pairs. A `sum(companies)` mistaken for a
+    company count reads as five here and fails, which is the whole point of the fixture --
+    the plan's headline number is a company count."""
     contributing = {row[0]: int(row[2]) for row in sections["candidates"]}
-    assert contributing == {ADOPTABLE: 1, SHARED: 3}
+    assert contributing == {ADOPTABLE: 1, SHARED: 4}
+    assert sum(contributing.values()) == 5
+    assert sections["company_count"] == [["4"]]
+    # ... and the measurement's own pair total is the five, not the four.
+    assert int(sections["measurement"][0][2]) == 5
 
 
 def test_the_adopted_row_carries_the_legacy_decision_and_its_own_version(
