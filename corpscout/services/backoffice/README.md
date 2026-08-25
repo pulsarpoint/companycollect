@@ -111,27 +111,45 @@ can inspect every proposed domain and keeps the selected `domain` in its URL.
 agent (`app/agents/geocode-analysis.server.ts`, OpenAI Codex SDK) that clusters
 the unmatched address pool, tests each hypothesis against matched exemplars,
 and returns Dagster augmentation suggestions with examples and counts. Sweden
-is the first wired country; `GEOCODE_AGENT_COUNTRIES` is where the next one is
-added.
+is the first wired country; the next one is added to the `GEOCODE_AGENT_COUNTRIES`
+table in that module (a TypeScript constant, not an environment variable).
 
-Guardrails, all enforced in application code rather than in the prompt:
+Guardrails, in the order they bind, and honest about which one carries weight:
 
-- The agent holds no database handle. It asks for SQL in structured output;
-  `app/agents/read-only-sql.ts` refuses anything that is not a single read
-  statement (and refuses `url()`, `file()`, `s3()`, `remote()`, which
-  ClickHouse itself considers reads), and the connection sends `readonly=1`.
-- It never reaches PostgreSQL. The report, suggestions and memory are validated
-  by `app/agents/geocode-analysis-contract.ts` and written by the app.
-- It never writes the geocode store, deploys, or triggers Dagster. An accepted
-  suggestion is a work item for a golden-gated policy bump.
-- Its Codex process runs read-only in an empty temp directory with no network,
-  no approvals, `mcp_servers={}`, and an allowlisted environment (PATH, HOME,
-  proxies) -- the backoffice's own credentials are never in scope for it. Set
-  `GEOCODE_AGENT_CODEX_HOME` to keep the host operator's own Codex config out
-  of the agent's session entirely.
+- **ClickHouse writes: the server refuses them.** Every agent statement is sent
+  with `readonly=1` on a connection separate from the backoffice's own. This is
+  the barrier; nothing else is trusted to hold it.
+- **ClickHouse's read-only escape hatches: judged from its own parse.** `url()`,
+  `file()`, `s3()`, `remote()`, `executable()` are reads, so `readonly=1` runs
+  them happily. Before a statement executes, `EXPLAIN AST` is fetched over the
+  same connection and every table function ClickHouse reports must be on an
+  allowlist of inert local ones (`merge`, `view`, `numbers`, ...). Reading the
+  server's parse is what makes heredoc literals (`$x$...$x$`) and
+  backtick-quoted names non-issues; the string checks in
+  `app/agents/read-only-sql.ts` are fast feedback and defense in depth, not a
+  boundary.
+- **PostgreSQL: the agent never reaches it.** The report, suggestions and memory
+  come back as structured output, are validated by
+  `app/agents/geocode-analysis-contract.ts`, and are written by the app inside
+  one transaction that first claims the run row.
+- **It never writes the geocode store, deploys, or triggers Dagster.** An
+  accepted suggestion is a work item for a golden-gated policy bump; marking one
+  implemented records the policy version that shipped it.
+- **The model process is narrowed, not jailed.** It starts with
+  `sandboxMode: "read-only"`, no network, no approvals, `mcp_servers={}`, an
+  empty working directory, an allowlisted environment (PATH, proxies -- none of
+  the backoffice's credentials), and a private HOME/CODEX_HOME created under the
+  OS temp directory. Note what read-only does NOT mean: it restricts writes, not
+  reads, so a command in that sandbox can still read any file the process's uid
+  can read. Narrowing HOME keeps `~/.aws`, `~/.ssh` and the operator's Codex
+  config out of easy reach; real isolation is a separate uid or container and is
+  a deployment decision. `GEOCODE_AGENT_CODEX_HOME` may point at a provisioned
+  directory instead -- it must already exist, or the Codex CLI hard-errors.
 
 Runs take minutes: the action inserts a queued row and returns, and the panel
-polls `/admin/se/company-info/geocoding/agent` until the run is terminal.
+polls `/admin/se/company-info/geocoding/agent` until the run is terminal. Page
+loads and polls never write; a run abandoned by a dead process is reaped at the
+next trigger, measured against that run's own stored budget.
 
 Its three tables live in the review-queue PostgreSQL and are created by the
 first migration in `database/migrations`:
