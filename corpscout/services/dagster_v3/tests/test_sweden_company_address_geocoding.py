@@ -870,6 +870,125 @@ def test_shared_address_link_collapses_canonical_care_of_variants() -> None:
     )
 
 
+def test_the_canonical_build_refuses_a_member_total_that_disagrees() -> None:
+    """Check 1's ClickHouse half compared member_count sums across two published tables.
+    Asserting it inside the build instead aborts before the bad snapshot is ever published
+    -- same arithmetic, same rows, one step earlier.
+
+    The build runs first for two reasons: it populates the canonical and member tables, and
+    it leaves the temporary _sweden_company_address_observations relation on the connection,
+    which the invariant reads as its source-observation denominator.
+    """
+    from dagster_v3.defs.sweden_company.address_canonicalization import (
+        _assert_canonical_address_invariants,
+        replace_sweden_company_canonical_addresses,
+    )
+
+    connection = _osm_connection()
+    replace_sweden_company_canonical_addresses(
+        connection=connection,
+        clickhouse_client=_AddressClickHouseClient(),
+        normalization_run_id="canonical-run",
+        normalized_at=datetime(2026, 8, 24, tzinfo=UTC),
+    )
+    # A clean snapshot passes -- without this the mutated case below could be passing for
+    # any reason at all.
+    _assert_canonical_address_invariants(connection)
+
+    connection.execute(
+        """
+        update sweden_company_enrichment.se_company_addresses_canonical_current
+        set member_count = member_count + 1
+        """
+    )
+    try:
+        _assert_canonical_address_invariants(connection)
+    except ValueError as error:
+        assert "member_count" in str(error)
+    else:
+        raise AssertionError(
+            "a canonical member_count total that disagrees with the member rows must "
+            "abort the build"
+        )
+
+
+def test_the_canonical_build_refuses_two_normalization_runs_in_one_snapshot() -> None:
+    """The other half of check 1's relocated terms: one snapshot, one normalization run.
+
+    The published check asserted this by reading the run id off both tables and comparing
+    them. Two single-run assertions over tables the key join has already matched row for
+    row say the same thing about the same rows, one step before the snapshot exists.
+    """
+    from dagster_v3.defs.sweden_company.address_canonicalization import (
+        _assert_canonical_address_invariants,
+        replace_sweden_company_canonical_addresses,
+    )
+
+    connection = _osm_connection()
+    replace_sweden_company_canonical_addresses(
+        connection=connection,
+        clickhouse_client=_AddressClickHouseClient(),
+        normalization_run_id="canonical-run",
+        normalized_at=datetime(2026, 8, 24, tzinfo=UTC),
+    )
+    connection.execute(
+        """
+        update sweden_company_enrichment.se_company_address_members_current
+        set normalization_run_id = 'a-second-run'
+        where company_id = 'exact-company'
+        """
+    )
+    try:
+        _assert_canonical_address_invariants(connection)
+    except ValueError as error:
+        assert "normalization run" in str(error)
+    else:
+        raise AssertionError(
+            "a canonical snapshot spanning two normalization runs must abort the build"
+        )
+
+
+def test_the_shared_build_refuses_an_unknown_link_review_status() -> None:
+    """Check 2's review-status allowlist, relocated the same way. The ClickHouse half keeps
+    its own copy of this term -- the two tables it compares both survive -- but the DuckDB
+    assertion is what stops a bad snapshot being published in the first place."""
+    from dagster_v3.defs.sweden_company.address_canonicalization import (
+        replace_sweden_company_canonical_addresses,
+    )
+    from dagster_v3.defs.sweden_company.shared_addresses import (
+        _assert_shared_address_invariants,
+        replace_sweden_shared_addresses,
+    )
+
+    connection = _osm_connection()
+    replace_sweden_company_canonical_addresses(
+        connection=connection,
+        clickhouse_client=_AddressClickHouseClient(),
+        normalization_run_id="canonical-run",
+        normalized_at=datetime(2026, 8, 24, tzinfo=UTC),
+    )
+    replace_sweden_shared_addresses(
+        connection=connection,
+        company_address_link_reviews=(),
+        address_identity_run_id="address-identity-run",
+        address_identity_built_at=datetime(2026, 8, 24, 1, tzinfo=UTC),
+    )
+    _assert_shared_address_invariants(connection)
+
+    connection.execute(
+        """
+        update sweden_company_enrichment.se_company_address_links_current
+        set review_status = 'maybe'
+        """
+    )
+    try:
+        _assert_shared_address_invariants(connection)
+    except ValueError as error:
+        assert "review status" in str(error)
+    else:
+        raise AssertionError("an unknown link review status must abort the build")
+
+
 def test_sweden_company_address_matching_only_accepts_unique_exact_osm_rows() -> None:
     from dagster_v3.defs.sweden_company.address_canonicalization import (
         replace_sweden_company_canonical_addresses,

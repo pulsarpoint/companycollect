@@ -285,12 +285,23 @@ def _create_shared_addresses(
 
 
 def _assert_shared_address_invariants(connection: Any) -> None:
+    """The shared-address graph's own consistency, asserted before it is published.
+
+    The canonical denominator here is the AUTHORITY for that term (spec section 4.5): the
+    ClickHouse check that used to carry it reads a canonical table that is retiring, and
+    this assertion aborts the build's transaction rather than reporting on a snapshot that
+    has already shipped. The review-status allowlist joins it for the same reason -- a link
+    carrying a status nothing downstream knows how to read is a bad snapshot, not a bad
+    report. The published check keeps its own copy of that term: both tables it compares
+    survive the retirement, and a review is written by a human after the build.
+    """
     [(
         expected_link_rows,
         canonical_evidence,
         link_rows,
         unique_link_rows,
         linked_evidence,
+        invalid_review_statuses,
     )] = (
         connection.execute(
             f"""
@@ -312,7 +323,14 @@ def _assert_shared_address_invariants(connection: Any) -> None:
                 (select sum(member_count) from expected),
                 count(*),
                 count(distinct (company_id, address_id)),
-                sum(evidence_count)
+                sum(evidence_count),
+                count(*) filter (
+                    where review_status not in (
+                        'unreviewed',
+                        'confirmed',
+                        'rejected'
+                    )
+                )
             from {QUALIFIED_COMPANY_ADDRESS_LINKS_TABLE}
             """
         ).fetchall()
@@ -345,6 +363,10 @@ def _assert_shared_address_invariants(connection: Any) -> None:
         raise ValueError("Shared Sweden address evidence totals must match link totals")
     if int(link_rows) != int(address_companies):
         raise ValueError("Shared Sweden address company counts must match link rows")
+    if int(invalid_review_statuses) != 0:
+        raise ValueError(
+            "Sweden company-address link review statuses must be known values"
+        )
 
 
 def _count(connection: Any, qualified_table: str) -> int:

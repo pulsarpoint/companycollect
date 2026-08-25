@@ -53,64 +53,58 @@ MIN_EXACT_MATCH_RATE_PERCENT = 5.0
 MAX_EXACT_MATCH_RATE_CHANGE_PERCENTAGE_POINTS = 2.0
 
 
+_GEOCODED_STATUS_LIST = ", ".join(
+    f"'{status}'" for status in geocode_store.GEOCODED_STATUSES
+)
+_VALID_STATUS_LIST = ", ".join(f"'{status}'" for status in geocode_store.VALID_STATUSES)
+
+
 @dataclass(frozen=True)
-class SwedenAddressGeocodeStats:
-    company_addresses: int
-    matched_exact: int
-    unique_geocodes: int
-    source_run_count: int
-    latest_osm_snapshot_at: datetime | None
+class SwedenGeocodeExactMatchStats:
+    company_address_links: int
+    matched_exact_links: int
+    geocoded_links: int
 
     @property
     def exact_match_rate_percent(self) -> float:
-        if self.company_addresses == 0:
+        if self.company_address_links == 0:
             return 0.0
-        return 100.0 * self.matched_exact / self.company_addresses
+        return 100.0 * self.matched_exact_links / self.company_address_links
 
 
-def fetch_sweden_address_geocode_stats(client: Any) -> SwedenAddressGeocodeStats:
-    [
-        (
-            matched_exact,
-            unique_geocodes,
-            source_run_count,
-            latest_osm_snapshot_at,
-        )
-    ] = client.execute(
-        f"""
-        SELECT
-            count(),
-            uniqExact(tuple(company_id, address_key)),
-            uniqExact(source_run_id),
-            max(source_snapshot_at)
-        FROM {address_geocoding.QUALIFIED_CLICKHOUSE_TABLE}
-        """
-    )
-    [(company_addresses,)] = client.execute(
-        f"""
-        SELECT count()
-        FROM {address_canonicalization.QUALIFIED_CLICKHOUSE_CANONICAL_ADDRESSES_TABLE}
-        """
-    )
-    return SwedenAddressGeocodeStats(
-        company_addresses=int(company_addresses),
-        matched_exact=int(matched_exact),
-        unique_geocodes=int(unique_geocodes),
-        source_run_count=int(source_run_count),
-        latest_osm_snapshot_at=latest_osm_snapshot_at,
+EXACT_MATCH_RATE_SQL = f"""SELECT
+    count(),
+    countIf(ifNull(geocode.match_status, '') = 'matched_exact'),
+    countIf(ifNull(geocode.match_status, '') IN ({_GEOCODED_STATUS_LIST}))
+FROM {shared_addresses.QUALIFIED_CLICKHOUSE_COMPANY_ADDRESS_LINKS_TABLE} AS link
+LEFT JOIN (
+{geocode_store.build_current_geocodes_sql(columns=("address_id", "match_status"))}
+) AS geocode ON geocode.address_id = link.address_id"""
+
+SNAPSHOT_FRESHNESS_SQL = f"""SELECT max(source_snapshot_at)
+FROM {geocode_store.QUALIFIED_CLICKHOUSE_GEOCODE_STORE_TABLE}"""
+
+
+def fetch_sweden_geocode_exact_match_stats(client: Any) -> SwedenGeocodeExactMatchStats:
+    """Company-address links, and how many of them the store currently geocodes.
+
+    The denominator is LINKS, not canonical addresses: the canonical ClickHouse table is
+    retiring, and a link is the thing a rate over company addresses is actually about. The
+    numerator joins the versioned read, so the two share a grain -- counting identities
+    against a link denominator would produce a number that means nothing.
+    """
+    [(links, matched_exact, geocoded)] = client.execute(EXACT_MATCH_RATE_SQL)
+    return SwedenGeocodeExactMatchStats(
+        company_address_links=int(links),
+        matched_exact_links=int(matched_exact),
+        geocoded_links=int(geocoded),
     )
 
 
-def fetch_sweden_address_geocode_result_counts(client: Any) -> dict[str, int]:
-    rows = client.execute(
-        f"""
-        SELECT match_status, count()
-        FROM {address_geocoding.QUALIFIED_CLICKHOUSE_RESULTS_TABLE}
-        GROUP BY match_status
-        ORDER BY match_status
-        """
-    )
-    return {str(status): int(count) for status, count in rows}
+def fetch_sweden_geocode_snapshot_freshness(client: Any) -> datetime | None:
+    """The newest OSM snapshot any stored outcome was computed against."""
+    [(snapshot_at,)] = client.execute(SNAPSHOT_FRESHNESS_SQL)
+    return snapshot_at
 
 
 def exact_match_rate_is_stable(
@@ -139,22 +133,44 @@ def osm_snapshot_is_fresh(*, snapshot_at: datetime | None, now: datetime) -> boo
     return now.astimezone(UTC) - normalized_snapshot_at <= MAX_OSM_SNAPSHOT_AGE
 
 
+EXACT_MATCH_RATE_CHECK_NAME = "exact_match_rate_stable"
+EXACT_MATCH_RATE_CHECK_KEY = dg.AssetCheckKey(
+    dg.AssetKey(GEOCODE_STORE_ASSET_KEY),
+    EXACT_MATCH_RATE_CHECK_NAME,
+)
+
+
 def previous_exact_match_rate_percent(
     instance: dg.DagsterInstance,
     *,
     current_run_id: str,
 ) -> float | None:
-    records = instance.fetch_materializations(
-        dg.AssetKey(GEOCODE_ASSET_KEY),
+    """The rate this check last reported, read out of this check's OWN history.
+
+    IT USED TO READ MATERIALIZATIONS, AND IT CANNOT ANY MORE. The series was the legacy
+    publish asset's materialization metadata, which carried the rate as a side effect of
+    the asset computing it. That asset retires with the legacy pair, and the store asset
+    this check now hangs off publishes no rate at all -- it appends the outcomes a
+    promotion produced and reports what it appended. Following the check to its new host
+    while still reading materializations would answer None on every run forever: the
+    +/-2pp term would be permanently inert and nothing would say so.
+
+    An evaluation is written after the check body returns, so the current run's own record
+    is normally absent; a PLANNED record carries no evaluation and is skipped. `run_id` is
+    still compared, because a check retried inside one run must not be compared against
+    itself.
+    """
+    records = instance.event_log_storage.get_asset_check_execution_history(
+        EXACT_MATCH_RATE_CHECK_KEY,
         limit=10,
-    ).records
+    )
     for record in records:
-        if record.event_log_entry.run_id == current_run_id:
+        if record.run_id == current_run_id:
             continue
-        materialization = record.asset_materialization
-        if materialization is None:
+        evaluation = record.evaluation
+        if evaluation is None:
             continue
-        value = materialization.metadata.get("exact_match_rate_percent")
+        value = evaluation.metadata.get("exact_match_rate_percent")
         numeric_value = getattr(value, "value", None)
         if isinstance(numeric_value, int | float):
             return float(numeric_value)
@@ -1224,20 +1240,14 @@ def sweden_company_address_geocodes_clickhouse(
                 truncate=True,
                 log=context.log.info,
             )
-            stats = fetch_sweden_address_geocode_stats(clickhouse_client)
+    # The stats block this used to publish is gone with the helper that fed it: it read
+    # the canonical ClickHouse table for a denominator, and the rate it reported is now
+    # the store check's to report. This asset is deleted whole with the legacy pair; until
+    # then it publishes what it actually wrote.
     return dg.MaterializeResult(
         metadata={
             "rows": rows,
             "table": address_geocoding.QUALIFIED_CLICKHOUSE_TABLE,
-            "company_addresses": stats.company_addresses,
-            "unique_geocodes": stats.unique_geocodes,
-            "exact_match_rate_percent": stats.exact_match_rate_percent,
-            "source_run_count": stats.source_run_count,
-            "latest_osm_snapshot_at": (
-                stats.latest_osm_snapshot_at.isoformat()
-                if stats.latest_osm_snapshot_at is not None
-                else None
-            ),
         }
     )
 
@@ -1278,14 +1288,10 @@ def sweden_company_address_geocode_results_clickhouse(
                 truncate=True,
                 log=context.log.info,
             )
-            status_counts = fetch_sweden_address_geocode_result_counts(
-                clickhouse_client
-            )
     return dg.MaterializeResult(
         metadata={
             "rows": rows,
             "table": address_geocoding.QUALIFIED_CLICKHOUSE_RESULTS_TABLE,
-            **status_counts,
         }
     )
 
@@ -1422,29 +1428,21 @@ def sweden_company_canonical_addresses_complete_check(
     asset=sweden_shared_addresses_clickhouse,
     name="all_company_addresses_link_to_one_shared_address",
     description=(
-        "Fails when canonical company addresses are missing or duplicated in the "
-        "shared-address graph, or aggregate evidence totals disagree."
+        "Fails when the published Sweden shared-address graph disagrees with its own "
+        "company-address links."
     ),
 )
 def sweden_shared_addresses_complete_check(
     clickhouse: ClickhouseResource,
 ) -> dg.AssetCheckResult:
+    """Fails when the published shared-address graph disagrees with its own links.
+
+    The canonical denominator this check used to carry is asserted by
+    shared_addresses._assert_shared_address_invariants inside the DuckDB build, which aborts
+    before publishing rather than reporting afterwards -- and the canonical ClickHouse table
+    it read is retiring (spec section 4.5).
+    """
     with clickhouse.get_connection() as client:
-        [(canonical_rows, expected_link_rows, canonical_evidence)] = client.execute(
-            f"""
-            SELECT
-                count(),
-                uniqExact(tuple(
-                    company_id,
-                    country_code,
-                    normalized_street,
-                    normalized_postal_code,
-                    normalized_post_town
-                )),
-                sum(member_count)
-            FROM {address_canonicalization.QUALIFIED_CLICKHOUSE_CANONICAL_ADDRESSES_TABLE}
-            """
-        )
         [
             (
                 link_rows,
@@ -1484,8 +1482,7 @@ def sweden_shared_addresses_complete_check(
             """
         )
     passed = (
-        int(expected_link_rows) == int(link_rows) == int(unique_link_rows)
-        and int(canonical_evidence) == int(link_evidence)
+        int(link_rows) == int(unique_link_rows)
         and int(address_rows) == int(unique_address_rows)
         and int(link_evidence) == int(address_evidence)
         and int(link_rows) == int(address_company_total)
@@ -1495,9 +1492,6 @@ def sweden_shared_addresses_complete_check(
     return dg.AssetCheckResult(
         passed=passed,
         metadata={
-            "canonical_company_addresses": int(canonical_rows),
-            "expected_company_address_links": int(expected_link_rows),
-            "canonical_source_evidence": int(canonical_evidence),
             "company_address_links": int(link_rows),
             "unique_company_address_links": int(unique_link_rows),
             "shared_addresses": int(address_rows),
@@ -1511,249 +1505,199 @@ def sweden_shared_addresses_complete_check(
     )
 
 
+STORE_INVARIANTS_SQL = f"""SELECT
+    count(),
+    uniqExact(tuple(address_id, policy_version, reference_md5)),
+    uniqExact(address_id),
+    countIf(match_status NOT IN ({_VALID_STATUS_LIST})),
+    countIf(reference_md5 = '' OR policy_version = ''),
+    countIf(
+        isNull(latitude) != isNull(longitude)
+        OR (isNotNull(latitude) AND (latitude < -90 OR latitude > 90))
+        OR (isNotNull(longitude) AND (longitude < -180 OR longitude > 180))
+    ),
+    countIf(
+        match_status IN ({_GEOCODED_STATUS_LIST})
+        AND (isNull(latitude) OR isNull(longitude))
+    ),
+    countIf(
+        match_status NOT IN ({_GEOCODED_STATUS_LIST})
+        AND (isNotNull(latitude) OR isNotNull(longitude))
+    ),
+    countIf(
+        match_status IN ('matched_exact', 'matched_corrected')
+            AND geocode_precision != 'building'
+        OR match_status = 'matched_site' AND geocode_precision != 'site'
+        OR match_status = 'matched_area' AND geocode_precision != 'area'
+        OR match_status = 'matched_street' AND geocode_precision != 'street'
+        OR match_status NOT IN ({_GEOCODED_STATUS_LIST})
+            AND geocode_precision != ''
+    ),
+    countIf(
+        isNull(source_url)
+        OR isNull(source_object_key)
+        OR isNull(source_md5)
+        OR isNull(source_snapshot_at)
+        OR isNull(source_retrieved_at)
+    )
+FROM {geocode_store.QUALIFIED_CLICKHOUSE_GEOCODE_STORE_TABLE}"""
+
+# The anti-join runs FROM THE IDENTITY SIDE, and only that direction. A permanent versioned
+# store legitimately keeps outcomes for identities the register has since dropped, so
+# "every stored outcome has a live identity" is false by design and would report a growing
+# number nobody can act on. "Every live identity has an outcome" is the direction that can
+# catch a demand scan which skipped somebody, which is the failure worth catching.
+STORE_COVERAGE_SQL = f"""SELECT count()
+FROM {shared_addresses.QUALIFIED_CLICKHOUSE_SHARED_ADDRESSES_TABLE} AS address
+LEFT ANTI JOIN {
+    geocode_store.QUALIFIED_CLICKHOUSE_GEOCODE_STORE_TABLE
+} AS store ON store.address_id = address.address_id"""
+
+# Only the adopted identities are ranked -- the filter goes on the INNER read, where the
+# store's sorting key leads with address_id, so this reads the ~19k imported identities
+# rather than all 2.09M.
+_ADOPTED_EXACT_FILTER_SQL = (
+    "address_id IN (\n"
+    "        SELECT address_id\n"
+    f"        FROM {geocode_store.QUALIFIED_CLICKHOUSE_GEOCODE_STORE_TABLE}\n"
+    f"        WHERE policy_version = '{geocode_store.LEGACY_ADOPTED_POLICY_VERSION}'\n"
+    "          AND match_status = 'matched_exact'\n"
+    "    )"
+)
+
+ADOPTION_DEMOTION_SQL = f"""SELECT count()
+FROM (
+{
+    geocode_store.build_current_geocodes_sql(
+        columns=("address_id", "policy_version", "match_status"),
+        address_filter_sql=_ADOPTED_EXACT_FILTER_SQL,
+    )
+}
+) AS served
+WHERE served.policy_version != '{geocode_store.LEGACY_ADOPTED_POLICY_VERSION}'
+  AND served.match_status NOT IN ('matched_exact', 'matched_corrected')"""
+
+
 @dg.asset_check(
-    asset=sweden_address_geocodes_clickhouse,
-    name="all_shared_addresses_have_one_geocoding_outcome",
+    asset=sweden_address_geocode_store_clickhouse,
+    name="every_stored_outcome_is_attributable_and_consistent",
     description=(
-        "Fails when the shared-address geocode table is not a complete, unique, "
-        "single-run classification of the current address identities."
+        "Fails when the versioned Sweden geocode store holds a duplicate "
+        "(identity, policy, reference) row, an unknown status, an outcome with no "
+        "version identity, or a coordinate that disagrees with its status."
     ),
 )
-def sweden_shared_address_geocodes_complete_check(
+def sweden_address_geocode_store_complete_check(
     clickhouse: ClickhouseResource,
 ) -> dg.AssetCheckResult:
+    """Check 3, at the store's grain.
+
+    The old check demanded ONE row per identity and ONE geocode run across the whole table,
+    and joined the outcome table to the identity table on their shared address_identity_run
+    id. All three are now wrong by design: several attributable outcomes per identity is
+    the store working, a demand-driven run appends only what it matched so a table spanning
+    many runs is the normal state, and an outcome carries the identity run it was decided
+    under rather than the current one. Uniqueness moves to the key TRIPLE, which is the
+    grain that replaced them and the only version of that term which can still fail. What
+    survives unchanged is everything about a single row -- the status allowlist, the
+    coordinate/precision agreement, the provenance -- plus the two new key columns, which
+    must never be empty because an outcome that cannot be attributed is exactly what this
+    design set out to eliminate.
+
+    WHAT `rows == unique_keys` CAN AND CANNOT SEE. It is the ReplacingMergeTree contract
+    stated as an assertion, and it discriminates: a duplicate key triple means un-merged
+    parts the versioned read has to rank around, which is safe but worth knowing about, and
+    a persistent inequality means the append path is writing the same key twice across
+    runs. It cannot see a key written twice inside ONE insert block: the default
+    `optimize_on_insert = 1` collapses those before they land (verified both ways on 26.5),
+    so this term's silence is not evidence that the append never produced one.
+    """
     with clickhouse.get_connection() as client:
-        [(address_rows, unique_addresses, address_identity_runs)] = client.execute(
-            f"""
-            SELECT
-                count(),
-                uniqExact(address_id),
-                uniqExact(address_identity_run_id)
-            FROM {shared_addresses.QUALIFIED_CLICKHOUSE_SHARED_ADDRESSES_TABLE}
-            """
-        )
         [
             (
-                result_rows,
-                unique_results,
-                result_identity_runs,
-                geocode_runs,
+                rows,
+                unique_keys,
+                identities,
                 invalid_statuses,
+                missing_versions,
                 invalid_coordinates,
                 missing_geocoded_coordinates,
                 unexpected_coordinates,
                 invalid_precision,
-                missing_snapshot_provenance,
+                missing_provenance,
             )
-        ] = client.execute(
-            f"""
-            SELECT
-                count(),
-                uniqExact(address_id),
-                uniqExact(address_identity_run_id),
-                uniqExact(geocode_run_id),
-                countIf(match_status NOT IN (
-                    'matched_exact',
-                    'matched_corrected',
-                    'matched_site',
-                    'matched_area',
-                    'matched_street',
-                    'ambiguous',
-                    'unmatched',
-                    'invalid_address',
-                    'foreign_address',
-                    'postal_box',
-                    'property_identifier'
-                )),
-                countIf(
-                    isNull(latitude) != isNull(longitude)
-                    OR (isNotNull(latitude) AND (latitude < -90 OR latitude > 90))
-                    OR (
-                        isNotNull(longitude)
-                        AND (longitude < -180 OR longitude > 180)
-                    )
-                ),
-                countIf(
-                    match_status IN (
-                        'matched_exact',
-                        'matched_corrected',
-                        'matched_site',
-                        'matched_area',
-                        'matched_street'
-                    )
-                    AND (isNull(latitude) OR isNull(longitude))
-                ),
-                countIf(
-                    match_status NOT IN (
-                        'matched_exact',
-                        'matched_corrected',
-                        'matched_site',
-                        'matched_area',
-                        'matched_street'
-                    )
-                    AND (isNotNull(latitude) OR isNotNull(longitude))
-                ),
-                countIf(
-                    match_status IN ('matched_exact', 'matched_corrected')
-                        AND geocode_precision != 'building'
-                    OR match_status = 'matched_site'
-                        AND geocode_precision != 'site'
-                    OR match_status = 'matched_area'
-                        AND geocode_precision != 'area'
-                    OR match_status = 'matched_street'
-                        AND geocode_precision != 'street'
-                    OR match_status NOT IN (
-                        'matched_exact',
-                        'matched_corrected',
-                        'matched_site',
-                        'matched_area',
-                        'matched_street'
-                    )
-                        AND geocode_precision != ''
-                ),
-                countIf(
-                    isNull(source_url)
-                    OR isNull(source_object_key)
-                    OR isNull(source_md5)
-                    OR isNull(source_snapshot_at)
-                    OR isNull(source_retrieved_at)
-                )
-            FROM {shared_address_geocoding.QUALIFIED_CLICKHOUSE_ADDRESS_GEOCODES_TABLE}
-            """
-        )
-        [(identity_mismatches,)] = client.execute(
-            f"""
-            SELECT count()
-            FROM {shared_addresses.QUALIFIED_CLICKHOUSE_SHARED_ADDRESSES_TABLE} address
-            LEFT JOIN {
-                shared_address_geocoding.QUALIFIED_CLICKHOUSE_ADDRESS_GEOCODES_TABLE
-            } geocode USING (address_id)
-            WHERE geocode.geocode_run_id = ''
-               OR geocode.address_identity_run_id != address.address_identity_run_id
-            """
-        )
+        ] = client.execute(STORE_INVARIANTS_SQL)
+        [(identities_without_outcome,)] = client.execute(STORE_COVERAGE_SQL)
+        [(demoted_adoptions,)] = client.execute(ADOPTION_DEMOTION_SQL)
     passed = (
-        int(address_rows) == int(unique_addresses)
-        and int(address_rows) == int(result_rows) == int(unique_results)
-        and int(address_identity_runs) == int(result_identity_runs) == 1
-        and int(geocode_runs) == 1
-        and int(identity_mismatches) == 0
+        # The one term that carries the store's grain: one row per (identity, matcher,
+        # reference). `count() >= uniqExact(address_id)` over the same table was the obvious
+        # thing to write here and is a tautology -- it cannot fail, whatever the store holds.
+        int(rows) == int(unique_keys)
+        and int(identities_without_outcome) == 0
         and int(invalid_statuses) == 0
+        and int(missing_versions) == 0
         and int(invalid_coordinates) == 0
         and int(missing_geocoded_coordinates) == 0
         and int(unexpected_coordinates) == 0
         and int(invalid_precision) == 0
-        and int(missing_snapshot_provenance) == 0
+        and int(missing_provenance) == 0
     )
     return dg.AssetCheckResult(
         passed=passed,
         metadata={
-            "shared_addresses": int(address_rows),
-            "unique_shared_addresses": int(unique_addresses),
-            "geocode_results": int(result_rows),
-            "unique_geocode_results": int(unique_results),
-            "address_identity_runs": int(address_identity_runs),
-            "geocode_runs": int(geocode_runs),
-            "identity_mismatches": int(identity_mismatches),
+            "store_rows": int(rows),
+            "unique_version_keys": int(unique_keys),
+            "identities": int(identities),
+            "identities_without_outcome": int(identities_without_outcome),
             "invalid_statuses": int(invalid_statuses),
+            "outcomes_missing_a_version_identity": int(missing_versions),
             "invalid_coordinates": int(invalid_coordinates),
             "missing_geocoded_coordinates": int(missing_geocoded_coordinates),
             "unexpected_coordinates": int(unexpected_coordinates),
             "invalid_precision": int(invalid_precision),
-            "missing_snapshot_provenance": int(missing_snapshot_provenance),
+            "missing_snapshot_provenance": int(missing_provenance),
+            # REPORTED, NEVER GATED. Identities whose SERVED outcome has moved off an
+            # imported `matched_exact` onto a lower-precision resolver outcome. That trade
+            # is what the read rule is for -- a resolver answer that geocodes takes over --
+            # but under the demand rule (spec section 4.2) a geocoded outcome is never
+            # re-selected, so the demotion is terminal in practice even though both rows
+            # stay in the store. Nothing here is broken, so nothing here may go red; this
+            # counter exists so somebody can watch the number rather than discover it.
+            "adopted_exact_identities_demoted": int(demoted_adoptions),
         },
     )
 
 
 @dg.asset_check(
-    asset=sweden_address_geocodes_clickhouse,
-    name="shared_geocoding_matches_company_baseline",
+    asset=sweden_address_geocode_store_clickhouse,
+    name=EXACT_MATCH_RATE_CHECK_NAME,
     description=(
-        "Compares company-link coverage from shared geocodes with the existing "
-        "company-address outcome table."
-    ),
-)
-def sweden_shared_address_geocodes_baseline_check(
-    clickhouse: ClickhouseResource,
-) -> dg.AssetCheckResult:
-    with clickhouse.get_connection() as client:
-        [(baseline_exact, baseline_geolocated)] = client.execute(
-            f"""
-            SELECT
-                uniqExactIf(
-                    tuple(
-                        canonical.company_id,
-                        canonical.country_code,
-                        canonical.normalized_street,
-                        canonical.normalized_postal_code,
-                        canonical.normalized_post_town
-                    ),
-                    result.match_status = 'matched_exact'
-                ),
-                uniqExactIf(
-                    tuple(
-                        canonical.company_id,
-                        canonical.country_code,
-                        canonical.normalized_street,
-                        canonical.normalized_postal_code,
-                        canonical.normalized_post_town
-                    ),
-                    isNotNull(result.latitude) AND isNotNull(result.longitude)
-                )
-            FROM {
-                address_canonicalization.QUALIFIED_CLICKHOUSE_CANONICAL_ADDRESSES_TABLE
-            } canonical
-            INNER JOIN {address_geocoding.QUALIFIED_CLICKHOUSE_RESULTS_TABLE} result
-                ON result.company_id = canonical.company_id
-               AND result.address_key = canonical.canonical_address_key
-            """
-        )
-        [(shared_exact, shared_geolocated)] = client.execute(
-            f"""
-            SELECT
-                countIf(geocode.match_status = 'matched_exact'),
-                countIf(
-                    isNotNull(geocode.latitude) AND isNotNull(geocode.longitude)
-                )
-            FROM {
-                shared_addresses.QUALIFIED_CLICKHOUSE_COMPANY_ADDRESS_LINKS_TABLE
-            } link
-            INNER JOIN {
-                shared_address_geocoding.QUALIFIED_CLICKHOUSE_ADDRESS_GEOCODES_TABLE
-            } geocode USING (address_id)
-            """
-        )
-    return dg.AssetCheckResult(
-        passed=(
-            int(shared_exact) == int(baseline_exact)
-            and int(shared_geolocated) == int(baseline_geolocated)
-        ),
-        severity=dg.AssetCheckSeverity.WARN,
-        metadata={
-            "baseline_exact_company_addresses": int(baseline_exact),
-            "shared_exact_company_links": int(shared_exact),
-            "baseline_geolocated_company_addresses": int(baseline_geolocated),
-            "shared_geolocated_company_links": int(shared_geolocated),
-            "exact_difference": int(shared_exact) - int(baseline_exact),
-            "geolocated_difference": int(shared_geolocated) - int(baseline_geolocated),
-        },
-    )
-
-
-@dg.asset_check(
-    asset=sweden_company_address_geocodes_clickhouse,
-    name="exact_match_rate_stable",
-    description=(
-        "Warns when exact OSM coverage drops below the operational floor or moves "
-        "by more than two percentage points from the previous materialization."
+        "Warns when exact OSM coverage of Sweden company-address links drops below "
+        "the operational floor or moves by more than two percentage points from the "
+        "previous materialization."
     ),
 )
 def sweden_company_address_exact_match_rate_check(
     context: dg.AssetCheckExecutionContext,
     clickhouse: ClickhouseResource,
 ) -> dg.AssetCheckResult:
+    """Check 5, over links and the versioned read.
+
+    The two terms that retire with the legacy pair -- `matched_exact == unique_geocodes`
+    and `source_run_count == 1` -- described a table that held exact matches only and was
+    rebuilt whole every week. Neither is true of an append-only store, and neither ever
+    said anything about coverage. What is left is the rate, which is what this check was
+    for.
+
+    THE SERIES DOES NOT CARRY OVER. `previous_exact_match_rate_percent` reads this check's
+    own evaluations, and this check has none under its new key, so the first run after the
+    deploy sees None and the +/-2pp term is inert for one week. The absolute number steps
+    as well: the denominator moves from canonical company addresses to company-address
+    links, so week one is not comparable with the old series either.
+    """
     with clickhouse.get_connection() as client:
-        stats = fetch_sweden_address_geocode_stats(client)
+        stats = fetch_sweden_geocode_exact_match_stats(client)
     previous_percent = previous_exact_match_rate_percent(
         context.instance,
         current_run_id=context.run.run_id,
@@ -1763,20 +1707,15 @@ def sweden_company_address_exact_match_rate_check(
         current_percent - previous_percent if previous_percent is not None else None
     )
     return dg.AssetCheckResult(
-        passed=(
-            stats.matched_exact == stats.unique_geocodes
-            and stats.source_run_count == 1
-            and exact_match_rate_is_stable(
-                current_percent=current_percent,
-                previous_percent=previous_percent,
-            )
+        passed=exact_match_rate_is_stable(
+            current_percent=current_percent,
+            previous_percent=previous_percent,
         ),
         severity=dg.AssetCheckSeverity.WARN,
         metadata={
-            "company_addresses": stats.company_addresses,
-            "matched_exact": stats.matched_exact,
-            "unique_geocodes": stats.unique_geocodes,
-            "source_run_count": stats.source_run_count,
+            "company_address_links": stats.company_address_links,
+            "matched_exact_links": stats.matched_exact_links,
+            "geocoded_links": stats.geocoded_links,
             "exact_match_rate_percent": current_percent,
             "previous_exact_match_rate_percent": previous_percent,
             "change_percentage_points": change,
@@ -1789,17 +1728,26 @@ def sweden_company_address_exact_match_rate_check(
 
 
 @dg.asset_check(
-    asset=sweden_company_address_geocodes_clickhouse,
+    asset=sweden_address_geocode_store_clickhouse,
     name="osm_snapshot_fresh",
-    description="Warns when published coordinates come from an OSM snapshot over nine days old.",
+    description=(
+        "Warns when stored Sweden coordinates come from an OSM snapshot over nine "
+        "days old."
+    ),
 )
 def sweden_company_address_osm_snapshot_freshness_check(
     clickhouse: ClickhouseResource,
 ) -> dg.AssetCheckResult:
+    """Check 6, over the store alone.
+
+    `max(source_snapshot_at)` is taken over the WHOLE store rather than the versioned read:
+    the store is append-only, so the newest snapshot any outcome was computed against is
+    the newest snapshot the resolver has seen, and ranking 2.09M identities to learn it
+    would cost a great deal to answer the same question.
+    """
     checked_at = datetime.now(UTC)
     with clickhouse.get_connection() as client:
-        stats = fetch_sweden_address_geocode_stats(client)
-    snapshot_at = stats.latest_osm_snapshot_at
+        snapshot_at = fetch_sweden_geocode_snapshot_freshness(client)
     snapshot_age_hours = (
         (checked_at - snapshot_at.astimezone(UTC)).total_seconds() / 3600
         if snapshot_at is not None and snapshot_at.tzinfo is not None
@@ -1948,8 +1896,7 @@ defs = dg.Definitions(
         sweden_shared_addresses_complete_check,
         sweden_address_geocodes_derived_parity_check,
         sweden_address_geocode_store_derived_parity_check,
-        sweden_shared_address_geocodes_complete_check,
-        sweden_shared_address_geocodes_baseline_check,
+        sweden_address_geocode_store_complete_check,
         sweden_company_address_exact_match_rate_check,
         sweden_company_address_osm_snapshot_freshness_check,
         sweden_company_address_geocode_results_complete_check,

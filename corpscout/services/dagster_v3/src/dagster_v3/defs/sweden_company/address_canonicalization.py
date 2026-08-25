@@ -413,7 +413,23 @@ def replace_sweden_company_canonical_addresses(
 
 
 def _assert_canonical_address_invariants(connection: Any) -> None:
-    [(source_rows, member_rows, assigned_source_rows)] = connection.execute(
+    """Everything the canonical snapshot has to be true about itself, before it publishes.
+
+    The member-count total, the canonical-cannot-outnumber-its-members bound and the
+    single-normalization-run identity used to be asserted downstream, by an asset check
+    reading the two PUBLISHED ClickHouse tables. The arithmetic is unchanged; asserting it
+    here aborts the build's transaction instead of reporting on a snapshot that is already
+    live, and it survives the retirement of the canonical ClickHouse publish (spec
+    section 4.5), which is where that check read its rows.
+
+    "Same normalization run on both tables" is asserted as two single-run terms plus the
+    join below: members and canonical each hold exactly one run id, and every canonical row
+    counted here reached its members through the key. Two tables that each span one run and
+    agree row-for-row cannot be from different runs without the row counts disagreeing.
+    """
+    [
+        (source_rows, member_rows, assigned_source_rows, member_normalization_runs)
+    ] = connection.execute(
         f"""
         select
             (select count(*) from _sweden_company_address_observations),
@@ -424,31 +440,46 @@ def _assert_canonical_address_invariants(connection: Any) -> None:
                 address_type,
                 address_key
             ))
+             from {QUALIFIED_ADDRESS_MEMBERS_TABLE}),
+            (select count(distinct normalization_run_id)
              from {QUALIFIED_ADDRESS_MEMBERS_TABLE})
         """
     ).fetchall()
-    [(canonical_rows, unique_canonical_rows, conflicting_countries)] = (
-        connection.execute(
-            f"""
+    [
+        (
+            canonical_rows,
+            unique_canonical_rows,
+            conflicting_countries,
+            declared_member_total,
+            canonical_normalization_runs,
+        )
+    ] = connection.execute(
+        f"""
+        select
+            count(*),
+            count(distinct (company_id, canonical_address_key)),
+            count(*) filter (where country_count > 1),
+            coalesce(sum(member_total), 0),
+            count(distinct normalization_run_id)
+        from (
             select
-                count(*),
-                count(distinct (company_id, canonical_address_key)),
-                count(*) filter (where country_count > 1)
-            from (
-                select
-                    canonical.company_id,
-                    canonical.canonical_address_key,
-                    count(distinct members.country_code) as country_count
-                from {QUALIFIED_CANONICAL_ADDRESSES_TABLE} canonical
-                join {QUALIFIED_ADDRESS_MEMBERS_TABLE} members using (
-                    company_id,
-                    canonical_address_key
-                )
-                group by canonical.company_id, canonical.canonical_address_key
-            ) groups
-            """
-        ).fetchall()
-    )
+                canonical.company_id,
+                canonical.canonical_address_key,
+                canonical.normalization_run_id,
+                any_value(canonical.member_count) as member_total,
+                count(distinct members.country_code) as country_count
+            from {QUALIFIED_CANONICAL_ADDRESSES_TABLE} canonical
+            join {QUALIFIED_ADDRESS_MEMBERS_TABLE} members using (
+                company_id,
+                canonical_address_key
+            )
+            group by
+                canonical.company_id,
+                canonical.canonical_address_key,
+                canonical.normalization_run_id
+        ) groups
+        """
+    ).fetchall()
     if int(source_rows) != int(member_rows) or int(source_rows) != int(
         assigned_source_rows
     ):
@@ -460,6 +491,23 @@ def _assert_canonical_address_invariants(connection: Any) -> None:
         raise ValueError("Canonical Sweden company address keys must be unique")
     if int(conflicting_countries) != 0:
         raise ValueError("A canonical Sweden company address cannot span countries")
+    if int(declared_member_total) != int(member_rows):
+        raise ValueError(
+            "Canonical Sweden member_count totals must equal the member rows they "
+            "summarise"
+        )
+    if int(canonical_rows) > int(member_rows):
+        raise ValueError(
+            "Sweden canonical addresses cannot outnumber the members they group"
+        )
+    if int(member_normalization_runs) != 1:
+        raise ValueError(
+            "Sweden canonical address members must belong to one normalization run"
+        )
+    if int(canonical_normalization_runs) != 1:
+        raise ValueError(
+            "Canonical Sweden addresses must belong to one normalization run"
+        )
 
 
 def _load_current_company_addresses(
