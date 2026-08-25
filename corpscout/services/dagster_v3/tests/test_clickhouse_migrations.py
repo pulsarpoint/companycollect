@@ -329,6 +329,7 @@ EXPECTED_MIGRATIONS = (
     "000317_corpscout_se_address_geocodes_store",
     "000318_corpscout_company_serving_source_lineage",
     "000319_corpscout_rs_apr_company_people",
+    "000320_corpscout_se_address_geocodes_current_mv",
 )
 
 NOOP_MIGRATIONS = {"000276_noop"}
