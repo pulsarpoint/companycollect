@@ -15,11 +15,33 @@ pnpm dev               # http://localhost:5183
 
 - `pnpm dev` — dev server (port 5183)
 - `pnpm build` / `pnpm start` — production build / serve (port 3000)
+- `pnpm dagster:codegen` — regenerate the Backoffice GraphQL operation types
+  from `DAGSTER_GRAPHQL_SCHEMA_URL`, falling back to `DAGSTER_GRAPHQL_URL`
 - `pnpm typecheck` — react-router typegen + tsc
 - `pnpm test` — vitest (integration tests hit the real ClickHouse from .env)
 - `pnpm temporal:people-worker` — run the durable Swedish Draft 1, Draft 2,
   and person-profile LLM worker; it must share the backoffice data directory
   and LLM environment
+
+## Dagster GraphQL types
+
+Backoffice keeps its direct server-side `fetch` transport. The operations in
+`app/lib/dagster.operations.ts` are validated against the deployed Dagster
+schema and generate `app/lib/dagster.generated.ts`.
+
+Regenerate after every Dagster upgrade, or whenever an operation changes:
+
+```bash
+cd corpscout/services/backoffice
+DAGSTER_GRAPHQL_SCHEMA_URL=http://dagster:3000/graphql pnpm dagster:codegen
+pnpm typecheck
+pnpm test app/lib/dagster.server.test.ts
+```
+
+The schema URL must be reachable from the shell running codegen. For a remote
+self-hosted instance, use an SSH tunnel and point
+`DAGSTER_GRAPHQL_SCHEMA_URL` at the local tunnel. Generated code is committed;
+production startup never needs schema introspection.
 
 ## Structure
 

@@ -543,12 +543,25 @@ def build_company_enrichment_request(
     evidence_input: EsefEnrichmentInput,
     *,
     model: str,
+    temperature: float = 0,
+    max_tokens: int = MAX_OUTPUT_TOKENS,
+    provider: str = "deepseek",
+    prompt_version: str = PROMPT_VERSION,
 ) -> dict[str, Any]:
-    """Build the complete request body sent to the DeepSeek-compatible API."""
+    """Build the complete request body sent to the OpenAI-compatible API."""
     clean_model = model.strip()
     if clean_model == "":
-        raise ValueError("DeepSeek model name must not be empty")
-    return {
+        raise ValueError("LLM model name must not be empty")
+    if not 0 <= temperature <= 2:
+        raise ValueError("LLM temperature must be between 0 and 2")
+    if not 256 <= max_tokens <= 32_000:
+        raise ValueError("LLM max_tokens must be between 256 and 32000")
+    if prompt_version != PROMPT_VERSION:
+        raise ValueError(
+            f"Unsupported ESEF prompt version: {prompt_version!r}; "
+            f"expected {PROMPT_VERSION!r}"
+        )
+    request: dict[str, Any] = {
         "model": clean_model,
         "messages": [
             {"role": "system", "content": _system_prompt()},
@@ -561,11 +574,13 @@ def build_company_enrichment_request(
                 ),
             },
         ],
-        "temperature": 0,
-        "max_tokens": MAX_OUTPUT_TOKENS,
+        "temperature": temperature,
+        "max_tokens": max_tokens,
         "response_format": {"type": "json_object"},
-        "extra_body": {"thinking": {"type": "disabled"}},
     }
+    if provider.strip().casefold() == "deepseek":
+        request["extra_body"] = {"thinking": {"type": "disabled"}}
+    return request
 
 
 def enrichment_request_json_bytes(request_payload: Mapping[str, Any]) -> bytes:
@@ -620,11 +635,16 @@ def enrichment_artifact_json_bytes(
     llm_request_sha256: str,
     generated_at: str,
     source_run_id: str,
+    provider: str = "deepseek",
+    base_url: str = "",
+    temperature: float = 0,
+    max_tokens: int = MAX_OUTPUT_TOKENS,
+    prompt_version: str = PROMPT_VERSION,
 ) -> bytes:
     """Serialize a reviewable enrichment artifact with model and fact provenance."""
     artifact = {
         "schema_version": ENRICHMENT_SCHEMA_VERSION,
-        "prompt_version": PROMPT_VERSION,
+        "prompt_version": prompt_version,
         "generated_at": generated_at,
         "source_run_id": source_run_id,
         "source": {
@@ -639,8 +659,11 @@ def enrichment_artifact_json_bytes(
             ),
         },
         "model": {
-            "provider": "deepseek",
+            "provider": provider,
             "name": model,
+            "base_url": base_url,
+            "temperature": temperature,
+            "max_tokens": max_tokens,
             "response_id": result.response_id,
             "prompt_tokens": result.prompt_tokens,
             "completion_tokens": result.completion_tokens,
@@ -665,7 +688,13 @@ def enrichment_artifact_json_bytes(
     ).encode("utf-8")
 
 
-def enrichment_request_object_key(request_sha256: str, *, model: str) -> str:
+def enrichment_request_object_key(
+    request_sha256: str,
+    *,
+    model: str,
+    provider: str = "deepseek",
+    prompt_version: str = PROMPT_VERSION,
+) -> str:
     """Return the content-addressed object key for an exact LLM request."""
     validated_request_sha256 = _validated_content_sha256(
         request_sha256,
@@ -673,10 +702,20 @@ def enrichment_request_object_key(request_sha256: str, *, model: str) -> str:
     )
     model_key = quote(model.strip(), safe="._-")
     if model_key == "":
-        raise ValueError("DeepSeek model name must not be empty")
+        raise ValueError("LLM model name must not be empty")
+    provider_key = quote(provider.strip().casefold(), safe="._-")
+    if provider_key == "":
+        raise ValueError("LLM provider must not be empty")
+    prompt_key = quote(prompt_version.strip(), safe="._-")
+    if prompt_key == "":
+        raise ValueError("LLM prompt version must not be empty")
+    # DeepSeek artifacts predate the runtime provider field. Preserve their path so
+    # reprocess_existing_without_model can still rebuild ClickHouse from paid results.
+    provider_path = "" if provider_key == "deepseek" else f"provider={provider_key}/"
     return (
         f"{ENRICHMENT_REQUEST_PREFIX}/schema=v{ENRICHMENT_REQUEST_SCHEMA_VERSION}/"
-        f"prompt={PROMPT_VERSION}/model={model_key}/"
+        f"prompt={prompt_key}/"
+        f"{provider_path}model={model_key}/"
         f"request_sha256={validated_request_sha256}/request.json"
     )
 
@@ -686,19 +725,30 @@ def enrichment_object_key(
     *,
     model: str,
     request_sha256: str,
+    provider: str = "deepseek",
+    prompt_version: str = PROMPT_VERSION,
 ) -> str:
     """Return a source-, schema-, prompt-, and model-versioned object key."""
     validated_sha256 = _validated_sha256(package_sha256)
     model_key = quote(model.strip(), safe="._-")
     if model_key == "":
-        raise ValueError("DeepSeek model name must not be empty")
+        raise ValueError("LLM model name must not be empty")
+    provider_key = quote(provider.strip().casefold(), safe="._-")
+    if provider_key == "":
+        raise ValueError("LLM provider must not be empty")
+    prompt_key = quote(prompt_version.strip(), safe="._-")
+    if prompt_key == "":
+        raise ValueError("LLM prompt version must not be empty")
+    # See enrichment_request_object_key: DeepSeek's legacy path is stable data.
+    provider_path = "" if provider_key == "deepseek" else f"provider={provider_key}/"
     validated_request_sha256 = _validated_content_sha256(
         request_sha256,
         name="LLM request SHA-256",
     )
     return (
         f"{ENRICHMENT_ARTIFACT_PREFIX}/schema=v{ENRICHMENT_SCHEMA_VERSION}/"
-        f"prompt={PROMPT_VERSION}/model={model_key}/"
+        f"prompt={prompt_key}/"
+        f"{provider_path}model={model_key}/"
         f"package_sha256={validated_sha256}/"
         f"request_sha256={validated_request_sha256}/artifact.json"
     )

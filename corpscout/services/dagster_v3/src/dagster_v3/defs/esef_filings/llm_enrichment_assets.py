@@ -9,9 +9,13 @@ No ``from __future__ import annotations``: Dagster inspects asset annotations.
 """
 
 import json
+import os
 import uuid
-from collections.abc import Callable, Mapping, Sequence
+from collections.abc import Callable, Iterator, Mapping, Sequence
+from concurrent.futures import ThreadPoolExecutor
+from dataclasses import dataclass
 from datetime import UTC, datetime
+from functools import partial
 from hashlib import sha256
 from typing import Any
 from urllib.parse import quote
@@ -19,7 +23,7 @@ from urllib.parse import quote
 import dagster as dg
 from dagster_clickhouse import ClickhouseResource
 from openai import OpenAI
-from pydantic import Field
+from pydantic import ConfigDict, Field
 
 from dagster_v3.defs.clickhouse.resolved import assert_clickhouse_tables_exist
 from dagster_v3.defs.common.resources import ObjectStoreResource
@@ -27,10 +31,12 @@ from dagster_v3.defs.esef_filings import tables
 from dagster_v3.defs.esef_filings.llm_enrichment import (
     ENRICHMENT_EVIDENCE_SEGMENTS,
     ENRICHMENT_VISIBLE_SECTION_TYPES,
+    MAX_OUTPUT_TOKENS,
     PROMPT_VERSION,
+    EsefEnrichmentInput,
+    EsefLlmEnrichmentResult,
     build_company_enrichment_request,
     build_enrichment_evidence,
-    deepseek_settings,
     enrichment_artifact_json_bytes,
     enrichment_object_key,
     enrichment_request_json_bytes,
@@ -55,6 +61,28 @@ _NON_SPECIFIC_PERSON_ROLES = frozenset(
 
 
 class EsefLlmEnrichmentConfig(dg.Config):
+    model_config = ConfigDict(str_strip_whitespace=True)
+
+    provider: str = Field(
+        default="deepseek",
+        min_length=1,
+        max_length=64,
+        pattern=r"^[A-Za-z][A-Za-z0-9_]*$",
+    )
+    model: str = Field(default="deepseek-v4-flash", min_length=1, max_length=200)
+    base_url: str = Field(
+        default="https://api.deepseek.com",
+        min_length=1,
+        max_length=2_048,
+    )
+    temperature: float = Field(default=0, ge=0, le=2)
+    max_tokens: int = Field(default=MAX_OUTPUT_TOKENS, ge=256, le=32_000)
+    prompt_version: str = Field(
+        default=PROMPT_VERSION,
+        min_length=1,
+        max_length=120,
+    )
+    concurrency: int = Field(default=1, ge=1, le=8)
     country_iso2: str = ""
     company_ids: list[str] = Field(default_factory=list)
     source_document_ids: list[str] = Field(default_factory=list)
@@ -63,6 +91,55 @@ class EsefLlmEnrichmentConfig(dg.Config):
     reprocess_existing_without_model: bool = False
     max_evidence_chars: int = Field(default=64_000, ge=500, le=250_000)
     timeout_seconds: int = Field(default=180, ge=1, le=600)
+
+
+def esef_llm_api_key_variable(provider: str) -> str:
+    """Return the Dagster-host environment variable for one provider's key."""
+    return f"{provider.upper()}_API_KEY"
+
+
+def build_esef_llm_client(config: EsefLlmEnrichmentConfig) -> OpenAI:
+    """Build the configured client while keeping credentials out of run config."""
+    _validate_prompt_version(config.prompt_version)
+    variable = esef_llm_api_key_variable(config.provider)
+    api_key = os.getenv(variable, "").strip()
+    if api_key == "":
+        raise ValueError(
+            f"No API key for ESEF LLM provider {config.provider!r}: "
+            f"set {variable} on the Dagster host"
+        )
+    return OpenAI(
+        base_url=config.base_url.rstrip("/"),
+        api_key=api_key,
+        timeout=float(config.timeout_seconds),
+        max_retries=2,
+    )
+
+
+def _validate_prompt_version(prompt_version: str) -> None:
+    if prompt_version != PROMPT_VERSION:
+        raise ValueError(
+            "Unsupported ESEF LLM prompt_version "
+            f"{prompt_version!r}; this deployment provides {PROMPT_VERSION!r}"
+        )
+
+
+@dataclass(frozen=True)
+class _PreparedEnrichment:
+    document: Mapping[str, object]
+    input_key: str
+    evidence_input: EsefEnrichmentInput
+    request_payload: Mapping[str, Any]
+    request_key: str
+    request_sha256: str
+    output_key: str
+
+
+@dataclass(frozen=True)
+class _CompletedEnrichment:
+    artifact: Mapping[str, Any]
+    work: _PreparedEnrichment
+    extraction_status: str
 
 
 def run_esef_llm_enrichment(
@@ -80,8 +157,26 @@ def run_esef_llm_enrichment(
     max_evidence_chars: int,
     log_info: Callable[..., object],
     reprocess_existing_without_model: bool = False,
+    provider: str = "deepseek",
+    base_url: str = "https://api.deepseek.com",
+    temperature: float = 0,
+    max_tokens: int = MAX_OUTPUT_TOKENS,
+    prompt_version: str = PROMPT_VERSION,
+    concurrency: int = 1,
 ) -> dict[str, object]:
     """Extract company information from each company's latest final CH document."""
+    _validate_prompt_version(prompt_version)
+    clean_provider = provider.strip().casefold()
+    model = model.strip()
+    base_url = base_url.strip().rstrip("/")
+    if clean_provider == "":
+        raise ValueError("ESEF LLM provider must not be empty")
+    if model == "":
+        raise ValueError("ESEF LLM model must not be empty")
+    if base_url == "":
+        raise ValueError("ESEF LLM base_url must not be empty")
+    if concurrency < 1 or concurrency > 8:
+        raise ValueError("ESEF LLM concurrency must be between 1 and 8")
     if refresh_existing and reprocess_existing_without_model:
         raise ValueError(
             "ESEF LLM refresh_existing and reprocess_existing_without_model "
@@ -101,7 +196,9 @@ def run_esef_llm_enrichment(
     selected_ids = {value.strip() for value in source_document_ids if value.strip()}
     documents = _load_latest_source_documents(
         clickhouse,
+        provider=clean_provider,
         model=model,
+        prompt_version=prompt_version,
         country_iso2=clean_country_iso2,
         company_ids=selected_company_ids,
         source_document_ids=selected_ids,
@@ -110,7 +207,9 @@ def run_esef_llm_enrichment(
     artifacts = _load_disclosure_artifacts(clickhouse, documents=documents)
     object_store.ensure_bucket(ESEF_DOCUMENT_BUCKET)
     extracted_at = datetime.now(UTC).isoformat().replace("+00:00", "Z")
-    information_rows: list[dict[str, object]] = []
+    information_rows_by_document: dict[str, dict[str, object]] = {}
+    completed_enrichments: dict[str, _CompletedEnrichment] = {}
+    pending_enrichments: list[_PreparedEnrichment] = []
     enriched_count = 0
     reused_count = 0
     no_evidence_count = 0
@@ -122,7 +221,6 @@ def run_esef_llm_enrichment(
     dropped_non_specific_person_candidate_count = 0
     citation_adjustment_count = 0
     dropped_invalid_citation_candidate_count = 0
-    processed_documents: list[dict[str, object]] = []
 
     log_info(
         "ESEF LLM latest-company selector: %s source documents considered",
@@ -146,16 +244,14 @@ def run_esef_llm_enrichment(
                 and str(document["existing_extraction_status"]) == "no_evidence"
             ):
                 continue
-            document["input_artifact_object_key"] = input_key
-            information_rows.append(
-                _no_evidence_row(
-                    document,
-                    model=model,
-                    source_run_id=source_run_id,
-                    extracted_at=extracted_at,
-                )
+            information_rows_by_document[source_document_id] = _no_evidence_row(
+                {**document, "input_artifact_object_key": input_key},
+                provider=clean_provider,
+                model=model,
+                prompt_version=prompt_version,
+                source_run_id=source_run_id,
+                extracted_at=extracted_at,
             )
-            processed_documents.append(document)
             no_evidence_count += 1
             continue
 
@@ -163,6 +259,10 @@ def run_esef_llm_enrichment(
         request_payload = build_company_enrichment_request(
             evidence_input,
             model=model,
+            provider=clean_provider,
+            temperature=temperature,
+            max_tokens=max_tokens,
+            prompt_version=prompt_version,
         )
         request_bytes = enrichment_request_json_bytes(request_payload)
         request_sha256 = sha256(request_bytes).hexdigest()
@@ -175,7 +275,9 @@ def run_esef_llm_enrichment(
 
         request_key = enrichment_request_object_key(
             request_sha256,
+            provider=clean_provider,
             model=model,
+            prompt_version=prompt_version,
         )
         if object_store.exists(request_key, bucket=ESEF_DOCUMENT_BUCKET):
             request_artifact_reused_count += 1
@@ -188,8 +290,19 @@ def run_esef_llm_enrichment(
             request_artifact_written_count += 1
         output_key = enrichment_object_key(
             package_sha256,
+            provider=clean_provider,
             model=model,
             request_sha256=request_sha256,
+            prompt_version=prompt_version,
+        )
+        work = _PreparedEnrichment(
+            document=document,
+            input_key=input_key,
+            evidence_input=evidence_input,
+            request_payload=request_payload,
+            request_key=request_key,
+            request_sha256=request_sha256,
+            output_key=output_key,
         )
         if not refresh_existing and object_store.exists(
             output_key,
@@ -204,45 +317,82 @@ def run_esef_llm_enrichment(
                 ),
                 name="LLM enrichment artifact",
             )
-            extraction_status = "reused"
+            completed_enrichments[source_document_id] = _CompletedEnrichment(
+                artifact=enrichment_artifact,
+                work=work,
+                extraction_status="reused",
+            )
             reused_count += 1
         else:
-            result = request_company_enrichment(
-                client,
-                evidence_input=evidence_input,
-                request_payload=request_payload,
+            pending_enrichments.append(work)
+        if index == 1 or index % _PROGRESS_INTERVAL == 0 or index == len(documents):
+            log_info(
+                "ESEF LLM latest-company selector: %s/%s documents prepared",
+                index,
+                len(documents),
             )
-            serialized_artifact = enrichment_artifact_json_bytes(
-                evidence_input=evidence_input,
-                result=result,
-                model=model,
-                input_artifact_key=input_key,
-                llm_request_object_key=request_key,
-                llm_request_sha256=request_sha256,
-                generated_at=extracted_at,
-                source_run_id=source_run_id,
-            )
-            object_store.write_bytes(
-                output_key,
-                serialized_artifact,
-                bucket=ESEF_DOCUMENT_BUCKET,
-            )
-            enrichment_artifact = _mapping(
+
+    results = _request_enrichments(
+        client=client,
+        work=pending_enrichments,
+        concurrency=concurrency,
+    )
+    for work, result in zip(pending_enrichments, results, strict=True):
+        serialized_artifact = enrichment_artifact_json_bytes(
+            evidence_input=work.evidence_input,
+            result=result,
+            model=model,
+            input_artifact_key=work.input_key,
+            llm_request_object_key=work.request_key,
+            llm_request_sha256=work.request_sha256,
+            generated_at=extracted_at,
+            source_run_id=source_run_id,
+            provider=clean_provider,
+            base_url=base_url.rstrip("/"),
+            temperature=temperature,
+            max_tokens=max_tokens,
+            prompt_version=prompt_version,
+        )
+        object_store.write_bytes(
+            work.output_key,
+            serialized_artifact,
+            bucket=ESEF_DOCUMENT_BUCKET,
+        )
+        source_document_id = str(work.document["source_document_id"])
+        completed_enrichments[source_document_id] = _CompletedEnrichment(
+            artifact=_mapping(
                 json.loads(serialized_artifact),
                 name="LLM enrichment artifact",
-            )
-            extraction_status = "enriched"
-            enriched_count += 1
+            ),
+            work=work,
+            extraction_status="enriched",
+        )
+        enriched_count += 1
 
+    information_rows: list[dict[str, object]] = []
+    processed_documents: list[Mapping[str, object]] = []
+    for document in documents:
+        source_document_id = str(document["source_document_id"])
+        if source_document_id in information_rows_by_document:
+            information_rows.append(information_rows_by_document[source_document_id])
+            processed_documents.append(document)
+            continue
+        completed = completed_enrichments.get(source_document_id)
+        if completed is None:
+            continue
+        enrichment_artifact = completed.artifact
+        work = completed.work
         information_row = _information_row(
             document,
             enrichment_artifact=enrichment_artifact,
-            enrichment_artifact_object_key=output_key,
-            input_artifact_object_key=input_key,
-            llm_request_object_key=request_key,
-            llm_request_sha256=request_sha256,
-            extraction_status=extraction_status,
+            enrichment_artifact_object_key=work.output_key,
+            input_artifact_object_key=work.input_key,
+            llm_request_object_key=work.request_key,
+            llm_request_sha256=work.request_sha256,
+            extraction_status=completed.extraction_status,
+            provider=clean_provider,
             model=model,
+            prompt_version=prompt_version,
             source_run_id=source_run_id,
             extracted_at=extracted_at,
         )
@@ -274,26 +424,27 @@ def run_esef_llm_enrichment(
         processed_documents.append(document)
         prompt_token_count += int(information_row["prompt_tokens"])
         completion_token_count += int(information_row["completion_tokens"])
-        if index == 1 or index % _PROGRESS_INTERVAL == 0 or index == len(documents):
-            log_info(
-                "ESEF LLM latest-company selector: %s/%s documents processed",
-                index,
-                len(documents),
-            )
 
     _replace_information_rows_clickhouse(
         clickhouse,
         source_document_ids=[
-            str(document["source_document_id"])
-            for document in processed_documents
+            str(document["source_document_id"]) for document in processed_documents
         ],
+        provider=clean_provider,
         model=model,
+        prompt_version=prompt_version,
         rows=information_rows,
     )
     return {
         "selection_method": "latest_xbrl_per_company",
         "selection_country_iso2": clean_country_iso2,
+        "llm_provider": clean_provider,
         "llm_model": model,
+        "llm_base_url": base_url.rstrip("/"),
+        "llm_temperature": temperature,
+        "llm_max_tokens": max_tokens,
+        "llm_prompt_version": prompt_version,
+        "llm_concurrency": concurrency,
         "reprocess_existing_without_model": reprocess_existing_without_model,
         "candidate_document_count": len(documents),
         "selected_document_count": len(processed_documents),
@@ -330,10 +481,43 @@ def run_esef_llm_enrichment(
     }
 
 
+def _request_enrichments(
+    *,
+    client: OpenAI,
+    work: Sequence[_PreparedEnrichment],
+    concurrency: int,
+) -> Iterator[EsefLlmEnrichmentResult]:
+    """Call the model with bounded parallelism and retain document order."""
+    call = partial(_request_prepared_enrichment, client=client)
+    if concurrency == 1 or len(work) <= 1:
+        for item in work:
+            yield call(item)
+        return
+    with ThreadPoolExecutor(
+        max_workers=concurrency,
+        thread_name_prefix="esef_company_information_llm",
+    ) as executor:
+        yield from executor.map(call, work)
+
+
+def _request_prepared_enrichment(
+    work: _PreparedEnrichment,
+    *,
+    client: OpenAI,
+) -> EsefLlmEnrichmentResult:
+    return request_company_enrichment(
+        client,
+        evidence_input=work.evidence_input,
+        request_payload=work.request_payload,
+    )
+
+
 def _load_latest_source_documents(
     clickhouse: ClickhouseResource,
     *,
     model: str,
+    provider: str = "deepseek",
+    prompt_version: str = PROMPT_VERSION,
     country_iso2: str,
     company_ids: set[str],
     source_document_ids: set[str],
@@ -360,8 +544,9 @@ def _load_latest_source_documents(
         "disclosures.section_type IN %(visible_section_types)s))",
     ]
     parameters: dict[str, object] = {
+        "model_provider": provider,
         "model_name": model,
-        "prompt_version": PROMPT_VERSION,
+        "prompt_version": prompt_version,
         "evidence_segments": ENRICHMENT_EVIDENCE_SEGMENTS,
         "visible_section_types": ENRICHMENT_VISIBLE_SECTION_TYPES,
     }
@@ -421,7 +606,8 @@ LEFT JOIN
         argMax(llm_request_sha256, resolved_at) AS llm_request_sha256,
         argMax(extraction_status, resolved_at) AS extraction_status
     FROM {tables.QUALIFIED_ESEF_DOCUMENT_COMPANY_INFORMATION_TABLE} FINAL
-    WHERE model_name = %(model_name)s
+    WHERE model_provider = %(model_provider)s
+      AND model_name = %(model_name)s
       AND prompt_version = %(prompt_version)s
     GROUP BY source_document_id
 ) AS existing USING (source_document_id)
@@ -512,8 +698,7 @@ ORDER BY source_document_id, concept_qname, language
             _add_visible_section_to_artifact(artifact, row=row)
         else:
             raise ValueError(
-                "Unsupported ESEF disclosure_kind: "
-                f"{row['disclosure_kind']}"
+                f"Unsupported ESEF disclosure_kind: {row['disclosure_kind']}"
             )
     return artifacts
 
@@ -629,7 +814,9 @@ def _information_row(
     llm_request_object_key: str,
     llm_request_sha256: str,
     extraction_status: str,
+    provider: str,
     model: str,
+    prompt_version: str,
     source_run_id: str,
     extracted_at: str,
 ) -> dict[str, object]:
@@ -679,10 +866,10 @@ def _information_row(
         "llm_request_sha256": llm_request_sha256,
         "llm_response_text": llm_response_text,
         "llm_response_sha256": str(model_metadata.get("raw_response_sha256", "")),
-        "model_provider": str(model_metadata.get("provider", "deepseek")),
+        "model_provider": str(model_metadata.get("provider", provider)),
         "model_name": str(model_metadata.get("name", model)),
         "prompt_version": str(
-            enrichment_artifact.get("prompt_version", PROMPT_VERSION)
+            enrichment_artifact.get("prompt_version", prompt_version)
         ),
         "prompt_tokens": int(model_metadata.get("prompt_tokens") or 0),
         "completion_tokens": int(model_metadata.get("completion_tokens") or 0),
@@ -725,7 +912,9 @@ def _people_with_explicit_roles(value: object) -> list[object]:
 def _no_evidence_row(
     document: Mapping[str, object],
     *,
+    provider: str,
     model: str,
+    prompt_version: str,
     source_run_id: str,
     extracted_at: str,
 ) -> dict[str, object]:
@@ -748,9 +937,9 @@ def _no_evidence_row(
         "llm_request_sha256": "",
         "llm_response_text": "",
         "llm_response_sha256": "",
-        "model_provider": "deepseek",
+        "model_provider": provider,
         "model_name": model,
-        "prompt_version": PROMPT_VERSION,
+        "prompt_version": prompt_version,
         "prompt_tokens": 0,
         "completion_tokens": 0,
         "input_character_count": 0,
@@ -775,7 +964,9 @@ def _replace_information_rows_clickhouse(
     clickhouse: ClickhouseResource,
     *,
     source_document_ids: Sequence[str],
+    provider: str,
     model: str,
+    prompt_version: str,
     rows: Sequence[Mapping[str, object]],
 ) -> None:
     if not source_document_ids:
@@ -791,8 +982,9 @@ def _replace_information_rows_clickhouse(
     stage = f"`{tables.ESEF_DATABASE}`.`{stage_name}`"
     parameters = {
         "source_document_ids": tuple(sorted(set(source_document_ids))),
+        "model_provider": provider,
         "model_name": model,
-        "prompt_version": PROMPT_VERSION,
+        "prompt_version": prompt_version,
     }
     with clickhouse.get_connection() as client:
         client.execute(f"CREATE TABLE {stage} AS {target}")
@@ -800,6 +992,7 @@ def _replace_information_rows_clickhouse(
             client.execute(
                 f"INSERT INTO {stage} SELECT * FROM {target} WHERE NOT ("
                 "source_document_id IN %(source_document_ids)s "
+                "AND model_provider = %(model_provider)s "
                 "AND model_name = %(model_name)s "
                 "AND prompt_version = %(prompt_version)s)",
                 parameters,
@@ -850,12 +1043,12 @@ def _json_text(value: object) -> str:
         dg.AssetKey("esef_filings_clickhouse"),
     ],
     group_name=GROUP_NAME,
-    kinds={"python", "s3", "clickhouse", "llm", "xbrl", "deepseek"},
+    kinds={"python", "s3", "clickhouse", "llm", "xbrl"},
     pool="esef_document_company_information_clickhouse",
     metadata={"table": tables.QUALIFIED_ESEF_DOCUMENT_COMPANY_INFORMATION_TABLE},
     description=(
         "Selects the latest canonical ESEF disclosures per company, archives "
-        "the exact content-addressed DeepSeek request in S3, and atomically "
+        "the exact content-addressed OpenAI-compatible request in S3, and atomically "
         "writes source-document observations to ClickHouse."
     ),
 )
@@ -865,17 +1058,17 @@ def esef_document_company_information_clickhouse(
     clickhouse: ClickhouseResource,
     object_store: ObjectStoreResource,
 ) -> dg.MaterializeResult:
-    settings = deepseek_settings()
     metadata = run_esef_llm_enrichment(
         clickhouse=clickhouse,
         object_store=object_store,
-        client=OpenAI(
-            base_url=settings.base_url.rstrip("/"),
-            api_key=settings.api_key,
-            timeout=float(config.timeout_seconds),
-            max_retries=2,
-        ),
-        model=settings.model,
+        client=build_esef_llm_client(config),
+        provider=config.provider,
+        model=config.model,
+        base_url=config.base_url,
+        temperature=config.temperature,
+        max_tokens=config.max_tokens,
+        prompt_version=config.prompt_version,
+        concurrency=config.concurrency,
         source_run_id=context.run_id,
         country_iso2=config.country_iso2,
         company_ids=config.company_ids,
