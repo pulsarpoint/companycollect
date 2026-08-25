@@ -93,6 +93,28 @@ export interface GeocodeAgentMemoryEntry {
   updatedAt: string;
 }
 
+/**
+ * Everything the Geocoding tab renders about the agent, in one payload. The
+ * page loader and the poll endpoint both answer with this shape so the polled
+ * update can replace the loaded one field for field.
+ *
+ * `available: false` is a normal state, not an error: a machine without
+ * `BACKOFFICE_POSTGRES_URL` still renders the tab's list, with the agent panel
+ * explaining what is missing.
+ */
+export interface GeocodeAgentPanel {
+  countryCode: string;
+  available: boolean;
+  unavailableReason: string;
+  runs: GeocodeAgentRun[];
+  suggestions: GeocodeAgentSuggestion[];
+}
+
+/** The newest run, which is the one the UI polls and reports on. */
+export function latestRun(panel: GeocodeAgentPanel): GeocodeAgentRun | null {
+  return panel.runs[0] ?? null;
+}
+
 /* -------------------------------------------------------------------- */
 /* The agent's structured output                                         */
 /* -------------------------------------------------------------------- */

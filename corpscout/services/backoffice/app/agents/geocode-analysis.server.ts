@@ -33,6 +33,7 @@ import {
   parseAgentTurnOutput,
   type AgentTurnOutput,
   type GeocodeAgentMemoryEntry,
+  type GeocodeAgentPanel,
   type GeocodeAgentRun,
   type GeocodeAgentRunParams,
   type GeocodeAgentSuggestion,
@@ -45,9 +46,13 @@ import {
 } from "~/agents/geocode-agent-clickhouse.server";
 import {
   createGeocodeAgentRun,
+  expireStaleGeocodeAgentRuns,
+  listGeocodeAgentRuns,
+  listGeocodeAgentSuggestions,
   postgresGeocodeAgentStore,
   type GeocodeAgentStore,
 } from "~/lib/geocode-agent-store.server";
+import { isBackofficePostgresConfigured } from "~/lib/postgres.server";
 
 /* -------------------------------------------------------------------- */
 /* Country profiles -- country is a parameter, SE is the first wired one  */
@@ -496,6 +501,68 @@ export async function executeGeocodeAnalysisRun(
     return fail(error instanceof Error ? error.message : String(error));
   } finally {
     await session?.close().catch(() => undefined);
+  }
+}
+
+/* -------------------------------------------------------------------- */
+/* What the tab renders                                                  */
+/* -------------------------------------------------------------------- */
+
+/** How many runs the history shows, and how many suggestions the board holds. */
+export const RUN_HISTORY_LIMIT = 10;
+export const SUGGESTION_BOARD_LIMIT = 100;
+
+/**
+ * Reads the agent's state for one country, and never throws: an unconfigured
+ * or unreachable review-queue database leaves the Geocoding tab's list intact
+ * and turns the agent panel into an explanation.
+ *
+ * Reaps abandoned runs on the way past. A backoffice restart mid-run leaves a
+ * 'running' row nobody will ever finish, and the partial unique index would
+ * then block every new run for that country; anything older than the run
+ * budget (plus slack) is failed here instead.
+ */
+export async function loadGeocodeAgentPanel(
+  countryCode: string,
+): Promise<GeocodeAgentPanel> {
+  const country = countryCode.toUpperCase();
+  const empty: GeocodeAgentPanel = {
+    countryCode: country,
+    available: false,
+    unavailableReason: "",
+    runs: [],
+    suggestions: [],
+  };
+
+  if (!geocodeAgentCountry(country)) {
+    return {
+      ...empty,
+      unavailableReason: `No geocode analysis profile is wired for ${country}.`,
+    };
+  }
+  if (!isBackofficePostgresConfigured()) {
+    return {
+      ...empty,
+      unavailableReason:
+        "BACKOFFICE_POSTGRES_URL is not set, so agent runs cannot be recorded. See .env.example.",
+    };
+  }
+
+  try {
+    const config = readGeocodeAgentConfig();
+    await expireStaleGeocodeAgentRuns(country, config.maxRunMinutes + 10);
+    const [runs, suggestions] = await Promise.all([
+      listGeocodeAgentRuns(country, RUN_HISTORY_LIMIT),
+      listGeocodeAgentSuggestions(country, SUGGESTION_BOARD_LIMIT),
+    ]);
+    return { ...empty, available: true, runs, suggestions };
+  } catch (error) {
+    return {
+      ...empty,
+      unavailableReason: `The review-queue database did not answer: ${
+        error instanceof Error ? error.message : String(error)
+      }`,
+    };
   }
 }
 

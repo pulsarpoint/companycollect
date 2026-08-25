@@ -119,6 +119,13 @@ export default [
       "se/company-info/geocoding",
       "routes/admin-se-company-info-geocoding.tsx",
     ),
+    // Not a page: the poll endpoint behind that tab's analysis-agent panel.
+    // Runs take minutes, so the tab's action returns as soon as the run row
+    // exists and this loader answers the panel's fetcher until it is terminal.
+    route(
+      "se/company-info/geocoding/agent",
+      "routes/admin-se-company-info-geocoding-agent.ts",
+    ),
     // Not a page: the resource route behind the companies list's Pipeline
     // sheet. Its loader answers that sheet's fetcher and redirects anyone who
     // navigates to the old URL back to the list.
