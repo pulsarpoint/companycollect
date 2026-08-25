@@ -4,6 +4,7 @@ import {
   DagsterGraphQLError,
   DagsterNotConfiguredError,
   DagsterRequestError,
+  DagsterRunConfigValidationError,
   dagsterRunUrl,
   instigatorStates,
   launchRun,
@@ -20,7 +21,10 @@ const URL_OPTION = "http://dagster:3000/graphql";
 /** One canned GraphQL response per call, plus the request bodies that asked for
  * them -- the point of most of these tests is the request, not the answer. */
 function fetchFake(payloads: unknown[]) {
-  const calls: { url: string; body: { query: string; variables: Record<string, unknown> } }[] = [];
+  const calls: {
+    url: string;
+    body: { query: string; variables: Record<string, unknown> };
+  }[] = [];
   const impl = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
     calls.push({
       url: String(input),
@@ -41,14 +45,23 @@ afterEach(() => {
 describe("launchRun", () => {
   it("sends the selector, the run config and the tags, and returns the run", async () => {
     const { impl, calls } = fetchFake([
-      { data: { launchRun: { __typename: "LaunchRunSuccess", run: { runId: "abc", status: "QUEUED" } } } },
+      {
+        data: {
+          launchRun: {
+            __typename: "LaunchRunSuccess",
+            run: { runId: "abc", status: "QUEUED" },
+          },
+        },
+      },
     ]);
 
     await expect(
       launchRun(
         {
           job: "se_company_info_review_job",
-          runConfig: { ops: { se_company_info_clickhouse: { config: { execute: true } } } },
+          runConfig: {
+            ops: { se_company_info_clickhouse: { config: { execute: true } } },
+          },
           tags: { pilot: "backoffice" },
         },
         { fetchImpl: impl, url: URL_OPTION },
@@ -63,7 +76,9 @@ describe("launchRun", () => {
           repositoryName: REPOSITORY_NAME,
           jobName: "se_company_info_review_job",
         },
-        runConfigData: { ops: { se_company_info_clickhouse: { config: { execute: true } } } },
+        runConfigData: {
+          ops: { se_company_info_clickhouse: { config: { execute: true } } },
+        },
         mode: "default",
         executionMetadata: { tags: [{ key: "pilot", value: "backoffice" }] },
       },
@@ -75,7 +90,14 @@ describe("launchRun", () => {
 
   it("narrows to an asset selection as AssetKeyInput paths", async () => {
     const { impl, calls } = fetchFake([
-      { data: { launchRun: { __typename: "LaunchRunSuccess", run: { runId: "r1", status: "QUEUED" } } } },
+      {
+        data: {
+          launchRun: {
+            __typename: "LaunchRunSuccess",
+            run: { runId: "r1", status: "QUEUED" },
+          },
+        },
+      },
     ]);
 
     await launchRun(
@@ -103,15 +125,36 @@ describe("launchRun", () => {
         data: {
           launchRun: {
             __typename: "RunConfigValidationInvalid",
-            message: "Received unexpected config entry \"llm\"",
+            pipelineName: "se_company_info_review_job",
+            errors: [
+              {
+                __typename: "FieldNotDefinedConfigError",
+                message: 'Received unexpected config entry "llm"',
+                path: ["root", "ops", "se_company_info_clickhouse", "config"],
+                reason: "FIELD_NOT_DEFINED",
+              },
+            ],
           },
         },
       },
     ]);
 
-    await expect(
-      launchRun({ job: "se_company_info_review_job", runConfig: {} }, { fetchImpl: impl, url: URL_OPTION }),
-    ).rejects.toBeInstanceOf(DagsterGraphQLError);
+    const launch = launchRun(
+      { job: "se_company_info_review_job", runConfig: {} },
+      { fetchImpl: impl, url: URL_OPTION },
+    );
+    await expect(launch).rejects.toBeInstanceOf(
+      DagsterRunConfigValidationError,
+    );
+    await expect(launch).rejects.toMatchObject({
+      errors: [
+        {
+          message: 'Received unexpected config entry "llm"',
+          path: ["root", "ops", "se_company_info_clickhouse", "config"],
+          reason: "FIELD_NOT_DEFINED",
+        },
+      ],
+    });
   });
 });
 
@@ -138,7 +181,10 @@ describe("listRuns and runStatus", () => {
     ]);
 
     await expect(
-      listRuns({ job: "se_company_info_job", limit: 5 }, { fetchImpl: impl, url: URL_OPTION }),
+      listRuns(
+        { job: "se_company_info_job", limit: 5 },
+        { fetchImpl: impl, url: URL_OPTION },
+      ),
     ).resolves.toEqual([
       {
         runId: "r1",
@@ -152,6 +198,36 @@ describe("listRuns and runStatus", () => {
     expect(calls[0].body.variables).toEqual({
       filter: { pipelineName: "se_company_info_job" },
       limit: 5,
+    });
+  });
+
+  it("can ask Dagster only for unfinished runs", async () => {
+    const { impl, calls } = fetchFake([
+      {
+        data: {
+          runsOrError: {
+            __typename: "Runs",
+            results: [],
+          },
+        },
+      },
+    ]);
+
+    await listRuns(
+      {
+        job: "esef_filings_backfill_job",
+        limit: 1,
+        statuses: ["QUEUED", "STARTED"],
+      },
+      { fetchImpl: impl, url: URL_OPTION },
+    );
+
+    expect(calls[0].body.variables).toEqual({
+      filter: {
+        pipelineName: "esef_filings_backfill_job",
+        statuses: ["QUEUED", "STARTED"],
+      },
+      limit: 1,
     });
   });
 
@@ -183,7 +259,10 @@ describe("listRuns and runStatus", () => {
       { data: { runsOrError: { __typename: "PythonError", message: "boom" } } },
     ]);
     await expect(
-      listRuns({ job: "se_company_info_job", limit: 5 }, { fetchImpl: impl, url: URL_OPTION }),
+      listRuns(
+        { job: "se_company_info_job", limit: 5 },
+        { fetchImpl: impl, url: URL_OPTION },
+      ),
     ).rejects.toThrow(/PythonError.*boom/);
   });
 });
@@ -200,8 +279,16 @@ describe("assetMaterializations", () => {
                   runId: "r1",
                   timestamp: "1770000000000",
                   metadataEntries: [
-                    { __typename: "IntMetadataEntry", label: "selected_company_count", intValue: 42 },
-                    { __typename: "IntMetadataEntry", label: "llm_request_count", intValue: 7 },
+                    {
+                      __typename: "IntMetadataEntry",
+                      label: "selected_company_count",
+                      intValue: 42,
+                    },
+                    {
+                      __typename: "IntMetadataEntry",
+                      label: "llm_request_count",
+                      intValue: 7,
+                    },
                     { __typename: "TextMetadataEntry", label: "table" },
                   ],
                 },
@@ -240,20 +327,34 @@ describe("instigatorStates", () => {
         schedulesOrError: {
           __typename: "Schedules",
           results: [
-            { name: "norway_brreg_weekly", cronSchedule: "0 3 * * 2", scheduleState: { status: "RUNNING" } },
+            {
+              name: "norway_brreg_weekly",
+              cronSchedule: "0 3 * * 2",
+              scheduleState: { status: "RUNNING" },
+            },
             {
               name: "se_company_info_weekly",
               cronSchedule: "50 6 * * 1",
               scheduleState: { status: "RUNNING" },
             },
-            { name: "ted_procurement_daily", cronSchedule: "0 1 * * *", scheduleState: { status: "STOPPED" } },
+            {
+              name: "ted_procurement_daily",
+              cronSchedule: "0 1 * * *",
+              scheduleState: { status: "STOPPED" },
+            },
           ],
         },
         sensorsOrError: {
           __typename: "Sensors",
           results: [
-            { name: "se_company_person_correction_sensor", sensorState: { status: "RUNNING" } },
-            { name: "se_company_info_correction_sensor", sensorState: { status: "STOPPED" } },
+            {
+              name: "se_company_person_correction_sensor",
+              sensorState: { status: "RUNNING" },
+            },
+            {
+              name: "se_company_info_correction_sensor",
+              sensorState: { status: "STOPPED" },
+            },
           ],
         },
       },
@@ -270,9 +371,15 @@ describe("instigatorStates", () => {
       ),
     ).resolves.toEqual({
       schedules: [
-        { name: "se_company_info_weekly", status: "RUNNING", cronSchedule: "50 6 * * 1" },
+        {
+          name: "se_company_info_weekly",
+          status: "RUNNING",
+          cronSchedule: "50 6 * * 1",
+        },
       ],
-      sensors: [{ name: "se_company_info_correction_sensor", status: "STOPPED" }],
+      sensors: [
+        { name: "se_company_info_correction_sensor", status: "STOPPED" },
+      ],
     });
     expect(calls[0].body.variables).toEqual({
       repositorySelector: {
@@ -284,7 +391,10 @@ describe("instigatorStates", () => {
 
   it("returns the whole roster when no names are given", async () => {
     const { impl } = fetchFake([...ROSTER]);
-    const states = await instigatorStates({}, { fetchImpl: impl, url: URL_OPTION });
+    const states = await instigatorStates(
+      {},
+      { fetchImpl: impl, url: URL_OPTION },
+    );
     expect(states.schedules).toHaveLength(3);
     expect(states.sensors).toHaveLength(2);
   });
@@ -295,7 +405,9 @@ describe("instigatorStates", () => {
       { names: ["se_company_info_weekly", "renamed_away"] },
       { fetchImpl: impl, url: URL_OPTION },
     );
-    expect(states.schedules.map((entry) => entry.name)).toEqual(["se_company_info_weekly"]);
+    expect(states.schedules.map((entry) => entry.name)).toEqual([
+      "se_company_info_weekly",
+    ]);
     expect(states.sensors).toEqual([]);
   });
 });
@@ -315,22 +427,34 @@ describe("transport failures", () => {
       throw new Error("ECONNREFUSED");
     }) as unknown as typeof fetch;
     await expect(
-      listRuns({ job: "se_company_info_job", limit: 1 }, { fetchImpl: failing, url: URL_OPTION }),
+      listRuns(
+        { job: "se_company_info_job", limit: 1 },
+        { fetchImpl: failing, url: URL_OPTION },
+      ),
     ).rejects.toBeInstanceOf(DagsterRequestError);
 
     const http500 = vi.fn(
       async () => new Response("nope", { status: 500 }),
     ) as unknown as typeof fetch;
     await expect(
-      listRuns({ job: "se_company_info_job", limit: 1 }, { fetchImpl: http500, url: URL_OPTION }),
+      listRuns(
+        { job: "se_company_info_job", limit: 1 },
+        { fetchImpl: http500, url: URL_OPTION },
+      ),
     ).rejects.toThrow(/HTTP 500/);
 
     const graphqlErrors = vi.fn(
       async () =>
-        new Response(JSON.stringify({ errors: [{ message: "unknown field" }] }), { status: 200 }),
+        new Response(
+          JSON.stringify({ errors: [{ message: "unknown field" }] }),
+          { status: 200 },
+        ),
     ) as unknown as typeof fetch;
     await expect(
-      listRuns({ job: "se_company_info_job", limit: 1 }, { fetchImpl: graphqlErrors, url: URL_OPTION }),
+      listRuns(
+        { job: "se_company_info_job", limit: 1 },
+        { fetchImpl: graphqlErrors, url: URL_OPTION },
+      ),
     ).rejects.toBeInstanceOf(DagsterGraphQLError);
   });
 });

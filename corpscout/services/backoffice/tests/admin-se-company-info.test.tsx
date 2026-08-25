@@ -262,7 +262,9 @@ describe("company info review page", () => {
   it("shows the suggestion's Swedish half beside its English one, each labelled", () => {
     const html = render();
     expect(html).toContain("English: Alpha builds payment software.");
-    expect(html).toContain("Swedish: Alpha AB bygger betalprogramvara i Sverige.");
+    expect(html).toContain(
+      "Swedish: Alpha AB bygger betalprogramvara i Sverige.",
+    );
   });
 
   // Task 13 round 1: the artifact stamp means "when the pipeline recorded this
@@ -272,22 +274,25 @@ describe("company info review page", () => {
     expect(html).toContain('title="when the pipeline recorded this version"');
   });
 
-  it("badges the LLM flag, the sources and the reviewed state on the published card", () => {
+  it("keeps provenance and review metadata inside the closed additional-information disclosure", () => {
     const html = render();
     // Task 17: no description_source label anywhere -- the published card says
-    // whether the model wrote the text and which sources fed it (nor the
-    // leftover "ClickHouse").
+    // whether the model wrote the text and which sources fed it, without the
+    // leftover "ClickHouse" label.
     expect(html).not.toContain("ClickHouse");
-    expect(html).toContain("LLM yes");
-    expect(html).toContain("Sources: wikidata, scb");
-    // Task 18: the "reviewed" badge came off the page header and onto the row
-    // it is a fact about.
+    expect(html).toContain("Additional information");
+    expect(html).toContain('aria-expanded="false"');
+    expect(html).toContain("LLM enhanced");
+    expect(html).toContain(">yes<");
+    expect(html).toContain("Description sources");
+    expect(html).toContain("wikidata, scb");
+    // Review state is represented by its correction ids in the same disclosure.
     const reviewed = render({
       ...detail,
       info: { ...detail.info, correction_ids: [OVERRIDE_CORRECTION_ID] },
     });
-    expect(reviewed).toContain(">reviewed<");
-    expect(html).not.toContain(">reviewed<");
+    expect(reviewed).toContain("Correction ids");
+    expect(reviewed).toContain(OVERRIDE_CORRECTION_ID);
   });
 
   it("says LLM no for a description that was copied from one input", () => {
@@ -297,8 +302,10 @@ describe("company info review page", () => {
       ...detail,
       info: { ...detail.info, llm_enhanced: 0, description_sources: ["scb"] },
     });
-    expect(html).toContain("LLM no");
-    expect(html).toContain("Sources: scb");
+    expect(html).toContain("LLM enhanced");
+    expect(html).toContain(">no<");
+    expect(html).toContain("Description sources");
+    expect(html).toContain(">scb<");
   });
 
   // Task 18: Info is one tab of the company area, and the area's layout owns
@@ -334,7 +341,8 @@ describe("company info review page", () => {
     ]) {
       expect(html).toContain(heading);
     }
-    // The published card is the active one, and says so.
+    // The published row's status remains available in its closed details.
+    expect(html).toContain("Status");
     expect(html).toContain(">active<");
   });
 
@@ -353,7 +361,11 @@ describe("company info review page", () => {
   it("shows the bare code on the active card when the dictionary names nothing", () => {
     const html = render({
       ...detail,
-      info: { ...detail.info, legal_form_label_sv: "", legal_form_label_en: "" },
+      info: {
+        ...detail.info,
+        legal_form_label_sv: "",
+        legal_form_label_en: "",
+      },
     });
     expect(html).toContain('title="AB-ORGFO"');
     expect(html).toContain(">AB-ORGFO<");
@@ -390,7 +402,12 @@ describe("company info review page", () => {
     ]) {
       expect(html).toContain(value);
     }
-    for (const label of ["Label", "Official name", "Headquarters", "Employees"]) {
+    for (const label of [
+      "Label",
+      "Official name",
+      "Headquarters",
+      "Employees",
+    ]) {
       expect(html).toContain(label);
     }
     // A column this app has never seen still renders, labelled from its name.
@@ -470,11 +487,14 @@ describe("company info review page", () => {
     );
   });
 
-  it("annotates the English text with its language and every contributing source", () => {
-    // Task 17: no winning-source label to leave out of the list any more --
-    // the sources ARE the list, and the LLM flag is a badge of its own.
+  it("shows the two descriptions cleanly and moves their provenance to dedicated fields", () => {
     const html = render();
-    expect(html).toContain("(en · wikidata, scb)");
+    expect(html).toContain('lang="en"');
+    expect(html).toContain('lang="sv"');
+    expect(html).toContain("Sources");
+    expect(html).toContain("SCB");
+    expect(html).toContain("Wikidata");
+    expect(html).not.toContain("(en · wikidata, scb)");
   });
 
   it("shows suggestion language and rationale parsed from the suggestion body", () => {
@@ -515,7 +535,9 @@ describe("company info review page", () => {
     });
     expect(html).toContain("Queued for the next Dagster review run");
     expect(
-      renderToStaticMarkup(<SeCompanyInfoNotPublished companyId="5565200028" />),
+      renderToStaticMarkup(
+        <SeCompanyInfoNotPublished companyId="5565200028" />,
+      ),
     ).toContain("not published");
   });
 
@@ -541,7 +563,10 @@ describe("company info review page", () => {
 
   it("shows an undo form on the current non-undo correction, and its 8-char id in the row", () => {
     const html = render(overriddenDetail);
-    const undoForm = formContaining(html, 'name="correction_kind" value="undo"');
+    const undoForm = formContaining(
+      html,
+      'name="correction_kind" value="undo"',
+    );
     expect(undoForm).toContain(
       `name="supersedes_correction_id" value="${OVERRIDE_CORRECTION_ID}"`,
     );

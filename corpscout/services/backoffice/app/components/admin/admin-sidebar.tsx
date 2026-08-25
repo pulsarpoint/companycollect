@@ -5,6 +5,7 @@ import {
   BotIcon,
   BrainCircuitIcon,
   ChevronRightIcon,
+  DatabaseZapIcon,
   FlagIcon,
   MapPinIcon,
   Rows3Icon,
@@ -125,6 +126,16 @@ export function AdminSidebar() {
         <SidebarGroup>
           <SidebarGroupLabel>Workspace</SidebarGroupLabel>
           <SidebarMenu>
+            <SidebarMenuItem>
+              <SidebarMenuButton
+                isActive={pathname === "/admin/esef"}
+                tooltip="ESEF processing"
+                render={<Link to="/admin/esef" />}
+              >
+                <DatabaseZapIcon />
+                <span>ESEF</span>
+              </SidebarMenuButton>
+            </SidebarMenuItem>
             <Collapsible
               defaultOpen={pathname.startsWith("/admin/general/")}
               className="group/collapsible"

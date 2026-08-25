@@ -5,7 +5,10 @@ import {
 } from "lucide-react";
 import { Form, useNavigation } from "react-router";
 import { Alert, AlertDescription, AlertTitle } from "~/components/ui/alert";
-import { CompanySourceStrip } from "~/components/admin/company-source-strip";
+import {
+  CompanySourceStrip,
+  companySourceLabels,
+} from "~/components/admin/company-source-strip";
 import {
   DefinitionList,
   EMPTY_VALUE,
@@ -14,6 +17,12 @@ import {
 import { LegalForm } from "~/components/admin/legal-form";
 import { Badge } from "~/components/ui/badge";
 import { Button, buttonVariants } from "~/components/ui/button";
+import {
+  Accordion,
+  AccordionContent,
+  AccordionItem,
+  AccordionTrigger,
+} from "~/components/ui/accordion";
 import {
   Card,
   CardContent,
@@ -31,6 +40,7 @@ import {
   EmptyTitle,
 } from "~/components/ui/empty";
 import { Input } from "~/components/ui/input";
+import { Separator } from "~/components/ui/separator";
 import { Textarea } from "~/components/ui/textarea";
 import type {
   SeCompanyInfoArtifactRow,
@@ -48,9 +58,7 @@ import {
 import { liveOverrideRefusal } from "~/lib/se-info-review-form";
 
 export type SeCompanyInfoReviewResult =
-  | { ok: true; correctionId: string }
-  | { ok: false; error: string }
-  | null;
+  { ok: true; correctionId: string } | { ok: false; error: string } | null;
 
 /**
  * Every non-undo correction form posts the kind it represents plus the
@@ -98,8 +106,7 @@ function parseSuggestion(raw: string): {
       descriptionSv:
         typeof obj.description_sv === "string" ? obj.description_sv : undefined,
       language: typeof obj.language === "string" ? obj.language : undefined,
-      rationale:
-        typeof obj.rationale === "string" ? obj.rationale : undefined,
+      rationale: typeof obj.rationale === "string" ? obj.rationale : undefined,
     };
   } catch {
     // Not JSON (or malformed) -- the raw text still renders below.
@@ -125,9 +132,9 @@ export function SeCompanyInfoNotPublished({
           </EmptyMedia>
           <EmptyTitle>Not published yet</EmptyTitle>
           <EmptyDescription>
-            Company {companyId} is not published in se_company_info yet.
-            Dagster publishes a company once its enrichment run completes, so
-            this page fills in after the next run.
+            Company {companyId} is not published in se_company_info yet. Dagster
+            publishes a company once its enrichment run completes, so this page
+            fills in after the next run.
           </EmptyDescription>
         </EmptyHeader>
         <EmptyContent>
@@ -262,7 +269,8 @@ function groupArtifactsBySource(
     ...ARTIFACT_SOURCES,
     ...artifacts.map((row) => row.source).filter((source) => !seen.has(source)),
   ];
-  const groups: Array<{ source: string; rows: SeCompanyInfoArtifactRow[] }> = [];
+  const groups: Array<{ source: string; rows: SeCompanyInfoArtifactRow[] }> =
+    [];
   for (const source of order) {
     if (groups.some((group) => group.source === source)) continue;
     const rows = artifacts.filter((row) => row.source === source);
@@ -279,99 +287,149 @@ function PublishedCard({ info }: { info: SeCompanyInfoRow }) {
   // "did the model write this", which no other column on the row says.
   const llmEnhanced = Boolean(Number(info.llm_enhanced));
   const sources = info.description_sources.join(", ");
+  const sourceLabels = companySourceLabels(info.description_sources);
   return (
-    <Card>
-      <CardHeader>
-        <div className="flex flex-wrap items-center gap-2">
-          <CardTitle>Published version</CardTitle>
-          <Badge>active</Badge>
-          <Badge variant={llmEnhanced ? "default" : "outline"}>
-            LLM {llmEnhanced ? "yes" : "no"}
-          </Badge>
-          <Badge variant="secondary">
-            {sources === "" ? "no sources" : `Sources: ${sources}`}
-          </Badge>
-          {/* Moved off the page header in Task 18: whether a reviewer has
-              already decided on this row belongs to the row. */}
-          {info.correction_ids.length > 0 ? (
-            <Badge variant="outline">reviewed</Badge>
-          ) : null}
-        </div>
+    <Card className="[--card-spacing:--spacing(5)]">
+      <CardHeader className="border-b">
+        <CardTitle>Published version</CardTitle>
         <CardDescription>
-          The se_company_info row every surface reads for this company. Both
-          languages are stored natively; corrections below change it only after
-          the next Dagster review run.
+          Current descriptions and classification shown across company surfaces.
         </CardDescription>
       </CardHeader>
-      <CardContent className="flex flex-col gap-4">
-        <div className="grid gap-3 md:grid-cols-2">
-          <div className="flex flex-col gap-1">
-            <span className="text-xs font-medium uppercase tracking-wide text-muted-foreground">
-              English
-            </span>
+      <CardContent className="flex flex-col gap-5">
+        <div className="grid gap-5 md:grid-cols-2 md:gap-0">
+          <section
+            aria-labelledby="published-description-en"
+            className="flex flex-col gap-2 md:pr-6"
+          >
+            <div className="flex items-center gap-2">
+              <Badge variant="outline">EN</Badge>
+              <h3 id="published-description-en" className="font-medium">
+                English
+              </h3>
+            </div>
             {info.description ? (
-              <p className="text-sm">
-                {info.description}{" "}
-                <span className="text-xs text-muted-foreground">
-                  ({info.description_language}
-                  {sources === "" ? "" : ` · ${sources}`})
-                </span>
+              <p className="text-base leading-relaxed" lang="en">
+                {info.description}
               </p>
             ) : (
               <p className="text-sm text-muted-foreground">No description.</p>
             )}
-          </div>
-          <div className="flex flex-col gap-1">
-            <span className="text-xs font-medium uppercase tracking-wide text-muted-foreground">
-              Swedish
-            </span>
+          </section>
+          <section
+            aria-labelledby="published-description-sv"
+            className="flex flex-col gap-2 border-t pt-5 md:border-t-0 md:border-l md:pt-0 md:pl-6"
+          >
+            <div className="flex items-center gap-2">
+              <Badge variant="outline">SV</Badge>
+              <h3 id="published-description-sv" className="font-medium">
+                Swedish
+              </h3>
+            </div>
             {info.description_sv ? (
-              <p className="text-sm">{info.description_sv}</p>
+              <p className="text-base leading-relaxed" lang="sv">
+                {info.description_sv}
+              </p>
             ) : (
               <p className="text-sm text-muted-foreground">
                 No Swedish description.
               </p>
             )}
-          </div>
+          </section>
         </div>
-        <DefinitionList
-          valueClassName="break-all"
-          entries={[
-            // Copied from the register with the code it names, not written by
-            // the model and not overridable here: an override_field payload
-            // may only carry the descriptions.
-            [
-              "Legal form",
-              <LegalForm
-                key="legal-form"
-                form={{
-                  code: info.legal_form_code ?? "",
-                  label_sv: info.legal_form_label_sv,
-                  label_en: info.legal_form_label_en,
-                }}
-              />,
-            ],
-            ["Incorporated", text(info.incorporation_date ?? "")],
-            ["NACE", text(info.primary_nace_code)],
-            ["SNI", text(info.primary_sni_code)],
-            ["Wikidata id", text(info.wikidata_id ?? "")],
-            ["LEI", text(info.lei ?? "")],
-            ["Description sources", text(sources)],
-            [
-              "Description source records",
-              text(info.description_source_record_uids.join(", ")),
-            ],
-            ["Source records", text(info.source_record_uids.join(", "))],
-            ["Evidence set hash", text(info.evidence_set_hash)],
-            ["Correction ids", text(info.correction_ids.join(", "))],
-            [
-              "Model",
-              `${info.model_provider} · ${info.model_name} · prompt ${info.prompt_version}`,
-            ],
-            ["Resolved at", text(info.resolved_at)],
-            ["Run", text(info.source_run_id)],
-          ]}
-        />
+        <Separator />
+        <dl className="grid grid-cols-2 gap-x-6 gap-y-4 sm:grid-cols-4">
+          <div className="flex flex-col gap-1">
+            <dt className="text-xs font-medium uppercase tracking-wide text-muted-foreground">
+              Incorporated
+            </dt>
+            <dd className="font-medium tabular-nums">
+              {text(info.incorporation_date ?? "")}
+            </dd>
+          </div>
+          <div className="flex flex-col gap-1">
+            <dt className="text-xs font-medium uppercase tracking-wide text-muted-foreground">
+              NACE
+            </dt>
+            <dd className="font-medium tabular-nums">
+              {text(info.primary_nace_code)}
+            </dd>
+          </div>
+          <div className="flex flex-col gap-1">
+            <dt className="text-xs font-medium uppercase tracking-wide text-muted-foreground">
+              SNI
+            </dt>
+            <dd className="font-medium tabular-nums">
+              {text(info.primary_sni_code)}
+            </dd>
+          </div>
+          <div className="flex flex-col gap-1">
+            <dt className="text-xs font-medium uppercase tracking-wide text-muted-foreground">
+              Sources
+            </dt>
+            <dd className="flex flex-wrap gap-1">
+              {sourceLabels.length === 0
+                ? EMPTY_VALUE
+                : sourceLabels.map((source) => (
+                    <Badge key={source} variant="secondary">
+                      {source}
+                    </Badge>
+                  ))}
+            </dd>
+          </div>
+        </dl>
+        <Separator />
+        <Accordion hiddenUntilFound>
+          <AccordionItem value="published-metadata">
+            <AccordionTrigger>
+              <span className="flex flex-col gap-0.5">
+                <span>Additional information</span>
+                <span className="text-xs font-normal text-muted-foreground">
+                  Legal form, identifiers, and processing details
+                </span>
+              </span>
+            </AccordionTrigger>
+            <AccordionContent className="pt-2">
+              <DefinitionList
+                valueClassName="break-all"
+                entries={[
+                  ["Status", text(info.status)],
+                  // Copied from the register with the code it names, not
+                  // written by the model and not overridable here.
+                  [
+                    "Legal form",
+                    <LegalForm
+                      key="legal-form"
+                      form={{
+                        code: info.legal_form_code ?? "",
+                        label_sv: info.legal_form_label_sv,
+                        label_en: info.legal_form_label_en,
+                      }}
+                    />,
+                  ],
+                  ["Description language", text(info.description_language)],
+                  ["LLM enhanced", llmEnhanced ? "yes" : "no"],
+                  ["Wikidata id", text(info.wikidata_id ?? "")],
+                  ["LEI", text(info.lei ?? "")],
+                  ["Description sources", text(sources)],
+                  [
+                    "Description source records",
+                    text(info.description_source_record_uids.join(", ")),
+                  ],
+                  ["Source records", text(info.source_record_uids.join(", "))],
+                  ["Evidence set hash", text(info.evidence_set_hash)],
+                  ["Correction ids", text(info.correction_ids.join(", "))],
+                  [
+                    "Model",
+                    `${info.model_provider} · ${info.model_name} · prompt ${info.prompt_version}`,
+                  ],
+                  ["Resolved at", text(info.resolved_at)],
+                  ["Run", text(info.source_run_id)],
+                ]}
+              />
+            </AccordionContent>
+          </AccordionItem>
+        </Accordion>
       </CardContent>
     </Card>
   );
@@ -408,7 +466,10 @@ export function SeCompanyInfoReviewWorkspace({
   // misleading -- disable them and point at the override instead. The two
   // kinds always share one answer (the check doesn't look at which kind was
   // asked), so one call covers both buttons below.
-  const overrideRefusal = liveOverrideRefusal("approve_suggestion", corrections);
+  const overrideRefusal = liveOverrideRefusal(
+    "approve_suggestion",
+    corrections,
+  );
   const contributing = new Set(info.description_source_record_uids);
   const groups = groupArtifactsBySource(artifacts);
 
@@ -472,9 +533,8 @@ export function SeCompanyInfoReviewWorkspace({
         <CardHeader>
           <CardTitle>Model suggestions</CardTitle>
           <CardDescription>
-            Newest first. Approve or reject only apply to the newest
-            suggestion; older ones answered evidence this company no longer
-            has.
+            Newest first. Approve or reject only apply to the newest suggestion;
+            older ones answered evidence this company no longer has.
           </CardDescription>
         </CardHeader>
         <CardContent className="flex flex-col gap-3">
@@ -612,12 +672,11 @@ export function SeCompanyInfoReviewWorkspace({
           <CardHeader>
             <CardTitle>Override description</CardTitle>
             <CardDescription>
-              Every decision is appended to the correction ledger with a
-              reason; nothing here rewrites the published row directly. Each
-              language is sent only when you change it — except the English
-              text, which the ledger always requires, so an override decides
-              both. Leave a text as-is and tick its box to clear that language
-              entirely.
+              Every decision is appended to the correction ledger with a reason;
+              nothing here rewrites the published row directly. Each language is
+              sent only when you change it — except the English text, which the
+              ledger always requires, so an override decides both. Leave a text
+              as-is and tick its box to clear that language entirely.
             </CardDescription>
           </CardHeader>
           <CardContent>
@@ -709,7 +768,10 @@ export function SeCompanyInfoReviewWorkspace({
                 <code className="font-mono text-xs">{correction.payload}</code>
                 {correction.is_current &&
                 correction.correction_kind !== "undo" ? (
-                  <Form method="post" className="ml-auto flex items-center gap-2">
+                  <Form
+                    method="post"
+                    className="ml-auto flex items-center gap-2"
+                  >
                     <input type="hidden" name="correction_kind" value="undo" />
                     <input
                       type="hidden"

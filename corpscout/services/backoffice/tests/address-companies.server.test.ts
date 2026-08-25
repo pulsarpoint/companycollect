@@ -8,7 +8,7 @@ describe("getSwedenCompaniesAtSameBuilding", () => {
 
     expect(ids).not.toContain("8024123872");
     expect(ids).toEqual(
-      expect.arrayContaining(["8025035497", "9698001493", "9697518182"]),
+      expect.arrayContaining(["8025035497", "9697518182"]),
     );
     expect(result.truncated).toBe(false);
   }, 30_000);

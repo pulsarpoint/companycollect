@@ -90,6 +90,7 @@ export default [
   ]),
   route("admin", "routes/admin-layout.tsx", [
     index("routes/admin-index.tsx"),
+    route("esef", "routes/admin-esef.tsx"),
     route("general/roles", "routes/admin-general-roles.tsx"),
     route("settings/llms", "routes/admin-settings-llms.tsx"),
     route("se/people", "routes/admin-se-people.tsx"),

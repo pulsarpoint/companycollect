@@ -15,6 +15,28 @@
  */
 import "dotenv/config";
 
+import type {
+  BackofficeAssetMaterializationsQuery,
+  BackofficeAssetMaterializationsQueryVariables,
+  BackofficeInstigatorsQuery,
+  BackofficeInstigatorsQueryVariables,
+  BackofficeLaunchRunMutation,
+  BackofficeLaunchRunMutationVariables,
+  BackofficeRunQuery,
+  BackofficeRunQueryVariables,
+  BackofficeRunsQuery,
+  BackofficeRunsQueryVariables,
+  EvaluationErrorReason,
+  RunStatus,
+} from "~/lib/dagster.generated";
+import {
+  BACKOFFICE_ASSET_MATERIALIZATIONS_QUERY,
+  BACKOFFICE_INSTIGATORS_QUERY,
+  BACKOFFICE_LAUNCH_RUN_MUTATION,
+  BACKOFFICE_RUN_QUERY,
+  BACKOFFICE_RUNS_QUERY,
+} from "~/lib/dagster.operations";
+
 /** The deployed code location and repository these jobs live in. */
 export const REPOSITORY_LOCATION_NAME = "dagster_v3";
 export const REPOSITORY_NAME = "__repository__";
@@ -61,6 +83,31 @@ export class DagsterGraphQLError extends DagsterError {
   }
 }
 
+export interface DagsterRunConfigError {
+  message: string;
+  path: readonly string[];
+  reason: EvaluationErrorReason;
+}
+
+/** Dagster accepted the launch request but rejected the job's run config. */
+export class DagsterRunConfigValidationError extends DagsterGraphQLError {
+  readonly errors: readonly DagsterRunConfigError[];
+
+  constructor(job: string, errors: readonly DagsterRunConfigError[]) {
+    const details = errors
+      .map((error) => {
+        const path = error.path.length === 0 ? "<root>" : error.path.join(".");
+        return `${path}: ${error.message}`;
+      })
+      .join("; ");
+    super(
+      `Dagster rejected the run config for ${job}${details === "" ? "." : `: ${details}`}`,
+    );
+    this.name = "DagsterRunConfigValidationError";
+    this.errors = errors;
+  }
+}
+
 export interface DagsterOptions {
   fetchImpl?: typeof fetch;
   url?: string;
@@ -68,7 +115,7 @@ export interface DagsterOptions {
 
 export interface DagsterRun {
   runId: string;
-  status: string;
+  status: RunStatus;
   jobName: string;
   /** Seconds since the epoch, as Dagster reports them; null while unstarted. */
   startTime: number | null;
@@ -133,11 +180,11 @@ interface GraphQLResponse<T> {
   errors?: { message?: string }[];
 }
 
-async function graphql<T>(
+async function graphql<TData, TVariables>(
   query: string,
-  variables: Record<string, unknown>,
+  variables: TVariables,
   options: DagsterOptions = {},
-): Promise<T> {
+): Promise<TData> {
   const endpoint = dagsterGraphqlUrl(options.url);
   const doFetch = options.fetchImpl ?? fetch;
   let response: Response;
@@ -159,10 +206,12 @@ async function graphql<T>(
       `Dagster at ${endpoint} answered HTTP ${response.status}.`,
     );
   }
-  const payload = (await response.json()) as GraphQLResponse<T>;
+  const payload = (await response.json()) as GraphQLResponse<TData>;
   if (payload.errors && payload.errors.length > 0) {
     throw new DagsterGraphQLError(
-      payload.errors.map((entry) => entry.message ?? "unknown error").join("; "),
+      payload.errors
+        .map((entry) => entry.message ?? "unknown error")
+        .join("; "),
     );
   }
   if (!payload.data) {
@@ -178,33 +227,19 @@ async function graphql<T>(
  * read as "no runs" or "nothing materialized".
  */
 function unionError(
-  node: { __typename?: string; message?: string } | null | undefined,
-  expected: string,
+  node: { __typename: string; message?: string | null },
   what: string,
-): DagsterGraphQLError | null {
-  if (node && node.__typename === expected) return null;
-  const kind = node?.__typename ?? "no response";
+): DagsterGraphQLError {
+  const kind = node.__typename;
   const detail = node?.message ? `: ${node.message}` : "";
   return new DagsterGraphQLError(`${what} failed (${kind})${detail}`);
 }
 
-function tagMap(tags: { key: string; value: string }[] | undefined): Record<string, string> {
-  return Object.fromEntries((tags ?? []).map((tag) => [tag.key, tag.value]));
+function tagMap(
+  tags: readonly { key: string; value: string }[],
+): Record<string, string> {
+  return Object.fromEntries(tags.map((tag) => [tag.key, tag.value]));
 }
-
-const LAUNCH_RUN_MUTATION = `mutation BackofficeLaunchRun($executionParams: ExecutionParams!) {
-  launchRun(executionParams: $executionParams) {
-    __typename
-    ... on LaunchRunSuccess { run { runId status } }
-    ... on PythonError { message }
-    ... on RunConfigValidationInvalid { message }
-    ... on PipelineNotFoundError { message }
-    ... on InvalidSubsetError { message }
-    ... on ConflictingExecutionParamsError { message }
-    ... on PresetNotFoundError { message }
-    ... on UnauthorizedError { message }
-  }
-}`;
 
 /**
  * Start one run of `job`, optionally narrowed to `assetSelection`, with exactly
@@ -216,76 +251,71 @@ export async function launchRun(
   input: LaunchRunInput,
   options: DagsterOptions = {},
 ): Promise<{ runId: string; status: string }> {
-  const data = await graphql<{
-    launchRun: {
-      __typename?: string;
-      message?: string;
-      run?: { runId: string; status: string };
-    };
-  }>(
-    LAUNCH_RUN_MUTATION,
-    {
-      executionParams: {
-        selector: {
-          repositoryLocationName: REPOSITORY_LOCATION_NAME,
-          repositoryName: REPOSITORY_NAME,
-          jobName: input.job,
-          ...(input.assetSelection
-            ? { assetSelection: input.assetSelection.map((name) => ({ path: [name] })) }
-            : {}),
-        },
-        runConfigData: input.runConfig,
-        mode: "default",
-        executionMetadata: {
-          tags: Object.entries(input.tags ?? {}).map(([key, value]) => ({ key, value })),
-        },
+  const variables: BackofficeLaunchRunMutationVariables = {
+    executionParams: {
+      selector: {
+        repositoryLocationName: REPOSITORY_LOCATION_NAME,
+        repositoryName: REPOSITORY_NAME,
+        jobName: input.job,
+        ...(input.assetSelection
+          ? {
+              assetSelection: input.assetSelection.map((name) => ({
+                path: [name],
+              })),
+            }
+          : {}),
+      },
+      runConfigData: input.runConfig,
+      mode: "default",
+      executionMetadata: {
+        tags: Object.entries(input.tags ?? {}).map(([key, value]) => ({
+          key,
+          value,
+        })),
       },
     },
-    options,
-  );
-  const error = unionError(data.launchRun, "LaunchRunSuccess", `Launching ${input.job}`);
-  if (error) throw error;
+  };
+  const data = await graphql<
+    BackofficeLaunchRunMutation,
+    BackofficeLaunchRunMutationVariables
+  >(BACKOFFICE_LAUNCH_RUN_MUTATION, variables, options);
+  if (data.launchRun.__typename === "RunConfigValidationInvalid") {
+    throw new DagsterRunConfigValidationError(
+      input.job,
+      data.launchRun.errors.map(({ message, path, reason }) => ({
+        message,
+        path,
+        reason,
+      })),
+    );
+  }
+  if (data.launchRun.__typename !== "LaunchRunSuccess") {
+    throw unionError(data.launchRun, `Launching ${input.job}`);
+  }
   const run = data.launchRun.run;
-  if (!run) throw new DagsterGraphQLError(`Launching ${input.job} returned no run.`);
   return { runId: run.runId, status: run.status };
 }
 
-const RUNS_QUERY = `query BackofficeRuns($filter: RunsFilter!, $limit: Int!) {
-  runsOrError(filter: $filter, limit: $limit) {
-    __typename
-    ... on Runs {
-      results { runId status jobName startTime endTime tags { key value } }
-    }
-    ... on PythonError { message }
-    ... on InvalidPipelineRunsFilterError { message }
-  }
-}`;
-
 export async function listRuns(
-  input: { job: string; limit: number },
+  input: { job: string; limit: number; statuses?: readonly RunStatus[] },
   options: DagsterOptions = {},
 ): Promise<DagsterRun[]> {
-  const data = await graphql<{
-    runsOrError: {
-      __typename?: string;
-      message?: string;
-      results?: {
-        runId: string;
-        status: string;
-        jobName: string;
-        startTime: number | null;
-        endTime: number | null;
-        tags?: { key: string; value: string }[];
-      }[];
-    };
-  }>(
-    RUNS_QUERY,
-    { filter: { pipelineName: input.job }, limit: input.limit },
+  const variables: BackofficeRunsQueryVariables = {
+    filter: {
+      pipelineName: input.job,
+      ...(input.statuses ? { statuses: [...input.statuses] } : {}),
+    },
+    limit: input.limit,
+  };
+  const data = await graphql<BackofficeRunsQuery, BackofficeRunsQueryVariables>(
+    BACKOFFICE_RUNS_QUERY,
+    variables,
     options,
   );
-  const error = unionError(data.runsOrError, "Runs", `Listing runs of ${input.job}`);
-  if (error) throw error;
-  return (data.runsOrError.results ?? []).map((run) => ({
+  if (data.runsOrError.__typename !== "Runs") {
+    throw unionError(data.runsOrError, `Listing runs of ${input.job}`);
+  }
+  return data.runsOrError.results.map((run) => ({
     runId: run.runId,
     status: run.status,
     jobName: run.jobName,
@@ -295,38 +325,24 @@ export async function listRuns(
   }));
 }
 
-const RUN_QUERY = `query BackofficeRun($runId: ID!) {
-  runOrError(runId: $runId) {
-    __typename
-    ... on Run { runId status jobName startTime endTime tags { key value } }
-    ... on RunNotFoundError { message }
-    ... on PythonError { message }
-  }
-}`;
-
 export async function runStatus(
   runId: string,
   options: DagsterOptions = {},
 ): Promise<DagsterRun> {
-  const data = await graphql<{
-    runOrError: {
-      __typename?: string;
-      message?: string;
-      runId?: string;
-      status?: string;
-      jobName?: string;
-      startTime?: number | null;
-      endTime?: number | null;
-      tags?: { key: string; value: string }[];
-    };
-  }>(RUN_QUERY, { runId }, options);
-  const error = unionError(data.runOrError, "Run", `Reading run ${runId}`);
-  if (error) throw error;
+  const variables: BackofficeRunQueryVariables = { runId };
+  const data = await graphql<BackofficeRunQuery, BackofficeRunQueryVariables>(
+    BACKOFFICE_RUN_QUERY,
+    variables,
+    options,
+  );
+  if (data.runOrError.__typename !== "Run") {
+    throw unionError(data.runOrError, `Reading run ${runId}`);
+  }
   const run = data.runOrError;
   return {
-    runId: run.runId ?? runId,
-    status: run.status ?? "",
-    jobName: run.jobName ?? "",
+    runId: run.runId,
+    status: run.status,
+    jobName: run.jobName,
     startTime: run.startTime ?? null,
     endTime: run.endTime ?? null,
     tags: tagMap(run.tags),
@@ -339,53 +355,34 @@ export async function runStatus(
  * Only integer entries are kept: those are the counts, and asking for every
  * metadata type would make one unexpected entry shape fail the whole query.
  */
-const MATERIALIZATIONS_QUERY = `query BackofficeAssetMaterializations($assetKeys: [AssetKeyInput!], $limit: Int!) {
-  assetNodes(assetKeys: $assetKeys) {
-    id
-    assetMaterializations(limit: $limit) {
-      runId
-      timestamp
-      metadataEntries {
-        label
-        __typename
-        ... on IntMetadataEntry { intValue }
-      }
-    }
-  }
-}`;
-
 export async function assetMaterializations(
   input: { asset: string; limit: number },
   options: DagsterOptions = {},
 ): Promise<AssetMaterialization[]> {
-  const data = await graphql<{
-    assetNodes: {
-      assetMaterializations?: {
-        runId: string;
-        timestamp: number | string | null;
-        metadataEntries?: {
-          label: string;
-          __typename?: string;
-          intValue?: number | null;
-        }[];
-      }[];
-    }[];
-  }>(
-    MATERIALIZATIONS_QUERY,
-    { assetKeys: [{ path: [input.asset] }], limit: input.limit },
-    options,
-  );
-  return (data.assetNodes ?? []).flatMap((node) =>
-    (node.assetMaterializations ?? []).map((materialization) => ({
+  const variables: BackofficeAssetMaterializationsQueryVariables = {
+    assetKeys: [{ path: [input.asset] }],
+    limit: input.limit,
+  };
+  const data = await graphql<
+    BackofficeAssetMaterializationsQuery,
+    BackofficeAssetMaterializationsQueryVariables
+  >(BACKOFFICE_ASSET_MATERIALIZATIONS_QUERY, variables, options);
+  return data.assetNodes.flatMap((node) =>
+    node.assetMaterializations.map((materialization) => ({
       runId: materialization.runId,
-      timestamp:
-        materialization.timestamp === null || materialization.timestamp === undefined
-          ? null
-          : Number(materialization.timestamp),
+      timestamp: Number(materialization.timestamp),
       numbers: Object.fromEntries(
-        (materialization.metadataEntries ?? [])
+        materialization.metadataEntries
           .filter(
-            (entry): entry is { label: string; intValue: number } =>
+            (
+              entry,
+            ): entry is Extract<
+              typeof entry,
+              { __typename: "IntMetadataEntry" }
+            > & {
+              intValue: number;
+            } =>
+              entry.__typename === "IntMetadataEntry" &&
               typeof entry.intValue === "number",
           )
           .map((entry) => [entry.label, entry.intValue]),
@@ -393,19 +390,6 @@ export async function assetMaterializations(
     })),
   );
 }
-
-const INSTIGATORS_QUERY = `query BackofficeInstigators($repositorySelector: RepositorySelector!) {
-  schedulesOrError(repositorySelector: $repositorySelector) {
-    __typename
-    ... on Schedules { results { name cronSchedule scheduleState { status } } }
-    ... on PythonError { message }
-  }
-  sensorsOrError(repositorySelector: $repositorySelector) {
-    __typename
-    ... on Sensors { results { name sensorState { status } } }
-    ... on PythonError { message }
-  }
-}`;
 
 /**
  * Whether the named schedules and sensors are RUNNING or STOPPED.
@@ -420,50 +404,37 @@ export async function instigatorStates(
   input: { names?: readonly string[] } = {},
   options: DagsterOptions = {},
 ): Promise<InstigatorStates> {
-  const data = await graphql<{
-    schedulesOrError: {
-      __typename?: string;
-      message?: string;
-      results?: {
-        name: string;
-        cronSchedule: string;
-        scheduleState?: { status?: string };
-      }[];
-    };
-    sensorsOrError: {
-      __typename?: string;
-      message?: string;
-      results?: { name: string; sensorState?: { status?: string } }[];
-    };
-  }>(
-    INSTIGATORS_QUERY,
-    {
-      repositorySelector: {
-        repositoryLocationName: REPOSITORY_LOCATION_NAME,
-        repositoryName: REPOSITORY_NAME,
-      },
+  const variables: BackofficeInstigatorsQueryVariables = {
+    repositorySelector: {
+      repositoryLocationName: REPOSITORY_LOCATION_NAME,
+      repositoryName: REPOSITORY_NAME,
     },
-    options,
-  );
-  const scheduleError = unionError(data.schedulesOrError, "Schedules", "Reading schedules");
-  if (scheduleError) throw scheduleError;
-  const sensorError = unionError(data.sensorsOrError, "Sensors", "Reading sensors");
-  if (sensorError) throw sensorError;
+  };
+  const data = await graphql<
+    BackofficeInstigatorsQuery,
+    BackofficeInstigatorsQueryVariables
+  >(BACKOFFICE_INSTIGATORS_QUERY, variables, options);
+  if (data.schedulesOrError.__typename !== "Schedules") {
+    throw unionError(data.schedulesOrError, "Reading schedules");
+  }
+  if (data.sensorsOrError.__typename !== "Sensors") {
+    throw unionError(data.sensorsOrError, "Reading sensors");
+  }
   const wanted = new Set(input.names ?? []);
   const mine = (name: string) => wanted.size === 0 || wanted.has(name);
   return {
-    schedules: (data.schedulesOrError.results ?? [])
+    schedules: data.schedulesOrError.results
       .filter((schedule) => mine(schedule.name))
       .map((schedule) => ({
         name: schedule.name,
-        status: schedule.scheduleState?.status ?? "UNKNOWN",
+        status: schedule.scheduleState.status,
         cronSchedule: schedule.cronSchedule,
       })),
-    sensors: (data.sensorsOrError.results ?? [])
+    sensors: data.sensorsOrError.results
       .filter((sensor) => mine(sensor.name))
       .map((sensor) => ({
         name: sensor.name,
-        status: sensor.sensorState?.status ?? "UNKNOWN",
+        status: sensor.sensorState.status,
       })),
   };
 }

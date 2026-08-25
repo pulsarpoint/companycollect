@@ -23,9 +23,14 @@ from dagster_v3.defs.esef_filings.llm_enrichment import (
     request_company_enrichment,
 )
 from dagster_v3.defs.esef_filings.llm_enrichment_assets import (
+    EsefLlmEnrichmentConfig,
+    _PreparedEnrichment,
     _load_disclosure_artifacts,
     _load_latest_source_documents,
     _people_with_explicit_roles,
+    _request_enrichments,
+    build_esef_llm_client,
+    esef_llm_api_key_variable,
     esef_document_company_information_clickhouse,
     run_esef_llm_enrichment,
 )
@@ -222,6 +227,32 @@ def test_request_company_enrichment_uses_deepseek_json_mode_and_validates_eviden
     assert captured_request == request_payload
 
 
+def test_request_profile_controls_openai_compatible_request() -> None:
+    evidence_input = build_enrichment_evidence(
+        _segment_artifact(),
+        max_evidence_chars=20_000,
+    )
+
+    request = build_company_enrichment_request(
+        evidence_input,
+        provider="fireworks",
+        model="accounts/example/models/custom",
+        temperature=0.35,
+        max_tokens=1_234,
+    )
+
+    assert request["model"] == "accounts/example/models/custom"
+    assert request["temperature"] == 0.35
+    assert request["max_tokens"] == 1_234
+    assert "extra_body" not in request
+    request_sha256 = sha256(enrichment_request_json_bytes(request)).hexdigest()
+    assert "/provider=fireworks/model=" in enrichment_request_object_key(
+        request_sha256,
+        provider="fireworks",
+        model="accounts/example/models/custom",
+    )
+
+
 def test_request_company_enrichment_drops_candidate_with_unknown_evidence() -> None:
     response_data = _valid_response()
     response_data["company_description"]["evidence_ids"] = ["E9999"]
@@ -368,6 +399,9 @@ def test_enrichment_artifact_is_versioned_and_auditable() -> None:
     assert artifact["prompt_version"] == "esef-company-enrichment-v2"
     assert artifact["source"]["package_sha256"] == "a" * 64
     assert artifact["model"]["name"] == "deepseek-v4-flash"
+    assert artifact["model"]["provider"] == "deepseek"
+    assert artifact["model"]["temperature"] == 0
+    assert artifact["model"]["max_tokens"] == 8_000
     assert artifact["model"]["raw_response_sha256"]
     assert artifact["model"]["raw_response"] == result.raw_response
     assert artifact["validation"] == {
@@ -415,6 +449,124 @@ def test_deepseek_settings_use_existing_repository_environment(
         deepseek_settings()
 
 
+def test_esef_runtime_profile_uses_only_host_api_key(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    config = EsefLlmEnrichmentConfig(
+        provider="fireworks",
+        model="accounts/example/models/custom",
+        base_url="https://api.fireworks.example/v1/",
+        temperature=0.25,
+        max_tokens=2_048,
+        prompt_version="esef-company-enrichment-v2",
+        concurrency=3,
+        company_ids=["5566692850"],
+        source_document_ids=["AAK-2024"],
+        max_documents=1,
+        refresh_existing=True,
+        max_evidence_chars=10_000,
+        timeout_seconds=45,
+    )
+
+    assert config.model_dump() == {
+        "provider": "fireworks",
+        "model": "accounts/example/models/custom",
+        "base_url": "https://api.fireworks.example/v1/",
+        "temperature": 0.25,
+        "max_tokens": 2_048,
+        "prompt_version": "esef-company-enrichment-v2",
+        "concurrency": 3,
+        "country_iso2": "",
+        "company_ids": ["5566692850"],
+        "source_document_ids": ["AAK-2024"],
+        "max_documents": 1,
+        "refresh_existing": True,
+        "reprocess_existing_without_model": False,
+        "max_evidence_chars": 10_000,
+        "timeout_seconds": 45,
+    }
+    assert esef_llm_api_key_variable(config.provider) == "FIREWORKS_API_KEY"
+    assert "api_key" not in config.model_dump()
+    monkeypatch.setenv("FIREWORKS_API_KEY", "test-key")
+    client = build_esef_llm_client(config)
+    assert str(client.base_url).rstrip("/") == "https://api.fireworks.example/v1"
+
+    monkeypatch.delenv("FIREWORKS_API_KEY")
+    with pytest.raises(ValueError, match="FIREWORKS_API_KEY"):
+        build_esef_llm_client(config)
+
+
+def test_esef_runtime_rejects_prompt_version_not_deployed_here() -> None:
+    config = EsefLlmEnrichmentConfig(prompt_version="esef-company-enrichment-v99")
+
+    with pytest.raises(ValueError, match="this deployment provides"):
+        build_esef_llm_client(config)
+
+
+def test_esef_model_calls_honor_bounded_concurrency() -> None:
+    import threading
+
+    evidence_input = build_enrichment_evidence(
+        _segment_artifact(),
+        max_evidence_chars=20_000,
+    )
+    request = build_company_enrichment_request(
+        evidence_input,
+        model="test-model",
+    )
+    barrier = threading.Barrier(2, timeout=10)
+    lock = threading.Lock()
+    in_flight = 0
+    max_in_flight = 0
+
+    def create_completion(**_kwargs: Any) -> SimpleNamespace:
+        nonlocal in_flight, max_in_flight
+        with lock:
+            in_flight += 1
+            max_in_flight = max(max_in_flight, in_flight)
+        barrier.wait()
+        with lock:
+            in_flight -= 1
+        return SimpleNamespace(
+            id="response",
+            choices=[
+                SimpleNamespace(
+                    message=SimpleNamespace(content=json.dumps(_valid_response()))
+                )
+            ],
+            usage=None,
+        )
+
+    client = SimpleNamespace(
+        chat=SimpleNamespace(
+            completions=SimpleNamespace(create=create_completion),
+        )
+    )
+    work = [
+        _PreparedEnrichment(
+            document={"source_document_id": source_document_id},
+            input_key=f"input/{source_document_id}",
+            evidence_input=evidence_input,
+            request_payload=request,
+            request_key=f"request/{source_document_id}",
+            request_sha256="a" * 64,
+            output_key=f"output/{source_document_id}",
+        )
+        for source_document_id in ("document-1", "document-2")
+    ]
+
+    results = list(
+        _request_enrichments(
+            client=client,  # type: ignore[arg-type]
+            work=work,
+            concurrency=2,
+        )
+    )
+
+    assert len(results) == 2
+    assert max_in_flight == 2
+
+
 def test_llm_enrichment_asset_depends_on_final_clickhouse_documents() -> None:
     output_key = AssetKey("esef_document_company_information_clickhouse")
 
@@ -423,9 +575,10 @@ def test_llm_enrichment_asset_depends_on_final_clickhouse_documents() -> None:
         AssetKey("esef_document_concept_labels_clickhouse"),
         AssetKey("esef_filings_clickhouse"),
     }
-    assert esef_document_company_information_clickhouse.group_names_by_key[
-        output_key
-    ] == "esef"
+    assert (
+        esef_document_company_information_clickhouse.group_names_by_key[output_key]
+        == "esef"
+    )
 
 
 def test_latest_document_selector_uses_one_final_xbrl_per_company() -> None:
@@ -451,6 +604,7 @@ def test_latest_document_selector_uses_one_final_xbrl_per_company() -> None:
     assert "esef_document_company_information" in sql
     assert "esef_source_documents" not in sql
     assert parameters["model_name"] == "deepseek-v4-flash"
+    assert parameters["model_provider"] == "deepseek"
     assert parameters["prompt_version"] == "esef-company-enrichment-v2"
     assert parameters["country_iso2"] == "SE"
     assert parameters["company_ids"] == ("5566692850",)
@@ -583,6 +737,11 @@ def test_llm_asset_reads_disclosures_and_writes_clickhouse_directly() -> None:
     assert metadata["enriched_document_count"] == 1
     assert metadata["information_row_count"] == 1
     assert metadata["selected_company_count"] == 1
+    assert metadata["llm_provider"] == "deepseek"
+    assert metadata["llm_temperature"] == 0
+    assert metadata["llm_max_tokens"] == 8_000
+    assert metadata["llm_prompt_version"] == "esef-company-enrichment-v2"
+    assert metadata["llm_concurrency"] == 1
     request_keys = [
         key
         for bucket, key in object_store.objects
@@ -603,12 +762,12 @@ def test_llm_asset_reads_disclosures_and_writes_clickhouse_directly() -> None:
     )
     assert artifact["enrichment"]["company_description"]["language"] == "en"
     assert len(artifact["enrichment"]["people"]) == 2
+    assert artifact["model"]["base_url"] == "https://api.deepseek.com"
     assert object_store.created_buckets == [ESEF_DOCUMENT_BUCKET]
     information_insert = next(
         parameters
         for sql, parameters in clickhouse.client.calls
-        if "esef_document_company_information" in sql
-        and " VALUES" in sql
+        if "esef_document_company_information" in sql and " VALUES" in sql
     )
     [inserted_values] = information_insert
     inserted = dict(
@@ -707,8 +866,9 @@ def _disclosure_clickhouse_row(
     return tuple(values[column] for column in tables.ESEF_DISCLOSURES_EXPORT_COLUMNS)
 
 
-def _segment_artifact_clickhouse_rows(
-) -> tuple[list[tuple[object, ...]], list[tuple[object, ...]]]:
+def _segment_artifact_clickhouse_rows() -> tuple[
+    list[tuple[object, ...]], list[tuple[object, ...]]
+]:
     artifact = _segment_artifact()
     facts = artifact["facts"]
     concepts = artifact["concepts"]

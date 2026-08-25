@@ -50,6 +50,7 @@ function AdminBreadcrumbs() {
   const companyLabel = useSeCompanyLabel(companyId);
   const onGeneralRolesPage = pathname === "/admin/general/roles";
   const onLlmSettingsPage = pathname === "/admin/settings/llms";
+  const onEsefPage = pathname === "/admin/esef";
   const onPeopleLlmInputPage = pathname.startsWith(
     "/admin/se/people/llm-input/",
   );
@@ -61,6 +62,22 @@ function AdminBreadcrumbs() {
     pathname.startsWith("/admin/se/companies/");
   const onCompanyAddressCorrectionsPage =
     pathname === "/admin/se/company-address/corrections";
+
+  if (onEsefPage) {
+    return (
+      <Breadcrumb>
+        <BreadcrumbList>
+          <BreadcrumbItem className="hidden sm:block">
+            <BreadcrumbLink render={<Link to="/admin" />}>Admin</BreadcrumbLink>
+          </BreadcrumbItem>
+          <BreadcrumbSeparator className="hidden sm:block" />
+          <BreadcrumbItem>
+            <BreadcrumbPage>ESEF</BreadcrumbPage>
+          </BreadcrumbItem>
+        </BreadcrumbList>
+      </Breadcrumb>
+    );
+  }
 
   if (onCompanyAddressCorrectionsPage) {
     return (
