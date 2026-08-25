@@ -65,10 +65,15 @@ class FakeClient:
 
     def __init__(self, answers: list[list[tuple]]) -> None:
         self.executed: list[tuple[str, object]] = []
+        # Parallel to .executed (same index), not folded into it: several call sites
+        # unpack .executed as a bare (sql, parameters) 2-tuple, and widening it would
+        # break every one of them for a kwarg only the address change scan passes.
+        self.settings_calls: list[object] = []
         self.answers = answers
 
-    def execute(self, sql: str, parameters: object = None) -> list[tuple]:
+    def execute(self, sql: str, parameters: object = None, settings: object = None) -> list[tuple]:
         self.executed.append((sql, parameters))
+        self.settings_calls.append(settings)
         if sql.lstrip().upper().startswith(("SELECT", "WITH")):
             return self.answers.pop(0)
         return []

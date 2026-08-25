@@ -557,6 +557,69 @@ def test_an_explicit_scope_is_chunked_so_the_rendered_query_stays_under_max_quer
     assert all(params["all_companies"] == 0 for params in scans)
 
 
+def test_the_scan_query_needs_max_query_size_raised_at_company_batch_sizes_cap() -> None:
+    """The failure this file's fix exists for: company_batch_size's cap of 5,000 alone does
+    NOT keep the rendered scan under ClickHouse's 262,144-byte default max_query_size.
+
+    Rendered exactly as clickhouse_driver's Client.execute renders it client-side --
+    Client.substitute_params against a SimpleNamespace context, the same technique
+    test_sweden_geocode_store_append.py uses to prove a driver-rendering claim without a
+    live connection -- with 12-digit ids, the wider of the two widths
+    normalized_se_company_ids admits (10-digit organisationsnummer or 12-digit
+    personnummer-based sole-trader ids, has_company CHECK, migration 000299). This is the
+    worst case: the scan embeds %(company_ids)s four times, so the longer id renders larger
+    at the same count.
+    """
+    from types import SimpleNamespace
+
+    from clickhouse_driver.client import Client
+
+    from dagster_v3.defs.se_company.address import SCAN_MAX_QUERY_SIZE
+
+    DEFAULT_MAX_QUERY_SIZE = 262_144
+    context = SimpleNamespace(
+        server_info=SimpleNamespace(get_timezone=lambda: "UTC"),
+        client_settings={"server_side_params": False},
+    )
+    driver = SimpleNamespace(connection=SimpleNamespace(context=context))
+    scope = tuple(str(556_000_000_000 + index) for index in range(5_000))  # 12-digit, at the cap
+    assert all(len(company_id) == 12 for company_id in scope)
+    params = {
+        "all_companies": 0, "company_ids": scope,
+        "resolve_all": 0, "resolve_all_before": "2026-08-24 18:30:00.000",
+        "after_company_id": "", "page_size": 5_000,
+    }
+    rendered = Client.substitute_params(driver, build_changed_companies_sql(), params, context)
+    rendered_size = len(rendered.encode("utf-8"))
+
+    # Half one: the bug report's failure class actually reproduces here -- the default
+    # would reject this render (Code: 62, "Max query size exceeded").
+    assert rendered_size > DEFAULT_MAX_QUERY_SIZE
+    # Half two: SCAN_MAX_QUERY_SIZE covers the measured worst case with real margin, not a
+    # razor's edge that the next edit to build_changed_companies_sql erodes back to zero.
+    assert rendered_size < SCAN_MAX_QUERY_SIZE
+    assert SCAN_MAX_QUERY_SIZE - rendered_size > DEFAULT_MAX_QUERY_SIZE  # more than 262,144 to spare
+
+
+def test_the_scan_page_passes_the_raised_max_query_size_to_client_execute() -> None:
+    """SCAN_MAX_QUERY_SIZE is inert unless it actually reaches the driver on the scan call --
+    the artifact/geocode/published reads in _resolve_page do not need it (they embed
+    company_ids at most twice, well under the default even at the cap) and must not carry
+    it either, or a change there would mask this test passing for the wrong query."""
+    from dagster_v3.defs.se_company.address import SCAN_MAX_QUERY_SIZE
+    from tests.test_se_company_common import FakeClickhouse, FakeClient
+
+    client = FakeClient(answers=[EXISTING_TABLES, []])
+    materialize_se_company_address(
+        clickhouse=FakeClickhouse(client), source_run_id="run", resolved_at=NOW,
+        company_ids=[], max_companies=10, company_batch_size=10, execute=False, log=None)
+
+    scan_index = next(i for i, (sql, _params) in enumerate(client.executed)
+                       if sql.startswith("WITH artifacts AS ("))
+    assert client.settings_calls[scan_index] == {"max_query_size": SCAN_MAX_QUERY_SIZE}
+    assert [settings for i, settings in enumerate(client.settings_calls) if i != scan_index] == [None]
+
+
 def test_the_cap_rather_than_exhaustion_is_reported_when_a_full_page_uses_it_up() -> None:
     from tests.test_se_company_common import FakeClickhouse, FakeClient
 
@@ -597,8 +660,11 @@ def test_the_config_gates_the_run_and_bounds_the_weekly_population() -> None:
             SECompanyAddressConfig(max_companies=bad)
 
     # Both the scan page size and the chunk size for an explicit scope: the scan embeds the
-    # id list four times and clickhouse-driver substitutes them client-side, against
-    # ClickHouse's 262,144-byte default max_query_size.
+    # id list four times and clickhouse-driver substitutes them client-side. That alone
+    # would put a max-cap render past ClickHouse's 262,144-byte default max_query_size --
+    # see test_the_scan_query_needs_max_query_size_raised_at_company_batch_sizes_cap, which
+    # measures it -- so the scan's own client.execute call raises max_query_size instead of
+    # this bound shrinking to fit under the default.
     assert build_changed_companies_sql().count("%(company_ids)s") == 4
     assert SECompanyAddressConfig().company_batch_size == 5_000
     for bad in (0, 5_001):

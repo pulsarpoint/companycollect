@@ -79,6 +79,21 @@ LINKS_TABLE = "se_company_address_links_current"
 # A LEFT JOIN miss reads as this instant, not as a bare NULL comparison.
 EPOCH_SQL = "toDateTime64('1970-01-01 00:00:00', 3, 'UTC')"
 
+# ClickHouse's default max_query_size (262,144 bytes) is how many bytes of a query STRING
+# the server will parse before rejecting it (Code: 62, "Max query size exceeded"). The
+# change scan below (build_changed_companies_sql) embeds %(company_ids)s four times, and
+# clickhouse-driver substitutes every id into the query text client-side -- so an explicit
+# scope grows the rendered statement by ~4 copies * (len(id) + 3) bytes per id. Measured at
+# company_batch_size's cap of 5,000: 283,099 bytes for 10-digit organisationsnummer,
+# 323,099 bytes for 12-digit sole-trader ids (normalized_se_company_ids admits both) --
+# both already past the default. Shrinking company_batch_size instead would buy only ~1%
+# headroom even at 4,000 (259,099 bytes for the 12-digit worst case), a margin that
+# re-erodes on any future edit to build_changed_companies_sql. The scan therefore raises
+# max_query_size per query -- see its use in materialize_se_company_address -- to a size
+# comfortably clear of the measured worst case, rather than shrinking the batch to barely
+# fit under the default.
+SCAN_MAX_QUERY_SIZE = 1_048_576  # 1 MiB: >3x the measured 323,099-byte worst case at the cap
+
 # The geocode store is named ONCE, in geocode_store, and this module does not re-declare it
 # under any spelling: `geocode_store.GEOCODE_STORE_TABLE` is the bare name (what
 # assert_clickhouse_tables_exist looks up in system.tables) and
@@ -639,11 +654,10 @@ def materialize_se_company_address(
     assert_clickhouse_tables_exist(clickhouse, database=DATABASE, tables=(
         *ARTIFACT_TABLES.values(), SE_COMPANY_ADDRESS, SE_COMPANY_ADDRESS_CORRECTION,
         MEMBERS_TABLE, LINKS_TABLE, geocode_store.GEOCODE_STORE_TABLE))
-    # The scan embeds %(company_ids)s four times and clickhouse-driver substitutes them
-    # client-side, so the rendered statement grows by ~12 bytes per id per copy: an explicit
-    # scope is split into chunks of at most company_batch_size ids, each paged on its own,
-    # and company_batch_size is capped at 5,000 by the config (ClickHouse's default
-    # max_query_size is 262,144 bytes).
+    # An explicit scope is split into chunks of at most company_batch_size ids, each paged
+    # on its own. company_batch_size's cap of 5,000 is not what keeps the rendered scan
+    # query under ClickHouse's max_query_size -- see SCAN_MAX_QUERY_SIZE above, which the
+    # scan's own client.execute call raises for exactly that.
     chunks = [tuple(scope[start : start + company_batch_size])
               for start in range(0, len(scope), company_batch_size)] or [()]
     metrics: dict[str, int] = defaultdict(int)
@@ -668,8 +682,12 @@ def materialize_se_company_address(
                 break
             page_size = min(company_batch_size, remaining)
             with clickhouse.get_connection() as client:
+                # settings=... raises max_query_size for this query only -- the render at
+                # company_batch_size's cap measures past ClickHouse's 262,144-byte default
+                # (SCAN_MAX_QUERY_SIZE's docstring above has the measured numbers).
                 page = client.execute(build_changed_companies_sql(),
-                                      {**base, "after_company_id": after_company_id, "page_size": page_size})
+                                      {**base, "after_company_id": after_company_id, "page_size": page_size},
+                                      settings={"max_query_size": SCAN_MAX_QUERY_SIZE})
             companies = [str(row[0]) for row in page]
             if not companies:
                 break
@@ -717,8 +735,11 @@ class SECompanyAddressConfig(dg.Config):
     # deliberately staged pass uses resolve_all with an explicit resolve_all_before
     # instead, which is the only memory there is.
     max_companies: int = Field(default=1_000_000, ge=1, le=5_000_000)
-    # Capped at 5,000: this is both the scan page size and the chunk size for an explicit
-    # company_ids scope, and the scan embeds the id list four times client-side.
+    # Both the scan page size and the chunk size for an explicit company_ids scope. The
+    # scan embeds the id list four times client-side, which at this cap renders up to
+    # 323,099 bytes for 12-digit sole-trader ids -- past ClickHouse's 262,144-byte default
+    # max_query_size -- so the scan's own client.execute call raises max_query_size
+    # (SCAN_MAX_QUERY_SIZE) rather than this bound shrinking to fit under the default.
     company_batch_size: int = Field(default=5_000, ge=1, le=5_000)
     # True = re-resolve every in-scope company even though no evidence moved. For rules-only
     # changes (new merge logic, a new artifact column): nothing marks those companies as
