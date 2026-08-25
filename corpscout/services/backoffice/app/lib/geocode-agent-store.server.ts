@@ -271,14 +271,6 @@ export async function listGeocodeAgentRuns(
   return rows.map(toRun);
 }
 
-export async function getGeocodeAgentRun(id: string): Promise<GeocodeAgentRun | null> {
-  const row = await pgQueryOne<RunRow>(
-    `SELECT ${RUN_COLUMNS} FROM geocode_agent_runs WHERE id = $1`,
-    [id],
-  );
-  return row ? toRun(row) : null;
-}
-
 /**
  * Marks runs abandoned by a process that died mid-run. Called when the tab
  * loads: without it a crashed run would hold the one-active-run index forever
@@ -417,17 +409,6 @@ function suggestionInsert(
   };
 }
 
-export async function insertGeocodeAgentSuggestions(
-  runId: string,
-  countryCode: string,
-  drafts: AgentSuggestionDraft[],
-): Promise<GeocodeAgentSuggestion[]> {
-  if (drafts.length === 0) return [];
-  const insert = suggestionInsert(runId, countryCode, drafts);
-  const rows = await pgQuery<SuggestionRow>(insert.sql, insert.values);
-  return rows.map(toSuggestion);
-}
-
 export async function listGeocodeAgentSuggestions(
   countryCode: string,
   limit = 100,
@@ -508,22 +489,12 @@ export async function listGeocodeAgentMemory(
 
 /** Upsert on `(country_code, key)`: a later run refines a note it wrote
  * before rather than appending a near-duplicate the next prompt would carry
- * twice. */
+ * twice. Used only inside `completeGeocodeAgentRun`'s transaction -- there is
+ * deliberately no unguarded path that writes memory or suggestions. */
 const MEMORY_UPSERT_SQL = `INSERT INTO geocode_agent_memory (country_code, key, content, run_id)
        VALUES ($1, $2, $3, $4)
        ON CONFLICT (country_code, key) DO UPDATE
        SET content = EXCLUDED.content, run_id = EXCLUDED.run_id, updated_at = now()`;
-
-export async function upsertGeocodeAgentMemory(
-  countryCode: string,
-  runId: string,
-  entries: AgentMemoryDraft[],
-): Promise<number> {
-  for (const entry of entries) {
-    await pgQuery(MEMORY_UPSERT_SQL, [countryCode, entry.key, entry.content, runId]);
-  }
-  return entries.length;
-}
 
 /* -------------------------------------------------------------------- */
 /* The narrow interface the agent loop depends on                        */
