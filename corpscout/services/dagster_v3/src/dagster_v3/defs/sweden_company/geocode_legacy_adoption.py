@@ -54,6 +54,14 @@ That is left exactly as it is, deliberately, for three reasons.
      identities would read as still-supported buildings and a single postcode-conflict
      fallback among ~19,413 of them would fail the weekly job outright.
 
+And the interaction is MONOTONE against the status quo ante, which is the argument that
+settles it. Without this import the identity serves nothing, then a street fallback. With
+it, the identity serves a building exact, then that same street fallback. Adoption strictly
+improves what is served over every interval, and it never makes an outcome worse than the
+run that never imported anything. The alternative -- ranking an adopted row above a geocoded
+resolver outcome so the fallback could not displace it -- would turn a stopgap into
+something the resolver can never take back, which is exactly what spec 4.4 refuses to build.
+
 Nothing is lost by leaving it: both rows stay in the store, the demotion is visible as a
 version change rather than an overwrite, and the adopted coordinate is one
 `policy_version` filter away. tests/test_sweden_geocode_legacy_adoption.py executes the
@@ -69,6 +77,7 @@ from dagster_v3.defs.sweden_company.geocode_store import (
     GEOCODED_STATUSES,
     LEGACY_ADOPTED_MATCH_METHOD,
     LEGACY_ADOPTED_POLICY_VERSION,
+    NEWEST_PER_FAMILY_RANK_SQL,
     QUALIFIED_CLICKHOUSE_GEOCODE_STORE_TABLE,
     STORE_COLUMNS,
     build_current_resolver_geocodes_sql,
@@ -109,11 +118,35 @@ HAVING uniqExact(tuple(legacy.latitude, legacy.longitude)) {agreement}"""
 _AGREED_SELECTION_SQL = _selection_sql("= 1")
 _DISAGREED_SELECTION_SQL = _selection_sql("> 1")
 
+# `resolver_status` is single-valued per group -- the resolver read yields one row per
+# identity -- so `any()` is exact, not a sample. It is carried here rather than measured
+# separately so the breakdown below and the adoption count describe one population.
 ADOPTION_CANDIDATES_SQL = f"""SELECT
     links.address_id AS address_id,
     count() AS legacy_rows,
-    uniqExact(legacy.company_id) AS companies
+    uniqExact(legacy.company_id) AS companies,
+    any(resolver.match_status) AS resolver_status,
+    groupUniqArray(legacy.company_id) AS company_ids
 {_AGREED_SELECTION_SQL}"""
+
+# The non-geocoded statuses the import adopts through, and how many identities each
+# accounts for. Spec 4.4 talks about `ambiguous`, but the rule admits every non-geocoded
+# status -- postal_box, invalid_address, foreign_address, property_identifier -- and the
+# owner should see that split in the preview, before a permanent write.
+ADOPTION_STATUS_BREAKDOWN_SQL = f"""SELECT resolver_status, count()
+FROM (
+{ADOPTION_CANDIDATES_SQL}
+)
+GROUP BY resolver_status
+ORDER BY resolver_status"""
+
+# DISTINCT companies, not company-address pairs. Summing the per-identity `companies`
+# counts a company once per adopted address it sits at, and the plan's headline number is
+# a company count -- so 12e must not read a pair count as one.
+ADOPTION_COMPANY_COUNT_SQL = f"""SELECT uniqExact(arrayJoin(company_ids))
+FROM (
+{ADOPTION_CANDIDATES_SQL}
+)"""
 
 # Identities the rule REFUSES, reported beside the adoption count so the number is
 # explainable rather than merely large.
@@ -159,6 +192,11 @@ SELECT
     fromUnixTimestamp64Milli(toInt64(%(imported_at)s), 'UTC') AS matched_at
 {_AGREED_SELECTION_SQL}"""
 
+# The controller's verification sample: N IDENTITIES, not N rows. Without the inner
+# `LIMIT 1 BY` a re-run -- or any import whose rows have not been merged yet -- returns the
+# same identity twice under two versions, and a 20-row sample would show ten identities
+# while reading as twenty. The rank is geocode_store's own stage-1 rank, imported rather
+# than restated.
 ADOPTION_SAMPLE_SQL = f"""SELECT
     toString(store.address_id),
     store.match_status,
@@ -167,14 +205,29 @@ ADOPTION_SAMPLE_SQL = f"""SELECT
     store.longitude,
     store.geocode_precision,
     toString(store.reference_md5)
-FROM {QUALIFIED_CLICKHOUSE_GEOCODE_STORE_TABLE} AS store
-WHERE store.policy_version = '{LEGACY_ADOPTED_POLICY_VERSION}'
+FROM (
+    SELECT *
+    FROM {QUALIFIED_CLICKHOUSE_GEOCODE_STORE_TABLE}
+    WHERE policy_version = '{LEGACY_ADOPTED_POLICY_VERSION}'
+    ORDER BY address_id, {NEWEST_PER_FAMILY_RANK_SQL} DESC
+    LIMIT 1 BY address_id
+) AS store
 ORDER BY store.address_id
 LIMIT %(sample_size)s"""
 
 # What the gated run measures after it writes: this run's own rows only. The store may
-# already hold adopted rows from an earlier import, and counting those in would make a
-# re-run's grain check answer for a population this run did not write.
+# already hold adopted rows from an earlier import, and counting those in would make this
+# check answer for a population this run did not write.
+#
+# WHAT IT CAN AND CANNOT SEE. It is NOT a test of the GROUP BY. ClickHouse's
+# `optimize_on_insert` (on by default) collapses rows that share the sorting key inside one
+# INSERT block, and the store's key is (address_id, policy_version, reference_md5) -- so an
+# import that stopped collapsing the company grain would emit several rows per identity,
+# they would share all three key columns, and the insert itself would silently dedup them.
+# `count() = uniqExact(address_id)` would hold on a broken import. What this DOES catch is
+# one run writing an identity twice under two DIFFERENT reference_md5 values -- the one
+# duplication the key permits and the read rule would then have to rank. Its silence at 12e
+# is not evidence about the grain; the harness is.
 ADOPTED_GRAIN_SQL = f"""SELECT count(), uniqExact(address_id)
 FROM {QUALIFIED_CLICKHOUSE_GEOCODE_STORE_TABLE}
 WHERE policy_version = '{LEGACY_ADOPTED_POLICY_VERSION}'

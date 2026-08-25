@@ -40,13 +40,16 @@ from dagster_v3.defs.sweden_company.address_geocoding_assets import (
 )
 from dagster_v3.defs.sweden_company.geocode_legacy_adoption import (
     ADOPTION_CANDIDATES_SQL,
+    ADOPTION_COMPANY_COUNT_SQL,
     ADOPTION_DISAGREEMENT_SQL,
     ADOPTION_INSERT_SQL,
     ADOPTION_SAMPLE_SQL,
+    ADOPTION_STATUS_BREAKDOWN_SQL,
 )
 from dagster_v3.defs.sweden_company.geocode_store import (
     LEGACY_ADOPTED_MATCH_METHOD,
     LEGACY_ADOPTED_POLICY_VERSION,
+    NEWEST_PER_FAMILY_RANK_SQL,
     QUALIFIED_CLICKHOUSE_GEOCODE_STORE_TABLE,
     STORE_COLUMNS,
     build_current_geocodes_sql,
@@ -81,6 +84,7 @@ NOT_EXACT = "4" * 64  # legacy matched_area -- must NOT be adopted
 SHARED = "5" * 64  # three companies, one agreed coordinate -- adopted ONCE
 WEAK_EXACT = "6" * 64  # legacy exact BELOW confidence 1.0 -- must NOT be adopted
 NO_COORDINATE = "7" * 64  # legacy exact with no coordinate -- must NOT be adopted
+NO_STORE_ROW = "8" * 64  # no store row at all -- must NOT be adopted
 
 
 def test_the_selection_names_its_three_tables_and_its_two_predicates() -> None:
@@ -117,6 +121,30 @@ def test_the_selection_reads_the_resolver_family_not_the_served_answer() -> None
         "matched_street",
     ):
         assert f"'{status}'" in ADOPTION_CANDIDATES_SQL
+
+
+def test_the_resolver_outcome_is_inner_joined_and_not_left_joined() -> None:
+    """The one join whose mutation the execution harness can only half-see.
+
+    LEFT here would admit an identity the store has NO row for -- register churn, a new
+    address identity, a store that was never backfilled. Under `join_use_nulls = 0` the
+    miss reads as the LowCardinality(String) default `''`, which passes
+    `NOT IN (geocoded)`, and the identity is adopted with no resolver outcome behind it
+    at all. Under `join_use_nulls = 1` the same miss is NULL, `NULL NOT IN (...)` is
+    NULL, and the row is silently dropped -- so the two settings would disagree about
+    what a one-shot permanent import wrote. The harness executes the `= 0` half through
+    NO_STORE_ROW; this pin closes the `= 1` half, where LEFT and INNER are
+    observationally identical and no fixture can separate them.
+    """
+    for sql in (
+        ADOPTION_CANDIDATES_SQL,
+        ADOPTION_INSERT_SQL,
+        ADOPTION_DISAGREEMENT_SQL,
+    ):
+        assert ") AS resolver ON resolver.address_id = links.address_id" in sql
+        assert "INNER JOIN (\n" in sql
+        assert "LEFT JOIN" not in sql
+        assert "resolver.match_status NOT IN (" in sql
 
 
 def test_the_refusal_count_is_the_selection_with_the_opposite_having() -> None:
@@ -176,12 +204,32 @@ def test_the_import_instant_is_bound_in_exact_milliseconds() -> None:
     assert "toDateTime64(%(imported_at)s" not in ADOPTION_INSERT_SQL
 
 
+def test_the_preview_can_explain_which_resolver_statuses_it_adopts_through() -> None:
+    """Spec 4.4 names `ambiguous`; the rule admits every non-geocoded status. The owner
+    authorising a permanent write sees the split rather than one number."""
+    assert ADOPTION_CANDIDATES_SQL in ADOPTION_STATUS_BREAKDOWN_SQL
+    assert "any(resolver.match_status) AS resolver_status" in ADOPTION_CANDIDATES_SQL
+    assert "GROUP BY resolver_status" in ADOPTION_STATUS_BREAKDOWN_SQL
+
+
+def test_the_company_count_is_distinct_companies_not_company_address_pairs() -> None:
+    """`sum(companies)` counts a company once per adopted address it sits at. The plan's
+    headline number is a company count, so the two must not be confusable."""
+    assert ADOPTION_CANDIDATES_SQL in ADOPTION_COMPANY_COUNT_SQL
+    assert "uniqExact(arrayJoin(company_ids))" in ADOPTION_COMPANY_COUNT_SQL
+    assert "groupUniqArray(legacy.company_id) AS company_ids" in ADOPTION_CANDIDATES_SQL
+
+
 def test_the_sample_reads_only_adopted_rows() -> None:
-    assert f"store.policy_version = '{LEGACY_ADOPTED_POLICY_VERSION}'" in (
+    assert f"WHERE policy_version = '{LEGACY_ADOPTED_POLICY_VERSION}'" in (
         ADOPTION_SAMPLE_SQL
     )
     assert "LIMIT %(sample_size)s" in ADOPTION_SAMPLE_SQL
     assert ADOPTION_SAMPLE_SQL.startswith("SELECT")
+    # N identities, not N rows: an unmerged re-run holds two versions of one key, and a
+    # 20-row sample would otherwise show ten identities while reading as twenty.
+    assert "LIMIT 1 BY address_id" in ADOPTION_SAMPLE_SQL
+    assert NEWEST_PER_FAMILY_RANK_SQL in ADOPTION_SAMPLE_SQL
 
 
 class _FakeClickhouseClient:
@@ -192,6 +240,12 @@ class _FakeClickhouseClient:
         *,
         existing_tables: set[str] | None = None,
         candidates: tuple[int, int, int] = (19413, 21000, 20500),
+        distinct_companies: int = 19180,
+        by_status: tuple[tuple[str, int], ...] = (
+            ("ambiguous", 19_000),
+            ("postal_box", 300),
+            ("unmatched", 113),
+        ),
         disagreeing: int = 87,
         adopted: tuple[int, int] = (19413, 19413),
         total_adopted: int = 19413,
@@ -207,6 +261,8 @@ class _FakeClickhouseClient:
             else existing_tables
         )
         self.candidates = candidates
+        self.distinct_companies = distinct_companies
+        self.by_status = by_status
         self.disagreeing = disagreeing
         self.adopted = adopted
         self.total_adopted = total_adopted
@@ -219,6 +275,10 @@ class _FakeClickhouseClient:
             ]
         if sql.startswith("INSERT INTO"):
             return []
+        if sql == ADOPTION_COMPANY_COUNT_SQL:
+            return [(self.distinct_companies,)]
+        if sql == ADOPTION_STATUS_BREAKDOWN_SQL:
+            return list(self.by_status)
         if "sum(legacy_rows)" in sql:
             return [self.candidates]
         if sql == ADOPTION_DISAGREEMENT_SQL:
@@ -270,8 +330,19 @@ def test_a_bare_materialize_measures_and_writes_nothing() -> None:
     assert result.metadata["preview"] is True
     assert result.metadata["adoptable_identities"] == 19413
     assert result.metadata["contributing_legacy_rows"] == 21000
-    assert result.metadata["contributing_companies"] == 20500
+    # Distinct companies, and the pair count beside it -- 12e reads the first against the
+    # plan's "~19,413 companies" and must not be handed a company-address pair count.
+    assert result.metadata["contributing_companies"] == 19180
+    assert result.metadata["contributing_company_address_pairs"] == 20500
     assert result.metadata["refused_disagreeing_identities"] == 87
+    # The statuses the rule adopts through, not just how many. Spec 4.4 names `ambiguous`;
+    # a preview showing 300 postal_box identities is a decision the owner gets to make
+    # before a permanent write, not one they discover afterwards.
+    assert result.metadata["adoptable_by_resolver_status"].value == {
+        "ambiguous": 19_000,
+        "postal_box": 300,
+        "unmatched": 113,
+    }
 
 
 def test_the_gated_run_inserts_once_and_reports_what_it_wrote() -> None:
@@ -314,13 +385,23 @@ def test_the_gated_run_refuses_an_import_that_would_adopt_nothing() -> None:
     )
 
 
-def test_the_gated_run_refuses_a_write_that_broke_the_identity_grain() -> None:
-    """The grain change is the whole risk: the legacy table is keyed per company, the
-    store per identity. A GROUP BY that stopped collapsing would write one row per
-    company-address and every downstream join would fan out."""
+def test_the_gated_run_refuses_one_identity_under_two_reference_versions() -> None:
+    """What this guard actually covers -- and what it does NOT.
+
+    It does NOT test the GROUP BY. `optimize_on_insert` is on by default in 26.5 and
+    collapses rows sharing the sorting key inside one INSERT block; the store's key is
+    (address_id, policy_version, reference_md5), and a broken grain emits rows agreeing
+    on all three. The insert dedups them and `count() = uniqExact(address_id)` holds on a
+    broken import, so this guard's SILENCE at 12e is not grain evidence -- the harness is
+    (`test_a_shared_identity_is_adopted_exactly_once`).
+
+    What it does catch is the one duplication the key permits: a single run writing an
+    identity twice under two DIFFERENT reference_md5 values, which the read rule would
+    then have to rank between two rows this import never meant to distinguish.
+    """
     client = _FakeClickhouseClient(adopted=(19500, 19413))
 
-    with pytest.raises(ValueError, match="more than one row per address identity"):
+    with pytest.raises(ValueError, match="two OSM reference versions"):
         _run_import(client, execute=True)
 
 
@@ -533,6 +614,7 @@ _MEMBERSHIP = (
     ("5560000008", SHARED, "e" * 64),
     ("5560000009", WEAK_EXACT, "f" * 64),
     ("5560000010", NO_COORDINATE, "0" * 64),
+    ("5560000011", NO_STORE_ROW, "9" * 64),
 )
 
 
@@ -570,6 +652,12 @@ def _fixture_statements() -> list[str]:
         # A geocoded status with no coordinate would violate the store's own
         # status/coordinate invariant the moment it landed.
         _legacy_row("5560000010", "0" * 64, latitude="NULL", longitude="NULL"),
+        # An impeccable legacy exact for an identity the STORE has no row for at all --
+        # register churn, a brand-new identity, a store that was never backfilled. The
+        # INNER join to the resolver read is the only thing that refuses it: under
+        # `join_use_nulls = 0` a LEFT join reads the miss as '' and adopts it with no
+        # resolver outcome behind it. This fixture is what makes that mutation visible.
+        _legacy_row("5560000011", "9" * 64, **_at((63.83, 20.26))),
     ]
     store_rows = [
         _store_row(ADOPTABLE),
@@ -647,6 +735,10 @@ def _marked(label: str, query: str) -> str:
     return f"SELECT '@@{label}';\n{query.rstrip().rstrip(';')} FORMAT TSV;"
 
 
+# Every column whose VALUE could be swapped with a neighbour's without the alias order
+# changing. The insert projects 28 aggregate expressions onto 28 aliases positionally, so
+# `any(legacy.source_url) AS source_object_key` reads as well-formed SQL, satisfies the
+# alias-order pin, and writes each value into its neighbour's column.
 _ADOPTED_SQL = f"""SELECT
     toString(address_id),
     match_status,
@@ -656,7 +748,19 @@ _ADOPTED_SQL = f"""SELECT
     geocode_precision,
     reference_md5,
     toString(matched_at),
-    geocode_run_id
+    geocode_run_id,
+    normalized_match_key,
+    ifNull(source_url, ''),
+    ifNull(source_object_key, ''),
+    ifNull(source_md5, ''),
+    ifNull(source_record_id, ''),
+    ifNull(source_record_url, ''),
+    ifNull(coordinate_method, ''),
+    toString(candidate_count),
+    toString(match_confidence),
+    arrayStringConcat(candidate_record_ids, '|'),
+    arrayStringConcat(candidate_record_urls, '|'),
+    address_identity_run_id
 FROM {STORE}
 WHERE policy_version = '{LEGACY_ADOPTED_POLICY_VERSION}'
 ORDER BY address_id"""
@@ -694,6 +798,8 @@ def _script(*, join_use_nulls: int) -> str:
     parts.extend(f"{statement};" for statement in _fixture_statements())
     parts.append(_marked("candidates", ADOPTION_CANDIDATES_SQL))
     parts.append(_marked("disagreement", ADOPTION_DISAGREEMENT_SQL))
+    parts.append(_marked("breakdown", ADOPTION_STATUS_BREAKDOWN_SQL))
+    parts.append(_marked("company_count", ADOPTION_COMPANY_COUNT_SQL))
     parts.append(f"{_render(ADOPTION_INSERT_SQL, _IMPORT_PARAMETERS)};")
     parts.append(_marked("adopted", _ADOPTED_SQL))
     parts.append(
@@ -704,6 +810,12 @@ def _script(*, join_use_nulls: int) -> str:
     # The same import again, same instant: a key-stable replace, not a second row.
     parts.append(f"{_render(ADOPTION_INSERT_SQL, _IMPORT_PARAMETERS)};")
     parts.append(_marked("grain_after_reimport", _ADOPTED_GRAIN_SQL))
+    parts.append(
+        _marked(
+            "sample_after_reimport",
+            _render(ADOPTION_SAMPLE_SQL, {"sample_size": SAMPLE_SIZE}),
+        )
+    )
     parts.append(f"{_later_resolver_statement()};")
     parts.append(_marked("served_after_resolver_success", _SERVED_SQL))
     parts.append(_marked("candidates_after_resolver_success", ADOPTION_CANDIDATES_SQL))
@@ -748,6 +860,8 @@ def test_only_the_trapped_decisions_are_adopted(sections) -> None:
     assert NOT_EXACT not in adopted, "only matched_exact at confidence 1.0 is adopted"
     assert WEAK_EXACT not in adopted, "an exact match below 1.0 is not a 1.0 decision"
     assert NO_COORDINATE not in adopted, "there is no coordinate here to adopt"
+    assert NO_STORE_ROW not in adopted, "no resolver outcome means nothing to supersede"
+    assert NO_STORE_ROW not in {row[0] for row in sections["candidates"]}
 
 
 def test_a_shared_identity_is_adopted_exactly_once(sections) -> None:
@@ -764,6 +878,25 @@ def test_the_refused_disagreement_is_counted_and_not_adopted(sections) -> None:
     assert sections["disagreement"] == [["1"]]
 
 
+def test_the_import_adopts_through_the_resolver_statuses_it_reports(sections) -> None:
+    """The preview's breakdown, executed: the split the owner reads at 12e is produced by
+    the same selection that produces the adoption count, so the two cannot disagree."""
+    assert {row[0]: int(row[1]) for row in sections["breakdown"]} == {
+        "ambiguous": 1,
+        "unmatched": 1,
+    }
+
+
+def test_the_company_count_counts_companies_and_not_pairs(sections) -> None:
+    """ADOPTABLE contributes one company, SHARED three -- four distinct companies across
+    two adopted identities, while the per-identity counts sum to four as well. The number
+    that matters is that the flattened count is a uniqExact over company ids, which the
+    disagreeing and refused identities never enter."""
+    assert sections["company_count"] == [["4"]]
+    contributing = {row[0]: int(row[2]) for row in sections["candidates"]}
+    assert contributing == {ADOPTABLE: 1, SHARED: 3}
+
+
 def test_the_adopted_row_carries_the_legacy_decision_and_its_own_version(
     sections,
 ) -> None:
@@ -771,9 +904,29 @@ def test_the_adopted_row_carries_the_legacy_decision_and_its_own_version(
     from, the coordinate and precision are the legacy matcher's own, and the reference
     identity is the OSM snapshot that matcher ran against."""
     rows = {row[0]: row for row in sections["adopted"]}
-    _, status, method, latitude, longitude, precision, reference, stamp, run = rows[
-        ADOPTABLE
-    ]
+    (
+        _,
+        status,
+        method,
+        latitude,
+        longitude,
+        precision,
+        reference,
+        stamp,
+        run,
+        match_key,
+        source_url,
+        source_object_key,
+        source_md5,
+        source_record_id,
+        source_record_url,
+        coordinate_method,
+        candidate_count,
+        confidence,
+        candidate_ids,
+        candidate_urls,
+        identity_run,
+    ) = rows[ADOPTABLE]
     assert status == "matched_exact"
     assert method == LEGACY_ADOPTED_MATCH_METHOD
     assert (float(latitude), float(longitude)) == (59.33, 18.06)
@@ -781,6 +934,21 @@ def test_the_adopted_row_carries_the_legacy_decision_and_its_own_version(
     assert reference == LEGACY_MD5
     assert run == IMPORT_RUN_ID
     assert stamp.startswith("2026-08-24 12:00:00")
+    # Each carried value lands in ITS OWN column, not its neighbour's. The alias-order pin
+    # cannot see a swap between two expressions of the same type; these values can.
+    assert source_url == "https://download.geofabrik.de/sweden-latest.osm.pbf"
+    assert source_object_key == "osm/sweden-latest.osm.pbf"
+    assert source_md5 == LEGACY_MD5
+    assert source_record_id == "osm/way/1"
+    assert source_record_url == "https://www.openstreetmap.org/way/1"
+    assert coordinate_method == "osm_record"
+    assert match_key == "se|storgatan 1|11122|stockholm"
+    assert candidate_count == "1"
+    assert float(confidence) == 1.0
+    assert candidate_ids == "osm/way/1"
+    assert candidate_urls == "https://www.openstreetmap.org/way/1"
+    # The identity run comes from LINKS, the only table that knows it.
+    assert identity_run == "identity-run-1"
 
 
 def test_the_controller_sample_reads_the_adopted_rows(sections) -> None:
@@ -807,6 +975,9 @@ def test_the_read_rule_serves_the_adopted_coordinate(sections) -> None:
     # Nothing was adopted for these, so they still read as the resolver left them.
     for identity in (DISAGREEING, NOT_EXACT, WEAK_EXACT, NO_COORDINATE):
         assert served[identity] == (POLICY, "ambiguous")
+    # ... and an identity the store never held is still absent from it. A LEFT join to
+    # the resolver read would have put a coordinate here under join_use_nulls = 0.
+    assert NO_STORE_ROW not in served
 
 
 def test_a_second_import_replaces_rather_than_duplicates(sections) -> None:
@@ -814,6 +985,17 @@ def test_a_second_import_replaces_rather_than_duplicates(sections) -> None:
     matched_at. Re-running the same import at the same instant must land the same rows,
     not a second copy of them."""
     assert sections["grain_after_reimport"] == [["2", "2"]]
+
+
+def test_the_sample_shows_identities_and_not_versions(sections) -> None:
+    """The controller's verification sample is read as "N identities I can go and check".
+    After a re-run the store holds two unmerged versions of each adopted key, and a
+    sample without the inner `LIMIT 1 BY` would return the same identity twice and make a
+    20-row sample cover ten."""
+    identities = [row[0] for row in sections["sample_after_reimport"]]
+    assert identities == sorted(identities)
+    assert len(identities) == len(set(identities)) == 2
+    assert set(identities) == {ADOPTABLE, SHARED}
 
 
 def test_a_later_resolver_success_outranks_the_adopted_row(sections) -> None:

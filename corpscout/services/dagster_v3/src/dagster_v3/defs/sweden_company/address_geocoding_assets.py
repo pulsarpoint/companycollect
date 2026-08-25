@@ -1078,15 +1078,33 @@ def sweden_address_geocode_legacy_adoption_clickhouse(
         [(disagreeing,)] = client.execute(
             geocode_legacy_adoption.ADOPTION_DISAGREEMENT_SQL
         )
+        [(distinct_companies,)] = client.execute(
+            geocode_legacy_adoption.ADOPTION_COMPANY_COUNT_SQL
+        )
+        # Which non-geocoded resolver statuses the import is adopting through. Spec 4.4
+        # talks about `ambiguous`; the rule admits every non-geocoded status, and the
+        # owner sees the split here before authorising a permanent write.
+        by_resolver_status = {
+            str(status): int(count)
+            for status, count in client.execute(
+                geocode_legacy_adoption.ADOPTION_STATUS_BREAKDOWN_SQL
+            )
+        }
+        measurements = {
+            "adoptable_identities": int(adoptable),
+            "adoptable_by_resolver_status": dg.MetadataValue.json(by_resolver_status),
+            "contributing_legacy_rows": int(legacy_rows or 0),
+            # DISTINCT companies. `contributing_company_address_pairs` is the sum of the
+            # per-identity counts, which counts a company once per adopted address it
+            # sits at -- the plan's headline is a company count, so both are reported
+            # and neither can be mistaken for the other.
+            "contributing_companies": int(distinct_companies or 0),
+            "contributing_company_address_pairs": int(companies or 0),
+            "refused_disagreeing_identities": int(disagreeing),
+        }
         if not config.execute:
             return dg.MaterializeResult(
-                metadata={
-                    "preview": True,
-                    "adoptable_identities": int(adoptable),
-                    "contributing_legacy_rows": int(legacy_rows or 0),
-                    "contributing_companies": int(companies or 0),
-                    "refused_disagreeing_identities": int(disagreeing),
-                }
+                metadata={"preview": True, **measurements}
             )
         if int(adoptable) == 0:
             raise ValueError(
@@ -1100,8 +1118,9 @@ def sweden_address_geocode_legacy_adoption_clickhouse(
                 "imported_at": epoch_milliseconds(imported_at),
             },
         )
-        # This run's own rows, not every adopted row the store holds: an earlier import's
-        # rows would make the grain check answer for a population this run did not write.
+        # This run's own rows only. NOT a test of the GROUP BY -- `optimize_on_insert`
+        # collapses same-key rows inside one INSERT block, so a broken grain would dedup
+        # itself away silently. See ADOPTED_GRAIN_SQL for what it does catch.
         [(adopted_rows, adopted_identities)] = client.execute(
             geocode_legacy_adoption.ADOPTED_GRAIN_SQL,
             {"geocode_run_id": context.run_id},
@@ -1113,7 +1132,9 @@ def sweden_address_geocode_legacy_adoption_clickhouse(
         )
     if int(adopted_rows) != int(adopted_identities):
         raise ValueError(
-            "The adoption import wrote more than one row per address identity"
+            f"The adoption import wrote {adopted_rows} rows for "
+            f"{adopted_identities} identities in one run -- an identity landed under "
+            "two OSM reference versions"
         )
     context.log.info(
         "Adopted %s Sweden legacy exact decisions into the geocode store",
@@ -1122,11 +1143,9 @@ def sweden_address_geocode_legacy_adoption_clickhouse(
     return dg.MaterializeResult(
         metadata={
             "preview": False,
-            "adoptable_identities": int(adoptable),
+            **measurements,
             "adopted_identities": int(adopted_identities),
             "adopted_identities_total": int(adopted_total),
-            "contributing_companies": int(companies or 0),
-            "refused_disagreeing_identities": int(disagreeing),
             "imported_at": imported_at.isoformat(),
             "sample": dg.MetadataValue.json([list(map(str, row)) for row in sample]),
         }
