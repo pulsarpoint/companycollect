@@ -204,6 +204,8 @@ __marimo__/
 .telemetry/
 data/*.duckdb
 data/*.duckdb.wal
+# Standalone geocode experiment workbench (scripts/geocode_workbench_experiment.py)
+data/geocode_workbench_local.duckdb
 
 # Dagster runtime state (DAGSTER_HOME points at the repo in dev)
 storage/
