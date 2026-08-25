@@ -48,6 +48,10 @@ LEGACY_ADOPTION_ASSET_KEY = "sweden_address_geocode_legacy_adoption_clickhouse"
 WEEKLY_CRON_SCHEDULE = "5 4 * * 2"
 WEEKLY_EXECUTION_TIMEZONE = "Europe/Stockholm"
 MAX_OSM_SNAPSHOT_AGE = timedelta(days=9)
+# Three times the REFRESH EVERY 1 HOUR interval migration 000320 gave the serving view.
+# One interval would go red on any refresh that merely ran long; three means two
+# consecutive refreshes have to have been missed entirely before this fires.
+MAX_SERVING_VIEW_REFRESH_AGE = timedelta(hours=3)
 _EPOCH = datetime(1970, 1, 1, tzinfo=UTC)
 MIN_EXACT_MATCH_RATE_PERCENT = 5.0
 MAX_EXACT_MATCH_RATE_CHANGE_PERCENTAGE_POINTS = 2.0
@@ -148,6 +152,27 @@ LEFT JOIN (
 SNAPSHOT_FRESHNESS_SQL = f"""SELECT max(source_snapshot_at)
 FROM {geocode_store.QUALIFIED_CLICKHOUSE_GEOCODE_STORE_TABLE}"""
 
+# The serving view's refresh state, which is the only place its health is now visible.
+#
+# THE INSTANT IS FETCHED AS AN EPOCH INTEGER, NOT AS A DATETIME, for the reason
+# build_store_append_regression_sql sets out at length: `last_success_time` is
+# `Nullable(DateTime)` with no timezone in its type, so what the driver hands back is a
+# NAIVE datetime rendered in the SERVER's timezone. Comparing that against a UTC `now`
+# is wrong by the server's offset -- an hour or two of phantom staleness on a
+# Europe/Stockholm server, which is most of a three-hour budget. `toUnixTimestamp` is the
+# absolute tick, and an int crosses the driver unambiguously.
+#
+# Not filtered by status. A view that is mid-refresh (`Running`) is healthy if its LAST
+# success is recent, and a view stuck retrying is unhealthy for exactly the same reason --
+# both are answered by the same two columns, so status is reported and never gated.
+SERVING_VIEW_REFRESH_SQL = f"""SELECT
+    status,
+    exception,
+    toUnixTimestamp(last_success_time)
+FROM system.view_refreshes
+WHERE database = '{geocode_store.CLICKHOUSE_DATABASE}'
+  AND view = '{shared_address_geocoding.ADDRESS_GEOCODES_TABLE}'"""
+
 
 def fetch_sweden_geocode_exact_match_stats(client: Any) -> SwedenGeocodeExactMatchStats:
     """Company-address links, and how many of them the store currently geocodes.
@@ -184,6 +209,34 @@ def exact_match_rate_is_stable(
         abs(current_percent - previous_percent)
         <= MAX_EXACT_MATCH_RATE_CHANGE_PERCENTAGE_POINTS
     )
+
+
+def serving_view_refresh_is_healthy(
+    *,
+    exception: str,
+    last_success_epoch_seconds: int | None,
+    now: datetime,
+) -> bool:
+    """Whether corpscout.se_address_geocodes_current is still being refreshed.
+
+    A NEVER-SUCCEEDED VIEW FAILS, and that is the case worth spelling out. `None` here
+    means ClickHouse knows the view and has never completed a refresh of it -- which for
+    a serving object means it is answering every backoffice request with an empty result
+    and raising nothing. Treating an absent instant as 'no evidence, so pass' would make
+    the check silent in precisely the state it exists to catch.
+
+    An `exception` fails whatever the age says: a view whose refresh is throwing still
+    serves its last good contents at full speed, so staleness is the only symptom, and
+    the age term alone would not report it for three hours. This is also what catches
+    the definer losing SELECT on the store -- the refresh fails, the reads stay fast, and
+    nothing else anywhere would notice.
+    """
+    if exception:
+        return False
+    if last_success_epoch_seconds is None:
+        return False
+    last_success = datetime.fromtimestamp(int(last_success_epoch_seconds), tz=UTC)
+    return now.astimezone(UTC) - last_success <= MAX_SERVING_VIEW_REFRESH_AGE
 
 
 def osm_snapshot_is_fresh(*, snapshot_at: datetime | None, now: datetime) -> bool:
@@ -1392,6 +1445,94 @@ def sweden_company_address_osm_snapshot_freshness_check(
     )
 
 
+@dg.asset_check(
+    asset=sweden_address_geocode_store_clickhouse,
+    name="serving_view_is_being_refreshed",
+    description=(
+        "Fails when the Sweden serving geocode view has stopped refreshing: its last "
+        "refresh raised, or it has not succeeded within three times its refresh "
+        "interval, or it has never succeeded at all."
+    ),
+)
+def sweden_address_geocodes_serving_view_refresh_check(
+    clickhouse: ClickhouseResource,
+) -> dg.AssetCheckResult:
+    """The only thing watching corpscout.se_address_geocodes_current, and why it exists.
+
+    Until migration 000320 that table was a Dagster asset: it had a publish, a shrink
+    guard, two parity checks and a row-count/freshness leaf, and any of them going red
+    said the serving table was wrong. It is a REFRESHABLE MATERIALIZED VIEW now, which is
+    the point -- ClickHouse rebuilds it hourly and nothing here recomputes it -- but that
+    also means every one of those tripwires retired with it and none could be replaced in
+    kind. A view is never materialized, so freshness has nothing to measure, and a parity
+    check comparing the view against the store read would be comparing the view's own
+    SELECT with itself.
+
+    What CAN fail is the refresh, and it fails quietly: a view whose refresh throws keeps
+    answering, at full speed, with contents that stop advancing. Four backoffice modules
+    read this name on every request and would show ageing coordinates indefinitely with
+    nothing raising anywhere. So this check reads the one system table that still knows --
+    system.view_refreshes -- and is the whole of what stands behind the serving name.
+
+    It hangs off the store asset because the store is what the view reads: they run on the
+    same weekly cadence as the other three store checks, and a week that appends outcomes
+    is exactly when it matters whether anything is publishing them.
+
+    WHAT A MISSING ROW MEANS. Zero rows is not "no data yet" -- the WHERE names one
+    database and one view, and ClickHouse lists every refreshable view it knows. No row
+    means corpscout.se_address_geocodes_current is not a refreshable view on this server:
+    the migration has not been applied, or something replaced the view with a table. Both
+    are failures, and both are invisible to a check that shrugged at an empty result.
+    """
+    checked_at = datetime.now(UTC)
+    with clickhouse.get_connection() as client:
+        rows = client.execute(SERVING_VIEW_REFRESH_SQL)
+    view = f"{geocode_store.CLICKHOUSE_DATABASE}.{shared_address_geocoding.ADDRESS_GEOCODES_TABLE}"
+    if not rows:
+        return dg.AssetCheckResult(
+            passed=False,
+            metadata={
+                "view": view,
+                "refresh_row_found": False,
+                "detail": (
+                    f"{view} is not a refreshable materialized view on this server -- "
+                    "system.view_refreshes has no row for it (migration 000320 not "
+                    "applied, or the view was replaced)"
+                ),
+            },
+        )
+    [(status, exception, last_success_epoch_seconds)] = rows
+    last_success = (
+        datetime.fromtimestamp(int(last_success_epoch_seconds), tz=UTC)
+        if last_success_epoch_seconds is not None
+        else None
+    )
+    return dg.AssetCheckResult(
+        passed=serving_view_refresh_is_healthy(
+            exception=str(exception),
+            last_success_epoch_seconds=last_success_epoch_seconds,
+            now=checked_at,
+        ),
+        metadata={
+            "view": view,
+            "refresh_row_found": True,
+            "status": str(status),
+            "exception": str(exception),
+            "last_success_at": (
+                last_success.isoformat() if last_success is not None else None
+            ),
+            "refresh_age_hours": (
+                (checked_at - last_success).total_seconds() / 3600
+                if last_success is not None
+                else None
+            ),
+            "maximum_refresh_age_hours": (
+                MAX_SERVING_VIEW_REFRESH_AGE.total_seconds() / 3600
+            ),
+        },
+    )
+
+
 sweden_company_address_geocoding_job = dg.define_asset_job(
     name="sweden_company_address_geocoding_job",
     selection=dg.AssetSelection.assets(
@@ -1488,8 +1629,10 @@ sweden_company_address_geocoding_weekly = dg.ScheduleDefinition(
     execution_timezone=WEEKLY_EXECUTION_TIMEZONE,
     default_status=dg.DefaultScheduleStatus.RUNNING,
     description=(
-        "Weekly Sweden OSM snapshot, address-index, exact company-address match, "
-        "and ClickHouse publication."
+        "Weekly Sweden OSM snapshot and address index, then the address identities "
+        "that are due are resolved and their outcomes appended to the versioned "
+        "geocode store. Publishes no serving table: se_address_geocodes_current is a "
+        "refreshable materialized view over that store since migration 000320."
     ),
 )
 
@@ -1510,6 +1653,7 @@ defs = dg.Definitions(
         sweden_address_geocode_store_complete_check,
         sweden_company_address_exact_match_rate_check,
         sweden_company_address_osm_snapshot_freshness_check,
+        sweden_address_geocodes_serving_view_refresh_check,
     ],
     jobs=[
         sweden_company_address_geocoding_job,

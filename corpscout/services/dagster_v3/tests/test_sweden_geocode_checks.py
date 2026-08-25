@@ -6,7 +6,7 @@ predicates, because a check whose predicate silently narrows keeps passing forev
 
 import time
 from contextlib import contextmanager
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta, timezone
 from typing import Any, Iterator
 
 import dagster as dg
@@ -23,6 +23,8 @@ from dagster_v3.defs.sweden_company.address_geocoding_assets import (
     EXACT_MATCH_RATE_SQL,
     GEOCODE_STORE_ASSET_KEY,
     SHARED_ADDRESSES_CLICKHOUSE_ASSET_KEY,
+    MAX_SERVING_VIEW_REFRESH_AGE,
+    SERVING_VIEW_REFRESH_SQL,
     SNAPSHOT_FRESHNESS_SQL,
     STORE_COVERAGE_SQL,
     STORE_INVARIANTS_SQL,
@@ -30,7 +32,9 @@ from dagster_v3.defs.sweden_company.address_geocoding_assets import (
     fetch_sweden_geocode_snapshot_freshness,
     previous_exact_match_rate_percent,
     sweden_address_geocode_store_complete_check,
+    sweden_address_geocodes_serving_view_refresh_check,
     sweden_company_address_exact_match_rate_check,
+    serving_view_refresh_is_healthy,
     sweden_company_address_osm_snapshot_freshness_check,
     sweden_shared_addresses_complete_check,
 )
@@ -196,6 +200,7 @@ def test_the_store_hosts_the_three_checks_that_read_it() -> None:
         sweden_address_geocode_store_complete_check,
         sweden_company_address_exact_match_rate_check,
         sweden_company_address_osm_snapshot_freshness_check,
+        sweden_address_geocodes_serving_view_refresh_check,
     ):
         assert {key.asset_key for key in check.check_keys} == {store}
     assert {
@@ -453,4 +458,144 @@ def test_only_the_clickhouse_canonical_constants_retire() -> None:
     )
     assert address_canonicalization.QUALIFIED_CLICKHOUSE_ADDRESS_MEMBERS_TABLE == (
         "corpscout.se_company_address_members_current"
+    )
+
+
+# ---------------------------------------------------------------------------------------
+# The serving view's refresh state. Migration 000320 turned
+# corpscout.se_address_geocodes_current into a refreshable materialized view, which took
+# its publish asset, its shrink guard, its two parity checks and its row-count leaf with
+# it. This check is what replaced all of them, so its predicate is the whole safety net
+# and every branch of it is pinned here.
+
+
+# A fixed instant for the PREDICATE tests, which take `now` as an argument. The check
+# body calls datetime.now(UTC) itself and cannot be handed one, so its fixtures are
+# built relative to the real clock instead -- a fixed instant there would drift into the
+# future or the past depending on the day the suite runs.
+_NOW = datetime(2026, 8, 25, 12, 0, tzinfo=UTC)
+
+
+def _epoch(hours_ago: float, *, before: datetime = _NOW) -> int:
+    return int((before - timedelta(hours=hours_ago)).timestamp())
+
+
+def _ago(hours: float) -> int:
+    """An epoch that is `hours` old when the check body reads the real clock."""
+    return _epoch(hours, before=datetime.now(UTC))
+
+
+def _run_view_refresh_check(rows: list[tuple[Any, ...]]) -> dict[str, Any]:
+    client = _FakeClickhouseClient({SERVING_VIEW_REFRESH_SQL: rows})
+    result = (
+        sweden_address_geocodes_serving_view_refresh_check.node_def.compute_fn.decorated_fn(
+            _FakeResource(client)
+        )
+    )
+    [executed] = client.executed
+    assert executed == SERVING_VIEW_REFRESH_SQL
+    return {
+        "passed": result.passed,
+        **{key: value.value for key, value in result.metadata.items()},
+    }
+
+
+def test_the_view_refresh_check_reads_the_one_table_that_still_knows() -> None:
+    """Pinned as SQL because there is no second source for this.
+
+    The view is never materialized, so no Dagster freshness signal exists for it, and the
+    only record that it is still being rebuilt lives in system.view_refreshes. A query that
+    drifted off that table, or off this exact view, would leave the serving name unwatched
+    while the check kept passing.
+    """
+    assert "FROM system.view_refreshes" in SERVING_VIEW_REFRESH_SQL
+    assert "WHERE database = 'corpscout'" in SERVING_VIEW_REFRESH_SQL
+    assert "AND view = 'se_address_geocodes_current'" in SERVING_VIEW_REFRESH_SQL
+    assert "exception" in SERVING_VIEW_REFRESH_SQL
+    # The instant crosses as an epoch integer, never as a datetime: last_success_time is
+    # Nullable(DateTime) with no timezone in its type, so a datetime would arrive naive in
+    # the SERVER's timezone and be compared against a UTC now.
+    assert "toUnixTimestamp(last_success_time)" in SERVING_VIEW_REFRESH_SQL
+    assert MAX_SERVING_VIEW_REFRESH_AGE == timedelta(hours=3)
+
+
+def test_the_view_refresh_check_passes_on_a_recently_refreshed_view() -> None:
+    result = _run_view_refresh_check([("Scheduled", "", _ago(0.5))])
+
+    assert result["passed"]
+    assert result["refresh_row_found"] is True
+    assert result["status"] == "Scheduled"
+    assert 0.49 < result["refresh_age_hours"] < 0.51
+    assert result["maximum_refresh_age_hours"] == 3.0
+
+
+def test_the_view_refresh_check_fails_on_an_exception_however_recent_the_success() -> None:
+    """The definer-privilege failure, and the one the age term alone would sit on.
+
+    A refresh that throws leaves the view serving its last good contents at full speed, so
+    for three hours nothing about the READ looks wrong. Gating on the exception makes the
+    failure visible at the first refresh rather than the fourth.
+    """
+    result = _run_view_refresh_check(
+        [("Scheduled", "Code: 497. DB::Exception: Not enough privileges", _ago(0.1))]
+    )
+
+    assert not result["passed"]
+    assert "Not enough privileges" in result["exception"]
+
+
+def test_the_view_refresh_check_fails_once_two_whole_intervals_have_been_missed() -> None:
+    """Three hours is 3x the REFRESH EVERY 1 HOUR interval, so one long refresh is not a
+    failure and two skipped ones are."""
+    assert _run_view_refresh_check([("Scheduled", "", _ago(2.9))])["passed"]
+    assert not _run_view_refresh_check([("Scheduled", "", _ago(3.1))])["passed"]
+
+
+def test_the_view_refresh_check_fails_a_view_that_has_never_succeeded() -> None:
+    """NULL last_success_time is the worst state, not the least informative one.
+
+    ClickHouse knows the view and has never finished refreshing it, which means every
+    backoffice read of the serving name is returning nothing and raising nothing. Tolerating
+    the NULL as 'no evidence yet' would keep this check green through exactly that.
+    """
+    result = _run_view_refresh_check([("Scheduled", "", None)])
+
+    assert not result["passed"]
+    assert result["last_success_at"] is None
+    assert result["refresh_age_hours"] is None
+
+
+def test_the_view_refresh_check_fails_when_the_view_is_not_refreshable_at_all() -> None:
+    """No row means the name is not a refreshable view here -- 000320 unapplied, or
+    something put a plain table back over it. Both are failures, and an empty result set is
+    the only way either one shows up."""
+    result = _run_view_refresh_check([])
+
+    assert not result["passed"]
+    assert result["refresh_row_found"] is False
+    assert "not a refreshable materialized view" in result["detail"]
+
+
+def test_the_view_refresh_predicate_gates_on_exception_before_age() -> None:
+    """The predicate alone, away from the check body: both terms fail independently and a
+    clean recent refresh is the only shape that passes."""
+    recent = _epoch(hours_ago=0.25)
+    assert serving_view_refresh_is_healthy(
+        exception="", last_success_epoch_seconds=recent, now=_NOW
+    )
+    assert not serving_view_refresh_is_healthy(
+        exception="boom", last_success_epoch_seconds=recent, now=_NOW
+    )
+    assert not serving_view_refresh_is_healthy(
+        exception="", last_success_epoch_seconds=_epoch(4), now=_NOW
+    )
+    assert not serving_view_refresh_is_healthy(
+        exception="", last_success_epoch_seconds=None, now=_NOW
+    )
+    # A `now` in another timezone is the same instant and must answer identically -- the
+    # epoch is absolute and the comparison normalizes to UTC.
+    assert serving_view_refresh_is_healthy(
+        exception="",
+        last_success_epoch_seconds=recent,
+        now=_NOW.astimezone(timezone(timedelta(hours=2))),
     )
