@@ -41,11 +41,13 @@ The whole script runs twice, once with `join_use_nulls = 0` and once with 1. The
 has no joins, but the rate query and the coverage anti-join do, and both must answer
 identically.
 
-WHAT THIS FILE DELIBERATELY DOES NOT EXECUTE. DERIVED_PARITY_SQL, clean and drifted, is
-executed in tests/test_sweden_geocode_derivation.py against the statements the derivation
-asset itself issues -- which is where the aliased-subquery-aggregate shape belongs, since
-that harness owns the serving table. Running it a third time here would replay two more
-migrations for a query already settled by the engine twice.
+THE 26-COLUMN SERVING PROJECTION IS EXECUTED HERE, AND NOWHERE ELSE ANY MORE. It used to
+belong to tests/test_sweden_geocode_derivation.py, alongside the weekly asset that staged
+and swapped corpscout.se_address_geocodes_current. Migration 000320 replaced that table
+with a refreshable materialized view carrying this very SELECT, so the asset, its shrink
+guard and its two parity checks are gone and that file with them -- but the projection
+itself is now what a production view HOLDS, which makes executing it over the hard shapes
+below matter more than it did, not less.
 """
 
 import re
@@ -63,7 +65,6 @@ from dagster_v3.defs.sweden_company.address_geocoding_assets import (
     STORE_COVERAGE_SQL,
     STORE_INVARIANTS_SQL,
     _ADOPTED_EXACT_FILTER_SQL,
-    build_derived_current_geocodes_sql,
     build_store_append_regression_sql,
     epoch_milliseconds,
 )
@@ -518,6 +519,15 @@ def _regression_probe(*, run_id: str, matched_at: datetime) -> str:
     )
 
 
+def _serving_projection_sql() -> str:
+    """What migration 000320's materialized view holds: the read rule at 26 columns.
+
+    Not a second expression of anything -- the same builder the served read uses, asked
+    for the serving column list, which is exactly what the migration embeds.
+    """
+    return build_current_geocodes_sql(columns=SERVING_COLUMNS)
+
+
 def _script(*, join_use_nulls: int) -> str:
     parts = [f"SET join_use_nulls = {join_use_nulls};"]
     parts.extend(f"{statement};" for statement in _schema_statements())
@@ -532,7 +542,7 @@ def _script(*, join_use_nulls: int) -> str:
         build_current_geocodes_sql(columns=SERVED_COLUMNS))))
     parts.append(_marked("resolver_view", _ordered(
         build_current_resolver_geocodes_sql(columns=RESOLVER_COLUMNS))))
-    parts.append(_marked("derived", _ordered(build_derived_current_geocodes_sql())))
+    parts.append(_marked("derived", _ordered(_serving_projection_sql())))
 
     parts.append(_marked("coverage", STORE_COVERAGE_SQL))
     parts.append(_marked("coverage_reversed", COVERAGE_REVERSED_SQL))
@@ -571,7 +581,7 @@ def _script(*, join_use_nulls: int) -> str:
     # All 26 columns again, not the four-column read: what the swallowed append changed
     # has to be nothing at all, coordinates included.
     parts.append(_marked("derived_after_swallowed_append",
-                         _ordered(build_derived_current_geocodes_sql())))
+                         _ordered(_serving_projection_sql())))
 
     parts.append(_insert(STORE, STORE_COLUMNS, (REFERENCE_BUMP_ROW,)))
     parts.append(_marked("served_after_reference_bump", _ordered(
@@ -717,9 +727,12 @@ def test_the_demand_scan_sees_the_resolver_row_behind_an_adopted_answer(
 def test_the_serving_projection_is_the_read_rule_at_twenty_six_columns(
     sections: dict[str, list[list[str]]],
 ) -> None:
-    """build_derived_current_geocodes_sql executed over the harder shapes: the derivation
-    and the read are one expression, so they cannot disagree about which outcome is
-    current."""
+    """The serving projection over the harder shapes.
+
+    This is what corpscout.se_address_geocodes_current actually holds since migration
+    000320 -- the view's SELECT and this one come from the same builder, so what the
+    backoffice reads and what the store says is current cannot disagree.
+    """
     rows = sections["derived"]
     assert {len(row) for row in rows} == {len(SERVING_COLUMNS)} == {26}
     identity = SERVING_COLUMNS.index("address_id")

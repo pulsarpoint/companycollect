@@ -1239,9 +1239,6 @@ def test_sweden_company_address_geocoding_assets_are_company_enhancements() -> N
     demand = repo.asset_graph.get(
         dg.AssetKey("sweden_address_geocode_demand_duckdb")
     )
-    shared_geocode_clickhouse = repo.asset_graph.get(
-        dg.AssetKey("sweden_address_geocodes_clickhouse")
-    )
     resolution_shadow = repo.asset_graph.get(
         dg.AssetKey("sweden_address_resolution_shadow_duckdb")
     )
@@ -1273,12 +1270,6 @@ def test_sweden_company_address_geocoding_assets_are_company_enhancements() -> N
         dg.AssetKey("sweden_osm_addresses_duckdb"),
     }
     assert demand.pools == {"sweden_address_osm_duckdb"}
-    assert shared_geocode_clickhouse.parent_keys == {
-        dg.AssetKey("sweden_address_geocode_store_clickhouse")
-    }
-    # It no longer touches DuckDB, so it no longer holds the serialising OSM pool -- which
-    # is the point: the derivation runs beside the DuckDB stages rather than behind them.
-    assert shared_geocode_clickhouse.pools == set()
     assert resolution_shadow.parent_keys == {
         dg.AssetKey("sweden_address_resolution_golden_evaluation"),
         dg.AssetKey("sweden_address_geocode_demand_duckdb"),
@@ -1295,7 +1286,6 @@ def test_sweden_company_address_geocoding_assets_are_company_enhancements() -> N
         "sweden_address_resolution_golden_evaluation",
         "sweden_address_resolution_shadow_duckdb",
         "sweden_address_resolution_current_duckdb",
-        "sweden_address_geocodes_clickhouse",
         "sweden_address_geocode_store_clickhouse",
     }
     assert {key.path[-1] for key in shared_job.asset_layer.executable_asset_keys} == {
@@ -1309,14 +1299,12 @@ def test_sweden_company_address_geocoding_assets_are_company_enhancements() -> N
         "sweden_address_resolution_golden_evaluation",
         "sweden_address_resolution_shadow_duckdb",
         "sweden_address_resolution_current_duckdb",
-        "sweden_address_geocodes_clickhouse",
         "sweden_address_geocode_store_clickhouse",
     }
     assert {
         key.path[-1] for key in resolution_publish_job.asset_layer.executable_asset_keys
     } == {
         "sweden_address_resolution_current_duckdb",
-        "sweden_address_geocodes_clickhouse",
         "sweden_address_geocode_store_clickhouse",
     }
     assert {key.path[-1] for key in weekly_job.asset_layer.executable_asset_keys} == {
@@ -1330,16 +1318,19 @@ def test_sweden_company_address_geocoding_assets_are_company_enhancements() -> N
         "sweden_address_resolution_golden_evaluation",
         "sweden_address_resolution_shadow_duckdb",
         "sweden_address_resolution_current_duckdb",
-        "sweden_address_geocodes_clickhouse",
         "sweden_address_geocode_store_clickhouse",
     }
     # The legacy per-company matcher and its two publish assets retired with the pair
-    # (LEGACY_PAIR_RETIREMENT_DROP_SQL), so the weekly job is twelve assets, not fifteen,
-    # and the three names below must never come back into it.
+    # (LEGACY_PAIR_RETIREMENT_DROP_SQL), and sweden_address_geocodes_clickhouse -- the
+    # weekly rebuild of the serving table -- retired with migration 000320, which made
+    # corpscout.se_address_geocodes_current a refreshable materialized view over the same
+    # store. The weekly job is eleven assets now, and none of these four names may come
+    # back into the graph: each one would be a second writer for a table ClickHouse owns.
     for retired in (
         "sweden_company_address_osm_matches_duckdb",
         "sweden_company_address_geocodes_clickhouse",
         "sweden_company_address_geocode_results_clickhouse",
+        "sweden_address_geocodes_clickhouse",
     ):
         assert retired not in {
             key.path[-1] for key in repo.asset_graph.get_all_asset_keys()

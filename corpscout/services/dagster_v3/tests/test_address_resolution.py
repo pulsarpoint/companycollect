@@ -607,11 +607,11 @@ def test_a_partial_pending_week_scopes_every_stage_to_the_pending_set() -> None:
     all look correct when the two sets coincide.
 
     The DuckDB `se_address_geocodes_current` this asserts on is the promotion's OWN copy of
-    what it decided, and pending-scoped is the right shape for it. It stopped being the
-    served table when `sweden_address_geocodes_clickhouse` became a projection of the
-    versioned store: the ClickHouse serving table is derived from every stored identity, so
-    a week like this one leaves it complete rather than three rows long, which
-    tests/test_sweden_geocode_derivation.py proves against a real ClickHouse.
+    what it decided, and pending-scoped is the right shape for it. It shares a name with the
+    ClickHouse serving object and nothing else: that one is a materialized view over every
+    stored identity (migration 000320), so a week like this one leaves it complete rather
+    than three rows long. tests/test_sweden_geocode_store_clickhouse_local.py executes the
+    view's SELECT over exactly that shape.
     """
     pending = ("exact", "typo", "nonexistent")
     with duckdb.connect(":memory:") as connection:

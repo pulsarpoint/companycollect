@@ -45,7 +45,6 @@ def test_registry_covers_the_known_scheduled_leaves() -> None:
         "slovakia_rpo_clickhouse_companies",
         "sweden_company_companies_clickhouse",
         "sweden_address_geocode_store_clickhouse",
-        "sweden_address_geocodes_clickhouse",
         "sweden_company_canonical_addresses_clickhouse",
         "sweden_shared_addresses_clickhouse",
         "sweden_financial_backfill_reports_clickhouse",
@@ -64,16 +63,15 @@ def test_registry_covers_the_known_scheduled_leaves() -> None:
     )
     assert "fi_company_addresses" in finland.tables
 
-    # The derived serving table is a publish asset like any other, and the registry's
-    # contract is one leaf per publish asset. It was the one Sweden address publish without
-    # a leaf, so nothing watched the table four backoffice modules read every request.
-    derived = next(
+    # se_address_geocodes_current has NO leaf, and the registry must not grow one back.
+    # Migration 000320 made it a refreshable materialized view, so no Dagster asset
+    # materializes it any more and a freshness check would have nothing to measure. A
+    # leaf here would be permanently, meaninglessly red.
+    assert not [
         leaf
         for leaf in chk.CLICKHOUSE_LEAVES
-        if leaf.asset_key == "sweden_address_geocodes_clickhouse"
-    )
-    assert derived.tables == ("se_address_geocodes_current",)
-    assert derived.max_age == chk.WEEKLY
+        if "se_address_geocodes_current" in leaf.tables
+    ]
 
     # The members publish lost its only asset check when the canonical ClickHouse table
     # retired, so this leaf is now the whole of what watches it -- and the se_company_address

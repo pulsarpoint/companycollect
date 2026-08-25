@@ -219,13 +219,13 @@ CLICKHOUSE_LEAVES: tuple[ClickhouseLeaf, ...] = (
         ("se_address_geocodes",),
         WEEKLY,
     ),
-    # The serving projection of that store, and the table four backoffice modules read on
-    # every request. It is a publish asset, so it gets a leaf like every other one.
-    ClickhouseLeaf(
-        "sweden_address_geocodes_clickhouse",
-        ("se_address_geocodes_current",),
-        WEEKLY,
-    ),
+    # NO LEAF FOR se_address_geocodes_current, and that is a deliberate gap rather than an
+    # oversight. Every leaf here hangs off a Dagster asset that publishes a table, and
+    # since migration 000320 nothing in Dagster publishes that one: it is a refreshable
+    # materialized view ClickHouse rebuilds hourly from se_address_geocodes. A freshness
+    # check needs materializations to measure and would never see one again. The leaf
+    # above, on the store the view reads, is what still watches this chain from Dagster --
+    # the view's own health lives in ClickHouse's system.view_refreshes.
     ClickhouseLeaf(
         "sweden_shared_addresses_clickhouse",
         ("se_addresses_current", "se_company_address_links_current"),

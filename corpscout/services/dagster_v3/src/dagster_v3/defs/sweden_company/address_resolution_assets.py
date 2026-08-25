@@ -32,7 +32,6 @@ GOLDEN_ASSET_KEY = "sweden_address_resolution_golden_evaluation"
 SHADOW_ASSET_KEY = "sweden_address_resolution_shadow_duckdb"
 PROMOTION_ASSET_KEY = "sweden_address_resolution_current_duckdb"
 DIAGNOSTICS_ASSET_KEY = "sweden_address_resolution_unmatched_diagnostics_duckdb"
-CLICKHOUSE_ASSET_KEY = "sweden_address_geocodes_clickhouse"
 GOLDEN_CORPUS_PATH = (
     Path(__file__).parents[1] / "address_resolution" / "corpora" / "sweden_v1.json"
 )
@@ -258,7 +257,6 @@ sweden_address_resolution_publish_job = dg.define_asset_job(
     name="sweden_address_resolution_publish_job",
     selection=dg.AssetSelection.assets(
         PROMOTION_ASSET_KEY,
-        CLICKHOUSE_ASSET_KEY,
         "sweden_address_geocode_store_clickhouse",
     ),
     tags={"country": "SE", "pipeline": "address_resolution_publish"},

@@ -2,8 +2,13 @@
 
 This module used to hold a second OSM matcher whose output was overwritten by the
 resolver's promotion before anything read it. The matcher is gone (spec section 4.3); what
-survives is the naming of se_address_geocodes_current, which is now DERIVED from
-corpscout.se_address_geocodes by geocode_store's versioned read.
+survives is the naming of se_address_geocodes_current.
+
+That name is no longer a table anything here writes. Migration 000320 made it a
+REFRESHABLE MATERIALIZED VIEW over corpscout.se_address_geocodes carrying
+geocode_store.build_current_geocodes_sql -- ClickHouse recomputes it hourly and readers
+still get a MergeTree ORDER BY address_id under the same name and the same 26 columns.
+The constants below therefore name a READ TARGET now, never a write target.
 """
 
 from dagster_v3.defs.sweden_company import address_canonicalization
