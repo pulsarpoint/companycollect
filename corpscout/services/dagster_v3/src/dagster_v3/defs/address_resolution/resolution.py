@@ -1,6 +1,9 @@
 from typing import Any
 
 from dagster_v3.defs.address_resolution.model import AddressResolutionPolicy
+from dagster_v3.defs.address_resolution.search_documents import (
+    SUFFIX_EXACT_VARIANT_KIND,
+)
 
 
 def replace_address_resolution_candidates(
@@ -569,6 +572,15 @@ def _replace_fuzzy_street_postings(
     street_variant_kind = (
         "'parsed'::varchar" if reference_documents else "street_variant_kind"
     )
+    # suffix_exact variants are exact-only: they must never enter fuzzy postings, so
+    # a fuzzy-eligible near-miss on the reference side can never fuzzy-match through
+    # one. The reference side is always hardcoded to 'parsed' above, so this filter
+    # is only meaningful (and only applied) on the query side.
+    exact_only_filter = (
+        ""
+        if reference_documents
+        else f"and street_variant_kind != '{SUFFIX_EXACT_VARIANT_KIND}'"
+    )
     connection.execute(
         f"""
         create or replace temporary table {postings_table} as
@@ -592,6 +604,7 @@ def _replace_fuzzy_street_postings(
                 >= {policy.minimum_fuzzy_street_length}
           and signature.value != ''
           {reference_filter}
+          {exact_only_filter}
         """
     )
 

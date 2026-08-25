@@ -7,6 +7,10 @@ import pytest
 from dagster_v3.defs.address_resolution.golden import (
     evaluate_golden_address_resolution_corpus,
 )
+from dagster_v3.defs.address_resolution.resolution import (
+    replace_address_resolution_candidates,
+    replace_address_resolution_results,
+)
 from dagster_v3.defs.address_resolution.search_documents import (
     SUFFIX_EXACT_VARIANT_KIND,
     SUFFIX_EXACT_VARIANT_RANK,
@@ -474,6 +478,147 @@ def test_exact_suffix_variants_absent_when_maps_not_passed() -> None:
         ("glued-road", "STAVSTENSVÄGEN", "stavstensvagen", "suffix_expansion", 2),
     ]
     assert not any(row[3] == SUFFIX_EXACT_VARIANT_KIND for row in rows)
+
+
+def test_suffix_exact_variant_is_excluded_from_fuzzy_street_postings() -> None:
+    """suffix_exact variants are exact-only: they must never enter fuzzy postings.
+
+    Mirrors the 2026-08-25 v7 exploration's `strandbergsg.` control-flip regression:
+    a fuzzy-eligible exact-only variant 1 edit away from a WRONG reference street
+    flipped a real address from matched_corrected to ambiguous. 'exact-only-street'
+    carries the punctuated 'Strandbergsg.' -- v6 cannot read a period-terminated
+    abbreviation at all, so only the new exact map (`{"g.": "gatan"}`) expands it to
+    'Strandbergsgatan'. No reference carries that exact street -- only the WRONG
+    near-miss 'Strandbergsgatar' (1 substitution away). If the exact-only variant
+    ever entered fuzzy postings, this near-miss would fuzzy-match it.
+
+    'control-street' carries the v6-only glued abbreviation 'Stavstensv', expanded by
+    `suffix_expansion` to 'Stavstensvägen', with its own WRONG 1-edit-away near-miss
+    reference 'Stavstensvager'. This proves the fix does not over-exclude: a v6
+    `suffix_expansion` variant must still fuzzy-match exactly as before.
+    """
+    exact_suffix_map = {"SE": {"g.": "gatan"}}
+    v6_suffix_map = {"SE": {"g": "gatan", "v": "vägen"}}
+    with duckdb.connect(":memory:") as connection:
+        replace_address_search_document_input_table(
+            connection,
+            table_name="query_input",
+        )
+        connection.execute(
+            """
+            insert into query_input values
+                (
+                    'test', 'exact-only-street', 'SE',
+                    'Strandbergsg. 3, 12345 Faketown',
+                    'Strandbergsg. 3, 12345 Faketown',
+                    'Strandbergsg.', '3', '', '12345', 'Faketown',
+                    'physical', '', null, null, null, 0, 'exact-only-street', ''
+                ),
+                (
+                    'test', 'control-street', 'SE',
+                    'Stavstensv 7, 54321 Othertown',
+                    'Stavstensv 7, 54321 Othertown',
+                    'Stavstensv', '7', '', '54321', 'Othertown',
+                    'physical', '', null, null, null, 0, 'control-street', ''
+                )
+            """
+        )
+        replace_address_search_document_input_table(
+            connection,
+            table_name="reference_input",
+        )
+        connection.execute(
+            """
+            insert into reference_input values
+                (
+                    'test', 'wrong-near-miss-1', 'SE',
+                    'Strandbergsgatar 3, 12345 Faketown',
+                    'Strandbergsgatar 3, 12345 Faketown',
+                    'Strandbergsgatar', '3', '', '12345', 'Faketown',
+                    'physical', 'building', 59.0, 18.0, 5.0, 1,
+                    'ref/wrong-1', 'https://example.test/1'
+                ),
+                (
+                    'test', 'wrong-near-miss-2', 'SE',
+                    'Stavstensvager 7, 54321 Othertown',
+                    'Stavstensvager 7, 54321 Othertown',
+                    'Stavstensvager', '7', '', '54321', 'Othertown',
+                    'physical', 'building', 60.0, 19.0, 5.0, 1,
+                    'ref/wrong-2', 'https://example.test/2'
+                )
+            """
+        )
+        replace_address_search_documents(
+            connection,
+            source_sql="select * from query_input",
+            table_name="query_documents",
+        )
+        replace_address_street_variants(
+            connection,
+            document_table="query_documents",
+            variant_table="query_street_variants",
+            languages_by_country={},
+            suffix_expansions_by_country=v6_suffix_map,
+            exact_suffix_expansions_by_country=exact_suffix_map,
+        )
+        replace_address_search_documents(
+            connection,
+            source_sql="select * from reference_input",
+            table_name="reference_documents",
+        )
+
+        # The exact-only variant exists and is tagged suffix_exact -- the exclusion
+        # is about where it is USED, not whether it is produced.
+        variant_rows = connection.execute(
+            """
+            select document_id, normalized_street_variant, variant_kind
+            from query_street_variants
+            where document_id = 'exact-only-street'
+            order by variant_rank
+            """
+        ).fetchall()
+        assert variant_rows == [
+            ("exact-only-street", "strandbergsg", "parsed"),
+            ("exact-only-street", "strandbergsgatan", SUFFIX_EXACT_VARIANT_KIND),
+        ]
+
+        replace_address_resolution_candidates(
+            connection,
+            query_table="query_documents",
+            query_street_variant_table="query_street_variants",
+            reference_table="reference_documents",
+            candidate_table="candidates",
+            policy=SWEDEN_ADDRESS_RESOLUTION_POLICY,
+        )
+        replace_address_resolution_results(
+            connection,
+            query_table="query_documents",
+            candidate_table="candidates",
+            result_table="results",
+            policy=SWEDEN_ADDRESS_RESOLUTION_POLICY,
+        )
+
+        candidate_rows = connection.execute(
+            "select query_document_id, strategy from candidates order by 1, 2"
+        ).fetchall()
+        result_rows = connection.execute(
+            """
+            select query_document_id, resolution_status, match_strategy
+            from results
+            order by query_document_id
+            """
+        ).fetchall()
+
+    # No candidate at all is generated for the exact-only street from its WRONG
+    # near-miss reference: the fuzzy path never sees it, and the exact path
+    # correctly finds nothing (no reference carries the exact expansion).
+    assert candidate_rows == [
+        ("control-street", "expanded_street_fuzzy_postcode_house"),
+    ]
+    assert result_rows == [
+        ("control-street", "matched_corrected", "expanded_street_fuzzy_postcode_house"),
+        ("exact-only-street", "unmatched", ""),
+    ]
 
 
 def test_sweden_shadow_adapter_builds_results_without_serving_changes() -> None:
