@@ -26,7 +26,7 @@ what a real run would select.
 KNOWN PROPERTY -- an address that VANISHES from a source does not re-trigger the scan.
 The artifacts are append-only: a row is written when a source's evidence hash changes, and
 a source that simply stops carrying a company's address writes nothing at all. No
-observed_at moves, no ledger row appears, the geocode snapshot is unrelated -- so the
+observed_at moves, no ledger row appears, the geocode store is unrelated -- so the
 change scan below has nothing to select the company on, and the published row stays
 is_current = true even though the register no longer says it. The set replacement only
 fires on a resolution that actually happens. The mitigation is the same machinery the info
@@ -204,20 +204,20 @@ def _projection_sql(projection: Iterable[tuple[str, str]]) -> str:
 
 
 def build_changed_companies_sql() -> str:
-    """Companies whose address set is missing, older than their evidence, older than the
-    geocode snapshot, or touched by a correction.
+    """Companies whose address set is missing, older than their evidence, older than their
+    stored geocode outcomes, or touched by a correction.
 
     Reasons to resolve a company again: it has never been published; an artifact carries an
-    observation newer than the published resolution; the geocode snapshot moved after it;
-    or the correction ledger gained a row after it. There is no model in this datatype, so
-    there is no "still owed something" term -- a resolution is complete the moment it is
-    written. What there is likewise no term for is an address that VANISHED from a source:
-    nothing is appended when a source stops carrying one, so nothing here can see it. See
-    the module docstring for why that is accepted and what clears it.
+    observation newer than the published resolution; the geocode store gained a newer
+    outcome for it; or the correction ledger gained a row after it. There is no model in
+    this datatype, so there is no "still owed something" term -- a resolution is complete
+    the moment it is written. What there is likewise no term for is an address that VANISHED
+    from a source: nothing is appended when a source stops carrying one, so nothing here can
+    see it. See the module docstring for why that is accepted and what clears it.
 
     ``artifacts`` is the DRIVING table -- every other CTE is LEFT JOINed onto it -- so a
     company with no artifact row in either source is never selected, whatever the ledger or
-    the geocode snapshot says about it. A correction filed against a company neither source
+    the geocode store says about it. A correction filed against a company neither source
     carries an address for therefore sits unapplied, and the correction sensor's run would
     report it as selected-nothing rather than as an error. Inherited from info.py's shape
     and true of it too; a known property, not a defect of this scan.
@@ -706,7 +706,10 @@ class SECompanyAddressConfig(dg.Config):
     # not the geocodes. The weekly whole-table geocode restamp that used to make
     # new_geocode select every geocoded company is gone: the store appends only what a run
     # actually matched, so an ordinary week now selects register churn plus real geocode
-    # changes. The bound stays wide anyway, because the scan has NO MEMORY. It is ordered
+    # changes. That holds from the SECOND week after the repoint -- the one-time backfill
+    # copied every serving row's matched_at as one instant that postdates every pre-deploy
+    # publish, so the FIRST weekly re-selects the whole published population once, exactly
+    # as an old week did. The bound stays wide anyway, because the scan has NO MEMORY. It is ordered
     # by company_id and every run starts from the first id again, so a cap below the number
     # of companies a run selects does not SAMPLE that population -- it rewrites the same
     # leading slice every week and never reaches the tail. Nothing tells the weekly config

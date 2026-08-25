@@ -592,8 +592,8 @@ def test_the_published_read_back_sees_the_tombstone_not_the_older_live_version(
 def test_a_published_company_is_quiet_until_resolve_all_asks_for_it(
     sections: dict[str, list[list[str]]],
 ) -> None:
-    """ALPHA's final rows are newer than every artifact and than the geocode snapshot, so
-    only the resolve_all disjunct can select it again."""
+    """ALPHA's final rows are newer than every artifact and than every stored geocode
+    outcome, so only the resolve_all disjunct can select it again."""
     assert ALPHA not in [row[0] for row in sections["changed_after_publish"]]
     selected = {row[0]: row for row in sections["changed_resolve_all"]}
     assert ALPHA in selected

@@ -3,7 +3,7 @@ migrations' own DDL in a disposable clickhouse-local. Proves the SQL runs on the
 ClickHouse version -- substring tests cannot, and the read rule is the one thing in this
 design that no downstream failure would reveal if it were subtly wrong.
 
-The fixture is nine identities, each a scenario the rule has to get right:
+The fixture is ten identities, each a scenario the rule has to get right:
 
   SETTLED         one resolver matched_exact. The ordinary 2.09M case.
   RETRIED         resolver ambiguous, then matched_exact at a newer reference. The retry
@@ -16,6 +16,12 @@ The fixture is nine identities, each a scenario the rule has to get right:
                   scan sees -- so the identity stays eligible for a rematch.
   RECLAIMED       the ADOPTED shape plus a later resolver matched_exact. The resolver takes
                   over and the adopted row is neither deleted nor merged, just outranked.
+  TIED            an adopted exact and a resolver matched_exact carrying the SAME
+                  matched_at, to the millisecond. The resolver row is served: stage 2 reads
+                  "as new as it is" as enough to take over, and breaks the tie on
+                  `1 - is_adopted`. RECLAIMED only shows that a STRICTLY newer resolver
+                  exact wins; this is the boundary itself, which the pure twin has always
+                  pinned and no engine ever executed until now.
   DEMOTED_STREET  an adopted exact that a later resolver `matched_street` DOES unseat.
   DEMOTED_AREA    the same with `matched_area`. These two are what ADOPTION_DEMOTION_SQL
                   is meant to count, and nothing else in this store is.
@@ -115,12 +121,16 @@ POLICY = "se-address-resolution-policy-v5"
     RETIRED,
 ) = (character * 64 for character in "123456789")
 CHURNED = "a" * 64
+# Outside the digit run because it arrived after the other nine were named; the shapes are
+# named, not numbered, and renumbering them would churn every assertion below.
+TIED = "b" * 64
 STORED_IDENTITIES = (
     SETTLED,
     RETRIED,
     REGRESSED,
     ADOPTED,
     RECLAIMED,
+    TIED,
     DEMOTED_STREET,
     DEMOTED_AREA,
     SWALLOWED,
@@ -137,12 +147,17 @@ CURRENT_IDENTITIES = tuple(
 # reads, and the two move together because a reference IS a snapshot.
 MD5_1, MD5_2, MD5_3, MD5_4, MD5_5 = (f"md5-week-{week}" for week in range(1, 6))
 MD5_LEGACY = "md5-legacy-import"
+# The tie is ENGINEERED: no weekly pass lands on the import's own millisecond by itself.
+# It gets its own reference rather than borrowing a week's, so that a reference still means
+# exactly one OSM snapshot everywhere in this fixture.
+MD5_TIE = "md5-tie"
 SNAPSHOT_1 = datetime(2026, 7, 4, 1, tzinfo=UTC)
 SNAPSHOT_2 = datetime(2026, 7, 11, 1, tzinfo=UTC)
 SNAPSHOT_3 = datetime(2026, 7, 18, 1, tzinfo=UTC)
 SNAPSHOT_4 = datetime(2026, 7, 25, 1, tzinfo=UTC)
 SNAPSHOT_5 = datetime(2026, 8, 1, 1, tzinfo=UTC)
 SNAPSHOT_LEGACY = datetime(2024, 1, 6, 1, tzinfo=UTC)
+SNAPSHOT_TIE = datetime(2026, 7, 14, 1, tzinfo=UTC)
 T_1 = datetime(2026, 7, 4, 3, tzinfo=UTC)
 T_2 = datetime(2026, 7, 11, 3, tzinfo=UTC)
 T_IMPORT = datetime(2026, 7, 15, 12, tzinfo=UTC)
@@ -154,6 +169,7 @@ T_4 = datetime(2026, 7, 25, 3, tzinfo=UTC)
 T_5 = datetime(2026, 8, 1, 3, tzinfo=UTC)
 RUN_1, RUN_2, RUN_3, RUN_4, RUN_5 = (f"run-week-{week}" for week in range(1, 6))
 RUN_IMPORT = "run-adoption-import"
+RUN_TIE = "run-tie"
 RUN_LATE = "run-late-append"
 
 COMPANIES = tuple(f"556000000{index}" for index in range(1, 6))
@@ -162,6 +178,7 @@ MEMBERSHIPS = (
     (COMPANIES[0], SETTLED),
     (COMPANIES[0], REGRESSED),
     (COMPANIES[1], ADOPTED),
+    (COMPANIES[1], TIED),
     (COMPANIES[2], RECLAIMED),
     (COMPANIES[2], DEMOTED_STREET),
     (COMPANIES[3], DEMOTED_AREA),
@@ -328,8 +345,11 @@ WEEK_5 = _reference(MD5_5, SNAPSHOT_5, RUN_5, T_5)
 IMPORT = _reference(MD5_LEGACY, SNAPSHOT_LEGACY, RUN_IMPORT, T_IMPORT) | {
     "policy_version": f"'{LEGACY_ADOPTED_POLICY_VERSION}'",
 }
+# A resolver pass whose append instant IS the import's, to the millisecond -- T_IMPORT, the
+# same value IMPORT carries.
+TIE = _reference(MD5_TIE, SNAPSHOT_TIE, RUN_TIE, T_IMPORT)
 
-# The store as the fixture leaves it: sixteen rows over nine identities.
+# The store as the fixture leaves it: eighteen rows over ten identities.
 #
 # Week 4 is the newest reference in the fixture and it touched exactly ONE identity --
 # ADOPTED, which it answered `ambiguous`. That is demand-driven matching working, and it is
@@ -346,6 +366,9 @@ FIXTURE_STORE_ROWS = (
     _store_row(RECLAIMED, **WEEK_1),
     _store_row(RECLAIMED, **IMPORT, **_adopted(59.35, 18.05)),
     _store_row(RECLAIMED, **WEEK_3, **_geocoded("matched_exact", 59.36, 18.06)),
+    # Two rows, one instant: `IMPORT` and `TIE` both stamp T_IMPORT.
+    _store_row(TIED, **IMPORT, **_adopted(59.43, 18.13)),
+    _store_row(TIED, **TIE, **_geocoded("matched_exact", 59.44, 18.14)),
     _store_row(DEMOTED_STREET, **IMPORT, **_adopted(59.37, 18.07)),
     _store_row(DEMOTED_STREET, **WEEK_3, **_geocoded("matched_street", 59.38, 18.08)),
     _store_row(DEMOTED_AREA, **IMPORT, **_adopted(59.39, 18.09)),
@@ -535,6 +558,8 @@ def _script(*, join_use_nulls: int) -> str:
     parts.append(_marked("invariants", STORE_INVARIANTS_SQL))
 
     parts.append(_insert(STORE, STORE_COLUMNS, (LATE_SWALLOWED_ROW,)))
+    parts.append(_marked("store_rows_after_swallowed_append",
+                         f"SELECT count() FROM {STORE}"))
     parts.append(_marked("regression_swallowed",
                          _regression_probe(run_id=RUN_LATE, matched_at=T_1)))
     parts.append(_marked("regression_clean",
@@ -606,6 +631,8 @@ def test_the_read_rule_answers_every_shape_the_store_can_hold(
     assert served[REGRESSED] == (POLICY, MD5_2, "ambiguous")
     assert served[ADOPTED] == (LEGACY_ADOPTED_POLICY_VERSION, MD5_LEGACY, "matched_exact")
     assert served[RECLAIMED] == (POLICY, MD5_3, "matched_exact")
+    # Equal instants: the resolver takes over anyway.
+    assert served[TIED] == (POLICY, MD5_TIE, "matched_exact")
     assert served[DEMOTED_STREET] == (POLICY, MD5_3, "matched_street")
     assert served[DEMOTED_AREA] == (POLICY, MD5_3, "matched_area")
     assert served[SWALLOWED] == (POLICY, MD5_3, "matched_exact")
@@ -635,6 +662,37 @@ def test_a_newer_resolver_ambiguous_DOES_unseat_an_older_resolver_exact(
     `matched_at` for the resolver family too and REGRESSED would keep serving a coordinate
     the current snapshot no longer supports, for ever, with nothing selecting it again."""
     assert _served(sections["served"])[REGRESSED] == (POLICY, MD5_2, "ambiguous")
+
+
+def test_a_resolver_exact_as_new_as_the_adopted_row_takes_the_identity_over(
+    sections: dict[str, list[list[str]]],
+) -> None:
+    """Stage 2's "as new as it is" boundary, executed. The pure twin has always pinned it;
+    no engine had ever answered it until this identity.
+
+    RECLAIMED's resolver exact is a WEEK newer than the adopted row it displaces, so it
+    would win under a rule that demanded strictly newer as well. TIED's is not newer at
+    all: both rows carry T_IMPORT to the millisecond, `servable` and `matched_at` are equal,
+    and the choice falls through to `1 - is_adopted`, which prefers the resolver. Flip that
+    component to `is_adopted`, or drop it, and this identity reverts to serving the import's
+    coordinate under legacy_adopted_v1 -- while RECLAIMED, ADOPTED and every other shape
+    here still answer correctly.
+
+    It is also the row a REPEAT of the one-time store backfill would manufacture: that
+    import copies each served row's own matched_at, so re-running it over a store that
+    already holds adopted outcomes would land a policy-v5 exact on the adopted row's
+    instant and take the coordinate over exactly like this. The backfill refuses a
+    non-empty store for this reason.
+    """
+    served = _served(sections["served"])
+    assert served[TIED] == (POLICY, MD5_TIE, "matched_exact")
+    # The two rows really do carry one instant -- a tie, not a near miss.
+    assert IMPORT["matched_at"] == TIE["matched_at"] == _literal(T_IMPORT)
+    # And what gets published is the resolver's coordinate, not the import's.
+    identity = SERVING_COLUMNS.index("address_id")
+    latitude = SERVING_COLUMNS.index("latitude")
+    coordinates = {row[identity]: row[latitude] for row in sections["derived"]}
+    assert coordinates[TIED] == "59.44"
 
 
 def test_the_demand_scan_sees_the_resolver_row_behind_an_adopted_answer(
@@ -690,16 +748,16 @@ def test_a_re_append_of_an_unchanged_outcome_changes_no_answer_and_no_row(
     not something a test may hope for.
     """
     assert sections["served_after_reappend"] == sections["served"]
-    assert _one(sections["store_rows"]) == len(FIXTURE_STORE_ROWS) == 16
-    assert _one(sections["store_rows_unmerged"]) == 17
-    assert _one(sections["store_rows_after_optimize"]) == 16
+    assert _one(sections["store_rows"]) == len(FIXTURE_STORE_ROWS) == 18
+    assert _one(sections["store_rows_unmerged"]) == 19
+    assert _one(sections["store_rows_after_optimize"]) == 18
 
 
 def test_the_store_invariants_hold_on_a_store_that_is_working(
     sections: dict[str, list[list[str]]],
 ) -> None:
-    """STORE_INVARIANTS_SQL, executed after the OPTIMIZE. Sixteen rows, sixteen key
-    triples, nine identities -- several outcomes per identity is the store working, and the
+    """STORE_INVARIANTS_SQL, executed after the OPTIMIZE. Eighteen rows, eighteen key
+    triples, ten identities -- several outcomes per identity is the store working, and the
     grain that can still fail is the TRIPLE. Every violation counter reads zero, which is
     the fixture's own certificate: the statuses, the coordinate/precision agreements and
     the five provenance columns are all built to satisfy the shipped query, so a row this
@@ -707,7 +765,7 @@ def test_the_store_invariants_hold_on_a_store_that_is_working(
     """
     [row] = sections["invariants"]
     rows, unique_keys, identities, *violations = (int(value) for value in row)
-    assert (rows, unique_keys, identities) == (16, 16, len(STORED_IDENTITIES))
+    assert (rows, unique_keys, identities) == (18, 18, len(STORED_IDENTITIES))
     assert violations == [0] * 7
 
 
@@ -722,15 +780,22 @@ def test_the_coverage_check_is_silent_about_a_retired_identity_and_only_that_way
     assert _one(sections["coverage_reversed"]) == 1
 
 
-def test_the_exact_match_rate_counts_links_and_reads_the_miss_through_ifnull(
+def test_the_exact_match_rate_counts_links_and_a_join_miss_as_no_geocode(
     sections: dict[str, list[list[str]]],
 ) -> None:
-    """Nine links, five of them served a `matched_exact` and seven served any geocoded
+    """Ten links, six of them served a `matched_exact` and eight served any geocoded
     status. CHURNED is the LEFT JOIN miss: its company link exists and the store has never
-    held a row for it, so `geocode.match_status` is '' under join_use_nulls = 0 and NULL
-    under 1 -- the ifNull is what makes both settings answer 9/5/7."""
+    held a row for it, so `geocode.match_status` comes back '' under join_use_nulls = 0 and
+    NULL under 1, and both settings answer 10/6/8.
+
+    THE `ifNull` IS NOT WHAT MAKES THEM AGREE. `countIf` counts a row only when its
+    predicate is TRUE, and a NULL predicate is not TRUE, so the miss is skipped under
+    either setting with or without it. It is kept because it says out loud that a miss is
+    "not geocoded" rather than unknown, and because the negated spellings of these
+    predicates are NOT setting-proof: `ifNull(...) != 'matched_exact'` counts the miss,
+    while a bare `!=` over the Nullable silently would not."""
     [row] = sections["rate"]
-    assert [int(value) for value in row] == [len(MEMBERSHIPS), 5, 7]
+    assert [int(value) for value in row] == [len(MEMBERSHIPS), 6, 8]
 
 
 def test_the_demotion_counter_counts_a_demotion_and_not_a_retry(
@@ -792,6 +857,10 @@ def test_the_regression_guard_sees_an_append_that_was_swallowed(
     assert _one(sections["regression_swallowed"]) == 1
     assert _one(sections["regression_clean"]) == 0
     assert sections["derived_after_swallowed_append"] == sections["derived"]
+    # The row really did land -- the append is a no-op in ANSWER, not in storage, and the
+    # count is the half of that claim a reader would otherwise have to take on trust.
+    stored_after_append = len(FIXTURE_STORE_ROWS) + 1
+    assert _one(sections["store_rows_after_swallowed_append"]) == stored_after_append == 19
 
 
 def test_a_second_truncated_parameter_would_report_every_row_as_a_regression(

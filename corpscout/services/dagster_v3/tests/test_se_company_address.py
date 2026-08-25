@@ -180,7 +180,7 @@ def test_every_where_disjunct_of_the_change_scan_is_pinned_exactly() -> None:
         "parseDateTime64BestEffort(%(resolve_all_before)s, 3, 'UTC'))",
         # evidence newer than the published resolution
         f"artifacts.latest_observed_at > {PUBLISHED_AT_SQL}",
-        # the geocode snapshot moved after it
+        # the geocode store gained a newer outcome for it
         f"ifNull(geocodes.latest_geocoded_at, {EPOCH_SQL}) > {PUBLISHED_AT_SQL}",
         # the correction ledger gained a row after it
         f"ifNull(ledger.latest_correction_at, {EPOCH_SQL}) > {PUBLISHED_AT_SQL}",
@@ -258,8 +258,20 @@ def test_the_geocode_query_reads_the_versioned_read_and_gates_every_joined_colum
     # Pinned WHOLE, not just at its opening. It is spliced in as the INNER read's WHERE with
     # no parentheses around it, so an `AND <anything>` welded onto the end would narrow
     # which rows enter the rank -- a different served outcome, silently, with no syntax
-    # error anywhere. Two clauses hold it shut: the text ends at the subquery's closing
-    # paren, and the only columns it may name are the identity key and the company key.
+    # error anywhere.
+    #
+    # The clause that holds that shut is the VOCABULARY one below. A weld ends at a closing
+    # paren just as happily as the constant does -- `AND match_status IN (...)` does -- so
+    # startswith and endswith fix the SHAPE and nothing more; what a weld cannot do is avoid
+    # naming a column outside {address_id, company_id}.
+    #
+    # The behavioural layer is tests/test_se_company_address_clickhouse_local.py, and the two
+    # are PARTNERS rather than substitutes. Measured, both ways: welding
+    # `AND policy_version != 'legacy_adopted_v1'` onto the constant kills four of that
+    # harness's tests (the adopted coordinate stops being served) and this pin as well, while
+    # welding `AND match_status IN ('matched_exact')` leaves the harness entirely green --
+    # the one ambiguous row in its fixture is already outranked by stage 2, so dropping it
+    # from the rank changes no answer there. That weld dies here and nowhere else.
     filter_sql = GEOCODE_ADDRESS_FILTER_SQL.strip()
     assert filter_sql.startswith("address_id IN (")
     assert filter_sql.endswith(")")
@@ -561,7 +573,9 @@ def test_the_config_gates_the_run_and_bounds_the_weekly_population() -> None:
 
     Ruling A17, restated for the store: the weekly whole-table geocode restamp that used to
     make new_geocode select every geocoded company is gone, so an ordinary week now selects
-    register churn plus real geocode changes. The bound stays wide for the reason that did
+    register churn plus real geocode changes -- from the SECOND post-repoint week, the first
+    one still re-selecting everything once because the backfill's copied matched_at stamps
+    postdate every pre-deploy publish. The bound stays wide for the reason that did
     NOT go away -- the scan has no memory. A run stopped by max_companies restarts at the
     first company_id, so a cap below the number of companies a run selects re-resolves the
     same leading slice forever and never reaches the tail, and nothing tells the weekly
