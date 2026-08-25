@@ -9,8 +9,10 @@ The whole per-company resolution is address_rules.resolve_company_addresses -- m
 geocode augmentation, ledger, set replacement, in the one order that is correct. This
 module never calls the four steps itself.
 Geocode: se_company_address_members_current -> se_company_address_links_current ->
-se_address_geocodes_current, keyed by the source observation's address_fingerprint, read
-at resolve time and stored on the row.
+corpscout.se_address_geocodes read through sweden_company/geocode_store's versioned read,
+keyed by the source observation's address_fingerprint, resolved at resolve time and stored
+on the row. An identity can hold several attributable outcomes -- one per (matcher, OSM
+snapshot) -- and which one is current is that rule, not a row.
 Set replacement: a resolution publishes the company's whole address set; a key it no
 longer produces is republished is_current = false. Readers filter FINAL ... WHERE is_current.
 Ledger: se_company_address_correction -- override_field / reject_address / undo; stale by
@@ -66,6 +68,7 @@ from dagster_v3.defs.se_company.common import (
 from dagster_v3.defs.se_company.info_rules import ArtifactRow
 from dagster_v3.defs.se_company.scb import ADDRESS_TABLE as SCB_TABLE
 from dagster_v3.defs.se_company.scb import SE_COMPANY_ADDRESS_SCB_COLUMNS
+from dagster_v3.defs.sweden_company import geocode_store
 
 DATABASE = "corpscout"
 GROUP_NAME = "se_company"
@@ -73,9 +76,37 @@ SE_COMPANY_ADDRESS = "se_company_address"
 SE_COMPANY_ADDRESS_CORRECTION = "se_company_address_correction"
 MEMBERS_TABLE = "se_company_address_members_current"
 LINKS_TABLE = "se_company_address_links_current"
-GEOCODES_TABLE = "se_address_geocodes_current"
 # A LEFT JOIN miss reads as this instant, not as a bare NULL comparison.
 EPOCH_SQL = "toDateTime64('1970-01-01 00:00:00', 3, 'UTC')"
+
+# The geocode store is named ONCE, in geocode_store, and this module does not re-declare it
+# under any spelling: `geocode_store.GEOCODE_STORE_TABLE` is the bare name (what
+# assert_clickhouse_tables_exist looks up in system.tables) and
+# `geocode_store.QUALIFIED_CLICKHOUSE_GEOCODE_STORE_TABLE` is the qualified one (what SQL
+# reads). A local alias for either would put one identifier with two values in one file,
+# and a later edit dropping the `geocode_store.` prefix would silently swap them.
+#
+# The read rule is likewise imported rather than re-expressed: a second ranking here would
+# let this final and the serving table disagree about which outcome is current while both
+# looked internally consistent, which spec section 8 names as this design's sharpest risk.
+#
+# What the versioned read is allowed to look at for one page of companies. It constrains
+# address_id, the store's sorting-key leading column, so a page prunes to a few parts
+# instead of ranking all 2.09M identities.
+GEOCODE_ADDRESS_FILTER_SQL = f"""address_id IN (
+        SELECT address_id
+        FROM {DATABASE}.{LINKS_TABLE}
+        WHERE company_id IN %(company_ids)s
+    )"""
+# Only the six columns this module actually reads -- the store has 28.
+GEOCODE_READ_COLUMNS = (
+    "address_id",
+    "match_status",
+    "latitude",
+    "longitude",
+    "matched_at",
+    "geocode_run_id",
+)
 
 # This module's READ contract: the artifact modules' own positional insert lists (each
 # pinned to the migration by its own test) minus the envelope this module reads by name.
@@ -203,25 +234,33 @@ def build_changed_companies_sql() -> str:
     NULL for every never-published company, and the scan returns zero rows -- the pipeline
     would silently stop resolving anything.
 
-    THE GEOCODE TERM IS DELIBERATELY BROAD, AND THAT SETS THE WEEKLY RUN'S SIZE.
-    ``se_address_geocodes_current`` is rebuilt whole by the weekly geocoding job, so
-    ``matched_at`` moves for every ADDRESS IDENTITY even when the outcome is unchanged, and
-    this term therefore re-selects every company linked to one of those ~2.09M identities,
-    once a week. (~2.09M counts identities, not companies: a shared address links many
-    companies to one identity, so the company count this term selects is the larger number.)
-    That is accepted: the resolution is deterministic, model-free and cheap, and
-    republishing an unchanged address changes nothing a reader sees.
+    THE GEOCODE TERM IS NOW AS NARROW AS THE STORE MAKES IT.
+    It used to be the widest term here: se_address_geocodes_current was rebuilt whole every
+    week with one wall-clock matched_at, so every geocoded company looked changed every
+    Monday and the weekly config had to run uncapped. corpscout.se_address_geocodes appends
+    an outcome only for an identity a run actually matched, and matched_at is that append's
+    instant -- so this term now selects register churn plus real geocode changes, which is
+    what it always meant to say.
 
-    What it is NOT is a population a cap can safely trim. This scan has no memory: it is
+    It reads the store RAW, not through the versioned read. max(matched_at) over every
+    stored row for an identity is always greater than or equal to the current outcome's, so
+    this can over-select -- an identity whose newest row is outranked (an adopted row a
+    later resolver success beat, say) wakes its companies once more than strictly needed --
+    but it can never MISS a company whose served coordinate moved. Over-selection costs one
+    republished version with identical content; under-selection would leave a stale
+    coordinate served forever. Ranking 2.09M identities on every scan page to avoid the
+    former would be the wrong trade, and it would put a second copy of the read rule in this
+    module, which is the thing the design forbids.
+
+    The weekly automated config still runs effectively UNCAPPED, and that is now pure
+    defense rather than a requirement this term imposes. This scan has no memory: it is
     ordered by ``company_id`` and every run starts from the first id again, so a run stopped
     by ``max_companies`` resumes at the START of the scan, not where it stopped -- a capped
-    weekly run would re-resolve the same leading slice forever and never reach the tail. The
-    weekly automated config must therefore run effectively UNCAPPED (``max_companies`` above
-    the selected population; the bound is 5,000,000), or, for a deliberately staged pass, use
-    ``resolve_all`` with an explicit ``resolve_all_before`` cutoff reused across the runs of
-    that pass -- which is the only mechanism here that does carry memory. What the geocode
-    term buys is the guarantee the spec asks for: a re-geocode is evidence, and no company
-    keeps a stale coordinate.
+    run re-resolves the same leading slice forever and never reaches the tail. For a
+    deliberately staged pass the mechanism that does carry memory is ``resolve_all`` with an
+    explicit ``resolve_all_before`` cutoff reused across the runs of that pass. What the
+    geocode term buys is unchanged: a re-geocode is evidence, and no company keeps a stale
+    coordinate.
 
     ``resolve_all`` re-selects every in-scope company even though nothing moved -- for
     rules-only changes (new merge logic, a new artifact column) that no ``observed_at`` and
@@ -238,10 +277,10 @@ def build_changed_companies_sql() -> str:
     expressions the WHERE is built from, spelled twice from one Python constant because a
     SELECT-list alias is not guaranteed visible to WHERE at the same level in ClickHouse.
 
-    The geocode CTE joins ``se_address_geocodes_current AS points``, not ``AS geocodes``:
-    the CTE is itself called ``geocodes`` and the outer query reads it by that name, so
-    reusing the name inside its own body would be one identifier with two meanings and an
-    analyzer-dependent query.
+    The geocode CTE joins ``se_address_geocodes AS points``, not ``AS geocodes``: the CTE is
+    itself called ``geocodes`` and the outer query reads it by that name, so reusing the name
+    inside its own body would be one identifier with two meanings and an analyzer-dependent
+    query.
     """
     artifact_union = "\n        UNION ALL\n        ".join(
         f"SELECT '{source}' AS source, company_id, max(observed_at) AS source_observed_at"
@@ -281,7 +320,8 @@ ledger AS (
 geocodes AS (
     SELECT links.company_id AS company_id, max(points.matched_at) AS latest_geocoded_at
     FROM {DATABASE}.{LINKS_TABLE} AS links
-    INNER JOIN {DATABASE}.{GEOCODES_TABLE} AS points ON points.address_id = links.address_id
+    INNER JOIN {geocode_store.QUALIFIED_CLICKHOUSE_GEOCODE_STORE_TABLE} AS points
+        ON points.address_id = links.address_id
     WHERE (%(all_companies)s = 1 OR links.company_id IN %(company_ids)s)
     GROUP BY links.company_id
 ),
@@ -348,14 +388,29 @@ def build_geocodes_sql() -> str:
     too. ifNull stays only where the SOURCE column is genuinely Nullable (latitude,
     longitude), which is a different question -- and both are projected as text so every
     column of this query is a plain String on both settings.
+
+    The geocode side is no longer a table but the geocode store's versioned read, imported
+    whole from sweden_company/geocode_store.py. An identity can hold several attributable
+    outcomes -- one per (matcher, OSM snapshot) -- and which one is CURRENT is a rule, not a
+    row. That rule is not restated here: this query asks for it. The subquery carries its
+    own address filter so the store is pruned on its sorting key before it is ranked; the
+    %(company_ids)s parameter is therefore bound twice in one statement, once inside the
+    subquery and once in the outer WHERE, which ClickHouse's named parameters handle by
+    name rather than by position.
     """
+    versioned_read = geocode_store.build_current_geocodes_sql(
+        columns=GEOCODE_READ_COLUMNS,
+        address_filter_sql=GEOCODE_ADDRESS_FILTER_SQL,
+    )
     return f"""SELECT
     {_projection_sql(GEOCODE_PROJECTION)}
 FROM {DATABASE}.{MEMBERS_TABLE} AS members
 INNER JOIN {DATABASE}.{LINKS_TABLE} AS links
     ON links.company_id = members.company_id
    AND links.canonical_address_key = members.canonical_address_key
-LEFT JOIN {DATABASE}.{GEOCODES_TABLE} AS geocodes ON geocodes.address_id = links.address_id
+LEFT JOIN (
+{versioned_read}
+) AS geocodes ON geocodes.address_id = links.address_id
 WHERE members.company_id IN %(company_ids)s"""
 
 
@@ -566,7 +621,7 @@ def materialize_se_company_address(
     scope = normalized_se_company_ids(company_ids)
     assert_clickhouse_tables_exist(clickhouse, database=DATABASE, tables=(
         *ARTIFACT_TABLES.values(), SE_COMPANY_ADDRESS, SE_COMPANY_ADDRESS_CORRECTION,
-        MEMBERS_TABLE, LINKS_TABLE, GEOCODES_TABLE))
+        MEMBERS_TABLE, LINKS_TABLE, geocode_store.GEOCODE_STORE_TABLE))
     # The scan embeds %(company_ids)s four times and clickhouse-driver substitutes them
     # client-side, so the rendered statement grows by ~12 bytes per id per copy: an explicit
     # scope is split into chunks of at most company_batch_size ids, each paged on its own,

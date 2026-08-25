@@ -17,6 +17,7 @@ import pytest
 
 from dagster_v3.defs.se_company.address import (
     ARTIFACT_COLUMNS,
+    GEOCODE_ADDRESS_FILTER_SQL,
     GEOCODE_COLUMNS,
     GEOCODE_PROJECTION,
     INSERT_COLUMNS,
@@ -33,6 +34,7 @@ from dagster_v3.defs.se_company.address import (
 )
 from dagster_v3.defs.se_company.address_rules import address_components, address_key_for
 from dagster_v3.defs.se_company.common import build_ledger_sql
+from dagster_v3.defs.sweden_company.geocode_store import build_current_geocodes_sql
 from tests.se_company_ddl import declared_columns
 
 EPOCH_SQL = "toDateTime64('1970-01-01 00:00:00', 3, 'UTC')"
@@ -54,7 +56,7 @@ EXISTING_TABLES = [
         "se_company_address_correction",
         "se_company_address_members_current",
         "se_company_address_links_current",
-        "se_address_geocodes_current",
+        "se_address_geocodes",
     )
 ]
 
@@ -217,29 +219,51 @@ def test_the_change_scan_needs_final_only_on_the_final_table() -> None:
     assert "FINAL" not in sql
 
 
-def test_the_geocode_cte_does_not_alias_a_table_with_its_own_name() -> None:
+def test_the_geocode_cte_reads_the_store_and_does_not_alias_a_table_with_its_own_name() -> None:
     """Self-shadowing a WITH name inside its own body is analyzer-dependent: the outer
     ``geocodes.latest_geocoded_at`` reads the CTE, so the joined table must be called
-    something else or the two names are one identifier with two meanings."""
+    something else or the two names are one identifier with two meanings.
+
+    The CTE reads the store RAW -- max(matched_at) over every stored row for the identity,
+    not over the versioned read's chosen row. That is deliberate and is argued in
+    build_changed_companies_sql's docstring: the raw maximum is always greater than or equal
+    to the current outcome's, so the scan can over-select but can never MISS a company whose
+    served coordinate moved. Ranking 2.09M identities on every scan page to avoid an
+    occasional harmless re-resolution would be the wrong trade.
+    """
     sql = build_changed_companies_sql()
-    assert "corpscout.se_address_geocodes_current AS geocodes" not in sql
-    assert "corpscout.se_address_geocodes_current AS points" in sql
+    assert "corpscout.se_address_geocodes AS geocodes" not in sql
+    assert "corpscout.se_address_geocodes AS points\n" in sql
     assert "max(points.matched_at) AS latest_geocoded_at" in sql
+    assert "se_address_geocodes_current" not in sql
+    # Raw, not ranked: no second copy of the read rule lives in this module.
+    assert "LIMIT 1 BY" not in sql
 
 
-def test_the_geocode_query_gates_every_non_nullable_joined_column() -> None:
+def test_the_geocode_query_reads_the_versioned_read_and_gates_every_joined_column() -> None:
     sql = build_geocodes_sql()
     assert "toUInt8(ifNull(geocodes.geocode_run_id, '') != '') AS has_geocode" in sql
     assert "INNER JOIN corpscout.se_company_address_links_current AS links" in sql
-    assert "LEFT JOIN corpscout.se_address_geocodes_current AS geocodes" in sql
     assert "toString(members.address_key) AS address_fingerprint" in sql
+    # The geocode side is the store's ONE read rule, pulled in whole -- byte-identical to
+    # what geocode_store builds, so this module cannot drift into a second ranking.
+    expected_read = build_current_geocodes_sql(
+        columns=("address_id", "match_status", "latitude", "longitude", "matched_at",
+                 "geocode_run_id"),
+        address_filter_sql=GEOCODE_ADDRESS_FILTER_SQL)
+    assert f"LEFT JOIN (\n{expected_read}\n) AS geocodes ON geocodes.address_id = links.address_id" in sql
+    # The filter prunes the store on its sorting key's leading column before ranking, so a
+    # page of companies never pays for the whole store.
+    assert GEOCODE_ADDRESS_FILTER_SQL.strip().startswith("address_id IN (")
+    assert "%(company_ids)s" in GEOCODE_ADDRESS_FILTER_SQL
     # Nullable source columns are ifNull'd, never gated; joined non-Nullable ones are gated.
     assert "ifNull(toString(geocodes.latitude), '') AS latitude" in sql
     assert "toString(geocodes.match_status), '') AS geocode_status" in sql
     assert re.findall(r"AS (\w+)", sql[: sql.index("\nFROM ")]) == list(GEOCODE_COLUMNS)
-    # Every alias, fed by its own source column. An alias wired to a neighbour would
-    # transpose the fact silently -- and half of these are same-typed text, so nothing
-    # downstream would notice. The map is exhaustive by assertion, not by good intentions.
+    # Every alias, fed by its own source column -- all eight, unchanged by the repoint. An
+    # alias wired to a neighbour would transpose the fact silently, and half of these are
+    # same-typed text, so nothing downstream would notice. The map is exhaustive by
+    # assertion, not by good intentions.
     sources = {
         "company_id": "members.company_id",
         # members.address_key IS the source observation's address_fingerprint -- the whole
@@ -255,6 +279,7 @@ def test_the_geocode_query_gates_every_non_nullable_joined_column() -> None:
         "geocoded_at": "geocodes.matched_at",
     }
     assert set(sources) == set(GEOCODE_COLUMNS)
+    assert len(sources) == 8
     for column, expression in GEOCODE_PROJECTION:
         assert sources[column] in expression, (column, expression)
 

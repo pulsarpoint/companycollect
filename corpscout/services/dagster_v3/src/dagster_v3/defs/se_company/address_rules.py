@@ -62,7 +62,8 @@ class GeocodeFact:
     Keyed by that observation's ``address_fingerprint``: the chain runs
     ``se_company_addresses_current.address_fingerprint`` ->
     ``se_company_address_members_current.address_key`` -> ``canonical_address_key`` ->
-    ``se_company_address_links_current.address_id`` -> ``se_address_geocodes_current``.
+    ``se_company_address_links_current.address_id`` -> ``se_address_geocodes``, whose
+    current outcome per identity is a read rule rather than a row.
     ``has_geocode`` is the geocoder's hit flag, not "has coordinates": an address can be
     classified (unmatched, foreign, postal-box) without a point.
     """

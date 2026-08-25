@@ -29,9 +29,20 @@ Set replacement is proved as a STORAGE round-trip here (the rules' decision is a
 in tests/test_se_company_address_rules.py): a key published is_current = true, then
 republished is_current = false with a newer resolved_at, disappears from
 `FINAL ... WHERE is_current`; published true again with a newer stamp still, it comes back.
+
+The geocode side is the STORE (migration 000317), read through geocode_store's versioned
+read -- which is what address.py builds now, so it is what this harness must execute.
+ALPHA's Bolagsverket identity deliberately holds TWO stored outcomes: an imported
+legacy_adopted_v1 exact, and a NEWER resolver ambiguous. Stage 2 of the read rule says the
+ambiguous must not take the coordinate away, so the served status here is matched_exact and
+the served stamp is the adopted row's -- a naive "newest matched_at wins" read serves
+`ambiguous` with a NULL latitude and fails.
+
 And the guarantee address.py's scan docstring headlines -- "a re-geocode is evidence, and
 no company keeps a stale coordinate" -- is closed end to end: a settled company is woken
-again by nothing but a new row in se_address_geocodes_current.
+again by nothing but a new outcome appended to corpscout.se_address_geocodes. That term
+reads the store RAW, so it also sees the ambiguous row the versioned read discards; both
+stamps predate the publish, so neither wakes ALPHA until the new append lands.
 
 The whole script runs twice, once under default settings and once with
 `SET join_use_nulls = 1` prepended: every LEFT JOIN miss in the scan and in the geocode
@@ -62,6 +73,7 @@ from dagster_v3.defs.se_company.scb import (
     SE_COMPANY_ADDRESS_SCB_SOURCE_COUNT_SQL,
     SE_COMPANY_ADDRESS_SCB_SQL,
 )
+from dagster_v3.defs.sweden_company.geocode_store import LEGACY_ADOPTED_POLICY_VERSION
 from tests.se_company_ddl import declared_columns
 from tests.test_se_company_person_clickhouse_local import _clickhouse_local_command, _literal, _render
 
@@ -70,23 +82,24 @@ pytestmark = pytest.mark.integration
 MIGRATIONS_DIR = Path(__file__).resolve().parents[3] / "clickhouse" / "migrations"
 # Every migration that creates or alters one of NEEDED_TABLES, in migration order. The
 # address history table (se_company_addresses) is deliberately absent: the artifacts read
-# the _current snapshot only.
+# the _current snapshot only. So is the 000275 serving table and 000277's ALTER on it:
+# address.py reads the 000317 STORE now, and replaying a table nothing under test touches
+# would only invite a reader to believe it is still the source.
 MIGRATIONS = (
     "000256_corpscout_se_company_address_current_snapshot.up.sql",
     "000265_corpscout_se_company_address_normalization.up.sql",
     "000273_corpscout_se_company_canonical_addresses.up.sql",
     "000274_corpscout_se_shared_addresses.up.sql",
-    "000275_corpscout_se_address_geocodes_current.up.sql",
-    "000277_corpscout_se_address_geocode_spread.up.sql",
     "000278_corpscout_se_address_components.up.sql",
     "000307_corpscout_se_company_address.up.sql",
+    "000317_corpscout_se_address_geocodes_store.up.sql",
 )
 NEEDED_TABLES = frozenset({
     "se_company_addresses_current",
     "se_company_address_members_current",
     "se_company_address_links_current",
     "se_addresses_current",
-    "se_address_geocodes_current",
+    "se_address_geocodes",
     "se_company_address_bolagsverket",
     "se_company_address_scb",
     "se_company_address",
@@ -103,6 +116,10 @@ ALPHA = "5565200028"
 BETA = "196408233412"  # sole trader: 12-digit id, admitted by the has_company CHECK
 T_SEED = _literal(datetime(2026, 8, 1, tzinfo=UTC))
 T_GEOCODE = _literal(datetime(2026, 8, 2, tzinfo=UTC))
+# The resolver's own newest outcome for ALPHA's Bolagsverket identity: STRICTLY NEWER than
+# the adopted row it must NOT displace, which is the only way this fixture can tell the
+# read rule apart from "newest matched_at wins".
+T_AMBIGUOUS = _literal(datetime(2026, 8, 3, tzinfo=UTC))
 T_CHANGED = _literal(datetime(2026, 8, 5, tzinfo=UTC))  # ALPHA's corrected Bolagsverket row.
 # DateTime64(3) has millisecond resolution and consecutive statements can share one, so
 # every point where a stamp must be strictly newer than the previous one is separated by a
@@ -115,6 +132,27 @@ CANONICAL_KEY_SCB, ADDRESS_ID_SCB = "f" * 64, "1" * 64
 CANONICAL_KEY_BETA = "2" * 64
 ALPHA_KEY = "7" * 64
 ALPHA_CARE_OF_V2 = "Bengt Andersson"  # no slash: toJSONString would escape one, TSV again
+# The store is keyed by (address_id, policy_version, reference_md5): one row per matcher per
+# OSM snapshot. RESOLVER_POLICY is address_resolution_policy.py's version; the adopted
+# policy version is geocode_store's own constant, imported rather than spelled, because
+# stage 2 of the read rule tests that exact string.
+RESOLVER_POLICY = "se-address-resolution-policy-v5"
+WEEK_MD5, ADOPTED_MD5 = "3" * 32, "4" * 32
+STORE_COLUMNS_SQL = (
+    "(address_id, policy_version, reference_md5, address_identity_run_id,"
+    " normalized_match_key, match_status, candidate_count, candidate_record_ids,"
+    " candidate_record_urls, match_method, match_confidence, latitude, longitude,"
+    " geocode_provider, geocode_precision, coordinate_supporting_point_count,"
+    " geocode_run_id, matched_at)")
+
+
+def _store_row(address_id: str, *, policy_version: str, reference_md5: str, status: str,
+               latitude: str, longitude: str, run_id: str, matched_at: str) -> str:
+    """One stored outcome. Every column the DDL leaves unnamed takes its declared default,
+    which for the Nullable provenance columns is NULL -- the shape a real append writes."""
+    return (f"('{address_id}', '{policy_version}', '{reference_md5}', 'ident-1',"
+            f" 'storgatan 1|11122|stockholm', '{status}', 1, [], [], 'exact', 0.99,"
+            f" {latitude}, {longitude}, 'osm', 'building', 1, '{run_id}', {matched_at})")
 
 
 def _schema_statements(migrations: tuple[str, ...]) -> list[str]:
@@ -196,13 +234,14 @@ VALUES
     ('{ALPHA}', '{ADDRESS_ID}', '{CANONICAL_KEY}', ['postal'], ['bolagsverket'], 1, {T_SEED}, {T_SEED}, 'ident-1', {T_SEED}),
     ('{ALPHA}', '{ADDRESS_ID_SCB}', '{CANONICAL_KEY_SCB}', ['visiting_or_postal'], ['scb'], 1, {T_SEED}, {T_SEED}, 'ident-1', {T_SEED});
 
-INSERT INTO corpscout.se_address_geocodes_current
-    (address_id, address_identity_run_id, normalized_match_key, match_status, candidate_count,
-     candidate_record_ids, candidate_record_urls, match_method, match_confidence, latitude, longitude,
-     geocode_provider, geocode_precision, coordinate_supporting_point_count, geocode_run_id, matched_at)
+INSERT INTO corpscout.se_address_geocodes {STORE_COLUMNS_SQL}
 VALUES
-    ('{ADDRESS_ID}', 'ident-1', 'storgatan 1|11122|stockholm', 'matched_exact', 1, [], [], 'exact',
-     0.99, 59.33, 18.06, 'osm', 'building', 1, 'geo-1', {T_GEOCODE});
+    {_store_row(ADDRESS_ID, policy_version=LEGACY_ADOPTED_POLICY_VERSION,
+                reference_md5=ADOPTED_MD5, status='matched_exact', latitude='59.33',
+                longitude='18.06', run_id='run-adoption', matched_at=T_GEOCODE)},
+    {_store_row(ADDRESS_ID, policy_version=RESOLVER_POLICY, reference_md5=WEEK_MD5,
+                status='ambiguous', latitude='NULL', longitude='NULL', run_id='geo-1',
+                matched_at=T_AMBIGUOUS)};
 """
 
 # The register CORRECTS ALPHA's Bolagsverket record: same company, same source_record_uid,
@@ -232,17 +271,16 @@ VALUES
      {T_CHANGED}, 1);
 """
 
-# The weekly geocoding job answers for ALPHA's SCB identity, which had no coordinate before.
-# matched_at is now64 -- later than ALPHA's published resolved_at -- so the scan's geocode
-# term is the ONLY thing that can select ALPHA again at that point.
+# A later resolver run answers for ALPHA's SCB identity, which had no stored outcome at all
+# before. matched_at is the append's own instant -- later than ALPHA's published resolved_at
+# -- so the scan's geocode term is the ONLY thing that can select ALPHA again at that point.
+# This is the whole shape the store changed: nothing restamps the identities no run touched.
 NEW_GEOCODE_SQL = f"""
-INSERT INTO corpscout.se_address_geocodes_current
-    (address_id, address_identity_run_id, normalized_match_key, match_status, candidate_count,
-     candidate_record_ids, candidate_record_urls, match_method, match_confidence, latitude, longitude,
-     geocode_provider, geocode_precision, coordinate_supporting_point_count, geocode_run_id, matched_at)
+INSERT INTO corpscout.se_address_geocodes {STORE_COLUMNS_SQL}
 VALUES
-    ('{ADDRESS_ID_SCB}', 'ident-1', 'storgatan 1|11122|stockholm', 'matched_exact', 1, [], [], 'exact',
-     0.98, 59.34, 18.07, 'osm', 'building', 1, 'geo-2', now64(3, 'UTC'));
+    {_store_row(ADDRESS_ID_SCB, policy_version=RESOLVER_POLICY, reference_md5=WEEK_MD5,
+                status='matched_exact', latitude='59.34', longitude='18.07',
+                run_id='geo-2', matched_at="now64(3, 'UTC')")};
 """
 
 # (source, table, insert columns, artifact SELECT, tripwire source-count SELECT). The
@@ -354,7 +392,7 @@ def _script(*, join_use_nulls: int) -> str:
                          + ") ORDER BY source, company_id"))
     parts.append(_marked("geocodes",
                          "SELECT company_id, address_fingerprint, address_id, has_geocode, latitude,"
-                         " geocode_status FROM ("
+                         " geocode_status, geocoded_at FROM ("
                          + _render(build_geocodes_sql(), {"company_ids": (ALPHA, BETA)})
                          + ") ORDER BY company_id, address_fingerprint"))
 
@@ -490,17 +528,41 @@ def test_the_geocode_lookup_gates_the_miss_instead_of_reading_a_type_default(
     assert rows[ALPHA_FP_BOLAGSVERKET][2] == ADDRESS_ID
     assert rows[ALPHA_FP_BOLAGSVERKET][3] == "1"
     assert rows[ALPHA_FP_BOLAGSVERKET][5] == "matched_exact"
-    # Linked, NOT geocoded: address_id present, status EMPTY -- not the type default.
+    # Linked, and holding NO stored outcome at all: address_id present, status EMPTY -- not
+    # the type default. The versioned read returns no row for this identity, so this is a
+    # LEFT JOIN miss against a SUBQUERY, which fills exactly as a missed table would.
     assert rows[ALPHA_FP_SCB][2] == ADDRESS_ID_SCB
     assert rows[ALPHA_FP_SCB][3] == "0"
     assert rows[ALPHA_FP_SCB][5] == ""
     assert rows[ALPHA_FP_SCB][4] == ""  # latitude, a genuinely Nullable source column
+    assert rows[ALPHA_FP_SCB][6] == ""  # geocoded_at, gated -- never 1970-01-01
     # Normalized but never linked: BETA HAS a members row, and its canonical address has
     # no links row, so the members -> links INNER join is what drops it. That is the point
     # of giving BETA a members row at all -- without one, an INNER -> LEFT mutation would
     # leave this assertion green.
     assert BETA_FP not in rows
     assert len(rows) == 2
+
+
+def test_the_served_geocode_is_the_stores_current_outcome_not_its_newest_row(
+    sections: dict[str, list[list[str]]],
+) -> None:
+    """ALPHA's Bolagsverket identity holds two stored outcomes: an imported
+    legacy_adopted_v1 `matched_exact` with a coordinate, and a NEWER resolver `ambiguous`
+    with none. Stage 2 of geocode_store's read rule says the ambiguous does not take the
+    coordinate away, so the final must see the adopted row -- status, coordinate AND stamp.
+
+    This is the assertion that proves the repoint imported the rule rather than re-expressing
+    it. A plain `max(matched_at)` read, or a `FINAL` over the store, serves `ambiguous` with
+    an empty latitude here; both are green against a store holding one row per identity,
+    which is why the fixture holds two.
+    """
+    served = {row[1]: row for row in sections["geocodes"]}[ALPHA_FP_BOLAGSVERKET]
+    assert served[5] == "matched_exact"
+    assert served[4] == "59.33"
+    # The stamp is the ADOPTED row's, not the ambiguous one's -- geocoded_at is what the
+    # final publishes and what a reader dates the coordinate by.
+    assert served[6].startswith("2026-08-02")
 
 
 def test_the_scan_selects_every_company_before_anything_is_published(
@@ -542,11 +604,14 @@ def test_a_published_company_is_quiet_until_resolve_all_asks_for_it(
 def test_a_re_geocode_wakes_a_published_company(
     sections: dict[str, list[list[str]]],
 ) -> None:
-    """The guarantee the scan's docstring headlines: `se_address_geocodes_current` is
-    rebuilt whole every week, and a company whose linked identity gained a newer
-    `matched_at` must be resolved again so no reader keeps a stale coordinate. ALPHA is
-    settled and quiet in `changed_after_publish`; nothing changes here but one new geocode
-    row, and it is the new_geocode reason -- not any other term -- that brings it back."""
+    """The guarantee the scan's docstring headlines: a company whose linked identity gained a
+    newer `matched_at` must be resolved again so no reader keeps a stale coordinate.
+
+    ALPHA is settled and quiet in `changed_after_publish` even though its Bolagsverket
+    identity already holds two stored outcomes -- which is the shape the store buys: an
+    append the resolver did not make cannot restamp anything, so a settled company stays
+    settled. Nothing changes here but one outcome appended for the SCB identity, and it is
+    the new_geocode reason -- not any other term -- that brings ALPHA back."""
     assert ALPHA not in [row[0] for row in sections["changed_after_publish"]]
     selected = {row[0]: row for row in sections["changed_after_regeocode"]}
     assert ALPHA in selected
