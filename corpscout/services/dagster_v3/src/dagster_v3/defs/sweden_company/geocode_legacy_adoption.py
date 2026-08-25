@@ -6,8 +6,8 @@ resolved `matched_exact` at confidence 1.0 on identical street text (measured on
 with the matcher. This module moves them into the versioned store as `legacy_adopted_v1`
 outcomes so they stay attributable, rankable and reversible.
 
-IT HAS RUN, AND ITS SOURCE IS GONE. The import is a one-shot that ran BEFORE migration
-000319 dropped the pair -- that ordering is the migration's own stated precondition. The
+RUNS ONCE, AT PLAN STEP 12e, BEFORE MIGRATION 000319 DROPS ITS SOURCE -- that ordering
+is the migration's own stated precondition. After that apply it can no longer execute. The
 module and its asset stay as the record of where the store's `legacy_adopted_v1` rows came
 from; a Materialize click after the drop fails in assert_clickhouse_tables_exist, naming
 se_company_address_geocode_results, which is exactly the answer such a click deserves.

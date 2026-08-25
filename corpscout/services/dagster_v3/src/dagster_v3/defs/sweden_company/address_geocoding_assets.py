@@ -1055,9 +1055,10 @@ class SwedenGeocodeLegacyAdoptionConfig(dg.Config):
     description=(
         "One-time import of the retired per-company matcher's exact decisions for "
         "Sweden address identities the resolver refuses, as versioned "
-        "legacy_adopted_v1 outcomes. Requires execute: true. It has run, and its "
-        "source table was dropped afterwards by migration 000319 -- this asset is "
-        "kept as the record of the import, and can no longer execute."
+        "legacy_adopted_v1 outcomes. Requires execute: true. Runs ONCE, at plan "
+        "step 12e, and must run BEFORE migration 000319 drops its source table; "
+        "after that apply it can no longer execute, and it stays as the record "
+        "of the import."
     ),
 )
 def sweden_address_geocode_legacy_adoption_clickhouse(
@@ -1070,9 +1071,9 @@ def sweden_address_geocode_legacy_adoption_clickhouse(
     The default run WRITES NOTHING: it reports the identities a real run would adopt and
     the identities the rule refuses, then returns. Only `execute: true` inserts.
 
-    IT HAS RUN, AND IT STAYS AS THE RECORD OF THAT RUN. Its source table retires with the
-    legacy matcher (migration 000319), which the import had to precede -- so after the drop
-    this asset can no longer do anything, by construction. It is kept because it is where a
+    RUNS ONCE, AT PLAN STEP 12e, AND THEN STAYS AS THE RECORD OF THAT RUN. Its source
+    table retires with the legacy matcher (migration 000319), which the import must
+    precede -- after the drop this asset can no longer do anything, by construction. It is kept because it is where a
     reader looks for "where did the store's legacy_adopted_v1 rows come from", and because
     the assert below names se_company_address_geocode_results: a Materialize click after
     the drop fails on that name rather than somewhere inside a three-way join.

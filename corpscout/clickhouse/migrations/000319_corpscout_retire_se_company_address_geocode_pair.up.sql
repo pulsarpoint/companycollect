@@ -48,6 +48,17 @@ CREATE DATABASE IF NOT EXISTS corpscout;
 --     assertions, which assert the public page does NOT read these tables
 --   * defs/sweden_address_geocoding/ -- the Lantmateriet module, which matches only on the
 --     path fragment "address_geocoding" and touches neither table
+--   * plus the dagster test files that pin these migrations or assert their absence
+--     (test_clickhouse_migrations, test_se_company_address, the sweden geocode test
+--     files, the clickhouse-local harness docstring) and the plan and spec docs
+--
+-- Gate 3 -- ORDERING AGAINST THE LEDGER. The applier mounts the WORKING COPY of this
+-- directory, and other workstreams stage migrations here before committing them. Before
+-- applying: run make clickhouse-migrate-version, confirm what a single-step up actually
+-- targets, and require every lower-numbered migration present on disk (000318 at the
+-- time of writing) to be COMMITTED AND APPLIED first. Applying this file over a gap
+-- records version 319 and strands the gap without force. The DROPs are IF EXISTS, so a
+-- later replay of this file is a harmless no-op if ordering has to be recovered.
 --
 -- Gate 2 -- row counts at drop time (SELECT run on the host, <DATE>):
 --   se_company_address_geocodes         <N> rows
