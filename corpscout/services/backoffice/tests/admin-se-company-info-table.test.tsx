@@ -45,7 +45,7 @@ import {
 import { legalFormOptionLabel } from "~/lib/se-legal-form";
 
 /** Every in-page link resolves against the route the table is rendered at. */
-const PATH = "/admin/se/company-info";
+const PATH = "/admin/se/companies";
 
 const ROW: SeCompanyInfoListRow = {
   company_id: "5565200028",
@@ -136,7 +136,7 @@ function render(props: Partial<Parameters<typeof SeCompanyInfoTable>[0]> = {}) {
         ),
       },
     ],
-    { initialEntries: ["/admin/se/company-info"] },
+    { initialEntries: ["/admin/se/companies"] },
   );
   return renderToStaticMarkup(<RouterProvider router={router} />);
 }
@@ -862,7 +862,7 @@ describe("profileSourceParts", () => {
 });
 
 describe("parseInfoFilters", () => {
-  const at = (search: string) => new URL(`http://localhost/admin/se/company-info${search}`);
+  const at = (search: string) => new URL(`http://localhost/admin/se/companies${search}`);
 
   it("reads every filter from the URL", () => {
     const filters = parseInfoFilters(

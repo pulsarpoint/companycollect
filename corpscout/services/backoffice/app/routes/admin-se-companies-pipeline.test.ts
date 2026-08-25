@@ -63,14 +63,14 @@ vi.mock("~/lib/se-company-info-pipeline.server", async (importOriginal) => ({
   loadSeCompanyInfoPipelineStats: () => loadStats(),
 }));
 
-const { action, loader } = await import("~/routes/admin-se-company-info-pipeline");
+const { action, loader } = await import("~/routes/admin-se-companies-pipeline");
 
 type ActionResult = Awaited<ReturnType<typeof action>>;
 
 /** The URL a fetcher actually posts to: React Router 8 fetches route data at
  * `<path>.data`, and the loader below tells a document GET from a data request
  * by exactly that suffix. */
-const DATA_URL = "http://backoffice/admin/se/company-info/pipeline.data";
+const DATA_URL = "http://backoffice/admin/se/companies/pipeline.data";
 
 function post(fields: Record<string, string>): Promise<ActionResult> {
   const body = new FormData();
@@ -281,12 +281,12 @@ describe("the route is not a page any more", () => {
     // thrown, so it never becomes a JSON body -- and nothing is read on the way,
     // which is the point: the change scan costs a FINAL read of 3.5M rows.
     await expect(
-      get("http://backoffice/admin/se/company-info/pipeline", BROWSER_ACCEPT),
+      get("http://backoffice/admin/se/companies/pipeline", BROWSER_ACCEPT),
     ).rejects.toSatisfy((thrown: unknown) => {
       expect(thrown).toBeInstanceOf(Response);
       const response = thrown as Response;
       expect(response.status).toBe(302);
-      expect(response.headers.get("Location")).toBe("/admin/se/company-info");
+      expect(response.headers.get("Location")).toBe("/admin/se/companies");
       return true;
     });
     expect(loadStats).not.toHaveBeenCalled();
@@ -309,7 +309,7 @@ describe("the route is not a page any more", () => {
     const view = await get(DATA_URL, "");
     expect(view.kind).toBe("view");
     expect(
-      (await get("http://backoffice/admin/se/company-info/pipeline", "*/*")).kind,
+      (await get("http://backoffice/admin/se/companies/pipeline", "*/*")).kind,
     ).toBe("view");
   });
 

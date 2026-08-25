@@ -80,11 +80,11 @@ vi.mock("~/lib/se-company-geocoding-list.server", () => ({
   countForFilter: vi.fn(() => 4),
 }));
 
-const { action, loader } = await import("~/routes/admin-se-company-info-geocoding");
+const { action, loader } = await import("~/routes/admin-se-companies-geocoding");
 
 function post(fields: Record<string, string>): Request {
   const body = new URLSearchParams(fields);
-  return new Request("http://localhost/admin/se/company-info/geocoding", {
+  return new Request("http://localhost/admin/se/companies/geocoding", {
     method: "POST",
     body,
   });
@@ -99,7 +99,7 @@ beforeEach(() => {
 describe("loader", () => {
   it("carries the agent panel alongside the list, for country SE", async () => {
     const data = await loader({
-      request: new Request("http://localhost/admin/se/company-info/geocoding"),
+      request: new Request("http://localhost/admin/se/companies/geocoding"),
       params: {},
       context: {} as never,
     } as never);

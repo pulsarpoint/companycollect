@@ -104,7 +104,7 @@ const VIEW: PipelineView = {
   dagsterError: "",
 };
 
-const PIPELINE_PATH = "/admin/se/company-info/pipeline";
+const PIPELINE_PATH = "/admin/se/companies/pipeline";
 const PICKED = ["5560125220", "5565200028"];
 
 /** The panel's forms, as plain markup: the fetcher's own `Form` posts to the
@@ -125,7 +125,7 @@ function renderPanel({
   loading?: boolean;
 } = {}) {
   return renderToStaticMarkup(
-    <MemoryRouter initialEntries={["/admin/se/company-info"]}>
+    <MemoryRouter initialEntries={["/admin/se/companies"]}>
       <SeCompanyInfoPipelinePanel
         view={view}
         result={result}
@@ -427,9 +427,9 @@ describe("the companies list pays nothing for the pipeline", () => {
   });
 
   it("runs no change-scan query in the LIST loader", async () => {
-    const { loader } = await import("~/routes/admin-se-company-info-table");
+    const { loader } = await import("~/routes/admin-se-companies-info");
     await loader({
-      request: new Request("http://backoffice/admin/se/company-info"),
+      request: new Request("http://backoffice/admin/se/companies"),
       params: {},
       context: {},
     } as unknown as Parameters<typeof loader>[0]);
@@ -451,27 +451,29 @@ describe("the companies list pays nothing for the pipeline", () => {
 describe("the standalone Pipeline page is retired", () => {
   it("is gone from the Sweden sidebar", () => {
     const html = renderToStaticMarkup(
-      <MemoryRouter initialEntries={["/admin/se/company-info"]}>
+      <MemoryRouter initialEntries={["/admin/se/companies"]}>
         <SidebarProvider>
           <AdminSidebar />
         </SidebarProvider>
       </MemoryRouter>,
     );
-    // The list it folded into is still there ...
-    expect(html).toContain('href="/admin/se/company-info"');
-    expect(html).toContain('href="/admin/se/company-info/corrections"');
-    // ... the page it used to be is not.
-    expect(html).not.toContain('href="/admin/se/company-info/pipeline"');
+    // The tabbed list it folded into is still there ...
+    expect(html).toContain('href="/admin/se/companies"');
+    // ... Info corrections is no longer its own sidebar entry (it is a
+    // secondary link from the Info tab now) ...
+    expect(html).not.toContain('href="/admin/se/company-info/corrections"');
+    // ... and the page the pipeline used to be is not in the sidebar.
+    expect(html).not.toContain('href="/admin/se/companies/pipeline"');
     expect(html).not.toContain(">Pipeline<");
   });
 
   it("has no breadcrumb branch left at the old URL", () => {
     const router = createMemoryRouter(
       [{ path: "*", element: <AdminLayout /> }],
-      { initialEntries: ["/admin/se/company-info/pipeline"] },
+      { initialEntries: ["/admin/se/companies/pipeline"] },
     );
     const html = renderToStaticMarkup(<RouterProvider router={router} />);
     expect(html).not.toContain(">Pipeline<");
-    expect(html).not.toContain('href="/admin/se/company-info/pipeline"');
+    expect(html).not.toContain('href="/admin/se/companies/pipeline"');
   });
 });
