@@ -28,6 +28,7 @@ import { Badge } from "~/components/ui/badge";
 import { Button } from "~/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "~/components/ui/card";
 import { Field, FieldDescription, FieldLabel } from "~/components/ui/field";
+import { Input } from "~/components/ui/input";
 import {
   Sheet,
   SheetContent,
@@ -130,10 +131,12 @@ function RunSummary({ run }: { run: GeocodeAgentRun }) {
 function SuggestionCard({
   suggestion,
   onDecide,
+  onImplement,
   busy,
 }: {
   suggestion: GeocodeAgentSuggestion;
   onDecide: (status: GeocodeAgentSuggestionStatus) => void;
+  onImplement: (policyVersion: string) => void;
   busy: boolean;
 }) {
   return (
@@ -185,16 +188,30 @@ function SuggestionCard({
           </Button>
         ) : null}
         {suggestion.status === "accepted" ? (
-          <Button
-            type="button"
-            size="sm"
-            variant="outline"
-            disabled={busy}
-            onClick={() => onDecide("implemented")}
+          // The spec's graduation link: an implemented suggestion records the
+          // policy version that shipped it, so the badge points at something
+          // real instead of asserting "implemented" with no evidence.
+          <form
+            className="flex items-center gap-2"
+            onSubmit={(event) => {
+              event.preventDefault();
+              const field = new FormData(event.currentTarget).get("policy_version");
+              onImplement(String(field ?? "").trim());
+            }}
           >
-            <RocketIcon data-icon="inline-start" />
-            Mark implemented
-          </Button>
+            <Input
+              name="policy_version"
+              required
+              maxLength={64}
+              placeholder="policy version, e.g. v7"
+              aria-label={`Policy version that shipped ${suggestion.pattern}`}
+              className="h-8 w-48"
+            />
+            <Button type="submit" size="sm" variant="outline" disabled={busy}>
+              <RocketIcon data-icon="inline-start" />
+              Mark implemented
+            </Button>
+          </form>
         ) : null}
         {suggestion.status !== "rejected" ? (
           <Button
@@ -267,9 +284,18 @@ export function GeocodeAnalysisAgent({ panel }: { panel: GeocodeAgentPanel }) {
     );
   }
 
-  const decide = (id: string, status: GeocodeAgentSuggestionStatus) => {
+  const decide = (
+    id: string,
+    status: GeocodeAgentSuggestionStatus,
+    policyVersion = "",
+  ) => {
     decideFetcher.submit(
-      { intent: "set_geocode_suggestion_status", suggestion_id: id, status },
+      {
+        intent: "set_geocode_suggestion_status",
+        suggestion_id: id,
+        status,
+        policy_version: policyVersion,
+      },
       { method: "post" },
     );
   };
@@ -401,6 +427,9 @@ export function GeocodeAnalysisAgent({ panel }: { panel: GeocodeAgentPanel }) {
                 suggestion={suggestion}
                 busy={deciding}
                 onDecide={(status) => decide(suggestion.id, status)}
+                onImplement={(policyVersion) =>
+                  decide(suggestion.id, "implemented", policyVersion)
+                }
               />
             ))}
           </section>

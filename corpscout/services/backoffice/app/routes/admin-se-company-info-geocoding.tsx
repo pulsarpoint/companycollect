@@ -12,8 +12,10 @@ import {
   loadSeCompanyGeocodingCounts,
 } from "~/lib/se-company-geocoding-list.server";
 import {
+  geocodeAgentCountry,
   loadGeocodeAgentPanel,
   startGeocodeAnalysisRun,
+  UnsupportedGeocodeAgentCountryError,
 } from "~/agents/geocode-analysis.server";
 import {
   GeocodeAgentRunActiveError,
@@ -76,8 +78,22 @@ export async function action({ request }: Route.ActionArgs) {
 
   try {
     if (intent === "start_geocode_analysis") {
+      // Validated before anything is inserted: this action is reachable by
+      // anyone who can reach the admin area, and an unwired country would
+      // otherwise accumulate run rows (or surface the CHECK constraint's raw
+      // text) for a run that could never do any work.
+      const requested = String(form.get("country") ?? COUNTRY_CODE)
+        .trim()
+        .toUpperCase();
+      const profile = geocodeAgentCountry(requested);
+      if (!profile) {
+        return {
+          ok: false as const,
+          error: `No geocode analysis profile is wired for "${requested}".`,
+        };
+      }
       const run = await startGeocodeAnalysisRun({
-        countryCode: String(form.get("country") ?? COUNTRY_CODE),
+        countryCode: profile.countryCode,
         focus: String(form.get("focus") ?? ""),
       });
       return { ok: true as const, intent: "start" as const, run };
@@ -91,6 +107,11 @@ export async function action({ request }: Route.ActionArgs) {
       }
       const suggestion = await setGeocodeAgentSuggestionStatus(id, status, {
         decidedBy: process.env.GEOCODE_AGENT_REVIEWER?.trim() ?? "",
+        // Only the "mark implemented" form sends one; an empty value leaves
+        // whatever version is already recorded untouched (see the store).
+        policyVersion: String(form.get("policy_version") ?? "")
+          .trim()
+          .slice(0, 64),
       });
       if (!suggestion) {
         return { ok: false as const, error: "That suggestion no longer exists." };
@@ -100,6 +121,9 @@ export async function action({ request }: Route.ActionArgs) {
 
     return { ok: false as const, error: "Unknown geocoding action." };
   } catch (error) {
+    if (error instanceof UnsupportedGeocodeAgentCountryError) {
+      return { ok: false as const, error: error.message };
+    }
     if (error instanceof GeocodeAgentRunActiveError) {
       return {
         ok: false as const,

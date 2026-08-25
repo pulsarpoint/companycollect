@@ -46,6 +46,10 @@ const agent = vi.hoisted(() => ({
   loadPanel: vi.fn(),
   startRun: vi.fn(),
   setStatus: vi.fn(),
+  /** The real country registry is a plain lookup; SE is the only wired one. */
+  country: (code: string) =>
+    code === "SE" ? { countryCode: "SE", label: "Sweden", briefing: "" } : null,
+  UnsupportedCountryError: class UnsupportedGeocodeAgentCountryError extends Error {},
   /** The real class is re-declared here so the route's `instanceof` branch is
    * exercised rather than mocked away. */
   ActiveError: class GeocodeAgentRunActiveError extends Error {},
@@ -54,6 +58,8 @@ const agent = vi.hoisted(() => ({
 vi.mock("~/agents/geocode-analysis.server", () => ({
   loadGeocodeAgentPanel: agent.loadPanel,
   startGeocodeAnalysisRun: agent.startRun,
+  geocodeAgentCountry: agent.country,
+  UnsupportedGeocodeAgentCountryError: agent.UnsupportedCountryError,
 }));
 
 vi.mock("~/lib/geocode-agent-store.server", () => ({
@@ -122,6 +128,28 @@ describe("action: start_geocode_analysis", () => {
     expect(response).toEqual({ ok: true, intent: "start", run: RUN });
   });
 
+  it("refuses an unwired country before any row is written", async () => {
+    const response = await action({
+      request: post({ intent: "start_geocode_analysis", country: "zz", focus: "" }),
+      params: {},
+      context: {} as never,
+    } as never);
+    expect(agent.startRun).not.toHaveBeenCalled();
+    expect(response).toEqual({
+      ok: false,
+      error: 'No geocode analysis profile is wired for "ZZ".',
+    });
+  });
+
+  it("normalises the country before starting", async () => {
+    await action({
+      request: post({ intent: "start_geocode_analysis", country: "se" }),
+      params: {},
+      context: {} as never,
+    } as never);
+    expect(agent.startRun).toHaveBeenCalledWith({ countryCode: "SE", focus: "" });
+  });
+
   it("explains a second click while a run is live instead of queueing another", async () => {
     agent.startRun.mockRejectedValueOnce(new agent.ActiveError("already active"));
     const response = await action({
@@ -159,8 +187,31 @@ describe("action: set_geocode_suggestion_status", () => {
       params: {},
       context: {} as never,
     } as never);
-    expect(agent.setStatus).toHaveBeenCalledWith("s1", "accepted", { decidedBy: "" });
+    expect(agent.setStatus).toHaveBeenCalledWith("s1", "accepted", {
+      decidedBy: "",
+      policyVersion: "",
+    });
     expect(response).toMatchObject({ ok: true, intent: "decide" });
+  });
+
+  it("passes the policy version through when a suggestion is marked implemented", async () => {
+    // The spec's graduation link: "implemented" without the version that
+    // shipped it is an unverifiable claim.
+    agent.setStatus.mockResolvedValueOnce({ id: "s1", status: "implemented" });
+    await action({
+      request: post({
+        intent: "set_geocode_suggestion_status",
+        suggestion_id: "s1",
+        status: "implemented",
+        policy_version: "  v7  ",
+      }),
+      params: {},
+      context: {} as never,
+    } as never);
+    expect(agent.setStatus).toHaveBeenCalledWith("s1", "implemented", {
+      decidedBy: "",
+      policyVersion: "v7",
+    });
   });
 
   it("refuses a status outside the lifecycle, and a missing id", async () => {
