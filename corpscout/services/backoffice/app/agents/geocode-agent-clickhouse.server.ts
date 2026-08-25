@@ -19,6 +19,14 @@
  *    writes and DDL server-side whatever text reaches it. This one is never
  *    turned off, whatever (1) and (2) conclude.
  *
+ * Lock 2 reads ClickHouse's OWN output (`Function`, `TableExpression` node
+ * labels), so a future server upgrade that renames those could make the gate
+ * silently start ALLOWING url()/s3() again. `readonly=1` would still block
+ * them -- this would be a loss of defense in depth, not reopened exfiltration
+ * -- but silent is the wrong failure mode, so `assertGuardSelfCheck` runs the
+ * whole path over a known-bad statement once per process and refuses to run
+ * ANY agent query if the guard fails to catch it (fail closed on drift).
+ *
  * This is a SEPARATE client from clickhouse.server.ts's: that one runs the
  * backoffice's own hand-written SQL under `readonly=2` (which permits settings
  * changes and named parameters). The agent gets the stricter `readonly=1`, no
@@ -29,6 +37,7 @@ import { createClient, type ClickHouseClient } from "@clickhouse/client";
 import {
   assertInertTableFunctions,
   assertReadOnlyQuery,
+  ReadOnlyQueryError,
 } from "~/agents/read-only-sql";
 
 /** Rows returned to the agent per query. Enough to show a pattern, small
@@ -39,6 +48,14 @@ export const AGENT_MAX_ROWS_PER_QUERY = 200;
 export const AGENT_QUERY_TIMEOUT_SECONDS = 90;
 /** Characters of serialised result the agent is shown per query. */
 export const AGENT_MAX_RESULT_CHARS = 40_000;
+
+/**
+ * The statement the guard self-check parses. A canonical exfiltration attempt:
+ * if the AST gate lets THIS through, the gate is not working and no agent
+ * query may run.
+ */
+export const GUARD_CANARY_SQL =
+  "SELECT * FROM url('http://example.invalid/', 'JSONEachRow')";
 
 let agentClient: ClickHouseClient | undefined;
 
@@ -77,6 +94,11 @@ export interface AgentQueryOutcome {
   elapsedMs: number;
 }
 
+/** The single dependency the guard and the canary share: hand ClickHouse a
+ * statement, get its AST back as text. Injectable so the drift path is
+ * testable without a server that has actually drifted. */
+export type ExplainAst = (sql: string) => Promise<string>;
+
 /**
  * Asks ClickHouse to parse the statement and returns its AST as text. Parsing
  * only: `EXPLAIN AST` reads no data and touches no table, so this costs one
@@ -91,21 +113,101 @@ async function explainAst(sql: string, maxRows: number): Promise<string> {
   return result.text();
 }
 
+export class GuardSelfCheckError extends Error {
+  constructor(detail: string) {
+    super(
+      `geocode agent SQL guard self-check failed -- ClickHouse AST shape may have changed (${detail}). Refusing to run agent queries.`,
+    );
+    this.name = "GuardSelfCheckError";
+  }
+}
+
+/**
+ * Runs the whole guard path over `GUARD_CANARY_SQL` and throws
+ * `GuardSelfCheckError` unless the guard REFUSES it. Fails closed on every way
+ * the guard could stop catching url(): drifted node labels, an empty/blank
+ * AST, or EXPLAIN AST being unavailable.
+ *
+ * Pure over its injected `explain`, so a test can force each failure branch
+ * without a real server.
+ */
+export async function assertGuardSelfCheck(explain: ExplainAst): Promise<void> {
+  // The shape gate must reject it on its own; if that ever stops being true,
+  // the canary is no longer canonical and must be updated deliberately.
+  try {
+    assertReadOnlyQuery(GUARD_CANARY_SQL);
+  } catch (error) {
+    if (error instanceof ReadOnlyQueryError) return; // refused early: guard holds.
+    throw error;
+  }
+
+  let ast: string;
+  try {
+    ast = await explain(GUARD_CANARY_SQL);
+  } catch (error) {
+    throw new GuardSelfCheckError(
+      `EXPLAIN AST is unavailable: ${error instanceof Error ? error.message : String(error)}`,
+    );
+  }
+
+  try {
+    assertInertTableFunctions(ast);
+  } catch (error) {
+    if (error instanceof ReadOnlyQueryError) return; // caught url(): guard holds.
+    throw error;
+  }
+
+  // We reach here only when the guard ALLOWED a url() exfiltration probe.
+  throw new GuardSelfCheckError(
+    "the url() canary was not refused by the AST gate",
+  );
+}
+
+let selfCheck: Promise<void> | undefined;
+
+/**
+ * Runs `assertGuardSelfCheck` at most once per process, memoized on the
+ * promise. A failed check is NOT cached as failed forever: the memo is cleared
+ * so a transient EXPLAIN outage can be retried on the next query, while a real
+ * drift keeps failing every time.
+ */
+function ensureGuardSelfCheck(explain: ExplainAst): Promise<void> {
+  if (!selfCheck) {
+    selfCheck = assertGuardSelfCheck(explain).catch((error: unknown) => {
+      selfCheck = undefined;
+      throw error;
+    });
+  }
+  return selfCheck;
+}
+
+/** Test-only: forget a prior self-check so the next query re-runs it. */
+export function resetGuardSelfCheckForTests(): void {
+  selfCheck = undefined;
+}
+
 /**
  * Validates and runs one agent-authored statement. Throws
- * `ReadOnlyQueryError` for a refused statement and the driver's own error for
- * a failing one -- the loop turns either into feedback the agent can act on.
+ * `ReadOnlyQueryError` for a refused statement, `GuardSelfCheckError` if the
+ * guard's own self-check has failed, and the driver's own error for a failing
+ * query -- the loop turns each into feedback the agent can act on.
  *
  * The statement that is executed is character-for-character the one that was
  * parsed by `EXPLAIN AST`, so the check and the execution cannot disagree.
  */
 export async function runAgentClickHouseQuery(
   request: { purpose: string; sql: string },
-  options: { maxRows?: number } = {},
+  options: { maxRows?: number; explain?: ExplainAst } = {},
 ): Promise<AgentQueryOutcome> {
   const maxRows = options.maxRows ?? AGENT_MAX_ROWS_PER_QUERY;
+  const explain = options.explain ?? ((sql: string) => explainAst(sql, maxRows));
+
+  // Fail closed before touching the request: if the guard cannot prove it
+  // still catches url(), no agent query runs at all.
+  await ensureGuardSelfCheck(explain);
+
   const sql = assertReadOnlyQuery(request.sql);
-  assertInertTableFunctions(await explainAst(sql, maxRows));
+  assertInertTableFunctions(await explain(sql));
   const startedAt = Date.now();
   const result = await getAgentClient(maxRows).query({
     query: sql,

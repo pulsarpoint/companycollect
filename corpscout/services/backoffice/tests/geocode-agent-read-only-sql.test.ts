@@ -7,7 +7,7 @@
  * argument and a backtick-quoted `` `url` `` call. The gate reads the server's
  * own parse, so these are the real inputs it will see.
  */
-import { describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import {
   assertInertTableFunctions,
   assertReadOnlyQuery,
@@ -16,6 +16,13 @@ import {
   parseAstNodes,
   ReadOnlyQueryError,
 } from "~/agents/read-only-sql";
+import {
+  assertGuardSelfCheck,
+  GuardSelfCheckError,
+  resetGuardSelfCheckForTests,
+  runAgentClickHouseQuery,
+  type ExplainAst,
+} from "~/agents/geocode-agent-clickhouse.server";
 
 /* --- captured ASTs ---------------------------------------------------- */
 
@@ -269,5 +276,103 @@ describe("assertInertTableFunctions: what ClickHouse says the statement is", () 
 
   it("allows an empty AST rather than inventing a verdict", () => {
     expect(() => assertInertTableFunctions("")).not.toThrow();
+  });
+});
+
+/* --- the fail-closed guard self-check ---------------------------------- */
+
+describe("assertGuardSelfCheck: fail closed when the AST gate stops catching url()", () => {
+  // A url() AST the gate SHOULD refuse -- the shape ClickHouse produces today.
+  const CANARY_AST_CAUGHT = `SelectWithUnionQuery (children 2)
+ ExpressionList (children 1)
+  SelectQuery (children 2)
+   ExpressionList (children 1)
+    Asterisk
+   TablesInSelectQuery (children 1)
+    TablesInSelectQueryElement (children 1)
+     TableExpression (children 1)
+      Function url (children 1)
+       ExpressionList (children 2)
+        Literal \\'http://example.invalid/\\'
+        Literal \\'JSONEachRow\\'
+ Identifier TabSeparatedRaw`;
+
+  it("passes silently when the gate refuses the url() canary", async () => {
+    await expect(
+      assertGuardSelfCheck(async () => CANARY_AST_CAUGHT),
+    ).resolves.toBeUndefined();
+  });
+
+  it("throws when a drifted AST no longer exposes the table function", async () => {
+    // Node labels renamed by a hypothetical CH upgrade: the gate walks it,
+    // finds no Function-under-TableExpression, and would ALLOW url(). The
+    // self-check turns that silent regression into a loud failure.
+    const drifted = "SomeNewRoot (children 1)\n TableThing corpscout.x\n  Callable url\n";
+    await expect(assertGuardSelfCheck(async () => drifted)).rejects.toThrow(
+      GuardSelfCheckError,
+    );
+    await expect(assertGuardSelfCheck(async () => drifted)).rejects.toThrow(
+      /self-check failed/,
+    );
+  });
+
+  it("throws on an empty AST rather than treating 'nothing found' as safe", async () => {
+    await expect(assertGuardSelfCheck(async () => "")).rejects.toThrow(GuardSelfCheckError);
+  });
+
+  it("throws when EXPLAIN AST itself is unavailable", async () => {
+    await expect(
+      assertGuardSelfCheck(async () => {
+        throw new Error("connection refused");
+      }),
+    ).rejects.toThrow(/EXPLAIN AST is unavailable/);
+  });
+});
+
+describe("runAgentClickHouseQuery: no query runs once the self-check has failed", () => {
+  beforeEach(() => resetGuardSelfCheckForTests());
+  afterEach(() => resetGuardSelfCheckForTests());
+
+  it("refuses every query when the injected explain shows drift", async () => {
+    // The drift is in the canary path; the request's own SQL never matters,
+    // because the client refuses before parsing it.
+    const explain: ExplainAst = async () => "SomeNewRoot\n TableThing x\n";
+    await expect(
+      runAgentClickHouseQuery({ purpose: "x", sql: "SELECT 1" }, { explain }),
+    ).rejects.toThrow(GuardSelfCheckError);
+  });
+
+  it("retries the self-check after a transient failure rather than caching it", async () => {
+    let canaryCalls = 0;
+    const urlAst = [
+      "TablesInSelectQueryElement (children 1)",
+      " TableExpression (children 1)",
+      "  Function url (children 1)",
+    ].join("\n");
+    const explain: ExplainAst = async (sql) => {
+      if (sql.includes("example.invalid")) {
+        canaryCalls += 1;
+        if (canaryCalls === 1) throw new Error("transient outage");
+        return urlAst;
+      }
+      // The request's own SQL: report a forbidden table function so the second
+      // attempt is refused at the request-AST stage (a ReadOnlyQueryError, not
+      // a GuardSelfCheckError) and never reaches the live .query() call.
+      return urlAst;
+    };
+
+    // First query: the canary throws, so the whole thing fails closed.
+    await expect(
+      runAgentClickHouseQuery({ purpose: "x", sql: "SELECT * FROM t" }, { explain }),
+    ).rejects.toThrow(GuardSelfCheckError);
+
+    // Second query: a failed check is NOT cached, so the canary runs again and
+    // now passes -- proven by the error changing to a plain ReadOnlyQueryError
+    // from the request's own forbidden AST, which is only reachable past the
+    // self-check.
+    await expect(
+      runAgentClickHouseQuery({ purpose: "x", sql: "SELECT * FROM t" }, { explain }),
+    ).rejects.toThrow(ReadOnlyQueryError);
+    expect(canaryCalls).toBeGreaterThanOrEqual(2);
   });
 });
