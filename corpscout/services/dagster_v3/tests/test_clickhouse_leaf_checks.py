@@ -45,6 +45,7 @@ def test_registry_covers_the_known_scheduled_leaves() -> None:
         "slovakia_rpo_clickhouse_companies",
         "sweden_company_companies_clickhouse",
         "sweden_address_geocode_store_clickhouse",
+        "sweden_address_geocodes_clickhouse",
         "sweden_shared_addresses_clickhouse",
         "sweden_financial_backfill_reports_clickhouse",
         "sweden_financial_current_facts_clickhouse",
@@ -61,6 +62,17 @@ def test_registry_covers_the_known_scheduled_leaves() -> None:
         if leaf.asset_key == "finland_ytj_resolved_clickhouse"
     )
     assert "fi_company_addresses" in finland.tables
+
+    # The derived serving table is a publish asset like any other, and the registry's
+    # contract is one leaf per publish asset. It was the one Sweden address publish without
+    # a leaf, so nothing watched the table four backoffice modules read every request.
+    derived = next(
+        leaf
+        for leaf in chk.CLICKHOUSE_LEAVES
+        if leaf.asset_key == "sweden_address_geocodes_clickhouse"
+    )
+    assert derived.tables == ("se_address_geocodes_current",)
+    assert derived.max_age == chk.WEEKLY
 
 
 def test_every_leaf_has_a_row_count_check_and_scheduled_leaves_freshness() -> None:

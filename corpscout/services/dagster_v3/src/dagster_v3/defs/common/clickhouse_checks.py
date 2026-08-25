@@ -203,11 +203,19 @@ CLICKHOUSE_LEAVES: tuple[ClickhouseLeaf, ...] = (
         "sweden_company_addresses_clickhouse", ("se_company_addresses",), WEEKLY
     ),
     ClickhouseLeaf("sweden_company_industries_clickhouse", ("se_industries",), WEEKLY),
-    # The legacy per-company geocode pair retired with migration 000319; the versioned
-    # store is the weekly Sweden geocode leaf in its place.
+    # The legacy per-company geocode pair retired with
+    # address_geocoding_assets.LEGACY_PAIR_RETIREMENT_DROP_SQL; the versioned store is the
+    # weekly Sweden geocode leaf in its place.
     ClickhouseLeaf(
         "sweden_address_geocode_store_clickhouse",
         ("se_address_geocodes",),
+        WEEKLY,
+    ),
+    # The serving projection of that store, and the table four backoffice modules read on
+    # every request. It is a publish asset, so it gets a leaf like every other one.
+    ClickhouseLeaf(
+        "sweden_address_geocodes_clickhouse",
+        ("se_address_geocodes_current",),
         WEEKLY,
     ),
     ClickhouseLeaf(
