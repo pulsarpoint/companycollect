@@ -135,7 +135,14 @@ export interface SeCompanyInfoListRow {
   has_description: number;
   /** 0 | 1 -- has a live row in corpscout.se_company_address. */
   has_address: number;
-  /** 0 | 1 -- has annual accounts from Bolagsverket or ESEF. */
+  /**
+   * 0 | 1 -- ANY financial data: extracted Bolagsverket/ESEF metrics OR a
+   * filed/parsed report with nothing extracted yet. Owner ruling (2026-08-24
+   * addendum, applied 2026-08-25): the list must never show "—" for a company
+   * whose Financial tab renders a "Filed reports" card, so ✓ means any
+   * financial data, not "has extracted figures" -- the list matches the tab
+   * by principle.
+   */
   has_financial: number;
   /** 0 | 1 -- has a published row in corpscout.se_company_person. */
   has_people: number;
@@ -216,6 +223,25 @@ export interface SeCompanyInfoListQuery extends SeCompanyInfoListFilters {
  *   se_financials_esef_current's own INNER JOIN does (issuer_scheme 'lei',
  *   country SE, is_current). Live check: this predicate and the view both name
  *   404 companies.
+ * - financial (filed reports, task 2026-08-25 owner ruling): se_financial_reports
+ *   is the exact table `FINANCIAL_REPORTS_SQL` in se-company-financial.server.ts
+ *   reads for the Financial tab's "Filed reports" card (`WHERE company_id =
+ *   {companyId:String}`, FINAL to show a re-parsed filing once as its newest
+ *   version). It is a ReplacingMergeTree(resolved_at) keyed on (company_id,
+ *   ifNull(report_period_end, ...), statement_key); verified read-only against
+ *   its writer (upsert_sweden_financial_reports_partition,
+ *   dagster_v3/defs/sweden_financial/clickhouse.py): a partition refresh
+ *   PHYSICALLY deletes the superseded rows by source_archive_key and then
+ *   inserts the new set -- there is no is_current-style flag flipped in place
+ *   the way se_company_address tombstones an address. So a bare `company_id IN
+ *   (SELECT company_id FROM se_financial_reports)` needs no FINAL for the same
+ *   reason financialBolagsverket/financialEsef need none: a row that still
+ *   exists in the table (merged or not) was never a live row hidden behind a
+ *   flag, it either still has a filed report or it and its rows are gone.
+ *   This is the arm that closes the reconciliation gap the owner ruled on: 287
+ *   companies have a row here with neither a Bolagsverket nor an ESEF
+ *   extracted metric, so before this arm the list showed them "—" while their
+ *   Financial tab rendered a Filed reports card.
  * - people: se_company_person is the published row (no is_current, no
  *   tombstone -- a row is never withdrawn, so no FINAL is needed to answer
  *   "does this company have one"), and se_company_person_role.sources is the
@@ -236,6 +262,7 @@ export const COMPANY_SETS = {
   addressBolagsverket: `SELECT company_id FROM corpscout.se_company_address FINAL WHERE is_current AND has(sources, 'bolagsverket')`,
   financialBolagsverket: `SELECT company_id FROM corpscout.se_bolagsverket_financial_metrics`,
   financialEsef: `SELECT ci.company_id FROM corpscout.company_identifier AS ci WHERE ci.issuer_scheme = 'lei' AND ci.country_code = 'SE' AND ci.is_current = 1 AND ci.issuer_id IN (SELECT upperUTF8(trimBoth(m.lei)) FROM corpscout.esef_financial_metrics AS m)`,
+  financialReports: `SELECT company_id FROM corpscout.se_financial_reports`,
   people: `SELECT company_id FROM corpscout.se_company_person`,
   peopleBolagsverket: `SELECT company_id FROM corpscout.se_company_person_role WHERE has(sources, 'bolagsverket')`,
   peopleEsef: `SELECT company_id FROM corpscout.se_company_person_role WHERE has(sources, 'esef')`,
@@ -260,17 +287,37 @@ function anyOf(...terms: readonly string[]): string {
  * client-safe catalog's own keys -- so a datatype added to PROFILE_DATATYPES
  * without an expression here is a compile error, never a column of blanks.
  *
- * `has_financial` is deliberately the OR of the two REGISTER arms rather than
- * a third read of se_company_financials_latest: those two views are exactly
- * what the Financial tab renders (SOURCE_VIEWS in se-company-financial.server
- * .ts), and defining it this way makes an invariant hold by construction --
- * a row can never show Financial ✓ with neither B nor E among its letters.
+ * `has_financial` is the OR of THREE arms, not a fourth read of
+ * se_company_financials_latest: the two REGISTER arms are exactly the two
+ * views the Financial tab renders as extracted figures (SOURCE_VIEWS in
+ * se-company-financial.server.ts), and `financialReports` is that same tab's
+ * "Filed reports" card source (se_financial_reports, read exactly as
+ * FINANCIAL_REPORTS_SQL there reads it -- see COMPANY_SETS's doc comment).
+ *
+ * Owner ruling (2026-08-24 addendum, applied 2026-08-25): ✓ means ANY
+ * financial data -- extracted figures OR filed/parsed reports -- not "has
+ * extracted metrics", so the list can never show "—" for a company whose
+ * Financial tab renders a card. This is a deliberate widening: before it, 287
+ * companies with a parsed filing but zero extracted metrics showed "—" here
+ * while their tab showed a Filed reports card, contradicting the list.
+ *
+ * It also DROPS a previous by-construction invariant worth naming explicitly:
+ * with only the two register arms, Financial ✓ could never appear without a B
+ * or E letter in Sources, because those same two arms fed
+ * PROFILE_SOURCE_PREDICATES.bolagsverket/esef. `financialReports` does NOT
+ * feed either letter (se_financial_reports does not, in this query, say which
+ * register filed the report -- see PROFILE_SOURCE_PREDICATES's doc comment),
+ * so a company can now show Financial ✓ from a filed report alone, with
+ * neither letter. In practice this stays rare -- Bolagsverket's own
+ * near-universal address coverage still earns most such rows a B -- but it is
+ * no longer guaranteed by the SQL the way it was.
  */
 export const DATATYPE_PRESENCE_EXPR: Record<ProfileDatatypeKey, string> = {
   has_address: hasCompanyIn(COMPANY_SETS.address),
   has_financial: anyOf(
     hasCompanyIn(COMPANY_SETS.financialBolagsverket),
     hasCompanyIn(COMPANY_SETS.financialEsef),
+    hasCompanyIn(COMPANY_SETS.financialReports),
   ),
   has_people: hasCompanyIn(COMPANY_SETS.people),
   has_domains: hasCompanyIn(COMPANY_SETS.domains),
@@ -311,6 +358,13 @@ export const DATATYPE_PRESENCE_EXPR: Record<ProfileDatatypeKey, string> = {
  * the Domains presence column is where that datatype speaks. (Live check
  * 2026-08-24, corrected by review 2026-08-25: folding them in would move ZERO companies --
  * every published company with a wikidata-sourced domain already carries W via wikidata_id.)
+ *
+ * ALSO NOT folded in: COMPANY_SETS.financialReports (se_financial_reports),
+ * added 2026-08-25 to widen `has_financial` (see DATATYPE_PRESENCE_EXPR's doc
+ * comment). That table carries no column this query reads to say which
+ * register filed the report, so a company earning Financial ✓ from a filed
+ * report alone does not automatically earn a B or E letter here -- unlike the
+ * two register arms, which double as both a letter and a presence check.
  *
  * Keyed by ProfileSourceValue, so adding a source to the catalog without a
  * predicate here is a type error rather than a silently missing letter.

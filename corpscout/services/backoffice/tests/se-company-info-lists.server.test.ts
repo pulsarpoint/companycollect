@@ -274,9 +274,19 @@ describe("se_company_info list SQL shape", () => {
     expect(COMPANY_SETS.domains).toBe(
       "SELECT company_id FROM corpscout.company_domains WHERE country_code = 'SE'",
     );
+    // The reports arm reads exactly the table the Financial tab's "Filed
+    // reports" card reads (FINANCIAL_REPORTS_SQL in
+    // se-company-financial.server.ts) -- widened in 2026-08-25 so the list
+    // can't show "—" for a company whose tab renders that card.
+    expect(COMPANY_SETS.financialReports).toBe(
+      "SELECT company_id FROM corpscout.se_financial_reports",
+    );
     // FINAL only where a flag is flipped in place by a later part. address's
     // is_current is (a tombstoned address must not read as live); the other
-    // three tables never withdraw a row, so paying for a merge would be waste.
+    // four tables never withdraw a row via an in-place flag -- se_financial_
+    // reports withdraws one by physically deleting it (partition-scoped
+    // delete+insert, see COMPANY_SETS's doc comment) -- so paying for a merge
+    // would be waste.
     expect(COMPANY_SETS.address).toContain("FINAL");
     expect(COMPANY_SETS.addressBolagsverket).toContain("FINAL");
     for (const set of [
@@ -284,6 +294,7 @@ describe("se_company_info list SQL shape", () => {
       COMPANY_SETS.domains,
       COMPANY_SETS.financialBolagsverket,
       COMPANY_SETS.financialEsef,
+      COMPANY_SETS.financialReports,
     ]) {
       expect(set).not.toContain("FINAL");
     }
@@ -315,19 +326,33 @@ describe("se_company_info list SQL shape", () => {
     expect(DATATYPE_PRESENCE_EXPR.has_domains).toBe(
       `i.company_id IN (${COMPANY_SETS.domains})`,
     );
-    // Financial presence is the OR of the two REGISTER arms -- the same two
-    // source views the Financial tab renders -- and is spelled with the very
-    // sets the B and E letters use. That is what makes the invariant hold:
-    // a row can never show Financial ✓ with neither B nor E among its letters.
+    // Financial presence is the OR of THREE arms -- the two REGISTER arms
+    // (spelled with the very sets the B and E letters use) plus the reports
+    // arm (owner ruling 2026-08-24 addendum: ✓ means ANY financial data, not
+    // just extracted figures, so the list can't show "—" under a Filed
+    // reports card). Pinned WHOLE: dropping any arm -- especially the reports
+    // arm regressing the 287-company reconciliation gap back open -- fails
+    // this test, not just a `.toContain`.
     expect(DATATYPE_PRESENCE_EXPR.has_financial).toBe(
       `(i.company_id IN (${COMPANY_SETS.financialBolagsverket})` +
-        ` OR i.company_id IN (${COMPANY_SETS.financialEsef}))`,
+        ` OR i.company_id IN (${COMPANY_SETS.financialEsef})` +
+        ` OR i.company_id IN (${COMPANY_SETS.financialReports}))`,
     );
     expect(PROFILE_SOURCE_PREDICATES.bolagsverket).toContain(
       `i.company_id IN (${COMPANY_SETS.financialBolagsverket})`,
     );
     expect(PROFILE_SOURCE_PREDICATES.esef).toContain(
       `i.company_id IN (${COMPANY_SETS.financialEsef})`,
+    );
+    // The reports arm is deliberately NOT folded into either register letter
+    // (se_financial_reports does not say, in this query, which register filed
+    // the report) -- see PROFILE_SOURCE_PREDICATES's doc comment. Financial ✓
+    // can therefore no longer be relied on to imply a B or E letter.
+    expect(PROFILE_SOURCE_PREDICATES.bolagsverket).not.toContain(
+      "se_financial_reports",
+    );
+    expect(PROFILE_SOURCE_PREDICATES.esef).not.toContain(
+      "se_financial_reports",
     );
   });
 
