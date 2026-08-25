@@ -2,7 +2,7 @@
 
 BACKOFFICE_POSTGRES_MIGRATE_URL := $(or $(BACKOFFICE_POSTGRES_MIGRATE_URL),$(shell sed -n 's/^BACKOFFICE_POSTGRES_MIGRATE_URL=//p' .env 2>/dev/null | tail -n 1))
 MIGRATE_IMAGE ?= migrate/migrate:v4.17.0
-MIGRATIONS_DIR := $(CURDIR)/database/migrations
+MIGRATIONS_DIR := $(CURDIR)/migrations
 
 _MIGRATE_RUN = docker run --rm -v "$(MIGRATIONS_DIR):/migrations:ro" $(MIGRATE_IMAGE) -path=/migrations -database="$(BACKOFFICE_POSTGRES_MIGRATE_URL)"
 

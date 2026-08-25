@@ -1,7 +1,7 @@
 /**
  * Every read and write of the geocode analysis agent's three PostgreSQL
  * tables (`geocode_agent_runs`, `geocode_agent_suggestions`,
- * `geocode_agent_memory`; migration database/migrations/000001_geocode_agent).
+ * `geocode_agent_memory`; migration migrations/000001_geocode_agent).
  *
  * The agent NEVER reaches PostgreSQL. It returns structured output, the loop
  * in app/agents/geocode-analysis.server.ts validates it against

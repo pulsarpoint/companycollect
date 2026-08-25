@@ -152,7 +152,7 @@ loads and polls never write; a run abandoned by a dead process is reaped at the
 next trigger, measured against that run's own stored budget.
 
 Its three tables live in the review-queue PostgreSQL and are created by the
-first migration in `database/migrations`:
+first migration in `migrations`:
 
 ```bash
 make migrate-up        # needs BACKOFFICE_POSTGRES_MIGRATE_URL in .env

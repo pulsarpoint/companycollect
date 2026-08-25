@@ -27,7 +27,7 @@ const PG_URL = process.env.GEOCODE_AGENT_PG_TEST_URL;
 if (PG_URL) process.env.BACKOFFICE_POSTGRES_URL = PG_URL;
 
 const MIGRATION = fileURLToPath(
-  new URL("../database/migrations/000001_geocode_agent.up.sql", import.meta.url),
+  new URL("../migrations/000001_geocode_agent.up.sql", import.meta.url),
 );
 
 const params = {
