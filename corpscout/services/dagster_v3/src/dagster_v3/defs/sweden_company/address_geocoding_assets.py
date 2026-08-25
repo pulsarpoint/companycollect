@@ -24,6 +24,10 @@ from dagster_v3.defs.sweden_company import (
 from dagster_v3.defs.sweden_company.address_resolution_policy import (
     SWEDEN_ADDRESS_RESOLUTION_POLICY,
 )
+from dagster_v3.defs.sweden_financial.clickhouse import (
+    clickhouse_table_row_count,
+    guard_against_clickhouse_table_shrink,
+)
 
 GROUP_NAME = "sweden_company"
 GEOCODE_ASSET_KEY = "sweden_company_address_geocodes_clickhouse"
@@ -489,6 +493,48 @@ DERIVED_PARITY_SQL = (
 )
 
 
+def _derived_parity_result(clickhouse: ClickhouseResource) -> dg.AssetCheckResult:
+    """One two-sided read, shared by the two checks that host it.
+
+    WHAT THE DIGEST SEES, AND WHAT IT DOES NOT. `cityHash64` covers five of the serving
+    table's 26 columns -- address_id, match_status, latitude, longitude, matched_at --
+    which are the columns that decide WHICH outcome is current and where it puts a
+    company on a map. A table wrong only in the descriptive remainder
+    (geocode_precision, match_confidence, candidate_count, the source_* provenance)
+    hashes identically and passes here. That is deliberate: the digest is a swap
+    tripwire, not a column-by-column diff, and widening it would trade a cheap weekly
+    read for one that reserializes 2.09M rows of provenance. The invariants over those
+    columns are check 3's job, not this one's.
+    """
+    with clickhouse.get_connection() as client:
+        sides = {
+            str(side): (int(rows), int(identities), int(content_hash))
+            for side, rows, identities, content_hash in client.execute(
+                DERIVED_PARITY_SQL
+            )
+        }
+    derived, store = sides["derived"], sides["store"]
+    return dg.AssetCheckResult(
+        passed=derived == store,
+        metadata={
+            "derived_rows": derived[0],
+            "store_rows": store[0],
+            "derived_identities": derived[1],
+            "store_identities": store[1],
+            "content_hashes_agree": derived[2] == store[2],
+        },
+    )
+
+
+class SwedenDerivedGeocodesConfig(dg.Config):
+    # Shrink-guard override (see sweden_financial/clickhouse.py's
+    # guard_against_clickhouse_table_shrink) -- MUST stay False by default. The store is
+    # append-only, so the derived identity set can only grow; a smaller one means the
+    # store this ran against is not the whole store. Only set True via explicit run
+    # config, for a shrink an operator has confirmed is real.
+    allow_shrink: bool = False
+
+
 @dg.asset(
     deps=[dg.AssetKey(GEOCODE_STORE_ASSET_KEY)],
     group_name=GROUP_NAME,
@@ -505,6 +551,7 @@ DERIVED_PARITY_SQL = (
 )
 def sweden_address_geocodes_clickhouse(
     context: dg.AssetExecutionContext,
+    config: SwedenDerivedGeocodesConfig,
     clickhouse: ClickhouseResource,
 ) -> dg.MaterializeResult:
     """Project the store onto the serving table, in one atomic swap.
@@ -550,6 +597,20 @@ def sweden_address_geocodes_clickhouse(
                     f"{stage} holds {rows} rows for {identities} identities -- the "
                     "versioned read must yield exactly one outcome per identity"
                 )
+            # THE STORE ONLY GROWS, SO THE DERIVED SET ONLY GROWS. An append-only store
+            # cannot lose an identity, so a stage smaller than the table it is about to
+            # replace does not mean fewer addresses -- it means this ran against a store
+            # that is not the whole store (backfill not run, wrong cluster, rows pruned).
+            # Neither refusal above sees that: a store holding one demand week stages a
+            # perfectly well-formed handful of rows, one per identity, and would replace
+            # 2.09M served identities with them. The parity check cannot see it either --
+            # both of its sides read that same store and would agree.
+            guard_against_clickhouse_table_shrink(
+                qualified_table=target,
+                existing_row_count=clickhouse_table_row_count(client, target),
+                staged_row_count=int(rows),
+                allow_shrink=config.allow_shrink,
+            )
             client.execute(f"EXCHANGE TABLES {stage} AND {target}")
         finally:
             client.execute(f"DROP TABLE IF EXISTS {stage}")
@@ -605,24 +666,7 @@ def sweden_address_geocodes_derived_parity_check(
     has a plausible row count and the wrong rows, so the content hash is what makes this
     check able to fail at all. It retires with the serving table.
     """
-    with clickhouse.get_connection() as client:
-        sides = {
-            str(side): (int(rows), int(identities), int(content_hash))
-            for side, rows, identities, content_hash in client.execute(
-                DERIVED_PARITY_SQL
-            )
-        }
-    derived, store = sides["derived"], sides["store"]
-    return dg.AssetCheckResult(
-        passed=derived == store,
-        metadata={
-            "derived_rows": derived[0],
-            "store_rows": store[0],
-            "derived_identities": derived[1],
-            "store_identities": store[1],
-            "content_hashes_agree": derived[2] == store[2],
-        },
-    )
+    return _derived_parity_result(clickhouse)
 
 
 def build_store_append_regression_sql() -> str:
@@ -844,6 +888,31 @@ def sweden_address_geocode_store_clickhouse(
             "table": geocode_store.QUALIFIED_CLICKHOUSE_GEOCODE_STORE_TABLE,
         }
     )
+
+
+@dg.asset_check(
+    asset=sweden_address_geocode_store_clickhouse,
+    name="derived_current_matches_the_store",
+    description=(
+        "The same transition tripwire, evaluated from the store's side: fails when "
+        "the derived Sweden serving geocode table disagrees with the versioned store "
+        "read it is supposed to be a projection of."
+    ),
+)
+def sweden_address_geocode_store_derived_parity_check(
+    clickhouse: ClickhouseResource,
+) -> dg.AssetCheckResult:
+    """The twin, and the reason there are two.
+
+    A check runs with the asset it hangs off. During the transition these two assets
+    move independently -- the store is appended to by every promoting job, and a
+    retried, backfilled or manually materialized store leg does not rebuild the serving
+    table. In those runs the tripwire on the serving asset does not fire at all, which
+    is precisely when the two tables are most likely to have drifted apart. Same query,
+    same severity, no second expression of anything: both call one function. Both retire
+    with the serving table.
+    """
+    return _derived_parity_result(clickhouse)
 
 
 class SwedenGeocodeStoreBackfillConfig(dg.Config):
@@ -1711,6 +1780,7 @@ defs = dg.Definitions(
         sweden_company_canonical_addresses_complete_check,
         sweden_shared_addresses_complete_check,
         sweden_address_geocodes_derived_parity_check,
+        sweden_address_geocode_store_derived_parity_check,
         sweden_shared_address_geocodes_complete_check,
         sweden_shared_address_geocodes_baseline_check,
         sweden_company_address_exact_match_rate_check,

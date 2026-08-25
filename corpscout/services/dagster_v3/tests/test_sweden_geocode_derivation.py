@@ -35,7 +35,9 @@ import pytest
 
 from dagster_v3.defs.sweden_company.address_geocoding_assets import (
     DERIVED_PARITY_SQL,
+    SwedenDerivedGeocodesConfig,
     build_derived_current_geocodes_sql,
+    sweden_address_geocode_store_derived_parity_check,
     sweden_address_geocodes_clickhouse,
     sweden_address_geocodes_derived_parity_check,
 )
@@ -90,6 +92,7 @@ class _FakeClickhouseClient:
         *,
         existing_tables: set[str] | None = None,
         staged: tuple[int, int] = (8, 8),
+        existing: int = 7,
         parity: tuple[tuple[Any, ...], ...] = (),
     ) -> None:
         self.executed: list[tuple[str, Any]] = []
@@ -99,6 +102,7 @@ class _FakeClickhouseClient:
             else existing_tables
         )
         self.staged = staged
+        self.existing = existing
         self.parity = parity
 
     def execute(self, sql: str, params: Any = None) -> list[tuple]:
@@ -109,6 +113,8 @@ class _FakeClickhouseClient:
             ]
         if "uniqExact(address_id) FROM corpscout._tmp_" in sql:
             return [self.staged]
+        if sql == f"SELECT count() FROM {TARGET}":
+            return [(self.existing,)]
         if "UNION ALL" in sql:
             return list(self.parity)
         if "GROUP BY match_status" in sql:
@@ -133,9 +139,13 @@ class _FakeResource:
         yield self._connection
 
 
-def _run_derivation(client: _FakeClickhouseClient) -> dg.MaterializeResult:
+def _run_derivation(
+    client: _FakeClickhouseClient, *, allow_shrink: bool = False
+) -> dg.MaterializeResult:
     return sweden_address_geocodes_clickhouse.node_def.compute_fn.decorated_fn(
-        dg.build_asset_context(), _FakeResource(client)
+        dg.build_asset_context(),
+        SwedenDerivedGeocodesConfig(allow_shrink=allow_shrink),
+        _FakeResource(client),
     )
 
 
@@ -150,12 +160,17 @@ def test_the_asset_stages_fills_validates_and_swaps_and_never_writes_the_target(
 
     result = _run_derivation(client)
 
-    create, insert, staged, exchange, drop, statuses, geolocated = client.statements
+    create, insert, staged, existing, exchange, drop, statuses, geolocated = (
+        client.statements
+    )
     stage = re.fullmatch(rf"CREATE TABLE (\S+) AS {re.escape(TARGET)}", create).group(1)
     assert stage.startswith("corpscout._tmp_se_address_geocodes_current_")
     assert insert.startswith(f"INSERT INTO {stage} ({', '.join(SERVING_COLUMNS)})\n")
     assert insert.endswith(build_derived_current_geocodes_sql())
     assert staged == f"SELECT count(), uniqExact(address_id) FROM {stage}"
+    # The shrink guard's own read, and it happens BEFORE the swap: a pre-swap count is
+    # the only count that can say what this replace would cost.
+    assert existing == f"SELECT count() FROM {TARGET}"
     assert exchange == f"EXCHANGE TABLES {stage} AND {TARGET}"
     assert drop == f"DROP TABLE IF EXISTS {stage}"
     assert TARGET in statuses and TARGET in geolocated
@@ -203,9 +218,46 @@ def test_the_asset_refuses_a_stage_holding_two_outcomes_for_one_identity() -> No
     )
 
 
+def test_the_asset_refuses_a_store_that_is_not_the_whole_store() -> None:
+    """The silent outage the two refusals above cannot see.
+
+    A store holding one demand week -- the backfill never ran, the run pointed at the
+    wrong cluster, rows were pruned -- stages a perfectly well-formed handful of rows,
+    one per identity, and would replace every served identity with them. rows != 0
+    passes. rows == identities passes. And the parity check passes too, because BOTH of
+    its sides read that same store. The store is append-only, so the derived set can
+    only grow: a shrink is a defect, never news.
+    """
+    client = _FakeClickhouseClient(staged=(3, 3), existing=7)
+
+    with pytest.raises(ValueError, match="less than 50%"):
+        _run_derivation(client)
+
+    assert not any(
+        statement.startswith("EXCHANGE TABLES") for statement in client.statements
+    )
+    assert client.statements[-1].startswith("DROP TABLE IF EXISTS corpscout._tmp_")
+
+
+def test_the_shrink_refusal_is_overridable_only_by_explicit_run_config() -> None:
+    """`allow_shrink` exists for an operator who has confirmed a shrink is real. It must
+    never default on -- a guard that defaults to off is not a guard."""
+    assert SwedenDerivedGeocodesConfig().allow_shrink is False
+
+    client = _FakeClickhouseClient(staged=(3, 3), existing=7)
+    result = _run_derivation(client, allow_shrink=True)
+
+    assert result.metadata["rows"] == 3
+    assert any(
+        statement.startswith("EXCHANGE TABLES") for statement in client.statements
+    )
+
+
 def _run_parity_check(client: _FakeClickhouseClient) -> dict[str, Any]:
-    result = sweden_address_geocodes_derived_parity_check.node_def.compute_fn.decorated_fn(
-        _FakeResource(client)
+    result = (
+        sweden_address_geocodes_derived_parity_check.node_def.compute_fn.decorated_fn(
+            _FakeResource(client)
+        )
     )
     # AssetCheckResult normalizes its metadata into MetadataValue wrappers.
     return {
@@ -229,20 +281,46 @@ def test_the_parity_check_passes_when_both_sides_agree() -> None:
     assert client.statements == [DERIVED_PARITY_SQL]
 
 
-def test_the_parity_check_is_registered_against_the_serving_asset() -> None:
+def test_the_parity_check_is_registered_on_both_sides_of_the_transition() -> None:
     """A check defined and never registered runs nowhere and reports nothing -- the one
-    failure mode a check cannot report on itself."""
+    failure mode a check cannot report on itself.
+
+    Two hosts, one query. A check runs with the asset it hangs off, and during the
+    transition these two assets move independently: a retried or manually materialized
+    store leg does not rebuild the serving table, and the tripwire hosted on the serving
+    asset would not fire in that run at all.
+    """
     from dagster_v3.definitions import defs as load_defs
 
     repo = load_defs().get_repository_def()
 
-    assert (
-        dg.AssetCheckKey(
-            asset_key=dg.AssetKey("sweden_address_geocodes_clickhouse"),
-            name="derived_current_matches_the_store",
+    for asset_name in (
+        "sweden_address_geocodes_clickhouse",
+        "sweden_address_geocode_store_clickhouse",
+    ):
+        assert (
+            dg.AssetCheckKey(
+                asset_key=dg.AssetKey(asset_name),
+                name="derived_current_matches_the_store",
+            )
+            in repo.asset_graph.asset_check_keys
         )
-        in repo.asset_graph.asset_check_keys
+
+
+def test_both_parity_hosts_run_the_same_query_and_read_it_the_same_way() -> None:
+    """Not a second expression of anything: one function, two hosts. A twin that grew
+    its own query would drift, and the drift would be invisible -- both would keep
+    passing on their own terms."""
+    twin = sweden_address_geocode_store_derived_parity_check
+    client = _FakeClickhouseClient(
+        parity=(("derived", 8, 8, 1111), ("store", 8, 8, 2222))
     )
+
+    result = twin.node_def.compute_fn.decorated_fn(_FakeResource(client))
+
+    assert client.statements == [DERIVED_PARITY_SQL]
+    assert result.passed is False
+    assert result.metadata["content_hashes_agree"].value is False
 
 
 def test_the_parity_check_fails_on_a_stale_table_with_the_right_row_count() -> None:
@@ -406,7 +484,9 @@ def _marked(label: str, query: str) -> str:
 
 
 def _script(*, join_use_nulls: int) -> str:
-    create, insert, staged, exchange, drop, statuses, geolocated = _asset_statements()
+    create, insert, staged, existing, exchange, drop, statuses, geolocated = (
+        _asset_statements()
+    )
     serving_columns = ", ".join(SERVING_COLUMNS)
     parts = [f"SET join_use_nulls = {join_use_nulls};"]
     parts.extend(f"{statement};" for statement in _schema_statements())
@@ -429,6 +509,7 @@ def _script(*, join_use_nulls: int) -> str:
     parts.append(f"{create};")
     parts.append(f"{insert};")
     parts.append(_marked("staged", staged))
+    parts.append(_marked("existing", existing))
     parts.append(f"{exchange};")
     parts.append(f"{drop};")
 
@@ -459,6 +540,28 @@ def _script(*, join_use_nulls: int) -> str:
     )
     parts.append(f"EXCHANGE TABLES corpscout.never_swapped AND {TARGET};")
     parts.append(_marked("stale_parity", DERIVED_PARITY_SQL))
+
+    # ... and the store as it looks when it is not the whole store: one demand week,
+    # against the serving table last Tuesday left behind. EXCHANGE rather than DELETE so
+    # the state is there the moment the next statement reads it.
+    parts.append(f"CREATE TABLE corpscout.store_pruned AS {STORE};")
+    parts.append(
+        f"INSERT INTO corpscout.store_pruned"
+        f" SELECT * FROM {STORE} WHERE reference_md5 = '{WEEK_1_MD5}';"
+    )
+    parts.append(f"EXCHANGE TABLES corpscout.store_pruned AND {STORE};")
+    parts.append(f"CREATE TABLE corpscout.target_week_0 AS {TARGET};")
+    parts.append(
+        f"INSERT INTO corpscout.target_week_0 ({serving_columns})\n"
+        f"SELECT {serving_columns} FROM corpscout.store_pruned\n"
+        f"WHERE policy_version = '{POLICY}' AND reference_md5 = '{WEEK_0_MD5}';"
+    )
+    parts.append(f"EXCHANGE TABLES corpscout.target_week_0 AND {TARGET};")
+    parts.append(f"{create};")
+    parts.append(f"{insert};")
+    parts.append(_marked("shrink_staged", staged))
+    parts.append(_marked("shrink_existing", existing))
+    parts.append(f"{drop};")
     return "\n".join(parts) + "\n"
 
 
@@ -550,6 +653,42 @@ def test_the_parity_query_runs_and_agrees_with_the_store_it_derived_from(
     assert set(parity) == {"derived", "store"}
     assert parity["derived"] == parity["store"]
     assert parity["derived"][:2] == ("8", "8")
+
+
+@pytest.mark.integration
+def test_a_store_that_is_not_the_whole_store_refuses_instead_of_serving(
+    sections: dict[str, list[list[str]]],
+) -> None:
+    """The silent outage, end to end: real numbers out of ClickHouse, real refusal out of
+    the asset body.
+
+    The store here holds one demand week -- the shape a missing backfill, a wrong cluster
+    or a pruning leaves behind. The versioned read over it stages three well-formed rows,
+    one per identity, over a serving table holding seven. Both of the asset's own
+    refusals pass on those numbers; only the shrink guard stops it, and the message it
+    raises is the guard's, not theirs.
+    """
+    assert sections["shrink_staged"] == [["3", "3"]]
+    assert sections["shrink_existing"] == [["7"]]
+
+    [[staged_rows, staged_identities]] = sections["shrink_staged"]
+    [[existing_rows]] = sections["shrink_existing"]
+    client = _FakeClickhouseClient(
+        staged=(int(staged_rows), int(staged_identities)),
+        existing=int(existing_rows),
+    )
+
+    with pytest.raises(ValueError) as raised:
+        _run_derivation(client)
+
+    assert "staged row count 3 is less than 50% of the existing 7 rows" in str(
+        raised.value
+    )
+    assert "0 rows" not in str(raised.value)
+    assert "one outcome per identity" not in str(raised.value)
+    assert not any(
+        statement.startswith("EXCHANGE TABLES") for statement in client.statements
+    )
 
 
 @pytest.mark.integration
