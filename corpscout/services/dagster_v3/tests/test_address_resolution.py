@@ -22,6 +22,8 @@ from dagster_v3.defs.address_resolution.search_documents import (
 )
 from dagster_v3.defs.sweden_company.address_resolution_policy import (
     SWEDEN_ADDRESS_RESOLUTION_POLICY,
+    SWEDEN_SEPARATE_DEFINITE_EXPANSIONS,
+    SWEDEN_STREET_SUFFIX_EXACT_EXPANSIONS,
     SWEDEN_STREET_SUFFIX_EXPANSIONS,
     SWEDEN_STREET_VARIANT_LANGUAGES,
 )
@@ -30,6 +32,8 @@ from dagster_v3.defs.sweden_company.address_resolution_promotion import (
 )
 from dagster_v3.defs.sweden_company.address_resolution_shadow import (
     QUALIFIED_SHADOW_COMPARISON_TABLE,
+    QUALIFIED_SHADOW_QUERY_STREET_VARIANTS_TABLE,
+    QUALIFIED_SHADOW_REFERENCE_DOCUMENTS_TABLE,
     QUALIFIED_SHADOW_RESULTS_TABLE,
     QUALIFIED_UNMATCHED_DIAGNOSTICS_TABLE,
     replace_sweden_address_resolution_shadow,
@@ -47,6 +51,36 @@ def test_sweden_golden_address_resolution_corpus() -> None:
 
     assert evaluation.failures == ()
     assert evaluation.passed_count == evaluation.case_count
+
+
+def test_sweden_address_resolution_policy_is_v7() -> None:
+    assert (
+        SWEDEN_ADDRESS_RESOLUTION_POLICY.version == "se-address-resolution-policy-v7"
+    )
+
+
+def test_sweden_street_suffix_exact_expansions_are_derived_from_glued() -> None:
+    assert SWEDEN_STREET_SUFFIX_EXACT_EXPANSIONS == {
+        "SE": {"gr.": "gränd", "v.": "vägen", "g.": "gatan"}
+    }
+
+
+def test_sweden_separate_definite_expansions_match_the_brief() -> None:
+    assert SWEDEN_SEPARATE_DEFINITE_EXPANSIONS == {
+        "SE": {
+            "väg": "vägen",
+            "gata": "gatan",
+            "torg": "torget",
+            "allé": "allén",
+            "backe": "backen",
+            "gränd": "gränden",
+            "plan": "planen",
+            "stig": "stigen",
+            "led": "leden",
+            "gång": "gången",
+            "park": "parken",
+        }
+    }
 
 
 def test_search_document_indexes_raw_and_parsed_representations() -> None:
@@ -717,6 +751,54 @@ def test_sweden_shadow_adapter_builds_results_without_serving_changes() -> None:
               )
             """
         ).fetchone() == (0,)
+
+
+def test_sweden_shadow_exact_suffix_variant_matches_punctuated_street() -> None:
+    """v6 cannot expand `Villav.` at all: `villav.` fails the `lowered.endswith("v")`
+    check `expanded_street_suffix_variants` gates on, because it reads a glued
+    (unpunctuated) abbreviation only. This is the first end-to-end proof that a
+    `suffix_exact` variant -- produced only via `SWEDEN_STREET_SUFFIX_EXACT_EXPANSIONS`
+    -- actually reaches and wins a real reference match through the production shadow
+    wiring, not just that the variant is emitted (Task 1) or excluded from fuzzy
+    postings (Task 2).
+    """
+    with duckdb.connect(":memory:") as connection:
+        _create_sweden_shadow_exact_suffix_fixture(connection)
+
+        replace_sweden_address_resolution_shadow(
+            connection=connection,
+            evaluation_run_id="shadow-test-run",
+            evaluated_at=datetime(2026, 8, 17, tzinfo=UTC),
+            log=None,
+        )
+
+        [(reference_normalized_street,)] = connection.execute(
+            f"""
+            select normalized_street
+            from {QUALIFIED_SHADOW_REFERENCE_DOCUMENTS_TABLE}
+            where source_record_id = 'osm/villavagen-3'
+            """
+        ).fetchall()
+
+        winning_variant = connection.execute(
+            f"""
+            select variant_kind, variant_rank
+            from {QUALIFIED_SHADOW_QUERY_STREET_VARIANTS_TABLE}
+            where document_id = 'villav-exact'
+              and normalized_street_variant = ?
+            """,
+            [reference_normalized_street],
+        ).fetchone()
+
+        assert winning_variant == (SUFFIX_EXACT_VARIANT_KIND, SUFFIX_EXACT_VARIANT_RANK)
+
+        assert connection.execute(
+            f"""
+            select resolution_status, match_strategy, matched_street_name
+            from {QUALIFIED_SHADOW_RESULTS_TABLE}
+            where query_document_id = 'villav-exact'
+            """
+        ).fetchone() == ("matched_corrected", "expanded_street_postcode_house", "Villavägen")
 
 
 def test_sweden_shadow_results_are_promoted_to_live_geocodes() -> None:
@@ -1409,6 +1491,143 @@ def _create_sweden_shadow_fixture(
             ('nonexistent', 'unmatched'),
             ('short-policy', 'unmatched'),
             ('postcode-conflict', 'unmatched');
+        """
+    )
+
+
+def _create_sweden_shadow_exact_suffix_fixture(
+    connection: duckdb.DuckDBPyConnection,
+) -> None:
+    """A minimal shadow fixture for the v7 exact-only path: one query document whose
+    street v6 cannot expand at all (a punctuated glued abbreviation, `Villav.`) against
+    one OSM building reference (`Villavägen`) reachable only via
+    `SWEDEN_STREET_SUFFIX_EXACT_EXPANSIONS`. Mirrors `_create_sweden_shadow_fixture`'s
+    table shapes, trimmed to the single document this test needs.
+    """
+    connection.execute(
+        "create or replace temporary table _sweden_shadow_snapshot as"
+        " select 'osm-snapshot-md5'::varchar as source_md5"
+    )
+    connection.execute(
+        """
+        create schema sweden_company_enrichment;
+        create schema sweden_address_osm;
+
+        create table sweden_company_enrichment.se_addresses_current (
+            address_id varchar,
+            canonical_display_address varchar,
+            street_address varchar,
+            street_name varchar,
+            house_number varchar,
+            unit varchar,
+            postal_code varchar,
+            post_town varchar,
+            country_code varchar,
+            address_kind varchar,
+            address_identity_run_id varchar default 'identity-test-run'
+        );
+        insert into sweden_company_enrichment.se_addresses_current (
+            address_id,
+            canonical_display_address,
+            street_address,
+            street_name,
+            house_number,
+            unit,
+            postal_code,
+            post_town,
+            country_code,
+            address_kind
+        ) values (
+            'villav-exact',
+            'Villav. 3, 12573 Älvsjö',
+            'Villav. 3',
+            'Villav.',
+            '3',
+            '',
+            '12573',
+            'Älvsjö',
+            'SE',
+            'physical'
+        );
+
+        create table sweden_address_osm.address_points (
+            source_record_id varchar,
+            country_code varchar,
+            full_address varchar,
+            street varchar,
+            place varchar,
+            house_number varchar,
+            unit varchar,
+            postcode varchar,
+            city varchar,
+            latitude double,
+            longitude double,
+            source_record_url varchar,
+            source_url varchar default 'https://download.geofabrik.de/europe/sweden-latest.osm.pbf',
+            source_object_key varchar default 'raw/sweden-test.osm.pbf',
+            source_md5 varchar,
+            source_snapshot_at timestamptz default '2026-08-16 00:00:00+00',
+            source_retrieved_at timestamptz default '2026-08-16 01:00:00+00'
+        );
+        insert into sweden_address_osm.address_points (
+            source_record_id,
+            country_code,
+            full_address,
+            street,
+            place,
+            house_number,
+            unit,
+            postcode,
+            city,
+            latitude,
+            longitude,
+            source_record_url
+        ) values (
+            'osm/villavagen-3',
+            'SE',
+            'Villavägen 3, 12573 Älvsjö',
+            'Villavägen',
+            '',
+            '3',
+            '',
+            '12573',
+            'Älvsjö',
+            59.0,
+            18.0,
+            'https://www.openstreetmap.org/node/100'
+        );
+        update sweden_address_osm.address_points
+        set source_md5 = (select source_md5 from _sweden_shadow_snapshot);
+
+        create table sweden_address_osm.street_segments (
+            source_record_id varchar,
+            street varchar,
+            latitude double,
+            longitude double,
+            source_record_url varchar
+        );
+
+        create table sweden_company_enrichment.se_address_pending_identities (
+            address_id varchar,
+            pending_reason varchar
+        );
+        insert into sweden_company_enrichment.se_address_pending_identities values
+            ('villav-exact', 'no_outcome');
+
+        create table sweden_company_enrichment.se_address_geocodes_previous (
+            address_id varchar,
+            policy_version varchar default 'se-address-resolution-policy-v6',
+            reference_md5 varchar default 'osm-snapshot-md5',
+            match_status varchar,
+            match_method varchar default '',
+            match_confidence double default 0.0,
+            candidate_record_ids varchar[] default [],
+            matched_at timestamptz default '2026-08-10 00:00:00+00'
+        );
+        insert into sweden_company_enrichment.se_address_geocodes_previous (
+            address_id,
+            match_status
+        ) values ('villav-exact', 'unmatched');
         """
     )
 
