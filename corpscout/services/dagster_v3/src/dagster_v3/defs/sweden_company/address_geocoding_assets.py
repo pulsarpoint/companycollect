@@ -892,6 +892,14 @@ def sweden_address_geocode_store_clickhouse(
 
 @dg.asset_check(
     asset=sweden_address_geocode_store_clickhouse,
+    # ORDERING, NOT COVERAGE. Without this the twin runs as soon as its own asset is
+    # done, so a week that appends to the store evaluates STORE -> TWIN -> DERIVATION and
+    # compares a store that has already grown against a serving table that has not been
+    # rebuilt yet -- red every single promoting week, on the one safety net that is
+    # supposed to mean something when it goes red. Naming the derivation makes the order
+    # STORE -> DERIVATION -> TWIN when both are selected, and when only the store is
+    # selected the twin still runs, which is the coverage it exists for.
+    additional_deps=[dg.AssetKey(SHARED_GEOCODE_CLICKHOUSE_ASSET_KEY)],
     name="derived_current_matches_the_store",
     description=(
         "The same transition tripwire, evaluated from the store's side: fails when "
@@ -906,9 +914,9 @@ def sweden_address_geocode_store_derived_parity_check(
 
     A check runs with the asset it hangs off. During the transition these two assets
     move independently -- the store is appended to by every promoting job, and a
-    retried, backfilled or manually materialized store leg does not rebuild the serving
-    table. In those runs the tripwire on the serving asset does not fire at all, which
-    is precisely when the two tables are most likely to have drifted apart. Same query,
+    retried or manually materialized store leg does not rebuild the serving table. In
+    those runs the tripwire on the serving asset does not fire at all, which is
+    precisely when the two tables are most likely to have drifted apart. Same query,
     same severity, no second expression of anything: both call one function. Both retire
     with the serving table.
     """

@@ -307,6 +307,29 @@ def test_the_parity_check_is_registered_on_both_sides_of_the_transition() -> Non
         )
 
 
+def test_the_twin_is_sequenced_behind_the_derivation_it_checks() -> None:
+    """A standing weekly false alarm, avoided by one dep.
+
+    A check runs as soon as its own asset is done. The store is appended to BEFORE the
+    serving table is rebuilt, so without this the promoting week evaluates
+    STORE -> TWIN -> DERIVATION: the twin compares a store that has already grown against
+    a serving table that has not been rebuilt yet, and goes red every promoting week
+    while the serving-host check goes green. Naming the derivation orders it
+    STORE -> DERIVATION -> TWIN when both are selected; when only the store is selected
+    the twin still runs, which is the coverage it exists for.
+
+    The check on the derivation asset needs no such dep -- it already runs after the
+    asset it hangs off.
+    """
+    [twin_spec] = sweden_address_geocode_store_derived_parity_check.check_specs
+    assert [dep.asset_key for dep in twin_spec.additional_deps] == [
+        dg.AssetKey("sweden_address_geocodes_clickhouse")
+    ]
+
+    [primary_spec] = sweden_address_geocodes_derived_parity_check.check_specs
+    assert list(primary_spec.additional_deps) == []
+
+
 def test_both_parity_hosts_run_the_same_query_and_read_it_the_same_way() -> None:
     """Not a second expression of anything: one function, two hosts. A twin that grew
     its own query would drift, and the drift would be invisible -- both would keep
