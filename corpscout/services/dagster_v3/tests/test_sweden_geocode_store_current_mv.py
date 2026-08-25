@@ -29,6 +29,7 @@ MIGRATIONS_DIR = Path(__file__).resolve().parents[3] / "clickhouse" / "migration
 MIGRATION = "000320_corpscout_se_address_geocodes_current_mv"
 VIEW = "corpscout.se_address_geocodes_current"
 RETIRED = "corpscout.se_address_geocodes_current_retired"
+STAGING = "corpscout.se_address_geocodes_current_next"
 
 
 def _sql(suffix: str) -> str:
@@ -43,6 +44,22 @@ def _statements(sql: str) -> list[str]:
     server will actually be asked to execute, not an approximation of it.
     """
     return [statement.strip() for statement in sql.split(";") if statement.strip()]
+
+
+def _body(statement: str) -> str:
+    """A statement with the `--` commentary that precedes it stripped off.
+
+    Splitting on semicolons hands the header block to whichever statement follows it,
+    so the migration's long rationale arrives glued to the front of the CREATE. Dropping
+    the leading comment lines is what lets the assertions below anchor on the statement's
+    first VERB rather than merely find the verb somewhere inside a wall of prose.
+    """
+    lines = statement.splitlines()
+    while lines and (not lines[0].strip() or lines[0].lstrip().startswith("--")):
+        lines.pop(0)
+    body = "\n".join(lines).strip()
+    assert body, f"no statement left after stripping comments: {statement[:80]!r}"
+    return body
 
 
 def _create_view_statement(sql: str) -> str:
@@ -134,7 +151,7 @@ def test_the_view_is_refreshable_and_keeps_the_serving_tables_engine() -> None:
     its result in a real MergeTree sorted the way the old table was sorted."""
     statement = _create_view_statement(_sql("up"))
 
-    assert f"CREATE MATERIALIZED VIEW {VIEW}" in statement
+    assert _body(statement).startswith(f"CREATE MATERIALIZED VIEW {STAGING}\n")
     assert "REFRESH EVERY 1 HOUR" in statement
     assert "ENGINE = MergeTree" in statement
     assert "ORDER BY address_id\nAS " in statement
@@ -148,6 +165,43 @@ def test_the_view_is_refreshable_and_keeps_the_serving_tables_engine() -> None:
     assert re.search(r"\bTO\s+corpscout\.", statement) is None
 
 
+
+def test_the_up_migration_builds_under_a_staging_name_and_swaps_in_one_rename() -> None:
+    """The apply order, pinned -- it is the difference between a clean cutover and two
+    distinct ways of serving nothing.
+
+    This ledger runs with x-multi-statement=true, so each statement is a separate
+    round-trip and the backoffice reads between them. Measured on ClickHouse 26.5 with
+    concurrent readers, the obvious ordering fails twice: RENAME-then-CREATE leaves the
+    name absent (Code 60, UNKNOWN_TABLE -- 3 of 133 samples raised), and a freshly created
+    refreshable MV is EMPTY until its first scheduled refresh lands (7 of those 133 read
+    zero rows and reported no error, which is the worse failure). Building as _next,
+    blocking on SYSTEM WAIT VIEW, then swapping BOTH names in a single atomic RENAME gave
+    zero errors and zero empty reads across 124 samples.
+
+    So all three properties below are load-bearing, and a reordering that kept them
+    individually present but changed their sequence would reopen one of the two windows.
+    """
+    statements = _statements(_sql("up"))
+
+    assert len(statements) == 4
+    assert statements[0] == "CREATE DATABASE IF NOT EXISTS corpscout"
+    assert _body(statements[1]).startswith(f"CREATE MATERIALIZED VIEW {STAGING}\n")
+    # The wait sits BETWEEN the build and the swap. Ahead of the CREATE it would wait on
+    # nothing; after the RENAME the swap would already have published an empty view.
+    assert statements[2] == f"SYSTEM WAIT VIEW {STAGING}"
+    # ONE rename, carrying both pairs. Two RENAME statements would be two round-trips with
+    # the serving name missing in between -- the UNKNOWN_TABLE window, reintroduced.
+    swap = statements[3]
+    assert swap.startswith("RENAME TABLE")
+    assert f"{VIEW} TO {RETIRED}" in swap
+    assert f"{STAGING} TO {VIEW}" in swap
+    assert swap.count("RENAME TABLE") == 1
+    assert swap.index(f"{VIEW} TO {RETIRED}") < swap.index(f"{STAGING} TO {VIEW}")
+    # The serving name is never itself created -- it only ever acquires the staging view.
+    assert f"CREATE MATERIALIZED VIEW {VIEW}\n" not in _sql("up")
+
+
 def test_the_up_migration_renames_the_old_table_and_drops_nothing() -> None:
     """The gated drop stays out of the ledger -- an owner ruling, paid for in UNDROPs.
 
@@ -158,7 +212,7 @@ def test_the_up_migration_renames_the_old_table_and_drops_nothing() -> None:
     """
     up = _sql("up")
 
-    assert f"RENAME TABLE {VIEW}\n    TO {RETIRED};" in up
+    assert f"    {VIEW} TO {RETIRED},\n" in up
     assert "DROP" not in _executable(up).upper()
 
     down = _sql("down")

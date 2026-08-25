@@ -702,6 +702,9 @@ def test_clickhouse_migrations_create_databases_and_tables() -> None:
             or "CREATE DICTIONARY IF NOT EXISTS" in sql
             or "CREATE USER IF NOT EXISTS" in sql
             or "RENAME TABLE" in sql  # rename is a schema change, and its own inverse
+            # A refreshable materialized view is a schema object like any other, and it
+            # has no IF NOT EXISTS form in the shape this ledger uses (000320).
+            or "CREATE MATERIALIZED VIEW" in sql
         )
         # Never TRUNCATE TABLE in an up migration. Match the full statement, not the bare
         # substring: legitimate column names like axfr_truncated contain "TRUNCATE" but are

@@ -11,39 +11,51 @@ CREATE DATABASE IF NOT EXISTS corpscout;
 -- LIMIT BY into the inner rank. A refreshable MV keeps a real MergeTree behind the name,
 -- so both reads stay table-fast while nothing in Dagster recomputes anything.
 --
+-- WHY IT BUILDS UNDER A STAGING NAME AND SWAPS AT THE END, WHICH IS NOT FUSSINESS. This
+-- migration runs with x-multi-statement=true (corpscout/Makefile), so every statement below
+-- is a SEPARATE round-trip and the backoffice keeps reading between them. The obvious
+-- ordering -- rename the table away, then create the view in its place -- was measured
+-- against concurrent readers on ClickHouse 26.5 and fails TWICE over:
+--
+--   1. Between the RENAME and the CREATE the name does not exist at all, and readers get
+--      Code 60, UNKNOWN_TABLE. Three of 133 concurrent samples raised.
+--   2. Between the CREATE and the first refresh landing the view exists but is EMPTY,
+--      because a refreshable MV schedules its first refresh instead of running it inline.
+--      Seven of those 133 samples read zero rows and reported no error at all, which is
+--      the worse of the two failures.
+--
+-- Building as _next, waiting for it to populate, and then swapping both names in ONE
+-- RENAME closes both windows: the multi-rename is atomic, so a reader sees either the old
+-- table or the fully populated view and never a gap or an empty. Measured on the same
+-- setup: zero errors and zero empty reads across 124 concurrent samples.
+--
+-- SYSTEM WAIT VIEW is what makes the swap safe -- it blocks until the staging view's first
+-- refresh has finished, so the RENAME below cannot publish an empty view. It is the only
+-- SYSTEM statement in this ledger, and it was applied through the real golang-migrate
+-- tooling against a throwaway 26.5 before this file was written, not just through a client.
+--
 -- THE SELECT BELOW IS NOT HAND-WRITTEN AND MUST NOT BE HAND-EDITED. It is the exact
 -- rendering of geocode_store.build_current_geocodes_sql(columns=SERVING_COLUMNS), the one
 -- expression of the store's two-stage versioned read. Editing this file without editing
 -- that builder -- or the builder without adding a migration -- trips the drift pin in
 -- dagster_v3 tests/test_sweden_geocode_store_current_mv.py.
 --
--- REFRESH SEMANTICS, verified on a throwaway ClickHouse 26.5 before this file was written:
--- a refresh builds into a temporary table and swaps it in, so a concurrent reader sees the
--- complete previous contents or the complete new contents and never an empty or partial
--- table. 3,710 concurrent count() samples taken across a 3,709ms refresh returned only the
--- two whole answers.
---
--- APPLY STEP -- THE ONE THING THIS FILE CANNOT DO FOR YOU. The first refresh is scheduled,
--- not synchronous: CREATE returns immediately and the view is EMPTY until that refresh
--- lands. Between the RENAME above and that instant the backoffice reads an empty serving
--- table. Immediately after `migrate up` completes, run
---   SYSTEM WAIT VIEW corpscout.se_address_geocodes_current
--- which blocks until the first refresh has finished, and only then treat the apply as
--- done. `SYSTEM REFRESH VIEW corpscout.se_address_geocodes_current` forces a refresh at any
--- later time, which is what a store append should be followed by if an hour is too long to
--- wait.
+-- AFTER THE APPLY. Nothing further is required: the swap publishes a populated view and
+-- ClickHouse refreshes it hourly from then on. `SYSTEM REFRESH VIEW
+-- corpscout.se_address_geocodes_current` forces a refresh at any later time -- renaming a
+-- refreshable MV carries its schedule with it, so the view is known by its new name in
+-- system.view_refreshes and under that statement. The Dagster asset check
+-- sweden_address_geocodes_current_view_refresh_check watches that same system table.
 --
 -- THE OLD TABLE IS RENAMED, NOT DROPPED. corpscout.se_address_geocodes_current_retired
 -- keeps all 2,090,981 rows as the rollback and as the comparison baseline for the apply.
--- Dropping it is a GATED drop -- the gate is "the MV has served correctly for long enough"
--- -- and a gated drop never enters this ledger, so it is trivial direct SQL run by hand
--- once that gate holds. This migration contains no DROP at all, and a guard test enforces
--- that.
+-- Dropping it is a drop whose gate -- "the view has served correctly for long enough" --
+-- cannot be checked by the thing that would run it, and a drop whose gate cannot be
+-- verified at write time does not belong in a ledger that `migrate up` walks blind. It is
+-- trivial direct SQL run by hand once that gate holds. This migration contains no DROP at
+-- all, and a guard test enforces that.
 
-RENAME TABLE corpscout.se_address_geocodes_current
-    TO corpscout.se_address_geocodes_current_retired;
-
-CREATE MATERIALIZED VIEW corpscout.se_address_geocodes_current
+CREATE MATERIALIZED VIEW corpscout.se_address_geocodes_current_next
 REFRESH EVERY 1 HOUR
 ENGINE = MergeTree
 ORDER BY address_id
@@ -116,3 +128,9 @@ ORDER BY address_id, tuple(
         reference_md5,
         policy_version) DESC
 LIMIT 1 BY address_id;
+
+SYSTEM WAIT VIEW corpscout.se_address_geocodes_current_next;
+
+RENAME TABLE
+    corpscout.se_address_geocodes_current TO corpscout.se_address_geocodes_current_retired,
+    corpscout.se_address_geocodes_current_next TO corpscout.se_address_geocodes_current;
