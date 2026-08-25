@@ -325,6 +325,76 @@ def test_match_join_sql_survives_driver_param_substitution() -> None:
     assert "LIMIT 50000" in rendered
 
 
+def test_intrinsic_self_consistency_sql_pins_the_derivations() -> None:
+    sql = osm_clickhouse.INTRINSIC_MATCH_KEY_SELF_CONSISTENCY_SQL
+    # Runs against the gazetteer alone -- never the store -- so it can never be vacuous.
+    assert "se_osm_address_points" in sql
+    assert "se_address_geocodes" not in sql
+    # The three re-derivations: compacted shape, postcode part, house-number suffix.
+    assert "'^[a-z0-9]*[|][a-z0-9]*$'" in sql
+    assert "splitByChar('|', normalized_match_key)[1]" in sql
+    assert "endsWith(" in sql
+    assert "replaceRegexpAll(house_number, '[^0-9A-Za-z]', '')" in sql
+
+
+@pytest.mark.parametrize(
+    ("total", "shape_ok", "postcode_ok", "house_ok", "expected"),
+    [
+        (0, 0, 0, 0, False),  # empty gazetteer is never healthy
+        (1000, 1000, 1000, 1000, True),  # perfect
+        (1000, 999, 1000, 9999 // 10, True),  # small house tail tolerated (>= 0.99)
+        (1000, 800, 1000, 1000, False),  # accents/uppercase leaked into the key -> shape fails
+        (1000, 1000, 900, 1000, False),  # postcode part broken
+    ],
+)
+def test_self_consistency_gate(
+    total, shape_ok, postcode_ok, house_ok, expected
+) -> None:
+    assert (
+        osm_clickhouse.gazetteer_self_consistency_is_healthy(
+            total=total,
+            shape_ok=shape_ok,
+            postcode_ok=postcode_ok,
+            house_ok=house_ok,
+        )
+        is expected
+    )
+
+
+def test_evaluate_match_join_zero_sample_warns_not_silent_pass() -> None:
+    outcome = osm_clickhouse.evaluate_match_join(
+        sample_size=0,
+        osm_id_present=0,
+        key_matches=0,
+        postcode_bearing=0,
+        key_matches_postcode_bearing=0,
+        gazetteer_md5="NEW_SNAPSHOT",
+        store_md5s=["OLD_SNAPSHOT"],
+    )
+    # Non-failing, but explicitly flagged as not evaluated so the vacuousness is observable.
+    assert outcome.passed is True
+    assert outcome.evaluated is False
+    assert outcome.metadata["evaluated"] is False
+    assert outcome.metadata["gazetteer_source_md5"] == "NEW_SNAPSHOT"
+    assert outcome.metadata["store_reference_md5s"] == ["OLD_SNAPSHOT"]
+    assert "not evaluated" in outcome.metadata["reason"]
+
+
+def test_evaluate_match_join_measures_when_sample_present() -> None:
+    healthy = osm_clickhouse.evaluate_match_join(
+        sample_size=100, osm_id_present=99, key_matches=60,
+        postcode_bearing=60, key_matches_postcode_bearing=60,
+        gazetteer_md5="m", store_md5s=["m"],
+    )
+    assert healthy.evaluated is True and healthy.passed is True
+    regressed = osm_clickhouse.evaluate_match_join(
+        sample_size=100, osm_id_present=99, key_matches=5,
+        postcode_bearing=60, key_matches_postcode_bearing=5,
+        gazetteer_md5="m", store_md5s=["m"],
+    )
+    assert regressed.evaluated is True and regressed.passed is False
+
+
 def test_row_count_band_rejects_empty_and_mismatch() -> None:
     assert osm_clickhouse.row_count_is_within_band(
         clickhouse_count=1000, duckdb_count=1000

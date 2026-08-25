@@ -204,6 +204,49 @@ def sweden_osm_gazetteer_row_count_check(
 
 @dg.asset_check(
     asset=sweden_osm_addresses_clickhouse,
+    name="match_key_is_self_consistent",
+    description=(
+        "Intrinsic, same-snapshot check on the published gazetteer that never depends on "
+        "the geocode store: re-derives the ClickHouse-expressible parts of "
+        "normalized_match_key (its compacted shape, the postcode part, the house-number "
+        "suffix) from each row's own fields and asserts they reproduce the stored key. A "
+        "strip_accents/lower/nfc regression in the publish leaves accents or uppercase in "
+        "the key and trips the shape term."
+    ),
+)
+def sweden_osm_gazetteer_self_consistency_check(
+    clickhouse: ClickhouseResource,
+) -> dg.AssetCheckResult:
+    with clickhouse.get_connection() as client:
+        [(total, shape_ok, postcode_ok, house_ok)] = client.execute(
+            osm_clickhouse.INTRINSIC_MATCH_KEY_SELF_CONSISTENCY_SQL
+        )
+    total = int(total)
+    shape_ok = int(shape_ok)
+    postcode_ok = int(postcode_ok)
+    house_ok = int(house_ok)
+    passed = osm_clickhouse.gazetteer_self_consistency_is_healthy(
+        total=total,
+        shape_ok=shape_ok,
+        postcode_ok=postcode_ok,
+        house_ok=house_ok,
+    )
+    return dg.AssetCheckResult(
+        passed=passed,
+        metadata={
+            "total": total,
+            "shape_ok": shape_ok,
+            "shape_ok_rate": shape_ok / total if total else 0.0,
+            "postcode_ok": postcode_ok,
+            "postcode_ok_rate": postcode_ok / total if total else 0.0,
+            "house_ok": house_ok,
+            "house_ok_rate": house_ok / total if total else 0.0,
+        },
+    )
+
+
+@dg.asset_check(
+    asset=sweden_osm_addresses_clickhouse,
     name="matched_geocodes_find_their_osm_point_by_match_key",
     description=(
         "Samples matched_exact geocode outcomes computed against this gazetteer's OSM "
@@ -229,34 +272,39 @@ def sweden_osm_gazetteer_match_key_join_check(
             osm_clickhouse.GAZETTEER_MATCH_JOIN_SQL,
             {"sample_limit": sample_limit},
         )
-    sample_size = int(sample_size)
-    osm_id_present = int(osm_id_present)
-    key_matches = int(key_matches)
-    postcode_bearing = int(postcode_bearing)
-    key_matches_postcode_bearing = int(key_matches_postcode_bearing)
-    passed = osm_clickhouse.gazetteer_match_join_is_healthy(
+        sample_size = int(sample_size)
+        gazetteer_md5 = ""
+        store_md5s: list[str] = []
+        if sample_size == 0:
+            # The store recompute runs on a PARALLEL heavy downstream branch, so at check time
+            # se_address_geocodes usually still carries the PRIOR snapshot's reference_md5 and
+            # nothing matches this gazetteer's snapshot. Fetch both snapshots for the WARN
+            # message so an operator can see the join sanity was not exercised this run.
+            [(gazetteer_md5,)] = client.execute(
+                f"SELECT any(source_md5) FROM {osm_clickhouse.CLICKHOUSE_DATABASE}."
+                f"{osm_clickhouse.ADDRESS_POINTS_TABLE_CH}"
+            )
+            [(store_md5s,)] = client.execute(
+                "SELECT groupUniqArray(reference_md5) FROM "
+                f"{osm_clickhouse.CLICKHOUSE_DATABASE}.se_address_geocodes"
+            )
+    outcome = osm_clickhouse.evaluate_match_join(
         sample_size=sample_size,
-        osm_id_present=osm_id_present,
-        postcode_bearing=postcode_bearing,
-        key_matches_postcode_bearing=key_matches_postcode_bearing,
+        osm_id_present=int(osm_id_present),
+        key_matches=int(key_matches),
+        postcode_bearing=int(postcode_bearing),
+        key_matches_postcode_bearing=int(key_matches_postcode_bearing),
+        gazetteer_md5=str(gazetteer_md5),
+        store_md5s=list(store_md5s),
     )
     return dg.AssetCheckResult(
-        passed=passed,
-        metadata={
-            "sample_size": sample_size,
-            "osm_id_present": osm_id_present,
-            "osm_id_present_rate": (
-                osm_id_present / sample_size if sample_size else 0.0
-            ),
-            "key_matches": key_matches,
-            "key_match_rate": key_matches / sample_size if sample_size else 0.0,
-            "postcode_bearing": postcode_bearing,
-            "key_match_rate_postcode_bearing": (
-                key_matches_postcode_bearing / postcode_bearing
-                if postcode_bearing
-                else 0.0
-            ),
-        },
+        passed=outcome.passed,
+        severity=(
+            dg.AssetCheckSeverity.ERROR
+            if outcome.evaluated
+            else dg.AssetCheckSeverity.WARN
+        ),
+        metadata=outcome.metadata,
     )
 
 
@@ -273,6 +321,7 @@ defs = dg.Definitions(
     ],
     asset_checks=[
         sweden_osm_gazetteer_row_count_check,
+        sweden_osm_gazetteer_self_consistency_check,
         sweden_osm_gazetteer_match_key_join_check,
     ],
     jobs=[sweden_address_osm_job],

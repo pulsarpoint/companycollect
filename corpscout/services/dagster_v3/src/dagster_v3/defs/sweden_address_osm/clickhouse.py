@@ -152,6 +152,56 @@ LEFT JOIN {CLICKHOUSE_DATABASE}.{ADDRESS_POINTS_TABLE_CH} AS point
 """
 
 
+# An INTRINSIC same-snapshot self-consistency check on the published gazetteer that never
+# depends on the store's snapshot (unlike the cross-store join, which the parallel heavy branch
+# leaves a snapshot behind). It re-derives the parts of normalized_match_key that are expressible
+# in pure ClickHouse -- the postcode part and the house-number suffix are ASCII, so ASCII
+# compaction reproduces them exactly -- and asserts the whole key has the compacted shape
+# "<alnum>|<alnum>". A regression that drops strip_accents / lower / nfc from the publish leaves
+# accents or uppercase in the key and trips the shape term; a broken concat order trips the
+# postcode/house terms. The street part needs strip_accents (no ClickHouse equivalent) so it is
+# covered only by the shape term, and by the throwaway-CH publish test on the exact key value.
+INTRINSIC_MATCH_KEY_SELF_CONSISTENCY_SQL = f"""
+SELECT
+    count() AS total,
+    countIf(match(normalized_match_key, '^[a-z0-9]*[|][a-z0-9]*$')) AS shape_ok,
+    countIf(
+        splitByChar('|', normalized_match_key)[1]
+        = lower(replaceRegexpAll(postcode, '[^0-9A-Za-z]', ''))
+    ) AS postcode_ok,
+    countIf(
+        endsWith(
+            splitByChar('|', normalized_match_key)[2],
+            lower(replaceRegexpAll(house_number, '[^0-9A-Za-z]', ''))
+        )
+    ) AS house_ok
+FROM {CLICKHOUSE_DATABASE}.{ADDRESS_POINTS_TABLE_CH}
+"""
+
+
+def gazetteer_self_consistency_is_healthy(
+    *,
+    total: int,
+    shape_ok: int,
+    postcode_ok: int,
+    house_ok: int,
+    min_rate: float = 0.99,
+) -> bool:
+    """Gate the intrinsic self-consistency check.
+
+    An empty gazetteer is never healthy. Otherwise every re-derivable term must reproduce for
+    at least ``min_rate`` of the rows -- measured at ~100% (shape, postcode) and 99.99% (house)
+    on the real build, so the small house tail (non-ASCII house tokens) stays under the gate.
+    """
+    if total <= 0:
+        return False
+    return (
+        shape_ok / total >= min_rate
+        and postcode_ok / total >= min_rate
+        and house_ok / total >= min_rate
+    )
+
+
 def row_count_is_within_band(
     *,
     clickhouse_count: int,
@@ -195,6 +245,73 @@ def gazetteer_match_join_is_healthy(
     if postcode_bearing == 0:
         return True
     return key_matches_postcode_bearing / postcode_bearing >= min_key_rate
+
+
+@dataclass(frozen=True, slots=True)
+class MatchJoinOutcome:
+    """The decision + reportable metadata for the cross-store join check.
+
+    ``evaluated`` is False only when the sample was empty because the store still carries a
+    different OSM snapshot than this gazetteer (the store recompute is a parallel downstream
+    branch). The check surfaces that as a non-failing WARN rather than a silent healthy pass.
+    """
+
+    passed: bool
+    evaluated: bool
+    metadata: dict[str, object]
+
+
+def evaluate_match_join(
+    *,
+    sample_size: int,
+    osm_id_present: int,
+    key_matches: int,
+    postcode_bearing: int,
+    key_matches_postcode_bearing: int,
+    gazetteer_md5: str,
+    store_md5s: list[str],
+) -> MatchJoinOutcome:
+    if sample_size <= 0:
+        return MatchJoinOutcome(
+            passed=True,
+            evaluated=False,
+            metadata={
+                "evaluated": False,
+                "reason": (
+                    f"not evaluated: store snapshot(s) {store_md5s} != gazetteer snapshot "
+                    f"({gazetteer_md5}); sampled 0 matched_exact rows. The store recompute is "
+                    "a parallel downstream branch, so the cross-store join is exercised only "
+                    "once the store catches up to this snapshot."
+                ),
+                "sample_size": 0,
+                "gazetteer_source_md5": gazetteer_md5,
+                "store_reference_md5s": store_md5s,
+            },
+        )
+    passed = gazetteer_match_join_is_healthy(
+        sample_size=sample_size,
+        osm_id_present=osm_id_present,
+        postcode_bearing=postcode_bearing,
+        key_matches_postcode_bearing=key_matches_postcode_bearing,
+    )
+    return MatchJoinOutcome(
+        passed=passed,
+        evaluated=True,
+        metadata={
+            "evaluated": True,
+            "sample_size": sample_size,
+            "osm_id_present": osm_id_present,
+            "osm_id_present_rate": osm_id_present / sample_size,
+            "key_matches": key_matches,
+            "key_match_rate": key_matches / sample_size,
+            "postcode_bearing": postcode_bearing,
+            "key_match_rate_postcode_bearing": (
+                key_matches_postcode_bearing / postcode_bearing
+                if postcode_bearing
+                else 0.0
+            ),
+        },
+    )
 
 
 @dataclass(frozen=True, slots=True)
