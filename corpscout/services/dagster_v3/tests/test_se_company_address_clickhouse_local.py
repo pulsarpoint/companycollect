@@ -120,10 +120,12 @@ ALPHA_CARE_OF_V2 = "Bengt Andersson"  # no slash: toJSONString would escape one,
 def _schema_statements(migrations: tuple[str, ...]) -> list[str]:
     """CREATE/ALTER TABLE statements for NEEDED_TABLES only, in migration order.
 
-    Several of these files also touch tables this pipeline never reads
-    (se_company_addresses_canonical_current, se_company_address_geocode_results); applying
-    those blindly would work but would grow the script for nothing, and 000277's ALTER on
-    the legacy results table would fail since it is never created here.
+    Several of these files also touch tables this pipeline never read and that the
+    register retires by controller-run SQL rather than by migration --
+    se_company_address_geocode_results and se_company_addresses_canonical_current, both
+    pinned in address_geocoding_assets. Applying their DDL here would grow the script to
+    rebuild tables the register has dropped, and 000277's ALTER on the legacy results table
+    would fail since it is never created here.
     """
     statements: list[str] = []
     for name in migrations:

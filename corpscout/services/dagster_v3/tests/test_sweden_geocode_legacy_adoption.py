@@ -504,7 +504,8 @@ _STORE_DEFAULTS: dict[str, str] = {
 
 # The retired results table's columns, verbatim from the matcher module that used to own
 # the tuple. Spelled out here because that module retires with the table (migration
-# 000319) and this harness is the last thing that has to know the shape of what the import
+# LEGACY_PAIR_RETIREMENT_DROP_SQL) and this harness is the last thing that has to know
+# the shape of what the import
 # read -- `_row` asserts the defaults below cover exactly these columns, so a column the
 # 000271/000272/000277 DDL has and this list does not is caught rather than defaulted.
 _LEGACY_COLUMNS = (

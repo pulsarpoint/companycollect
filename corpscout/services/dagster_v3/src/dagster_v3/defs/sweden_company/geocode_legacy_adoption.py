@@ -6,10 +6,11 @@ resolved `matched_exact` at confidence 1.0 on identical street text (measured on
 with the matcher. This module moves them into the versioned store as `legacy_adopted_v1`
 outcomes so they stay attributable, rankable and reversible.
 
-RUNS ONCE, AT PLAN STEP 12e, BEFORE MIGRATION 000319 DROPS ITS SOURCE -- that ordering
-is the migration's own stated precondition. After that apply it can no longer execute. The
-module and its asset stay as the record of where the store's `legacy_adopted_v1` rows came
-from; a Materialize click after the drop fails in assert_clickhouse_tables_exist, naming
+RUNS ONCE, AT PLAN STEP 12e, BEFORE THE 12f DROP TAKES ITS SOURCE -- that ordering is the
+drop's own stated precondition, pinned beside it in
+address_geocoding_assets.LEGACY_PAIR_RETIREMENT_DROP_SQL. After the drop this can no
+longer execute. The module and its asset stay as the record of where the store's
+`legacy_adopted_v1` rows came from; a Materialize click after the drop fails in assert_clickhouse_tables_exist, naming
 se_company_address_geocode_results, which is exactly the answer such a click deserves.
 
 REVERSIBLE, NOT MERGED. An adopted row is distinguishable by its policy_version forever.
@@ -88,8 +89,8 @@ from dagster_v3.defs.sweden_company.geocode_store import (
 
 # The retired matcher's results table, named here rather than imported. The module that
 # owned these constants (defs/sweden_company/address_geocoding.py) is deleted in the same
-# commit as migration 000319, which drops the table itself -- this module outlives both as
-# the record of what the import read. The name stays spelled out so the asset's
+# commit as the pair's retirement, which drops the table itself -- this module outlives
+# both as the record of what the import read. The name stays spelled out so the asset's
 # assert_clickhouse_tables_exist can fail by name after the drop rather than mid-query.
 CLICKHOUSE_DATABASE = "corpscout"
 CLICKHOUSE_RESULTS_TABLE = "se_company_address_geocode_results"

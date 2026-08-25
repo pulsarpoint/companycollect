@@ -1113,8 +1113,9 @@ def test_the_canonical_and_shared_address_chain_is_built_from_source_observation
 ):
     """Source observations -> canonical addresses -> shared identities -> company links.
 
-    The legacy per-company OSM matcher this test used to drive is retired (migration
-    000319); the resolver's own ladder is pinned in tests/test_address_resolution.py.
+    The legacy per-company OSM matcher this test used to drive is retired
+    (LEGACY_PAIR_RETIREMENT_DROP_SQL); the resolver's own ladder is pinned in
+    tests/test_address_resolution.py.
     What is left here is the identity chain, which stays.
     """
     from dagster_v3.defs.sweden_company.address_canonicalization import (
@@ -1333,8 +1334,8 @@ def test_sweden_company_address_geocoding_assets_are_company_enhancements() -> N
         "sweden_address_geocode_store_clickhouse",
     }
     # The legacy per-company matcher and its two publish assets retired with the pair
-    # (migration 000319), so the weekly job is twelve assets, not fifteen, and the three
-    # names below must never come back into it.
+    # (LEGACY_PAIR_RETIREMENT_DROP_SQL), so the weekly job is twelve assets, not fifteen,
+    # and the three names below must never come back into it.
     for retired in (
         "sweden_company_address_osm_matches_duckdb",
         "sweden_company_address_geocodes_clickhouse",
@@ -1469,47 +1470,6 @@ def test_sweden_company_address_city_fallback_migration_keeps_method_details() -
     assert "corpscout.se_company_address_geocode_results" in migration
     assert "coordinate_locality Nullable(String)" in migration
     assert "coordinate_supporting_point_count UInt32" in migration
-
-
-def test_sweden_legacy_geocode_pair_retirement_drops_only_the_pair() -> None:
-    """The drop is the ledger entry for two tables and nothing else.
-
-    The identity chain and the derived serving table share the prefix and are NOT this
-    migration's to touch -- se_address_geocodes_current in particular still has readers and
-    retires behind its own gate. The down file recreates both tables empty, which is the
-    only honest restore: no asset writes them any more.
-    """
-    migrations = Path(__file__).resolve().parents[3] / "clickhouse" / "migrations"
-    name = "000319_corpscout_retire_se_company_address_geocode_pair"
-    up = (migrations / f"{name}.up.sql").read_text(encoding="utf-8")
-    down = (migrations / f"{name}.down.sql").read_text(encoding="utf-8")
-
-    assert up.count("DROP TABLE IF EXISTS") == 2
-    for table in (
-        "corpscout.se_company_address_geocodes",
-        "corpscout.se_company_address_geocode_results",
-    ):
-        assert f"DROP TABLE IF EXISTS {table};" in up
-        assert f"CREATE TABLE IF NOT EXISTS {table}" in down
-    for kept in (
-        "corpscout.se_addresses_current",
-        "corpscout.se_company_address_links_current",
-        "corpscout.se_company_address_members_current",
-        "corpscout.se_address_geocodes_current",
-        "corpscout.se_address_geocodes",
-    ):
-        assert f"DROP TABLE IF EXISTS {kept};" not in up
-    # The import that read the dropped table has to run BEFORE the drop, and the comment
-    # is where 12f looks for that ordering.
-    assert "geocode_legacy_adoption" in up
-    assert "12e" in up and "12f" in up
-    # The three coordinate columns 000272 and 000277 added are part of the restored shape.
-    for column in (
-        "coordinate_locality Nullable(String)",
-        "coordinate_supporting_point_count UInt32",
-        "coordinate_spread_meters Nullable(Float64)",
-    ):
-        assert column in down
 
 
 def test_sweden_company_canonical_address_migration_preserves_source_members() -> None:
@@ -1747,3 +1707,159 @@ def test_sweden_company_address_links_are_bidirectionally_ordered() -> None:
         "source_snapshot_at Nullable(DateTime64(3, 'UTC'))",
     ):
         assert authoritative_column not in link_table
+
+
+class _RecordingClickhouseResource:
+    """A ClickhouseResource stand-in that only has to hand out a context manager."""
+
+    def __init__(self) -> None:
+        self.client = object()
+
+    def get_connection(self):
+        from contextlib import contextmanager
+
+        @contextmanager
+        def _connection():
+            yield self.client
+
+        return _connection()
+
+
+class _RecordingDuckDBResource:
+    def __init__(self) -> None:
+        self.connection = object()
+
+    def get_connection(self):
+        from contextlib import contextmanager
+
+        @contextmanager
+        def _connection():
+            yield self.connection
+
+        return _connection()
+
+
+def test_the_canonical_publish_carries_only_the_members_bridge(monkeypatch) -> None:
+    """One table crosses to ClickHouse now, and it is the one downstream actually joins.
+
+    se_company_address resolves through se_company_address_members_current; the canonical
+    rows themselves stay in DuckDB, where the build writes them and asserts on them. This
+    pins the narrowing behaviourally: the asset must ask for the members table alone, both
+    when it checks the target exists and when it exports -- a publish that still names the
+    canonical table would fail on a host where CANONICAL_RETIREMENT_DROP_SQL has run.
+    """
+    from dagster_v3.defs.sweden_company import (
+        address_canonicalization,
+        address_geocoding_assets,
+    )
+
+    existence_checks: list[tuple[str, ...]] = []
+    exports: list[dict[str, object]] = []
+
+    def _fake_assert_tables_exist(_clickhouse, *, database, tables):
+        assert database == "corpscout"
+        existence_checks.append(tuple(tables))
+
+    def _fake_export(**kwargs):
+        exports.append(kwargs)
+        return 4_674_100
+
+    def _forbidden_multi_table_replace(**_kwargs):
+        raise AssertionError(
+            "the members-only publish must use the single-table exporter"
+        )
+
+    monkeypatch.setattr(
+        address_geocoding_assets,
+        "assert_clickhouse_tables_exist",
+        _fake_assert_tables_exist,
+    )
+    monkeypatch.setattr(
+        address_geocoding_assets,
+        "export_duckdb_connection_table_to_clickhouse",
+        _fake_export,
+    )
+    monkeypatch.setattr(
+        address_geocoding_assets,
+        "replace_duckdb_connection_tables_in_clickhouse",
+        _forbidden_multi_table_replace,
+    )
+
+    context = dg.build_asset_context()
+    result = (
+        address_geocoding_assets.sweden_company_canonical_addresses_clickhouse.node_def.compute_fn.decorated_fn(
+            context,
+            _RecordingDuckDBResource(),
+            _RecordingClickhouseResource(),
+        )
+    )
+
+    assert existence_checks == [("se_company_address_members_current",)]
+    assert len(exports) == 1
+    export = exports[0]
+    assert export["duckdb_schema"] == "sweden_company_enrichment"
+    assert export["duckdb_table"] == "se_company_address_members_current"
+    assert export["clickhouse_database"] == "corpscout"
+    assert export["clickhouse_table"] == "se_company_address_members_current"
+    assert export["columns"] == address_canonicalization.ADDRESS_MEMBER_COLUMNS
+    assert export["truncate"] is True
+    assert result.metadata == {
+        "source_members": 4_674_100,
+        "member_table": "corpscout.se_company_address_members_current",
+    }
+
+
+def test_the_retirement_drops_live_as_pinned_sql_outside_the_ledger() -> None:
+    """A gated drop must never be a numbered migration -- an owner ruling paid for in UNDROPs.
+
+    A bare `migrate up` walks the ledger and does not know that these two drops have
+    preconditions, so on 2026-08-25 it applied both before theirs were met. They are
+    controller-run SQL now, and this is what pins them: the exact statements, IF EXISTS so a
+    re-run after a recovery is a no-op, and the names that must NOT appear in them.
+    """
+    from dagster_v3.defs.sweden_company import address_geocoding_assets as assets
+
+    assert assets.CANONICAL_RETIREMENT_DROP_SQL == (
+        "DROP TABLE IF EXISTS corpscout.se_company_addresses_canonical_current",
+    )
+    assert assets.LEGACY_PAIR_RETIREMENT_DROP_SQL == (
+        "DROP TABLE IF EXISTS corpscout.se_company_address_geocode_results",
+        "DROP TABLE IF EXISTS corpscout.se_company_address_geocodes",
+    )
+    dropped = assets.CANONICAL_RETIREMENT_DROP_SQL + (
+        assets.LEGACY_PAIR_RETIREMENT_DROP_SQL
+    )
+    # Members is what se_company_address joins through, se_addresses_current and the links
+    # are the identity chain, se_address_geocodes is the store and its _current projection
+    # is read by four backoffice modules. None of them is any drop's to touch.
+    for kept in (
+        "se_company_address_members_current",
+        "se_addresses_current",
+        "se_company_address_links_current",
+        "se_address_geocodes",
+        "se_address_geocodes_current",
+    ):
+        assert not any(kept in statement for statement in dropped), kept
+    # One statement each, so nothing rides along in a semicolon-separated script.
+    for statement in dropped:
+        assert statement.count("DROP TABLE") == 1
+        assert ";" not in statement
+
+
+def test_no_drop_migration_file_carries_these_retirements() -> None:
+    """The ledger is walked blind, so the gated drops must not be findable in it.
+
+    This is the regression test for the ruling: a future task that "just adds the drop
+    migration back" trips here rather than on a production table.
+    """
+    migrations = Path(__file__).resolve().parents[3] / "clickhouse" / "migrations"
+    # Up files only: 000270, 000271 and 000273's DOWN files legitimately drop these tables,
+    # because that is what reverting the migration that CREATED them means.
+    for path in migrations.glob("*.up.sql"):
+        sql = path.read_text(encoding="utf-8")
+        for table in (
+            "corpscout.se_company_addresses_canonical_current",
+            "corpscout.se_company_address_geocodes",
+            "corpscout.se_company_address_geocode_results",
+        ):
+            assert f"DROP TABLE IF EXISTS {table};" not in sql, f"{path.name}: {table}"

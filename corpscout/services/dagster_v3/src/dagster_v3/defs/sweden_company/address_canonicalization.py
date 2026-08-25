@@ -19,9 +19,10 @@ QUALIFIED_CANONICAL_ADDRESSES_TABLE = (
 QUALIFIED_ADDRESS_MEMBERS_TABLE = f"{ENRICHMENT_SCHEMA}.{ADDRESS_MEMBERS_TABLE}"
 
 CLICKHOUSE_DATABASE = "corpscout"
-QUALIFIED_CLICKHOUSE_CANONICAL_ADDRESSES_TABLE = (
-    f"{CLICKHOUSE_DATABASE}.{CANONICAL_ADDRESSES_TABLE}"
-)
+# The canonical table has no ClickHouse name any more -- the copy retires by
+# address_geocoding_assets.CANONICAL_RETIREMENT_DROP_SQL, run directly rather than through
+# the migration ledger. CANONICAL_ADDRESSES_TABLE above is the DuckDB build's, which stays:
+# the members bridge derives from it and this module's invariants assert on it.
 QUALIFIED_CLICKHOUSE_ADDRESS_MEMBERS_TABLE = (
     f"{CLICKHOUSE_DATABASE}.{ADDRESS_MEMBERS_TABLE}"
 )
@@ -53,32 +54,6 @@ PARSED_ADDRESS_COLUMNS = (
 )
 
 SOURCE_ADDRESS_COLUMNS = SOURCE_ADDRESS_INPUT_COLUMNS + PARSED_ADDRESS_COLUMNS
-
-CANONICAL_ADDRESS_COLUMNS = (
-    "company_id",
-    "canonical_address_key",
-    "canonical_display_address",
-    "representative_address_type",
-    "representative_address_source",
-    "representative_source_record_uid",
-    "street_address",
-    "street_name",
-    "house_number",
-    "unit",
-    "care_of",
-    "postal_code",
-    "post_town",
-    "country_code",
-    "address_kind",
-    "normalized_street",
-    "normalized_postal_code",
-    "normalized_post_town",
-    "address_types",
-    "address_sources",
-    "member_count",
-    "normalization_run_id",
-    "normalized_at",
-)
 
 ADDRESS_MEMBER_COLUMNS = (
     "company_id",

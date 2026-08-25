@@ -411,3 +411,46 @@ def test_a_register_with_no_links_reports_zero_instead_of_dividing() -> None:
     client = _FakeClickhouseClient({EXACT_MATCH_RATE_SQL: [(0, 0, 0)]})
 
     assert fetch_sweden_geocode_exact_match_stats(client).exact_match_rate_percent == 0.0
+
+
+def test_check_one_left_clickhouse_for_the_duckdb_build_it_can_still_read() -> None:
+    """The canonical ClickHouse table is dropped, so a check reading it could only fail.
+
+    Its arithmetic did not evaporate: address_canonicalization._assert_canonical_address_invariants
+    runs the same source-observation/member/canonical comparison against the DuckDB
+    canonical table one step earlier, where it aborts the build instead of reporting on an
+    already-published snapshot. What is NOT relocated is the informational
+    upstream_observations_since_snapshot term, which `passed` never depended on.
+    """
+    from dagster_v3.defs.sweden_company import address_canonicalization
+    from dagster_v3.defs.sweden_company import address_geocoding_assets
+
+    assert not hasattr(
+        address_geocoding_assets, "sweden_company_canonical_addresses_complete_check"
+    )
+    assert not any(
+        "all_source_observations_have_one_canonical_address" in key.name
+        for check in address_geocoding_assets.defs.asset_checks or ()
+        for key in check.check_keys
+    )
+    assert hasattr(address_canonicalization, "_assert_canonical_address_invariants")
+
+
+def test_only_the_clickhouse_canonical_constants_retire() -> None:
+    """The DuckDB canonical build stays -- the members bridge derives from it -- so the
+    two names that spell the ClickHouse copy go and the two that spell the DuckDB one
+    must not follow them out.
+    """
+    from dagster_v3.defs.sweden_company import address_canonicalization
+
+    assert not hasattr(
+        address_canonicalization, "QUALIFIED_CLICKHOUSE_CANONICAL_ADDRESSES_TABLE"
+    )
+    assert not hasattr(address_canonicalization, "CANONICAL_ADDRESS_COLUMNS")
+    assert (
+        address_canonicalization.QUALIFIED_CANONICAL_ADDRESSES_TABLE
+        == "sweden_company_enrichment.se_company_addresses_canonical_current"
+    )
+    assert address_canonicalization.QUALIFIED_CLICKHOUSE_ADDRESS_MEMBERS_TABLE == (
+        "corpscout.se_company_address_members_current"
+    )

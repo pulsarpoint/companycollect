@@ -50,6 +50,56 @@ MIN_EXACT_MATCH_RATE_PERCENT = 5.0
 MAX_EXACT_MATCH_RATE_CHANGE_PERCENTAGE_POINTS = 2.0
 
 
+# RETIREMENT DDL THE CONTROLLER RUNS BY HAND, NEVER THE MIGRATION LEDGER.
+#
+# Owner ruling, 2026-08-25: a drop that has a precondition must not be a numbered
+# migration. A bare `migrate up` walks the ledger without knowing what has to happen
+# first, and on 2026-08-25 it applied both of these before their gates were met --
+# recovered only because UNDROP TABLE has an ~480 second window. They live here as pinned
+# statements instead, executed directly at plan steps 12f and 12g once the gates below
+# actually hold. Each is IF EXISTS, so re-running one after a recovery is a no-op.
+#
+# LEGACY_PAIR_RETIREMENT_DROP_SQL -- step 12f. Gate: the adoption import
+# (geocode_legacy_adoption, asset sweden_address_geocode_legacy_adoption_clickhouse) reads
+# se_company_address_geocode_results as its SOURCE and must have run and been verified
+# FIRST, or the decisions worth keeping go with the table. Nothing writes the pair any
+# more: the matcher and its three assets were deleted with the code half of this
+# retirement.
+#
+# CANONICAL_RETIREMENT_DROP_SQL -- step 12g. Gate: zero readers, re-verified with
+#   rg -n "se_company_addresses_canonical_current" corpscout --glob '!*.pyc'
+#   rg -n "address_canonicalization\.(QUALIFIED_)?CLICKHOUSE" corpscout --glob '!*.pyc'
+# The second grep is the one that matters and the one an earlier attempt was burned by:
+# every ClickHouse read of the canonical table went through a qualified-table constant that
+# a grep for the table name cannot see. All six readers that indirection hid are gone --
+# the geocode stats helper (split in two), this module's own publish (narrowed to members),
+# all_current_addresses_classified (retired with the legacy pair),
+# all_source_observations_have_one_canonical_address (its arithmetic moved into
+# address_canonicalization._assert_canonical_address_invariants, against the DuckDB
+# canonical table), all_company_addresses_link_to_one_shared_address (narrowed to
+# shared-vs-links) and shared_geocoding_matches_company_baseline (retired with the parity
+# baseline it compared). Also checked clean: every dbt sources.yml and the ClickhouseLeaf
+# registry, both classes of reader that name things far from any sweden_company import.
+#
+# THE DUCKDB CANONICAL BUILD STAYS. se_company_address_members_current derives from it and
+# se_company_address joins through members on every resolution -- only the ClickHouse copy
+# of the per-company canonical rows retires. Reverting means re-widening the publish and
+# re-materializing it, which refills the table from that build.
+#
+# NOT dropped, deliberately: se_company_address_members_current, se_addresses_current,
+# se_company_address_links_current, se_address_geocodes and se_address_geocodes_current.
+# The last one is read by FOUR backoffice modules -- app/lib/address-quality.server.ts,
+# app/lib/address-companies.server.ts, app/lib/company-sections.server.ts and
+# app/lib/se-company-address.server.ts -- so it retires behind its own gate, if ever.
+LEGACY_PAIR_RETIREMENT_DROP_SQL = (
+    "DROP TABLE IF EXISTS corpscout.se_company_address_geocode_results",
+    "DROP TABLE IF EXISTS corpscout.se_company_address_geocodes",
+)
+CANONICAL_RETIREMENT_DROP_SQL = (
+    "DROP TABLE IF EXISTS corpscout.se_company_addresses_canonical_current",
+)
+
+
 _GEOCODED_STATUS_LIST = ", ".join(
     f"'{status}'" for status in geocode_store.GEOCODED_STATUSES
 )
@@ -239,16 +289,14 @@ def sweden_company_canonical_addresses_duckdb(
     kinds={"python", "duckdb", "clickhouse", "bolagsverket", "scb"},
     pool=osm_tables.DUCKDB_POOL,
     metadata={
-        "canonical_table": (
-            address_canonicalization.QUALIFIED_CLICKHOUSE_CANONICAL_ADDRESSES_TABLE
-        ),
         "member_table": (
             address_canonicalization.QUALIFIED_CLICKHOUSE_ADDRESS_MEMBERS_TABLE
         ),
     },
     description=(
-        "Atomically publishes canonical Sweden company addresses and their "
-        "complete source-observation membership to ClickHouse."
+        "Publishes the complete source-observation membership of each canonical "
+        "Sweden company address to ClickHouse. The canonical addresses themselves "
+        "stay in DuckDB -- the members bridge is what downstream readers join."
     ),
 )
 def sweden_company_canonical_addresses_clickhouse(
@@ -256,42 +304,35 @@ def sweden_company_canonical_addresses_clickhouse(
     sweden_address_osm_duckdb: DuckDBResource,
     clickhouse: ClickhouseResource,
 ) -> dg.MaterializeResult:
+    """Publish the members bridge, and only the members bridge.
+
+    The canonical rows used to cross with it into
+    corpscout.se_company_addresses_canonical_current, which CANONICAL_RETIREMENT_DROP_SQL
+    retires. The DuckDB canonical build STAYS -- this bridge derives from it,
+    se_company_address resolves through the bridge, and address_canonicalization's own
+    invariants assert on the canonical table where it still lives.
+    """
     assert_clickhouse_tables_exist(
         clickhouse,
         database=address_canonicalization.CLICKHOUSE_DATABASE,
-        tables=(
-            address_canonicalization.CANONICAL_ADDRESSES_TABLE,
-            address_canonicalization.ADDRESS_MEMBERS_TABLE,
-        ),
+        tables=(address_canonicalization.ADDRESS_MEMBERS_TABLE,),
     )
     with sweden_address_osm_duckdb.get_connection() as connection:
         with clickhouse.get_connection() as clickhouse_client:
-            rows = replace_duckdb_connection_tables_in_clickhouse(
+            rows = export_duckdb_connection_table_to_clickhouse(
                 duckdb_connection=connection,
                 clickhouse_client=clickhouse_client,
                 duckdb_schema=address_canonicalization.ENRICHMENT_SCHEMA,
+                duckdb_table=address_canonicalization.ADDRESS_MEMBERS_TABLE,
                 clickhouse_database=address_canonicalization.CLICKHOUSE_DATABASE,
-                tables=(
-                    (
-                        address_canonicalization.CANONICAL_ADDRESSES_TABLE,
-                        address_canonicalization.CANONICAL_ADDRESS_COLUMNS,
-                    ),
-                    (
-                        address_canonicalization.ADDRESS_MEMBERS_TABLE,
-                        address_canonicalization.ADDRESS_MEMBER_COLUMNS,
-                    ),
-                ),
+                clickhouse_table=address_canonicalization.ADDRESS_MEMBERS_TABLE,
+                columns=address_canonicalization.ADDRESS_MEMBER_COLUMNS,
+                truncate=True,
                 log=context.log.info,
             )
     return dg.MaterializeResult(
         metadata={
-            "canonical_addresses": rows[
-                address_canonicalization.CANONICAL_ADDRESSES_TABLE
-            ],
-            "source_members": rows[address_canonicalization.ADDRESS_MEMBERS_TABLE],
-            "canonical_table": (
-                address_canonicalization.QUALIFIED_CLICKHOUSE_CANONICAL_ADDRESSES_TABLE
-            ),
+            "source_members": rows,
             "member_table": (
                 address_canonicalization.QUALIFIED_CLICKHOUSE_ADDRESS_MEMBERS_TABLE
             ),
@@ -1056,9 +1097,9 @@ class SwedenGeocodeLegacyAdoptionConfig(dg.Config):
         "One-time import of the retired per-company matcher's exact decisions for "
         "Sweden address identities the resolver refuses, as versioned "
         "legacy_adopted_v1 outcomes. Requires execute: true. Runs ONCE, at plan "
-        "step 12e, and must run BEFORE migration 000319 drops its source table; "
-        "after that apply it can no longer execute, and it stays as the record "
-        "of the import."
+        "step 12e, and must run BEFORE LEGACY_PAIR_RETIREMENT_DROP_SQL takes its "
+        "source table; after that drop it can no longer execute, and it stays as "
+        "the record of the import."
     ),
 )
 def sweden_address_geocode_legacy_adoption_clickhouse(
@@ -1072,9 +1113,10 @@ def sweden_address_geocode_legacy_adoption_clickhouse(
     the identities the rule refuses, then returns. Only `execute: true` inserts.
 
     RUNS ONCE, AT PLAN STEP 12e, AND THEN STAYS AS THE RECORD OF THAT RUN. Its source
-    table retires with the legacy matcher (migration 000319), which the import must
-    precede -- after the drop this asset can no longer do anything, by construction. It is kept because it is where a
-    reader looks for "where did the store's legacy_adopted_v1 rows come from", and because
+    table retires with the legacy matcher (LEGACY_PAIR_RETIREMENT_DROP_SQL), which the
+    import must precede -- after the drop this asset can no longer do anything, by
+    construction. It is kept because it is where a reader looks for "where did the store's
+    legacy_adopted_v1 rows come from", and because
     the assert below names se_company_address_geocode_results: a Materialize click after
     the drop fails on that name rather than somewhere inside a three-way join.
 
@@ -1195,93 +1237,6 @@ def sweden_address_geocode_legacy_adoption_clickhouse(
             "imported_at": imported_at.isoformat(),
             "sample": dg.MetadataValue.json([list(map(str, row)) for row in sample]),
         }
-    )
-
-
-@dg.asset_check(
-    asset=sweden_company_canonical_addresses_clickhouse,
-    name="all_source_observations_have_one_canonical_address",
-    description=(
-        "Fails when a source address in the normalization snapshot is missing or "
-        "duplicated in the bridge, or a canonical company-address key is duplicated."
-    ),
-)
-def sweden_company_canonical_addresses_complete_check(
-    clickhouse: ClickhouseResource,
-) -> dg.AssetCheckResult:
-    with clickhouse.get_connection() as client:
-        [(source_rows,)] = client.execute(
-            """
-            SELECT count()
-            FROM corpscout.se_company_addresses_current
-            WHERE has_address = 1 AND has_observation = 1
-            """
-        )
-        [
-            (
-                member_rows,
-                unique_member_rows,
-                member_normalization_runs,
-                member_normalization_run_id,
-            )
-        ] = client.execute(
-            f"""
-            SELECT
-                count(),
-                uniqExact(tuple(
-                    company_id,
-                    address_source,
-                    address_type,
-                    address_key
-                )),
-                uniqExact(normalization_run_id),
-                any(normalization_run_id)
-            FROM {address_canonicalization.QUALIFIED_CLICKHOUSE_ADDRESS_MEMBERS_TABLE}
-            """
-        )
-        [
-            (
-                canonical_rows,
-                unique_canonical_rows,
-                canonical_member_rows,
-                canonical_normalization_runs,
-                canonical_normalization_run_id,
-            )
-        ] = client.execute(
-            f"""
-            SELECT
-                count(),
-                uniqExact(tuple(company_id, canonical_address_key)),
-                sum(member_count),
-                uniqExact(normalization_run_id),
-                any(normalization_run_id)
-            FROM {address_canonicalization.QUALIFIED_CLICKHOUSE_CANONICAL_ADDRESSES_TABLE}
-            """
-        )
-    passed = (
-        int(member_rows) == int(unique_member_rows) == int(canonical_member_rows)
-        and int(canonical_rows) == int(unique_canonical_rows)
-        and int(canonical_rows) <= int(member_rows)
-        and int(member_normalization_runs) == 1
-        and int(canonical_normalization_runs) == 1
-        and member_normalization_run_id == canonical_normalization_run_id
-    )
-    return dg.AssetCheckResult(
-        passed=passed,
-        metadata={
-            "current_source_observations": int(source_rows),
-            "snapshot_source_observations": int(member_rows),
-            "unique_source_members": int(unique_member_rows),
-            "canonical_addresses": int(canonical_rows),
-            "unique_canonical_addresses": int(unique_canonical_rows),
-            "canonical_member_total": int(canonical_member_rows),
-            "deduplicated_observations": int(member_rows) - int(canonical_rows),
-            "upstream_observations_since_snapshot": max(
-                int(source_rows) - int(member_rows),
-                0,
-            ),
-            "normalization_runs": int(canonical_normalization_runs),
-        },
     )
 
 
@@ -1749,7 +1704,6 @@ defs = dg.Definitions(
         sweden_address_geocode_legacy_adoption_clickhouse,
     ],
     asset_checks=[
-        sweden_company_canonical_addresses_complete_check,
         sweden_shared_addresses_complete_check,
         sweden_address_geocodes_derived_parity_check,
         sweden_address_geocode_store_derived_parity_check,
