@@ -28,13 +28,18 @@ from dagster_v3.defs.sweden_company.address_geocoding_assets import (
     sweden_address_geocode_store_backfill_clickhouse,
     sweden_address_geocode_store_clickhouse,
 )
+from dagster_v3.defs.sweden_company.address_resolution_policy import (
+    SWEDEN_ADDRESS_RESOLUTION_POLICY,
+)
 from dagster_v3.defs.sweden_company.geocode_store import (
     QUALIFIED_DUCKDB_GEOCODE_APPEND_TABLE,
     SERVING_COLUMNS,
     STORE_COLUMNS,
 )
 
-POLICY = "se-address-resolution-policy-v5"
+# Both the promotion gate and the backfill's stamp read the LIVE resolver policy, so a
+# literal here would fail the whole file on the next policy bump for no real reason.
+POLICY = SWEDEN_ADDRESS_RESOLUTION_POLICY.version
 
 
 def test_the_backfill_stamps_the_policy_and_promotes_source_md5_to_the_key() -> None:

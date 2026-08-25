@@ -28,7 +28,7 @@ SWEDEN_STREET_SUFFIX_EXPANSIONS: dict[str, dict[str, str]] = {
 
 
 SWEDEN_ADDRESS_RESOLUTION_POLICY = AddressResolutionPolicy(
-    version="se-address-resolution-policy-v5",
+    version="se-address-resolution-policy-v6",
     minimum_fuzzy_street_length=6,
     maximum_street_edit_distance=1,
     minimum_decisive_score_margin=0.05,

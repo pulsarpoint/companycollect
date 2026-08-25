@@ -804,7 +804,7 @@ def epoch_milliseconds(value: datetime) -> int:
 
 
 def build_geocode_store_backfill_sql() -> str:
-    """The one-time append of today's serving rows as policy-v5 outcomes.
+    """The one-time append of today's serving rows as resolver-policy outcomes.
 
     matched_at is COPIED from the serving row, never restamped. That instant is what the
     outcome actually claims, and copying it is what makes a second backfill run replace each
@@ -1044,7 +1044,7 @@ def sweden_address_geocode_store_backfill_clickhouse(
     config: SwedenGeocodeStoreBackfillConfig,
     clickhouse: ClickhouseResource,
 ) -> dg.MaterializeResult:
-    """Import today's serving table into the store once, as policy-v5 outcomes.
+    """Import today's serving table into the store once, as resolver-policy outcomes.
 
     The default run WRITES NOTHING: it reports what a real run would append and returns.
     Only `execute: true` inserts, which is what keeps a stray Materialize click on a

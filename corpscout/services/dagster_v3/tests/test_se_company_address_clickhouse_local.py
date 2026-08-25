@@ -73,6 +73,9 @@ from dagster_v3.defs.se_company.scb import (
     SE_COMPANY_ADDRESS_SCB_SOURCE_COUNT_SQL,
     SE_COMPANY_ADDRESS_SCB_SQL,
 )
+from dagster_v3.defs.sweden_company.address_resolution_policy import (
+    SWEDEN_ADDRESS_RESOLUTION_POLICY,
+)
 from dagster_v3.defs.sweden_company.geocode_store import LEGACY_ADOPTED_POLICY_VERSION
 from tests.se_company_ddl import declared_columns
 from tests.test_se_company_person_clickhouse_local import _clickhouse_local_command, _literal, _render
@@ -133,10 +136,10 @@ CANONICAL_KEY_BETA = "2" * 64
 ALPHA_KEY = "7" * 64
 ALPHA_CARE_OF_V2 = "Bengt Andersson"  # no slash: toJSONString would escape one, TSV again
 # The store is keyed by (address_id, policy_version, reference_md5): one row per matcher per
-# OSM snapshot. RESOLVER_POLICY is address_resolution_policy.py's version; the adopted
-# policy version is geocode_store's own constant, imported rather than spelled, because
-# stage 2 of the read rule tests that exact string.
-RESOLVER_POLICY = "se-address-resolution-policy-v5"
+# OSM snapshot. Both policy versions are imported rather than spelled: the resolver's is
+# whatever address_resolution_policy.py currently declares, and stage 2 of the read rule
+# tests the adopted one's exact string.
+RESOLVER_POLICY = SWEDEN_ADDRESS_RESOLUTION_POLICY.version
 WEEK_MD5, ADOPTED_MD5 = "3" * 32, "4" * 32
 STORE_COLUMNS_SQL = (
     "(address_id, policy_version, reference_md5, address_identity_run_id,"
