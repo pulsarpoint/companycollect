@@ -1,41 +1,47 @@
-# SE Geocode Lab — design
+# Geocode analysis agent + Geocoding tab — design (v2, supersedes the terminal-lab v1)
 
-Owner-approved in chat 2026-08-25 ("Do it", exact-only caching, terminal-first). Goal: iterate on
-address-augmentation ideas in minutes and let confirmed full matches reach serving without a policy
-bump + full rematch per idea.
+Owner decisions (chat, 2026-08-25): agent triggered from backoffice UI, not a terminal harness;
+universal per-country with parameters; TypeScript module in backoffice; **OpenAI Codex SDK**
+(deliberate choice — provider flexibility, not Anthropic-only); agent has **memory** and stores
+suggestions in the **review-queue Postgres** (deployed 2026-08-22). Exact-only/caching from v1 is
+dead: the agent produces SUGGESTIONS; serving changes flow only through golden-gated policy bumps.
 
-## Components
+## 1. Backoffice tab "Geocoding" on /admin/se/company-info
+- Columns: Company (id+name, linked) | Address (published) | Geocode status
+  (geocoded / ambiguous / unmatched / no outcome).
+- Default filter: has address but no geocode mapping; status filter switchable; class counts in header.
+- Reads the same sources as the address tab (se_company_address + links + se_address_geocodes_current)
+  so tab and company page can never disagree. SE-first full fidelity; query shaped for other countries.
 
-1. **Augmentation hook** — `sweden_company/geocode_lab.py`: one pluggable pure function
-   `augment(street, postal_code, city) -> tuple[AugmentedQuery, ...]` (candidate rewrites; empty
-   tuple = no idea for this address). Iterated by editing this module only.
+## 2. Analysis agent (backoffice TypeScript, @openai/codex-sdk)
+- Separate module `app/agents/geocode-analysis.server.ts` (+ thin route action to trigger).
+- Parameters: `country` (required), optional focus/continue directive.
+- Context/tools given to the agent: read-only ClickHouse (unmatched pool, matched exemplars,
+  store outcome stats), its own Postgres memory + prior suggestions, a report writer.
+- Per run: cluster unmatched addresses into patterns, test hypotheses against matched exemplars,
+  quantify expected yield, emit concrete dagster suggestions (augmentation rules, with examples
+  and counts). Re-trigger goes deeper on the remainder using memory; reports convergence when no
+  further classes are found.
+- Runs are minutes-long: fire-and-poll (run row in Postgres carries status), never a blocking request.
 
-2. **Lab harness (fast loop, local, no deploy)** — a script/pytest-style harness that:
-   - pulls ONLY the unmatched pool (latest servable outcome per identity = unmatched; read-only
-     prod SELECT) and the current OSM reference snapshot (reuse the weekly's DuckDB artifact or
-     rebuild locally from the Geofabrik download);
-   - runs the REAL resolver engine (`defs/address_resolution`) with augmentation applied to the
-     query side — same scoring, same policy thresholds, no simplified copy;
-   - reports: would-match counts by outcome class, confidence histogram, N samples per class for
-     eyeballing. Writes nothing anywhere.
+## 3. Postgres persistence (review-queue instance, postgresqueue)
+- `geocode_agent_runs` (id, country, params, status queued/running/done/failed, model, started/finished,
+  report_md).
+- `geocode_agent_suggestions` (id, run_id, country, pattern, description, expected_yield,
+  examples jsonb, status new/accepted/implemented/rejected).
+- `geocode_agent_memory` (country, key, content, updated_at) — durable notes injected into the next
+  run's context (what was tried, what converged, register quirks learned).
+- Schema managed the same way the existing review-queue tables are; backoffice reuses its existing
+  Postgres connection.
 
-3. **Cache-on-full-match path** — the "cache table" IS the store `se_address_geocodes`
-   (legacy-adoption precedent, policy label `lab_augmentation_v1`):
-   - only EXACT full matches (score 1.0: street+house+postcode) are eligible; everything else is
-     preview-only;
-   - preview-first, execute-gated Dagster job (adoption pattern: bare materialization previews,
-     `execute: true` appends); append rows carry is_adopted-family provenance so the versioned
-     read serves them, and any later real policy version that geocodes the same address OUTRANKS
-     them (existing two-stage read semantics — no cleanup ever needed);
-   - writer invariant preserved: appends never back-dated.
+## 4. UI around the agent
+- Trigger button on the tab (country pre-filled), run history with status, rendered report,
+  suggestions list with lifecycle (accept → becomes a dagster policy-bump work item; implemented
+  suggestions link to the policy version that shipped them).
 
-4. **Graduation** — a proven augmentation class moves into the resolver as a proper policy bump
-   (golden-corpus gated, full rematch), and its lab rows retire by being outranked. The lab is an
-   experimentation fast path, never a second permanent matcher.
-
-## Constraints
-- The two-stage versioned read in `geocode_store.py` is the single source of truth; the lab never
-  adds read paths.
-- Terminal-first: no backoffice surface in this iteration.
-- Exact-only into the store; the golden corpus is NOT bypassed for policy changes — only for
-  lab-labeled adoptions, which are individually exact and outrankable.
+## Guardrails
+- Agent is read-only on ClickHouse; writes only to its three Postgres tables; NEVER writes the
+  geocode store; no deploys, no Dagster triggers.
+- Graduation path unchanged: accepted suggestion → policy bump (golden-corpus gated) → full rematch.
+- Phase 2 (separate dagster task, later): publish the OSM address reference to ClickHouse so the
+  agent can verify candidate streets directly instead of statistically.
