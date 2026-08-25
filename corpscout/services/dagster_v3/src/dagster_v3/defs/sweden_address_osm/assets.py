@@ -4,10 +4,12 @@ from email.utils import parsedate_to_datetime
 from pathlib import Path
 
 import dagster as dg
+from dagster_clickhouse import ClickhouseResource
 from dagster_duckdb import DuckDBResource
 
 from dagster_v3.defs.common.duckdb_resources import duckdb_resource
 from dagster_v3.defs.common.resources import ObjectStoreResource
+from dagster_v3.defs.sweden_address_osm import clickhouse as osm_clickhouse
 from dagster_v3.defs.sweden_address_osm import tables
 from dagster_v3.defs.sweden_address_osm.normalize import replace_osm_address_points
 from dagster_v3.defs.sweden_address_osm.resources import (
@@ -111,13 +113,168 @@ def _source_snapshot_at(manifest: dict[str, object]) -> datetime:
     return datetime.fromisoformat(str(manifest["retrieved_at"])).astimezone(UTC)
 
 
+@dg.asset(
+    name="sweden_osm_addresses_clickhouse",
+    deps=[dg.AssetKey("sweden_osm_addresses_duckdb")],
+    group_name=tables.GROUP_NAME,
+    kinds={"python", "duckdb", "clickhouse", "openstreetmap"},
+    pool=tables.DUCKDB_POOL,
+    description=(
+        "Publishes the Sweden OSM address-point and named-road gazetteer from the "
+        "host-local build DuckDB into ClickHouse (corpscout.se_osm_address_points, "
+        "corpscout.se_osm_street_segments) via a staged atomic EXCHANGE, adding a "
+        "resolver-normalized normalized_match_key that lines up with "
+        "se_address_geocodes so rewrite yield can be measured by SQL join."
+    ),
+)
+def sweden_osm_addresses_clickhouse(
+    context: dg.AssetExecutionContext,
+    sweden_address_osm_duckdb: DuckDBResource,
+    clickhouse: ClickhouseResource,
+) -> dg.MaterializeResult:
+    with sweden_address_osm_duckdb.get_connection() as connection:
+        result = osm_clickhouse.publish_sweden_osm_gazetteer(
+            duckdb_connection=connection,
+            clickhouse=clickhouse,
+            published_at=datetime.now(UTC),
+            log=context.log.info,
+        )
+    return dg.MaterializeResult(
+        metadata={
+            "address_points": result.address_points,
+            "street_segments": result.street_segments,
+            "address_points_table": (
+                f"{osm_clickhouse.CLICKHOUSE_DATABASE}."
+                f"{osm_clickhouse.ADDRESS_POINTS_TABLE_CH}"
+            ),
+            "street_segments_table": (
+                f"{osm_clickhouse.CLICKHOUSE_DATABASE}."
+                f"{osm_clickhouse.STREET_SEGMENTS_TABLE_CH}"
+            ),
+        }
+    )
+
+
+@dg.asset_check(
+    asset=sweden_osm_addresses_clickhouse,
+    name="gazetteer_tables_are_non_empty_and_mirror_duckdb",
+    description=(
+        "Fails when either published ClickHouse gazetteer table is empty or its row "
+        "count does not mirror the DuckDB build table it was published from."
+    ),
+)
+def sweden_osm_gazetteer_row_count_check(
+    sweden_address_osm_duckdb: DuckDBResource,
+    clickhouse: ClickhouseResource,
+) -> dg.AssetCheckResult:
+    with sweden_address_osm_duckdb.get_connection() as connection:
+        [(duckdb_address_points,)] = connection.execute(
+            f"select count(*) from {tables.QUALIFIED_ADDRESS_TABLE}"
+        ).fetchall()
+        [(duckdb_street_segments,)] = connection.execute(
+            f"select count(*) from {tables.QUALIFIED_STREET_SEGMENT_TABLE}"
+        ).fetchall()
+    with clickhouse.get_connection() as client:
+        [(clickhouse_address_points,)] = client.execute(
+            f"SELECT count() FROM {osm_clickhouse.CLICKHOUSE_DATABASE}."
+            f"{osm_clickhouse.ADDRESS_POINTS_TABLE_CH}"
+        )
+        [(clickhouse_street_segments,)] = client.execute(
+            f"SELECT count() FROM {osm_clickhouse.CLICKHOUSE_DATABASE}."
+            f"{osm_clickhouse.STREET_SEGMENTS_TABLE_CH}"
+        )
+    address_points_ok = osm_clickhouse.row_count_is_within_band(
+        clickhouse_count=int(clickhouse_address_points),
+        duckdb_count=int(duckdb_address_points),
+    )
+    street_segments_ok = osm_clickhouse.row_count_is_within_band(
+        clickhouse_count=int(clickhouse_street_segments),
+        duckdb_count=int(duckdb_street_segments),
+    )
+    return dg.AssetCheckResult(
+        passed=address_points_ok and street_segments_ok,
+        metadata={
+            "clickhouse_address_points": int(clickhouse_address_points),
+            "duckdb_address_points": int(duckdb_address_points),
+            "clickhouse_street_segments": int(clickhouse_street_segments),
+            "duckdb_street_segments": int(duckdb_street_segments),
+        },
+    )
+
+
+@dg.asset_check(
+    asset=sweden_osm_addresses_clickhouse,
+    name="matched_geocodes_find_their_osm_point_by_match_key",
+    description=(
+        "Samples matched_exact geocode outcomes computed against this gazetteer's OSM "
+        "snapshot and confirms they find their OSM address point again -- by OSM id, and "
+        "by normalized_match_key wherever the OSM point carries a postcode. A "
+        "normalization regression collapses the postcode-bearing key agreement."
+    ),
+)
+def sweden_osm_gazetteer_match_key_join_check(
+    clickhouse: ClickhouseResource,
+) -> dg.AssetCheckResult:
+    sample_limit = 50_000
+    with clickhouse.get_connection() as client:
+        [
+            (
+                sample_size,
+                osm_id_present,
+                key_matches,
+                postcode_bearing,
+                key_matches_postcode_bearing,
+            )
+        ] = client.execute(
+            osm_clickhouse.GAZETTEER_MATCH_JOIN_SQL,
+            {"sample_limit": sample_limit},
+        )
+    sample_size = int(sample_size)
+    osm_id_present = int(osm_id_present)
+    key_matches = int(key_matches)
+    postcode_bearing = int(postcode_bearing)
+    key_matches_postcode_bearing = int(key_matches_postcode_bearing)
+    passed = osm_clickhouse.gazetteer_match_join_is_healthy(
+        sample_size=sample_size,
+        osm_id_present=osm_id_present,
+        postcode_bearing=postcode_bearing,
+        key_matches_postcode_bearing=key_matches_postcode_bearing,
+    )
+    return dg.AssetCheckResult(
+        passed=passed,
+        metadata={
+            "sample_size": sample_size,
+            "osm_id_present": osm_id_present,
+            "osm_id_present_rate": (
+                osm_id_present / sample_size if sample_size else 0.0
+            ),
+            "key_matches": key_matches,
+            "key_match_rate": key_matches / sample_size if sample_size else 0.0,
+            "postcode_bearing": postcode_bearing,
+            "key_match_rate_postcode_bearing": (
+                key_matches_postcode_bearing / postcode_bearing
+                if postcode_bearing
+                else 0.0
+            ),
+        },
+    )
+
+
 sweden_address_osm_job = dg.define_asset_job(
     name="sweden_address_osm_job",
-    selection=dg.AssetSelection.assets("sweden_osm_addresses_duckdb").upstream(),
+    selection=dg.AssetSelection.assets("sweden_osm_addresses_clickhouse").upstream(),
 )
 
 defs = dg.Definitions(
-    assets=[sweden_osm_pbf_s3, sweden_osm_addresses_duckdb],
+    assets=[
+        sweden_osm_pbf_s3,
+        sweden_osm_addresses_duckdb,
+        sweden_osm_addresses_clickhouse,
+    ],
+    asset_checks=[
+        sweden_osm_gazetteer_row_count_check,
+        sweden_osm_gazetteer_match_key_join_check,
+    ],
     jobs=[sweden_address_osm_job],
     resources={
         "sweden_address_osm_duckdb": duckdb_resource(tables.DUCKDB_PATH),
