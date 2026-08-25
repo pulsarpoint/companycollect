@@ -62,3 +62,4 @@ corpscout/commoncrawl/**/uv.lock
 
 corpscout/dagster_v3/storage/
 companies/analysis/sweden/data_model/
+corpscout/services/searcher/profile*/
