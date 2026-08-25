@@ -13,6 +13,8 @@ from dagster_v3.defs.address_resolution.model import (
 from dagster_v3.defs.sweden_address_osm import tables as osm_tables
 from dagster_v3.defs.sweden_company.address_resolution_policy import (
     SWEDEN_ADDRESS_RESOLUTION_POLICY,
+    SWEDEN_SEPARATE_DEFINITE_EXPANSIONS,
+    SWEDEN_STREET_SUFFIX_EXACT_EXPANSIONS,
     SWEDEN_STREET_SUFFIX_EXPANSIONS,
     SWEDEN_STREET_VARIANT_LANGUAGES,
 )
@@ -194,6 +196,8 @@ def _evaluate_golden_corpus() -> GoldenAddressResolutionEvaluation:
         policy=SWEDEN_ADDRESS_RESOLUTION_POLICY,
         street_variant_languages_by_country=(SWEDEN_STREET_VARIANT_LANGUAGES),
         street_suffix_expansions_by_country=(SWEDEN_STREET_SUFFIX_EXPANSIONS),
+        exact_suffix_expansions_by_country=SWEDEN_STREET_SUFFIX_EXACT_EXPANSIONS,
+        separate_definite_by_country=SWEDEN_SEPARATE_DEFINITE_EXPANSIONS,
     )
 
 

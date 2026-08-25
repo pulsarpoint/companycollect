@@ -1,3 +1,4 @@
+import json
 from datetime import UTC, datetime
 from pathlib import Path
 
@@ -42,15 +43,74 @@ from dagster_v3.defs.sweden_company.address_resolution_shadow import (
 
 
 def test_sweden_golden_address_resolution_corpus() -> None:
+    """Gates on the real Sweden call path, including the v7 variant maps.
+
+    Mirrors `address_resolution_assets._evaluate_golden_corpus` exactly -- the golden
+    gate must exercise the same maps the production asset passes, or it silently
+    validates the matcher without ever touching v7 despite the policy being stamped
+    v7. Expected to be unchanged by v7: the maps are additive and the corpus may not
+    contain any punctuated or separate-definite-form streets.
+    """
     evaluation = evaluate_golden_address_resolution_corpus(
         corpus_path=_sweden_corpus_path(),
         policy=SWEDEN_ADDRESS_RESOLUTION_POLICY,
         street_variant_languages_by_country=SWEDEN_STREET_VARIANT_LANGUAGES,
         street_suffix_expansions_by_country=SWEDEN_STREET_SUFFIX_EXPANSIONS,
+        exact_suffix_expansions_by_country=SWEDEN_STREET_SUFFIX_EXACT_EXPANSIONS,
+        separate_definite_by_country=SWEDEN_SEPARATE_DEFINITE_EXPANSIONS,
     )
 
     assert evaluation.failures == ()
     assert evaluation.passed_count == evaluation.case_count
+
+
+def test_golden_corpus_evaluation_exercises_v7_suffix_exact_and_separate_definite(
+    tmp_path: Path,
+) -> None:
+    """The golden runner must forward the v7 maps to `replace_address_street_variants`.
+
+    Before this wiring, `evaluate_golden_address_resolution_corpus` did not accept
+    `exact_suffix_expansions_by_country` / `separate_definite_by_country` at all, so
+    the golden gate validated the matcher without ever exercising the v7 variant
+    tier -- even though `SWEDEN_ADDRESS_RESOLUTION_POLICY.version` reads v7. The real
+    Sweden golden corpus (`sweden_v1.json`) may not contain a punctuated or
+    separate-definite-form street, so it can't by itself prove the wiring reaches a
+    real match; this uses a synthetic two-case corpus instead, exercising the golden
+    runner end to end (real DuckDB matcher, no mocking):
+
+    - `punctuated_suffix_exact`: query street `Villav.` cannot be expanded by the v6
+      glued-suffix map at all (`"villav.".endswith("v")` is `False` -- the trailing
+      period breaks it), so only the v7 exact map (`"v." -> "vägen"`) can produce a
+      variant that matches the `Villavägen` reference.
+    - `separate_definite_expansion`: query street `Norra Villa Väg` -- the v6 glued
+      map also can't touch this (its last-token stem after stripping `g` is 2
+      characters, below `MINIMUM_GLUED_SUFFIX_STEM_LENGTH`) -- only the v7 separate
+      map (`"väg" -> "vägen"`) can produce the `Norra Villa Vägen` variant.
+
+    This is the strongest assertion the existing golden test structure supports: the
+    corpus/evaluate structure golden.py already exposes doesn't expose the internal
+    duckdb connection or variant table after `evaluate_golden_address_resolution_corpus`
+    returns (it opens and closes an in-memory connection per call), so asserting on the
+    final match outcome -- rather than mocking or inspecting internal state -- is the
+    only way to observe that the two kwargs actually reached the variant builder.
+    """
+    corpus_path = tmp_path / "v7_variant_wiring_corpus.json"
+    corpus_path.write_text(
+        json.dumps(_v7_variant_wiring_corpus()), encoding="utf-8"
+    )
+
+    evaluation = evaluate_golden_address_resolution_corpus(
+        corpus_path=corpus_path,
+        policy=SWEDEN_ADDRESS_RESOLUTION_POLICY,
+        street_variant_languages_by_country=SWEDEN_STREET_VARIANT_LANGUAGES,
+        street_suffix_expansions_by_country=SWEDEN_STREET_SUFFIX_EXPANSIONS,
+        exact_suffix_expansions_by_country=SWEDEN_STREET_SUFFIX_EXACT_EXPANSIONS,
+        separate_definite_by_country=SWEDEN_SEPARATE_DEFINITE_EXPANSIONS,
+    )
+
+    assert evaluation.failures == ()
+    assert evaluation.case_count == 2
+    assert evaluation.passed_count == 2
 
 
 def test_sweden_address_resolution_policy_is_v7() -> None:
@@ -1642,3 +1702,142 @@ def _sweden_corpus_path() -> Path:
         / "corpora"
         / "sweden_v1.json"
     )
+
+
+def _v7_variant_wiring_corpus() -> dict[str, object]:
+    """A minimal two-case corpus that only resolves through the v7 variant maps.
+
+    Neither case can be solved by the v6 glued-suffix map or by libpostal's
+    general-purpose expansion -- see the docstring on
+    `test_golden_corpus_evaluation_exercises_v7_suffix_exact_and_separate_definite`
+    for why each street defeats v6.
+    """
+    return {
+        "version": "v7-variant-wiring-corpus-v1",
+        "cases": [
+            {
+                "case_id": "punctuated_suffix_exact",
+                "description": (
+                    "A punctuated suffix abbreviation resolves only through the v7 "
+                    "exact-suffix map."
+                ),
+                "query": _v7_wiring_document(
+                    document_id="query-villav-3",
+                    raw_address="Villav. 3, 12573 Älvsjö",
+                    street_name="Villav.",
+                    house_number="3",
+                    postal_code="12573",
+                    locality="Älvsjö",
+                    reference_precision="",
+                    latitude=None,
+                    longitude=None,
+                    coordinate_spread_meters=None,
+                    supporting_record_count=0,
+                    source_record_url="",
+                ),
+                "references": [
+                    _v7_wiring_document(
+                        document_id="reference-villavagen-3",
+                        raw_address="",
+                        street_name="Villavägen",
+                        house_number="3",
+                        postal_code="12573",
+                        locality="Älvsjö",
+                        reference_precision="building",
+                        latitude=59.276887,
+                        longitude=18.011506,
+                        coordinate_spread_meters=0,
+                        supporting_record_count=1,
+                        source_record_id="node/villavagen-3",
+                        source_record_url="https://www.openstreetmap.org/node/1",
+                    )
+                ],
+                "expected": {
+                    "status": "matched_corrected",
+                    "precision": "building",
+                    "strategy": "expanded_street_postcode_house",
+                },
+            },
+            {
+                "case_id": "separate_definite_expansion",
+                "description": (
+                    "A standalone indefinite last token resolves only through the "
+                    "v7 separate-definite map."
+                ),
+                "query": _v7_wiring_document(
+                    document_id="query-norravillavag-8",
+                    raw_address="Norra Villa Väg 8, 12573 Älvsjö",
+                    street_name="Norra Villa Väg",
+                    house_number="8",
+                    postal_code="12573",
+                    locality="Älvsjö",
+                    reference_precision="",
+                    latitude=None,
+                    longitude=None,
+                    coordinate_spread_meters=None,
+                    supporting_record_count=0,
+                    source_record_url="",
+                ),
+                "references": [
+                    _v7_wiring_document(
+                        document_id="reference-norravillavagen-8",
+                        raw_address="",
+                        street_name="Norra Villa Vägen",
+                        house_number="8",
+                        postal_code="12573",
+                        locality="Älvsjö",
+                        reference_precision="building",
+                        latitude=59.3,
+                        longitude=18.05,
+                        coordinate_spread_meters=0,
+                        supporting_record_count=1,
+                        source_record_id="node/norravillavagen-8",
+                        source_record_url="https://www.openstreetmap.org/node/2",
+                    )
+                ],
+                "expected": {
+                    "status": "matched_corrected",
+                    "precision": "building",
+                    "strategy": "expanded_street_postcode_house",
+                },
+            },
+        ],
+    }
+
+
+def _v7_wiring_document(
+    *,
+    document_id: str,
+    raw_address: str,
+    street_name: str,
+    house_number: str,
+    postal_code: str,
+    locality: str,
+    reference_precision: str,
+    latitude: float | None,
+    longitude: float | None,
+    coordinate_spread_meters: float | None,
+    supporting_record_count: int,
+    source_record_url: str,
+    source_record_id: str | None = None,
+) -> dict[str, object]:
+    search_text = f"{street_name} {house_number}, {postal_code} {locality}"
+    return {
+        "document_id": document_id,
+        "country_code": "SE",
+        "raw_address": raw_address,
+        "search_text": search_text,
+        "street_name": street_name,
+        "house_number": house_number,
+        "unit": "",
+        "postal_code": postal_code,
+        "locality": locality,
+        "address_kind": "physical",
+        "reference_precision": reference_precision,
+        "latitude": latitude,
+        "longitude": longitude,
+        "coordinate_spread_meters": coordinate_spread_meters,
+        "supporting_record_count": supporting_record_count,
+        "source_record_id": source_record_id or document_id,
+        "source_record_url": source_record_url,
+    }
