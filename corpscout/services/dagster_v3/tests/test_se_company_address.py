@@ -254,8 +254,19 @@ def test_the_geocode_query_reads_the_versioned_read_and_gates_every_joined_colum
     assert f"LEFT JOIN (\n{expected_read}\n) AS geocodes ON geocodes.address_id = links.address_id" in sql
     # The filter prunes the store on its sorting key's leading column before ranking, so a
     # page of companies never pays for the whole store.
-    assert GEOCODE_ADDRESS_FILTER_SQL.strip().startswith("address_id IN (")
+    #
+    # Pinned WHOLE, not just at its opening. It is spliced in as the INNER read's WHERE with
+    # no parentheses around it, so an `AND <anything>` welded onto the end would narrow
+    # which rows enter the rank -- a different served outcome, silently, with no syntax
+    # error anywhere. Two clauses hold it shut: the text ends at the subquery's closing
+    # paren, and the only columns it may name are the identity key and the company key.
+    filter_sql = GEOCODE_ADDRESS_FILTER_SQL.strip()
+    assert filter_sql.startswith("address_id IN (")
+    assert filter_sql.endswith(")")
     assert "%(company_ids)s" in GEOCODE_ADDRESS_FILTER_SQL
+    vocabulary = filter_sql.replace("%(company_ids)s", "?").replace(
+        "corpscout.se_company_address_links_current", "")
+    assert set(re.findall(r"[a-z_][a-z_0-9]*", vocabulary)) == {"address_id", "company_id"}
     # Nullable source columns are ifNull'd, never gated; joined non-Nullable ones are gated.
     assert "ifNull(toString(geocodes.latitude), '') AS latitude" in sql
     assert "toString(geocodes.match_status), '') AS geocode_status" in sql
@@ -548,13 +559,14 @@ def test_the_cap_rather_than_exhaustion_is_reported_when_a_full_page_uses_it_up(
 def test_the_config_gates_the_run_and_bounds_the_weekly_population() -> None:
     """The two bounds that decide what an automated run actually does.
 
-    Ruling A17: this datatype's weekly selection is NOT "the companies that changed". The
-    geocode snapshot is rebuilt whole every week, so new_geocode re-selects every company
-    linked to one of the ~2.09M address IDENTITIES -- more companies than identities, since
-    a shared address links many. And the scan has no memory: a run stopped by max_companies
-    restarts at the first company_id, so a cap below that population re-resolves the same
-    leading slice forever and never reaches the tail. The bound therefore has to admit an
-    effectively uncapped weekly run.
+    Ruling A17, restated for the store: the weekly whole-table geocode restamp that used to
+    make new_geocode select every geocoded company is gone, so an ordinary week now selects
+    register churn plus real geocode changes. The bound stays wide for the reason that did
+    NOT go away -- the scan has no memory. A run stopped by max_companies restarts at the
+    first company_id, so a cap below the number of companies a run selects re-resolves the
+    same leading slice forever and never reaches the tail, and nothing tells the weekly
+    config that number in advance. The bound therefore has to admit an effectively uncapped
+    weekly run.
     """
     from dagster_v3.defs.se_company.address import SECompanyAddressConfig
 

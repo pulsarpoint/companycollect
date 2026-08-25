@@ -223,9 +223,12 @@ def build_changed_companies_sql() -> str:
     and true of it too; a known property, not a defect of this scan.
 
     ``max(observed_at)`` per artifact and ``max(matched_at)`` per company need no FINAL --
-    both ARE their table's version column (ReplacingMergeTree for the artifacts, a
-    rebuilt-per-run snapshot for the geocodes), so an unmerged older duplicate can never be
-    the maximum. ``max(resolved_at)`` over the final is version-safe for the same reason,
+    each IS its own table's ReplacingMergeTree version column, the artifacts' and the
+    geocode store's alike, so an unmerged older duplicate can never be the maximum. That is
+    a STRONGER property than it used to be: the geocodes were a snapshot rebuilt whole per
+    run, where "no FINAL" rested on the rebuild leaving one row per identity; the store is
+    ReplacingMergeTree(matched_at) itself, so this maximum is version-safe by the engine's
+    own contract. ``max(resolved_at)`` over the final is version-safe for the same reason,
     which is why nothing in this query is FINAL: a full-table dedup pass over a 4.7M-row
     final would be paid on every page for a value that cannot change.
 
@@ -248,9 +251,23 @@ def build_changed_companies_sql() -> str:
     later resolver success beat, say) wakes its companies once more than strictly needed --
     but it can never MISS a company whose served coordinate moved. Over-selection costs one
     republished version with identical content; under-selection would leave a stale
-    coordinate served forever. Ranking 2.09M identities on every scan page to avoid the
-    former would be the wrong trade, and it would put a second copy of the read rule in this
-    module, which is the thing the design forbids.
+    coordinate served forever.
+
+    THE NO-MISS HALF RESTS ON ONE CONSTRAINT, and it is a constraint on WRITERS rather than
+    a property of this query: an append is stamped with the instant it is made, so any
+    append that changes the served row also raises the maximum this term reads. An importer
+    that back-dated its rows -- stamping an outcome with the instant it was originally
+    decided rather than the instant it was stored -- could change what the store serves
+    without moving max(matched_at) at all, and nothing here would ever see it. Both writers
+    that exist satisfy the constraint: the weekly promotion stamps the append's own instant,
+    and the legacy_adopted_v1 import stamps its run's (geocode_legacy_adoption). The
+    one-time store backfill does copy matched_at, but only from serving rows that were
+    already the served ones, so it changes no served answer. A future importer of historical
+    outcomes would have to add a term here, not just an INSERT.
+
+    Ranking 2.09M identities on every scan page to avoid the over-selection would be the
+    wrong trade, and it would put a second copy of the read rule in this module, which is
+    the thing the design forbids.
 
     The weekly automated config still runs effectively UNCAPPED, and that is now pure
     defense rather than a requirement this term imposes. This scan has no memory: it is
@@ -685,15 +702,17 @@ class SECompanyAddressConfig(dg.Config):
     # launch all do.
     execute: bool = False
     company_ids: list[str] = Field(default_factory=list)
-    # Bounded at 5,000,000, not the info final's 1,000,000. This datatype's weekly
-    # selection is not "the companies that changed": the geocode snapshot is rebuilt whole
-    # every week, so new_geocode re-selects every company linked to one of the ~2.09M
-    # address IDENTITIES -- more companies than identities, since a shared address links
-    # many. A cap below that population does NOT sample it: the scan is ordered by
-    # company_id and has no memory, so a capped run resumes at the start and rewrites the
-    # same leading slice every week while the tail is never reached. The automated weekly
-    # config must run effectively uncapped; a deliberately staged pass uses resolve_all
-    # with an explicit resolve_all_before instead, which is the only memory there is.
+    # Bounded at 5,000,000, not the info final's 1,000,000 -- and the reason is the SCAN,
+    # not the geocodes. The weekly whole-table geocode restamp that used to make
+    # new_geocode select every geocoded company is gone: the store appends only what a run
+    # actually matched, so an ordinary week now selects register churn plus real geocode
+    # changes. The bound stays wide anyway, because the scan has NO MEMORY. It is ordered
+    # by company_id and every run starts from the first id again, so a cap below the number
+    # of companies a run selects does not SAMPLE that population -- it rewrites the same
+    # leading slice every week and never reaches the tail. Nothing tells the weekly config
+    # that number in advance, so the only safe automated setting is effectively uncapped; a
+    # deliberately staged pass uses resolve_all with an explicit resolve_all_before
+    # instead, which is the only memory there is.
     max_companies: int = Field(default=1_000_000, ge=1, le=5_000_000)
     # Capped at 5,000: this is both the scan page size and the chunk size for an explicit
     # company_ids scope, and the scan embeds the id list four times client-side.
@@ -744,12 +763,11 @@ se_company_address_review_job = dg.define_asset_job(
 # or scheduled run carries only the config written here, and anything left out falls back to
 # the asset's own defaults -- which for this asset means resolving nothing. The weekly
 # schedule reuses this same dict, so a scheduled run would also fall back to max_companies'
-# default of 1,000,000 -- below the weekly new_geocode population (~2.09M address identities,
-# more companies than that), and the scan restarts from the top every run, so a capped weekly
-# run would rewrite the same leading slice forever instead of ever reaching the tail (Ruling
-# A17, documented on SECompanyAddressConfig.max_companies above). max_companies is set here to
-# run effectively uncapped. The correction sensor's runs are scoped by company_ids regardless
-# of this cap, so sharing the same value there is harmless.
+# default of 1,000,000 -- a cap this scan cannot sample under, because it restarts from the
+# first company_id every run and would rewrite the same leading slice forever instead of ever
+# reaching the tail (Ruling A17, documented on SECompanyAddressConfig.max_companies above).
+# max_companies is set here to run effectively uncapped. The correction sensor's runs are
+# scoped by company_ids regardless of this cap, so sharing the same value there is harmless.
 AUTOMATED_RUN_CONFIG: dict[str, Any] = {"execute": True, "max_companies": 5_000_000}
 se_company_address_correction_sensor = ledger_sensor(
     name="se_company_address_correction_sensor", table=SE_COMPANY_ADDRESS_CORRECTION,
