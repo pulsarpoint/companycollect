@@ -19,6 +19,7 @@ from clickhouse_driver.columns.datetimecolumn import DateTime64Column
 
 from dagster_v3.defs.sweden_company.address_geocoding_assets import (
     BACKFILL_PREFLIGHT_SQL,
+    BACKFILL_STORE_GUARD_SQL,
     GEOCODE_STORE_BACKFILL_SQL,
     SwedenGeocodeStoreBackfillConfig,
     build_geocode_store_backfill_sql,
@@ -177,12 +178,14 @@ class _FakeClickhouseClient:
         existing_tables: set[str],
         regressions: int = 0,
         preflight: tuple[int, int] = (3, 0),
+        store_rows: int = 0,
     ) -> None:
         self.executed: list[tuple[str, Any]] = []
         self.inserted_rows: list[tuple] = []
         self.existing_tables = existing_tables
         self.regressions = regressions
         self.preflight = preflight
+        self.store_rows = store_rows
 
     def execute(self, sql: str, params: Any = None) -> list[tuple]:
         self.executed.append((sql, params))
@@ -193,6 +196,11 @@ class _FakeClickhouseClient:
         if sql.startswith("INSERT INTO"):
             self.inserted_rows.extend(params or [])
             return []
+        # Matched on the constant itself, not on a shape: `SELECT count() FROM <store>` is
+        # too ordinary a spelling to dispatch on, and this answer decides whether the
+        # backfill's one legitimate run has already happened.
+        if sql == BACKFILL_STORE_GUARD_SQL:
+            return [(self.store_rows,)]
         if "toUnixTimestamp64Milli" in sql:
             return [(self.regressions,)]
         if "countIf(isNull(source_md5)" in sql:
@@ -534,3 +542,34 @@ def test_the_backfill_refuses_an_empty_serving_table() -> None:
 
     with pytest.raises(ValueError, match="serving geocode table is empty"):
         _run_backfill(client, execute=True)
+
+
+def test_the_backfill_refuses_to_run_a_second_time_on_a_non_empty_store() -> None:
+    """The one-time import is one-time, and a repeat is no longer merely redundant.
+
+    It WAS idempotent while the serving table was the pipeline's own output and this was a
+    copy of it. It is not now: the serving table is derived FROM the store, and among the
+    rows it publishes are the adoption import's legacy_adopted_v1 outcomes, which the
+    serving projection carries without their policy. Reading them back through this INSERT
+    stamps them policy-v5 with the legacy row's source MD5 -- a resolver-family
+    `matched_exact` at the SAME matched_at as the adopted row it was copied from, which
+    stage 2 prefers (`1 - is_adopted` breaks the tie towards the resolver). The coordinate
+    is silently re-attributed to a resolver that never matched the identity, and ~19k
+    identities leave the retry pool the demand scan builds out of resolver rows.
+
+    Nothing downstream would raise: the served coordinate does not move, only its story.
+    """
+    loaded = _backfill_client(preflight=(2_090_981, 0), store_rows=2_090_981)
+
+    with pytest.raises(ValueError, match="already holds 2,090,981 rows"):
+        _run_backfill(loaded, execute=True)
+    assert not [sql for sql in loaded.statements if sql.startswith("INSERT INTO")]
+
+    # ... and it is a guard, not a refusal: the empty store the one legitimate run met is
+    # still imported into.
+    empty = _backfill_client(preflight=(3, 0), store_rows=0)
+
+    result = _run_backfill(empty, execute=True)
+
+    assert [sql for sql in empty.statements if sql.startswith("INSERT INTO")]
+    assert result.metadata["preview"] is False

@@ -834,6 +834,12 @@ BACKFILL_PREFLIGHT_SQL = f"""SELECT
     countIf(isNull(source_md5) OR source_md5 = '')
 FROM {shared_address_geocoding.QUALIFIED_CLICKHOUSE_ADDRESS_GEOCODES_TABLE}"""
 
+# What tells the backfill its one legitimate append has already happened. Any row at all is
+# enough: the import is seeding, and a store that holds anything is a store that is already
+# being read (see the asset's docstring for what a repeat would do to the adopted rows).
+BACKFILL_STORE_GUARD_SQL = f"""SELECT count()
+FROM {geocode_store.QUALIFIED_CLICKHOUSE_GEOCODE_STORE_TABLE}"""
+
 
 @dg.asset(
     name=GEOCODE_STORE_ASSET_KEY,
@@ -1027,8 +1033,10 @@ class SwedenGeocodeStoreBackfillConfig(dg.Config):
     description=(
         "One-time append of the whole current Sweden serving geocode table into the "
         "versioned store, stamped with the resolver policy that produced it and each "
-        "row's own OSM snapshot MD5. Idempotent: a second run replaces each row with "
-        "identical content."
+        "row's own OSM snapshot MD5. Ran ONCE, at plan step 12c, into an EMPTY store: "
+        "execute: true refuses a store that already holds rows, because the serving "
+        "table is now derived from the store and a repeat would re-attribute the "
+        "adopted coordinates to the resolver. A bare Materialize click is a preview."
     ),
 )
 def sweden_address_geocode_store_backfill_clickhouse(
@@ -1040,9 +1048,23 @@ def sweden_address_geocode_store_backfill_clickhouse(
 
     The default run WRITES NOTHING: it reports what a real run would append and returns.
     Only `execute: true` inserts, which is what keeps a stray Materialize click on a
-    2.09M-row table harmless. Re-running with the gate on is safe -- every row keeps the
-    serving row's own `matched_at`, so a second import replaces each row with identical
-    content instead of bumping 2.09M versions.
+    2.09M-row table harmless.
+
+    IT SEEDS AN EMPTY STORE AND REFUSES A NON-EMPTY ONE, and the refusal is not tidiness.
+    A repeat WAS harmless while the serving table was the matcher's own output and this was
+    a copy of it: every row keeps the serving row's `matched_at`, so the second import
+    replaced each row with identical content instead of bumping 2.09M versions. The serving
+    table is now a PROJECTION OF THE STORE, and what it publishes includes the adoption
+    import's legacy_adopted_v1 outcomes -- carried without their policy, because the
+    serving projection drops both version columns. Reading those back through this INSERT
+    would stamp them with the resolver policy and key them by the legacy row's own
+    source_md5: a brand-new resolver-family `matched_exact` at the SAME `matched_at` as the
+    adopted row it was copied from, which the choice rank then PREFERS (equal instants are
+    broken towards the resolver). The coordinate would be re-attributed to a resolver that
+    never matched the identity, and the ~19k adopted identities would leave the retry pool
+    the demand scan builds out of resolver rows -- with no served coordinate moving and
+    nothing anywhere raising. Rebuilding the store from scratch is a deliberate TRUNCATE
+    followed by a run, never a re-run.
     """
     assert_clickhouse_tables_exist(
         clickhouse,
@@ -1069,6 +1091,22 @@ def sweden_address_geocode_store_backfill_clickhouse(
                     "serving_rows": int(serving_rows),
                     "policy_version": policy_version,
                 }
+            )
+        # Preview keeps working on a full store -- reporting what the serving table holds
+        # writes nothing. Only the gate is refused, and only after the preview branch, so a
+        # reader can still measure the store this way.
+        [(store_rows,)] = client.execute(BACKFILL_STORE_GUARD_SQL)
+        if int(store_rows) != 0:
+            raise ValueError(
+                f"The Sweden geocode store already holds {int(store_rows):,} rows -- "
+                "this one-time seeding import (plan step 12c) has already run. The "
+                "serving table is derived FROM the store now, so a second import would "
+                "read the adoption import's legacy_adopted_v1 outcomes back out of it "
+                f"and re-insert them as {policy_version} rows keyed by the legacy "
+                "source MD5: a resolver-family matched_exact that re-attributes those "
+                "coordinates to the resolver and drops ~19k identities out of the retry "
+                "pool, silently. Rebuild by TRUNCATE-then-run if that is really what is "
+                "meant; use execute: false to inspect"
             )
         client.execute(GEOCODE_STORE_BACKFILL_SQL, {"policy_version": policy_version})
         [(store_rows, store_identities, policies)] = client.execute(
