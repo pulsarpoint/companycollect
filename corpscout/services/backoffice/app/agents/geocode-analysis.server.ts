@@ -21,11 +21,19 @@
  * Runs take minutes, so `startGeocodeAnalysisRun` inserts a queued row and
  * returns; the loop continues in the background and the UI polls the row.
  */
-import { mkdtemp, rm } from "node:fs/promises";
+import { chmod, copyFile, mkdir, mkdtemp, rm } from "node:fs/promises";
 import { existsSync } from "node:fs";
 import { homedir, tmpdir } from "node:os";
 import { join } from "node:path";
-import { Codex, type ModelReasoningEffort } from "@openai/codex-sdk";
+import {
+  Codex,
+  type CodexOptions,
+  type Input,
+  type ModelReasoningEffort,
+  type ThreadOptions,
+  type TurnOptions,
+  type Usage,
+} from "@openai/codex-sdk";
 import {
   AGENT_TURN_OUTPUT_SCHEMA,
   AgentOutputError,
@@ -221,12 +229,19 @@ function modelReasoningEffort(value: string): ModelReasoningEffort | undefined {
  * key in the backoffice's environment -- is withheld: a model process that
  * cannot read a credential cannot leak one, whatever it is persuaded to do.
  *
- * The Codex CLI needs PATH and a home to resolve its own binary, config and
- * credentials, and proxy variables when the host reaches the API through one.
+ * HOME is NOT inherited. The Codex sandbox's "read-only" mode restricts
+ * WRITES, not reads: a child process can still `cat` any file the uid can
+ * read, so pointing HOME at the operator's home directory would put
+ * ~/.aws/credentials, ~/.ssh and every dotfile one shell command away. It is
+ * replaced by a per-session directory (see `createSessionHome`). That narrows
+ * the blast radius; it does not eliminate it -- real isolation is a separate
+ * uid or container, which is a deployment decision (README).
+ *
+ * The Codex CLI still needs PATH to resolve its own binary, a home for its
+ * state, and proxy variables when the host reaches the API through one.
  */
 const AGENT_ENV_ALLOWLIST = [
   "PATH",
-  "HOME",
   "USER",
   "LOGNAME",
   "SHELL",
@@ -241,8 +256,15 @@ const AGENT_ENV_ALLOWLIST = [
   "no_proxy",
 ];
 
+export interface AgentSessionHome {
+  /** HOME for the child process: a directory of its own, never the operator's. */
+  home: string;
+  /** CODEX_HOME: the configured one, or a fresh one inside `home`. */
+  codexHome: string;
+}
+
 export function agentProcessEnv(
-  config: GeocodeAgentConfig,
+  session: AgentSessionHome,
   env: NodeJS.ProcessEnv = process.env,
 ): Record<string, string> {
   const allowed: Record<string, string> = {};
@@ -250,8 +272,44 @@ export function agentProcessEnv(
     const value = env[key];
     if (typeof value === "string" && value !== "") allowed[key] = value;
   }
-  if (config.codexHome !== "") allowed.CODEX_HOME = config.codexHome;
+  allowed.HOME = session.home;
+  allowed.CODEX_HOME = session.codexHome;
   return allowed;
+}
+
+/**
+ * Creates the per-run home directory the Codex child gets instead of the
+ * operator's.
+ *
+ * When the host authenticates through a signed-in CLI rather than an API key,
+ * the one file the child genuinely needs -- `auth.json` -- is copied in at
+ * 0600 rather than handing over the whole `~/.codex` (which is also where an
+ * operator's `config.toml` registers MCP servers). `mkdtemp` creates the
+ * directory 0700.
+ */
+export async function createSessionHome(
+  config: GeocodeAgentConfig,
+): Promise<AgentSessionHome & { cleanup: () => Promise<void> }> {
+  const home = await mkdtemp(join(tmpdir(), "geocode-agent-home-"));
+  const cleanup = async () => {
+    await rm(home, { recursive: true, force: true });
+  };
+
+  if (config.codexHome !== "") {
+    return { home, codexHome: config.codexHome, cleanup };
+  }
+
+  const codexHome = join(home, ".codex");
+  await mkdir(codexHome, { recursive: true, mode: 0o700 });
+  if (config.apiKey === "") {
+    const source = join(homedir(), ".codex", "auth.json");
+    if (existsSync(source)) {
+      const target = join(codexHome, "auth.json");
+      await copyFile(source, target);
+      await chmod(target, 0o600);
+    }
+  }
+  return { home, codexHome, cleanup };
 }
 
 /**
@@ -267,25 +325,58 @@ export function agentProcessEnv(
 const AGENT_CONFIG_OVERRIDES = ["mcp_servers={}"];
 
 /**
- * The real factory: a Codex thread locked down to nothing but thinking.
- *
- * - `sandboxMode: "read-only"` and a fresh empty working directory: the agent
- *   cannot see this repository, let alone edit it.
- * - `networkAccessEnabled: false`, `webSearchEnabled: false`: no egress.
- * - `approvalPolicy: "never"`: no interactive escape hatch on a server.
- *
- * Every fact it uses therefore arrives through this loop's query results.
+ * The narrow slice of the Codex SDK this module uses, so the guardrail options
+ * below can be asserted in a unit test without spawning a model process.
+ * `new Codex(...)` satisfies it structurally.
  */
-export function codexThreadFactory(config: GeocodeAgentConfig): AgentThreadFactory {
+export interface CodexClientLike {
+  startThread(options?: ThreadOptions): {
+    readonly id: string | null;
+    run(
+      input: Input,
+      turnOptions?: TurnOptions,
+    ): Promise<{ finalResponse: string; usage: Usage | null }>;
+  };
+}
+
+export type CodexClientFactory = (options: CodexOptions) => CodexClientLike;
+
+/**
+ * The real factory: a Codex thread with as little reach as the CLI allows.
+ *
+ * What these options DO buy:
+ * - `sandboxMode: "read-only"`: the child cannot WRITE anywhere, so it cannot
+ *   edit this repository or drop anything on the host.
+ * - `networkAccessEnabled: false`, `webSearchEnabled: false`: no egress from
+ *   the sandboxed child beyond the model API the CLI itself speaks to.
+ * - `approvalPolicy: "never"`: no interactive escape hatch on a server.
+ * - `mcp_servers={}` plus a per-session HOME/CODEX_HOME: the operator's own
+ *   Codex config -- and any MCP server it registers -- is out of scope.
+ *
+ * What they do NOT buy, stated so nobody relies on it: read-only is not
+ * read-PROOF. A shell command in the sandbox can still read any file this uid
+ * can read; an empty working directory and a private HOME reduce what is
+ * within easy reach, they do not make the filesystem invisible. Production
+ * isolation means a separate uid or container (README).
+ *
+ * The agent is not asked to run commands at all -- every fact it uses arrives
+ * through this loop's query results -- but the guardrails are set as if it
+ * were, because a prompt is not a boundary.
+ */
+export function codexThreadFactory(
+  config: GeocodeAgentConfig,
+  createCodex: CodexClientFactory = (options) => new Codex(options),
+): AgentThreadFactory {
   return {
     model: config.model || "codex-default",
     async start() {
       const effort = modelReasoningEffort(config.reasoningEffort);
+      const session = await createSessionHome(config);
       const workingDirectory = await mkdtemp(join(tmpdir(), "geocode-agent-"));
-      const codex = new Codex({
+      const codex = createCodex({
         ...(config.apiKey ? { apiKey: config.apiKey } : {}),
         ...(config.baseUrl ? { baseUrl: config.baseUrl } : {}),
-        env: agentProcessEnv(config),
+        env: agentProcessEnv(session),
         configOverrides: AGENT_CONFIG_OVERRIDES,
       });
       const thread = codex.startThread({
@@ -320,6 +411,7 @@ export function codexThreadFactory(config: GeocodeAgentConfig): AgentThreadFacto
         },
         close: async () => {
           await rm(workingDirectory, { recursive: true, force: true });
+          await session.cleanup();
         },
       };
     },
@@ -430,6 +522,12 @@ export interface GeocodeAgentDeps {
   runQuery(request: { purpose: string; sql: string }): Promise<AgentQueryOutcome>;
 }
 
+/** What a run learns when its terminal write is refused: the row had already
+ * been reaped as abandoned (or otherwise finished), so a newer run owns this
+ * country now and this one's output is discarded rather than merged in. */
+export const SUPERSEDED_MESSAGE =
+  "This run was superseded before it finished; its output was discarded.";
+
 /** How many malformed answers in a row end the run. Two corrections are a
  * model having a bad moment; three is a model that cannot hold the contract. */
 const MAX_INVALID_ANSWERS = 3;
@@ -459,14 +557,19 @@ export async function executeGeocodeAnalysisRun(
   let session: { thread: AgentThread; close: () => Promise<void> } | null = null;
 
   const fail = async (message: string): Promise<GeocodeAgentRunSummary> => {
-    await deps.store.fail(run.id, {
+    const claimed = await deps.store.fail(run.id, {
       errorMessage: message,
       threadId,
       iterations,
       inputTokens,
       outputTokens,
     });
-    return { status: "failed", iterations, suggestions: 0, errorMessage: message };
+    return {
+      status: "failed",
+      iterations,
+      suggestions: 0,
+      errorMessage: claimed ? message : SUPERSEDED_MESSAGE,
+    };
   };
 
   if (!profile) {
@@ -537,16 +640,25 @@ export async function executeGeocodeAnalysisRun(
       invalidAnswers = 0;
 
       if (output.action === "final") {
-        await deps.store.saveSuggestions(run.id, run.countryCode, output.suggestions);
-        await deps.store.saveMemory(run.countryCode, run.id, output.memory);
-        await deps.store.finish(run.id, {
+        // One transaction that starts by claiming the run row. A run reaped as
+        // abandoned while it was still thinking has already lost its slot to a
+        // newer one; it must not resurrect itself, nor leave that country's
+        // board holding its suggestions.
+        const committed = await deps.store.complete(run.id, run.countryCode, {
+          outcome: { threadId, iterations, inputTokens, outputTokens },
           reportMd: output.reportMd,
           converged: output.converged,
-          threadId,
-          iterations,
-          inputTokens,
-          outputTokens,
+          suggestions: output.suggestions,
+          memory: output.memory,
         });
+        if (!committed) {
+          return {
+            status: "failed",
+            iterations,
+            suggestions: 0,
+            errorMessage: SUPERSEDED_MESSAGE,
+          };
+        }
         return {
           status: "done",
           iterations,
@@ -626,8 +738,11 @@ export async function loadGeocodeAgentPanel(
   }
 
   try {
-    const config = readGeocodeAgentConfig();
-    await expireStaleGeocodeAgentRuns(country, config.maxRunMinutes + 10);
+    // No reaping here. This loader answers the tab's first paint AND the
+    // panel's poll every few seconds; an UPDATE on a GET would mean a page
+    // view could kill a run, and a poll is not a place to write.
+    // `startGeocodeAnalysisRun` reaps instead, which is the moment the freed
+    // slot is actually needed.
     const [runs, suggestions] = await Promise.all([
       listGeocodeAgentRuns(country, RUN_HISTORY_LIMIT),
       listGeocodeAgentSuggestions(country, SUGGESTION_BOARD_LIMIT),
@@ -657,13 +772,33 @@ export interface StartGeocodeAnalysisInput {
  *
  * Returns as soon as the row exists — the HTTP action that called this must
  * not wait minutes for a model. The UI polls the row; a process that dies
- * mid-run leaves a stale 'running' row that `expireStaleGeocodeAgentRuns`
- * reaps on the next page load.
+ * mid-run leaves a stale 'running' row, which this function (not the page
+ * loader, and never a poll) reaps on the next trigger.
  */
+export class UnsupportedGeocodeAgentCountryError extends Error {
+  constructor(countryCode: string) {
+    super(
+      `No geocode analysis profile is wired for ${countryCode}. Wire it into GEOCODE_AGENT_COUNTRIES first.`,
+    );
+    this.name = "UnsupportedGeocodeAgentCountryError";
+  }
+}
+
+/** Slack on top of a run's own budget before it is called abandoned: the run
+ * aborts itself on its deadline first, so anything still 'running' well past
+ * it is a process that died. */
+export const STALE_RUN_SLACK_MINUTES = 10;
+
 export async function startGeocodeAnalysisRun(
   input: StartGeocodeAnalysisInput,
 ): Promise<GeocodeAgentRun> {
   const countryCode = input.countryCode.toUpperCase();
+  // Guarded before any row is written: an unwired country must not be able to
+  // accumulate rows, and the CHECK constraint's raw text is not an error
+  // message for a person.
+  if (!geocodeAgentCountry(countryCode)) {
+    throw new UnsupportedGeocodeAgentCountryError(countryCode);
+  }
   const config = readGeocodeAgentConfig();
   const params: GeocodeAgentRunParams = {
     focus: (input.focus ?? "").trim().slice(0, 2_000),
@@ -671,6 +806,13 @@ export async function startGeocodeAnalysisRun(
     maxRowsPerQuery: AGENT_MAX_ROWS_PER_QUERY,
     maxRunMinutes: config.maxRunMinutes,
   };
+  // The one moment reaping is needed: a run abandoned by a dead process still
+  // holds this country's single active slot, and it is about to refuse a
+  // legitimate trigger.
+  await expireStaleGeocodeAgentRuns(countryCode, {
+    fallbackMinutes: config.maxRunMinutes,
+    slackMinutes: STALE_RUN_SLACK_MINUTES,
+  });
   const run = await createGeocodeAgentRun({ countryCode, params });
 
   const credentialProblem = geocodeAgentCredentialProblem(config);

@@ -1,5 +1,6 @@
-import { mkdtempSync } from "node:fs";
-import { tmpdir } from "node:os";
+import { existsSync, mkdtempSync, readdirSync } from "node:fs";
+import { homedir, tmpdir } from "node:os";
+import { join } from "node:path";
 import { describe, expect, it, vi } from "vitest";
 import type {
   AgentMemoryDraft,
@@ -10,17 +11,22 @@ import type {
 } from "~/agents/geocode-analysis-contract";
 import type {
   GeocodeAgentRunOutcome,
+  GeocodeAgentRunOutput,
   GeocodeAgentStore,
 } from "~/lib/geocode-agent-store.server";
 import type { AgentQueryOutcome } from "~/agents/geocode-agent-clickhouse.server";
 import {
+  agentProcessEnv,
+  codexThreadFactory,
+  createSessionHome,
   DEFAULT_MAX_ITERATIONS,
   executeGeocodeAnalysisRun,
-  agentProcessEnv,
+  SUPERSEDED_MESSAGE,
   geocodeAgentCredentialProblem,
   geocodeAgentCountry,
   readGeocodeAgentConfig,
   type AgentThreadFactory,
+  type CodexClientFactory,
   type GeocodeAgentDeps,
 } from "~/agents/geocode-analysis.server";
 import { assertReadOnlyQuery } from "~/agents/read-only-sql";
@@ -32,44 +38,41 @@ import { assertReadOnlyQuery } from "~/agents/read-only-sql";
 interface RecordedStore extends GeocodeAgentStore {
   calls: string[];
   running: { model: string; threadId: string } | null;
-  finished: (GeocodeAgentRunOutcome & { reportMd: string; converged: boolean }) | null;
+  completed: GeocodeAgentRunOutput | null;
   failed: (GeocodeAgentRunOutcome & { errorMessage: string }) | null;
-  suggestions: AgentSuggestionDraft[];
-  memory: AgentMemoryDraft[];
+  /** What the store answers to a terminal claim: false models a run that was
+   * reaped as abandoned while it was still thinking. */
+  claimable: boolean;
 }
 
 function fakeStore(
   seed: {
     memory?: GeocodeAgentMemoryEntry[];
     suggestions?: GeocodeAgentSuggestion[];
+    claimable?: boolean;
   } = {},
 ): RecordedStore {
   const store: RecordedStore = {
     calls: [],
     running: null,
-    finished: null,
+    completed: null,
     failed: null,
-    suggestions: [],
-    memory: [],
+    claimable: seed.claimable ?? true,
     async markRunning(_id, update) {
       store.calls.push("markRunning");
       store.running = update;
     },
-    async finish(_id, outcome) {
-      store.calls.push("finish");
-      store.finished = outcome;
+    async complete(_id, _country, output) {
+      store.calls.push("complete");
+      if (!store.claimable) return false;
+      store.completed = output;
+      return true;
     },
     async fail(_id, outcome) {
       store.calls.push("fail");
+      if (!store.claimable) return false;
       store.failed = outcome;
-    },
-    async saveSuggestions(_runId, _country, drafts) {
-      store.calls.push("saveSuggestions");
-      store.suggestions = drafts;
-    },
-    async saveMemory(_country, _runId, entries) {
-      store.calls.push("saveMemory");
-      store.memory = entries;
+      return true;
     },
     async readMemory() {
       store.calls.push("readMemory");
@@ -230,22 +233,24 @@ describe("executeGeocodeAnalysisRun: the happy path", () => {
       "readMemory",
       "readSuggestions",
       "markRunning",
-      "saveSuggestions",
-      "saveMemory",
-      "finish",
+      // ONE terminal call: the report, its suggestions and its memory are
+      // committed together, behind a claim on the run row.
+      "complete",
     ]);
     expect(store.running).toEqual({ model: "fake-model", threadId: "thread-1" });
-    expect(store.finished).toMatchObject({
+    expect(store.completed).toMatchObject({
       converged: true,
-      iterations: 2,
-      threadId: "thread-1",
-      // Usage is summed across turns, not taken from the last one.
-      inputTokens: 20,
-      outputTokens: 10,
+      outcome: {
+        iterations: 2,
+        threadId: "thread-1",
+        // Usage is summed across turns, not taken from the last one.
+        inputTokens: 20,
+        outputTokens: 10,
+      },
     });
-    expect(store.finished?.reportMd).toContain("# Geocoding analysis");
-    expect(store.suggestions[0]?.expectedYield).toBe(4200);
-    expect(store.memory[0]?.key).toBe("glued-suffix");
+    expect(store.completed?.reportMd).toContain("# Geocoding analysis");
+    expect(store.completed?.suggestions[0]?.expectedYield).toBe(4200);
+    expect(store.completed?.memory[0]?.key).toBe("glued-suffix");
     expect(threads.closed).toBe(true);
   });
 
@@ -338,7 +343,7 @@ describe("executeGeocodeAnalysisRun: guardrails", () => {
     expect(feedback).toContain("ERROR:");
     expect(feedback).toMatch(/Query must start with one of SELECT/);
     // Nothing was executed, and the run still produced its report.
-    expect(store.finished?.reportMd).toContain("# Geocoding analysis");
+    expect(store.completed?.reportMd).toContain("# Geocoding analysis");
   });
 
   it("asks the agent to correct a malformed answer, then gives up after three", async () => {
@@ -350,7 +355,7 @@ describe("executeGeocodeAnalysisRun: guardrails", () => {
     expect(summary.status).toBe("failed");
     expect(store.failed?.errorMessage).toMatch(/3 unusable answers/);
     expect(threads.prompts[1]).toContain("Your last answer could not be used");
-    expect(store.calls).not.toContain("finish");
+    expect(store.calls).not.toContain("complete");
   });
 
   it("recovers when the agent fixes its answer", async () => {
@@ -377,6 +382,34 @@ describe("executeGeocodeAnalysisRun: guardrails", () => {
     expect(store.failed?.errorMessage).toMatch(/used all 2 turns/);
     // The last turn is announced as the last one.
     expect(threads.prompts[1]).toContain("This is your LAST turn");
+  });
+
+  it("cannot resurrect a run that was reaped while it was thinking", async () => {
+    // The reaper frees the country's single active slot, but the detached
+    // executor keeps going: without a claim on the terminal write it would
+    // walk back to 'done' behind a newer run's back, and drop its suggestions
+    // on that country's board.
+    const store = fakeStore({ claimable: false });
+    const threads = fakeThreads([FINAL_TURN]);
+
+    const summary = await executeGeocodeAnalysisRun(run(), deps(store, threads));
+
+    expect(store.calls).toContain("complete");
+    expect(store.completed).toBeNull();
+    expect(summary).toMatchObject({
+      status: "failed",
+      suggestions: 0,
+      errorMessage: SUPERSEDED_MESSAGE,
+    });
+  });
+
+  it("reports a refused failure claim as superseded rather than as its own error", async () => {
+    const store = fakeStore({ claimable: false });
+    const threads = fakeThreads(["not json"]);
+    const summary = await executeGeocodeAnalysisRun(run(), deps(store, threads));
+    expect(summary.status).toBe("failed");
+    expect(summary.errorMessage).toBe(SUPERSEDED_MESSAGE);
+    expect(store.failed).toBeNull();
   });
 
   it("hands each turn the run's remaining wall-clock budget", async () => {
@@ -502,27 +535,104 @@ describe("configuration", () => {
     ).toBe("");
   });
 
-  it("hands the Codex process an allowlisted environment, not the backoffice's", () => {
-    const config = readGeocodeAgentConfig({
-      GEOCODE_AGENT_CODEX_HOME: "/srv/agent-codex",
-    } as NodeJS.ProcessEnv);
-    const passed = agentProcessEnv(config, {
-      PATH: "/usr/bin",
-      HOME: "/home/app",
-      HTTPS_PROXY: "http://proxy:3128",
-      // None of these may reach a model process.
-      CLICKHOUSE_PASSWORD: "secret",
-      BACKOFFICE_POSTGRES_URL: "postgres://user:pw@host/db",
-      OPENROUTER_API: "sk-secret",
-      CORPSCOUT_S3_SECRET_KEY: "secret",
-    } as NodeJS.ProcessEnv);
+  it("hands the Codex process an allowlisted environment and a home of its own", () => {
+    const passed = agentProcessEnv(
+      { home: "/tmp/geocode-agent-home-x", codexHome: "/srv/agent-codex" },
+      {
+        PATH: "/usr/bin",
+        // The operator's home is NOT inherited: read-only sandboxing stops
+        // writes, not reads, so ~/.aws and ~/.ssh would be one `cat` away.
+        HOME: "/home/operator",
+        HTTPS_PROXY: "http://proxy:3128",
+        // None of these may reach a model process either.
+        CLICKHOUSE_PASSWORD: "secret",
+        BACKOFFICE_POSTGRES_URL: "postgres://user:pw@host/db",
+        OPENROUTER_API: "sk-secret",
+        CORPSCOUT_S3_SECRET_KEY: "secret",
+      } as NodeJS.ProcessEnv,
+    );
 
     expect(passed).toEqual({
       PATH: "/usr/bin",
-      HOME: "/home/app",
       HTTPS_PROXY: "http://proxy:3128",
+      HOME: "/tmp/geocode-agent-home-x",
       CODEX_HOME: "/srv/agent-codex",
     });
+  });
+
+  it("creates a private session home instead of pointing at the operator's", async () => {
+    const config = readGeocodeAgentConfig({
+      GEOCODE_AGENT_API_KEY: "k",
+    } as NodeJS.ProcessEnv);
+    const session = await createSessionHome(config);
+    try {
+      expect(session.home.startsWith(tmpdir())).toBe(true);
+      expect(session.home).not.toBe(homedir());
+      // With an API key configured nothing is copied in: the directory exists
+      // and holds only the empty .codex the CLI writes its state into.
+      expect(existsSync(join(session.home, ".codex"))).toBe(true);
+      expect(existsSync(join(session.home, ".codex", "auth.json"))).toBe(false);
+      expect(session.codexHome).toBe(join(session.home, ".codex"));
+    } finally {
+      await session.cleanup();
+    }
+    expect(existsSync(session.home)).toBe(false);
+  });
+
+  it("starts the Codex thread with every guardrail set", async () => {
+    // Deleting any of these from codexThreadFactory must fail a test rather
+    // than quietly widening what the model process can do.
+    const recorded: { codex?: unknown; thread?: unknown } = {};
+    const createCodex: CodexClientFactory = (options) => {
+      recorded.codex = options;
+      return {
+        startThread(threadOptions) {
+          recorded.thread = threadOptions;
+          return {
+            id: "thread-guard",
+            async run() {
+              return { finalResponse: "{}", usage: null };
+            },
+          };
+        },
+      };
+    };
+
+    const config = readGeocodeAgentConfig({
+      GEOCODE_AGENT_API_KEY: "k",
+      GEOCODE_AGENT_MODEL: "gpt-5.1-codex",
+      GEOCODE_AGENT_REASONING_EFFORT: "high",
+    } as NodeJS.ProcessEnv);
+    const session = await codexThreadFactory(config, createCodex).start();
+    try {
+      expect(recorded.thread).toMatchObject({
+        sandboxMode: "read-only",
+        approvalPolicy: "never",
+        networkAccessEnabled: false,
+        webSearchEnabled: false,
+        skipGitRepoCheck: true,
+        model: "gpt-5.1-codex",
+        modelReasoningEffort: "high",
+      });
+      const workingDirectory = (recorded.thread as { workingDirectory: string })
+        .workingDirectory;
+      expect(workingDirectory.startsWith(tmpdir())).toBe(true);
+      expect(readdirSync(workingDirectory)).toEqual([]);
+
+      const codexOptions = recorded.codex as {
+        configOverrides: string[];
+        env: Record<string, string>;
+        apiKey: string;
+      };
+      // An operator's own ~/.codex/config.toml may register MCP servers;
+      // they would otherwise become tools of this thread.
+      expect(codexOptions.configOverrides).toContain("mcp_servers={}");
+      expect(codexOptions.apiKey).toBe("k");
+      expect(codexOptions.env.HOME).not.toBe(homedir());
+      expect(codexOptions.env.CLICKHOUSE_PASSWORD).toBeUndefined();
+    } finally {
+      await session.close();
+    }
   });
 
   it("wires Sweden and nothing else, by country code", () => {
