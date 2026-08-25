@@ -1,5 +1,5 @@
 /**
- * The URL-facing filter state of `/admin/se/company-info/geocoding`: the
+ * The URL-facing filter state of `/admin/se/companies/geocoding`: the
  * class a company's published address's geocode fell into, and the search
  * string a toggle click navigates to.
  *

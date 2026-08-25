@@ -1,5 +1,5 @@
 /**
- * The two `/admin/se/company-info*` list pages: every published
+ * The two `/admin/se/companies*` list pages: every published
  * `se_company_info` row (3.5M, ReplacingMergeTree ORDER BY company_id) and
  * the full `se_company_info_correction` ledger. Both mirror
  * se-company-info.server.ts's client/query style -- explicit column
@@ -105,12 +105,12 @@ function pageParams(query: { page: number; pageSize: number }): {
 export const PAGE_LIMIT_OFFSET_SQL = "LIMIT {limit:UInt32} OFFSET {offset:UInt32}";
 
 /* -------------------------------------------------------------------- */
-/* Page 1: /admin/se/company-info -- the se_company_info table          */
+/* Page 1: /admin/se/companies -- the se_company_info table          */
 /* -------------------------------------------------------------------- */
 
 /**
  * One company, as this list shows it. Task 17 (owner addendum 2026-08-23):
- * /admin/se/company-info is a COMPANIES list, not a description view -- so it
+ * /admin/se/companies is a COMPANIES list, not a description view -- so it
  * carries the register's own columns plus exactly one description fact, whether
  * the company has a published description at all. Everything about WHERE that
  * description came from, who reviewed it and whether the model wrote it lives
@@ -742,7 +742,7 @@ export async function loadSeCompanyInfoCorrectionFilterOptions(): Promise<SeComp
 }
 
 /* -------------------------------------------------------------------- */
-/* Page 2: /admin/se/company-info/corrections -- the correction ledger  */
+/* Page 2: /admin/se/companies/corrections -- the correction ledger  */
 /* -------------------------------------------------------------------- */
 
 export interface SeCompanyInfoCorrectionListRow {

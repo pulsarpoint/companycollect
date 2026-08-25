@@ -6,9 +6,7 @@ import {
   BrainCircuitIcon,
   ChevronRightIcon,
   FlagIcon,
-  ListChecksIcon,
   MapPinIcon,
-  MapPinnedIcon,
   Rows3Icon,
   Settings2Icon,
   SlidersHorizontalIcon,
@@ -62,22 +60,13 @@ const COUNTRY_NAVIGATION = [
         exact: false,
       },
       {
-        title: "Company info",
-        to: "/admin/se/company-info",
+        // One entry for the whole tabbed list area (Info · Geocoding ·
+        // Financial · People). exact:false so it stays active on every tab.
+        // Info corrections is reached as a secondary link from the Info tab.
+        title: "Companies",
+        to: "/admin/se/companies",
         icon: Building2Icon,
-        exact: true,
-      },
-      {
-        title: "Info corrections",
-        to: "/admin/se/company-info/corrections",
-        icon: ListChecksIcon,
-        exact: true,
-      },
-      {
-        title: "Geocoding",
-        to: "/admin/se/company-info/geocoding",
-        icon: MapPinnedIcon,
-        exact: true,
+        exact: false,
       },
       {
         title: "Address corrections",

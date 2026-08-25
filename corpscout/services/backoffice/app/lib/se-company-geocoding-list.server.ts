@@ -1,5 +1,5 @@
 /**
- * The `/admin/se/company-info/geocoding` list: one row per Swedish company
+ * The `/admin/se/companies/geocoding` list: one row per Swedish company
  * that has a published address, showing that address's geocode outcome.
  *
  * Reads exactly the table se-company-address.server.ts reads for the Address
@@ -86,7 +86,7 @@ export const GEOCODING_PUBLISHED_ADDRESS_SQL = `SELECT
  * to agree today.
  *
  * The join itself: se_company_info is the same "company info" spine the
- * sibling /admin/se/company-info list itself reads its `legal_name` from
+ * sibling /admin/se/companies list itself reads its `legal_name` from
  * (INFO_LIST_SELECT_SQL), so this tab's Company column cannot show a
  * different name than the row this company's own line on the main list
  * shows. INNER, not LEFT: live-checked 2026-08-25, every one of the

@@ -26,6 +26,10 @@ import {
   seCompanyTabFromPath,
   seCompanyTabLabel,
 } from "~/lib/se-company-tabs";
+import {
+  seCompaniesTabFromPath,
+  seCompaniesTabLabel,
+} from "~/lib/se-companies-tabs";
 
 /**
  * The company crumb reads the company layout's own loader data rather than
@@ -52,9 +56,9 @@ function AdminBreadcrumbs() {
   const onCompanyInfoPage = pathname.startsWith("/admin/se/company/");
   const onCompanyInfoCorrectionsPage =
     pathname === "/admin/se/company-info/corrections";
-  const onCompanyInfoTablePage = pathname === "/admin/se/company-info";
-  const onCompanyInfoGeocodingPage =
-    pathname === "/admin/se/company-info/geocoding";
+  const onCompaniesPage =
+    pathname === "/admin/se/companies" ||
+    pathname.startsWith("/admin/se/companies/");
   const onCompanyAddressCorrectionsPage =
     pathname === "/admin/se/company-address/corrections";
 
@@ -95,8 +99,8 @@ function AdminBreadcrumbs() {
           </BreadcrumbItem>
           <BreadcrumbSeparator className="hidden sm:block" />
           <BreadcrumbItem>
-            <BreadcrumbLink render={<Link to="/admin/se/company-info" />}>
-              Company info
+            <BreadcrumbLink render={<Link to="/admin/se/companies" />}>
+              Companies
             </BreadcrumbLink>
           </BreadcrumbItem>
           <BreadcrumbSeparator />
@@ -108,7 +112,10 @@ function AdminBreadcrumbs() {
     );
   }
 
-  if (onCompanyInfoTablePage) {
+  if (onCompaniesPage) {
+    // Companies > <Tab>. Info is the section index, so it is the leaf on the
+    // bare root; every other tab shows Companies as a link back to Info.
+    const tab = seCompaniesTabFromPath(pathname);
     return (
       <Breadcrumb>
         <BreadcrumbList>
@@ -123,36 +130,22 @@ function AdminBreadcrumbs() {
           </BreadcrumbItem>
           <BreadcrumbSeparator className="hidden sm:block" />
           <BreadcrumbItem>
-            <BreadcrumbPage>Company info</BreadcrumbPage>
+            {tab === "info" ? (
+              <BreadcrumbPage>Companies</BreadcrumbPage>
+            ) : (
+              <BreadcrumbLink render={<Link to="/admin/se/companies" />}>
+                Companies
+              </BreadcrumbLink>
+            )}
           </BreadcrumbItem>
-        </BreadcrumbList>
-      </Breadcrumb>
-    );
-  }
-
-  if (onCompanyInfoGeocodingPage) {
-    return (
-      <Breadcrumb>
-        <BreadcrumbList>
-          <BreadcrumbItem className="hidden sm:block">
-            <BreadcrumbLink render={<Link to="/admin/se/people" />}>
-              Admin
-            </BreadcrumbLink>
-          </BreadcrumbItem>
-          <BreadcrumbSeparator className="hidden sm:block" />
-          <BreadcrumbItem className="hidden sm:block">
-            <BreadcrumbPage>Sweden</BreadcrumbPage>
-          </BreadcrumbItem>
-          <BreadcrumbSeparator className="hidden sm:block" />
-          <BreadcrumbItem>
-            <BreadcrumbLink render={<Link to="/admin/se/company-info" />}>
-              Company info
-            </BreadcrumbLink>
-          </BreadcrumbItem>
-          <BreadcrumbSeparator />
-          <BreadcrumbItem>
-            <BreadcrumbPage>Geocoding</BreadcrumbPage>
-          </BreadcrumbItem>
+          {tab === "info" ? null : (
+            <>
+              <BreadcrumbSeparator />
+              <BreadcrumbItem>
+                <BreadcrumbPage>{seCompaniesTabLabel(tab)}</BreadcrumbPage>
+              </BreadcrumbItem>
+            </>
+          )}
         </BreadcrumbList>
       </Breadcrumb>
     );
@@ -173,8 +166,8 @@ function AdminBreadcrumbs() {
           </BreadcrumbItem>
           <BreadcrumbSeparator className="hidden md:block" />
           <BreadcrumbItem className="hidden sm:block">
-            <BreadcrumbLink render={<Link to="/admin/se/company-info" />}>
-              Company info
+            <BreadcrumbLink render={<Link to="/admin/se/companies" />}>
+              Companies
             </BreadcrumbLink>
           </BreadcrumbItem>
           <BreadcrumbSeparator className="hidden sm:block" />

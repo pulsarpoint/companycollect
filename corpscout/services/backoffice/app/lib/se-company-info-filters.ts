@@ -1,5 +1,5 @@
 /**
- * The URL-facing filter state of the two `/admin/se/company-info*` list pages:
+ * The URL-facing filter state of the two `/admin/se/companies*` list pages:
  * the shape the filter sheet edits, the chips that summarise what is applied,
  * and the search string a chip's remove link (or Clear) navigates to.
  *
@@ -122,7 +122,7 @@ export function profileSourceLabel(value: string): string {
 
 /**
  * The five datatypes a Swedish company profile is assembled from, as the
- * presence columns of `/admin/se/company-info`: `key` is the list row's own
+ * presence columns of `/admin/se/companies`: `key` is the list row's own
  * column (and therefore its `?sort=` value), `label` is the column header.
  *
  * Description is NOT here: it is a column of se_company_info itself, answered
