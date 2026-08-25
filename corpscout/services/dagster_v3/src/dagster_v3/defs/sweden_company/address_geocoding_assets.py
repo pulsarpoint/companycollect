@@ -155,10 +155,25 @@ def previous_exact_match_rate_percent(
     while still reading materializations would answer None on every run forever: the
     +/-2pp term would be permanently inert and nothing would say so.
 
+    A PLANNED RECORD IS NOT AN EVALUATION, AND IT IS NOT `None` EITHER.
+    `AssetCheckExecutionRecord.evaluation` is an unchecked cast over the event's
+    `event_specific_data`, so a PLANNED row hands back an `AssetCheckEvaluationPlanned`,
+    which has no `.metadata`. PLANNED rows are written at RUN CREATION for every planned
+    check, so any week that fails before this check evaluates -- the store asset alone has
+    five raise sites, and an operator can terminate a run -- leaves one sitting on top of
+    the history. Reading it raises AttributeError, this run is then stored PLANNED too, and
+    every following week raises on ITS predecessor: one bad week would kill the series
+    permanently. The isinstance guard steps over it to the usable evaluation underneath.
+
+    `dg.AssetCheckEvaluation` is public, and the guard is a positive statement about what
+    this needs rather than an enumeration of what it does not. Filtering the query by
+    status instead would need a private import AND would drop FAILED evaluations, which
+    carry a perfectly good rate -- this check is a WARN, so a week it failed is exactly the
+    week worth comparing the next one against.
+
     An evaluation is written after the check body returns, so the current run's own record
-    is normally absent; a PLANNED record carries no evaluation and is skipped. `run_id` is
-    still compared, because a check retried inside one run must not be compared against
-    itself.
+    is normally absent; `run_id` is still compared, because a check retried inside one run
+    must not be compared against itself.
     """
     records = instance.event_log_storage.get_asset_check_execution_history(
         EXACT_MATCH_RATE_CHECK_KEY,
@@ -168,7 +183,7 @@ def previous_exact_match_rate_percent(
         if record.run_id == current_run_id:
             continue
         evaluation = record.evaluation
-        if evaluation is None:
+        if not isinstance(evaluation, dg.AssetCheckEvaluation):
             continue
         value = evaluation.metadata.get("exact_match_rate_percent")
         numeric_value = getattr(value, "value", None)
@@ -1582,9 +1597,10 @@ WHERE served.policy_version != '{geocode_store.LEGACY_ADOPTED_POLICY_VERSION}'
     asset=sweden_address_geocode_store_clickhouse,
     name="every_stored_outcome_is_attributable_and_consistent",
     description=(
-        "Fails when the versioned Sweden geocode store holds a duplicate "
-        "(identity, policy, reference) row, an unknown status, an outcome with no "
-        "version identity, or a coordinate that disagrees with its status."
+        "Fails when a current Sweden address identity has no stored outcome, or the "
+        "versioned geocode store holds a duplicate (identity, policy, reference) row, "
+        "an unknown status, an outcome with no version identity, or a coordinate that "
+        "disagrees with its status."
     ),
 )
 def sweden_address_geocode_store_complete_check(
@@ -1664,6 +1680,9 @@ def sweden_address_geocode_store_complete_check(
             # re-selected, so the demotion is terminal in practice even though both rows
             # stay in the store. Nothing here is broken, so nothing here may go red; this
             # counter exists so somebody can watch the number rather than discover it.
+            # It counts over the whole store, so retired identities are included: their
+            # rows remain, their served answer can still be demoted, and excluding them
+            # would mean an identity join this query deliberately does not carry.
             "adopted_exact_identities_demoted": int(demoted_adoptions),
         },
     )

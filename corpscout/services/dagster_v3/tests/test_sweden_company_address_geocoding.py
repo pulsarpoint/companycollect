@@ -918,6 +918,10 @@ def test_the_canonical_build_refuses_two_normalization_runs_in_one_snapshot() ->
     The published check asserted this by reading the run id off both tables and comparing
     them. Two single-run assertions over tables the key join has already matched row for
     row say the same thing about the same rows, one step before the snapshot exists.
+
+    BOTH tables are corrupted, one at a time, because the two raises are separate terms and
+    the members one comes first: a test that only ever corrupts members proves nothing
+    about the canonical term, which would then be free to be deleted.
     """
     from dagster_v3.defs.sweden_company.address_canonicalization import (
         _assert_canonical_address_invariants,
@@ -931,6 +935,30 @@ def test_the_canonical_build_refuses_two_normalization_runs_in_one_snapshot() ->
         normalization_run_id="canonical-run",
         normalized_at=datetime(2026, 8, 24, tzinfo=UTC),
     )
+    _assert_canonical_address_invariants(connection)
+
+    connection.execute(
+        """
+        update sweden_company_enrichment.se_company_addresses_canonical_current
+        set normalization_run_id = 'a-second-run'
+        where company_id = 'exact-company'
+        """
+    )
+    try:
+        _assert_canonical_address_invariants(connection)
+    except ValueError as error:
+        assert "Canonical Sweden addresses must belong" in str(error)
+    else:
+        raise AssertionError(
+            "a canonical table spanning two normalization runs must abort the build"
+        )
+
+    connection.execute(
+        """
+        update sweden_company_enrichment.se_company_addresses_canonical_current
+        set normalization_run_id = 'canonical-run'
+        """
+    )
     connection.execute(
         """
         update sweden_company_enrichment.se_company_address_members_current
@@ -941,10 +969,101 @@ def test_the_canonical_build_refuses_two_normalization_runs_in_one_snapshot() ->
     try:
         _assert_canonical_address_invariants(connection)
     except ValueError as error:
-        assert "normalization run" in str(error)
+        assert "members must belong" in str(error)
     else:
         raise AssertionError(
-            "a canonical snapshot spanning two normalization runs must abort the build"
+            "a member table spanning two normalization runs must abort the build"
+        )
+
+
+def _add_orphan_canonical_addresses(
+    connection: duckdb.DuckDBPyConnection,
+    *,
+    count: int,
+    declared_member_count: int,
+) -> None:
+    """Canonical rows with no member rows at all -- the shape an inner join erases."""
+    for index in range(count):
+        connection.execute(
+            f"""
+            insert into sweden_company_enrichment.se_company_addresses_canonical_current
+            select * replace (
+                ('orphan-{index}-' || canonical_address_key) as canonical_address_key,
+                {declared_member_count} as member_count
+            )
+            from sweden_company_enrichment.se_company_addresses_canonical_current
+            where company_id = 'exact-company'
+            limit 1
+            """
+        )
+
+
+def test_the_canonical_build_refuses_a_canonical_row_with_no_members() -> None:
+    """The member-count total has to be taken over the canonical TABLE, not over the join.
+
+    An orphan canonical row -- one whose members are missing -- is dropped by the join, so
+    a query that counts BOTH sides inside the join loses the orphan from the count and its
+    member_count from the total at the same time. The two then agree and the build ships a
+    canonical address that summarises rows which do not exist. Counting the canonical side
+    over its own table is what makes the orphan visible.
+    """
+    from dagster_v3.defs.sweden_company.address_canonicalization import (
+        _assert_canonical_address_invariants,
+        replace_sweden_company_canonical_addresses,
+    )
+
+    connection = _osm_connection()
+    replace_sweden_company_canonical_addresses(
+        connection=connection,
+        clickhouse_client=_AddressClickHouseClient(),
+        normalization_run_id="canonical-run",
+        normalized_at=datetime(2026, 8, 24, tzinfo=UTC),
+    )
+    # One orphan claiming one member row that was never written. The canonical count stays
+    # equal to the member count, so the outnumbering bound below cannot preempt this.
+    _add_orphan_canonical_addresses(connection, count=1, declared_member_count=1)
+
+    try:
+        _assert_canonical_address_invariants(connection)
+    except ValueError as error:
+        assert "member_count" in str(error)
+    else:
+        raise AssertionError(
+            "a canonical address claiming members it does not have must abort the build"
+        )
+
+
+def test_the_canonical_build_refuses_more_canonical_rows_than_members() -> None:
+    """The bound that could not fail while it was computed over the join.
+
+    Canonical rows are groups OF member rows, so there can never be more of them than
+    there are members. Over the join both sides counted the same matched rows and the
+    comparison was a tautology; over the canonical table it is a real bound, and orphan
+    rows claiming no members are the shape that trips it without tripping the total first.
+    """
+    from dagster_v3.defs.sweden_company.address_canonicalization import (
+        _assert_canonical_address_invariants,
+        replace_sweden_company_canonical_addresses,
+    )
+
+    connection = _osm_connection()
+    replace_sweden_company_canonical_addresses(
+        connection=connection,
+        clickhouse_client=_AddressClickHouseClient(),
+        normalization_run_id="canonical-run",
+        normalized_at=datetime(2026, 8, 24, tzinfo=UTC),
+    )
+    # The fixture is 7 canonical rows over 8 members. Three orphans declaring no members
+    # keep the member_count total honest and push the canonical count past the member one.
+    _add_orphan_canonical_addresses(connection, count=3, declared_member_count=0)
+
+    try:
+        _assert_canonical_address_invariants(connection)
+    except ValueError as error:
+        assert "cannot outnumber the members" in str(error)
+    else:
+        raise AssertionError(
+            "more canonical addresses than member rows must abort the build"
         )
 
 

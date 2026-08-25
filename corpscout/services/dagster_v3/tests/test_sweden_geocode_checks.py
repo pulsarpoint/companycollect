@@ -4,11 +4,18 @@ Every SQL constant here is also executed by the harness (Task 11). These tests p
 predicates, because a check whose predicate silently narrows keeps passing forever.
 """
 
+import time
 from contextlib import contextmanager
 from datetime import UTC, datetime
 from typing import Any, Iterator
 
 import dagster as dg
+
+# Not exported from the top-level package; there is no public way to write the event a
+# failed run leaves behind, and this test is about surviving exactly that event.
+from dagster._core.definitions.asset_checks.asset_check_evaluation import (
+    AssetCheckEvaluationPlanned,
+)
 
 from dagster_v3.defs.sweden_company.address_geocoding_assets import (
     ADOPTION_DEMOTION_SQL,
@@ -226,6 +233,62 @@ def test_the_previous_rate_comes_from_this_checks_own_history() -> None:
     assert (
         previous_exact_match_rate_percent(instance, current_run_id=record.run_id) is None
     )
+
+
+def _store_planned_check_event(instance: dg.DagsterInstance, *, run_id: str) -> None:
+    """The record a run leaves when it plans this check and dies before evaluating it."""
+    instance.event_log_storage.store_event(
+        dg.EventLogEntry(
+            error_info=None,
+            level="debug",
+            user_message="",
+            run_id=run_id,
+            timestamp=time.time(),
+            dagster_event=dg.DagsterEvent(
+                event_type_value=(
+                    dg.DagsterEventType.ASSET_CHECK_EVALUATION_PLANNED.value
+                ),
+                job_name="sweden_company_address_geocoding_weekly_job",
+                event_specific_data=AssetCheckEvaluationPlanned(
+                    asset_key=EXACT_MATCH_RATE_CHECK_KEY.asset_key,
+                    check_name=EXACT_MATCH_RATE_CHECK_KEY.name,
+                ),
+            ),
+        )
+    )
+
+
+def test_a_planned_record_is_stepped_over_rather_than_read() -> None:
+    """One failed week must not end the series permanently.
+
+    `AssetCheckExecutionRecord.evaluation` is an unchecked cast: a PLANNED row hands back
+    an `AssetCheckEvaluationPlanned`, which is NOT None and has no `.metadata`. PLANNED
+    rows are written at run creation, so a week that dies before this check evaluates --
+    the store asset has five raise sites, and runs get terminated -- leaves one on top of
+    the history. Reading it raises AttributeError, THIS run is then recorded PLANNED too,
+    and every later week raises on its own predecessor: the +/-2pp comparison would never
+    come back without someone deleting event-log rows.
+    """
+    instance = dg.DagsterInstance.ephemeral()
+    instance.report_runless_asset_event(
+        dg.AssetCheckEvaluation(
+            asset_key=EXACT_MATCH_RATE_CHECK_KEY.asset_key,
+            check_name=EXACT_MATCH_RATE_CHECK_KEY.name,
+            passed=True,
+            metadata={"exact_match_rate_percent": 11.6},
+        )
+    )
+    _store_planned_check_event(instance, run_id="the-week-that-failed")
+
+    # The PLANNED row really is newest -- otherwise this test would pass without the guard.
+    records = instance.event_log_storage.get_asset_check_execution_history(
+        EXACT_MATCH_RATE_CHECK_KEY, limit=10
+    )
+    assert [record.status.value for record in records] == ["PLANNED", "SUCCEEDED"]
+    assert records[0].evaluation is not None
+    assert not isinstance(records[0].evaluation, dg.AssetCheckEvaluation)
+
+    assert previous_exact_match_rate_percent(instance, current_run_id="this-week") == 11.6
 
 
 class _FakeClickhouseClient:

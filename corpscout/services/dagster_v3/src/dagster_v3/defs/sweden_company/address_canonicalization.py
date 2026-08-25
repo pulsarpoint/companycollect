@@ -423,9 +423,18 @@ def _assert_canonical_address_invariants(connection: Any) -> None:
     section 4.5), which is where that check read its rows.
 
     "Same normalization run on both tables" is asserted as two single-run terms plus the
-    join below: members and canonical each hold exactly one run id, and every canonical row
-    counted here reached its members through the key. Two tables that each span one run and
-    agree row-for-row cannot be from different runs without the row counts disagreeing.
+    member-total equality below: members and canonical each hold exactly one run id, and
+    the member_count total ties the two tables to the same rows. Two tables that each span
+    one run and account for each other row-for-row cannot be from different runs without
+    one of those terms disagreeing.
+
+    EVERY CANONICAL-SIDE AGGREGATE IS TAKEN OVER THE CANONICAL TABLE, NOT OVER THE JOIN.
+    A canonical row with no member rows is exactly the corruption these terms exist to
+    catch, and it is precisely the row an inner join drops -- counting both sides inside
+    the join would remove the orphan from the count AND from the total, so the two would
+    still agree and the check would pass in silence. The join survives only for the
+    country-conflict term, which is a statement ABOUT members and has nothing to say about
+    a canonical row that has none.
     """
     [
         (source_rows, member_rows, assigned_source_rows, member_normalization_runs)
@@ -449,34 +458,32 @@ def _assert_canonical_address_invariants(connection: Any) -> None:
         (
             canonical_rows,
             unique_canonical_rows,
-            conflicting_countries,
             declared_member_total,
             canonical_normalization_runs,
+            conflicting_countries,
         )
     ] = connection.execute(
         f"""
         select
-            count(*),
-            count(distinct (company_id, canonical_address_key)),
-            count(*) filter (where country_count > 1),
-            coalesce(sum(member_total), 0),
-            count(distinct normalization_run_id)
+            (select count(*) from {QUALIFIED_CANONICAL_ADDRESSES_TABLE}),
+            (select count(distinct (company_id, canonical_address_key))
+             from {QUALIFIED_CANONICAL_ADDRESSES_TABLE}),
+            (select coalesce(sum(member_count), 0)
+             from {QUALIFIED_CANONICAL_ADDRESSES_TABLE}),
+            (select count(distinct normalization_run_id)
+             from {QUALIFIED_CANONICAL_ADDRESSES_TABLE}),
+            count(*) filter (where country_count > 1)
         from (
             select
                 canonical.company_id,
                 canonical.canonical_address_key,
-                canonical.normalization_run_id,
-                any_value(canonical.member_count) as member_total,
                 count(distinct members.country_code) as country_count
             from {QUALIFIED_CANONICAL_ADDRESSES_TABLE} canonical
             join {QUALIFIED_ADDRESS_MEMBERS_TABLE} members using (
                 company_id,
                 canonical_address_key
             )
-            group by
-                canonical.company_id,
-                canonical.canonical_address_key,
-                canonical.normalization_run_id
+            group by canonical.company_id, canonical.canonical_address_key
         ) groups
         """
     ).fetchall()
@@ -496,6 +503,8 @@ def _assert_canonical_address_invariants(connection: Any) -> None:
             "Canonical Sweden member_count totals must equal the member rows they "
             "summarise"
         )
+    # Meaningful only because canonical_rows counts the canonical TABLE: over the join it
+    # was bounded by the member rows it counted against and could never fire.
     if int(canonical_rows) > int(member_rows):
         raise ValueError(
             "Sweden canonical addresses cannot outnumber the members they group"
