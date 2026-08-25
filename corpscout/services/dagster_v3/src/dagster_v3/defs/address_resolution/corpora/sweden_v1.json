@@ -1,5 +1,5 @@
 {
-  "version": "sweden-address-resolution-golden-v4",
+  "version": "sweden-address-resolution-golden-v5",
   "cases": [
     {
       "case_id": "exact_building_with_unit",
@@ -832,6 +832,173 @@
           "supporting_record_count": 1,
           "source_record_id": "node/1484851478-wrong-context",
           "source_record_url": "https://www.openstreetmap.org/node/1484851478"
+        }
+      ],
+      "expected": {
+        "status": "unmatched",
+        "precision": "",
+        "strategy": ""
+      }
+    }
+,
+    {
+      "case_id": "glued_street_suffix_expansion",
+      "description": "A Swedish street suffix truncated and glued to the stem resolves through an auditable suffix-expansion variant.",
+      "query": {
+        "document_id": "query-stavstensv-3",
+        "country_code": "SE",
+        "raw_address": "STAVSTENSV 3, 23100 TRELLEBORG",
+        "search_text": "STAVSTENSV 3, 23100 TRELLEBORG",
+        "street_name": "STAVSTENSV",
+        "house_number": "3",
+        "unit": "",
+        "postal_code": "23100",
+        "locality": "TRELLEBORG",
+        "address_kind": "physical",
+        "reference_precision": "",
+        "latitude": null,
+        "longitude": null,
+        "coordinate_spread_meters": null,
+        "supporting_record_count": 0,
+        "source_record_id": "query-stavstensv-3",
+        "source_record_url": ""
+      },
+      "references": [
+        {
+          "document_id": "reference-stavstensvagen-3",
+          "country_code": "SE",
+          "raw_address": "",
+          "search_text": "Stavstensvägen 3, 23100 Trelleborg",
+          "street_name": "Stavstensvägen",
+          "house_number": "3",
+          "unit": "",
+          "postal_code": "23100",
+          "locality": "Trelleborg",
+          "address_kind": "physical",
+          "reference_precision": "building",
+          "latitude": 55.3763889,
+          "longitude": 13.12328,
+          "coordinate_spread_meters": 0,
+          "supporting_record_count": 1,
+          "source_record_id": "node/2445732485",
+          "source_record_url": "https://www.openstreetmap.org/node/2445732485"
+        }
+      ],
+      "expected": {
+        "status": "matched_corrected",
+        "precision": "building",
+        "strategy": "expanded_street_postcode_house"
+      }
+    },
+    {
+      "case_id": "glued_alley_suffix_expansion",
+      "description": "A glued gr resolves to the gränd it abbreviates and does not drift to the gatan sharing its stem and postcode.",
+      "query": {
+        "document_id": "query-sandgr-1",
+        "country_code": "SE",
+        "raw_address": "SANDGR 1, 24132 ESLÖV",
+        "search_text": "SANDGR 1, 24132 ESLÖV",
+        "street_name": "SANDGR",
+        "house_number": "1",
+        "unit": "",
+        "postal_code": "24132",
+        "locality": "ESLÖV",
+        "address_kind": "physical",
+        "reference_precision": "",
+        "latitude": null,
+        "longitude": null,
+        "coordinate_spread_meters": null,
+        "supporting_record_count": 0,
+        "source_record_id": "query-sandgr-1",
+        "source_record_url": ""
+      },
+      "references": [
+        {
+          "document_id": "reference-sandgrand-1",
+          "country_code": "SE",
+          "raw_address": "",
+          "search_text": "Sandgränd 1, 24132 Eslöv",
+          "street_name": "Sandgränd",
+          "house_number": "1",
+          "unit": "",
+          "postal_code": "24132",
+          "locality": "Eslöv",
+          "address_kind": "physical",
+          "reference_precision": "building",
+          "latitude": 55.8394,
+          "longitude": 13.3041,
+          "coordinate_spread_meters": 0,
+          "supporting_record_count": 1,
+          "source_record_id": "node/sandgrand-1",
+          "source_record_url": "https://www.openstreetmap.org/node/sandgrand-1"
+        },
+        {
+          "document_id": "reference-sandgatan-1",
+          "country_code": "SE",
+          "raw_address": "",
+          "search_text": "Sandgatan 1, 24132 Eslöv",
+          "street_name": "Sandgatan",
+          "house_number": "1",
+          "unit": "",
+          "postal_code": "24132",
+          "locality": "Eslöv",
+          "address_kind": "physical",
+          "reference_precision": "building",
+          "latitude": 55.8371,
+          "longitude": 13.3025,
+          "coordinate_spread_meters": 0,
+          "supporting_record_count": 1,
+          "source_record_id": "node/sandgatan-1",
+          "source_record_url": "https://www.openstreetmap.org/node/sandgatan-1"
+        }
+      ],
+      "expected": {
+        "status": "matched_corrected",
+        "precision": "building",
+        "strategy": "expanded_street_postcode_house"
+      }
+    },
+    {
+      "case_id": "unmapped_glued_street_suffix",
+      "description": "A glued abbreviation the country map does not hold earns no variant and stays unmatched.",
+      "query": {
+        "document_id": "query-backst-4",
+        "country_code": "SE",
+        "raw_address": "BACKST 4, 13834 ÄLTA",
+        "search_text": "BACKST 4, 13834 ÄLTA",
+        "street_name": "BACKST",
+        "house_number": "4",
+        "unit": "",
+        "postal_code": "13834",
+        "locality": "ÄLTA",
+        "address_kind": "physical",
+        "reference_precision": "",
+        "latitude": null,
+        "longitude": null,
+        "coordinate_spread_meters": null,
+        "supporting_record_count": 0,
+        "source_record_id": "query-backst-4",
+        "source_record_url": ""
+      },
+      "references": [
+        {
+          "document_id": "reference-backstigen-4",
+          "country_code": "SE",
+          "raw_address": "",
+          "search_text": "Backstigen 4, 13834 Älta",
+          "street_name": "Backstigen",
+          "house_number": "4",
+          "unit": "",
+          "postal_code": "13834",
+          "locality": "Älta",
+          "address_kind": "physical",
+          "reference_precision": "building",
+          "latitude": 59.2622,
+          "longitude": 18.1836,
+          "coordinate_spread_meters": 0,
+          "supporting_record_count": 1,
+          "source_record_id": "node/backstigen-4",
+          "source_record_url": "https://www.openstreetmap.org/node/backstigen-4"
         }
       ],
       "expected": {
