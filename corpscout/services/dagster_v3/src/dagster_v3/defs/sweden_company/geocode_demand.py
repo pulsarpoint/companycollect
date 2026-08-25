@@ -30,7 +30,7 @@ disagree about which snapshot this run is matching against.
 """
 
 import time
-from collections.abc import Callable, Iterator, Sequence
+from collections.abc import Callable, Sequence
 from typing import Any
 
 from dagster_v3.defs.sweden_address_osm import tables as osm_tables
@@ -67,12 +67,22 @@ PREVIOUS_OUTCOME_COLUMNS = (
     "candidate_record_ids",
     "matched_at",
 )
+# One page of the current-outcome read. Each page is its own bounded query+insert; the
+# loader NEVER opens one unbounded 2.09M-row stream over a single long-lived connection --
+# that read RESET (Errno 104) on one run and HUNG 150 minutes on another, holding the DuckDB
+# pool. The store's sorting key leads with address_id, so paginating by an address_id keyset
+# turns each page into an index-pruned range scan of the tail rather than an OFFSET walk.
 QUERY_BATCH_SIZE = 100_000
 PROGRESS_LOG_ROW_INTERVAL = 500_000
-
-PREVIOUS_OUTCOMES_SQL = build_current_resolver_geocodes_sql(
-    columns=PREVIOUS_OUTCOME_COLUMNS
-)
+# The ClickHouse server aborts a page that runs past this instead of the client blocking on a
+# dead socket forever. Each page is a few seconds of work; five minutes is pure headroom.
+MAX_PAGE_EXECUTION_SECONDS = 300
+# clickhouse-driver socket timeouts, set on the connection before its first query (they are
+# applied when the socket connects). send_receive_timeout bounds a stalled recv; tcp_keepalive
+# (idle_seconds, interval_seconds, probes) makes a silently dropped peer -- the Errno 104 the
+# incident also saw -- surface in ~2 minutes rather than never.
+SOCKET_SEND_RECEIVE_TIMEOUT_SECONDS = 300
+TCP_KEEPALIVE = (60, 15, 4)
 
 
 def pending_reason(
@@ -110,13 +120,15 @@ def fresh_reference_md5(connection: Any) -> str:
     return str(reference_md5)
 
 
-def load_current_resolver_outcomes(
-    *,
-    connection: Any,
-    clickhouse_client: Any,
-    log: Callable[..., object] | None = None,
-) -> int:
-    """Stream the store's current resolver outcome per identity into DuckDB."""
+def create_empty_previous_outcomes_table(connection: Any) -> None:
+    """The DuckDB table the demand join reads, created empty.
+
+    Both the chunked load and the rematch_all skip path go through here: the CASE in
+    replace_pending_address_identities LEFT JOINs this table, so it must exist even when the
+    run never loads a previous outcome. An empty table makes every identity's ``previous``
+    side NULL, which the CASE reads as 'rematch_all' (that branch fires first) or 'no_outcome'
+    (it never does under rematch_all).
+    """
     connection.execute(f"create schema if not exists {ENRICHMENT_SCHEMA}")
     connection.execute(
         f"""
@@ -132,25 +144,48 @@ def load_current_resolver_outcomes(
         )
         """
     )
+
+
+def load_current_resolver_outcomes(
+    *,
+    connection: Any,
+    clickhouse_client: Any,
+    log: Callable[..., object] | None = None,
+) -> int:
+    """Load the store's current resolver outcome per identity into DuckDB, one page at a time.
+
+    The read rule is geocode_store's -- ``build_current_resolver_geocodes_sql`` -- unchanged.
+    Only HOW it is streamed changes: instead of one execute_iter over all ~2.09M identities,
+    the loader walks the result in ``QUERY_BATCH_SIZE`` address_id keyset pages, each its own
+    short query and its own insert, so a stalled or dropped connection fails one bounded page
+    instead of hanging the whole load. Row-for-row the union of the pages is the single-query
+    result: each page ranks the resolver family over the address_id tail above the cursor and
+    keeps the newest per identity, and ``address_id`` is unique in that reduced set, so a
+    strict ``>`` cursor neither drops nor repeats an identity at a page boundary.
+    """
+    _harden_clickhouse_socket(clickhouse_client)
+    create_empty_previous_outcomes_table(connection)
     started_at = time.monotonic()
     loaded_rows = 0
-    batch: list[Sequence[object]] = []
-    for row in _iter_clickhouse_rows(clickhouse_client):
-        batch.append(row)
-        if len(batch) < QUERY_BATCH_SIZE:
-            continue
-        _insert_previous_outcome_batch(connection, batch)
-        loaded_rows += len(batch)
-        batch.clear()
-        if loaded_rows % PROGRESS_LOG_ROW_INTERVAL == 0:
+    next_log_at = PROGRESS_LOG_ROW_INTERVAL
+    after_address_id: str | None = None
+    while True:
+        page = _read_outcome_page(clickhouse_client, after_address_id=after_address_id)
+        if not page:
+            break
+        _insert_previous_outcome_batch(connection, page)
+        loaded_rows += len(page)
+        after_address_id = str(page[-1][0])
+        if loaded_rows >= next_log_at:
             _log(
                 log,
                 "Loading current Sweden resolver outcomes: rows=%d elapsed_seconds=%.1f",
                 loaded_rows,
                 time.monotonic() - started_at,
             )
-    _insert_previous_outcome_batch(connection, batch)
-    loaded_rows += len(batch)
+            next_log_at += PROGRESS_LOG_ROW_INTERVAL
+        if len(page) < QUERY_BATCH_SIZE:
+            break
     _log(
         log,
         "Loaded current Sweden resolver outcomes: rows=%d elapsed_seconds=%.1f",
@@ -230,15 +265,69 @@ def pending_identity_count(connection: Any) -> int:
     return int(count)
 
 
-def _iter_clickhouse_rows(clickhouse_client: Any) -> Iterator[Sequence[object]]:
-    execute_iter = getattr(clickhouse_client, "execute_iter", None)
-    if callable(execute_iter):
-        yield from execute_iter(
-            PREVIOUS_OUTCOMES_SQL,
-            settings={"max_block_size": QUERY_BATCH_SIZE},
+def _read_outcome_page(
+    clickhouse_client: Any,
+    *,
+    after_address_id: str | None,
+) -> list[Sequence[object]]:
+    """One bounded page of the current-outcome read, above ``after_address_id``."""
+    sql = _outcome_page_sql(has_cursor=after_address_id is not None)
+    params = (
+        {"after_address_id": after_address_id}
+        if after_address_id is not None
+        else None
+    )
+    return list(
+        clickhouse_client.execute(
+            sql,
+            params,
+            settings={
+                "max_execution_time": MAX_PAGE_EXECUTION_SECONDS,
+                "max_block_size": QUERY_BATCH_SIZE,
+            },
         )
+    )
+
+
+def _outcome_page_sql(*, has_cursor: bool) -> str:
+    """geocode_store's resolver read, keyset-bounded to one page.
+
+    The cursor bound is the store builder's own ``address_filter_sql`` -- inserted on the
+    INNER query so the ranking touches only the address_id tail, exactly the contract that
+    docstring spells out. It is a bound parameter (``%(after_address_id)s``), so the value
+    the previous page returned is never string-formatted into the SQL. The outer
+    ``ORDER BY address_id`` + ``LIMIT`` takes the smallest ``QUERY_BATCH_SIZE`` identities of
+    that tail; the store read has already reduced the family to one row per address_id, so
+    the page LIMIT cuts on identity boundaries and the last address_id becomes the next
+    cursor. No LIKE and no datetime here, so neither clickhouse-driver %-escaping hazard bites.
+    """
+    address_filter_sql = "address_id > %(after_address_id)s" if has_cursor else ""
+    inner_sql = build_current_resolver_geocodes_sql(
+        columns=PREVIOUS_OUTCOME_COLUMNS,
+        address_filter_sql=address_filter_sql,
+    )
+    projection = ", ".join(PREVIOUS_OUTCOME_COLUMNS)
+    return (
+        f"SELECT {projection}\n"
+        f"FROM (\n{inner_sql}\n) AS page\n"
+        "ORDER BY address_id\n"
+        f"LIMIT {QUERY_BATCH_SIZE}"
+    )
+
+
+def _harden_clickhouse_socket(clickhouse_client: Any) -> None:
+    """Give the driver connection a bounded socket timeout and TCP keepalive.
+
+    Set before the first query, so it lands when clickhouse-driver connects the socket. A
+    fake client (or any object without a ``connection``) is left untouched.
+    """
+    connection = getattr(clickhouse_client, "connection", None)
+    if connection is None:
         return
-    yield from clickhouse_client.execute(PREVIOUS_OUTCOMES_SQL)
+    if hasattr(connection, "send_receive_timeout"):
+        connection.send_receive_timeout = SOCKET_SEND_RECEIVE_TIMEOUT_SECONDS
+    if hasattr(connection, "tcp_keepalive"):
+        connection.tcp_keepalive = TCP_KEEPALIVE
 
 
 def _insert_previous_outcome_batch(

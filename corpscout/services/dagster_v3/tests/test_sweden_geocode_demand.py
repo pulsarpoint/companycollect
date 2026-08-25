@@ -6,15 +6,18 @@ because the thing under test is a LEFT JOIN and a CASE, and a substring test can
 correct CASE from one whose branches are in the wrong order.
 """
 
+import re
 from collections.abc import Iterator
 from datetime import UTC, datetime
 
 import duckdb
 import pytest
 
+from dagster_v3.defs.sweden_company import geocode_demand
 from dagster_v3.defs.sweden_company.geocode_demand import (
     PENDING_REASONS,
     QUALIFIED_DUCKDB_PENDING_IDENTITIES_TABLE,
+    create_empty_previous_outcomes_table,
     fresh_reference_md5,
     load_current_resolver_outcomes,
     pending_identity_count,
@@ -280,7 +283,12 @@ class _FakeClickhouseClient:
         self.rows = rows
         self.executed: list[str] = []
 
-    def execute(self, sql: str, params: object = None) -> list[tuple[object, ...]]:
+    def execute(
+        self,
+        sql: str,
+        params: object = None,
+        settings: object = None,
+    ) -> list[tuple[object, ...]]:
         self.executed.append(sql)
         return list(self.rows)
 
@@ -331,4 +339,146 @@ def test_the_fresh_reference_md5_is_read_the_way_the_promotion_stamps_it() -> No
     connection.execute("delete from sweden_address_osm.address_points")
     with pytest.raises(ValueError, match="carries no snapshot MD5"):
         fresh_reference_md5(connection)
+    connection.close()
+
+
+class _PagingClickhouseClient:
+    """Serves the keyset-page contract of `_outcome_page_sql` against a fixed result set.
+
+    The store's read has already reduced the resolver family to one row per address_id; this
+    stands in for that reduced set. Each `execute` reads the `%(after_address_id)s` cursor and
+    the trailing `LIMIT n` and returns the next slice in address_id order -- exactly what a
+    correct engine returns for the wrapped page query -- so the loader's pagination loop
+    (cursor advance, boundary, termination, insert) is what is under test.
+    """
+
+    def __init__(self, rows: list[tuple[object, ...]]) -> None:
+        self.rows = sorted(rows, key=lambda row: row[0])
+        self.calls: list[tuple[str, object, object]] = []
+
+    def execute(
+        self,
+        sql: str,
+        params: object = None,
+        settings: object = None,
+    ) -> list[tuple[object, ...]]:
+        self.calls.append((sql, params, settings))
+        cursor = None if params is None else params["after_address_id"]  # type: ignore[index]
+        match = re.search(r"LIMIT (\d+)\s*$", sql)
+        assert match is not None, sql
+        limit = int(match.group(1))
+        tail = [row for row in self.rows if cursor is None or row[0] > cursor]
+        return tail[:limit]
+
+
+def _outcome_row(address_id: str) -> tuple[object, ...]:
+    # Positional to PREVIOUS_OUTCOME_COLUMNS: address_id first, then the eight-column shape
+    # the loader inserts into the DuckDB previous-outcomes table.
+    return (address_id, POLICY, MD5_NOW, "ambiguous", "", 0.0, [], T1)
+
+
+@pytest.mark.parametrize(
+    ("row_count", "page_size", "expected_cursors"),
+    [
+        # A partial final page (7 = 2+2+2+1): the last page is short and ends the walk.
+        (7, 2, ["id-01", "id-03", "id-05"]),
+        # An exact multiple (4 = 2+2): the walk needs one extra empty page to know it is done.
+        (4, 2, ["id-01", "id-03"]),
+        # A single page smaller than the batch: one query, no cursor, immediate stop.
+        (3, 10, []),
+    ],
+)
+def test_the_chunked_load_reproduces_the_single_query_row_set(
+    monkeypatch: pytest.MonkeyPatch,
+    row_count: int,
+    page_size: int,
+    expected_cursors: list[str],
+) -> None:
+    monkeypatch.setattr(geocode_demand, "QUERY_BATCH_SIZE", page_size)
+    identities = [f"id-{index:02d}" for index in range(row_count)]
+    # Hand them in reversed so only correct address_id ordering + keyset paging can rebuild
+    # the set; a page that leaked ordering would drop or repeat one at a boundary.
+    client = _PagingClickhouseClient([_outcome_row(i) for i in reversed(identities)])
+    connection = duckdb.connect()
+
+    loaded = load_current_resolver_outcomes(
+        connection=connection, clickhouse_client=client, log=None
+    )
+
+    assert loaded == row_count
+    stored = [
+        address_id
+        for (address_id,) in connection.execute(
+            "select address_id from"
+            f" {geocode_demand.QUALIFIED_DUCKDB_PREVIOUS_OUTCOMES_TABLE}"
+            " order by address_id"
+        ).fetchall()
+    ]
+    # Row-count and row-set parity with the single-query read, and no dup/drop at chunk edges.
+    assert stored == identities
+    assert len(stored) == len(set(stored)) == row_count
+    # Keyset, not OFFSET: each page after the first carried the previous page's last id.
+    cursors = [
+        params["after_address_id"]  # type: ignore[index]
+        for _, params, _ in client.calls
+        if params is not None
+    ]
+    assert cursors == expected_cursors
+    # The bound that makes a stalled page ERROR instead of hanging travels on every query.
+    for _, _, settings in client.calls:
+        assert settings == {
+            "max_execution_time": geocode_demand.MAX_PAGE_EXECUTION_SECONDS,
+            "max_block_size": page_size,
+        }
+    connection.close()
+
+
+def test_rematch_all_skips_the_load_and_still_selects_every_identity() -> None:
+    """The asset's rematch_all path executed: no current-outcome load runs, the previous
+    table is created EMPTY, and replace_pending_address_identities still marks every identity
+    'rematch_all' -- the CASE's first branch fires whatever the (all-NULL) previous side is."""
+    connection = duckdb.connect()
+    connection.execute("create schema if not exists sweden_company_enrichment")
+    connection.execute(
+        "create table sweden_company_enrichment.se_addresses_current"
+        " (address_id varchar, address_kind varchar)"
+    )
+    for identity in ("alpha", "beta", "gamma"):
+        connection.execute(
+            "insert into sweden_company_enrichment.se_addresses_current"
+            " values (?, 'physical')",
+            [identity],
+        )
+
+    create_empty_previous_outcomes_table(connection)
+    assert (
+        connection.execute(
+            "select count(*) from"
+            f" {geocode_demand.QUALIFIED_DUCKDB_PREVIOUS_OUTCOMES_TABLE}"
+        ).fetchone()[0]
+        == 0
+    )
+
+    counts = replace_pending_address_identities(
+        connection=connection,
+        policy_version=POLICY,
+        reference_md5=MD5_NOW,
+        rematch_all=True,
+        log=None,
+    )
+
+    assert counts["pending_identities"] == 3
+    assert counts["reason_counts"] == {"rematch_all": 3}
+    assert counts["short_circuit"] is False
+    rows = dict(
+        connection.execute(
+            "select address_id, pending_reason"
+            f" from {QUALIFIED_DUCKDB_PENDING_IDENTITIES_TABLE}"
+        ).fetchall()
+    )
+    assert rows == {
+        "alpha": "rematch_all",
+        "beta": "rematch_all",
+        "gamma": "rematch_all",
+    }
     connection.close()
