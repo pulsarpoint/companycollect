@@ -29,16 +29,18 @@ This is a non-partitioned full-snapshot download. One request returns the whole
 register, so API partitions and pagination would add bookkeeping without
 reducing source work.
 
-The first implemented boundary is the durable raw object:
+The source now has two implemented durable boundaries:
 
 ```text
 APR complete JSON GET -> validated temporary file -> content-addressed S3 object
+content-addressed S3 object -> typed Arrow batches -> three atomic DuckDB tables
 ```
 
-DuckDB parsing and the ClickHouse company-table publication are deliberately
-not implemented in this pass. They will depend on this raw asset in the next
-pass. The separately implemented paid representative and beneficial-owner
-pipelines remain different source boundaries.
+The DuckDB load is one non-subsettable multi-asset because one validation and
+parse operation produces a snapshot catalog, historical observations, and the
+current population together. ClickHouse company-table publication is not
+implemented in this pass. The separately implemented paid representative and
+beneficial-owner pipelines remain different source boundaries.
 
 ## 3. Download, validation, and object storage
 
@@ -69,13 +71,62 @@ snapshot date, object key, SHA-256, byte size, company count, and whether the
 content-addressed body was newly uploaded or reused. Re-running the same APR
 payload writes a new audit manifest but does not duplicate the raw object.
 
-## 4. Future DuckDB and ClickHouse steps
+## 4. DuckDB model and loading contract
 
-The next implementation pass will add a non-partitioned DuckDB file and one
-single-writer pool. It will select the newest accepted raw manifest, download
-the referenced JSON object, preserve the matični broj map key, and create typed
-current and observation tables with source provenance. ClickHouse DDL and
-publication will remain migration-owned and atomically replaced.
+The non-partitioned database is `data/serbia_apr_companies_source.duckdb`, with
+schema `serbia_apr_companies`. Every asset that opens it uses the single-writer
+pool `serbia_apr_companies_duckdb`. The file stem intentionally differs from
+the schema name so DuckDB does not encounter a catalog/schema collision.
+
+The non-subsettable `serbia_apr_companies_duckdb_load` multi-asset produces:
+
+- `serbia_apr_company_snapshot_runs_duckdb` -> `snapshot_runs`: accepted raw
+  manifest, source-object integrity, row count, schema fingerprint, and load
+  timestamps;
+- `serbia_apr_company_observations_duckdb` -> `company_observations`: complete
+  typed history, idempotently replaceable by APR snapshot date; and
+- `serbia_apr_companies_current_duckdb` -> `companies_current`: the complete
+  company population from the selected snapshot.
+
+The loader selects manifests by `(snapshot_date, retrieved_at)`, so a newly
+written manifest for an older source snapshot cannot regress current data. A
+later correction for the same snapshot date wins. It downloads the referenced
+object and independently checks its byte count and SHA-256 before parsing.
+
+Direct `ijson` to typed Arrow batches is used instead of a second dlt extraction
+boundary: the raw S3 asset already owns extraction, while APR's dynamic
+`Podaci.<matični broj>` JSON map needs strict key preservation and whole-file
+validation. Batches contain at most 50,000 records and are inserted with a
+registered Arrow relation and `INSERT SELECT`.
+
+The map key is preserved as `company_id`, `registration_number`,
+`source_record_id`, and as part of `source_record_uid`. The source mapping is:
+
+| APR field | DuckDB field |
+| --- | --- |
+| map key under `Podaci` | `company_id`, `registration_number` |
+| `PoslovnoIme` | `legal_name` |
+| `SifraOpstine` | `municipality_code` |
+| `NazivOpstine` | `municipality_name_original` |
+| `NazivStatus` | `source_status_original`, canonical `status`, `is_active` |
+| `DatumOsnivanja` | `incorporation_date` |
+| `NazivPravneForme` | `legal_form_original` |
+| `SifraDelatnosti` | `primary_activity_code` |
+
+Each company row also records the source run/object, record ordinal, raw JSON,
+payload hash, stable source-record UID, business-state fingerprint, snapshot
+date, retrieval time, and DuckDB load time. Raw JSON and hashes deliberately
+remain in this source database; a later ClickHouse publication can expose only
+the serving fields it needs.
+
+Before publication the loader rejects invalid identifiers/codes, missing or
+empty required fields, unknown APR status labels, future incorporation dates,
+duplicate company keys, inconsistent municipality code/name mappings, row
+count differences, and snapshot-date differences. Staging is validated first;
+all three durable tables then commit or roll back together. Re-running one raw
+manifest replaces that snapshot's observations instead of duplicating them.
+
+ClickHouse DDL and publication remain a later migration-owned pass.
 
 The raw open feed contains company identity, municipality, current status,
 incorporation date, legal form, and primary KD2010 activity code. It does not
@@ -97,17 +148,17 @@ beneficial owners.
 
 ## 6. Scheduling and deployment
 
-No schedule is registered yet. The asset is being manually materialized after
-deployment first. Once live behavior and a later DuckDB chain are validated,
-the complete refresh job should run monthly after APR publishes a new
-`DatumPreseka`, with the schedule initially stopped.
+No schedule is registered yet. Once the full S3-to-DuckDB chain has been
+manually materialized in the deployed environment, the complete refresh job
+should run monthly after APR publishes a new `DatumPreseka`, with the schedule
+initially stopped.
 
 ## 7. Verification
 
 - Unit tests cover content-addressing, S3 reuse, immutable run manifests,
-  streaming JSON validation, population guards, whole-download retry, and
-  Dagster asset registration.
+  streaming JSON validation, population guards, whole-download retry, newest
+  manifest selection, typed parsing, Cyrillic and leading-zero preservation,
+  idempotency, rollback on source drift, and Dagster lineage/pool registration.
 - Definition loading is checked with `uv run dg check defs`.
-- Live completion requires a deployed Dagster materialization whose metadata
-  reports the current snapshot date, record count, SHA-256, byte size, S3 object
-  key, and manifest key.
+- Live verification of the DuckDB parser uses the downloaded 133,634-company
+  object and checks all three table counts and representative typed values.

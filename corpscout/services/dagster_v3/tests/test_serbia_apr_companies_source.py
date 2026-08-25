@@ -207,7 +207,7 @@ def test_raw_snapshot_asset_is_registered_as_the_open_data_source_boundary() -> 
     assert node.tags["layer"] == "s3"
 
 
-def test_source_design_records_the_raw_only_scope_and_future_duckdb_step() -> None:
+def test_source_design_records_the_raw_and_duckdb_contracts() -> None:
     design_path = (
         Path(__file__).resolve().parents[1]
         / "src"
@@ -222,4 +222,5 @@ def test_source_design_records_the_raw_only_scope_and_future_duckdb_step() -> No
     assert "57,673,691" in text
     assert "content-addressed" in text
     assert "DuckDB" in text
-    assert "not implemented in this pass" in text
+    assert "serbia_apr_companies_duckdb_load" in text
+    assert "commit or roll back together" in text

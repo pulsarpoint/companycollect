@@ -1,7 +1,7 @@
 import json
 import tempfile
 import time
-from collections.abc import Callable
+from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from datetime import UTC, date, datetime
 from hashlib import sha256
@@ -172,6 +172,135 @@ def snapshot_manifest_key(*, retrieved_at: datetime, run_id: str) -> str:
         f"{tables.S3_MANIFEST_PREFIX}/retrieved_at={retrieved_timestamp}/"
         f"run_id={run_id}.json"
     )
+
+
+def latest_snapshot_manifest(
+    object_store: ObjectStoreResource,
+) -> dict[str, object]:
+    """Return the newest valid APR snapshot, not merely the newest S3 key."""
+    manifest_keys = object_store.list_keys(
+        f"{tables.S3_MANIFEST_PREFIX}/",
+        bucket=tables.S3_BUCKET,
+    )
+    if not manifest_keys:
+        raise ValueError(
+            "no Serbia APR companies snapshot manifest exists; materialize "
+            "serbia_apr_companies_raw_snapshot_s3 first"
+        )
+
+    manifests: list[dict[str, object]] = []
+    for manifest_key in manifest_keys:
+        try:
+            raw_manifest = json.loads(
+                object_store.read_bytes(
+                    manifest_key,
+                    bucket=tables.S3_BUCKET,
+                )
+            )
+        except (json.JSONDecodeError, UnicodeDecodeError) as exc:
+            raise ValueError(
+                f"Serbia APR companies manifest is invalid JSON: {manifest_key}"
+            ) from exc
+        if not isinstance(raw_manifest, dict):
+            raise ValueError(
+                f"Serbia APR companies manifest is not an object: {manifest_key}"
+            )
+        manifests.append(validate_snapshot_manifest(raw_manifest))
+
+    return max(
+        manifests,
+        key=lambda manifest: (
+            date.fromisoformat(str(manifest["snapshot_date"])),
+            _manifest_retrieved_at(manifest),
+        ),
+    )
+
+
+def validate_snapshot_manifest(
+    manifest: Mapping[str, object],
+) -> dict[str, object]:
+    required_fields = {
+        "bucket",
+        "content_type",
+        "downloaded",
+        "object_key",
+        "record_count",
+        "retrieved_at",
+        "sha256",
+        "size_bytes",
+        "snapshot_date",
+        "source_license",
+        "source_run_id",
+        "source_slug",
+        "source_url",
+    }
+    missing_fields = sorted(required_fields - manifest.keys())
+    if missing_fields:
+        raise ValueError(
+            "Serbia APR companies manifest is missing fields: "
+            + ", ".join(missing_fields)
+        )
+
+    expected_values = {
+        "bucket": tables.S3_BUCKET,
+        "source_license": tables.SOURCE_LICENSE,
+        "source_slug": tables.SOURCE_SLUG,
+        "source_url": tables.SOURCE_URL,
+    }
+    for field_name, expected_value in expected_values.items():
+        if manifest[field_name] != expected_value:
+            raise ValueError(
+                f"Serbia APR companies manifest has unexpected {field_name}: "
+                f"{manifest[field_name]!r}"
+            )
+
+    object_key = manifest["object_key"]
+    if not isinstance(object_key, str) or not object_key.startswith(
+        f"{tables.S3_RAW_PREFIX}/"
+    ):
+        raise ValueError("Serbia APR companies manifest has an invalid raw object key")
+    source_run_id = manifest["source_run_id"]
+    if not isinstance(source_run_id, str) or source_run_id.strip() == "":
+        raise ValueError("Serbia APR companies manifest has an empty source_run_id")
+
+    payload_sha256 = manifest["sha256"]
+    if (
+        not isinstance(payload_sha256, str)
+        or len(payload_sha256) != 64
+        or any(character not in "0123456789abcdef" for character in payload_sha256)
+    ):
+        raise ValueError("Serbia APR companies manifest has an invalid SHA-256")
+    for field_name in ("record_count", "size_bytes"):
+        value = manifest[field_name]
+        if isinstance(value, bool) or not isinstance(value, int) or value < 0:
+            raise ValueError(
+                f"Serbia APR companies manifest has an invalid {field_name}"
+            )
+
+    try:
+        date.fromisoformat(str(manifest["snapshot_date"]))
+    except ValueError as exc:
+        raise ValueError(
+            "Serbia APR companies manifest has an invalid snapshot_date"
+        ) from exc
+    _manifest_retrieved_at(manifest)
+    return dict(manifest)
+
+
+def _manifest_retrieved_at(manifest: Mapping[str, object]) -> datetime:
+    try:
+        retrieved_at = datetime.fromisoformat(
+            str(manifest["retrieved_at"]).replace("Z", "+00:00")
+        )
+    except ValueError as exc:
+        raise ValueError(
+            "Serbia APR companies manifest has an invalid retrieved_at"
+        ) from exc
+    if retrieved_at.tzinfo is None:
+        raise ValueError(
+            "Serbia APR companies manifest retrieved_at must include a timezone"
+        )
+    return retrieved_at.astimezone(UTC)
 
 
 def _download_snapshot(
