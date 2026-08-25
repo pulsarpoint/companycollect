@@ -45,7 +45,7 @@ CREATE DATABASE IF NOT EXISTS corpscout;
 -- corpscout.se_address_geocodes_current` forces a refresh at any later time -- renaming a
 -- refreshable MV carries its schedule with it, so the view is known by its new name in
 -- system.view_refreshes and under that statement. The Dagster asset check
--- sweden_address_geocodes_current_view_refresh_check watches that same system table.
+-- sweden_address_geocodes_serving_view_refresh_check watches that same system table.
 --
 -- THE OLD TABLE IS RENAMED, NOT DROPPED. corpscout.se_address_geocodes_current_retired
 -- keeps all 2,090,981 rows as the rollback and as the comparison baseline for the apply.
