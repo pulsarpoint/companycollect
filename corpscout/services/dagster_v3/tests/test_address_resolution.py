@@ -8,12 +8,14 @@ from dagster_v3.defs.address_resolution.golden import (
     evaluate_golden_address_resolution_corpus,
 )
 from dagster_v3.defs.address_resolution.search_documents import (
+    expanded_street_suffix_variants,
     replace_address_search_document_input_table,
     replace_address_search_documents,
     replace_address_street_variants,
 )
 from dagster_v3.defs.sweden_company.address_resolution_policy import (
     SWEDEN_ADDRESS_RESOLUTION_POLICY,
+    SWEDEN_STREET_SUFFIX_EXPANSIONS,
     SWEDEN_STREET_VARIANT_LANGUAGES,
 )
 from dagster_v3.defs.sweden_company.address_resolution_promotion import (
@@ -33,6 +35,7 @@ def test_sweden_golden_address_resolution_corpus() -> None:
         corpus_path=_sweden_corpus_path(),
         policy=SWEDEN_ADDRESS_RESOLUTION_POLICY,
         street_variant_languages_by_country=SWEDEN_STREET_VARIANT_LANGUAGES,
+        street_suffix_expansions_by_country=SWEDEN_STREET_SUFFIX_EXPANSIONS,
     )
 
     assert evaluation.failures == ()
@@ -103,7 +106,14 @@ def test_search_document_indexes_raw_and_parsed_representations() -> None:
     assert "vaxtorpsgran" in row[8]
 
 
-def test_street_variants_expand_only_libpostal_supported_abbreviations() -> None:
+def test_street_variants_expand_punctuated_and_glued_abbreviations() -> None:
+    """libpostal reads a punctuated abbreviation; the suffix map reads a glued one.
+
+    The two sources are complementary, not redundant. libpostal expands `g.` as a token
+    of its own -- and to the indefinite `gata` -- while a Swedish register writes the
+    abbreviation glued to the stem and OSM carries the definite `gatan`, which is what
+    the suffix map produces.
+    """
     with duckdb.connect(":memory:") as connection:
         replace_address_search_document_input_table(
             connection,
@@ -138,6 +148,7 @@ def test_street_variants_expand_only_libpostal_supported_abbreviations() -> None
             document_table="search_documents",
             variant_table="street_variants",
             languages_by_country=SWEDEN_STREET_VARIANT_LANGUAGES,
+            suffix_expansions_by_country=SWEDEN_STREET_SUFFIX_EXPANSIONS,
         )
         rows = connection.execute(
             """
@@ -148,9 +159,152 @@ def test_street_variants_expand_only_libpostal_supported_abbreviations() -> None
         ).fetchall()
 
     assert ("punctuated", "karljohansgata", "libpostal_expansion") in rows
-    assert [row for row in rows if row[0] == "unmarked"] == [
-        ("unmarked", "gregersg", "parsed")
+    # A trailing period is not a glued suffix, so the suffix map leaves it to libpostal.
+    assert [row for row in rows if row[0] == "punctuated" and row[2] != "parsed"] == [
+        ("punctuated", "karljohansgata", "libpostal_expansion")
     ]
+    assert [row for row in rows if row[0] == "unmarked"] == [
+        ("unmarked", "gregersg", "parsed"),
+        ("unmarked", "gregersgatan", "suffix_expansion"),
+    ]
+
+
+def test_street_variants_add_glued_suffix_expansions_per_country() -> None:
+    with duckdb.connect(":memory:") as connection:
+        replace_address_search_document_input_table(
+            connection,
+            table_name="input_documents",
+        )
+        connection.execute(
+            """
+            insert into input_documents values
+                (
+                    'test', 'glued-road', 'SE',
+                    'STAVSTENSV 3, 23100 TRELLEBORG',
+                    'STAVSTENSV 3, 23100 TRELLEBORG',
+                    'STAVSTENSV', '3', '', '23100', 'TRELLEBORG',
+                    'physical', '', null, null, null, 0, 'glued-road', ''
+                ),
+                (
+                    'test', 'glued-alley', 'SE',
+                    'Sandgr 1, 24132 Eslöv',
+                    'Sandgr 1, 24132 Eslöv',
+                    'Sandgr', '1', '', '24132', 'Eslöv',
+                    'physical', '', null, null, null, 0, 'glued-alley', ''
+                ),
+                (
+                    'test', 'glued-multi-token', 'SE',
+                    'Norra Stationsg 5, 11364 Stockholm',
+                    'Norra Stationsg 5, 11364 Stockholm',
+                    'Norra Stationsg', '5', '', '11364', 'Stockholm',
+                    'physical', '', null, null, null, 0, 'glued-multi-token', ''
+                ),
+                (
+                    'test', 'short-stem', 'SE',
+                    'Nyg 7, 11120 Stockholm',
+                    'Nyg 7, 11120 Stockholm',
+                    'Nyg', '7', '', '11120', 'Stockholm',
+                    'physical', '', null, null, null, 0, 'short-stem', ''
+                ),
+                (
+                    'test', 'unmapped-suffix', 'SE',
+                    'Backst 4, 13834 Älta',
+                    'Backst 4, 13834 Älta',
+                    'Backst', '4', '', '13834', 'Älta',
+                    'physical', '', null, null, null, 0, 'unmapped-suffix', ''
+                ),
+                (
+                    'test', 'other-country', 'NO',
+                    'Storgatv 9, 0155 Oslo',
+                    'Storgatv 9, 0155 Oslo',
+                    'Storgatv', '9', '', '0155', 'Oslo',
+                    'physical', '', null, null, null, 0, 'other-country', ''
+                )
+            """
+        )
+        replace_address_search_documents(
+            connection,
+            source_sql="select * from input_documents",
+            table_name="search_documents",
+        )
+        replace_address_street_variants(
+            connection,
+            document_table="search_documents",
+            variant_table="street_variants",
+            languages_by_country=SWEDEN_STREET_VARIANT_LANGUAGES,
+            suffix_expansions_by_country=SWEDEN_STREET_SUFFIX_EXPANSIONS,
+        )
+        rows = connection.execute(
+            """
+            select
+                document_id,
+                street_variant,
+                normalized_street_variant,
+                variant_kind,
+                variant_rank
+            from street_variants
+            order by document_id, variant_rank, normalized_street_variant
+            """
+        ).fetchall()
+        [(variant_rows, distinct_variants)] = connection.execute(
+            """
+            select
+                count(*),
+                count(distinct (document_id, normalized_street_variant))
+            from street_variants
+            """
+        ).fetchall()
+
+    # The expansion ADDS a row and keeps the register's own spelling, and it carries the
+    # rank that loses to parsed and libpostal when a normalized variant collides.
+    assert [row for row in rows if row[0] == "glued-road"] == [
+        ("glued-road", "STAVSTENSV", "stavstensv", "parsed", 0),
+        ("glued-road", "STAVSTENSVÄGEN", "stavstensvagen", "suffix_expansion", 2),
+    ]
+    assert [row for row in rows if row[0] == "glued-alley"] == [
+        ("glued-alley", "Sandgr", "sandgr", "parsed", 0),
+        ("glued-alley", "Sandgränd", "sandgrand", "suffix_expansion", 2),
+    ]
+    # Only the LAST token carries the abbreviation.
+    assert [row for row in rows if row[0] == "glued-multi-token"] == [
+        ("glued-multi-token", "Norra Stationsg", "norrastationsg", "parsed", 0),
+        (
+            "glued-multi-token",
+            "Norra Stationsgatan",
+            "norrastationsgatan",
+            "suffix_expansion",
+            2,
+        ),
+    ]
+    # A two-letter stem is a street name, not a stem, and `st` is not in the SE map.
+    assert [row for row in rows if row[0] == "short-stem"] == [
+        ("short-stem", "Nyg", "nyg", "parsed", 0)
+    ]
+    assert [row for row in rows if row[0] == "unmapped-suffix"] == [
+        ("unmapped-suffix", "Backst", "backst", "parsed", 0)
+    ]
+    # A country with no configured map keeps its parsed street, glued suffix and all.
+    assert [row for row in rows if row[0] == "other-country"] == [
+        ("other-country", "Storgatv", "storgatv", "parsed", 0)
+    ]
+    assert variant_rows == distinct_variants
+
+
+def test_glued_suffix_expansion_reads_the_longest_configured_abbreviation() -> None:
+    suffix_expansions = {"v": "vägen", "sv": "svängen"}
+
+    assert expanded_street_suffix_variants("Bergsv", suffix_expansions) == (
+        "Bergsvängen",
+    )
+    assert expanded_street_suffix_variants("BERGSV", suffix_expansions) == (
+        "BERGSVÄNGEN",
+    )
+    # The stem of the longest match is too short, so the shorter abbreviation reads it.
+    assert expanded_street_suffix_variants("Nysv", suffix_expansions) == ("Nysvägen",)
+    assert expanded_street_suffix_variants("Nyv", suffix_expansions) == ()
+    assert expanded_street_suffix_variants("", suffix_expansions) == ()
+    # Three stem LETTERS, so a house number glued to the abbreviation is not a stem.
+    assert expanded_street_suffix_variants("12v", suffix_expansions) == ()
 
 
 def test_sweden_shadow_adapter_builds_results_without_serving_changes() -> None:

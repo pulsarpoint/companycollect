@@ -23,6 +23,7 @@ from dagster_v3.defs.sweden_company import (
 )
 from dagster_v3.defs.sweden_company.address_resolution_policy import (
     SWEDEN_ADDRESS_RESOLUTION_POLICY,
+    SWEDEN_STREET_SUFFIX_EXPANSIONS,
     SWEDEN_STREET_VARIANT_LANGUAGES,
 )
 
@@ -98,6 +99,7 @@ def replace_sweden_address_resolution_shadow(
         document_table=QUALIFIED_SHADOW_QUERY_DOCUMENTS_TABLE,
         variant_table=QUALIFIED_SHADOW_QUERY_STREET_VARIANTS_TABLE,
         languages_by_country=SWEDEN_STREET_VARIANT_LANGUAGES,
+        suffix_expansions_by_country=SWEDEN_STREET_SUFFIX_EXPANSIONS,
     )
     _log(log, "Building Sweden OSM building search documents")
     _replace_building_reference_documents(connection)

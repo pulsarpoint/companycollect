@@ -40,6 +40,7 @@ def evaluate_golden_address_resolution_corpus(
     corpus_path: Path,
     policy: AddressResolutionPolicy,
     street_variant_languages_by_country: Mapping[str, Sequence[str]],
+    street_suffix_expansions_by_country: Mapping[str, Mapping[str, str]],
 ) -> GoldenAddressResolutionEvaluation:
     corpus_version, cases = load_golden_address_resolution_corpus(corpus_path)
     with duckdb.connect(":memory:") as connection:
@@ -54,6 +55,7 @@ def evaluate_golden_address_resolution_corpus(
             document_table="_golden_query_documents",
             variant_table="_golden_query_street_variants",
             languages_by_country=street_variant_languages_by_country,
+            suffix_expansions_by_country=street_suffix_expansions_by_country,
         )
         replace_address_search_documents(
             connection,

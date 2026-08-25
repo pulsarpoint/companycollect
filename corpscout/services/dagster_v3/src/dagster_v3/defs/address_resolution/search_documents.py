@@ -49,6 +49,16 @@ STREET_VARIANT_COLUMNS = (
     "street_deletion_signatures",
 )
 
+LIBPOSTAL_EXPANSION_VARIANT_KIND = "libpostal_expansion"
+LIBPOSTAL_EXPANSION_VARIANT_RANK = 1
+SUFFIX_EXPANSION_VARIANT_KIND = "suffix_expansion"
+SUFFIX_EXPANSION_VARIANT_RANK = 2
+
+# How many letters a glued abbreviation must follow before it is read as a suffix
+# rather than as the whole street name: `Norra V` keeps its parsed form, `Ringv`
+# earns a `Ringvägen` variant.
+MINIMUM_GLUED_SUFFIX_STEM_LENGTH = 3
+
 
 def replace_address_search_document_input_table(
     connection: Any,
@@ -165,14 +175,49 @@ def replace_address_search_documents(
     )
 
 
+def expanded_street_suffix_variants(
+    street_name: str,
+    suffix_expansions: Mapping[str, str],
+) -> tuple[str, ...]:
+    """Expand a street suffix abbreviation glued to the last token's stem.
+
+    Swedish registers truncate the suffix and glue what is left to the stem, so
+    `STAVSTENSV 3` is Stavstensvägen 3 and `Sandgr 1` is Sandgränd 1. The longest
+    configured abbreviation wins, so a map holding both `gr` and `g` reads `Sandgr`
+    as a gränd. Returns the expanded street, or nothing when the last token carries
+    no configured abbreviation or too short a stem to be one.
+    """
+    tokens = street_name.split()
+    if not tokens:
+        return ()
+    last_token = tokens[-1]
+    lowered = last_token.lower()
+    for suffix in sorted(suffix_expansions, key=len, reverse=True):
+        if not lowered.endswith(suffix):
+            continue
+        stem = last_token[: len(last_token) - len(suffix)]
+        if len(stem) < MINIMUM_GLUED_SUFFIX_STEM_LENGTH:
+            continue
+        if not stem[-MINIMUM_GLUED_SUFFIX_STEM_LENGTH:].isalpha():
+            continue
+        expansion = suffix_expansions[suffix]
+        abbreviation = last_token[len(stem) :]
+        expanded_token = stem + (
+            expansion.upper() if abbreviation.isupper() else expansion
+        )
+        return (" ".join([*tokens[:-1], expanded_token]),)
+    return ()
+
+
 def replace_address_street_variants(
     connection: Any,
     *,
     document_table: str,
     variant_table: str,
     languages_by_country: Mapping[str, Sequence[str]],
+    suffix_expansions_by_country: Mapping[str, Mapping[str, str]],
 ) -> None:
-    """Materialize parsed and libpostal-expanded street search variants."""
+    """Materialize parsed, libpostal-expanded and suffix-expanded street variants."""
     # Importing pypostal initializes libpostal's multi-gigabyte language model.
     # Keep it out of Dagster definition discovery and load it during materialization.
     import pyarrow as pa
@@ -181,6 +226,25 @@ def replace_address_street_variants(
     expansion_countries: list[str] = []
     expansion_streets: list[str] = []
     expanded_streets: list[str] = []
+    expansion_kinds: list[str] = []
+    expansion_ranks: list[int] = []
+
+    def record(
+        country_code: str,
+        street_name: str,
+        expanded_street: str,
+        *,
+        kind: str,
+        rank: int,
+    ) -> None:
+        if expanded_street.strip() == "":
+            return
+        expansion_countries.append(country_code)
+        expansion_streets.append(street_name)
+        expanded_streets.append(expanded_street)
+        expansion_kinds.append(kind)
+        expansion_ranks.append(rank)
+
     street_rows = connection.execute(
         f"""
         select distinct country_code, street_name
@@ -189,20 +253,36 @@ def replace_address_street_variants(
         order by country_code, street_name
         """
     ).fetchall()
-    for country_code, street_name in street_rows:
-        languages = languages_by_country.get(str(country_code))
-        if languages is None or len(languages) == 0:
-            continue
-        for expanded_street in expand_address(
-            str(street_name),
-            languages=list(languages),
-            address_components=ADDRESS_STREET,
-        ):
-            if expanded_street.strip() == "":
-                continue
-            expansion_countries.append(str(country_code))
-            expansion_streets.append(str(street_name))
-            expanded_streets.append(expanded_street)
+    for row_country_code, row_street_name in street_rows:
+        country_code = str(row_country_code)
+        street_name = str(row_street_name)
+        languages = languages_by_country.get(country_code)
+        if languages:
+            for expanded_street in expand_address(
+                street_name,
+                languages=list(languages),
+                address_components=ADDRESS_STREET,
+            ):
+                record(
+                    country_code,
+                    street_name,
+                    expanded_street,
+                    kind=LIBPOSTAL_EXPANSION_VARIANT_KIND,
+                    rank=LIBPOSTAL_EXPANSION_VARIANT_RANK,
+                )
+        suffix_expansions = suffix_expansions_by_country.get(country_code)
+        if suffix_expansions:
+            for expanded_street in expanded_street_suffix_variants(
+                street_name,
+                suffix_expansions,
+            ):
+                record(
+                    country_code,
+                    street_name,
+                    expanded_street,
+                    kind=SUFFIX_EXPANSION_VARIANT_KIND,
+                    rank=SUFFIX_EXPANSION_VARIANT_RANK,
+                )
 
     expansion_input = "_address_resolution_street_expansion_input"
     if expanded_streets:
@@ -214,6 +294,8 @@ def replace_address_street_variants(
                     "country_code": expansion_countries,
                     "street_name": expansion_streets,
                     "expanded_street": expanded_streets,
+                    "variant_kind": expansion_kinds,
+                    "variant_rank": expansion_ranks,
                 }
             ),
         )
@@ -224,7 +306,9 @@ def replace_address_street_variants(
                 select distinct
                     country_code::varchar as country_code,
                     street_name::varchar as street_name,
-                    expanded_street::varchar as expanded_street
+                    expanded_street::varchar as expanded_street,
+                    variant_kind::varchar as variant_kind,
+                    variant_rank::utinyint as variant_rank
                 from {registered_rows}
                 """
             )
@@ -236,7 +320,9 @@ def replace_address_street_variants(
             create or replace temporary table {expansion_input} (
                 country_code varchar,
                 street_name varchar,
-                expanded_street varchar
+                expanded_street varchar,
+                variant_kind varchar,
+                variant_rank utinyint
             )
             """
         )
@@ -265,8 +351,8 @@ def replace_address_street_variants(
                 document.country_code,
                 expansion.expanded_street,
                 {normalized_expanded_street} as normalized_street_variant,
-                'libpostal_expansion'::varchar as variant_kind,
-                1::utinyint as variant_rank
+                expansion.variant_kind,
+                expansion.variant_rank
             from {document_table} document
             inner join {expansion_input} expansion
                 on expansion.country_code = document.country_code
