@@ -17,6 +17,7 @@ from dagster_v3.defs.sweden_company import (
     address_canonicalization,
     address_geocoding,
     geocode_demand,
+    geocode_legacy_adoption,
     geocode_store,
     shared_address_geocoding,
     shared_addresses,
@@ -43,6 +44,7 @@ ADDRESS_RESOLUTION_SHADOW_ASSET_KEY = "sweden_address_resolution_shadow_duckdb"
 ADDRESS_RESOLUTION_CURRENT_ASSET_KEY = "sweden_address_resolution_current_duckdb"
 GEOCODE_STORE_ASSET_KEY = "sweden_address_geocode_store_clickhouse"
 GEOCODE_STORE_BACKFILL_ASSET_KEY = "sweden_address_geocode_store_backfill_clickhouse"
+LEGACY_ADOPTION_ASSET_KEY = "sweden_address_geocode_legacy_adoption_clickhouse"
 WEEKLY_CRON_SCHEDULE = "5 4 * * 2"
 WEEKLY_EXECUTION_TIMEZONE = "Europe/Stockholm"
 MAX_OSM_SNAPSHOT_AGE = timedelta(days=9)
@@ -1005,6 +1007,132 @@ def sweden_address_geocode_store_backfill_clickhouse(
     )
 
 
+class SwedenGeocodeLegacyAdoptionConfig(dg.Config):
+    """One shot, owner-gated. A bare Materialize click measures and writes nothing."""
+
+    execute: bool = False
+    sample_size: int = 20
+
+
+@dg.asset(
+    name=LEGACY_ADOPTION_ASSET_KEY,
+    deps=[
+        dg.AssetKey(GEOCODE_STORE_ASSET_KEY),
+        dg.AssetKey(GEOCODE_RESULT_ASSET_KEY),
+    ],
+    group_name=GROUP_NAME,
+    kinds={"python", "clickhouse"},
+    metadata={"table": geocode_store.QUALIFIED_CLICKHOUSE_GEOCODE_STORE_TABLE},
+    description=(
+        "One-time import of the retired per-company matcher's exact decisions for "
+        "Sweden address identities the resolver refuses, as versioned "
+        "legacy_adopted_v1 outcomes. Requires execute: true."
+    ),
+)
+def sweden_address_geocode_legacy_adoption_clickhouse(
+    context: dg.AssetExecutionContext,
+    config: SwedenGeocodeLegacyAdoptionConfig,
+    clickhouse: ClickhouseResource,
+) -> dg.MaterializeResult:
+    """Import the legacy matcher's trapped exact decisions once, as adopted outcomes.
+
+    The default run WRITES NOTHING: it reports the identities a real run would adopt and
+    the identities the rule refuses, then returns. Only `execute: true` inserts. This is
+    the one asset in the geocoding chain whose input tables are about to be dropped, so a
+    stray Materialize click has to be harmless and the real run has to be deliberate.
+
+    `matched_at` is ONE instant for the whole import, bound as a parameter. That is the
+    single place in this plan where a run-wide stamp is correct: every adopted row
+    genuinely was decided at that instant, by this import, and the source rows carry no
+    instant of their own worth promoting. It is bound in integer milliseconds rather than
+    as a datetime -- `clickhouse_driver` renders a bound datetime in the SERVER's
+    timezone with the sub-second part dropped, which a `DateTime64(3, 'UTC')` column then
+    reads back as UTC. See `build_store_append_regression_sql` for the same pairing.
+
+    RE-RUNNING IS SAFE AND IS NOT A NO-OP TO BE AFRAID OF. The store's key is
+    (address_id, policy_version, reference_md5), so a second import replaces each row
+    rather than appending beside it; only `matched_at` and `geocode_run_id` move. And an
+    identity the resolver has answered in the meantime is no longer selected at all,
+    because the selection reads the resolver family -- so a re-run cannot re-promote an
+    adopted row over a resolver outcome that has already superseded it.
+    """
+    assert_clickhouse_tables_exist(
+        clickhouse,
+        database=geocode_store.CLICKHOUSE_DATABASE,
+        tables=(
+            geocode_store.GEOCODE_STORE_TABLE,
+            address_geocoding.CLICKHOUSE_RESULTS_TABLE,
+            shared_addresses.COMPANY_ADDRESS_LINKS_TABLE,
+        ),
+    )
+    # Truncated to the store's own resolution before anything reads it, per
+    # geocode_store.StoredOutcome: matched_at is DateTime64(3, 'UTC'), so an instant
+    # carrying microseconds would be REPORTED here and STORED one floor-division away,
+    # and the metadata would name an instant the store does not hold.
+    now = datetime.now(UTC)
+    imported_at = now.replace(microsecond=1000 * (now.microsecond // 1000))
+    with clickhouse.get_connection() as client:
+        [(adoptable, legacy_rows, companies)] = client.execute(
+            geocode_legacy_adoption.ADOPTION_MEASUREMENT_SQL
+        )
+        [(disagreeing,)] = client.execute(
+            geocode_legacy_adoption.ADOPTION_DISAGREEMENT_SQL
+        )
+        if not config.execute:
+            return dg.MaterializeResult(
+                metadata={
+                    "preview": True,
+                    "adoptable_identities": int(adoptable),
+                    "contributing_legacy_rows": int(legacy_rows or 0),
+                    "contributing_companies": int(companies or 0),
+                    "refused_disagreeing_identities": int(disagreeing),
+                }
+            )
+        if int(adoptable) == 0:
+            raise ValueError(
+                "No Sweden legacy exact decisions are adoptable -- refusing to run an "
+                "import that would write nothing"
+            )
+        client.execute(
+            geocode_legacy_adoption.ADOPTION_INSERT_SQL,
+            {
+                "geocode_run_id": context.run_id,
+                "imported_at": epoch_milliseconds(imported_at),
+            },
+        )
+        # This run's own rows, not every adopted row the store holds: an earlier import's
+        # rows would make the grain check answer for a population this run did not write.
+        [(adopted_rows, adopted_identities)] = client.execute(
+            geocode_legacy_adoption.ADOPTED_GRAIN_SQL,
+            {"geocode_run_id": context.run_id},
+        )
+        [(adopted_total,)] = client.execute(geocode_legacy_adoption.ADOPTED_TOTAL_SQL)
+        sample = client.execute(
+            geocode_legacy_adoption.ADOPTION_SAMPLE_SQL,
+            {"sample_size": config.sample_size},
+        )
+    if int(adopted_rows) != int(adopted_identities):
+        raise ValueError(
+            "The adoption import wrote more than one row per address identity"
+        )
+    context.log.info(
+        "Adopted %s Sweden legacy exact decisions into the geocode store",
+        adopted_identities,
+    )
+    return dg.MaterializeResult(
+        metadata={
+            "preview": False,
+            "adoptable_identities": int(adoptable),
+            "adopted_identities": int(adopted_identities),
+            "adopted_identities_total": int(adopted_total),
+            "contributing_companies": int(companies or 0),
+            "refused_disagreeing_identities": int(disagreeing),
+            "imported_at": imported_at.isoformat(),
+            "sample": dg.MetadataValue.json([list(map(str, row)) for row in sample]),
+        }
+    )
+
+
 @dg.asset(
     deps=[
         dg.AssetKey(CANONICAL_CLICKHOUSE_ASSET_KEY),
@@ -1757,6 +1885,17 @@ sweden_address_geocode_store_backfill_job = dg.define_asset_job(
     ),
 )
 
+sweden_address_geocode_legacy_adoption_job = dg.define_asset_job(
+    name="sweden_address_geocode_legacy_adoption_job",
+    selection=dg.AssetSelection.assets(LEGACY_ADOPTION_ASSET_KEY),
+    tags={"country": "SE", "pipeline": "address_geocode_legacy_adoption"},
+    description=(
+        "One-time, owner-gated import of the legacy per-company matcher's exact "
+        "Sweden decisions into the versioned geocode store. Requires execute: true "
+        "-- a bare materialization previews."
+    ),
+)
+
 sweden_company_address_geocoding_weekly = dg.ScheduleDefinition(
     name="sweden_company_address_geocoding_weekly",
     job=sweden_company_address_geocoding_weekly_job,
@@ -1780,6 +1919,7 @@ defs = dg.Definitions(
         sweden_address_geocodes_clickhouse,
         sweden_address_geocode_store_clickhouse,
         sweden_address_geocode_store_backfill_clickhouse,
+        sweden_address_geocode_legacy_adoption_clickhouse,
         sweden_company_address_osm_matches_duckdb,
         sweden_company_address_geocodes_clickhouse,
         sweden_company_address_geocode_results_clickhouse,
@@ -1801,6 +1941,7 @@ defs = dg.Definitions(
         sweden_shared_address_geocoding_job,
         sweden_company_address_geocoding_weekly_job,
         sweden_address_geocode_store_backfill_job,
+        sweden_address_geocode_legacy_adoption_job,
     ],
     schedules=[sweden_company_address_geocoding_weekly],
 )

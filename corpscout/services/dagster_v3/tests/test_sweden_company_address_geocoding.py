@@ -1640,6 +1640,22 @@ def test_sweden_company_address_geocoding_assets_are_company_enhancements() -> N
             key.path[-1]
             for key in repo.get_job(job_name).asset_layer.executable_asset_keys
         }
+    # So is the legacy-adoption import: one shot, its own job, in no other job and on no
+    # schedule. Its inputs are the tables the transition drops, so it can never become
+    # part of a recurring run.
+    adoption_job = repo.get_job("sweden_address_geocode_legacy_adoption_job")
+    assert {
+        key.path[-1] for key in adoption_job.asset_layer.executable_asset_keys
+    } == {"sweden_address_geocode_legacy_adoption_clickhouse"}
+    for job_name in (
+        "sweden_company_address_geocoding_weekly_job",
+        "sweden_company_address_geocoding_job",
+        "sweden_shared_address_geocoding_job",
+    ):
+        assert "sweden_address_geocode_legacy_adoption_clickhouse" not in {
+            key.path[-1]
+            for key in repo.get_job(job_name).asset_layer.executable_asset_keys
+        }
     assert schedule.job.name == "sweden_company_address_geocoding_weekly_job"
     assert schedule.cron_schedule == "5 4 * * 2"
     assert schedule.execution_timezone == "Europe/Stockholm"
