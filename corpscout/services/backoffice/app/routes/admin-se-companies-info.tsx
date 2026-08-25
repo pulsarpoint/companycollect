@@ -1,5 +1,6 @@
 import { useState } from "react";
-import type { Route } from "./+types/admin-se-company-info-table";
+import { Link } from "react-router";
+import type { Route } from "./+types/admin-se-companies-info";
 import { SeCompanyInfoTable } from "~/components/admin/se-company-info-table";
 import { NO_ROWS_SELECTED, type RowSelection } from "~/lib/row-selection";
 import { parseInfoFilters, parseListView } from "~/lib/se-company-info-filters";
@@ -46,7 +47,7 @@ export async function loader({ request }: Route.LoaderArgs) {
 }
 
 export function meta() {
-  return [{ title: "Company info | CompanyCollect" }];
+  return [{ title: "Companies · Info | CompanyCollect" }];
 }
 
 export default function AdminSeCompanyInfoTable({ loaderData }: Route.ComponentProps) {
@@ -67,18 +68,19 @@ export default function AdminSeCompanyInfoTable({ loaderData }: Route.ComponentP
   //   `selectedRowIds(selection)` (~/lib/row-selection) turns it into the
   //                   id list the pipeline launches post as `company_ids`.
   const [selection, setSelection] = useState<RowSelection>(NO_ROWS_SELECTED);
+  // The layout owns the page header now (title + tab bar), so this tab renders
+  // only its own body. The corrections ledger is not a tab -- it is a secondary
+  // link from here, its old sidebar entry having been folded into "Companies".
   return (
-    <div className="flex flex-1 flex-col gap-6 p-4 md:p-6">
-      <header className="flex flex-col gap-2">
-        {/* Named for the sidebar entry that opens it, not for what the list
-            now shows: the page IS the companies list of se_company_info. */}
-        <h1 className="text-2xl font-semibold tracking-tight">Company info</h1>
-        <p className="text-sm text-muted-foreground">
-          Every Swedish company published in se_company_info, read FINAL.
-          Filter and sort to find one; each row opens that company's info page,
-          where its description, sources, suggestions and corrections live.
-        </p>
-      </header>
+    <>
+      <div className="flex flex-wrap items-center gap-3 text-sm">
+        <Link
+          className="underline underline-offset-2"
+          to="/admin/se/company-info/corrections"
+        >
+          Info corrections
+        </Link>
+      </div>
       <SeCompanyInfoTable
         rows={listPage.rows}
         total={total}
@@ -92,6 +94,6 @@ export default function AdminSeCompanyInfoTable({ loaderData }: Route.ComponentP
         selection={selection}
         onSelectionChange={setSelection}
       />
-    </div>
+    </>
   );
 }

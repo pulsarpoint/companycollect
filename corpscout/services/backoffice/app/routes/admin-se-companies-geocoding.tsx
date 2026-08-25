@@ -1,4 +1,4 @@
-import type { Route } from "./+types/admin-se-company-info-geocoding";
+import type { Route } from "./+types/admin-se-companies-geocoding";
 import { GeocodeAnalysisAgent } from "~/components/admin/geocode-analysis-agent";
 import { SeCompanyGeocodingTable } from "~/components/admin/se-company-geocoding-table";
 import { parseListView } from "~/lib/se-company-info-filters";
@@ -25,7 +25,7 @@ import { GEOCODE_AGENT_SUGGESTION_STATUSES } from "~/agents/geocode-analysis-con
 import type { GeocodeAgentSuggestionStatus } from "~/agents/geocode-analysis-contract";
 
 // Only server-only exports (`loader`, `action`), `meta` and the component live
-// here, same discipline as admin-se-company-info-table.tsx: any OTHER export
+// here, same discipline as admin-se-companies-info.tsx: any OTHER export
 // touching `~/lib/*.server` or `~/agents/*.server` would keep that module in
 // the client bundle and break the production build (see CLAUDE.md).
 // `parseListView` is reused rather than re-spelled -- it already clamps
@@ -138,23 +138,17 @@ export async function action({ request }: Route.ActionArgs) {
 }
 
 export function meta() {
-  return [{ title: "Geocoding | CompanyCollect" }];
+  return [{ title: "Companies · Geocoding | CompanyCollect" }];
 }
 
 export default function AdminSeCompanyInfoGeocoding({
   loaderData,
 }: Route.ComponentProps) {
   const { listPage, counts, total, page, pageSize, filter, agent } = loaderData;
+  // The layout owns the page header (title + tab bar); this tab renders only its
+  // own body -- the analysis agent panel above the geocoding list.
   return (
-    <div className="flex flex-1 flex-col gap-6 p-4 md:p-6">
-      <header className="flex flex-col gap-2">
-        <h1 className="text-2xl font-semibold tracking-tight">Geocoding</h1>
-        <p className="text-sm text-muted-foreground">
-          Every Swedish company with a published address (se_company_address),
-          and that address's own geocode outcome. Defaults to companies that
-          need attention: an address with no successful geocode mapping.
-        </p>
-      </header>
+    <>
       <GeocodeAnalysisAgent panel={agent} />
       <SeCompanyGeocodingTable
         rows={listPage.rows}
@@ -164,6 +158,6 @@ export default function AdminSeCompanyInfoGeocoding({
         filter={filter}
         counts={counts}
       />
-    </div>
+    </>
   );
 }

@@ -107,31 +107,39 @@ export default [
       route("people", "routes/admin-se-company-people.tsx"),
       route("domains", "routes/admin-se-company-domains.tsx"),
     ]),
-    route("se/company-info", "routes/admin-se-company-info-table.tsx"),
+    // The all-companies LIST area: one tabbed section. The layout owns the
+    // header and tab bar; Info is the default (index). Sibling of the
+    // single-company DETAIL area above, and a different thing (many companies).
+    route("se/companies", "routes/admin-se-companies-layout.tsx", [
+      index("routes/admin-se-companies-info.tsx"),
+      route("geocoding", "routes/admin-se-companies-geocoding.tsx"),
+      route("financial", "routes/admin-se-companies-financial.tsx"),
+      route("people", "routes/admin-se-companies-people.tsx"),
+    ]),
+    // Not a page: the poll endpoint behind the Geocoding tab's analysis-agent
+    // panel. Runs take minutes, so the tab's action returns as soon as the run
+    // row exists and this loader answers the panel's fetcher until it is
+    // terminal.
+    route(
+      "se/companies/geocoding/agent",
+      "routes/admin-se-companies-geocoding-agent.ts",
+    ),
+    // Not a page: the resource route behind the companies list's Pipeline
+    // sheet. Its loader answers that sheet's fetcher and redirects anyone who
+    // navigates to the URL back to the list.
+    route("se/companies/pipeline", "routes/admin-se-companies-pipeline.ts"),
+    // The correction ledger is not a tab: it keeps its own URL and is reached
+    // as a secondary link from the Info tab.
     route(
       "se/company-info/corrections",
       "routes/admin-se-company-info-corrections.tsx",
     ),
-    // Sibling view of the companies list, same navigation shape as
-    // /corrections: a top-level route reached from the sidebar, not a tab of
-    // the list page itself (that page has no tab primitive).
+    // Old bookmarks: the list and the geocoding view moved under se/companies.
+    // Thin loader-only routes that 302 to the new URLs.
+    route("se/company-info", "routes/admin-se-company-info-redirect.ts"),
     route(
       "se/company-info/geocoding",
-      "routes/admin-se-company-info-geocoding.tsx",
-    ),
-    // Not a page: the poll endpoint behind that tab's analysis-agent panel.
-    // Runs take minutes, so the tab's action returns as soon as the run row
-    // exists and this loader answers the panel's fetcher until it is terminal.
-    route(
-      "se/company-info/geocoding/agent",
-      "routes/admin-se-company-info-geocoding-agent.ts",
-    ),
-    // Not a page: the resource route behind the companies list's Pipeline
-    // sheet. Its loader answers that sheet's fetcher and redirects anyone who
-    // navigates to the old URL back to the list.
-    route(
-      "se/company-info/pipeline",
-      "routes/admin-se-company-info-pipeline.ts",
+      "routes/admin-se-company-info-geocoding-redirect.ts",
     ),
     route(
       "se/company-address/corrections",
