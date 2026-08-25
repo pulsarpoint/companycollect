@@ -105,6 +105,36 @@ The company Domains tab writes `confirmed_primary`, `confirmed_related`,
 `COMPANY_DOMAIN_REVIEWER` to record a reviewer identifier. The Technology tab
 can inspect every proposed domain and keeps the selected `domain` in its URL.
 
+## Geocode analysis agent
+
+`/admin/se/company-info/geocoding` triggers a country-parametrised analysis
+agent (`app/agents/geocode-analysis.server.ts`, OpenAI Codex SDK) that clusters
+the unmatched address pool, tests each hypothesis against matched exemplars,
+and returns Dagster augmentation suggestions with examples and counts. Sweden
+is the first wired country; `GEOCODE_AGENT_COUNTRIES` is where the next one is
+added.
+
+Guardrails, all enforced in application code rather than in the prompt:
+
+- The agent holds no database handle. It asks for SQL in structured output;
+  `app/agents/read-only-sql.ts` refuses anything that is not a single read
+  statement (and refuses `url()`, `file()`, `s3()`, `remote()`, which
+  ClickHouse itself considers reads), and the connection sends `readonly=1`.
+- It never reaches PostgreSQL. The report, suggestions and memory are validated
+  by `app/agents/geocode-analysis-contract.ts` and written by the app.
+- It never writes the geocode store, deploys, or triggers Dagster. An accepted
+  suggestion is a work item for a golden-gated policy bump.
+
+Runs take minutes: the action inserts a queued row and returns, and the panel
+polls `/admin/se/company-info/geocoding/agent` until the run is terminal.
+
+Its three tables live in the review-queue PostgreSQL and are created by the
+first migration in `database/migrations`:
+
+```bash
+make migrate-up        # needs BACKOFFICE_POSTGRES_MIGRATE_URL in .env
+```
+
 ## companies_all
 
 `corpscout.companies_all` is a ClickHouse table with one uniform row per
