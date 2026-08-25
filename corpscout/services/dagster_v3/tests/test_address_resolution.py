@@ -8,10 +8,13 @@ from dagster_v3.defs.address_resolution.golden import (
     evaluate_golden_address_resolution_corpus,
 )
 from dagster_v3.defs.address_resolution.search_documents import (
+    SUFFIX_EXACT_VARIANT_KIND,
+    SUFFIX_EXACT_VARIANT_RANK,
     expanded_street_suffix_variants,
     replace_address_search_document_input_table,
     replace_address_search_documents,
     replace_address_street_variants,
+    separate_definite_variant,
 )
 from dagster_v3.defs.sweden_company.address_resolution_policy import (
     SWEDEN_ADDRESS_RESOLUTION_POLICY,
@@ -305,6 +308,172 @@ def test_glued_suffix_expansion_reads_the_longest_configured_abbreviation() -> N
     assert expanded_street_suffix_variants("", suffix_expansions) == ()
     # Three stem LETTERS, so a house number glued to the abbreviation is not a stem.
     assert expanded_street_suffix_variants("12v", suffix_expansions) == ()
+
+
+def test_separate_definite_variant_expands_last_token_case_preserving() -> None:
+    m = {"väg": "vägen", "gata": "gatan"}
+    assert separate_definite_variant("Norra Villa Väg", m) == "Norra Villa Vägen"
+    assert separate_definite_variant("NORRA VILLA VÄG", m) == "NORRA VILLA VÄGEN"
+    assert separate_definite_variant("Norra Villavägen", m) is None
+    assert separate_definite_variant("", m) is None
+
+
+def test_exact_suffix_variants_are_additive_and_tagged_suffix_exact() -> None:
+    """The exact-only tier only ever ADDS to the v6 table, never replaces it.
+
+    'PUNCT-EXACT' carries a punctuated glued abbreviation ('VILLAV.') the v6 glued
+    map cannot read at all (no configured suffix ends in a period); the new exact map
+    does, expanding it to 'VILLAVÄGEN'. 'SEPARATE-EXACT' carries a separate-word
+    indefinite last token ('NORRA VILLA VÄG') that neither v6 nor the exact glued map
+    can read -- only `separate_definite_variant` produces its 'NORRA VILLA VÄGEN'.
+    'GLUED-V6-ALREADY' carries 'STAVSTENSV', which v6 already expands to
+    'STAVSTENSVÄGEN' via the plain (unpunctuated) 'v' abbreviation; the exact map
+    configures the SAME abbreviation, so the additive set produces no duplicate.
+    """
+    exact_suffix_map = {
+        "SE": {
+            "gr": "gränd",
+            "gr.": "gränd",
+            "v": "vägen",
+            "v.": "vägen",
+            "g": "gatan",
+            "g.": "gatan",
+        }
+    }
+    separate_map = {"SE": {"väg": "vägen", "gata": "gatan"}}
+    with duckdb.connect(":memory:") as connection:
+        replace_address_search_document_input_table(
+            connection,
+            table_name="input_documents",
+        )
+        connection.execute(
+            """
+            insert into input_documents values
+                (
+                    'test', 'PUNCT-EXACT', 'SE',
+                    'VILLAV. 3, 23100 TRELLEBORG',
+                    'VILLAV. 3, 23100 TRELLEBORG',
+                    'VILLAV.', '3', '', '23100', 'TRELLEBORG',
+                    'physical', '', null, null, null, 0, 'PUNCT-EXACT', ''
+                ),
+                (
+                    'test', 'SEPARATE-EXACT', 'SE',
+                    'NORRA VILLA VÄG 5, 11364 STOCKHOLM',
+                    'NORRA VILLA VÄG 5, 11364 STOCKHOLM',
+                    'NORRA VILLA VÄG', '5', '', '11364', 'STOCKHOLM',
+                    'physical', '', null, null, null, 0, 'SEPARATE-EXACT', ''
+                ),
+                (
+                    'test', 'GLUED-V6-ALREADY', 'SE',
+                    'STAVSTENSV 3, 23100 TRELLEBORG',
+                    'STAVSTENSV 3, 23100 TRELLEBORG',
+                    'STAVSTENSV', '3', '', '23100', 'TRELLEBORG',
+                    'physical', '', null, null, null, 0, 'GLUED-V6-ALREADY', ''
+                )
+            """
+        )
+        replace_address_search_documents(
+            connection,
+            source_sql="select * from input_documents",
+            table_name="search_documents",
+        )
+        replace_address_street_variants(
+            connection,
+            document_table="search_documents",
+            variant_table="street_variants_v6",
+            languages_by_country=SWEDEN_STREET_VARIANT_LANGUAGES,
+            suffix_expansions_by_country=SWEDEN_STREET_SUFFIX_EXPANSIONS,
+        )
+        replace_address_street_variants(
+            connection,
+            document_table="search_documents",
+            variant_table="street_variants_v7",
+            languages_by_country=SWEDEN_STREET_VARIANT_LANGUAGES,
+            suffix_expansions_by_country=SWEDEN_STREET_SUFFIX_EXPANSIONS,
+            exact_suffix_expansions_by_country=exact_suffix_map,
+            separate_definite_by_country=separate_map,
+        )
+        select_rows = """
+            select document_id, street_variant, normalized_street_variant,
+                   variant_kind, variant_rank
+            from {table}
+            order by document_id, variant_rank, normalized_street_variant
+        """
+        v6_rows = connection.execute(select_rows.format(table="street_variants_v6")).fetchall()
+        v7_rows = connection.execute(select_rows.format(table="street_variants_v7")).fetchall()
+
+    # Strict superset: every v6 row survives byte-identical in v7.
+    assert set(v6_rows).issubset(set(v7_rows))
+    added_rows = sorted(set(v7_rows) - set(v6_rows))
+    assert added_rows == [
+        (
+            "PUNCT-EXACT",
+            "VILLAVÄGEN",
+            "villavagen",
+            SUFFIX_EXACT_VARIANT_KIND,
+            SUFFIX_EXACT_VARIANT_RANK,
+        ),
+        (
+            "SEPARATE-EXACT",
+            "NORRA VILLA VÄGEN",
+            "norravillavagen",
+            SUFFIX_EXACT_VARIANT_KIND,
+            SUFFIX_EXACT_VARIANT_RANK,
+        ),
+    ]
+    # The street v6 already expands gains no suffix_exact duplicate of its own
+    # v6 expansion.
+    assert [row for row in v7_rows if row[0] == "GLUED-V6-ALREADY"] == [
+        row for row in v6_rows if row[0] == "GLUED-V6-ALREADY"
+    ]
+    assert not any(row[3] == SUFFIX_EXACT_VARIANT_KIND for row in v6_rows)
+
+
+def test_exact_suffix_variants_absent_when_maps_not_passed() -> None:
+    """The two new params default to None and change nothing when omitted."""
+    with duckdb.connect(":memory:") as connection:
+        replace_address_search_document_input_table(
+            connection,
+            table_name="input_documents",
+        )
+        connection.execute(
+            """
+            insert into input_documents values
+                (
+                    'test', 'glued-road', 'SE',
+                    'STAVSTENSV 3, 23100 TRELLEBORG',
+                    'STAVSTENSV 3, 23100 TRELLEBORG',
+                    'STAVSTENSV', '3', '', '23100', 'TRELLEBORG',
+                    'physical', '', null, null, null, 0, 'glued-road', ''
+                )
+            """
+        )
+        replace_address_search_documents(
+            connection,
+            source_sql="select * from input_documents",
+            table_name="search_documents",
+        )
+        replace_address_street_variants(
+            connection,
+            document_table="search_documents",
+            variant_table="street_variants",
+            languages_by_country=SWEDEN_STREET_VARIANT_LANGUAGES,
+            suffix_expansions_by_country=SWEDEN_STREET_SUFFIX_EXPANSIONS,
+        )
+        rows = connection.execute(
+            """
+            select document_id, street_variant, normalized_street_variant,
+                   variant_kind, variant_rank
+            from street_variants
+            order by document_id, variant_rank, normalized_street_variant
+            """
+        ).fetchall()
+
+    assert rows == [
+        ("glued-road", "STAVSTENSV", "stavstensv", "parsed", 0),
+        ("glued-road", "STAVSTENSVÄGEN", "stavstensvagen", "suffix_expansion", 2),
+    ]
+    assert not any(row[3] == SUFFIX_EXACT_VARIANT_KIND for row in rows)
 
 
 def test_sweden_shadow_adapter_builds_results_without_serving_changes() -> None:

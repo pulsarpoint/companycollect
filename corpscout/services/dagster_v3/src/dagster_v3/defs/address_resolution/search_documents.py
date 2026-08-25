@@ -53,6 +53,8 @@ LIBPOSTAL_EXPANSION_VARIANT_KIND = "libpostal_expansion"
 LIBPOSTAL_EXPANSION_VARIANT_RANK = 1
 SUFFIX_EXPANSION_VARIANT_KIND = "suffix_expansion"
 SUFFIX_EXPANSION_VARIANT_RANK = 2
+SUFFIX_EXACT_VARIANT_KIND = "suffix_exact"
+SUFFIX_EXACT_VARIANT_RANK = 3
 
 # How many letters a glued abbreviation must follow before it is read as a suffix
 # rather than as the whole street name: `Norra V` keeps its parsed form, `Ringv`
@@ -209,6 +211,40 @@ def expanded_street_suffix_variants(
     return ()
 
 
+def separate_definite_variant(
+    street_name: str,
+    separate_map: Mapping[str, str],
+) -> str | None:
+    """Expand a separate-word indefinite last token to its definite form.
+
+    A Swedish street name sometimes spells the suffix as its own word instead of
+    gluing it to the stem: `Norra Villa Väg` where OSM carries `Norra Villa Vägen`.
+    Returns the street with the last token replaced by its definite form -- fully
+    uppercased when the original token is fully upper, leading-letter-capitalized
+    when only the original token's first letter is, and used as configured
+    otherwise -- or `None` when the last token (lowercased) is not a key in
+    `separate_map`, there is no last token at all, or the replacement would leave
+    the street unchanged.
+    """
+    tokens = street_name.split()
+    if not tokens:
+        return None
+    last_token = tokens[-1]
+    definite = separate_map.get(last_token.lower())
+    if definite is None:
+        return None
+    if last_token.isupper():
+        replacement = definite.upper()
+    elif last_token[:1].isupper():
+        replacement = definite[:1].upper() + definite[1:]
+    else:
+        replacement = definite
+    variant = " ".join([*tokens[:-1], replacement])
+    if variant == street_name:
+        return None
+    return variant
+
+
 def replace_address_street_variants(
     connection: Any,
     *,
@@ -216,8 +252,20 @@ def replace_address_street_variants(
     variant_table: str,
     languages_by_country: Mapping[str, Sequence[str]],
     suffix_expansions_by_country: Mapping[str, Mapping[str, str]],
+    exact_suffix_expansions_by_country: Mapping[str, Mapping[str, str]] | None = None,
+    separate_definite_by_country: Mapping[str, Mapping[str, str]] | None = None,
 ) -> None:
-    """Materialize parsed, libpostal-expanded and suffix-expanded street variants."""
+    """Materialize parsed, libpostal-expanded and suffix-expanded street variants.
+
+    `exact_suffix_expansions_by_country` and `separate_definite_by_country` are
+    additive, exact-only extras (variant_kind='suffix_exact', variant_rank=3): when
+    both are omitted (default `None`), the produced table is unchanged from before
+    these params existed. When provided, each distinct (country_code, street_name)
+    gets the set {expanded_street_suffix_variants(street, exact map)} union
+    {separate_definite_variant(street, separate map)}, minus whatever
+    `suffix_expansions_by_country` (v6) already produces for that street, minus the
+    street itself -- so a v7 addition can never duplicate or replace a v6 variant.
+    """
     # Importing pypostal initializes libpostal's multi-gigabyte language model.
     # Keep it out of Dagster definition discovery and load it during materialization.
     import pyarrow as pa
@@ -282,6 +330,43 @@ def replace_address_street_variants(
                     expanded_street,
                     kind=SUFFIX_EXPANSION_VARIANT_KIND,
                     rank=SUFFIX_EXPANSION_VARIANT_RANK,
+                )
+        exact_suffix_expansions = (
+            exact_suffix_expansions_by_country.get(country_code, {})
+            if exact_suffix_expansions_by_country is not None
+            else {}
+        )
+        separate_definite = (
+            separate_definite_by_country.get(country_code, {})
+            if separate_definite_by_country is not None
+            else {}
+        )
+        if exact_suffix_expansions or separate_definite:
+            v6_variants = set(
+                expanded_street_suffix_variants(
+                    street_name,
+                    suffix_expansions_by_country.get(country_code, {}),
+                )
+            )
+            exact_candidates = list(
+                expanded_street_suffix_variants(street_name, exact_suffix_expansions)
+            )
+            separate_variant = separate_definite_variant(street_name, separate_definite)
+            if separate_variant is not None:
+                exact_candidates.append(separate_variant)
+            seen_exact: set[str] = set()
+            for expanded_street in exact_candidates:
+                if expanded_street in seen_exact:
+                    continue
+                seen_exact.add(expanded_street)
+                if expanded_street in v6_variants or expanded_street == street_name:
+                    continue
+                record(
+                    country_code,
+                    street_name,
+                    expanded_street,
+                    kind=SUFFIX_EXACT_VARIANT_KIND,
+                    rank=SUFFIX_EXACT_VARIANT_RANK,
                 )
 
     expansion_input = "_address_resolution_street_expansion_input"
