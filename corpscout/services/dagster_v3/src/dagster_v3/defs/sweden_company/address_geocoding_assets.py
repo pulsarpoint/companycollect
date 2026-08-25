@@ -568,12 +568,25 @@ def sweden_address_geocode_demand_duckdb(
     )
     with sweden_address_osm_duckdb.get_connection() as connection:
         reference_md5 = geocode_demand.fresh_reference_md5(connection)
-        with clickhouse.get_connection() as clickhouse_client:
-            loaded = geocode_demand.load_current_resolver_outcomes(
-                connection=connection,
-                clickhouse_client=clickhouse_client,
-                log=context.log.info,
+        if config.rematch_all:
+            # A full rematch marks every identity 'rematch_all' regardless of its stored
+            # outcome, so loading ~2.09M current outcomes out of ClickHouse is wasted work.
+            # The CASE still LEFT JOINs the previous-outcomes table, so it must exist --
+            # created empty, every identity's previous side is NULL and the 'rematch_all'
+            # branch (which fires first) selects it anyway.
+            geocode_demand.create_empty_previous_outcomes_table(connection)
+            loaded = 0
+            context.log.info(
+                "rematch_all: skipping the current-outcome load; every identity is "
+                "pending regardless of its stored outcome."
             )
+        else:
+            with clickhouse.get_connection() as clickhouse_client:
+                loaded = geocode_demand.load_current_resolver_outcomes(
+                    connection=connection,
+                    clickhouse_client=clickhouse_client,
+                    log=context.log.info,
+                )
         counts = geocode_demand.replace_pending_address_identities(
             connection=connection,
             policy_version=SWEDEN_ADDRESS_RESOLUTION_POLICY.version,

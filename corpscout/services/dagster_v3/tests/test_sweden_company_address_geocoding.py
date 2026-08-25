@@ -6,10 +6,52 @@ import dagster as dg
 import duckdb
 
 
-class _AddressClickHouseClient:
-    def execute_iter(self, _sql: str, *, settings: dict[str, int]):
-        assert settings["max_block_size"] > 0
-        yield from (
+class _PagingCurrentAddressClient:
+    """Serves ``_company_addresses_page_sql``'s keyset-page contract over a fixed row set.
+
+    The canonical load now issues one bounded ``execute`` per page (with an ``after_*`` cursor
+    and a trailing ``LIMIT``) instead of one unbounded ``execute_iter``. Each concrete fake
+    supplies its rows via ``_rows``; this base returns the next slice in
+    ``(company_id, address_key, address_type, address_source)`` order above the cursor --
+    exactly what a correct engine returns for the wrapped page query -- so the loader's
+    pagination (cursor advance, boundary, termination) runs against a faithful stand-in.
+    """
+
+    def _rows(self) -> tuple[tuple[object, ...], ...]:
+        raise NotImplementedError
+
+    def execute(
+        self,
+        sql: str,
+        params: dict[str, object] | None = None,
+        settings: dict[str, int] | None = None,
+    ) -> list[tuple[object, ...]]:
+        assert settings is not None and settings["max_block_size"] > 0
+        rows = sorted(self._rows(), key=lambda r: (r[0], r[1], r[2], r[3]))
+        cursor = (
+            None
+            if params is None
+            else (
+                params["after_company_id"],
+                params["after_address_key"],
+                params["after_address_type"],
+                params["after_address_source"],
+            )
+        )
+        match = re.search(r"LIMIT (\d+)\s*$", sql)
+        assert match is not None, sql
+        limit = int(match.group(1))
+        tail = [
+            row
+            for row in rows
+            if cursor is None or (row[0], row[1], row[2], row[3]) > cursor
+        ]
+        return tail[:limit]
+
+
+class _AddressClickHouseClient(_PagingCurrentAddressClient):
+    def _rows(self) -> tuple[tuple[object, ...], ...]:
+        return (
             (
                 "exact-company",
                 "a" * 64,
@@ -133,10 +175,9 @@ class _AddressClickHouseClient:
         )
 
 
-class _CareOfCollisionClickHouseClient:
-    def execute_iter(self, _sql: str, *, settings: dict[str, int]):
-        assert settings["max_block_size"] > 0
-        yield from (
+class _CareOfCollisionClickHouseClient(_PagingCurrentAddressClient):
+    def _rows(self) -> tuple[tuple[object, ...], ...]:
+        return (
             (
                 "care-of-company",
                 "i" * 64,
@@ -170,10 +211,9 @@ class _CareOfCollisionClickHouseClient:
         )
 
 
-class _CityAddressFallbackClickHouseClient:
-    def execute_iter(self, _sql: str, *, settings: dict[str, int]):
-        assert settings["max_block_size"] > 0
-        yield from (
+class _CityAddressFallbackClickHouseClient(_PagingCurrentAddressClient):
+    def _rows(self) -> tuple[tuple[object, ...], ...]:
+        return (
             (
                 "city-fallback-company",
                 "k" * 64,
@@ -207,10 +247,9 @@ class _CityAddressFallbackClickHouseClient:
         )
 
 
-class _CountryAddressFallbackClickHouseClient:
-    def execute_iter(self, _sql: str, *, settings: dict[str, int]):
-        assert settings["max_block_size"] > 0
-        yield from (
+class _CountryAddressFallbackClickHouseClient(_PagingCurrentAddressClient):
+    def _rows(self) -> tuple[tuple[object, ...], ...]:
+        return (
             (
                 "country-fallback-company",
                 "m" * 64,
@@ -244,10 +283,9 @@ class _CountryAddressFallbackClickHouseClient:
         )
 
 
-class _SpatialCandidateClickHouseClient:
-    def execute_iter(self, _sql: str, *, settings: dict[str, int]):
-        assert settings["max_block_size"] > 0
-        yield from (
+class _SpatialCandidateClickHouseClient(_PagingCurrentAddressClient):
+    def _rows(self) -> tuple[tuple[object, ...], ...]:
+        return (
             (
                 "site-company",
                 "o" * 64,
@@ -281,10 +319,9 @@ class _SpatialCandidateClickHouseClient:
         )
 
 
-class _StreetFallbackClickHouseClient:
-    def execute_iter(self, _sql: str, *, settings: dict[str, int]):
-        assert settings["max_block_size"] > 0
-        yield from (
+class _StreetFallbackClickHouseClient(_PagingCurrentAddressClient):
+    def _rows(self) -> tuple[tuple[object, ...], ...]:
+        return (
             (
                 "street-fallback-company",
                 "q" * 64,
@@ -318,23 +355,24 @@ class _StreetFallbackClickHouseClient:
         )
 
 
-class _RoadGeometryFallbackClickHouseClient:
-    def execute_iter(self, _sql: str, *, settings: dict[str, int]):
-        assert settings["max_block_size"] > 0
-        yield (
-            "road-fallback-company",
-            "t" * 64,
-            "visiting_or_postal",
-            "scb",
-            "Borgaregatan 19 B, 61131 Nyköping",
-            "Borgaregatan 19 B",
-            "",
-            "61131",
-            "Nyköping",
-            "SE",
-            "registry-road-fallback",
-            "registry-run",
-            "2026-08-16 16:00:00.000",
+class _RoadGeometryFallbackClickHouseClient(_PagingCurrentAddressClient):
+    def _rows(self) -> tuple[tuple[object, ...], ...]:
+        return (
+            (
+                "road-fallback-company",
+                "t" * 64,
+                "visiting_or_postal",
+                "scb",
+                "Borgaregatan 19 B, 61131 Nyköping",
+                "Borgaregatan 19 B",
+                "",
+                "61131",
+                "Nyköping",
+                "SE",
+                "registry-road-fallback",
+                "registry-run",
+                "2026-08-16 16:00:00.000",
+            ),
         )
 
 
@@ -1867,3 +1905,172 @@ def test_no_drop_migration_file_carries_these_retirements() -> None:
     for path in up_files:
         found = pattern.search(path.read_text(encoding="utf-8"))
         assert found is None, f"{path.name} drops {found.group(1)}"
+
+
+class _RecordingPagingClient(_PagingCurrentAddressClient):
+    """A `_PagingCurrentAddressClient` over caller-supplied rows that records every page call.
+
+    Lets the parity test both feed an arbitrary fixture (collision pairs, exact multiples) and
+    inspect the cursor the loader carried between pages -- proof the walk is keyset, not OFFSET.
+    """
+
+    def __init__(self, rows: list[tuple[object, ...]]) -> None:
+        self._rows_data = tuple(rows)
+        self.calls: list[tuple[str, object, object]] = []
+
+    def _rows(self) -> tuple[tuple[object, ...], ...]:
+        return self._rows_data
+
+    def execute(
+        self,
+        sql: str,
+        params: dict[str, object] | None = None,
+        settings: dict[str, int] | None = None,
+    ) -> list[tuple[object, ...]]:
+        self.calls.append((sql, params, settings))
+        return super().execute(sql, params, settings)
+
+
+def _canon_row(
+    company_id: str,
+    address_key: str,
+    address_type: str,
+    source: str,
+) -> tuple[object, ...]:
+    # Positional to SOURCE_ADDRESS_INPUT_COLUMNS: the loader keys pagination on the first four
+    # (company_id, address_key, address_type, address_source); the rest is inert payload.
+    return (
+        company_id,
+        address_key,
+        address_type,
+        source,
+        "Storgatan 1$111 22$Stockholm",
+        "Storgatan 1",
+        "",
+        "111 22",
+        "Stockholm",
+        "SE",
+        f"uid-{company_id}-{address_key}-{address_type}-{source}",
+        "registry-run",
+        "2026-08-12 19:00:00.000",
+    )
+
+
+def _load_into_temp_table(
+    rows: list[tuple[object, ...]],
+) -> tuple[list[tuple[str, str, str, str]], _RecordingPagingClient]:
+    from dagster_v3.defs.sweden_company.address_canonicalization import (
+        _load_current_company_addresses,
+    )
+
+    client = _RecordingPagingClient(rows)
+    connection = duckdb.connect()
+    try:
+        _load_current_company_addresses(
+            connection=connection, clickhouse_client=client, log=None
+        )
+        stored = connection.execute(
+            "select company_id, address_key, address_type, address_source"
+            " from _sweden_company_address_observations"
+            " order by company_id, address_key, address_type, address_source"
+        ).fetchall()
+    finally:
+        connection.close()
+    return stored, client
+
+
+def test_the_chunked_canonical_load_keeps_a_fingerprint_collision_across_a_page_boundary() -> (
+    None
+):
+    """The load-bearing reason the cursor is the FULL four-tuple, not (company_id, address_key).
+
+    Two observations share company_id AND address_key (an identical address reported under two
+    (address_type, source) pairs -- the grain se_company_addresses_current actually permits).
+    With page size 1 the boundary falls exactly between them, so a (company_id, address_key)
+    cursor would drop the second (it is not strictly greater on that pair). The four-tuple
+    cursor keeps it, and both survive.
+    """
+    import pytest as _pytest  # local: keep the module import list unchanged
+
+    monkeypatch = _pytest.MonkeyPatch()
+    from dagster_v3.defs.sweden_company import address_canonicalization
+
+    monkeypatch.setattr(address_canonicalization, "QUERY_BATCH_SIZE", 1)
+    rows = [
+        _canon_row("comp-1", "key-a", "postal", "bolagsverket"),
+        _canon_row("comp-1", "key-a", "visiting", "scb"),  # collision: same comp + key
+        _canon_row("comp-2", "key-b", "postal", "bolagsverket"),
+    ]
+    try:
+        # Hand them in reversed so only correct four-tuple ordering + keyset paging rebuilds
+        # the set.
+        stored, client = _load_into_temp_table(list(reversed(rows)))
+    finally:
+        monkeypatch.undo()
+
+    expected = [(r[0], r[1], r[2], r[3]) for r in rows]
+    assert stored == expected
+    assert len(stored) == len(set(stored)) == 3
+    # The collision pair -- proof it was not dropped at the boundary.
+    assert ("comp-1", "key-a", "postal", "bolagsverket") in stored
+    assert ("comp-1", "key-a", "visiting", "scb") in stored
+
+
+def test_the_chunked_canonical_load_reproduces_the_single_query_row_set() -> None:
+    """Row-set + boundary parity across partial-final, exact-multiple, and single-page walks.
+
+    Each case builds a distinct fixture, loads it at a small page size, and asserts the temp
+    table holds exactly the fixture (count, set, order, no dup) and that the loader advanced a
+    keyset cursor -- carrying the previous page's last four-tuple -- with the right settings on
+    every query.
+    """
+    import pytest as _pytest
+
+    from dagster_v3.defs.sweden_company import address_canonicalization
+
+    cases = [
+        # (row_count, page_size, full_pages) -- 7 @ 2 = 2+2+2+1, a short final page ends it.
+        (7, 2, 3),
+        # 4 @ 2 = 2+2 exactly, so the walk needs one extra empty page to know it is done.
+        (4, 2, 2),
+        # 3 @ 10: one page smaller than the batch, no cursor, immediate stop.
+        (3, 10, 0),
+    ]
+    for row_count, page_size, full_pages in cases:
+        rows = [
+            _canon_row(f"comp-{i:02d}", f"key-{i:02d}", "postal", "bolagsverket")
+            for i in range(row_count)
+        ]
+        monkeypatch = _pytest.MonkeyPatch()
+        monkeypatch.setattr(address_canonicalization, "QUERY_BATCH_SIZE", page_size)
+        try:
+            stored, client = _load_into_temp_table(list(reversed(rows)))
+        finally:
+            monkeypatch.undo()
+
+        expected = [(r[0], r[1], r[2], r[3]) for r in rows]
+        assert stored == expected, (row_count, page_size)
+        assert len(stored) == len(set(stored)) == row_count
+        # Keyset, not OFFSET: every page after the first carried the prior page's last id, and
+        # only full pages (page_size rows) advance the cursor.
+        cursors = [
+            (
+                params["after_company_id"],
+                params["after_address_key"],
+                params["after_address_type"],
+                params["after_address_source"],
+            )
+            for _sql, params, _settings in client.calls
+            if params is not None
+        ]
+        expected_cursors = [
+            (r[0], r[1], r[2], r[3])
+            for r in rows[page_size - 1 :: page_size]
+        ][:full_pages]
+        assert cursors == expected_cursors, (row_count, page_size)
+        # The bound that makes a stalled page ERROR instead of hanging rides every query.
+        for _sql, _params, settings in client.calls:
+            assert settings == {
+                "max_execution_time": address_canonicalization.MAX_PAGE_EXECUTION_SECONDS,
+                "max_block_size": page_size,
+            }
