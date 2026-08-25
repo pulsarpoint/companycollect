@@ -1,4 +1,12 @@
-import { existsSync, mkdtempSync, readdirSync } from "node:fs";
+import {
+  existsSync,
+  mkdtempSync,
+  readdirSync,
+  readFileSync,
+  rmSync,
+  statSync,
+  writeFileSync,
+} from "node:fs";
 import { homedir, tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it, vi } from "vitest";
@@ -558,6 +566,49 @@ describe("configuration", () => {
       HOME: "/tmp/geocode-agent-home-x",
       CODEX_HOME: "/srv/agent-codex",
     });
+  });
+
+  it("copies auth.json into the CLI-auth session home at dir 0700 / file 0600", async () => {
+    // No API key configured -> the host authenticates by a signed-in CLI, so
+    // the one file the child needs is copied in with tight modes.
+    const fakeAuthDir = mkdtempSync(`${tmpdir()}/codex-auth-`);
+    const authSource = join(fakeAuthDir, "auth.json");
+    writeFileSync(authSource, JSON.stringify({ tokens: "secret" }), { mode: 0o600 });
+    const config = readGeocodeAgentConfig({} as NodeJS.ProcessEnv);
+    expect(config.apiKey).toBe("");
+
+    const session = await createSessionHome(config, authSource);
+    try {
+      const copied = join(session.codexHome, "auth.json");
+      expect(existsSync(copied)).toBe(true);
+      expect(readFileSync(copied, "utf8")).toContain("secret");
+      // 0o777 masks off the file-type bits, leaving the permission bits.
+      expect(statSync(session.codexHome).mode & 0o777).toBe(0o700);
+      expect(statSync(copied).mode & 0o777).toBe(0o600);
+    } finally {
+      await session.cleanup();
+      rmSync(fakeAuthDir, { recursive: true, force: true });
+    }
+  });
+
+  it("does NOT copy auth.json when an API key is configured", async () => {
+    const fakeAuthDir = mkdtempSync(`${tmpdir()}/codex-auth-`);
+    const authSource = join(fakeAuthDir, "auth.json");
+    writeFileSync(authSource, "secret");
+    const config = readGeocodeAgentConfig({
+      GEOCODE_AGENT_API_KEY: "k",
+    } as NodeJS.ProcessEnv);
+
+    const session = await createSessionHome(config, authSource);
+    try {
+      // The .codex home still exists (the CLI writes its state there), but the
+      // operator's credential is not copied into it.
+      expect(existsSync(session.codexHome)).toBe(true);
+      expect(existsSync(join(session.codexHome, "auth.json"))).toBe(false);
+    } finally {
+      await session.cleanup();
+      rmSync(fakeAuthDir, { recursive: true, force: true });
+    }
   });
 
   it("creates a private session home instead of pointing at the operator's", async () => {

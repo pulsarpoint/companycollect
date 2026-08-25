@@ -289,6 +289,7 @@ export function agentProcessEnv(
  */
 export async function createSessionHome(
   config: GeocodeAgentConfig,
+  authSourcePath: string = join(homedir(), ".codex", "auth.json"),
 ): Promise<AgentSessionHome & { cleanup: () => Promise<void> }> {
   const home = await mkdtemp(join(tmpdir(), "geocode-agent-home-"));
   const cleanup = async () => {
@@ -301,13 +302,14 @@ export async function createSessionHome(
 
   const codexHome = join(home, ".codex");
   await mkdir(codexHome, { recursive: true, mode: 0o700 });
-  if (config.apiKey === "") {
-    const source = join(homedir(), ".codex", "auth.json");
-    if (existsSync(source)) {
-      const target = join(codexHome, "auth.json");
-      await copyFile(source, target);
-      await chmod(target, 0o600);
-    }
+  // Only when the host authenticates by a signed-in CLI (no API key) does the
+  // child need the one file `~/.codex/auth.json`; it is copied at 0600 rather
+  // than exposing the whole `~/.codex` (config.toml, MCP registrations, ...).
+  // With an API key configured, nothing is copied.
+  if (config.apiKey === "" && existsSync(authSourcePath)) {
+    const target = join(codexHome, "auth.json");
+    await copyFile(authSourcePath, target);
+    await chmod(target, 0o600);
   }
   return { home, codexHome, cleanup };
 }
