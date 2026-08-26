@@ -223,7 +223,10 @@ ESEF_PARSING_CLICKHOUSE_ASSETS = (esef_parsing_clickhouse,)
 # partitions simultaneously, and metrics.py joins esef_facts to filings on
 # fxo_id alone (no FINAL, no week filter) -- both copies would aggregate into
 # esef_financial_metrics silently. This is real corruption, not a coverage
-# gap, so it fails the run at the default ERROR severity.
+# gap, so it uses the default ERROR severity -- which flags the check failed
+# loudly in the UI/asset catalog, but (per Dagster semantics, and no check in
+# this repo sets `blocking=True`) does NOT block the run or downstream
+# esef_financial_metrics. This is a detector, not a hard gate.
 FXO_CROSS_WEEK_DUPLICATION_COUNT_SQL = f"""
 SELECT count() FROM (
     SELECT fxo_id
@@ -293,11 +296,15 @@ def fxo_id_single_processed_week(
 # column of its own, so its filings are bucketed into the SAME Sunday-start
 # week boundary the pipeline partitions on
 # (ESEF_PROCESSED_WEEK_PARTITIONS: cron '0 0 * * 0' UTC) via
-# `toStartOfWeek(date, 0)` (mode 0 = week starts Sunday).
+# `toStartOfWeek(date, 0)` (mode 0 = week starts Sunday). The timezone is
+# explicit ('UTC') rather than relying on the ClickHouse SERVER's default
+# timezone -- unverified and unprecedented elsewhere in this codebase, and if
+# the server tz ever differs from UTC, records near the Sunday 00:00 UTC
+# boundary would land in the wrong week and produce false warnings forever.
 FACTS_COVERAGE_BY_WEEK_SQL = f"""
 WITH index_weeks AS (
     SELECT
-        toStartOfWeek(toDate(processed_at), 0) AS week,
+        toStartOfWeek(toDate(processed_at, 'UTC'), 0) AS week,
         uniqExact(fxo_id) AS index_filings
     FROM {tables.QUALIFIED_ESEF_FILINGS_TABLE}
     WHERE processed_at IS NOT NULL
