@@ -1,0 +1,425 @@
+---
+- name: Inspect the local Ratsit server source files
+  ansible.builtin.stat:
+    path: "{{ item }}"
+  loop:
+    - "{{ ratsit_server_source_dir }}/pyproject.toml"
+    - "{{ ratsit_server_source_dir }}/uv.lock"
+    - "{{ ratsit_server_source_dir }}/ratsit_server/main.py"
+    - "{{ ratsit_server_source_dir }}/tests/test_ratsit_server.py"
+  register: ratsit_server_local_source_files
+  delegate_to: localhost
+  become: false
+  run_once: true
+
+- name: Require a complete local Ratsit server source tree
+  ansible.builtin.assert:
+    that:
+      - ratsit_server_local_source_files.results | map(attribute='stat.exists') | min
+    fail_msg: >-
+      Run this playbook from ratsit_server/ansible; the project files, server,
+      or server tests are missing.
+  delegate_to: localhost
+  become: false
+  run_once: true
+
+- name: Require pyproject.toml and uv.lock to agree
+  ansible.builtin.command:
+    argv:
+      - uv
+      - lock
+      - --check
+    chdir: "{{ ratsit_server_source_dir }}"
+  delegate_to: localhost
+  become: false
+  run_once: true
+  check_mode: false
+  changed_when: false
+
+- name: Test the Ratsit CDP server on the control machine
+  ansible.builtin.command:
+    argv:
+      - uv
+      - run
+      - --frozen
+      - pytest
+      - tests/test_ratsit_server.py
+    chdir: "{{ ratsit_server_source_dir }}"
+  delegate_to: localhost
+  become: false
+  run_once: true
+  check_mode: false
+  changed_when: false
+
+- name: Require a supported CloakBrowser target
+  ansible.builtin.assert:
+    that:
+      - ansible_facts.system == 'Linux'
+      - ansible_facts.os_family == 'Debian'
+      - ansible_facts.architecture in ['x86_64', 'aarch64']
+      - ratsit_server_cdp_port | int >= 1024
+      - ratsit_server_cdp_port | int <= 65535
+      - ratsit_server_profile_dir.startswith(ratsit_server_state_dir ~ '/')
+    fail_msg: >-
+      This deployment supports Debian-family Linux on x86_64 or aarch64 and a
+      CDP port between 1024 and 65535.
+
+- name: Discover uv from the SSH user's login environment
+  ansible.builtin.command:
+    argv:
+      - /bin/sh
+      - -lc
+      - command -v uv
+  become: false
+  register: ratsit_server_discovered_uv
+  check_mode: false
+  changed_when: false
+  failed_when: false
+  when: ratsit_server_uv_binary | length == 0
+
+- name: Select the target uv executable
+  ansible.builtin.set_fact:
+    ratsit_server_uv_executable: >-
+      {{
+        ratsit_server_uv_binary
+        if ratsit_server_uv_binary | length > 0
+        else ratsit_server_discovered_uv.stdout | default('') | trim
+      }}
+
+- name: Require an absolute target uv path
+  ansible.builtin.assert:
+    that:
+      - ratsit_server_uv_executable | length > 0
+      - ratsit_server_uv_executable.startswith('/')
+    fail_msg: >-
+      uv was not found in the SSH user's login environment. Install uv or set
+      ratsit_server_uv_binary to its absolute path before deploying.
+
+- name: Inspect uv on the target host
+  ansible.builtin.stat:
+    path: "{{ ratsit_server_uv_executable }}"
+  register: ratsit_server_target_uv
+
+- name: Require uv on the target host
+  ansible.builtin.assert:
+    that:
+      - ratsit_server_target_uv.stat.exists
+      - ratsit_server_target_uv.stat.executable
+    fail_msg: >-
+      {{ ratsit_server_uv_executable }} is missing or not executable. Install
+      uv or set ratsit_server_uv_binary to its absolute path before deploying.
+
+- name: Read the graphical service user's UID
+  ansible.builtin.command:
+    argv:
+      - id
+      - -u
+      - "{{ ratsit_server_service_user }}"
+  register: ratsit_server_actual_service_uid
+  check_mode: false
+  changed_when: false
+
+- name: Read the graphical service user's primary group
+  ansible.builtin.command:
+    argv:
+      - id
+      - -gn
+      - "{{ ratsit_server_service_user }}"
+  register: ratsit_server_actual_service_group
+  check_mode: false
+  changed_when: false
+
+- name: Inspect the graphical user's runtime directory
+  ansible.builtin.stat:
+    path: "{{ ratsit_server_runtime_dir }}"
+  register: ratsit_server_graphical_runtime
+
+- name: Read the graphical user manager environment
+  ansible.builtin.command:
+    argv:
+      - systemctl
+      - --user
+      - show-environment
+  become: true
+  become_user: "{{ ratsit_server_service_user }}"
+  environment:
+    XDG_RUNTIME_DIR: "{{ ratsit_server_runtime_dir }}"
+    DBUS_SESSION_BUS_ADDRESS: >-
+      unix:path={{ ratsit_server_runtime_dir }}/bus
+  register: ratsit_server_user_manager_environment
+  check_mode: false
+  changed_when: false
+  failed_when: false
+
+- name: Inspect the graphical session target
+  ansible.builtin.command:
+    argv:
+      - systemctl
+      - --user
+      - is-active
+      - graphical-session.target
+  become: true
+  become_user: "{{ ratsit_server_service_user }}"
+  environment:
+    XDG_RUNTIME_DIR: "{{ ratsit_server_runtime_dir }}"
+    DBUS_SESSION_BUS_ADDRESS: >-
+      unix:path={{ ratsit_server_runtime_dir }}/bus
+  register: ratsit_server_graphical_target
+  check_mode: false
+  changed_when: false
+  failed_when: false
+
+- name: Require the active UID 1000 graphical session
+  ansible.builtin.assert:
+    that:
+      - ratsit_server_actual_service_uid.stdout | int == ratsit_server_service_uid
+      - ratsit_server_actual_service_group.stdout == ratsit_server_service_group
+      - ratsit_server_graphical_runtime.stat.isdir | default(false)
+      - "'DISPLAY=' in ratsit_server_user_manager_environment.stdout"
+      - "'XAUTHORITY=' in ratsit_server_user_manager_environment.stdout"
+      - ratsit_server_graphical_target.stdout == 'active'
+    fail_msg: >-
+      {{ ratsit_server_service_user }} must be UID
+      {{ ratsit_server_service_uid }} with an active graphical-session.target,
+      DISPLAY, and XAUTHORITY before this headed browser can be deployed.
+
+- name: Inspect the legacy system-level unit
+  ansible.builtin.stat:
+    path: "{{ ratsit_server_legacy_system_unit }}"
+  register: ratsit_server_legacy_system_unit_status
+  check_mode: false
+
+- name: Stop and disable the legacy system-level service
+  ansible.builtin.systemd_service:
+    name: "{{ ratsit_server_service_name }}"
+    enabled: false
+    state: stopped
+  when:
+    - not ansible_check_mode
+    - ratsit_server_legacy_system_unit_status.stat.exists
+
+- name: Remove the legacy system-level unit
+  ansible.builtin.file:
+    path: "{{ ratsit_server_legacy_system_unit }}"
+    state: absent
+
+- name: Reload system-level unit metadata after migration
+  ansible.builtin.systemd_service:
+    daemon_reload: true
+  when:
+    - not ansible_check_mode
+    - ratsit_server_legacy_system_unit_status.stat.exists
+
+- name: Install browser runtime packages
+  ansible.builtin.apt:
+    name:
+      - ca-certificates
+      - curl
+    state: present
+    update_cache: true
+    cache_valid_time: 3600
+
+- name: Inspect the deployment directory before check-mode changes
+  ansible.builtin.stat:
+    path: "{{ ratsit_server_deploy_dir }}"
+  register: ratsit_server_existing_deploy_dir
+  check_mode: false
+
+- name: Inspect the user unit directory before check-mode changes
+  ansible.builtin.stat:
+    path: "{{ ratsit_server_user_unit_dir }}"
+  register: ratsit_server_existing_user_unit_dir
+  check_mode: false
+
+- name: Create the root-owned deployment directory
+  ansible.builtin.file:
+    path: "{{ ratsit_server_deploy_dir }}"
+    state: directory
+    owner: root
+    group: root
+    mode: "0755"
+
+- name: Create persistent browser directories
+  ansible.builtin.file:
+    path: "{{ item }}"
+    state: directory
+    owner: "{{ ratsit_server_service_user }}"
+    group: "{{ ratsit_server_service_group }}"
+    mode: "0700"
+  loop:
+    - "{{ ratsit_server_state_dir }}"
+    - "{{ ratsit_server_cache_dir }}"
+
+- name: Give UID 1000 ownership of existing browser state
+  ansible.builtin.file:
+    path: "{{ item }}"
+    state: directory
+    owner: "{{ ratsit_server_service_user }}"
+    group: "{{ ratsit_server_service_group }}"
+    recurse: true
+  loop:
+    - "{{ ratsit_server_state_dir }}"
+    - "{{ ratsit_server_cache_dir }}"
+  when: not ansible_check_mode
+
+- name: Create graphical user service directories
+  ansible.builtin.file:
+    path: "{{ item.path }}"
+    state: directory
+    owner: "{{ ratsit_server_service_user }}"
+    group: "{{ ratsit_server_service_group }}"
+    mode: "{{ item.mode }}"
+  loop:
+    - path: "{{ ratsit_server_user_unit_dir }}"
+      mode: "0755"
+    - path: "{{ ratsit_server_config_dir }}"
+      mode: "0700"
+
+- name: Install the locked Python project metadata
+  ansible.builtin.copy:
+    src: "{{ ratsit_server_source_dir }}/{{ item }}"
+    dest: "{{ ratsit_server_deploy_dir }}/{{ item }}"
+    owner: root
+    group: root
+    mode: "0644"
+  loop:
+    - pyproject.toml
+    - uv.lock
+  notify: Restart Ratsit CDP server
+  when:
+    - >-
+      not ansible_check_mode
+      or ratsit_server_existing_deploy_dir.stat.isdir | default(false)
+
+- name: Install the Ratsit CDP server
+  ansible.builtin.copy:
+    src: "{{ ratsit_server_source_dir }}/ratsit_server/main.py"
+    dest: "{{ ratsit_server_deploy_dir }}/main.py"
+    owner: root
+    group: root
+    mode: "0644"
+  notify: Restart Ratsit CDP server
+  when:
+    - >-
+      not ansible_check_mode
+      or ratsit_server_existing_deploy_dir.stat.isdir | default(false)
+
+- name: Synchronize the Python 3.14 runtime environment
+  ansible.builtin.command:
+    argv:
+      - "{{ ratsit_server_uv_executable }}"
+      - sync
+      - --frozen
+      - --no-dev
+      - --no-install-project
+      - --python
+      - "{{ ratsit_server_python_version }}"
+    chdir: "{{ ratsit_server_deploy_dir }}"
+  environment:
+    UV_CACHE_DIR: "{{ ratsit_server_uv_cache_dir }}"
+    UV_PYTHON_INSTALL_DIR: "{{ ratsit_server_uv_python_dir }}"
+  changed_when: false
+  when: not ansible_check_mode
+
+- name: Verify the CloakBrowser GeoIP dependency
+  ansible.builtin.command:
+    argv:
+      - "{{ ratsit_server_deploy_dir }}/.venv/bin/python"
+      - -c
+      - import geoip2
+  changed_when: false
+  when: not ansible_check_mode
+
+- name: Install Chromium shared-library dependencies
+  ansible.builtin.command:
+    argv:
+      - "{{ ratsit_server_deploy_dir }}/.venv/bin/playwright"
+      - install-deps
+      - chromium
+  changed_when: false
+  when: not ansible_check_mode
+
+- name: Download and verify the CloakBrowser binary
+  ansible.builtin.command:
+    argv:
+      - "{{ ratsit_server_deploy_dir }}/.venv/bin/python"
+      - -m
+      - cloakbrowser
+      - install
+  become: true
+  become_user: "{{ ratsit_server_service_user }}"
+  environment:
+    HOME: "{{ ratsit_server_service_home }}"
+    CLOAKBROWSER_CACHE_DIR: "{{ ratsit_server_cache_dir }}"
+  changed_when: false
+  when: not ansible_check_mode
+
+- name: Install the Ratsit CDP user unit
+  ansible.builtin.template:
+    src: ratsit-cdp.service.j2
+    dest: "{{ ratsit_server_user_unit_file }}"
+    owner: "{{ ratsit_server_service_user }}"
+    group: "{{ ratsit_server_service_group }}"
+    mode: "0644"
+  notify: Restart Ratsit CDP server
+  when:
+    - >-
+      not ansible_check_mode
+      or ratsit_server_existing_user_unit_dir.stat.isdir | default(false)
+
+- name: Verify the installed systemd user unit
+  ansible.builtin.command:
+    argv:
+      - systemd-analyze
+      - --user
+      - verify
+      - "{{ ratsit_server_user_unit_file }}"
+  become: true
+  become_user: "{{ ratsit_server_service_user }}"
+  environment:
+    XDG_RUNTIME_DIR: "{{ ratsit_server_runtime_dir }}"
+    DBUS_SESSION_BUS_ADDRESS: >-
+      unix:path={{ ratsit_server_runtime_dir }}/bus
+  changed_when: false
+  when: not ansible_check_mode
+
+- name: Apply pending service changes
+  ansible.builtin.meta: flush_handlers
+
+- name: Enable and start the Ratsit CDP server
+  ansible.builtin.systemd_service:
+    name: "{{ ratsit_server_service_name }}"
+    scope: user
+    enabled: true
+    state: started
+    daemon_reload: true
+  become: true
+  become_user: "{{ ratsit_server_service_user }}"
+  environment:
+    XDG_RUNTIME_DIR: "{{ ratsit_server_runtime_dir }}"
+    DBUS_SESSION_BUS_ADDRESS: >-
+      unix:path={{ ratsit_server_runtime_dir }}/bus
+  when: not ansible_check_mode
+
+- name: Wait for the local CDP port
+  ansible.builtin.wait_for:
+    host: "{{ ratsit_server_bind_address }}"
+    port: "{{ ratsit_server_cdp_port }}"
+    state: started
+    timeout: 120
+  when: not ansible_check_mode
+
+- name: Verify the Chrome DevTools endpoint
+  ansible.builtin.uri:
+    url: >-
+      http://{{ ratsit_server_bind_address }}:{{ ratsit_server_cdp_port
+      }}/json/version
+    return_content: true
+    status_code: 200
+  register: ratsit_server_cdp_version
+  changed_when: false
+  failed_when: >-
+    ratsit_server_cdp_version.status != 200
+    or 'webSocketDebuggerUrl' not in
+    (ratsit_server_cdp_version.content | default(''))
+  when: not ansible_check_mode

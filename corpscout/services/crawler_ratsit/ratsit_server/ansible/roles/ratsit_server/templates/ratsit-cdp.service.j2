@@ -1,0 +1,30 @@
+# MANAGED BY ANSIBLE (roles/ratsit_server).
+[Unit]
+Description=Ratsit CloakBrowser CDP server
+PartOf=graphical-session.target
+After=graphical-session.target
+ConditionEnvironment=DISPLAY
+ConditionEnvironment=XAUTHORITY
+StartLimitIntervalSec=0
+
+[Service]
+Type=exec
+WorkingDirectory={{ ratsit_server_deploy_dir }}
+Environment=HOME={{ ratsit_server_service_home }}
+Environment=CLOAKBROWSER_CACHE_DIR={{ ratsit_server_cache_dir }}
+Environment=PYTHONUNBUFFERED=1
+EnvironmentFile=-{{ ratsit_server_environment_file }}
+ExecStart={{ ratsit_server_deploy_dir }}/.venv/bin/python {{ ratsit_server_deploy_dir }}/main.py --address {{ ratsit_server_bind_address }} --cdp-port {{ ratsit_server_cdp_port }} --profile-dir {{ ratsit_server_profile_dir }} --headed
+
+Restart=on-failure
+RestartSec=5s
+TimeoutStopSec=30s
+KillSignal=SIGTERM
+KillMode=control-group
+UMask=0077
+
+NoNewPrivileges=true
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
+
+[Install]
+WantedBy=graphical-session.target

@@ -1,0 +1,7 @@
+---
+- name: Deploy the Ratsit CloakBrowser CDP server
+  hosts: ratsit_servers
+  become: true
+  gather_facts: true
+  roles:
+    - ratsit_server

@@ -1,0 +1,26 @@
+---
+crawler_ratsit_service_name: ratsit-worker
+crawler_ratsit_service_user: graovic
+crawler_ratsit_service_uid: 1000
+crawler_ratsit_service_group: graovic
+crawler_ratsit_service_home: /home/graovic
+crawler_ratsit_runtime_dir: "/run/user/{{ crawler_ratsit_service_uid }}"
+crawler_ratsit_user_unit_dir: >-
+  {{ crawler_ratsit_service_home }}/.config/systemd/user
+crawler_ratsit_user_unit_file: >-
+  {{ crawler_ratsit_user_unit_dir }}/{{ crawler_ratsit_service_name }}.service
+crawler_ratsit_config_dir: >-
+  {{ crawler_ratsit_service_home }}/.config/crawler-ratsit
+crawler_ratsit_environment_source: "{{ playbook_dir }}/worker-environment"
+crawler_ratsit_environment_file: >-
+  {{ crawler_ratsit_config_dir }}/environment
+
+crawler_ratsit_source_dir: "{{ playbook_dir }}/../.."
+crawler_ratsit_deploy_dir: /opt/companycollect/corpscout/crawler-ratsit
+
+# Leave empty to discover uv from the SSH user's login environment.
+# Set an absolute path here when the target needs an explicit override.
+crawler_ratsit_uv_binary: ""
+crawler_ratsit_python_version: "3.14"
+crawler_ratsit_uv_python_dir: "{{ crawler_ratsit_deploy_dir }}/.uv-python"
+crawler_ratsit_uv_cache_dir: "{{ crawler_ratsit_deploy_dir }}/.uv-cache"

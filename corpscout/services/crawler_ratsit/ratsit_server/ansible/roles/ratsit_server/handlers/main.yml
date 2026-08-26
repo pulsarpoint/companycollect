@@ -1,0 +1,15 @@
+---
+- name: Restart Ratsit CDP server
+  ansible.builtin.systemd_service:
+    name: "{{ ratsit_server_service_name }}"
+    scope: user
+    enabled: true
+    state: restarted
+    daemon_reload: true
+  become: true
+  become_user: "{{ ratsit_server_service_user }}"
+  environment:
+    XDG_RUNTIME_DIR: "{{ ratsit_server_runtime_dir }}"
+    DBUS_SESSION_BUS_ADDRESS: >-
+      unix:path={{ ratsit_server_runtime_dir }}/bus
+  when: not ansible_check_mode
