@@ -54,6 +54,7 @@ from dagster_v3.defs.esef_filings.segment_parser import (
 from dagster_v3.defs.esef_filings.visible_sections import extract_visible_sections
 from dagster_v3.defs.esef_filings.website_candidates import (
     TaggedWebsiteValue,
+    _normalize_website,
     extract_website_candidates,
     registrable_domain_for_host,
 )
@@ -305,6 +306,25 @@ def test_website_candidates_are_normalized_deduplicated_and_auditable(
     assert "m.in" not in by_domain
 
 
+def test_website_candidates_skip_bracketed_footnote_urls_without_crashing(
+    tmp_path: Path,
+) -> None:
+    report_path = tmp_path / "footnote.xhtml"
+    report_path.write_text(_BRACKETED_FOOTNOTE_WEBSITE_XHTML, encoding="utf-8")
+
+    candidates = extract_website_candidates(
+        {"reports/footnote.xhtml": report_path},
+        tagged_values=[],
+        known_email_domains=[],
+    )
+
+    by_domain = {candidate.registrable_domain: candidate for candidate in candidates}
+    assert "example.com" not in by_domain
+    assert by_domain["sample-oils.se"].normalized_urls == [
+        "https://www.sample-oils.se/"
+    ]
+
+
 def test_report_production_credits_are_not_company_contacts(tmp_path: Path) -> None:
     report_path = tmp_path / "report.xhtml"
     report_path.write_text(_REPORT_PRODUCTION_CREDITS_XHTML, encoding="utf-8")
@@ -341,6 +361,15 @@ def test_registrable_domain_validator_requires_a_public_suffix() -> None:
     assert registrable_domain_for_host("company.not-a-real-tld") is None
     assert registrable_domain_for_host("filing.zip") is None
     assert registrable_domain_for_host("invalid-.se") is None
+
+
+def test_normalize_website_rejects_unparseable_url_candidates() -> None:
+    # A bracketed footnote marker (e.g. "www.example.com[1]") makes
+    # urlsplit() raise ValueError: Invalid IPv6 URL instead of returning a
+    # parsed result. That must be treated as an invalid candidate, not
+    # propagate and crash the caller.
+    assert _normalize_website("www.example.com[1]") is None
+    assert _normalize_website("http://exa[mple.com") is None
 
 
 def test_contact_candidates_are_normalized_deduplicated_and_auditable(
@@ -1552,6 +1581,18 @@ _CONTACT_REPORT_XHTML = """<?xml version="1.0" encoding="UTF-8"?>
       <svg xmlns="http://www.w3.org/2000/svg">
         <text>image-contact@do-not-use.se</text>
       </svg>
+    </section>
+  </body>
+</html>
+"""
+
+_BRACKETED_FOOTNOTE_WEBSITE_XHTML = """<?xml version="1.0" encoding="UTF-8"?>
+<html xmlns="http://www.w3.org/1999/xhtml">
+  <head><title>Sample report</title></head>
+  <body>
+    <section id="footnote-websites">
+      <p>See disclosure at www.example.com[1] for details.</p>
+      <p>Company website: www.sample-oils.se</p>
     </section>
   </body>
 </html>

@@ -406,7 +406,10 @@ def _normalize_website(raw_value: str) -> _NormalizedWebsite | None:
     elif not candidate.lower().startswith(("http://", "https://")):
         candidate = f"https://{candidate}"
 
-    parsed = urlsplit(candidate)
+    try:
+        parsed = urlsplit(candidate)
+    except ValueError:
+        return None
     if parsed.scheme.lower() not in {"http", "https"}:
         return None
     if parsed.username is not None or parsed.password is not None:
