@@ -19,20 +19,26 @@ SWEDEN_STREET_VARIANT_LANGUAGES = {"SE": ("sv",)}
 # were measured and left out -- too rare to matter, and `st` is genuinely ambiguous
 # between stigen and stråket.
 #
-# 2026-08-25 -- v7 promotion. `SWEDEN_STREET_SUFFIX_EXACT_EXPANSIONS` (the punctuated
-# form of the same three glued abbreviations, e.g. `v.` -> `vägen`) and
-# `SWEDEN_SEPARATE_DEFINITE_EXPANSIONS` (indefinite-as-its-own-word -> definite, e.g.
-# `Väg` -> `Vägen`) were measured exact-only (variant_kind='suffix_exact', excluded from
-# fuzzy postings) against the g8_v7_recommended candidate set on the 49,461-identity
-# control pool and the 20,513-identity yield pool: +1,909 newly matched, 0 lost, 0
-# regressions across both pools. Two classes of extension were measured and rejected:
-# (1) making the punctuated forms fuzzy-eligible instead of exact-only -- this
-# reintroduces the wrong-match risk exact-only exists to prevent; the control pool
-# alone produced one flip (`strandbergsg.`, `matched_corrected` -> `ambiguous`) from a
-# fuzzy-eligible punctuated variant landing a false 1-edit neighbor. (2) widening
-# either map with more abbreviations (`gg`, `all`, `stg`, `tg`, `ba`, `li`, `str`,
-# `vg`, `gt`, `pl`) -- each was measured and re-confirmed harmful (net-negative or
-# too ambiguous), same as the v6 measurement above; none are included here either.
+# 2026-08-25 -- v7 promotion. The exact-only tier below (variant_kind='suffix_exact',
+# excluded from fuzzy postings) was measured against the g8 strictly-additive candidate
+# set on the 49,461-identity control pool and the 20,513-identity yield pool. It is safe
+# by CONSTRUCTION: a suffix_exact variant can only ever ADD an exact reference match,
+# never remove or fuzzy-mismatch a v6 one, so v7 is a strict superset of v6.
+#   - `SWEDEN_STREET_SUFFIX_EXACT_EXPANSIONS`: the punctuated twins of the v6 glued
+#     abbreviations (`v.` -> `vägen`) PLUS the extra abbreviations in
+#     `SWEDEN_STREET_EXTRA_ABBREVIATIONS`, both glued and punctuated.
+#   - `SWEDEN_SEPARATE_DEFINITE_EXPANSIONS`: indefinite-as-its-own-word -> definite
+#     (`Väg` -> `Vägen`).
+# Combined yield on the yield pool: +1,919 newly matched, 0 lost, 0 regressions across
+# both pools (the punctuated + separate-definite core carries +1,909; the extra
+# abbreviations are a provably-safe +10 marginal add, per the g8_v7_plus_extra candidate).
+#
+# One extension was measured and REJECTED: making the punctuated forms fuzzy-eligible
+# instead of exact-only reintroduces the wrong-match risk exact-only exists to prevent --
+# the control pool alone produced one flip (`strandbergsg.`, `matched_corrected` ->
+# `ambiguous`) from a fuzzy-eligible punctuated variant landing a false 1-edit neighbor
+# (`Strindbergsgatan`). That is why every NEW variant is exact-only. `st` is excluded
+# from the extra abbreviations (genuinely ambiguous: stigen vs Sankt vs storgatan).
 SWEDEN_STREET_SUFFIX_EXPANSIONS: dict[str, dict[str, str]] = {
     "SE": {
         "gr": "gränd",
@@ -42,13 +48,41 @@ SWEDEN_STREET_SUFFIX_EXPANSIONS: dict[str, dict[str, str]] = {
 }
 
 
-# Derived from `SWEDEN_STREET_SUFFIX_EXPANSIONS` so the punctuated (exact-only) form can
-# never drift from the glued (v6, fuzzy-eligible) form: `gr` -> `gr.`, `v` -> `v.`, etc.
+# NEW v7 abbreviations beyond v6's glued set, added exact-only (see the note above). `st`
+# is deliberately excluded as ambiguous (stigen vs Sankt vs storgatan).
+SWEDEN_STREET_EXTRA_ABBREVIATIONS: dict[str, dict[str, str]] = {
+    "SE": {
+        "gg": "gången",
+        "all": "allén",
+        "stg": "stigen",
+        "pl": "plan",
+        "tg": "torget",
+        "ba": "backen",
+        "li": "liden",
+        "str": "stråket",
+        "vg": "vägen",
+        "gt": "gatan",
+    }
+}
+
+
+def _punctuated_twins(glued: dict[str, str]) -> dict[str, str]:
+    """`{"v": "vägen"}` -> `{"v.": "vägen"}` -- the punctuated form of each abbreviation."""
+    return {f"{abbreviation}.": expansion for abbreviation, expansion in glued.items()}
+
+
+# Exact-only expansion map: the punctuated twins of the v6 glued abbreviations plus the
+# extra abbreviations in BOTH glued and punctuated form. Derived from the two source maps
+# so the exact-only form can never drift from them.
 SWEDEN_STREET_SUFFIX_EXACT_EXPANSIONS: dict[str, dict[str, str]] = {
     country: {
-        f"{abbreviation}.": expansion for abbreviation, expansion in glued.items()
+        **_punctuated_twins(SWEDEN_STREET_SUFFIX_EXPANSIONS.get(country, {})),
+        **SWEDEN_STREET_EXTRA_ABBREVIATIONS.get(country, {}),
+        **_punctuated_twins(SWEDEN_STREET_EXTRA_ABBREVIATIONS.get(country, {})),
     }
-    for country, glued in SWEDEN_STREET_SUFFIX_EXPANSIONS.items()
+    for country in (
+        SWEDEN_STREET_SUFFIX_EXPANSIONS.keys() | SWEDEN_STREET_EXTRA_ABBREVIATIONS.keys()
+    )
 }
 
 

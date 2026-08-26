@@ -120,9 +120,43 @@ def test_sweden_address_resolution_policy_is_v7() -> None:
 
 
 def test_sweden_street_suffix_exact_expansions_are_derived_from_glued() -> None:
+    # Punctuated twins of the v6 glued abbreviations, PLUS the extra abbreviations in
+    # both glued and punctuated form (the g8_v7_plus_extra candidate, +1,919). `st` is
+    # excluded as ambiguous; every entry is exact-only (variant_kind='suffix_exact').
     assert SWEDEN_STREET_SUFFIX_EXACT_EXPANSIONS == {
-        "SE": {"gr.": "gränd", "v.": "vägen", "g.": "gatan"}
+        "SE": {
+            # punctuated twins of the v6 glued set
+            "gr.": "gränd",
+            "v.": "vägen",
+            "g.": "gatan",
+            # extra abbreviations, glued
+            "gg": "gången",
+            "all": "allén",
+            "stg": "stigen",
+            "pl": "plan",
+            "tg": "torget",
+            "ba": "backen",
+            "li": "liden",
+            "str": "stråket",
+            "vg": "vägen",
+            "gt": "gatan",
+            # extra abbreviations, punctuated
+            "gg.": "gången",
+            "all.": "allén",
+            "stg.": "stigen",
+            "pl.": "plan",
+            "tg.": "torget",
+            "ba.": "backen",
+            "li.": "liden",
+            "str.": "stråket",
+            "vg.": "vägen",
+            "gt.": "gatan",
+        }
     }
+    # `st` is deliberately excluded from the extras (ambiguous: stigen vs Sankt vs
+    # storgatan); it must appear in neither glued nor punctuated form.
+    assert "st" not in SWEDEN_STREET_SUFFIX_EXACT_EXPANSIONS["SE"]
+    assert "st." not in SWEDEN_STREET_SUFFIX_EXACT_EXPANSIONS["SE"]
 
 
 def test_sweden_separate_definite_expansions_match_the_brief() -> None:
@@ -527,6 +561,31 @@ def test_exact_suffix_variants_are_additive_and_tagged_suffix_exact() -> None:
     assert not any(row[3] == SUFFIX_EXACT_VARIANT_KIND for row in v6_rows)
 
 
+def test_extra_abbreviations_produce_exact_variants_and_st_is_excluded() -> None:
+    """The v7 extra abbreviations expand exact-only; the excluded `st` earns nothing.
+
+    Uses the production `SWEDEN_STREET_SUFFIX_EXACT_EXPANSIONS` map (the punctuated twins
+    of the v6 glued set plus the extra abbreviations glued and punctuated -- the
+    g8_v7_plus_extra candidate, +1,919). Each extra expands its own stem, glued or
+    punctuated; a street ending in the deliberately excluded `st` abbreviation
+    (ambiguous: stigen vs Sankt vs storgatan) earns no variant; and the stem guard still
+    rejects too-short stems.
+    """
+    exact = SWEDEN_STREET_SUFFIX_EXACT_EXPANSIONS["SE"]
+    # extra abbreviations, glued and punctuated, case-preserving
+    assert expanded_street_suffix_variants("Kvarnstg", exact) == ("Kvarnstigen",)
+    assert expanded_street_suffix_variants("Kvarnstg.", exact) == ("Kvarnstigen",)
+    assert expanded_street_suffix_variants("Storstr", exact) == ("Storstråket",)
+    assert expanded_street_suffix_variants("HAMNTG", exact) == ("HAMNTORGET",)
+    # punctuated twin of a v6 glued abbreviation (v6 cannot read the trailing period)
+    assert expanded_street_suffix_variants("Villav.", exact) == ("Villavägen",)
+    # `st` is excluded: a street ending in it earns no exact variant, glued or punctuated
+    assert expanded_street_suffix_variants("Hamnst", exact) == ()
+    assert expanded_street_suffix_variants("Hamnst.", exact) == ()
+    # stem guard: too short a stem is not read as an abbreviation
+    assert expanded_street_suffix_variants("Xgt", exact) == ()
+
+
 def test_exact_suffix_variants_absent_when_maps_not_passed() -> None:
     """The two new params default to None and change nothing when omitted."""
     with duckdb.connect(":memory:") as connection:
@@ -713,6 +772,147 @@ def test_suffix_exact_variant_is_excluded_from_fuzzy_street_postings() -> None:
         ("control-street", "matched_corrected", "expanded_street_fuzzy_postcode_house"),
         ("exact-only-street", "unmatched", ""),
     ]
+
+
+def _resolve_strandbergsg_regression_lock(
+    connection: duckdb.DuckDBPyConnection,
+) -> tuple[str, list[str]]:
+    """Resolve the `strandbergsg.` double-namesake case with the PRODUCTION v7 maps.
+
+    Query `Strandbergsg.` (house 5, 11251 Stockholm) against two references in the same
+    locality/postcode: the correct `Strandbergsgatan` and the near-namesake
+    `Strindbergsgatan` (1 edit from the exact-only expansion). Returns
+    `(resolution_status, matched_record_ids)`.
+    """
+    from dagster_v3.defs.address_resolution.search_documents import (
+        SEARCH_DOCUMENT_INPUT_COLUMNS,
+    )
+
+    def row(document_id: str, street: str, *, reference: bool, record_id: str) -> tuple:
+        return (
+            "regression-lock", document_id, "SE",
+            "" if reference else f"{street} 5, 11251 Stockholm",
+            f"{street} 5, 11251 Stockholm", street, "5", "", "11251", "Stockholm",
+            "physical", "building" if reference else "",
+            59.33 if reference else None, 18.06 if reference else None,
+            0.0 if reference else None, 1 if reference else 0, record_id, "",
+        )
+
+    replace_address_search_document_input_table(connection, table_name="lock_query_input")
+    replace_address_search_document_input_table(connection, table_name="lock_ref_input")
+    placeholders = ", ".join("?" for _ in SEARCH_DOCUMENT_INPUT_COLUMNS)
+    connection.executemany(
+        f"insert into lock_query_input values ({placeholders})",
+        [row("strandbergsg", "Strandbergsg.", reference=False, record_id="strandbergsg")],
+    )
+    connection.executemany(
+        f"insert into lock_ref_input values ({placeholders})",
+        [
+            row("ref-right", "Strandbergsgatan", reference=True, record_id="node/730950907"),
+            row("ref-wrong", "Strindbergsgatan", reference=True, record_id="node/1904752776"),
+        ],
+    )
+    replace_address_search_documents(
+        connection, source_sql="select * from lock_query_input", table_name="lock_query_documents"
+    )
+    replace_address_street_variants(
+        connection,
+        document_table="lock_query_documents",
+        variant_table="lock_query_street_variants",
+        languages_by_country=SWEDEN_STREET_VARIANT_LANGUAGES,
+        suffix_expansions_by_country=SWEDEN_STREET_SUFFIX_EXPANSIONS,
+        exact_suffix_expansions_by_country=SWEDEN_STREET_SUFFIX_EXACT_EXPANSIONS,
+        separate_definite_by_country=SWEDEN_SEPARATE_DEFINITE_EXPANSIONS,
+    )
+    replace_address_search_documents(
+        connection, source_sql="select * from lock_ref_input", table_name="lock_reference_documents"
+    )
+    replace_address_resolution_candidates(
+        connection,
+        query_table="lock_query_documents",
+        query_street_variant_table="lock_query_street_variants",
+        reference_table="lock_reference_documents",
+        candidate_table="lock_candidates",
+        policy=SWEDEN_ADDRESS_RESOLUTION_POLICY,
+    )
+    replace_address_resolution_results(
+        connection,
+        query_table="lock_query_documents",
+        candidate_table="lock_candidates",
+        result_table="lock_results",
+        policy=SWEDEN_ADDRESS_RESOLUTION_POLICY,
+    )
+    [(status, record_ids)] = connection.execute(
+        "select resolution_status, candidate_record_ids from lock_results"
+    ).fetchall()
+    return str(status), sorted(str(rid) for rid in record_ids)
+
+
+def test_strandbergsg_regression_lock_is_decisive_only_with_the_exclusion(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The exact-only guard is the ONE line that keeps `strandbergsg.` decisive.
+
+    Locks the 2026-08-25 v7 exploration's control regression with the production maps:
+    the exact-only `Strandbergsgatan` expansion is 1 edit from the real near-namesake
+    `Strindbergsgatan` in the same locality. WITH the
+    `street_variant_kind != 'suffix_exact'` clause in
+    `resolution._replace_fuzzy_street_postings`, the exact-only variant never enters the
+    fuzzy path, so only `Strandbergsgatan` is a candidate -> matched, node/730950907.
+    WITHOUT that clause (the pre-v7 query-side filter), the exact-only variant fuzzy-
+    matches the near-namesake too -> a genuine tie -> ambiguous. This is the golden
+    corpus's `punctuated_suffix_exact_regression_lock` case, asserted both ways.
+    """
+    import dagster_v3.defs.address_resolution.resolution as resolution_module
+
+    # Production (guarded): decisive match to the correct street.
+    with duckdb.connect(":memory:") as connection:
+        status, record_ids = _resolve_strandbergsg_regression_lock(connection)
+    assert status == "matched_corrected"
+    assert record_ids == ["node/730950907"]
+
+    # Pre-v7 query-side filter (no suffix_exact exclusion): the double-guess returns.
+    def _unguarded_fuzzy_postings(
+        connection: object,
+        *,
+        source_table: str,
+        postings_table: str,
+        policy: object,
+        reference_documents: bool,
+    ) -> None:
+        reference_filter = (
+            "and reference_precision = 'building'" if reference_documents else ""
+        )
+        street_variant_kind = (
+            "'parsed'::varchar" if reference_documents else "street_variant_kind"
+        )
+        connection.execute(  # type: ignore[attr-defined]
+            f"""
+            create or replace temporary table {postings_table} as
+            select distinct
+                document_id, index_scope, country_code,
+                normalized_street, normalized_house_number,
+                normalized_postal_code, normalized_locality,
+                {street_variant_kind} as street_variant_kind,
+                signature.value as street_signature
+            from {source_table}
+            cross join unnest(
+                list_concat([normalized_street], street_deletion_signatures)
+            ) signature(value)
+            where address_kind = 'physical'
+              and normalized_house_number != ''
+              and length(normalized_street) >= {policy.minimum_fuzzy_street_length}
+              and signature.value != ''
+              {reference_filter}
+            """
+        )
+
+    monkeypatch.setattr(
+        resolution_module, "_replace_fuzzy_street_postings", _unguarded_fuzzy_postings
+    )
+    with duckdb.connect(":memory:") as connection:
+        status_unguarded, _ = _resolve_strandbergsg_regression_lock(connection)
+    assert status_unguarded == "ambiguous"
 
 
 def test_sweden_shadow_adapter_builds_results_without_serving_changes() -> None:
