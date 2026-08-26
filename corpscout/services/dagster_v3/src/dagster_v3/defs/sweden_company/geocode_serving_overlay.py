@@ -61,6 +61,25 @@ POSTCODE_CENTROIDS_TABLE = f"{CLICKHOUSE_DATABASE}.se_postcode_centroids"
 CITY_CENTROIDS_TABLE = f"{CLICKHOUSE_DATABASE}.se_city_centroids"
 ADDRESSES_TABLE = shared_addresses.QUALIFIED_CLICKHOUSE_SHARED_ADDRESSES_TABLE
 
+# The FAST materialized serving table -- the refreshable MV migration 000320 keeps behind
+# `se_address_geocodes_current`. It already holds exactly one servable row per address_id in
+# SERVING_COLUMNS shape and order, so the overlay's precise base can read it as a straight
+# projection: no re-ranking, no touching the 2.09M-row raw store. This is what the served
+# VIEW (Task 5b) wraps, so backoffice reads coarse-fallback coordinates off a MergeTree.
+FAST_SERVING_TABLE = f"{CLICKHOUSE_DATABASE}.se_address_geocodes_current"
+
+
+def fast_serving_base_sql() -> str:
+    """A plain projection of the fast serving table in SERVING_COLUMNS order.
+
+    Passed to ``build_served_geocodes_sql(base_sql=...)`` so the overlay reads the already
+    materialized MergeTree (migration 000320) instead of re-deriving the current outcome
+    from the versioned store. The migration that exposes ``se_address_geocodes_served``
+    embeds exactly this rendering; the drift pin asserts the two stay identical.
+    """
+    projection = ",\n    ".join(SERVING_COLUMNS)
+    return f"SELECT\n    {projection}\nFROM {FAST_SERVING_TABLE}"
+
 # The precise outcomes the overlay is allowed to fill. Everything else -- geocoded,
 # postal_box, invalid_address, foreign_address, property_identifier -- passes through.
 FALLBACK_ELIGIBLE_STATUSES = ("unmatched", "ambiguous")
@@ -123,22 +142,42 @@ def build_served_geocodes_sql(
     *,
     columns: Sequence[str] = SERVING_COLUMNS,
     address_filter_sql: str = "",
+    base_sql: str | None = None,
 ) -> str:
     """One served row per address_id: precise outcome, or the finest centroid filling it.
 
     ``columns`` selects the output projection (a subset of ``SERVING_COLUMNS``); the
-    default is the full serving shape. ``address_filter_sql`` is threaded down to the
-    precise base read (build_current_geocodes_sql), where it constrains ``address_id``
-    against the store's sorting key so a page-sized read touches a few parts -- it never
-    goes on the outer overlay query.
+    default is the full serving shape.
+
+    ``base_sql`` chooses what precise base the overlay fills the gaps in. The default
+    (``None``) reads the versioned store directly through ``build_current_geocodes_sql`` --
+    the correct, self-ranking read every consumer shares, and what the overlay's own
+    correctness test seeds. Pass a SELECT in ``SERVING_COLUMNS`` shape (one servable row
+    per ``address_id``) to wrap THAT instead: ``fast_serving_base_sql()`` reads the already
+    materialized fast serving table so the served VIEW never re-ranks the raw store.
+
+    ``address_filter_sql`` is threaded down to the precise base read (build_current_geocodes_sql),
+    where it constrains ``address_id`` against the store's sorting key so a page-sized read
+    touches a few parts -- it never goes on the outer overlay query. It applies only to the
+    default base: a supplied ``base_sql`` already fixes the base read, so combining the two
+    is refused rather than silently ignored.
 
     The result is deterministic and NULL-safe under both ``join_use_nulls`` settings: every
     LEFT JOIN column is read through ``ifNull`` when it gates the tier, and a missing
     centroid can never be selected because its tier requires ``point_count > 0``.
     """
+    if base_sql is not None and address_filter_sql:
+        raise ValueError(
+            "address_filter_sql applies only to the default store read; a supplied "
+            "base_sql already fixes the base -- filter inside base_sql instead."
+        )
     eligible = ", ".join(f"'{status}'" for status in FALLBACK_ELIGIBLE_STATUSES)
-    precise = build_current_geocodes_sql(
-        columns=SERVING_COLUMNS, address_filter_sql=address_filter_sql
+    precise = (
+        build_current_geocodes_sql(
+            columns=SERVING_COLUMNS, address_filter_sql=address_filter_sql
+        )
+        if base_sql is None
+        else base_sql
     )
     # The serving columns are carried through each layer by explicit name rather than `*`:
     # the two centroid joins below both expose latitude/longitude/point_count/spread_meters,
