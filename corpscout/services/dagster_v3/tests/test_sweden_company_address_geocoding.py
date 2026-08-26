@@ -1358,6 +1358,7 @@ def test_sweden_company_address_geocoding_assets_are_company_enhancements() -> N
         "sweden_address_resolution_shadow_duckdb",
         "sweden_address_resolution_current_duckdb",
         "sweden_address_geocode_store_clickhouse",
+        "sweden_companies_current_clickhouse",
     }
     # The legacy per-company matcher and its two publish assets retired with the pair
     # (LEGACY_PAIR_RETIREMENT_DROP_SQL), and sweden_address_geocodes_clickhouse -- the

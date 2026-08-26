@@ -28,6 +28,11 @@ from dagster_v3.defs.sweden_company.centroid_assets import (
     sweden_geocode_centroid_area_sanity_check,
     sweden_geocode_centroids_clickhouse,
 )
+from dagster_v3.defs.sweden_company.companies_current_asset import (
+    COMPANIES_CURRENT_ASSET_KEY,
+    sweden_companies_current_clickhouse,
+    sweden_companies_current_refresh_check,
+)
 
 GROUP_NAME = "sweden_company"
 CANONICAL_DUCKDB_ASSET_KEY = "sweden_company_canonical_addresses_duckdb"
@@ -1611,6 +1616,7 @@ sweden_company_address_geocoding_weekly_job = dg.define_asset_job(
         ADDRESS_RESOLUTION_SHADOW_ASSET_KEY,
         ADDRESS_RESOLUTION_CURRENT_ASSET_KEY,
         GEOCODE_STORE_ASSET_KEY,
+        COMPANIES_CURRENT_ASSET_KEY,
     ),
     tags={"country": "SE", "pipeline": "address_geocoding"},
     description=(
@@ -1667,6 +1673,7 @@ defs = dg.Definitions(
         sweden_address_geocode_store_clickhouse,
         sweden_address_geocode_store_backfill_clickhouse,
         sweden_address_geocode_legacy_adoption_clickhouse,
+        sweden_companies_current_clickhouse,
     ],
     asset_checks=[
         sweden_shared_addresses_complete_check,
@@ -1675,6 +1682,7 @@ defs = dg.Definitions(
         sweden_company_address_osm_snapshot_freshness_check,
         sweden_address_geocodes_serving_view_refresh_check,
         sweden_geocode_centroid_area_sanity_check,
+        sweden_companies_current_refresh_check,
     ],
     jobs=[
         sweden_company_address_geocoding_job,
