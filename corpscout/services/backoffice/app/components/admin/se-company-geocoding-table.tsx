@@ -73,9 +73,11 @@ function geocodeBadgeTitle(row: SeCompanyGeocodingListRow): string {
   return row.geocode_status || "Never geocoded";
 }
 
-/** `row.geocode_class` is computed SQL-side (GEOCODE_STATUS_CLASS_EXPR), not
- * re-derived here -- a status/provider pair this tab has never seen cannot
- * be classified two different ways by two copies of the same multiIf. */
+/** `row.geocode_class` is precomputed in the serving view
+ * (corpscout.se_companies_current's `primary_geocode_class`, read straight
+ * through by se-company-geocoding-list.server.ts), not re-derived here -- a
+ * status/provider pair this tab has never seen cannot be classified two
+ * different ways by two copies of the same multiIf. */
 function GeocodeStatusBadge({ row }: { row: SeCompanyGeocodingListRow }) {
   return (
     <Badge
