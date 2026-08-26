@@ -14,12 +14,14 @@ describe("GEOCODE_LIST_FILTERS", () => {
       "needs_attention",
       "all",
       "geocoded",
+      "coarse",
       "ambiguous",
       "unmatched",
       "no_outcome",
     ]);
     expect(GEOCODE_STATUS_CLASSES).toEqual([
       "geocoded",
+      "coarse",
       "ambiguous",
       "unmatched",
       "no_outcome",

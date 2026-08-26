@@ -5,6 +5,7 @@ const clickhouse = vi.hoisted(() => ({ query: vi.fn() }));
 vi.mock("~/lib/clickhouse.server", () => ({ chQuery: clickhouse.query }));
 
 import {
+  CENTROID_FALLBACK_PROVIDER,
   countForFilter,
   GEOCODE_LIST_FILTER_SQL,
   GEOCODE_STATUS_CLASS_EXPR,
@@ -22,14 +23,17 @@ import { GEOCODE_LIST_FILTERS } from "~/lib/se-company-geocoding-filters";
 
 describe("GEOCODING_PUBLISHED_ADDRESS_SQL: the per-company primary-address pick", () => {
   it("reads se_company_address FINAL, live rows only, and NOTHING else", () => {
-    // Pinned whole: this is the one join path the task requires -- reusing
-    // se-company-address.server.ts's own table and its `geocode_status`
-    // column, never a fresh join to se_address_geocodes_current.
+    // Pinned whole: this fragment never joins anywhere -- `address_id` is
+    // carried as plain text (Task 6, the served-view join key), reusing
+    // se-company-address.server.ts's own `ifNull(toString(a.address_id), '')`
+    // idiom verbatim. The served-view join itself lives one level up, in
+    // GEOCODING_PUBLISHED_CTE_SQL's `published_companies` -- never here.
     expect(GEOCODING_PUBLISHED_ADDRESS_SQL).toBe(`SELECT
     a.company_id AS company_id,
     ifNull(a.street_address, '') AS street_address,
     ifNull(a.postal_code, '') AS postal_code,
     ifNull(a.city, '') AS city,
+    ifNull(toString(a.address_id), '') AS address_id,
     toString(a.geocode_status) AS geocode_status
   FROM corpscout.se_company_address AS a FINAL
   WHERE a.is_current
@@ -43,15 +47,19 @@ describe("GEOCODING_PUBLISHED_ADDRESS_SQL: the per-company primary-address pick"
       "se_address_geocodes_current",
     );
     expect(GEOCODING_PUBLISHED_ADDRESS_SQL).not.toContain(
+      "se_address_geocodes_served",
+    );
+    expect(GEOCODING_PUBLISHED_ADDRESS_SQL).not.toContain(
       "se_company_address_links_current",
     );
   });
 
   it("is reused verbatim by the shared CTE both the row list and the counts query start from", () => {
     // Two CTEs, not one: `published` is the raw per-company address pick,
-    // `published_companies` folds in the se_company_info join. Pinned whole
-    // so the join can never be re-added to one query's FROM without the
-    // other -- see the fix below.
+    // `published_companies` folds in the se_company_info join AND (Task 6)
+    // the LEFT JOIN to the served overlay for precision/provider alone.
+    // Pinned whole so neither join can be re-added to one query's FROM
+    // without the other -- see the fix below.
     expect(GEOCODING_PUBLISHED_CTE_SQL).toBe(`WITH published AS (
 ${GEOCODING_PUBLISHED_ADDRESS_SQL}
 ),
@@ -62,12 +70,28 @@ published_companies AS (
     p.street_address AS street_address,
     p.postal_code AS postal_code,
     p.city AS city,
-    p.geocode_status AS geocode_status
+    p.geocode_status AS geocode_status,
+    ifNull(s.geocode_precision, '') AS geocode_precision,
+    ifNull(s.geocode_provider, '') AS geocode_provider
   FROM published AS p
   INNER JOIN corpscout.se_company_info AS i FINAL ON i.company_id = p.company_id
+  LEFT JOIN corpscout.se_address_geocodes_served AS s ON toString(s.address_id) = p.address_id
 )`);
     expect(GEOCODING_LIST_SELECT_SQL).toContain(GEOCODING_PUBLISHED_CTE_SQL);
     expect(GEOCODING_COUNTS_SQL).toContain(GEOCODING_PUBLISHED_CTE_SQL);
+  });
+
+  it("joins the served overlay by address_id, not by re-deriving match_status or coordinates", () => {
+    // The overlay's own `match_status`/`latitude`/`longitude` never appear
+    // in this file -- only `geocode_precision`/`geocode_provider` are read
+    // off it, so this join cannot reintroduce the store/status drift risk
+    // the module's own top doc comment describes.
+    expect(GEOCODING_PUBLISHED_CTE_SQL).toContain(
+      "LEFT JOIN corpscout.se_address_geocodes_served AS s ON toString(s.address_id) = p.address_id",
+    );
+    expect(GEOCODING_PUBLISHED_CTE_SQL).not.toContain("s.match_status");
+    expect(GEOCODING_PUBLISHED_CTE_SQL).not.toContain("s.latitude");
+    expect(GEOCODING_PUBLISHED_CTE_SQL).not.toContain("s.longitude");
   });
 
   it("gives the row list and the counts query the exact same FROM -- neither adds a join of its own", () => {
@@ -89,30 +113,61 @@ published_companies AS (
 });
 
 describe("geocodeClassExpr / GEOCODE_STATUS_CLASS_EXPR", () => {
-  it("classifies '' as no_outcome before checking membership, matched_* as geocoded, 'ambiguous' on its own, and everything else as unmatched", () => {
+  it("classifies '' as no_outcome, centroid_fallback provider as coarse, matched_* as geocoded, 'ambiguous' on its own, and everything else as unmatched", () => {
     // Pinned whole: postal_box, invalid_address, foreign_address and
     // property_identifier are all real, distinct outcomes -- none of them
     // geocoded per Dagster's own GEOCODED_STATUSES (geocode_store.py) -- so
     // this multiIf must fall through to 'unmatched' for every one of them via
     // the trailing default, not an explicit branch that could omit one.
-    expect(geocodeClassExpr("x")).toBe(`multiIf(
+    expect(geocodeClassExpr("x", "y")).toBe(`multiIf(
     x = '', 'no_outcome',
+    y = 'centroid_fallback', 'coarse',
     x IN ('matched_exact', 'matched_corrected', 'matched_site', 'matched_area', 'matched_street'), 'geocoded',
     x = 'ambiguous', 'ambiguous',
     'unmatched'
   )`);
-    expect(GEOCODE_STATUS_CLASS_EXPR).toBe(geocodeClassExpr("p.geocode_status"));
+    expect(GEOCODE_STATUS_CLASS_EXPR).toBe(
+      geocodeClassExpr("p.geocode_status", "p.geocode_provider"),
+    );
+    expect(CENTROID_FALLBACK_PROVIDER).toBe("centroid_fallback");
   });
 
-  it("puts the empty-string branch before the IN check (branch order the multiIf itself depends on)", () => {
+  it("puts the empty-string branch before the coarse-provider branch, and the coarse-provider branch before the exact-match IN check (branch order the multiIf itself depends on)", () => {
     const emptyIdx = GEOCODE_STATUS_CLASS_EXPR.indexOf("'no_outcome'");
+    const coarseIdx = GEOCODE_STATUS_CLASS_EXPR.indexOf("'coarse'");
     const geocodedIdx = GEOCODE_STATUS_CLASS_EXPR.indexOf("'geocoded'");
     const ambiguousIdx = GEOCODE_STATUS_CLASS_EXPR.indexOf("'ambiguous'");
     const unmatchedIdx = GEOCODE_STATUS_CLASS_EXPR.indexOf("'unmatched'");
     expect(emptyIdx).toBeGreaterThan(-1);
-    expect(emptyIdx).toBeLessThan(geocodedIdx);
+    expect(emptyIdx).toBeLessThan(coarseIdx);
+    expect(coarseIdx).toBeLessThan(geocodedIdx);
     expect(geocodedIdx).toBeLessThan(ambiguousIdx);
     expect(ambiguousIdx).toBeLessThan(unmatchedIdx);
+  });
+
+  it("KEY CORRECTNESS PIN: a centroid_fallback row can never classify as 'geocoded', even though its match_status is 'matched_area' -- a GEOCODED_MATCH_STATUSES member", () => {
+    // This is the exact hazard Task 6 exists to close: the served overlay
+    // (corpscout.se_address_geocodes_served) deliberately keeps a coarse
+    // row's own `match_status` inside the GEOCODED vocabulary so no OTHER
+    // consumer filtering on status alone is surprised -- so a naive
+    // "geocode_status IN GEOCODED_MATCH_STATUSES" read (the OLD single-column
+    // classifier) would have silently counted a postcode/city centroid as a
+    // full building-precise match.
+    expect(GEOCODED_MATCH_STATUSES).toContain("matched_area");
+    // The coarse branch is keyed on `geocode_provider` alone, and its
+    // condition text appears in the multiIf strictly BEFORE the exact-match
+    // IN-list's condition text -- so even for a row whose status happens to
+    // literally read 'matched_area', the provider check wins first. Pinned
+    // as an exact substring, not just an index comparison, so the coarse
+    // branch's own SQL shape (equality against CENTROID_FALLBACK_PROVIDER)
+    // is what's actually checked, not merely "some 'coarse' text exists
+    // somewhere before some 'geocoded' text".
+    const coarseBranch = `p.geocode_provider = '${CENTROID_FALLBACK_PROVIDER}', 'coarse',`;
+    const geocodedBranch = "p.geocode_status IN (";
+    expect(GEOCODE_STATUS_CLASS_EXPR).toContain(coarseBranch);
+    expect(GEOCODE_STATUS_CLASS_EXPR.indexOf(coarseBranch)).toBeLessThan(
+      GEOCODE_STATUS_CLASS_EXPR.indexOf(geocodedBranch),
+    );
   });
 });
 
@@ -122,6 +177,7 @@ describe("GEOCODE_LIST_FILTER_SQL", () => {
       needs_attention: `(${GEOCODE_STATUS_CLASS_EXPR}) != 'geocoded'`,
       all: "1",
       geocoded: `(${GEOCODE_STATUS_CLASS_EXPR}) = 'geocoded'`,
+      coarse: `(${GEOCODE_STATUS_CLASS_EXPR}) = 'coarse'`,
       ambiguous: `(${GEOCODE_STATUS_CLASS_EXPR}) = 'ambiguous'`,
       unmatched: `(${GEOCODE_STATUS_CLASS_EXPR}) = 'unmatched'`,
       no_outcome: `(${GEOCODE_STATUS_CLASS_EXPR}) = 'no_outcome'`,
@@ -153,6 +209,15 @@ describe("GEOCODING_LIST_SELECT_SQL", () => {
     );
     expect(GEOCODING_LIST_SELECT_SQL).toContain(
       "p.geocode_status AS geocode_status",
+    );
+  });
+
+  it("also projects geocode_precision/geocode_provider (Task 6) -- the columns a reader needs to tell a coarse row apart from an exact one", () => {
+    expect(GEOCODING_LIST_SELECT_SQL).toContain(
+      "p.geocode_precision AS geocode_precision",
+    );
+    expect(GEOCODING_LIST_SELECT_SQL).toContain(
+      "p.geocode_provider AS geocode_provider",
     );
   });
 });
@@ -209,7 +274,8 @@ describe("loadSeCompanyGeocodingCounts", () => {
         total: "3523532",
         needs_attention: "1658184",
         geocoded: "1865348",
-        ambiguous: "491817",
+        coarse: "204817",
+        ambiguous: "287000",
         unmatched: "1166366",
         no_outcome: "1",
       },
@@ -221,7 +287,8 @@ describe("loadSeCompanyGeocodingCounts", () => {
       total: 3523532,
       needsAttention: 1658184,
       geocoded: 1865348,
-      ambiguous: 491817,
+      coarse: 204817,
+      ambiguous: 287000,
       unmatched: 1166366,
       noOutcome: 1,
     });
@@ -236,6 +303,7 @@ describe("loadSeCompanyGeocodingCounts", () => {
       total: 0,
       needsAttention: 0,
       geocoded: 0,
+      coarse: 0,
       ambiguous: 0,
       unmatched: 0,
       noOutcome: 0,
@@ -249,14 +317,16 @@ describe("countForFilter", () => {
       total: 10,
       needsAttention: 7,
       geocoded: 3,
-      ambiguous: 2,
+      coarse: 2,
+      ambiguous: 1,
       unmatched: 4,
       noOutcome: 1,
     };
     expect(countForFilter(counts, "all")).toBe(10);
     expect(countForFilter(counts, "needs_attention")).toBe(7);
     expect(countForFilter(counts, "geocoded")).toBe(3);
-    expect(countForFilter(counts, "ambiguous")).toBe(2);
+    expect(countForFilter(counts, "coarse")).toBe(2);
+    expect(countForFilter(counts, "ambiguous")).toBe(1);
     expect(countForFilter(counts, "unmatched")).toBe(4);
     expect(countForFilter(counts, "no_outcome")).toBe(1);
   });

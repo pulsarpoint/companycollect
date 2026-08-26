@@ -33,21 +33,57 @@ const STATUS_BADGE_VARIANT: Record<
   "secondary" | "outline" | "destructive"
 > = {
   geocoded: "secondary",
+  coarse: "outline",
   ambiguous: "outline",
   unmatched: "destructive",
   no_outcome: "outline",
 };
 
+/** The 'coarse' class's own amber tint on top of the shared "outline"
+ * variant -- the same `variant="outline"` + `className="text-amber-*"`
+ * pattern gleif-group-section.tsx already uses for its "LEI lapsed" badge,
+ * not a new color idiom. This is what makes a coarse-centroid row visually
+ * distinct from BOTH the exact-geocoded green (secondary) and the plain
+ * grey "Ambiguous"/"No outcome" outline badges -- required precisely because
+ * its underlying `match_status` (from the served overlay) is `matched_area`,
+ * a status that on any OTHER row means an exact hit. */
+const COARSE_BADGE_CLASSNAME = "text-amber-600 dark:text-amber-500";
+
+/** A coarse row's label names which centroid served it ("Coarse: postcode" /
+ * "Coarse: city"), read straight off `row.geocode_precision` -- the served
+ * overlay's own column, never re-derived here -- so the label can never name
+ * a precision the SQL didn't actually pick. Every other class keeps the
+ * plain catalog label. */
+function geocodeBadgeLabel(row: SeCompanyGeocodingListRow): string {
+  if (row.geocode_class === "coarse" && row.geocode_precision) {
+    return `Coarse: ${row.geocode_precision}`;
+  }
+  return GEOCODE_LIST_FILTER_LABELS[row.geocode_class];
+}
+
+/** A coarse row's title names BOTH halves of the story: the coordinate this
+ * row actually shows (a centroid) and the precise outcome underneath it
+ * (still 'unmatched'/'ambiguous' on se_company_address -- the served overlay
+ * fills the read, it never rewrites the store). Every other class keeps the
+ * plain raw-status title. */
+function geocodeBadgeTitle(row: SeCompanyGeocodingListRow): string {
+  if (row.geocode_class === "coarse") {
+    return `Coarse ${row.geocode_precision || "centroid"} centroid -- precise match: ${row.geocode_status || "unmatched"}`;
+  }
+  return row.geocode_status || "Never geocoded";
+}
+
 /** `row.geocode_class` is computed SQL-side (GEOCODE_STATUS_CLASS_EXPR), not
- * re-derived here -- a status this tab has never seen cannot be classified
- * two different ways by two copies of the same multiIf. */
+ * re-derived here -- a status/provider pair this tab has never seen cannot
+ * be classified two different ways by two copies of the same multiIf. */
 function GeocodeStatusBadge({ row }: { row: SeCompanyGeocodingListRow }) {
   return (
     <Badge
       variant={STATUS_BADGE_VARIANT[row.geocode_class]}
-      title={row.geocode_status || "Never geocoded"}
+      className={row.geocode_class === "coarse" ? COARSE_BADGE_CLASSNAME : undefined}
+      title={geocodeBadgeTitle(row)}
     >
-      {GEOCODE_LIST_FILTER_LABELS[row.geocode_class]}
+      {geocodeBadgeLabel(row)}
     </Badge>
   );
 }
@@ -99,6 +135,7 @@ function CountsStrip({ counts }: { counts: SeCompanyGeocodingCounts }) {
           ["With address", counts.total],
           ["Needs attention", counts.needsAttention],
           ["Geocoded", counts.geocoded],
+          ["Coarse", counts.coarse],
           ["Ambiguous", counts.ambiguous],
           ["Unmatched", counts.unmatched],
           ["No outcome", counts.noOutcome],
@@ -110,6 +147,45 @@ function CountsStrip({ counts }: { counts: SeCompanyGeocodingCounts }) {
         </Badge>
       ))}
     </div>
+  );
+}
+
+/**
+ * The legend (Task 6): what each badge in the Geocode status column actually
+ * means, spelled out once rather than left for a reader to guess from color
+ * alone -- most pointedly for "Coarse", since its underlying `match_status`
+ * (from the served overlay, corpscout.se_address_geocodes_served) is
+ * literally `matched_area`, the SAME status name a genuine building-precise
+ * hit can carry. Without this line, an amber "Coarse: postcode" badge could
+ * read as just a paler flavor of "Geocoded" instead of the distinct,
+ * lower-confidence state it is.
+ */
+function GeocodeLegend() {
+  return (
+    <dl className="text-muted-foreground flex flex-wrap items-center gap-x-4 gap-y-1.5 text-xs">
+      <div className="flex items-center gap-1.5">
+        <Badge variant="secondary">Geocoded</Badge>
+        <dd>Precise match (building-level or better).</dd>
+      </div>
+      <div className="flex items-center gap-1.5">
+        <Badge variant="outline" className={COARSE_BADGE_CLASSNAME}>
+          Coarse: postcode / city
+        </Badge>
+        <dd>No precise match -- a postcode or city centroid coordinate instead. Not a precise match.</dd>
+      </div>
+      <div className="flex items-center gap-1.5">
+        <Badge variant="outline">Ambiguous</Badge>
+        <dd>Multiple candidates, no coordinate chosen.</dd>
+      </div>
+      <div className="flex items-center gap-1.5">
+        <Badge variant="destructive">Unmatched</Badge>
+        <dd>No usable coordinate at all.</dd>
+      </div>
+      <div className="flex items-center gap-1.5">
+        <Badge variant="outline">No outcome</Badge>
+        <dd>Address never reached the geocoder.</dd>
+      </div>
+    </dl>
   );
 }
 
@@ -162,6 +238,7 @@ export function SeCompanyGeocodingTable({
   return (
     <div className="flex flex-col gap-4">
       <CountsStrip counts={counts} />
+      <GeocodeLegend />
       <div className="max-w-full overflow-x-auto pb-1">
         <StatusToggle filter={filter} />
       </div>

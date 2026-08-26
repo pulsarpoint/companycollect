@@ -11,23 +11,35 @@
  */
 
 /**
- * The tab's own four-way read of a published address's `geocode_status`
- * (se_company_address, mirrored verbatim -- see se-company-geocoding-list.
- * server.ts for the SQL and the citation of Dagster's own GEOCODED_STATUSES):
+ * The tab's own five-way read of a published address's geocode outcome
+ * (se_company_address's `geocode_status`, plus `geocode_precision`/
+ * `geocode_provider` served-overlay columns as of Task 6 -- see
+ * se-company-geocoding-list.server.ts for the SQL and the citation of
+ * Dagster's own GEOCODED_STATUSES):
  *
- * - "geocoded": a successful match with coordinates precise enough that
- *   Dagster itself calls it geocoded.
- * - "ambiguous": more than one OpenStreetMap candidate, no coordinate chosen.
+ * - "geocoded": a successful, PRECISE match -- coordinates the precise
+ *   matcher itself produced, no served-overlay fallback involved.
+ * - "coarse": the precise matcher left this address unmatched/ambiguous, but
+ *   corpscout.se_address_geocodes_served (the SE geocode SERVING OVERLAY,
+ *   migration 000325) filled it with a coarse postcode-or-city CENTROID
+ *   coordinate instead (`geocode_provider = 'centroid_fallback'`). A usable
+ *   coordinate, but never a precise one -- and NEVER the same state as
+ *   "geocoded", even though the overlay's own `match_status` for such a row
+ *   is literally `matched_area`, a status that otherwise means an exact hit.
+ * - "ambiguous": more than one OpenStreetMap candidate, no coordinate chosen,
+ *   and no postcode/city centroid was available to fall back to either.
  * - "unmatched": every other non-empty status -- 'unmatched', 'invalid_address',
  *   'foreign_address', 'postal_box' and 'property_identifier' alike. Each of
  *   those is a real, distinct outcome on the Address tab's own detail cards,
  *   but this tab's job is triage, not a taxonomy: none of them is a usable
- *   coordinate, so none of them is "geocoded".
+ *   coordinate, so none of them is "geocoded" -- and none has a centroid
+ *   fallback either, or it would classify as "coarse" instead.
  * - "no_outcome": geocode_status is '' -- the address has never reached the
  *   geocoder at all.
  */
 export const GEOCODE_STATUS_CLASSES = [
   "geocoded",
+  "coarse",
   "ambiguous",
   "unmatched",
   "no_outcome",
@@ -61,6 +73,7 @@ export const GEOCODE_LIST_FILTER_LABELS: Record<GeocodeListFilter, string> = {
   needs_attention: "Needs attention",
   all: "All",
   geocoded: "Geocoded",
+  coarse: "Coarse",
   ambiguous: "Ambiguous",
   unmatched: "Unmatched",
   no_outcome: "No outcome",
