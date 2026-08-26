@@ -7,25 +7,37 @@ rule would leak a coordinate no downstream failure would ever reveal: it fills a
 outcome, present or later, must ALWAYS win. Substring tests over the generated SQL cannot
 prove that; a real engine ranking the real rows can.
 
-The fixture is eight identities, each a different way of getting the rules wrong:
+The fixture is ten identities, each a different way of getting the rules wrong. `postal_box`
+joined `unmatched`/`ambiguous` as fallback-eligible 2026-08 (owner-approved: a box postcode is
+a dedicated range tied to a postal town, so the coarse centroid is as honest for a box as for
+an unmatched street) -- POSTAL_BOX_PC and POSTAL_BOX_CITY prove it climbs the SAME ladder,
+and INVALID_ADDRESS_WINS proves the widening did not go further than that one status:
 
-  GEOCODED_WINS   a resolver matched_exact whose postcode AND city both HAVE centroids.
-                  Serves its precise coordinate anyway -- rule 1, precise always wins even
-                  when a centroid is sitting right there.
-  FOREIGN_WINS    a `foreign_address` whose postcode/city both have centroids. Not
-                  eligible: passes through UNCHANGED. The overlay never overrides a
-                  non-(unmatched/ambiguous) status.
-  POSTAL_BOX      the (d) case: a `postal_box` with centroids available -> UNCHANGED.
-  UNMATCHED_PC    the (b) case: unmatched, postcode in se_postcode_centroids (tight spread)
-                  -> POSTCODE-precision centroid. City centroid also present, so this also
-                  proves the ladder prefers the finer postcode rung.
-  AMBIGUOUS_PC    `ambiguous` (not just unmatched) is eligible too -> postcode centroid.
-  UNMATCHED_CITY  the (c) STAVSTENSV/Trelleborg case: unmatched, postcode ABSENT from
-                  se_postcode_centroids but post_town in se_city_centroids -> CITY centroid.
-  LOOSE_POSTCODE  unmatched, postcode centroid present but its spread exceeds
-                  POSTCODE_SPREAD_MAX_METERS -> demoted to the CITY centroid. Also exercises
-                  the accent-preserving city key (post_town "Umeå" -> key "UMEÅ").
-  BARE_UNMATCHED  unmatched with NEITHER centroid -> the original unmatched row, unchanged.
+  GEOCODED_WINS        a resolver matched_exact whose postcode AND city both HAVE centroids.
+                       Serves its precise coordinate anyway -- rule 1, precise always wins
+                       even when a centroid is sitting right there.
+  FOREIGN_WINS         a `foreign_address` whose postcode/city both have centroids. Not
+                       eligible: passes through UNCHANGED.
+  INVALID_ADDRESS_WINS an `invalid_address` whose post_town HAS a city centroid. Not
+                       eligible either: proves postal_box's addition didn't widen the gate
+                       to every non-geocoded status, only to postal_box itself.
+  POSTAL_BOX_PC        a `postal_box` whose postcode is in se_postcode_centroids (tight
+                       spread) -> POSTCODE-precision centroid, city centroid also present so
+                       this proves the ladder still prefers the finer postcode rung for a box.
+  POSTAL_BOX_CITY      a `postal_box` whose postcode is ABSENT from se_postcode_centroids but
+                       whose post_town IS in se_city_centroids -> CITY-precision centroid.
+  UNMATCHED_PC         the (b) case: unmatched, postcode in se_postcode_centroids (tight
+                       spread) -> POSTCODE-precision centroid. City centroid also present, so
+                       this also proves the ladder prefers the finer postcode rung.
+  AMBIGUOUS_PC         `ambiguous` (not just unmatched) is eligible too -> postcode centroid.
+  UNMATCHED_CITY       the (c) STAVSTENSV/Trelleborg case: unmatched, postcode ABSENT from
+                       se_postcode_centroids but post_town in se_city_centroids -> CITY
+                       centroid.
+  LOOSE_POSTCODE       unmatched, postcode centroid present but its spread exceeds
+                       POSTCODE_SPREAD_MAX_METERS -> demoted to the CITY centroid. Also
+                       exercises the accent-preserving city key (post_town "Umeå" -> "UMEÅ").
+  BARE_UNMATCHED       unmatched with NEITHER centroid -> the original unmatched row,
+                       unchanged.
 """
 
 import subprocess
@@ -80,18 +92,22 @@ POLICY = "se-address-resolution-policy-v5"
 (
     GEOCODED_WINS,
     FOREIGN_WINS,
-    POSTAL_BOX,
+    INVALID_ADDRESS_WINS,
+    POSTAL_BOX_PC,
+    POSTAL_BOX_CITY,
     UNMATCHED_PC,
     AMBIGUOUS_PC,
     UNMATCHED_CITY,
     LOOSE_POSTCODE,
     BARE_UNMATCHED,
-) = (character * 64 for character in "12345678")
+) = (character * 64 for character in "1234567890")
 
 IDENTITIES = (
     GEOCODED_WINS,
     FOREIGN_WINS,
-    POSTAL_BOX,
+    INVALID_ADDRESS_WINS,
+    POSTAL_BOX_PC,
+    POSTAL_BOX_CITY,
     UNMATCHED_PC,
     AMBIGUOUS_PC,
     UNMATCHED_CITY,
@@ -124,7 +140,9 @@ CITY_CENTROID_ROWS = {
 ADDRESS_BY_IDENTITY = {
     GEOCODED_WINS: ("111 22", "Stockholm"),
     FOREIGN_WINS: ("231 39", "Trelleborg"),
-    POSTAL_BOX: ("231 39", "Trelleborg"),
+    INVALID_ADDRESS_WINS: ("231 39", "Trelleborg"),  # both centroids present, still ineligible
+    POSTAL_BOX_PC: ("231 39", "Trelleborg"),  # tight postcode centroid -> postcode tier
+    POSTAL_BOX_CITY: ("999 99", "Trelleborg"),  # 99999 has no postcode centroid -> city tier
     UNMATCHED_PC: ("231 39", "Trelleborg"),
     AMBIGUOUS_PC: ("231 39", "Trelleborg"),
     UNMATCHED_CITY: ("999 99", "Trelleborg"),  # 99999 has no postcode centroid
@@ -136,7 +154,9 @@ ADDRESS_BY_IDENTITY = {
 STATUS_BY_IDENTITY = {
     GEOCODED_WINS: "matched_exact",
     FOREIGN_WINS: "foreign_address",
-    POSTAL_BOX: "postal_box",
+    INVALID_ADDRESS_WINS: "invalid_address",
+    POSTAL_BOX_PC: "postal_box",
+    POSTAL_BOX_CITY: "postal_box",
     UNMATCHED_PC: "unmatched",
     AMBIGUOUS_PC: "ambiguous",
     UNMATCHED_CITY: "unmatched",
@@ -374,17 +394,46 @@ def test_a_precise_match_always_wins_over_an_available_centroid(
 def test_non_eligible_statuses_are_never_overlaid(
     served: dict[str, tuple[str, ...]],
 ) -> None:
-    """foreign_address and postal_box both have centroids available and both pass through
-    untouched: the overlay fires ONLY for unmatched/ambiguous."""
+    """foreign_address and invalid_address both have centroids available and both pass
+    through untouched: the overlay fires ONLY for unmatched/ambiguous/postal_box. Proves the
+    postal_box widening did not spill over to the other non-geocoded statuses."""
     for identity, expected_status in (
         (FOREIGN_WINS, "foreign_address"),
-        (POSTAL_BOX, "postal_box"),
+        (INVALID_ADDRESS_WINS, "invalid_address"),
     ):
         status, lat, lon, precision, provider = served[identity]
         assert status == expected_status
         assert lat == "\\N" and lon == "\\N"  # never geocoded, no coordinate
         assert precision == ""
         assert provider == "openstreetmap"
+
+
+def test_postal_box_with_a_tight_postcode_gets_the_postcode_centroid(
+    served: dict[str, tuple[str, ...]],
+) -> None:
+    """The (b) case for postal_box: eligible now, and the ladder still prefers the finer
+    postcode rung over the also-available city centroid."""
+    lat, lon, expected = _centroid_lat_lon_precision(POSTAL_BOX_PC)
+    assert expected == POSTCODE_PRECISION
+    status, got_lat, got_lon, precision, provider = served[POSTAL_BOX_PC]
+    assert status == GEOCODE_FALLBACK_STATUS
+    assert precision == POSTCODE_PRECISION
+    assert provider == GEOCODE_FALLBACK_PROVIDER
+    assert _coord(got_lat) == pytest.approx(lat)
+    assert _coord(got_lon) == pytest.approx(lon)
+
+
+def test_postal_box_with_only_a_city_centroid_gets_the_city_centroid(
+    served: dict[str, tuple[str, ...]],
+) -> None:
+    """The (a) case for postal_box: post_town Trelleborg has a city centroid, and the
+    99999 postcode has none, so the box is filled by the CITY rung."""
+    status, got_lat, got_lon, precision, provider = served[POSTAL_BOX_CITY]
+    assert status == GEOCODE_FALLBACK_STATUS
+    assert precision == CITY_PRECISION
+    assert provider == GEOCODE_FALLBACK_PROVIDER
+    assert _coord(got_lat) == pytest.approx(CITY_CENTROID_ROWS["TRELLEBORG"][0])
+    assert _coord(got_lon) == pytest.approx(CITY_CENTROID_ROWS["TRELLEBORG"][1])
 
 
 def test_unmatched_with_a_tight_postcode_gets_the_postcode_centroid(

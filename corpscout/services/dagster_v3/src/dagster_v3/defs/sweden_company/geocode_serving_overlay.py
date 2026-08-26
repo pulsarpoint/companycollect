@@ -2,7 +2,7 @@
 
 The geocode store (`se_address_geocodes`, see geocode_store.py) holds ONLY precise
 matcher outcomes. This module is the read-time overlay that sits in front of it: for an
-identity the precise matcher left `unmatched`/`ambiguous`, it serves a coarse
+identity the precise matcher left `unmatched`/`ambiguous`/`postal_box`, it serves a coarse
 postcode-or-city CENTROID coordinate -- honestly labeled by precision, and ALWAYS ranked
 below any precise match.
 
@@ -10,12 +10,16 @@ THE THREE RULES THIS SQL ENFORCES, and nothing downstream may re-express:
 
 1. A PRECISE MATCH ALWAYS WINS. The overlay fires ONLY for an identity whose current
    precise outcome (build_current_geocodes_sql -- the same read rule every other consumer
-   uses) has `match_status IN ('unmatched','ambiguous')`. A geocoded row
-   (`matched_exact`/`matched_area`/...), a `postal_box`, an `invalid_address`, a
-   `foreign_address`, a `property_identifier` -- all pass through UNCHANGED. A precise
-   coordinate is never overwritten by a centroid, and a precise match that later arrives
-   takes the identity back the moment the store carries it (the overlay is a read-time
-   fill; it stores nothing).
+   uses) has `match_status IN ('unmatched','ambiguous','postal_box')`. A geocoded row
+   (`matched_exact`/`matched_area`/...) passes through UNCHANGED, and so do an
+   `invalid_address`, a `foreign_address` and a `property_identifier` -- an invalid address
+   does not even guarantee a real postcode to key a centroid off. `postal_box` IS eligible
+   (added 2026-08): a PO box is a mail drop, so it must never get a precise-looking pin, but
+   Swedish box postcodes are dedicated ranges tied to a postal town, so the coarse tier's
+   honestly-labeled city/postcode centroid ("we only know the area") is exactly as true for
+   a box as for an unmatched street. A precise coordinate is never overwritten by a
+   centroid, and a precise match that later arrives takes the identity back the moment the
+   store carries it (the overlay is a read-time fill; it stores nothing).
 
 2. FINEST AVAILABLE. For an eligible identity, the ladder is: the POSTCODE centroid if the
    address's postcode is in `se_postcode_centroids` AND that centroid's `spread_meters` is
@@ -80,9 +84,11 @@ def fast_serving_base_sql() -> str:
     projection = ",\n    ".join(SERVING_COLUMNS)
     return f"SELECT\n    {projection}\nFROM {FAST_SERVING_TABLE}"
 
-# The precise outcomes the overlay is allowed to fill. Everything else -- geocoded,
-# postal_box, invalid_address, foreign_address, property_identifier -- passes through.
-FALLBACK_ELIGIBLE_STATUSES = ("unmatched", "ambiguous")
+# The precise outcomes the overlay is allowed to fill. `postal_box` joined 2026-08: a box
+# postcode is a dedicated range tied to a postal town, so the coarse centroid is exactly as
+# honest for a box as for an unmatched street (see Rule 1 above). Everything else --
+# geocoded, invalid_address, foreign_address, property_identifier -- still passes through.
+FALLBACK_ELIGIBLE_STATUSES = ("unmatched", "ambiguous", "postal_box")
 
 # A postcode centroid looser than this is demoted to the city centroid: past a few km a
 # "postcode" centroid no longer means the postcode.

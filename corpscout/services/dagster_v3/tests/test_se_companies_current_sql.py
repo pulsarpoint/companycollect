@@ -10,12 +10,17 @@ Runs through clickhouse-local (a local binary, else the pinned server image unde
 the module skips), twice -- once per `join_use_nulls` setting -- and must answer the same both
 times, because every served-overlay miss this SELECT reads is guarded by `ifNull`.
 
-The fixture is three companies, each a different shape of the primary-class rule:
+The fixture is four companies, each a different shape of the primary-class rule:
 
   COARSE      one address, its stored geocode_status 'unmatched', but a served-overlay row
               stamps provider='centroid_fallback'/precision='city'. primary_geocode_class must
               be 'coarse' -- the coarse-before-geocoded check firing on provider, NOT the base
               status. Its JSON element carries the overlay's precision/provider.
+  POSTAL_BOX  one address, its stored geocode_status 'postal_box' (fallback-eligible since
+              2026-08 -- geocode_serving_overlay.py Rule 1), served-overlay row stamps
+              provider='centroid_fallback'/precision='postcode'. Same coarse-before-geocoded
+              proof as COARSE, but from a box rather than an unmatched street: the class expr
+              does not care WHICH non-geocoded status produced the served row.
   PRECISE     two addresses. The primary (visiting_or_postal) has a served PRECISE row
               (geocoded); the secondary (postal) is ambiguous with no served row. The primary
               pick must take the visiting_or_postal row -> class 'geocoded', proving the ranking
@@ -47,19 +52,23 @@ NOW = datetime(2026, 8, 26, 9, tzinfo=UTC)
 COARSE = "5560000011"
 PRECISE = "5560000022"
 NOSERVED = "5560000033"
+POSTAL_BOX = "5560000044"
 
 # address_id -> the served-overlay row (precise or coarse). Absent ids have no served row.
 PRECISE_LAT, PRECISE_LON = 59.3300, 18.0600
 COARSE_LAT, COARSE_LON = 55.6050, 13.0000
+POSTAL_BOX_LAT, POSTAL_BOX_LON = 55.3770, 13.1520
 COARSE_ADDR = "a" * 64
 PRECISE_PRIMARY_ADDR = "b" * 64
 PRECISE_SECONDARY_ADDR = "c" * 64
 NOSERVED_ADDR = "d" * 64
+POSTAL_BOX_ADDR = "e" * 64
 
 # (address_id, geocode_precision, geocode_provider, latitude, longitude)
 SERVED_ROWS = (
     (COARSE_ADDR, "city", "centroid_fallback", COARSE_LAT, COARSE_LON),
     (PRECISE_PRIMARY_ADDR, "building", "openstreetmap", PRECISE_LAT, PRECISE_LON),
+    (POSTAL_BOX_ADDR, "postcode", "centroid_fallback", POSTAL_BOX_LAT, POSTAL_BOX_LON),
 )
 
 
@@ -147,6 +156,16 @@ ADDRESS_ROWS = (
         address_id=NOSERVED_ADDR,
         geocode_status="unmatched",
     ),
+    _address_row(
+        company_id=POSTAL_BOX,
+        address_key="k" + "5" * 63,
+        address_type="postal",
+        street="Box 5305",
+        postal_code="102 47",
+        city="Stockholm",
+        address_id=POSTAL_BOX_ADDR,
+        geocode_status="postal_box",
+    ),
 )
 
 
@@ -187,6 +206,7 @@ def _script(*, join_use_nulls: int) -> str:
                 _info_row(COARSE, "Coarse AB"),
                 _info_row(PRECISE, "Precise AB"),
                 _info_row(NOSERVED, "Noserved AB"),
+                _info_row(POSTAL_BOX, "Postal Box AB"),
             )
         )
         + ";",
@@ -234,19 +254,21 @@ def _addresses(row: dict) -> dict[str, dict]:
 
 
 def test_one_row_per_company(rows: dict[str, dict]) -> None:
-    assert set(rows) == {COARSE, PRECISE, NOSERVED}
+    assert set(rows) == {COARSE, PRECISE, NOSERVED, POSTAL_BOX}
 
 
 def test_legal_name_is_inner_joined_from_company_info(rows: dict[str, dict]) -> None:
     assert rows[COARSE]["legal_name"] == "Coarse AB"
     assert rows[PRECISE]["legal_name"] == "Precise AB"
     assert rows[NOSERVED]["legal_name"] == "Noserved AB"
+    assert rows[POSTAL_BOX]["legal_name"] == "Postal Box AB"
 
 
 def test_address_count_matches_current_addresses(rows: dict[str, dict]) -> None:
     assert rows[COARSE]["address_count"] == 1
     assert rows[PRECISE]["address_count"] == 2
     assert rows[NOSERVED]["address_count"] == 1
+    assert rows[POSTAL_BOX]["address_count"] == 1
 
 
 def test_addresses_json_carries_the_coarse_overlay_precision_and_provider(
@@ -300,6 +322,23 @@ def test_primary_class_is_coarse_aware_for_a_centroid_fallback_primary(
     assert row["primary_postal_code"] == "231 39"
     assert row["primary_city"] == "Trelleborg"
     assert row["primary_geocode_status"] == "unmatched"
+
+
+def test_primary_class_is_coarse_for_a_centroid_fallback_postal_box(
+    rows: dict[str, dict],
+) -> None:
+    """POSTAL_BOX's primary is a centroid_fallback row whose base status is 'postal_box'
+    (fallback-eligible since 2026-08). The class must be 'coarse', same as COARSE -- the
+    provider check does not care which non-geocoded status produced the served row."""
+    row = rows[POSTAL_BOX]
+    assert row["primary_geocode_class"] == "coarse"
+    assert row["primary_geocode_precision"] == "postcode"
+    assert row["primary_geocode_provider"] == "centroid_fallback"
+    assert float(row["primary_latitude"]) == pytest.approx(POSTAL_BOX_LAT)
+    assert row["primary_street_address"] == "Box 5305"
+    assert row["primary_postal_code"] == "102 47"
+    assert row["primary_city"] == "Stockholm"
+    assert row["primary_geocode_status"] == "postal_box"
 
 
 def test_primary_pick_takes_the_visiting_or_postal_row(rows: dict[str, dict]) -> None:
