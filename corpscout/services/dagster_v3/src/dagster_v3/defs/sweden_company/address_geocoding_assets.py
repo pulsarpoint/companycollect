@@ -25,6 +25,7 @@ from dagster_v3.defs.sweden_company.address_resolution_policy import (
 )
 from dagster_v3.defs.sweden_company.centroid_assets import (
     CENTROIDS_ASSET_KEY,
+    sweden_geocode_centroid_area_sanity_check,
     sweden_geocode_centroids_clickhouse,
 )
 
@@ -1673,6 +1674,7 @@ defs = dg.Definitions(
         sweden_company_address_exact_match_rate_check,
         sweden_company_address_osm_snapshot_freshness_check,
         sweden_address_geocodes_serving_view_refresh_check,
+        sweden_geocode_centroid_area_sanity_check,
     ],
     jobs=[
         sweden_company_address_geocoding_job,
