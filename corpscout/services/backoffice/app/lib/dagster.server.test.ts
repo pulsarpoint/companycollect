@@ -1,5 +1,6 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import {
+  assetGroup,
   assetMaterializations,
   DagsterGraphQLError,
   DagsterNotConfiguredError,
@@ -172,6 +173,8 @@ describe("listRuns and runStatus", () => {
                 jobName: "se_company_info_job",
                 startTime: 1_770_000_000,
                 endTime: 1_770_000_600,
+                runConfig: { ops: { example: { config: { limit: 5 } } } },
+                assetSelection: [{ path: ["se_company_info_clickhouse"] }],
                 tags: [{ key: "pilot", value: "backoffice" }],
               },
             ],
@@ -192,6 +195,8 @@ describe("listRuns and runStatus", () => {
         jobName: "se_company_info_job",
         startTime: 1_770_000_000,
         endTime: 1_770_000_600,
+        runConfig: { ops: { example: { config: { limit: 5 } } } },
+        selectedAssets: ["se_company_info_clickhouse"],
         tags: { pilot: "backoffice" },
       },
     ]);
@@ -264,6 +269,60 @@ describe("listRuns and runStatus", () => {
         { fetchImpl: impl, url: URL_OPTION },
       ),
     ).rejects.toThrow(/PythonError.*boom/);
+  });
+});
+
+describe("assetGroup", () => {
+  it("loads one exact repository group and maps operational asset state", async () => {
+    const { impl, calls } = fetchFake([
+      {
+        data: {
+          assetNodes: [
+            {
+              id: "asset-1",
+              assetKey: { path: ["esef_filing_facts_duckdb"] },
+              groupName: "esef",
+              description: "Normalised XBRL facts",
+              jobNames: ["esef_filings_backfill_job", "__ASSET_JOB"],
+              kinds: ["duckdb", "python"],
+              dependencyKeys: [{ path: ["esef_document_artifacts_s3"] }],
+              staleStatus: "FRESH",
+              partitionDefinition: { type: "TIME_WINDOW" },
+              assetMaterializations: [
+                { runId: "facts-run", timestamp: "1770000000000" },
+              ],
+            },
+          ],
+        },
+      },
+    ]);
+
+    await expect(
+      assetGroup("esef", { fetchImpl: impl, url: URL_OPTION }),
+    ).resolves.toEqual([
+      {
+        asset: "esef_filing_facts_duckdb",
+        description: "Normalised XBRL facts",
+        groupName: "esef",
+        kinds: ["duckdb", "python"],
+        dependencies: ["esef_document_artifacts_s3"],
+        jobNames: ["esef_filings_backfill_job", "__ASSET_JOB"],
+        staleStatus: "FRESH",
+        partitioned: true,
+        materialization: {
+          runId: "facts-run",
+          timestamp: 1_770_000_000_000,
+          numbers: {},
+        },
+      },
+    ]);
+    expect(calls[0].body.variables).toEqual({
+      group: {
+        groupName: "esef",
+        repositoryLocationName: REPOSITORY_LOCATION_NAME,
+        repositoryName: REPOSITORY_NAME,
+      },
+    });
   });
 });
 

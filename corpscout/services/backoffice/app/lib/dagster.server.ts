@@ -16,6 +16,8 @@
 import "dotenv/config";
 
 import type {
+  BackofficeAssetGroupQuery,
+  BackofficeAssetGroupQueryVariables,
   BackofficeAssetMaterializationsQuery,
   BackofficeAssetMaterializationsQueryVariables,
   BackofficeInstigatorsQuery,
@@ -28,8 +30,10 @@ import type {
   BackofficeRunsQueryVariables,
   EvaluationErrorReason,
   RunStatus,
+  StaleStatus,
 } from "~/lib/dagster.generated";
 import {
+  BACKOFFICE_ASSET_GROUP_QUERY,
   BACKOFFICE_ASSET_MATERIALIZATIONS_QUERY,
   BACKOFFICE_INSTIGATORS_QUERY,
   BACKOFFICE_LAUNCH_RUN_MUTATION,
@@ -120,6 +124,9 @@ export interface DagsterRun {
   /** Seconds since the epoch, as Dagster reports them; null while unstarted. */
   startTime: number | null;
   endTime: number | null;
+  runConfig: Record<string, unknown>;
+  /** Null means Dagster launched the complete job rather than an asset subset. */
+  selectedAssets: string[] | null;
   tags: Record<string, string>;
 }
 
@@ -136,6 +143,18 @@ export interface AssetMaterialization {
   runId: string;
   timestamp: number | null;
   numbers: Record<string, number>;
+}
+
+export interface DagsterAsset {
+  asset: string;
+  description: string;
+  groupName: string;
+  kinds: string[];
+  dependencies: string[];
+  jobNames: string[];
+  staleStatus: StaleStatus | null;
+  partitioned: boolean;
+  materialization: AssetMaterialization | null;
 }
 
 export interface InstigatorState {
@@ -241,6 +260,16 @@ function tagMap(
   return Object.fromEntries(tags.map((tag) => [tag.key, tag.value]));
 }
 
+function assetName(path: readonly string[]): string {
+  return path.join("/");
+}
+
+function runConfig(value: unknown): Record<string, unknown> {
+  return value !== null && typeof value === "object" && !Array.isArray(value)
+    ? (value as Record<string, unknown>)
+    : {};
+}
+
 /**
  * Start one run of `job`, optionally narrowed to `assetSelection`, with exactly
  * the config given -- no defaults are filled in here. The caller owns the whole
@@ -321,6 +350,9 @@ export async function listRuns(
     jobName: run.jobName,
     startTime: run.startTime ?? null,
     endTime: run.endTime ?? null,
+    runConfig: runConfig(run.runConfig),
+    selectedAssets:
+      run.assetSelection?.map((asset) => assetName(asset.path)) ?? null,
     tags: tagMap(run.tags),
   }));
 }
@@ -345,8 +377,49 @@ export async function runStatus(
     jobName: run.jobName,
     startTime: run.startTime ?? null,
     endTime: run.endTime ?? null,
+    runConfig: runConfig(run.runConfig),
+    selectedAssets:
+      run.assetSelection?.map((asset) => assetName(asset.path)) ?? null,
     tags: tagMap(run.tags),
   };
+}
+
+/** Load one complete Dagster asset group without scanning every repository asset. */
+export async function assetGroup(
+  groupName: string,
+  options: DagsterOptions = {},
+): Promise<DagsterAsset[]> {
+  const variables: BackofficeAssetGroupQueryVariables = {
+    group: {
+      groupName,
+      repositoryLocationName: REPOSITORY_LOCATION_NAME,
+      repositoryName: REPOSITORY_NAME,
+    },
+  };
+  const data = await graphql<
+    BackofficeAssetGroupQuery,
+    BackofficeAssetGroupQueryVariables
+  >(BACKOFFICE_ASSET_GROUP_QUERY, variables, options);
+  return data.assetNodes.map((asset) => {
+    const materialization = asset.assetMaterializations[0];
+    return {
+      asset: assetName(asset.assetKey.path),
+      description: asset.description ?? "",
+      groupName: asset.groupName,
+      kinds: [...asset.kinds],
+      dependencies: asset.dependencyKeys.map((key) => assetName(key.path)),
+      jobNames: [...asset.jobNames],
+      staleStatus: asset.staleStatus,
+      partitioned: asset.partitionDefinition !== null,
+      materialization: materialization
+        ? {
+            runId: materialization.runId,
+            timestamp: Number(materialization.timestamp),
+            numbers: {},
+          }
+        : null,
+    };
+  });
 }
 
 /**

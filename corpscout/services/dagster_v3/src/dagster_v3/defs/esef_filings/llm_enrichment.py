@@ -16,10 +16,10 @@ from urllib.parse import quote
 
 from lxml import etree, html as lxml_html
 from openai import OpenAI
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, ValidationError
 
-ENRICHMENT_SCHEMA_VERSION = 1
-ENRICHMENT_REQUEST_SCHEMA_VERSION = 1
+ENRICHMENT_SCHEMA_VERSION = 2
+ENRICHMENT_REQUEST_SCHEMA_VERSION = 2
 PROMPT_VERSION = "esef-company-enrichment-v2"
 ENRICHMENT_ARTIFACT_PREFIX = "esef_filings/llm_company_enrichment"
 ENRICHMENT_REQUEST_PREFIX = "esef_filings/llm_company_enrichment_requests"
@@ -27,7 +27,6 @@ SUPPORTED_ENRICHMENT_ARTIFACT_SCHEMA_VERSIONS = (3, 4, 5)
 MAX_EVIDENCE_ITEM_CHARS = 32_000
 MAX_VISIBLE_EVIDENCE_ITEM_CHARS = 6_000
 MAX_VISIBLE_EVIDENCE_CHARS = 32_000
-MAX_OUTPUT_TOKENS = 8_000
 
 ENRICHMENT_EVIDENCE_SEGMENTS = (
     "identity",
@@ -196,8 +195,13 @@ class EsefLlmEnrichmentResult:
     citation_adjustments: tuple[EsefCitationAdjustment, ...]
     raw_response: str
     response_id: str
+    finish_reason: str
     prompt_tokens: int | None
     completion_tokens: int | None
+
+
+class EsefLlmResponseError(ValueError):
+    """A provider response that cannot become a validated enrichment artifact."""
 
 
 @dataclass(frozen=True)
@@ -544,7 +548,6 @@ def build_company_enrichment_request(
     *,
     model: str,
     temperature: float = 0,
-    max_tokens: int = MAX_OUTPUT_TOKENS,
     provider: str = "deepseek",
     prompt_version: str = PROMPT_VERSION,
 ) -> dict[str, Any]:
@@ -554,8 +557,6 @@ def build_company_enrichment_request(
         raise ValueError("LLM model name must not be empty")
     if not 0 <= temperature <= 2:
         raise ValueError("LLM temperature must be between 0 and 2")
-    if not 256 <= max_tokens <= 32_000:
-        raise ValueError("LLM max_tokens must be between 256 and 32000")
     if prompt_version != PROMPT_VERSION:
         raise ValueError(
             f"Unsupported ESEF prompt version: {prompt_version!r}; "
@@ -575,7 +576,6 @@ def build_company_enrichment_request(
             },
         ],
         "temperature": temperature,
-        "max_tokens": max_tokens,
         "response_format": {"type": "json_object"},
     }
     if provider.strip().casefold() == "deepseek":
@@ -601,27 +601,52 @@ def request_company_enrichment(
 ) -> EsefLlmEnrichmentResult:
     """Request structured company enrichment and validate every citation."""
     response = client.chat.completions.create(**dict(request_payload))
-    content = response.choices[0].message.content
+    if not response.choices:
+        raise EsefLlmResponseError(
+            "ESEF company enrichment returned no response choices"
+        )
+    choice = response.choices[0]
+    content = choice.message.content
+    finish_reason = str(getattr(choice, "finish_reason", "") or "")
+    usage = getattr(response, "usage", None)
+    completion_tokens = _usage_value(usage, "completion_tokens")
+    if finish_reason == "length":
+        raise EsefLlmResponseError(
+            "ESEF company enrichment response was truncated by the provider "
+            "(finish_reason=length, client_output_token_limit=none, "
+            f"completion_tokens={completion_tokens})"
+        )
     if content is None:
-        raise RuntimeError("ESEF company enrichment returned no content")
+        raise EsefLlmResponseError("ESEF company enrichment returned no content")
     json_start = content.find("{")
     json_end = content.rfind("}")
     if json_start < 0 or json_end < json_start:
-        raise RuntimeError("ESEF company enrichment did not return a JSON object")
+        raise EsefLlmResponseError(
+            "ESEF company enrichment did not return a JSON object"
+        )
     validated_response_json = content[json_start : json_end + 1]
-    raw_enrichment = EsefCompanyEnrichment.model_validate_json(validated_response_json)
+    try:
+        raw_enrichment = EsefCompanyEnrichment.model_validate_json(
+            validated_response_json
+        )
+    except ValidationError as exc:
+        raise EsefLlmResponseError(
+            "ESEF company enrichment returned invalid structured JSON "
+            f"(finish_reason={finish_reason or 'unknown'}, "
+            f"completion_tokens={completion_tokens})"
+        ) from exc
     enrichment, citation_adjustments = _normalize_evidence_citations(
         raw_enrichment,
         evidence_input.evidence,
     )
-    usage = getattr(response, "usage", None)
     return EsefLlmEnrichmentResult(
         enrichment=enrichment,
         citation_adjustments=citation_adjustments,
         raw_response=content,
         response_id=str(getattr(response, "id", "") or ""),
+        finish_reason=finish_reason,
         prompt_tokens=_usage_value(usage, "prompt_tokens"),
-        completion_tokens=_usage_value(usage, "completion_tokens"),
+        completion_tokens=completion_tokens,
     )
 
 
@@ -638,7 +663,6 @@ def enrichment_artifact_json_bytes(
     provider: str = "deepseek",
     base_url: str = "",
     temperature: float = 0,
-    max_tokens: int = MAX_OUTPUT_TOKENS,
     prompt_version: str = PROMPT_VERSION,
 ) -> bytes:
     """Serialize a reviewable enrichment artifact with model and fact provenance."""
@@ -663,8 +687,8 @@ def enrichment_artifact_json_bytes(
             "name": model,
             "base_url": base_url,
             "temperature": temperature,
-            "max_tokens": max_tokens,
             "response_id": result.response_id,
+            "finish_reason": result.finish_reason,
             "prompt_tokens": result.prompt_tokens,
             "completion_tokens": result.completion_tokens,
             "raw_response_sha256": sha256(result.raw_response.encode()).hexdigest(),

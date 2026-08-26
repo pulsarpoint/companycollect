@@ -1,10 +1,24 @@
 /** Internal type. DO NOT USE DIRECTLY. */
 type Exact<T extends { [key: string]: unknown }> = { [K in keyof T]: T[K] };
 /** Internal type. DO NOT USE DIRECTLY. */
-export type Incremental<T> = T | { [P in keyof T]?: P extends ' $fragmentName' | '__typename' ? T[P] : never };
+export type Incremental<T> =
+  | T
+  | {
+      [P in keyof T]?: P extends " $fragmentName" | "__typename" ? T[P] : never;
+    };
 export type AssetCheckHandleInput = {
   assetKey: AssetKeyInput;
   name: string;
+};
+
+/**
+ * This type represents the fields necessary to identify
+ *         an asset group.
+ */
+export type AssetGroupSelector = {
+  groupName: string;
+  repositoryLocationName: string;
+  repositoryName: string;
 };
 
 export type AssetKeyInput = {
@@ -12,12 +26,12 @@ export type AssetKeyInput = {
 };
 
 export type EvaluationErrorReason =
-  | 'FIELDS_NOT_DEFINED'
-  | 'FIELD_NOT_DEFINED'
-  | 'MISSING_REQUIRED_FIELD'
-  | 'MISSING_REQUIRED_FIELDS'
-  | 'RUNTIME_TYPE_MISMATCH'
-  | 'SELECTOR_FIELD_ERROR';
+  | "FIELDS_NOT_DEFINED"
+  | "FIELD_NOT_DEFINED"
+  | "MISSING_REQUIRED_FIELD"
+  | "MISSING_REQUIRED_FIELDS"
+  | "RUNTIME_TYPE_MISMATCH"
+  | "SELECTOR_FIELD_ERROR";
 
 export type ExecutionMetadata = {
   /**
@@ -68,9 +82,7 @@ export type ExecutionTag = {
   value: string;
 };
 
-export type InstigationStatus =
-  | 'RUNNING'
-  | 'STOPPED';
+export type InstigationStatus = "RUNNING" | "STOPPED";
 
 /** This type represents the fields necessary to identify a job or pipeline */
 export type JobOrPipelineSelector = {
@@ -83,6 +95,9 @@ export type JobOrPipelineSelector = {
   solidSelection?: Array<string> | null | undefined;
 };
 
+export type PartitionDefinitionType =
+  "DYNAMIC" | "MULTIPARTITIONED" | "STATIC" | "TIME_WINDOW";
+
 /** This type represents the fields necessary to identify a repository. */
 export type RepositorySelector = {
   repositoryLocationName: string;
@@ -92,23 +107,23 @@ export type RepositorySelector = {
 /** The status of run execution. */
 export type RunStatus =
   /** Runs that have been canceled before completion. */
-  | 'CANCELED'
+  | "CANCELED"
   /** Runs that are in-progress and pending to be canceled. */
-  | 'CANCELING'
+  | "CANCELING"
   /** Runs that have failed to complete. */
-  | 'FAILURE'
+  | "FAILURE"
   /** Runs that are managed outside of the Dagster control plane. */
-  | 'MANAGED'
+  | "MANAGED"
   /** Runs that have been created, but not yet submitted for launch. */
-  | 'NOT_STARTED'
+  | "NOT_STARTED"
   /** Runs waiting to be launched by the Dagster Daemon. */
-  | 'QUEUED'
+  | "QUEUED"
   /** Runs that have been launched and execution has started. */
-  | 'STARTED'
+  | "STARTED"
   /** Runs that have been launched, but execution has not yet started. */
-  | 'STARTING'
+  | "STARTING"
   /** Runs that have successfully completed. */
-  | 'SUCCESS';
+  | "SUCCESS";
 
 /** This type represents a filter on Dagster runs. */
 export type RunsFilter = {
@@ -124,96 +139,237 @@ export type RunsFilter = {
   updatedBefore?: number | null | undefined;
 };
 
+/** An enumeration. */
+export type StaleStatus = "FRESH" | "MISSING" | "STALE";
+
 export type BackofficeLaunchRunMutationVariables = Exact<{
   executionParams: ExecutionParams;
 }>;
 
-
-export type BackofficeLaunchRunMutation = { __typename: 'Mutation', launchRun:
-    | { __typename: 'ConflictingExecutionParamsError', message: string }
-    | { __typename: 'InvalidOutputError' }
-    | { __typename: 'InvalidStepError' }
-    | { __typename: 'InvalidSubsetError', message: string }
-    | { __typename: 'LaunchRunSuccess', run: { __typename: 'Run', runId: string, status: RunStatus } }
-    | { __typename: 'NoModeProvidedError' }
-    | { __typename: 'PipelineNotFoundError', message: string }
-    | { __typename: 'PresetNotFoundError', message: string }
-    | { __typename: 'PythonError', message: string }
-    | { __typename: 'RunConfigValidationInvalid', pipelineName: string, errors: Array<
-        | { __typename: 'FieldNotDefinedConfigError', message: string, path: Array<string>, reason: EvaluationErrorReason }
-        | { __typename: 'FieldsNotDefinedConfigError', message: string, path: Array<string>, reason: EvaluationErrorReason }
-        | { __typename: 'MissingFieldConfigError', message: string, path: Array<string>, reason: EvaluationErrorReason }
-        | { __typename: 'MissingFieldsConfigError', message: string, path: Array<string>, reason: EvaluationErrorReason }
-        | { __typename: 'RuntimeMismatchConfigError', message: string, path: Array<string>, reason: EvaluationErrorReason }
-        | { __typename: 'SelectorTypeConfigError', message: string, path: Array<string>, reason: EvaluationErrorReason }
-      > }
-    | { __typename: 'RunConflict' }
-    | { __typename: 'UnauthorizedError', message: string }
-   };
+export type BackofficeLaunchRunMutation = {
+  __typename: "Mutation";
+  launchRun:
+    | { __typename: "ConflictingExecutionParamsError"; message: string }
+    | { __typename: "InvalidOutputError" }
+    | { __typename: "InvalidStepError" }
+    | { __typename: "InvalidSubsetError"; message: string }
+    | {
+        __typename: "LaunchRunSuccess";
+        run: { __typename: "Run"; runId: string; status: RunStatus };
+      }
+    | { __typename: "NoModeProvidedError" }
+    | { __typename: "PipelineNotFoundError"; message: string }
+    | { __typename: "PresetNotFoundError"; message: string }
+    | { __typename: "PythonError"; message: string }
+    | {
+        __typename: "RunConfigValidationInvalid";
+        pipelineName: string;
+        errors: Array<
+          | {
+              __typename: "FieldNotDefinedConfigError";
+              message: string;
+              path: Array<string>;
+              reason: EvaluationErrorReason;
+            }
+          | {
+              __typename: "FieldsNotDefinedConfigError";
+              message: string;
+              path: Array<string>;
+              reason: EvaluationErrorReason;
+            }
+          | {
+              __typename: "MissingFieldConfigError";
+              message: string;
+              path: Array<string>;
+              reason: EvaluationErrorReason;
+            }
+          | {
+              __typename: "MissingFieldsConfigError";
+              message: string;
+              path: Array<string>;
+              reason: EvaluationErrorReason;
+            }
+          | {
+              __typename: "RuntimeMismatchConfigError";
+              message: string;
+              path: Array<string>;
+              reason: EvaluationErrorReason;
+            }
+          | {
+              __typename: "SelectorTypeConfigError";
+              message: string;
+              path: Array<string>;
+              reason: EvaluationErrorReason;
+            }
+        >;
+      }
+    | { __typename: "RunConflict" }
+    | { __typename: "UnauthorizedError"; message: string };
+};
 
 export type BackofficeRunsQueryVariables = Exact<{
   filter: RunsFilter;
   limit: number;
 }>;
 
-
-export type BackofficeRunsQuery = { __typename: 'Query', runsOrError:
-    | { __typename: 'InvalidPipelineRunsFilterError', message: string }
-    | { __typename: 'PythonError', message: string }
-    | { __typename: 'Runs', results: Array<{ __typename: 'Run', runId: string, status: RunStatus, jobName: string, startTime: number | null, endTime: number | null, tags: Array<{ __typename: 'PipelineTag', key: string, value: string }> }> }
-   };
+export type BackofficeRunsQuery = {
+  __typename: "Query";
+  runsOrError:
+    | { __typename: "InvalidPipelineRunsFilterError"; message: string }
+    | { __typename: "PythonError"; message: string }
+    | {
+        __typename: "Runs";
+        results: Array<{
+          __typename: "Run";
+          runId: string;
+          status: RunStatus;
+          jobName: string;
+          startTime: number | null;
+          endTime: number | null;
+          runConfig: Record<string, unknown>;
+          assetSelection: Array<{
+            __typename: "AssetKey";
+            path: Array<string>;
+          }> | null;
+          tags: Array<{
+            __typename: "PipelineTag";
+            key: string;
+            value: string;
+          }>;
+        }>;
+      };
+};
 
 export type BackofficeRunQueryVariables = Exact<{
   runId: string;
 }>;
 
+export type BackofficeRunQuery = {
+  __typename: "Query";
+  runOrError:
+    | { __typename: "PythonError"; message: string }
+    | {
+        __typename: "Run";
+        runId: string;
+        status: RunStatus;
+        jobName: string;
+        startTime: number | null;
+        endTime: number | null;
+        runConfig: Record<string, unknown>;
+        assetSelection: Array<{
+          __typename: "AssetKey";
+          path: Array<string>;
+        }> | null;
+        tags: Array<{ __typename: "PipelineTag"; key: string; value: string }>;
+      }
+    | { __typename: "RunNotFoundError"; message: string };
+};
 
-export type BackofficeRunQuery = { __typename: 'Query', runOrError:
-    | { __typename: 'PythonError', message: string }
-    | { __typename: 'Run', runId: string, status: RunStatus, jobName: string, startTime: number | null, endTime: number | null, tags: Array<{ __typename: 'PipelineTag', key: string, value: string }> }
-    | { __typename: 'RunNotFoundError', message: string }
-   };
+export type BackofficeAssetGroupQueryVariables = Exact<{
+  group: AssetGroupSelector;
+}>;
+
+export type BackofficeAssetGroupQuery = {
+  __typename: "Query";
+  assetNodes: Array<{
+    __typename: "AssetNode";
+    id: string;
+    groupName: string;
+    description: string | null;
+    jobNames: Array<string>;
+    kinds: Array<string>;
+    staleStatus: StaleStatus | null;
+    assetKey: { __typename: "AssetKey"; path: Array<string> };
+    dependencyKeys: Array<{ __typename: "AssetKey"; path: Array<string> }>;
+    partitionDefinition: {
+      __typename: "PartitionDefinition";
+      type: PartitionDefinitionType;
+    } | null;
+    assetMaterializations: Array<{
+      __typename: "MaterializationEvent";
+      runId: string;
+      timestamp: string;
+    }>;
+  }>;
+};
 
 export type BackofficeAssetMaterializationsQueryVariables = Exact<{
   assetKeys: Array<AssetKeyInput> | AssetKeyInput;
   limit: number;
 }>;
 
-
-export type BackofficeAssetMaterializationsQuery = { __typename: 'Query', assetNodes: Array<{ __typename: 'AssetNode', id: string, assetMaterializations: Array<{ __typename: 'MaterializationEvent', runId: string, timestamp: string, metadataEntries: Array<
-        | { __typename: 'AssetMetadataEntry', label: string }
-        | { __typename: 'BoolMetadataEntry', label: string }
-        | { __typename: 'CodeReferencesMetadataEntry', label: string }
-        | { __typename: 'FloatMetadataEntry', label: string }
-        | { __typename: 'IntMetadataEntry', intValue: number | null, label: string }
-        | { __typename: 'JobMetadataEntry', label: string }
-        | { __typename: 'JsonMetadataEntry', label: string }
-        | { __typename: 'MarkdownMetadataEntry', label: string }
-        | { __typename: 'NotebookMetadataEntry', label: string }
-        | { __typename: 'NullMetadataEntry', label: string }
-        | { __typename: 'PathMetadataEntry', label: string }
-        | { __typename: 'PipelineRunMetadataEntry', label: string }
-        | { __typename: 'PoolMetadataEntry', label: string }
-        | { __typename: 'PythonArtifactMetadataEntry', label: string }
-        | { __typename: 'TableColumnLineageMetadataEntry', label: string }
-        | { __typename: 'TableMetadataEntry', label: string }
-        | { __typename: 'TableSchemaMetadataEntry', label: string }
-        | { __typename: 'TextMetadataEntry', label: string }
-        | { __typename: 'TimestampMetadataEntry', label: string }
-        | { __typename: 'UrlMetadataEntry', label: string }
-      > }> }> };
+export type BackofficeAssetMaterializationsQuery = {
+  __typename: "Query";
+  assetNodes: Array<{
+    __typename: "AssetNode";
+    id: string;
+    assetMaterializations: Array<{
+      __typename: "MaterializationEvent";
+      runId: string;
+      timestamp: string;
+      metadataEntries: Array<
+        | { __typename: "AssetMetadataEntry"; label: string }
+        | { __typename: "BoolMetadataEntry"; label: string }
+        | { __typename: "CodeReferencesMetadataEntry"; label: string }
+        | { __typename: "FloatMetadataEntry"; label: string }
+        | {
+            __typename: "IntMetadataEntry";
+            intValue: number | null;
+            label: string;
+          }
+        | { __typename: "JobMetadataEntry"; label: string }
+        | { __typename: "JsonMetadataEntry"; label: string }
+        | { __typename: "MarkdownMetadataEntry"; label: string }
+        | { __typename: "NotebookMetadataEntry"; label: string }
+        | { __typename: "NullMetadataEntry"; label: string }
+        | { __typename: "PathMetadataEntry"; label: string }
+        | { __typename: "PipelineRunMetadataEntry"; label: string }
+        | { __typename: "PoolMetadataEntry"; label: string }
+        | { __typename: "PythonArtifactMetadataEntry"; label: string }
+        | { __typename: "TableColumnLineageMetadataEntry"; label: string }
+        | { __typename: "TableMetadataEntry"; label: string }
+        | { __typename: "TableSchemaMetadataEntry"; label: string }
+        | { __typename: "TextMetadataEntry"; label: string }
+        | { __typename: "TimestampMetadataEntry"; label: string }
+        | { __typename: "UrlMetadataEntry"; label: string }
+      >;
+    }>;
+  }>;
+};
 
 export type BackofficeInstigatorsQueryVariables = Exact<{
   repositorySelector: RepositorySelector;
 }>;
 
-
-export type BackofficeInstigatorsQuery = { __typename: 'Query', schedulesOrError:
-    | { __typename: 'PythonError', message: string }
-    | { __typename: 'RepositoryNotFoundError' }
-    | { __typename: 'Schedules', results: Array<{ __typename: 'Schedule', name: string, cronSchedule: string, scheduleState: { __typename: 'InstigationState', status: InstigationStatus } }> }
-  , sensorsOrError:
-    | { __typename: 'PythonError', message: string }
-    | { __typename: 'RepositoryNotFoundError' }
-    | { __typename: 'Sensors', results: Array<{ __typename: 'Sensor', name: string, sensorState: { __typename: 'InstigationState', status: InstigationStatus } }> }
-   };
+export type BackofficeInstigatorsQuery = {
+  __typename: "Query";
+  schedulesOrError:
+    | { __typename: "PythonError"; message: string }
+    | { __typename: "RepositoryNotFoundError" }
+    | {
+        __typename: "Schedules";
+        results: Array<{
+          __typename: "Schedule";
+          name: string;
+          cronSchedule: string;
+          scheduleState: {
+            __typename: "InstigationState";
+            status: InstigationStatus;
+          };
+        }>;
+      };
+  sensorsOrError:
+    | { __typename: "PythonError"; message: string }
+    | { __typename: "RepositoryNotFoundError" }
+    | {
+        __typename: "Sensors";
+        results: Array<{
+          __typename: "Sensor";
+          name: string;
+          sensorState: {
+            __typename: "InstigationState";
+            status: InstigationStatus;
+          };
+        }>;
+      };
+};

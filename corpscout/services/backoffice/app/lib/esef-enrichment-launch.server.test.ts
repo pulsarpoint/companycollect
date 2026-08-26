@@ -10,7 +10,7 @@ const DAGSTER_URL = "http://dagster:3000/graphql";
 
 const INPUT: LaunchEsefDocumentCompanyInformationInput = {
   requestedBy: " operator@example.com ",
-  countryIso2: " se ",
+  countryIso2s: [" se ", "SE"],
   companyIds: [" 5566692850 ", "5566692850", "5560125220"],
   sourceDocumentIds: [" filing-1 ", "", "filing-2"],
   maxDocuments: 250,
@@ -21,49 +21,85 @@ const INPUT: LaunchEsefDocumentCompanyInformationInput = {
     provider: " deepseek ",
     model: " deepseek-v4-flash ",
     baseUrl: " https://api.deepseek.com ",
+    apiKeyEnvironmentVariable: " DEEPSEEK_API_KEY ",
     temperature: 0,
-    maxTokens: 8_000,
     promptVersion: " esef-company-enrichment-v2 ",
     concurrency: 4,
   },
 };
 
 function successfulDagsterFetch() {
-  const calls: Array<{ query: string; variables: Record<string, unknown> }> = [];
-  const fetchImpl = vi.fn(async (_input: RequestInfo | URL, init?: RequestInit) => {
-    const body = JSON.parse(String(init?.body)) as {
-      query: string;
-      variables: Record<string, unknown>;
-    };
-    calls.push(body);
-    const data = body.query.includes("query BackofficeRuns")
-      ? { runsOrError: { __typename: "Runs", results: [] } }
-      : body.query.includes("query BackofficeAssetMaterializations")
-        ? {
-            assetNodes: [
-              {
-                id: "asset",
-                assetMaterializations: [
-                  {
-                    runId: "input-run",
-                    timestamp: "1000",
-                    metadataEntries: [],
+  const calls: Array<{ query: string; variables: Record<string, unknown> }> =
+    [];
+  const fetchImpl = vi.fn(
+    async (_input: RequestInfo | URL, init?: RequestInit) => {
+      const body = JSON.parse(String(init?.body)) as {
+        query: string;
+        variables: Record<string, unknown>;
+      };
+      calls.push(body);
+      const data = body.query.includes("query BackofficeRuns")
+        ? { runsOrError: { __typename: "Runs", results: [] } }
+        : body.query.includes("query BackofficeAssetGroup")
+          ? {
+              assetNodes: [
+                ...[
+                  "esef_filings_clickhouse",
+                  "esef_document_concept_labels_clickhouse",
+                  "esef_disclosures_clickhouse",
+                ].map((name) => ({
+                  id: name,
+                  assetKey: { path: [name] },
+                  groupName: "esef",
+                  description: "",
+                  jobNames: [
+                    "esef_filings_backfill_job",
+                    "esef_filings_refresh_job",
+                    "__ASSET_JOB",
+                  ],
+                  kinds: ["clickhouse"],
+                  dependencyKeys: [],
+                  staleStatus: "FRESH",
+                  partitionDefinition: null,
+                  assetMaterializations: [
+                    { runId: `${name}-run`, timestamp: "1000" },
+                  ],
+                })),
+                {
+                  id: "esef_document_company_information_clickhouse",
+                  assetKey: {
+                    path: ["esef_document_company_information_clickhouse"],
                   },
-                ],
-              },
-            ],
-          }
-        : {
-            launchRun: {
-              __typename: "LaunchRunSuccess",
-              run: { runId: "run-1", status: "QUEUED" },
-            },
-          };
-    return new Response(
-      JSON.stringify({ data }),
-      { status: 200, headers: { "content-type": "application/json" } },
-    );
-  });
+                  groupName: "esef",
+                  description: "",
+                  jobNames: [
+                    "esef_document_company_information_job",
+                    "__ASSET_JOB",
+                  ],
+                  kinds: ["clickhouse"],
+                  dependencyKeys: [],
+                  staleStatus: "FRESH",
+                  partitionDefinition: null,
+                  assetMaterializations: [
+                    { runId: "enrichment-run", timestamp: "1000" },
+                  ],
+                },
+              ],
+            }
+          : body.query.includes("query BackofficeAssetMaterializations")
+            ? { assetNodes: [] }
+            : {
+                launchRun: {
+                  __typename: "LaunchRunSuccess",
+                  run: { runId: "run-1", status: "QUEUED" },
+                },
+              };
+      return new Response(JSON.stringify({ data }), {
+        status: 200,
+        headers: { "content-type": "application/json" },
+      });
+    },
+  );
   return { calls, fetchImpl: fetchImpl as unknown as typeof fetch };
 }
 
@@ -116,11 +152,11 @@ describe("launchEsefDocumentCompanyInformation", () => {
             provider: "deepseek",
             model: "deepseek-v4-flash",
             base_url: "https://api.deepseek.com",
+            api_key_environment_variable: "DEEPSEEK_API_KEY",
             temperature: 0,
-            max_tokens: 8_000,
             prompt_version: "esef-company-enrichment-v2",
             concurrency: 4,
-            country_iso2: "SE",
+            country_iso2s: ["SE"],
             company_ids: ["5566692850", "5560125220"],
             source_document_ids: ["filing-1", "filing-2"],
             max_documents: 250,
@@ -132,7 +168,9 @@ describe("launchEsefDocumentCompanyInformation", () => {
         },
       },
     });
-    expect(JSON.stringify(params.runConfigData)).not.toContain("browser-secret");
+    expect(JSON.stringify(params.runConfigData)).not.toContain(
+      "browser-secret",
+    );
 
     const tags = Object.fromEntries(
       params.executionMetadata.tags.map(({ key, value }) => [key, value]),
@@ -141,6 +179,13 @@ describe("launchEsefDocumentCompanyInformation", () => {
       "corpscout/trigger_source": "backoffice",
       "corpscout/request_id": launched.requestId,
       "corpscout/requested_by": "operator@example.com",
+      "corpscout/llm_provider": "deepseek",
+      "corpscout/llm_model": "deepseek-v4-flash",
+      "corpscout/country_count": "1",
+      "corpscout/company_count": "2",
+      "corpscout/source_document_count": "2",
+      "corpscout/refresh_behavior": "reuse_existing",
+      "corpscout/country_iso2": "SE",
     });
     expect(launched).toMatchObject({ runId: "run-1", status: "QUEUED" });
     expect(launched.requestId).toMatch(
@@ -177,6 +222,36 @@ describe("launchEsefDocumentCompanyInformation", () => {
       );
     },
   );
+
+  it("passes a normalized multi-country scope without a singular country tag", async () => {
+    const { calls, fetchImpl } = successfulDagsterFetch();
+
+    await launchEsefDocumentCompanyInformation(
+      {
+        ...INPUT,
+        countryIso2s: ["se", " FI ", "SE"],
+        companyIds: [],
+      },
+      { fetchImpl, url: DAGSTER_URL },
+    );
+
+    const params = executionParams(launchCall(calls));
+    const config = (
+      params.runConfigData as {
+        ops: {
+          esef_document_company_information_clickhouse: {
+            config: Record<string, unknown>;
+          };
+        };
+      }
+    ).ops.esef_document_company_information_clickhouse.config;
+    expect(config.country_iso2s).toEqual(["FI", "SE"]);
+    const tags = Object.fromEntries(
+      params.executionMetadata.tags.map(({ key, value }) => [key, value]),
+    );
+    expect(tags["corpscout/country_count"]).toBe("2");
+    expect(tags).not.toHaveProperty("corpscout/country_iso2");
+  });
 
   it("refuses a launch without an authenticated operator", async () => {
     const fetchImpl = vi.fn();

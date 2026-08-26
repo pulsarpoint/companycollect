@@ -22,7 +22,7 @@ from urllib.parse import quote
 
 import dagster as dg
 from dagster_clickhouse import ClickhouseResource
-from openai import OpenAI
+from openai import OpenAI, OpenAIError, RateLimitError
 from pydantic import ConfigDict, Field
 
 from dagster_v3.defs.clickhouse.resolved import assert_clickhouse_tables_exist
@@ -31,10 +31,10 @@ from dagster_v3.defs.esef_filings import tables
 from dagster_v3.defs.esef_filings.llm_enrichment import (
     ENRICHMENT_EVIDENCE_SEGMENTS,
     ENRICHMENT_VISIBLE_SECTION_TYPES,
-    MAX_OUTPUT_TOKENS,
     PROMPT_VERSION,
     EsefEnrichmentInput,
     EsefLlmEnrichmentResult,
+    EsefLlmResponseError,
     build_company_enrichment_request,
     build_enrichment_evidence,
     enrichment_artifact_json_bytes,
@@ -63,27 +63,27 @@ _NON_SPECIFIC_PERSON_ROLES = frozenset(
 class EsefLlmEnrichmentConfig(dg.Config):
     model_config = ConfigDict(str_strip_whitespace=True)
 
-    provider: str = Field(
-        default="deepseek",
-        min_length=1,
-        max_length=64,
-        pattern=r"^[A-Za-z][A-Za-z0-9_]*$",
-    )
+    provider: str = Field(default="deepseek", min_length=1, max_length=120)
     model: str = Field(default="deepseek-v4-flash", min_length=1, max_length=200)
     base_url: str = Field(
         default="https://api.deepseek.com",
         min_length=1,
         max_length=2_048,
     )
+    api_key_environment_variable: str = Field(
+        default="DEEPSEEK_API_KEY",
+        min_length=1,
+        max_length=128,
+        pattern=r"^[A-Za-z_][A-Za-z0-9_]*$",
+    )
     temperature: float = Field(default=0, ge=0, le=2)
-    max_tokens: int = Field(default=MAX_OUTPUT_TOKENS, ge=256, le=32_000)
     prompt_version: str = Field(
         default=PROMPT_VERSION,
         min_length=1,
         max_length=120,
     )
     concurrency: int = Field(default=1, ge=1, le=8)
-    country_iso2: str = ""
+    country_iso2s: list[str] = Field(default_factory=list)
     company_ids: list[str] = Field(default_factory=list)
     source_document_ids: list[str] = Field(default_factory=list)
     max_documents: int | None = Field(default=None, ge=1, le=100_000)
@@ -93,15 +93,10 @@ class EsefLlmEnrichmentConfig(dg.Config):
     timeout_seconds: int = Field(default=180, ge=1, le=600)
 
 
-def esef_llm_api_key_variable(provider: str) -> str:
-    """Return the Dagster-host environment variable for one provider's key."""
-    return f"{provider.upper()}_API_KEY"
-
-
 def build_esef_llm_client(config: EsefLlmEnrichmentConfig) -> OpenAI:
     """Build the configured client while keeping credentials out of run config."""
     _validate_prompt_version(config.prompt_version)
-    variable = esef_llm_api_key_variable(config.provider)
+    variable = config.api_key_environment_variable
     api_key = os.getenv(variable, "").strip()
     if api_key == "":
         raise ValueError(
@@ -142,6 +137,13 @@ class _CompletedEnrichment:
     extraction_status: str
 
 
+@dataclass(frozen=True)
+class _EnrichmentRequestOutcome:
+    work: _PreparedEnrichment
+    result: EsefLlmEnrichmentResult | None
+    failure_kind: str | None = None
+
+
 def run_esef_llm_enrichment(
     *,
     clickhouse: ClickhouseResource,
@@ -149,7 +151,7 @@ def run_esef_llm_enrichment(
     client: OpenAI,
     model: str,
     source_run_id: str,
-    country_iso2: str,
+    country_iso2s: Sequence[str],
     company_ids: Sequence[str],
     source_document_ids: Sequence[str],
     max_documents: int | None,
@@ -160,7 +162,6 @@ def run_esef_llm_enrichment(
     provider: str = "deepseek",
     base_url: str = "https://api.deepseek.com",
     temperature: float = 0,
-    max_tokens: int = MAX_OUTPUT_TOKENS,
     prompt_version: str = PROMPT_VERSION,
     concurrency: int = 1,
 ) -> dict[str, object]:
@@ -182,16 +183,19 @@ def run_esef_llm_enrichment(
             "ESEF LLM refresh_existing and reprocess_existing_without_model "
             "cannot both be enabled"
         )
-    clean_country_iso2 = country_iso2.strip().upper()
-    if clean_country_iso2 != "" and (
-        len(clean_country_iso2) != 2 or not clean_country_iso2.isalpha()
+    selected_country_iso2s = {
+        value.strip().upper() for value in country_iso2s if value.strip()
+    }
+    if any(
+        len(country_iso2) != 2 or not country_iso2.isalpha()
+        for country_iso2 in selected_country_iso2s
     ):
-        raise ValueError("ESEF LLM country_iso2 must be a two-letter country code")
+        raise ValueError("ESEF LLM country_iso2s must contain two-letter country codes")
     selected_company_ids = {value.strip() for value in company_ids if value.strip()}
-    if selected_company_ids and clean_country_iso2 == "":
+    if selected_company_ids and len(selected_country_iso2s) != 1:
         raise ValueError(
-            "ESEF LLM company_ids require country_iso2 because company identity "
-            "is country-scoped"
+            "ESEF LLM company_ids require exactly one country_iso2 because "
+            "company identity is country-scoped"
         )
     selected_ids = {value.strip() for value in source_document_ids if value.strip()}
     documents = _load_latest_source_documents(
@@ -199,7 +203,7 @@ def run_esef_llm_enrichment(
         provider=clean_provider,
         model=model,
         prompt_version=prompt_version,
-        country_iso2=clean_country_iso2,
+        country_iso2s=selected_country_iso2s,
         company_ids=selected_company_ids,
         source_document_ids=selected_ids,
         max_documents=max_documents,
@@ -221,6 +225,8 @@ def run_esef_llm_enrichment(
     dropped_non_specific_person_candidate_count = 0
     citation_adjustment_count = 0
     dropped_invalid_citation_candidate_count = 0
+    failed_document_count = 0
+    rate_limited_document_count = 0
 
     log_info(
         "ESEF LLM latest-company selector: %s source documents considered",
@@ -261,7 +267,6 @@ def run_esef_llm_enrichment(
             model=model,
             provider=clean_provider,
             temperature=temperature,
-            max_tokens=max_tokens,
             prompt_version=prompt_version,
         )
         request_bytes = enrichment_request_json_bytes(request_payload)
@@ -332,12 +337,29 @@ def run_esef_llm_enrichment(
                 len(documents),
             )
 
-    results = _request_enrichments(
+    outcomes = _request_enrichments(
         client=client,
         work=pending_enrichments,
         concurrency=concurrency,
+        log_info=log_info,
     )
-    for work, result in zip(pending_enrichments, results, strict=True):
+    for attempt_index, outcome in enumerate(outcomes, start=1):
+        work = outcome.work
+        result = outcome.result
+        if result is None:
+            failed_document_count += 1
+            if outcome.failure_kind == "rate_limited":
+                rate_limited_document_count += 1
+            log_info(
+                "ESEF LLM request failed for document %s (%s); "
+                "continuing batch: %s/%s attempted, %s failed",
+                work.document["source_document_id"],
+                outcome.failure_kind,
+                attempt_index,
+                len(pending_enrichments),
+                failed_document_count,
+            )
+            continue
         serialized_artifact = enrichment_artifact_json_bytes(
             evidence_input=work.evidence_input,
             result=result,
@@ -350,7 +372,6 @@ def run_esef_llm_enrichment(
             provider=clean_provider,
             base_url=base_url.rstrip("/"),
             temperature=temperature,
-            max_tokens=max_tokens,
             prompt_version=prompt_version,
         )
         object_store.write_bytes(
@@ -368,6 +389,13 @@ def run_esef_llm_enrichment(
             extraction_status="enriched",
         )
         enriched_count += 1
+        log_info(
+            "ESEF LLM request progress: %s/%s attempted, %s processed, %s failed",
+            attempt_index,
+            len(pending_enrichments),
+            enriched_count,
+            failed_document_count,
+        )
 
     information_rows: list[dict[str, object]] = []
     processed_documents: list[Mapping[str, object]] = []
@@ -437,18 +465,23 @@ def run_esef_llm_enrichment(
     )
     return {
         "selection_method": "latest_xbrl_per_company",
-        "selection_country_iso2": clean_country_iso2,
+        "selection_country_iso2s": sorted(selected_country_iso2s),
         "llm_provider": clean_provider,
         "llm_model": model,
         "llm_base_url": base_url.rstrip("/"),
         "llm_temperature": temperature,
-        "llm_max_tokens": max_tokens,
         "llm_prompt_version": prompt_version,
         "llm_concurrency": concurrency,
         "reprocess_existing_without_model": reprocess_existing_without_model,
         "candidate_document_count": len(documents),
+        "attempted_document_count": len(pending_enrichments),
+        "processed_document_count": len(processed_documents),
+        "failed_document_count": failed_document_count,
+        "rate_limited_document_count": rate_limited_document_count,
         "selected_document_count": len(processed_documents),
-        "unchanged_document_count": len(documents) - len(processed_documents),
+        "unchanged_document_count": (
+            len(documents) - len(processed_documents) - failed_document_count
+        ),
         "selected_company_count": len(
             {
                 (str(document["country_iso2"]), str(document["company_id"]))
@@ -486,13 +519,26 @@ def _request_enrichments(
     client: OpenAI,
     work: Sequence[_PreparedEnrichment],
     concurrency: int,
-) -> Iterator[EsefLlmEnrichmentResult]:
-    """Call the model with bounded parallelism and retain document order."""
+    log_info: Callable[..., object] | None = None,
+) -> Iterator[_EnrichmentRequestOutcome]:
+    """Call the HTTP client with bounded parallelism and retain document order."""
     call = partial(_request_prepared_enrichment, client=client)
     if concurrency == 1 or len(work) <= 1:
-        for item in work:
+        for index, item in enumerate(work, start=1):
+            if log_info is not None:
+                log_info(
+                    "ESEF LLM request starting: %s/%s",
+                    index,
+                    len(work),
+                )
             yield call(item)
         return
+    if log_info is not None:
+        log_info(
+            "ESEF LLM dispatching %s requests with concurrency %s",
+            len(work),
+            concurrency,
+        )
     with ThreadPoolExecutor(
         max_workers=concurrency,
         thread_name_prefix="esef_company_information_llm",
@@ -504,12 +550,32 @@ def _request_prepared_enrichment(
     work: _PreparedEnrichment,
     *,
     client: OpenAI,
-) -> EsefLlmEnrichmentResult:
-    return request_company_enrichment(
-        client,
-        evidence_input=work.evidence_input,
-        request_payload=work.request_payload,
-    )
+) -> _EnrichmentRequestOutcome:
+    try:
+        result = request_company_enrichment(
+            client,
+            evidence_input=work.evidence_input,
+            request_payload=work.request_payload,
+        )
+    except RateLimitError:
+        return _EnrichmentRequestOutcome(
+            work=work,
+            result=None,
+            failure_kind="rate_limited",
+        )
+    except OpenAIError:
+        return _EnrichmentRequestOutcome(
+            work=work,
+            result=None,
+            failure_kind="http_error",
+        )
+    except EsefLlmResponseError:
+        return _EnrichmentRequestOutcome(
+            work=work,
+            result=None,
+            failure_kind="invalid_response",
+        )
+    return _EnrichmentRequestOutcome(work=work, result=result)
 
 
 def _load_latest_source_documents(
@@ -518,7 +584,7 @@ def _load_latest_source_documents(
     model: str,
     provider: str = "deepseek",
     prompt_version: str = PROMPT_VERSION,
-    country_iso2: str,
+    country_iso2s: set[str],
     company_ids: set[str],
     source_document_ids: set[str],
     max_documents: int | None,
@@ -550,9 +616,9 @@ def _load_latest_source_documents(
         "evidence_segments": ENRICHMENT_EVIDENCE_SEGMENTS,
         "visible_section_types": ENRICHMENT_VISIBLE_SECTION_TYPES,
     }
-    if country_iso2 != "":
-        document_filters.append("disclosures.country_iso2 = %(country_iso2)s")
-        parameters["country_iso2"] = country_iso2
+    if country_iso2s:
+        document_filters.append("disclosures.country_iso2 IN %(country_iso2s)s")
+        parameters["country_iso2s"] = tuple(sorted(country_iso2s))
     if company_ids:
         document_filters.append("disclosures.company_id IN %(company_ids)s")
         parameters["company_ids"] = tuple(sorted(company_ids))
@@ -592,7 +658,7 @@ FROM
             argMax(filings.package_url, filings.processed_at) AS package_url,
             max(disclosures.artifact_schema_version) AS artifact_schema_version,
             toString(max(filings.processed_at)) AS source_processed_at
-        FROM {tables.QUALIFIED_ESEF_DISCLOSURES_TABLE} AS disclosures FINAL
+        FROM {tables.QUALIFIED_ESEF_DISCLOSURES_TABLE} AS disclosures
         INNER JOIN {tables.QUALIFIED_ESEF_FILINGS_TABLE} AS filings FINAL
             ON filings.fxo_id = disclosures.source_document_id
         WHERE {" AND ".join(document_filters)}
@@ -605,7 +671,7 @@ LEFT JOIN
         source_document_id,
         argMax(llm_request_sha256, resolved_at) AS llm_request_sha256,
         argMax(extraction_status, resolved_at) AS extraction_status
-    FROM {tables.QUALIFIED_ESEF_DOCUMENT_COMPANY_INFORMATION_TABLE} FINAL
+    FROM {tables.QUALIFIED_ESEF_DOCUMENT_COMPANY_INFORMATION_TABLE}
     WHERE model_provider = %(model_provider)s
       AND model_name = %(model_name)s
       AND prompt_version = %(prompt_version)s
@@ -643,22 +709,35 @@ def _load_disclosure_artifacts(
     disclosure_columns = tables.ESEF_DISCLOSURES_EXPORT_COLUMNS
     disclosure_query = f"""
 SELECT {", ".join(disclosure_columns)}
-FROM {tables.QUALIFIED_ESEF_DISCLOSURES_TABLE} FINAL
+FROM {tables.QUALIFIED_ESEF_DISCLOSURES_TABLE}
 WHERE source_document_id IN %(source_document_ids)s
 ORDER BY source_document_id, disclosure_kind, report_member,
     anchor_visual_order, source_fact_key, segment, disclosure_id
 """
     label_query = f"""
 SELECT
-    source_document_id,
-    concept_qname,
-    language,
-    argMax(label, tuple(is_report_language, resolved_at, label_id)) AS label
-FROM {tables.QUALIFIED_ESEF_DOCUMENT_CONCEPT_LABELS_TABLE} FINAL
-WHERE source_document_id IN %(source_document_ids)s
-  AND label != ''
-GROUP BY source_document_id, concept_qname, language
-ORDER BY source_document_id, concept_qname, language
+    concept_labels.source_document_id,
+    concept_labels.concept_qname,
+    concept_labels.language,
+    argMax(
+        concept_labels.label,
+        tuple(
+            concept_labels.is_report_language,
+            concept_labels.resolved_at,
+            concept_labels.label_id
+        )
+    ) AS resolved_label
+FROM {tables.QUALIFIED_ESEF_DOCUMENT_CONCEPT_LABELS_TABLE} AS concept_labels
+WHERE concept_labels.source_document_id IN %(source_document_ids)s
+  AND concept_labels.label != ''
+GROUP BY
+    concept_labels.source_document_id,
+    concept_labels.concept_qname,
+    concept_labels.language
+ORDER BY
+    concept_labels.source_document_id,
+    concept_labels.concept_qname,
+    concept_labels.language
 """
     parameters = {"source_document_ids": source_document_ids}
     with clickhouse.get_connection() as client:
@@ -1045,6 +1124,11 @@ def _json_text(value: object) -> str:
     group_name=GROUP_NAME,
     kinds={"python", "s3", "clickhouse", "llm", "xbrl"},
     pool="esef_document_company_information_clickhouse",
+    retry_policy=dg.RetryPolicy(
+        max_retries=3,
+        delay=60,
+        backoff=dg.Backoff.EXPONENTIAL,
+    ),
     metadata={"table": tables.QUALIFIED_ESEF_DOCUMENT_COMPANY_INFORMATION_TABLE},
     description=(
         "Selects the latest canonical ESEF disclosures per company, archives "
@@ -1066,11 +1150,10 @@ def esef_document_company_information_clickhouse(
         model=config.model,
         base_url=config.base_url,
         temperature=config.temperature,
-        max_tokens=config.max_tokens,
         prompt_version=config.prompt_version,
         concurrency=config.concurrency,
         source_run_id=context.run_id,
-        country_iso2=config.country_iso2,
+        country_iso2s=config.country_iso2s,
         company_ids=config.company_ids,
         source_document_ids=config.source_document_ids,
         max_documents=config.max_documents,

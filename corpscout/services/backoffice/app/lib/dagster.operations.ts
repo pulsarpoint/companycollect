@@ -57,6 +57,10 @@ export const BACKOFFICE_RUNS_QUERY = /* GraphQL */ `
           jobName
           startTime
           endTime
+          runConfig
+          assetSelection {
+            path
+          }
           tags {
             key
             value
@@ -83,6 +87,10 @@ export const BACKOFFICE_RUN_QUERY = /* GraphQL */ `
         jobName
         startTime
         endTime
+        runConfig
+        assetSelection {
+          path
+        }
         tags {
           key
           value
@@ -93,6 +101,32 @@ export const BACKOFFICE_RUN_QUERY = /* GraphQL */ `
       }
       ... on PythonError {
         message
+      }
+    }
+  }
+`;
+
+export const BACKOFFICE_ASSET_GROUP_QUERY = /* GraphQL */ `
+  query BackofficeAssetGroup($group: AssetGroupSelector!) {
+    assetNodes(group: $group, loadMaterializations: true) {
+      id
+      assetKey {
+        path
+      }
+      groupName
+      description(characterLimit: 240)
+      jobNames
+      kinds
+      dependencyKeys {
+        path
+      }
+      staleStatus
+      partitionDefinition {
+        type
+      }
+      assetMaterializations(limit: 1) {
+        runId
+        timestamp
       }
     }
   }
