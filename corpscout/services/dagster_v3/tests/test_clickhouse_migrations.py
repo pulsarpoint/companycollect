@@ -331,8 +331,10 @@ EXPECTED_MIGRATIONS = (
     "000319_corpscout_rs_apr_company_people",
     "000320_corpscout_se_address_geocodes_current_mv",
     "000321_corpscout_rs_apr_company",
+    "000322_corpscout_se_company_ratsit_crawl_results",
     "000323_corpscout_se_postcode_centroids",
     "000324_corpscout_se_city_centroids",
+    "000325_corpscout_se_address_geocodes_served_view",
 )
 
 NOOP_MIGRATIONS = {"000276_noop"}
@@ -3148,6 +3150,55 @@ def test_company_serving_lineage_migration_makes_serving_rows_self_contained() -
         assert f"DROP COLUMN IF EXISTS {column}" in down_sql
 
     assert "DROP TABLE" not in sql
+
+
+def test_sweden_ratsit_crawl_results_migration_defines_result_contract() -> None:
+    up_sql = _migration_sql(
+        "000322_corpscout_se_company_ratsit_crawl_results.up.sql"
+    )
+    down_sql = _migration_sql(
+        "000322_corpscout_se_company_ratsit_crawl_results.down.sql"
+    )
+
+    assert (
+        "CREATE TABLE IF NOT EXISTS corpscout.se_company_ratsit_crawl_results"
+        in up_sql
+    )
+    for column in (
+        "company_id String",
+        "batch_id UUID",
+        "outcome LowCardinality(String)",
+        "selected_at DateTime64(3, 'UTC')",
+        "attempted_at DateTime64(3, 'UTC')",
+        "completed_at DateTime64(3, 'UTC')",
+        "http_status Nullable(UInt16)",
+        "source_bucket LowCardinality(String)",
+        "source_object_key String",
+        "content_size_bytes UInt64",
+        "duration_ms UInt64",
+        "attempt_count UInt16",
+        "temporal_workflow_id String",
+        "temporal_run_id String",
+        "recorded_at DateTime64(3, 'UTC')",
+    ):
+        assert column in up_sql
+
+    assert "raw_content" not in up_sql
+    assert "content_sha256" not in up_sql
+    assert "ENGINE = ReplacingMergeTree(recorded_at)" in up_sql
+    assert "PARTITION BY toYYYYMM(completed_at)" in up_sql
+    assert "ORDER BY (company_id, batch_id)" in up_sql
+    assert "match(company_id, '^[0-9]{10}$')" in up_sql
+    assert "content_size_bytes > 0" in up_sql
+    assert "CREATE VIEW IF NOT EXISTS corpscout.se_company_ratsit_current" in up_sql
+    assert "argMax(" in up_sql
+    assert "maxIf(completed_at, outcome = 'success')" in up_sql
+
+    drop_view = "DROP VIEW IF EXISTS corpscout.se_company_ratsit_current"
+    drop_table = (
+        "DROP TABLE IF EXISTS corpscout.se_company_ratsit_crawl_results"
+    )
+    assert down_sql.index(drop_view) < down_sql.index(drop_table)
 
 
 def test_esef_source_record_uid_repair_casts_fixed_string_hashes() -> None:
