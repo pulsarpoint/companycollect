@@ -95,9 +95,11 @@ export interface SeCompanyGeocodingListRow {
   /** The raw stored status of the primary address (e.g. "matched_exact", "" for
    * never-geocoded) -- kept alongside the class for the badge tooltip, exactly
    * as the Address tab's own cards show it. For a coarse-centroid row this
-   * stays 'unmatched'/'ambiguous' (the precise matcher's own outcome), never
-   * 'matched_area'; `geocode_precision`/`geocode_provider` carry the served
-   * overlay's own answer. Read off the view's `primary_geocode_status`. */
+   * stays 'unmatched'/'ambiguous'/'postal_box' (the precise matcher's own,
+   * fallback-eligible outcome -- see FALLBACK_ELIGIBLE_STATUSES in
+   * geocode_serving_overlay.py), never 'matched_area';
+   * `geocode_precision`/`geocode_provider` carry the served overlay's own
+   * answer. Read off the view's `primary_geocode_status`. */
   geocode_status: string;
   /** '' unless the served overlay filled the primary address with a coarse
    * centroid -- 'postcode' or 'city' when it did. Off `primary_geocode_precision`. */

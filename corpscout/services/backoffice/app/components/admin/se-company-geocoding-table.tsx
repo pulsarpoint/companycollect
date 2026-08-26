@@ -63,9 +63,9 @@ function geocodeBadgeLabel(row: SeCompanyGeocodingListRow): string {
 
 /** A coarse row's title names BOTH halves of the story: the coordinate this
  * row actually shows (a centroid) and the precise outcome underneath it
- * (still 'unmatched'/'ambiguous' on se_company_address -- the served overlay
- * fills the read, it never rewrites the store). Every other class keeps the
- * plain raw-status title. */
+ * (still 'unmatched'/'ambiguous'/'postal_box' on se_company_address -- the
+ * served overlay fills the read, it never rewrites the store). Every other
+ * class keeps the plain raw-status title. */
 function geocodeBadgeTitle(row: SeCompanyGeocodingListRow): string {
   if (row.geocode_class === "coarse") {
     return `Coarse ${row.geocode_precision || "centroid"} centroid -- precise match: ${row.geocode_status || "unmatched"}`;

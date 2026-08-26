@@ -14,9 +14,10 @@ WHAT IT AGGREGATES.
 - Each address element is a Map(String, String) -- every value stringified so `toJSONString`
   emits a plain JSON object (verified 2026-08-26 to round-trip a/a/o intact). Its geocode fields
   (`geocode_precision`, `geocode_provider`, `latitude`, `longitude`) come from the SE geocode
-  SERVING OVERLAY `corpscout.se_address_geocodes_served` (migration 000325 -- precise outcomes
-  pass through, unmatched/ambiguous identities filled with a coarse postcode/city centroid),
-  LEFT-JOINed on `address_id`; `geocode_status` stays the value stored on the published row.
+  SERVING OVERLAY `corpscout.se_address_geocodes_served` (migration 000325, widened by 000327
+  -- precise outcomes pass through, unmatched/ambiguous/postal_box identities filled with a
+  coarse postcode/city centroid), LEFT-JOINed on `address_id`; `geocode_status` stays the
+  value stored on the published row.
 - `legal_name` is INNER-JOINed from `se_company_info` FINAL (every addressed company has one --
   0 orphans verified), matching the sibling company list's own name spine.
 

@@ -19,21 +19,26 @@
  *
  * - "geocoded": a successful, PRECISE match -- coordinates the precise
  *   matcher itself produced, no served-overlay fallback involved.
- * - "coarse": the precise matcher left this address unmatched/ambiguous, but
- *   corpscout.se_address_geocodes_served (the SE geocode SERVING OVERLAY,
- *   migration 000325) filled it with a coarse postcode-or-city CENTROID
- *   coordinate instead (`geocode_provider = 'centroid_fallback'`). A usable
- *   coordinate, but never a precise one -- and NEVER the same state as
- *   "geocoded", even though the overlay's own `match_status` for such a row
- *   is literally `matched_area`, a status that otherwise means an exact hit.
+ * - "coarse": the precise matcher left this address unmatched/ambiguous/postal_box (the
+ *   fallback-eligible statuses -- see FALLBACK_ELIGIBLE_STATUSES in
+ *   geocode_serving_overlay.py), but corpscout.se_address_geocodes_served (the SE geocode
+ *   SERVING OVERLAY, migration 000325, widened to cover postal_box by migration 000327)
+ *   filled it with a coarse postcode-or-city CENTROID coordinate instead
+ *   (`geocode_provider = 'centroid_fallback'`). A usable coordinate, but never a precise
+ *   one -- and NEVER the same state as "geocoded", even though the overlay's own
+ *   `match_status` for such a row is literally `matched_area`, a status that otherwise
+ *   means an exact hit.
  * - "ambiguous": more than one OpenStreetMap candidate, no coordinate chosen,
  *   and no postcode/city centroid was available to fall back to either.
- * - "unmatched": every other non-empty status -- 'unmatched', 'invalid_address',
- *   'foreign_address', 'postal_box' and 'property_identifier' alike. Each of
- *   those is a real, distinct outcome on the Address tab's own detail cards,
- *   but this tab's job is triage, not a taxonomy: none of them is a usable
- *   coordinate, so none of them is "geocoded" -- and none has a centroid
- *   fallback either, or it would classify as "coarse" instead.
+ * - "unmatched": every other non-empty status with no usable served-overlay row --
+ *   'unmatched', 'invalid_address', 'foreign_address', 'postal_box' and
+ *   'property_identifier' alike. Each of those is a real, distinct outcome on the Address
+ *   tab's own detail cards, but this tab's job is triage, not a taxonomy: none of them is a
+ *   usable coordinate, so none of them is "geocoded" here. 'unmatched' and 'postal_box' ARE
+ *   centroid-fallback-eligible (see "coarse" above) -- a row lands in THIS bucket only when
+ *   no postcode/city centroid was available to fill it; 'invalid_address',
+ *   'foreign_address' and 'property_identifier' are never fallback-eligible and always
+ *   land here.
  * - "no_outcome": geocode_status is '' -- the address has never reached the
  *   geocoder at all.
  */

@@ -1,7 +1,8 @@
 """The SERVING overlay's precise base is swappable, and by default it is the store read.
 
-`build_served_geocodes_sql` fills unmatched/ambiguous identities with coarse centroids over
-a PRECISE base. That base is `build_current_geocodes_sql` by default -- the self-ranking
+`build_served_geocodes_sql` fills unmatched/ambiguous/postal_box identities (the
+fallback-eligible statuses -- FALLBACK_ELIGIBLE_STATUSES) with coarse centroids over a
+PRECISE base. That base is `build_current_geocodes_sql` by default -- the self-ranking
 read straight off the versioned store -- which is what the overlay's own clickhouse-local
 correctness test seeds and depends on. But that read is expensive (it re-ranks 2.09M raw
 rows), so the SERVED VIEW (migration, Task 5b) wraps the ALREADY materialized fast serving
