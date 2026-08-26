@@ -2,7 +2,7 @@
 
 DATABASE_URL := $(or $(DATABASE_URL),$(shell sed -n 's/^DATABASE_URL=//p' .env 2>/dev/null | tail -n 1),postgres://corpscout:change-me@companycollect:5432/corpscout?sslmode=disable)
 CORPSCOUT_TEST_DATABASE_URL := $(or $(CORPSCOUT_TEST_DATABASE_URL),$(shell sed -n 's/^CORPSCOUT_TEST_DATABASE_URL=//p' .env 2>/dev/null | tail -n 1),$(shell sed -n 's/^DATABASE_URL=//p' .env 2>/dev/null | tail -n 1 | sed 's|/corpscout?|/corpscout_test?|'),postgres://corpscout:change-me@companycollect:5432/corpscout_test?sslmode=disable)
-CLICKHOUSE_MIGRATE_URL := $(or $(CLICKHOUSE_MIGRATE_URL),$(shell sed -n 's/^CLICKHOUSE_MIGRATE_URL=//p' .env 2>/dev/null | tail -n 1),clickhouse://companycollect:9002?username=default&password=change-me&database=corpscout&x-multi-statement=true)
+CLICKHOUSE_MIGRATE_URL := $(or $(CLICKHOUSE_MIGRATE_URL),$(shell sed -n 's/^CLICKHOUSE_MIGRATE_URL=//p' .env 2>/dev/null | tail -n 1),clickhouse://companycollect:9002?username=default&password=change-me&database=corpscout&x-multi-statement=true&read_timeout=300)
 CLICKHOUSE_NATIVE_URL := $(or $(CLICKHOUSE_NATIVE_URL),$(shell sed -n 's/^CLICKHOUSE_NATIVE_URL=//p' .env 2>/dev/null | tail -n 1),$(CLICKHOUSE_MIGRATE_URL))
 COMPANYCOLLECT_HOST_IP := $(or $(COMPANYCOLLECT_HOST_IP),$(shell sed -n 's/^COMPANYCOLLECT_HOST_IP=//p' .env 2>/dev/null | tail -n 1),100.85.212.113)
 CLICKHOUSE_MIGRATE_DOCKER_ARGS ?= --add-host companycollect:$(COMPANYCOLLECT_HOST_IP)
