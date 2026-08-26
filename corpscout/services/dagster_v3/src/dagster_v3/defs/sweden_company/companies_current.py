@@ -20,13 +20,18 @@ WHAT IT AGGREGATES.
 - `legal_name` is INNER-JOINed from `se_company_info` FINAL (every addressed company has one --
   0 orphans verified), matching the sibling company list's own name spine.
 
-THE PRIMARY-ADDRESS SUMMARY. `primary_geocode_class`/`_precision`/`_provider`/`_latitude`/
+THE PRIMARY-ADDRESS SUMMARY. `primary_street_address`/`_postal_code`/`_city`/
+`primary_geocode_status`/`primary_geocode_class`/`_precision`/`_provider`/`_latitude`/
 `_longitude` describe the ONE address the geocoding list treats as the company's own, picked by
 the SAME rule that list uses (se-company-geocoding-list.server.ts): a physical
 `visiting_or_postal` outranks `visiting`, which outranks a postal-only row, with `address_key`
 as the deterministic final tiebreak -- expressed here as the identical `ORDER BY ... LIMIT 1 BY
 company_id` idiom rather than an aggregate, so the primary row's own coordinate (which may be
-NULL) is carried through verbatim.
+NULL) is carried through verbatim. The street/postcode/city/geocode_status columns are the
+primary row's own display fields carried out alongside the geocode summary: the backoffice
+geocoding list reads them straight off this table for its Company/Address columns and badge
+tooltip, so it never has to re-pick a primary out of the `addresses` JSON (which, being a plain
+map array, carries no `address_key` to tiebreak on).
 
 THE CLASS IS COARSE-AWARE. `primary_geocode_class` mirrors the backoffice's
 GEOCODE_STATUS_CLASS_EXPR EXACTLY (`_geocode_class_expr` below), so the Task 3 repoint is a
@@ -156,6 +161,10 @@ def build_se_companies_current_sql() -> str:
 primary_address AS (
   SELECT
     company_id,
+    street_address AS primary_street_address,
+    postal_code AS primary_postal_code,
+    city AS primary_city,
+    geocode_status AS primary_geocode_status,
     {_geocode_class_expr("geocode_status", "geocode_provider")} AS primary_geocode_class,
     geocode_precision AS primary_geocode_precision,
     geocode_provider AS primary_geocode_provider,
@@ -178,6 +187,10 @@ SELECT
   i.legal_name AS legal_name,
   agg.addresses AS addresses,
   agg.address_count AS address_count,
+  pa.primary_street_address AS primary_street_address,
+  pa.primary_postal_code AS primary_postal_code,
+  pa.primary_city AS primary_city,
+  pa.primary_geocode_status AS primary_geocode_status,
   pa.primary_geocode_class AS primary_geocode_class,
   pa.primary_geocode_precision AS primary_geocode_precision,
   pa.primary_geocode_provider AS primary_geocode_provider,

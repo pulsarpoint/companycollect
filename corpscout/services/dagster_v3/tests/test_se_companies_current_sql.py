@@ -294,6 +294,12 @@ def test_primary_class_is_coarse_aware_for_a_centroid_fallback_primary(
     assert row["primary_geocode_precision"] == "city"
     assert row["primary_geocode_provider"] == "centroid_fallback"
     assert float(row["primary_latitude"]) == pytest.approx(COARSE_LAT)
+    # The primary row's own display fields are carried out beside the geocode summary, for the
+    # backoffice list's Company/Address columns and badge tooltip.
+    assert row["primary_street_address"] == "Storgatan 1"
+    assert row["primary_postal_code"] == "231 39"
+    assert row["primary_city"] == "Trelleborg"
+    assert row["primary_geocode_status"] == "unmatched"
 
 
 def test_primary_pick_takes_the_visiting_or_postal_row(rows: dict[str, dict]) -> None:
@@ -303,6 +309,11 @@ def test_primary_pick_takes_the_visiting_or_postal_row(rows: dict[str, dict]) ->
     assert row["primary_geocode_class"] == "geocoded"
     assert row["primary_geocode_provider"] == "openstreetmap"
     assert float(row["primary_latitude"]) == pytest.approx(PRECISE_LAT)
+    # The display fields come from the SAME primary row -- the visiting_or_postal one --
+    # not the postal secondary (whose street is "Box 9").
+    assert row["primary_street_address"] == "Kungsgatan 2"
+    assert row["primary_city"] == "Stockholm"
+    assert row["primary_geocode_status"] == "matched_exact"
 
 
 def test_primary_class_falls_back_to_base_status_with_no_served_row(

@@ -73,6 +73,10 @@ AS WITH company_addresses AS (
 primary_address AS (
   SELECT
     company_id,
+    street_address AS primary_street_address,
+    postal_code AS primary_postal_code,
+    city AS primary_city,
+    geocode_status AS primary_geocode_status,
     multiIf(
     geocode_status = '', 'no_outcome',
     geocode_provider = 'centroid_fallback', 'coarse',
@@ -115,6 +119,10 @@ SELECT
   i.legal_name AS legal_name,
   agg.addresses AS addresses,
   agg.address_count AS address_count,
+  pa.primary_street_address AS primary_street_address,
+  pa.primary_postal_code AS primary_postal_code,
+  pa.primary_city AS primary_city,
+  pa.primary_geocode_status AS primary_geocode_status,
   pa.primary_geocode_class AS primary_geocode_class,
   pa.primary_geocode_precision AS primary_geocode_precision,
   pa.primary_geocode_provider AS primary_geocode_provider,
