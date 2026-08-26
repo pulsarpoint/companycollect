@@ -1,5 +1,5 @@
 {
-  "version": "sweden-address-resolution-golden-v5",
+  "version": "sweden-address-resolution-golden-v6",
   "cases": [
     {
       "case_id": "exact_building_with_unit",
@@ -999,6 +999,221 @@
           "supporting_record_count": 1,
           "source_record_id": "node/backstigen-4",
           "source_record_url": "https://www.openstreetmap.org/node/backstigen-4"
+        }
+      ],
+      "expected": {
+        "status": "unmatched",
+        "precision": "",
+        "strategy": ""
+      }
+    },
+    {
+      "case_id": "punctuated_suffix_exact_recovery",
+      "description": "v7 recovery: a punctuated glued suffix ('Villav.') that v6's glued map cannot read (the trailing period breaks 'lowered.endswith(\"v\")') resolves exact-only through the v7 exact-suffix map ('v.' -> 'vaegen').",
+      "query": {
+        "document_id": "query-villav-3",
+        "country_code": "SE",
+        "raw_address": "Villav. 3, 12573 Älvsjö",
+        "search_text": "Villav. 3, 12573 Älvsjö",
+        "street_name": "Villav.",
+        "house_number": "3",
+        "unit": "",
+        "postal_code": "12573",
+        "locality": "Älvsjö",
+        "address_kind": "physical",
+        "reference_precision": "",
+        "latitude": null,
+        "longitude": null,
+        "coordinate_spread_meters": null,
+        "supporting_record_count": 0,
+        "source_record_id": "query-villav-3",
+        "source_record_url": ""
+      },
+      "references": [
+        {
+          "document_id": "reference-villavagen-3",
+          "country_code": "SE",
+          "raw_address": "",
+          "search_text": "Villavägen 3, 12573 Älvsjö",
+          "street_name": "Villavägen",
+          "house_number": "3",
+          "unit": "",
+          "postal_code": "12573",
+          "locality": "Älvsjö",
+          "address_kind": "physical",
+          "reference_precision": "building",
+          "latitude": 59.276887,
+          "longitude": 18.011506,
+          "coordinate_spread_meters": 0,
+          "supporting_record_count": 1,
+          "source_record_id": "node/villavagen-3",
+          "source_record_url": "https://www.openstreetmap.org/node/villavagen-3"
+        }
+      ],
+      "expected": {
+        "status": "matched_corrected",
+        "precision": "building",
+        "strategy": "expanded_street_postcode_house"
+      }
+    },
+    {
+      "case_id": "separate_word_definite_expansion",
+      "description": "v7 separate-word: a standalone indefinite last token ('Stora Vaeg') that neither v6 nor the glued map can touch resolves exact-only through the v7 separate-definite map to its definite form ('Stora Vaegen').",
+      "query": {
+        "document_id": "query-stora-vag-5",
+        "country_code": "SE",
+        "raw_address": "Stora Väg 5, 11122 Stockholm",
+        "search_text": "Stora Väg 5, 11122 Stockholm",
+        "street_name": "Stora Väg",
+        "house_number": "5",
+        "unit": "",
+        "postal_code": "11122",
+        "locality": "Stockholm",
+        "address_kind": "physical",
+        "reference_precision": "",
+        "latitude": null,
+        "longitude": null,
+        "coordinate_spread_meters": null,
+        "supporting_record_count": 0,
+        "source_record_id": "query-stora-vag-5",
+        "source_record_url": ""
+      },
+      "references": [
+        {
+          "document_id": "reference-stora-vagen-5",
+          "country_code": "SE",
+          "raw_address": "",
+          "search_text": "Stora Vägen 5, 11122 Stockholm",
+          "street_name": "Stora Vägen",
+          "house_number": "5",
+          "unit": "",
+          "postal_code": "11122",
+          "locality": "Stockholm",
+          "address_kind": "physical",
+          "reference_precision": "building",
+          "latitude": 59.334,
+          "longitude": 18.061,
+          "coordinate_spread_meters": 0,
+          "supporting_record_count": 1,
+          "source_record_id": "node/stora-vagen-5",
+          "source_record_url": "https://www.openstreetmap.org/node/stora-vagen-5"
+        }
+      ],
+      "expected": {
+        "status": "matched_corrected",
+        "precision": "building",
+        "strategy": "expanded_street_postcode_house"
+      }
+    },
+    {
+      "case_id": "punctuated_suffix_exact_regression_lock",
+      "description": "REGRESSION LOCK (2026-08-25 v7 exploration): 'Strandbergsg.' must resolve exact-only to Strandbergsgatan and stay DECISIVE, not go ambiguous by having its exact-only expansion fuzzy-match the near-namesake Strindbergsgatan in the same locality. The resolution._replace_fuzzy_street_postings guard ('street_variant_kind != suffix_exact') keeps the exact-only variant out of the fuzzy path; without that one line this case flips to ambiguous.",
+      "query": {
+        "document_id": "query-strandbergsg-5",
+        "country_code": "SE",
+        "raw_address": "Strandbergsg. 5, 11251 Stockholm",
+        "search_text": "Strandbergsg. 5, 11251 Stockholm",
+        "street_name": "Strandbergsg.",
+        "house_number": "5",
+        "unit": "",
+        "postal_code": "11251",
+        "locality": "Stockholm",
+        "address_kind": "physical",
+        "reference_precision": "",
+        "latitude": null,
+        "longitude": null,
+        "coordinate_spread_meters": null,
+        "supporting_record_count": 0,
+        "source_record_id": "query-strandbergsg-5",
+        "source_record_url": ""
+      },
+      "references": [
+        {
+          "document_id": "reference-strandbergsgatan-5",
+          "country_code": "SE",
+          "raw_address": "",
+          "search_text": "Strandbergsgatan 5, 11251 Stockholm",
+          "street_name": "Strandbergsgatan",
+          "house_number": "5",
+          "unit": "",
+          "postal_code": "11251",
+          "locality": "Stockholm",
+          "address_kind": "physical",
+          "reference_precision": "building",
+          "latitude": 59.3293,
+          "longitude": 18.0686,
+          "coordinate_spread_meters": 0,
+          "supporting_record_count": 1,
+          "source_record_id": "node/730950907",
+          "source_record_url": "https://www.openstreetmap.org/node/730950907"
+        },
+        {
+          "document_id": "reference-strindbergsgatan-5",
+          "country_code": "SE",
+          "raw_address": "",
+          "search_text": "Strindbergsgatan 5, 11251 Stockholm",
+          "street_name": "Strindbergsgatan",
+          "house_number": "5",
+          "unit": "",
+          "postal_code": "11251",
+          "locality": "Stockholm",
+          "address_kind": "physical",
+          "reference_precision": "building",
+          "latitude": 59.3521,
+          "longitude": 18.0498,
+          "coordinate_spread_meters": 0,
+          "supporting_record_count": 1,
+          "source_record_id": "node/1904752776",
+          "source_record_url": "https://www.openstreetmap.org/node/1904752776"
+        }
+      ],
+      "expected": {
+        "status": "matched_corrected",
+        "precision": "building",
+        "strategy": "expanded_street_fuzzy_postcode_house"
+      }
+    },
+    {
+      "case_id": "excluded_abbreviation_no_exact_variant",
+      "description": "NEGATIVE CONTROL: 'Hantverkarst' ends in the deliberately excluded 'st' abbreviation (ambiguous: stigen vs Sankt vs storgatan), so no suffix_exact variant is minted; it cannot reach the near-miss Hantverkarstigen reference and stays unmatched.",
+      "query": {
+        "document_id": "query-hantverkarst-5",
+        "country_code": "SE",
+        "raw_address": "Hantverkarst 5, 11221 Stockholm",
+        "search_text": "Hantverkarst 5, 11221 Stockholm",
+        "street_name": "Hantverkarst",
+        "house_number": "5",
+        "unit": "",
+        "postal_code": "11221",
+        "locality": "Stockholm",
+        "address_kind": "physical",
+        "reference_precision": "",
+        "latitude": null,
+        "longitude": null,
+        "coordinate_spread_meters": null,
+        "supporting_record_count": 0,
+        "source_record_id": "query-hantverkarst-5",
+        "source_record_url": ""
+      },
+      "references": [
+        {
+          "document_id": "reference-hantverkarstigen-5",
+          "country_code": "SE",
+          "raw_address": "",
+          "search_text": "Hantverkarstigen 5, 11221 Stockholm",
+          "street_name": "Hantverkarstigen",
+          "house_number": "5",
+          "unit": "",
+          "postal_code": "11221",
+          "locality": "Stockholm",
+          "address_kind": "physical",
+          "reference_precision": "building",
+          "latitude": 59.33,
+          "longitude": 18.05,
+          "coordinate_spread_meters": 0,
+          "supporting_record_count": 1,
+          "source_record_id": "node/hantverkarstigen-5",
+          "source_record_url": "https://www.openstreetmap.org/node/hantverkarstigen-5"
         }
       ],
       "expected": {
