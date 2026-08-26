@@ -1348,6 +1348,7 @@ def test_sweden_company_address_geocoding_assets_are_company_enhancements() -> N
     assert {key.path[-1] for key in weekly_job.asset_layer.executable_asset_keys} == {
         "sweden_osm_pbf_s3",
         "sweden_osm_addresses_duckdb",
+        "sweden_geocode_centroids_clickhouse",
         "sweden_company_canonical_addresses_duckdb",
         "sweden_company_canonical_addresses_clickhouse",
         "sweden_shared_addresses_duckdb",

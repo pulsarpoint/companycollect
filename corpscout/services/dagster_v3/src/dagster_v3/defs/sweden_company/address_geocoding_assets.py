@@ -23,6 +23,10 @@ from dagster_v3.defs.sweden_company import (
 from dagster_v3.defs.sweden_company.address_resolution_policy import (
     SWEDEN_ADDRESS_RESOLUTION_POLICY,
 )
+from dagster_v3.defs.sweden_company.centroid_assets import (
+    CENTROIDS_ASSET_KEY,
+    sweden_geocode_centroids_clickhouse,
+)
 
 GROUP_NAME = "sweden_company"
 CANONICAL_DUCKDB_ASSET_KEY = "sweden_company_canonical_addresses_duckdb"
@@ -1596,6 +1600,7 @@ sweden_company_address_geocoding_weekly_job = dg.define_asset_job(
     selection=dg.AssetSelection.assets(
         "sweden_osm_pbf_s3",
         "sweden_osm_addresses_duckdb",
+        CENTROIDS_ASSET_KEY,
         CANONICAL_DUCKDB_ASSET_KEY,
         CANONICAL_CLICKHOUSE_ASSET_KEY,
         SHARED_ADDRESSES_DUCKDB_ASSET_KEY,
@@ -1652,6 +1657,7 @@ sweden_company_address_geocoding_weekly = dg.ScheduleDefinition(
 
 defs = dg.Definitions(
     assets=[
+        sweden_geocode_centroids_clickhouse,
         sweden_company_canonical_addresses_duckdb,
         sweden_company_canonical_addresses_clickhouse,
         sweden_shared_addresses_duckdb,
