@@ -43,6 +43,8 @@ overlay-read fallback every absent field takes, answering identically under both
 `join_use_nulls` settings.
 """
 
+from datetime import UTC, datetime, timedelta
+
 from dagster_v3.defs.sweden_company.geocode_serving_overlay import (
     GEOCODE_FALLBACK_PROVIDER,
 )
@@ -185,3 +187,69 @@ FROM aggregated AS agg
 INNER JOIN {COMPANY_INFO_TABLE} AS i FINAL ON i.company_id = agg.company_id
 INNER JOIN primary_address AS pa ON pa.company_id = agg.company_id
 ORDER BY agg.company_id"""
+
+
+
+# --- Serving-view refresh health -------------------------------------------------------------
+# The refreshable MV migration 000326 creates has no Dagster asset that recomputes it -- so, as
+# with se_address_geocodes_current (migration 000320), the only place its health is visible is
+# its refresh state in system.view_refreshes. Task 2b's sweden_companies_current_clickhouse asset
+# reads SE_COMPANIES_CURRENT_REFRESH_SQL and reports companies_current_refresh_is_healthy(...);
+# the SQL and the predicate live here beside the builder so both are importable and unit-testable
+# without pulling in the asset module. This mirrors sweden_address_geocodes_serving_view_refresh_check.
+
+SE_COMPANIES_CURRENT_VIEW = "se_companies_current"
+
+# Three times the REFRESH EVERY 1 HOUR interval migration 000326 gave the view. One interval
+# would fire on any refresh that merely ran long; three means two consecutive refreshes had to
+# have been missed entirely before this reports unhealthy. Mirrors the 000320 view's budget.
+MAX_COMPANIES_CURRENT_REFRESH_AGE = timedelta(hours=3)
+
+# The refresh instant is fetched as an epoch INTEGER, not a DateTime: `last_success_time` is
+# Nullable(DateTime) with no timezone in its type, so the driver hands back a NAIVE datetime in
+# the SERVER's timezone -- comparing that against a UTC `now` is wrong by the server's offset
+# (most of a three-hour budget on a Europe/Stockholm server). toUnixTimestamp is the absolute
+# tick and an int crosses the driver unambiguously. Status is selected but never gated: a view
+# mid-refresh (Running) is healthy if its LAST success is recent, and one stuck retrying is
+# unhealthy for the same reason -- both are answered by exception + last_success_time.
+SE_COMPANIES_CURRENT_REFRESH_SQL = f"""SELECT
+    status,
+    exception,
+    toUnixTimestamp(last_success_time)
+FROM system.view_refreshes
+WHERE database = '{CLICKHOUSE_DATABASE}'
+  AND view = '{SE_COMPANIES_CURRENT_VIEW}'"""
+
+
+def companies_current_refresh_is_healthy(
+    *,
+    row_found: bool,
+    exception: str,
+    last_success_epoch_seconds: int | None,
+    now: datetime,
+) -> bool:
+    """Whether corpscout.se_companies_current is still being refreshed.
+
+    Fails in four ways, each a way the serving surface goes wrong while still answering fast:
+
+    - NO ROW. system.view_refreshes lists every refreshable view ClickHouse knows; a WHERE that
+      names one database and one view returning nothing means se_companies_current is not a
+      refreshable view on this server -- migration 000326 was not applied, or something replaced
+      the view with a table. `row_found=False` fails.
+    - AN EXCEPTION. A view whose refresh throws keeps serving its last good contents at full
+      speed, so staleness is the only visible symptom and the age term alone would not report it
+      for three hours. This also catches the definer losing SELECT on an input.
+    - NEVER SUCCEEDED. `None` means ClickHouse knows the view and has never completed a refresh:
+      it answers every request empty and raises nothing. Treating an absent instant as 'no
+      evidence, so pass' would make the check silent in exactly the state it exists to catch.
+    - STALE. A last success older than three refresh intervals means refreshes have quietly
+      stopped landing.
+    """
+    if not row_found:
+        return False
+    if exception:
+        return False
+    if last_success_epoch_seconds is None:
+        return False
+    last_success = datetime.fromtimestamp(int(last_success_epoch_seconds), tz=UTC)
+    return now.astimezone(UTC) - last_success <= MAX_COMPANIES_CURRENT_REFRESH_AGE
