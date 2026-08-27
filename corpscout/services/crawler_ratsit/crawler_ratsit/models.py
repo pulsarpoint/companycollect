@@ -1,5 +1,6 @@
 from dataclasses import asdict, dataclass
 from datetime import datetime
+from hashlib import sha256
 from typing import Any, Self
 from uuid import UUID
 
@@ -48,12 +49,15 @@ class FetchedPage:
     content: str
     error_type: str
     error_message: str
+    diagnostic_content: str = ""
 
     def __post_init__(self) -> None:
         if self.outcome not in PAGE_OUTCOMES:
             raise ValueError(f"unsupported page outcome: {self.outcome}")
         if self.outcome == "success" and not self.content:
             raise ValueError("a successful page must contain content")
+        if self.outcome != "success" and self.content:
+            raise ValueError("a non-successful page must not contain stored content")
 
 
 @dataclass(frozen=True)
@@ -152,6 +156,16 @@ def validate_company_id(company_id: str) -> None:
         or not company_id.isdigit()
     ):
         raise ValueError("company_id must contain exactly ten or twelve ASCII digits")
+
+
+def identity_sha256(company_id: str) -> str:
+    validate_company_id(company_id)
+    return sha256(company_id.encode("utf-8")).hexdigest()
+
+
+def identity_kind(company_id: str) -> str:
+    validate_company_id(company_id)
+    return "individual_owner" if len(company_id) == 12 else "company"
 
 
 def validate_batch_id(batch_id: str) -> None:

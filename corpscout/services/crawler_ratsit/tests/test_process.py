@@ -35,25 +35,23 @@ def test_browser_launch_uses_its_profile_and_optional_proxy(
     launch_arguments: dict[str, Any] = {}
 
     async def fake_launch(
-        profile_directory: Path,
+        selected_browser_settings: BrowserSettings,
         *,
+        profile_directory: Path,
         license_key: str | None,
         headless: bool,
-        proxy: str | None,
-        geoip: bool,
     ) -> FakeContext:
         launch_arguments.update(
             {
+                "browser_settings": selected_browser_settings,
                 "profile_directory": profile_directory,
                 "license_key": license_key,
                 "headless": headless,
-                "proxy": proxy,
-                "geoip": geoip,
             }
         )
         return context
 
-    monkeypatch.setattr(process, "launch_persistent_context_async", fake_launch)
+    monkeypatch.setattr(process, "launch_browser_context", fake_launch)
     browser_settings = BrowserSettings(
         browser_id="proxy1",
         proxy_url="http://user:password@proxy1:8080",
@@ -77,11 +75,10 @@ def test_browser_launch_uses_its_profile_and_optional_proxy(
 
     assert runtime.context is context
     assert launch_arguments == {
+        "browser_settings": browser_settings,
         "profile_directory": tmp_path / "proxy1",
         "license_key": "license",
         "headless": False,
-        "proxy": "http://user:password@proxy1:8080",
-        "geoip": True,
     }
     assert "disconnected" in context.browser.subscriptions
 

@@ -1,6 +1,7 @@
 import asyncio
 import io
 import json
+import logging
 from datetime import UTC, datetime, timedelta
 from types import SimpleNamespace
 from typing import Any
@@ -18,7 +19,7 @@ from crawler_ratsit.activities import (
     RatsitCrawlActivities,
 )
 from crawler_ratsit.crawler import RatsitRateLimitedError
-from crawler_ratsit.models import CrawlActivityInput, FetchedPage
+from crawler_ratsit.models import CrawlActivityInput, FetchedPage, identity_sha256
 from crawler_ratsit.object_store import RatsitObjectStore
 
 
@@ -60,7 +61,9 @@ class FakeS3Client:
         self.objects[object_identity] = Body
 
 
-def test_capture_activity_reuses_existing_s3_response() -> None:
+def test_capture_activity_reuses_existing_s3_response(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
     async def run_test() -> None:
         crawl_calls = 0
 
@@ -106,7 +109,86 @@ def test_capture_activity_reuses_existing_s3_response() -> None:
         assert stored_response["browser_id"] == "direct"
         assert stored_response["result"]["company_id"] == "5562434182"
 
+    caplog.set_level(logging.INFO, logger="crawler_ratsit.activities")
     asyncio.run(run_test())
+
+    completion_log = next(
+        record.message
+        for record in caplog.records
+        if "event=ratsit_crawl_completed" in record.message
+    )
+    assert f"identity_sha256={identity_sha256('5562434182')}" in completion_log
+    assert "identity_kind=company" in completion_log
+    assert "company_id=" not in completion_log
+    assert "workflow_id=" not in completion_log
+    assert "http_status=200" in completion_log
+    assert "s3_stored=True" in completion_log
+
+    reuse_log = next(
+        record.message
+        for record in caplog.records
+        if "event=ratsit_s3_response_reused" in record.message
+    )
+    assert "browser_id=direct" in reuse_log
+    assert "attempt=2" in reuse_log
+
+
+def test_capture_activity_keeps_not_found_result_out_of_s3(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    async def run_test() -> None:
+        async def crawl_page(company_id: str) -> FetchedPage:
+            return FetchedPage(
+                outcome="not_found",
+                requested_url=f"https://www.ratsit.se/{company_id[-10:]}",
+                final_url="https://www.ratsit.se/foretag?saknas",
+                http_status=200,
+                content="",
+                error_type="ratsit_missing",
+                error_message="Ratsit redirected to /foretag?saknas",
+                diagnostic_content="<html><body>Missing</body></html>",
+            )
+
+        s3_client = FakeS3Client()
+        activities = RatsitCrawlActivities(
+            browsers=(CrawlBrowser(browser_id="direct", crawl_page=crawl_page),),
+            per_browser_activities_per_second=0.2,
+            object_store=RatsitObjectStore(
+                s3_client,
+                bucket="source-sweden-ratsit",
+                prefix="raw",
+            ),
+        )
+        result = await activities.capture_company(
+            CrawlActivityInput(
+                company_id="195562434182",
+                batch_id=str(uuid4()),
+                selected_at=datetime(2020, 1, 1, tzinfo=UTC).isoformat(),
+                temporal_workflow_id="ratsit/test",
+                temporal_run_id="run-id",
+            ),
+            attempt_number=1,
+        )
+
+        assert result.outcome == "not_found"
+        assert result.source_bucket == ""
+        assert result.source_object_key == ""
+        assert result.content_size_bytes == 0
+        assert result.error_type == "ratsit_missing"
+        assert not s3_client.objects
+
+    caplog.set_level(logging.INFO, logger="crawler_ratsit.activities")
+    asyncio.run(run_test())
+
+    completion_log = next(
+        record.message
+        for record in caplog.records
+        if "event=ratsit_crawl_completed" in record.message
+    )
+    assert "identity_kind=individual_owner" in completion_log
+    assert "outcome=not_found" in completion_log
+    assert "content_bytes=0" in completion_log
+    assert "s3_stored=False" in completion_log
 
 
 def test_rate_limited_activity_requests_a_ten_minute_retry(

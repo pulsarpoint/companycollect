@@ -42,11 +42,14 @@ class FakePage:
         status: int,
         content: str = "",
         selector_timeout: bool = False,
+        final_url: str = "https://www.ratsit.se/5562434182",
+        document_content: str = "<html><body>Document</body></html>",
     ) -> None:
-        self.url = "https://www.ratsit.se/5562434182"
+        self.url = final_url
         self.requested_url: str | None = None
         self._status = status
         self._locator = FakeLocator(content=content, timeout=selector_timeout)
+        self._document_content = document_content
         self.closed = False
 
     async def goto(self, url: str, **_kwargs: Any) -> FakeResponse:
@@ -56,6 +59,9 @@ class FakePage:
     def locator(self, selector: str) -> FakeLocator:
         assert selector == "main .main-inner"
         return self._locator
+
+    async def content(self) -> str:
+        return self._document_content
 
     async def close(self) -> None:
         self.closed = True
@@ -152,6 +158,33 @@ def test_fetch_page_marks_missing_selector() -> None:
     )
 
     assert result.outcome == "selector_changed"
+    assert result.content == ""
+    assert result.diagnostic_content == "<html><body>Document</body></html>"
+
+
+def test_fetch_page_treats_ratsit_missing_redirect_as_not_found() -> None:
+    result = asyncio.run(
+        fetch_ratsit_page(
+            FakePage(
+                status=200,
+                selector_timeout=True,
+                final_url="https://www.ratsit.se/foretag?saknas",
+                document_content="<html><body>Företaget saknas</body></html>",
+            ),
+            "195562434182",
+            content_selector="main .main-inner",
+            timeout_ms=1000,
+        )
+    )
+
+    assert result.outcome == "not_found"
+    assert result.http_status == 200
+    assert result.content == ""
+    assert result.error_type == "ratsit_missing"
+    assert result.error_message == "Ratsit redirected to /foretag?saknas"
+    assert result.diagnostic_content == (
+        "<html><body>Företaget saknas</body></html>"
+    )
 
 
 def test_fetch_page_retries_rate_limit() -> None:

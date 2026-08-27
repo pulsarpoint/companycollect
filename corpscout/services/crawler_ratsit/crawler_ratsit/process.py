@@ -13,7 +13,6 @@ import boto3
 import click
 import clickhouse_connect
 from botocore.config import Config as BotoConfig
-from cloakbrowser import launch_persistent_context_async
 from playwright.async_api import BrowserContext
 from temporalio.client import Client
 from temporalio.worker import Worker
@@ -23,6 +22,7 @@ from crawler_ratsit.activities import (
     RatsitCrawlActivities,
     RatsitResultActivities,
 )
+from crawler_ratsit.browser import launch_browser_context
 from crawler_ratsit.config import BrowserSettings, ProcessSettings, WorkerSettings
 from crawler_ratsit.constants import HTTP_TASK_QUEUE
 from crawler_ratsit.crawler import crawl_ratsit_page
@@ -160,27 +160,14 @@ async def _launch_browser(
     disconnected_callback: Callable[[str], None],
 ) -> BrowserRuntime:
     profile_directory = process_settings.state_directory / browser_settings.browser_id
-    profile_directory.mkdir(parents=True, exist_ok=True, mode=0o700)
-    LOGGER.info(
-        "launching CloakBrowser browser_id=%s proxy=%s profile=%s mode=%s",
-        browser_settings.browser_id,
-        "configured" if browser_settings.proxy_url is not None else "direct",
-        profile_directory,
-        "headless" if process_settings.headless else "headed",
-    )
-    context = await launch_persistent_context_async(
-        profile_directory,
+    context = await launch_browser_context(
+        browser_settings,
+        profile_directory=profile_directory,
         license_key=license_key,
         headless=process_settings.headless,
-        proxy=browser_settings.proxy_url,
-        geoip=True,
     )
     browser = context.browser
-    if browser is None:
-        await context.close()
-        raise RuntimeError(
-            f"persistent browser context {browser_settings.browser_id} has no browser"
-        )
+    assert browser is not None
     browser.on(
         "disconnected",
         lambda _browser: disconnected_callback(browser_settings.browser_id),

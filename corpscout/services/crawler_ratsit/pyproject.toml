@@ -9,6 +9,7 @@ dependencies = [
     "click>=8.4.2",
     "clickhouse-connect>=1.3.0",
     "cloakbrowser[geoip]>=0.5.8",
+    "markdownify>=1.2.3",
     "playwright>=1.62.0",
     "temporalio>=1.28.0",
 ]
@@ -16,6 +17,7 @@ dependencies = [
 [project.scripts]
 ratsit-process = "crawler_ratsit.process:main"
 ratsit-crawl = "crawler_ratsit.start:main"
+ratsit-inspect = "crawler_ratsit.inspection:main"
 
 [build-system]
 requires = ["hatchling"]

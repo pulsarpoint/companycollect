@@ -514,12 +514,17 @@
 - name: Apply pending Ratsit process changes
   ansible.builtin.meta: flush_handlers
 
-- name: Enable and start the Ratsit process
+- name: Apply the requested Ratsit process service state
   ansible.builtin.systemd_service:
     name: "{{ crawler_ratsit_service_name }}"
     scope: user
-    enabled: true
-    state: started
+    enabled: "{{ not (crawler_ratsit_maintenance_mode | bool) }}"
+    state: >-
+      {{
+        'stopped'
+        if crawler_ratsit_maintenance_mode | bool
+        else 'started'
+      }}
     daemon_reload: true
   become: true
   become_user: "{{ crawler_ratsit_service_user }}"
@@ -529,7 +534,7 @@
       unix:path={{ crawler_ratsit_runtime_dir }}/bus
   when: not ansible_check_mode
 
-- name: Verify the Ratsit process remains active
+- name: Verify the running Ratsit process remains active
   ansible.builtin.command:
     argv:
       - systemctl
@@ -547,4 +552,29 @@
   retries: 10
   delay: 2
   changed_when: false
-  when: not ansible_check_mode
+  when:
+    - not ansible_check_mode
+    - not (crawler_ratsit_maintenance_mode | bool)
+
+- name: Verify the Ratsit process remains stopped in maintenance mode
+  ansible.builtin.command:
+    argv:
+      - systemctl
+      - --user
+      - is-active
+      - "{{ crawler_ratsit_service_name }}"
+  become: true
+  become_user: "{{ crawler_ratsit_service_user }}"
+  environment:
+    XDG_RUNTIME_DIR: "{{ crawler_ratsit_runtime_dir }}"
+    DBUS_SESSION_BUS_ADDRESS: >-
+      unix:path={{ crawler_ratsit_runtime_dir }}/bus
+  register: crawler_ratsit_worker_inactive
+  until: crawler_ratsit_worker_inactive.stdout == 'inactive'
+  retries: 10
+  delay: 2
+  changed_when: false
+  failed_when: false
+  when:
+    - not ansible_check_mode
+    - crawler_ratsit_maintenance_mode | bool

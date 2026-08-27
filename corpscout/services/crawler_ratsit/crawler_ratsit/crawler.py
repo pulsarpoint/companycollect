@@ -1,3 +1,5 @@
+from urllib.parse import parse_qsl, urlsplit
+
 from playwright.async_api import BrowserContext, Page
 from playwright.async_api import TimeoutError as PlaywrightTimeoutError
 
@@ -77,6 +79,18 @@ async def fetch_ratsit_page(
     if not response.ok:
         raise RatsitTransientError(f"Ratsit returned HTTP status {response.status}")
 
+    if _is_missing_company_redirect(page.url):
+        return FetchedPage(
+            outcome="not_found",
+            requested_url=requested_url,
+            final_url=page.url,
+            http_status=response.status,
+            content="",
+            error_type="ratsit_missing",
+            error_message="Ratsit redirected to /foretag?saknas",
+            diagnostic_content=await page.content(),
+        )
+
     content = page.locator(content_selector).first
     try:
         await content.wait_for(state="visible", timeout=timeout_ms)
@@ -89,6 +103,7 @@ async def fetch_ratsit_page(
             content="",
             error_type="content_selector_missing",
             error_message=f"Ratsit content selector was not visible: {content_selector}",
+            diagnostic_content=await page.content(),
         )
 
     return FetchedPage(
@@ -99,4 +114,16 @@ async def fetch_ratsit_page(
         content=await content.inner_html(),
         error_type="",
         error_message="",
+    )
+
+
+def _is_missing_company_redirect(url: str) -> bool:
+    parsed_url = urlsplit(url)
+    if parsed_url.hostname not in {"ratsit.se", "www.ratsit.se"}:
+        return False
+    if parsed_url.path.rstrip("/") != "/foretag":
+        return False
+    return any(
+        name == "saknas"
+        for name, _value in parse_qsl(parsed_url.query, keep_blank_values=True)
     )

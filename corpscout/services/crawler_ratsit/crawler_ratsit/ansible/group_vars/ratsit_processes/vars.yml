@@ -26,6 +26,10 @@ crawler_ratsit_retired_service_names:
   - ratsit-worker
   - ratsit-cdp
 
+# Set true for code/config deployments that must not poll Temporal afterward.
+# Maintenance mode stops and disables the user unit after applying changes.
+crawler_ratsit_maintenance_mode: false
+
 # Leave empty to discover uv from the SSH user's login environment.
 # Set an absolute path here when the target needs an explicit override.
 crawler_ratsit_uv_binary: ""

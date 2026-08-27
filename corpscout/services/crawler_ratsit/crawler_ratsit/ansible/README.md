@@ -49,6 +49,20 @@ ansible-playbook site.yml --check --diff
 ansible-playbook site.yml
 ```
 
+To deploy code and configuration while preventing all Temporal polling, enable
+maintenance mode for both the check and real run:
+
+```shell
+ansible-playbook site.yml --check --diff \
+  -e crawler_ratsit_maintenance_mode=true
+ansible-playbook site.yml \
+  -e crawler_ratsit_maintenance_mode=true
+```
+
+Maintenance mode stops and disables `ratsit-process` after applying changes,
+including when a changed file notifies the restart handler. A later normal
+deployment starts and enables the unit again.
+
 Before changing the host, the role validates both configuration files and runs
 the non-integration test suite. During cutover it stops, disables, and removes
 the former UID 1000 `ratsit-worker` and `ratsit-cdp` user units, then enables
@@ -60,12 +74,35 @@ left in place and can be removed separately after the new service is verified.
 Because this is a user unit, query it through the UID 1000 user manager:
 
 ```shell
-ssh ratsit-process \
+ssh graovic@192.168.88.149 \
   'XDG_RUNTIME_DIR=/run/user/1000 systemctl --user status ratsit-process --no-pager'
 
-ssh ratsit-process \
-  'XDG_RUNTIME_DIR=/run/user/1000 journalctl --user -u ratsit-process -n 100 -f'
+ssh graovic@192.168.88.149 \
+  'XDG_RUNTIME_DIR=/run/user/1000 journalctl --user -u ratsit-process -f -o short-iso'
 ```
 
-Logs name the `browser_id` used for every crawl without printing proxy URLs or
-credentials.
+Useful filtered views on the remote host:
+
+```shell
+# Completed crawls during the last hour.
+XDG_RUNTIME_DIR=/run/user/1000 \
+  journalctl --user -u ratsit-process --since "1 hour ago" --no-pager \
+    -g 'event=ratsit_crawl_completed' -o cat
+
+# Rate limits during the current day.
+XDG_RUNTIME_DIR=/run/user/1000 \
+  journalctl --user -u ratsit-process --since today --no-pager \
+    -g 'event=ratsit_crawl_rate_limited' -o cat
+```
+
+From a root shell, run the same commands through the service user:
+
+```shell
+sudo -u graovic env XDG_RUNTIME_DIR=/run/user/1000 \
+  journalctl --user -u ratsit-process -f -o short-iso
+```
+
+Crawl events use searchable `key=value` fields for browser ID, hashed identity
+reference and kind, batch ID, outcome, HTTP status, content bytes, duration,
+attempt, S3 disposition, and Temporal run ID. Full identity numbers, workflow
+IDs containing identity numbers, proxy URLs, and credentials are not logged.

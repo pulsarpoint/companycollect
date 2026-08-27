@@ -1,8 +1,9 @@
 import json
-from hashlib import sha256
 from typing import Any
 
 from botocore.exceptions import ClientError
+
+from crawler_ratsit.models import identity_sha256
 
 
 class RatsitObjectStore:
@@ -18,10 +19,9 @@ class RatsitObjectStore:
         self._prefix = prefix.strip("/")
 
     def response_key(self, *, company_id: str, batch_id: str) -> str:
-        identity_hash = sha256(company_id.encode("utf-8")).hexdigest()
         return (
             f"{self._prefix}/batch_id={batch_id}/"
-            f"identity_sha256={identity_hash}/response.json"
+            f"identity_sha256={identity_sha256(company_id)}/response.json"
         )
 
     def read_json_if_exists(self, key: str) -> dict[str, Any] | None:
@@ -34,7 +34,7 @@ class RatsitObjectStore:
 
         payload = json.loads(response["Body"].read())
         if not isinstance(payload, dict):
-            raise ValueError(f"S3 object {key} must contain a JSON object")
+            raise TypeError(f"S3 object {key} must contain a JSON object")
         return payload
 
     def write_json_if_absent(self, key: str, value: dict[str, Any]) -> bool:

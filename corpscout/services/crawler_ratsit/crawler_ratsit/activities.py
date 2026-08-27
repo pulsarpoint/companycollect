@@ -17,6 +17,8 @@ from crawler_ratsit.models import (
     CrawlActivityInput,
     CrawlResult,
     FetchedPage,
+    identity_kind,
+    identity_sha256,
     response_envelope,
     result_from_response_envelope,
 )
@@ -89,11 +91,17 @@ class RatsitCrawlActivities:
             object_key,
         )
         if existing is not None:
-            return result_from_response_envelope(
+            result = result_from_response_envelope(
                 existing,
                 expected_company_id=activity_input.company_id,
                 expected_batch_id=activity_input.batch_id,
             )
+            _log_reused_response(
+                result,
+                browser_id=existing.get("browser_id", "unknown"),
+                attempt_number=attempt_number,
+            )
+            return result
 
         browser = await self._available_browsers.get()
         try:
@@ -105,18 +113,28 @@ class RatsitCrawlActivities:
             attempted_at = datetime.now(UTC)
             started = monotonic()
             LOGGER.info(
-                "crawling Ratsit company browser_id=%s company_id=%s attempt=%d",
+                "event=ratsit_crawl_started browser_id=%s identity_sha256=%s "
+                "identity_kind=%s batch_id=%s attempt=%d run_id=%s",
                 browser.browser_id,
-                activity_input.company_id,
+                identity_sha256(activity_input.company_id),
+                identity_kind(activity_input.company_id),
+                activity_input.batch_id,
                 attempt_number,
+                activity_input.temporal_run_id,
             )
             try:
                 page = await browser.crawl_page(activity_input.company_id)
             except RatsitRateLimitedError as error:
                 LOGGER.warning(
-                    "Ratsit rate limited browser_id=%s company_id=%s",
+                    "event=ratsit_crawl_rate_limited browser_id=%s "
+                    "identity_sha256=%s identity_kind=%s batch_id=%s "
+                    "http_status=429 attempt=%d run_id=%s",
                     browser.browser_id,
-                    activity_input.company_id,
+                    identity_sha256(activity_input.company_id),
+                    identity_kind(activity_input.company_id),
+                    activity_input.batch_id,
+                    attempt_number,
+                    activity_input.temporal_run_id,
                 )
                 raise ApplicationError(
                     str(error),
@@ -138,9 +156,13 @@ class RatsitCrawlActivities:
             completed_at=completed_at.isoformat(),
             http_status=page.http_status,
             source_url=page.requested_url,
-            source_bucket=self._object_store.bucket,
-            source_object_key=object_key,
-            content_size_bytes=len(page.content.encode("utf-8")),
+            source_bucket=(
+                self._object_store.bucket if page.outcome == "success" else ""
+            ),
+            source_object_key=object_key if page.outcome == "success" else "",
+            content_size_bytes=(
+                len(page.content.encode("utf-8")) if page.outcome == "success" else 0
+            ),
             duration_ms=duration_ms,
             attempt_count=attempt_number,
             error_type=page.error_type,
@@ -148,6 +170,10 @@ class RatsitCrawlActivities:
             temporal_workflow_id=activity_input.temporal_workflow_id,
             temporal_run_id=activity_input.temporal_run_id,
         )
+        if page.outcome != "success":
+            _log_completed_result(result, browser_id=browser_id)
+            return result
+
         created = await asyncio.to_thread(
             self._object_store.write_json_if_absent,
             object_key,
@@ -159,6 +185,7 @@ class RatsitCrawlActivities:
             ),
         )
         if created:
+            _log_completed_result(result, browser_id=browser_id)
             return result
 
         existing = await asyncio.to_thread(
@@ -169,11 +196,17 @@ class RatsitCrawlActivities:
             raise RuntimeError(
                 f"S3 object {object_key} disappeared after a conditional-write conflict"
             )
-        return result_from_response_envelope(
+        result = result_from_response_envelope(
             existing,
             expected_company_id=activity_input.company_id,
             expected_batch_id=activity_input.batch_id,
         )
+        _log_reused_response(
+            result,
+            browser_id=existing.get("browser_id", "unknown"),
+            attempt_number=attempt_number,
+        )
+        return result
 
 
 class RatsitResultActivities:
@@ -183,3 +216,65 @@ class RatsitResultActivities:
     @activity.defn(name=RECORD_RESULT_ACTIVITY)
     async def record_crawl_result(self, result: CrawlResult) -> None:
         await asyncio.to_thread(self._result_store.record, result)
+        LOGGER.info(
+            "event=ratsit_result_recorded identity_sha256=%s identity_kind=%s "
+            "batch_id=%s outcome=%s http_status=%s content_bytes=%d attempt=%d "
+            "s3_stored=%s s3_bucket=%s s3_key=%s run_id=%s",
+            identity_sha256(result.company_id),
+            identity_kind(result.company_id),
+            result.batch_id,
+            result.outcome,
+            result.http_status,
+            result.content_size_bytes,
+            result.attempt_count,
+            bool(result.source_object_key),
+            result.source_bucket,
+            result.source_object_key,
+            result.temporal_run_id,
+        )
+
+
+def _log_completed_result(result: CrawlResult, *, browser_id: str) -> None:
+    LOGGER.info(
+        "event=ratsit_crawl_completed browser_id=%s identity_sha256=%s "
+        "identity_kind=%s batch_id=%s outcome=%s http_status=%s "
+        "content_bytes=%d duration_ms=%d attempt=%d s3_stored=%s "
+        "s3_bucket=%s s3_key=%s run_id=%s",
+        browser_id,
+        identity_sha256(result.company_id),
+        identity_kind(result.company_id),
+        result.batch_id,
+        result.outcome,
+        result.http_status,
+        result.content_size_bytes,
+        result.duration_ms,
+        result.attempt_count,
+        bool(result.source_object_key),
+        result.source_bucket,
+        result.source_object_key,
+        result.temporal_run_id,
+    )
+
+
+def _log_reused_response(
+    result: CrawlResult,
+    *,
+    browser_id: object,
+    attempt_number: int,
+) -> None:
+    LOGGER.info(
+        "event=ratsit_s3_response_reused browser_id=%s identity_sha256=%s "
+        "identity_kind=%s batch_id=%s outcome=%s http_status=%s "
+        "content_bytes=%d attempt=%d s3_bucket=%s s3_key=%s run_id=%s",
+        browser_id,
+        identity_sha256(result.company_id),
+        identity_kind(result.company_id),
+        result.batch_id,
+        result.outcome,
+        result.http_status,
+        result.content_size_bytes,
+        attempt_number,
+        result.source_bucket,
+        result.source_object_key,
+        result.temporal_run_id,
+    )

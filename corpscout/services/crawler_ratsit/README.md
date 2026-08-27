@@ -80,6 +80,41 @@ The process must reach Temporal, S3/RustFS, and ClickHouse. The S3 bucket must
 exist and the ClickHouse migration for `se_company_ratsit_crawl_results` must
 already be applied.
 
+## Inspect one page locally
+
+Use the standalone inspection command to exercise the production
+CloakBrowser launch, proxy selection, Ratsit URL normalization, and content
+selector without starting Temporal or writing to S3 or ClickHouse:
+
+```shell
+uv run --env-file .env ratsit-inspect 5562434182 \
+  --config process.toml \
+  --browser direct \
+  --headless
+```
+
+To test a configured proxy, change only the browser ID:
+
+```shell
+uv run --env-file .env ratsit-inspect 5562434182 \
+  --config process.toml \
+  --browser proxy1 \
+  --headless
+```
+
+The browser ID must match an enabled `[[browsers]]` entry in `process.toml`.
+The command uses its exact `proxy_url` but never prints that URL. It keeps a
+local browser profile and writes a Markdown file beneath the ignored
+`ratsit-inspections/` directory. Artifact names contain an identity hash rather
+than the submitted identifier, and Markdown files are created with mode
+`0600` because they may contain personal data.
+
+For a successful page, the Markdown contains the same selected HTML that
+production would upload. For `not_found` or `selector_changed`, it contains the
+full diagnostic document captured in memory. Local inspection does not need
+Temporal, S3, or ClickHouse credentials; only the optional CloakBrowser license
+and the browser-related environment settings are read.
+
 ## Submit one company
 
 ```shell
@@ -92,19 +127,22 @@ ten digits; natural-person and sole-proprietor records may use twelve. The
 canonical ID remains unchanged in Temporal, S3, and ClickHouse, while the
 Ratsit URL uses its final ten digits.
 
-A crawl and S3 upload are one retryable HTTP activity. HTTP 429 responses ask
-Temporal to wait ten minutes before retrying. ClickHouse result recording is a
-separate activity, so a database retry never repeats the Ratsit request.
+A successful crawl and S3 upload are one retryable HTTP activity. HTTP 429
+responses ask Temporal to wait ten minutes before retrying. ClickHouse result
+recording is a separate activity, so a database retry never repeats the Ratsit
+request.
 
-Raw responses use:
+Successful raw responses use:
 
 ```text
 raw/batch_id=<batch-uuid>/identity_sha256=<company-id-sha256>/response.json
 ```
 
 The JSON includes the selected HTML, crawl metadata, and `browser_id` used for
-the request. ClickHouse stores only outcome, S3 location, content size, timing,
-attempt count, errors, and Temporal provenance.
+the request. Terminal outcomes without content—including HTTP 404 and Ratsit's
+`/foretag?saknas` redirect—do not create S3 objects. They are recorded only in
+ClickHouse with an empty S3 location, zero content size, HTTP status, error
+classification, timing, attempt count, and Temporal provenance.
 
 ## Deploy
 

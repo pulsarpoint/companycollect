@@ -1,2 +1,3 @@
 # Local foreground browser-pool configuration may contain proxy credentials.
 /process.toml
+/ratsit-inspections/
