@@ -16,6 +16,7 @@ import {
   SE_COMPANY_PERSON_ASSET,
   SE_COMPANY_PERSON_IDENTITY_EVALUATION_ASSET,
   SE_COMPANY_PERSON_IDENTITY_EVALUATION_JOB,
+  SE_COMPANY_PERSON_JOB,
   SE_COMPANY_PERSON_LLM_SUGGESTIONS_ASSET,
   SE_COMPANY_PERSON_LLM_SUGGESTIONS_JOB,
   SE_COMPANY_PERSON_MERGE_ASSET,
@@ -49,6 +50,15 @@ interface SePeopleTaskSpec {
 }
 
 const TASK_SPECS: readonly SePeopleTaskSpec[] = [
+  {
+    key: "simple-sync",
+    label: "Simple sync (se_company_person_job)",
+    job: SE_COMPANY_PERSON_JOB,
+    // The job runs three assets (role draft, person, role); the person
+    // asset's counts are the "did this do anything" signal.
+    asset: SE_COMPANY_PERSON_ASSET,
+    metricKeys: ["inserted_count", "total_person_count"],
+  },
   {
     key: "clean-copy",
     label: "Clean copy (se_company_person_clickhouse)",

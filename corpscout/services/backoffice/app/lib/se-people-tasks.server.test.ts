@@ -25,12 +25,13 @@ beforeEach(() => {
 });
 
 describe("loadSePeopleTasks", () => {
-  it("covers all seven assets/jobs the spec names, roles and review included", async () => {
+  it("covers all eight assets/jobs, the Simple Sync cascade included", async () => {
     listRuns.mockResolvedValue([]);
     const { rows, error } = await loadSePeopleTasks();
 
     expect(error).toBe("");
     expect(rows.map((row) => row.key)).toEqual([
+      "simple-sync",
       "clean-copy",
       "llm-suggestions",
       "promotion",
