@@ -129,9 +129,10 @@ def test_serving_models_resolve_identity_and_evidence_offline() -> None:
 
     assert "ref('company_external_identifier_current_build')" in gleif
     assert "ref('company_external_identifier_current_build')" in wikidata
-    assert "country_person_match" in management
+    assert "country_person_match" not in management
+    assert "country_person_match" not in source_links
     assert "GROUP BY country_code, company_id, identity_person_id" in management
-    assert "identity_person_id AS person_id" in management
+    assert "'' AS person_id" in management
     assert "'registry-person|'" in management
     assert "observed_name_normalized" not in management
     assert "company_section_item_source_links" not in source_links
@@ -192,7 +193,6 @@ def test_serving_project_declares_integrity_tests() -> None:
     assert tests == {
         "company_lei_gleif_is_consistent.sql",
         "company_domains_source_arrays_align.sql",
-        "management_identity_requires_accepted_evidence.sql",
         "section_presence_uses_supported_names.sql",
         "section_source_links_have_records.sql",
     }

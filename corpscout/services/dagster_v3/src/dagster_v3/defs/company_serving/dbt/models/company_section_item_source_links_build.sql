@@ -344,32 +344,22 @@ registry_observations AS (
         source_record_uid
     FROM {{ source('corpscout', 'se_financial_report_signatories') }}
 ),
-registry_person_matches AS (
-    SELECT
-        source_matches.country_iso2,
-        source_matches.observation_id,
-        argMax(source_matches.person_id, (
-            source_matches.decided_at,
-            source_matches.resolver_version,
-            toString(source_matches.person_id)
-        )) AS person_id
-    FROM {{ source('corpscout', 'country_person_match') }} AS source_matches
-    WHERE source_matches.country_iso2 = '{{ var("country_code") }}'
-    GROUP BY source_matches.country_iso2, source_matches.observation_id
-),
 registry_management AS (
+    -- Mirrors company_management_current_build's management_id hash. No
+    -- country_person identity resolution remains (country_people group
+    -- retired), so the observation id -- the same one that model now uses
+    -- directly as its grouping key -- is hashed straight through with no
+    -- join required to keep this evidence link's item_key aligned with
+    -- that model's management_id.
     SELECT
         observations.country_code,
         observations.company_id,
         lower(hex(SHA256(concat(
             'registry-person|', observations.country_code, '|', observations.company_id, '|',
-            toString(ifNull(matches.person_id, observations.observation_id))
+            toString(observations.observation_id)
         )))) AS item_key,
         observations.source_record_uid
     FROM registry_observations AS observations
-    LEFT JOIN registry_person_matches AS matches
-        ON matches.country_iso2 = observations.country_code
-       AND matches.observation_id = observations.observation_id
     GROUP BY observations.country_code, observations.company_id, item_key, observations.source_record_uid
 ),
 management_candidates AS (
@@ -388,7 +378,7 @@ management_candidates AS (
             'annual_report_narrative_role'
         ) AS relationship_kind,
         multiIf(
-            has(current.source_systems, 'se_xbrl_signatures'), 'country_person_match',
+            has(current.source_systems, 'se_xbrl_signatures'), 'annual_report_signatory_observation',
             has(current.source_systems, 'wikidata'), 'wikidata_company_claim',
             'annual_report_extraction'
         ) AS match_method,

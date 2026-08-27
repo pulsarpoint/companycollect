@@ -1,8 +1,4 @@
 import { chQuery } from "~/lib/clickhouse.server";
-import {
-  normalizeCountryPersonName,
-  resolveCountryPersonProfilesForCompany,
-} from "~/lib/people.server";
 import type {
   EvidenceOrigin,
   AddressRow,
@@ -307,31 +303,16 @@ async function getManagementSection(
     ),
     getSectionEvidence(country, id, "management"),
   ]);
-  const legacyProfileIds = await resolveCountryPersonProfilesForCompany(
-    country,
-    id,
-    rows
-      .filter(
-        (row) =>
-          row.person_profile_available === 0 &&
-          row.source_systems.includes("se_xbrl_signatures"),
-      )
-      .map((row) => row.display_name),
-  );
   const officers: OfficerRow[] = [];
   const wikidataPeople: WikidataPersonRow[] = [];
   const esefPeople: EsefPersonObservation[] = [];
   for (const row of rows) {
     const rowEvidence = evidence.get(row.management_id) ?? [];
     if (row.source_systems.includes("se_xbrl_signatures")) {
-      const resolvedPersonId =
-        legacyProfileIds.get(normalizeCountryPersonName(row.display_name)) ??
-        null;
       officers.push({
         country_iso2: country,
-        person_id: resolvedPersonId ?? row.person_id,
-        person_profile_available:
-          Boolean(row.person_profile_available) || resolvedPersonId !== null,
+        person_id: row.person_id,
+        person_profile_available: Boolean(row.person_profile_available),
         first_name: row.first_name,
         last_name: row.last_name,
         role_original: row.role_label,

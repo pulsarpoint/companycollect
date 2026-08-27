@@ -15,34 +15,16 @@ WITH registry_rows AS (
     ) AS company_anchors
         ON company_anchors.company_id = officers.company_id
 ),
-person_matches AS (
-    SELECT
-        source_matches.country_iso2,
-        source_matches.observation_id,
-        argMax(source_matches.person_id, (
-            source_matches.decided_at,
-            source_matches.resolver_version,
-            toString(source_matches.person_id)
-        )) AS person_id,
-        argMax(source_matches.match_status, (
-            source_matches.decided_at,
-            source_matches.resolver_version,
-            toString(source_matches.person_id)
-        )) AS match_status,
-        argMax(source_matches.confidence, (
-            source_matches.decided_at,
-            source_matches.resolver_version,
-            toString(source_matches.person_id)
-        )) AS confidence
-    FROM {{ source('corpscout', 'country_person_match') }} AS source_matches
-    WHERE source_matches.country_iso2 = '{{ var("country_code") }}'
-    GROUP BY source_matches.country_iso2, source_matches.observation_id
-),
 registry_observations AS (
     SELECT
         '{{ var("country_code") }}' AS country_code,
         rows.company_id,
-        ifNull(matches.person_id, rows.observation_id) AS identity_person_id,
+        -- No country_person identity resolution remains (country_people group
+        -- retired). The observation id -- deterministic per statement/signatory
+        -- occurrence -- stands in directly as the grouping key: it still
+        -- de-duplicates a name listed twice within one statement, but no
+        -- longer merges the same officer's occurrences across fiscal years.
+        rows.observation_id AS identity_person_id,
         trim(concat(rows.first_name, ' ', rows.last_name)) AS display_name,
         rows.first_name,
         rows.last_name,
@@ -51,7 +33,7 @@ registry_observations AS (
         rows.signatory_kind,
         toUInt16(rows.fiscal_year) AS fiscal_year,
         rows.company_latest_fiscal_year,
-        toFloat32(ifNull(matches.confidence / 100, 0.75)) AS confidence,
+        toFloat32(0.75) AS confidence,
         tuple(
             multiIf(
                 rows.role_kind = 'chairman', 7,
@@ -69,9 +51,6 @@ registry_observations AS (
             rows.person_seq
         ) AS preferred_role_order
     FROM registry_rows AS rows
-    LEFT JOIN person_matches AS matches
-        ON matches.country_iso2 = '{{ var("country_code") }}'
-       AND matches.observation_id = rows.observation_id
 ),
 registry AS (
     SELECT
@@ -80,7 +59,11 @@ registry AS (
         lower(hex(SHA256(concat(
             'registry-person|', country_code, '|', company_id, '|', toString(identity_person_id)
         )))) AS management_id,
-        identity_person_id AS person_id,
+        -- country_person profile resolution is retired; this stays a String
+        -- column (matching the model's non-null empty-string convention for
+        -- unavailable fields below) so downstream consumers keep their column
+        -- contract while links die gracefully.
+        '' AS person_id,
         '' AS external_person_scheme,
         '' AS external_person_value,
         argMax(display_name, preferred_role_order) AS display_name,
@@ -108,7 +91,7 @@ wikidata AS (
         '{{ var("country_code") }}' AS country_code,
         company_ids.company_id,
         lower(hex(SHA256(concat('wikidata|', people.company_wikidata_id, '|', people.role_property, '|', people.person_wikidata_id)))) AS management_id,
-        CAST(NULL, 'Nullable(UUID)') AS person_id,
+        '' AS person_id,
         'wikidata' AS external_person_scheme,
         people.person_wikidata_id AS external_person_value,
         persons.name AS display_name,
@@ -140,7 +123,7 @@ esef AS (
         country_code,
         company_id,
         candidate_uid AS management_id,
-        CAST(NULL, 'Nullable(UUID)') AS person_id,
+        '' AS person_id,
         '' AS external_person_scheme,
         '' AS external_person_value,
         name AS display_name,

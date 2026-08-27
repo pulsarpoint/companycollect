@@ -179,8 +179,8 @@ export default function CompanyDetail({
         <EsefSection filings={detail.esefFilings} />
       )}
       <ManagementSection
-        officers={detail.officers}
-        peopleMatches={detail.peopleMatches}
+        officers={[]}
+        peopleMatches={[]}
         audit={detail.audit}
         wikidataPeople={detail.wikidataPeople}
         esefPeople={detail.esefPeople}

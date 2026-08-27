@@ -19,8 +19,6 @@ sources:
       - name: wikidata_company_domains
       - name: wikidata_company_people
       - name: wikidata_persons
-      - name: country_person_observation
-      - name: country_person_match
       - name: se_financial_report_signatories
       - name: esef_document_company_information
         meta:

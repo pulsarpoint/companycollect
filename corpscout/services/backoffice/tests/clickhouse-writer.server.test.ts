@@ -11,13 +11,12 @@ vi.mock("@clickhouse/client", () => ({
 
 import {
   chInsertCompanyDomains,
-  chInsertPersonCorrections,
   chInsertSeCompanyAddressCorrections,
   chInsertSeCompanyInfoCorrections,
   chInsertSeCompanyPersonCorrections,
 } from "~/lib/clickhouse.server";
 
-describe("person correction ClickHouse writer", () => {
+describe("correction and domain ClickHouse writers", () => {
   afterEach(() => {
     vi.unstubAllEnvs();
     clickhouse.createClient.mockReset();
@@ -29,20 +28,24 @@ describe("person correction ClickHouse writer", () => {
     vi.stubEnv("CLICKHOUSE_PASSWORD", "");
 
     await expect(
-      chInsertPersonCorrections([{ correction_id: "test" }]),
+      chInsertSeCompanyPersonCorrections([{ correction_id: "test" }]),
     ).rejects.toThrow("CLICKHOUSE_USER and CLICKHOUSE_PASSWORD");
     expect(clickhouse.createClient).not.toHaveBeenCalled();
   });
 
-  it("uses the shared credentials and the correction ledger only", async () => {
+  it("writes domain reviews only to the unified company domains table", async () => {
     vi.stubEnv("CLICKHOUSE_USER", "correction_writer");
     vi.stubEnv("CLICKHOUSE_PASSWORD", "writer-secret");
     clickhouse.createClient.mockReturnValue({ insert: clickhouse.insert });
     clickhouse.insert.mockResolvedValue(undefined);
 
-    const rows = [{ correction_id: "test" }];
-    await chInsertPersonCorrections(rows);
+    const rows = [{ company_id: "5560593575", root_domain: "assaabloy.com" }];
+    await chInsertCompanyDomains(rows);
 
+    // The write client is a module-level singleton (see clickhouse.server.ts)
+    // reused across every write helper, so the credential/settings shape is
+    // only asserted once, here, against whichever test's write is first to
+    // trigger client creation.
     expect(clickhouse.createClient).toHaveBeenCalledWith(
       expect.objectContaining({
         username: "correction_writer",
@@ -57,22 +60,6 @@ describe("person correction ClickHouse writer", () => {
         }),
       }),
     );
-    expect(clickhouse.insert).toHaveBeenCalledWith({
-      table: "country_person_correction",
-      values: rows,
-      format: "JSONEachRow",
-    });
-  });
-
-  it("writes domain reviews only to the unified company domains table", async () => {
-    vi.stubEnv("CLICKHOUSE_USER", "correction_writer");
-    vi.stubEnv("CLICKHOUSE_PASSWORD", "writer-secret");
-    clickhouse.createClient.mockReturnValue({ insert: clickhouse.insert });
-    clickhouse.insert.mockResolvedValue(undefined);
-
-    const rows = [{ company_id: "5560593575", root_domain: "assaabloy.com" }];
-    await chInsertCompanyDomains(rows);
-
     expect(clickhouse.insert).toHaveBeenCalledWith({
       table: "company_domains",
       values: rows,

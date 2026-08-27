@@ -131,24 +131,6 @@ export interface CountryDetailConfig {
    */
   secondaryNamesQuery?: string;
   /**
-   * {id:String} → officer/signatory rows for the latest fiscal year that
-   * has people: country_iso2, person_id, first_name, last_name,
-   * role_original, role_kind, signatory_kind, fiscal_year. Board and
-   * certification signatures for the same resolved country person are
-   * pre-merged per signatory_kind server-side; the UI does a final merge
-   * across signatory kinds (see ManagementSection).
-   */
-  officersQuery?: string;
-  /**
-   * {names:Array(String)} + {id:String} → same-name matches for the
-   * displayed officers, from the cross-country people table, excluding the
-   * current company: full_name_normalized, country_iso2, person_id,
-   * company_id, company_name, role_kind, fiscal_year. Names are lowercase
-   * trimmed "first last" pairs matching full_name_normalized. Run once per
-   * page load (batched), after officersQuery resolves.
-   */
-  peopleMatchesQuery?: string;
-  /**
    * {id:String} → ONE latest-filing audit row: audit_firm, opinion_kind
    * ('standard' | 'modified' | 'unknown'), opinion_date, fiscal_year.
    * Rendered inside the Management card's auditor block.
@@ -1020,70 +1002,6 @@ FROM (
 WHERE entry[2] IN ('SARS_FORNAMN-ORGNAM', 'FORNAMN_FRSPRAK-ORGNAM')
 ORDER BY registered, name
 LIMIT 200`,
-      // Latest fiscal year's signatories. Note: the two argMax()/max()
-      // aggregates below can't be aliased to their own input column name
-      // (e.g. `argMax(role_kind, ...) AS role_kind`) — ClickHouse's alias
-      // resolution treats that as a self-referential expansion and throws
-      // ILLEGAL_AGGREGATION, so the inner subquery uses `_out` aliases and
-      // the outer SELECT renames them back to the plan's field names.
-      officersQuery: `SELECT country_iso2, toString(person_id) AS person_id,
-  first_name, last_name, role_original, role_kind_out AS role_kind,
-  signatory_kind, fiscal_year,
-  lower(hex(SHA256(concat(
-    'company-source-record-v1\\nstructured\\nsweden_financial\\nannual_report_xhtml\\n',
-    source_statement_key_out, '\\n', source_statement_key_out
-  )))) AS source_record_uid
-FROM (
-  SELECT o.country_iso2, m.person_id,
-    o.observed_first_name AS first_name,
-    o.observed_last_name AS last_name,
-    argMax(o.role_original, (o.role_kind != 'unknown', o.source_statement_key)) AS role_original,
-    argMax(o.role_kind, (o.role_kind != 'unknown', o.source_statement_key)) AS role_kind_out,
-    argMax(o.source_statement_key, (o.role_kind != 'unknown', o.source_statement_key)) AS source_statement_key_out,
-    o.signatory_kind, o.fiscal_year
-  FROM country_person_observation AS o
-  INNER JOIN country_person_match AS m
-    ON m.country_iso2 = o.country_iso2
-   AND m.observation_id = o.observation_id
-  WHERE o.country_iso2 = 'SE'
-    AND o.company_id = {id:String}
-    AND o.fiscal_year = (
-      SELECT max(fiscal_year)
-      FROM country_person_observation
-      WHERE country_iso2 = 'SE' AND company_id = {id:String}
-    )
-  GROUP BY o.country_iso2, m.person_id, o.observed_first_name,
-    o.observed_last_name, o.signatory_kind, o.fiscal_year
-)
-ORDER BY signatory_kind = 'auditor', role_kind != 'chairman', role_kind != 'ceo', last_name
-LIMIT 100`,
-      // Same-name matches across all companies for the officers shown above
-      // (batched: {names} carries every displayed person in one round trip).
-      // Same self-alias pitfall as officersQuery — max(fiscal_year) can't be
-      // AS fiscal_year — hence the inner _out alias.
-      peopleMatchesQuery: `SELECT full_name_normalized, country_iso2,
-  toString(person_id) AS person_id, company_id, company_name,
-  role_kind_out AS role_kind, fiscal_year_out AS fiscal_year
-FROM (
-  SELECT o.observed_name_normalized AS full_name_normalized,
-    o.country_iso2 AS country_iso2,
-    m.person_id AS person_id,
-    o.company_id AS company_id,
-    any(o.company_name) AS company_name,
-    argMax(o.role_kind, (o.fiscal_year, o.source_statement_key)) AS role_kind_out,
-    max(o.fiscal_year) AS fiscal_year_out
-  FROM country_person_observation AS o
-  INNER JOIN country_person_match AS m
-    ON o.country_iso2 = m.country_iso2
-   AND o.observation_id = m.observation_id
-  WHERE o.observed_name_normalized IN {names:Array(String)}
-    AND NOT (o.country_iso2 = 'SE' AND o.company_id = {id:String})
-  GROUP BY o.observed_name_normalized, o.country_iso2, m.person_id, o.company_id
-)
-ORDER BY full_name_normalized, fiscal_year DESC
-LIMIT 10 BY full_name_normalized
-LIMIT 200`,
-      // LIMIT BY caps matches per name at 10 so common surnames don't starve others
       // A filing year can yield two audit rows (annual report + separate
       // audit-report document) — prefer the one carrying an opinion and date.
       auditQuery: `SELECT audit_firm AS audit_firm, opinion_kind AS opinion_kind,
