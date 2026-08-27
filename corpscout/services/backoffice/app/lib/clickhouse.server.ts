@@ -104,18 +104,6 @@ export async function* chStreamQuery<T>(
   }
 }
 
-/** Append reviewed decisions to the immutable person-correction ledger. */
-export async function chInsertPersonCorrections<T extends object>(
-  values: T[],
-): Promise<void> {
-  if (values.length === 0) return;
-  await getWriteClient().insert({
-    table: "country_person_correction",
-    values,
-    format: "JSONEachRow",
-  });
-}
-
 /** Append a replacement version of a reviewed company/domain association. */
 export async function chInsertCompanyDomains<T extends object>(
   values: T[],

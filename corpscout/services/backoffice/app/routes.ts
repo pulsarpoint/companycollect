@@ -76,15 +76,8 @@ export default [
     route("procurements", "routes/procurements.tsx"),
     route("procurements/:source", "routes/procurement-source.tsx"),
     route("procurements/:source/:key", "routes/procurement-record.tsx"),
-    route("people", "routes/people.tsx"),
     route("ip/:address", "routes/ip-address.tsx"),
     route("financial-demo", "routes/financial-demo.tsx"),
-    route(
-      "country/:country/person-targets",
-      "routes/country-person-targets.ts",
-    ),
-    route("country/:country/person/:id", "routes/country-person.tsx"),
-    route("person/:name", "routes/person.tsx"),
     // Old bookmarks: /financials/country/:c still lands on the country page.
     route("financials/country/:country", "routes/financials-country.tsx"),
   ]),

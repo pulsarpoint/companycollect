@@ -2296,10 +2296,6 @@ export interface CompanyDetail {
    * or the company has never won one. */
   contractSummary: ContractSummaryRow | null;
   secondaryNames: SecondaryNameRow[];
-  officers: OfficerRow[];
-  /** Same-name matches for the officers above, in OTHER companies. Fetched
-   * after officers resolves — the query needs their names. */
-  peopleMatches: PeopleMatchRow[];
   /** Latest filing's audit firm + opinion form; null when unavailable. */
   audit: AuditRow | null;
   /** GLEIF corporate-group links; empty when no LEI or no query. */
@@ -3200,9 +3196,6 @@ export async function getCompanyDetail(
   const secondaryNamesPromise = country.detail?.secondaryNamesQuery
     ? chQuery<SecondaryNameRow>(country.detail.secondaryNamesQuery, { id })
     : Promise.resolve([]);
-  const officersPromise = country.detail?.officersQuery
-    ? chQuery<OfficerRow>(country.detail.officersQuery, { id })
-    : Promise.resolve([]);
   const auditPromise = country.detail?.auditQuery
     ? chQuery<AuditRow>(country.detail.auditQuery, { id })
     : Promise.resolve([]);
@@ -3285,7 +3278,6 @@ export async function getCompanyDetail(
   taxRecordsPromise.catch(() => {});
   publicContractsPromise.catch(() => {});
   secondaryNamesPromise.catch(() => {});
-  officersPromise.catch(() => {});
   auditPromise.catch(() => {});
   gleifRelationshipsPromise.catch(() => {});
   gleifEntityPromise.catch(() => {});
@@ -3319,7 +3311,6 @@ export async function getCompanyDetail(
     taxRecords,
     publicContracts,
     secondaryNames,
-    officers,
     auditRows,
     gleifRelationships,
     gleifEntityRows,
@@ -3343,7 +3334,6 @@ export async function getCompanyDetail(
     taxRecordsPromise,
     publicContractsPromise,
     secondaryNamesPromise,
-    officersPromise,
     auditPromise,
     gleifRelationshipsPromise,
     gleifEntityPromise,
@@ -3477,13 +3467,6 @@ export async function getCompanyDetail(
         })
       : [];
   }
-  for (const row of officers) {
-    row.evidence = row.source_record_uid
-      ? observationEvidence(evidenceByUid, row.source_record_uid, {
-          extractionMethod: "ixbrl_signature",
-        })
-      : [];
-  }
   const latestWikidataEvidence =
     sourceRecords.find((row) =>
       row.evidence[0]?.origins.some(
@@ -3492,25 +3475,6 @@ export async function getCompanyDetail(
     )?.evidence ?? [];
   if (wikidataRows[0]) wikidataRows[0].evidence = latestWikidataEvidence;
   for (const row of wikidataPeople) row.evidence = latestWikidataEvidence;
-
-  // Same-name matches need the officers' names, so this can only start once
-  // officersPromise has resolved — one batched query, not per-person fetches.
-  let peopleMatches: PeopleMatchRow[] = [];
-  if (country.detail?.peopleMatchesQuery && officers.length > 0) {
-    const names = Array.from(
-      new Set(
-        officers
-          .map((o) => `${o.first_name} ${o.last_name}`.trim().toLowerCase())
-          .filter((name) => name !== ""),
-      ),
-    );
-    if (names.length > 0) {
-      peopleMatches = await chQuery<PeopleMatchRow>(
-        country.detail.peopleMatchesQuery,
-        { id, names },
-      ).catch(() => [] as PeopleMatchRow[]);
-    }
-  }
 
   return {
     company,
@@ -3526,8 +3490,6 @@ export async function getCompanyDetail(
     publicContracts,
     contractSummary: contractSummaryRows[0] ?? null,
     secondaryNames,
-    officers,
-    peopleMatches,
     audit: auditRows[0] ?? null,
     gleifRelationships,
     gleifEntity: gleifEntityRows[0] ?? null,

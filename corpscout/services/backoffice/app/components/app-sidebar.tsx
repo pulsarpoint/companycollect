@@ -1,5 +1,5 @@
 import { Link, useLocation } from "react-router";
-import { Gavel, Globe2, Users } from "lucide-react";
+import { Gavel, Globe2 } from "lucide-react";
 import {
   Sidebar,
   SidebarContent,
@@ -14,23 +14,16 @@ import {
 const NAV_ITEMS = [
   { title: "Countries", to: "/countries", icon: Globe2 },
   { title: "Procurement", to: "/procurements", icon: Gavel },
-  { title: "People", to: "/people", icon: Users },
 ];
 
 /**
  * An item is active on an exact match or any of its sub-paths. Countries
- * additionally activates for `/company/:country/:id` detail pages, and
- * People for country-scoped person detail pages — both live outside their
- * list prefix. Legacy `/person/:name` routes redirect back to People search.
+ * additionally activates for `/company/:country/:id` detail pages, which
+ * live outside the `/countries` list prefix.
  */
 function isNavItemActive(pathname: string, to: string): boolean {
   if (pathname === to || pathname.startsWith(`${to}/`)) return true;
-  if (to === "/countries" && pathname.startsWith("/company/")) return true;
-  return (
-    to === "/people" &&
-    (pathname.startsWith("/person/") ||
-      (pathname.startsWith("/country/") && pathname.includes("/person/")))
-  );
+  return to === "/countries" && pathname.startsWith("/company/");
 }
 
 export function AppSidebar() {
