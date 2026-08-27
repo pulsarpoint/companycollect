@@ -13,12 +13,13 @@ function url(search: string): URL {
 }
 
 describe("SE_PEOPLE_SOURCE_TABS", () => {
-  it("is the three source views, then the resolved table, in reading order", () => {
+  it("is the three source views, then the resolved table, then Tasks, in reading order", () => {
     expect(SE_PEOPLE_SOURCE_TABS.map((tab) => tab.value)).toEqual([
       "bolagsverket",
       "esef",
       "wikidata",
       "final",
+      "tasks",
     ]);
     expect(DEFAULT_SE_PEOPLE_SOURCE_TAB).toBe("bolagsverket");
   });

@@ -3,6 +3,9 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 const clickhouse = vi.hoisted(() => ({ query: vi.fn() }));
 vi.mock("~/lib/clickhouse.server", () => ({ chQuery: clickhouse.query }));
 
+const tasks = vi.hoisted(() => ({ load: vi.fn() }));
+vi.mock("~/lib/se-people-tasks.server", () => ({ loadSePeopleTasks: tasks.load }));
+
 import { PAGE_LIMIT_OFFSET_SQL } from "~/lib/se-company-info-lists.server";
 import {
   BOLAGSVERKET_SELECT_SQL,
@@ -164,5 +167,20 @@ describe("loadSePeopleSourcePage", () => {
     const result = await loadSePeopleSourcePage("esef", NO_FILTERS, 1, 50);
     expect(result.tab).toBe("esef");
     expect(result.total).toBe(1);
+  });
+
+  it("dispatches the tasks tab to loadSePeopleTasks -- no ClickHouse table read at all", async () => {
+    tasks.load.mockResolvedValueOnce({
+      rows: [{ key: "clean-copy" } as never],
+      error: "",
+    });
+    const result = await loadSePeopleSourcePage("tasks", NO_FILTERS, 1, 50);
+    expect(result).toEqual({
+      tab: "tasks",
+      rows: [{ key: "clean-copy" }],
+      total: 1,
+      error: "",
+    });
+    expect(clickhouse.query).not.toHaveBeenCalled();
   });
 });

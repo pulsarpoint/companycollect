@@ -91,6 +91,17 @@ export const SE_COMPANY_PERSON_PROMOTION_JOB = "se_company_person_promotion_job"
 export const SE_COMPANY_PERSON_PROMOTION_ASSET = "se_company_person_promotion";
 export const SE_COMPANY_PERSON_MERGE_JOB = "se_company_person_merge_job";
 export const SE_COMPANY_PERSON_MERGE_ASSET = "se_company_person_merge_suggestions";
+/**
+ * The People Tasks tab's remaining two jobs (`company_people/roles.py` /
+ * `corrections.py`), neither triggered from this page's own launch forms
+ * above -- `roles.py`'s combined draft+publish chain runs after clean copy or
+ * promotion elsewhere, and `corrections.py`'s review job is the ONE
+ * eager/sensor-driven job in this whole group (`se_company_person_correction_sensor`,
+ * `default_status=RUNNING`) -- unlike every job above, which is "never
+ * scheduled, never eager" per their own module docstrings.
+ */
+export const SE_COMPANY_PERSON_ROLE_JOB = "se_company_person_role_job";
+export const SE_COMPANY_PERSON_REVIEW_JOB = "se_company_person_review_job";
 
 export class DagsterError extends Error {
   constructor(message: string) {

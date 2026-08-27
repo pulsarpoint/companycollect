@@ -29,9 +29,11 @@ describe("tab navigation", () => {
     expect(html).toContain(">ESEF<");
     expect(html).toContain(">Wikidata<");
     expect(html).toContain(">People (final)<");
+    expect(html).toContain(">Tasks<");
     expect(html).toContain('href="/admin/se/people?tab=esef"');
     expect(html).toContain('href="/admin/se/people?tab=wikidata"');
     expect(html).toContain('href="/admin/se/people?tab=final"');
+    expect(html).toContain('href="/admin/se/people?tab=tasks"');
     // Switching back to the default tab must not carry a stale ?tab=.
     expect(html).not.toContain("tab=bolagsverket");
   });
@@ -91,6 +93,51 @@ describe("final (People) tab", () => {
   it("shows an explanatory empty state instead of an error when nothing is resolved yet", () => {
     const html = render({ tab: "final", rows: [], total: 0 });
     expect(html).toContain("clean-copy step");
+  });
+});
+
+describe("tasks tab", () => {
+  it("has no filter form and no pagination -- it is not a row-per-company table", () => {
+    const html = render({ tab: "tasks", rows: [], total: 0, error: "" });
+    expect(html).not.toContain('name="companyId"');
+    expect(html).not.toContain(">Filter<");
+    expect(html).not.toContain("of 0 source rows");
+  });
+
+  it("shows a colored status badge, timing and key metrics per row", () => {
+    const html = render({
+      tab: "tasks",
+      rows: [
+        {
+          key: "clean-copy",
+          label: "Clean copy (se_company_person_clickhouse)",
+          job: "se_company_person_publish_job",
+          runId: "run-1",
+          status: "SUCCESS",
+          url: "https://dagster.example/runs/run-1",
+          startTime: 1_755_000_000,
+          endTime: 1_755_000_060,
+          metrics: { inserted_count: 12 },
+        },
+      ],
+      total: 1,
+      error: "",
+    });
+
+    expect(html).toContain("Clean copy (se_company_person_clickhouse)");
+    expect(html).toContain("SUCCESS");
+    expect(html).toContain("inserted: 12");
+  });
+
+  it("renders an error banner instead of throwing when Dagster is unreachable", () => {
+    const html = render({
+      tab: "tasks",
+      rows: [],
+      total: 0,
+      error: "Dagster at http://dagster:3000/graphql did not answer",
+    });
+    expect(html).toContain("Dagster is unreachable");
+    expect(html).toContain("did not answer");
   });
 });
 

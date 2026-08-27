@@ -3,10 +3,21 @@ import { Form, Link } from "react-router";
 import { DataTable } from "~/components/data-table/data-table";
 import { DataTablePagination } from "~/components/data-table/pagination";
 import { useEffectiveSearchParams } from "~/components/data-table/use-effective-search";
+import { Alert, AlertDescription, AlertTitle } from "~/components/ui/alert";
+import { Badge } from "~/components/ui/badge";
 import { Button } from "~/components/ui/button";
 import { Input } from "~/components/ui/input";
 import { Label } from "~/components/ui/label";
+import {
+  Table,
+  TableBody,
+  TableCell,
+  TableHead,
+  TableHeader,
+  TableRow,
+} from "~/components/ui/table";
 import { Tabs, TabsList, TabsTrigger } from "~/components/ui/tabs";
+import type { SePeopleTaskRow } from "~/lib/se-people-tasks.server";
 import type {
   SePeopleBolagsverketRow,
   SePeopleEsefRow,
@@ -194,6 +205,109 @@ function finalColumns(): ColumnDef<SePeopleFinalRow, unknown>[] {
   ];
 }
 
+const nf = new Intl.NumberFormat("en-US");
+
+/** Dagster reports seconds since the epoch as a float. Mirrors
+ * se-company-info-pipeline.tsx's `instant`. */
+function instant(seconds: number | null): string {
+  if (seconds === null) return "—";
+  return new Date(seconds * 1000).toISOString().replace("T", " ").slice(0, 19);
+}
+
+/** Finished runs only -- a running run's duration would need the clock, same
+ * reasoning as se-company-info-pipeline.tsx's `duration`. */
+function duration(row: SePeopleTaskRow): string {
+  if (row.startTime === null) return "—";
+  if (row.endTime === null) return "running";
+  const total = Math.max(0, Math.round(row.endTime - row.startTime));
+  const hours = Math.floor(total / 3600);
+  const minutes = Math.floor((total % 3600) / 60);
+  const seconds = total % 60;
+  if (hours > 0) return `${hours}h ${minutes}m`;
+  if (minutes > 0) return `${minutes}m ${seconds}s`;
+  return `${seconds}s`;
+}
+
+/** Colored-badge-per-status convention, mirrored from
+ * se-company-info-pipeline.tsx's `statusVariant`. */
+function statusVariant(
+  status: string | null,
+): "default" | "secondary" | "destructive" | "outline" {
+  if (status === "SUCCESS") return "default";
+  if (status === "FAILURE" || status === "CANCELED") return "destructive";
+  if (status === "STARTED" || status === "STARTING" || status === "QUEUED") return "secondary";
+  return "outline";
+}
+
+function metricsText(metrics: Record<string, number>): string {
+  const entries = Object.entries(metrics);
+  if (entries.length === 0) return "—";
+  return entries.map(([key, value]) => `${key.replace(/_count$/, "")}: ${nf.format(value)}`).join(", ");
+}
+
+/** Tasks tab: every people asset/job's latest run, columns per spec --
+ * asset/job, colored status badge, started/ended, duration, and whatever key
+ * metadata counts `se-people-tasks.server.ts` picked out (see that module's
+ * `TASK_SPECS` doc comment for what is and is not included and why). */
+function SePeopleTasksTable({ rows, error }: { rows: SePeopleTaskRow[]; error: string }) {
+  return (
+    <div className="flex flex-col gap-4">
+      {error ? (
+        <Alert variant="destructive">
+          <AlertTitle>Dagster is unreachable</AlertTitle>
+          <AlertDescription>{error}</AlertDescription>
+        </Alert>
+      ) : null}
+      <div className="overflow-x-auto">
+        <Table className="min-w-[64rem]">
+          <TableHeader>
+            <TableRow>
+              <TableHead>Asset / job</TableHead>
+              <TableHead>Status</TableHead>
+              <TableHead>Started</TableHead>
+              <TableHead>Ended</TableHead>
+              <TableHead>Duration</TableHead>
+              <TableHead>Key metrics</TableHead>
+            </TableRow>
+          </TableHeader>
+          <TableBody>
+            {rows.length === 0 ? (
+              <TableRow>
+                <TableCell colSpan={6} className="text-muted-foreground text-sm">
+                  {error ? "No run data -- Dagster could not be reached." : "No runs to show."}
+                </TableCell>
+              </TableRow>
+            ) : (
+              rows.map((row) => (
+                <TableRow key={row.key}>
+                  <TableCell className="text-sm">{row.label}</TableCell>
+                  <TableCell>
+                    {row.status ? (
+                      <Badge variant={statusVariant(row.status)}>{row.status}</Badge>
+                    ) : (
+                      <span className="text-muted-foreground text-xs">No runs yet</span>
+                    )}
+                  </TableCell>
+                  <TableCell className="text-muted-foreground text-xs">
+                    {instant(row.startTime)}
+                  </TableCell>
+                  <TableCell className="text-muted-foreground text-xs">
+                    {instant(row.endTime)}
+                  </TableCell>
+                  <TableCell className="text-muted-foreground text-xs">
+                    {duration(row)}
+                  </TableCell>
+                  <TableCell className="text-xs">{metricsText(row.metrics)}</TableCell>
+                </TableRow>
+              ))
+            )}
+          </TableBody>
+        </Table>
+      </div>
+    </div>
+  );
+}
+
 /** The company id / name filter form every tab shares. A plain GET `<Form>`,
  * mirroring se-company-info-filter-sheet.tsx's ViewFields pattern: `tab` and
  * `pageSize` ride along as hidden fields so a filter submit stays on the same
@@ -302,7 +416,9 @@ export function SePeopleSourcesTable({
   return (
     <div className="flex flex-col gap-4">
       <SourceTabsNav tab={page.tab} />
-      <SourceFilterForm tab={page.tab} filters={filters} pageSize={view.pageSize} />
+      {page.tab === "tasks" ? null : (
+        <SourceFilterForm tab={page.tab} filters={filters} pageSize={view.pageSize} />
+      )}
       {page.tab === "bolagsverket" ? (
         <DataTable
           columns={bolagsverketColumns()}
@@ -324,7 +440,7 @@ export function SePeopleSourcesTable({
           emptyText="No Wikidata person rows match these filters."
           minWidthClassName="min-w-[64rem]"
         />
-      ) : (
+      ) : page.tab === "final" ? (
         <DataTable
           columns={finalColumns()}
           data={page.rows}
@@ -334,13 +450,17 @@ export function SePeopleSourcesTable({
             `/admin/se/people/person/${encodeURIComponent(row.company_id)}/${encodeURIComponent(row.person_id)}`
           }
         />
+      ) : (
+        <SePeopleTasksTable rows={page.rows} error={page.error} />
       )}
-      <DataTablePagination
-        total={page.total}
-        page={view.page}
-        pageSize={view.pageSize}
-        itemsLabel={page.tab === "final" ? "people" : "source rows"}
-      />
+      {page.tab === "tasks" ? null : (
+        <DataTablePagination
+          total={page.total}
+          page={view.page}
+          pageSize={view.pageSize}
+          itemsLabel={page.tab === "final" ? "people" : "source rows"}
+        />
+      )}
     </div>
   );
 }

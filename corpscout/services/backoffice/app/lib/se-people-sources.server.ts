@@ -22,6 +22,7 @@ import { chQuery } from "~/lib/clickhouse.server";
 import { clampPage, clampPageSize } from "~/lib/paging";
 import { PAGE_LIMIT_OFFSET_SQL } from "~/lib/se-company-info-lists.server";
 import type { SePeopleSourceFilters, SePeopleSourceTab } from "~/lib/se-people-sources";
+import { loadSePeopleTasks, type SePeopleTaskRow } from "~/lib/se-people-tasks.server";
 
 function nonEmpty(value: string): string | null {
   const trimmed = value.trim();
@@ -313,11 +314,14 @@ export type SePeopleSourcePage =
   | { tab: "bolagsverket"; rows: SePeopleBolagsverketRow[]; total: number }
   | { tab: "esef"; rows: SePeopleEsefRow[]; total: number }
   | { tab: "wikidata"; rows: SePeopleWikidataRow[]; total: number }
-  | { tab: "final"; rows: SePeopleFinalRow[]; total: number };
+  | { tab: "final"; rows: SePeopleFinalRow[]; total: number }
+  | { tab: "tasks"; rows: SePeopleTaskRow[]; total: number; error: string };
 
 /** The loader's one call: runs the active tab's page + count queries (two
  * scans of ONE table, never all four) and returns a tab-tagged result the
- * component can switch on. */
+ * component can switch on. Tasks is the odd one out -- no filters, no
+ * pagination, `error` instead of a filterable count -- see
+ * `se-people-tasks.server.ts`'s guarded-read shape. */
 export async function loadSePeopleSourcePage(
   tab: SePeopleSourceTab,
   filters: SePeopleSourceFilters,
@@ -325,6 +329,10 @@ export async function loadSePeopleSourcePage(
   pageSize: number,
 ): Promise<SePeopleSourcePage> {
   switch (tab) {
+    case "tasks": {
+      const { rows, error } = await loadSePeopleTasks();
+      return { tab, rows, total: rows.length, error };
+    }
     case "bolagsverket": {
       const [rows, total] = await Promise.all([
         listSePeopleBolagsverketPage(filters, page, pageSize),

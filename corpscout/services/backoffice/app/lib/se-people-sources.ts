@@ -14,18 +14,22 @@
 import { clampPage, clampPageSize, DEFAULT_PAGE_SIZE } from "~/lib/paging";
 
 /**
- * The four tabs, in reading order: the three raw source views (bolagsverket,
+ * The five tabs, in reading order: the three raw source views (bolagsverket,
  * esef, wikidata -- Sweden's uniform person source read, see dagster_v3's
- * `company_people/source_views.py`), then the resolved `se_company_person`
- * table those sources feed. "final" is empty until the owner runs the
+ * `company_people/source_views.py`), the resolved `se_company_person` table
+ * those sources feed, and Tasks (every people asset/job's latest-run stats,
+ * `se-people-tasks.server.ts`). "final" is empty until the owner runs the
  * pipeline's clean-copy step -- an empty tab with a zero count is the
- * correct, unsurprising state, not an error.
+ * correct, unsurprising state, not an error. "tasks" has no company id/name
+ * filter and no pagination (see `SePeopleSourcesTable`'s tab switch) -- it is
+ * not a row-per-company table like the other four.
  */
 export const SE_PEOPLE_SOURCE_TABS = [
   { value: "bolagsverket", label: "Bolagsverket" },
   { value: "esef", label: "ESEF" },
   { value: "wikidata", label: "Wikidata" },
   { value: "final", label: "People (final)" },
+  { value: "tasks", label: "Tasks" },
 ] as const;
 
 export type SePeopleSourceTab = (typeof SE_PEOPLE_SOURCE_TABS)[number]["value"];
