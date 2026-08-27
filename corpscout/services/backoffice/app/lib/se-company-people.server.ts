@@ -103,3 +103,101 @@ export async function loadSeCompanyPeople(
     roles: rolesByPerson.get(person.person_id) ?? [],
   }));
 }
+
+/** One source observation of one person at this company, with the role AS THE
+ * SOURCE WROTE IT (role_original / role / role_label) -- no canonical mapping.
+ * `period` is whatever time context the source gives: a fiscal year
+ * (bolagsverket), an effective range (esef) or a start–end range (wikidata),
+ * already formatted because the shapes are source-specific. */
+export interface SeCompanyPersonEvidenceRow {
+  source: string;
+  full_name: string;
+  role: string;
+  period: string;
+}
+
+/** All source observations of one person name, across sources. */
+export interface SeCompanyPersonEvidenceGroup {
+  full_name: string;
+  sources: string[];
+  entries: SeCompanyPersonEvidenceRow[];
+}
+
+/**
+ * The raw evidence read: every person the three SOURCE views know at this
+ * company, with original role text -- deliberately NOT the published/merged
+ * tables (owner decision 2026-08-28: until the Ratsit spine lands, the company
+ * People tab shows what each source says, verbatim). The role fallbacks mirror
+ * each view's own shape: bolagsverket's free-text role_original falls back to
+ * its role_kind enum, esef's role text to its role_category, wikidata's
+ * role_label to the raw P-code.
+ */
+export const PEOPLE_EVIDENCE_SQL = `SELECT source, full_name, role, period
+FROM (
+  SELECT
+    'bolagsverket' AS source,
+    full_name AS full_name,
+    if(trim(role_original) != '', role_original, role_kind) AS role,
+    if(fiscal_year > 0, toString(fiscal_year), '') AS period
+  FROM corpscout.se_company_person_bolagsverket
+  WHERE company_id = {companyId:String} AND trim(full_name) != ''
+
+  UNION ALL
+
+  SELECT
+    'esef' AS source,
+    full_name AS full_name,
+    if(trim(role) != '', role, role_category) AS role,
+    trim(concat(ifNull(toString(effective_from), ''), ' – ', ifNull(toString(effective_to), ''))) AS period
+  FROM corpscout.se_company_person_esef
+  WHERE company_id = {companyId:String} AND trim(full_name) != ''
+
+  UNION ALL
+
+  SELECT
+    'wikidata' AS source,
+    full_name AS full_name,
+    if(trim(role_label) != '', role_label, role_property) AS role,
+    trim(concat(ifNull(toString(start_date), ''), ' – ', ifNull(toString(end_date), ''))) AS period
+  FROM corpscout.se_company_person_wikidata
+  WHERE company_id = {companyId:String} AND trim(full_name) != ''
+)
+ORDER BY full_name, source, period, role
+LIMIT 900`;
+
+/** Every source observation of this company's people, grouped by the verbatim
+ * person name (no identity resolution -- two spellings are two groups, which
+ * is exactly the honesty an evidence panel owes the reader). */
+export async function loadSeCompanyPeopleEvidence(
+  companyId: string,
+): Promise<SeCompanyPersonEvidenceGroup[]> {
+  const rows = await chQuery<SeCompanyPersonEvidenceRow>(PEOPLE_EVIDENCE_SQL, {
+    companyId,
+  });
+  const groups = new Map<string, SeCompanyPersonEvidenceGroup>();
+  for (const row of rows) {
+    // The SQL always concatenates "start – end"; a missing side leaves a
+    // dangling dash ("2018-01-01 –", "– 2020-06-30", or just "–").
+    const period =
+      row.period === "–"
+        ? ""
+        : row.period.endsWith(" –")
+          ? `from ${row.period.slice(0, -2).trim()}`
+          : row.period.startsWith("– ")
+            ? `until ${row.period.slice(2).trim()}`
+            : row.period;
+    const cleaned = { ...row, period };
+    const group = groups.get(row.full_name);
+    if (group) {
+      group.entries.push(cleaned);
+      if (!group.sources.includes(row.source)) group.sources.push(row.source);
+    } else {
+      groups.set(row.full_name, {
+        full_name: row.full_name,
+        sources: [row.source],
+        entries: [cleaned],
+      });
+    }
+  }
+  return [...groups.values()];
+}

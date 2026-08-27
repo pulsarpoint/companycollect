@@ -466,7 +466,7 @@ const people: SeCompanyPersonRow[] = [
 describe("people tab", () => {
   it("links every person to the existing per-company person review page", () => {
     const html = render(
-      <SeCompanyPeopleTab companyId={COMPANY_ID} people={people} />,
+      <SeCompanyPeopleTab companyId={COMPANY_ID} people={people} evidence={[]} />,
       seCompanyTabPath(COMPANY_ID, "people"),
     );
     expect(html).toContain("Jens Lapidus");
@@ -478,12 +478,48 @@ describe("people tab", () => {
     expect(html).toContain("2 people · 1 without a role");
   });
 
-  it("says so when Dagster has published no people", () => {
+  it("says so when neither sources nor Dagster know any people", () => {
     const html = render(
-      <SeCompanyPeopleTab companyId={COMPANY_ID} people={[]} />,
+      <SeCompanyPeopleTab companyId={COMPANY_ID} people={[]} evidence={[]} />,
       seCompanyTabPath(COMPANY_ID, "people"),
     );
     expect(html).toContain("No people recorded");
+  });
+
+  it("shows verbatim source evidence with original roles even before any publish", () => {
+    const html = render(
+      <SeCompanyPeopleTab
+        companyId={COMPANY_ID}
+        people={[]}
+        evidence={[
+          {
+            full_name: "Jens Lapidus",
+            sources: ["bolagsverket", "esef"],
+            entries: [
+              {
+                source: "bolagsverket",
+                full_name: "Jens Lapidus",
+                role: "Verkställande direktör",
+                period: "2024",
+              },
+              {
+                source: "esef",
+                full_name: "Jens Lapidus",
+                role: "Member of the Audit Committee",
+                period: "",
+              },
+            ],
+          },
+        ]}
+      />,
+      seCompanyTabPath(COMPANY_ID, "people"),
+    );
+    expect(html).toContain("1 person found in sources");
+    // Roles exactly as the sources wrote them, never a canonical mapping.
+    expect(html).toContain("Verkställande direktör · 2024");
+    expect(html).toContain("Member of the Audit Committee");
+    expect(html).toContain("bolagsverket");
+    expect(html).toContain("esef");
   });
 });
 
@@ -572,7 +608,7 @@ describe("the Sources strip every tab opens with", () => {
 
   it("names the registers behind the people's ROLES, and says nothing when no role resolved", () => {
     const html = render(
-      <SeCompanyPeopleTab companyId={COMPANY_ID} people={people} />,
+      <SeCompanyPeopleTab companyId={COMPANY_ID} people={people} evidence={[]} />,
       seCompanyTabPath(COMPANY_ID, "people"),
     );
     expect(html).toContain('data-source-strip="Bolagsverket"');
@@ -584,6 +620,7 @@ describe("the Sources strip every tab opens with", () => {
       <SeCompanyPeopleTab
         companyId={COMPANY_ID}
         people={people.map((person) => ({ ...person, roles: [] }))}
+        evidence={[]}
       />,
       seCompanyTabPath(COMPANY_ID, "people"),
     );

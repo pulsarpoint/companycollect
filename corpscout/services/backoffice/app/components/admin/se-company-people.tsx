@@ -26,6 +26,7 @@ import {
   TableRow,
 } from "~/components/ui/table";
 import type {
+  SeCompanyPersonEvidenceGroup,
   SeCompanyPersonRoleRow,
   SeCompanyPersonRow,
 } from "~/lib/se-company-people.server";
@@ -43,19 +44,87 @@ function RoleBadge({ role }: { role: SeCompanyPersonRoleRow }) {
   );
 }
 
+/** What each source says about this company's people, verbatim: one row per
+ * person name, the roles exactly as the source wrote them (no canonical
+ * mapping, no identity resolution -- two spellings are two rows). This is the
+ * tab's primary content until the Ratsit spine lands. */
+function SourceEvidenceCard({
+  evidence,
+}: {
+  evidence: SeCompanyPersonEvidenceGroup[];
+}) {
+  return (
+    <Card>
+      <CardHeader>
+        <CardTitle className="text-base">
+          {evidence.length} {evidence.length === 1 ? "person" : "people"} found
+          in sources
+        </CardTitle>
+        <CardDescription>
+          Everything the Bolagsverket, ESEF and Wikidata source tables say about
+          this company's people, with roles exactly as each source wrote them.
+        </CardDescription>
+      </CardHeader>
+      <CardContent>
+        <Table>
+          <TableHeader>
+            <TableRow>
+              <TableHead>Name</TableHead>
+              <TableHead>Roles as reported</TableHead>
+              <TableHead>Sources</TableHead>
+            </TableRow>
+          </TableHeader>
+          <TableBody>
+            {evidence.map((group) => (
+              <TableRow key={group.full_name}>
+                <TableCell className="font-medium">{group.full_name}</TableCell>
+                <TableCell>
+                  <div className="flex flex-wrap gap-1">
+                    {group.entries.map((entry, index) => (
+                      <Badge
+                        key={`${entry.source}:${entry.role}:${entry.period}:${index}`}
+                        variant="outline"
+                      >
+                        {entry.role}
+                        {entry.period === "" ? "" : ` · ${entry.period}`}
+                      </Badge>
+                    ))}
+                  </div>
+                </TableCell>
+                <TableCell>
+                  <div className="flex flex-wrap gap-1">
+                    {group.sources.map((source) => (
+                      <Badge key={source} variant="secondary">
+                        {source}
+                      </Badge>
+                    ))}
+                  </div>
+                </TableCell>
+              </TableRow>
+            ))}
+          </TableBody>
+        </Table>
+      </CardContent>
+    </Card>
+  );
+}
+
 /**
- * The published people of this company. Each row links to the person review
- * page, which is keyed on (company, person) -- the same person name at
- * another company is another person here.
+ * Source evidence first (verbatim per-source people and roles), then the
+ * published/merged people when the pipeline has produced any. Each published
+ * row links to the person review page, which is keyed on (company, person) --
+ * the same person name at another company is another person here.
  */
 export function SeCompanyPeopleTab({
   companyId,
   people,
+  evidence,
 }: {
   companyId: string;
   people: SeCompanyPersonRow[];
+  evidence: SeCompanyPersonEvidenceGroup[];
 }) {
-  if (people.length === 0) {
+  if (people.length === 0 && evidence.length === 0) {
     return (
       <Empty className="border">
         <EmptyHeader>
@@ -64,18 +133,22 @@ export function SeCompanyPeopleTab({
           </EmptyMedia>
           <EmptyTitle>No people recorded</EmptyTitle>
           <EmptyDescription>
-            Dagster has published no people for this company yet. People appear
-            once their drafts are resolved into se_company_person.
+            No source has reported people for this company, and Dagster has
+            published none.
           </EmptyDescription>
         </EmptyHeader>
       </Empty>
     );
+  }
+  if (people.length === 0) {
+    return <SourceEvidenceCard evidence={evidence} />;
   }
   const withoutRoles = people.filter(
     (person) => person.roles.length === 0,
   ).length;
   return (
     <div className="flex flex-col gap-4">
+      {evidence.length === 0 ? null : <SourceEvidenceCard evidence={evidence} />}
       {/* The registers behind the ROLES, which is the only provenance the
           published person rows carry (se_company_person has no source column;
           se_company_person_role.sources does). A company whose people have no
