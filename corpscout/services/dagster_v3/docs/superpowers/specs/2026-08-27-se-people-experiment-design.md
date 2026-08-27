@@ -151,11 +151,17 @@ backoffice), schedules ship STOPPED until the identity rule is chosen and the
 first full resolution validates. clickhouse-local test harness per the
 established pattern; every SQL executed under both `join_use_nulls` settings.
 
-## 6. Open questions for the owner (answers wanted at spec review)
+## 6. Owner decisions (2026-08-27, spec review)
 
-1. Identity rule expectation confirmed (K3) — or should the experiment also
-   price an LLM-assisted merge pass for the collision candidates?
-2. May `se_company_person_draft` be retired as part of this work, or must it
-   run in parallel until the first full re-resolution is reviewed?
-3. Does the company People tab switch to the new model immediately on first
-   resolution, or after a review sample?
+1. **Identity/merging**: deterministic K3 is the base rule (still validated by
+   the §3.2 evaluation numbers). Person MERGING beyond the deterministic rule —
+   the collision candidates — is **LLM-assisted, triggered from the backoffice**
+   exactly like ESEF extraction: the Dagster merge asset takes the **LLM as a
+   run parameter** (named run-config profiles, `<PROVIDER>_API_KEY` from host
+   env, `execute` gate so a bare UI Materialize is a preview — the info-pilot /
+   ESEF pattern verbatim). Never scheduled; never eager.
+2. **`se_company_person_draft` is retired IN THIS WORK** — no parallel run.
+   Collector, jobs, and table go with the standard drop gates once
+   normalization reads the views.
+3. **The company People tab switches to the new model immediately at first
+   resolution** — no review-sample gate.
