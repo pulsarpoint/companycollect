@@ -13,6 +13,13 @@ export const SE_PERSON_CORRECTION_KINDS = [
   "override_field",
   "set_role",
   "remove_role",
+  // The negative half of a collision-candidate-group decision (SE People
+  // Experiment Task 4/5): the counterpart to a merge_persons correction whose
+  // payload names the same candidate_group_id. Dagster's corrections.py keeps
+  // it OUT of PERSON_CORRECTION_KINDS -- it moves no evidence, it only marks a
+  // group decided -- but it is a normal ledger row here (a real subject_person_id,
+  // a real evidence_hash checked against that subject).
+  "keep_separate",
   "undo",
 ] as const;
 
@@ -53,7 +60,10 @@ export interface SePersonCorrectionDraft {
 const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 const HASH_PATTERN = /^[0-9a-f]{64}$/;
 const ALLOWED_PAYLOAD_KEYS: Record<SePersonCorrectionKind, readonly string[]> = {
-  merge_persons: [],
+  // candidate_group_id is optional: a manually-typed merge carries none, while a
+  // merge approved off a collision-candidate group's suggestion carries the
+  // group's id so Dagster's merge asset recognizes the group as decided.
+  merge_persons: ["candidate_group_id"],
   reassign_draft: [],
   split_person: ["name"],
   approve_suggestion: ["suggestion_id"],
@@ -61,6 +71,7 @@ const ALLOWED_PAYLOAD_KEYS: Record<SePersonCorrectionKind, readonly string[]> = 
   override_field: ["name", "description"],
   set_role: ["role_code", "fiscal_year"],
   remove_role: [],
+  keep_separate: ["candidate_group_id"],
   undo: [],
 };
 
@@ -119,6 +130,25 @@ export function validateSePersonCorrection(
       if (kind === "merge_persons" && draftIds.length !== 0) {
         fail("Merge does not take draft ids.");
       }
+      if (kind === "merge_persons" && "candidate_group_id" in payload) {
+        if (
+          typeof payload.candidate_group_id !== "string" ||
+          payload.candidate_group_id.trim() === ""
+        ) {
+          fail("candidate_group_id must be a non-empty string.");
+        }
+        cleanPayload.candidate_group_id = payload.candidate_group_id.trim();
+      }
+      break;
+    }
+    case "keep_separate": {
+      if (
+        typeof payload.candidate_group_id !== "string" ||
+        payload.candidate_group_id.trim() === ""
+      ) {
+        fail("keep_separate needs a candidate_group_id.");
+      }
+      cleanPayload.candidate_group_id = payload.candidate_group_id.trim();
       break;
     }
     case "split_person": {

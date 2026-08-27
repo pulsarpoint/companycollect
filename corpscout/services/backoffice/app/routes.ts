@@ -98,6 +98,11 @@ export default [
       "se/people/person/:companyId/:personId",
       "routes/admin-se-people-person.tsx",
     ),
+    // Backoffice-triggered runs for the ClickHouse company-person model
+    // (identity evaluation, resolution, merge suggestions) -- SE People
+    // Experiment Task 5, mirroring se/companies/pipeline's confirm-then-launch
+    // pattern. A real page, not a sheet: see the route's own docstring.
+    route("se/people/pipeline", "routes/admin-se-people-pipeline.tsx"),
     // One company, five tabs. The layout owns the header and the sub-menu; a
     // bare /admin/se/company/:companyId redirects to Info.
     route("se/company/:companyId", "routes/admin-se-company-layout.tsx", [

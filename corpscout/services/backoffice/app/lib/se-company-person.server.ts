@@ -9,6 +9,10 @@ import {
   ZERO_EVIDENCE_HASH,
   type SePersonCorrectionInput,
 } from "~/lib/se-person-corrections";
+import {
+  parseMergeSuggestionPayload,
+  type SeMergeSuggestionPayload,
+} from "~/lib/se-person-merge-suggestions";
 
 export { ZERO_EVIDENCE_HASH };
 const CORRECTION_ACTOR = "backoffice";
@@ -149,10 +153,117 @@ FROM corpscout.se_company_person AS p FINAL
 WHERE p.company_id = {companyId:String} AND p.person_id = {personId:UUID}
 LIMIT 1`;
 
-export const DRAFTS_SQL = `SELECT
-  toString(d.draft_id) AS draft_id, toString(d.source) AS source,
+/**
+ * SE People Experiment Task 5: `se_company_person_draft` is retired (Task 3
+ * already moved normalization/roles off it; this is the last backoffice
+ * reader). The evidence panel now reads the three source views directly --
+ * `se_company_person_bolagsverket` / `se_company_person_esef` /
+ * `se_company_person_wikidata` (migration 000330/000331) -- through a
+ * hand-ported TS mirror of dagster_v3's shared `source_observations` CTE
+ * (`company_people/source_views.py`,
+ * `build_se_company_person_source_observations_sql`). This has to be a real
+ * port, not a paraphrase: `draft_id` here MUST hash to the exact same UUID
+ * Dagster's SQL computes for the same row, because `person.draft_ids` (the
+ * `IN {draftIds:...}` filter below) was populated by THAT formula. Every
+ * piece is copied verbatim: the v2 hash domain, the per-branch row-level
+ * disambiguator folded into the hash (`signatory_uid` / `candidate_uid` /
+ * `company_wikidata_id` -- fixes the same "two rows collide onto one
+ * draft_id" bug Task 3's fix round found), and ClickHouse's
+ * `reinterpretAsUUID(unhex(...))` byte-reversal quirk (inherited for free:
+ * this is the same SQL text, not a Python-side reimplementation of it).
+ *
+ * The per-branch `source_value_json` shape also mirrors source_views.py
+ * field-for-field (bolagsverket: first_name/last_name/role_original/
+ * role_kind/signatory_kind; esef: name/role/role_category/...; wikidata:
+ * name/role_property/role_label/description/...), which is what keeps the
+ * `name`/`role_original` derivation below unchanged from the old
+ * draft-table version -- those two `multiIf`s only ever read keys this
+ * shape already carries.
+ *
+ * `company_id = {companyId:String}` is pushed into each branch's WHERE
+ * (Dagster's own shared CTE does not scope by company -- callers there
+ * already work company-batch-at-a-time upstream); pushing it here keeps a
+ * single person's evidence read from re-scanning every SE person in all
+ * three source tables.
+ */
+const SOURCE_OBSERVATION_HASH_DOMAIN = "se-company-person-source-observation-v2";
+
+function sourceObservationIdSql(sourceLiteral: string, disambiguator: string): string {
+  return `reinterpretAsUUID(unhex(substring(hex(SHA256(concat(
+            '${SOURCE_OBSERVATION_HASH_DOMAIN}\\n',
+            company_id, '\\n', ${sourceLiteral}, '\\n', toString(source_record_uid), '\\n',
+            toString(person_profile_hash), '\\n', toString(person_role_hash), '\\n',
+            toString(${disambiguator})
+        ))), 1, 32)))`;
+}
+
+const SOURCE_OBSERVATIONS_CTE = `source_observations AS (
+    SELECT
+        'bolagsverket' AS source,
+        company_id,
+        full_name,
+        if(
+            fiscal_year > 0,
+            toNullable(toUInt16(fiscal_year)),
+            CAST(NULL, 'Nullable(UInt16)')
+        ) AS fiscal_year,
+        source_observed_at,
+        ${sourceObservationIdSql("'bolagsverket'", "signatory_uid")} AS draft_id,
+        toJSONString(CAST(tuple(
+            first_name, last_name, role_original, role_kind, signatory_kind
+        ) AS Tuple(
+            first_name String, last_name String, role_original String, role_kind String,
+            signatory_kind String
+        ))) AS source_value_json
+    FROM corpscout.se_company_person_bolagsverket
+    WHERE trim(full_name) != '' AND company_id = {companyId:String}
+
+    UNION ALL
+
+    SELECT
+        'esef' AS source,
+        company_id,
+        full_name,
+        toNullable(fiscal_year) AS fiscal_year,
+        source_observed_at,
+        ${sourceObservationIdSql("'esef'", "candidate_uid")} AS draft_id,
+        toJSONString(CAST(tuple(
+            full_name, role, role_category, organization, status, effective_from,
+            effective_to, confidence
+        ) AS Tuple(
+            name String, role String, role_category String, organization String,
+            status String, effective_from Nullable(Date32), effective_to Nullable(Date32),
+            confidence Float32
+        ))) AS source_value_json
+    FROM corpscout.se_company_person_esef
+    WHERE trim(full_name) != '' AND company_id = {companyId:String}
+
+    UNION ALL
+
+    SELECT
+        'wikidata' AS source,
+        company_id,
+        full_name,
+        CAST(NULL, 'Nullable(UInt16)') AS fiscal_year,
+        source_observed_at,
+        ${sourceObservationIdSql("'wikidata'", "company_wikidata_id")} AS draft_id,
+        toJSONString(CAST(tuple(
+            full_name, role_property, role_label, ifNull(description, ''),
+            person_wikidata_id, start_date, end_date, birth_year
+        ) AS Tuple(
+            name String, role_property String, role_label String, description String,
+            person_wikidata_id String, start_date Nullable(Date), end_date Nullable(Date),
+            birth_year Nullable(UInt16)
+        ))) AS source_value_json
+    FROM corpscout.se_company_person_wikidata
+    WHERE trim(full_name) != '' AND company_id = {companyId:String}
+)`;
+
+export const DRAFTS_SQL = `WITH ${SOURCE_OBSERVATIONS_CTE}
+SELECT
+  toString(draft_id) AS draft_id, toString(source) AS source,
   multiIf(
-    d.source = 'bolagsverket',
+    source = 'bolagsverket',
     trim(concat(
       JSONExtractString(source_value_json, 'first_name'), ' ',
       JSONExtractString(source_value_json, 'last_name')
@@ -160,15 +271,15 @@ export const DRAFTS_SQL = `SELECT
     JSONExtractString(source_value_json, 'name')
   ) AS name,
   multiIf(
-    d.source = 'bolagsverket', JSONExtractString(source_value_json, 'role_original'),
-    d.source = 'esef', JSONExtractString(source_value_json, 'role'),
+    source = 'bolagsverket', JSONExtractString(source_value_json, 'role_original'),
+    source = 'esef', JSONExtractString(source_value_json, 'role'),
     JSONExtractString(source_value_json, 'role_label')
   ) AS role_original,
-  d.fiscal_year AS fiscal_year,
-  toString(d.source_observed_at) AS source_observed_at,
-  d.source_value_json AS source_value_json
-FROM corpscout.se_company_person_draft AS d FINAL
-WHERE d.company_id = {companyId:String} AND d.draft_id IN {draftIds:Array(UUID)}
+  fiscal_year AS fiscal_year,
+  toString(source_observed_at) AS source_observed_at,
+  source_value_json AS source_value_json
+FROM source_observations
+WHERE company_id = {companyId:String} AND draft_id IN {draftIds:Array(UUID)}
 ORDER BY source, fiscal_year, draft_id`;
 
 export const ROLES_SQL = `SELECT
@@ -337,4 +448,323 @@ export async function appendSeCompanyPersonCorrection(
     },
   ]);
   return { correctionId };
+}
+
+/* -------------------------------------------------------------------- */
+/* Collision-candidate + merge-suggestion review (SE People Experiment   */
+/* Task 5). Groups come from Task 2's se_company_person_collision_candidate */
+/* table; a group's suggestion (if any) comes from Task 4's merge asset,    */
+/* which writes it into se_company_person_enrichment_observation, the SAME */
+/* table normalization.py's profile-suggestion path already uses.          */
+/* -------------------------------------------------------------------- */
+
+export interface SeCollisionCandidateMember {
+  person_key: string;
+  full_name: string;
+  source: string;
+  source_record_uid: string;
+}
+
+export interface SeCollisionCandidateSuggestion {
+  suggestion_id: string;
+  decision: "merge" | "keep_separate";
+  confidence: number;
+  rationale: string;
+  into_person_id: string;
+  from_person_ids: string[];
+  member_person_ids: string[];
+  created_at: string;
+}
+
+export interface SeCollisionCandidateGroup {
+  candidate_group_id: string;
+  members: SeCollisionCandidateMember[];
+  /** The most recent merge suggestion filed against this group, if any. A
+   * group with none has not been through se_company_person_merge_job yet. */
+  suggestion: SeCollisionCandidateSuggestion | null;
+  /** A human has already ruled on this group (merge_persons or keep_separate,
+   * not superseded by a later undo) -- mirrors merge.py's own decided-marker
+   * read exactly (same kinds, same undo-exclusion), so a group this page
+   * still offers Approve/Keep separate on is a group Dagster's merge job
+   * would still consider open too. */
+  is_decided: boolean;
+}
+
+export const COLLISION_CANDIDATES_SQL = `SELECT
+  candidate_group_id AS candidate_group_id, person_key AS person_key,
+  full_name AS full_name, source AS source, source_record_uid AS source_record_uid
+FROM corpscout.se_company_person_collision_candidate
+WHERE company_id = {companyId:String}
+ORDER BY candidate_group_id, source, full_name`;
+
+/** Mirrors merge.py's own decided-marker read: both decision kinds, a payload
+ * naming this group, excluding a decision a later undo superseded -- so a
+ * group this query still calls open is a group the merge asset would still
+ * consider open too. */
+export const DECIDED_CANDIDATE_GROUPS_SQL = `SELECT DISTINCT
+  JSONExtractString(payload, 'candidate_group_id') AS candidate_group_id
+FROM corpscout.se_company_person_correction
+WHERE company_id = {companyId:String}
+  AND correction_kind IN ('merge_persons', 'keep_separate')
+  AND JSONExtractString(payload, 'candidate_group_id') != ''
+  AND correction_id NOT IN (
+    SELECT supersedes_correction_id
+    FROM corpscout.se_company_person_correction
+    WHERE company_id = {companyId:String} AND supersedes_correction_id IS NOT NULL
+  )`;
+
+/** Every merge suggestion ever written for this company (any subject person),
+ * newest first -- unlike SUGGESTIONS_SQL, not scoped to one person_id, because
+ * a merge suggestion is filed under its group's into_person_id, and a
+ * collision group's other members would otherwise never see it on their own
+ * page. Rows this reader did not write (an ordinary profile suggestion,
+ * sharing the same table) fail parseMergeSuggestionPayload and are dropped. */
+export const MERGE_SUGGESTIONS_FOR_COMPANY_SQL = `SELECT
+  toString(s.suggestion_id) AS suggestion_id, s.suggestion AS suggestion,
+  toString(s.created_at) AS created_at
+FROM corpscout.se_company_person_enrichment_observation AS s
+WHERE s.company_id = {companyId:String}
+  AND JSONExtractString(s.suggestion, 'candidate_group_id') != ''
+ORDER BY s.created_at DESC
+LIMIT 200`;
+
+export async function loadSeCompanyPersonCollisionReview(
+  companyId: string,
+): Promise<SeCollisionCandidateGroup[]> {
+  const [candidateRows, suggestionRows, decidedRows] = await Promise.all([
+    chQuery<SeCollisionCandidateMember & { candidate_group_id: string }>(
+      COLLISION_CANDIDATES_SQL,
+      { companyId },
+    ),
+    chQuery<{ suggestion_id: string; suggestion: string; created_at: string }>(
+      MERGE_SUGGESTIONS_FOR_COMPANY_SQL,
+      { companyId },
+    ),
+    chQuery<{ candidate_group_id: string }>(DECIDED_CANDIDATE_GROUPS_SQL, { companyId }),
+  ]);
+
+  const decided = new Set(
+    decidedRows.map((row) => row.candidate_group_id).filter((id) => id !== ""),
+  );
+
+  // Newest first (query order): the first suggestion seen per group is kept.
+  const suggestionByGroup = new Map<string, SeCollisionCandidateSuggestion>();
+  for (const row of suggestionRows) {
+    const payload = parseMergeSuggestionPayload(row.suggestion);
+    if (!payload || suggestionByGroup.has(payload.candidate_group_id)) continue;
+    suggestionByGroup.set(payload.candidate_group_id, {
+      suggestion_id: row.suggestion_id,
+      decision: payload.decision,
+      confidence: payload.confidence,
+      rationale: payload.rationale,
+      into_person_id: payload.into_person_id,
+      from_person_ids: payload.from_person_ids,
+      member_person_ids: payload.member_person_ids,
+      created_at: row.created_at,
+    });
+  }
+
+  const groups = new Map<string, SeCollisionCandidateGroup>();
+  for (const row of candidateRows) {
+    let group = groups.get(row.candidate_group_id);
+    if (!group) {
+      group = {
+        candidate_group_id: row.candidate_group_id,
+        members: [],
+        suggestion: suggestionByGroup.get(row.candidate_group_id) ?? null,
+        is_decided: decided.has(row.candidate_group_id),
+      };
+      groups.set(row.candidate_group_id, group);
+    }
+    group.members.push({
+      person_key: row.person_key,
+      full_name: row.full_name,
+      source: row.source,
+      source_record_uid: row.source_record_uid,
+    });
+  }
+  return [...groups.values()];
+}
+
+export const MERGE_SUGGESTION_BY_ID_SQL = `SELECT
+  toString(s.suggestion_id) AS suggestion_id,
+  s.suggestion AS suggestion,
+  arrayMap(id -> toString(id), s.draft_ids) AS draft_ids
+FROM corpscout.se_company_person_enrichment_observation AS s
+WHERE s.company_id = {companyId:String} AND s.suggestion_id = {suggestionId:UUID}
+LIMIT 1`;
+
+/** The group's currently-published, non-tombstoned people and the drafts they
+ * hold right now -- read fresh, never trusted from the suggestion row, which
+ * may be arbitrarily old by the time a human reviews it. */
+export const MERGE_GROUP_LIVE_SQL = `SELECT
+  toString(person_id) AS person_id,
+  toString(draft_set_hash) AS draft_set_hash,
+  arrayMap(id -> toString(id), draft_ids) AS draft_ids,
+  toUInt8(merged_into_person_id IS NULL) AS is_live
+FROM corpscout.se_company_person FINAL
+WHERE company_id = {companyId:String} AND person_id IN {personIds:Array(UUID)}`;
+
+interface MergeGroupLiveRow {
+  person_id: string;
+  draft_set_hash: string;
+  draft_ids: string[];
+  is_live: number;
+}
+
+export type SeMergeRevalidation =
+  | { ok: true; evidenceHashByPersonId: Record<string, string> }
+  | { ok: false; reason: string };
+
+/**
+ * CARRY-FORWARD REQUIREMENT from Task 4's review: a merge suggestion's
+ * into/from ids can go stale between when the model answered and when a human
+ * approves it (new evidence merged/split the people involved). This
+ * re-reads se_company_person live and refuses with a clear reason rather than
+ * trusting the suggestion's ids -- both halves the brief asks for: the
+ * into/from ids must still exist un-tombstoned, AND (going further than the
+ * "at minimum" bar) the suggestion's own draft_ids must still be owned by
+ * SOME member of the group, so evidence a correction moved out of the group
+ * entirely since the suggestion was written cannot be silently re-merged.
+ */
+export async function revalidateMergeSuggestion(
+  companyId: string,
+  payload: SeMergeSuggestionPayload,
+  suggestionDraftIds: readonly string[],
+): Promise<SeMergeRevalidation> {
+  const groupPersonIds = [payload.into_person_id, ...payload.from_person_ids];
+  const rows = await chQuery<MergeGroupLiveRow>(MERGE_GROUP_LIVE_SQL, {
+    companyId,
+    personIds: groupPersonIds,
+  });
+  const byId = new Map(rows.map((row) => [row.person_id, row]));
+
+  const missing = groupPersonIds.filter((id) => !byId.has(id));
+  if (missing.length > 0) {
+    return {
+      ok: false,
+      reason:
+        `This suggestion is stale: ${missing.join(", ")} ` +
+        `${missing.length === 1 ? "is" : "are"} no longer published for this company.`,
+    };
+  }
+  const tombstoned = groupPersonIds.filter((id) => byId.get(id)?.is_live === 0);
+  if (tombstoned.length > 0) {
+    return {
+      ok: false,
+      reason:
+        `This suggestion is stale: ${tombstoned.join(", ")} ` +
+        `${tombstoned.length === 1 ? "was" : "were"} already merged elsewhere.`,
+    };
+  }
+  const liveDraftIds = new Set(rows.flatMap((row) => row.draft_ids));
+  const movedDrafts = suggestionDraftIds.filter((id) => !liveDraftIds.has(id));
+  if (movedDrafts.length > 0) {
+    return {
+      ok: false,
+      reason:
+        "This suggestion is stale: the underlying evidence moved since it was written. " +
+        "Reload and reconsider.",
+    };
+  }
+  return {
+    ok: true,
+    evidenceHashByPersonId: Object.fromEntries(
+      rows.map((row) => [row.person_id, row.draft_set_hash]),
+    ),
+  };
+}
+
+async function loadMergeSuggestionForReview(
+  companyId: string,
+  suggestionId: string,
+): Promise<{ payload: SeMergeSuggestionPayload; draftIds: string[] }> {
+  const [row] = await chQuery<{ suggestion_id: string; suggestion: string; draft_ids: string[] }>(
+    MERGE_SUGGESTION_BY_ID_SQL,
+    { companyId, suggestionId },
+  );
+  if (!row) throw new SePersonCorrectionValidationError("Suggestion not found.");
+  const payload = parseMergeSuggestionPayload(row.suggestion);
+  if (!payload) {
+    throw new SePersonCorrectionValidationError(
+      "This suggestion is not a recognizable merge suggestion.",
+    );
+  }
+  return { payload, draftIds: row.draft_ids };
+}
+
+/**
+ * Approving a merge suggestion writes one merge_persons correction PER
+ * from_person_id (apply_person_corrections only ever moves evidence from one
+ * subject to one target -- see dagster_v3's normalization.py) -- each carrying
+ * the group's candidate_group_id in its payload so merge.py's decided-marker
+ * query recognizes the whole group as resolved, not just one pair.
+ * Re-validated against live state FIRST: if the suggestion is stale, nothing
+ * is written at all.
+ */
+export async function approveMergeSuggestion(input: {
+  companyId: string;
+  suggestionId: string;
+  reason: string;
+}): Promise<{ correctionIds: string[] }> {
+  const { payload, draftIds } = await loadMergeSuggestionForReview(
+    input.companyId,
+    input.suggestionId,
+  );
+  if (payload.from_person_ids.length === 0) {
+    throw new SePersonCorrectionValidationError(
+      "This suggestion names no people to merge away.",
+    );
+  }
+  const revalidation = await revalidateMergeSuggestion(input.companyId, payload, draftIds);
+  if (!revalidation.ok) throw new SePersonCorrectionValidationError(revalidation.reason);
+
+  const correctionIds: string[] = [];
+  for (const fromPersonId of payload.from_person_ids) {
+    const evidenceHash = revalidation.evidenceHashByPersonId[fromPersonId];
+    const result = await appendSeCompanyPersonCorrection({
+      companyId: input.companyId,
+      kind: "merge_persons",
+      subjectPersonId: fromPersonId,
+      targetPersonId: payload.into_person_id,
+      payload: { candidate_group_id: payload.candidate_group_id },
+      evidenceHash,
+      reason: input.reason,
+      activeRoleCodes: new Set(),
+    });
+    correctionIds.push(result.correctionId);
+  }
+  return { correctionIds };
+}
+
+/**
+ * Keeping a group separate writes one keep_separate correction, anchored on
+ * the group's into_person_id (an arbitrary but real, currently-published
+ * member -- keep_separate moves no evidence, so which member anchors it is
+ * not semantically meaningful, only that it be a real, current one). Also
+ * re-validated against live state first, for the same staleness reason.
+ */
+export async function keepSeparateMergeSuggestion(input: {
+  companyId: string;
+  suggestionId: string;
+  reason: string;
+}): Promise<{ correctionId: string }> {
+  const { payload, draftIds } = await loadMergeSuggestionForReview(
+    input.companyId,
+    input.suggestionId,
+  );
+  const revalidation = await revalidateMergeSuggestion(input.companyId, payload, draftIds);
+  if (!revalidation.ok) throw new SePersonCorrectionValidationError(revalidation.reason);
+
+  const evidenceHash = revalidation.evidenceHashByPersonId[payload.into_person_id];
+  const result = await appendSeCompanyPersonCorrection({
+    companyId: input.companyId,
+    kind: "keep_separate",
+    subjectPersonId: payload.into_person_id,
+    payload: { candidate_group_id: payload.candidate_group_id },
+    evidenceHash,
+    reason: input.reason,
+    activeRoleCodes: new Set(),
+  });
+  return { correctionId: result.correctionId };
 }

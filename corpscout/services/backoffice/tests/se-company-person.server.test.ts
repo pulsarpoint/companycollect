@@ -8,11 +8,20 @@ vi.mock("~/lib/clickhouse.server", () => ({
 
 import {
   appendSeCompanyPersonCorrection,
+  approveMergeSuggestion,
+  COLLISION_CANDIDATES_SQL,
   CORRECTIONS_SQL,
+  DECIDED_CANDIDATE_GROUPS_SQL,
   DRAFTS_SQL,
   getSeCompanyPerson,
+  keepSeparateMergeSuggestion,
   listStaleSeCompanyPersonCorrections,
+  loadSeCompanyPersonCollisionReview,
+  MERGE_GROUP_LIVE_SQL,
+  MERGE_SUGGESTION_BY_ID_SQL,
+  MERGE_SUGGESTIONS_FOR_COMPANY_SQL,
   PERSON_SQL,
+  revalidateMergeSuggestion,
   STALE_CORRECTIONS_SQL,
   ROLES_SQL,
   seCompanyPersonId,
@@ -22,6 +31,7 @@ import {
   SePersonCorrectionValidationError,
   ZERO_EVIDENCE_HASH,
 } from "~/lib/se-person-corrections";
+import type { SeMergeSuggestionPayload } from "~/lib/se-person-merge-suggestions";
 
 const COMPANY = "5565200028";
 const PERSON = "43234b7d-0184-16b5-de47-dc086a2b0ed9";
@@ -102,8 +112,42 @@ describe("review query SQL text", () => {
       "trim(concat(\n      JSONExtractString(source_value_json, 'first_name'), ' ',\n      JSONExtractString(source_value_json, 'last_name')\n    ))",
     );
     expect(DRAFTS_SQL).toContain("JSONExtractString(source_value_json, 'name')");
-    expect(DRAFTS_SQL).toContain("FROM corpscout.se_company_person_draft AS d FINAL");
+    expect(DRAFTS_SQL).toContain("FROM source_observations");
     expect(DRAFTS_SQL).toContain("{draftIds:Array(UUID)}");
+  });
+
+  it("DRAFTS_SQL reads the three source views, never se_company_person_draft (Task 5)", () => {
+    // The draft table is retired in Task 6; nothing in the backoffice may read
+    // it any more (rg se_company_person_draft must come back empty).
+    expect(DRAFTS_SQL).not.toContain("se_company_person_draft");
+    for (const view of [
+      "corpscout.se_company_person_bolagsverket",
+      "corpscout.se_company_person_esef",
+      "corpscout.se_company_person_wikidata",
+    ]) {
+      expect(DRAFTS_SQL).toContain(`FROM ${view}`);
+    }
+    // Blank-name exclusion, mirroring source_views.py's shared CTE.
+    expect(DRAFTS_SQL.match(/WHERE trim\(full_name\) != ''/g)).toHaveLength(3);
+  });
+
+  it("DRAFTS_SQL computes draft_id with the same v2 hash formula as dagster_v3's shared CTE", () => {
+    // Byte-for-byte port of source_views.py's _SOURCE_OBSERVATION_ID_SQL: same
+    // hash domain, same field order, same per-branch disambiguator folded in
+    // (Task 3's fix round -- without it two rows can collide onto one
+    // draft_id). This MUST match, because person.draft_ids (the IN filter
+    // below) was populated by exactly that Python-side SQL.
+    expect(DRAFTS_SQL).toContain("se-company-person-source-observation-v2");
+    expect(DRAFTS_SQL).toContain("reinterpretAsUUID(unhex(substring(hex(SHA256(concat(");
+    expect(DRAFTS_SQL).toContain("toString(signatory_uid)");
+    expect(DRAFTS_SQL).toContain("toString(candidate_uid)");
+    expect(DRAFTS_SQL).toContain("toString(company_wikidata_id)");
+  });
+
+  it("DRAFTS_SQL scopes each branch by company_id, not just the outer WHERE", () => {
+    // Pushed into every UNION branch so a single person's evidence read does
+    // not rescan every SE person in all three source tables.
+    expect(DRAFTS_SQL.match(/AND company_id = \{companyId:String\}/g)).toHaveLength(3);
   });
 
   it("PERSON_SQL selects the review columns from se_company_person", () => {
@@ -122,9 +166,9 @@ describe("review query SQL text", () => {
       "WHERE p.company_id = {companyId:String} AND p.person_id = {personId:UUID}",
     );
     expect(DRAFTS_SQL).toContain(
-      "WHERE d.company_id = {companyId:String} AND d.draft_id IN {draftIds:Array(UUID)}",
+      "WHERE company_id = {companyId:String} AND draft_id IN {draftIds:Array(UUID)}",
     );
-    expect(DRAFTS_SQL).toContain("FROM corpscout.se_company_person_draft AS d FINAL");
+    expect(DRAFTS_SQL).not.toContain("se_company_person_draft");
   });
 
   it("ROLES_SQL selects correction_ids and is_current from se_company_person_role", () => {
@@ -286,5 +330,364 @@ describe("getSeCompanyPerson", () => {
 
     expect(result).toBeNull();
     expect(clickhouse.query).toHaveBeenCalledTimes(1);
+  });
+});
+
+/* -------------------------------------------------------------------- */
+/* Collision-candidate + merge-suggestion review (SE People Experiment   */
+/* Task 5)                                                                */
+/* -------------------------------------------------------------------- */
+
+const INTO_PERSON = PERSON;
+const FROM_PERSON = "11111111-1111-4111-8111-111111111111";
+const GROUP_ID = "grp-1";
+const MERGE_SUGGESTION_ID = "99999999-9999-4999-8999-999999999999";
+
+function mergeSuggestionPayload(
+  overrides: Partial<SeMergeSuggestionPayload> = {},
+): SeMergeSuggestionPayload {
+  return {
+    candidate_group_id: GROUP_ID,
+    decision: "merge",
+    confidence: 0.9,
+    rationale: "Same person, middle name variant.",
+    into_person_id: INTO_PERSON,
+    from_person_ids: [FROM_PERSON],
+    member_person_ids: [INTO_PERSON, FROM_PERSON],
+    ...overrides,
+  };
+}
+
+describe("collision-candidate review SQL text", () => {
+  it("scopes collision candidates and decided groups by company_id", () => {
+    expect(COLLISION_CANDIDATES_SQL).toContain(
+      "FROM corpscout.se_company_person_collision_candidate",
+    );
+    expect(COLLISION_CANDIDATES_SQL).toContain("WHERE company_id = {companyId:String}");
+    expect(DECIDED_CANDIDATE_GROUPS_SQL).toContain(
+      "correction_kind IN ('merge_persons', 'keep_separate')",
+    );
+    // Mirrors merge.py's own decided-marker read: a decision an undo
+    // superseded must not keep a group stuck as "decided" forever.
+    expect(DECIDED_CANDIDATE_GROUPS_SQL).toContain("supersedes_correction_id");
+    expect(MERGE_SUGGESTIONS_FOR_COMPANY_SQL).toContain(
+      "JSONExtractString(s.suggestion, 'candidate_group_id') != ''",
+    );
+  });
+
+  it("MERGE_GROUP_LIVE_SQL reads live, non-tombstoned people fresh from se_company_person", () => {
+    expect(MERGE_GROUP_LIVE_SQL).toContain("FROM corpscout.se_company_person FINAL");
+    expect(MERGE_GROUP_LIVE_SQL).toContain("merged_into_person_id IS NULL");
+    expect(MERGE_GROUP_LIVE_SQL).toContain("{personIds:Array(UUID)}");
+  });
+
+  it("MERGE_SUGGESTION_BY_ID_SQL reads draft_ids for the revalidation check", () => {
+    expect(MERGE_SUGGESTION_BY_ID_SQL).toContain(
+      "arrayMap(id -> toString(id), s.draft_ids) AS draft_ids",
+    );
+  });
+});
+
+describe("loadSeCompanyPersonCollisionReview", () => {
+  beforeEach(() => {
+    clickhouse.insert.mockReset();
+    clickhouse.query.mockReset();
+  });
+
+  it("groups candidate rows by candidate_group_id, attaches the newest merge suggestion, and marks decided groups", async () => {
+    clickhouse.query
+      .mockResolvedValueOnce([
+        {
+          candidate_group_id: GROUP_ID,
+          person_key: "anna svensson",
+          full_name: "Anna Svensson",
+          source: "bolagsverket",
+          source_record_uid: "u1",
+        },
+        {
+          candidate_group_id: GROUP_ID,
+          person_key: "anna maria svensson",
+          full_name: "Anna Maria Svensson",
+          source: "esef",
+          source_record_uid: "u2",
+        },
+        {
+          candidate_group_id: "grp-2",
+          person_key: "erik eriksson",
+          full_name: "Erik Eriksson",
+          source: "wikidata",
+          source_record_uid: "u3",
+        },
+      ])
+      .mockResolvedValueOnce([
+        {
+          suggestion_id: MERGE_SUGGESTION_ID,
+          suggestion: JSON.stringify(mergeSuggestionPayload()),
+          created_at: "2026-08-27 09:00:00.000",
+        },
+        // A row this reader did not write (an ordinary profile suggestion,
+        // sharing the same table) -- must be skipped, not crash.
+        {
+          suggestion_id: "not-a-merge-suggestion",
+          suggestion: JSON.stringify({ name: "Someone" }),
+          created_at: "2026-08-27 08:00:00.000",
+        },
+      ])
+      .mockResolvedValueOnce([{ candidate_group_id: "grp-2" }]);
+
+    const groups = await loadSeCompanyPersonCollisionReview(COMPANY);
+
+    expect(groups).toHaveLength(2);
+    const grp1 = groups.find((group) => group.candidate_group_id === GROUP_ID);
+    expect(grp1?.members).toHaveLength(2);
+    expect(grp1?.suggestion?.decision).toBe("merge");
+    expect(grp1?.suggestion?.into_person_id).toBe(INTO_PERSON);
+    expect(grp1?.is_decided).toBe(false);
+
+    const grp2 = groups.find((group) => group.candidate_group_id === "grp-2");
+    expect(grp2?.suggestion).toBeNull();
+    expect(grp2?.is_decided).toBe(true);
+  });
+});
+
+describe("revalidateMergeSuggestion", () => {
+  beforeEach(() => {
+    clickhouse.insert.mockReset();
+    clickhouse.query.mockReset();
+  });
+
+  it("is ok when every group member is live and its drafts are still owned by the group", async () => {
+    clickhouse.query.mockResolvedValueOnce([
+      { person_id: INTO_PERSON, draft_set_hash: "a".repeat(64), draft_ids: ["d1"], is_live: 1 },
+      { person_id: FROM_PERSON, draft_set_hash: "b".repeat(64), draft_ids: ["d2"], is_live: 1 },
+    ]);
+
+    const result = await revalidateMergeSuggestion(COMPANY, mergeSuggestionPayload(), [
+      "d1",
+      "d2",
+    ]);
+
+    expect(result).toEqual({
+      ok: true,
+      evidenceHashByPersonId: { [INTO_PERSON]: "a".repeat(64), [FROM_PERSON]: "b".repeat(64) },
+    });
+    expect(clickhouse.query).toHaveBeenCalledWith(MERGE_GROUP_LIVE_SQL, {
+      companyId: COMPANY,
+      personIds: [INTO_PERSON, FROM_PERSON],
+    });
+  });
+
+  it("refuses when a group member is no longer published", async () => {
+    clickhouse.query.mockResolvedValueOnce([
+      { person_id: INTO_PERSON, draft_set_hash: "a".repeat(64), draft_ids: ["d1"], is_live: 1 },
+      // FROM_PERSON: no row at all -- split/reassigned away since the
+      // suggestion was written.
+    ]);
+
+    const result = await revalidateMergeSuggestion(COMPANY, mergeSuggestionPayload(), ["d1"]);
+
+    expect(result.ok).toBe(false);
+    expect(result.ok === false && result.reason).toMatch(/no longer published/);
+  });
+
+  it("refuses when a group member was already merged elsewhere", async () => {
+    clickhouse.query.mockResolvedValueOnce([
+      { person_id: INTO_PERSON, draft_set_hash: "a".repeat(64), draft_ids: ["d1"], is_live: 1 },
+      { person_id: FROM_PERSON, draft_set_hash: "b".repeat(64), draft_ids: ["d2"], is_live: 0 },
+    ]);
+
+    const result = await revalidateMergeSuggestion(COMPANY, mergeSuggestionPayload(), [
+      "d1",
+      "d2",
+    ]);
+
+    expect(result.ok).toBe(false);
+    expect(result.ok === false && result.reason).toMatch(/already merged elsewhere/);
+  });
+
+  it("refuses when the suggestion's evidence moved out of the group since it was written", async () => {
+    clickhouse.query.mockResolvedValueOnce([
+      { person_id: INTO_PERSON, draft_set_hash: "a".repeat(64), draft_ids: ["d1"], is_live: 1 },
+      { person_id: FROM_PERSON, draft_set_hash: "b".repeat(64), draft_ids: ["d2"], is_live: 1 },
+    ]);
+
+    const result = await revalidateMergeSuggestion(COMPANY, mergeSuggestionPayload(), [
+      "d1",
+      "d-moved-away",
+    ]);
+
+    expect(result.ok).toBe(false);
+    expect(result.ok === false && result.reason).toMatch(/evidence moved/);
+  });
+});
+
+describe("approveMergeSuggestion", () => {
+  beforeEach(() => {
+    clickhouse.insert.mockReset();
+    clickhouse.query.mockReset();
+  });
+
+  it("writes one merge_persons correction per from_person_id after live re-validation", async () => {
+    clickhouse.query
+      .mockResolvedValueOnce([
+        {
+          suggestion_id: MERGE_SUGGESTION_ID,
+          suggestion: JSON.stringify(mergeSuggestionPayload()),
+          draft_ids: ["d1", "d2"],
+        },
+      ])
+      .mockResolvedValueOnce([
+        { person_id: INTO_PERSON, draft_set_hash: "a".repeat(64), draft_ids: ["d1"], is_live: 1 },
+        { person_id: FROM_PERSON, draft_set_hash: "b".repeat(64), draft_ids: ["d2"], is_live: 1 },
+      ])
+      .mockResolvedValueOnce([{ draft_set_hash: "b".repeat(64) }]);
+    clickhouse.insert.mockResolvedValue(undefined);
+
+    const result = await approveMergeSuggestion({
+      companyId: COMPANY,
+      suggestionId: MERGE_SUGGESTION_ID,
+      reason: "LLM agreed, matches the register",
+    });
+
+    expect(result.correctionIds).toHaveLength(1);
+    expect(clickhouse.insert).toHaveBeenCalledTimes(1);
+    const [rows] = clickhouse.insert.mock.calls[0];
+    expect(rows[0]).toMatchObject({
+      correction_kind: "merge_persons",
+      subject_person_id: FROM_PERSON,
+      target_person_id: INTO_PERSON,
+      payload: JSON.stringify({ candidate_group_id: GROUP_ID }),
+      evidence_hash: "b".repeat(64),
+    });
+  });
+
+  it("REFUSES with a clear message and writes nothing when the suggestion has gone stale", async () => {
+    clickhouse.query
+      .mockResolvedValueOnce([
+        {
+          suggestion_id: MERGE_SUGGESTION_ID,
+          suggestion: JSON.stringify(mergeSuggestionPayload()),
+          draft_ids: ["d1", "d2"],
+        },
+      ])
+      .mockResolvedValueOnce([
+        { person_id: INTO_PERSON, draft_set_hash: "a".repeat(64), draft_ids: ["d1"], is_live: 1 },
+        // FROM_PERSON already merged into someone else by the time this is
+        // reviewed -- the carry-forward requirement this guard exists for.
+      ]);
+
+    let caught: unknown;
+    try {
+      await approveMergeSuggestion({
+        companyId: COMPANY,
+        suggestionId: MERGE_SUGGESTION_ID,
+        reason: "approve",
+      });
+    } catch (error) {
+      caught = error;
+    }
+
+    expect(caught).toBeInstanceOf(SePersonCorrectionValidationError);
+    expect((caught as Error).message).toMatch(/no longer published/);
+    expect(clickhouse.insert).not.toHaveBeenCalled();
+  });
+
+  it("refuses a suggestion row that is not a recognizable merge suggestion", async () => {
+    clickhouse.query.mockResolvedValueOnce([
+      {
+        suggestion_id: MERGE_SUGGESTION_ID,
+        suggestion: JSON.stringify({ name: "Someone", description: null }),
+        draft_ids: [],
+      },
+    ]);
+
+    await expect(
+      approveMergeSuggestion({
+        companyId: COMPANY,
+        suggestionId: MERGE_SUGGESTION_ID,
+        reason: "approve",
+      }),
+    ).rejects.toThrow(SePersonCorrectionValidationError);
+    expect(clickhouse.insert).not.toHaveBeenCalled();
+  });
+
+  it("refuses a suggestion id that does not exist", async () => {
+    clickhouse.query.mockResolvedValueOnce([]);
+
+    await expect(
+      approveMergeSuggestion({
+        companyId: COMPANY,
+        suggestionId: MERGE_SUGGESTION_ID,
+        reason: "approve",
+      }),
+    ).rejects.toThrow(SePersonCorrectionValidationError);
+    expect(clickhouse.insert).not.toHaveBeenCalled();
+  });
+});
+
+describe("keepSeparateMergeSuggestion", () => {
+  beforeEach(() => {
+    clickhouse.insert.mockReset();
+    clickhouse.query.mockReset();
+  });
+
+  it("writes one keep_separate correction anchored on into_person_id", async () => {
+    clickhouse.query
+      .mockResolvedValueOnce([
+        {
+          suggestion_id: MERGE_SUGGESTION_ID,
+          suggestion: JSON.stringify(mergeSuggestionPayload({ decision: "keep_separate" })),
+          draft_ids: ["d1", "d2"],
+        },
+      ])
+      .mockResolvedValueOnce([
+        { person_id: INTO_PERSON, draft_set_hash: "a".repeat(64), draft_ids: ["d1"], is_live: 1 },
+        { person_id: FROM_PERSON, draft_set_hash: "b".repeat(64), draft_ids: ["d2"], is_live: 1 },
+      ])
+      .mockResolvedValueOnce([{ draft_set_hash: "a".repeat(64) }]);
+    clickhouse.insert.mockResolvedValue(undefined);
+
+    const result = await keepSeparateMergeSuggestion({
+      companyId: COMPANY,
+      suggestionId: MERGE_SUGGESTION_ID,
+      reason: "Different people, same name",
+    });
+
+    expect(result.correctionId).toMatch(/^[0-9a-f-]{36}$/);
+    const [rows] = clickhouse.insert.mock.calls[0];
+    expect(rows[0]).toMatchObject({
+      correction_kind: "keep_separate",
+      subject_person_id: INTO_PERSON,
+      target_person_id: null,
+      payload: JSON.stringify({ candidate_group_id: GROUP_ID }),
+      evidence_hash: "a".repeat(64),
+    });
+  });
+
+  it("REFUSES with a clear message and writes nothing when the suggestion has gone stale", async () => {
+    clickhouse.query
+      .mockResolvedValueOnce([
+        {
+          suggestion_id: MERGE_SUGGESTION_ID,
+          suggestion: JSON.stringify(mergeSuggestionPayload()),
+          draft_ids: ["d1", "d2"],
+        },
+      ])
+      .mockResolvedValueOnce([]); // neither member is live any more
+
+    let caught: unknown;
+    try {
+      await keepSeparateMergeSuggestion({
+        companyId: COMPANY,
+        suggestionId: MERGE_SUGGESTION_ID,
+        reason: "keep separate",
+      });
+    } catch (error) {
+      caught = error;
+    }
+
+    expect(caught).toBeInstanceOf(SePersonCorrectionValidationError);
+    expect((caught as Error).message).toMatch(/no longer published/);
+    expect(clickhouse.insert).not.toHaveBeenCalled();
   });
 });

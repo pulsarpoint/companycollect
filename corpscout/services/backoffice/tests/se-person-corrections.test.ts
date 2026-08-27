@@ -18,10 +18,11 @@ const base = {
 };
 
 describe("validateSePersonCorrection", () => {
-  it("lists the nine kinds", () => {
+  it("lists the ten kinds", () => {
     expect(SE_PERSON_CORRECTION_KINDS).toEqual([
       "merge_persons", "reassign_draft", "split_person", "approve_suggestion",
-      "reject_suggestion", "override_field", "set_role", "remove_role", "undo",
+      "reject_suggestion", "override_field", "set_role", "remove_role",
+      "keep_separate", "undo",
     ]);
   });
 
@@ -121,6 +122,58 @@ describe("validateSePersonCorrection", () => {
     expect(() =>
       validateSePersonCorrection({ ...base, kind: "merge_persons", targetPersonId: TARGET, draftIds: [DRAFT] }),
     ).toThrow("does not take draft");
+  });
+
+  it("builds a merge_persons row carrying a collision-candidate group id", () => {
+    // SE People Experiment Task 5: approving a merge suggestion off a
+    // collision-candidate group names the group in the payload, so Dagster's
+    // merge asset (build_decided_candidate_group_ids_sql) recognizes the
+    // group as decided.
+    const row = validateSePersonCorrection({
+      ...base,
+      kind: "merge_persons",
+      targetPersonId: TARGET,
+      draftIds: [],
+      payload: { candidate_group_id: " grp-1 " },
+    });
+    expect(JSON.parse(row.payload)).toEqual({ candidate_group_id: "grp-1" });
+  });
+
+  it("rejects a blank candidate_group_id on merge_persons", () => {
+    expect(() =>
+      validateSePersonCorrection({
+        ...base,
+        kind: "merge_persons",
+        targetPersonId: TARGET,
+        draftIds: [],
+        payload: { candidate_group_id: "  " },
+      }),
+    ).toThrow("candidate_group_id");
+  });
+
+  it("builds a successful keep_separate row", () => {
+    const row = validateSePersonCorrection({
+      ...base,
+      kind: "keep_separate",
+      payload: { candidate_group_id: " grp-1 " },
+    });
+    expect(row).toEqual({
+      company_id: "5565200028",
+      correction_kind: "keep_separate",
+      subject_person_id: SUBJECT,
+      target_person_id: null,
+      draft_ids: [],
+      payload: JSON.stringify({ candidate_group_id: "grp-1" }),
+      evidence_hash: HASH,
+      reason: "Reviewer note",
+      supersedes_correction_id: null,
+    });
+  });
+
+  it("rejects keep_separate without a candidate_group_id", () => {
+    expect(() =>
+      validateSePersonCorrection({ ...base, kind: "keep_separate", payload: {} }),
+    ).toThrow("candidate_group_id");
   });
 
   it("builds a successful remove_role row", () => {

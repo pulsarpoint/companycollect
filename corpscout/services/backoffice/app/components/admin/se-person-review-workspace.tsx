@@ -29,7 +29,10 @@ import {
   TableRow,
 } from "~/components/ui/table";
 import { Textarea } from "~/components/ui/textarea";
-import type { SeCompanyPersonDetail } from "~/lib/se-company-person.server";
+import type {
+  SeCollisionCandidateGroup,
+  SeCompanyPersonDetail,
+} from "~/lib/se-company-person.server";
 
 export type SePersonReviewResult =
   | { ok: true; correctionId: string }
@@ -86,6 +89,132 @@ function DraftCheckboxes({
   );
 }
 
+/**
+ * Collision candidates (Task 2's se_company_person_collision_candidate) and
+ * any merge suggestion filed against each group (Task 4's merge asset),
+ * company-wide rather than scoped to this one person -- a group's other
+ * members would otherwise never see it on their own page.
+ */
+function CollisionReviewCard({
+  groups,
+  busy,
+}: {
+  groups: SeCollisionCandidateGroup[];
+  busy: boolean;
+}) {
+  return (
+    <Card>
+      <CardHeader>
+        <CardTitle>Collision candidates &amp; merge review</CardTitle>
+        <CardDescription>
+          Groups the deterministic K3 identity rule kept apart but a looser
+          name match (K1) would have merged. A merge suggestion appears once
+          se_company_person_merge_job has run for this company; approving one
+          re-checks it against live state first and refuses if it has gone
+          stale.
+        </CardDescription>
+      </CardHeader>
+      <CardContent className="flex flex-col gap-3">
+        {groups.length === 0 ? (
+          <span className="text-sm text-muted-foreground">
+            No open collision candidates for this company.
+          </span>
+        ) : null}
+        {groups.map((group) => (
+          <div key={group.candidate_group_id} className="rounded-lg border p-3">
+            <div className="flex flex-wrap items-center gap-2">
+              <Badge variant="outline">{group.candidate_group_id}</Badge>
+              {group.is_decided ? <Badge>decided</Badge> : null}
+              {group.suggestion ? (
+                <Badge
+                  variant={group.suggestion.decision === "merge" ? "default" : "outline"}
+                >
+                  model: {group.suggestion.decision.replace("_", " ")} ·{" "}
+                  {Math.round(group.suggestion.confidence * 100)}%
+                </Badge>
+              ) : (
+                <span className="text-xs text-muted-foreground">
+                  No merge suggestion yet.
+                </span>
+              )}
+            </div>
+            <ul className="mt-2 flex flex-col gap-1 text-sm">
+              {group.members.map((member) => (
+                <li
+                  key={`${member.source}:${member.source_record_uid}:${member.full_name}`}
+                >
+                  {member.full_name} · {member.source}
+                </li>
+              ))}
+            </ul>
+            {group.suggestion ? (
+              <>
+                {group.suggestion.rationale ? (
+                  <p className="mt-2 text-sm text-muted-foreground">
+                    {group.suggestion.rationale}
+                  </p>
+                ) : null}
+                <p className="mt-1 text-xs text-muted-foreground">
+                  Into{" "}
+                  <code className="font-mono">{group.suggestion.into_person_id}</code>{" "}
+                  from{" "}
+                  {group.suggestion.from_person_ids.map((id) => (
+                    <code key={id} className="mr-1 font-mono">
+                      {id}
+                    </code>
+                  ))}
+                </p>
+                {group.is_decided ? null : (
+                  <div className="mt-2 flex flex-wrap gap-2">
+                    <Form method="post" className="flex items-center gap-2">
+                      <input
+                        type="hidden"
+                        name="correction_kind"
+                        value="approve_merge_suggestion"
+                      />
+                      <input
+                        type="hidden"
+                        name="suggestion_id"
+                        value={group.suggestion.suggestion_id}
+                      />
+                      <Input name="reason" placeholder="Reason" required className="w-56" />
+                      <Button size="sm" type="submit" disabled={busy} aria-busy={busy}>
+                        Approve merge
+                      </Button>
+                    </Form>
+                    <Form method="post" className="flex items-center gap-2">
+                      <input
+                        type="hidden"
+                        name="correction_kind"
+                        value="keep_separate_suggestion"
+                      />
+                      <input
+                        type="hidden"
+                        name="suggestion_id"
+                        value={group.suggestion.suggestion_id}
+                      />
+                      <Input name="reason" placeholder="Reason" required className="w-56" />
+                      <Button
+                        size="sm"
+                        variant="outline"
+                        type="submit"
+                        disabled={busy}
+                        aria-busy={busy}
+                      >
+                        Keep separate
+                      </Button>
+                    </Form>
+                  </div>
+                )}
+              </>
+            ) : null}
+          </div>
+        ))}
+      </CardContent>
+    </Card>
+  );
+}
+
 /** Shown when Dagster has not published this person into `se_company_person`. */
 export function SePersonNotPublished({
   companyId,
@@ -126,10 +255,12 @@ export function SePersonNotPublished({
 export function SePersonReviewWorkspace({
   detail,
   activeRoleCodes,
+  collisionGroups,
   result,
 }: {
   detail: SeCompanyPersonDetail;
   activeRoleCodes: string[];
+  collisionGroups: SeCollisionCandidateGroup[];
   result: SePersonReviewResult;
 }) {
   const { person, drafts, roles, suggestions, corrections } = detail;
@@ -361,6 +492,8 @@ export function SePersonReviewWorkspace({
           ))}
         </CardContent>
       </Card>
+
+      <CollisionReviewCard groups={collisionGroups} busy={busy} />
 
       <Card>
         <CardHeader>

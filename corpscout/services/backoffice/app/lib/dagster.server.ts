@@ -54,6 +54,27 @@ export const SE_COMPANY_INFO_ASSET = "se_company_info_clickhouse";
 export const SE_COMPANY_INFO_SCHEDULE = "se_company_info_weekly";
 export const SE_COMPANY_INFO_SENSOR = "se_company_info_correction_sensor";
 
+/**
+ * SE People Experiment Task 5: the three backoffice-triggered people jobs
+ * (spec §6.1 -- "the info-pilot / ESEF pattern verbatim"). None of the three
+ * is ever scheduled or eager (dagster_v3's identity_eval.py/normalization.py/
+ * merge.py module docstrings say so explicitly): there is no schedule or
+ * sensor name to filter instigator queries to here, unlike SE_COMPANY_INFO's
+ * pair above -- the people pipeline page simply never calls
+ * `instigatorStates`, which is the "filter to exactly these jobs" lesson
+ * applied to a pipeline that has none to filter to.
+ */
+export const SE_COMPANY_PERSON_IDENTITY_EVALUATION_JOB =
+  "se_company_person_identity_evaluation_job";
+export const SE_COMPANY_PERSON_IDENTITY_EVALUATION_ASSET =
+  "se_company_person_identity_evaluation";
+export const SE_COMPANY_PERSON_JOB = "se_company_person_job";
+export const SE_COMPANY_PERSON_ROLE_DRAFT_ASSET = "se_company_person_role_draft_clickhouse";
+export const SE_COMPANY_PERSON_ASSET = "se_company_person_clickhouse";
+export const SE_COMPANY_PERSON_ROLE_ASSET = "se_company_person_role_clickhouse";
+export const SE_COMPANY_PERSON_MERGE_JOB = "se_company_person_merge_job";
+export const SE_COMPANY_PERSON_MERGE_ASSET = "se_company_person_merge_suggestions";
+
 export class DagsterError extends Error {
   constructor(message: string) {
     super(message);
