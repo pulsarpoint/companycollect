@@ -65,7 +65,22 @@ PERSON_CORRECTION_KINDS = (
 )
 ROLE_CORRECTION_KINDS = ("set_role", "remove_role")
 UNDO_KIND = "undo"
-CORRECTION_KINDS = frozenset((*PERSON_CORRECTION_KINDS, *ROLE_CORRECTION_KINDS, UNDO_KIND))
+# Task 4: the negative half of a merge-candidate-group decision ("these observations K1
+# would have merged and K3 kept apart really ARE different people"), the counterpart to a
+# `merge_persons` correction whose payload names the same `candidate_group_id` (spec §6.1's
+# owner ruling -- see company_people/merge.py's module docstring for the full decided-marker
+# design). It is DELIBERATELY excluded from PERSON_CORRECTION_KINDS/KIND_ORDER: it moves no
+# evidence and touches no profile, so it has nothing for apply_person_corrections to apply
+# and no application-order rank to occupy. `effective_corrections` already drops any kind
+# absent from KIND_ORDER exactly like an unrecognized one (see
+# test_effective_corrections_drop_superseded_and_undo_rows_and_order_by_kind's "not_a_kind"
+# case) -- which is exactly the "ledger-only, never applied" semantics this kind needs, not a
+# gap to patch. Its only readers are company_people/merge.py's decided-group skip query and
+# the backoffice review page that writes it.
+KEEP_SEPARATE_CORRECTION_KIND = "keep_separate"
+CORRECTION_KINDS = frozenset(
+    (*PERSON_CORRECTION_KINDS, *ROLE_CORRECTION_KINDS, KEEP_SEPARATE_CORRECTION_KIND, UNDO_KIND)
+)
 # Spec §4.1 applies corrections in four steps: which drafts belong to whom, then
 # the profile source, then field values, then roles. Kinds inside one step share
 # a rank so `(created_at, correction_id)` decides between them -- an approval
