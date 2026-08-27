@@ -429,16 +429,26 @@ def collect_se_company_person_role_drafts(
                 + ", ".join(inactive_roles)
             )
 
+        # Unmapped roles are EXCLUDED from the drafts (build_role_draft_insert_sql
+        # inner-joins the static mapping), never invented -- so an unmapped tail
+        # skips those observations and reports them instead of blocking the whole
+        # materialization. Bolagsverket's tail is dominated by extraction noise
+        # (person names / dates in the role field); triage via
+        # build_unmapped_source_roles_sql and extend the source-owned mapping for
+        # the legitimate strings.
         unmapped_roles = client.execute(build_unmapped_source_roles_sql(company_scope))
-        if unmapped_roles:
+        unmapped_role_observation_count = sum(int(row[2]) for row in unmapped_roles)
+        if unmapped_roles and log is not None:
             details = "; ".join(
                 f"{source}:{source_role_code or '<empty>'} "
                 f"({int(count)} observations; examples={list(names)})"
                 for source, source_role_code, count, names in unmapped_roles
             )
-            raise ValueError(
-                "Unmapped source roles must be added to the source-owned static "
-                f"mapping before role materialization: {details}"
+            log(
+                "Skipping %s observations with unmapped source roles "
+                "(add legitimate ones to the source-owned static mapping): %s",
+                unmapped_role_observation_count,
+                details,
             )
 
         roleless_observation_count = int(
@@ -481,7 +491,8 @@ def collect_se_company_person_role_drafts(
         "wikidata_role_count": int(quality[4]),
         "canonical_role_count": int(quality[5]),
         "roleless_observation_count": roleless_observation_count,
-        "unmapped_role_count": 0,
+        "unmapped_role_count": len(unmapped_roles),
+        "unmapped_role_observation_count": unmapped_role_observation_count,
         "total_role_draft_count": total_role_draft_count,
         "source_run_id": source_run_id,
         "company_scope": list(company_scope),
