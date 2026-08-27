@@ -23,7 +23,7 @@
  *    per-company filter here to thread through. Mirrors
  *    `se-company-person-pipeline.server.ts`'s own unscoped stats queries
  *    (`PUBLISHED_PERSON_COUNT_SQL` et al.).
- * 2. `any(source) AS source` is added to `draft_companies`: correct only
+ * 2. `any(source) AS single_source` is added to `draft_companies`: correct only
  *    because the `source_count = 1` filter guarantees every row in a kept
  *    group shares one source -- `any()` would be arbitrary otherwise, but
  *    normalization.py never needed a per-company source label so it never
@@ -120,7 +120,11 @@ export const SIMPLE_SYNC_COMPANY_STATUS_CTE_SQL = `WITH ${SOURCE_OBSERVATIONS_CT
 draft_companies AS (
     SELECT
         company_id,
-        any(source) AS source,
+        -- Named single_source, NOT "source": aliasing an aggregate to the same
+        -- name as its input column makes ClickHouse's alias expansion rewrite
+        -- the sibling uniqExact(source) into uniqExact(any(source)) -- a
+        -- nested-aggregate error.
+        any(source) AS single_source,
         uniqExact(source) AS source_count,
         count() AS observation_count,
         arraySort(groupUniqArray(draft_id)) AS draft_ids
@@ -161,7 +165,7 @@ effective_company_corrections AS (
 company_status AS (
     SELECT
         drafts.company_id AS company_id,
-        drafts.source AS source,
+        drafts.single_source AS source,
         drafts.source_count AS source_count,
         drafts.observation_count AS observation_count,
         published.company_id != ''
