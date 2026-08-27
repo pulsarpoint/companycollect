@@ -50,6 +50,30 @@ export function mergeLlmProfile(name: string): MergeLlmProfileOption | null {
   return MERGE_LLM_PROFILES.find((profile) => profile.name === name) ?? null;
 }
 
+/**
+ * Named LLM profiles the LLM-suggestions job's `llm_profile: str` config selects
+ * from -- mirrors dagster_v3's `company_people/normalization.py`
+ * `PERSON_LLM_PROFILES`/`DEFAULT_PERSON_LLM_PROFILE_NAME`. A SEPARATE hand-mirrored
+ * list from MERGE_LLM_PROFILES above (today: identical values) -- the two
+ * Dagster-side registries are themselves separate dicts that may diverge
+ * independently (e.g. max_tokens), so this list is not reused for the merge job's
+ * picker; keep both in sync by hand when either changes.
+ */
+export const PERSON_LLM_PROFILES: readonly MergeLlmProfileOption[] = [
+  {
+    name: "deepseek-default",
+    provider: "deepseek",
+    model: "deepseek-v4-flash",
+    baseUrl: "https://api.deepseek.com",
+  },
+];
+
+export const DEFAULT_PERSON_LLM_PROFILE_NAME = "deepseek-default";
+
+export function personLlmProfile(name: string): MergeLlmProfileOption | null {
+  return PERSON_LLM_PROFILES.find((profile) => profile.name === name) ?? null;
+}
+
 /** Same normalization rule as dagster_v3's `llm_api_key_variable`: purely
  * descriptive here (the key itself is read on the Dagster host, never here),
  * so the confirm step can say which variable a run will need. */
@@ -97,9 +121,23 @@ export const MIN_MERGE_TIMEOUT_SECONDS = 1;
 export const MAX_MERGE_TIMEOUT_SECONDS = 600;
 export const DEFAULT_MERGE_TIMEOUT_SECONDS = 60;
 
+/** Mirrors normalization.py's SECompanyPersonPromotionConfig.min_confidence
+ * (Field(default=0.0, ge=0, le=1)) -- 0.0 promotes every live suggestion
+ * regardless of the model's own confidence. */
+export const MIN_CONFIDENCE = 0;
+export const MAX_CONFIDENCE = 1;
+export const DEFAULT_MIN_CONFIDENCE = 0;
+
 function clamp(value: number, low: number, high: number, fallback: number): number {
   if (!Number.isFinite(value)) return fallback;
   return Math.min(high, Math.max(low, Math.trunc(value)));
+}
+
+/** Unlike clamp() above, min_confidence is a FRACTION (0..1), not an integer count --
+ * Math.trunc would floor 0.7 to 0. */
+export function clampMinConfidence(value: number): number {
+  if (!Number.isFinite(value)) return DEFAULT_MIN_CONFIDENCE;
+  return Math.min(MAX_CONFIDENCE, Math.max(MIN_CONFIDENCE, value));
 }
 
 export function clampMaxCompanies(value: number): number {

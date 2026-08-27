@@ -68,10 +68,27 @@ export const SE_COMPANY_PERSON_IDENTITY_EVALUATION_JOB =
   "se_company_person_identity_evaluation_job";
 export const SE_COMPANY_PERSON_IDENTITY_EVALUATION_ASSET =
   "se_company_person_identity_evaluation";
+/** The combined role_draft+person+role chain -- unused by the Pipeline page's own
+ * three resolution launches below (each is a single-asset job, "1:1"), kept for
+ * whoever else wants the full cascade (e.g. a manual UI materialize). */
 export const SE_COMPANY_PERSON_JOB = "se_company_person_job";
 export const SE_COMPANY_PERSON_ROLE_DRAFT_ASSET = "se_company_person_role_draft_clickhouse";
 export const SE_COMPANY_PERSON_ASSET = "se_company_person_clickhouse";
 export const SE_COMPANY_PERSON_ROLE_ASSET = "se_company_person_role_clickhouse";
+/**
+ * Three-asset split (dagster_v3 company_people/normalization.py's module docstring):
+ * se_company_person_clickhouse is CLEAN COPY ONLY (single-source companies, no LLM
+ * config at all). se_company_person_llm_suggestions resolves multi-source companies
+ * with the model but writes ONLY to se_company_person_enrichment_observation --
+ * never the final table. se_company_person_promotion is the separate, model-free
+ * asset that copies an eligible suggestion into se_company_person. Each gets its
+ * own single-asset job so the Pipeline page's three resolution launches map 1:1.
+ */
+export const SE_COMPANY_PERSON_PUBLISH_JOB = "se_company_person_publish_job";
+export const SE_COMPANY_PERSON_LLM_SUGGESTIONS_JOB = "se_company_person_llm_suggestions_job";
+export const SE_COMPANY_PERSON_LLM_SUGGESTIONS_ASSET = "se_company_person_llm_suggestions";
+export const SE_COMPANY_PERSON_PROMOTION_JOB = "se_company_person_promotion_job";
+export const SE_COMPANY_PERSON_PROMOTION_ASSET = "se_company_person_promotion";
 export const SE_COMPANY_PERSON_MERGE_JOB = "se_company_person_merge_job";
 export const SE_COMPANY_PERSON_MERGE_ASSET = "se_company_person_merge_suggestions";
 

@@ -33,10 +33,13 @@ import {
   DEFAULT_MAX_COMPANIES,
   DEFAULT_MERGE_LLM_PROFILE_NAME,
   DEFAULT_MERGE_TIMEOUT_SECONDS,
+  DEFAULT_MIN_CONFIDENCE,
   DEFAULT_OBSERVATIONS_PER_REQUEST,
+  DEFAULT_PERSON_LLM_PROFILE_NAME,
   DEFAULT_RESOLUTION_TIMEOUT_SECONDS,
   IDENTITY_EVALUATION_DEFAULT_WRITE_CANDIDATES,
   MERGE_LLM_PROFILES,
+  PERSON_LLM_PROFILES,
 } from "~/lib/se-company-person-pipeline";
 import type { SeCompanyPersonPipelineStats } from "~/lib/se-company-person-pipeline.server";
 
@@ -63,7 +66,9 @@ export interface PeoplePipelineRunRow {
 export interface PeoplePipelineView {
   kind: "view";
   identityRuns: PeoplePipelineRunRow[];
-  resolutionRuns: PeoplePipelineRunRow[];
+  cleanCopyRuns: PeoplePipelineRunRow[];
+  llmSuggestionsRuns: PeoplePipelineRunRow[];
+  promotionRuns: PeoplePipelineRunRow[];
   mergeRuns: PeoplePipelineRunRow[];
   dagsterError: string;
   stats: SeCompanyPersonPipelineStats | null;
@@ -76,7 +81,12 @@ export interface PeoplePipelineView {
   prefilledCompanyId: string;
 }
 
-export type PeoplePipelineSection = "identity" | "resolution" | "merge";
+export type PeoplePipelineSection =
+  | "identity"
+  | "clean-copy"
+  | "llm-suggestions"
+  | "promotion"
+  | "merge";
 
 /** What the confirm step restates before anything is launched. */
 export interface PeoplePipelineConfirmation {
@@ -275,7 +285,9 @@ function IdentityEvaluationSection({ runs }: { runs: PeoplePipelineRunRow[] }) {
   );
 }
 
-function ResolutionSection({
+/** se_company_person_publish_job -- CLEAN COPY: deterministic single-source
+ * companies straight to se_company_person, no LLM controls at all. */
+function CleanCopySection({
   runs,
   publishedPersonCount,
 }: {
@@ -285,21 +297,22 @@ function ResolutionSection({
   return (
     <Card>
       <CardHeader>
-        <CardTitle>Resolution</CardTitle>
+        <CardTitle>Clean copy (single-source, deterministic)</CardTitle>
         <CardDescription>
-          se_company_person_job -- publishes se_company_person,
-          se_company_person_role_draft and se_company_person_role for the
-          scoped companies. Always writes when launched; there is no preview
-          mode, and it may call DeepSeek for every multi-source company in
-          scope with no cost estimate available here -- start narrow, or a
-          deliberately larger max companies, not the default.
+          se_company_person_publish_job -- publishes se_company_person for
+          SINGLE-SOURCE companies only: a pure deterministic copy per
+          company, no LLM involved and no LLM parameters accepted. A
+          multi-source company in scope is skipped and counted, never
+          partially processed -- use LLM suggestions + Promote suggestions
+          below for those. Always writes when launched; there is no preview
+          mode, and none is needed: this is deterministic and free.
           {publishedPersonCount !== null
             ? ` ${nf.format(publishedPersonCount)} people are currently published.`
             : ""}
         </CardDescription>
       </CardHeader>
       <SectionBody
-        section="resolution"
+        section="clean-copy"
         runs={runs}
         reviewForm={
           <>
@@ -308,6 +321,93 @@ function ResolutionSection({
                 <Input name="company_ids" placeholder="5560125220,5565200028" />
               </Field>
             </div>
+            <Field label="Max companies">
+              <Input
+                name="max_companies"
+                defaultValue={String(DEFAULT_MAX_COMPANIES)}
+                inputMode="numeric"
+              />
+            </Field>
+            <Field label="Company batch size">
+              <Input
+                name="company_batch_size"
+                defaultValue={String(DEFAULT_COMPANY_BATCH_SIZE)}
+                inputMode="numeric"
+              />
+            </Field>
+          </>
+        }
+      />
+    </Card>
+  );
+}
+
+function ProfileSelect({
+  profiles,
+  defaultValue,
+}: {
+  profiles: typeof MERGE_LLM_PROFILES;
+  defaultValue: string;
+}) {
+  return (
+    <Select
+      items={profiles.map((profile) => ({
+        label: `${profile.name} — ${profile.model}`,
+        value: profile.name,
+      }))}
+      name="llm_profile"
+      defaultValue={defaultValue}
+    >
+      <SelectTrigger className="w-full" size="sm">
+        <SelectValue />
+      </SelectTrigger>
+      <SelectContent>
+        {profiles.map((profile) => (
+          <SelectItem key={profile.name} value={profile.name}>
+            {`${profile.name} — ${profile.model}`}
+          </SelectItem>
+        ))}
+      </SelectContent>
+    </Select>
+  );
+}
+
+/** se_company_person_llm_suggestions_job -- multi-source companies, writes
+ * suggestions ONLY (se_company_person_enrichment_observation); never touches
+ * se_company_person. execute off is a harmless preview, mirroring the merge
+ * job below. */
+function LlmSuggestionsSection({ runs }: { runs: PeoplePipelineRunRow[] }) {
+  return (
+    <Card>
+      <CardHeader>
+        <CardTitle>LLM resolution (multi-source)</CardTitle>
+        <CardDescription>
+          se_company_person_llm_suggestions_job -- resolves MULTI-SOURCE
+          companies with the model and writes suggestions ONLY, to
+          se_company_person_enrichment_observation. Nothing goes live in
+          se_company_person until a Promote suggestions run. Execute off is
+          a harmless preview: no model call, nothing written. May call
+          DeepSeek for every multi-source company in scope with no cost
+          estimate available here -- start narrow, or a deliberately larger
+          max companies, not the default.
+        </CardDescription>
+      </CardHeader>
+      <SectionBody
+        section="llm-suggestions"
+        runs={runs}
+        reviewForm={
+          <>
+            <div className="sm:col-span-2">
+              <Field label="Company scope (comma-separated, blank = every company)">
+                <Input name="company_ids" placeholder="5560125220,5565200028" />
+              </Field>
+            </div>
+            <Field label="LLM profile">
+              <ProfileSelect
+                profiles={PERSON_LLM_PROFILES}
+                defaultValue={DEFAULT_PERSON_LLM_PROFILE_NAME}
+              />
+            </Field>
             <Field label="Max companies">
               <Input
                 name="max_companies"
@@ -336,6 +436,13 @@ function ResolutionSection({
                 inputMode="numeric"
               />
             </Field>
+            <label className="flex items-center gap-2 text-sm sm:col-span-2">
+              <Checkbox name="execute" value="1" />
+              <span>
+                Execute: call the model and write suggestions (unchecked =
+                preview, writes nothing)
+              </span>
+            </label>
           </>
         }
       />
@@ -343,27 +450,59 @@ function ResolutionSection({
   );
 }
 
-function ProfileSelect() {
+/** se_company_person_promotion_job -- deterministic, model-free: copies an
+ * eligible stored suggestion into se_company_person, gated only by
+ * min_confidence. No execute gate, like clean copy: this is free. */
+function PromotionSection({ runs }: { runs: PeoplePipelineRunRow[] }) {
   return (
-    <Select
-      items={MERGE_LLM_PROFILES.map((profile) => ({
-        label: `${profile.name} — ${profile.model}`,
-        value: profile.name,
-      }))}
-      name="llm_profile"
-      defaultValue={DEFAULT_MERGE_LLM_PROFILE_NAME}
-    >
-      <SelectTrigger className="w-full" size="sm">
-        <SelectValue />
-      </SelectTrigger>
-      <SelectContent>
-        {MERGE_LLM_PROFILES.map((profile) => (
-          <SelectItem key={profile.name} value={profile.name}>
-            {`${profile.name} — ${profile.model}`}
-          </SelectItem>
-        ))}
-      </SelectContent>
-    </Select>
+    <Card>
+      <CardHeader>
+        <CardTitle>Promote LLM suggestions</CardTitle>
+        <CardDescription>
+          se_company_person_promotion_job -- copies a stored LLM suggestion
+          into se_company_person for multi-source companies, applying the
+          correction ledger on top exactly like clean copy does.
+          min_confidence (default 0) gates which suggestions promote; a
+          suggestion whose evidence has moved since it was written is
+          skipped and counted, never guessed at. Deterministic and free --
+          no model is ever called here.
+        </CardDescription>
+      </CardHeader>
+      <SectionBody
+        section="promotion"
+        runs={runs}
+        reviewForm={
+          <>
+            <div className="sm:col-span-2">
+              <Field label="Company scope (comma-separated, blank = every company)">
+                <Input name="company_ids" placeholder="5560125220,5565200028" />
+              </Field>
+            </div>
+            <Field label="Max companies">
+              <Input
+                name="max_companies"
+                defaultValue={String(DEFAULT_MAX_COMPANIES)}
+                inputMode="numeric"
+              />
+            </Field>
+            <Field label="Company batch size">
+              <Input
+                name="company_batch_size"
+                defaultValue={String(DEFAULT_COMPANY_BATCH_SIZE)}
+                inputMode="numeric"
+              />
+            </Field>
+            <Field label="Min confidence (0-1, blank = 0: promote all)">
+              <Input
+                name="min_confidence"
+                defaultValue={String(DEFAULT_MIN_CONFIDENCE)}
+                inputMode="decimal"
+              />
+            </Field>
+          </>
+        }
+      />
+    </Card>
   );
 }
 
@@ -408,7 +547,10 @@ function MergeSection({
               </Field>
             </div>
             <Field label="LLM profile">
-              <ProfileSelect />
+              <ProfileSelect
+                profiles={MERGE_LLM_PROFILES}
+                defaultValue={DEFAULT_MERGE_LLM_PROFILE_NAME}
+              />
             </Field>
             <Field label="Max groups (blank = no limit)">
               <Input name="max_groups" inputMode="numeric" />
@@ -441,9 +583,9 @@ export function SePeoplePipeline({ view }: { view: PeoplePipelineView }) {
         <h1 className="text-2xl font-semibold tracking-tight">People pipeline</h1>
         <p className="text-sm text-muted-foreground">
           Backoffice-triggered runs for the Sweden company-person model (spec
-          §6.1): identity evaluation, resolution, and LLM-assisted merge
-          suggestions. Never scheduled, never eager -- every launch here is
-          tagged pilot=backoffice.
+          §6.1): identity evaluation, clean-copy and LLM-assisted
+          resolution, and LLM-assisted merge suggestions. Never scheduled,
+          never eager -- every launch here is tagged pilot=backoffice.
         </p>
         {view.dagsterError ? (
           <Alert variant="destructive">
@@ -453,10 +595,12 @@ export function SePeoplePipeline({ view }: { view: PeoplePipelineView }) {
         ) : null}
       </header>
       <IdentityEvaluationSection runs={view.identityRuns} />
-      <ResolutionSection
-        runs={view.resolutionRuns}
+      <CleanCopySection
+        runs={view.cleanCopyRuns}
         publishedPersonCount={view.stats?.publishedPersonCount ?? null}
       />
+      <LlmSuggestionsSection runs={view.llmSuggestionsRuns} />
+      <PromotionSection runs={view.promotionRuns} />
       <MergeSection
         runs={view.mergeRuns}
         stats={view.stats}

@@ -107,44 +107,36 @@ describe("identity evaluation", () => {
   });
 });
 
-describe("resolution", () => {
-  it("confirms then launches with company_ids threaded onto every op, and numeric params on the middle one", async () => {
+describe("clean copy", () => {
+  it("confirms then launches with company_ids/max_companies/company_batch_size -- no LLM fields at all", async () => {
     const confirmed = await post({
-      intent: "confirm-resolution",
+      intent: "confirm-clean-copy",
       company_ids: "5560125220",
       max_companies: "2000",
       company_batch_size: "1000",
-      maximum_observations_per_request: "80",
-      timeout_seconds: "240",
     });
     const fields = confirmation(confirmed).fields;
     expect(fields.max_companies).toBe("2000");
+    expect(fields).not.toHaveProperty("execute");
+    expect(fields).not.toHaveProperty("llm_profile");
 
-    const result = await post({ intent: "launch-resolution", ...fields });
+    const result = await post({ intent: "launch-clean-copy", ...fields });
     expect(result.kind).toBe("launched");
     const [input] = launchRun.mock.calls[0] as unknown as [
       { job: string; runConfig: { ops: Record<string, { config: Record<string, unknown> }> } },
     ];
-    expect(input.job).toBe("se_company_person_job");
-    const ops = input.runConfig.ops;
-    expect(ops.se_company_person_role_draft_clickhouse.config).toEqual({
-      company_ids: ["5560125220"],
-    });
-    expect(ops.se_company_person_role_clickhouse.config).toEqual({
-      company_ids: ["5560125220"],
-    });
-    expect(ops.se_company_person_clickhouse.config).toEqual({
+    expect(input.job).toBe("se_company_person_publish_job");
+    const config = input.runConfig.ops.se_company_person_clickhouse.config;
+    expect(config).toEqual({
       company_ids: ["5560125220"],
       max_companies: 2000,
       company_batch_size: 1000,
-      maximum_observations_per_request: 80,
-      timeout_seconds: 240,
     });
   });
 
   it("clamps an out-of-range max_companies rather than sending it verbatim", async () => {
     const confirmed = await post({
-      intent: "confirm-resolution",
+      intent: "confirm-clean-copy",
       company_ids: "",
       max_companies: "99999999",
     });
@@ -153,21 +145,124 @@ describe("resolution", () => {
   });
 
   it("defaults max_companies to the conservative 10,000 prefill, not the 1,000,000 bound", async () => {
-    // Coordinator review item 3b: a prior incident of an accidental
-    // full-corpus LLM spend is why the DEFAULT (not the allowed bound) must
-    // require deliberately typing a bigger number.
-    const confirmed = await post({ intent: "confirm-resolution", company_ids: "" });
+    const confirmed = await post({ intent: "confirm-clean-copy", company_ids: "" });
     const fields = confirmation(confirmed).fields;
     expect(fields.max_companies).toBe("10000");
   });
 
-  it("states the DeepSeek cost/no-preview honesty line explicitly", async () => {
-    // Coordinator review item 3a.
-    const confirmed = await post({ intent: "confirm-resolution", company_ids: "" });
-    const lines = confirmation(confirmed).lines;
-    expect(lines).toContain(
-      "May call DeepSeek for every multi-source company in scope; there is no preview/cost estimate.",
-    );
+  it("says plainly that no LLM is involved, and that it always writes", async () => {
+    const confirmed = await post({ intent: "confirm-clean-copy", company_ids: "" });
+    const lines = confirmation(confirmed).lines.join(" ");
+    expect(lines).toContain("no LLM involved");
+    expect(lines).toContain("no preview mode");
+  });
+});
+
+describe("llm suggestions", () => {
+  it("refuses an unknown LLM profile before calling Dagster", async () => {
+    const result = await post({
+      intent: "confirm-llm-suggestions",
+      llm_profile: "not-a-real-profile",
+    });
+    expect(result.kind).toBe("error");
+    expect(result.kind === "error" && result.error).toContain("Unknown LLM profile");
+    expect(launchRun).not.toHaveBeenCalled();
+  });
+
+  it("confirms then launches with execute/profile/bounds on the one op", async () => {
+    const confirmed = await post({
+      intent: "confirm-llm-suggestions",
+      company_ids: "5560125220",
+      execute: "1",
+      llm_profile: "deepseek-default",
+      max_companies: "2000",
+      company_batch_size: "1000",
+      maximum_observations_per_request: "80",
+      timeout_seconds: "240",
+    });
+    const fields = confirmation(confirmed).fields;
+    expect(fields.max_companies).toBe("2000");
+
+    const result = await post({ intent: "launch-llm-suggestions", ...fields });
+    expect(result.kind).toBe("launched");
+    const [input] = launchRun.mock.calls[0] as unknown as [
+      { job: string; runConfig: { ops: Record<string, { config: Record<string, unknown> }> } },
+    ];
+    expect(input.job).toBe("se_company_person_llm_suggestions_job");
+    const config = input.runConfig.ops.se_company_person_llm_suggestions.config;
+    expect(config).toEqual({
+      execute: true,
+      llm_profile: "deepseek-default",
+      company_ids: ["5560125220"],
+      max_companies: 2000,
+      company_batch_size: 1000,
+      maximum_observations_per_request: 80,
+      timeout_seconds: 240,
+    });
+  });
+
+  it("says it writes suggestions only -- nothing goes live until a promotion run", async () => {
+    const confirmed = await post({
+      intent: "confirm-llm-suggestions",
+      llm_profile: "deepseek-default",
+      execute: "1",
+    });
+    const lines = confirmation(confirmed).lines.join(" ");
+    expect(lines).toContain("writes suggestions ONLY");
+    expect(lines).toContain("nothing goes live in se_company_person until a Promote suggestions run");
+  });
+
+  it("describes a preview (execute off) without promising a model call", async () => {
+    const confirmed = await post({
+      intent: "confirm-llm-suggestions",
+      llm_profile: "deepseek-default",
+      execute: "",
+    });
+    const conf = confirmation(confirmed);
+    expect(conf.lines.join(" ")).toContain("harmless preview");
+    expect(conf.fields.execute).toBe("");
+  });
+});
+
+describe("promotion", () => {
+  it("confirms then launches with company_ids/max_companies/company_batch_size/min_confidence -- no LLM fields", async () => {
+    const confirmed = await post({
+      intent: "confirm-promotion",
+      company_ids: "5560125220",
+      max_companies: "2000",
+      company_batch_size: "1000",
+      min_confidence: "0.6",
+    });
+    const fields = confirmation(confirmed).fields;
+    expect(fields.min_confidence).toBe("0.6");
+    expect(fields).not.toHaveProperty("execute");
+    expect(fields).not.toHaveProperty("llm_profile");
+
+    const result = await post({ intent: "launch-promotion", ...fields });
+    expect(result.kind).toBe("launched");
+    const [input] = launchRun.mock.calls[0] as unknown as [
+      { job: string; runConfig: { ops: Record<string, { config: Record<string, unknown> }> } },
+    ];
+    expect(input.job).toBe("se_company_person_promotion_job");
+    const config = input.runConfig.ops.se_company_person_promotion.config;
+    expect(config).toEqual({
+      company_ids: ["5560125220"],
+      max_companies: 2000,
+      company_batch_size: 1000,
+      min_confidence: 0.6,
+    });
+  });
+
+  it("defaults min_confidence to 0 (promote all) when left blank", async () => {
+    const confirmed = await post({ intent: "confirm-promotion", company_ids: "" });
+    const fields = confirmation(confirmed).fields;
+    expect(fields.min_confidence).toBe("0");
+  });
+
+  it("says it is deterministic and free -- no execute gate, no model call", async () => {
+    const confirmed = await post({ intent: "confirm-promotion", company_ids: "" });
+    const lines = confirmation(confirmed).lines.join(" ");
+    expect(lines).toContain("Deterministic and free");
   });
 });
 
@@ -237,13 +332,15 @@ describe("merge suggestions", () => {
 });
 
 describe("the loader", () => {
-  it("filters run/asset queries to exactly the three people jobs", async () => {
+  it("filters run/asset queries to exactly the five people jobs", async () => {
     await get();
-    expect(listRuns).toHaveBeenCalledTimes(3);
+    expect(listRuns).toHaveBeenCalledTimes(5);
     const jobs = listRuns.mock.calls.map((call) => (call[0] as { job: string }).job);
     expect(jobs).toEqual([
       "se_company_person_identity_evaluation_job",
-      "se_company_person_job",
+      "se_company_person_publish_job",
+      "se_company_person_llm_suggestions_job",
+      "se_company_person_promotion_job",
       "se_company_person_merge_job",
     ]);
   });

@@ -3,23 +3,35 @@
  * server-only half of `se-company-person-pipeline.ts`'s split. Each builder
  * is a PORT of the matching dagster_v3 op config's field names/shape
  * (`company_people/identity_eval.py`'s SECompanyPersonIdentityEvaluationConfig,
- * `normalization.py`'s SECompanyPersonConfig +
- * `roles.py`'s SECompanyPersonRoleConfig, `merge.py`'s
- * SECompanyPersonMergeConfig) -- op keys and field names must match exactly,
- * or Dagster rejects the run config as invalid before anything runs.
+ * `normalization.py`'s SECompanyPersonConfig / SECompanyPersonLlmSuggestionsConfig
+ * / SECompanyPersonPromotionConfig, `merge.py`'s SECompanyPersonMergeConfig) --
+ * op keys and field names must match exactly, or Dagster rejects the run config
+ * as invalid before anything runs.
+ *
+ * Resolution is now THREE separate single-asset jobs/launches (the LLM/promotion
+ * split, normalization.py's module docstring), not one combined
+ * role_draft+person+role chain: `buildCleanCopyRunConfig` (single-source, always
+ * writes, no LLM fields at all), `buildLlmSuggestionsRunConfig` (multi-source,
+ * writes ONLY to se_company_person_enrichment_observation, execute-gated like the
+ * merge job), `buildPromotionRunConfig` (deterministic, free, copies an eligible
+ * suggestion into se_company_person). `se_company_person_role_draft_clickhouse`/
+ * `se_company_person_role_clickhouse` no longer ride along on these launches --
+ * see SE_COMPANY_PERSON_JOB's own doc comment in dagster.server.ts for the
+ * combined cascade, still available separately.
  */
 import { chQuery } from "~/lib/clickhouse.server";
 import {
   SE_COMPANY_PERSON_ASSET,
   SE_COMPANY_PERSON_IDENTITY_EVALUATION_ASSET,
+  SE_COMPANY_PERSON_LLM_SUGGESTIONS_ASSET,
   SE_COMPANY_PERSON_MERGE_ASSET,
-  SE_COMPANY_PERSON_ROLE_ASSET,
-  SE_COMPANY_PERSON_ROLE_DRAFT_ASSET,
+  SE_COMPANY_PERSON_PROMOTION_ASSET,
 } from "~/lib/dagster.server";
 import {
   clampCompanyBatchSize,
   clampMaxCompanies,
   clampMergeTimeoutSeconds,
+  clampMinConfidence,
   clampObservationsPerRequest,
   clampResolutionTimeoutSeconds,
   normalizeCompanyIdScope,
@@ -46,7 +58,34 @@ export function buildIdentityEvaluationRunConfig(
   };
 }
 
-export interface ResolutionRunOptions {
+export interface CleanCopyRunOptions {
+  companyIds: readonly string[];
+  maxCompanies: number;
+  companyBatchSize: number;
+}
+
+/** `se_company_person_publish_job` -- one asset, one op key
+ * (se_company_person_clickhouse), CLEAN COPY only: single-source companies, no LLM
+ * fields in this config at all (dagster_v3's SECompanyPersonConfig strips them). */
+export function buildCleanCopyRunConfig(
+  options: CleanCopyRunOptions,
+): Record<string, unknown> {
+  return {
+    ops: {
+      [SE_COMPANY_PERSON_ASSET]: {
+        config: {
+          company_ids: normalizeCompanyIdScope(options.companyIds),
+          max_companies: clampMaxCompanies(options.maxCompanies),
+          company_batch_size: clampCompanyBatchSize(options.companyBatchSize),
+        },
+      },
+    },
+  };
+}
+
+export interface LlmSuggestionsRunOptions {
+  execute: boolean;
+  llmProfile: string;
   companyIds: readonly string[];
   maxCompanies: number;
   companyBatchSize: number;
@@ -54,20 +93,20 @@ export interface ResolutionRunOptions {
   timeoutSeconds: number;
 }
 
-/** `se_company_person_job` selects three ops
- * (se_company_person_role_draft_clickhouse, se_company_person_clickhouse,
- * se_company_person_role_clickhouse); every op takes a company_ids scope,
- * and only the middle one takes the numeric bounds. */
-export function buildResolutionRunConfig(
-  options: ResolutionRunOptions,
+/** `se_company_person_llm_suggestions_job` -- one asset, one op key
+ * (se_company_person_llm_suggestions). Multi-source companies only; writes
+ * suggestions ONLY (se_company_person_enrichment_observation) -- never the final
+ * table. execute off is a harmless preview, mirroring the merge job. */
+export function buildLlmSuggestionsRunConfig(
+  options: LlmSuggestionsRunOptions,
 ): Record<string, unknown> {
-  const companyIds = normalizeCompanyIdScope(options.companyIds);
   return {
     ops: {
-      [SE_COMPANY_PERSON_ROLE_DRAFT_ASSET]: { config: { company_ids: companyIds } },
-      [SE_COMPANY_PERSON_ASSET]: {
+      [SE_COMPANY_PERSON_LLM_SUGGESTIONS_ASSET]: {
         config: {
-          company_ids: companyIds,
+          execute: options.execute,
+          llm_profile: options.llmProfile,
+          company_ids: normalizeCompanyIdScope(options.companyIds),
           max_companies: clampMaxCompanies(options.maxCompanies),
           company_batch_size: clampCompanyBatchSize(options.companyBatchSize),
           maximum_observations_per_request: clampObservationsPerRequest(
@@ -76,7 +115,34 @@ export function buildResolutionRunConfig(
           timeout_seconds: clampResolutionTimeoutSeconds(options.timeoutSeconds),
         },
       },
-      [SE_COMPANY_PERSON_ROLE_ASSET]: { config: { company_ids: companyIds } },
+    },
+  };
+}
+
+export interface PromotionRunOptions {
+  companyIds: readonly string[];
+  maxCompanies: number;
+  companyBatchSize: number;
+  minConfidence: number;
+}
+
+/** `se_company_person_promotion_job` -- one asset, one op key
+ * (se_company_person_promotion). Deterministic and free like clean copy -- no
+ * execute gate, no LLM fields: it copies an already-stored suggestion into
+ * se_company_person, gated only by min_confidence. */
+export function buildPromotionRunConfig(
+  options: PromotionRunOptions,
+): Record<string, unknown> {
+  return {
+    ops: {
+      [SE_COMPANY_PERSON_PROMOTION_ASSET]: {
+        config: {
+          company_ids: normalizeCompanyIdScope(options.companyIds),
+          max_companies: clampMaxCompanies(options.maxCompanies),
+          company_batch_size: clampCompanyBatchSize(options.companyBatchSize),
+          min_confidence: clampMinConfidence(options.minConfidence),
+        },
+      },
     },
   };
 }

@@ -13,14 +13,18 @@ import {
   launchRun,
   listRuns,
   SE_COMPANY_PERSON_IDENTITY_EVALUATION_JOB,
-  SE_COMPANY_PERSON_JOB,
+  SE_COMPANY_PERSON_LLM_SUGGESTIONS_JOB,
   SE_COMPANY_PERSON_MERGE_JOB,
+  SE_COMPANY_PERSON_PROMOTION_JOB,
+  SE_COMPANY_PERSON_PUBLISH_JOB,
   type DagsterRun,
 } from "~/lib/dagster.server";
 import {
+  buildCleanCopyRunConfig,
   buildIdentityEvaluationRunConfig,
+  buildLlmSuggestionsRunConfig,
   buildMergeRunConfig,
-  buildResolutionRunConfig,
+  buildPromotionRunConfig,
   loadSeCompanyPersonPipelineStats,
   type SeCompanyPersonPipelineStats,
 } from "~/lib/se-company-person-pipeline.server";
@@ -28,10 +32,13 @@ import {
   DEFAULT_MAX_COMPANIES,
   DEFAULT_MERGE_LLM_PROFILE_NAME,
   DEFAULT_MERGE_TIMEOUT_SECONDS,
+  DEFAULT_MIN_CONFIDENCE,
+  DEFAULT_PERSON_LLM_PROFILE_NAME,
   clampCompanyBatchSize,
   clampMaxCompanies,
   clampMaxGroups,
   clampMergeTimeoutSeconds,
+  clampMinConfidence,
   clampObservationsPerRequest,
   clampResolutionTimeoutSeconds,
   dagsterApiKeyVariable,
@@ -39,6 +46,7 @@ import {
   formatCompanyIdScope,
   mergeLlmProfile,
   parseCompanyIdScope,
+  personLlmProfile,
   PILOT_TAG_KEY,
   PILOT_TAG_VALUE,
 } from "~/lib/se-company-person-pipeline";
@@ -59,7 +67,12 @@ import {
  * to ask about -- the "filter instigator/asset queries to exactly these
  * jobs" lesson from the company-info pipeline, applied to a pipeline that
  * has no instigators to filter to. Run/asset queries ARE filtered, to
- * exactly these three job names.
+ * exactly these job names.
+ *
+ * Resolution used to be one launch (se_company_person_job); it is now THREE --
+ * clean copy, LLM suggestions, promote suggestions -- each its own single-asset
+ * job (dagster_v3's LLM/promotion split), so there are five run lists here, not
+ * three.
  */
 
 const RUN_LIMIT = 10;
@@ -75,25 +88,39 @@ function toRunRow(run: DagsterRun): PeoplePipelineRunRow {
 
 async function dagsterView(): Promise<{
   identityRuns: PeoplePipelineRunRow[];
-  resolutionRuns: PeoplePipelineRunRow[];
+  cleanCopyRuns: PeoplePipelineRunRow[];
+  llmSuggestionsRuns: PeoplePipelineRunRow[];
+  promotionRuns: PeoplePipelineRunRow[];
   mergeRuns: PeoplePipelineRunRow[];
   error: string;
 }> {
   try {
-    const [identityRuns, resolutionRuns, mergeRuns] = await Promise.all([
-      listRuns({ job: SE_COMPANY_PERSON_IDENTITY_EVALUATION_JOB, limit: RUN_LIMIT }),
-      listRuns({ job: SE_COMPANY_PERSON_JOB, limit: RUN_LIMIT }),
-      listRuns({ job: SE_COMPANY_PERSON_MERGE_JOB, limit: RUN_LIMIT }),
-    ]);
+    const [identityRuns, cleanCopyRuns, llmSuggestionsRuns, promotionRuns, mergeRuns] =
+      await Promise.all([
+        listRuns({ job: SE_COMPANY_PERSON_IDENTITY_EVALUATION_JOB, limit: RUN_LIMIT }),
+        listRuns({ job: SE_COMPANY_PERSON_PUBLISH_JOB, limit: RUN_LIMIT }),
+        listRuns({ job: SE_COMPANY_PERSON_LLM_SUGGESTIONS_JOB, limit: RUN_LIMIT }),
+        listRuns({ job: SE_COMPANY_PERSON_PROMOTION_JOB, limit: RUN_LIMIT }),
+        listRuns({ job: SE_COMPANY_PERSON_MERGE_JOB, limit: RUN_LIMIT }),
+      ]);
     return {
       identityRuns: identityRuns.map(toRunRow),
-      resolutionRuns: resolutionRuns.map(toRunRow),
+      cleanCopyRuns: cleanCopyRuns.map(toRunRow),
+      llmSuggestionsRuns: llmSuggestionsRuns.map(toRunRow),
+      promotionRuns: promotionRuns.map(toRunRow),
       mergeRuns: mergeRuns.map(toRunRow),
       error: "",
     };
   } catch (error) {
     if (error instanceof DagsterError) {
-      return { identityRuns: [], resolutionRuns: [], mergeRuns: [], error: error.message };
+      return {
+        identityRuns: [],
+        cleanCopyRuns: [],
+        llmSuggestionsRuns: [],
+        promotionRuns: [],
+        mergeRuns: [],
+        error: error.message,
+      };
     }
     throw error;
   }
@@ -120,7 +147,9 @@ export async function loader({ request }: Route.LoaderArgs): Promise<PeoplePipel
   return {
     kind: "view",
     identityRuns: dagster.identityRuns,
-    resolutionRuns: dagster.resolutionRuns,
+    cleanCopyRuns: dagster.cleanCopyRuns,
+    llmSuggestionsRuns: dagster.llmSuggestionsRuns,
+    promotionRuns: dagster.promotionRuns,
     mergeRuns: dagster.mergeRuns,
     dagsterError: dagster.error,
     stats: statsResult.stats,
@@ -200,8 +229,42 @@ export async function action({ request }: Route.ActionArgs): Promise<PeoplePipel
       );
     }
 
-    if (intent === "confirm-resolution" || intent === "launch-resolution") {
+    if (intent === "confirm-clean-copy" || intent === "launch-clean-copy") {
       const companyIds = parseCompanyIdScope(formValue(form, "company_ids"));
+      const maxCompanies = clampMaxCompanies(formNumber(form, "max_companies", DEFAULT_MAX_COMPANIES));
+      const companyBatchSize = clampCompanyBatchSize(formNumber(form, "company_batch_size", 5_000));
+      if (intent === "confirm-clean-copy") {
+        return confirmed({
+          section: "clean-copy",
+          title: "Publish se_company_person (clean copy)",
+          lines: [
+            `Scope: ${describeCompanyScope(companyIds)}.`,
+            `Up to ${maxCompanies} companies per run, ${companyBatchSize} per batch.`,
+            "Single-source companies only: a deterministic copy per company, no LLM involved and no LLM parameters accepted. A multi-source company in scope is skipped and counted, never partially processed.",
+            "This always writes when launched -- clean copy has no preview mode; it is deterministic and free.",
+          ],
+          fields: {
+            company_ids: formatCompanyIdScope(companyIds),
+            max_companies: String(maxCompanies),
+            company_batch_size: String(companyBatchSize),
+          },
+        });
+      }
+      return await launch(
+        "clean-copy",
+        SE_COMPANY_PERSON_PUBLISH_JOB,
+        buildCleanCopyRunConfig({ companyIds, maxCompanies, companyBatchSize }),
+      );
+    }
+
+    if (intent === "confirm-llm-suggestions" || intent === "launch-llm-suggestions") {
+      const companyIds = parseCompanyIdScope(formValue(form, "company_ids"));
+      const execute = formValue(form, "execute") === "1";
+      const llmProfileName = formValue(form, "llm_profile") || DEFAULT_PERSON_LLM_PROFILE_NAME;
+      const profile = personLlmProfile(llmProfileName);
+      if (!profile) {
+        return refused("llm-suggestions", `Unknown LLM profile "${llmProfileName}".`);
+      }
       const maxCompanies = clampMaxCompanies(formNumber(form, "max_companies", DEFAULT_MAX_COMPANIES));
       const companyBatchSize = clampCompanyBatchSize(formNumber(form, "company_batch_size", 5_000));
       const maximumObservationsPerRequest = clampObservationsPerRequest(
@@ -210,24 +273,25 @@ export async function action({ request }: Route.ActionArgs): Promise<PeoplePipel
       const timeoutSeconds = clampResolutionTimeoutSeconds(
         formNumber(form, "timeout_seconds", 180),
       );
-      if (intent === "confirm-resolution") {
+      if (intent === "confirm-llm-suggestions") {
+        const keyVariable = dagsterApiKeyVariable(profile.provider);
         return confirmed({
-          section: "resolution",
-          title: "Publish se_company_person / roles",
+          section: "llm-suggestions",
+          title: execute ? "Call the model and write suggestions" : "Preview LLM suggestions",
           lines: [
             `Scope: ${describeCompanyScope(companyIds)}.`,
             `Up to ${maxCompanies} companies per run, ${companyBatchSize} per batch, ` +
               `up to ${maximumObservationsPerRequest} observations per LLM request, ` +
               `${timeoutSeconds}s timeout.`,
-            "This always writes when launched -- se_company_person_job has no preview mode.",
-            // Coordinator review item 3: this IS a paid LLM path (DeepSeek,
-            // normalization.py's multi-source resolution) with no cost
-            // estimate available here -- say so plainly rather than let the
-            // "always writes" line above read as merely a ClickHouse write.
-            "May call DeepSeek for every multi-source company in scope; there is no preview/cost estimate.",
+            "Multi-source companies only: this writes suggestions ONLY, to se_company_person_enrichment_observation -- nothing goes live in se_company_person until a Promote suggestions run.",
+            execute
+              ? `Calls ${profile.model} (${profile.provider}) at ${profile.baseUrl}; the key is read from ${keyVariable} on the Dagster host.`
+              : "No model is called and nothing is written: a bare Materialize with execute off is a harmless preview.",
           ],
           fields: {
             company_ids: formatCompanyIdScope(companyIds),
+            execute: execute ? "1" : "",
+            llm_profile: profile.name,
             max_companies: String(maxCompanies),
             company_batch_size: String(companyBatchSize),
             maximum_observations_per_request: String(maximumObservationsPerRequest),
@@ -236,15 +300,51 @@ export async function action({ request }: Route.ActionArgs): Promise<PeoplePipel
         });
       }
       return await launch(
-        "resolution",
-        SE_COMPANY_PERSON_JOB,
-        buildResolutionRunConfig({
+        "llm-suggestions",
+        SE_COMPANY_PERSON_LLM_SUGGESTIONS_JOB,
+        buildLlmSuggestionsRunConfig({
+          execute,
+          llmProfile: profile.name,
           companyIds,
           maxCompanies,
           companyBatchSize,
           maximumObservationsPerRequest,
           timeoutSeconds,
         }),
+      );
+    }
+
+    if (intent === "confirm-promotion" || intent === "launch-promotion") {
+      const companyIds = parseCompanyIdScope(formValue(form, "company_ids"));
+      const maxCompanies = clampMaxCompanies(formNumber(form, "max_companies", DEFAULT_MAX_COMPANIES));
+      const companyBatchSize = clampCompanyBatchSize(formNumber(form, "company_batch_size", 5_000));
+      const minConfidence = clampMinConfidence(
+        Number.parseFloat(formValue(form, "min_confidence")) || DEFAULT_MIN_CONFIDENCE,
+      );
+      if (intent === "confirm-promotion") {
+        return confirmed({
+          section: "promotion",
+          title: "Promote LLM suggestions",
+          lines: [
+            `Scope: ${describeCompanyScope(companyIds)}.`,
+            `Up to ${maxCompanies} companies per run, ${companyBatchSize} per batch.`,
+            minConfidence > 0
+              ? `Only promotes a suggestion with confidence >= ${minConfidence}.`
+              : "Promotes every live suggestion regardless of the model's own confidence (min_confidence is 0).",
+            "Deterministic and free -- no model is ever called here. Copies an eligible stored suggestion into se_company_person, applying the correction ledger on top exactly like clean copy does. A suggestion whose evidence has moved since it was written is skipped and counted, never guessed at.",
+          ],
+          fields: {
+            company_ids: formatCompanyIdScope(companyIds),
+            max_companies: String(maxCompanies),
+            company_batch_size: String(companyBatchSize),
+            min_confidence: String(minConfidence),
+          },
+        });
+      }
+      return await launch(
+        "promotion",
+        SE_COMPANY_PERSON_PROMOTION_JOB,
+        buildPromotionRunConfig({ companyIds, maxCompanies, companyBatchSize, minConfidence }),
       );
     }
 
@@ -300,11 +400,15 @@ export async function action({ request }: Route.ActionArgs): Promise<PeoplePipel
     if (error instanceof DagsterError) {
       const section: PeoplePipelineSection | null = intent.includes("identity")
         ? "identity"
-        : intent.includes("resolution")
-          ? "resolution"
-          : intent.includes("merge")
-            ? "merge"
-            : null;
+        : intent.includes("clean-copy")
+          ? "clean-copy"
+          : intent.includes("llm-suggestions")
+            ? "llm-suggestions"
+            : intent.includes("promotion")
+              ? "promotion"
+              : intent.includes("merge")
+                ? "merge"
+                : null;
       return refused(section, error.message);
     }
     throw error;
