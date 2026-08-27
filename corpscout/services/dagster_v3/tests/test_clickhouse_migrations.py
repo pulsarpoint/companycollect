@@ -338,6 +338,7 @@ EXPECTED_MIGRATIONS = (
     "000326_corpscout_se_companies_current",
     "000327_corpscout_se_address_geocodes_served_postal_box_fallback",
     "000328_corpscout_retire_company_people_all",
+    "000329_corpscout_se_company_ratsit_sole_trader_ids",
 )
 
 NOOP_MIGRATIONS = {"000276_noop"}
@@ -3598,6 +3599,24 @@ def test_normalized_sweden_company_people_table_is_migrated() -> None:
     assert "role_code" not in sql
     assert "role_name" not in sql
     assert "DROP TABLE IF EXISTS corpscout.se_company_person" in down_sql
+
+
+def test_ratsit_sole_trader_id_migration_repairs_applied_constraints() -> None:
+    up_sql = _migration_sql(
+        "000329_corpscout_se_company_ratsit_sole_trader_ids.up.sql"
+    )
+    down_sql = _migration_sql(
+        "000329_corpscout_se_company_ratsit_sole_trader_ids.down.sql"
+    )
+
+    assert "ALTER TABLE corpscout.se_company_ratsit_crawl_results" in up_sql
+    assert "^([0-9]{10}|[0-9]{12})$" in up_sql
+    assert "right(company_id, 10)" in up_sql
+    assert "DROP CONSTRAINT se_company_ratsit_company_id" in up_sql
+    assert "DROP CONSTRAINT se_company_ratsit_source_url" in up_sql
+
+    assert "^[0-9]{10}$" in down_sql
+    assert "concat('https://www.ratsit.se/', company_id)" in down_sql
 
 
 def _migration_sql(file_name: str) -> str:
