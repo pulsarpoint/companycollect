@@ -1,11 +1,14 @@
 /**
  * `/admin/se/people`'s action: the Simple Sync sheet's two intents.
  * `confirm-simple-sync` answers with the preview `se-people-simple-sync.server.ts`
- * computes; `launch-simple-sync` must call Dagster with EXACTLY the same
- * job/run-config shape the Pipeline page's own clean-copy launch uses
- * (`SE_COMPANY_PERSON_PUBLISH_JOB` + `buildCleanCopyRunConfig`) -- this is the
- * "reuse the existing launch path, don't fork it" requirement, asserted on
- * the wire shape a fork could accidentally drift from.
+ * computes; `launch-simple-sync` must call Dagster with EXACTLY the combined
+ * role_draft+person+role cascade (`SE_COMPANY_PERSON_JOB` +
+ * `buildSimpleSyncRunConfig`, `se-company-person-pipeline.server.ts`) --
+ * deliberately NOT the Pipeline page's own single-asset clean-copy launch
+ * (`SE_COMPANY_PERSON_PUBLISH_JOB` + `buildCleanCopyRunConfig`, person table
+ * only, which this file does not touch). This pins the launched job name and
+ * its three-op selection so a future job-shape change breaks loudly here
+ * instead of silently skipping role assignments in production.
  */
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { SimpleSyncPreview } from "~/lib/se-people-simple-sync.server";
@@ -71,7 +74,7 @@ describe("confirm-simple-sync", () => {
 });
 
 describe("launch-simple-sync", () => {
-  it("launches se_company_person_publish_job with an all-companies clean-copy config and the pilot tag", async () => {
+  it("launches se_company_person_job (role_draft+person+role) with an all-companies config and the pilot tag", async () => {
     const result = await post({ intent: "launch-simple-sync" });
 
     // `dagsterRunUrl` derives from DAGSTER_GRAPHQL_URL (backoffice/.env, loaded
@@ -80,7 +83,7 @@ describe("launch-simple-sync", () => {
       kind: "launched",
       runId: "run-1",
       url: "http://dagster:3000/runs/run-1",
-      job: "se_company_person_publish_job",
+      job: "se_company_person_job",
     });
     expect(launchRun).toHaveBeenCalledTimes(1);
     const [input] = launchRun.mock.calls[0] as unknown as [
@@ -90,14 +93,36 @@ describe("launch-simple-sync", () => {
         tags: Record<string, string>;
       },
     ];
-    expect(input.job).toBe("se_company_person_publish_job");
+    // Pinned so a future job-shape change (dagster_v3's se_company_person_job
+    // definition) breaks this test loudly instead of silently dropping role
+    // assignments from what Simple Sync publishes.
+    expect(input.job).toBe("se_company_person_job");
     expect(input.tags).toEqual({ pilot: "backoffice" });
-    const config = input.runConfig.ops.se_company_person_clickhouse.config;
+    const { ops } = input.runConfig;
+    expect(Object.keys(ops).sort()).toEqual(
+      [
+        "se_company_person_clickhouse",
+        "se_company_person_role_clickhouse",
+        "se_company_person_role_draft_clickhouse",
+      ].sort(),
+    );
+
+    const personConfig = ops.se_company_person_clickhouse.config;
     // Every company, exactly like the Pipeline page's own default-scope
     // clean-copy launch (se-company-person-pipeline.ts's normalizeCompanyIdScope([])).
-    expect(config.company_ids).toEqual([]);
-    expect(config).not.toHaveProperty("execute");
-    expect(config).not.toHaveProperty("llm_profile");
+    expect(personConfig.company_ids).toEqual([]);
+    expect(personConfig).not.toHaveProperty("execute");
+    expect(personConfig).not.toHaveProperty("llm_profile");
+
+    // The two role ops (company_people/roles.py's SECompanyPersonRoleConfig)
+    // take ONLY company_ids -- no max_companies/company_batch_size field
+    // exists on that config class, unlike the person op's.
+    expect(ops.se_company_person_role_draft_clickhouse.config).toEqual({
+      company_ids: [],
+    });
+    expect(ops.se_company_person_role_clickhouse.config).toEqual({
+      company_ids: [],
+    });
   });
 });
 

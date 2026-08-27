@@ -15,9 +15,11 @@
  * writes ONLY to se_company_person_enrichment_observation, execute-gated like the
  * merge job), `buildPromotionRunConfig` (deterministic, free, copies an eligible
  * suggestion into se_company_person). `se_company_person_role_draft_clickhouse`/
- * `se_company_person_role_clickhouse` no longer ride along on these launches --
- * see SE_COMPANY_PERSON_JOB's own doc comment in dagster.server.ts for the
- * combined cascade, still available separately.
+ * `se_company_person_role_clickhouse` no longer ride along on these THREE
+ * launches -- but `buildSimpleSyncRunConfig` below builds the combined cascade
+ * (SE_COMPANY_PERSON_JOB) on purpose, for the People page's Simple Sync sheet
+ * (se-people-actions.tsx), which is not one of these three and wants both
+ * tables published in one click.
  */
 import { chQuery } from "~/lib/clickhouse.server";
 import {
@@ -26,6 +28,8 @@ import {
   SE_COMPANY_PERSON_LLM_SUGGESTIONS_ASSET,
   SE_COMPANY_PERSON_MERGE_ASSET,
   SE_COMPANY_PERSON_PROMOTION_ASSET,
+  SE_COMPANY_PERSON_ROLE_ASSET,
+  SE_COMPANY_PERSON_ROLE_DRAFT_ASSET,
 } from "~/lib/dagster.server";
 import {
   clampCompanyBatchSize,
@@ -78,6 +82,45 @@ export function buildCleanCopyRunConfig(
           max_companies: clampMaxCompanies(options.maxCompanies),
           company_batch_size: clampCompanyBatchSize(options.companyBatchSize),
         },
+      },
+    },
+  };
+}
+
+export interface SimpleSyncRunOptions {
+  companyIds: readonly string[];
+  maxCompanies: number;
+  companyBatchSize: number;
+}
+
+/** `se_company_person_job` -- the combined role_draft+person+role cascade
+ * (SE_COMPANY_PERSON_JOB's own doc comment in dagster.server.ts). Used ONLY by
+ * the People page's Simple Sync sheet, NOT the Pipeline page's own clean-copy
+ * launch (`buildCleanCopyRunConfig` above, still `se_company_person_publish_job`,
+ * person table only): Simple Sync publishes BOTH `se_company_person` and its
+ * role assignments in one run, so the same company scope is threaded to all
+ * three ops. `company_people/roles.py`'s `SECompanyPersonRoleConfig` (the two
+ * role ops' config class) takes ONLY `company_ids` -- no
+ * `max_companies`/`company_batch_size` field exists there, unlike
+ * `SECompanyPersonConfig`. */
+export function buildSimpleSyncRunConfig(
+  options: SimpleSyncRunOptions,
+): Record<string, unknown> {
+  const companyIds = normalizeCompanyIdScope(options.companyIds);
+  return {
+    ops: {
+      [SE_COMPANY_PERSON_ROLE_DRAFT_ASSET]: {
+        config: { company_ids: companyIds },
+      },
+      [SE_COMPANY_PERSON_ASSET]: {
+        config: {
+          company_ids: companyIds,
+          max_companies: clampMaxCompanies(options.maxCompanies),
+          company_batch_size: clampCompanyBatchSize(options.companyBatchSize),
+        },
+      },
+      [SE_COMPANY_PERSON_ROLE_ASSET]: {
+        config: { company_ids: companyIds },
       },
     },
   };

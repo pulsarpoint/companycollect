@@ -3,11 +3,14 @@ import {
   SE_COMPANY_PERSON_ASSET,
   SE_COMPANY_PERSON_LLM_SUGGESTIONS_ASSET,
   SE_COMPANY_PERSON_PROMOTION_ASSET,
+  SE_COMPANY_PERSON_ROLE_ASSET,
+  SE_COMPANY_PERSON_ROLE_DRAFT_ASSET,
 } from "~/lib/dagster.server";
 import {
   buildCleanCopyRunConfig,
   buildLlmSuggestionsRunConfig,
   buildPromotionRunConfig,
+  buildSimpleSyncRunConfig,
 } from "~/lib/se-company-person-pipeline.server";
 
 /**
@@ -71,6 +74,62 @@ describe("buildCleanCopyRunConfig", () => {
       "5560125220",
       "5565200028",
     ]);
+  });
+});
+
+describe("buildSimpleSyncRunConfig", () => {
+  it("selects all three ops of se_company_person_job -- role_draft, person, role", () => {
+    const config = buildSimpleSyncRunConfig({
+      companyIds: [],
+      maxCompanies: 10_000,
+      companyBatchSize: 5_000,
+    }) as { ops: Record<string, { config: Record<string, unknown> }> };
+
+    expect(Object.keys(config.ops).sort()).toEqual(
+      [SE_COMPANY_PERSON_ROLE_DRAFT_ASSET, SE_COMPANY_PERSON_ASSET, SE_COMPANY_PERSON_ROLE_ASSET].sort(),
+    );
+  });
+
+  it("gives the person op the full clean-copy config, exactly like buildCleanCopyRunConfig's", () => {
+    const config = buildSimpleSyncRunConfig({
+      companyIds: ["5560125220"],
+      maxCompanies: 100,
+      companyBatchSize: 50,
+    }) as { ops: Record<string, { config: Record<string, unknown> }> };
+
+    expect(config.ops[SE_COMPANY_PERSON_ASSET].config).toEqual({
+      company_ids: ["5560125220"],
+      max_companies: 100,
+      company_batch_size: 50,
+    });
+  });
+
+  it("gives both role ops ONLY company_ids -- SECompanyPersonRoleConfig has no max_companies/company_batch_size field", () => {
+    const config = buildSimpleSyncRunConfig({
+      companyIds: ["5560125220"],
+      maxCompanies: 100,
+      companyBatchSize: 50,
+    }) as { ops: Record<string, { config: Record<string, unknown> }> };
+
+    expect(config.ops[SE_COMPANY_PERSON_ROLE_DRAFT_ASSET].config).toEqual({
+      company_ids: ["5560125220"],
+    });
+    expect(config.ops[SE_COMPANY_PERSON_ROLE_ASSET].config).toEqual({
+      company_ids: ["5560125220"],
+    });
+  });
+
+  it("normalizes and shares the SAME company scope across all three ops", () => {
+    const config = buildSimpleSyncRunConfig({
+      companyIds: [" 5560125220 ", "5565200028", "5560125220", ""],
+      maxCompanies: 10_000,
+      companyBatchSize: 5_000,
+    }) as { ops: Record<string, { config: { company_ids: string[] } }> };
+
+    const expected = ["5560125220", "5565200028"];
+    expect(config.ops[SE_COMPANY_PERSON_ROLE_DRAFT_ASSET].config.company_ids).toEqual(expected);
+    expect(config.ops[SE_COMPANY_PERSON_ASSET].config.company_ids).toEqual(expected);
+    expect(config.ops[SE_COMPANY_PERSON_ROLE_ASSET].config.company_ids).toEqual(expected);
   });
 });
 

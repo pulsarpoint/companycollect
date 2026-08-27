@@ -9,9 +9,9 @@ import {
   DagsterError,
   dagsterRunUrl,
   launchRun,
-  SE_COMPANY_PERSON_PUBLISH_JOB,
+  SE_COMPANY_PERSON_JOB,
 } from "~/lib/dagster.server";
-import { buildCleanCopyRunConfig } from "~/lib/se-company-person-pipeline.server";
+import { buildSimpleSyncRunConfig } from "~/lib/se-company-person-pipeline.server";
 import {
   DEFAULT_COMPANY_BATCH_SIZE,
   DEFAULT_MAX_COMPANIES,
@@ -37,11 +37,13 @@ import { loadSePeopleSourcePage } from "~/lib/se-people-sources.server";
 // se_company_person table, and a Tasks tab of every people asset/job's
 // latest run, so a reviewer can see what each source actually published (and
 // what has run) without leaving this page. The Actions menu's "Simple sync"
-// sheet previews and launches the SAME clean-copy job the pipeline page's
-// own clean-copy launch uses (`SE_COMPANY_PERSON_PUBLISH_JOB` +
-// `buildCleanCopyRunConfig`, `se-company-person-pipeline.server.ts`) -- this
-// route's action is a second CALLER of that launch path, not a duplicate of
-// it.
+// sheet previews and launches the COMBINED role_draft+person+role cascade
+// (`SE_COMPANY_PERSON_JOB` + `buildSimpleSyncRunConfig`,
+// `se-company-person-pipeline.server.ts`) -- deliberately NOT the pipeline
+// page's own clean-copy launch (`SE_COMPANY_PERSON_PUBLISH_JOB` +
+// `buildCleanCopyRunConfig`, person table only, untouched by this route):
+// Simple Sync's one click needs to publish both people AND their role
+// assignments.
 
 export async function loader({ request }: Route.LoaderArgs) {
   const url = new URL(request.url);
@@ -63,8 +65,8 @@ export async function action({ request }: Route.ActionArgs): Promise<SimpleSyncA
     }
     if (intent === "launch-simple-sync") {
       const run = await launchRun({
-        job: SE_COMPANY_PERSON_PUBLISH_JOB,
-        runConfig: buildCleanCopyRunConfig({
+        job: SE_COMPANY_PERSON_JOB,
+        runConfig: buildSimpleSyncRunConfig({
           companyIds: [],
           maxCompanies: DEFAULT_MAX_COMPANIES,
           companyBatchSize: DEFAULT_COMPANY_BATCH_SIZE,
@@ -75,7 +77,7 @@ export async function action({ request }: Route.ActionArgs): Promise<SimpleSyncA
         kind: "launched",
         runId: run.runId,
         url: dagsterRunUrl(run.runId),
-        job: SE_COMPANY_PERSON_PUBLISH_JOB,
+        job: SE_COMPANY_PERSON_JOB,
       };
     }
     return { kind: "error", error: "Unknown action." };
