@@ -41,8 +41,12 @@ def test_source_observation_id_matches_a_known_clickhouse_result() -> None:
     SELECT reinterpretAsUUID(unhex(substring(hex(SHA256(concat(
         'se-company-person-source-observation-v2\\n',
         '5560000001', '\\n', 'bolagsverket', '\\n', 'src', '\\n',
-        repeat('a', 64), '\\n', repeat('b', 64)
-    ))), 1, 32))) = '74574618-5e8c-1aea-f27e-a26dd07cd279'
+        repeat('a', 64), '\\n', repeat('b', 64), '\\n', 'sig-1'
+    ))), 1, 32))) = 'cb422322-689a-2d40-b17b-d3203f7ed8c4'
+
+    (Fix round: the payload now includes the row-level disambiguator -- see the module's
+    "THE draft_id FORMULA" comment -- so this pin's expected value changed from the
+    pre-fix-round one when the disambiguator was added to the hash.)
     """
     result = source_observation_id(
         company_id="5560000001",
@@ -50,8 +54,25 @@ def test_source_observation_id_matches_a_known_clickhouse_result() -> None:
         source_record_uid="src",
         person_profile_hash="a" * 64,
         person_role_hash="b" * 64,
+        disambiguator="sig-1",
     )
-    assert result == uuid.UUID("74574618-5e8c-1aea-f27e-a26dd07cd279")
+    assert result == uuid.UUID("cb422322-689a-2d40-b17b-d3203f7ed8c4")
+
+
+def test_source_observation_id_changes_when_only_the_disambiguator_differs() -> None:
+    """THE PIN for the C1 fix: two rows identical in every other identity field but a
+    different disambiguator must produce different draft_ids -- this is exactly what closes
+    the un-deduplicated-view-union bug (see source_views.py's "THE draft_id FORMULA")."""
+    kwargs = dict(
+        company_id="5560000001",
+        source="bolagsverket",
+        source_record_uid="src",
+        person_profile_hash="a" * 64,
+        person_role_hash="b" * 64,
+    )
+    first = source_observation_id(disambiguator="signatory-1", **kwargs)
+    second = source_observation_id(disambiguator="signatory-2", **kwargs)
+    assert first != second
 
 
 def test_shared_cte_excludes_blank_names_on_every_branch() -> None:
@@ -97,6 +118,12 @@ CREATE TABLE corpscout.se_financial_report_signatories
     source_record_uid String,
     signatory_kind LowCardinality(String),
     person_seq UInt16,
+    signatory_uid FixedString(64) MATERIALIZED
+        lower(hex(SHA256(concat(
+            'sweden-financial-report-signatory-v1\n',
+            company_id, '\n', statement_key, '\n', signatory_kind, '\n',
+            toString(person_seq)
+        )))),
     first_name String,
     last_name String,
     person_profile_hash FixedString(64) MATERIALIZED
@@ -270,6 +297,7 @@ ORDER BY (issuer_scheme, issuer_id, country_code, company_id);
 """
 
 COMPANY = "5560000099"
+DUP_COMPANY = "5560000098"  # C1 regression: two byte-identical-but-for-person_seq signatories
 
 _FIXTURE_SQL = f"""
 INSERT INTO corpscout.se_financial_report_signatories
@@ -281,6 +309,12 @@ VALUES
      toDateTime64('2026-08-01 00:00:00', 3, 'UTC')),
     ('{COMPANY}', 2024, 'stmt-1', 'src-bv-1', 'board_signature', 2,
      '', '', 'Styrelseledamot', 'board_member',
+     toDateTime64('2026-08-01 00:00:00', 3, 'UTC')),
+    ('{DUP_COMPANY}', 2024, 'stmt-dup-1', 'src-dup-1', 'board_signature', 1,
+     'Anna', 'Karlsson', 'Styrelseledamot', 'board_member',
+     toDateTime64('2026-08-01 00:00:00', 3, 'UTC')),
+    ('{DUP_COMPANY}', 2024, 'stmt-dup-1', 'src-dup-1', 'board_signature', 2,
+     'Anna', 'Karlsson', 'Styrelseledamot', 'board_member',
      toDateTime64('2026-08-01 00:00:00', 3, 'UTC'));
 
 INSERT INTO corpscout.esef_document_people
@@ -342,8 +376,16 @@ def _script() -> str:
         "SELECT '@@observations'",
         f"WITH {build_se_company_person_source_observations_sql()}\n"
         "SELECT source, toString(draft_id), source_record_uid, toString(person_profile_hash), "
-        "toString(person_role_hash) FROM source_observations "
+        "toString(person_role_hash), disambiguator FROM source_observations "
         f"WHERE company_id = '{COMPANY}' ORDER BY source",
+        "SELECT '@@dup_rows'",
+        f"WITH {build_se_company_person_source_observations_sql()}\n"
+        "SELECT toString(draft_id) FROM source_observations "
+        f"WHERE company_id = '{DUP_COMPANY}' ORDER BY toString(draft_id)",
+        "SELECT '@@dup_groupuniq'",
+        f"WITH {build_se_company_person_source_observations_sql()}\n"
+        "SELECT count(), length(groupUniqArray(draft_id)) FROM source_observations "
+        f"WHERE company_id = '{DUP_COMPANY}'",
     ]
     return ";\n".join(statements) + ";\n"
 
@@ -372,14 +414,66 @@ def test_blank_names_excluded_and_counted_and_draft_id_matches_python() -> None:
     assert sections["blank_count"] == [["2"]]
     assert len(sections["observations"]) == 2  # only the two non-blank rows
 
-    for source, draft_id, source_record_uid, person_profile_hash, person_role_hash in sections[
-        "observations"
-    ]:
+    for (
+        source,
+        draft_id,
+        source_record_uid,
+        person_profile_hash,
+        person_role_hash,
+        disambiguator,
+    ) in sections["observations"]:
         expected = source_observation_id(
             company_id=COMPANY,
             source=source,
             source_record_uid=source_record_uid,
             person_profile_hash=person_profile_hash,
             person_role_hash=person_role_hash,
+            disambiguator=disambiguator,
         )
         assert uuid.UUID(draft_id) == expected
+
+
+@pytest.mark.integration
+def test_c1_two_rows_identical_but_for_person_seq_get_distinct_draft_ids() -> None:
+    """THE PIN for C1 (fix round, Critical): the pre-fix bug. DUP_COMPANY's two bolagsverket
+    rows are byte-identical in every column the view projects except `person_seq` -- same
+    name, same role, same statement (hence same source_record_uid), same
+    person_profile_hash/person_role_hash. Before the disambiguator was folded into the
+    draft_id hash, both rows produced ONE draft_id: `groupUniqArray(draft_id)` (the
+    deduplicated array `build_company_statistics_sql`/`build_pending_companies_sql` compare
+    against) disagreed with the plain, non-deduplicated per-observation read
+    (`build_company_observations_sql`) that `_load_company_work` uses, and that mismatch is
+    exactly what made `_load_company_work` raise "Draft rows changed while loading company
+    ..." on every run for a company with this shape -- forever, since `after_company_id`
+    only advances past a company once its batch succeeds.
+    """
+    completed = subprocess.run(
+        _clickhouse_local_command(),
+        input=_script(),
+        capture_output=True,
+        text=True,
+        timeout=900,
+    )
+    assert completed.returncode == 0, completed.stderr or completed.stdout
+    sections: dict[str, list[list[str]]] = {}
+    current = ""
+    for line in completed.stdout.splitlines():
+        if line.startswith("@@"):
+            current = line[2:]
+            sections[current] = []
+        elif line.strip():
+            sections[current].append(line.split("\t"))
+
+    dup_draft_ids = [row[0] for row in sections["dup_rows"]]
+    assert len(dup_draft_ids) == 2, "both rows must survive -- neither is dropped"
+    assert len(set(dup_draft_ids)) == 2, (
+        "the two rows must get DISTINCT draft_ids (this is the whole fix)"
+    )
+
+    total_count, distinct_count = sections["dup_groupuniq"][0]
+    assert total_count == "2"
+    assert distinct_count == "2", (
+        "groupUniqArray(draft_id) (the statistics/pending queries' dedup) must equal the "
+        "plain row count (the per-observation read's count) -- the exact invariant "
+        "_load_company_work depends on"
+    )

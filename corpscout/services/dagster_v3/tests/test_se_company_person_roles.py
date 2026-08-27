@@ -137,6 +137,9 @@ def test_role_draft_sql_links_exact_person_draft_and_static_mapping() -> None:
     assert "JSONExtractString(drafts.source_value_json, 'role_kind')" in sql
     assert "JSONExtractString(drafts.source_value_json, 'role_category')" in sql
     assert "JSONExtractString(drafts.source_value_json, 'role_property')" in sql
+    # M3 (fix round): role_label restored -- the unmapped-role diagnostic and the role
+    # review page's wikidata labels must not read a permanently-blank JSON key.
+    assert "JSONExtractString(drafts.source_value_json, 'role_label')" in sql
     assert "INNER JOIN role_mapping AS mapping" in sql
     assert "se-company-person-role-observation-v2" in sql
     assert "person_draft_id" in sql

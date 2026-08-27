@@ -236,10 +236,12 @@ def _source_roles_sql(company_ids: Sequence[str]) -> str:
     same deterministic ``draft_id`` normalization.py computes for the same view row -- both
     modules splice in the identical shared CTE, so the two never drift.
 
-    Wikidata's ``source_role_name`` reads a ``role_label`` JSON key the source_observations
-    JSON blob does not carry (the view itself does not project it); it resolves to ``''``
-    here and falls back to ``source_role_code`` at the insert site below, exactly as an
-    already-blank ``role_label`` did before.
+    Wikidata's ``source_role_name`` reads a ``role_label`` JSON key (fix round: restored to
+    both the wikidata view, migration 000331, and the shared source_observations JSON blob --
+    it briefly did not carry the key at all, which silently blanked this diagnostic and the
+    role review page's wikidata labels). ``role_code`` mapping itself never depended on
+    ``role_label`` -- it always keys off ``role_property`` (a stable P-code) -- so this only
+    ever affected what a human reads, never what got mapped.
     """
     company_filter = _company_filter("drafts.company_id", company_ids)
     return f"""role_mapping AS (

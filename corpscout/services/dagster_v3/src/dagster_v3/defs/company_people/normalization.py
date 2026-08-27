@@ -12,7 +12,7 @@ import json
 import re
 import uuid
 from collections import defaultdict
-from collections.abc import Callable, Mapping, Sequence
+from collections.abc import Callable, Iterable, Mapping, Sequence
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from typing import Any
@@ -106,7 +106,6 @@ DIRECT_PROMPT_VERSION = "single-source-copy-v2"
 MAX_OUTPUT_TOKENS = 4_000
 MAX_CONTRACT_ATTEMPTS = 3
 
-_WHITESPACE_PATTERN = re.compile(r"\s+")
 _ROLE_SEPARATOR_PATTERN = re.compile(r"[^a-z0-9]+")
 
 _ROLE_ALIASES = {
@@ -805,23 +804,25 @@ def person_id_for(company_id: str, group_key: str) -> uuid.UUID:
 
     ``group_key`` is not derived here -- the caller resolves it first:
 
-    - The deterministic single-source path (``_normalize_single_source_company``) runs the
-      full K3 reconciliation over a company's current observations
+    - Both the deterministic single-source path (``_normalize_single_source_company``) and
+      the LLM multi-source path (``_normalize_multi_source_company``) run the full K3
+      reconciliation over a company's current observations
       (``_company_person_group_keys``, reusing ``identity_eval.k3_merge_groups`` -- the
-      production key derivation, not a fork of it) and passes each group's canonical key
-      (its SHORTEST member K2 key -- the base name without middle names, e.g. "anna svensson"
-      out of {"anna svensson", "anna maria svensson"}: deterministic, and a K3 group's
-      shortest member is always well-defined since K3 only ever merges a name into a strict
-      *superset* of itself).
-    - Everywhere else a name arrives with no company-wide K3 context to resolve against --
-      the LLM multi-source path's suggestion/name fallback, and the ``split_person``/
-      ``override_field`` correction handlers acting on a human-typed name -- uses
-      ``identity_key_k2(name)`` directly. A singleton group's canonical key is trivially
-      itself, so this is not a different rule, just K3 with nothing else in the group to
-      compare against. (Full K3 is not re-run per LLM suggestion: the LLM's own
-      ``existing_person_id`` continuity plus human corrections already provide the
-      "same person, different spelling" merging K3's rule (a) would otherwise add for a
-      multi-source company; see task-3-report.md.)
+      production key derivation, not a fork of it) ONCE per company and use its canonical
+      keys. This is company-scoped and source-agnostic: a person's group key -- and
+      therefore their person_id -- no longer depends on how many sources happened to observe
+      them (fix round: the two paths used to disagree, the same human getting a different
+      person_id depending on source count -- a v2 regression from v1, where both paths
+      happened to agree because K1 was cheap enough to inline everywhere).
+    - Only a name with NO matching observation at all in the current company (an LLM-invented
+      name, or a human-typed one in the ``split_person``/``override_field`` correction
+      handlers) falls back to ``identity_key_k2(name)`` directly -- there is nothing in
+      ``_company_person_group_keys``' map to look up. A singleton group's canonical key would
+      be trivially itself anyway, so this is not a different rule, just K3 with nothing else
+      in the group to compare against.
+
+    See ``_company_person_group_keys`` for how the canonical key itself is chosen within one
+    K3 group (CONTROLLER RULING: stability over minimality).
     """
     digest = hashlib.sha256(
         f"{PERSON_ID_HASH_DOMAIN}\n{company_id}\n{group_key}".encode()
@@ -832,19 +833,49 @@ def person_id_for(company_id: str, group_key: str) -> uuid.UUID:
 def _company_person_group_keys(
     company_id: str,
     observations: Sequence[DraftPersonObservation],
+    previous_profiles: Sequence[ExistingPersonProfile] = (),
 ) -> dict[uuid.UUID, str]:
     """K3-resolved canonical group key per non-blank-name observation, one company at a time.
 
-    A group's canonical key is its SHORTEST member K2 key. ``MergeDecision.k3_person_key`` is
-    already ``"|".join(sorted member K2 keys)`` (identity_eval.k3_merge_groups), so splitting
-    on ``"|"`` recovers the member set with no re-derivation.
+    CANONICAL KEY (CONTROLLER RULING, amending the original shortest-member-only rule): a
+    group's canonical key is a PREVIOUSLY-PUBLISHED member's canonical key when one exists,
+    else the group's shortest member K2 key. Stability beats minimality -- without this, a
+    K3 group's person_id could churn merely because a later run adds a newer, shorter-named
+    observation to an already-published group (e.g. "Anna Maria Svensson" published first,
+    "Anna Svensson" observed later: the group's person_id must stay the one already
+    published, not silently move to the new shorter name's hash).
+
+    The ledger stores each published person's ``person_id`` (a UUID), not the string key that
+    produced it, so "does this group already have a published identity" is answered by
+    RE-HASHING each candidate member key with ``person_id_for`` and testing membership
+    against ``previous_profiles``' person_ids -- there is no way to recover "the" prior key
+    except by testing candidates this way. A TOMBSTONED (merged-away) profile's id is
+    excluded from that membership test: reusing it would resurrect a merged-away identity
+    instead of letting the group resolve fresh (or, if its evidence rejoins the surviving
+    target's group some other way, stay with the target). If more than one member key
+    matches a (different) previously-published person_id -- reachable only if K3 now merges
+    two groups that were published separately in an earlier run -- the alphabetically-first
+    matching key wins: a deterministic tie-break for an edge case with no currently-reachable
+    test scenario.
+
+    Member K2 keys are recomputed directly from each row's ``full_name``
+    (``{identity_key_k2(row.full_name) for row in decision.rows}``), NOT recovered by
+    splitting ``MergeDecision.k3_person_key`` on ``"|"`` -- a literal ``|`` character
+    somewhere in a name would corrupt that split.
+
+    ``min(..., key=lambda key: (len(key), key))`` is a deterministic TIE-BREAK, not a
+    meaningful "base name" rule: it reads as "drop the middle name" for K3 rule (a)
+    (superset-of-tokens merges), but K3 rule (b) (a shared Wikidata QID) can merge two
+    completely unrelated spellings with no superset relationship at all -- the tie-break
+    still produces SOME deterministic answer there, it just is not "the base name" in any
+    meaningful sense for that case.
 
     Correlated back to ``draft_id`` by object identity (``id()``), not value equality: two
     DIFFERENT observations can be value-identical ``PersonObservationRow`` instances (e.g. two
-    bolagsverket signatories sharing one filing's ``source_record_uid``, name and role -- the
-    views do not project a finer-grained row id, see
-    ``source_views.build_se_company_person_source_observations_sql``'s docstring), and a
-    value-keyed lookup would silently collapse them onto one group.
+    bolagsverket signatories sharing one filing's ``source_record_uid``, name and role --
+    ``PersonObservationRow`` does not carry the row-level disambiguator ``draft_id`` itself
+    now folds in, see ``source_views.build_se_company_person_source_observations_sql``'s
+    docstring), and a value-keyed lookup would silently collapse them onto one group.
     """
     rows: list[PersonObservationRow] = []
     observation_by_row_id: dict[int, DraftPersonObservation] = {}
@@ -863,14 +894,54 @@ def _company_person_group_keys(
         rows.append(row)
         observation_by_row_id[id(row)] = observation
 
+    # A tombstoned (merged-away) profile's id is deliberately excluded: reusing it here would
+    # resurrect a merged-away identity if K3 later regroups its observations under a key that
+    # happens to match the tombstone's own key, rather than the surviving target's -- exactly
+    # the outcome apply_person_corrections' merge_persons handling exists to prevent.
+    previous_person_ids = {
+        profile.person_id
+        for profile in previous_profiles
+        if profile.merged_into_person_id is None
+    }
     group_key_by_draft_id: dict[uuid.UUID, str] = {}
     for decision in k3_merge_groups(rows):
-        member_keys = decision.k3_person_key.split("|")
-        canonical_key = min(member_keys, key=lambda key: (len(key), key))
+        member_keys = sorted({identity_key_k2(row.full_name) for row in decision.rows})
+        published_keys = [
+            key for key in member_keys if person_id_for(company_id, key) in previous_person_ids
+        ]
+        canonical_key = (
+            published_keys[0]
+            if published_keys
+            else min(member_keys, key=lambda key: (len(key), key))
+        )
         for row in decision.rows:
             draft_observation = observation_by_row_id[id(row)]
             group_key_by_draft_id[draft_observation.draft_id] = canonical_key
     return group_key_by_draft_id
+
+
+def _group_key_for_draft_ids(
+    draft_ids: Iterable[uuid.UUID],
+    group_key_by_draft_id: Mapping[uuid.UUID, str],
+    *,
+    fallback_name: str,
+) -> str:
+    """The K3 canonical group key shared by a set of draft_ids (a profile's evidence, or an
+    LLM suggestion's), or K2 of ``fallback_name`` when NONE of them resolve to a known
+    observation -- an LLM-invented name, or a human-typed one with no company-wide K3 context
+    (``person_id_for``'s docstring). If the draft_ids span more than one K3 group (a profile
+    the LLM or a correction has already made deviate from K3 -- itself a pre-existing,
+    orthogonal compromise of this multi-source path, not something this helper introduces),
+    the alphabetically-first group key is the deterministic tie-break.
+    """
+    keys = {
+        group_key_by_draft_id[draft_id]
+        for draft_id in draft_ids
+        if draft_id in group_key_by_draft_id
+    }
+    if keys:
+        return min(keys)
+    return identity_key_k2(fallback_name)
 
 
 def _source_name(observation: DraftPersonObservation) -> str:
@@ -1288,7 +1359,9 @@ def _normalize_single_source_company(
     docstring).
     """
     group_key_by_draft_id = _company_person_group_keys(
-        company.status.company_id, company.observations
+        company.status.company_id,
+        company.observations,
+        previous_profiles=company.previous_profiles,
     )
     by_group: dict[str, list[DraftPersonObservation]] = defaultdict(list)
     for observation in company.observations:
@@ -1402,6 +1475,18 @@ def _normalize_multi_source_company(
     maximum_observations_per_request: int,
     created_at: datetime,
 ) -> "_MultiSourceOutcome":
+    # Computed ONCE per company, source-agnostic (fix round, Important): the same K3 group
+    # keys the deterministic single-source path uses. Without this, the multi-source path
+    # used to key its own name-based person lookups by raw K2 -- a fork from the
+    # single-source path's K3 keys that let the same human end up with a DIFFERENT person_id
+    # depending purely on how many sources happened to observe them (a v2 regression from v1,
+    # where both paths agreed because K1 was cheap enough to inline everywhere). See
+    # person_id_for's docstring.
+    group_key_by_draft_id = _company_person_group_keys(
+        company.status.company_id,
+        company.observations,
+        previous_profiles=company.previous_profiles,
+    )
     # A merge tombstone keeps the drafts it was merged away with, and so does
     # the person it was merged into. Seeding both would hand the model the same
     # evidence twice and leave whichever row it does not re-populate empty, so
@@ -1493,12 +1578,16 @@ def _normalize_multi_source_company(
                 profile.draft_ids -= removed_ids
                 profile.touched = True
 
-        # K2, not full K3: no company-wide observation set is visible per LLM suggestion to
-        # reconcile against (see person_id_for's docstring). The LLM's own existing_person_id
-        # continuity is the primary "same person" mechanism here; this is only the fallback
-        # for a name it did not attribute to a supplied previous profile.
+        # K3-keyed (fix round, Important): profiles_by_name and the fallback below both key
+        # off the SAME company-wide group_key_by_draft_id computed once above -- the LLM's
+        # own existing_person_id continuity is still the primary "same person" mechanism,
+        # this is only the fallback for a suggestion it did not attribute to a supplied
+        # previous profile. Raw K2 applies only when a profile/suggestion's draft_ids don't
+        # resolve to any known observation (see _group_key_for_draft_ids).
         profiles_by_name = {
-            identity_key_k2(profile.name): profile.person_id
+            _group_key_for_draft_ids(
+                profile.draft_ids, group_key_by_draft_id, fallback_name=profile.name
+            ): profile.person_id
             for profile in profiles.values()
         }
         for suggestion in result.response.people:
@@ -1509,11 +1598,16 @@ def _normalize_multi_source_company(
                 else suggestion.existing_person_id
             )
             if person_id is None:
-                person_id = profiles_by_name.get(identity_key_k2(suggestion.name))
-            if person_id is None:
-                person_id = person_id_for(
-                    company.status.company_id, identity_key_k2(suggestion.name)
+                suggestion_group_key = _group_key_for_draft_ids(
+                    suggestion.draft_ids,
+                    group_key_by_draft_id,
+                    fallback_name=suggestion.name,
                 )
+                person_id = profiles_by_name.get(suggestion_group_key)
+                if person_id is None:
+                    person_id = person_id_for(
+                        company.status.company_id, suggestion_group_key
+                    )
 
             profile = profiles.get(person_id)
             if profile is None:

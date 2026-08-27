@@ -89,6 +89,12 @@ CREATE TABLE corpscout.se_financial_report_signatories
     source_record_uid String,
     signatory_kind LowCardinality(String),
     person_seq UInt16,
+    signatory_uid FixedString(64) MATERIALIZED
+        lower(hex(SHA256(concat(
+            'sweden-financial-report-signatory-v1\n',
+            company_id, '\n', statement_key, '\n', signatory_kind, '\n',
+            toString(person_seq)
+        )))),
     first_name String,
     last_name String,
     person_profile_hash FixedString(64) MATERIALIZED

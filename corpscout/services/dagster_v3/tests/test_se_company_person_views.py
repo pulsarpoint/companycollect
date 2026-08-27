@@ -135,17 +135,21 @@ def test_the_pins_are_not_vacuous() -> None:
     assert "se_financial_report_signatories" in bolagsverket
     assert "trim(concat(first_name" in bolagsverket
     assert "resolved_at AS source_observed_at" in bolagsverket
+    assert "signatory_uid" in bolagsverket  # row-level draft_id disambiguator
 
     assert len(esef) > 100
     assert "esef_document_people FINAL" in esef
     assert "country_code = 'SE'" in esef
     assert "extracted_at AS source_observed_at" in esef
+    assert "candidate_uid" in esef  # row-level draft_id disambiguator
 
     assert len(wikidata) > 300
     assert "wikidata_company_identifiers" in wikidata
     assert "company_identifier" in wikidata
     assert "'se_orgnr'" in wikidata
     assert "'lei'" in wikidata
+    assert "links.role_label AS role_label" in wikidata
+    assert "links.company_wikidata_id AS company_wikidata_id" in wikidata  # disambiguator
     assert "match(company_id, '^[0-9]{10}([0-9]{2})?$')" in wikidata
     assert "greatest(links.resolved_at, persons.resolved_at) AS source_observed_at" in wikidata
 
