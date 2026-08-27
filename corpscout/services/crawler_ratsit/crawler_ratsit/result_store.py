@@ -4,7 +4,6 @@ from uuid import UUID
 
 from crawler_ratsit.models import CrawlResult
 
-
 RESULT_COLUMNS = (
     "company_id",
     "batch_id",

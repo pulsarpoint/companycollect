@@ -5,7 +5,6 @@ from uuid import UUID
 
 from crawler_ratsit.constants import RESPONSE_SCHEMA_VERSION, SOURCE_NAME
 
-
 CRAWL_OUTCOMES = frozenset(
     {"success", "not_found", "retry_exhausted", "blocked", "selector_changed"}
 )
@@ -179,15 +178,19 @@ def validate_utc_timestamp(value: str, *, field_name: str) -> datetime:
 def response_envelope(
     result: CrawlResult,
     *,
+    browser_id: str,
     final_url: str,
     content: str,
 ) -> dict[str, Any]:
+    if not browser_id:
+        raise ValueError("browser_id must not be blank")
     content_size_bytes = len(content.encode("utf-8"))
     if content_size_bytes != result.content_size_bytes:
         raise ValueError("response content size does not match crawl result")
     return {
         "schema_version": RESPONSE_SCHEMA_VERSION,
         "source": SOURCE_NAME,
+        "browser_id": browser_id,
         "result": result.to_dict(),
         "final_url": final_url,
         "content_type": "text/html",

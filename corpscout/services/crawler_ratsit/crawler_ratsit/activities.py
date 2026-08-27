@@ -1,4 +1,5 @@
 import asyncio
+import logging
 from collections.abc import Awaitable, Callable
 from datetime import UTC, datetime, timedelta
 from time import monotonic
@@ -24,19 +25,22 @@ from crawler_ratsit.result_store import RatsitResultStore
 type CrawlPage = Callable[[str], Awaitable[FetchedPage]]
 
 RATE_LIMIT_RETRY_DELAY = timedelta(minutes=10)
+LOGGER = logging.getLogger(__name__)
 
 
-class RatsitActivities:
+class RatsitCrawlActivities:
     def __init__(
         self,
         *,
+        browser_id: str,
         crawl_page: CrawlPage,
         object_store: RatsitObjectStore,
-        result_store: RatsitResultStore,
     ) -> None:
+        if not browser_id:
+            raise ValueError("browser_id must not be blank")
+        self._browser_id = browser_id
         self._crawl_page = crawl_page
         self._object_store = object_store
-        self._result_store = result_store
 
     @activity.defn(name=CRAWL_AND_UPLOAD_ACTIVITY)
     async def crawl_and_upload_company(
@@ -49,6 +53,11 @@ class RatsitActivities:
                 attempt_number=activity.info().attempt,
             )
         except RatsitRateLimitedError as error:
+            LOGGER.warning(
+                "Ratsit rate limited browser_id=%s company_id=%s",
+                self._browser_id,
+                activity_input.company_id,
+            )
             raise ApplicationError(
                 str(error),
                 type="ratsit_rate_limited",
@@ -78,6 +87,12 @@ class RatsitActivities:
 
         attempted_at = datetime.now(UTC)
         started = monotonic()
+        LOGGER.info(
+            "crawling Ratsit company browser_id=%s company_id=%s attempt=%d",
+            self._browser_id,
+            activity_input.company_id,
+            attempt_number,
+        )
         page = await self._crawl_page(activity_input.company_id)
         completed_at = datetime.now(UTC)
         result = CrawlResult(
@@ -104,6 +119,7 @@ class RatsitActivities:
             object_key,
             response_envelope(
                 result,
+                browser_id=self._browser_id,
                 final_url=page.final_url,
                 content=page.content,
             ),
@@ -124,6 +140,11 @@ class RatsitActivities:
             expected_company_id=activity_input.company_id,
             expected_batch_id=activity_input.batch_id,
         )
+
+
+class RatsitResultActivities:
+    def __init__(self, *, result_store: RatsitResultStore) -> None:
+        self._result_store = result_store
 
     @activity.defn(name=RECORD_RESULT_ACTIVITY)
     async def record_crawl_result(self, result: CrawlResult) -> None:

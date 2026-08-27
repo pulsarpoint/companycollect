@@ -1,140 +1,132 @@
 # Ratsit crawler
 
-Python 3.14 service for crawling one Swedish company through a durable Temporal
-workflow. Temporal owns execution and retries, S3 stores the response JSON, and
-ClickHouse records the terminal crawl outcome.
+Python 3.14 service for crawling Swedish companies through durable Temporal
+workflows. Temporal owns pending work and retries, S3/RustFS stores response
+JSON, and ClickHouse records terminal crawl outcomes.
 
-Install dependencies:
+One `ratsit-process` launches every configured CloakBrowser persistent context
+directly. It does not expose or connect to Chrome DevTools Protocol endpoints.
+The same process runs:
+
+- one Temporal workflow/result worker on `ratsit-crawler`;
+- one HTTP activity worker on `ratsit-http` for each browser context.
+
+Every HTTP worker is permanently bound to one browser, has concurrency `1`,
+and polls the same task queue. Temporal gives the next activity to an available
+poller, so no local round-robin or shared DuckDB scheduler is needed. Workflow
+and activity names are unchanged, so existing Temporal histories remain
+compatible.
+
+## Browser pool config
+
+Copy the examples and protect the TOML file because proxy URLs may contain
+credentials:
+
+```shell
+cp .env.example .env
+cp crawler_ratsit/ansible/process-config.toml.example process.toml
+chmod 0600 process.toml
+```
+
+The pool config has process-wide browser defaults, explicit rate limits, and
+one entry per persistent context:
+
+```toml
+[process]
+state_directory = "/absolute/path/to/ratsit-process-state"
+headless = false
+
+[limits]
+per_browser_activities_per_second = 0.2
+task_queue_activities_per_second = 0.2
+
+[[browsers]]
+id = "direct"
+enabled = true
+
+[[browsers]]
+id = "proxy1"
+enabled = true
+proxy_url = "http://user:password@proxy1.example:8080"
+```
+
+Omit `proxy_url` for direct access. `enabled = false` disables an entire
+context. Each enabled ID gets its own profile directory under
+`process.state_directory`; IDs must be unique and contain lowercase letters,
+digits, hyphens, or underscores.
+
+`per_browser_activities_per_second` protects each browser independently.
+`task_queue_activities_per_second` is Temporal's server-side global rate for
+`ratsit-http`. Keep the global value explicit and identical on every process
+polling that queue. Start at `0.2`—one new request every five seconds across the
+whole queue—and raise it only from observed 429 and proxy results. Do not
+multiply it automatically by the number of browsers.
+
+## Run locally
+
+Install and run with Python 3.14:
 
 ```shell
 uv sync
+uv run --env-file .env ratsit-process --config process.toml
 ```
 
-Copy `.env.example` into the deployment secret/configuration system and make
-the variables available to the processes. The S3 bucket must exist and the
-ClickHouse migration for `se_company_ratsit_crawl_results` must already be up.
+Headed mode requires `DISPLAY` and `XAUTHORITY` in the process environment.
+The process stops all Temporal pollers and browser contexts on SIGTERM or
+SIGINT. An unexpected browser disconnect fails the process so systemd can
+restart the complete unit.
 
-## Run the browser
-
-Start the persistent local Chromium instance:
-
-```shell
-uv run ratsit-server --profile-dir ./profile --headed
-```
-
-The launcher now lives in [`ratsit_server`](ratsit_server/README.md). Its
-Ansible playbook owns only the UID 1000 `ratsit-cdp.service` user unit. The
-browser runs normally on that user's active graphical session.
-
-## Run the Temporal worker
-
-The Temporal worker has a separate inventory, role, installation directory,
-environment, and systemd user unit under `crawler_ratsit/ansible`. For the
-current deployment, point its inventory at the same server and keep the CDP URL
-on loopback:
-
-```shell
-cd crawler_ratsit/ansible
-cp inventory.example.ini inventory.ini
-cp worker-environment.example worker-environment
-# Edit inventory.ini and worker-environment with the real service values.
-# Keep RATSIT_CDP_URL=http://127.0.0.1:9222 while both services share a host.
-ansible-playbook site.yml
-```
-
-The deployed worker runs as UID 1000, restarts automatically, and uses
-the CDP URL from its own environment. It must be able to reach these
-dependencies:
-
-- Temporal at `TEMPORAL_ADDRESS`, using `TEMPORAL_NAMESPACE`. The workflow and
-  ClickHouse activity use the queue named by `RATSIT_TEMPORAL_TASK_QUEUE`; the
-  browser/S3 activity uses the stable `ratsit-http` queue.
-- S3/RustFS at `CORPSCOUT_S3_ENDPOINT`.
-- ClickHouse at `CLICKHOUSE_HOST:CLICKHOUSE_HTTP_PORT`.
-- CloakBrowser at `RATSIT_CDP_URL`.
-
-The browser and worker playbooks can be deployed or restarted independently.
-When they move to different production hosts, change the worker inventory and
-provide a protected reachable CDP URL; the browser deployment remains
-unchanged.
-
-For local development instead, keep CDP private and create an SSH tunnel:
-
-```shell
-ssh -N -L 19222:127.0.0.1:9222 graovic@192.168.88.149
-```
-
-Then set `RATSIT_CDP_URL=http://127.0.0.1:19222` in `.env` and start the
-foreground worker with `uv run --env-file .env ratsit-worker`. The tunnel must
-remain open for as long as the local worker is running.
-
-The service hosts two Temporal workers. The `ratsit-crawler` worker runs the
-workflow and ClickHouse result activity. The `ratsit-http` worker exclusively
-runs the browser request and S3 upload, with one concurrent activity and a
-server-enforced dispatch rate of `RATSIT_HTTP_ACTIVITIES_PER_SECOND` (default
-`0.2`, or one activity start every five seconds). Every worker polling
-`ratsit-http` must use the same rate value.
-
-A crawl and its S3 upload are one retryable activity. HTTP 429 responses ask
-Temporal to wait ten minutes before that activity's next attempt. Recording the
-result in ClickHouse remains a separate, unthrottled activity, so a ClickHouse
-retry cannot make another request to Ratsit.
+The process must reach Temporal, S3/RustFS, and ClickHouse. The S3 bucket must
+exist and the ClickHouse migration for `se_company_ratsit_crawl_results` must
+already be applied.
 
 ## Submit one company
 
-With a Temporal server available, submit one workflow manually:
-
 ```shell
-uv run ratsit-crawl 5562434182
+uv run --env-file .env ratsit-crawl 5562434182
 ```
 
-The command generates a batch UUID unless `--batch-id <uuid>` is supplied and
-returns as soon as Temporal accepts the workflow. The stable workflow ID is
-`ratsit/company/<company-id>`: another submission reports `already_running`
-while that company is open, and a new run can reuse the ID after completion.
-The batch and company IDs are also stored in Temporal memo for inspection.
+The command generates a batch UUID unless `--batch-id <uuid>` is supplied. The
+stable workflow ID is `ratsit/company/<company-id>`. Regular organisations use
+ten digits; natural-person and sole-proprietor records may use twelve. The
+canonical ID remains unchanged in Temporal, S3, and ClickHouse, while the
+Ratsit URL uses its final ten digits.
 
-Canonical Swedish company IDs remain unchanged throughout Temporal, S3, and
-ClickHouse. Regular organisations use ten digits, while natural-person and
-sole-proprietor records may include a two-digit century prefix and use twelve.
-Ratsit expects the final ten digits in its URL path, so only URL construction
-removes that century prefix.
+A crawl and S3 upload are one retryable HTTP activity. HTTP 429 responses ask
+Temporal to wait ten minutes before retrying. ClickHouse result recording is a
+separate activity, so a database retry never repeats the Ratsit request.
 
-Raw responses use this S3 layout:
+Raw responses use:
 
 ```text
 raw/batch_id=<batch-uuid>/identity_sha256=<company-id-sha256>/response.json
 ```
 
-The JSON stores the selected HTML and crawl metadata. ClickHouse stores only
-the outcome, S3 location, content size, timings, and Temporal provenance.
+The JSON includes the selected HTML, crawl metadata, and `browser_id` used for
+the request. ClickHouse stores only outcome, S3 location, content size, timing,
+attempt count, errors, and Temporal provenance.
+
+## Deploy
+
+The single Ansible deployment is under
+[`crawler_ratsit/ansible`](crawler_ratsit/ansible/README.md). It owns
+`ratsit-process.service`, installs CloakBrowser, and retires the former
+`ratsit-worker.service` and `ratsit-cdp.service` units during cutover.
 
 ## Test
-
-The standalone request-rate experiment is a separate Python 3.14 package under
-[`ratsit_speed_probe`](ratsit_speed_probe/README.md). It does not use Temporal
-or the production crawler environment.
 
 ```shell
 uv run pytest
 ```
 
-The live CDP integration test is disabled during the normal test run. Because
-the remote service binds CDP to loopback, first forward it over SSH:
-
-```shell
-ssh -N -L 19222:127.0.0.1:9222 graovic@192.168.88.149
-```
-
-Then run the integration test in a second terminal:
+The normal suite never opens a browser. Run the opt-in direct CloakBrowser
+integration test with:
 
 ```shell
 RATSIT_RUN_INTEGRATION_TESTS=1 \
-RATSIT_CDP_URL=http://127.0.0.1:19222 \
-uv run pytest -s tests/integration/test_remote_cdp.py
+uv run pytest -s tests/integration/test_direct_browser.py
 ```
 
-Set `RATSIT_INTEGRATION_COMPANY_ID` to test a company other than
-`5562434182`. The test opens the real Ratsit page through the remote browser,
-selects `main .main-inner`, converts that HTML to Markdown, and verifies that
-the requested organisation number is present.
+Set `RATSIT_INTEGRATION_PROXY_URL` for a proxy run or
+`RATSIT_INTEGRATION_COMPANY_ID` for a different company. The standalone speed
+experiment remains in [`ratsit_speed_probe`](ratsit_speed_probe/README.md).

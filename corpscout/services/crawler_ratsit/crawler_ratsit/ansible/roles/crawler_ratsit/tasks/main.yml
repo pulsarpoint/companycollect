@@ -1,18 +1,18 @@
 ---
-- name: Inspect the local Ratsit worker source files
+- name: Inspect the local Ratsit process source files
   ansible.builtin.stat:
     path: "{{ item }}"
   loop:
     - "{{ crawler_ratsit_source_dir }}/pyproject.toml"
     - "{{ crawler_ratsit_source_dir }}/uv.lock"
-    - "{{ crawler_ratsit_source_dir }}/crawler_ratsit/worker.py"
+    - "{{ crawler_ratsit_source_dir }}/crawler_ratsit/process.py"
     - "{{ crawler_ratsit_source_dir }}/tests/test_workflow.py"
   register: crawler_ratsit_local_source_files
   delegate_to: localhost
   become: false
   run_once: true
 
-- name: Discover the local Ratsit worker Python files
+- name: Discover the local Ratsit process Python files
   ansible.builtin.set_fact:
     crawler_ratsit_python_files: >-
       {{ query(
@@ -23,7 +23,7 @@
   become: false
   run_once: true
 
-- name: Inspect the local Ratsit worker environment
+- name: Inspect the local Ratsit process environment
   ansible.builtin.stat:
     path: "{{ crawler_ratsit_environment_source }}"
   register: crawler_ratsit_local_environment
@@ -31,30 +31,41 @@
   become: false
   run_once: true
 
-- name: Require a complete local Ratsit worker source tree
+- name: Inspect the local Ratsit browser pool config
+  ansible.builtin.stat:
+    path: "{{ crawler_ratsit_process_config_source }}"
+  register: crawler_ratsit_local_process_config
+  delegate_to: localhost
+  become: false
+  run_once: true
+
+- name: Require a complete local Ratsit process source tree
   ansible.builtin.assert:
     that:
       - crawler_ratsit_local_source_files.results | map(attribute='stat.exists') | min
       - crawler_ratsit_python_files | length > 0
     fail_msg: >-
       Run this playbook from crawler_ratsit/ansible; the project files,
-      worker, or worker tests are missing.
+      process, or process tests are missing.
   delegate_to: localhost
   become: false
   run_once: true
 
-- name: Require the ignored Ratsit worker environment file
+- name: Require the ignored Ratsit process configuration files
   ansible.builtin.assert:
     that:
       - crawler_ratsit_local_environment.stat.isreg | default(false)
+      - crawler_ratsit_local_process_config.stat.isreg | default(false)
     fail_msg: >-
       Copy worker-environment.example to worker-environment, configure its
-      CDP, Temporal, S3, and ClickHouse values, and retry the deployment.
+      Temporal, S3, ClickHouse, and CloakBrowser values; copy
+      process-config.toml.example to process-config.toml, chmod it 0600,
+      configure browsers and proxies, and retry the deployment.
   delegate_to: localhost
   become: false
   run_once: true
 
-- name: Reject placeholder Ratsit worker credentials
+- name: Reject placeholder Ratsit process credentials
   ansible.builtin.assert:
     that:
       - >-
@@ -81,7 +92,7 @@
   check_mode: false
   changed_when: false
 
-- name: Validate the Ratsit worker environment on the control machine
+- name: Validate the Ratsit process configuration on the control machine
   ansible.builtin.command:
     argv:
       - uv
@@ -92,8 +103,10 @@
       - python
       - -c
       - >-
-        import os; from crawler_ratsit.config import WorkerSettings;
-        WorkerSettings.from_environment(os.environ)
+        import os; from pathlib import Path;
+        from crawler_ratsit.config import ProcessSettings, WorkerSettings;
+        WorkerSettings.from_environment(os.environ);
+        ProcessSettings.from_file(Path("{{ crawler_ratsit_process_config_source }}"))
     chdir: "{{ crawler_ratsit_source_dir }}"
   delegate_to: localhost
   become: false
@@ -102,7 +115,7 @@
   changed_when: false
   no_log: true
 
-- name: Test the Ratsit worker on the control machine
+- name: Test the Ratsit process on the control machine
   ansible.builtin.command:
     argv:
       - uv
@@ -111,7 +124,6 @@
       - pytest
       - tests
       - --ignore=tests/integration
-      - --ignore=tests/test_ratsit_server.py
     chdir: "{{ crawler_ratsit_source_dir }}"
   delegate_to: localhost
   become: false
@@ -119,7 +131,7 @@
   check_mode: false
   changed_when: false
 
-- name: Require a supported Ratsit worker target
+- name: Require a supported Ratsit process target
   ansible.builtin.assert:
     that:
       - ansible_facts.system == 'Linux'
@@ -172,7 +184,7 @@
       {{ crawler_ratsit_uv_executable }} is missing or not executable. Install
       uv or set crawler_ratsit_uv_binary to its absolute path before deploying.
 
-- name: Read the Ratsit worker user's UID
+- name: Read the Ratsit process user's UID
   ansible.builtin.command:
     argv:
       - id
@@ -182,7 +194,7 @@
   check_mode: false
   changed_when: false
 
-- name: Read the Ratsit worker user's primary group
+- name: Read the Ratsit process user's primary group
   ansible.builtin.command:
     argv:
       - id
@@ -192,7 +204,7 @@
   check_mode: false
   changed_when: false
 
-- name: Require the configured UID 1000 Ratsit worker user
+- name: Require the configured UID 1000 Ratsit process user
   ansible.builtin.assert:
     that:
       - crawler_ratsit_actual_service_uid.stdout | int == crawler_ratsit_service_uid
@@ -202,7 +214,7 @@
       {{ crawler_ratsit_service_uid }} with primary group
       {{ crawler_ratsit_service_group }}.
 
-- name: Enable lingering for the Ratsit worker user
+- name: Enable lingering for the Ratsit process user
   ansible.builtin.command:
     argv:
       - loginctl
@@ -210,18 +222,73 @@
       - "{{ crawler_ratsit_service_user }}"
     creates: "/var/lib/systemd/linger/{{ crawler_ratsit_service_user }}"
 
-- name: Start the Ratsit worker user manager
+- name: Start the Ratsit process user manager
   ansible.builtin.systemd_service:
     name: "user@{{ crawler_ratsit_service_uid }}.service"
     state: started
   when: not ansible_check_mode
 
-- name: Wait for the Ratsit worker user bus
+- name: Wait for the Ratsit process user bus
   ansible.builtin.wait_for:
     path: "{{ crawler_ratsit_runtime_dir }}/bus"
     state: present
     timeout: 30
   when: not ansible_check_mode
+
+- name: Read the graphical user manager environment
+  ansible.builtin.command:
+    argv:
+      - systemctl
+      - --user
+      - show-environment
+  become: true
+  become_user: "{{ crawler_ratsit_service_user }}"
+  environment:
+    XDG_RUNTIME_DIR: "{{ crawler_ratsit_runtime_dir }}"
+    DBUS_SESSION_BUS_ADDRESS: >-
+      unix:path={{ crawler_ratsit_runtime_dir }}/bus
+  register: crawler_ratsit_user_manager_environment
+  check_mode: false
+  changed_when: false
+  failed_when: false
+
+- name: Inspect the graphical session target
+  ansible.builtin.command:
+    argv:
+      - systemctl
+      - --user
+      - is-active
+      - graphical-session.target
+  become: true
+  become_user: "{{ crawler_ratsit_service_user }}"
+  environment:
+    XDG_RUNTIME_DIR: "{{ crawler_ratsit_runtime_dir }}"
+    DBUS_SESSION_BUS_ADDRESS: >-
+      unix:path={{ crawler_ratsit_runtime_dir }}/bus
+  register: crawler_ratsit_graphical_target
+  check_mode: false
+  changed_when: false
+  failed_when: false
+
+- name: Require the active UID 1000 graphical session
+  ansible.builtin.assert:
+    that:
+      - "'DISPLAY=' in crawler_ratsit_user_manager_environment.stdout"
+      - "'XAUTHORITY=' in crawler_ratsit_user_manager_environment.stdout"
+      - crawler_ratsit_graphical_target.stdout == 'active'
+    fail_msg: >-
+      {{ crawler_ratsit_service_user }} must have an active
+      graphical-session.target with DISPLAY and XAUTHORITY imported into the
+      systemd user manager before deploying headed CloakBrowser contexts.
+
+- name: Install browser runtime packages
+  ansible.builtin.apt:
+    name:
+      - ca-certificates
+      - curl
+    state: present
+    update_cache: true
+    cache_valid_time: 3600
 
 - name: Inspect the deployment directory before check-mode changes
   ansible.builtin.stat:
@@ -235,7 +302,7 @@
   register: crawler_ratsit_existing_user_unit_dir
   check_mode: false
 
-- name: Create the root-owned worker deployment directories
+- name: Create the root-owned process deployment directories
   ansible.builtin.file:
     path: "{{ item }}"
     state: directory
@@ -246,7 +313,18 @@
     - "{{ crawler_ratsit_deploy_dir }}"
     - "{{ crawler_ratsit_deploy_dir }}/crawler_ratsit"
 
-- name: Create the Ratsit worker user directories
+- name: Create persistent CloakBrowser directories
+  ansible.builtin.file:
+    path: "{{ item }}"
+    state: directory
+    owner: "{{ crawler_ratsit_service_user }}"
+    group: "{{ crawler_ratsit_service_group }}"
+    mode: "0700"
+  loop:
+    - "{{ crawler_ratsit_state_dir }}"
+    - "{{ crawler_ratsit_cache_dir }}"
+
+- name: Create the Ratsit process user directories
   ansible.builtin.file:
     path: "{{ item.path }}"
     state: directory
@@ -259,14 +337,25 @@
     - path: "{{ crawler_ratsit_config_dir }}"
       mode: "0700"
 
-- name: Install the protected Ratsit worker environment
+- name: Install the protected Ratsit process environment
   ansible.builtin.copy:
     src: "{{ crawler_ratsit_environment_source }}"
     dest: "{{ crawler_ratsit_environment_file }}"
     owner: "{{ crawler_ratsit_service_user }}"
     group: "{{ crawler_ratsit_service_group }}"
     mode: "0600"
-  notify: Restart Ratsit worker
+  notify: Restart Ratsit process
+  no_log: true
+  when: not ansible_check_mode
+
+- name: Install the protected Ratsit browser pool config
+  ansible.builtin.copy:
+    src: "{{ crawler_ratsit_process_config_source }}"
+    dest: "{{ crawler_ratsit_process_config_file }}"
+    owner: "{{ crawler_ratsit_service_user }}"
+    group: "{{ crawler_ratsit_service_group }}"
+    mode: "0600"
+  notify: Restart Ratsit process
   no_log: true
   when: not ansible_check_mode
 
@@ -280,13 +369,13 @@
   loop:
     - pyproject.toml
     - uv.lock
-  notify: Restart Ratsit worker
+  notify: Restart Ratsit process
   when:
     - >-
       not ansible_check_mode
       or crawler_ratsit_existing_deploy_dir.stat.isdir | default(false)
 
-- name: Install the Ratsit worker sources
+- name: Install the Ratsit process sources
   ansible.builtin.copy:
     src: "{{ item }}"
     dest: >-
@@ -295,13 +384,13 @@
     group: root
     mode: "0644"
   loop: "{{ crawler_ratsit_python_files }}"
-  notify: Restart Ratsit worker
+  notify: Restart Ratsit process
   when:
     - >-
       not ansible_check_mode
       or crawler_ratsit_existing_deploy_dir.stat.isdir | default(false)
 
-- name: Synchronize the worker Python 3.14 runtime environment
+- name: Synchronize the process Python 3.14 runtime environment
   ansible.builtin.command:
     argv:
       - "{{ crawler_ratsit_uv_executable }}"
@@ -318,30 +407,63 @@
   changed_when: false
   when: not ansible_check_mode
 
-- name: Verify the deployed Ratsit worker imports
+- name: Verify the CloakBrowser GeoIP dependency
   ansible.builtin.command:
     argv:
       - "{{ crawler_ratsit_deploy_dir }}/.venv/bin/python"
       - -c
-      - from crawler_ratsit.worker import main
+      - import geoip2
+  changed_when: false
+  when: not ansible_check_mode
+
+- name: Install Chromium shared-library dependencies
+  ansible.builtin.command:
+    argv:
+      - "{{ crawler_ratsit_deploy_dir }}/.venv/bin/playwright"
+      - install-deps
+      - chromium
+  changed_when: false
+  when: not ansible_check_mode
+
+- name: Download and verify the CloakBrowser binary
+  ansible.builtin.command:
+    argv:
+      - "{{ crawler_ratsit_deploy_dir }}/.venv/bin/python"
+      - -m
+      - cloakbrowser
+      - install
+  become: true
+  become_user: "{{ crawler_ratsit_service_user }}"
+  environment:
+    HOME: "{{ crawler_ratsit_service_home }}"
+    CLOAKBROWSER_CACHE_DIR: "{{ crawler_ratsit_cache_dir }}"
+  changed_when: false
+  when: not ansible_check_mode
+
+- name: Verify the deployed Ratsit process imports
+  ansible.builtin.command:
+    argv:
+      - "{{ crawler_ratsit_deploy_dir }}/.venv/bin/python"
+      - -c
+      - from crawler_ratsit.process import main
     chdir: "{{ crawler_ratsit_deploy_dir }}"
   changed_when: false
   when: not ansible_check_mode
 
-- name: Install the Ratsit worker user unit
+- name: Install the Ratsit process user unit
   ansible.builtin.template:
-    src: ratsit-worker.service.j2
+    src: ratsit-process.service.j2
     dest: "{{ crawler_ratsit_user_unit_file }}"
     owner: "{{ crawler_ratsit_service_user }}"
     group: "{{ crawler_ratsit_service_group }}"
     mode: "0644"
-  notify: Restart Ratsit worker
+  notify: Restart Ratsit process
   when:
     - >-
       not ansible_check_mode
       or crawler_ratsit_existing_user_unit_dir.stat.isdir | default(false)
 
-- name: Verify the installed Ratsit worker user unit
+- name: Verify the installed Ratsit process user unit
   ansible.builtin.command:
     argv:
       - systemd-analyze
@@ -357,10 +479,42 @@
   changed_when: false
   when: not ansible_check_mode
 
-- name: Apply pending Ratsit worker changes
+- name: Inspect retired Ratsit user units
+  ansible.builtin.stat:
+    path: "{{ crawler_ratsit_user_unit_dir }}/{{ item }}.service"
+  loop: "{{ crawler_ratsit_retired_service_names }}"
+  register: crawler_ratsit_retired_user_units
+  check_mode: false
+
+- name: Stop and disable retired Ratsit user services
+  ansible.builtin.systemd_service:
+    name: "{{ item.item }}"
+    scope: user
+    enabled: false
+    state: stopped
+  become: true
+  become_user: "{{ crawler_ratsit_service_user }}"
+  environment:
+    XDG_RUNTIME_DIR: "{{ crawler_ratsit_runtime_dir }}"
+    DBUS_SESSION_BUS_ADDRESS: >-
+      unix:path={{ crawler_ratsit_runtime_dir }}/bus
+  loop: "{{ crawler_ratsit_retired_user_units.results }}"
+  loop_control:
+    label: "{{ item.item }}"
+  when:
+    - not ansible_check_mode
+    - item.stat.exists
+
+- name: Remove retired Ratsit user units
+  ansible.builtin.file:
+    path: "{{ crawler_ratsit_user_unit_dir }}/{{ item }}.service"
+    state: absent
+  loop: "{{ crawler_ratsit_retired_service_names }}"
+
+- name: Apply pending Ratsit process changes
   ansible.builtin.meta: flush_handlers
 
-- name: Enable and start the Ratsit Temporal worker
+- name: Enable and start the Ratsit process
   ansible.builtin.systemd_service:
     name: "{{ crawler_ratsit_service_name }}"
     scope: user
@@ -375,7 +529,7 @@
       unix:path={{ crawler_ratsit_runtime_dir }}/bus
   when: not ansible_check_mode
 
-- name: Verify the Ratsit Temporal worker remains active
+- name: Verify the Ratsit process remains active
   ansible.builtin.command:
     argv:
       - systemctl

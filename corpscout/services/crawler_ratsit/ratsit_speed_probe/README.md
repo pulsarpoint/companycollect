@@ -35,11 +35,11 @@ Before measuring, stop the production worker so it does not generate competing
 Ratsit traffic:
 
 ```bash
-systemctl --user stop ratsit-worker
+systemctl --user stop ratsit-process
 ```
 
-The existing `ratsit-cdp` service uses port `9222`; it may remain running. Stop
-it too if you want to reduce browser resource usage during the measurement.
+The production service owns its browser contexts, so stopping it also removes
+all competing production Ratsit browser traffic.
 
 ## Run
 

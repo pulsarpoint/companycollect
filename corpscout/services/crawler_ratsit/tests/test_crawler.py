@@ -7,8 +7,8 @@ from playwright.async_api import TimeoutError as PlaywrightTimeoutError
 from crawler_ratsit.crawler import (
     RatsitRateLimitedError,
     RatsitTransientError,
+    crawl_ratsit_page,
     fetch_ratsit_page,
-    html_to_markdown,
 )
 
 
@@ -47,6 +47,7 @@ class FakePage:
         self.requested_url: str | None = None
         self._status = status
         self._locator = FakeLocator(content=content, timeout=selector_timeout)
+        self.closed = False
 
     async def goto(self, url: str, **_kwargs: Any) -> FakeResponse:
         self.requested_url = url
@@ -55,6 +56,37 @@ class FakePage:
     def locator(self, selector: str) -> FakeLocator:
         assert selector == "main .main-inner"
         return self._locator
+
+    async def close(self) -> None:
+        self.closed = True
+
+
+class FakeContext:
+    def __init__(self, page: FakePage) -> None:
+        self.page = page
+        self.new_page_calls = 0
+
+    async def new_page(self) -> FakePage:
+        self.new_page_calls += 1
+        return self.page
+
+
+def test_crawl_uses_bound_browser_context_and_closes_page() -> None:
+    page = FakePage(status=200, content="<h1>Company</h1>")
+    context = FakeContext(page)
+
+    result = asyncio.run(
+        crawl_ratsit_page(
+            "5562434182",
+            context=context,
+            content_selector="main .main-inner",
+            timeout_ms=1000,
+        )
+    )
+
+    assert result.outcome == "success"
+    assert context.new_page_calls == 1
+    assert page.closed
 
 
 def test_fetch_page_returns_selected_html() -> None:
@@ -86,14 +118,6 @@ def test_fetch_page_normalizes_twelve_digit_company_id_for_ratsit_url() -> None:
 
     assert page.requested_url == "https://www.ratsit.se/5562434182"
     assert result.requested_url == "https://www.ratsit.se/5562434182"
-
-
-def test_html_to_markdown_converts_selected_page_content() -> None:
-    markdown = html_to_markdown(
-        "<h1>Example AB</h1><p>Organisation number: <strong>556243-4182</strong></p>"
-    )
-
-    assert markdown == ("# Example AB\n\nOrganisation number: **556243-4182**")
 
 
 @pytest.mark.parametrize(

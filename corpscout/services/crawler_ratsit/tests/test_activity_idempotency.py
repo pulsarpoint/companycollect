@@ -11,11 +11,10 @@ from botocore.exceptions import ClientError
 from temporalio import activity
 from temporalio.exceptions import ApplicationError
 
-from crawler_ratsit.activities import RATE_LIMIT_RETRY_DELAY, RatsitActivities
+from crawler_ratsit.activities import RATE_LIMIT_RETRY_DELAY, RatsitCrawlActivities
 from crawler_ratsit.crawler import RatsitRateLimitedError
 from crawler_ratsit.models import CrawlActivityInput, FetchedPage
 from crawler_ratsit.object_store import RatsitObjectStore
-from crawler_ratsit.result_store import RatsitResultStore
 
 
 class FakeS3Client:
@@ -56,11 +55,6 @@ class FakeS3Client:
         self.objects[object_identity] = Body
 
 
-class UnusedClickHouseClient:
-    def insert(self, *_args: Any, **_kwargs: Any) -> None:
-        raise AssertionError("ClickHouse is not used by the capture activity")
-
-
 def test_capture_activity_reuses_existing_s3_response() -> None:
     async def run_test() -> None:
         crawl_calls = 0
@@ -79,16 +73,13 @@ def test_capture_activity_reuses_existing_s3_response() -> None:
             )
 
         s3_client = FakeS3Client()
-        activities = RatsitActivities(
+        activities = RatsitCrawlActivities(
+            browser_id="direct",
             crawl_page=crawl_page,
             object_store=RatsitObjectStore(
                 s3_client,
                 bucket="source-sweden-ratsit",
                 prefix="raw",
-            ),
-            result_store=RatsitResultStore(
-                UnusedClickHouseClient(),
-                database="corpscout",
             ),
         )
         activity_input = CrawlActivityInput(
@@ -106,7 +97,9 @@ def test_capture_activity_reuses_existing_s3_response() -> None:
         assert second == first
         assert first.content_size_bytes == len("<h1>Räksmörgås AB</h1>".encode())
         stored_body = next(iter(s3_client.objects.values()))
-        assert json.loads(stored_body)["result"]["company_id"] == "5562434182"
+        stored_response = json.loads(stored_body)
+        assert stored_response["browser_id"] == "direct"
+        assert stored_response["result"]["company_id"] == "5562434182"
 
     asyncio.run(run_test())
 
@@ -117,16 +110,13 @@ def test_rate_limited_activity_requests_a_ten_minute_retry(
     async def rate_limited_crawl(_company_id: str) -> FetchedPage:
         raise RatsitRateLimitedError("Ratsit returned retryable HTTP status 429")
 
-    activities = RatsitActivities(
+    activities = RatsitCrawlActivities(
+        browser_id="proxy1",
         crawl_page=rate_limited_crawl,
         object_store=RatsitObjectStore(
             FakeS3Client(),
             bucket="source-sweden-ratsit",
             prefix="raw",
-        ),
-        result_store=RatsitResultStore(
-            UnusedClickHouseClient(),
-            database="corpscout",
         ),
     )
     activity_input = CrawlActivityInput(

@@ -9,17 +9,13 @@ dependencies = [
     "click>=8.4.2",
     "clickhouse-connect>=1.3.0",
     "cloakbrowser[geoip]>=0.5.8",
-    "fastapi>=0.141.1",
-    "markdownify>=1.2.3",
     "playwright>=1.62.0",
     "temporalio>=1.28.0",
-    "uvicorn>=0.35.0",
 ]
 
 [project.scripts]
-ratsit-worker = "crawler_ratsit.worker:main"
+ratsit-process = "crawler_ratsit.process:main"
 ratsit-crawl = "crawler_ratsit.start:main"
-ratsit-server = "ratsit_server.main:main"
 
 [build-system]
 requires = ["hatchling"]
@@ -28,11 +24,10 @@ build-backend = "hatchling.build"
 [tool.hatch.build]
 exclude = [
     "/crawler_ratsit/ansible",
-    "/ratsit_server/ansible",
 ]
 
 [tool.hatch.build.targets.wheel]
-packages = ["crawler_ratsit", "ratsit_server"]
+packages = ["crawler_ratsit"]
 
 [dependency-groups]
 dev = [

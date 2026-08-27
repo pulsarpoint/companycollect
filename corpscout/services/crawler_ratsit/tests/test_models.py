@@ -34,13 +34,27 @@ def test_response_envelope_round_trips_result_and_checks_content_size() -> None:
     result = _success_result(content_size_bytes=len(content.encode("utf-8")))
     envelope = response_envelope(
         result,
+        browser_id="direct",
         final_url="https://www.ratsit.se/5562434182",
         content=content,
     )
 
+    assert envelope["browser_id"] == "direct"
+
     assert (
         result_from_response_envelope(
             envelope,
+            expected_company_id=result.company_id,
+            expected_batch_id=result.batch_id,
+        )
+        == result
+    )
+
+    legacy_envelope = dict(envelope)
+    legacy_envelope.pop("browser_id")
+    assert (
+        result_from_response_envelope(
+            legacy_envelope,
             expected_company_id=result.company_id,
             expected_batch_id=result.batch_id,
         )

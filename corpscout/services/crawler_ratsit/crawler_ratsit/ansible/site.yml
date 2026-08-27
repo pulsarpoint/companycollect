@@ -1,6 +1,6 @@
 ---
-- name: Deploy the Ratsit Temporal worker
-  hosts: ratsit_workers
+- name: Deploy the Ratsit crawler process
+  hosts: ratsit_processes
   become: true
   gather_facts: true
   roles:

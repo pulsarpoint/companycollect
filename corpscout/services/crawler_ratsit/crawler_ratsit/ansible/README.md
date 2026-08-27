@@ -1,57 +1,47 @@
-# Ratsit Temporal worker deployment
+# Ratsit process deployment
 
-This playbook owns only `ratsit-worker.service`. It deploys the crawler source,
-an independent locked Python 3.14 environment, protected runtime configuration,
-and a systemd user unit. It does not install or manage CloakBrowser.
+This playbook owns the single `ratsit-process.service` systemd user unit. It
+deploys the Python 3.14 crawler, installs CloakBrowser and Chromium runtime
+dependencies, copies protected runtime configuration, and runs the service as
+UID 1000 in the active graphical session.
 
-The worker defaults to UID 1000 user `graovic`, matching the current CDP host,
-but has its own inventory and service variables. Its unit is enabled under
-`default.target`, not `graphical-session.target`, so the worker does not require
-a desktop session. Ansible enables systemd lingering for the service user.
+The process launches all configured browsers itself. There is no CDP server,
+CDP port, or separate browser deployment.
 
 ## Prerequisites
 
-- The target is Linux on x86-64 or arm64.
-- `graovic` is UID 1000; change the worker variables together if production
-  uses another service account.
-- `uv` is available in the target SSH user's login environment. The playbook
-  discovers it automatically; `crawler_ratsit_uv_binary` can override the path.
-- The SSH deployment user has passwordless sudo.
-- The target can reach CDP, Temporal, S3/RustFS, and ClickHouse.
-- The ClickHouse migration for `se_company_ratsit_crawl_results` is applied.
-
-Only Ansible built-in modules are used.
+- Linux on x86-64 or arm64.
+- `graovic` is UID 1000, or all service-user variables are changed together.
+- The UID 1000 systemd user manager has an active `graphical-session.target`,
+  `DISPLAY`, and `XAUTHORITY`.
+- `uv` is available in the SSH user's login environment.
+- The deployment user has passwordless sudo.
+- The host can reach Temporal, S3/RustFS, and ClickHouse.
+- The ClickHouse Ratsit result migration is applied.
 
 ## Configure
 
-Create the independent inventory. For the current same-host deployment, use
-the same address and SSH user as the CDP server inventory:
-
-```bash
+```shell
 cd crawler_ratsit/ansible
 cp inventory.example.ini inventory.ini
-```
-
-Create the ignored environment file and replace every placeholder:
-
-```bash
 cp worker-environment.example worker-environment
-$EDITOR inventory.ini worker-environment
+cp process-config.toml.example process-config.toml
+chmod 0600 process-config.toml
+$EDITOR inventory.ini worker-environment process-config.toml
 ```
 
-For the current topology, keep:
+`worker-environment` contains service credentials and connection settings.
+`process-config.toml` contains browser contexts, optional fixed proxy URLs, and
+both Temporal activity rates. Both installed files use mode `0600`; the TOML
+source must also be private or validation fails.
 
-```dotenv
-RATSIT_CDP_URL=http://127.0.0.1:9222
-```
-
-When the worker moves to another host, change only this worker inventory and
-`RATSIT_CDP_URL`. The CDP endpoint must remain protected; use a private tunnel
-or private network policy rather than exposing Chrome DevTools publicly.
+Omit `proxy_url` for a direct browser. Add one `[[browsers]]` entry per proxy.
+Every entry receives a unique persistent profile beneath
+`/var/lib/ratsit-process`.
 
 ## Deploy
 
-```bash
+```shell
 export LC_ALL=en_US.UTF-8
 export LANG=en_US.UTF-8
 ansible-playbook site.yml --syntax-check
@@ -59,24 +49,23 @@ ansible-playbook site.yml --check --diff
 ansible-playbook site.yml
 ```
 
-The playbook validates the environment through `WorkerSettings`, rejects
-placeholder credentials, copies it to
-`~/.config/crawler-ratsit/environment` with mode `0600`, runs the worker tests,
-installs the worker in `/opt/companycollect/corpscout/crawler-ratsit`, and
-requires the Temporal worker to remain active after deployment.
-
-The one service process polls two queues. `RATSIT_TEMPORAL_TASK_QUEUE` handles
-workflows and ClickHouse result writes. The stable `ratsit-http` queue handles
-only browser/S3 activities and uses Temporal's server-side
-`RATSIT_HTTP_ACTIVITIES_PER_SECOND` rate (default `0.2`). Use the same rate on
-every future host that polls this queue.
+Before changing the host, the role validates both configuration files and runs
+the non-integration test suite. During cutover it stops, disables, and removes
+the former UID 1000 `ratsit-worker` and `ratsit-cdp` user units, then enables
+`ratsit-process` under `graphical-session.target`. Existing old browser state is
+left in place and can be removed separately after the new service is verified.
 
 ## Operations
 
-```bash
-ssh ratsit-worker 'systemctl --user status ratsit-worker --no-pager'
-ssh ratsit-worker 'journalctl --user -u ratsit-worker -n 100 -f'
+Because this is a user unit, query it through the UID 1000 user manager:
+
+```shell
+ssh ratsit-process \
+  'XDG_RUNTIME_DIR=/run/user/1000 systemctl --user status ratsit-process --no-pager'
+
+ssh ratsit-process \
+  'XDG_RUNTIME_DIR=/run/user/1000 journalctl --user -u ratsit-process -n 100 -f'
 ```
 
-Re-run only this worker playbook after changing crawler code or
-`worker-environment`. Browser deployments and restarts remain independent.
+Logs name the `browser_id` used for every crawl without printing proxy URLs or
+credentials.

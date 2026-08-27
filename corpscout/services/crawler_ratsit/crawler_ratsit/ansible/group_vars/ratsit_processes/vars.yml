@@ -1,5 +1,5 @@
 ---
-crawler_ratsit_service_name: ratsit-worker
+crawler_ratsit_service_name: ratsit-process
 crawler_ratsit_service_user: graovic
 crawler_ratsit_service_uid: 1000
 crawler_ratsit_service_group: graovic
@@ -14,9 +14,17 @@ crawler_ratsit_config_dir: >-
 crawler_ratsit_environment_source: "{{ playbook_dir }}/worker-environment"
 crawler_ratsit_environment_file: >-
   {{ crawler_ratsit_config_dir }}/environment
+crawler_ratsit_process_config_source: "{{ playbook_dir }}/process-config.toml"
+crawler_ratsit_process_config_file: >-
+  {{ crawler_ratsit_config_dir }}/process.toml
 
 crawler_ratsit_source_dir: "{{ playbook_dir }}/../.."
 crawler_ratsit_deploy_dir: /opt/companycollect/corpscout/crawler-ratsit
+crawler_ratsit_state_dir: /var/lib/ratsit-process
+crawler_ratsit_cache_dir: /var/cache/ratsit-process
+crawler_ratsit_retired_service_names:
+  - ratsit-worker
+  - ratsit-cdp
 
 # Leave empty to discover uv from the SSH user's login environment.
 # Set an absolute path here when the target needs an explicit override.
