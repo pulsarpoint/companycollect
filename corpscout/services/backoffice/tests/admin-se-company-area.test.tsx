@@ -500,12 +500,16 @@ describe("people tab", () => {
                 source: "bolagsverket",
                 full_name: "Jens Lapidus",
                 role: "Verkställande direktör",
+                source_role_code: "ceo",
+                mapped_role_label: "Chief executive officer",
                 period: "2024",
               },
               {
                 source: "esef",
                 full_name: "Jens Lapidus",
                 role: "Member of the Audit Committee",
+                source_role_code: "other",
+                mapped_role_label: "",
                 period: "",
               },
             ],
@@ -515,9 +519,15 @@ describe("people tab", () => {
       seCompanyTabPath(COMPANY_ID, "people"),
     );
     expect(html).toContain("1 person found in sources");
-    // Roles exactly as the sources wrote them, never a canonical mapping.
-    expect(html).toContain("Verkställande direktör · 2024");
+    expect(html).toContain("2 observations");
+    // The source's own wording stays verbatim...
+    expect(html).toContain("Verkställande direktör");
     expect(html).toContain("Member of the Audit Committee");
+    // ...with our canonical mapping beside it when the static maps know the
+    // source role code, and an em dash when they do not.
+    expect(html).toContain("Chief executive officer");
+    expect(html).toContain("2024");
+    expect(html).toContain("seen by 2 sources");
     expect(html).toContain("bolagsverket");
     expect(html).toContain("esef");
   });

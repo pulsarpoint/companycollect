@@ -44,64 +44,101 @@ function RoleBadge({ role }: { role: SeCompanyPersonRoleRow }) {
   );
 }
 
-/** What each source says about this company's people, verbatim: one row per
- * person name, the roles exactly as the source wrote them (no canonical
- * mapping, no identity resolution -- two spellings are two rows). This is the
- * tab's primary content until the Ratsit spine lands. */
+/** Per-source badge styling so a scan of the Source column reads at a
+ * glance which register is speaking. */
+const SOURCE_BADGE_CLASS: Record<string, string> = {
+  bolagsverket:
+    "border-transparent bg-blue-100 text-blue-900 dark:bg-blue-950 dark:text-blue-200",
+  esef: "border-transparent bg-amber-100 text-amber-900 dark:bg-amber-950 dark:text-amber-200",
+  wikidata:
+    "border-transparent bg-emerald-100 text-emerald-900 dark:bg-emerald-950 dark:text-emerald-200",
+};
+
+/** What each source says about this company's people: one row per source
+ * observation, the role exactly as the source wrote it beside our canonical
+ * mapping when the static per-source maps recognize it. No identity
+ * resolution -- two spellings are two name groups, which is exactly the
+ * honesty an evidence panel owes the reader. This is the tab's primary
+ * content until the Ratsit spine lands. */
 function SourceEvidenceCard({
   evidence,
 }: {
   evidence: SeCompanyPersonEvidenceGroup[];
 }) {
+  const observationCount = evidence.reduce(
+    (total, group) => total + group.entries.length,
+    0,
+  );
   return (
     <Card>
       <CardHeader>
         <CardTitle className="text-base">
           {evidence.length} {evidence.length === 1 ? "person" : "people"} found
-          in sources
+          in sources · {observationCount}{" "}
+          {observationCount === 1 ? "observation" : "observations"}
         </CardTitle>
         <CardDescription>
           Everything the Bolagsverket, ESEF and Wikidata source tables say about
-          this company's people, with roles exactly as each source wrote them.
+          this company's people. "Role as reported" is the source's own
+          wording; "Our mapping" is the canonical role our static maps assign
+          to it, when they recognize the source's role code.
         </CardDescription>
       </CardHeader>
       <CardContent>
         <Table>
           <TableHeader>
             <TableRow>
-              <TableHead>Name</TableHead>
-              <TableHead>Roles as reported</TableHead>
-              <TableHead>Sources</TableHead>
+              <TableHead className="w-[22%]">Name</TableHead>
+              <TableHead>Role as reported</TableHead>
+              <TableHead className="w-[18%]">Our mapping</TableHead>
+              <TableHead className="w-[14%]">Period</TableHead>
+              <TableHead className="w-[12%]">Source</TableHead>
             </TableRow>
           </TableHeader>
           <TableBody>
-            {evidence.map((group) => (
-              <TableRow key={group.full_name}>
-                <TableCell className="font-medium">{group.full_name}</TableCell>
-                <TableCell>
-                  <div className="flex flex-wrap gap-1">
-                    {group.entries.map((entry, index) => (
-                      <Badge
-                        key={`${entry.source}:${entry.role}:${entry.period}:${index}`}
-                        variant="outline"
-                      >
-                        {entry.role}
-                        {entry.period === "" ? "" : ` · ${entry.period}`}
-                      </Badge>
-                    ))}
-                  </div>
-                </TableCell>
-                <TableCell>
-                  <div className="flex flex-wrap gap-1">
-                    {group.sources.map((source) => (
-                      <Badge key={source} variant="secondary">
-                        {source}
-                      </Badge>
-                    ))}
-                  </div>
-                </TableCell>
-              </TableRow>
-            ))}
+            {evidence.map((group) =>
+              group.entries.map((entry, index) => (
+                <TableRow
+                  key={`${group.full_name}:${entry.source}:${entry.role}:${entry.period}:${index}`}
+                  className={index === 0 ? "border-t-2" : "border-0"}
+                >
+                  {index === 0 ? (
+                    <TableCell
+                      rowSpan={group.entries.length}
+                      className="align-top font-medium"
+                    >
+                      {group.full_name}
+                      {group.sources.length > 1 ? (
+                        <p className="mt-0.5 text-xs font-normal text-muted-foreground">
+                          seen by {group.sources.length} sources
+                        </p>
+                      ) : null}
+                    </TableCell>
+                  ) : null}
+                  <TableCell className="whitespace-normal">
+                    {entry.role}
+                  </TableCell>
+                  <TableCell>
+                    {entry.mapped_role_label === "" ? (
+                      <span className="text-muted-foreground">{EMPTY_VALUE}</span>
+                    ) : (
+                      <Badge variant="secondary">{entry.mapped_role_label}</Badge>
+                    )}
+                  </TableCell>
+                  <TableCell className="text-xs tabular-nums text-muted-foreground">
+                    {entry.period === "" ? EMPTY_VALUE : entry.period}
+                  </TableCell>
+                  <TableCell>
+                    <Badge
+                      variant="outline"
+                      className={SOURCE_BADGE_CLASS[entry.source] ?? ""}
+                    >
+                      {entry.source}
+                    </Badge>
+                  </TableCell>
+                </TableRow>
+              )),
+            )}
           </TableBody>
         </Table>
       </CardContent>

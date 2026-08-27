@@ -105,7 +105,8 @@ export async function loadSeCompanyPeople(
 }
 
 /** One source observation of one person at this company, with the role AS THE
- * SOURCE WROTE IT (role_original / role / role_label) -- no canonical mapping.
+ * SOURCE WROTE IT (role_original / role / role_label) plus our canonical
+ * mapping when the static per-source maps know the source's role code.
  * `period` is whatever time context the source gives: a fiscal year
  * (bolagsverket), an effective range (esef) or a start–end range (wikidata),
  * already formatted because the shapes are source-specific. */
@@ -113,6 +114,12 @@ export interface SeCompanyPersonEvidenceRow {
   source: string;
   full_name: string;
   role: string;
+  /** The source's own role code (role_kind / role_category / role_property) --
+   * the key the static mapping is keyed on. */
+  source_role_code: string;
+  /** company_person_role_type display name of the mapped canonical role, ''
+   * when the mapping has no entry for this source role code. */
+  mapped_role_label: string;
   period: string;
 }
 
@@ -132,12 +139,13 @@ export interface SeCompanyPersonEvidenceGroup {
  * its role_kind enum, esef's role text to its role_category, wikidata's
  * role_label to the raw P-code.
  */
-export const PEOPLE_EVIDENCE_SQL = `SELECT source, full_name, role, period
+export const PEOPLE_EVIDENCE_SQL = `SELECT source, full_name, role, source_role_code, period
 FROM (
   SELECT
     'bolagsverket' AS source,
     full_name AS full_name,
     if(trim(role_original) != '', role_original, role_kind) AS role,
+    role_kind AS source_role_code,
     if(fiscal_year > 0, toString(fiscal_year), '') AS period
   FROM corpscout.se_company_person_bolagsverket
   WHERE company_id = {companyId:String} AND trim(full_name) != ''
@@ -148,6 +156,7 @@ FROM (
     'esef' AS source,
     full_name AS full_name,
     if(trim(role) != '', role, role_category) AS role,
+    role_category AS source_role_code,
     trim(concat(ifNull(toString(effective_from), ''), ' – ', ifNull(toString(effective_to), ''))) AS period
   FROM corpscout.se_company_person_esef
   WHERE company_id = {companyId:String} AND trim(full_name) != ''
@@ -158,6 +167,7 @@ FROM (
     'wikidata' AS source,
     full_name AS full_name,
     if(trim(role_label) != '', role_label, role_property) AS role,
+    role_property AS source_role_code,
     trim(concat(ifNull(toString(start_date), ''), ' – ', ifNull(toString(end_date), ''))) AS period
   FROM corpscout.se_company_person_wikidata
   WHERE company_id = {companyId:String} AND trim(full_name) != ''
@@ -165,15 +175,61 @@ FROM (
 ORDER BY full_name, source, period, role
 LIMIT 900`;
 
+/**
+ * The static per-source role mappings, hand-mirrored from dagster_v3
+ * (sweden_financial/roles.py, esef_filings/roles.py, wikidata/roles.py --
+ * the same SOURCE_ROLE_MAPPINGS company_people/roles.py splices into its
+ * draft SQL). No shared module crosses the Python/TS boundary, same as every
+ * other hand-mirrored constant in this directory; keep in sync by hand.
+ */
+export const SOURCE_ROLE_MAPPINGS: Record<string, Record<string, string>> = {
+  bolagsverket: {
+    auditor: "auditor",
+    board_member: "board_member",
+    ceo: "chief_executive_officer",
+    chairman: "board_chair",
+    deputy_board_member: "deputy_board_member",
+    liquidator: "liquidator",
+  },
+  esef: {
+    audit_partner: "audit_partner",
+    auditor: "auditor",
+    board_chair: "board_chair",
+    board_member: "board_member",
+    chief_executive: "chief_executive_officer",
+    chief_financial_officer: "chief_financial_officer",
+    executive: "executive",
+  },
+  wikidata: {
+    P112: "founder",
+    P127: "owner",
+    P169: "chief_executive_officer",
+    P3320: "board_member",
+    P488: "board_chair",
+  },
+};
+
+/** role_code → display_name for the canonical catalog, one small read. */
+const ROLE_TYPE_LABELS_SQL = `SELECT role_code, display_name
+FROM corpscout.company_person_role_type FINAL
+WHERE is_active = 1`;
+
 /** Every source observation of this company's people, grouped by the verbatim
  * person name (no identity resolution -- two spellings are two groups, which
  * is exactly the honesty an evidence panel owes the reader). */
 export async function loadSeCompanyPeopleEvidence(
   companyId: string,
 ): Promise<SeCompanyPersonEvidenceGroup[]> {
-  const rows = await chQuery<SeCompanyPersonEvidenceRow>(PEOPLE_EVIDENCE_SQL, {
-    companyId,
-  });
+  const [rows, roleTypes] = await Promise.all([
+    chQuery<Omit<SeCompanyPersonEvidenceRow, "mapped_role_label">>(
+      PEOPLE_EVIDENCE_SQL,
+      { companyId },
+    ),
+    chQuery<{ role_code: string; display_name: string }>(ROLE_TYPE_LABELS_SQL),
+  ]);
+  const labelByRoleCode = new Map(
+    roleTypes.map((row) => [row.role_code, row.display_name]),
+  );
   const groups = new Map<string, SeCompanyPersonEvidenceGroup>();
   for (const row of rows) {
     // The SQL always concatenates "start – end"; a missing side leaves a
@@ -186,7 +242,16 @@ export async function loadSeCompanyPeopleEvidence(
           : row.period.startsWith("– ")
             ? `until ${row.period.slice(2).trim()}`
             : row.period;
-    const cleaned = { ...row, period };
+    const mappedCode =
+      SOURCE_ROLE_MAPPINGS[row.source]?.[row.source_role_code] ?? "";
+    const cleaned: SeCompanyPersonEvidenceRow = {
+      ...row,
+      period,
+      // The catalog's display name; the raw canonical code fills in if the
+      // catalog has not learned the code (mirrors PEOPLE_ROLES_SQL's fallback).
+      mapped_role_label:
+        mappedCode === "" ? "" : (labelByRoleCode.get(mappedCode) ?? mappedCode),
+    };
     const group = groups.get(row.full_name);
     if (group) {
       group.entries.push(cleaned);
