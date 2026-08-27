@@ -49,29 +49,40 @@ to the public pages (Phase B's concern).
 
 ## 3. What changes — three moves
 
-### 3.1 Per-source artifacts replace the draft inbox
+### 3.1 Per-source SE VIEWS replace the draft inbox — no copies, no duplicated history
 
-Following the `se_company_<datatype>_<source>` envelope proven by `info` and
-`address` (spec 2026-08-22, `se_company/common.py` helpers — `publish_with_stage`
-with `new_versions_only`, evidence hashes, ledger sensor factory):
+**Owner decision (2026-08-27): history and evidence live in the ORIGINAL source
+tables only.** Sweden gets a uniform *shape*, not a copy. The evidence keys
+already exist upstream: migration 000289's MATERIALIZED
+`person_profile_hash` / `person_role_hash` on all four source tables are the
+per-observation evidence hashes this experiment builds on.
 
-| New table | Reads | Payload columns (typed, beyond the envelope) |
+Three plain ClickHouse VIEWS (one migration; a refreshable MV is unnecessary at
+this scale — ESEF ~6.6k rows, Wikidata ~12k; the Bolagsverket view is a column
+projection the optimizer pushes down):
+
+| View | Over | Projects (uniform person-observation shape) |
 |---|---|---|
-| `se_company_person_bolagsverket` | `se_financial_report_signatories` | first_name, last_name, role_original, role_kind, signatory_kind, fiscal_year, statement_key, person_seq |
-| `se_company_person_esef` | `esef_document_people` WHERE country='SE' | full_name, role, role_category, organization, status, effective_from, effective_to, confidence, source_document_id |
-| `se_company_person_wikidata` | `wikidata_company_people`+`wikidata_persons` via orgnr/LEI bridge | full_name, person_wikidata_id, role_property, start_date, end_date, birth_year, description, image_url, external_url |
+| `se_company_person_bolagsverket` | `se_financial_report_signatories` | company_id, source_record_uid, person_profile_hash, person_role_hash, first_name, last_name, full_name (concat), role_original, role_kind, signatory_kind, fiscal_year |
+| `se_company_person_esef` | `esef_document_people` WHERE country='SE' | company_id, source_record_uid, person_profile_hash, person_role_hash, full_name, role, role_category, organization, status, effective_from, effective_to, confidence |
+| `se_company_person_wikidata` | `wikidata_company_people` + `wikidata_persons` joined via the orgnr/LEI bridge | company_id (normalized in the view; invalid ids filtered out), source_record_uid, person_profile_hash, person_role_hash, full_name, person_wikidata_id, role_property, start_date, end_date, birth_year, description, image_url, external_url |
 
-Envelope: `company_id, source_record_uid, observed_at, source_run_id,
-evidence_hash MATERIALIZED SHA256('se-company-person-<source>-v1\n'||payload)`,
-`ReplacingMergeTree(observed_at) ORDER BY (company_id, source_record_uid)`,
-`CHECK match(company_id,'^[0-9]{10}$'|12-digit sole traders)` — identical to the
-info/address artifact shape. Hand-written asset per source in
-`defs/se_company/` (scb.py-style modules; no factories, per the standing rule).
+Each view is pinned by a drift test comparing its stored SQL against the Python
+builder (the `se_address_geocodes_served` pattern), and every view runs under
+both `join_use_nulls` settings in the clickhouse-local harness.
 
-The current `se_company_person_draft` collector (draft.py) is retired once the
-artifacts feed normalization — it is the same three reads with a less regular
-envelope. `draft.py`'s hashing discipline (semantic profile/role hashes) carries
-over via `evidence_hash`.
+**Consequences, accepted deliberately:**
+- The final's `evidence_set_hash` is computed over the CURRENT upstream rows'
+  000289 hashes. When an upstream row is replaced in place (ESEF re-enrichment
+  under a new prompt, Wikidata weekly rebuild), the hash changes, the person
+  re-resolves, and any pending correction goes stale-by-hash for re-review —
+  exactly the already-shipped sub-project-1 behavior. The pre-change payload is
+  not retained on the Swedish side; if pre-replacement history is ever wanted,
+  that is an UPSTREAM table concern, decided per source, not a per-country copy.
+- The `se_company_person_draft` inbox retires with nothing replacing it: the
+  originals are the observation store, the views are the read contract, and the
+  final's provenance arrays hold `source_record_uids` + the 000289 hashes
+  observed at resolution time.
 
 ### 3.2 The identity experiment (the actual research)
 
@@ -121,7 +132,7 @@ Already mostly built; the experiment pins the contract:
 
 ## 4. Retirements this unlocks (in order)
 
-1. `se_company_person_draft` collector + table (after artifacts feed
+1. `se_company_person_draft` collector + table (after the views feed
    normalization; table dropped with the standard gates).
 2. The backoffice **DuckDB Draft 1/2 + SQLite + Temporal person worker**
    (`/admin/se/people` re-points to the ClickHouse model; role mappings move
