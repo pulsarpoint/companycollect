@@ -37,8 +37,8 @@ state_directory = "/absolute/path/to/ratsit-process-state"
 headless = false
 
 [limits]
-per_browser_activities_per_second = 0.2
-task_queue_activities_per_second = 0.2
+per_browser_activities_per_second = 0.5
+task_queue_activities_per_second = 2.0
 
 [[browsers]]
 id = "direct"
@@ -58,9 +58,11 @@ digits, hyphens, or underscores.
 `per_browser_activities_per_second` protects each leased browser independently.
 `task_queue_activities_per_second` is Temporal's server-side global rate for
 `ratsit-http-v2`. Keep the global value explicit and identical on every process
-polling that queue. Start at `0.2`—one new request every five seconds across the
-whole queue—and raise it only from observed 429 and proxy results. Do not
-multiply it automatically by the number of browsers.
+polling that queue. The example allows one request start every two seconds per
+browser. With four enabled browsers, the task queue permits an aggregate
+long-term average of two request starts per second. Actual throughput can be
+lower when page loads take longer than two seconds. Temporal can briefly burst,
+so validate the configured rate against observed HTTP 429 and proxy results.
 
 ## Run locally
 
