@@ -3,8 +3,16 @@ classifier, and the manual analysis asset.
 
 Part one is plain unit tests for `identity_key_k1`, `identity_key_k2`, `k3_merge_groups`, and
 `evaluate_se_company_person_identity` -- the plan's required cases (superset merge, ambiguous
-three-way collision, diacritics, QID-link merge, blank-name exclusion) plus the K1 parity pin
-against `normalization.py`'s current `_name_match_key`.
+three-way collision, diacritics, QID-link merge, blank-name exclusion).
+
+TASK 3 UPDATE: `normalization.py` no longer has a `_name_match_key` (K1) function at all --
+person identity moved to K3 production (`_company_person_group_keys`, which reuses this
+module's `k3_merge_groups`/`identity_key_k2` directly rather than forking them) plus the v2
+hash domain (`person_id_for`). The K1-parity pin this module used to carry against
+`normalization._name_match_key` is removed rather than updated: there is no longer a
+"normalization's current key" for K1 to agree with (K1 stays defined here, frozen, as the
+baseline the identity-rule evaluation's numbers are measured against -- spec 3.2 -- it is
+simply no longer mirrored by production code).
 
 Part two is the executed clickhouse-local test of "the asset body": one script builds the
 same upstream fixtures + the three real SE person source views (migration 000330) as
@@ -38,7 +46,6 @@ from dagster_v3.defs.company_people.identity_eval import (
     identity_key_k2,
     k3_merge_groups,
 )
-from dagster_v3.defs.company_people.normalization import _name_match_key
 
 MIGRATIONS_DIR = Path(__file__).resolve().parents[3] / "clickhouse" / "migrations"
 MIGRATION = "000330_corpscout_se_company_person_views"
@@ -124,28 +131,6 @@ class TestIdentityKeyK1:
 
     def test_whitespace_and_case_are_normalized(self) -> None:
         assert identity_key_k1("  ANNA   svensson  ") == "anna|svensson"
-
-    @pytest.mark.parametrize(
-        "name",
-        [
-            "Anna Svensson",
-            "Anna Maria Svensson",
-            "Cher",
-            "",
-            "   ",
-            "  ANNA   svensson  ",
-            "Åsa Öberg",
-            "Erik B. Karlsson",
-            "van der Berg Jan",
-        ],
-    )
-    def test_k1_matches_normalizations_current_key(self, name: str) -> None:
-        """THE PIN (controller ruling): K1 is defined LOCALLY (copied, not imported) so a
-        future Task 3 change to normalization's key cannot silently change this frozen
-        baseline. This test documents that today the two independent implementations agree;
-        it is expected to need updating (or intentional removal) once Task 3 changes
-        normalization's key."""
-        assert identity_key_k1(name) == _name_match_key(name)
 
 
 class TestIdentityKeyK2:

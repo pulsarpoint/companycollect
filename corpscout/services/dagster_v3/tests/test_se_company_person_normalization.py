@@ -1,3 +1,4 @@
+import hashlib
 import json
 import uuid
 from dataclasses import replace
@@ -13,6 +14,7 @@ from dagster_v3.defs.company_people.corrections import (
     PersonCorrection,
     StoredSuggestion,
 )
+from dagster_v3.defs.company_people.identity_eval import identity_key_k2
 from dagster_v3.defs.company_people.normalization import (
     DIRECT_PROMPT_VERSION,
     PERSON_COLUMNS,
@@ -28,6 +30,7 @@ from dagster_v3.defs.company_people.normalization import (
     SuggestionWrite,
     batch_company_observations,
     build_company_people_request,
+    build_company_observations_sql,
     build_company_statistics_sql,
     build_pending_companies_sql,
     normalize_companies,
@@ -81,6 +84,7 @@ def _observation(
     return DraftPersonObservation(
         draft_id=uuid.UUID(int=index),
         source=source,
+        source_record_uid=f"source-record-{index}",
         fiscal_year=2025,
         source_observed_at=NOW + timedelta(seconds=index),
         source_value=source_value,
@@ -166,6 +170,23 @@ def test_company_status_projects_the_join_key_instead_of_drafts_star() -> None:
             "draft_ids",
         ):
             assert f"drafts.{column} AS {column}," in sql
+
+
+def test_company_status_and_observations_read_only_the_three_views() -> None:
+    """THE PIN: se_company_person_draft is retired from every read path Task 3 touches --
+    company status, pending selection, and the per-observation read all resolve through the
+    shared source_observations CTE over the three SE person views, nothing else."""
+    for sql in (
+        build_company_statistics_sql(),
+        build_pending_companies_sql(),
+        build_company_observations_sql(),
+    ):
+        assert "se_company_person_draft" not in sql
+        assert "FROM corpscout.se_company_person_bolagsverket" in sql
+        assert "FROM corpscout.se_company_person_esef" in sql
+        assert "FROM corpscout.se_company_person_wikidata" in sql
+        assert "source_observations AS (" in sql
+        assert "WHERE trim(full_name) != ''" in sql
 
 
 @pytest.mark.parametrize(
@@ -448,6 +469,75 @@ def test_single_source_company_is_copied_without_llm() -> None:
     assert metrics["llm_request_count"] == 0
 
 
+def test_person_id_hash_domain_is_v2() -> None:
+    """THE PIN: person_id moved off se-company-person-v1 (first|last token) to the v2
+    domain, keyed by an already-canonical group key rather than deriving one internally."""
+    digest = hashlib.sha256(
+        f"se-company-person-v2\n{COMPANY_ID}\nanna svensson".encode()
+    ).hexdigest()
+    assert person_id_for(COMPANY_ID, "anna svensson") == uuid.UUID(hex=digest[:32])
+    # v1's first|last-token domain must not appear anywhere in the new formula.
+    v1_digest = hashlib.sha256(
+        f"se-company-person-v1\n{COMPANY_ID}\nanna|svensson".encode()
+    ).hexdigest()
+    assert person_id_for(COMPANY_ID, "anna svensson") != uuid.UUID(hex=v1_digest[:32])
+
+
+def test_single_source_company_k3_merges_a_middle_name_variant_into_one_person() -> None:
+    """THE PIN (K3 key production): "Anna Maria Svensson" and "Anna Svensson" in one
+    single-source company resolve to the SAME person_id -- K3's rule (a), reused directly
+    from identity_eval.k3_merge_groups (not forked), replacing normalization's old K1
+    (first|last token) grouping. The group's canonical key is its shortest member K2 key.
+    """
+    base = _observation(
+        "bolagsverket", name="Anna Svensson", role="board_member", index=1
+    )
+    middle_name_variant = _observation(
+        "bolagsverket", name="Anna Maria Svensson", role="board_member", index=2
+    )
+    company = _company(base, middle_name_variant)
+
+    writes, _suggestions, _metrics, _notes = normalize_companies(
+        [company],
+        llm_suggester=None,
+        llm_model=None,
+        maximum_observations_per_request=10,
+        created_at=NOW,
+    )
+
+    assert len(writes) == 1
+    expected_id = person_id_for(COMPANY_ID, identity_key_k2("Anna Svensson"))
+    assert writes[0].person_id == expected_id
+    assert set(writes[0].draft_ids) == {base.draft_id, middle_name_variant.draft_id}
+
+
+def test_single_source_company_k3_keeps_ambiguous_middle_names_apart() -> None:
+    """The mirror image of the merge case: two DIFFERENT middle-name variants sharing one
+    K1 bucket have no UNIQUE minimal superset between them, so K3 (unlike the retired K1
+    grouping) keeps them as two separate people."""
+    first = _observation(
+        "bolagsverket", name="Anna B Svensson", role="board_member", index=1
+    )
+    second = _observation(
+        "bolagsverket", name="Anna C Svensson", role="board_member", index=2
+    )
+    company = _company(first, second)
+
+    writes, _suggestions, _metrics, _notes = normalize_companies(
+        [company],
+        llm_suggester=None,
+        llm_model=None,
+        maximum_observations_per_request=10,
+        created_at=NOW,
+    )
+
+    assert len(writes) == 2
+    assert {write.person_id for write in writes} == {
+        person_id_for(COMPANY_ID, identity_key_k2("Anna B Svensson")),
+        person_id_for(COMPANY_ID, identity_key_k2("Anna C Svensson")),
+    }
+
+
 def test_multi_source_company_is_sent_once_when_below_limit() -> None:
     observations = (
         _observation(
@@ -551,7 +641,10 @@ def test_large_company_sends_role_batches_and_all_observations() -> None:
     assert metrics["llm_observation_count"] == 5
 
 
-def test_main_asset_depends_on_draft_and_combined_job_runs_both() -> None:
+def test_main_asset_depends_on_the_source_views_and_combined_job_runs_both() -> None:
+    """Task 3: se_company_person_draft_clickhouse is retired from this read path -- the main
+    asset now depends on the same six upstream source-table assets the three SE person views
+    (source_views.py) transitively read, and the combined job no longer needs a draft step."""
     from dagster_v3.definitions import defs as load_defs
 
     repository = load_defs().get_repository_def()
@@ -560,7 +653,12 @@ def test_main_asset_depends_on_draft_and_combined_job_runs_both() -> None:
     )
 
     assert person_asset.parent_keys == {
-        dg.AssetKey("se_company_person_draft_clickhouse")
+        dg.AssetKey("se_financial_report_signatories_clickhouse"),
+        dg.AssetKey("esef_document_people_clickhouse"),
+        dg.AssetKey("company_identifier_clickhouse"),
+        dg.AssetKey("wikidata_company_identifiers"),
+        dg.AssetKey("wikidata_company_people"),
+        dg.AssetKey("wikidata_persons"),
     }
     job_keys = {
         key.path[-1]
@@ -569,7 +667,6 @@ def test_main_asset_depends_on_draft_and_combined_job_runs_both() -> None:
         ).asset_layer.executable_asset_keys
     }
     assert job_keys == {
-        "se_company_person_draft_clickhouse",
         "se_company_person_role_draft_clickhouse",
         "se_company_person_clickhouse",
         "se_company_person_role_clickhouse",
@@ -753,7 +850,7 @@ def _previous(
     draft_set_hash: str,
 ) -> ExistingPersonProfile:
     return ExistingPersonProfile(
-        person_id=person_id_for(COMPANY_ID, name),
+        person_id=person_id_for(COMPANY_ID, identity_key_k2(name)),
         name=name,
         description=None,
         draft_ids=tuple(sorted(draft_ids)),
@@ -764,7 +861,7 @@ def _previous(
 
 def test_override_field_wins_over_deterministic_name_and_records_provenance() -> None:
     observation = _observation("bolagsverket", name="Anna Svensson", role="ceo", index=1)
-    subject = person_id_for(COMPANY_ID, "Anna Svensson")
+    subject = person_id_for(COMPANY_ID, identity_key_k2("Anna Svensson"))
     previous = _previous("Anna Svensson", (observation.draft_id,), "a" * 64)
     company = CompanyPersonWork(
         status=_company(observation).status,
@@ -799,7 +896,7 @@ def test_override_field_wins_over_deterministic_name_and_records_provenance() ->
 
 def test_override_is_stale_when_evidence_hash_moved() -> None:
     observation = _observation("bolagsverket", name="Anna Svensson", role="ceo", index=1)
-    subject = person_id_for(COMPANY_ID, "Anna Svensson")
+    subject = person_id_for(COMPANY_ID, identity_key_k2("Anna Svensson"))
     previous = _previous("Anna Svensson", (observation.draft_id,), "b" * 64)
     company = CompanyPersonWork(
         status=_company(observation).status,
@@ -837,8 +934,8 @@ def test_merge_persons_moves_evidence_and_tombstones_the_subject() -> None:
     # The two names must key differently (anna|svensson vs anna|svensson-berg),
     # otherwise the deterministic pass folds them into one profile and the merge
     # subject never exists in the run.
-    subject = person_id_for(COMPANY_ID, "Anna Svensson-Berg")
-    target = person_id_for(COMPANY_ID, "Anna Svensson")
+    subject = person_id_for(COMPANY_ID, identity_key_k2("Anna Svensson-Berg"))
+    target = person_id_for(COMPANY_ID, identity_key_k2("Anna Svensson"))
     previous_subject = _previous("Anna Svensson-Berg", (second.draft_id,), "c" * 64)
     previous_target = _previous("Anna Svensson", (first.draft_id,), "d" * 64)
     company = CompanyPersonWork(
@@ -877,8 +974,8 @@ def test_reassign_draft_requires_the_draft_on_the_subject() -> None:
     second = _observation(
         "bolagsverket", name="Erik Eriksson", role="board_member", index=2
     )
-    anna = person_id_for(COMPANY_ID, "Anna Svensson")
-    erik = person_id_for(COMPANY_ID, "Erik Eriksson")
+    anna = person_id_for(COMPANY_ID, identity_key_k2("Anna Svensson"))
+    erik = person_id_for(COMPANY_ID, identity_key_k2("Erik Eriksson"))
     company = CompanyPersonWork(
         status=_company(first, second).status,
         observations=(first, second),
@@ -913,7 +1010,7 @@ def test_reassign_draft_requires_the_draft_on_the_subject() -> None:
 def test_split_person_creates_a_new_deterministic_person_from_payload_name() -> None:
     first = _observation("bolagsverket", name="Anna Svensson", role="ceo", index=1)
     second = _observation("bolagsverket", name="Anna Svensson", role="auditor", index=2)
-    anna = person_id_for(COMPANY_ID, "Anna Svensson")
+    anna = person_id_for(COMPANY_ID, identity_key_k2("Anna Svensson"))
     company = CompanyPersonWork(
         status=_company(first, second).status,
         observations=(first, second),
@@ -941,7 +1038,7 @@ def test_split_person_creates_a_new_deterministic_person_from_payload_name() -> 
     )
 
     by_id = {write.person_id: write for write in writes}
-    new_id = person_id_for(COMPANY_ID, "Anna Svensson (auditor)")
+    new_id = person_id_for(COMPANY_ID, identity_key_k2("Anna Svensson (auditor)"))
     assert by_id[anna].draft_ids == (first.draft_id,)
     assert by_id[new_id].draft_ids == (second.draft_id,)
     assert by_id[new_id].name == "Anna Svensson (auditor)"

@@ -25,6 +25,7 @@ def _observation(
     return DraftPersonObservation(
         draft_id=uuid.UUID(int=draft_number),
         source=source,
+        source_record_uid=f"source-record-{draft_number}",
         fiscal_year=2025,
         source_observed_at=NOW,
         source_value=source_value,

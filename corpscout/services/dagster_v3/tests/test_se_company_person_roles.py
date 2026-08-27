@@ -127,7 +127,13 @@ def test_role_draft_sql_links_exact_person_draft_and_static_mapping() -> None:
         ["5565200028"],
     )
 
-    assert "FROM corpscout.se_company_person_draft AS drafts FINAL" in sql
+    # Task 3: reads the shared source_observations CTE (the three SE person views), not
+    # se_company_person_draft.
+    assert "FROM draft_observations AS drafts" in sql
+    assert "FROM corpscout.se_company_person_bolagsverket" in sql
+    assert "FROM corpscout.se_company_person_esef" in sql
+    assert "FROM corpscout.se_company_person_wikidata" in sql
+    assert "se_company_person_draft" not in sql
     assert "JSONExtractString(drafts.source_value_json, 'role_kind')" in sql
     assert "JSONExtractString(drafts.source_value_json, 'role_category')" in sql
     assert "JSONExtractString(drafts.source_value_json, 'role_property')" in sql
@@ -175,7 +181,14 @@ def test_role_assets_and_jobs_follow_person_pipeline() -> None:
     )
     role = repository.asset_graph.get(dg.AssetKey("se_company_person_role_clickhouse"))
 
-    assert role_draft.parent_keys == {dg.AssetKey("se_company_person_draft_clickhouse")}
+    assert role_draft.parent_keys == {
+        dg.AssetKey("se_financial_report_signatories_clickhouse"),
+        dg.AssetKey("esef_document_people_clickhouse"),
+        dg.AssetKey("company_identifier_clickhouse"),
+        dg.AssetKey("wikidata_company_identifiers"),
+        dg.AssetKey("wikidata_company_people"),
+        dg.AssetKey("wikidata_persons"),
+    }
     assert role.parent_keys == {
         dg.AssetKey("se_company_person_clickhouse"),
         dg.AssetKey("se_company_person_role_draft_clickhouse"),

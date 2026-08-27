@@ -18,6 +18,13 @@ fixture rows cover the three cases the plan calls out: a Wikidata row bridging v
 invalid-orgnr Wikidata row that must be filtered out, and an ESEF row in a non-SE country
 that must be excluded. The script runs twice, once per `join_use_nulls` setting, and must
 answer identically both times.
+
+000331 (Task 3) widened all three views with one more column, `source_observed_at` --
+following the `se_address_geocodes_served` precedent (000327 widening 000325 in place), it
+is a SEPARATE migration that re-issues `CREATE OR REPLACE VIEW`, not a hand-edit of 000330's
+already-committed rendering. The drift pin below therefore targets 000331 (the CURRENT
+definition); 000330 still creates the views and the collision-candidate table, and is
+exercised by the down-migration-parity test instead.
 """
 
 from __future__ import annotations
@@ -40,7 +47,8 @@ from dagster_v3.defs.company_people.source_views import (
 # pin and migration-text checks above are plain string/file comparisons and always run.
 
 MIGRATIONS_DIR = Path(__file__).resolve().parents[3] / "clickhouse" / "migrations"
-MIGRATION = "000330_corpscout_se_company_person_views"
+MIGRATION = "000331_corpscout_se_company_person_views_observed_at"
+PRIOR_MIGRATION = "000330_corpscout_se_company_person_views"
 CLICKHOUSE_IMAGE = "clickhouse/clickhouse-server:26.5"
 
 BOLAGSVERKET_VIEW = "corpscout.se_company_person_bolagsverket"
@@ -60,8 +68,8 @@ BUILDERS = {
 # ---------------------------------------------------------------------------
 
 
-def _sql(suffix: str) -> str:
-    return (MIGRATIONS_DIR / f"{MIGRATION}.{suffix}.sql").read_text(encoding="utf-8")
+def _sql(suffix: str, migration: str = MIGRATION) -> str:
+    return (MIGRATIONS_DIR / f"{migration}.{suffix}.sql").read_text(encoding="utf-8")
 
 
 def _statements(sql: str) -> list[str]:
@@ -126,10 +134,12 @@ def test_the_pins_are_not_vacuous() -> None:
     assert len(bolagsverket) > 100
     assert "se_financial_report_signatories" in bolagsverket
     assert "trim(concat(first_name" in bolagsverket
+    assert "resolved_at AS source_observed_at" in bolagsverket
 
     assert len(esef) > 100
     assert "esef_document_people FINAL" in esef
     assert "country_code = 'SE'" in esef
+    assert "extracted_at AS source_observed_at" in esef
 
     assert len(wikidata) > 300
     assert "wikidata_company_identifiers" in wikidata
@@ -137,6 +147,7 @@ def test_the_pins_are_not_vacuous() -> None:
     assert "'se_orgnr'" in wikidata
     assert "'lei'" in wikidata
     assert "match(company_id, '^[0-9]{10}([0-9]{2})?$')" in wikidata
+    assert "greatest(links.resolved_at, persons.resolved_at) AS source_observed_at" in wikidata
 
 
 def test_up_migration_creates_database_first_and_only_touches_corpscout() -> None:
@@ -145,11 +156,24 @@ def test_up_migration_creates_database_first_and_only_touches_corpscout() -> Non
     assert "DROP" not in _executable(_sql("up")).upper()
 
 
-def test_up_migration_creates_the_collision_candidate_table() -> None:
+def test_up_migration_replaces_the_views_in_place_and_creates_nothing_new() -> None:
+    """000331 (Task 3) only widens the three views. The collision-candidate table is
+    000330's object -- unchanged and not touched here."""
     up_sql = _sql("up")
+    for view in (BOLAGSVERKET_VIEW, ESEF_VIEW, WIKIDATA_VIEW):
+        assert _body(_create_view_statement(up_sql, view)).startswith(
+            f"CREATE OR REPLACE VIEW {view} AS\n"
+        )
+    assert "CREATE TABLE" not in _executable(up_sql).upper()
+
+
+def test_the_prior_migration_still_creates_the_collision_candidate_table() -> None:
+    """Unchanged by Task 3 -- pinned here so a future edit to 000330 is caught by this
+    module too, not only by the migration-file-list test."""
+    prior_up = _sql("up", migration=PRIOR_MIGRATION)
     [statement] = [
         _body(s)
-        for s in _statements(up_sql)
+        for s in _statements(prior_up)
         if f"CREATE TABLE IF NOT EXISTS {CANDIDATE_TABLE}" in s
     ]
     for column in (
@@ -168,8 +192,28 @@ def test_up_migration_creates_the_collision_candidate_table() -> None:
     assert "ORDER BY (company_id, candidate_group_id)" in statement
 
 
-def test_down_migration_drops_every_object_the_up_migration_created() -> None:
+def test_down_migration_restores_the_prior_migrations_original_rendering() -> None:
+    """000331's down-file does not DROP the views -- 000330 owns their creation, and this
+    migration only widened their definitions. Reverting means putting 000330's exact
+    original renderings back with CREATE OR REPLACE VIEW, source_observed_at removed again."""
     executable_down = _executable(_sql("down"))
+    assert "DROP" not in executable_down.upper()
+    up_sql = _sql("up")
+    prior_up_sql = _sql("up", migration=PRIOR_MIGRATION)
+    down_sql = _sql("down")
+    for view in (BOLAGSVERKET_VIEW, ESEF_VIEW, WIKIDATA_VIEW):
+        restored = _normalized(_body(_create_view_statement(down_sql, view)))
+        original = _normalized(_body(_create_view_statement(prior_up_sql, view)))
+        widened = _normalized(_body(_create_view_statement(up_sql, view)))
+        assert restored == original
+        assert "source_observed_at" not in restored
+        assert restored != widened
+
+
+def test_prior_migrations_down_file_still_drops_every_object_it_created() -> None:
+    """Unchanged by Task 3 -- 000330's own down-migration still fully tears down the views
+    and the collision-candidate table; nothing here needed to change when 000331 was added."""
+    executable_down = _executable(_sql("down", migration=PRIOR_MIGRATION))
     for view in (BOLAGSVERKET_VIEW, ESEF_VIEW, WIKIDATA_VIEW):
         assert f"DROP VIEW IF EXISTS {view}" in executable_down
     assert f"DROP TABLE IF EXISTS {CANDIDATE_TABLE}" in executable_down
@@ -527,17 +571,20 @@ def _script(*, join_use_nulls: int) -> str:
         "SELECT '@@bolagsverket'",
         "SELECT company_id, source_record_uid, full_name, first_name, last_name, "
         "role_original, role_kind, signatory_kind, fiscal_year, "
-        "length(person_profile_hash), length(person_role_hash) "
+        "length(person_profile_hash), length(person_role_hash), "
+        "toString(source_observed_at) "
         f"FROM {BOLAGSVERKET_VIEW} ORDER BY company_id",
         "SELECT '@@esef'",
         "SELECT company_id, full_name, role, role_category, organization, status, "
         "toString(effective_from), confidence, length(person_profile_hash), "
-        f"length(person_role_hash) FROM {ESEF_VIEW} ORDER BY company_id",
+        "length(person_role_hash), toString(source_observed_at) "
+        f"FROM {ESEF_VIEW} ORDER BY company_id",
         "SELECT '@@wikidata'",
         "SELECT company_id, full_name, person_wikidata_id, role_property, "
         "ifNull(toString(birth_year), ''), ifNull(external_url, ''), "
         "length(source_record_uid), length(person_profile_hash), "
-        f"length(person_role_hash) FROM {WIKIDATA_VIEW} ORDER BY person_wikidata_id",
+        "length(person_role_hash), toString(source_observed_at) "
+        f"FROM {WIKIDATA_VIEW} ORDER BY person_wikidata_id",
     ]
     return ";\n".join(statements) + ";\n"
 
@@ -588,6 +635,7 @@ def test_bolagsverket_view_projects_split_names_and_concatenated_full_name(
             "2024",
             "64",
             "64",
+            "2026-08-01 00:00:00.000",
         ]
     ]
 
@@ -602,6 +650,7 @@ def test_esef_view_excludes_non_se_country(
     assert row[0] == PENDING_A
     assert row[1] == "Anna Karlsson"
     assert row[2] == "CEO"
+    assert row[10] == "2026-08-01 00:00:00.000"  # extracted_at AS source_observed_at
     # No row carries the DK company or the Danish person's name.
     assert all(r[0] != "DK12345678" for r in sections["esef"])
     assert all("Hansen" not in r[1] for r in sections["esef"])
@@ -631,3 +680,4 @@ def test_wikidata_view_bridges_via_orgnr_and_lei_and_filters_invalid_orgnr(
     assert lei_row[6] == "64"  # source_record_uid length
     assert lei_row[7] == "64"  # person_profile_hash length
     assert lei_row[8] == "64"  # person_role_hash length
+    assert lei_row[9] == "2026-08-01 00:00:00.000"  # greatest(link, person resolved_at)
