@@ -40,16 +40,6 @@ class ClickhouseLeaf:
 
 
 CLICKHOUSE_LEAVES: tuple[ClickhouseLeaf, ...] = (
-    # country_people — daily 08:00 UTC; identifiers may legitimately be empty
-    ClickhouseLeaf(
-        "country_person_observations_clickhouse",
-        ("country_person_observation",),
-        DAILY,
-    ),
-    ClickhouseLeaf(
-        "country_person_matches_clickhouse", ("country_person_match",), DAILY
-    ),
-    ClickhouseLeaf("country_people_clickhouse", ("country_person",), DAILY),
     # czech_ares — monthly 17th
     ClickhouseLeaf("czech_ares_clickhouse_companies", ("cz_companies",), MONTHLY),
     ClickhouseLeaf(
