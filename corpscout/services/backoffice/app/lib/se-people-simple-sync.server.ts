@@ -16,13 +16,16 @@
  * Python original, both deliberate:
  *
  * 1. UNSCOPED (no `company_ids` parameter): the Confirm button always
- *    launches `buildCleanCopyRunConfig({ companyIds: [] })` (every company,
+ *    launches `buildSimpleSyncRunConfig({ companyIds: [] })` (every company,
  *    `se-company-person-pipeline.ts`'s `normalizeCompanyIdScope([]) === []`
- *    convention) exactly like the Pipeline page's own clean-copy launch, so
- *    the preview must describe that same unscoped run -- there is no
- *    per-company filter here to thread through. Mirrors
- *    `se-company-person-pipeline.server.ts`'s own unscoped stats queries
- *    (`PUBLISHED_PERSON_COUNT_SQL` et al.).
+ *    convention) -- the combined role_draft+person+role cascade
+ *    (`SE_COMPANY_PERSON_JOB`), not the Pipeline page's own single-asset
+ *    clean-copy launch -- so the preview must describe that same unscoped
+ *    person-table run -- there is no per-company filter here to thread
+ *    through, and the role assignments the same run also publishes are a
+ *    deterministic function of the people this preview already counts, not a
+ *    separate scope. Mirrors `se-company-person-pipeline.server.ts`'s own
+ *    unscoped stats queries (`PUBLISHED_PERSON_COUNT_SQL` et al.).
  * 2. `any(source) AS single_source` is added to `draft_companies`: correct only
  *    because the `source_count = 1` filter guarantees every row in a kept
  *    group shares one source -- `any()` would be arbitrary otherwise, but

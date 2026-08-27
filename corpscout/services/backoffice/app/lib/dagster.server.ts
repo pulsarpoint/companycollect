@@ -69,8 +69,11 @@ export const SE_COMPANY_PERSON_IDENTITY_EVALUATION_JOB =
 export const SE_COMPANY_PERSON_IDENTITY_EVALUATION_ASSET =
   "se_company_person_identity_evaluation";
 /** The combined role_draft+person+role chain -- unused by the Pipeline page's own
- * three resolution launches below (each is a single-asset job, "1:1"), kept for
- * whoever else wants the full cascade (e.g. a manual UI materialize). */
+ * three resolution launches below (each is a single-asset job, "1:1"), but this
+ * IS what the People page's Simple Sync sheet launches (se-people-actions.tsx /
+ * se-company-person-pipeline.server.ts's buildSimpleSyncRunConfig): a single
+ * unscoped click needs to publish both people and their role assignments, not
+ * just se_company_person alone. */
 export const SE_COMPANY_PERSON_JOB = "se_company_person_job";
 export const SE_COMPANY_PERSON_ROLE_DRAFT_ASSET = "se_company_person_role_draft_clickhouse";
 export const SE_COMPANY_PERSON_ASSET = "se_company_person_clickhouse";
