@@ -104,11 +104,11 @@ from dagster_v3.defs.company_people.corrections import (
     SUGGESTION_TABLE,
     build_company_suggestions_sql,
 )
-from dagster_v3.defs.company_people.draft import normalized_company_ids
 from dagster_v3.defs.company_people.normalization import PERSON_TABLE, QUALIFIED_PERSON_TABLE
 from dagster_v3.defs.company_people.source_views import (
     SE_COMPANY_PERSON_COLLISION_CANDIDATE_TABLE,
     build_se_company_person_source_observations_sql,
+    normalized_company_ids,
 )
 
 DATABASE = "corpscout"

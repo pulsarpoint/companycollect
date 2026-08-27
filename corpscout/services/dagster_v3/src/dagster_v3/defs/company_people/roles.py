@@ -13,12 +13,12 @@ from dagster_v3.defs.company_people.corrections import (
     CORRECTION_TABLE,
     ROLE_CORRECTION_KINDS,
 )
-from dagster_v3.defs.company_people.draft import normalized_company_ids
 from dagster_v3.defs.company_people.source_views import (
     SE_COMPANY_PERSON_BOLAGSVERKET_VIEW,
     SE_COMPANY_PERSON_ESEF_VIEW,
     SE_COMPANY_PERSON_WIKIDATA_VIEW,
     build_se_company_person_source_observations_sql,
+    normalized_company_ids,
 )
 from dagster_v3.defs.esef_filings.roles import (
     ESEF_ROLE_CATEGORY_TO_CANONICAL_ROLE,

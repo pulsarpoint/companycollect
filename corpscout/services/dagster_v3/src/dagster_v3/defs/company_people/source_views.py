@@ -57,16 +57,16 @@ rendering of it and must never be hand-edited without also updating the function
 
 THE WIKIDATA BRIDGE. `wikidata_company_people`/`wikidata_persons` carry no company_id --
 only a Wikidata QID. The bridge to a Swedish org number runs through
-`wikidata_company_identifiers`, exactly the join shape `company_people/draft.py`'s
-`_source_observations_sql` uses for its wikidata branch:
+`wikidata_company_identifiers`, exactly the join shape the now-removed
+`company_people/draft.py`'s `_source_observations_sql` used for its wikidata branch:
 
 - ``identifier_type = 'se_orgnr'``: the identifier VALUE (once stripped of separators) IS
   the company_id.
 - ``identifier_type = 'lei'``: the identifier value is a LEI, translated to a company_id via
   ``corpscout.company_identifier`` (``country_code = 'SE'``, ``issuer_scheme = 'lei'``,
-  ``is_current = 1``) -- the same table draft.py's ``company_leis`` CTE reads.
+  ``is_current = 1``) -- the same table the removed draft.py's ``company_leis`` CTE read.
 
-Unlike draft.py (which additionally restricts the bridge to an explicit list of already
+Unlike the removed draft.py (which additionally restricted the bridge to an explicit list of already
 -registered Swedish company ids passed as a parameter), this view has no caller-supplied
 scope: it bridges every wikidata_company_identifiers row of either kind and instead
 validates the RESULT, filtering to ``match(company_id, '^[0-9]{10}([0-9]{2})?$')`` --
@@ -75,7 +75,9 @@ to nothing in company_identifier) never gets a fabricated company_id.
 """
 
 import hashlib
+import re
 import uuid
+from collections.abc import Sequence
 
 DATABASE = "corpscout"
 
@@ -98,6 +100,25 @@ SE_COMPANY_ID_PATTERN = r"^[0-9]{10}([0-9]{2})?$"
 SE_COMPANY_PERSON_COLLISION_CANDIDATE_TABLE = (
     f"{DATABASE}.se_company_person_collision_candidate"
 )
+
+# Relocated from the now-removed ``company_people/draft.py`` (Task 6): this experiment's
+# company_people assets (normalization.py, roles.py, merge.py) all scope a run to an explicit
+# list of organisationsnummer, validated here at exactly 10 digits. This is deliberately
+# narrower than ``se_company/common.py``'s ``normalized_se_company_ids`` (10 OR 12 digits, for
+# the sole-trader personnummer-based ids `se_company` also publishes) -- see that function's
+# docstring for why it does not reuse this one.
+_STRICT_SE_COMPANY_ID_PATTERN = re.compile(r"\d{10}")
+
+
+def normalized_company_ids(company_ids: Sequence[str]) -> tuple[str, ...]:
+    """Sorted, de-duplicated, validated Swedish organisationsnummer (10 digits only)."""
+    normalized = tuple(sorted(set(company_id.strip() for company_id in company_ids)))
+    if any(
+        _STRICT_SE_COMPANY_ID_PATTERN.fullmatch(company_id) is None
+        for company_id in normalized
+    ):
+        raise ValueError("Sweden company IDs must contain exactly 10 digits")
+    return normalized
 
 
 def _projection(columns: tuple[str, ...]) -> str:
@@ -179,10 +200,10 @@ def build_se_company_person_esef_view_sql() -> str:
 def build_se_company_person_wikidata_view_sql() -> str:
     """The Wikidata company-person read, bridged to a validated SE company_id.
 
-    See the module docstring for the bridge shape (copied from draft.py's wikidata read) and
+    See the module docstring for the bridge shape (copied from the removed draft.py's wikidata read) and
     why this view validates the RESULT rather than restricting the join to a known-company
     scope. Both ``wikidata_company_people`` and ``wikidata_persons`` are
-    ``ReplacingMergeTree(resolved_at)`` -- both sides read FINAL, matching draft.py.
+    ``ReplacingMergeTree(resolved_at)`` -- both sides read FINAL, matching the removed draft.py.
     """
     bridge = f"""company_leis AS (
     SELECT
@@ -256,11 +277,11 @@ company_wikidata_bridge AS (
 #
 # `company_people/normalization.py` and `company_people/roles.py` both need one flat stream
 # of "every non-blank-name row across the three views, with a stable per-row id" -- the exact
-# role draft.py's `se_company_person_draft` used to play. There is no table to hold that
+# role the removed draft.py's `se_company_person_draft` used to play. There is no table to hold that
 # stream anymore (spec 3.1: the views ARE the read contract), so it is a CTE fragment both
 # callers splice into their own WITH clause, computed fresh on every query.
 #
-# THE draft_id FORMULA. draft.py minted `draft_id` as
+# THE draft_id FORMULA. The removed draft.py minted `draft_id` as
 # SHA256('se-company-person-source-observation-v1\n{company_id}\n{source}\n{source_entity_id}
 # \n{person_profile_hash}\n{person_role_hash}') truncated to a UUID. `source_entity_id` (e.g.
 # bolagsverket's `signatory_uid`) was not one of the three views' original (Task 1) projected

@@ -687,8 +687,8 @@ def test_an_explicit_scope_is_chunked_so_the_rendered_query_stays_under_max_quer
 def test_a_scoped_run_accepts_a_twelve_digit_sole_trader_id() -> None:
     """se_companies publishes 12-digit personnummer-based ids for enskild firma and the
     final's has_company CHECK admits them, so naming one in company_ids must not raise.
-    company_people.draft.normalized_company_ids validates 10 digits only, so the scope
-    normalizes through se_company.common.normalized_se_company_ids instead."""
+    company_people.source_views.normalized_company_ids validates 10 digits only, so the
+    scope normalizes through se_company.common.normalized_se_company_ids instead."""
     from dagster_v3.defs.se_company.info import materialize_se_company_info
     from tests.test_se_company_common import FakeClickhouse, FakeClient
 

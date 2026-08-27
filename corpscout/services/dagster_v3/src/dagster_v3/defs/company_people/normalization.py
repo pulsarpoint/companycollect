@@ -46,7 +46,6 @@ from dagster_v3.defs.company_people.corrections import (
     effective_corrections,
     suggestion_from_row,
 )
-from dagster_v3.defs.company_people.draft import normalized_company_ids
 from dagster_v3.defs.company_people.identity_eval import (
     PersonObservationRow,
     identity_key_k2,
@@ -62,6 +61,7 @@ from dagster_v3.defs.company_people.source_views import (
     SE_COMPANY_PERSON_WIKIDATA_VIEW,
     build_se_company_person_blank_full_name_count_sql,
     build_se_company_person_source_observations_sql,
+    normalized_company_ids,
 )
 from dagster_v3.defs.esef_filings.llm_enrichment import deepseek_settings
 
