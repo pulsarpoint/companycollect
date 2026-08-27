@@ -4,6 +4,7 @@ import os
 import pytest
 
 from crawler_ratsit.crawler import crawl_ratsit_markdown
+from crawler_ratsit.models import ratsit_path_id
 
 pytestmark = pytest.mark.integration
 
@@ -25,7 +26,8 @@ def test_remote_cdp_returns_ratsit_company_page_as_markdown() -> None:
         )
     )
 
-    formatted_company_id = f"{company_id[:6]}-{company_id[6:]}"
+    path_id = ratsit_path_id(company_id)
+    formatted_company_id = f"{path_id[:6]}-{path_id[6:]}"
     assert markdown
-    assert company_id in markdown or formatted_company_id in markdown
+    assert path_id in markdown or formatted_company_id in markdown
     assert "<main" not in markdown.lower()

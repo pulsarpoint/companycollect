@@ -111,11 +111,17 @@ def _timestamp_metadata(
 def validate_company_id(company_id: str) -> None:
     if (
         not isinstance(company_id, str)
-        or len(company_id) != 10
+        or len(company_id) not in (10, 12)
         or not company_id.isascii()
         or not company_id.isdigit()
     ):
-        raise ValueError("company_id must contain exactly ten ASCII digits")
+        raise ValueError("company_id must contain exactly ten or twelve ASCII digits")
+
+
+def ratsit_path_id(company_id: str) -> str:
+    """Return the ten-digit identifier accepted by the Ratsit URL path."""
+    validate_company_id(company_id)
+    return company_id[-10:]
 
 
 def company_workflow_id(company_id: str) -> str:
@@ -269,6 +275,9 @@ def select_company_ids(
         validate_company_id(company_id)
     if len(company_ids) != len(set(company_ids)):
         raise RuntimeError("Ratsit candidate query returned duplicate company IDs")
+    ratsit_path_ids = [ratsit_path_id(company_id) for company_id in company_ids]
+    if len(ratsit_path_ids) != len(set(ratsit_path_ids)):
+        raise RuntimeError("Ratsit candidate query returned duplicate URL path IDs")
     return company_ids
 
 

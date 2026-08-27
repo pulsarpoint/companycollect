@@ -12,7 +12,12 @@ from crawler_ratsit.constants import (
     CRAWL_MAX_ATTEMPTS,
     RECORD_RESULT_ACTIVITY,
 )
-from crawler_ratsit.models import CrawlActivityInput, CrawlCompanyInput, CrawlResult
+from crawler_ratsit.models import (
+    CrawlActivityInput,
+    CrawlCompanyInput,
+    CrawlResult,
+    ratsit_url,
+)
 from crawler_ratsit.workflows import RatsitCompanyWorkflow
 
 
@@ -39,7 +44,7 @@ def test_workflow_captures_then_records_success() -> None:
                 result = await environment.client.execute_workflow(
                     RatsitCompanyWorkflow.run,
                     CrawlCompanyInput(
-                        company_id="5562434182",
+                        company_id="195562434182",
                         batch_id=str(uuid4()),
                     ),
                     id=f"ratsit-test-{uuid4()}",
@@ -49,6 +54,8 @@ def test_workflow_captures_then_records_success() -> None:
             await environment.shutdown()
 
         assert result.outcome == "success"
+        assert result.company_id == "195562434182"
+        assert result.source_url == "https://www.ratsit.se/5562434182"
         assert recorded == [result]
 
     asyncio.run(run_test())
@@ -80,7 +87,7 @@ def test_workflow_records_retry_exhaustion_without_an_s3_object() -> None:
                 result = await environment.client.execute_workflow(
                     RatsitCompanyWorkflow.run,
                     CrawlCompanyInput(
-                        company_id="5562434182",
+                        company_id="195562434182",
                         batch_id=str(uuid4()),
                     ),
                     id=f"ratsit-retry-test-{uuid4()}",
@@ -92,6 +99,8 @@ def test_workflow_records_retry_exhaustion_without_an_s3_object() -> None:
 
         assert attempts == CRAWL_MAX_ATTEMPTS
         assert result.outcome == "retry_exhausted"
+        assert result.company_id == "195562434182"
+        assert result.source_url == "https://www.ratsit.se/5562434182"
         assert result.source_object_key == ""
         assert result.attempt_count == CRAWL_MAX_ATTEMPTS
         assert result.error_type == "browser_timeout"
@@ -109,7 +118,7 @@ def _success_result(activity_input: CrawlActivityInput) -> CrawlResult:
         attempted_at=activity_input.selected_at,
         completed_at=activity_input.selected_at,
         http_status=200,
-        source_url=f"https://www.ratsit.se/{activity_input.company_id}",
+        source_url=ratsit_url(activity_input.company_id),
         source_bucket="source-sweden-ratsit",
         source_object_key="raw/response.json",
         content_size_bytes=100,

@@ -17,6 +17,7 @@ from dagster_v3.components.ratsit_temporal_component import (
     build_candidate_sql,
     build_coverage_sql,
     company_workflow_id,
+    ratsit_path_id,
     read_coverage,
     select_company_ids,
     submit_company_workflow,
@@ -95,7 +96,7 @@ def test_batch_id_is_stable_for_the_same_run_and_company_set() -> None:
 
 
 def test_select_company_ids_uses_the_requested_batch_policy() -> None:
-    client = FakeClickHouseClient([[("5562434182",), ("5566778899",)]])
+    client = FakeClickHouseClient([[("195562434182",), ("5566778899",)]])
 
     selected = select_company_ids(
         FakeClickHouseResource(client),  # type: ignore[arg-type]
@@ -104,7 +105,7 @@ def test_select_company_ids_uses_the_requested_batch_policy() -> None:
         failure_cooldown_hours=48,
     )
 
-    assert selected == ["5562434182", "5566778899"]
+    assert selected == ["195562434182", "5566778899"]
     assert "INTERVAL 30 DAY" in client.statements[0]
     assert "INTERVAL 48 HOUR" in client.statements[0]
     assert "LIMIT 2" in client.statements[0]
@@ -114,6 +115,18 @@ def test_select_company_ids_rejects_duplicates_from_clickhouse() -> None:
     client = FakeClickHouseClient([[("5562434182",), ("5562434182",)]])
 
     with pytest.raises(RuntimeError, match="duplicate company IDs"):
+        select_company_ids(
+            FakeClickHouseResource(client),  # type: ignore[arg-type]
+            batch_size=2,
+            freshness_days=20,
+            failure_cooldown_hours=24,
+        )
+
+
+def test_select_company_ids_rejects_duplicate_ratsit_url_paths() -> None:
+    client = FakeClickHouseClient([[("195562434182",), ("5562434182",)]])
+
+    with pytest.raises(RuntimeError, match="duplicate URL path IDs"):
         select_company_ids(
             FakeClickHouseResource(client),  # type: ignore[arg-type]
             batch_size=2,
@@ -262,5 +275,8 @@ def test_ratsit_assets_and_manual_jobs_are_registered() -> None:
 
 
 def test_company_workflow_id_rejects_non_swedish_company_ids() -> None:
-    with pytest.raises(ValueError, match="ten ASCII digits"):
+    assert company_workflow_id("195562434182") == "ratsit/company/195562434182"
+    assert ratsit_path_id("195562434182") == "5562434182"
+
+    with pytest.raises(ValueError, match="ten or twelve ASCII digits"):
         company_workflow_id("ABC")

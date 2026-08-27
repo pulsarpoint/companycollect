@@ -43,10 +43,12 @@ class FakePage:
         selector_timeout: bool = False,
     ) -> None:
         self.url = "https://www.ratsit.se/5562434182"
+        self.requested_url: str | None = None
         self._status = status
         self._locator = FakeLocator(content=content, timeout=selector_timeout)
 
-    async def goto(self, *_args: Any, **_kwargs: Any) -> FakeResponse:
+    async def goto(self, url: str, **_kwargs: Any) -> FakeResponse:
+        self.requested_url = url
         return FakeResponse(self._status)
 
     def locator(self, selector: str) -> FakeLocator:
@@ -67,6 +69,22 @@ def test_fetch_page_returns_selected_html() -> None:
     assert result.outcome == "success"
     assert result.content == "<h1>Company</h1>"
     assert result.http_status == 200
+
+
+def test_fetch_page_normalizes_twelve_digit_company_id_for_ratsit_url() -> None:
+    page = FakePage(status=200, content="<h1>Sole proprietor</h1>")
+
+    result = asyncio.run(
+        fetch_ratsit_page(
+            page,
+            "195562434182",
+            content_selector="main .main-inner",
+            timeout_ms=1000,
+        )
+    )
+
+    assert page.requested_url == "https://www.ratsit.se/5562434182"
+    assert result.requested_url == "https://www.ratsit.se/5562434182"
 
 
 def test_html_to_markdown_converts_selected_page_content() -> None:

@@ -86,6 +86,12 @@ returns as soon as Temporal accepts the workflow. The stable workflow ID is
 while that company is open, and a new run can reuse the ID after completion.
 The batch and company IDs are also stored in Temporal memo for inspection.
 
+Canonical Swedish company IDs remain unchanged throughout Temporal, S3, and
+ClickHouse. Regular organisations use ten digits, while natural-person and
+sole-proprietor records may include a two-digit century prefix and use twelve.
+Ratsit expects the final ten digits in its URL path, so only URL construction
+removes that century prefix.
+
 Raw responses use this S3 layout:
 
 ```text

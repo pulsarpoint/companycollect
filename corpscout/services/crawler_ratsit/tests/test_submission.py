@@ -14,13 +14,19 @@ from crawler_ratsit.constants import (
     CRAWL_COMPANY_WORKFLOW,
     RECORD_RESULT_ACTIVITY,
 )
-from crawler_ratsit.models import CrawlActivityInput, CrawlCompanyInput, CrawlResult
+from crawler_ratsit.models import (
+    CrawlActivityInput,
+    CrawlCompanyInput,
+    CrawlResult,
+    ratsit_url,
+)
 from crawler_ratsit.submission import company_workflow_id, submit_company_workflow
 from crawler_ratsit.workflows import RatsitCompanyWorkflow
 
 
 def test_company_workflow_id_is_stable() -> None:
     assert company_workflow_id("5562434182") == "ratsit/company/5562434182"
+    assert company_workflow_id("195562434182") == "ratsit/company/195562434182"
 
 
 def test_submit_company_workflow_starts_without_waiting_for_a_result() -> None:
@@ -173,7 +179,7 @@ def _success_result(activity_input: CrawlActivityInput) -> CrawlResult:
         attempted_at=activity_input.selected_at,
         completed_at=activity_input.selected_at,
         http_status=200,
-        source_url=f"https://www.ratsit.se/{activity_input.company_id}",
+        source_url=ratsit_url(activity_input.company_id),
         source_bucket="source-sweden-ratsit",
         source_object_key="raw/response.json",
         content_size_bytes=100,

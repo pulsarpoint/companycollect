@@ -136,18 +136,23 @@ class CrawlResult:
 
 
 def ratsit_url(company_id: str) -> str:
+    return f"https://www.ratsit.se/{ratsit_path_id(company_id)}"
+
+
+def ratsit_path_id(company_id: str) -> str:
+    """Return the ten-digit identifier accepted by the Ratsit URL path."""
     validate_company_id(company_id)
-    return f"https://www.ratsit.se/{company_id}"
+    return company_id[-10:]
 
 
 def validate_company_id(company_id: str) -> None:
     if (
         not isinstance(company_id, str)
-        or len(company_id) != 10
+        or len(company_id) not in (10, 12)
         or not company_id.isascii()
         or not company_id.isdigit()
     ):
-        raise ValueError("company_id must contain exactly ten ASCII digits")
+        raise ValueError("company_id must contain exactly ten or twelve ASCII digits")
 
 
 def validate_batch_id(batch_id: str) -> None:
