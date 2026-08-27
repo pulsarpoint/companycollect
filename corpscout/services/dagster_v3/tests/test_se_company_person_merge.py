@@ -120,6 +120,19 @@ def test_decided_group_ids_sql_matches_both_kinds_with_no_join() -> None:
     assert "JOIN" not in sql.upper()
 
 
+def test_decided_group_ids_sql_excludes_a_row_a_later_undo_superseded() -> None:
+    """Same idiom as corrections.effective_company_corrections_cte /
+    roles._live_role_corrections_filter: a NOT IN (SELECT supersedes_correction_id ...)
+    subquery, scoped the same way as the outer scan."""
+    sql = build_decided_candidate_group_ids_sql()
+    assert "AND correction_id NOT IN (" in sql
+    assert sql.count("SELECT supersedes_correction_id") == 1
+    assert "WHERE supersedes_correction_id IS NOT NULL" in sql
+    # The subquery's own scope repeats the outer scan's exact scope predicate -- an undo
+    # always names a row of its own company, matching the codebase-wide convention.
+    assert sql.count("(%(all_companies)s = 1 OR company_id IN %(company_ids)s)") == 2
+
+
 def test_observation_rows_sql_wraps_the_shared_cte_and_adds_full_name() -> None:
     sql = build_merge_observation_rows_sql()
     assert "source_observations AS (" in sql or "source_observations" in sql
@@ -1049,9 +1062,33 @@ def _id(marker: int) -> str:
     return str(uuid.UUID(int=marker))
 
 
+def _correction_insert(
+    *,
+    marker: int,
+    kind: str,
+    subject_person_id: uuid.UUID,
+    candidate_group_id: str = "",
+    supersedes: uuid.UUID | None = None,
+    created_at: str,
+) -> str:
+    """One `se_company_person_correction` row. `candidate_group_id` is omitted from the
+    payload for an `undo` row (it names its target via `supersedes_correction_id`, not a
+    group id of its own)."""
+    payload = (
+        f'{{\\"candidate_group_id\\":\\"{candidate_group_id}\\"}}' if candidate_group_id else "{}"
+    )
+    supersedes_sql = "NULL" if supersedes is None else f"'{_id(supersedes.int)}'"
+    return f"""INSERT INTO corpscout.se_company_person_correction
+    (correction_id, company_id, correction_kind, subject_person_id, target_person_id,
+     draft_ids, payload, evidence_hash, reason, decided_by, supersedes_correction_id, created_at)
+VALUES
+    ('{_id(marker)}', '{COMPANY_ID}', '{kind}', '{_id(subject_person_id.int)}', NULL,
+     [], '{payload}', repeat('0', 64), 'reason', 'backoffice',
+     {supersedes_sql}, toDateTime64('{created_at}', 3, 'UTC'))"""
+
+
 def _fixture_statements() -> list[str]:
     person_id = uuid.UUID(int=100)
-    correction_id = uuid.UUID(int=200)
     return [
         f"""INSERT INTO corpscout.se_financial_report_signatories
     (company_id, fiscal_year, statement_key, source_record_uid, signatory_kind,
@@ -1073,13 +1110,34 @@ VALUES
      ['{_id(1)}'], [], NULL,
      'deterministic', 'copy', 'v1', 'run',
      toDateTime64('2026-08-01 00:00:00', 3, 'UTC'), toDateTime64('2026-08-01 00:00:00', 3, 'UTC'))""",
-        f"""INSERT INTO corpscout.se_company_person_correction
-    (correction_id, company_id, correction_kind, subject_person_id, target_person_id,
-     draft_ids, payload, evidence_hash, reason, decided_by, supersedes_correction_id, created_at)
-VALUES
-    ('{correction_id}', '{COMPANY_ID}', '{KEEP_SEPARATE_CORRECTION_KIND}', '{person_id}', NULL,
-     [], '{{\\"candidate_group_id\\":\\"grp1\\"}}', repeat('0', 64), 'reason', 'backoffice',
-     NULL, toDateTime64('2026-08-02 00:00:00', 3, 'UTC'))""",
+        # grp1: keep_separate, never undone -- must stay decided (control).
+        _correction_insert(
+            marker=200, kind=KEEP_SEPARATE_CORRECTION_KIND, subject_person_id=person_id,
+            candidate_group_id="grp1", created_at="2026-08-02 00:00:00",
+        ),
+        # grp-merge: merge_persons, never undone -- must stay decided (control).
+        _correction_insert(
+            marker=201, kind="merge_persons", subject_person_id=person_id,
+            candidate_group_id="grp-merge", created_at="2026-08-02 00:00:00",
+        ),
+        # grp-keep-separate-undone: keep_separate decided, then UNDONE -- must be eligible again.
+        _correction_insert(
+            marker=202, kind=KEEP_SEPARATE_CORRECTION_KIND, subject_person_id=person_id,
+            candidate_group_id="grp-keep-separate-undone", created_at="2026-08-02 00:00:00",
+        ),
+        _correction_insert(
+            marker=203, kind="undo", subject_person_id=person_id,
+            supersedes=uuid.UUID(int=202), created_at="2026-08-03 00:00:00",
+        ),
+        # grp-merge-undone: merge_persons decided, then UNDONE -- must be eligible again.
+        _correction_insert(
+            marker=204, kind="merge_persons", subject_person_id=person_id,
+            candidate_group_id="grp-merge-undone", created_at="2026-08-02 00:00:00",
+        ),
+        _correction_insert(
+            marker=205, kind="undo", subject_person_id=person_id,
+            supersedes=uuid.UUID(int=204), created_at="2026-08-03 00:00:00",
+        ),
     ]
 
 
@@ -1136,7 +1194,7 @@ def test_the_new_sql_executes_against_a_real_engine(sections: dict[str, list[lis
     assert sections["candidates"] == [
         [COMPANY_ID, "grp1", "david mindus", "David Mindus", "bolagsverket", "src-1"]
     ]
-    assert sections["decided"] == [["grp1"]]
+    assert "grp1" in {row[0] for row in sections["decided"]}
     assert len(sections["observations"]) == 1
     observation = sections["observations"][0]
     assert observation[1] == COMPANY_ID
@@ -1149,3 +1207,26 @@ def test_the_new_sql_executes_against_a_real_engine(sections: dict[str, list[lis
     assert len(sections["published"]) == 1
     assert sections["published"][0][0] == _id(100)
     assert sections["published"][0][1] == COMPANY_ID
+
+
+@pytest.mark.integration
+def test_an_undo_reopens_its_candidate_group_for_both_decision_kinds(
+    sections: dict[str, list[list[str]]],
+) -> None:
+    """The Important fix: `build_decided_candidate_group_ids_sql` must exclude a decision a
+    later `undo` has superseded, for BOTH `merge_persons` and `keep_separate` -- otherwise a
+    reviewer undoing either decision leaves the candidate group permanently stuck as
+    "decided", with no fresh suggestion ever possible again.
+
+    `_fixture_statements` seeds four decisions against a real engine: grp1 (keep_separate,
+    control) and grp-merge (merge_persons, control) are never undone and must still read as
+    decided; grp-keep-separate-undone and grp-merge-undone are each decided and then
+    immediately undone by a later `undo` row naming the decision's own correction_id via
+    `supersedes_correction_id`, and must read as NOT decided -- eligible for a fresh
+    suggestion again.
+    """
+    decided = {row[0] for row in sections["decided"]}
+
+    assert decided == {"grp1", "grp-merge"}
+    assert "grp-keep-separate-undone" not in decided
+    assert "grp-merge-undone" not in decided
