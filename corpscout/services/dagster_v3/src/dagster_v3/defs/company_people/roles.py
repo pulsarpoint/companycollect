@@ -328,9 +328,20 @@ def build_role_draft_insert_sql(
 )
 WITH {source_roles_sql},
 mapped_roles AS (
-    SELECT roles.*, mapping.role_code
+    SELECT
+        roles.*,
+        -- An unmapped source role is kept AS IS: the original label (or the
+        -- raw source code when no label exists) becomes the role_code --
+        -- never a catch-all bucket, never a dropped row. coalesce/nullIf
+        -- keeps the fallback correct under both join_use_nulls settings
+        -- (a LEFT JOIN miss is '' or NULL depending on the setting).
+        coalesce(
+            nullIf(mapping.role_code, ''),
+            nullIf(roles.source_role_name, ''),
+            roles.source_role_code
+        ) AS role_code
     FROM source_roles AS roles
-    INNER JOIN role_mapping AS mapping
+    LEFT JOIN role_mapping AS mapping
         ON mapping.source = roles.source
        AND mapping.source_role_code = roles.source_role_code
     WHERE {roleless_filter}
@@ -346,6 +357,9 @@ candidates AS (
         ))), 1, 32))) AS role_draft_id,
         *
     FROM mapped_roles
+    -- A row with no mapping, no label AND no source code has nothing to
+    -- publish (the published table CHECKs trim(role_code) != '').
+    WHERE trim(role_code) != ''
 )
 SELECT
     role_draft_id,
@@ -407,7 +421,12 @@ def collect_se_company_person_role_drafts(
     company_ids: Sequence[str],
     log: Callable[..., object] | None,
 ) -> dict[str, int | str | list[str]]:
-    """Append statically mapped roles for unseen person draft observations."""
+    """Append role drafts for unseen person draft observations.
+
+    Statically mapped roles get their canonical code; unmapped roles are kept
+    as is with the original source label as the role_code. Only roleless
+    observations (SOURCE_ROLELESS_CODES) produce no draft.
+    """
     company_scope = normalized_company_ids(company_ids)
     assert_clickhouse_tables_exist(
         clickhouse,
@@ -429,13 +448,12 @@ def collect_se_company_person_role_drafts(
                 + ", ".join(inactive_roles)
             )
 
-        # Unmapped roles are EXCLUDED from the drafts (build_role_draft_insert_sql
-        # inner-joins the static mapping), never invented -- so an unmapped tail
-        # skips those observations and reports them instead of blocking the whole
-        # materialization. Bolagsverket's tail is dominated by extraction noise
-        # (person names / dates in the role field); triage via
-        # build_unmapped_source_roles_sql and extend the source-owned mapping for
-        # the legitimate strings.
+        # Unmapped roles are kept AS IS (build_role_draft_insert_sql left-joins
+        # the static mapping and falls back to the original source label as the
+        # role_code) -- never bucketed into a catch-all, never dropped. The
+        # breakdown here is diagnostic only: triage via
+        # build_unmapped_source_roles_sql and extend the source-owned mapping
+        # when a raw label deserves a canonical code.
         unmapped_roles = client.execute(build_unmapped_source_roles_sql(company_scope))
         unmapped_role_observation_count = sum(int(row[2]) for row in unmapped_roles)
         if unmapped_roles and log is not None:
@@ -445,8 +463,8 @@ def collect_se_company_person_role_drafts(
                 for source, source_role_code, count, names in unmapped_roles
             )
             log(
-                "Skipping %s observations with unmapped source roles "
-                "(add legitimate ones to the source-owned static mapping): %s",
+                "Publishing %s observations with unmapped source roles as their "
+                "original labels (map them to canonical codes when worthwhile): %s",
                 unmapped_role_observation_count,
                 details,
             )

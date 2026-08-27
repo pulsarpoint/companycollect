@@ -92,7 +92,7 @@ def test_each_source_owns_its_native_role_mapping() -> None:
     assert BOLAGSVERKET_ROLELESS_ROLE_KINDS == {"unknown"}
     assert BOLAGSVERKET_ORIGINAL_ROLE_TO_CANONICAL_ROLE == {
         "Arbetstagarrepresentant": "employee_board_representative",
-        "Vice VD": "deputy_chief_executive_officer"
+        "Vice VD": "deputy_chief_executive_officer",
     }
     assert ESEF_ROLE_CATEGORY_TO_CANONICAL_ROLE["chief_executive"] == (
         "chief_executive_officer"
@@ -140,7 +140,17 @@ def test_role_draft_sql_links_exact_person_draft_and_static_mapping() -> None:
     # M3 (fix round): role_label restored -- the unmapped-role diagnostic and the role
     # review page's wikidata labels must not read a permanently-blank JSON key.
     assert "JSONExtractString(drafts.source_value_json, 'role_label')" in sql
-    assert "INNER JOIN role_mapping AS mapping" in sql
+    # Unmapped roles are KEPT with their original label as the role_code (owner
+    # decision 2026-08-27): a LEFT JOIN plus a label fallback, never an INNER
+    # JOIN that would drop them, never a catch-all bucket.
+    assert "LEFT JOIN role_mapping AS mapping" in sql
+    assert "INNER JOIN role_mapping" not in sql
+    assert "nullIf(mapping.role_code, '')" in sql
+    assert "nullIf(roles.source_role_name, '')" in sql
+    assert "roles.source_role_code\n        ) AS role_code" in sql
+    # A row with mapping, label and source code all empty has no publishable
+    # role_code (the published table CHECKs it non-empty).
+    assert "WHERE trim(role_code) != ''" in sql
     assert "se-company-person-role-observation-v2" in sql
     assert "person_draft_id" in sql
     assert "ifNull(toString(fiscal_year), 'undated')" in sql
@@ -245,8 +255,7 @@ def test_role_corrections_win_per_fiscal_year_not_per_draft() -> None:
     assert "applicable_corrections AS (" in sql
     assert "ORDER BY ledger.created_at DESC, ledger.correction_id DESC" in sql
     assert (
-        "LIMIT 1 BY company_id, subject_person_id, person_draft_id, fiscal_year"
-        in sql
+        "LIMIT 1 BY company_id, subject_person_id, person_draft_id, fiscal_year" in sql
     )
     assert (
         "ifNull(toString(corrections.fiscal_year), 'undated')\n"
@@ -300,9 +309,7 @@ def test_role_sql_never_assumes_join_use_nulls_is_zero() -> None:
     assert "ifNull(corrections.correction_kind, '') != 'remove_role'" in insert_sql
     assert "ifNull(corrections.correction_kind, '') = 'set_role'" in insert_sql
     assert (
-        "ifNull(toString(existing.role_id), '{zero}') = '{zero}'".format(
-            zero=ZERO_UUID
-        )
+        "ifNull(toString(existing.role_id), '{zero}') = '{zero}'".format(zero=ZERO_UUID)
         in insert_sql
     )
     for sql in (insert_sql, quality_sql, publish_sql, stale_sql):
