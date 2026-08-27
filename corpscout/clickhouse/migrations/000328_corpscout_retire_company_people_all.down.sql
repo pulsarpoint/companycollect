@@ -4,8 +4,10 @@ CREATE DATABASE IF NOT EXISTS corpscout;
 -- 000313's down.sql precedent. Rolling back only recreates both tables'
 -- schemas empty (copied from 000145's company_people_all CREATE and
 -- 000288:6-43's se_company_person_draft CREATE, renamed here to its
--- post-000290-rename name) so the tables exist again for a subsequent
--- re-apply or a manual backfill.
+-- post-000290-rename name, plus 000289's pre-rename
+-- ADD COLUMN wikidata_person_id AFTER wikidata_source_record_uids, which
+-- carried forward into the legacy table) so the tables exist again for a
+-- subsequent re-apply or a manual backfill.
 CREATE TABLE IF NOT EXISTS corpscout.company_people_all
 (
     country_iso2 LowCardinality(String),
@@ -41,6 +43,7 @@ CREATE TABLE IF NOT EXISTS corpscout.se_company_person_draft_legacy
     esef_source_record_uids Array(String),
     esef_profile_hash Nullable(FixedString(64)),
     wikidata_source_record_uids Array(String),
+    wikidata_person_id Nullable(String),
     wikidata_profile_hash Nullable(FixedString(64)),
     source_count UInt8 MATERIALIZED
         toUInt8(notEmpty(bolagsverket_source_record_uids))
