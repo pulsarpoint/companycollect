@@ -115,7 +115,6 @@ export default [
       index("routes/admin-se-companies-info.tsx"),
       route("geocoding", "routes/admin-se-companies-geocoding.tsx"),
       route("financial", "routes/admin-se-companies-financial.tsx"),
-      route("people", "routes/admin-se-companies-people.tsx"),
     ]),
     // Not a page: the resource route behind the companies list's Pipeline
     // sheet. Its loader answers that sheet's fetcher and redirects anyone who

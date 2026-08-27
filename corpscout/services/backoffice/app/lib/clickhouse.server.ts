@@ -164,20 +164,3 @@ export async function chInsertSeCompanyAddressCorrections<T extends object>(
     format: "JSONEachRow",
   });
 }
-
-/**
- * Append model suggestions produced by a one-off script or a synchronous
- * per-person re-run in the backoffice. Dagster remains the normal producer.
- * Callers batch rows per call; the writer client's async_insert settings
- * coalesce the rest.
- */
-export async function chInsertSeCompanyPersonSuggestions<T extends object>(
-  values: T[],
-): Promise<void> {
-  if (values.length === 0) return;
-  await getWriteClient().insert({
-    table: "se_company_person_enrichment_observation",
-    values,
-    format: "JSONEachRow",
-  });
-}
