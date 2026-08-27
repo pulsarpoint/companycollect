@@ -175,6 +175,7 @@ def build_llm_client(profile: PersonLlmProfile, *, timeout_seconds: int) -> Open
         max_retries=2,
     )
 
+
 _ROLE_SEPARATOR_PATTERN = re.compile(r"[^a-z0-9]+")
 
 _ROLE_ALIASES = {
@@ -989,7 +990,9 @@ def _company_person_group_keys(
     for decision in k3_merge_groups(rows):
         member_keys = sorted({identity_key_k2(row.full_name) for row in decision.rows})
         published_keys = [
-            key for key in member_keys if person_id_for(company_id, key) in previous_person_ids
+            key
+            for key in member_keys
+            if person_id_for(company_id, key) in previous_person_ids
         ]
         canonical_key = (
             published_keys[0]
@@ -1536,7 +1539,7 @@ def _reuse_stored_suggestions(
         validate_company_people_response(
             response, batch=batch, previous_profiles=previous_profiles
         )
-    except (ValidationError, ValueError):
+    except ValidationError, ValueError:
         return None
     return LlmCompanyPeopleResult(
         response=response,
@@ -1930,9 +1933,18 @@ def _load_company_work(
     *,
     clickhouse: ClickhouseResource,
     statuses: Sequence[CompanyPersonStatus],
-) -> list[CompanyPersonWork]:
+    log: Callable[..., object] | None = None,
+) -> tuple[list[CompanyPersonWork], list[str]]:
+    """Load per-company evidence for the selected statuses.
+
+    A company whose loaded rows no longer match its status (a source table was
+    written between the pending query and this read -- e.g. a concurrent
+    sweden_financial run) is SKIPPED for this run, not a failure: its evidence
+    is in flux, and the next run's pending query picks it up with a consistent
+    snapshot. Returns (work, changed_company_ids).
+    """
     if not statuses:
-        return []
+        return [], []
     selected_company_ids = tuple(status.company_id for status in statuses)
     observations_by_company: dict[str, list[DraftPersonObservation]] = defaultdict(list)
     profiles_by_company: dict[str, list[ExistingPersonProfile]] = defaultdict(list)
@@ -1955,22 +1967,30 @@ def _load_company_work(
             corrections_by_company[company_id].append(correction)
 
     result: list[CompanyPersonWork] = []
+    changed_company_ids: list[str] = []
     for status in statuses:
         observations = tuple(observations_by_company[status.company_id])
         observed_draft_ids = tuple(sorted(item.draft_id for item in observations))
-        if observed_draft_ids != status.draft_ids:
-            raise ValueError(
-                f"Draft rows changed while loading company {status.company_id}"
-            )
         observed_sources = {item.source for item in observations}
-        if len(observations) != status.observation_count:
-            raise ValueError(
-                f"Draft observation count changed for company {status.company_id}"
-            )
-        if len(observed_sources) != status.source_count:
-            raise ValueError(
-                f"Draft source count changed for company {status.company_id}"
-            )
+        changed_reason = (
+            "draft rows changed"
+            if observed_draft_ids != status.draft_ids
+            else "observation count changed"
+            if len(observations) != status.observation_count
+            else "source count changed"
+            if len(observed_sources) != status.source_count
+            else None
+        )
+        if changed_reason is not None:
+            changed_company_ids.append(status.company_id)
+            if log is not None:
+                log(
+                    "Skipping company %s this run: %s while loading "
+                    "(concurrent source write; the next run picks it up)",
+                    status.company_id,
+                    changed_reason,
+                )
+            continue
         result.append(
             CompanyPersonWork(
                 status=status,
@@ -1980,7 +2000,7 @@ def _load_company_work(
                 corrections=tuple(corrections_by_company[status.company_id]),
             )
         )
-    return result
+    return result, changed_company_ids
 
 
 def _insert_person_writes(
@@ -2189,6 +2209,7 @@ def materialize_se_company_people(
         "settled_company_count": 0,
         "suggestion_inserted_count": 0,
         "skipped_multi_source_count": 0,
+        "skipped_concurrent_change_count": 0,
     }
     selected_company_count = 0
     inserted_count = 0
@@ -2231,7 +2252,12 @@ def materialize_se_company_people(
         if not kept_statuses:
             continue
 
-        companies = _load_company_work(clickhouse=clickhouse, statuses=kept_statuses)
+        companies, changed_company_ids = _load_company_work(
+            clickhouse=clickhouse, statuses=kept_statuses, log=log
+        )
+        normalization_metrics["skipped_concurrent_change_count"] += len(
+            changed_company_ids
+        )
         # llm_suggester=None / llm_model=None / maximum_observations_per_request is
         # never read: every company here is single-source (requires_llm is False for
         # all of them by construction), so normalize_companies never enters the LLM
@@ -2248,8 +2274,7 @@ def materialize_se_company_people(
                 if note.is_empty:
                     continue
                 log(
-                    "Stale corrections skipped: company=%s ids=%s "
-                    "emptied_people=%s",
+                    "Stale corrections skipped: company=%s ids=%s emptied_people=%s",
                     note.company_id,
                     [str(value) for value in note.stale_correction_ids],
                     [str(value) for value in note.emptied_person_ids],
@@ -2401,6 +2426,7 @@ def materialize_se_company_person_llm_suggestions(
         "llm_contract_retry_count": 0,
         "emptied_profile_count": 0,
         "skipped_single_source_count": 0,
+        "skipped_concurrent_change_count": 0,
         "suggestion_inserted_count": 0,
     }
     selected_company_count = 0
@@ -2441,7 +2467,10 @@ def materialize_se_company_person_llm_suggestions(
         if not kept_statuses:
             continue
 
-        companies = _load_company_work(clickhouse=clickhouse, statuses=kept_statuses)
+        companies, changed_company_ids = _load_company_work(
+            clickhouse=clickhouse, statuses=kept_statuses, log=log
+        )
+        metrics["skipped_concurrent_change_count"] += len(changed_company_ids)
 
         def suggest_company_people(
             company_id: str,
@@ -2955,7 +2984,9 @@ def se_company_person_llm_suggestions(
         llm_profile=profile,
         log=context.log.info,
     )
-    return dg.MaterializeResult(metadata={**metadata, "table": QUALIFIED_SUGGESTION_TABLE})
+    return dg.MaterializeResult(
+        metadata={**metadata, "table": QUALIFIED_SUGGESTION_TABLE}
+    )
 
 
 @dg.asset(
