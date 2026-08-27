@@ -13,7 +13,13 @@ from dagster_v3.defs.company_people.corrections import (
     CORRECTION_TABLE,
     ROLE_CORRECTION_KINDS,
 )
-from dagster_v3.defs.company_people.draft import normalized_company_ids
+from dagster_v3.defs.company_people.source_views import (
+    SE_COMPANY_PERSON_BOLAGSVERKET_VIEW,
+    SE_COMPANY_PERSON_ESEF_VIEW,
+    SE_COMPANY_PERSON_WIKIDATA_VIEW,
+    build_se_company_person_source_observations_sql,
+    normalized_company_ids,
+)
 from dagster_v3.defs.esef_filings.roles import (
     ESEF_ROLE_CATEGORY_TO_CANONICAL_ROLE,
     ESEF_ROLELESS_ROLE_CATEGORIES,
@@ -30,11 +36,22 @@ from dagster_v3.defs.wikidata.roles import (
 DATABASE = "corpscout"
 GROUP_NAME = "company_people"
 
-PERSON_DRAFT_TABLE = "se_company_person_draft"
 PERSON_TABLE = "se_company_person"
 ROLE_TYPE_TABLE = "company_person_role_type"
 ROLE_DRAFT_TABLE = "se_company_person_role_draft"
 ROLE_TABLE = "se_company_person_role"
+
+# Unqualified names of the three source views (source_views.py, migrations 000330/000331)
+# role-draft collection reads instead of se_company_person_draft (retired from this path,
+# Task 3).
+SOURCE_VIEW_TABLES = tuple(
+    view.removeprefix(f"{DATABASE}.")
+    for view in (
+        SE_COMPANY_PERSON_BOLAGSVERKET_VIEW,
+        SE_COMPANY_PERSON_ESEF_VIEW,
+        SE_COMPANY_PERSON_WIKIDATA_VIEW,
+    )
+)
 
 QUALIFIED_ROLE_DRAFT_TABLE = f"{DATABASE}.{ROLE_DRAFT_TABLE}"
 QUALIFIED_ROLE_TABLE = f"{DATABASE}.{ROLE_TABLE}"
@@ -214,6 +231,18 @@ def _roleless_filter_sql(source_column: str, role_code_column: str) -> str:
 
 
 def _source_roles_sql(company_ids: Sequence[str]) -> str:
+    """The role-draft source read: the shared source_observations CTE (source_views.py),
+    not se_company_person_draft (retired from this path, Task 3). ``person_draft_id`` is the
+    same deterministic ``draft_id`` normalization.py computes for the same view row -- both
+    modules splice in the identical shared CTE, so the two never drift.
+
+    Wikidata's ``source_role_name`` reads a ``role_label`` JSON key (fix round: restored to
+    both the wikidata view, migration 000331, and the shared source_observations JSON blob --
+    it briefly did not carry the key at all, which silently blanked this diagnostic and the
+    role review page's wikidata labels). ``role_code`` mapping itself never depended on
+    ``role_label`` -- it always keys off ``role_property`` (a stable P-code) -- so this only
+    ever affected what a human reads, never what got mapped.
+    """
     company_filter = _company_filter("drafts.company_id", company_ids)
     return f"""role_mapping AS (
     SELECT source, source_role_code, role_code
@@ -222,6 +251,7 @@ def _source_roles_sql(company_ids: Sequence[str]) -> str:
         {_role_mapping_values_sql()}
     )
 ),
+{build_se_company_person_source_observations_sql(cte_name="draft_observations")},
 source_roles AS (
     SELECT
         drafts.draft_id AS person_draft_id,
@@ -243,7 +273,7 @@ source_roles AS (
         ) AS source_role_name,
         drafts.fiscal_year,
         drafts.source_observed_at
-    FROM corpscout.se_company_person_draft AS drafts FINAL
+    FROM draft_observations AS drafts
     WHERE {company_filter}
 )"""
 
@@ -382,7 +412,7 @@ def collect_se_company_person_role_drafts(
     assert_clickhouse_tables_exist(
         clickhouse,
         database=DATABASE,
-        tables=(PERSON_DRAFT_TABLE, ROLE_TYPE_TABLE, ROLE_DRAFT_TABLE),
+        tables=(*SOURCE_VIEW_TABLES, ROLE_TYPE_TABLE, ROLE_DRAFT_TABLE),
     )
 
     stage_table = f"_tmp_{ROLE_DRAFT_TABLE}_{uuid.uuid4().hex}"
@@ -866,9 +896,22 @@ class SECompanyPersonRoleConfig(dg.Config):
     company_ids: list[str] = Field(default_factory=list)
 
 
+# The transitive read footprint of the three source views -- mirrors normalization.py's
+# _SOURCE_ASSET_DEPS (same views, Task 3): se_company_person_draft_clickhouse is retired
+# from this path.
+_SOURCE_ASSET_DEPS = (
+    dg.AssetKey("se_financial_report_signatories_clickhouse"),
+    dg.AssetKey("esef_document_people_clickhouse"),
+    dg.AssetKey("company_identifier_clickhouse"),
+    dg.AssetKey("wikidata_company_identifiers"),
+    dg.AssetKey("wikidata_company_people"),
+    dg.AssetKey("wikidata_persons"),
+)
+
+
 @dg.asset(
     name="se_company_person_role_draft_clickhouse",
-    deps=[dg.AssetKey("se_company_person_draft_clickhouse")],
+    deps=_SOURCE_ASSET_DEPS,
     group_name=GROUP_NAME,
     kinds={"clickhouse", "python"},
     metadata={"table": QUALIFIED_ROLE_DRAFT_TABLE},

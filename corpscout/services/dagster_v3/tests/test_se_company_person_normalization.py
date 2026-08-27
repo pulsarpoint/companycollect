@@ -1,3 +1,4 @@
+import hashlib
 import json
 import uuid
 from dataclasses import replace
@@ -12,6 +13,11 @@ from pydantic import ValidationError
 from dagster_v3.defs.company_people.corrections import (
     PersonCorrection,
     StoredSuggestion,
+)
+from dagster_v3.defs.company_people.identity_eval import (
+    PersonObservationRow,
+    identity_key_k2,
+    k3_merge_groups,
 )
 from dagster_v3.defs.company_people.normalization import (
     DIRECT_PROMPT_VERSION,
@@ -28,6 +34,7 @@ from dagster_v3.defs.company_people.normalization import (
     SuggestionWrite,
     batch_company_observations,
     build_company_people_request,
+    build_company_observations_sql,
     build_company_statistics_sql,
     build_pending_companies_sql,
     normalize_companies,
@@ -81,6 +88,7 @@ def _observation(
     return DraftPersonObservation(
         draft_id=uuid.UUID(int=index),
         source=source,
+        source_record_uid=f"source-record-{index}",
         fiscal_year=2025,
         source_observed_at=NOW + timedelta(seconds=index),
         source_value=source_value,
@@ -166,6 +174,23 @@ def test_company_status_projects_the_join_key_instead_of_drafts_star() -> None:
             "draft_ids",
         ):
             assert f"drafts.{column} AS {column}," in sql
+
+
+def test_company_status_and_observations_read_only_the_three_views() -> None:
+    """THE PIN: se_company_person_draft is retired from every read path Task 3 touches --
+    company status, pending selection, and the per-observation read all resolve through the
+    shared source_observations CTE over the three SE person views, nothing else."""
+    for sql in (
+        build_company_statistics_sql(),
+        build_pending_companies_sql(),
+        build_company_observations_sql(),
+    ):
+        assert "se_company_person_draft" not in sql
+        assert "FROM corpscout.se_company_person_bolagsverket" in sql
+        assert "FROM corpscout.se_company_person_esef" in sql
+        assert "FROM corpscout.se_company_person_wikidata" in sql
+        assert "source_observations AS (" in sql
+        assert "WHERE trim(full_name) != ''" in sql
 
 
 @pytest.mark.parametrize(
@@ -448,6 +473,202 @@ def test_single_source_company_is_copied_without_llm() -> None:
     assert metrics["llm_request_count"] == 0
 
 
+def test_person_id_hash_domain_is_v2() -> None:
+    """THE PIN: person_id moved off se-company-person-v1 (first|last token) to the v2
+    domain, keyed by an already-canonical group key rather than deriving one internally."""
+    digest = hashlib.sha256(
+        f"se-company-person-v2\n{COMPANY_ID}\nanna svensson".encode()
+    ).hexdigest()
+    assert person_id_for(COMPANY_ID, "anna svensson") == uuid.UUID(hex=digest[:32])
+    # v1's first|last-token domain must not appear anywhere in the new formula.
+    v1_digest = hashlib.sha256(
+        f"se-company-person-v1\n{COMPANY_ID}\nanna|svensson".encode()
+    ).hexdigest()
+    assert person_id_for(COMPANY_ID, "anna svensson") != uuid.UUID(hex=v1_digest[:32])
+
+
+def test_shared_cross_language_vector_matches_the_typescript_twin() -> None:
+    """M6 (fix round, minor): ONE test vector asserted in BOTH language's test suites --
+    company_id + name + expected UUID -- so a byte-for-byte divergence between
+    dagster_v3.normalization.person_id_for and backoffice's seCompanyPersonId
+    (se-company-person.server.ts) is caught on either side. See the matching assertion in
+    corpscout/services/backoffice/tests/se-company-person.server.test.ts
+    ("matches the Dagster person_id_for hash (v2 domain, K2 canonical key)" ->
+    SHARED_VECTOR). Computed independently in Node during the fix round and confirmed to
+    match this exact value before either test was written.
+    """
+    assert person_id_for("5565200028", identity_key_k2("Anna Svensson")) == uuid.UUID(
+        "a95ef2f2-b817-c3f7-2ecf-e78d42acfc10"
+    )
+
+
+def test_k3_canonical_key_is_not_corrupted_by_a_literal_pipe_in_the_name() -> None:
+    """THE PIN for M1 (fix round, minor): the canonical key is recovered as
+    ``identity_key_k2(row.full_name)`` per row, NOT by splitting
+    ``MergeDecision.k3_person_key`` on "|" -- a name that itself contains a literal "|" (a
+    plausible OCR/scrape artifact) would corrupt that split. A single observation named
+    "Anna|Svensson" must resolve to identity_key_k2("Anna|Svensson") verbatim, not the two
+    pieces "anna" / "svensson" a naive split would produce.
+    """
+    observation = _observation(
+        "bolagsverket", name="Anna|Svensson", role="board_member", index=1
+    )
+    company = _company(observation)
+
+    writes, _suggestions, _metrics, _notes = normalize_companies(
+        [company],
+        llm_suggester=None,
+        llm_model=None,
+        maximum_observations_per_request=10,
+        created_at=NOW,
+    )
+
+    assert len(writes) == 1
+    assert writes[0].person_id == person_id_for(
+        COMPANY_ID, identity_key_k2("Anna|Svensson")
+    )
+
+
+def test_single_source_company_k3_merges_a_middle_name_variant_into_one_person() -> None:
+    """THE PIN (K3 key production): "Anna Maria Svensson" and "Anna Svensson" in one
+    single-source company resolve to the SAME person_id -- K3's rule (a), reused directly
+    from identity_eval.k3_merge_groups (not forked), replacing normalization's old K1
+    (first|last token) grouping. The group's canonical key is its shortest member K2 key.
+    """
+    base = _observation(
+        "bolagsverket", name="Anna Svensson", role="board_member", index=1
+    )
+    middle_name_variant = _observation(
+        "bolagsverket", name="Anna Maria Svensson", role="board_member", index=2
+    )
+    company = _company(base, middle_name_variant)
+
+    writes, _suggestions, _metrics, _notes = normalize_companies(
+        [company],
+        llm_suggester=None,
+        llm_model=None,
+        maximum_observations_per_request=10,
+        created_at=NOW,
+    )
+
+    assert len(writes) == 1
+    expected_id = person_id_for(COMPANY_ID, identity_key_k2("Anna Svensson"))
+    assert writes[0].person_id == expected_id
+    assert set(writes[0].draft_ids) == {base.draft_id, middle_name_variant.draft_id}
+
+
+def test_single_source_company_k3_keeps_ambiguous_middle_names_apart() -> None:
+    """The mirror image of the merge case: two DIFFERENT middle-name variants sharing one
+    K1 bucket have no UNIQUE minimal superset between them, so K3 (unlike the retired K1
+    grouping) keeps them as two separate people."""
+    first = _observation(
+        "bolagsverket", name="Anna B Svensson", role="board_member", index=1
+    )
+    second = _observation(
+        "bolagsverket", name="Anna C Svensson", role="board_member", index=2
+    )
+    company = _company(first, second)
+
+    writes, _suggestions, _metrics, _notes = normalize_companies(
+        [company],
+        llm_suggester=None,
+        llm_model=None,
+        maximum_observations_per_request=10,
+        created_at=NOW,
+    )
+
+    assert len(writes) == 2
+    assert {write.person_id for write in writes} == {
+        person_id_for(COMPANY_ID, identity_key_k2("Anna B Svensson")),
+        person_id_for(COMPANY_ID, identity_key_k2("Anna C Svensson")),
+    }
+
+
+def test_k3_group_canonical_key_prefers_a_previously_published_member_over_the_shortest() -> (
+    None
+):
+    """THE PIN for the CONTROLLER RULING (fix round, amends the original shortest-member
+    rule): stability beats minimality. "Anna Maria Svensson" was published FIRST (only
+    observation at the time); a later run adds the shorter "Anna Svensson", and K3 merges
+    them (rule (a)). The group's person_id must stay the ALREADY-PUBLISHED one -- not silently
+    move to the new, shorter name's hash, which is exactly the id-churn the shortest-only
+    rule would have caused.
+    """
+    published_name = "Anna Maria Svensson"
+    published_id = person_id_for(COMPANY_ID, identity_key_k2(published_name))
+    original = _observation(
+        "bolagsverket", name=published_name, role="board_member", index=1
+    )
+    new_shorter = _observation(
+        "bolagsverket", name="Anna Svensson", role="board_member", index=2
+    )
+    previous = ExistingPersonProfile(
+        person_id=published_id,
+        name=published_name,
+        description=None,
+        draft_ids=(original.draft_id,),
+        created_at=NOW - timedelta(days=1),
+        draft_set_hash="a" * 64,
+    )
+    company = _company(original, new_shorter, previous_profiles=(previous,))
+
+    writes, _suggestions, _metrics, _notes = normalize_companies(
+        [company],
+        llm_suggester=None,
+        llm_model=None,
+        maximum_observations_per_request=10,
+        created_at=NOW,
+    )
+
+    assert len(writes) == 1
+    assert writes[0].person_id == published_id, (
+        "must stay the previously-published id, not move to "
+        f"{person_id_for(COMPANY_ID, identity_key_k2('Anna Svensson'))} "
+        "(the shortest-member-only rule's answer)"
+    )
+    assert set(writes[0].draft_ids) == {original.draft_id, new_shorter.draft_id}
+
+
+def test_k3_group_canonical_key_ignores_a_tombstoned_members_previous_id() -> None:
+    """A tombstoned (merged-away) profile's id must NOT count as "previously published" for
+    the stability rule -- reusing it would resurrect a merged-away identity. Here
+    "Anna Maria Svensson" was published, then merged away (tombstoned); a later run's K3
+    group spanning both names must fall back to the shortest-member rule, not silently
+    resurrect the tombstone's id.
+    """
+    tombstoned_name = "Anna Maria Svensson"
+    tombstoned_id = person_id_for(COMPANY_ID, identity_key_k2(tombstoned_name))
+    target_id = uuid.UUID(int=5000)
+    original = _observation(
+        "bolagsverket", name=tombstoned_name, role="board_member", index=1
+    )
+    new_shorter = _observation(
+        "bolagsverket", name="Anna Svensson", role="board_member", index=2
+    )
+    tombstone = ExistingPersonProfile(
+        person_id=tombstoned_id,
+        name=tombstoned_name,
+        description=None,
+        draft_ids=(original.draft_id,),
+        created_at=NOW - timedelta(days=1),
+        draft_set_hash="a" * 64,
+        merged_into_person_id=target_id,
+    )
+    company = _company(original, new_shorter, previous_profiles=(tombstone,))
+
+    writes, _suggestions, _metrics, _notes = normalize_companies(
+        [company],
+        llm_suggester=None,
+        llm_model=None,
+        maximum_observations_per_request=10,
+        created_at=NOW,
+    )
+
+    assert len(writes) == 1
+    assert writes[0].person_id != tombstoned_id, "must not resurrect the tombstoned id"
+    assert writes[0].person_id == person_id_for(COMPANY_ID, identity_key_k2("Anna Svensson"))
+
+
 def test_multi_source_company_is_sent_once_when_below_limit() -> None:
     observations = (
         _observation(
@@ -506,6 +727,78 @@ def test_multi_source_company_is_sent_once_when_below_limit() -> None:
     assert metrics["llm_completion_tokens"] == 5
 
 
+def test_multi_source_llm_fallback_is_k3_keyed_not_raw_k2() -> None:
+    """THE PIN for the identity-fork fix (fix round, Important, reviewer-confirmed worked
+    example): before this fix, the multi-source path's suggestion/name fallback keyed off raw
+    K2, so an LLM that (conservatively) reports a middle-name variant as its OWN suggestion --
+    without setting existing_person_id -- would get a DIFFERENT person_id than K3 (and the
+    single-source path) would assign, purely because two sources happened to observe this
+    person instead of one. That was a v2 regression: v1's single-source and multi-source
+    paths agreed, because K1 was cheap enough to key both the same way.
+
+    Two bolagsverket + esef observations of "Anna Svensson" / "Anna Maria Svensson" K3-merge
+    into ONE group (rule (a): unique minimal superset) -- confirmed independently via
+    identity_eval.k3_merge_groups in the assertion below, not assumed. The fake LLM reports
+    them as TWO SEPARATE suggestions, deliberately WITHOUT existing_person_id, to force the
+    fallback path. Both must land on the SAME person_id.
+    """
+    base = _observation(
+        "bolagsverket", name="Anna Svensson", role="board_member", index=1
+    )
+    middle_name_variant = _observation(
+        "esef", name="Anna Maria Svensson", role="board_member", index=2
+    )
+    company = _company(base, middle_name_variant)
+
+    # Independently confirm the K3 premise this test relies on, so a change to K3's rules
+    # elsewhere fails loudly here instead of this test silently asserting something else.
+    decisions = k3_merge_groups(
+        [
+            PersonObservationRow(
+                company_id=COMPANY_ID, source="bolagsverket",
+                source_record_uid=base.source_record_uid, full_name="Anna Svensson",
+            ),
+            PersonObservationRow(
+                company_id=COMPANY_ID, source="esef",
+                source_record_uid=middle_name_variant.source_record_uid,
+                full_name="Anna Maria Svensson",
+            ),
+        ]
+    )
+    assert len(decisions) == 1, "premise: K3 merges these two into one group"
+
+    def suggest(
+        company_id: str,
+        batch: CompanyObservationBatch,
+        previous_profiles: tuple[ExistingPersonProfile, ...],
+        request: dict[str, object],
+    ) -> LlmCompanyPeopleResult:
+        del company_id, previous_profiles, request
+        return _llm_result(
+            [
+                LlmCompanyPersonSuggestion(
+                    name="Anna Svensson", draft_ids=[base.draft_id]
+                ),
+                LlmCompanyPersonSuggestion(
+                    name="Anna Maria Svensson", draft_ids=[middle_name_variant.draft_id]
+                ),
+            ]
+        )
+
+    writes, _suggestions, _metrics, _notes = normalize_companies(
+        [company],
+        llm_suggester=suggest,
+        llm_model="deepseek-v4-flash",
+        maximum_observations_per_request=10,
+        created_at=NOW,
+    )
+
+    assert len(writes) == 1, "both LLM suggestions must resolve to ONE published person"
+    expected_id = person_id_for(COMPANY_ID, identity_key_k2("Anna Svensson"))
+    assert writes[0].person_id == expected_id
+    assert set(writes[0].draft_ids) == {base.draft_id, middle_name_variant.draft_id}
+
+
 def test_large_company_sends_role_batches_and_all_observations() -> None:
     observations = (
         _observation("esef", name="Board One", role="board_member", index=1),
@@ -551,7 +844,10 @@ def test_large_company_sends_role_batches_and_all_observations() -> None:
     assert metrics["llm_observation_count"] == 5
 
 
-def test_main_asset_depends_on_draft_and_combined_job_runs_both() -> None:
+def test_main_asset_depends_on_the_source_views_and_combined_job_runs_both() -> None:
+    """Task 3: se_company_person_draft_clickhouse is retired from this read path -- the main
+    asset now depends on the same six upstream source-table assets the three SE person views
+    (source_views.py) transitively read, and the combined job no longer needs a draft step."""
     from dagster_v3.definitions import defs as load_defs
 
     repository = load_defs().get_repository_def()
@@ -560,7 +856,12 @@ def test_main_asset_depends_on_draft_and_combined_job_runs_both() -> None:
     )
 
     assert person_asset.parent_keys == {
-        dg.AssetKey("se_company_person_draft_clickhouse")
+        dg.AssetKey("se_financial_report_signatories_clickhouse"),
+        dg.AssetKey("esef_document_people_clickhouse"),
+        dg.AssetKey("company_identifier_clickhouse"),
+        dg.AssetKey("wikidata_company_identifiers"),
+        dg.AssetKey("wikidata_company_people"),
+        dg.AssetKey("wikidata_persons"),
     }
     job_keys = {
         key.path[-1]
@@ -569,7 +870,6 @@ def test_main_asset_depends_on_draft_and_combined_job_runs_both() -> None:
         ).asset_layer.executable_asset_keys
     }
     assert job_keys == {
-        "se_company_person_draft_clickhouse",
         "se_company_person_role_draft_clickhouse",
         "se_company_person_clickhouse",
         "se_company_person_role_clickhouse",
@@ -753,7 +1053,7 @@ def _previous(
     draft_set_hash: str,
 ) -> ExistingPersonProfile:
     return ExistingPersonProfile(
-        person_id=person_id_for(COMPANY_ID, name),
+        person_id=person_id_for(COMPANY_ID, identity_key_k2(name)),
         name=name,
         description=None,
         draft_ids=tuple(sorted(draft_ids)),
@@ -764,7 +1064,7 @@ def _previous(
 
 def test_override_field_wins_over_deterministic_name_and_records_provenance() -> None:
     observation = _observation("bolagsverket", name="Anna Svensson", role="ceo", index=1)
-    subject = person_id_for(COMPANY_ID, "Anna Svensson")
+    subject = person_id_for(COMPANY_ID, identity_key_k2("Anna Svensson"))
     previous = _previous("Anna Svensson", (observation.draft_id,), "a" * 64)
     company = CompanyPersonWork(
         status=_company(observation).status,
@@ -799,7 +1099,7 @@ def test_override_field_wins_over_deterministic_name_and_records_provenance() ->
 
 def test_override_is_stale_when_evidence_hash_moved() -> None:
     observation = _observation("bolagsverket", name="Anna Svensson", role="ceo", index=1)
-    subject = person_id_for(COMPANY_ID, "Anna Svensson")
+    subject = person_id_for(COMPANY_ID, identity_key_k2("Anna Svensson"))
     previous = _previous("Anna Svensson", (observation.draft_id,), "b" * 64)
     company = CompanyPersonWork(
         status=_company(observation).status,
@@ -837,8 +1137,8 @@ def test_merge_persons_moves_evidence_and_tombstones_the_subject() -> None:
     # The two names must key differently (anna|svensson vs anna|svensson-berg),
     # otherwise the deterministic pass folds them into one profile and the merge
     # subject never exists in the run.
-    subject = person_id_for(COMPANY_ID, "Anna Svensson-Berg")
-    target = person_id_for(COMPANY_ID, "Anna Svensson")
+    subject = person_id_for(COMPANY_ID, identity_key_k2("Anna Svensson-Berg"))
+    target = person_id_for(COMPANY_ID, identity_key_k2("Anna Svensson"))
     previous_subject = _previous("Anna Svensson-Berg", (second.draft_id,), "c" * 64)
     previous_target = _previous("Anna Svensson", (first.draft_id,), "d" * 64)
     company = CompanyPersonWork(
@@ -877,8 +1177,8 @@ def test_reassign_draft_requires_the_draft_on_the_subject() -> None:
     second = _observation(
         "bolagsverket", name="Erik Eriksson", role="board_member", index=2
     )
-    anna = person_id_for(COMPANY_ID, "Anna Svensson")
-    erik = person_id_for(COMPANY_ID, "Erik Eriksson")
+    anna = person_id_for(COMPANY_ID, identity_key_k2("Anna Svensson"))
+    erik = person_id_for(COMPANY_ID, identity_key_k2("Erik Eriksson"))
     company = CompanyPersonWork(
         status=_company(first, second).status,
         observations=(first, second),
@@ -913,7 +1213,7 @@ def test_reassign_draft_requires_the_draft_on_the_subject() -> None:
 def test_split_person_creates_a_new_deterministic_person_from_payload_name() -> None:
     first = _observation("bolagsverket", name="Anna Svensson", role="ceo", index=1)
     second = _observation("bolagsverket", name="Anna Svensson", role="auditor", index=2)
-    anna = person_id_for(COMPANY_ID, "Anna Svensson")
+    anna = person_id_for(COMPANY_ID, identity_key_k2("Anna Svensson"))
     company = CompanyPersonWork(
         status=_company(first, second).status,
         observations=(first, second),
@@ -941,7 +1241,7 @@ def test_split_person_creates_a_new_deterministic_person_from_payload_name() -> 
     )
 
     by_id = {write.person_id: write for write in writes}
-    new_id = person_id_for(COMPANY_ID, "Anna Svensson (auditor)")
+    new_id = person_id_for(COMPANY_ID, identity_key_k2("Anna Svensson (auditor)"))
     assert by_id[anna].draft_ids == (first.draft_id,)
     assert by_id[new_id].draft_ids == (second.draft_id,)
     assert by_id[new_id].name == "Anna Svensson (auditor)"

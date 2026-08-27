@@ -46,7 +46,7 @@
 
 **Files:** Modify `src/dagster_v3/defs/company_people/normalization.py` (source reads: draft table → the three views; `person_id_for` → domain `se-company-person-v2` keyed by the K3 deterministic key; provenance: `draft_ids` semantics replaced by source_record_uids + observed 000289 hashes — check migration 000291's columns and add a small ALTER migration 000330 ONLY if a provenance column must be renamed/added, else reuse existing arrays), Modify `roles.py` (role-draft source CTE reads the views; role hashes keep their v2 domain), Modify `corrections.py` only if staleness inputs change shape. Backoffice `se-company-person.server.ts` re-implements the person-id hash in TS — update it to the v2 domain + K3 key IN THE SAME change (grep `se-company-person-v1`).
 - [ ] **Step 1:** failing tests pinning: v2 hash domain, K3 key production ("Anna Maria Svensson" and "Anna Svensson" same person_id within a company), views as the only sources (fake-CH dispatch keys), provenance arrays carry view uids+hashes.
-- [ ] **Steps 2-4:** RED → implement → GREEN; run the whole `-k company_people` suite + the clickhouse-local person harness.
+- [ ] **Steps 2-4:** RED → implement → GREEN; run `uv run pytest tests/test_se_company_person_views.py tests/test_se_company_person_identity_eval.py tests/test_se_company_person_normalization_live.py tests/test_se_company_person_clickhouse_local.py -q` (NOTE: `-k company_people` does NOT match the `test_se_company_person_*` files — name tests explicitly by path) + the clickhouse-local person harness.
 - [ ] **Step 5:** Commit `feat(se-people): view-fed normalization with K3 person identity (v2 hash domain)`.
 
 ## Task 4: Backoffice-triggered LLM merge asset

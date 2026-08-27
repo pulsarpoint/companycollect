@@ -8,9 +8,22 @@ otherwise the module skips.
 The script runs twice, once per `join_use_nulls` setting, and must answer the
 same both times. A LEFT JOIN miss is the column's default with the setting off
 and NULL with it on, and every guard in the role SQL reads one of those misses.
+
+TASK 3: the statistics/pending company-status queries (`build_company_statistics_sql`,
+`build_pending_companies_sql`) now read the three SE person source views instead of
+`se_company_person_draft` (retired from this path), so this file's fixture builds the same
+minimal upstream tables + migrations 000330/000331 as `test_se_company_person_views.py`,
+seeded with one bolagsverket + one esef row for PENDING_COMPANY and one bolagsverket row for
+SETTLED_COMPANY -- the same 2-source-pending / 1-source-settled shape the original
+`se_company_person_draft`-backed fixture had. The role-assignment half of this file
+(`se_company_person_role_draft`/`se_company_person`/`se_company_person_correction`) is
+untouched by Task 3 -- those rows are still hand-inserted with arbitrary UUIDs, since
+`build_role_assignments_insert_sql` joins on whatever `person_draft_id`/`draft_ids` it finds
+there and never recomputes them.
 """
 
 import functools
+import re
 import shutil
 import subprocess
 import uuid
@@ -30,6 +43,9 @@ from dagster_v3.defs.company_people.roles import (
     build_role_assignments_insert_sql,
     build_stale_role_corrections_sql,
 )
+from dagster_v3.defs.company_people.source_views import (
+    build_se_company_person_source_observations_sql,
+)
 
 pytestmark = pytest.mark.integration
 
@@ -41,14 +57,239 @@ MIGRATIONS = (
     "000293_corpscout_se_company_person_roles_by_year.up.sql",
     "000294_corpscout_employee_board_representative_role.up.sql",
     "000295_corpscout_se_company_person_corrections.up.sql",
+    "000330_corpscout_se_company_person_views.up.sql",
+    "000331_corpscout_se_company_person_views_observed_at.up.sql",
 )
 CLICKHOUSE_IMAGE = "clickhouse/clickhouse-server:26.5"
-APPLIED_PREFIXES = ("CREATE DATABASE", "CREATE TABLE", "ALTER TABLE", "DROP TABLE", "INSERT")
+APPLIED_PREFIXES = (
+    "CREATE DATABASE",
+    "CREATE TABLE",
+    "CREATE OR REPLACE VIEW",
+    "ALTER TABLE",
+    "DROP TABLE",
+    "INSERT",
+)
 
 PENDING_COMPANY = "5565200028"
 SETTLED_COMPANY = "5560125220"
 STAGE_TABLE = "`corpscout`.`stage_roles`"
 NOW = datetime(2026, 8, 22, 9, tzinfo=UTC)
+
+# The upstream tables the three SE person source views (migrations 000330/000331) read.
+# Trimmed to what the views themselves select plus the MATERIALIZED evidence-hash columns
+# (000289) -- the same shape test_se_company_person_views.py's fixture uses, minus the parts
+# this file's cases never exercise (no wikidata rows are inserted; those tables still have to
+# exist for the wikidata view's CREATE to resolve, so they are declared empty).
+_UPSTREAM_SCHEMA_SQL = """
+CREATE TABLE corpscout.se_financial_report_signatories
+(
+    company_id String,
+    fiscal_year Int32,
+    statement_key String,
+    source_record_uid String,
+    signatory_kind LowCardinality(String),
+    person_seq UInt16,
+    signatory_uid FixedString(64) MATERIALIZED
+        lower(hex(SHA256(concat(
+            'sweden-financial-report-signatory-v1\n',
+            company_id, '\n', statement_key, '\n', signatory_kind, '\n',
+            toString(person_seq)
+        )))),
+    first_name String,
+    last_name String,
+    person_profile_hash FixedString(64) MATERIALIZED
+        lower(hex(SHA256(concat(
+            'company-person-profile-v1\n',
+            toString(length(lowerUTF8(trim(first_name)))), ':',
+            lowerUTF8(trim(first_name)), '\n',
+            toString(length(lowerUTF8(trim(last_name)))), ':',
+            lowerUTF8(trim(last_name))
+        )))),
+    role_original String,
+    role_kind LowCardinality(String),
+    person_role_hash FixedString(64) MATERIALIZED
+        lower(hex(SHA256(concat(
+            'company-person-role-v1\n',
+            toString(length(lowerUTF8(trim(role_original)))), ':',
+            lowerUTF8(trim(role_original)), '\n',
+            toString(length(lowerUTF8(trim(role_kind)))), ':',
+            lowerUTF8(trim(role_kind)), '\n',
+            toString(length(lowerUTF8(trim(signatory_kind)))), ':',
+            lowerUTF8(trim(signatory_kind)), '\n',
+            toString(fiscal_year)
+        )))),
+    resolved_at DateTime64(3, 'UTC')
+)
+ENGINE = MergeTree
+ORDER BY (company_id, fiscal_year, statement_key, signatory_kind, person_seq);
+
+CREATE TABLE corpscout.esef_document_people
+(
+    candidate_uid FixedString(64),
+    source_record_uid FixedString(64),
+    source_document_id String,
+    country_code LowCardinality(String),
+    company_id String,
+    fiscal_year UInt16,
+    name String,
+    person_profile_hash FixedString(64) MATERIALIZED
+        lower(hex(SHA256(concat(
+            'company-person-profile-v1\n',
+            toString(length(lowerUTF8(trim(name)))), ':', lowerUTF8(trim(name)), '\n',
+            '0:'
+        )))),
+    role String,
+    role_category LowCardinality(String),
+    organization String,
+    status LowCardinality(String),
+    person_role_hash FixedString(64) MATERIALIZED
+        lower(hex(SHA256(concat(
+            'company-person-role-v1\n',
+            toString(length(lowerUTF8(trim(role)))), ':', lowerUTF8(trim(role)), '\n',
+            toString(length(lowerUTF8(trim(role_category)))), ':',
+            lowerUTF8(trim(role_category)), '\n',
+            toString(length(lowerUTF8(trim(organization)))), ':',
+            lowerUTF8(trim(organization)), '\n',
+            toString(length(lowerUTF8(trim(status)))), ':', lowerUTF8(trim(status)), '\n',
+            ifNull(toString(effective_from), ''), '\n',
+            ifNull(toString(effective_to), ''), '\n',
+            toString(fiscal_year)
+        )))),
+    effective_from Nullable(Date32),
+    effective_to Nullable(Date32),
+    confidence Float32,
+    evidence_ids Array(String),
+    model_provider LowCardinality(String),
+    model_name String,
+    prompt_version String,
+    source_run_id String,
+    extracted_at DateTime64(3, 'UTC')
+)
+ENGINE = ReplacingMergeTree(extracted_at)
+ORDER BY (country_code, company_id, fiscal_year, source_record_uid, candidate_uid);
+
+CREATE TABLE corpscout.wikidata_company_identifiers
+(
+    wikidata_id String,
+    identifier_type LowCardinality(String),
+    wikidata_property_id LowCardinality(String),
+    identifier_value String,
+    identifier_scope Nullable(String),
+    is_primary UInt8,
+    source_system LowCardinality(String),
+    source_run_id String,
+    source_record_id String,
+    source_payload_hash FixedString(64),
+    retrieved_at DateTime64(3, 'UTC'),
+    resolved_at DateTime64(3, 'UTC')
+)
+ENGINE = ReplacingMergeTree(resolved_at)
+ORDER BY (identifier_type, identifier_value, wikidata_id);
+
+CREATE TABLE corpscout.wikidata_company_people
+(
+    company_wikidata_id String,
+    person_wikidata_id String,
+    role_property LowCardinality(String),
+    role_label LowCardinality(String),
+    start_date Nullable(Date),
+    end_date Nullable(Date),
+    is_current UInt8,
+    source_system LowCardinality(String),
+    source_run_id String,
+    source_record_id String,
+    source_payload_hash FixedString(64),
+    person_role_hash FixedString(64) MATERIALIZED
+        lower(hex(SHA256(concat(
+            'company-person-role-v1\n',
+            toString(length(lowerUTF8(trim(role_property)))), ':',
+            lowerUTF8(trim(role_property)), '\n',
+            toString(length(lowerUTF8(trim(role_label)))), ':',
+            lowerUTF8(trim(role_label)), '\n',
+            ifNull(toString(start_date), ''), '\n',
+            ifNull(toString(end_date), ''), '\n',
+            toString(is_current)
+        )))),
+    retrieved_at DateTime64(3, 'UTC'),
+    resolved_at DateTime64(3, 'UTC')
+)
+ENGINE = ReplacingMergeTree(resolved_at)
+ORDER BY (company_wikidata_id, role_property, person_wikidata_id);
+
+CREATE TABLE corpscout.wikidata_persons
+(
+    person_wikidata_id String,
+    source_record_uid String,
+    person_profile_hash FixedString(64) MATERIALIZED
+        lower(hex(SHA256(concat(
+            'company-person-profile-v1\n',
+            toString(length(lowerUTF8(trim(name)))), ':', lowerUTF8(trim(name)), '\n',
+            toString(length(lowerUTF8(trim(ifNull(description, ''))))), ':',
+            lowerUTF8(trim(ifNull(description, '')))
+        )))),
+    name String,
+    name_normalized String,
+    description Nullable(String),
+    birth_year Nullable(UInt16),
+    image_url Nullable(String),
+    wikidata_url Nullable(String),
+    source_system LowCardinality(String),
+    source_run_id String,
+    source_record_id String,
+    source_payload_hash FixedString(64),
+    retrieved_at DateTime64(3, 'UTC'),
+    resolved_at DateTime64(3, 'UTC')
+)
+ENGINE = ReplacingMergeTree(resolved_at)
+ORDER BY (person_wikidata_id);
+
+CREATE TABLE corpscout.company_identifier
+(
+    issuer_scheme LowCardinality(String),
+    issuer_id String,
+    country_code LowCardinality(String),
+    company_id String,
+    match_method LowCardinality(String),
+    match_confidence LowCardinality(String),
+    registration_authority_id LowCardinality(String),
+    registered_as_raw String,
+    company_id_normalized String,
+    entity_status LowCardinality(String),
+    registration_status LowCardinality(String),
+    is_current UInt8,
+    successor_issuer_id String,
+    first_seen_date Date,
+    last_seen_date Date,
+    source_run_id String,
+    resolved_at DateTime64(3, 'UTC')
+)
+ENGINE = MergeTree
+ORDER BY (issuer_scheme, issuer_id, country_code, company_id);
+"""
+
+_SOURCE_FIXTURE_SQL = f"""
+INSERT INTO corpscout.se_financial_report_signatories
+    (company_id, fiscal_year, statement_key, source_record_uid, signatory_kind,
+     person_seq, first_name, last_name, role_original, role_kind, resolved_at)
+VALUES
+    ('{PENDING_COMPANY}', 2024, 'stmt-pending-1', 'src-pending-1', 'board_signature', 1,
+     'David', 'Mindus', 'Verkstallande direktor', 'ceo',
+     toDateTime64('2026-08-01 00:00:00', 3, 'UTC')),
+    ('{SETTLED_COMPANY}', 2024, 'stmt-settled-1', 'src-settled-1', 'board_signature', 1,
+     'David', 'Mindus', 'Verkstallande direktor', 'ceo',
+     toDateTime64('2026-08-01 00:00:00', 3, 'UTC'));
+
+INSERT INTO corpscout.esef_document_people
+    (candidate_uid, source_record_uid, source_document_id, country_code, company_id,
+     fiscal_year, name, role, role_category, organization, status, effective_from,
+     effective_to, confidence, evidence_ids, model_provider, model_name, prompt_version,
+     source_run_id, extracted_at)
+VALUES
+    ('{"e" * 64}', '{"f" * 64}', 'doc-pending-1', 'SE', '{PENDING_COMPANY}', 2024,
+     'David Mindus', 'board', 'board', 'Acme AB', 'active', NULL, NULL, 0.9,
+     [], 'openai', 'gpt', 'v1', 'run-esef-1',
+     toDateTime64('2026-08-01 00:00:00', 3, 'UTC'));
+"""
 
 
 def _id(marker: int) -> str:
@@ -57,7 +298,6 @@ def _id(marker: int) -> str:
 
 DRAFT_CEO = _id(1)
 DRAFT_BOARD = _id(2)
-DRAFT_SETTLED = _id(3)
 PERSON = _id(1000)
 PERSON_SETTLED = _id(1001)
 UNKNOWN_DRAFT = _id(9999)
@@ -105,6 +345,42 @@ def _render(sql: str, parameters: dict[str, Any]) -> str:
     return sql
 
 
+@functools.cache
+def _settled_company_draft_id() -> str:
+    """The real, view-derived `draft_id` for SETTLED_COMPANY's one signatory observation.
+
+    `se_company_person`'s fixture row for SETTLED_COMPANY has to carry this EXACT value as
+    its `draft_ids` for the settled/unchanged classification to fire (`is_unchanged` compares
+    it against the freshly computed `draft_companies.draft_ids`) -- Task 3's `draft_id` is a
+    deterministic hash of the view row's own identity fields, not a value this test can pick
+    freely the way the retired `se_company_person_draft`-backed fixture could. Discovered by
+    actually running the schema + upstream fixture + view migrations against clickhouse-local
+    once and reading the computed id back, rather than reimplementing the SQL hash formula
+    (reinterpretAsUUID's byte order) a second time in this test file.
+    """
+    script = ";\n".join(
+        [
+            "CREATE DATABASE IF NOT EXISTS corpscout",
+            *(s.strip() for s in _UPSTREAM_SCHEMA_SQL.split(";") if s.strip()),
+            *(s.strip() for s in _SOURCE_FIXTURE_SQL.split(";") if s.strip()),
+            *_schema_statements(),
+            f"WITH {build_se_company_person_source_observations_sql()}\n"
+            "SELECT toString(draft_id) FROM source_observations "
+            f"WHERE company_id = '{SETTLED_COMPANY}'",
+        ]
+    ) + ";\n"
+    completed = subprocess.run(
+        _clickhouse_local_command(),
+        input=script,
+        capture_output=True,
+        text=True,
+        timeout=900,
+    )
+    assert completed.returncode == 0, completed.stderr or completed.stdout
+    [draft_id] = [line for line in completed.stdout.splitlines() if line.strip()]
+    return draft_id
+
+
 def _schema_statements() -> list[str]:
     statements: list[str] = []
     for name in MIGRATIONS:
@@ -119,18 +395,18 @@ def _schema_statements() -> list[str]:
 
 
 def _fixture_statements() -> list[str]:
-    """One pending company, one settled company, and three ledger rows."""
-    drafts = ", ".join(
-        f"('{draft_id}', '{company}', '{source}', 'e', 'u-{draft_id}', "
-        f"repeat('0', 64), repeat('0', 64), '{{}}', 2024, "
-        "toDateTime64('2026-08-01 00:00:00', 3, 'UTC'), 'run', "
-        "toDateTime64('2026-08-01 00:00:00', 3, 'UTC'))"
-        for draft_id, company, source in (
-            (DRAFT_CEO, PENDING_COMPANY, "bolagsverket"),
-            (DRAFT_BOARD, PENDING_COMPANY, "esef"),
-            (DRAFT_SETTLED, SETTLED_COMPANY, "bolagsverket"),
-        )
-    )
+    """One pending company, one settled company, and three ledger rows.
+
+    `se_company_person_role_draft`/`se_company_person_correction` still carry the arbitrary
+    DRAFT_CEO/DRAFT_BOARD UUIDs as their `person_draft_id`/`draft_ids` provenance for
+    PENDING_COMPANY -- the role-assignment SQL under test here
+    (`build_role_assignments_insert_sql` and friends) only ever joins on whatever value it
+    finds there, it never recomputes one, and PENDING_COMPANY's real view-derived draft_ids
+    are irrelevant to that half of the fixture. SETTLED_COMPANY's `se_company_person` row is
+    different: its `draft_ids` must be the REAL view-derived draft_id
+    (`_settled_company_draft_id`) for the settled/unchanged company-status classification to
+    fire at all (see that function's docstring).
+    """
     people = ", ".join(
         f"('{person}', '{company}', 'David Mindus', NULL, [{draft_ids}], [], "
         "NULL, NULL, 'deterministic', 'copy', 'v1', 'run', "
@@ -138,7 +414,7 @@ def _fixture_statements() -> list[str]:
         "toDateTime64('2026-08-01 00:00:00', 3, 'UTC'))"
         for person, company, draft_ids in (
             (PERSON, PENDING_COMPANY, f"'{DRAFT_CEO}', '{DRAFT_BOARD}'"),
-            (PERSON_SETTLED, SETTLED_COMPANY, f"'{DRAFT_SETTLED}'"),
+            (PERSON_SETTLED, SETTLED_COMPANY, f"'{_settled_company_draft_id()}'"),
         )
     )
     role_drafts = ", ".join(
@@ -166,7 +442,6 @@ def _fixture_statements() -> list[str]:
         )
     )
     return [
-        f"INSERT INTO corpscout.se_company_person_draft VALUES {drafts}",
         f"INSERT INTO corpscout.se_company_person VALUES {people}",
         f"INSERT INTO corpscout.se_company_person_role_draft VALUES {role_drafts}",
         f"INSERT INTO corpscout.se_company_person_correction VALUES {corrections}",
@@ -178,6 +453,9 @@ def _script(*, join_use_nulls: int) -> str:
     role_parameters = {"source_run_id": "run", "updated_at": NOW}
     statements = [
         f"SET join_use_nulls = {join_use_nulls}",
+        "CREATE DATABASE IF NOT EXISTS corpscout",
+        *(s.strip() for s in _UPSTREAM_SCHEMA_SQL.split(";") if s.strip()),
+        *(s.strip() for s in _SOURCE_FIXTURE_SQL.split(";") if s.strip()),
         *_schema_statements(),
         *_fixture_statements(),
         f"CREATE TABLE {STAGE_TABLE} AS corpscout.se_company_person_role",
@@ -248,7 +526,14 @@ def test_company_status_queries_run_and_separate_pending_from_settled(
     company_id, source_count, observation_count, draft_ids = sections["pending"][0]
     assert company_id == PENDING_COMPANY
     assert (source_count, observation_count) == ("2", "2")
-    assert DRAFT_CEO in draft_ids and DRAFT_BOARD in draft_ids
+    # draft_ids are now computed from the view rows' own identity fields (Task 3), not the
+    # arbitrary DRAFT_CEO/DRAFT_BOARD constants -- two distinct, well-formed UUIDs is the
+    # structural claim this query makes; the exact hash formula is pinned separately
+    # (source_views.source_observation_id, tests/test_se_company_person_source_observations.py).
+    found_draft_ids = re.findall(
+        r"[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}", draft_ids
+    )
+    assert len(found_draft_ids) == len(set(found_draft_ids)) == 2
 
 
 def test_role_path_keeps_uncorrected_roles_and_applies_remove_role(

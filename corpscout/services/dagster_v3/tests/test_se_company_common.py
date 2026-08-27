@@ -39,8 +39,8 @@ SOLE_TRADER = "196408233412"  # a 12-digit personnummer-based enskild firma id
 def test_company_ids_accept_sole_traders() -> None:
     """se_companies carries 12-digit personnummer-based ids for enskild firma, and the
     se_company finals' has_company CHECK admits them -- so a scoped run must too.
-    company_people.draft.normalized_company_ids validates 10 digits only, which is why
-    this exists rather than being reused from there."""
+    company_people.source_views.normalized_company_ids validates 10 digits only, which
+    is why this exists rather than being reused from there."""
     assert normalized_se_company_ids([SOLE_TRADER, COMPANY]) == (SOLE_TRADER, COMPANY)
     assert SE_COMPANY_ID_PATTERN == "^([0-9]{10}|[0-9]{12})$"
     for bad in ("55652000", "5565200028X", "55652000281", "", "556-520-0028"):

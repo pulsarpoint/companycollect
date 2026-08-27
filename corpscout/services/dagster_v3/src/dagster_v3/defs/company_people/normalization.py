@@ -12,7 +12,7 @@ import json
 import re
 import uuid
 from collections import defaultdict
-from collections.abc import Callable, Mapping, Sequence
+from collections.abc import Callable, Iterable, Mapping, Sequence
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from typing import Any
@@ -46,19 +46,43 @@ from dagster_v3.defs.company_people.corrections import (
     effective_corrections,
     suggestion_from_row,
 )
-from dagster_v3.defs.company_people.draft import normalized_company_ids
+from dagster_v3.defs.company_people.identity_eval import (
+    PersonObservationRow,
+    identity_key_k2,
+    k3_merge_groups,
+)
 from dagster_v3.defs.company_people.roles import (
     canonical_role_code,
     source_role_code,
+)
+from dagster_v3.defs.company_people.source_views import (
+    SE_COMPANY_PERSON_BOLAGSVERKET_VIEW,
+    SE_COMPANY_PERSON_ESEF_VIEW,
+    SE_COMPANY_PERSON_WIKIDATA_VIEW,
+    build_se_company_person_blank_full_name_count_sql,
+    build_se_company_person_source_observations_sql,
+    normalized_company_ids,
 )
 from dagster_v3.defs.esef_filings.llm_enrichment import deepseek_settings
 
 DATABASE = "corpscout"
 GROUP_NAME = "company_people"
 
-PERSON_DRAFT_TABLE = "se_company_person_draft"
 PERSON_TABLE = "se_company_person"
 QUALIFIED_PERSON_TABLE = f"{DATABASE}.{PERSON_TABLE}"
+
+# Unqualified names of the three source views normalization reads (source_views.py,
+# migrations 000330/000331) -- se_company_person_draft is retired from this read path
+# (Task 3); assert_clickhouse_tables_exist checks system.tables by bare name, and views
+# appear there exactly like tables.
+SOURCE_VIEW_TABLES = tuple(
+    view.removeprefix(f"{DATABASE}.")
+    for view in (
+        SE_COMPANY_PERSON_BOLAGSVERKET_VIEW,
+        SE_COMPANY_PERSON_ESEF_VIEW,
+        SE_COMPANY_PERSON_WIKIDATA_VIEW,
+    )
+)
 
 PERSON_COLUMNS = (
     "person_id",
@@ -82,7 +106,6 @@ DIRECT_PROMPT_VERSION = "single-source-copy-v2"
 MAX_OUTPUT_TOKENS = 4_000
 MAX_CONTRACT_ATTEMPTS = 3
 
-_WHITESPACE_PATTERN = re.compile(r"\s+")
 _ROLE_SEPARATOR_PATTERN = re.compile(r"[^a-z0-9]+")
 
 _ROLE_ALIASES = {
@@ -113,6 +136,7 @@ _ROLE_ALIASES = {
 class DraftPersonObservation:
     draft_id: uuid.UUID
     source: str
+    source_record_uid: str
     fiscal_year: int | None
     source_observed_at: datetime
     source_value: Mapping[str, Any]
@@ -283,18 +307,23 @@ def _insert_columns(columns: Sequence[str]) -> str:
 
 
 def _company_status_ctes() -> str:
-    """Company evidence: the draft set plus the live ledger rows applied to it.
+    """Company evidence: the source-view observations plus the live ledger rows applied to it.
 
     A company is unchanged only when both match what is already published, so an
-    appended correction is itself changed evidence for exactly that company.
+    appended correction is itself changed evidence for exactly that company. The observation
+    read is the shared ``source_observations`` CTE (source_views.py) over the three SE person
+    views -- the ``se_company_person_draft`` inbox this used to read is retired from this
+    path (Task 3); ``draft_id`` is now computed inline from each view row's own identity
+    fields rather than looked up from a materialized draft table.
     """
-    return f"""draft_companies AS (
+    return f"""{build_se_company_person_source_observations_sql()},
+draft_companies AS (
     SELECT
         company_id,
         uniqExact(source) AS source_count,
         count() AS observation_count,
         arraySort(groupUniqArray(draft_id)) AS draft_ids
-    FROM corpscout.se_company_person_draft FINAL
+    FROM source_observations
     WHERE (%(all_companies)s OR company_id IN %(company_ids)s)
     GROUP BY company_id
 ),
@@ -350,14 +379,16 @@ LIMIT %(max_companies)s"""
 
 
 def build_company_observations_sql() -> str:
-    return """SELECT
+    return f"""WITH {build_se_company_person_source_observations_sql()}
+SELECT
     draft_id,
     company_id,
     source,
+    source_record_uid,
     fiscal_year,
     source_observed_at,
     source_value_json
-FROM corpscout.se_company_person_draft FINAL
+FROM source_observations
 WHERE company_id IN %(selected_company_ids)s
 ORDER BY company_id, source, fiscal_year, source_observed_at, draft_id"""
 
@@ -400,9 +431,10 @@ def _observation_from_row(row: Sequence[Any]) -> tuple[str, DraftPersonObservati
     return company_id, DraftPersonObservation(
         draft_id=uuid.UUID(str(row[0])),
         source=str(row[2]),
-        fiscal_year=int(row[3]) if row[3] is not None else None,
-        source_observed_at=row[4],
-        source_value=_source_value(row[5]),
+        source_record_uid=str(row[3]),
+        fiscal_year=int(row[4]) if row[4] is not None else None,
+        source_observed_at=row[5],
+        source_value=_source_value(row[6]),
     )
 
 
@@ -764,23 +796,152 @@ def _usage_value(usage: object, name: str) -> int:
     return int(value) if value is not None else 0
 
 
-def _normalized_name(value: str) -> str:
-    return _WHITESPACE_PATTERN.sub(" ", value.strip()).casefold()
+PERSON_ID_HASH_DOMAIN = "se-company-person-v2"
 
 
-def _name_match_key(value: str) -> str:
-    tokens = _normalized_name(value).split()
-    if len(tokens) < 2:
-        return tokens[0] if tokens else ""
-    return f"{tokens[0]}|{tokens[-1]}"
+def person_id_for(company_id: str, group_key: str) -> uuid.UUID:
+    """The deterministic person id: company scope plus an ALREADY-CANONICAL group key.
 
+    ``group_key`` is not derived here -- the caller resolves it first:
 
-def person_id_for(company_id: str, name: str) -> uuid.UUID:
-    """The deterministic person id corrections refer to: company plus name key."""
+    - Both the deterministic single-source path (``_normalize_single_source_company``) and
+      the LLM multi-source path (``_normalize_multi_source_company``) run the full K3
+      reconciliation over a company's current observations
+      (``_company_person_group_keys``, reusing ``identity_eval.k3_merge_groups`` -- the
+      production key derivation, not a fork of it) ONCE per company and use its canonical
+      keys. This is company-scoped and source-agnostic: a person's group key -- and
+      therefore their person_id -- no longer depends on how many sources happened to observe
+      them (fix round: the two paths used to disagree, the same human getting a different
+      person_id depending on source count -- a v2 regression from v1, where both paths
+      happened to agree because K1 was cheap enough to inline everywhere).
+    - Only a name with NO matching observation at all in the current company (an LLM-invented
+      name, or a human-typed one in the ``split_person``/``override_field`` correction
+      handlers) falls back to ``identity_key_k2(name)`` directly -- there is nothing in
+      ``_company_person_group_keys``' map to look up. A singleton group's canonical key would
+      be trivially itself anyway, so this is not a different rule, just K3 with nothing else
+      in the group to compare against.
+
+    See ``_company_person_group_keys`` for how the canonical key itself is chosen within one
+    K3 group (CONTROLLER RULING: stability over minimality).
+    """
     digest = hashlib.sha256(
-        f"se-company-person-v1\n{company_id}\n{_name_match_key(name)}".encode()
+        f"{PERSON_ID_HASH_DOMAIN}\n{company_id}\n{group_key}".encode()
     ).hexdigest()
     return uuid.UUID(hex=digest[:32])
+
+
+def _company_person_group_keys(
+    company_id: str,
+    observations: Sequence[DraftPersonObservation],
+    previous_profiles: Sequence[ExistingPersonProfile] = (),
+) -> dict[uuid.UUID, str]:
+    """K3-resolved canonical group key per non-blank-name observation, one company at a time.
+
+    CANONICAL KEY (CONTROLLER RULING, amending the original shortest-member-only rule): a
+    group's canonical key is a PREVIOUSLY-PUBLISHED member's canonical key when one exists,
+    else the group's shortest member K2 key. Stability beats minimality -- without this, a
+    K3 group's person_id could churn merely because a later run adds a newer, shorter-named
+    observation to an already-published group (e.g. "Anna Maria Svensson" published first,
+    "Anna Svensson" observed later: the group's person_id must stay the one already
+    published, not silently move to the new shorter name's hash).
+
+    The ledger stores each published person's ``person_id`` (a UUID), not the string key that
+    produced it, so "does this group already have a published identity" is answered by
+    RE-HASHING each candidate member key with ``person_id_for`` and testing membership
+    against ``previous_profiles``' person_ids -- there is no way to recover "the" prior key
+    except by testing candidates this way. A TOMBSTONED (merged-away) profile's id is
+    excluded from that membership test: reusing it would resurrect a merged-away identity
+    instead of letting the group resolve fresh (or, if its evidence rejoins the surviving
+    target's group some other way, stay with the target). If more than one member key
+    matches a (different) previously-published person_id -- reachable only if K3 now merges
+    two groups that were published separately in an earlier run -- the alphabetically-first
+    matching key wins: a deterministic tie-break for an edge case with no currently-reachable
+    test scenario.
+
+    Member K2 keys are recomputed directly from each row's ``full_name``
+    (``{identity_key_k2(row.full_name) for row in decision.rows}``), NOT recovered by
+    splitting ``MergeDecision.k3_person_key`` on ``"|"`` -- a literal ``|`` character
+    somewhere in a name would corrupt that split.
+
+    ``min(..., key=lambda key: (len(key), key))`` is a deterministic TIE-BREAK, not a
+    meaningful "base name" rule: it reads as "drop the middle name" for K3 rule (a)
+    (superset-of-tokens merges), but K3 rule (b) (a shared Wikidata QID) can merge two
+    completely unrelated spellings with no superset relationship at all -- the tie-break
+    still produces SOME deterministic answer there, it just is not "the base name" in any
+    meaningful sense for that case.
+
+    Correlated back to ``draft_id`` by object identity (``id()``), not value equality: two
+    DIFFERENT observations can be value-identical ``PersonObservationRow`` instances (e.g. two
+    bolagsverket signatories sharing one filing's ``source_record_uid``, name and role --
+    ``PersonObservationRow`` does not carry the row-level disambiguator ``draft_id`` itself
+    now folds in, see ``source_views.build_se_company_person_source_observations_sql``'s
+    docstring), and a value-keyed lookup would silently collapse them onto one group.
+    """
+    rows: list[PersonObservationRow] = []
+    observation_by_row_id: dict[int, DraftPersonObservation] = {}
+    for observation in observations:
+        name = _source_name(observation)
+        if not name.strip():
+            continue
+        wikidata_id = observation.source_value.get("person_wikidata_id") or ""
+        row = PersonObservationRow(
+            company_id=company_id,
+            source=observation.source,
+            source_record_uid=observation.source_record_uid,
+            full_name=name,
+            person_wikidata_id=str(wikidata_id),
+        )
+        rows.append(row)
+        observation_by_row_id[id(row)] = observation
+
+    # A tombstoned (merged-away) profile's id is deliberately excluded: reusing it here would
+    # resurrect a merged-away identity if K3 later regroups its observations under a key that
+    # happens to match the tombstone's own key, rather than the surviving target's -- exactly
+    # the outcome apply_person_corrections' merge_persons handling exists to prevent.
+    previous_person_ids = {
+        profile.person_id
+        for profile in previous_profiles
+        if profile.merged_into_person_id is None
+    }
+    group_key_by_draft_id: dict[uuid.UUID, str] = {}
+    for decision in k3_merge_groups(rows):
+        member_keys = sorted({identity_key_k2(row.full_name) for row in decision.rows})
+        published_keys = [
+            key for key in member_keys if person_id_for(company_id, key) in previous_person_ids
+        ]
+        canonical_key = (
+            published_keys[0]
+            if published_keys
+            else min(member_keys, key=lambda key: (len(key), key))
+        )
+        for row in decision.rows:
+            draft_observation = observation_by_row_id[id(row)]
+            group_key_by_draft_id[draft_observation.draft_id] = canonical_key
+    return group_key_by_draft_id
+
+
+def _group_key_for_draft_ids(
+    draft_ids: Iterable[uuid.UUID],
+    group_key_by_draft_id: Mapping[uuid.UUID, str],
+    *,
+    fallback_name: str,
+) -> str:
+    """The K3 canonical group key shared by a set of draft_ids (a profile's evidence, or an
+    LLM suggestion's), or K2 of ``fallback_name`` when NONE of them resolve to a known
+    observation -- an LLM-invented name, or a human-typed one with no company-wide K3 context
+    (``person_id_for``'s docstring). If the draft_ids span more than one K3 group (a profile
+    the LLM or a correction has already made deviate from K3 -- itself a pre-existing,
+    orthogonal compromise of this multi-source path, not something this helper introduces),
+    the alphabetically-first group key is the deterministic tie-break.
+    """
+    keys = {
+        group_key_by_draft_id[draft_id]
+        for draft_id in draft_ids
+        if draft_id in group_key_by_draft_id
+    }
+    if keys:
+        return min(keys)
+    return identity_key_k2(fallback_name)
 
 
 def _source_name(observation: DraftPersonObservation) -> str:
@@ -802,15 +963,6 @@ def _source_description(observation: DraftPersonObservation) -> str | None:
     if value is None or str(value).strip() == "":
         return None
     return str(value).strip()
-
-
-def _previous_profile_by_name(
-    profiles: Sequence[ExistingPersonProfile],
-) -> dict[str, ExistingPersonProfile]:
-    result: dict[str, ExistingPersonProfile] = {}
-    for profile in sorted(profiles, key=lambda item: str(item.person_id)):
-        result.setdefault(_name_match_key(profile.name), profile)
-    return result
 
 
 def _profiles_for_request(
@@ -1043,7 +1195,7 @@ def apply_person_corrections(
             if not moved or not moved < subject.draft_ids or name == "":
                 stale.append(correction)
                 continue
-            new_id = person_id_for(company.status.company_id, name)
+            new_id = person_id_for(company.status.company_id, identity_key_k2(name))
             if new_id == subject.person_id:
                 stale.append(correction)
                 continue
@@ -1198,17 +1350,30 @@ def _normalize_single_source_company(
     *,
     created_at: datetime,
 ) -> dict[uuid.UUID, _ProfileAccumulator]:
-    by_name: dict[str, list[DraftPersonObservation]] = defaultdict(list)
-    for observation in company.observations:
-        source_name = _source_name(observation)
-        if source_name:
-            by_name[_name_match_key(source_name)].append(observation)
+    """Group a single source's observations by K3, not K1 (spec 3.2's production rule).
 
-    previous_by_name = _previous_profile_by_name(company.previous_profiles)
+    K3 replaces the previous K1 (first|last token) grouping wholesale here: every observation
+    in a single-source company is visible at once, exactly the scope K3's deterministic
+    reconciliation pass is designed for -- no LLM involved, so there is no continuity
+    mechanism to defer to (contrast the multi-source path, see ``person_id_for``'s
+    docstring).
+    """
+    group_key_by_draft_id = _company_person_group_keys(
+        company.status.company_id,
+        company.observations,
+        previous_profiles=company.previous_profiles,
+    )
+    by_group: dict[str, list[DraftPersonObservation]] = defaultdict(list)
+    for observation in company.observations:
+        group_key = group_key_by_draft_id.get(observation.draft_id)
+        if group_key is not None:
+            by_group[group_key].append(observation)
+
+    previous_by_id = {item.person_id: item for item in company.previous_profiles}
     profiles: dict[uuid.UUID, _ProfileAccumulator] = {}
     source = next(iter({item.source for item in company.observations}))
 
-    for name_key, observations in sorted(by_name.items()):
+    for group_key, observations in sorted(by_group.items()):
         ordered = sorted(
             observations,
             key=lambda item: (
@@ -1228,14 +1393,10 @@ def _normalize_single_source_company(
             ),
             None,
         )
-        previous = previous_by_name.get(name_key)
+        person_id = person_id_for(company.status.company_id, group_key)
+        previous = previous_by_id.get(person_id)
         if description is None and previous is not None:
             description = previous.description
-        person_id = (
-            previous.person_id
-            if previous is not None
-            else person_id_for(company.status.company_id, name)
-        )
         profiles[person_id] = _ProfileAccumulator(
             person_id=person_id,
             name=name,
@@ -1314,6 +1475,18 @@ def _normalize_multi_source_company(
     maximum_observations_per_request: int,
     created_at: datetime,
 ) -> "_MultiSourceOutcome":
+    # Computed ONCE per company, source-agnostic (fix round, Important): the same K3 group
+    # keys the deterministic single-source path uses. Without this, the multi-source path
+    # used to key its own name-based person lookups by raw K2 -- a fork from the
+    # single-source path's K3 keys that let the same human end up with a DIFFERENT person_id
+    # depending purely on how many sources happened to observe them (a v2 regression from v1,
+    # where both paths agreed because K1 was cheap enough to inline everywhere). See
+    # person_id_for's docstring.
+    group_key_by_draft_id = _company_person_group_keys(
+        company.status.company_id,
+        company.observations,
+        previous_profiles=company.previous_profiles,
+    )
     # A merge tombstone keeps the drafts it was merged away with, and so does
     # the person it was merged into. Seeding both would hand the model the same
     # evidence twice and leave whichever row it does not re-populate empty, so
@@ -1405,8 +1578,16 @@ def _normalize_multi_source_company(
                 profile.draft_ids -= removed_ids
                 profile.touched = True
 
+        # K3-keyed (fix round, Important): profiles_by_name and the fallback below both key
+        # off the SAME company-wide group_key_by_draft_id computed once above -- the LLM's
+        # own existing_person_id continuity is still the primary "same person" mechanism,
+        # this is only the fallback for a suggestion it did not attribute to a supplied
+        # previous profile. Raw K2 applies only when a profile/suggestion's draft_ids don't
+        # resolve to any known observation (see _group_key_for_draft_ids).
         profiles_by_name = {
-            _name_match_key(profile.name): profile.person_id
+            _group_key_for_draft_ids(
+                profile.draft_ids, group_key_by_draft_id, fallback_name=profile.name
+            ): profile.person_id
             for profile in profiles.values()
         }
         for suggestion in result.response.people:
@@ -1417,9 +1598,16 @@ def _normalize_multi_source_company(
                 else suggestion.existing_person_id
             )
             if person_id is None:
-                person_id = profiles_by_name.get(_name_match_key(suggestion.name))
-            if person_id is None:
-                person_id = person_id_for(company.status.company_id, suggestion.name)
+                suggestion_group_key = _group_key_for_draft_ids(
+                    suggestion.draft_ids,
+                    group_key_by_draft_id,
+                    fallback_name=suggestion.name,
+                )
+                person_id = profiles_by_name.get(suggestion_group_key)
+                if person_id is None:
+                    person_id = person_id_for(
+                        company.status.company_id, suggestion_group_key
+                    )
 
             profile = profiles.get(person_id)
             if profile is None:
@@ -1795,7 +1983,7 @@ def materialize_se_company_people(
         clickhouse,
         database=DATABASE,
         tables=(
-            PERSON_DRAFT_TABLE,
+            *SOURCE_VIEW_TABLES,
             PERSON_TABLE,
             SUGGESTION_TABLE,
             CORRECTION_TABLE,
@@ -1807,6 +1995,9 @@ def materialize_se_company_people(
     }
     with clickhouse.get_connection() as client:
         statistics = client.execute(build_company_statistics_sql(), query_parameters)[0]
+        excluded_blank_full_name_count = int(
+            client.execute(build_se_company_person_blank_full_name_count_sql())[0][0]
+        )
 
     pending_company_count = int(statistics[2]) + int(statistics[3])
     if log is not None:
@@ -1990,6 +2181,7 @@ def materialize_se_company_people(
         "inserted_count": inserted_count,
         **normalization_metrics,
         "total_person_count": total_person_count,
+        "excluded_blank_full_name_count": excluded_blank_full_name_count,
         "source_run_id": source_run_id,
         "company_scope": list(company_scope),
     }
@@ -2019,9 +2211,23 @@ class SECompanyPersonConfig(dg.Config):
     timeout_seconds: int = Field(default=180, ge=1, le=600)
 
 
+# The transitive read footprint of the three source views (source_views.py) --
+# se_company_person_draft_clickhouse is retired from this path (Task 3); this asset now
+# reads the views directly, so its deps are the same upstream tables identity_eval.py's
+# evaluation asset already depends on for the same views.
+_SOURCE_ASSET_DEPS = (
+    dg.AssetKey("se_financial_report_signatories_clickhouse"),
+    dg.AssetKey("esef_document_people_clickhouse"),
+    dg.AssetKey("company_identifier_clickhouse"),
+    dg.AssetKey("wikidata_company_identifiers"),
+    dg.AssetKey("wikidata_company_people"),
+    dg.AssetKey("wikidata_persons"),
+)
+
+
 @dg.asset(
     name="se_company_person_clickhouse",
-    deps=[dg.AssetKey("se_company_person_draft_clickhouse")],
+    deps=_SOURCE_ASSET_DEPS,
     group_name=GROUP_NAME,
     kinds={"clickhouse", "python", "llm", "deepseek"},
     metadata={"table": QUALIFIED_PERSON_TABLE},
@@ -2055,7 +2261,6 @@ def se_company_person_clickhouse(
 se_company_person_job = dg.define_asset_job(
     "se_company_person_job",
     selection=dg.AssetSelection.assets(
-        "se_company_person_draft_clickhouse",
         "se_company_person_role_draft_clickhouse",
         "se_company_person_clickhouse",
         "se_company_person_role_clickhouse",

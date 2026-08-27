@@ -8,6 +8,7 @@ import {
   DatabaseZapIcon,
   FlagIcon,
   MapPinIcon,
+  PlayIcon,
   Rows3Icon,
   Settings2Icon,
   SlidersHorizontalIcon,
@@ -52,6 +53,12 @@ const COUNTRY_NAVIGATION = [
         title: "Stale corrections",
         to: "/admin/se/people/stale-corrections",
         icon: TriangleAlertIcon,
+        exact: true,
+      },
+      {
+        title: "People pipeline",
+        to: "/admin/se/people/pipeline",
+        icon: PlayIcon,
         exact: true,
       },
       {

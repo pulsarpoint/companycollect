@@ -3,7 +3,10 @@ import { createMemoryRouter, RouterProvider } from "react-router";
 import { describe, expect, it } from "vitest";
 import { SePersonReviewWorkspace } from "~/components/admin/se-person-review-workspace";
 import type { CompanyPersonRoleType } from "~/lib/company-roles.server";
-import type { SeCompanyPersonDetail } from "~/lib/se-company-person.server";
+import type {
+  SeCollisionCandidateGroup,
+  SeCompanyPersonDetail,
+} from "~/lib/se-company-person.server";
 import { ZERO_EVIDENCE_HASH } from "~/lib/se-person-corrections";
 import {
   buildCorrectionInput,
@@ -87,6 +90,7 @@ const reviewedDetail: SeCompanyPersonDetail = {
 function renderWorkspace(
   workspaceDetail: Parameters<typeof SePersonReviewWorkspace>[0]["detail"],
   result: Parameters<typeof SePersonReviewWorkspace>[0]["result"] = null,
+  collisionGroups: SeCollisionCandidateGroup[] = [],
 ) {
   const router = createMemoryRouter(
     [
@@ -96,6 +100,7 @@ function renderWorkspace(
           <SePersonReviewWorkspace
             detail={workspaceDetail}
             activeRoleCodes={["board_member", "chief_executive_officer"]}
+            collisionGroups={collisionGroups}
             result={result}
           />
         ),
@@ -205,6 +210,106 @@ describe("Sweden company-person review page", () => {
       `name="supersedes_correction_id" value="${CORRECTION_ID}"`,
     );
     expect(undoForm).not.toContain("evidence_hash");
+  });
+
+  it("shows no open collision candidates when the company has none", () => {
+    const html = render();
+    expect(html).toContain("No open collision candidates for this company.");
+  });
+
+  it("offers approve/keep-separate on an undecided group with a merge suggestion", () => {
+    const groups: SeCollisionCandidateGroup[] = [
+      {
+        candidate_group_id: "grp-1",
+        members: [
+          { person_key: "anna svensson", full_name: "Anna Svensson", source: "bolagsverket", source_record_uid: "u1" },
+          { person_key: "anna maria svensson", full_name: "Anna Maria Svensson", source: "esef", source_record_uid: "u2" },
+        ],
+        suggestion: {
+          suggestion_id: "99999999-9999-4999-8999-999999999999",
+          decision: "merge",
+          confidence: 0.9,
+          rationale: "Same person, middle name variant.",
+          into_person_id: PERSON_ID,
+          from_person_ids: ["11111111-1111-4111-8111-111111111111"],
+          member_person_ids: [PERSON_ID, "11111111-1111-4111-8111-111111111111"],
+          created_at: "2026-08-27 09:00:00.000",
+        },
+        is_decided: false,
+      },
+    ];
+    const html = renderWorkspace(detail, null, groups);
+
+    expect(html).toContain("grp-1");
+    expect(html).toContain("Anna Svensson");
+    expect(html).toContain("Anna Maria Svensson");
+    expect(html).toContain("Same person, middle name variant.");
+
+    const approveForm = formContaining(
+      html,
+      'name="correction_kind" value="approve_merge_suggestion"',
+    );
+    expect(approveForm).toContain(
+      'name="suggestion_id" value="99999999-9999-4999-8999-999999999999"',
+    );
+    const keepSeparateForm = formContaining(
+      html,
+      'name="correction_kind" value="keep_separate_suggestion"',
+    );
+    expect(keepSeparateForm).toContain(
+      'name="suggestion_id" value="99999999-9999-4999-8999-999999999999"',
+    );
+  });
+
+  it("offers no decision on an already-decided group", () => {
+    const groups: SeCollisionCandidateGroup[] = [
+      {
+        candidate_group_id: "grp-decided",
+        members: [
+          { person_key: "anna svensson", full_name: "Anna Svensson", source: "bolagsverket", source_record_uid: "u1" },
+        ],
+        suggestion: {
+          suggestion_id: "99999999-9999-4999-8999-999999999999",
+          decision: "keep_separate",
+          confidence: 0.4,
+          rationale: "",
+          into_person_id: PERSON_ID,
+          from_person_ids: ["11111111-1111-4111-8111-111111111111"],
+          member_person_ids: [PERSON_ID, "11111111-1111-4111-8111-111111111111"],
+          created_at: "2026-08-27 09:00:00.000",
+        },
+        is_decided: true,
+      },
+    ];
+    const html = renderWorkspace(detail, null, groups);
+
+    expect(html).toContain("grp-decided");
+    expect(html).toContain("decided");
+    expect(html).not.toContain("approve_merge_suggestion");
+    expect(html).not.toContain("keep_separate_suggestion");
+  });
+
+  it("shows a group with no suggestion yet, without decision buttons", () => {
+    const groups: SeCollisionCandidateGroup[] = [
+      {
+        candidate_group_id: "grp-pending",
+        members: [
+          { person_key: "anna svensson", full_name: "Anna Svensson", source: "bolagsverket", source_record_uid: "u1" },
+        ],
+        suggestion: null,
+        is_decided: false,
+      },
+    ];
+    const html = renderWorkspace(detail, null, groups);
+
+    expect(html).toContain("grp-pending");
+    expect(html).toContain("No merge suggestion yet.");
+    expect(html).not.toContain("approve_merge_suggestion");
+    // Item 4: a link to launch a scoped merge run without copy-pasting the
+    // company id -- the pipeline page's loader reads it back via `?company_id=`.
+    expect(html).toContain(
+      `href="/admin/se/people/pipeline?company_id=${detail.person.company_id}"`,
+    );
   });
 });
 

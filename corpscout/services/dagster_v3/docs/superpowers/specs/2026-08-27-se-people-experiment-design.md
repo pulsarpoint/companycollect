@@ -63,7 +63,7 @@ projection the optimizer pushes down):
 
 | View | Over | Projects (uniform person-observation shape) |
 |---|---|---|
-| `se_company_person_bolagsverket` | `se_financial_report_signatories` | company_id, source_record_uid, person_profile_hash, person_role_hash, first_name, last_name, full_name (concat), role_original, role_kind, signatory_kind, fiscal_year |
+| `se_company_person_bolagsverket` | `se_financial_report_signatories` | company_id, source_record_uid, person_profile_hash, person_role_hash, full_name (concat), first_name, last_name, role_original, role_kind, signatory_kind, fiscal_year |
 | `se_company_person_esef` | `esef_document_people` WHERE country='SE' | company_id, source_record_uid, person_profile_hash, person_role_hash, full_name, role, role_category, organization, status, effective_from, effective_to, confidence |
 | `se_company_person_wikidata` | `wikidata_company_people` + `wikidata_persons` joined via the orgnr/LEI bridge | company_id (normalized in the view; invalid ids filtered out), source_record_uid, person_profile_hash, person_role_hash, full_name, person_wikidata_id, role_property, start_date, end_date, birth_year, description, image_url, external_url |
 

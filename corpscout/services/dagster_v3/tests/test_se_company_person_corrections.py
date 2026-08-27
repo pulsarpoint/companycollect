@@ -12,6 +12,7 @@ from dagster_clickhouse import ClickhouseResource
 from dagster_v3.defs.company_people.corrections import (
     CORRECTION_COLUMNS,
     CORRECTION_KINDS,
+    KEEP_SEPARATE_CORRECTION_KIND,
     KIND_ORDER,
     PERSON_CORRECTION_KINDS,
     ROLE_CORRECTION_KINDS,
@@ -131,8 +132,14 @@ def test_correction_kinds_are_closed_and_ordered() -> None:
     )
     assert ROLE_CORRECTION_KINDS == ("set_role", "remove_role")
     assert UNDO_KIND == "undo"
+    assert KEEP_SEPARATE_CORRECTION_KIND == "keep_separate"
     assert CORRECTION_KINDS == frozenset(
-        (*PERSON_CORRECTION_KINDS, *ROLE_CORRECTION_KINDS, UNDO_KIND)
+        (
+            *PERSON_CORRECTION_KINDS,
+            *ROLE_CORRECTION_KINDS,
+            KEEP_SEPARATE_CORRECTION_KIND,
+            UNDO_KIND,
+        )
     )
 
 
@@ -191,7 +198,23 @@ def test_kind_order_gives_every_spec_step_one_shared_rank() -> None:
     ranks = [{KIND_ORDER[kind] for kind in step} for step in steps]
 
     assert [sorted(rank) for rank in ranks] == [[0], [1], [2], [3]]
-    assert set(KIND_ORDER) == set(CORRECTION_KINDS) - {UNDO_KIND}
+    # keep_separate is closed-set (CORRECTION_KINDS) but not applied (KIND_ORDER): it is a
+    # ledger-only decision marker, never a step apply_person_corrections runs.
+    assert set(KIND_ORDER) == set(CORRECTION_KINDS) - {UNDO_KIND, KEEP_SEPARATE_CORRECTION_KIND}
+
+
+def test_keep_separate_kind_is_decision_only_and_never_applied() -> None:
+    """keep_separate must never reach apply_person_corrections: effective_corrections drops
+    it exactly like an unrecognized kind (it is absent from KIND_ORDER on purpose -- see the
+    constant's docstring in corrections.py)."""
+    rows = (
+        _correction(1, KEEP_SEPARATE_CORRECTION_KIND, payload={"candidate_group_id": "g1"}),
+        _correction(2, "override_field", payload={"name": "Kept"}),
+    )
+
+    effective = effective_corrections(rows)
+
+    assert [c.correction_id.int for c in effective] == [2]
 
 
 def test_correction_set_hash_sorts_string_ids_like_clickhouse() -> None:
