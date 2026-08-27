@@ -72,10 +72,45 @@
 
 ## Task 7 (controller): deploy, apply, first resolution, switch verification
 
-- [ ] Deploy code (pristine-worktree light_sync) BEFORE applying any migration.
-- [ ] Apply 000329 (views + candidate table); run identity evaluation; **owner reviews the K1/K2/K3 numbers and confirms K3** (STOP if the numbers surprise).
-- [ ] Run full resolution (config-driven job, batched company_ids as the existing jobs do); verify: person counts vs draft-era, spot-check collision candidates, People tab renders v2 people, correction staleness behaves.
-- [ ] Apply the draft drop migration (Task 6) only AFTER the resolution is verified.
-- [ ] Record outcomes in this plan + ledger + memory.
+> Amended after the final whole-branch review (which found the original list stale
+> vs the ledger rulings). Migration numbers as merged: 000330 (views + candidate
+> table), 000331 (view widening — disambiguators/role_label/evidence fields),
+> 000332 (draft-table drop). Execute strictly in order.
+
+- [ ] **1. Deploy code** (pristine-worktree light_sync) BEFORE applying any migration.
+- [ ] **2. Targeted migration apply to 000331 ONLY.** Check prod `schema_migrations`
+      position first (the concurrent ratsit 000329 may or may not be applied). A bare
+      `make clickhouse-migrate-up` would ALSO apply 000332 and drop the draft table
+      early — use `make clickhouse-migrate-up-one` the required number of times,
+      verifying the ledger lands at 331/clean.
+- [ ] **3. C1 duplicate-count settle queries** (ruled at Task 3's review; run before any
+      resolution): for EACH of the three views —
+      `SELECT count() - uniqExact((company_id, source, source_record_uid, person_profile_hash, person_role_hash)) FROM corpscout.se_company_person_<source>`
+      (small nonzero allowed — those are exactly what the disambiguators separate),
+      and the loader invariant:
+      `SELECT count() = uniqExact(draft_id)` over the union source-observations CTE
+      → MUST be 1; if not, STOP: a duplicate draft_id survived the disambiguators.
+- [ ] **4. Full-corpus identity evaluation** (`se_company_person_identity_evaluation`,
+      `write_candidates=true`); **owner reviews the K1/K2/K3 numbers** (with the
+      QID-rule caveat the asset description carries) **and confirms K3** — STOP on
+      surprise.
+- [ ] **5. Baseline capture, THEN cutover TRUNCATE** (ledger ruling I2): snapshot the
+      v1 baseline first — `se_company_person` count and a full `se_company_person_role`
+      snapshot (needed for the deferred §3.2 role-stability metric) — then TRUNCATE
+      `se_company_person`, `se_company_person_role_draft`, `se_company_person_role`.
+      The correction ledger + suggestion table are NOT touched; v1-era review
+      decisions become stale by design — the owner has been told.
+- [ ] **6. First full resolution** via the backoffice pipeline page (10,000-company
+      prefill is deliberate; full corpus requires typing the override — paid LLM
+      path for multi-source companies, no preview exists).
+- [ ] **7. Verify**: person counts vs the step-5 baseline; role-assignment stability
+      vs the step-5 role snapshot (the deferred §3.2 metric); spot-check collision
+      candidates; People tab renders v2 people; correction staleness behaves.
+      Interpretation note: the wikidata view has no registered-company scope, so a
+      small legitimate uptick from orgnr-shaped unregistered bridged companies is
+      expected.
+- [ ] **8. Apply 000332** (the draft drop) only AFTER step 7 verifies; re-snapshot the
+      live row count at apply time into the ledger; ~480s UNDROP window.
+- [ ] **9. Record outcomes** in this plan + ledger + memory.
 
 **Deferred (explicitly not this plan):** moving people into `defs/se_company/people.py`; retiring the DuckDB/SQLite/Temporal admin machinery; Phase B (`country_person*` + public pages + dbt management switch) — next plan, unblocked by first resolution.
