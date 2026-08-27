@@ -342,6 +342,7 @@ EXPECTED_MIGRATIONS = (
     "000330_corpscout_se_company_person_views",
     "000331_corpscout_se_company_person_views_observed_at",
     "000332_corpscout_retire_se_company_person_draft",
+    "000333_corpscout_retire_country_person_tables",
 )
 
 NOOP_MIGRATIONS = {"000276_noop"}
