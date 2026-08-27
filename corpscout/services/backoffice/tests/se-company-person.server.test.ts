@@ -27,11 +27,17 @@ const COMPANY = "5565200028";
 const PERSON = "43234b7d-0184-16b5-de47-dc086a2b0ed9";
 
 describe("seCompanyPersonId", () => {
-  it("matches the Dagster person_id_for hash", () => {
-    expect(seCompanyPersonId(COMPANY, "David Mindus")).toBe(PERSON);
-    expect(seCompanyPersonId(COMPANY, "  david   MINDUS ")).toBe(PERSON);
+  it("matches the Dagster person_id_for hash (v2 domain, K2 canonical key)", () => {
+    // Expected values from dagster_v3's person_id_for(COMPANY, identity_key_k2(name)) --
+    // se-people-experiment Task 3 moved the hash off the v1 domain (first|last token, K1)
+    // to v2, keyed by an already-canonical K2 key (all tokens, not just first+last).
+    const DAVID_MINDUS = "4e2390d6-9bc2-9ca9-7846-2154e5bdfe48";
+    expect(seCompanyPersonId(COMPANY, "David Mindus")).toBe(DAVID_MINDUS);
+    expect(seCompanyPersonId(COMPANY, "  david   MINDUS ")).toBe(DAVID_MINDUS);
+    // A middle name changes the K2 key (unlike K1, which dropped it): a different hash
+    // from "Anna Svensson", proving this is no longer first|last-token grouping.
     expect(seCompanyPersonId(COMPANY, "Anna Karin Svensson")).toBe(
-      "6942ffc1-e104-ebea-7aa0-ef7377e8a508",
+      "8b94d500-5c3a-f2b2-193e-8aef7b16e074",
     );
   });
 });

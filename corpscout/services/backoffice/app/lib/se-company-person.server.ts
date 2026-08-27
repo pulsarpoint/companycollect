@@ -102,13 +102,26 @@ export interface SeCompanyPersonDetail {
   corrections: SeCompanyPersonCorrectionRow[];
 }
 
-/** Same hash as dagster_v3 normalization.person_id_for: sha256 of company + first|last token key. */
+/**
+ * Same hash as dagster_v3 normalization.person_id_for: sha256 of the v2 domain, the company,
+ * and an already-canonical group key.
+ *
+ * SE People Experiment Task 3 moved person_id off the v1 domain (first|last token, K1) to
+ * v2, keyed by K3 production (dagster_v3 company_people/identity_eval.py +
+ * normalization._company_person_group_keys). This caller only ever has a single free-text
+ * name in hand (`row.name` from the legacy DuckDB draft-two admin page, a preview link — see
+ * admin-se-people.tsx) with no company-wide observation set to run K3's reconciliation pass
+ * over, so it cannot reproduce K3 here. What it CAN reproduce is K2 (all tokens, casefolded,
+ * whitespace-normalized) -- a singleton K3 group's canonical key is trivially its own K2 key,
+ * which is exactly the "already-canonical key" person_id_for hashes on the Python side. This
+ * mirrors dagster_v3's identity_eval.identity_key_k2 modulo one pre-existing, unchanged
+ * discrepancy: Python's str.casefold() vs this function's toLowerCase() (immaterial for
+ * Swedish å/ä/ö, which this v1 implementation already relied on).
+ */
 export function seCompanyPersonId(companyId: string, name: string): string {
-  const tokens = name.trim().replace(/\s+/g, " ").toLowerCase().split(" ").filter(Boolean);
-  const key =
-    tokens.length < 2 ? (tokens[0] ?? "") : `${tokens[0]}|${tokens[tokens.length - 1]}`;
+  const key = name.trim().replace(/\s+/g, " ").toLowerCase();
   const hex = createHash("sha256")
-    .update(`se-company-person-v1\n${companyId}\n${key}`)
+    .update(`se-company-person-v2\n${companyId}\n${key}`)
     .digest("hex")
     .slice(0, 32);
   return `${hex.slice(0, 8)}-${hex.slice(8, 12)}-${hex.slice(12, 16)}-${hex.slice(16, 20)}-${hex.slice(20)}`;
