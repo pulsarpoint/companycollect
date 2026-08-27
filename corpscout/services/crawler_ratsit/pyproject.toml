@@ -40,6 +40,7 @@ dev = [
 ]
 
 [tool.pytest.ini_options]
+testpaths = ["tests"]
 markers = [
     "integration: requires an explicitly enabled live external service",
 ]

@@ -46,8 +46,9 @@ The deployed worker runs as UID 1000, restarts automatically, and uses
 the CDP URL from its own environment. It must be able to reach these
 dependencies:
 
-- Temporal at `TEMPORAL_ADDRESS`, using `TEMPORAL_NAMESPACE` and the task queue
-  named by `RATSIT_TEMPORAL_TASK_QUEUE`.
+- Temporal at `TEMPORAL_ADDRESS`, using `TEMPORAL_NAMESPACE`. The workflow and
+  ClickHouse activity use the queue named by `RATSIT_TEMPORAL_TASK_QUEUE`; the
+  browser/S3 activity uses the stable `ratsit-http` queue.
 - S3/RustFS at `CORPSCOUT_S3_ENDPOINT`.
 - ClickHouse at `CLICKHOUSE_HOST:CLICKHOUSE_HTTP_PORT`.
 - CloakBrowser at `RATSIT_CDP_URL`.
@@ -67,10 +68,17 @@ Then set `RATSIT_CDP_URL=http://127.0.0.1:19222` in `.env` and start the
 foreground worker with `uv run --env-file .env ratsit-worker`. The tunnel must
 remain open for as long as the local worker is running.
 
-The worker polls the `ratsit-crawler` task queue with one activity slot by
-default. A crawl and its S3 upload are one retryable activity. Recording the
-result in ClickHouse is a separate activity, so a ClickHouse retry cannot make
-another request to Ratsit.
+The service hosts two Temporal workers. The `ratsit-crawler` worker runs the
+workflow and ClickHouse result activity. The `ratsit-http` worker exclusively
+runs the browser request and S3 upload, with one concurrent activity and a
+server-enforced dispatch rate of `RATSIT_HTTP_ACTIVITIES_PER_SECOND` (default
+`0.2`, or one activity start every five seconds). Every worker polling
+`ratsit-http` must use the same rate value.
+
+A crawl and its S3 upload are one retryable activity. HTTP 429 responses ask
+Temporal to wait ten minutes before that activity's next attempt. Recording the
+result in ClickHouse remains a separate, unthrottled activity, so a ClickHouse
+retry cannot make another request to Ratsit.
 
 ## Submit one company
 
@@ -102,6 +110,10 @@ The JSON stores the selected HTML and crawl metadata. ClickHouse stores only
 the outcome, S3 location, content size, timings, and Temporal provenance.
 
 ## Test
+
+The standalone request-rate experiment is a separate Python 3.14 package under
+[`ratsit_speed_probe`](ratsit_speed_probe/README.md). It does not use Temporal
+or the production crawler environment.
 
 ```shell
 uv run pytest

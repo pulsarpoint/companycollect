@@ -26,4 +26,18 @@ def test_worker_defaults_to_one_activity() -> None:
     )
 
     assert settings.max_concurrent_activities == 1
+    assert settings.http_activities_per_second == 0.2
     assert settings.clickhouse_http_port == 8123
+
+
+@pytest.mark.parametrize("value", ["0", "-1", "not-a-number"])
+def test_worker_rejects_invalid_http_activity_rate(value: str) -> None:
+    environment = {
+        "CORPSCOUT_S3_ENDPOINT": "http://rustfs:9000",
+        "CORPSCOUT_S3_ACCESS_KEY": "access",
+        "CORPSCOUT_S3_SECRET_KEY": "secret",
+        "RATSIT_HTTP_ACTIVITIES_PER_SECOND": value,
+    }
+
+    with pytest.raises(ValueError, match="RATSIT_HTTP_ACTIVITIES_PER_SECOND"):
+        WorkerSettings.from_environment(environment)

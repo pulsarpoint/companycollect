@@ -9,6 +9,10 @@ class RatsitTransientError(RuntimeError):
     pass
 
 
+class RatsitRateLimitedError(RatsitTransientError):
+    pass
+
+
 class RatsitPageUnavailableError(RuntimeError):
     pass
 
@@ -109,7 +113,9 @@ async def fetch_ratsit_page(
             error_type="http_blocked",
             error_message=f"Ratsit returned HTTP status {response.status}",
         )
-    if response.status == 429 or response.status >= 500:
+    if response.status == 429:
+        raise RatsitRateLimitedError("Ratsit returned retryable HTTP status 429")
+    if response.status >= 500:
         raise RatsitTransientError(
             f"Ratsit returned retryable HTTP status {response.status}"
         )

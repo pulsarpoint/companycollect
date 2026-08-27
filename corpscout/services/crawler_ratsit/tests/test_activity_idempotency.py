@@ -1,13 +1,18 @@
 import asyncio
 import io
 import json
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
+from types import SimpleNamespace
 from typing import Any
 from uuid import uuid4
 
+import pytest
 from botocore.exceptions import ClientError
+from temporalio import activity
+from temporalio.exceptions import ApplicationError
 
-from crawler_ratsit.activities import RatsitActivities
+from crawler_ratsit.activities import RATE_LIMIT_RETRY_DELAY, RatsitActivities
+from crawler_ratsit.crawler import RatsitRateLimitedError
 from crawler_ratsit.models import CrawlActivityInput, FetchedPage
 from crawler_ratsit.object_store import RatsitObjectStore
 from crawler_ratsit.result_store import RatsitResultStore
@@ -104,3 +109,38 @@ def test_capture_activity_reuses_existing_s3_response() -> None:
         assert json.loads(stored_body)["result"]["company_id"] == "5562434182"
 
     asyncio.run(run_test())
+
+
+def test_rate_limited_activity_requests_a_ten_minute_retry(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    async def rate_limited_crawl(_company_id: str) -> FetchedPage:
+        raise RatsitRateLimitedError("Ratsit returned retryable HTTP status 429")
+
+    activities = RatsitActivities(
+        crawl_page=rate_limited_crawl,
+        object_store=RatsitObjectStore(
+            FakeS3Client(),
+            bucket="source-sweden-ratsit",
+            prefix="raw",
+        ),
+        result_store=RatsitResultStore(
+            UnusedClickHouseClient(),
+            database="corpscout",
+        ),
+    )
+    activity_input = CrawlActivityInput(
+        company_id="5562434182",
+        batch_id=str(uuid4()),
+        selected_at=datetime(2020, 1, 1, tzinfo=UTC).isoformat(),
+        temporal_workflow_id="ratsit/test",
+        temporal_run_id="run-id",
+    )
+    monkeypatch.setattr(activity, "info", lambda: SimpleNamespace(attempt=1))
+
+    with pytest.raises(ApplicationError) as captured:
+        asyncio.run(activities.crawl_and_upload_company(activity_input))
+
+    assert captured.value.type == "ratsit_rate_limited"
+    assert captured.value.next_retry_delay == timedelta(minutes=10)
+    assert RATE_LIMIT_RETRY_DELAY == timedelta(minutes=10)

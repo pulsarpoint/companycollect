@@ -12,6 +12,7 @@ from temporalio.worker import Worker
 from crawler_ratsit.constants import (
     CRAWL_AND_UPLOAD_ACTIVITY,
     CRAWL_COMPANY_WORKFLOW,
+    HTTP_TASK_QUEUE,
     RECORD_RESULT_ACTIVITY,
 )
 from crawler_ratsit.models import (
@@ -116,12 +117,18 @@ def test_temporal_rejects_an_open_company_and_reuses_its_id_after_completion() -
             batch_id=str(uuid4()),
         )
         try:
-            async with Worker(
+            workflow_worker = Worker(
                 environment.client,
                 task_queue=task_queue,
                 workflows=[RatsitCompanyWorkflow],
-                activities=[crawl, record],
-            ):
+                activities=[record],
+            )
+            http_worker = Worker(
+                environment.client,
+                task_queue=HTTP_TASK_QUEUE,
+                activities=[crawl],
+            )
+            async with workflow_worker, http_worker:
                 first = await submit_company_workflow(
                     environment.client,
                     first_input,

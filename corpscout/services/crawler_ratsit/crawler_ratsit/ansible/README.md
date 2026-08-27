@@ -65,6 +65,12 @@ placeholder credentials, copies it to
 installs the worker in `/opt/companycollect/corpscout/crawler-ratsit`, and
 requires the Temporal worker to remain active after deployment.
 
+The one service process polls two queues. `RATSIT_TEMPORAL_TASK_QUEUE` handles
+workflows and ClickHouse result writes. The stable `ratsit-http` queue handles
+only browser/S3 activities and uses Temporal's server-side
+`RATSIT_HTTP_ACTIVITIES_PER_SECOND` rate (default `0.2`). Use the same rate on
+every future host that polls this queue.
+
 ## Operations
 
 ```bash

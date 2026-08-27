@@ -10,6 +10,7 @@ from temporalio.worker import Worker
 from crawler_ratsit.constants import (
     CRAWL_AND_UPLOAD_ACTIVITY,
     CRAWL_MAX_ATTEMPTS,
+    HTTP_TASK_QUEUE,
     RECORD_RESULT_ACTIVITY,
 )
 from crawler_ratsit.models import (
@@ -35,12 +36,18 @@ def test_workflow_captures_then_records_success() -> None:
 
         environment = await WorkflowEnvironment.start_time_skipping()
         try:
-            async with Worker(
+            workflow_worker = Worker(
                 environment.client,
                 task_queue="ratsit-test",
                 workflows=[RatsitCompanyWorkflow],
-                activities=[crawl, record],
-            ):
+                activities=[record],
+            )
+            http_worker = Worker(
+                environment.client,
+                task_queue=HTTP_TASK_QUEUE,
+                activities=[crawl],
+            )
+            async with workflow_worker, http_worker:
                 result = await environment.client.execute_workflow(
                     RatsitCompanyWorkflow.run,
                     CrawlCompanyInput(
@@ -78,12 +85,18 @@ def test_workflow_records_retry_exhaustion_without_an_s3_object() -> None:
 
         environment = await WorkflowEnvironment.start_time_skipping()
         try:
-            async with Worker(
+            workflow_worker = Worker(
                 environment.client,
                 task_queue="ratsit-retry-test",
                 workflows=[RatsitCompanyWorkflow],
-                activities=[crawl, record],
-            ):
+                activities=[record],
+            )
+            http_worker = Worker(
+                environment.client,
+                task_queue=HTTP_TASK_QUEUE,
+                activities=[crawl],
+            )
+            async with workflow_worker, http_worker:
                 result = await environment.client.execute_workflow(
                     RatsitCompanyWorkflow.run,
                     CrawlCompanyInput(

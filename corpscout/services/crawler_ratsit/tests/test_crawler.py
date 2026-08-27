@@ -5,6 +5,7 @@ import pytest
 from playwright.async_api import TimeoutError as PlaywrightTimeoutError
 
 from crawler_ratsit.crawler import (
+    RatsitRateLimitedError,
     RatsitTransientError,
     fetch_ratsit_page,
     html_to_markdown,
@@ -130,10 +131,25 @@ def test_fetch_page_marks_missing_selector() -> None:
 
 
 def test_fetch_page_retries_rate_limit() -> None:
-    with pytest.raises(RatsitTransientError, match="retryable HTTP status 429"):
+    with pytest.raises(
+        RatsitRateLimitedError,
+        match="retryable HTTP status 429",
+    ):
         asyncio.run(
             fetch_ratsit_page(
                 FakePage(status=429),
+                "5562434182",
+                content_selector="main .main-inner",
+                timeout_ms=1000,
+            )
+        )
+
+
+def test_fetch_page_retries_server_error() -> None:
+    with pytest.raises(RatsitTransientError, match="retryable HTTP status 503"):
+        asyncio.run(
+            fetch_ratsit_page(
+                FakePage(status=503),
                 "5562434182",
                 content_selector="main .main-inner",
                 timeout_ms=1000,

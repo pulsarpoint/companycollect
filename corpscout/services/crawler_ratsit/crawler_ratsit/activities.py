@@ -1,14 +1,16 @@
 import asyncio
 from collections.abc import Awaitable, Callable
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from time import monotonic
 
 from temporalio import activity
+from temporalio.exceptions import ApplicationError
 
 from crawler_ratsit.constants import (
     CRAWL_AND_UPLOAD_ACTIVITY,
     RECORD_RESULT_ACTIVITY,
 )
+from crawler_ratsit.crawler import RatsitRateLimitedError
 from crawler_ratsit.models import (
     CrawlActivityInput,
     CrawlResult,
@@ -19,8 +21,9 @@ from crawler_ratsit.models import (
 from crawler_ratsit.object_store import RatsitObjectStore
 from crawler_ratsit.result_store import RatsitResultStore
 
-
 type CrawlPage = Callable[[str], Awaitable[FetchedPage]]
+
+RATE_LIMIT_RETRY_DELAY = timedelta(minutes=10)
 
 
 class RatsitActivities:
@@ -40,10 +43,17 @@ class RatsitActivities:
         self,
         activity_input: CrawlActivityInput,
     ) -> CrawlResult:
-        return await self.capture_company(
-            activity_input,
-            attempt_number=activity.info().attempt,
-        )
+        try:
+            return await self.capture_company(
+                activity_input,
+                attempt_number=activity.info().attempt,
+            )
+        except RatsitRateLimitedError as error:
+            raise ApplicationError(
+                str(error),
+                type="ratsit_rate_limited",
+                next_retry_delay=RATE_LIMIT_RETRY_DELAY,
+            ) from error
 
     async def capture_company(
         self,

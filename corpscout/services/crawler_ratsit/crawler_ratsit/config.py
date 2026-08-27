@@ -51,6 +51,7 @@ class WorkerSettings:
     clickhouse_database: str
     clickhouse_secure: bool
     max_concurrent_activities: int
+    http_activities_per_second: float
 
     @classmethod
     def from_environment(cls, environment: Mapping[str, str]) -> Self:
@@ -116,6 +117,11 @@ class WorkerSettings:
                 "RATSIT_MAX_CONCURRENT_ACTIVITIES",
                 fallback="1",
             ),
+            http_activities_per_second=_positive_float(
+                environment,
+                "RATSIT_HTTP_ACTIVITIES_PER_SECOND",
+                fallback="0.2",
+            ),
         )
 
 
@@ -150,6 +156,22 @@ def _positive_int(
     except ValueError as error:
         raise ValueError(f"{name} must be an integer") from error
     if value < 1:
+        raise ValueError(f"{name} must be positive")
+    return value
+
+
+def _positive_float(
+    environment: Mapping[str, str],
+    name: str,
+    *,
+    fallback: str,
+) -> float:
+    raw_value = _value(environment, name, fallback=fallback)
+    try:
+        value = float(raw_value)
+    except ValueError as error:
+        raise ValueError(f"{name} must be a number") from error
+    if value <= 0:
         raise ValueError(f"{name} must be positive")
     return value
 

@@ -12,11 +12,11 @@ from temporalio.worker import Worker
 
 from crawler_ratsit.activities import RatsitActivities
 from crawler_ratsit.config import WorkerSettings
+from crawler_ratsit.constants import HTTP_TASK_QUEUE
 from crawler_ratsit.crawler import crawl_ratsit_page
 from crawler_ratsit.object_store import RatsitObjectStore
 from crawler_ratsit.result_store import RatsitResultStore
 from crawler_ratsit.workflows import RatsitCompanyWorkflow
-
 
 LOGGER = logging.getLogger(__name__)
 
@@ -59,23 +59,35 @@ async def run_worker(settings: WorkerSettings) -> None:
             database=settings.clickhouse_database,
         ),
     )
+    http_activity_rate = settings.http_activities_per_second
 
     LOGGER.info(
-        "starting Ratsit Temporal worker task_queue=%s concurrency=%d",
+        "starting Ratsit workflow/result worker task_queue=%s concurrency=%d",
         settings.temporal.temporal_task_queue,
         settings.max_concurrent_activities,
     )
+    LOGGER.info(
+        "starting Ratsit HTTP worker task_queue=%s activities_per_second=%g",
+        HTTP_TASK_QUEUE,
+        http_activity_rate,
+    )
+    workflow_worker = Worker(
+        temporal_client,
+        task_queue=settings.temporal.temporal_task_queue,
+        workflows=[RatsitCompanyWorkflow],
+        activities=[activities.record_crawl_result],
+        max_concurrent_activities=settings.max_concurrent_activities,
+    )
+    http_worker = Worker(
+        temporal_client,
+        task_queue=HTTP_TASK_QUEUE,
+        activities=[activities.crawl_and_upload_company],
+        max_concurrent_activities=1,
+        max_task_queue_activities_per_second=http_activity_rate,
+    )
     try:
-        await Worker(
-            temporal_client,
-            task_queue=settings.temporal.temporal_task_queue,
-            workflows=[RatsitCompanyWorkflow],
-            activities=[
-                activities.crawl_and_upload_company,
-                activities.record_crawl_result,
-            ],
-            max_concurrent_activities=settings.max_concurrent_activities,
-        ).run()
+        async with http_worker:
+            await workflow_worker.run()
     finally:
         await asyncio.to_thread(clickhouse_client.close)
         s3_client.close()
