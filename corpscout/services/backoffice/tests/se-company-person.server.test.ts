@@ -34,6 +34,16 @@ describe("seCompanyPersonId", () => {
     const DAVID_MINDUS = "4e2390d6-9bc2-9ca9-7846-2154e5bdfe48";
     expect(seCompanyPersonId(COMPANY, "David Mindus")).toBe(DAVID_MINDUS);
     expect(seCompanyPersonId(COMPANY, "  david   MINDUS ")).toBe(DAVID_MINDUS);
+    // M6 (fix round, minor): SHARED_VECTOR -- this exact (company_id, name, uuid) triple is
+    // ALSO asserted in dagster_v3's tests/test_se_company_person_normalization.py
+    // (test_shared_cross_language_vector_matches_the_typescript_twin), independently
+    // computed in Node during the fix round and confirmed to match Python's
+    // person_id_for("5565200028", identity_key_k2("Anna Svensson")) before either test was
+    // written. A byte-for-byte divergence between the two implementations fails on either
+    // side.
+    expect(seCompanyPersonId(COMPANY, "Anna Svensson")).toBe(
+      "a95ef2f2-b817-c3f7-2ecf-e78d42acfc10",
+    );
     // A middle name changes the K2 key (unlike K1, which dropped it): a different hash
     // from "Anna Svensson", proving this is no longer first|last-token grouping.
     expect(seCompanyPersonId(COMPANY, "Anna Karin Svensson")).toBe(
