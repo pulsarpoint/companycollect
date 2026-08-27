@@ -35,6 +35,15 @@ THE THREE RULES.
   cluster has exactly one (unique) superset candidate, so K3 merges them and nothing is
   written to the candidate table for that pair.
 
+QID-RULE STRUCTURAL CAVEAT. Rule (b) is implemented per spec 3.2(b) and is fully exercised by
+unit tests, but under the CURRENT three source views it cannot fire on live data:
+`person_wikidata_id` is populated only on wikidata-sourced rows, and `se_company_person_
+wikidata` (migration 000330) is one-name-per-QID (one `wikidata_persons` row per QID), so a
+company's wikidata rows never carry two *different* K2 spellings for the same QID today.
+Consequently the evaluation's K3 numbers on the real corpus exercise rule (a) ONLY --
+"QID-linking doesn't reduce the collision count" must NOT be read from those numbers; it is a
+property of the current view shape, not evidence that the rule is unhelpful.
+
 BLANK NAMES. The three views are raw pass-throughs of their upstream tables (source_views.py
 module docstring) -- they do not filter empty/blank `full_name`. `k3_merge_groups` silently
 drops any row whose `full_name` is empty or whitespace-only (defense in depth: a caller that
@@ -340,8 +349,16 @@ def k3_merge_groups(company_rows: Sequence[PersonObservationRow]) -> list[MergeD
         is_collision = bool(colliding_here)
         candidate_group_id = ""
         if is_collision:
-            # Deterministic representative when a decision (rare: only via a QID link that
-            # crosses buckets) touches more than one colliding K1 key.
+            # Deterministic representative when a decision touches more than one colliding
+            # K1 key (only reachable via a QID merge that crosses buckets -- see the module
+            # docstring's QID structural caveat). Picking one representative here means the
+            # OTHER (non-representative) colliding bucket's candidate group can end up
+            # incomplete/one-sided: it is built from `by_k1[that bucket]`, but this
+            # decision's rows -- which belong to that bucket too, via the cross-bucket
+            # merge -- get filed only under the representative bucket's group, not the
+            # other one. Unreachable from current live views (the QID rule is structurally
+            # a no-op there, see module docstring) but must be revisited before K3 (or a
+            # variant) is promoted to a served rule.
             representative_k1_key = colliding_here[0]
             candidate_group_id = _candidate_group_id(
                 company_id,
@@ -584,7 +601,9 @@ _SOURCE_ASSET_DEPS = (
         "Manual one-off analysis (spec 3.2): evaluates the K1 (baseline)/K2 (full-name)/K3 "
         "(deterministic reconciliation) identity rules over the three SE person source "
         "views and writes K1-vs-K3 collision candidates for backoffice review. Never "
-        "scheduled or eager -- launched from the UI with an optional company_ids scope."
+        "scheduled or eager -- launched from the UI with an optional company_ids scope. "
+        "NOTE: the QID-link rule cannot fire on the current source views (one name per QID) "
+        "-- these K3 numbers exercise the superset rule only; see module docstring."
     ),
 )
 def se_company_person_identity_evaluation(
@@ -603,11 +622,18 @@ def se_company_person_identity_evaluation(
         result = evaluate_se_company_person_identity(rows)
 
         if config.write_candidates:
-            client.execute(
-                f"TRUNCATE TABLE IF EXISTS {SE_COMPANY_PERSON_COLLISION_CANDIDATE_TABLE}"
-            )
+            # Build the rows to write BEFORE the destructive TRUNCATE: a crash while
+            # building `candidate_rows` (or between here and the INSERT) must never leave
+            # the table emptied with no way to tell "zero collisions found" apart from
+            # "crashed mid-write". This shrinks the failure window to the INSERT call
+            # itself, which is the narrowest it can get without EXCHANGE-TABLES atomicity
+            # (deliberately not used here -- see the module docstring's write-strategy
+            # note).
             candidate_rows = _candidate_table_rows(
                 result.candidate_groups, created_at=datetime.now(UTC)
+            )
+            client.execute(
+                f"TRUNCATE TABLE IF EXISTS {SE_COMPANY_PERSON_COLLISION_CANDIDATE_TABLE}"
             )
             if candidate_rows:
                 columns = ", ".join(SE_COMPANY_PERSON_COLLISION_CANDIDATE_COLUMNS)
