@@ -521,6 +521,8 @@ describe("revalidateMergeSuggestion", () => {
   });
 });
 
+const SECOND_FROM_PERSON = "22222222-2222-4222-8222-222222222222";
+
 describe("approveMergeSuggestion", () => {
   beforeEach(() => {
     clickhouse.insert.mockReset();
@@ -528,6 +530,10 @@ describe("approveMergeSuggestion", () => {
   });
 
   it("writes one merge_persons correction per from_person_id after live re-validation", async () => {
+    const liveRows = [
+      { person_id: INTO_PERSON, draft_set_hash: "a".repeat(64), draft_ids: ["d1"], is_live: 1 },
+      { person_id: FROM_PERSON, draft_set_hash: "b".repeat(64), draft_ids: ["d2"], is_live: 1 },
+    ];
     clickhouse.query
       .mockResolvedValueOnce([
         {
@@ -536,11 +542,8 @@ describe("approveMergeSuggestion", () => {
           draft_ids: ["d1", "d2"],
         },
       ])
-      .mockResolvedValueOnce([
-        { person_id: INTO_PERSON, draft_set_hash: "a".repeat(64), draft_ids: ["d1"], is_live: 1 },
-        { person_id: FROM_PERSON, draft_set_hash: "b".repeat(64), draft_ids: ["d2"], is_live: 1 },
-      ])
-      .mockResolvedValueOnce([{ draft_set_hash: "b".repeat(64) }]);
+      .mockResolvedValueOnce(liveRows) // upfront revalidation
+      .mockResolvedValueOnce(liveRows); // immediately-before-INSERT recheck
     clickhouse.insert.mockResolvedValue(undefined);
 
     const result = await approveMergeSuggestion({
@@ -559,6 +562,130 @@ describe("approveMergeSuggestion", () => {
       payload: JSON.stringify({ candidate_group_id: GROUP_ID }),
       evidence_hash: "b".repeat(64),
     });
+  });
+
+  it("writes every from_person_id's correction in ONE atomic INSERT when the group has more than two members", async () => {
+    // Coordinator review item 1: an N-way merge cannot be one correction ROW
+    // (apply_person_corrections' merge_persons handler reads only a row's own
+    // singular subject_person_id/target_person_id -- never `payload` -- so an
+    // array payload would silently merge just one of these and drop the
+    // rest). What IS achievable and IS asserted here: every row lands in a
+    // SINGLE `chInsertSeCompanyPersonCorrections` call, not N independent
+    // ones -- so the group can never be observed half-merged.
+    const payload = mergeSuggestionPayload({
+      from_person_ids: [FROM_PERSON, SECOND_FROM_PERSON],
+      member_person_ids: [INTO_PERSON, FROM_PERSON, SECOND_FROM_PERSON],
+    });
+    const liveRows = [
+      { person_id: INTO_PERSON, draft_set_hash: "a".repeat(64), draft_ids: ["d1"], is_live: 1 },
+      { person_id: FROM_PERSON, draft_set_hash: "b".repeat(64), draft_ids: ["d2"], is_live: 1 },
+      { person_id: SECOND_FROM_PERSON, draft_set_hash: "c".repeat(64), draft_ids: ["d3"], is_live: 1 },
+    ];
+    clickhouse.query
+      .mockResolvedValueOnce([
+        {
+          suggestion_id: MERGE_SUGGESTION_ID,
+          suggestion: JSON.stringify(payload),
+          draft_ids: ["d1", "d2", "d3"],
+        },
+      ])
+      .mockResolvedValueOnce(liveRows)
+      .mockResolvedValueOnce(liveRows);
+    clickhouse.insert.mockResolvedValue(undefined);
+
+    const result = await approveMergeSuggestion({
+      companyId: COMPANY,
+      suggestionId: MERGE_SUGGESTION_ID,
+      reason: "approve the whole group",
+    });
+
+    expect(result.correctionIds).toHaveLength(2);
+    expect(clickhouse.insert).toHaveBeenCalledTimes(1);
+    const [rows] = clickhouse.insert.mock.calls[0] as [Array<Record<string, unknown>>];
+    expect(rows).toHaveLength(2);
+    expect(rows.map((row) => row.subject_person_id).sort()).toEqual(
+      [FROM_PERSON, SECOND_FROM_PERSON].sort(),
+    );
+    for (const row of rows) {
+      expect(row.target_person_id).toBe(INTO_PERSON);
+      expect(row.correction_kind).toBe("merge_persons");
+      expect(JSON.parse(row.payload as string)).toEqual({ candidate_group_id: GROUP_ID });
+    }
+  });
+
+  it("is all-or-nothing: a failed batch insert leaves zero rows written, never a half-merged group", async () => {
+    const payload = mergeSuggestionPayload({
+      from_person_ids: [FROM_PERSON, SECOND_FROM_PERSON],
+      member_person_ids: [INTO_PERSON, FROM_PERSON, SECOND_FROM_PERSON],
+    });
+    const liveRows = [
+      { person_id: INTO_PERSON, draft_set_hash: "a".repeat(64), draft_ids: ["d1"], is_live: 1 },
+      { person_id: FROM_PERSON, draft_set_hash: "b".repeat(64), draft_ids: ["d2"], is_live: 1 },
+      { person_id: SECOND_FROM_PERSON, draft_set_hash: "c".repeat(64), draft_ids: ["d3"], is_live: 1 },
+    ];
+    clickhouse.query
+      .mockResolvedValueOnce([
+        {
+          suggestion_id: MERGE_SUGGESTION_ID,
+          suggestion: JSON.stringify(payload),
+          draft_ids: ["d1", "d2", "d3"],
+        },
+      ])
+      .mockResolvedValueOnce(liveRows)
+      .mockResolvedValueOnce(liveRows);
+    clickhouse.insert.mockRejectedValueOnce(new Error("network reset mid-batch"));
+
+    await expect(
+      approveMergeSuggestion({
+        companyId: COMPANY,
+        suggestionId: MERGE_SUGGESTION_ID,
+        reason: "approve the whole group",
+      }),
+    ).rejects.toThrow("network reset mid-batch");
+    // The whole group's evidence moves as ONE call; there is no partial
+    // state a reload could observe, and DECIDED_CANDIDATE_GROUPS_SQL cannot
+    // flip the group to "decided" because no correction row exists at all.
+    expect(clickhouse.insert).toHaveBeenCalledTimes(1);
+  });
+
+  it("REFUSES at write time when a subject was tombstoned in the gap after the upfront revalidation", async () => {
+    // Coordinator review item 2: merge-tombstoning sets merged_into_person_id
+    // WITHOUT touching draft_set_hash, so this can only be caught by a fresh
+    // is_live check immediately before the INSERT -- a hash-only recheck
+    // would not see it (draft_set_hash is IDENTICAL in both reads below).
+    clickhouse.query
+      .mockResolvedValueOnce([
+        {
+          suggestion_id: MERGE_SUGGESTION_ID,
+          suggestion: JSON.stringify(mergeSuggestionPayload()),
+          draft_ids: ["d1", "d2"],
+        },
+      ])
+      .mockResolvedValueOnce([
+        { person_id: INTO_PERSON, draft_set_hash: "a".repeat(64), draft_ids: ["d1"], is_live: 1 },
+        { person_id: FROM_PERSON, draft_set_hash: "b".repeat(64), draft_ids: ["d2"], is_live: 1 },
+      ]) // upfront revalidation: both live
+      .mockResolvedValueOnce([
+        { person_id: INTO_PERSON, draft_set_hash: "a".repeat(64), draft_ids: ["d1"], is_live: 1 },
+        // FROM_PERSON merged into someone else by a DIFFERENT correction in
+        // the gap between the two reads -- same hash, is_live flipped to 0.
+        { person_id: FROM_PERSON, draft_set_hash: "b".repeat(64), draft_ids: ["d2"], is_live: 0 },
+      ]);
+
+    let caught: unknown;
+    try {
+      await approveMergeSuggestion({
+        companyId: COMPANY,
+        suggestionId: MERGE_SUGGESTION_ID,
+        reason: "approve",
+      });
+    } catch (error) {
+      caught = error;
+    }
+
+    expect(caught).toBeInstanceOf(SePersonCorrectionValidationError);
+    expect((caught as Error).message).toMatch(/stale while saving/);
+    expect(clickhouse.insert).not.toHaveBeenCalled();
   });
 
   it("REFUSES with a clear message and writes nothing when the suggestion has gone stale", async () => {
@@ -632,6 +759,41 @@ describe("keepSeparateMergeSuggestion", () => {
   });
 
   it("writes one keep_separate correction anchored on into_person_id", async () => {
+    const liveRows = [
+      { person_id: INTO_PERSON, draft_set_hash: "a".repeat(64), draft_ids: ["d1"], is_live: 1 },
+      { person_id: FROM_PERSON, draft_set_hash: "b".repeat(64), draft_ids: ["d2"], is_live: 1 },
+    ];
+    clickhouse.query
+      .mockResolvedValueOnce([
+        {
+          suggestion_id: MERGE_SUGGESTION_ID,
+          suggestion: JSON.stringify(mergeSuggestionPayload({ decision: "keep_separate" })),
+          draft_ids: ["d1", "d2"],
+        },
+      ])
+      .mockResolvedValueOnce(liveRows) // upfront revalidation
+      .mockResolvedValueOnce([liveRows[0]]); // immediately-before-INSERT recheck (into_person_id only)
+    clickhouse.insert.mockResolvedValue(undefined);
+
+    const result = await keepSeparateMergeSuggestion({
+      companyId: COMPANY,
+      suggestionId: MERGE_SUGGESTION_ID,
+      reason: "Different people, same name",
+    });
+
+    expect(result.correctionId).toMatch(/^[0-9a-f-]{36}$/);
+    expect(clickhouse.insert).toHaveBeenCalledTimes(1);
+    const [rows] = clickhouse.insert.mock.calls[0];
+    expect(rows[0]).toMatchObject({
+      correction_kind: "keep_separate",
+      subject_person_id: INTO_PERSON,
+      target_person_id: null,
+      payload: JSON.stringify({ candidate_group_id: GROUP_ID }),
+      evidence_hash: "a".repeat(64),
+    });
+  });
+
+  it("REFUSES at write time when into_person_id was tombstoned in the gap after the upfront revalidation", async () => {
     clickhouse.query
       .mockResolvedValueOnce([
         {
@@ -644,24 +806,25 @@ describe("keepSeparateMergeSuggestion", () => {
         { person_id: INTO_PERSON, draft_set_hash: "a".repeat(64), draft_ids: ["d1"], is_live: 1 },
         { person_id: FROM_PERSON, draft_set_hash: "b".repeat(64), draft_ids: ["d2"], is_live: 1 },
       ])
-      .mockResolvedValueOnce([{ draft_set_hash: "a".repeat(64) }]);
-    clickhouse.insert.mockResolvedValue(undefined);
+      .mockResolvedValueOnce([
+        // Same hash, but merged elsewhere by another correction in the gap.
+        { person_id: INTO_PERSON, draft_set_hash: "a".repeat(64), draft_ids: ["d1"], is_live: 0 },
+      ]);
 
-    const result = await keepSeparateMergeSuggestion({
-      companyId: COMPANY,
-      suggestionId: MERGE_SUGGESTION_ID,
-      reason: "Different people, same name",
-    });
+    let caught: unknown;
+    try {
+      await keepSeparateMergeSuggestion({
+        companyId: COMPANY,
+        suggestionId: MERGE_SUGGESTION_ID,
+        reason: "keep separate",
+      });
+    } catch (error) {
+      caught = error;
+    }
 
-    expect(result.correctionId).toMatch(/^[0-9a-f-]{36}$/);
-    const [rows] = clickhouse.insert.mock.calls[0];
-    expect(rows[0]).toMatchObject({
-      correction_kind: "keep_separate",
-      subject_person_id: INTO_PERSON,
-      target_person_id: null,
-      payload: JSON.stringify({ candidate_group_id: GROUP_ID }),
-      evidence_hash: "a".repeat(64),
-    });
+    expect(caught).toBeInstanceOf(SePersonCorrectionValidationError);
+    expect((caught as Error).message).toMatch(/stale while saving/);
+    expect(clickhouse.insert).not.toHaveBeenCalled();
   });
 
   it("REFUSES with a clear message and writes nothing when the suggestion has gone stale", async () => {

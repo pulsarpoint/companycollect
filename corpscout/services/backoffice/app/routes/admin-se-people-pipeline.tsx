@@ -25,6 +25,7 @@ import {
   type SeCompanyPersonPipelineStats,
 } from "~/lib/se-company-person-pipeline.server";
 import {
+  DEFAULT_MAX_COMPANIES,
   DEFAULT_MERGE_LLM_PROFILE_NAME,
   DEFAULT_MERGE_TIMEOUT_SECONDS,
   clampCompanyBatchSize,
@@ -109,8 +110,13 @@ async function statsView(): Promise<{
   }
 }
 
-export async function loader(_args: Route.LoaderArgs): Promise<PeoplePipelineView> {
+export async function loader({ request }: Route.LoaderArgs): Promise<PeoplePipelineView> {
   const [dagster, statsResult] = await Promise.all([dagsterView(), statsView()]);
+  // Coordinator review item 4: the person review page's "No merge suggestion
+  // yet." state links here with `?company_id=`, so a reviewer can launch a
+  // scoped merge run without copy-pasting the id -- prefills the merge
+  // section's company scope only.
+  const rawCompanyId = new URL(request.url).searchParams.get("company_id") ?? "";
   return {
     kind: "view",
     identityRuns: dagster.identityRuns,
@@ -119,6 +125,7 @@ export async function loader(_args: Route.LoaderArgs): Promise<PeoplePipelineVie
     dagsterError: dagster.error,
     stats: statsResult.stats,
     statsError: statsResult.error,
+    prefilledCompanyId: rawCompanyId === "" ? "" : formatCompanyIdScope([rawCompanyId]),
   };
 }
 
@@ -195,7 +202,7 @@ export async function action({ request }: Route.ActionArgs): Promise<PeoplePipel
 
     if (intent === "confirm-resolution" || intent === "launch-resolution") {
       const companyIds = parseCompanyIdScope(formValue(form, "company_ids"));
-      const maxCompanies = clampMaxCompanies(formNumber(form, "max_companies", 1_000_000));
+      const maxCompanies = clampMaxCompanies(formNumber(form, "max_companies", DEFAULT_MAX_COMPANIES));
       const companyBatchSize = clampCompanyBatchSize(formNumber(form, "company_batch_size", 5_000));
       const maximumObservationsPerRequest = clampObservationsPerRequest(
         formNumber(form, "maximum_observations_per_request", 50),
@@ -213,6 +220,11 @@ export async function action({ request }: Route.ActionArgs): Promise<PeoplePipel
               `up to ${maximumObservationsPerRequest} observations per LLM request, ` +
               `${timeoutSeconds}s timeout.`,
             "This always writes when launched -- se_company_person_job has no preview mode.",
+            // Coordinator review item 3: this IS a paid LLM path (DeepSeek,
+            // normalization.py's multi-source resolution) with no cost
+            // estimate available here -- say so plainly rather than let the
+            // "always writes" line above read as merely a ClickHouse write.
+            "May call DeepSeek for every multi-source company in scope; there is no preview/cost estimate.",
           ],
           fields: {
             company_ids: formatCompanyIdScope(companyIds),

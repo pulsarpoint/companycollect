@@ -96,9 +96,11 @@ function DraftCheckboxes({
  * members would otherwise never see it on their own page.
  */
 function CollisionReviewCard({
+  companyId,
   groups,
   busy,
 }: {
+  companyId: string;
   groups: SeCollisionCandidateGroup[];
   busy: boolean;
 }) {
@@ -134,7 +136,14 @@ function CollisionReviewCard({
                 </Badge>
               ) : (
                 <span className="text-xs text-muted-foreground">
-                  No merge suggestion yet.
+                  No merge suggestion yet. Launch a scoped{" "}
+                  <Link
+                    className="underline"
+                    to={`/admin/se/people/pipeline?company_id=${encodeURIComponent(companyId)}`}
+                  >
+                    merge run
+                  </Link>
+                  .
                 </span>
               )}
             </div>
@@ -493,7 +502,11 @@ export function SePersonReviewWorkspace({
         </CardContent>
       </Card>
 
-      <CollisionReviewCard groups={collisionGroups} busy={busy} />
+      <CollisionReviewCard
+        companyId={person.company_id}
+        groups={collisionGroups}
+        busy={busy}
+      />
 
       <Card>
         <CardHeader>

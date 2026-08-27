@@ -48,9 +48,9 @@ function post(fields: Record<string, string>): Promise<ActionResult> {
   } as unknown as Parameters<typeof action>[0]);
 }
 
-function get() {
+function get(url = "http://backoffice/admin/se/people/pipeline") {
   return loader({
-    request: new Request("http://backoffice/admin/se/people/pipeline"),
+    request: new Request(url),
   } as unknown as Parameters<typeof loader>[0]);
 }
 
@@ -151,6 +151,24 @@ describe("resolution", () => {
     const fields = confirmation(confirmed).fields;
     expect(fields.max_companies).toBe("1000000");
   });
+
+  it("defaults max_companies to the conservative 10,000 prefill, not the 1,000,000 bound", async () => {
+    // Coordinator review item 3b: a prior incident of an accidental
+    // full-corpus LLM spend is why the DEFAULT (not the allowed bound) must
+    // require deliberately typing a bigger number.
+    const confirmed = await post({ intent: "confirm-resolution", company_ids: "" });
+    const fields = confirmation(confirmed).fields;
+    expect(fields.max_companies).toBe("10000");
+  });
+
+  it("states the DeepSeek cost/no-preview honesty line explicitly", async () => {
+    // Coordinator review item 3a.
+    const confirmed = await post({ intent: "confirm-resolution", company_ids: "" });
+    const lines = confirmation(confirmed).lines;
+    expect(lines).toContain(
+      "May call DeepSeek for every multi-source company in scope; there is no preview/cost estimate.",
+    );
+  });
 });
 
 describe("merge suggestions", () => {
@@ -248,5 +266,15 @@ describe("the loader", () => {
     expect(view.kind).toBe("view");
     expect(view.dagsterError).toContain("Dagster is down");
     expect(view.identityRuns).toEqual([]);
+  });
+
+  it("prefills the merge section's company scope from a ?company_id= query param (item 4)", async () => {
+    const view = await get("http://backoffice/admin/se/people/pipeline?company_id=5560125220");
+    expect(view.prefilledCompanyId).toBe("5560125220");
+  });
+
+  it("prefills nothing when opened without a company_id", async () => {
+    const view = await get();
+    expect(view.prefilledCompanyId).toBe("");
   });
 });

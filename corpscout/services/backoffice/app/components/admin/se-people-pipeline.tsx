@@ -68,6 +68,12 @@ export interface PeoplePipelineView {
   dagsterError: string;
   stats: SeCompanyPersonPipelineStats | null;
   statsError: string;
+  /** From the `?company_id=` query param -- the person review page's "No
+   * merge suggestion yet." state links here so a reviewer can launch a
+   * scoped merge run without copy-pasting the id by hand. Prefills the
+   * merge section's company scope only (that is the launch a reviewer
+   * coming from that link wants); "" when the page was opened directly. */
+  prefilledCompanyId: string;
 }
 
 export type PeoplePipelineSection = "identity" | "resolution" | "merge";
@@ -284,7 +290,9 @@ function ResolutionSection({
           se_company_person_job -- publishes se_company_person,
           se_company_person_role_draft and se_company_person_role for the
           scoped companies. Always writes when launched; there is no preview
-          mode.
+          mode, and it may call DeepSeek for every multi-source company in
+          scope with no cost estimate available here -- start narrow, or a
+          deliberately larger max companies, not the default.
           {publishedPersonCount !== null
             ? ` ${nf.format(publishedPersonCount)} people are currently published.`
             : ""}
@@ -363,10 +371,12 @@ function MergeSection({
   runs,
   stats,
   statsError,
+  prefilledCompanyId,
 }: {
   runs: PeoplePipelineRunRow[];
   stats: SeCompanyPersonPipelineStats | null;
   statsError: string;
+  prefilledCompanyId: string;
 }) {
   return (
     <Card>
@@ -390,7 +400,11 @@ function MergeSection({
           <>
             <div className="sm:col-span-2">
               <Field label="Company scope (comma-separated, blank = every company)">
-                <Input name="company_ids" placeholder="5560125220,5565200028" />
+                <Input
+                  name="company_ids"
+                  placeholder="5560125220,5565200028"
+                  defaultValue={prefilledCompanyId}
+                />
               </Field>
             </div>
             <Field label="LLM profile">
@@ -443,7 +457,12 @@ export function SePeoplePipeline({ view }: { view: PeoplePipelineView }) {
         runs={view.resolutionRuns}
         publishedPersonCount={view.stats?.publishedPersonCount ?? null}
       />
-      <MergeSection runs={view.mergeRuns} stats={view.stats} statsError={view.statsError} />
+      <MergeSection
+        runs={view.mergeRuns}
+        stats={view.stats}
+        statsError={view.statsError}
+        prefilledCompanyId={view.prefilledCompanyId}
+      />
     </div>
   );
 }

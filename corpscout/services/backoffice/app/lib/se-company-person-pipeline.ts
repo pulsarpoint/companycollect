@@ -61,10 +61,23 @@ export function dagsterApiKeyVariable(provider: string): string {
  * numeric bounds, just a company scope and a boolean. */
 export const IDENTITY_EVALUATION_DEFAULT_WRITE_CANDIDATES = true;
 
-/** Mirrors normalization.py's SECompanyPersonConfig field bounds. */
+/**
+ * Mirrors normalization.py's SECompanyPersonConfig field bounds
+ * (`max_companies: int = Field(default=1_000_000, ge=1, le=1_000_000)`) --
+ * except the DEFAULT, which is deliberately NOT Dagster's own 1,000,000.
+ * Resolution is a paid DeepSeek path for every multi-source company in
+ * scope, with no preview/cost gate on the asset itself (controller ruling,
+ * SE People Experiment Task 5 review round 1: this repo has a prior
+ * incident of an accidental full-corpus LLM spend). Prefilling the UI's
+ * bound instead of its own conservative default would make an
+ * accidental full-corpus run the path of least resistance again; a
+ * full-corpus run now requires deliberately typing a bigger number. The
+ * upper BOUND stays 1,000,000 -- Dagster would reject anything past it
+ * regardless of what this page prefills.
+ */
 export const MIN_MAX_COMPANIES = 1;
 export const MAX_MAX_COMPANIES = 1_000_000;
-export const DEFAULT_MAX_COMPANIES = 1_000_000;
+export const DEFAULT_MAX_COMPANIES = 10_000;
 
 export const MIN_COMPANY_BATCH_SIZE = 1;
 export const MAX_COMPANY_BATCH_SIZE = 25_000;

@@ -305,6 +305,11 @@ describe("Sweden company-person review page", () => {
     expect(html).toContain("grp-pending");
     expect(html).toContain("No merge suggestion yet.");
     expect(html).not.toContain("approve_merge_suggestion");
+    // Item 4: a link to launch a scoped merge run without copy-pasting the
+    // company id -- the pipeline page's loader reads it back via `?company_id=`.
+    expect(html).toContain(
+      `href="/admin/se/people/pipeline?company_id=${detail.person.company_id}"`,
+    );
   });
 });
 

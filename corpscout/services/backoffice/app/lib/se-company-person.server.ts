@@ -694,13 +694,70 @@ async function loadMergeSuggestionForReview(
 }
 
 /**
+ * Fresh is_live + draft_set_hash for exactly `personIds`, read a SECOND time
+ * (revalidateMergeSuggestion already read it once, upfront) immediately
+ * before the INSERT that decides a group. Cannot be replaced by
+ * appendSeCompanyPersonCorrection's own hash recheck: merge-tombstoning
+ * (normalization.py's merge_persons handler) sets `merged_into_person_id`
+ * WITHOUT touching `draft_ids`/`draft_set_hash`, so a hash-only comparison
+ * cannot see a subject tombstoned by ANOTHER correction landing in the gap
+ * between the upfront revalidation and this write. Refuses the whole write
+ * (throws, nothing inserted) if any subject is no longer live.
+ */
+async function requireLiveAtWriteTime(
+  companyId: string,
+  personIds: readonly string[],
+): Promise<Record<string, string>> {
+  const rows = await chQuery<MergeGroupLiveRow>(MERGE_GROUP_LIVE_SQL, { companyId, personIds });
+  const byId = new Map(rows.map((row) => [row.person_id, row]));
+  const stale = personIds.filter((id) => byId.get(id)?.is_live !== 1);
+  if (stale.length > 0) {
+    throw new SePersonCorrectionValidationError(
+      `This suggestion went stale while saving: ${stale.join(", ")} ` +
+        `${stale.length === 1 ? "is" : "are"} no longer a live, published person. Reload and reconsider.`,
+    );
+  }
+  return Object.fromEntries(rows.map((row) => [row.person_id, row.draft_set_hash]));
+}
+
+function correctionRow(
+  draft: ReturnType<typeof validateSePersonCorrection>,
+  createdAt: string,
+): Record<string, unknown> {
+  return {
+    correction_id: randomUUID(),
+    ...draft,
+    decided_by: CORRECTION_ACTOR,
+    created_at: createdAt,
+  };
+}
+
+/**
  * Approving a merge suggestion writes one merge_persons correction PER
- * from_person_id (apply_person_corrections only ever moves evidence from one
- * subject to one target -- see dagster_v3's normalization.py) -- each carrying
- * the group's candidate_group_id in its payload so merge.py's decided-marker
- * query recognizes the whole group as resolved, not just one pair.
- * Re-validated against live state FIRST: if the suggestion is stale, nothing
- * is written at all.
+ * from_person_id -- apply_person_corrections' merge_persons handler
+ * (normalization.py ~1153-1169) reads only a correction row's own singular
+ * `subject_person_id`/`target_person_id`; it never reads `payload` at all,
+ * and neither `PersonCorrection` (corrections.py) nor `CORRECTION_COLUMNS`
+ * has an array-of-subjects field. A single correction row carrying
+ * `{into_person_id, from_person_ids: [...]}"` in its payload would therefore
+ * NOT be honored -- Dagster would silently merge only whichever one
+ * `subject_person_id` that row names and ignore the rest. True single-row
+ * atomicity for an N-way merge needs a dagster_v3-side schema change (an
+ * array subject column + updated apply logic), which is out of this
+ * backoffice-only task's scope -- flagged for the controller, not
+ * implemented here.
+ *
+ * What IS achievable without touching dagster_v3: every row this call needs
+ * is built and validated FIRST, re-checked live immediately before writing,
+ * and sent in ONE `chInsertSeCompanyPersonCorrections` call -- a single
+ * ClickHouse INSERT of N rows is atomic at the client/network level (it
+ * either lands as one accepted request or the call throws and nothing is
+ * written), unlike N sequential single-row `insert()` calls, each of which
+ * carries its own independent failure window. A group can therefore never be
+ * observed half-merged: either every from_person_id's correction exists, or
+ * none of them do, so DECIDED_CANDIDATE_GROUPS_SQL (which flips a group to
+ * "decided" the instant ANY correction names it) can never see a partial
+ * group.
  */
 export async function approveMergeSuggestion(input: {
   companyId: string;
@@ -719,30 +776,48 @@ export async function approveMergeSuggestion(input: {
   const revalidation = await revalidateMergeSuggestion(input.companyId, payload, draftIds);
   if (!revalidation.ok) throw new SePersonCorrectionValidationError(revalidation.reason);
 
-  const correctionIds: string[] = [];
-  for (const fromPersonId of payload.from_person_ids) {
-    const evidenceHash = revalidation.evidenceHashByPersonId[fromPersonId];
-    const result = await appendSeCompanyPersonCorrection({
+  const drafts = payload.from_person_ids.map((fromPersonId) =>
+    validateSePersonCorrection({
       companyId: input.companyId,
       kind: "merge_persons",
       subjectPersonId: fromPersonId,
       targetPersonId: payload.into_person_id,
       payload: { candidate_group_id: payload.candidate_group_id },
-      evidenceHash,
+      evidenceHash: revalidation.evidenceHashByPersonId[fromPersonId],
       reason: input.reason,
       activeRoleCodes: new Set(),
-    });
-    correctionIds.push(result.correctionId);
+    }),
+  );
+
+  // Immediately-before-INSERT recheck (is_live, not just hash -- see
+  // requireLiveAtWriteTime's docstring for why): if anything changed in the
+  // gap since the upfront revalidation above, this throws and NOTHING below
+  // is written.
+  const freshHashes = await requireLiveAtWriteTime(input.companyId, [
+    payload.into_person_id,
+    ...payload.from_person_ids,
+  ]);
+  for (const draft of drafts) {
+    if (freshHashes[draft.subject_person_id] !== draft.evidence_hash) {
+      throw new SePersonCorrectionValidationError(
+        "The evidence changed the instant before saving. Reload and reconsider.",
+      );
+    }
   }
-  return { correctionIds };
+
+  const createdAt = correctionTimestamp();
+  const rows = drafts.map((draft) => correctionRow(draft, createdAt));
+  await chInsertSeCompanyPersonCorrections(rows);
+  return { correctionIds: rows.map((row) => row.correction_id as string) };
 }
 
 /**
  * Keeping a group separate writes one keep_separate correction, anchored on
  * the group's into_person_id (an arbitrary but real, currently-published
  * member -- keep_separate moves no evidence, so which member anchors it is
- * not semantically meaningful, only that it be a real, current one). Also
- * re-validated against live state first, for the same staleness reason.
+ * not semantically meaningful, only that it be a real, current one). Same
+ * two-read shape as approveMergeSuggestion: revalidated upfront, then
+ * re-checked live immediately before the INSERT.
  */
 export async function keepSeparateMergeSuggestion(input: {
   companyId: string;
@@ -756,15 +831,24 @@ export async function keepSeparateMergeSuggestion(input: {
   const revalidation = await revalidateMergeSuggestion(input.companyId, payload, draftIds);
   if (!revalidation.ok) throw new SePersonCorrectionValidationError(revalidation.reason);
 
-  const evidenceHash = revalidation.evidenceHashByPersonId[payload.into_person_id];
-  const result = await appendSeCompanyPersonCorrection({
+  const draft = validateSePersonCorrection({
     companyId: input.companyId,
     kind: "keep_separate",
     subjectPersonId: payload.into_person_id,
     payload: { candidate_group_id: payload.candidate_group_id },
-    evidenceHash,
+    evidenceHash: revalidation.evidenceHashByPersonId[payload.into_person_id],
     reason: input.reason,
     activeRoleCodes: new Set(),
   });
-  return { correctionId: result.correctionId };
+
+  const freshHashes = await requireLiveAtWriteTime(input.companyId, [payload.into_person_id]);
+  if (freshHashes[payload.into_person_id] !== draft.evidence_hash) {
+    throw new SePersonCorrectionValidationError(
+      "The evidence changed the instant before saving. Reload and reconsider.",
+    );
+  }
+
+  const row = correctionRow(draft, correctionTimestamp());
+  await chInsertSeCompanyPersonCorrections([row]);
+  return { correctionId: row.correction_id as string };
 }
