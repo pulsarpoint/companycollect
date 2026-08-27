@@ -19,9 +19,6 @@ pnpm dev               # http://localhost:5183
   from `DAGSTER_GRAPHQL_SCHEMA_URL`, falling back to `DAGSTER_GRAPHQL_URL`
 - `pnpm typecheck` — react-router typegen + tsc
 - `pnpm test` — vitest (integration tests hit the real ClickHouse from .env)
-- `pnpm temporal:people-worker` — run the durable Swedish Draft 1, Draft 2,
-  and person-profile LLM worker; it must share the backoffice data directory
-  and LLM environment
 
 ## Dagster GraphQL types
 
@@ -58,42 +55,6 @@ production startup never needs schema introspection.
   `companies_all`.
 - `app/routes.ts` — `/` redirects to `/companies` (unified list); the
   company detail page is `/company/{country_code}/{id}`.
-
-## Running the Sweden people Temporal worker
-
-The backoffice only submits workflows. A separate long-lived Temporal worker
-executes Draft 1 rebuilds, Draft 2 rebuilds, and bulk person-profile LLM
-enhancement.
-
-Configure `.env` first. The worker uses the same ClickHouse, DuckDB, SQLite,
-LLM provider, and API-key environment as the backoffice. At minimum, verify the
-Temporal connection:
-
-```dotenv
-TEMPORAL_ADDRESS=companycollect:7233
-TEMPORAL_NAMESPACE=corpscout
-TEMPORAL_PEOPLE_TASK_QUEUE=backoffice-sweden-people
-TEMPORAL_PEOPLE_WORKER_ACTIVITY_SLOTS=4
-```
-
-Run the worker in a separate terminal from the backoffice server:
-
-```bash
-cd corpscout/services/backoffice
-pnpm install
-pnpm temporal:people-worker
-```
-
-Keep this process running while people-processing workflows are active. A
-successfully started worker logs `state: 'RUNNING'` and the task queue
-`backoffice-sweden-people`. If the worker is stopped, Temporal retains queued
-and running workflow state; processing resumes when a compatible worker starts
-again.
-
-The worker and backoffice must use the same `data/sweden` directory. Draft data
-is stored in `people-draft.duckdb`, while UI-facing job progress and saved LLM
-responses are stored in `people-curation.sqlite`. Stop the local worker with
-Ctrl-C; Temporal performs a graceful drain before exit.
 
 ## Person identities and corrections
 

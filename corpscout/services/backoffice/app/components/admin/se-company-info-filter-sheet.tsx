@@ -51,8 +51,8 @@ import {
 
 /**
  * Both list pages' filters, in a right-hand `Sheet` opened by one "Filters"
- * button, mirroring `source-role-mappings-sheet.tsx`'s Sheet usage and
- * `data-table/contract-filter-sheet.tsx`'s button-with-count.
+ * button, mirroring `data-table/contract-filter-sheet.tsx`'s Sheet usage and
+ * button-with-count.
  *
  * The sheet holds a plain GET `<Form>`: every field is a named input, Apply is
  * its submit, and the browser builds the next URL -- so the filters work with

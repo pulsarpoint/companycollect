@@ -136,29 +136,8 @@ export default [
       "routes/admin-se-company-address-corrections.tsx",
     ),
     route(
-      "se/people/llm-input/:draftTwoId",
-      "routes/admin-se-people-llm-input.tsx",
-    ),
-    route(
-      "se/people/draft-1-job",
-      "routes/admin-se-people-draft-job.ts",
-    ),
-    route(
-      "se/people/draft-2-job",
-      "routes/admin-se-people-draft-two-job.ts",
-    ),
-    route(
-      "se/people/llm-bulk-job",
-      "routes/admin-se-people-llm-bulk-job.ts",
-    ),
-    route(
       "se/people/stale-corrections",
       "routes/admin-se-people-stale-corrections.tsx",
-    ),
-    route("se/people/sources", "routes/admin-se-people-sources.tsx"),
-    route(
-      "se/people/sources/:sourceName",
-      "routes/admin-se-people-source.tsx",
     ),
   ]),
 ] satisfies RouteConfig;

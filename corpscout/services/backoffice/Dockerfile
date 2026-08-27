@@ -21,6 +21,5 @@ FROM node:24-alpine
 COPY package.json /app/
 COPY --from=production-dependencies-env /app/node_modules /app/node_modules
 COPY --from=build-env /app/build /app/build
-COPY --from=build-env /app/content /app/content
 WORKDIR /app
 CMD ["./node_modules/.bin/react-router-serve", "./build/server/index.js"]

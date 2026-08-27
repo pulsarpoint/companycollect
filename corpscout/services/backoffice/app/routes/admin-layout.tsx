@@ -14,10 +14,6 @@ import {
   SidebarProvider,
   SidebarTrigger,
 } from "~/components/ui/sidebar";
-import {
-  getPeopleSourceDefinition,
-  isPeopleSourceName,
-} from "~/lib/people-sources";
 // Type-only: erased at build, so the company layout's shell shape is shared
 // here without pulling its ClickHouse module into the client bundle.
 import type { SeCompanyShell } from "~/lib/se-company-shell.server";
@@ -51,9 +47,6 @@ function AdminBreadcrumbs() {
   const onGeneralRolesPage = pathname === "/admin/general/roles";
   const onLlmSettingsPage = pathname === "/admin/settings/llms";
   const onEsefPage = pathname === "/admin/esef";
-  const onPeopleLlmInputPage = pathname.startsWith(
-    "/admin/se/people/llm-input/",
-  );
   const onCompanyInfoPage = pathname.startsWith("/admin/se/company/");
   const onCompanyInfoCorrectionsPage =
     pathname === "/admin/se/company-info/corrections";
@@ -254,42 +247,6 @@ function AdminBreadcrumbs() {
     );
   }
 
-  if (onPeopleLlmInputPage) {
-    return (
-      <Breadcrumb>
-        <BreadcrumbList>
-          <BreadcrumbItem className="hidden md:block">
-            <BreadcrumbLink render={<Link to="/admin/se/people" />}>
-              Admin
-            </BreadcrumbLink>
-          </BreadcrumbItem>
-          <BreadcrumbSeparator className="hidden md:block" />
-          <BreadcrumbItem className="hidden sm:block">
-            <BreadcrumbLink render={<Link to="/admin/se/people" />}>
-              Sweden
-            </BreadcrumbLink>
-          </BreadcrumbItem>
-          <BreadcrumbSeparator className="hidden sm:block" />
-          <BreadcrumbItem>
-            <BreadcrumbLink render={<Link to="/admin/se/people" />}>
-              People
-            </BreadcrumbLink>
-          </BreadcrumbItem>
-          <BreadcrumbSeparator />
-          <BreadcrumbItem>
-            <BreadcrumbPage>LLM input</BreadcrumbPage>
-          </BreadcrumbItem>
-        </BreadcrumbList>
-      </Breadcrumb>
-    );
-  }
-
-  const sourceName = pathname.split("/")[5] ?? "";
-  const onSourcesPage = pathname.startsWith("/admin/se/people/sources");
-  const source = isPeopleSourceName(sourceName)
-    ? getPeopleSourceDefinition(sourceName)
-    : null;
-
   return (
     <Breadcrumb>
       <BreadcrumbList>
@@ -306,38 +263,8 @@ function AdminBreadcrumbs() {
         </BreadcrumbItem>
         <BreadcrumbSeparator className="hidden sm:block" />
         <BreadcrumbItem>
-          {onSourcesPage ? (
-            <BreadcrumbLink render={<Link to="/admin/se/people" />}>
-              People
-            </BreadcrumbLink>
-          ) : (
-            <BreadcrumbPage>People</BreadcrumbPage>
-          )}
+          <BreadcrumbPage>People</BreadcrumbPage>
         </BreadcrumbItem>
-        {onSourcesPage ? (
-          <>
-            <BreadcrumbSeparator />
-            <BreadcrumbItem>
-              {source ? (
-                <BreadcrumbLink
-                  render={<Link to="/admin/se/people/sources" />}
-                >
-                  Sources
-                </BreadcrumbLink>
-              ) : (
-                <BreadcrumbPage>Sources</BreadcrumbPage>
-              )}
-            </BreadcrumbItem>
-          </>
-        ) : null}
-        {source ? (
-          <>
-            <BreadcrumbSeparator />
-            <BreadcrumbItem>
-              <BreadcrumbPage>{source.label}</BreadcrumbPage>
-            </BreadcrumbItem>
-          </>
-        ) : null}
       </BreadcrumbList>
     </Breadcrumb>
   );

@@ -9,7 +9,6 @@ import {
   FlagIcon,
   MapPinIcon,
   PlayIcon,
-  Rows3Icon,
   Settings2Icon,
   SlidersHorizontalIcon,
   TagsIcon,
@@ -60,12 +59,6 @@ const COUNTRY_NAVIGATION = [
         to: "/admin/se/people/pipeline",
         icon: PlayIcon,
         exact: true,
-      },
-      {
-        title: "Sources",
-        to: "/admin/se/people/sources",
-        icon: Rows3Icon,
-        exact: false,
       },
       {
         // One entry for the whole tabbed list area (Info · Geocoding ·
