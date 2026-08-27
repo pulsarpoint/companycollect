@@ -121,6 +121,12 @@ class StoredSuggestion:
     name: str
     description: str | None
     existing_person_id: uuid.UUID | None
+    # The model's own certainty (0-1) that every draft_id in this suggestion truly
+    # describes the same person. Read from the stored suggestion JSON, defaulting to
+    # 1.0 for a row written before this field existed -- a legacy row carries no
+    # opinion either way, and 1.0 keeps it eligible for promotion rather than silently
+    # blocking it (company_people/normalization.py's promote_company_from_suggestions).
+    confidence: float
     model_provider: str
     model_name: str
     prompt_version: str
@@ -235,6 +241,8 @@ def suggestion_from_row(row: Sequence[Any]) -> tuple[str, StoredSuggestion]:
     company_id = str(row[1])
     suggestion = _payload(row[5])
     description = suggestion.get("description")
+    raw_confidence = suggestion.get("confidence")
+    confidence = 1.0 if raw_confidence is None else float(raw_confidence)
     return company_id, StoredSuggestion(
         suggestion_id=uuid.UUID(str(row[0])),
         company_id=company_id,
@@ -244,6 +252,7 @@ def suggestion_from_row(row: Sequence[Any]) -> tuple[str, StoredSuggestion]:
         name=str(suggestion.get("name", "")),
         description=None if description is None else str(description),
         existing_person_id=_nullable_uuid(suggestion.get("existing_person_id")),
+        confidence=confidence,
         model_provider=str(row[6]),
         model_name=str(row[7]),
         prompt_version=str(row[8]),
@@ -288,6 +297,13 @@ REVIEW_ASSET_NAMES = (
     "se_company_person_clickhouse",
     "se_company_person_role_draft_clickhouse",
     "se_company_person_role_clickhouse",
+    # se_company_person_clickhouse is clean-copy-only (single-source companies) since
+    # the LLM/promotion split (company_people/normalization.py's module docstring) --
+    # without also re-running promotion here, a correction on a MULTI-source
+    # company's already-promoted person would never be re-applied by this sensor.
+    # se_company_person_promotion's own Config accepts company_ids like every other
+    # review asset, so review_run_request below needs no special-casing.
+    "se_company_person_promotion",
 )
 
 se_company_person_review_job = dg.define_asset_job(

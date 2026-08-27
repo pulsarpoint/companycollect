@@ -329,6 +329,12 @@ def test_review_job_selects_person_and_role_assets_without_draft_import() -> Non
         "se_company_person_clickhouse",
         "se_company_person_role_draft_clickhouse",
         "se_company_person_role_clickhouse",
+        # se_company_person_clickhouse is clean-copy-only (single-source companies)
+        # since the LLM/promotion split; se_company_person_promotion is what
+        # re-applies a correction against an already-promoted multi-source person,
+        # so it must ride along on the same sensor-triggered review job or a
+        # correction on a multi-source company would never be re-applied.
+        "se_company_person_promotion",
     }
     sensor = repository.get_sensor_def("se_company_person_correction_sensor")
     assert sensor.job_name == "se_company_person_review_job"
@@ -356,6 +362,7 @@ def test_run_request_scopes_every_asset_to_touched_companies() -> None:
             "se_company_person_clickhouse": {"config": {"company_ids": ["5565200028"]}},
             "se_company_person_role_draft_clickhouse": {"config": {"company_ids": ["5565200028"]}},
             "se_company_person_role_clickhouse": {"config": {"company_ids": ["5565200028"]}},
+            "se_company_person_promotion": {"config": {"company_ids": ["5565200028"]}},
         }
     }
 

@@ -1,6 +1,7 @@
 import hashlib
 import json
 import uuid
+from collections.abc import Sequence
 from dataclasses import replace
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
@@ -11,6 +12,7 @@ import pytest
 from pydantic import ValidationError
 
 from dagster_v3.defs.company_people.corrections import (
+    ZERO_HASH,
     PersonCorrection,
     StoredSuggestion,
 )
@@ -40,8 +42,11 @@ from dagster_v3.defs.company_people.normalization import (
     normalize_companies,
     observation_role_bucket,
     person_id_for,
+    promote_company_from_suggestions,
     request_company_people,
     request_input_hash,
+    split_pending_statuses_by_source_count,
+    suggest_multi_source_companies,
     validate_company_people_response,
 )
 
@@ -883,6 +888,64 @@ def test_main_asset_depends_on_the_source_views_and_combined_job_runs_both() -> 
     assert publish_job_keys == {"se_company_person_clickhouse"}
 
 
+def test_llm_suggestions_and_promotion_are_separate_single_asset_jobs() -> None:
+    """The three-asset split (owner amendment, superseding an earlier mode-flag
+    design): se_company_person_clickhouse stays clean-copy-only under its existing
+    key (no asset-key churn); se_company_person_llm_suggestions and
+    se_company_person_promotion are NEW assets, each with its own thin single-asset
+    job so the backoffice's three launches map 1:1 to a job."""
+    from dagster_v3.definitions import defs as load_defs
+
+    repository = load_defs().get_repository_def()
+
+    suggestions_asset = repository.asset_graph.get(
+        dg.AssetKey("se_company_person_llm_suggestions")
+    )
+    assert suggestions_asset.parent_keys == {
+        dg.AssetKey("se_financial_report_signatories_clickhouse"),
+        dg.AssetKey("esef_document_people_clickhouse"),
+        dg.AssetKey("company_identifier_clickhouse"),
+        dg.AssetKey("wikidata_company_identifiers"),
+        dg.AssetKey("wikidata_company_people"),
+        dg.AssetKey("wikidata_persons"),
+    }
+    promotion_asset = repository.asset_graph.get(
+        dg.AssetKey("se_company_person_promotion")
+    )
+    assert promotion_asset.parent_keys == {
+        dg.AssetKey("se_company_person_llm_suggestions"),
+    }
+
+    suggestions_job_keys = {
+        key.path[-1]
+        for key in repository.get_job(
+            "se_company_person_llm_suggestions_job"
+        ).asset_layer.executable_asset_keys
+    }
+    assert suggestions_job_keys == {"se_company_person_llm_suggestions"}
+
+    promotion_job_keys = {
+        key.path[-1]
+        for key in repository.get_job(
+            "se_company_person_promotion_job"
+        ).asset_layer.executable_asset_keys
+    }
+    assert promotion_job_keys == {"se_company_person_promotion"}
+
+
+def test_clean_copy_config_has_no_llm_fields() -> None:
+    """The clean-copy asset's own config never accepted llm_profile/execute; strip
+    check for the three-asset split -- LLM parameters live only on
+    SECompanyPersonLlmSuggestionsConfig."""
+    from dagster_v3.defs.company_people.normalization import SECompanyPersonConfig
+
+    assert set(SECompanyPersonConfig.model_fields) == {
+        "company_ids",
+        "max_companies",
+        "company_batch_size",
+    }
+
+
 def test_request_input_hash_is_stable_and_covers_every_message() -> None:
     observation = _observation("esef", name="David Mindus", role="chief_executive", index=1)
     batch = batch_company_observations([observation], maximum_observations_per_request=10)[0]
@@ -958,6 +1021,7 @@ def test_stored_suggestion_with_current_input_hash_skips_the_llm() -> None:
         name="David Gustaf Mindus",
         description="CEO.",
         existing_person_id=None,
+        confidence=1.0,
         model_provider="deepseek",
         model_name="deepseek-v4-flash",
         prompt_version=PROMPT_VERSION,
@@ -1281,6 +1345,7 @@ def _stored_suggestion(
         name="David Gustaf Mindus",
         description="CEO.",
         existing_person_id=None,
+        confidence=1.0,
         model_provider="deepseek",
         model_name="deepseek-v4-flash",
         prompt_version=PROMPT_VERSION,
@@ -1504,6 +1569,7 @@ def test_approve_that_would_strip_another_person_bare_is_stale() -> None:
             name=profile.name,
             description=profile.description,
             existing_person_id=None,
+            confidence=1.0,
             model_provider="deepseek",
             model_name="deepseek-v4-flash",
             prompt_version=PROMPT_VERSION,
@@ -1687,3 +1753,286 @@ def test_normalization_notes_carry_the_stale_correction_ids_per_company() -> Non
     assert metrics["stale_correction_count"] == 1
     assert notes[0].company_id == COMPANY_ID
     assert notes[0].stale_correction_ids == (uuid.UUID(int=9001),)
+
+
+# ---------------------------------------------------------------------------
+# Three-asset split: se_company_person_clickhouse (clean copy) /
+# se_company_person_llm_suggestions (suggestions only) /
+# se_company_person_promotion (deterministic, model-free).
+# ---------------------------------------------------------------------------
+
+
+def test_split_pending_statuses_by_source_count_keeps_single_source_for_copy() -> None:
+    single = CompanyPersonStatus(
+        company_id="A", source_count=1, observation_count=1, draft_ids=(uuid.UUID(int=1),)
+    )
+    multi = CompanyPersonStatus(
+        company_id="B", source_count=2, observation_count=2,
+        draft_ids=(uuid.UUID(int=2), uuid.UUID(int=3)),
+    )
+
+    kept, skipped = split_pending_statuses_by_source_count(
+        [single, multi], keep_multi_source=False
+    )
+
+    assert kept == [single]
+    assert skipped == 1
+
+
+def test_split_pending_statuses_by_source_count_keeps_multi_source_for_suggestions() -> None:
+    single = CompanyPersonStatus(
+        company_id="A", source_count=1, observation_count=1, draft_ids=(uuid.UUID(int=1),)
+    )
+    multi = CompanyPersonStatus(
+        company_id="B", source_count=2, observation_count=2,
+        draft_ids=(uuid.UUID(int=2), uuid.UUID(int=3)),
+    )
+
+    kept, skipped = split_pending_statuses_by_source_count(
+        [single, multi], keep_multi_source=True
+    )
+
+    assert kept == [multi]
+    assert skipped == 1
+
+
+def test_llm_company_person_suggestion_confidence_defaults_and_validates_bounds() -> None:
+    suggestion = LlmCompanyPersonSuggestion(name="David Mindus", draft_ids=[uuid.UUID(int=1)])
+    assert suggestion.confidence == 1.0
+
+    with pytest.raises(ValidationError):
+        LlmCompanyPersonSuggestion(
+            name="David Mindus", draft_ids=[uuid.UUID(int=1)], confidence=1.5
+        )
+
+
+def test_suggest_multi_source_companies_rejects_a_single_source_company() -> None:
+    observation = _observation("esef", name="David Mindus", role="chief_executive", index=1)
+    company = _company(observation)
+
+    with pytest.raises(ValueError, match="single-source"):
+        suggest_multi_source_companies(
+            [company],
+            llm_suggester=None,
+            llm_model=None,
+            maximum_observations_per_request=10,
+            created_at=NOW,
+        )
+
+
+def test_suggest_multi_source_companies_writes_suggestions_only_never_finalizes() -> None:
+    """The suggestions asset's core pure step: a multi-source company's LLM answer
+    becomes a SuggestionWrite (with confidence carried through), and nothing else --
+    unlike normalize_companies, this never touches se_company_person."""
+    observations = (
+        _observation("bolagsverket", name="David Mindus", role="ceo", index=1),
+        _observation("esef", name="David Mindus", role="chief_executive", index=2),
+    )
+    company = _company(*observations)
+
+    def suggest(company_id, batch, previous_profiles, request):
+        return _llm_result(
+            [
+                LlmCompanyPersonSuggestion(
+                    name="David Mindus",
+                    description="CEO.",
+                    confidence=0.87,
+                    draft_ids=[item.draft_id for item in observations],
+                )
+            ]
+        )
+
+    suggestion_writes, metrics = suggest_multi_source_companies(
+        [company],
+        llm_suggester=suggest,
+        llm_model="deepseek-v4-flash",
+        maximum_observations_per_request=10,
+        created_at=NOW,
+    )
+
+    assert len(suggestion_writes) == 1
+    write = suggestion_writes[0]
+    assert write.company_id == COMPANY_ID
+    assert json.loads(write.suggestion_json)["confidence"] == 0.87
+    assert json.loads(write.suggestion_json)["name"] == "David Mindus"
+    assert metrics["llm_company_count"] == 1
+    assert metrics["llm_request_count"] == 1
+
+
+def _stored_person_suggestion(
+    person_id: uuid.UUID,
+    draft_ids: Sequence[uuid.UUID],
+    *,
+    confidence: float,
+    name: str = "David Mindus",
+    input_hash: str = "hash-a",
+    created_at: datetime = NOW,
+) -> StoredSuggestion:
+    return StoredSuggestion(
+        suggestion_id=uuid.uuid4(),
+        company_id=COMPANY_ID,
+        person_id=person_id,
+        input_hash=input_hash,
+        draft_ids=tuple(draft_ids),
+        name=name,
+        description="CEO." if name == "David Mindus" else None,
+        existing_person_id=None,
+        confidence=confidence,
+        model_provider="deepseek",
+        model_name="deepseek-v4-flash",
+        prompt_version=PROMPT_VERSION,
+        created_at=created_at,
+    )
+
+
+def test_promote_company_from_suggestions_gates_by_confidence() -> None:
+    obs_a = _observation("bolagsverket", name="David Mindus", role="ceo", index=1)
+    obs_b = _observation("esef", name="Anna Andersson", role="board_member", index=2)
+    company = CompanyPersonWork(
+        status=CompanyPersonStatus(
+            company_id=COMPANY_ID,
+            source_count=2,
+            observation_count=2,
+            draft_ids=tuple(sorted((obs_a.draft_id, obs_b.draft_id))),
+        ),
+        observations=(obs_a, obs_b),
+        previous_profiles=(),
+        suggestions=(
+            _stored_person_suggestion(
+                uuid.UUID(int=1), [obs_a.draft_id], confidence=0.9,
+                name="David Mindus", input_hash="hash-a",
+            ),
+            _stored_person_suggestion(
+                uuid.UUID(int=2), [obs_b.draft_id], confidence=0.2,
+                name="Anna Andersson", input_hash="hash-b",
+            ),
+        ),
+    )
+
+    writes, metrics, stale_ids = promote_company_from_suggestions(
+        company, min_confidence=0.5, created_at=NOW
+    )
+
+    assert stale_ids == ()
+    assert len(writes) == 1
+    assert writes[0].name == "David Mindus"
+    assert metrics["promoted_person_count"] == 1
+    assert metrics["skipped_below_confidence_count"] == 1
+    assert metrics["skipped_stale_count"] == 0
+
+
+def test_promote_company_from_suggestions_skips_a_suggestion_whose_evidence_moved() -> None:
+    """A suggestion answers evidence that has since changed (no request rebuild is
+    possible without a model call), so promotion skips it and counts it -- rather than
+    guessing at whether it still applies."""
+    obs = _observation("bolagsverket", name="David Mindus", role="ceo", index=1)
+    stale_draft_id = uuid.UUID(int=999)
+    company = CompanyPersonWork(
+        status=CompanyPersonStatus(
+            company_id=COMPANY_ID, source_count=1, observation_count=1,
+            draft_ids=(obs.draft_id,),
+        ),
+        observations=(obs,),
+        previous_profiles=(),
+        suggestions=(
+            _stored_person_suggestion(uuid.UUID(int=1), [stale_draft_id], confidence=1.0),
+        ),
+    )
+
+    writes, metrics, _stale_ids = promote_company_from_suggestions(
+        company, min_confidence=0.0, created_at=NOW
+    )
+
+    assert writes == []
+    assert metrics["promoted_person_count"] == 0
+    assert metrics["skipped_stale_count"] == 1
+    assert metrics["skipped_below_confidence_count"] == 0
+
+
+def test_promote_company_from_suggestions_applies_corrections_on_top() -> None:
+    """Corrections win, exactly like the clean-copy path and the retired combined LLM
+    path: promotion seeds from the stored suggestion, then apply_person_corrections
+    (via _finalize_company_profiles) is what actually decides the published content."""
+    obs = _observation("bolagsverket", name="David Mindus", role="ceo", index=1)
+    obs2 = _observation("esef", name="David Mindus", role="chief_executive", index=2)
+    person_id = uuid.UUID(int=1)
+    correction = _correction(
+        1, "override_field", subject=person_id, payload={"name": "Corrected Name"},
+        evidence_hash=ZERO_HASH,
+    )
+    company = CompanyPersonWork(
+        status=CompanyPersonStatus(
+            company_id=COMPANY_ID, source_count=2, observation_count=2,
+            draft_ids=tuple(sorted((obs.draft_id, obs2.draft_id))),
+        ),
+        observations=(obs, obs2),
+        previous_profiles=(),
+        suggestions=(
+            _stored_person_suggestion(
+                person_id, [obs.draft_id, obs2.draft_id], confidence=0.95,
+            ),
+        ),
+        corrections=(correction,),
+    )
+
+    writes, metrics, _stale_ids = promote_company_from_suggestions(
+        company, min_confidence=0.0, created_at=NOW
+    )
+
+    assert len(writes) == 1
+    assert writes[0].name == "Corrected Name"
+    assert metrics["promoted_person_count"] == 1
+    assert metrics["applied_correction_count"] == 1
+
+
+def test_promote_company_from_suggestions_is_idempotent_on_rerun() -> None:
+    """Re-running promotion against a company already reflecting the promoted state
+    (previous_profiles matches exactly what promoting the stored suggestion again
+    would produce) writes nothing -- no duplicate insert on a repeat run."""
+    obs = _observation("bolagsverket", name="David Mindus", role="ceo", index=1)
+    obs2 = _observation("esef", name="David Mindus", role="chief_executive", index=2)
+    person_id = uuid.UUID(int=1)
+    suggestion_id = uuid.UUID(int=500)
+    stored = StoredSuggestion(
+        suggestion_id=suggestion_id,
+        company_id=COMPANY_ID,
+        person_id=person_id,
+        input_hash="hash-a",
+        draft_ids=(obs.draft_id, obs2.draft_id),
+        name="David Mindus",
+        description="CEO.",
+        existing_person_id=None,
+        confidence=0.95,
+        model_provider="deepseek",
+        model_name="deepseek-v4-flash",
+        prompt_version=PROMPT_VERSION,
+        created_at=NOW,
+    )
+    # Already-promoted state: this previous profile is exactly what promoting `stored`
+    # would produce, so a rerun must find nothing changed.
+    previous = ExistingPersonProfile(
+        person_id=person_id,
+        name="David Mindus",
+        description="CEO.",
+        draft_ids=tuple(sorted((obs.draft_id, obs2.draft_id))),
+        created_at=NOW - timedelta(days=1),
+        draft_set_hash="a" * 64,
+        suggestion_id=suggestion_id,
+    )
+    company = CompanyPersonWork(
+        status=CompanyPersonStatus(
+            company_id=COMPANY_ID, source_count=2, observation_count=2,
+            draft_ids=tuple(sorted((obs.draft_id, obs2.draft_id))),
+        ),
+        observations=(obs, obs2),
+        previous_profiles=(previous,),
+        suggestions=(stored,),
+    )
+
+    writes, metrics, _stale_ids = promote_company_from_suggestions(
+        company, min_confidence=0.0, created_at=NOW
+    )
+
+    assert writes == []
+    assert metrics["promoted_person_count"] == 1
+    assert metrics["unchanged_profile_count"] == 1

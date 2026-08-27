@@ -9,6 +9,7 @@ are chunked; no source observation is dropped.
 
 import hashlib
 import json
+import os
 import re
 import uuid
 from collections import defaultdict
@@ -63,7 +64,6 @@ from dagster_v3.defs.company_people.source_views import (
     build_se_company_person_source_observations_sql,
     normalized_company_ids,
 )
-from dagster_v3.defs.esef_filings.llm_enrichment import deepseek_settings
 
 DATABASE = "corpscout"
 GROUP_NAME = "se_company_person"
@@ -105,6 +105,75 @@ PROMPT_VERSION = "se-company-people-v2"
 DIRECT_PROMPT_VERSION = "single-source-copy-v2"
 MAX_OUTPUT_TOKENS = 4_000
 MAX_CONTRACT_ATTEMPTS = 3
+
+
+# ---------------------------------------------------------------------------
+# LLM profile pattern (copied from se_company/info.py / company_people/merge.py --
+# a named profile resolving provider/model/base_url/etc.; the API key itself is read
+# from host env by provider name, never accepted as run config). Replicated locally
+# rather than imported from merge.py: this is a SEPARATE named registry from
+# merge.py's MERGE_LLM_PROFILES (today: identical values) so the two call sites can
+# diverge independently -- see merge.py's own module docstring for the same
+# replicate-don't-couple reasoning.
+# ---------------------------------------------------------------------------
+
+
+@dataclass(frozen=True)
+class PersonLlmProfile:
+    provider: str
+    model: str
+    base_url: str
+    temperature: float
+    max_tokens: int
+
+
+PERSON_LLM_PROFILES: dict[str, PersonLlmProfile] = {
+    "deepseek-default": PersonLlmProfile(
+        provider="deepseek",
+        model="deepseek-v4-flash",
+        base_url="https://api.deepseek.com",
+        temperature=0,
+        max_tokens=MAX_OUTPUT_TOKENS,
+    ),
+}
+DEFAULT_PERSON_LLM_PROFILE_NAME = "deepseek-default"
+
+
+def resolve_person_llm_profile(name: str) -> PersonLlmProfile:
+    try:
+        return PERSON_LLM_PROFILES[name]
+    except KeyError:
+        raise ValueError(
+            f"Unknown llm_profile {name!r}; choose one of {sorted(PERSON_LLM_PROFILES)}"
+        ) from None
+
+
+def llm_api_key_variable(provider: str) -> str:
+    """The host environment variable holding this provider's key."""
+    return f"{provider.upper()}_API_KEY"
+
+
+def build_llm_client(profile: PersonLlmProfile, *, timeout_seconds: int) -> OpenAI:
+    """The OpenAI-compatible client for ``profile``, or a clear failure.
+
+    Called before any ClickHouse read, exactly like info.py's/merge.py's own
+    build_llm_client: a run configured for a provider whose key this host does not
+    carry must fail with that message immediately, not half-way through a page of
+    paid calls.
+    """
+    variable = llm_api_key_variable(profile.provider)
+    api_key = os.getenv(variable, "").strip()
+    if not api_key:
+        raise ValueError(
+            f"No API key for LLM provider {profile.provider!r}: set {variable} on the "
+            "Dagster host, or run with execute: false"
+        )
+    return OpenAI(
+        base_url=profile.base_url.rstrip("/"),
+        api_key=api_key,
+        timeout=float(timeout_seconds),
+        max_retries=2,
+    )
 
 _ROLE_SEPARATOR_PATTERN = re.compile(r"[^a-z0-9]+")
 
@@ -255,6 +324,14 @@ class LlmCompanyPersonSuggestion(BaseModel):
     existing_person_id: uuid.UUID | None = None
     name: str = Field(min_length=1, max_length=300)
     description: str | None = Field(default=None, max_length=1_000)
+    # The model's own certainty that every draft_id below is the same real person.
+    # Defaulted (not required) so every existing caller that builds this model
+    # in-process without a confidence opinion -- reused stored suggestions from
+    # before this field existed, corrections' deterministic paths that never touch
+    # confidence at all -- keeps working unchanged; a live model response is asked
+    # for it explicitly (see build_company_people_request's prompt) and promotion
+    # (promote_company_from_suggestions) is what actually reads it.
+    confidence: float = Field(default=1.0, ge=0, le=1)
     draft_ids: list[uuid.UUID] = Field(min_length=1)
 
     @field_validator("draft_ids")
@@ -617,6 +694,7 @@ def build_company_people_request(
                     "Return exactly one JSON object shaped as "
                     '{"people":[{"existing_person_id":uuid-or-null,'
                     '"name":string,"description":string-or-null,'
+                    '"confidence":number-between-0-and-1,'
                     '"draft_ids":[uuid,...]}]}. Group observations that describe '
                     "the same natural person. Every input draft_id must occur exactly "
                     "once in the response, with no additional IDs. Set "
@@ -625,7 +703,11 @@ def build_company_people_request(
                     "supported full name. Write a concise English description using "
                     "only supplied source facts, or null. Previous profiles help with "
                     "identity continuity but are not evidence for new facts. Do not "
-                    "return unsupported previous profiles and never invent facts."
+                    "return unsupported previous profiles and never invent facts. Set "
+                    "confidence to your own certainty, from 0 to 1, that every draft_id "
+                    "grouped under this person truly describes the same real individual; "
+                    "this score is used later to decide whether the group is published "
+                    "automatically or held for human review."
                 ),
             },
             {
@@ -1445,6 +1527,7 @@ def _reuse_stored_suggestions(
                     existing_person_id=row.existing_person_id,
                     name=row.name,
                     description=row.description,
+                    confidence=row.confidence,
                     draft_ids=list(row.draft_ids),
                 )
                 for row in stored
@@ -1689,6 +1772,58 @@ def _normalize_multi_source_company(
         current_input_hashes=frozenset(input_hashes),
         emptied_person_ids=emptied_person_ids,
     )
+
+
+def suggest_multi_source_companies(
+    companies: Sequence[CompanyPersonWork],
+    *,
+    llm_suggester: CompanyLlmSuggester | None,
+    llm_model: str | None,
+    maximum_observations_per_request: int,
+    created_at: datetime,
+) -> tuple[list[SuggestionWrite], dict[str, int]]:
+    """Multi-source companies only: compute (or reuse-by-input_hash) an LLM suggestion per
+    company and return it for STORAGE, never for publication.
+
+    Unlike ``normalize_companies``, this never calls ``_finalize_company_profiles`` and
+    never touches ``se_company_person`` -- ``_normalize_multi_source_company``'s computed
+    ``profiles``/``current_input_hashes``/``emptied_person_ids`` are deliberately discarded
+    here; only its ``suggestion_writes`` (already one row per touched person, already
+    including this run's ``confidence``) and its per-batch metrics are kept. A separate,
+    model-free asset (``se_company_person_promotion`` / ``promote_company_from_suggestions``)
+    is what later decides which of these stored suggestions actually becomes a published row.
+    """
+    suggestion_writes: list[SuggestionWrite] = []
+    metrics = {
+        "llm_company_count": 0,
+        "llm_request_count": 0,
+        "llm_reused_batch_count": 0,
+        "llm_role_batch_count": 0,
+        "llm_observation_count": 0,
+        "llm_prompt_tokens": 0,
+        "llm_completion_tokens": 0,
+        "llm_contract_retry_count": 0,
+        "emptied_profile_count": 0,
+    }
+    for company in companies:
+        if not company.requires_llm:
+            raise ValueError(
+                "suggest_multi_source_companies received a single-source company "
+                f"({company.status.company_id}); route it through the clean-copy "
+                "asset (se_company_person_clickhouse) instead"
+            )
+        metrics["llm_company_count"] += 1
+        outcome = _normalize_multi_source_company(
+            company,
+            llm_suggester=llm_suggester,
+            llm_model=llm_model,
+            maximum_observations_per_request=maximum_observations_per_request,
+            created_at=created_at,
+        )
+        suggestion_writes.extend(outcome.suggestion_writes)
+        for name, value in outcome.metrics.items():
+            metrics[name] += value
+    return suggestion_writes, metrics
 
 
 def normalize_companies(
@@ -1964,6 +2099,26 @@ def _insert_suggestion_writes(
     return len(rows)
 
 
+def split_pending_statuses_by_source_count(
+    statuses: Sequence[CompanyPersonStatus],
+    *,
+    keep_multi_source: bool,
+) -> tuple[list[CompanyPersonStatus], int]:
+    """Split one fetched batch of pending companies by source_count, returning the
+    statuses THIS asset should process and how many of the OTHER kind were skipped.
+
+    Shared by se_company_person_clickhouse (keep_multi_source=False: single-source
+    only, clean copy) and se_company_person_llm_suggestions (keep_multi_source=True:
+    multi-source only) so the split -- and its "skipped, never partially processed"
+    guarantee -- is pinned once, not duplicated per asset.
+    """
+    if keep_multi_source:
+        kept = [status for status in statuses if status.source_count > 1]
+    else:
+        kept = [status for status in statuses if status.source_count == 1]
+    return kept, len(statuses) - len(kept)
+
+
 def materialize_se_company_people(
     *,
     clickhouse: ClickhouseResource,
@@ -1972,12 +2127,14 @@ def materialize_se_company_people(
     company_ids: Sequence[str],
     max_companies: int,
     company_batch_size: int,
-    maximum_observations_per_request: int,
-    timeout_seconds: int,
-    llm_client: OpenAI | None,
-    llm_model: str | None,
     log: Callable[..., object] | None,
 ) -> dict[str, object]:
+    """Clean copy only: deterministic single-source companies straight to
+    se_company_person. No LLM anywhere in this path -- a multi-source company in scope
+    is SKIPPED and counted (skipped_multi_source_count), never partially processed.
+    See se_company_person_llm_suggestions for the multi-source suggestion path and
+    se_company_person_promotion for what actually publishes a multi-source company.
+    """
     company_scope = normalized_company_ids(company_ids)
     assert_clickhouse_tables_exist(
         clickhouse,
@@ -2002,8 +2159,8 @@ def materialize_se_company_people(
     pending_company_count = int(statistics[2]) + int(statistics[3])
     if log is not None:
         log(
-            "Evaluated Sweden company-person companies: total=%s pending=%s "
-            "direct=%s llm=%s skipped=%s selected=%s",
+            "Evaluated Sweden company-person companies (clean copy): total=%s "
+            "pending=%s direct=%s llm=%s skipped=%s selected=%s",
             statistics[0],
             pending_company_count,
             statistics[2],
@@ -2012,12 +2169,6 @@ def materialize_se_company_people(
             min(pending_company_count, max_companies),
         )
 
-    deepseek_client = llm_client
-    selected_model = llm_model
-    # The provider label rides with the rest of the endpoint configuration:
-    # a DeepSeek-compatible endpoint that is not DeepSeek must not be recorded
-    # as one. Filled in below when the settings are loaded for a real call.
-    model_provider = "deepseek"
     normalization_metrics = {
         "direct_company_count": 0,
         "llm_company_count": 0,
@@ -2037,14 +2188,15 @@ def materialize_se_company_people(
         "emptied_profile_count": 0,
         "settled_company_count": 0,
         "suggestion_inserted_count": 0,
+        "skipped_multi_source_count": 0,
     }
     selected_company_count = 0
     inserted_count = 0
     publish_batch_count = 0
     total_person_count = 0
     # Batches walk company_id order. A company whose only change is a stale
-    # correction publishes nothing, so without this cursor the next pending
-    # query would hand it back forever.
+    # correction (or that is skipped for being multi-source) publishes nothing,
+    # so without this cursor the next pending query would hand it back forever.
     after_company_id = ""
 
     while selected_company_count < max_companies:
@@ -2066,48 +2218,29 @@ def materialize_se_company_people(
             ]
         if not statuses:
             break
+        after_company_id = statuses[-1].company_id
+        selected_company_count += len(statuses)
 
-        companies = _load_company_work(clickhouse=clickhouse, statuses=statuses)
-        llm_suggester: CompanyLlmSuggester | None = None
-        if any(company.requires_llm for company in companies):
-            if deepseek_client is None:
-                settings = deepseek_settings()
-                selected_model = settings.model
-                model_provider = settings.provider
-                deepseek_client = OpenAI(
-                    base_url=settings.base_url.rstrip("/"),
-                    api_key=settings.api_key,
-                    timeout=float(timeout_seconds),
-                    max_retries=2,
-                )
-            if selected_model is None or selected_model.strip() == "":
-                raise ValueError(
-                    "LLM model must be provided for multi-source companies"
-                )
+        # Clean copy processes single-source companies ONLY: a multi-source company in
+        # this batch is skipped and counted here, never partially processed -- its
+        # suggestion/promotion happen in the two dedicated assets.
+        kept_statuses, skipped_count = split_pending_statuses_by_source_count(
+            statuses, keep_multi_source=False
+        )
+        normalization_metrics["skipped_multi_source_count"] += skipped_count
+        if not kept_statuses:
+            continue
 
-            def suggest_company_people(
-                company_id: str,
-                batch: CompanyObservationBatch,
-                previous_profiles: tuple[ExistingPersonProfile, ...],
-                request: dict[str, Any],
-            ) -> LlmCompanyPeopleResult:
-                return request_company_people(
-                    deepseek_client,
-                    company_id=company_id,
-                    batch=batch,
-                    previous_profiles=previous_profiles,
-                    model=selected_model,
-                    model_provider=model_provider,
-                    request=request,
-                )
-
-            llm_suggester = suggest_company_people
-
-        writes, suggestion_writes, batch_metrics, notes = normalize_companies(
+        companies = _load_company_work(clickhouse=clickhouse, statuses=kept_statuses)
+        # llm_suggester=None / llm_model=None / maximum_observations_per_request is
+        # never read: every company here is single-source (requires_llm is False for
+        # all of them by construction), so normalize_companies never enters the LLM
+        # branch and never produces a SuggestionWrite.
+        writes, _suggestion_writes, batch_metrics, notes = normalize_companies(
             companies,
-            llm_suggester=llm_suggester,
-            llm_model=selected_model,
-            maximum_observations_per_request=maximum_observations_per_request,
+            llm_suggester=None,
+            llm_model=None,
+            maximum_observations_per_request=1,
             created_at=updated_at,
         )
         if log is not None:
@@ -2121,13 +2254,6 @@ def materialize_se_company_people(
                     [str(value) for value in note.stale_correction_ids],
                     [str(value) for value in note.emptied_person_ids],
                 )
-        normalization_metrics["suggestion_inserted_count"] += _insert_suggestion_writes(
-            clickhouse=clickhouse,
-            writes=suggestion_writes,
-            source_run_id=source_run_id,
-        )
-        selected_company_count += len(companies)
-        after_company_id = statuses[-1].company_id
         for name, value in batch_metrics.items():
             normalization_metrics[name] += value
 
@@ -2137,7 +2263,7 @@ def materialize_se_company_people(
                 log(
                     "Sweden company-person batch produced no new profiles "
                     "(stale corrections or unchanged evidence): companies=%s",
-                    [status.company_id for status in statuses[:10]],
+                    [status.company_id for status in kept_statuses[:10]],
                 )
             continue
 
@@ -2152,8 +2278,8 @@ def materialize_se_company_people(
 
         if log is not None:
             log(
-                "Published Sweden company-person batch: batch=%s companies=%s "
-                "processed_companies=%s inserted=%s total_people=%s",
+                "Published Sweden company-person batch (clean copy): batch=%s "
+                "companies=%s processed_companies=%s inserted=%s total_people=%s",
                 publish_batch_count,
                 len(companies),
                 selected_company_count,
@@ -2187,15 +2313,13 @@ def materialize_se_company_people(
     }
     if log is not None:
         log(
-            "Published Sweden company-person profiles: companies=%s inserted=%s "
-            "direct=%s llm_profiles=%s llm_requests=%s llm_observations=%s "
+            "Published Sweden company-person profiles (clean copy): companies=%s "
+            "inserted=%s direct=%s skipped_multi_source=%s "
             "skipped_companies=%s deferred_companies=%s total=%s",
             metadata["selected_company_count"],
             metadata["inserted_count"],
             metadata["directly_inserted_count"],
-            metadata["llm_inserted_count"],
-            metadata["llm_request_count"],
-            metadata["llm_observation_count"],
+            metadata["skipped_multi_source_count"],
             metadata["skipped_company_count"],
             metadata["deferred_company_count"],
             metadata["total_person_count"],
@@ -2203,7 +2327,528 @@ def materialize_se_company_people(
     return metadata
 
 
+# ---------------------------------------------------------------------------
+# se_company_person_llm_suggestions: multi-source companies, suggestions only.
+# ---------------------------------------------------------------------------
+
+
+def materialize_se_company_person_llm_suggestions(
+    *,
+    clickhouse: ClickhouseResource,
+    source_run_id: str,
+    created_at: datetime,
+    company_ids: Sequence[str],
+    max_companies: int,
+    company_batch_size: int,
+    maximum_observations_per_request: int,
+    timeout_seconds: int,
+    execute: bool,
+    llm_client: OpenAI | None,
+    llm_profile: PersonLlmProfile,
+    log: Callable[..., object] | None,
+) -> dict[str, object]:
+    """Multi-source companies only. Writes suggestion rows ONLY --
+    se_company_person is never touched here; se_company_person_promotion is the
+    separate, model-free asset that decides which stored suggestion becomes a
+    published row.
+
+    ``execute`` False is a harmless preview: reads the same real pending state a real
+    run would, reports how many companies would be asked, calls no model and writes
+    nothing (no ``llm_client`` is required in that case).
+    """
+    if execute and llm_client is None:
+        raise ValueError(
+            "execute=True needs an LLM client built from the resolved llm_profile; "
+            "build_llm_client resolves the key on the host"
+        )
+    company_scope = normalized_company_ids(company_ids)
+    assert_clickhouse_tables_exist(
+        clickhouse,
+        database=DATABASE,
+        tables=(
+            *SOURCE_VIEW_TABLES,
+            PERSON_TABLE,
+            SUGGESTION_TABLE,
+            CORRECTION_TABLE,
+        ),
+    )
+    query_parameters = {
+        "all_companies": not company_scope,
+        "company_ids": company_scope or ("",),
+    }
+    with clickhouse.get_connection() as client:
+        statistics = client.execute(build_company_statistics_sql(), query_parameters)[0]
+    pending_llm_company_count = int(statistics[3])
+    if log is not None:
+        log(
+            "Evaluated Sweden multi-source company-person companies: total=%s "
+            "pending_llm=%s pending_direct=%s skipped=%s selected=%s",
+            statistics[0],
+            pending_llm_company_count,
+            statistics[2],
+            statistics[1],
+            min(pending_llm_company_count, max_companies),
+        )
+
+    metrics = {
+        "llm_company_count": 0,
+        "llm_request_count": 0,
+        "llm_reused_batch_count": 0,
+        "llm_role_batch_count": 0,
+        "llm_observation_count": 0,
+        "llm_prompt_tokens": 0,
+        "llm_completion_tokens": 0,
+        "llm_contract_retry_count": 0,
+        "emptied_profile_count": 0,
+        "skipped_single_source_count": 0,
+        "suggestion_inserted_count": 0,
+    }
+    selected_company_count = 0
+    would_call_model = 0
+    after_company_id = ""
+
+    while selected_company_count < max_companies:
+        current_batch_size = min(
+            company_batch_size, max_companies - selected_company_count
+        )
+        with clickhouse.get_connection() as client:
+            statuses = [
+                _status_from_row(row)
+                for row in client.execute(
+                    build_pending_companies_sql(),
+                    {
+                        **query_parameters,
+                        "max_companies": current_batch_size,
+                        "after_company_id": after_company_id,
+                    },
+                )
+            ]
+        if not statuses:
+            break
+        after_company_id = statuses[-1].company_id
+        selected_company_count += len(statuses)
+
+        kept_statuses, skipped_count = split_pending_statuses_by_source_count(
+            statuses, keep_multi_source=True
+        )
+        metrics["skipped_single_source_count"] += skipped_count
+
+        if not execute:
+            # Preview: count what would be asked, load nothing, call nothing, write
+            # nothing.
+            would_call_model += len(kept_statuses)
+            continue
+        if not kept_statuses:
+            continue
+
+        companies = _load_company_work(clickhouse=clickhouse, statuses=kept_statuses)
+
+        def suggest_company_people(
+            company_id: str,
+            batch: CompanyObservationBatch,
+            previous_profiles: tuple[ExistingPersonProfile, ...],
+            request: dict[str, Any],
+        ) -> LlmCompanyPeopleResult:
+            return request_company_people(
+                llm_client,
+                company_id=company_id,
+                batch=batch,
+                previous_profiles=previous_profiles,
+                model=llm_profile.model,
+                model_provider=llm_profile.provider,
+                request=request,
+            )
+
+        suggestion_writes, batch_metrics = suggest_multi_source_companies(
+            companies,
+            llm_suggester=suggest_company_people,
+            llm_model=llm_profile.model,
+            maximum_observations_per_request=maximum_observations_per_request,
+            created_at=created_at,
+        )
+        metrics["suggestion_inserted_count"] += _insert_suggestion_writes(
+            clickhouse=clickhouse,
+            writes=suggestion_writes,
+            source_run_id=source_run_id,
+        )
+        for name, value in batch_metrics.items():
+            metrics[name] += value
+
+        if log is not None:
+            log(
+                "Sweden company-person LLM suggestions batch: companies=%s "
+                "requests=%s reused=%s suggestions_written=%s",
+                len(companies),
+                batch_metrics["llm_request_count"],
+                batch_metrics["llm_reused_batch_count"],
+                len(suggestion_writes),
+            )
+
+    metadata: dict[str, object] = {
+        "company_count": int(statistics[0]),
+        "skipped_company_count": int(statistics[1]),
+        "pending_llm_company_count": pending_llm_company_count,
+        "pending_direct_company_count": int(statistics[2]),
+        "selected_company_count": selected_company_count,
+        **metrics,
+        "source_run_id": source_run_id,
+        "company_scope": list(company_scope),
+        "llm_model": llm_profile.model,
+        "llm_provider": llm_profile.provider,
+        "preview": not execute,
+    }
+    if not execute:
+        metadata["would_call_model"] = would_call_model
+    if log is not None:
+        log(
+            "Sweden company-person LLM suggestions: selected=%s llm_companies=%s "
+            "requests=%s reused=%s written=%s",
+            selected_company_count,
+            metrics["llm_company_count"],
+            metrics["llm_request_count"],
+            metrics["llm_reused_batch_count"],
+            metrics["suggestion_inserted_count"],
+        )
+    return metadata
+
+
+# ---------------------------------------------------------------------------
+# se_company_person_promotion: deterministic, model-free suggestion -> final table.
+# ---------------------------------------------------------------------------
+
+
+def build_promotion_candidate_companies_sql() -> str:
+    """Distinct companies with at least one stored LLM suggestion, in scope, paged by
+    company_id.
+
+    Promotion iterates these, NOT ``build_pending_companies_sql``'s evidence/
+    correction-changed scan -- that scan answers "does this company need a FRESH
+    suggestion?" (the suggestions asset's question); promotion asks "does this company
+    have a STORED suggestion not yet reflected in se_company_person?", which is
+    answered by presence in the suggestion table, not by the evidence-changed CTEs.
+    """
+    return """SELECT DISTINCT company_id
+FROM corpscout.se_company_person_enrichment_observation
+WHERE (%(all_companies)s OR company_id IN %(company_ids)s)
+  AND company_id > %(after_company_id)s
+ORDER BY company_id
+LIMIT %(max_companies)s"""
+
+
+def _load_promotion_company_work(
+    *,
+    clickhouse: ClickhouseResource,
+    company_ids: Sequence[str],
+) -> list[CompanyPersonWork]:
+    """The same four per-company reads ``_load_company_work`` uses, without that
+    function's pending-scan consistency cross-check: promotion selects companies by
+    "has a stored suggestion" (``build_promotion_candidate_companies_sql``), not by the
+    evidence-changed scan ``_load_company_work``'s callers rely on, so there is no
+    separately-fetched ``CompanyPersonStatus`` to validate against -- it is derived
+    directly from the observations this function itself just read.
+    """
+    if not company_ids:
+        return []
+    parameters = {"selected_company_ids": tuple(company_ids)}
+    observations_by_company: dict[str, list[DraftPersonObservation]] = defaultdict(list)
+    profiles_by_company: dict[str, list[ExistingPersonProfile]] = defaultdict(list)
+    suggestions_by_company: dict[str, list[StoredSuggestion]] = defaultdict(list)
+    corrections_by_company: dict[str, list[PersonCorrection]] = defaultdict(list)
+
+    with clickhouse.get_connection() as client:
+        for row in client.execute(build_company_observations_sql(), parameters):
+            company_id, observation = _observation_from_row(row)
+            observations_by_company[company_id].append(observation)
+        for row in client.execute(build_existing_profiles_sql(), parameters):
+            company_id, profile = _profile_from_row(row)
+            profiles_by_company[company_id].append(profile)
+        for row in client.execute(build_company_suggestions_sql(), parameters):
+            company_id, suggestion = suggestion_from_row(row)
+            suggestions_by_company[company_id].append(suggestion)
+        for row in client.execute(build_company_corrections_sql(), parameters):
+            company_id, correction = correction_from_row(row)
+            corrections_by_company[company_id].append(correction)
+
+    result: list[CompanyPersonWork] = []
+    for company_id in company_ids:
+        observations = tuple(observations_by_company[company_id])
+        result.append(
+            CompanyPersonWork(
+                status=CompanyPersonStatus(
+                    company_id=company_id,
+                    source_count=len({item.source for item in observations}),
+                    observation_count=len(observations),
+                    draft_ids=tuple(sorted(item.draft_id for item in observations)),
+                ),
+                observations=observations,
+                previous_profiles=tuple(profiles_by_company[company_id]),
+                suggestions=tuple(suggestions_by_company[company_id]),
+                corrections=tuple(corrections_by_company[company_id]),
+            )
+        )
+    return result
+
+
+def promote_company_from_suggestions(
+    company: CompanyPersonWork,
+    *,
+    min_confidence: float,
+    created_at: datetime,
+) -> tuple[list[PersonProfileWrite], dict[str, int], tuple[uuid.UUID, ...]]:
+    """Deterministic and model-free: layer the newest LIVE stored suggestion per person
+    onto the previously-published profiles, gated by ``min_confidence``, then apply the
+    correction ledger exactly like ``_finalize_company_profiles`` always has --
+    corrections win, same as the clean-copy path and the (now-retired) combined
+    single-asset LLM path before it.
+
+    A suggestion is LIVE when every one of its draft_ids is still present in the
+    company's CURRENT observations. Promotion never rebuilds the original LLM request
+    (it is deliberately model-free), so it cannot recompute input_hash the way the
+    suggestion step's own reuse check (``_reuse_stored_suggestions``) does -- this
+    draft_id-subset test is the model-free staleness proxy, the same coarse-grained
+    notion ``apply_person_corrections``' ``_evidence_is_current`` already uses for a
+    correction's own ``evidence_hash``.
+    """
+    live_draft_ids = {observation.draft_id for observation in company.observations}
+    profiles: dict[uuid.UUID, _ProfileAccumulator] = {
+        previous.person_id: _ProfileAccumulator(
+            person_id=previous.person_id,
+            name=previous.name,
+            description=previous.description,
+            draft_ids=set(previous.draft_ids),
+            created_at=previous.created_at,
+            model_provider="deepseek",
+            model_name="",
+            prompt_version=PROMPT_VERSION,
+        )
+        for previous in company.previous_profiles
+        if previous.merged_into_person_id is None
+    }
+
+    newest_by_person: dict[uuid.UUID, StoredSuggestion] = {}
+    for row in sorted(
+        company.suggestions, key=lambda item: (item.created_at, str(item.suggestion_id))
+    ):
+        newest_by_person[row.person_id] = row
+
+    live_rows = [
+        row for row in newest_by_person.values() if set(row.draft_ids) <= live_draft_ids
+    ]
+    # Suggestions this run considers "current" for approve_suggestion/reject_suggestion
+    # purposes -- see apply_person_corrections' current_input_hashes gate. Confidence
+    # is deliberately NOT part of this set: a low-confidence suggestion can still be
+    # explicitly approved by a human on an already-published person's review page.
+    current_input_hashes = frozenset(row.input_hash for row in live_rows)
+    skipped_stale_count = len(newest_by_person) - len(live_rows)
+
+    promoted_count = 0
+    skipped_below_confidence_count = 0
+    for row in sorted(live_rows, key=lambda item: str(item.person_id)):
+        if row.confidence < min_confidence:
+            skipped_below_confidence_count += 1
+            continue
+        profile = profiles.get(row.person_id)
+        if profile is None:
+            profile = _ProfileAccumulator(
+                person_id=row.person_id,
+                name=row.name,
+                description=row.description,
+                draft_ids=set(),
+                created_at=created_at,
+                model_provider=row.model_provider,
+                model_name=row.model_name,
+                prompt_version=row.prompt_version,
+            )
+            profiles[row.person_id] = profile
+        moved = set(row.draft_ids)
+        for other in profiles.values():
+            if other is not profile and other.draft_ids & moved:
+                other.draft_ids -= moved
+                other.touched = True
+        profile.draft_ids |= moved
+        profile.name = row.name
+        profile.description = row.description
+        profile.model_provider = row.model_provider
+        profile.model_name = row.model_name
+        profile.prompt_version = row.prompt_version
+        profile.suggestion_id = row.suggestion_id
+        profile.touched = True
+        promoted_count += 1
+
+    writes, finalize_metrics, stale_correction_ids = _finalize_company_profiles(
+        company,
+        profiles,
+        current_input_hashes=current_input_hashes,
+        created_at=created_at,
+    )
+    metrics = {
+        "promoted_person_count": promoted_count,
+        "skipped_stale_count": skipped_stale_count,
+        "skipped_below_confidence_count": skipped_below_confidence_count,
+        **finalize_metrics,
+    }
+    return writes, metrics, stale_correction_ids
+
+
+def materialize_se_company_person_promotion(
+    *,
+    clickhouse: ClickhouseResource,
+    source_run_id: str,
+    updated_at: datetime,
+    company_ids: Sequence[str],
+    max_companies: int,
+    company_batch_size: int,
+    min_confidence: float,
+    log: Callable[..., object] | None,
+) -> dict[str, object]:
+    """Deterministic, model-free: promotes stored LLM suggestions
+    (se_company_person_llm_suggestions) into se_company_person, applying the
+    correction ledger on top exactly like the clean-copy path always has. No preview
+    gate -- like clean copy, this is free and deterministic; nothing here ever calls
+    a model.
+    """
+    company_scope = normalized_company_ids(company_ids)
+    assert_clickhouse_tables_exist(
+        clickhouse,
+        database=DATABASE,
+        tables=(
+            *SOURCE_VIEW_TABLES,
+            PERSON_TABLE,
+            SUGGESTION_TABLE,
+            CORRECTION_TABLE,
+        ),
+    )
+    query_parameters = {
+        "all_companies": not company_scope,
+        "company_ids": company_scope or ("",),
+    }
+    metrics = {
+        "promoted_person_count": 0,
+        "skipped_stale_count": 0,
+        "skipped_below_confidence_count": 0,
+        "unchanged_profile_count": 0,
+        "invalid_profile_count": 0,
+        "applied_correction_count": 0,
+        "stale_correction_count": 0,
+        "inserted_count": 0,
+    }
+    candidate_company_count = 0
+    publish_batch_count = 0
+    total_person_count = 0
+    after_company_id = ""
+
+    while candidate_company_count < max_companies:
+        current_batch_size = min(
+            company_batch_size, max_companies - candidate_company_count
+        )
+        with clickhouse.get_connection() as client:
+            rows = client.execute(
+                build_promotion_candidate_companies_sql(),
+                {
+                    **query_parameters,
+                    "max_companies": current_batch_size,
+                    "after_company_id": after_company_id,
+                },
+            )
+        candidate_ids = [str(row[0]) for row in rows]
+        if not candidate_ids:
+            break
+        after_company_id = candidate_ids[-1]
+        candidate_company_count += len(candidate_ids)
+
+        companies = _load_promotion_company_work(
+            clickhouse=clickhouse, company_ids=candidate_ids
+        )
+        writes: list[PersonProfileWrite] = []
+        for company in companies:
+            company_writes, company_metrics, stale_ids = (
+                promote_company_from_suggestions(
+                    company, min_confidence=min_confidence, created_at=updated_at
+                )
+            )
+            writes.extend(company_writes)
+            for name, value in company_metrics.items():
+                metrics[name] += value
+            if log is not None and stale_ids:
+                log(
+                    "Stale corrections skipped during promotion: company=%s ids=%s",
+                    company.status.company_id,
+                    [str(value) for value in stale_ids],
+                )
+
+        if not writes:
+            continue
+
+        total_person_count = _insert_person_writes(
+            clickhouse=clickhouse,
+            writes=writes,
+            source_run_id=source_run_id,
+            updated_at=updated_at,
+        )
+        metrics["inserted_count"] += len(writes)
+        publish_batch_count += 1
+
+        if log is not None:
+            log(
+                "Promoted Sweden company-person batch: batch=%s companies=%s "
+                "inserted=%s total_people=%s",
+                publish_batch_count,
+                len(companies),
+                len(writes),
+                total_person_count,
+            )
+
+    if publish_batch_count == 0:
+        with clickhouse.get_connection() as client:
+            total_person_count = int(
+                client.execute(f"SELECT count() FROM {_qualified(PERSON_TABLE)} FINAL")[
+                    0
+                ][0]
+            )
+
+    metadata: dict[str, object] = {
+        "candidate_company_count": candidate_company_count,
+        "min_confidence": min_confidence,
+        "publish_batch_count": publish_batch_count,
+        **metrics,
+        "total_person_count": total_person_count,
+        "source_run_id": source_run_id,
+        "company_scope": list(company_scope),
+    }
+    if log is not None:
+        log(
+            "Sweden company-person promotion: candidates=%s promoted=%s "
+            "skipped_stale=%s skipped_below_confidence=%s inserted=%s total=%s",
+            candidate_company_count,
+            metrics["promoted_person_count"],
+            metrics["skipped_stale_count"],
+            metrics["skipped_below_confidence_count"],
+            metrics["inserted_count"],
+            total_person_count,
+        )
+    return metadata
+
+
 class SECompanyPersonConfig(dg.Config):
+    """se_company_person_clickhouse's config: clean copy only, no LLM fields at all. A
+    multi-source company in scope is skipped and counted
+    (skipped_multi_source_count in the run's metadata), never partially processed.
+    """
+
+    company_ids: list[str] = Field(default_factory=list)
+    max_companies: int = Field(default=1_000_000, ge=1, le=1_000_000)
+    company_batch_size: int = Field(default=5_000, ge=1, le=25_000)
+
+
+class SECompanyPersonLlmSuggestionsConfig(dg.Config):
+    # False = preview: read the same real pending state a real run would, call no
+    # model, write nothing. The default is False so a bare "Materialize" click in the
+    # Dagster UI can never spend a paid call -- the same owner-decision gate as
+    # merge.py/se_company/info.py.
+    execute: bool = False
+    # A named profile (PERSON_LLM_PROFILES) resolving provider/model/base_url/etc. --
+    # the API key itself is read from host env by provider name, never accepted here.
+    llm_profile: str = DEFAULT_PERSON_LLM_PROFILE_NAME
     company_ids: list[str] = Field(default_factory=list)
     max_companies: int = Field(default=1_000_000, ge=1, le=1_000_000)
     company_batch_size: int = Field(default=5_000, ge=1, le=25_000)
@@ -2211,10 +2856,19 @@ class SECompanyPersonConfig(dg.Config):
     timeout_seconds: int = Field(default=180, ge=1, le=600)
 
 
+class SECompanyPersonPromotionConfig(dg.Config):
+    company_ids: list[str] = Field(default_factory=list)
+    max_companies: int = Field(default=1_000_000, ge=1, le=1_000_000)
+    company_batch_size: int = Field(default=5_000, ge=1, le=25_000)
+    # 0.0 = promote every live suggestion regardless of the model's own confidence.
+    min_confidence: float = Field(default=0.0, ge=0, le=1)
+
+
 # The transitive read footprint of the three source views (source_views.py) --
-# se_company_person_draft_clickhouse is retired from this path (Task 3); this asset now
-# reads the views directly, so its deps are the same upstream tables identity_eval.py's
-# evaluation asset already depends on for the same views.
+# se_company_person_draft_clickhouse is retired from this path (Task 3); both
+# se_company_person_clickhouse and se_company_person_llm_suggestions read the views
+# directly, so their deps are the same upstream tables identity_eval.py's evaluation
+# asset already depends on for the same views.
 _SOURCE_ASSET_DEPS = (
     dg.AssetKey("se_financial_report_signatories_clickhouse"),
     dg.AssetKey("esef_document_people_clickhouse"),
@@ -2229,12 +2883,14 @@ _SOURCE_ASSET_DEPS = (
     name="se_company_person_clickhouse",
     deps=_SOURCE_ASSET_DEPS,
     group_name=GROUP_NAME,
-    kinds={"clickhouse", "python", "llm", "deepseek"},
+    kinds={"clickhouse", "python"},
     metadata={"table": QUALIFIED_PERSON_TABLE},
     description=(
-        "Publishes changed Sweden company-person profiles company by company, "
-        "copying single-source companies directly and resolving multi-source "
-        "companies with bounded, lossless DeepSeek requests."
+        "Publishes changed Sweden company-person profiles for SINGLE-SOURCE "
+        "companies only -- a pure deterministic copy per company, no LLM involved "
+        "and no LLM config accepted. A multi-source company in scope is skipped and "
+        "counted (skipped_multi_source_count); se_company_person_llm_suggestions and "
+        "se_company_person_promotion are the assets that resolve those."
     ),
 )
 def se_company_person_clickhouse(
@@ -2249,10 +2905,88 @@ def se_company_person_clickhouse(
         company_ids=config.company_ids,
         max_companies=config.max_companies,
         company_batch_size=config.company_batch_size,
-        maximum_observations_per_request=(config.maximum_observations_per_request),
+        log=context.log.info,
+    )
+    return dg.MaterializeResult(metadata={**metadata, "table": QUALIFIED_PERSON_TABLE})
+
+
+@dg.asset(
+    name="se_company_person_llm_suggestions",
+    deps=_SOURCE_ASSET_DEPS,
+    group_name=GROUP_NAME,
+    kinds={"clickhouse", "python", "llm", "deepseek"},
+    metadata={"table": QUALIFIED_SUGGESTION_TABLE},
+    description=(
+        "LLM-assisted person suggestions for MULTI-SOURCE Sweden companies only; "
+        "writes ONLY to se_company_person_enrichment_observation, never to "
+        "se_company_person -- se_company_person_promotion is the separate, "
+        "model-free asset that copies an eligible suggestion into the final table. "
+        "Launch from the backoffice with llm_profile/execute; a bare Materialize "
+        "(execute=false) is a preview that calls no model and writes nothing. Never "
+        "scheduled, never eager."
+    ),
+)
+def se_company_person_llm_suggestions(
+    context: dg.AssetExecutionContext,
+    config: SECompanyPersonLlmSuggestionsConfig,
+    clickhouse: ClickhouseResource,
+) -> dg.MaterializeResult:
+    profile = resolve_person_llm_profile(config.llm_profile)
+    # Built here, before any ClickHouse read: a run configured for a provider whose
+    # key this host does not carry must fail with that message immediately, not
+    # half-way through a page of paid calls. A preview needs no client -- it never
+    # calls the model.
+    llm_client = (
+        build_llm_client(profile, timeout_seconds=config.timeout_seconds)
+        if config.execute
+        else None
+    )
+    metadata = materialize_se_company_person_llm_suggestions(
+        clickhouse=clickhouse,
+        source_run_id=context.run_id,
+        created_at=datetime.now(UTC),
+        company_ids=config.company_ids,
+        max_companies=config.max_companies,
+        company_batch_size=config.company_batch_size,
+        maximum_observations_per_request=config.maximum_observations_per_request,
         timeout_seconds=config.timeout_seconds,
-        llm_client=None,
-        llm_model=None,
+        execute=config.execute,
+        llm_client=llm_client,
+        llm_profile=profile,
+        log=context.log.info,
+    )
+    return dg.MaterializeResult(metadata={**metadata, "table": QUALIFIED_SUGGESTION_TABLE})
+
+
+@dg.asset(
+    name="se_company_person_promotion",
+    deps=(dg.AssetKey("se_company_person_llm_suggestions"),),
+    group_name=GROUP_NAME,
+    kinds={"clickhouse", "python"},
+    metadata={"table": QUALIFIED_PERSON_TABLE},
+    description=(
+        "Deterministic, model-free: promotes stored LLM suggestions "
+        "(se_company_person_llm_suggestions) into se_company_person for "
+        "multi-source companies, applying the correction ledger on top exactly like "
+        "the clean-copy path. min_confidence (default 0.0) gates which suggestions "
+        "promote; a suggestion whose evidence has moved since it was written is "
+        "skipped and counted, never guessed at. Always writes when launched -- no "
+        "preview gate, like clean copy: this is free and calls no model."
+    ),
+)
+def se_company_person_promotion(
+    context: dg.AssetExecutionContext,
+    config: SECompanyPersonPromotionConfig,
+    clickhouse: ClickhouseResource,
+) -> dg.MaterializeResult:
+    metadata = materialize_se_company_person_promotion(
+        clickhouse=clickhouse,
+        source_run_id=context.run_id,
+        updated_at=datetime.now(UTC),
+        company_ids=config.company_ids,
+        max_companies=config.max_companies,
+        company_batch_size=config.company_batch_size,
+        min_confidence=config.min_confidence,
         log=context.log.info,
     )
     return dg.MaterializeResult(metadata={**metadata, "table": QUALIFIED_PERSON_TABLE})
@@ -2272,8 +3006,27 @@ se_company_person_publish_job = dg.define_asset_job(
     selection=dg.AssetSelection.assets("se_company_person_clickhouse"),
 )
 
+se_company_person_llm_suggestions_job = dg.define_asset_job(
+    "se_company_person_llm_suggestions_job",
+    selection=dg.AssetSelection.assets("se_company_person_llm_suggestions"),
+)
+
+se_company_person_promotion_job = dg.define_asset_job(
+    "se_company_person_promotion_job",
+    selection=dg.AssetSelection.assets("se_company_person_promotion"),
+)
+
 
 defs = dg.Definitions(
-    assets=[se_company_person_clickhouse],
-    jobs=[se_company_person_job, se_company_person_publish_job],
+    assets=[
+        se_company_person_clickhouse,
+        se_company_person_llm_suggestions,
+        se_company_person_promotion,
+    ],
+    jobs=[
+        se_company_person_job,
+        se_company_person_publish_job,
+        se_company_person_llm_suggestions_job,
+        se_company_person_promotion_job,
+    ],
 )
