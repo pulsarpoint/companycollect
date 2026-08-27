@@ -9,7 +9,9 @@ from crawler_ratsit.constants import (
     CRAWL_COMPANY_WORKFLOW,
     CRAWL_MAX_ATTEMPTS,
     HTTP_TASK_QUEUE,
-    HTTP_TASK_QUEUE_PATCH,
+    HTTP_TASK_QUEUE_V1_PATCH,
+    HTTP_TASK_QUEUE_V2_PATCH,
+    LEGACY_HTTP_TASK_QUEUE,
     RECORD_RESULT_ACTIVITY,
 )
 from crawler_ratsit.models import (
@@ -34,13 +36,18 @@ class RatsitCompanyWorkflow:
             temporal_run_id=workflow_info.run_id,
         )
 
+        if workflow.patched(HTTP_TASK_QUEUE_V2_PATCH):
+            http_task_queue = HTTP_TASK_QUEUE
+        elif workflow.patched(HTTP_TASK_QUEUE_V1_PATCH):
+            http_task_queue = LEGACY_HTTP_TASK_QUEUE
+        else:
+            http_task_queue = None
+
         try:
             result = await workflow.execute_activity(
                 CRAWL_AND_UPLOAD_ACTIVITY,
                 activity_input,
-                task_queue=(
-                    HTTP_TASK_QUEUE if workflow.patched(HTTP_TASK_QUEUE_PATCH) else None
-                ),
+                task_queue=http_task_queue,
                 result_type=CrawlResult,
                 start_to_close_timeout=timedelta(seconds=90),
                 retry_policy=RetryPolicy(

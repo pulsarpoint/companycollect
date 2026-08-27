@@ -19,6 +19,7 @@ from temporalio.client import Client
 from temporalio.worker import Worker
 
 from crawler_ratsit.activities import (
+    CrawlBrowser,
     RatsitCrawlActivities,
     RatsitResultActivities,
 )
@@ -116,17 +117,14 @@ async def run_process(
             max_concurrent_activities=worker_settings.max_concurrent_activities,
             identity=f"{identity_prefix}/workflow-results",
         )
-        http_workers = [
-            _http_worker(
-                temporal_client,
-                browser_runtime=browser_runtime,
-                worker_settings=worker_settings,
-                process_settings=process_settings,
-                object_store=object_store,
-                identity_prefix=identity_prefix,
-            )
-            for browser_runtime in browsers
-        ]
+        http_worker = _http_worker(
+            temporal_client,
+            browsers=browsers,
+            worker_settings=worker_settings,
+            process_settings=process_settings,
+            object_store=object_store,
+            identity_prefix=identity_prefix,
+        )
 
         LOGGER.info(
             "starting Ratsit process browsers=%d workflow_task_queue=%s "
@@ -139,8 +137,7 @@ async def run_process(
         )
         async with AsyncExitStack() as worker_stack:
             await worker_stack.enter_async_context(workflow_worker)
-            for http_worker in http_workers:
-                await worker_stack.enter_async_context(http_worker)
+            await worker_stack.enter_async_context(http_worker)
             await stop_event.wait()
 
         if disconnected_browsers:
@@ -162,9 +159,7 @@ async def _launch_browser(
     license_key: str | None,
     disconnected_callback: Callable[[str], None],
 ) -> BrowserRuntime:
-    profile_directory = (
-        process_settings.state_directory / browser_settings.browser_id
-    )
+    profile_directory = process_settings.state_directory / browser_settings.browser_id
     profile_directory.mkdir(parents=True, exist_ok=True, mode=0o700)
     LOGGER.info(
         "launching CloakBrowser browser_id=%s proxy=%s profile=%s mode=%s",
@@ -196,20 +191,27 @@ async def _launch_browser(
 def _http_worker(
     temporal_client: Client,
     *,
-    browser_runtime: BrowserRuntime,
+    browsers: list[BrowserRuntime],
     worker_settings: WorkerSettings,
     process_settings: ProcessSettings,
     object_store: RatsitObjectStore,
     identity_prefix: str,
 ) -> Worker:
-    browser_id = browser_runtime.settings.browser_id
     crawl_activities = RatsitCrawlActivities(
-        browser_id=browser_id,
-        crawl_page=partial(
-            crawl_ratsit_page,
-            context=browser_runtime.context,
-            content_selector=worker_settings.content_selector,
-            timeout_ms=worker_settings.page_timeout_ms,
+        browsers=tuple(
+            CrawlBrowser(
+                browser_id=browser_runtime.settings.browser_id,
+                crawl_page=partial(
+                    crawl_ratsit_page,
+                    context=browser_runtime.context,
+                    content_selector=worker_settings.content_selector,
+                    timeout_ms=worker_settings.page_timeout_ms,
+                ),
+            )
+            for browser_runtime in browsers
+        ),
+        per_browser_activities_per_second=(
+            process_settings.per_browser_activities_per_second
         ),
         object_store=object_store,
     )
@@ -217,14 +219,11 @@ def _http_worker(
         temporal_client,
         task_queue=HTTP_TASK_QUEUE,
         activities=[crawl_activities.crawl_and_upload_company],
-        max_concurrent_activities=1,
-        max_activities_per_second=(
-            process_settings.per_browser_activities_per_second
-        ),
+        max_concurrent_activities=len(browsers),
         max_task_queue_activities_per_second=(
             process_settings.task_queue_activities_per_second
         ),
-        identity=f"{identity_prefix}/browser/{browser_id}",
+        identity=f"{identity_prefix}/http-pool",
     )
 
 

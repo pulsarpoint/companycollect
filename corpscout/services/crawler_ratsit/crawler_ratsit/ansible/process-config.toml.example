@@ -7,7 +7,7 @@ headless = false
 per_browser_activities_per_second = 0.2
 
 # Temporal task-queue-wide pacing. Keep this explicit and identical on every
-# host polling ratsit-http; do not derive it from the number of browsers.
+# host polling ratsit-http-v2; do not derive it from the number of browsers.
 task_queue_activities_per_second = 0.2
 
 [[browsers]]

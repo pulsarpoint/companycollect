@@ -9,13 +9,13 @@ directly. It does not expose or connect to Chrome DevTools Protocol endpoints.
 The same process runs:
 
 - one Temporal workflow/result worker on `ratsit-crawler`;
-- one HTTP activity worker on `ratsit-http` for each browser context.
+- one HTTP activity worker on `ratsit-http-v2` backed by all browser contexts.
 
-Every HTTP worker is permanently bound to one browser, has concurrency `1`,
-and polls the same task queue. Temporal gives the next activity to an available
-poller, so no local round-robin or shared DuckDB scheduler is needed. Workflow
-and activity names are unchanged, so existing Temporal histories remain
-compatible.
+The HTTP worker's concurrency equals the number of browser contexts. A bounded
+in-process queue leases one context exclusively to each activity and returns it
+after success, failure, or cancellation. FIFO leasing rotates work across the
+direct and proxy contexts without using DuckDB. Workflow and activity names are
+unchanged, so existing Temporal histories remain compatible.
 
 ## Browser pool config
 
@@ -55,9 +55,9 @@ context. Each enabled ID gets its own profile directory under
 `process.state_directory`; IDs must be unique and contain lowercase letters,
 digits, hyphens, or underscores.
 
-`per_browser_activities_per_second` protects each browser independently.
+`per_browser_activities_per_second` protects each leased browser independently.
 `task_queue_activities_per_second` is Temporal's server-side global rate for
-`ratsit-http`. Keep the global value explicit and identical on every process
+`ratsit-http-v2`. Keep the global value explicit and identical on every process
 polling that queue. Start at `0.2`—one new request every five seconds across the
 whole queue—and raise it only from observed 429 and proxy results. Do not
 multiply it automatically by the number of browsers.

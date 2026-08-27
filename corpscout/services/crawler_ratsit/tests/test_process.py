@@ -86,7 +86,7 @@ def test_browser_launch_uses_its_profile_and_optional_proxy(
     assert "disconnected" in context.browser.subscriptions
 
 
-def test_http_worker_is_bound_to_one_browser_and_both_rate_limits(
+def test_http_worker_uses_one_temporal_worker_for_the_browser_pool(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     captured: dict[str, Any] = {}
@@ -104,23 +104,34 @@ def test_http_worker_is_bound_to_one_browser_and_both_rate_limits(
             "CORPSCOUT_S3_SECRET_KEY": "secret",
         }
     )
-    browser_settings = BrowserSettings(browser_id="direct", proxy_url=None)
+    direct_settings = BrowserSettings(browser_id="direct", proxy_url=None)
+    proxy_settings = BrowserSettings(
+        browser_id="proxy1",
+        proxy_url="http://user:password@proxy1:8080",
+    )
     process_settings = ProcessSettings(
         state_directory=Path("/var/lib/ratsit-process"),
         headless=True,
         per_browser_activities_per_second=0.2,
         task_queue_activities_per_second=0.4,
-        browsers=(browser_settings,),
+        browsers=(direct_settings, proxy_settings),
     )
-    context = FakeContext()
+    direct_context = FakeContext()
+    proxy_context = FakeContext()
     temporal_client = object()
 
     process._http_worker(
         temporal_client,
-        browser_runtime=process.BrowserRuntime(
-            settings=browser_settings,
-            context=context,
-        ),
+        browsers=[
+            process.BrowserRuntime(
+                settings=direct_settings,
+                context=direct_context,
+            ),
+            process.BrowserRuntime(
+                settings=proxy_settings,
+                context=proxy_context,
+            ),
+        ],
         worker_settings=worker_settings,
         process_settings=process_settings,
         object_store=RatsitObjectStore(
@@ -133,10 +144,15 @@ def test_http_worker_is_bound_to_one_browser_and_both_rate_limits(
 
     assert captured["client"] is temporal_client
     assert captured["task_queue"] == HTTP_TASK_QUEUE
-    assert captured["max_concurrent_activities"] == 1
-    assert captured["max_activities_per_second"] == 0.2
+    assert captured["max_concurrent_activities"] == 2
+    assert "max_activities_per_second" not in captured
     assert captured["max_task_queue_activities_per_second"] == 0.4
-    assert captured["identity"] == "ratsit-process/test/1/browser/direct"
+    assert captured["identity"] == "ratsit-process/test/1/http-pool"
     crawl_activity = captured["activities"][0]
-    assert crawl_activity.__self__._browser_id == "direct"
-    assert crawl_activity.__self__._crawl_page.keywords["context"] is context
+    activities = crawl_activity.__self__
+    direct_browser = activities._available_browsers.get_nowait()
+    proxy_browser = activities._available_browsers.get_nowait()
+    assert direct_browser.browser_id == "direct"
+    assert direct_browser.crawl_page.keywords["context"] is direct_context
+    assert proxy_browser.browser_id == "proxy1"
+    assert proxy_browser.crawl_page.keywords["context"] is proxy_context
