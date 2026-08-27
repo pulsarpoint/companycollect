@@ -112,7 +112,7 @@ from dagster_v3.defs.company_people.source_views import (
 )
 
 DATABASE = "corpscout"
-GROUP_NAME = "company_people"
+GROUP_NAME = "se_company_person"
 MERGE_PROMPT_VERSION = "se-company-person-merge-v1"
 
 

@@ -84,7 +84,7 @@ from dagster_v3.defs.company_people.source_views import (
 )
 
 DATABASE = "corpscout"
-GROUP_NAME = "company_people"
+GROUP_NAME = "se_company_person"
 
 # The candidate table's own column order (migration 000330). `created_at` is included and
 # always supplied explicitly (never left to the column's DEFAULT now()) -- matching this

@@ -16,7 +16,7 @@ import dagster as dg
 from dagster_clickhouse import ClickhouseResource
 
 DATABASE = "corpscout"
-GROUP_NAME = "company_people"
+GROUP_NAME = "se_company_person"
 
 CORRECTION_TABLE = "se_company_person_correction"
 SUGGESTION_TABLE = "se_company_person_enrichment_observation"

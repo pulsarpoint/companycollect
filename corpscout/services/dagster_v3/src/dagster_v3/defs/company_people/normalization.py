@@ -66,7 +66,7 @@ from dagster_v3.defs.company_people.source_views import (
 from dagster_v3.defs.esef_filings.llm_enrichment import deepseek_settings
 
 DATABASE = "corpscout"
-GROUP_NAME = "company_people"
+GROUP_NAME = "se_company_person"
 
 PERSON_TABLE = "se_company_person"
 QUALIFIED_PERSON_TABLE = f"{DATABASE}.{PERSON_TABLE}"

@@ -787,7 +787,7 @@ def test_asset_and_job_are_wired_with_the_right_group_and_deps() -> None:
 
     graph = load_defs().get_repository_def().asset_graph
     node = graph.get(dg.AssetKey("se_company_person_merge_suggestions"))
-    assert node.group_name == "company_people"
+    assert node.group_name == "se_company_person"
     assert node.parent_keys == {
         dg.AssetKey("se_company_person_identity_evaluation"),
         dg.AssetKey("se_company_person_clickhouse"),

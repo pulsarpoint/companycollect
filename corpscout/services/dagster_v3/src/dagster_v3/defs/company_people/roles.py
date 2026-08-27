@@ -34,7 +34,7 @@ from dagster_v3.defs.wikidata.roles import (
 )
 
 DATABASE = "corpscout"
-GROUP_NAME = "company_people"
+GROUP_NAME = "se_company_person"
 
 PERSON_TABLE = "se_company_person"
 ROLE_TYPE_TABLE = "company_person_role_type"
