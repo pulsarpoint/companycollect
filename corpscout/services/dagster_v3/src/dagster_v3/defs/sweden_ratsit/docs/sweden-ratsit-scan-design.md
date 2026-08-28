@@ -9,9 +9,10 @@ pool `sweden_ratsit_browser` prevents concurrent browser runs. The asset has no
 schedule; `se_ratsit_scan_dispatch_job` is launched manually while the pilot is
 evaluated.
 
-There is no separate coverage asset. Scan status and company coverage remain
-directly queryable from `se_company_ratsit_scans`,
-`se_company_ratsit_crawl_results`, and `se_company_ratsit_current`.
+There is no separate coverage asset or scan-summary table. Company coverage and
+completed scan summaries are derived from `se_company_ratsit` by
+grouping its `scan_id`; Dagster owns run-level status and failures that occur
+before any company result can be persisted.
 
 ## S3 objects and content deduplication
 
@@ -40,19 +41,16 @@ explain a selector or page-shape problem without another request.
 
 ## ClickHouse history
 
-`corpscout.se_company_ratsit_crawl_results` has one row per
+`corpscout.se_company_ratsit` has one row per
 `(scan_id, company_id)`. Every successful or failed company result contains the
 exact S3 bucket, object key, JSON SHA-256, byte size, fetch metadata, and optional
 diagnostic key. Reused rows retain the new scan ID while pointing to the old S3
 report object.
 
-`corpscout.se_company_ratsit_scans` has one row per Dagster run with the fixed
-selection, counts, status, versions, timestamps, and S3 root. A run that fails
-before company results are persisted is recorded as `failed` with zero results.
-
-`corpscout.se_company_ratsit_current` exposes both the latest company attempt and
-the latest successful report pointer. A new failure therefore does not hide the
-last usable report.
+`outcome` is either `success` or `failure`. For failed rows, `failure_type`
+identifies `navigation`, `http`, or `parse`; successful rows have an empty
+`failure_type`. Consumers select the latest successful report directly from this
+single table, so a newer failure does not hide the last usable S3 pointer.
 
 ## Parser output
 
@@ -67,5 +65,5 @@ number matching the requested ID.
 - Contract tests: `tests/test_sweden_ratsit_pilot.py`.
 - Migration contract: migration `000336` and `tests/test_clickhouse_migrations.py`.
 - Definitions: `uv run dg check defs`.
-- Runtime: materialize `se_ratsit_scan_job`, then inspect the scan ID in
-  `corpscout.se_company_ratsit_scans` and its 20 result rows.
+- Runtime: materialize `se_ratsit_scan_dispatch_job`, then inspect its 20 rows in
+  `corpscout.se_company_ratsit` by Dagster run ID.

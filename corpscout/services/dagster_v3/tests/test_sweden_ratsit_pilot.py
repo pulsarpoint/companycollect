@@ -15,8 +15,6 @@ from dagster_v3.defs.sweden_ratsit.assets import (
     RATSIT_RESULT_COLUMNS,
     RATSIT_RESULT_TABLE,
     RATSIT_S3_BUCKET,
-    RATSIT_SCAN_COLUMNS,
-    RATSIT_SCAN_TABLE,
     StoredRatsitReport,
     persist_ratsit_scan,
     ratsit_result_object_key,
@@ -200,7 +198,7 @@ class FakeClickHouseClient:
     def execute(self, sql: str, parameters: object | None = None):
         self.calls.append((sql, parameters))
         if "FROM system.tables" in sql:
-            return [(RATSIT_RESULT_TABLE,), (RATSIT_SCAN_TABLE,)]
+            return [(RATSIT_RESULT_TABLE,)]
         return []
 
 
@@ -422,6 +420,14 @@ def test_scan_writes_run_scoped_results_and_only_parse_failures_keep_html() -> N
     assert summary.written_object_count == 3
     assert summary.reused_report_count == 0
     assert summary.result_object_keys == (report_key, error_key)
+    assert (summary.results[0].outcome, summary.results[0].failure_type) == (
+        "success",
+        "",
+    )
+    assert (summary.results[1].outcome, summary.results[1].failure_type) == (
+        "failure",
+        "parse",
+    )
     assert summary.results[0].result_size_bytes == len(object_store.objects[report_key])
     assert len(summary.results[0].result_sha256) == 64
 
@@ -525,7 +531,7 @@ def test_changed_report_writes_new_scan_id_object() -> None:
     assert second.results[0].result_sha256 != first_result.result_sha256
 
 
-def test_completed_scan_persists_all_company_rows_and_one_scan_row() -> None:
+def test_completed_scan_persists_company_result_rows() -> None:
     report = RatsitCompanyReport(
         company_id=COMPANY_ID,
         requested_url=f"https://www.ratsit.se/{COMPANY_ID}",
@@ -551,29 +557,15 @@ def test_completed_scan_persists_all_company_rows_and_one_scan_row() -> None:
     )
 
     assert indexed == 1
-    assert len(client.calls) == 3
+    assert len(client.calls) == 2
     result_sql, result_rows = client.calls[1]
-    scan_sql, scan_rows = client.calls[2]
     assert (
         f"INSERT INTO {RATSIT_CLICKHOUSE_DATABASE}.{RATSIT_RESULT_TABLE}" in result_sql
     )
     assert ", ".join(RATSIT_RESULT_COLUMNS) in result_sql
-    assert f"INSERT INTO {RATSIT_CLICKHOUSE_DATABASE}.{RATSIT_SCAN_TABLE}" in scan_sql
-    assert ", ".join(RATSIT_SCAN_COLUMNS) in scan_sql
     assert isinstance(result_rows, list)
-    assert isinstance(scan_rows, list)
     [result_row] = result_rows
-    [scan_row] = scan_rows
-    assert result_row[0:3] == ("scan-run-1", COMPANY_ID, "success")
-    assert result_row[7] == ratsit_result_object_key(
+    assert result_row[0:4] == ("scan-run-1", COMPANY_ID, "success", "")
+    assert result_row[8] == ratsit_result_object_key(
         COMPANY_ID, "scan-run-1", "report.json"
-    )
-    assert scan_row[0:7] == (
-        "scan-run-1",
-        "success",
-        [COMPANY_ID],
-        1,
-        1,
-        1,
-        0,
     )

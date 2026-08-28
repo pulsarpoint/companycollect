@@ -1,9 +1,8 @@
 CREATE DATABASE IF NOT EXISTS corpscout;
 
--- Recreate the pre-Dagster Temporal result model empty. Data discarded by the
--- up migration cannot be restored by a schema rollback.
-DROP TABLE IF EXISTS corpscout.se_company_ratsit;
-
+-- Terminal Ratsit crawl outcomes. Temporal owns pending and running work, while
+-- this table records the durable result used to decide when a company is due
+-- for another crawl. Raw response content and its hash remain in S3.
 CREATE TABLE IF NOT EXISTS corpscout.se_company_ratsit
 (
     company_id String,
@@ -26,8 +25,7 @@ CREATE TABLE IF NOT EXISTS corpscout.se_company_ratsit
     temporal_run_id String,
     recorded_at DateTime64(3, 'UTC'),
 
-    CONSTRAINT se_company_ratsit_company_id CHECK
-        match(company_id, '^([0-9]{10}|[0-9]{12})$'),
+    CONSTRAINT se_company_ratsit_company_id CHECK match(company_id, '^[0-9]{10}$'),
     CONSTRAINT se_company_ratsit_outcome CHECK outcome IN ('success', 'failure'),
     CONSTRAINT se_company_ratsit_failure_type CHECK
         (outcome = 'success' AND failure_type = '')
@@ -38,7 +36,7 @@ CREATE TABLE IF NOT EXISTS corpscout.se_company_ratsit
         AND completed_at <= recorded_at,
     CONSTRAINT se_company_ratsit_attempt_count CHECK attempt_count > 0,
     CONSTRAINT se_company_ratsit_source_url CHECK
-        source_url = concat('https://www.ratsit.se/', right(company_id, 10)),
+        source_url = concat('https://www.ratsit.se/', company_id),
     CONSTRAINT se_company_ratsit_object_location CHECK
         source_object_key = '' OR source_bucket != '',
     CONSTRAINT se_company_ratsit_content_location CHECK

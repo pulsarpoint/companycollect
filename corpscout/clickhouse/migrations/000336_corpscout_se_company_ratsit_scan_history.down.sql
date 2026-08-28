@@ -3,10 +3,10 @@ CREATE DATABASE IF NOT EXISTS corpscout;
 -- Roll back to the success-only report catalog introduced by migration 000334.
 -- Failure history has no representation in that schema and is intentionally
 -- omitted from the restored table.
-DROP TABLE IF EXISTS corpscout.se_company_ratsit_crawl_results_next;
-DROP TABLE IF EXISTS corpscout.se_company_ratsit_crawl_results_legacy;
+DROP TABLE IF EXISTS corpscout.se_company_ratsit_next;
+DROP TABLE IF EXISTS corpscout.se_company_ratsit_legacy;
 
-CREATE TABLE corpscout.se_company_ratsit_crawl_results_next
+CREATE TABLE corpscout.se_company_ratsit_next
 (
     company_id String CODEC(ZSTD(3)),
     requested_url String CODEC(ZSTD(3)),
@@ -49,7 +49,7 @@ CREATE TABLE corpscout.se_company_ratsit_crawl_results_next
 ENGINE = ReplacingMergeTree(recorded_at)
 ORDER BY company_id;
 
-INSERT INTO corpscout.se_company_ratsit_crawl_results_next
+INSERT INTO corpscout.se_company_ratsit_next
 (
     company_id,
     requested_url,
@@ -81,32 +81,12 @@ SELECT
     scan_id,
     fetched_at,
     recorded_at
-FROM corpscout.se_company_ratsit_crawl_results FINAL
+FROM corpscout.se_company_ratsit FINAL
 WHERE outcome = 'success';
 
-DROP VIEW IF EXISTS corpscout.se_company_ratsit_current;
 RENAME TABLE
-    corpscout.se_company_ratsit_crawl_results
-        TO corpscout.se_company_ratsit_crawl_results_legacy,
-    corpscout.se_company_ratsit_crawl_results_next
-        TO corpscout.se_company_ratsit_crawl_results;
-DROP TABLE corpscout.se_company_ratsit_crawl_results_legacy;
-DROP TABLE IF EXISTS corpscout.se_company_ratsit_scans;
-
-CREATE VIEW corpscout.se_company_ratsit_current AS
-SELECT
-    company_id,
-    requested_url,
-    source_url,
-    report_bucket,
-    report_object_key,
-    report_sha256,
-    report_size_bytes,
-    report_payload_sha256,
-    source_html_sha256,
-    schema_version,
-    parser_version,
-    dagster_run_id,
-    fetched_at,
-    recorded_at
-FROM corpscout.se_company_ratsit_crawl_results FINAL;
+    corpscout.se_company_ratsit
+        TO corpscout.se_company_ratsit_legacy,
+    corpscout.se_company_ratsit_next
+        TO corpscout.se_company_ratsit;
+DROP TABLE corpscout.se_company_ratsit_legacy;

@@ -4,13 +4,12 @@ CREATE DATABASE IF NOT EXISTS corpscout;
 -- pointers. Ratsit collection now runs directly in Dagster and publishes one
 -- normalized report.json per company at a deterministic S3 key. The old rows
 -- and schema are deliberately discarded rather than mixing two contracts.
-DROP VIEW IF EXISTS corpscout.se_company_ratsit_current;
-DROP TABLE IF EXISTS corpscout.se_company_ratsit_crawl_results;
+DROP TABLE IF EXISTS corpscout.se_company_ratsit;
 
 -- Success-only discovery catalog for normalized Ratsit reports in S3. A newer
 -- successful fetch replaces the current row for the company. Failed fetches do
 -- not write here, so the last successful report remains discoverable.
-CREATE TABLE IF NOT EXISTS corpscout.se_company_ratsit_crawl_results
+CREATE TABLE IF NOT EXISTS corpscout.se_company_ratsit
 (
     company_id String,
     requested_url String,
@@ -61,23 +60,3 @@ CREATE TABLE IF NOT EXISTS corpscout.se_company_ratsit_crawl_results
 )
 ENGINE = ReplacingMergeTree(recorded_at)
 ORDER BY company_id;
-
--- Consumers use this view for one current report pointer per company and can
--- fetch the exact bucket and key without listing the S3 prefix.
-CREATE VIEW IF NOT EXISTS corpscout.se_company_ratsit_current AS
-SELECT
-    company_id,
-    requested_url,
-    source_url,
-    report_bucket,
-    report_object_key,
-    report_sha256,
-    report_size_bytes,
-    report_payload_sha256,
-    source_html_sha256,
-    schema_version,
-    parser_version,
-    dagster_run_id,
-    fetched_at,
-    recorded_at
-FROM corpscout.se_company_ratsit_crawl_results FINAL;

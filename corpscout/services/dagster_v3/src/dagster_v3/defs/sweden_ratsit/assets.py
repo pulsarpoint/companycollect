@@ -48,13 +48,13 @@ RATSIT_SCHEMA_VERSION = 1
 RATSIT_PARSER_VERSION = "ratsit-html-v1"
 RATSIT_BROWSER_POOL = "sweden_ratsit_browser"
 RATSIT_CLICKHOUSE_DATABASE = "corpscout"
-RATSIT_RESULT_TABLE = "se_company_ratsit_crawl_results"
-RATSIT_SCAN_TABLE = "se_company_ratsit_scans"
+RATSIT_RESULT_TABLE = "se_company_ratsit"
 
 RATSIT_RESULT_COLUMNS = (
     "scan_id",
     "company_id",
     "outcome",
+    "failure_type",
     "requested_url",
     "source_url",
     "http_status",
@@ -71,27 +71,6 @@ RATSIT_RESULT_COLUMNS = (
     "error_message",
     "recorded_at",
 )
-RATSIT_SCAN_COLUMNS = (
-    "scan_id",
-    "status",
-    "selected_company_ids",
-    "selected_company_count",
-    "result_count",
-    "success_count",
-    "failure_count",
-    "reused_report_count",
-    "written_object_count",
-    "result_bucket",
-    "result_prefix",
-    "schema_version",
-    "parser_version",
-    "started_at",
-    "completed_at",
-    "error_type",
-    "error_message",
-    "recorded_at",
-)
-
 type RatsitResultFilename = Literal[
     "report.json",
     "error.json",
@@ -113,6 +92,7 @@ class RatsitScanResult:
     scan_id: str
     company_id: str
     outcome: str
+    failure_type: str
     requested_url: str
     source_url: str
     http_status: int | None
@@ -262,6 +242,7 @@ def write_ratsit_scan(
                     scan_id=scan_id,
                     company_id=result.company_id,
                     outcome="success",
+                    failure_type="",
                     requested_url=result.requested_url,
                     source_url=result.source_url,
                     http_status=result.http_status,
@@ -308,7 +289,8 @@ def write_ratsit_scan(
             RatsitScanResult(
                 scan_id=scan_id,
                 company_id=result.company_id,
-                outcome=result.error_type,
+                outcome="failure",
+                failure_type=result.error_type,
                 requested_url=result.requested_url,
                 source_url=result.source_url,
                 http_status=result.http_status,
@@ -357,7 +339,7 @@ def persist_ratsit_scan(
     assert_clickhouse_tables_exist(
         clickhouse,
         database=RATSIT_CLICKHOUSE_DATABASE,
-        tables=(RATSIT_RESULT_TABLE, RATSIT_SCAN_TABLE),
+        tables=(RATSIT_RESULT_TABLE,),
     )
     indexed_at = recorded_at or datetime.now(UTC)
     _require_aware_timestamp(indexed_at, label="scan index")
@@ -371,6 +353,7 @@ def persist_ratsit_scan(
             result.scan_id,
             result.company_id,
             result.outcome,
+            result.failure_type,
             result.requested_url,
             result.source_url,
             result.http_status,
@@ -389,27 +372,6 @@ def persist_ratsit_scan(
         )
         for result in summary.results
     ]
-    scan_status = "success" if summary.failure_count == 0 else "completed_with_failures"
-    scan_row = (
-        summary.scan_id,
-        scan_status,
-        list(summary.selected_company_ids),
-        len(summary.selected_company_ids),
-        len(summary.results),
-        summary.success_count,
-        summary.failure_count,
-        summary.reused_report_count,
-        summary.written_object_count,
-        RATSIT_S3_BUCKET,
-        f"{RATSIT_S3_PREFIX}/",
-        RATSIT_SCHEMA_VERSION,
-        RATSIT_PARSER_VERSION,
-        summary.started_at,
-        summary.completed_at,
-        "",
-        "",
-        indexed_at,
-    )
     with clickhouse.get_connection() as client:
         client.execute(
             f"""
@@ -418,61 +380,7 @@ def persist_ratsit_scan(
             """,
             result_rows,
         )
-        client.execute(
-            f"""
-            INSERT INTO {RATSIT_CLICKHOUSE_DATABASE}.{RATSIT_SCAN_TABLE}
-            ({", ".join(RATSIT_SCAN_COLUMNS)}) VALUES
-            """,
-            [scan_row],
-        )
     return len(result_rows)
-
-
-def record_failed_ratsit_scan(
-    clickhouse: ClickhouseResource,
-    *,
-    scan_id: str,
-    company_ids: tuple[str, ...],
-    started_at: datetime,
-    error_type: str,
-    completed_at: datetime | None = None,
-) -> None:
-    assert_clickhouse_tables_exist(
-        clickhouse,
-        database=RATSIT_CLICKHOUSE_DATABASE,
-        tables=(RATSIT_SCAN_TABLE,),
-    )
-    failed_at = completed_at or datetime.now(UTC)
-    _require_aware_timestamp(failed_at, label="failed scan completion")
-    with clickhouse.get_connection() as client:
-        client.execute(
-            f"""
-            INSERT INTO {RATSIT_CLICKHOUSE_DATABASE}.{RATSIT_SCAN_TABLE}
-            ({", ".join(RATSIT_SCAN_COLUMNS)}) VALUES
-            """,
-            [
-                (
-                    scan_id,
-                    "failed",
-                    list(company_ids),
-                    len(company_ids),
-                    0,
-                    0,
-                    0,
-                    0,
-                    0,
-                    RATSIT_S3_BUCKET,
-                    f"{RATSIT_S3_PREFIX}/",
-                    RATSIT_SCHEMA_VERSION,
-                    RATSIT_PARSER_VERSION,
-                    started_at,
-                    failed_at,
-                    error_type[:128],
-                    "Ratsit scan failed before all company results were persisted",
-                    failed_at,
-                )
-            ],
-        )
 
 
 def _company_prefix(company_id: str) -> str:
@@ -568,32 +476,19 @@ def se_ratsit_scan_dispatch(
         len(RATSIT_COMPANY_IDS),
         sweden_ratsit_browser.request_interval_seconds,
     )
-    try:
-        reusable_reports = load_reusable_ratsit_reports(
-            clickhouse,
-            RATSIT_COMPANY_IDS,
-        )
-        summary = write_ratsit_scan(
-            object_store=sweden_ratsit_object_store,
-            ratsit=sweden_ratsit_browser,
-            company_ids=RATSIT_COMPANY_IDS,
-            scan_id=scan_id,
-            reusable_reports=reusable_reports,
-            started_at=started_at,
-        )
-        indexed_result_count = persist_ratsit_scan(clickhouse, summary)
-    except Exception as error:
-        try:
-            record_failed_ratsit_scan(
-                clickhouse,
-                scan_id=scan_id,
-                company_ids=RATSIT_COMPANY_IDS,
-                started_at=started_at,
-                error_type=type(error).__name__,
-            )
-        except Exception:
-            context.log.exception("Could not record the failed Ratsit scan")
-        raise
+    reusable_reports = load_reusable_ratsit_reports(
+        clickhouse,
+        RATSIT_COMPANY_IDS,
+    )
+    summary = write_ratsit_scan(
+        object_store=sweden_ratsit_object_store,
+        ratsit=sweden_ratsit_browser,
+        company_ids=RATSIT_COMPANY_IDS,
+        scan_id=scan_id,
+        reusable_reports=reusable_reports,
+        started_at=started_at,
+    )
+    indexed_result_count = persist_ratsit_scan(clickhouse, summary)
 
     context.log.info(
         "Finished Ratsit scan: scan_id=%s successes=%s failures=%s reused=%s "
@@ -617,7 +512,6 @@ def se_ratsit_scan_dispatch(
             "company_ids": list(summary.selected_company_ids),
             "result_object_keys": list(summary.result_object_keys),
             "result_table": (f"{RATSIT_CLICKHOUSE_DATABASE}.{RATSIT_RESULT_TABLE}"),
-            "scan_table": f"{RATSIT_CLICKHOUSE_DATABASE}.{RATSIT_SCAN_TABLE}",
             "headless": sweden_ratsit_browser.headless,
             "request_interval_seconds": (
                 sweden_ratsit_browser.request_interval_seconds

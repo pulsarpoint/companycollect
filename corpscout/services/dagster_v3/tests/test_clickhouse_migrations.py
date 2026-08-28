@@ -331,7 +331,7 @@ EXPECTED_MIGRATIONS = (
     "000319_corpscout_rs_apr_company_people",
     "000320_corpscout_se_address_geocodes_current_mv",
     "000321_corpscout_rs_apr_company",
-    "000322_corpscout_se_company_ratsit_crawl_results",
+    "000322_corpscout_se_company_ratsit",
     "000323_corpscout_se_postcode_centroids",
     "000324_corpscout_se_city_centroids",
     "000325_corpscout_se_address_geocodes_served_view",
@@ -3615,7 +3615,7 @@ def test_ratsit_sole_trader_id_migration_repairs_applied_constraints() -> None:
         "000329_corpscout_se_company_ratsit_sole_trader_ids.down.sql"
     )
 
-    assert "ALTER TABLE corpscout.se_company_ratsit_crawl_results" in up_sql
+    assert "ALTER TABLE corpscout.se_company_ratsit" in up_sql
     assert "^([0-9]{10}|[0-9]{12})$" in up_sql
     assert "right(company_id, 10)" in up_sql
     assert "DROP CONSTRAINT se_company_ratsit_company_id" in up_sql
@@ -3629,10 +3629,9 @@ def test_ratsit_reports_migration_replaces_temporal_results_with_s3_catalog() ->
     up_sql = _migration_sql("000334_corpscout_se_company_ratsit_reports.up.sql")
     down_sql = _migration_sql("000334_corpscout_se_company_ratsit_reports.down.sql")
 
-    assert "DROP VIEW IF EXISTS corpscout.se_company_ratsit_current" in up_sql
-    assert "DROP TABLE IF EXISTS corpscout.se_company_ratsit_crawl_results" in up_sql
+    assert "DROP TABLE IF EXISTS corpscout.se_company_ratsit" in up_sql
     assert (
-        "CREATE TABLE IF NOT EXISTS corpscout.se_company_ratsit_crawl_results" in up_sql
+        "CREATE TABLE IF NOT EXISTS corpscout.se_company_ratsit" in up_sql
     )
     for column in (
         "report_bucket LowCardinality(String)",
@@ -3652,7 +3651,8 @@ def test_ratsit_reports_migration_replaces_temporal_results_with_s3_catalog() ->
     assert "ENGINE = ReplacingMergeTree(recorded_at)" in up_sql
     assert "ORDER BY company_id" in up_sql
     assert "PARTITION BY" not in up_sql
-    assert "FROM corpscout.se_company_ratsit_crawl_results FINAL" in up_sql
+    assert "se_company_ratsit_current" not in up_sql
+    assert "se_company_ratsit_current" not in down_sql
     assert "temporal_workflow_id" not in up_sql
     assert "batch_id" not in up_sql
 
@@ -3660,17 +3660,17 @@ def test_ratsit_reports_migration_replaces_temporal_results_with_s3_catalog() ->
     assert "temporal_workflow_id String" in down_sql
 
 
-def test_ratsit_scan_history_migration_tracks_every_scan_and_reused_report() -> None:
+def test_ratsit_scan_history_migration_tracks_company_results_and_reuse() -> None:
     up_sql = _migration_sql("000336_corpscout_se_company_ratsit_scan_history.up.sql")
     down_sql = _migration_sql(
         "000336_corpscout_se_company_ratsit_scan_history.down.sql"
     )
 
-    assert "CREATE TABLE corpscout.se_company_ratsit_crawl_results_next" in up_sql
-    assert "CREATE TABLE IF NOT EXISTS corpscout.se_company_ratsit_scans" in up_sql
+    assert "CREATE TABLE corpscout.se_company_ratsit_next" in up_sql
     for column in (
         "scan_id String",
         "outcome LowCardinality(String)",
+        "failure_type LowCardinality(String)",
         "result_bucket LowCardinality(String)",
         "result_object_key String",
         "result_sha256 FixedString(64)",
@@ -3682,11 +3682,12 @@ def test_ratsit_scan_history_migration_tracks_every_scan_and_reused_report() -> 
         assert column in up_sql
 
     assert "ORDER BY (scan_id, company_id)" in up_sql
-    assert "ORDER BY scan_id" in up_sql
-    assert "GROUP BY dagster_run_id" in up_sql
-    assert "latest successful report" in up_sql
-    assert "report_object_key" in up_sql
-    assert "DROP TABLE IF EXISTS corpscout.se_company_ratsit_scans" in down_sql
+    assert "outcome IN ('success', 'failure')" in up_sql
+    assert "failure_type IN ('navigation', 'http', 'parse')" in up_sql
+    assert "se_company_ratsit_current" not in up_sql
+    assert "se_company_ratsit_current" not in down_sql
+    assert "se_company_ratsit_scans" not in up_sql
+    assert "se_company_ratsit_scans" not in down_sql
     assert "WHERE outcome = 'success'" in down_sql
 
 
