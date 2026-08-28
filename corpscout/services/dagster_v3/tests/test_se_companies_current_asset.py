@@ -24,7 +24,7 @@ import dagster as dg
 
 from dagster_v3.defs.sweden_company import companies_current
 from dagster_v3.defs.sweden_company.companies_current_asset import (
-    QUALIFIED_SE_COMPANIES_CURRENT_VIEW,
+    QUALIFIED_SE_COMPANIES_SERVING_VIEW,
     REFRESH_VIEW_SQL,
     ROW_COUNT_SQL,
     WAIT_VIEW_SQL,
@@ -70,7 +70,11 @@ class _FakeCompaniesCurrentClient:
     def execute(self, sql: str, params: Any = None) -> list[tuple[Any, ...]]:
         self.executed.append((sql, params))
         if "system.tables" in sql:
-            return [(companies_current.SE_COMPANIES_CURRENT_VIEW,)] if self._view_exists else []
+            return (
+                [(companies_current.SE_COMPANIES_SERVING_VIEW,)]
+                if self._view_exists
+                else []
+            )
         if sql == REFRESH_VIEW_SQL:
             return []
         if sql == WAIT_VIEW_SQL:
@@ -96,16 +100,16 @@ def test_the_asset_forces_a_refresh_and_waits_on_this_view() -> None:
     result = _run_asset(client)
 
     # The two SYSTEM statements are issued, in order, against the qualified serving view.
-    system_statements = [
-        sql for sql in client.statements if sql.startswith("SYSTEM ")
-    ]
+    system_statements = [sql for sql in client.statements if sql.startswith("SYSTEM ")]
     assert system_statements == [REFRESH_VIEW_SQL, WAIT_VIEW_SQL]
-    assert REFRESH_VIEW_SQL == f"SYSTEM REFRESH VIEW {QUALIFIED_SE_COMPANIES_CURRENT_VIEW}"
-    assert WAIT_VIEW_SQL == f"SYSTEM WAIT VIEW {QUALIFIED_SE_COMPANIES_CURRENT_VIEW}"
-    assert QUALIFIED_SE_COMPANIES_CURRENT_VIEW == "corpscout.se_companies_current"
+    assert (
+        REFRESH_VIEW_SQL == f"SYSTEM REFRESH VIEW {QUALIFIED_SE_COMPANIES_SERVING_VIEW}"
+    )
+    assert WAIT_VIEW_SQL == f"SYSTEM WAIT VIEW {QUALIFIED_SE_COMPANIES_SERVING_VIEW}"
+    assert QUALIFIED_SE_COMPANIES_SERVING_VIEW == "corpscout.se_companies_serving"
 
     metadata = result.metadata
-    assert metadata["view"] == QUALIFIED_SE_COMPANIES_CURRENT_VIEW
+    assert metadata["view"] == QUALIFIED_SE_COMPANIES_SERVING_VIEW
     assert metadata["row_count"] == 4_321
 
 
@@ -118,7 +122,7 @@ def test_the_asset_asserts_the_view_exists_before_refreshing() -> None:
     assert len(probe) == 1
     [(_, probe_params)] = probe
     assert probe_params["database"] == companies_current.CLICKHOUSE_DATABASE
-    assert companies_current.SE_COMPANIES_CURRENT_VIEW in probe_params["tables"]
+    assert companies_current.SE_COMPANIES_SERVING_VIEW in probe_params["tables"]
     # It runs BEFORE either SYSTEM statement -- a pre-migration run must fail on the name.
     system_index = min(
         i for i, sql in enumerate(client.statements) if sql.startswith("SYSTEM ")
@@ -134,7 +138,7 @@ def test_a_pre_migration_run_fails_clearly_on_the_missing_view() -> None:
     try:
         _run_asset(client)
     except ValueError as exc:
-        assert companies_current.SE_COMPANIES_CURRENT_VIEW in str(exc)
+        assert companies_current.SE_COMPANIES_SERVING_VIEW in str(exc)
     else:
         raise AssertionError("a missing view must raise")
     # It failed on the existence probe, before touching the view with any SYSTEM statement.
@@ -168,7 +172,7 @@ class _FakeRefreshClient:
 
     def execute(self, sql: str, params: Any = None) -> list[tuple[Any, ...]]:
         self.executed.append(sql)
-        assert sql == companies_current.SE_COMPANIES_CURRENT_REFRESH_SQL
+        assert sql == companies_current.SE_COMPANIES_SERVING_REFRESH_SQL
         return self._rows
 
 
@@ -178,7 +182,7 @@ def _run_check(rows: list[tuple[Any, ...]]) -> dict[str, Any]:
         _FakeResource(client)
     )
     [executed] = client.executed
-    assert executed == companies_current.SE_COMPANIES_CURRENT_REFRESH_SQL
+    assert executed == companies_current.SE_COMPANIES_SERVING_REFRESH_SQL
     return {
         "passed": result.passed,
         **{key: value.value for key, value in result.metadata.items()},
@@ -190,15 +194,17 @@ def _recent_epoch(hours_ago: float) -> int:
 
 
 def test_the_check_reads_system_view_refreshes_for_this_view() -> None:
-    assert "system.view_refreshes" in companies_current.SE_COMPANIES_CURRENT_REFRESH_SQL
-    assert "database = 'corpscout'" in companies_current.SE_COMPANIES_CURRENT_REFRESH_SQL
+    assert "system.view_refreshes" in companies_current.SE_COMPANIES_SERVING_REFRESH_SQL
     assert (
-        "view = 'se_companies_current'"
-        in companies_current.SE_COMPANIES_CURRENT_REFRESH_SQL
+        "database = 'corpscout'" in companies_current.SE_COMPANIES_SERVING_REFRESH_SQL
+    )
+    assert (
+        "view = 'se_companies_serving'"
+        in companies_current.SE_COMPANIES_SERVING_REFRESH_SQL
     )
     assert (
         "toUnixTimestamp(last_success_time)"
-        in companies_current.SE_COMPANIES_CURRENT_REFRESH_SQL
+        in companies_current.SE_COMPANIES_SERVING_REFRESH_SQL
     )
 
 
