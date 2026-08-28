@@ -27,6 +27,11 @@ import { SeCompanyListedTab } from "~/components/admin/se-company-listed";
 import { SeCompanyPeopleTab } from "~/components/admin/se-company-people";
 import { SeFinancialsView } from "~/components/financials/se-financials-view";
 import AdminSwedenCompanyTechnology from "~/routes/admin-se-company-technology";
+import AdminSwedenCompanyTechnologyLayout from "~/routes/admin-se-company-technology-layout";
+import AdminSwedenCompanyTechnologyInfrastructure from "~/routes/admin-se-company-technology-infrastructure";
+import AdminSwedenCompanyTechnologyIpAddress from "~/routes/admin-se-company-technology-ip-address";
+import AdminSwedenCompanyTechnologyIpAddresses from "~/routes/admin-se-company-technology-ip-addresses";
+import AdminSwedenCompanyTechnologyWebIntelligence from "~/routes/admin-se-company-technology-web-intelligence";
 import { buildWebTechnologyHistory } from "~/lib/web-technology-history";
 import {
   loadSeCompanyAddresses,
@@ -36,6 +41,7 @@ import {
 import type {
   CompanyFinancialSource,
   CompanyTechnologyDetail,
+  CompanyTechnologyIpInventory,
   DomainRow,
   FinancialSourceYearRow,
   PublicContractRow,
@@ -102,6 +108,17 @@ describe("se company tab paths", () => {
     expect(seCompanyTabFromPath(`/admin/se/company/${COMPANY_ID}`)).toBe("info");
     expect(seCompanyTabFromPath(`/admin/se/company/${COMPANY_ID}/nope`)).toBe(
       "info",
+    );
+  });
+
+  it("keeps Technology active on every nested technology sub-path", () => {
+    const base = `/admin/se/company/${COMPANY_ID}/technology`;
+    expect(seCompanyTabFromPath(base)).toBe("technology");
+    expect(seCompanyTabFromPath(`${base}/web-intelligence`)).toBe("technology");
+    expect(seCompanyTabFromPath(`${base}/infrastructure`)).toBe("technology");
+    expect(seCompanyTabFromPath(`${base}/ip-addresses`)).toBe("technology");
+    expect(seCompanyTabFromPath(`${base}/ip-addresses/193.235.32.10`)).toBe(
+      "technology",
     );
   });
 });
@@ -643,24 +660,108 @@ const techDomain: DomainRow = {
   review_status: "confirmed_primary",
 };
 
-/** The route component's props are React Router's generated
- * `Route.ComponentProps`; a test drives only loaderData and params. */
-type TechnologyProps = Parameters<typeof AdminSwedenCompanyTechnology>[0];
-
-function technologyProps(detail: CompanyTechnologyDetail): TechnologyProps {
+/** Route components take React Router's generated `Route.ComponentProps`; a
+ * test drives only loaderData (and params where the component reads them). */
+function routeProps<Component extends (props: never) => unknown>(
+  loaderData: unknown,
+): Parameters<Component>[0] {
   return {
-    loaderData: detail,
+    loaderData,
     params: { companyId: COMPANY_ID },
-  } as unknown as TechnologyProps;
+  } as unknown as Parameters<Component>[0];
 }
 
-describe("technology tab", () => {
-  // The tab IS the public technology experience: the same shared sections the
-  // public /company/se/:id/technology page renders, deep-linking into the
-  // public web-intelligence, infrastructure, and IP readers.
-  const publicBase = `/company/se/${COMPANY_ID}/technology`;
+const technologyProps = (detail: CompanyTechnologyDetail) =>
+  routeProps<typeof AdminSwedenCompanyTechnology>(detail);
 
-  it("renders the shared domains section and the three public deep links", () => {
+// The admin base path every technology sub-tab lives under since the area
+// became a nested twin of the public one (no more public deep links).
+const adminTechnologyBase = `/admin/se/company/${COMPANY_ID}/technology`;
+
+describe("technology area layout", () => {
+  // The layout IS the public technology layout's admin twin: the same domain
+  // selector and the same four section tabs, but on the admin base path.
+  const layoutProps = (domains: DomainRow[], selectedDomain: string) =>
+    routeProps<typeof AdminSwedenCompanyTechnologyLayout>({
+      domains,
+      selectedDomain,
+    });
+
+  it("renders the four section tabs with admin hrefs threading ?domain=", () => {
+    const html = render(
+      <AdminSwedenCompanyTechnologyLayout
+        {...layoutProps([techDomain], techDomain.domain)}
+      />,
+      adminTechnologyBase,
+    );
+    expect(html).toContain("Associated domain");
+    expect(html).toContain(
+      `href="${adminTechnologyBase}?domain=beijerbygg.se"`,
+    );
+    expect(html).toContain(
+      `href="${adminTechnologyBase}/web-intelligence?domain=beijerbygg.se"`,
+    );
+    expect(html).toContain(
+      `href="${adminTechnologyBase}/infrastructure?domain=beijerbygg.se"`,
+    );
+    expect(html).toContain(
+      `href="${adminTechnologyBase}/ip-addresses?domain=beijerbygg.se"`,
+    );
+    // Nothing points at the public reader any more: the sections moved in.
+    expect(html).not.toContain(`href="/company/se/${COMPANY_ID}/technology`);
+  });
+
+  it("marks exactly the section the URL is on as active", () => {
+    const sections = [
+      { path: adminTechnologyBase, value: "overview" },
+      { path: `${adminTechnologyBase}/web-intelligence`, value: "web-intelligence" },
+      { path: `${adminTechnologyBase}/infrastructure`, value: "infrastructure" },
+      { path: `${adminTechnologyBase}/ip-addresses`, value: "ip-addresses" },
+      // The per-IP detail page still belongs to the IP addresses section.
+      {
+        path: `${adminTechnologyBase}/ip-addresses/193.235.32.10`,
+        value: "ip-addresses",
+      },
+    ];
+    const hrefs: Record<string, string> = {
+      overview: `${adminTechnologyBase}?domain=beijerbygg.se`,
+      "web-intelligence": `${adminTechnologyBase}/web-intelligence?domain=beijerbygg.se`,
+      infrastructure: `${adminTechnologyBase}/infrastructure?domain=beijerbygg.se`,
+      "ip-addresses": `${adminTechnologyBase}/ip-addresses?domain=beijerbygg.se`,
+    };
+    for (const active of sections) {
+      const html = render(
+        <AdminSwedenCompanyTechnologyLayout
+          {...layoutProps([techDomain], techDomain.domain)}
+        />,
+        active.path,
+      );
+      for (const [section, href] of Object.entries(hrefs)) {
+        expect(anchorWithHref(html, href), `${active.path} / ${section}`)
+          .toContain(`aria-selected="${section === active.value}"`);
+      }
+    }
+  });
+
+  // The public layout 404s a company with no domains; the admin shell must
+  // keep rendering so every sub-tab can say "nothing yet" instead.
+  it("keeps the tab shell without a domain selector when no domain resolved", () => {
+    const html = render(
+      <AdminSwedenCompanyTechnologyLayout {...layoutProps([], "")} />,
+      adminTechnologyBase,
+    );
+    expect(html).not.toContain("Associated domain");
+    // The section tabs still render, without a dangling ?domain=.
+    expect(html).toContain(`href="${adminTechnologyBase}/infrastructure"`);
+    expect(html).toContain(`href="${adminTechnologyBase}/ip-addresses"`);
+  });
+});
+
+describe("technology tab", () => {
+  // The index IS the public technology overview: the same shared sections the
+  // public /company/se/:id/technology index renders; the domain selector and
+  // the section tabs live in the parent layout.
+  it("renders the shared domains section", () => {
     const html = render(
       <AdminSwedenCompanyTechnology
         {...technologyProps({
@@ -669,23 +770,12 @@ describe("technology tab", () => {
           webTechnologyHistory: null,
         })}
       />,
-      seCompanyTabPath(COMPANY_ID, "technology"),
+      adminTechnologyBase,
     );
     expect(html).toContain("Web presence");
     expect(html).toContain("beijerbygg.se");
     expect(html).toContain(">Selected<");
     expect(html).toContain(">wikidata<");
-    // The deep links carry the selected domain so the public readers open on
-    // the same domain the admin was looking at.
-    expect(html).toContain(
-      `href="${publicBase}/web-intelligence?domain=beijerbygg.se"`,
-    );
-    expect(html).toContain(
-      `href="${publicBase}/infrastructure?domain=beijerbygg.se"`,
-    );
-    expect(html).toContain(
-      `href="${publicBase}/ip-addresses?domain=beijerbygg.se"`,
-    );
   });
 
   it("renders the crawl-history section when the selected domain has detections", () => {
@@ -718,7 +808,7 @@ describe("technology tab", () => {
           webTechnologyHistory: history,
         })}
       />,
-      seCompanyTabPath(COMPANY_ID, "technology"),
+      adminTechnologyBase,
     );
     expect(html).toContain("WordPress");
     expect(html).toContain("CC-MAIN-2026-26");
@@ -735,11 +825,100 @@ describe("technology tab", () => {
           webTechnologyHistory: null,
         })}
       />,
-      seCompanyTabPath(COMPANY_ID, "technology"),
+      adminTechnologyBase,
     );
-    expect(html).toContain("No technology data for this company yet");
+    expect(html).toContain("No domains resolved for this company");
     expect(html).not.toContain("Web presence");
-    expect(html).not.toContain(`href="${publicBase}/web-intelligence`);
+  });
+});
+
+describe("technology sub-tabs", () => {
+  // Each sub-tab mounts the SAME section component as its public twin; what
+  // is admin-specific is only the honest empty state where the public route
+  // throws a 404.
+  it("says no domains resolved instead of 404ing, on every sub-tab", () => {
+    for (const [name, element] of [
+      [
+        "web-intelligence",
+        <AdminSwedenCompanyTechnologyWebIntelligence
+          {...routeProps<typeof AdminSwedenCompanyTechnologyWebIntelligence>(
+            null,
+          )}
+        />,
+      ],
+      [
+        "infrastructure",
+        <AdminSwedenCompanyTechnologyInfrastructure
+          {...routeProps<typeof AdminSwedenCompanyTechnologyInfrastructure>(
+            null,
+          )}
+        />,
+      ],
+      [
+        "ip-addresses",
+        <AdminSwedenCompanyTechnologyIpAddresses
+          {...routeProps<typeof AdminSwedenCompanyTechnologyIpAddresses>(null)}
+        />,
+      ],
+    ] as const) {
+      const html = render(element, `${adminTechnologyBase}/${name}`);
+      expect(html, name).toContain("No domains resolved for this company");
+    }
+  });
+
+  it("says so on the per-IP page when nothing connects the address", () => {
+    const html = render(
+      <AdminSwedenCompanyTechnologyIpAddress
+        {...routeProps<typeof AdminSwedenCompanyTechnologyIpAddress>(null)}
+      />,
+      `${adminTechnologyBase}/ip-addresses/193.235.32.10`,
+    );
+    expect(html).toContain(
+      "No evidence connects this IP address to the company",
+    );
+  });
+
+  it("links each inventory row to the per-IP page under the ADMIN base path", () => {
+    const inventory: CompanyTechnologyIpInventory = {
+      domain: techDomain.domain,
+      page: 1,
+      pageSize: 25,
+      summary: {
+        totalAddresses: 1,
+        ipv4Addresses: 1,
+        ipv6Addresses: 0,
+        rdapRegisteredAddressesOnPage: 0,
+      },
+      addresses: [
+        {
+          ip: "193.235.32.10",
+          version: 4,
+          networkSegment: "193.235.32.0/24",
+          firstSeen: "2025-01-01 00:00:00.000",
+          lastSeen: "2026-08-01 00:00:00.000",
+          countryCode: "SE",
+          countryName: "Sweden",
+          cityName: "Stockholm",
+          asn: 3301,
+          asnOrganization: "Telia Company AB",
+          rdapRegistration: null,
+          hostnames: ["www.beijerbygg.se"],
+        },
+      ],
+    };
+    const html = render(
+      <AdminSwedenCompanyTechnologyIpAddresses
+        {...routeProps<typeof AdminSwedenCompanyTechnologyIpAddresses>(
+          inventory,
+        )}
+      />,
+      `${adminTechnologyBase}/ip-addresses`,
+    );
+    // The section links via the CURRENT pathname, so the same shared
+    // component deep-links within the admin area, not out to the public one.
+    expect(html).toContain(
+      `href="${adminTechnologyBase}/ip-addresses/193.235.32.10?domain=beijerbygg.se"`,
+    );
   });
 });
 

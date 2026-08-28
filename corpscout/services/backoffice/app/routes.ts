@@ -105,7 +105,28 @@ export default [
       route("financial", "routes/admin-se-company-financial.tsx"),
       route("people", "routes/admin-se-company-people.tsx"),
       route("domains", "routes/admin-se-company-domains.tsx"),
-      route("technology", "routes/admin-se-company-technology.tsx"),
+      // The whole public technology area, inside the admin panel: the same
+      // sub-tabs as /company/:country/:id/technology, nested the same way,
+      // on the admin base path and without the public 404-on-empty.
+      route("technology", "routes/admin-se-company-technology-layout.tsx", [
+        index("routes/admin-se-company-technology.tsx"),
+        route(
+          "web-intelligence",
+          "routes/admin-se-company-technology-web-intelligence.tsx",
+        ),
+        route(
+          "infrastructure",
+          "routes/admin-se-company-technology-infrastructure.tsx",
+        ),
+        route(
+          "ip-addresses",
+          "routes/admin-se-company-technology-ip-addresses.tsx",
+        ),
+        route(
+          "ip-addresses/:address",
+          "routes/admin-se-company-technology-ip-address.tsx",
+        ),
+      ]),
       route("contracts", "routes/admin-se-company-contracts.tsx"),
       route("jobs", "routes/admin-se-company-jobs.tsx"),
       route("listed", "routes/admin-se-company-listed.tsx"),
