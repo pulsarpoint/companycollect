@@ -10,8 +10,8 @@ import {
 // evaluator runs in-process. No precompute (owner decision): the query is a
 // primary-key point lookup and the evaluation is milliseconds.
 //
-// Row scoping: mail analysis needs MX/TXT/SPF/TLSA rows anywhere under the
-// domain (DKIM selectors and TLSA live on subnames), but DNSSEC presence
+// Row scoping: mail analysis needs MX/TXT/SPF rows anywhere under the
+// domain (DKIM selectors live on subnames), but DNSSEC presence
 // only needs apex RRSIG/DNSKEY/DS -- unrestricted RRSIG rows would flood the
 // result (hundreds of signatures per signed zone) and crowd out the mail
 // rows within the LIMIT. CNAME rows are fetched only for `._domainkey.`
@@ -33,7 +33,7 @@ FROM (
   FROM commoncrawl_domain_dns_records_current
   WHERE root_domain = {domain:String}
     AND (
-      record_type IN ('MX', 'TXT', 'SPF', 'TLSA')
+      record_type IN ('MX', 'TXT', 'SPF')
       OR (record_type IN ('RRSIG', 'DNSKEY', 'DS') AND name = {domain:String})
       OR (record_type = 'CNAME' AND position(name, '._domainkey.') > 0)
     )

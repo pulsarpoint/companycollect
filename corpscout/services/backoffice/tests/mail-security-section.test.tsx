@@ -66,7 +66,6 @@ describe("MailSecuritySection", () => {
       "DMARC",
       "MTA-STS",
       "BIMI",
-      "DANE TLSA",
     ]) {
       expect(html).toContain(label);
     }

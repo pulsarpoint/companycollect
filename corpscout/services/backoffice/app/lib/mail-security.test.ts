@@ -86,11 +86,12 @@ describe("evaluateMailSecurity", () => {
     expect(control(report, "dmarc").status).toBe("pass");
     expect(control(report, "mta_sts").status).toBe("pass");
     expect(control(report, "bimi").status).toBe("pass");
-    // DKIM selectors and TLSA names are unobservable in this crawl slice:
-    // both are `unknown` (-15 each), never `fail`.
+    // DKIM selectors are unobservable in this crawl slice: shown as
+    // `unknown` but EXCLUDED from the score (owner 2026-08-29), so the
+    // well-configured fixture reaches the full 100.
     expect(control(report, "dkim").status).toBe("unknown");
-    expect(control(report, "dane_tlsa").status).toBe("unknown");
-    expect(report.score).toBe(70);
+    expect(report.scored_without_dkim).toBe(true);
+    expect(report.score).toBe(100);
     expect(report.mail_ready).toBe(true);
     expect(report.summary.dnssec_available).toBe(true);
     expect(report.summary.mx_host_count).toBe(2);
@@ -105,7 +106,7 @@ describe("evaluateMailSecurity", () => {
     const spf = control(report, "spf");
     expect(spf.status).toBe("warn");
     expect(spf.reasons.join(" ")).toContain("spf_weak");
-    expect(report.score).toBe(60);
+    expect(report.score).toBe(90);
   });
 
   it("marks DMARC p=none as warn and keeps mail_ready", () => {
@@ -329,9 +330,10 @@ describe("evaluateMailSecurity", () => {
     expect(dkim.status).toBe("pass");
     expect(dkim.reasons.join(" ")).toContain("selector1");
     expect(dkim.reasons.join(" ")).toContain("selector2");
-    // unknown costs -15 against the 70-point rich fixture; presence
-    // recovers exactly that.
-    expect(withDkim.score).toBe(85);
+    // With selectors observed DKIM re-enters the score as a pass; the rich
+    // fixture stays at the full 100 either way.
+    expect(withDkim.scored_without_dkim).toBe(false);
+    expect(withDkim.score).toBe(100);
   });
 
   it("treats the MTA-STS control as record-presence only", () => {
@@ -344,26 +346,33 @@ describe("evaluateMailSecurity", () => {
     expect(mtaSts.reasons.join(" ")).toContain("policy file");
   });
 
-  it("scores DANE by TLSA presence and DNSSEC", () => {
-    const verified = evaluateMailSecurity(
-      [
-        record("_25._tcp.mail.example.se", "TLSA", "3 1 1 abcdef"),
-        record("example.se", "DNSKEY", "257 3 13 abc"),
-      ],
+  it("has no DANE control and excludes unobserved DKIM from the score", () => {
+    const report = evaluateMailSecurity([], "example.se");
+    expect(report.controls.map((c) => c.key)).not.toContain("dane_tlsa");
+    // Unobserved DKIM is displayed as unknown but costs nothing.
+    const dkim = control(report, "dkim");
+    expect(dkim.status).toBe("unknown");
+    expect(report.scored_without_dkim).toBe(true);
+    // Empty domain: mx/spf/dmarc fail (-20 each), mta_sts/bimi fail... every
+    // OTHER control contributes; dkim does not.
+    const contributing = report.controls.filter((c) => c.key !== "dkim");
+    const expected = Math.max(
+      0,
+      100 -
+        contributing.filter((c) => c.status === "fail").length * 20 -
+        contributing.filter((c) => c.status === "warn").length * 10 -
+        contributing.filter((c) => c.status === "unknown").length * 15,
+    );
+    expect(report.score).toBe(expected);
+  });
+
+  it("keeps observed DKIM in the score", () => {
+    const withDkim = evaluateMailSecurity(
+      [record("s1._domainkey.example.se", "TXT", '"v=DKIM1; k=rsa; p=abc"')],
       "example.se",
     );
-    expect(control(verified, "dane_tlsa").status).toBe("pass");
-
-    const withoutDnssec = evaluateMailSecurity(
-      [record("_25._tcp.mail.example.se", "TLSA", "3 1 1 abcdef")],
-      "example.se",
-    );
-    const dane = control(withoutDnssec, "dane_tlsa");
-    expect(dane.status).toBe("warn");
-    expect(dane.reasons.join(" ")).toContain("DNSSEC");
-
-    const absent = evaluateMailSecurity([], "example.se");
-    expect(control(absent, "dane_tlsa").status).toBe("unknown");
+    expect(withDkim.scored_without_dkim).toBe(false);
+    expect(control(withDkim, "dkim").status).toBe("pass");
   });
 
   it("parses split multi-chunk quoted TXT records", () => {
@@ -395,7 +404,6 @@ describe("evaluateMailSecurity", () => {
     expect(control(report, "mta_sts").status).toBe("fail");
     expect(control(report, "bimi").status).toBe("fail");
     expect(control(report, "dkim").status).toBe("unknown");
-    expect(control(report, "dane_tlsa").status).toBe("unknown");
   });
 
   it("ignores records for other names and unrelated TXT content", () => {

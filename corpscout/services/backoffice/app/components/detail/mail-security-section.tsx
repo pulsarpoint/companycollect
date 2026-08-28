@@ -112,6 +112,12 @@ export function MailSecuritySection({
               <span>Detections: {report.summary.total_detections}</span>
             </div>
           </div>
+          {report.scored_without_dkim ? (
+            <p className="text-muted-foreground mt-3 text-xs">
+              Score computed without DKIM — no DKIM selectors were observed in
+              the crawl, so that control is shown but not counted.
+            </p>
+          ) : null}
         </CardContent>
       </Card>
 

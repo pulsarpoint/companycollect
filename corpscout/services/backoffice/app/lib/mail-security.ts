@@ -4,7 +4,7 @@
 // (pulsarprotectrunner/internal/functions/mail_function/function.go,
 // `deriveOutput` + `buildControl`) and the record-analysis detection rules of
 // its per-control scanners (spf_scanner, dmarc_scanner, mx_scanner,
-// mta_sts_scanner, bimi_scanner, dane_tlsa_scanner). Unlike runner3 there are
+// mta_sts_scanner, bimi_scanner). Unlike runner3 there are
 // NO live scan steps here: everything is derived from DNS records already
 // observed by the crawl, so
 //   - the Go `FailedSteps * 5` penalty and the "step did not complete" fail
@@ -48,7 +48,6 @@ export type MailSecuritySummary = {
   dkim_records_found: number;
   mta_sts_found: boolean;
   bimi_found: boolean;
-  dane_found: boolean;
   dnssec_available: boolean;
   total_detections: number;
 };
@@ -61,6 +60,9 @@ export type MailSecurityReport = {
   controls: MailSecurityControl[];
   /** Max `last_seen` over the records that fed the judgment; "" if none. */
   last_seen: string;
+  /** True when no DKIM selectors were observed in the crawl: the DKIM
+   * control is shown but EXCLUDED from the score (owner 2026-08-29). */
+  scored_without_dkim: boolean;
 };
 
 /** Strip surrounding quotes from a crawled TXT value and join multi-chunk
@@ -87,7 +89,7 @@ type ControlDraft = {
   detections: string[];
   reasons: string[];
   evidence: string[];
-  /** Overrides the pass/warn/fail derivation entirely (DKIM/DANE unknown). */
+  /** Overrides the pass/warn/fail derivation entirely (unobserved DKIM). */
   forcedStatus?: MailControlStatus;
 };
 
@@ -457,8 +459,9 @@ function buildMxControl(
 /**
  * Evaluate mail security for one domain from its crawled DNS records.
  *
- * Controls: mx, spf, dkim, dmarc, mta_sts, bimi, dane_tlsa. Runner3's
- * eighth control ("dns" = "the DNS scan step completed") has no crawl
+ * Controls: mx, spf, dkim, dmarc, mta_sts, bimi. Runner3's DANE control is
+ * NOT ported (owner 2026-08-29: no DANE testing here) and its
+ * "dns" step control has no crawl
  * equivalent and is dropped; DNSSEC presence feeds the summary exactly like
  * runner3's snapshotHasDNSSEC feeds its summary. Scoring follows Go
  * deriveOutput: start at 100, warn -10, fail -20, unknown -15, floor 0
@@ -487,7 +490,7 @@ export function evaluateMailSecurity(
     const seen = new Set<string>();
     const result: Normalized[] = [];
     for (const row of rows) {
-      const key = `${row.canonicalName} ${row.text}`;
+      const key = `${row.canonicalName}\u0000${row.text}`;
       if (seen.has(key)) continue;
       seen.add(key);
       result.push(row);
@@ -643,43 +646,17 @@ export function evaluateMailSecurity(
     .map(use);
   const dnssecAvailable = dnssecRows.length > 0;
 
-  // --- DANE TLSA ----------------------------------------------------------
-  // Presence-level rule (dane_missing). Deviation from Go: when NO TLSA
-  // record was observed the control is `unknown`, not `fail` -- the crawl
-  // only holds TLSA rows for names it happened to query (mostly zones
-  // obtained via AXFR), and TLSA for an off-domain MX host lives under a
-  // different root_domain entirely, so absence is not evidence. When TLSA
-  // records ARE present but DNSSEC is not observed, Go's dane_missing
-  // condition (`!DNSSECEnabled`) still fires -> warn.
-  const tlsaRows = dedupe(
-    normalized.filter((r) => r.record_type === "TLSA"),
-  ).map(use);
-  const dane: ControlDraft = {
-    key: "dane_tlsa",
-    label: "DANE TLSA",
-    present: tlsaRows.length > 0,
-    detections:
-      tlsaRows.length > 0 && !dnssecAvailable
-        ? [
-            "TLSA records published but no DNSSEC observed; DANE requires DNSSEC (dane_missing)",
-          ]
-        : [],
-    reasons:
-      tlsaRows.length > 0
-        ? [`${tlsaRows.length} TLSA record(s) observed`]
-        : [
-            "no TLSA records observed in crawl (TLSA names are only crawled when queried; off-domain MX hosts are never covered)",
-          ],
-    evidence: tlsaRows.map((r) => `${r.canonicalName} ${r.text}`),
-    forcedStatus: tlsaRows.length > 0 ? undefined : "unknown",
-  };
-
-  const drafts = [mx.draft, spf, dkim, dmarc, mtaSts, bimi, dane];
+  const drafts = [mx.draft, spf, dkim, dmarc, mtaSts, bimi];
   const controls = drafts.map(finalizeControl);
 
   // Port of Go deriveOutput scoring (minus FailedSteps: no live steps).
+  // Owner 2026-08-29: an UNOBSERVED DKIM control is a crawl-coverage gap, not
+  // a domain deficiency -- it is shown but excluded from the score, and the
+  // report says so (scored_without_dkim).
+  const scoredWithoutDkim = dkimRows.length === 0;
   let score = 100;
   for (const control of controls) {
+    if (scoredWithoutDkim && control.key === "dkim") continue;
     if (control.status === "warn") score -= 10;
     else if (control.status === "fail") score -= 20;
     else if (control.status === "unknown") score -= 15;
@@ -694,7 +671,6 @@ export function evaluateMailSecurity(
     dkim_records_found: dkimRows.length,
     mta_sts_found: mtaSts.present,
     bimi_found: bimi.present,
-    dane_found: dane.present,
     dnssec_available: dnssecAvailable,
     total_detections: drafts.reduce((n, d) => n + d.detections.length, 0),
   };
@@ -713,5 +689,6 @@ export function evaluateMailSecurity(
     summary,
     controls,
     last_seen: lastSeen,
+    scored_without_dkim: scoredWithoutDkim,
   };
 }
