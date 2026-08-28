@@ -161,6 +161,13 @@ export default function AdminSwedenCompanyTechnologyLayout({
           >
             IP addresses
           </TabsTrigger>
+          <TabsTrigger
+            value="mail-security"
+            render={<NavLink to={`${basePath}/mail-security${domainSearch}`} />}
+            nativeButton={false}
+          >
+            Mail security
+          </TabsTrigger>
         </TabsList>
       </Tabs>
 

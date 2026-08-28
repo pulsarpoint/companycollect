@@ -4,7 +4,11 @@ export type CompanyTab =
   | "suggestions"
   | "technology";
 export type TechnologySection =
-  "overview" | "web-intelligence" | "infrastructure" | "ip-addresses";
+  | "overview"
+  | "web-intelligence"
+  | "infrastructure"
+  | "ip-addresses"
+  | "mail-security";
 
 export function companyTabFromPath(pathname: string): CompanyTab {
   if (pathname.includes("/technology")) return "technology";
@@ -18,6 +22,7 @@ export function technologySectionFromPath(pathname: string): TechnologySection {
   if (pathname.includes("/technology/web-intelligence")) {
     return "web-intelligence";
   }
+  if (pathname.includes("/technology/mail-security")) return "mail-security";
   return pathname.includes("/technology/infrastructure")
     ? "infrastructure"
     : "overview";

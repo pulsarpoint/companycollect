@@ -58,5 +58,10 @@ describe("company detail tabs", () => {
         "/company/se/5594643297/technology/ip-addresses/2a02%3A28f0%3A%3A1",
       ),
     ).toBe("ip-addresses");
+    expect(
+      technologySectionFromPath(
+        "/admin/se/company/5594643297/technology/mail-security",
+      ),
+    ).toBe("mail-security");
   });
 });

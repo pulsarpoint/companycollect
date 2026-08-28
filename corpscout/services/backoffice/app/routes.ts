@@ -126,6 +126,10 @@ export default [
           "ip-addresses/:address",
           "routes/admin-se-company-technology-ip-address.tsx",
         ),
+        route(
+          "mail-security",
+          "routes/admin-se-company-technology-mail-security.tsx",
+        ),
       ]),
       route("contracts", "routes/admin-se-company-contracts.tsx"),
       route("jobs", "routes/admin-se-company-jobs.tsx"),
