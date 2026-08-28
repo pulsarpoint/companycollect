@@ -208,6 +208,9 @@ def _script(*, join_use_nulls: int) -> str:
         _served_table_ddl() + ";",
         # Stubs for the presence-set reads: only the columns the serving SELECT's
         # IN-subqueries touch. Seeds prove each arm independently.
+        "CREATE TABLE corpscout.se_companies (company_id String, activity_description Nullable(String), status_reason Nullable(String), bolagsverket_source_record_uid String, updated_from_raw_at DateTime64(3, 'UTC')) ENGINE = ReplacingMergeTree(updated_from_raw_at) ORDER BY company_id;",
+        "CREATE TABLE corpscout.text_translations (source_table String, source_column String, source_lang String, target_lang String, source_text_hash UInt64, translated_text String, version UInt32) ENGINE = MergeTree ORDER BY source_text_hash;",
+        "CREATE TABLE corpscout.se_code_labels (code_type String, code String, label_en String, version UInt32) ENGINE = MergeTree ORDER BY code;",
         "CREATE TABLE corpscout.se_bolagsverket_financial_metrics (company_id String) ENGINE = MergeTree ORDER BY company_id;",
         "CREATE TABLE corpscout.company_identifier (company_id String, issuer_scheme String, country_code String, is_current UInt8, issuer_id String) ENGINE = MergeTree ORDER BY company_id;",
         "CREATE TABLE corpscout.esef_financial_metrics (lei String) ENGINE = MergeTree ORDER BY lei;",
@@ -215,6 +218,12 @@ def _script(*, join_use_nulls: int) -> str:
         "CREATE TABLE corpscout.se_company_person (company_id String) ENGINE = MergeTree ORDER BY company_id;",
         "CREATE TABLE corpscout.se_company_person_role (company_id String, sources Array(String)) ENGINE = MergeTree ORDER BY company_id;",
         "CREATE TABLE corpscout.company_domains (company_id String, country_code String) ENGINE = MergeTree ORDER BY company_id;",
+        # Spine rows: COARSE has a translated activity + a labeled status reason; PRECISE has
+        # an activity with NO translation row (text_en must stay ''); NOSERVED has no spine
+        # row at all (every spine-derived field folds to '').
+        f"INSERT INTO corpscout.se_companies VALUES ('{COARSE}', 'Bygghandel med trävaror', 'konkurs avslutad', 'blv-uid-coarse', {_literal(NOW)}), ('{PRECISE}', 'Handel med maskiner', NULL, 'blv-uid-precise', {_literal(NOW)});",
+        "INSERT INTO corpscout.text_translations VALUES ('corpscout.se_companies', 'activity_description', 'sv', 'en', cityHash64('Bygghandel med trävaror'), 'Building trade with timber', 2), ('corpscout.se_companies', 'activity_description', 'sv', 'en', cityHash64('Bygghandel med trävaror'), 'Timber trade (older render)', 1);",
+        "INSERT INTO corpscout.se_code_labels VALUES ('status_reason', 'konkurs avslutad', 'Bankruptcy concluded', 1);",
         f"INSERT INTO corpscout.se_bolagsverket_financial_metrics VALUES ('{PRECISE}');",
         f"INSERT INTO corpscout.se_financial_reports VALUES ('{COARSE}');",
         f"INSERT INTO corpscout.se_company_person VALUES ('{PRECISE}');",
@@ -308,6 +317,23 @@ def test_presence_flags_come_from_the_child_tables(rows: dict[str, dict]) -> Non
     for company in (COARSE, PRECISE, NOSERVED, POSTAL_BOX):
         assert rows[company]["has_address"] == 1
         assert rows[company]["has_description"] == 0
+
+
+def test_translations_are_absorbed_from_the_spine_join(rows: dict[str, dict]) -> None:
+    # COARSE: activity translated (argMax picks version 2), status reason labeled.
+    assert rows[COARSE]["activity_description"] == "Bygghandel med trävaror"
+    assert rows[COARSE]["activity_description_en"] == "Building trade with timber"
+    assert rows[COARSE]["status_reason"] == "konkurs avslutad"
+    assert rows[COARSE]["status_reason_label_en"] == "Bankruptcy concluded"
+    assert rows[COARSE]["bolagsverket_source_record_uid"] == "blv-uid-coarse"
+    # PRECISE: activity present, no translation row -> '' (never invented).
+    assert rows[PRECISE]["activity_description"] == "Handel med maskiner"
+    assert rows[PRECISE]["activity_description_en"] == ""
+    assert rows[PRECISE]["status_reason"] == ""
+    # NOSERVED: no spine row at all -> every spine-derived field folds to ''.
+    assert rows[NOSERVED]["activity_description"] == ""
+    assert rows[NOSERVED]["activity_description_en"] == ""
+    assert rows[NOSERVED]["bolagsverket_source_record_uid"] == ""
 
 
 def test_source_flags_or_their_arms_together(rows: dict[str, dict]) -> None:

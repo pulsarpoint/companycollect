@@ -170,6 +170,27 @@ DOMAINS_SET = (
     "WHERE country_code = 'SE'"
 )
 
+# The registered-activity translation and the status-reason label, absorbed VERBATIM from the
+# retired corpscout.se_companies_translated view (migration 000252's rendering) -- migration
+# 000338 folds them into the serving view and the follow-up drops the view. The legal-form
+# label join is NOT carried over: se_company_info already ships label_en/label_sv (000306).
+SE_COMPANIES_TABLE = f"{CLICKHOUSE_DATABASE}.se_companies"
+ACTIVITY_TRANSLATION_JOIN = f"""LEFT JOIN (
+    SELECT source_text_hash, argMax(translated_text, version) AS translated_text
+    FROM {CLICKHOUSE_DATABASE}.text_translations
+    WHERE source_table = 'corpscout.se_companies'
+      AND source_column = 'activity_description'
+      AND source_lang = 'sv'
+      AND target_lang = 'en'
+    GROUP BY source_text_hash
+  ) AS act ON act.source_text_hash = cityHash64(ifNull(c.activity_description, ''))"""
+STATUS_REASON_LABEL_JOIN = f"""LEFT JOIN (
+    SELECT code, argMax(label_en, version) AS label_en
+    FROM {CLICKHOUSE_DATABASE}.se_code_labels
+    WHERE code_type = 'status_reason'
+    GROUP BY code
+  ) AS sr ON sr.code = ifNull(c.status_reason, '')"""
+
 
 def build_se_companies_serving_sql() -> str:
     """One wide row per published SE company: info-list columns, presence flags, source
@@ -240,6 +261,12 @@ SELECT
   legal_form_code,
   legal_form_label_en,
   legal_form_label_sv,
+  activity_description,
+  activity_description_en,
+  status_reason,
+  status_reason_label_en,
+  bolagsverket_source_record_uid,
+  updated_from_raw_at,
   has_description,
   has_address,
   toUInt8(fin_bolagsverket OR fin_esef OR fin_reports) AS has_financial,
@@ -267,6 +294,12 @@ FROM (
     ifNull(i.legal_form_code, '') AS legal_form_code,
     i.legal_form_label_en AS legal_form_label_en,
     i.legal_form_label_sv AS legal_form_label_sv,
+    ifNull(c.activity_description, '') AS activity_description,
+    ifNull(act.translated_text, '') AS activity_description_en,
+    ifNull(c.status_reason, '') AS status_reason,
+    ifNull(sr.label_en, '') AS status_reason_label_en,
+    ifNull(c.bolagsverket_source_record_uid, '') AS bolagsverket_source_record_uid,
+    ifNull(c.updated_from_raw_at, toDateTime64(0, 3, 'UTC')) AS updated_from_raw_at,
     toUInt8(i.description IS NOT NULL) AS has_description,
     toUInt8(ifNull(agg.address_count, 0) > 0) AS has_address,
     toUInt8(i.company_id IN ({BOLAGSVERKET_FINANCIAL_SET})) AS fin_bolagsverket,
@@ -293,6 +326,9 @@ FROM (
     pa.primary_latitude AS primary_latitude,
     pa.primary_longitude AS primary_longitude
   FROM {COMPANY_INFO_TABLE} AS i FINAL
+  LEFT JOIN {SE_COMPANIES_TABLE} AS c FINAL ON c.company_id = i.company_id
+  {ACTIVITY_TRANSLATION_JOIN}
+  {STATUS_REASON_LABEL_JOIN}
   LEFT JOIN aggregated AS agg ON agg.company_id = i.company_id
   LEFT JOIN primary_address AS pa ON pa.company_id = i.company_id
 )

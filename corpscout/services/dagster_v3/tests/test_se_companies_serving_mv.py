@@ -1,11 +1,11 @@
-"""Migration 000335: the consolidated companies serving view, pinned to its builder.
+"""Migration 000338: the serving view widened with translations, pinned to its builder.
 
 `corpscout.se_companies_serving` is the ONE wide per-company row every admin companies list
-page reads: the info-list columns, the presence and source flags the backoffice used to
-recompute as IN-set subqueries per page load, and the address JSON + primary geocode summary
-`se_companies_current` (migration 000326) carried. It is a plain CREATE under a brand-new
-name (nothing reads it before the backoffice repoint ships) followed by SYSTEM WAIT VIEW,
-exactly the 000326 shape at a 15-minute cadence.
+page reads: the info-list columns, the presence and source flags, the address JSON + primary
+geocode summary, and (since 000338) the registered-activity translation, status-reason label
+and spine fields absorbed from the retired `se_companies_translated` view. Because the name
+now has live readers, 000338 is 000320's staged swap -- build under _next, SYSTEM WAIT, one
+atomic RENAME -- not 000335's plain CREATE.
 
 The drift pin couples the migration's embedded SELECT to a fresh render of
 companies_current.build_se_companies_serving_sql -- editing either half alone turns this red.
@@ -20,8 +20,10 @@ from dagster_v3.defs.sweden_company.companies_current import (
 )
 
 MIGRATIONS_DIR = Path(__file__).resolve().parents[3] / "clickhouse" / "migrations"
-MIGRATION = "000335_corpscout_se_companies_serving"
+MIGRATION = "000338_corpscout_se_companies_serving_translations"
 VIEW = "corpscout.se_companies_serving"
+NEXT = "corpscout.se_companies_serving_next"
+RETIRED = "corpscout.se_companies_serving_retired"
 
 
 def _sql(suffix: str) -> str:
@@ -84,40 +86,52 @@ def test_the_pin_is_not_vacuous() -> None:
     assert "company_domains" in embedded
     # The base is ALL of se_company_info, LEFT-joined to the address aggregation --
     # a company with no current address still gets a row.
+    # The absorbed translation joins (the retired se_companies_translated's contract).
+    assert "text_translations" in embedded
+    assert "activity_description_en" in embedded
+    assert "se_code_labels" in embedded
+    assert "status_reason_label_en" in embedded
+    assert "bolagsverket_source_record_uid" in embedded
     assert "LEFT JOIN aggregated" in embedded
     assert "LEFT JOIN primary_address" in embedded
     assert "INNER JOIN corpscout.se_company_info" not in embedded
 
 
-def test_the_up_migration_is_a_refreshable_mv_created_plain_and_waited_on() -> None:
+def test_the_up_migration_is_a_staged_swap_waited_on_before_the_rename() -> None:
+    """000320's pattern, for 000320's reason: the serving name has LIVE readers now, so the
+    widened view builds under _next, its first refresh is waited on, and ONE atomic RENAME
+    swaps both names -- a reader sees the old view or the fully populated new one, never
+    UNKNOWN_TABLE and never an empty view."""
     statements = _statements(_sql("up"))
 
-    assert len(statements) == 3
+    assert len(statements) == 4
     assert statements[0] == "CREATE DATABASE IF NOT EXISTS corpscout"
 
     create = _create_view_statement(_sql("up"))
-    assert _body(create).startswith(f"CREATE MATERIALIZED VIEW {VIEW}\n")
+    assert _body(create).startswith(f"CREATE MATERIALIZED VIEW {NEXT}\n")
     assert "REFRESH EVERY 15 MINUTE" in create
     assert "ENGINE = MergeTree" in create
     assert "ORDER BY company_id\nAS " in create
     assert "APPEND" not in create
     assert "POPULATE" not in create
-    assert re.search(r"\bTO\s+corpscout\.", create) is None
 
-    assert statements[2] == f"SYSTEM WAIT VIEW {VIEW}"
+    assert statements[2] == f"SYSTEM WAIT VIEW {NEXT}"
+
+    rename = _body(statements[3])
+    assert rename.startswith("RENAME TABLE")
+    assert f"{VIEW} TO {RETIRED}" in rename
+    assert f"{NEXT} TO {VIEW}" in rename
 
 
-def test_the_up_migration_creates_a_brand_new_name_and_drops_nothing() -> None:
-    """se_companies_current keeps serving its remaining readers until they are repointed;
-    its drop is a separate migration with its own zero-reader proof."""
+def test_the_up_migration_drops_nothing() -> None:
+    """The pre-translation view keeps its machinery under the _retired name; its drop is the
+    follow-up migration's, together with se_companies_translated once the dbt model repoint
+    is deployed."""
     up = _sql("up")
     assert "DROP" not in _executable(up).upper()
-    assert "RENAME TABLE" not in _executable(up).upper()
-    assert f"CREATE MATERIALIZED VIEW {VIEW}\n" in _body(_create_view_statement(up))
-    assert f"{VIEW}_next" not in up
 
 
-def test_the_down_migration_drops_only_the_serving_view() -> None:
+def test_the_down_migration_swaps_back_and_discards_the_translated_render() -> None:
     down = _executable(_sql("down"))
-    assert f"DROP VIEW IF EXISTS {VIEW}" in down
-    assert "se_companies_current" not in down
+    assert f"{RETIRED} TO {VIEW}" in down
+    assert "DROP VIEW IF EXISTS corpscout.se_companies_serving_translated_discard" in down
