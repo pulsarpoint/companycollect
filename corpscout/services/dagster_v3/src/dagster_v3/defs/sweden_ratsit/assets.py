@@ -2,7 +2,8 @@ import gzip
 import hashlib
 import json
 import re
-from collections.abc import Mapping
+from collections import Counter
+from collections.abc import Iterator, Mapping
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from typing import Literal
@@ -12,6 +13,23 @@ from dagster_clickhouse import ClickhouseResource
 
 from dagster_v3.defs.clickhouse.resolved import assert_clickhouse_tables_exist
 from dagster_v3.defs.common.resources import ObjectStoreResource
+from dagster_v3.defs.sweden_ratsit.normalization import (
+    RATSIT_COMPANY_INDUSTRY_CODES_TABLE,
+    RATSIT_COMPANY_SUMMARIES_TABLE,
+    RATSIT_COMPANY_TABLE,
+    RATSIT_ESTABLISHMENTS_TABLE,
+    RATSIT_FINANCIAL_PERIODS_TABLE,
+    RATSIT_FINANCIAL_REPORTS_TABLE,
+    RATSIT_NACE_REVISION,
+    RATSIT_NORMALIZATION_STATISTIC_KEYS,
+    RATSIT_NORMALIZED_TABLES,
+    RATSIT_NORMALIZER_VERSION,
+    RATSIT_RESPONSIBLE_PEOPLE_TABLE,
+    insert_normalized_ratsit_reports,
+    load_nace_rev_2_1_class_codes,
+    normalize_ratsit_report,
+    select_latest_unnormalized_ratsit_reports,
+)
 from dagster_v3.defs.sweden_ratsit.resources import (
     RATSIT_BROWSER_WORKER_COUNT,
     RATSIT_HARD_MAX_COMPANIES,
@@ -132,6 +150,7 @@ RATSIT_S3_PREFIX = "sweden_ratsit/pilot"
 RATSIT_SCHEMA_VERSION = 1
 RATSIT_PARSER_VERSION = "ratsit-html-v1"
 RATSIT_BROWSER_POOL = "sweden_ratsit_browser"
+RATSIT_NORMALIZE_POOL = "sweden_ratsit_normalize"
 RATSIT_CLICKHOUSE_DATABASE = "corpscout"
 RATSIT_RESULT_TABLE = "se_company_ratsit"
 
@@ -690,16 +709,259 @@ def se_ratsit_scan_dispatch(
     )
 
 
+RATSIT_NORMALIZATION_DEPS = (
+    dg.AssetKey("se_ratsit_scan_dispatch"),
+    dg.AssetKey("nace_categories_clickhouse"),
+)
+
+
+@dg.multi_asset(
+    name="se_ratsit_normalized",
+    specs=[
+        dg.AssetSpec(
+            RATSIT_COMPANY_TABLE,
+            deps=RATSIT_NORMALIZATION_DEPS,
+            group_name="sweden_ratsit",
+            kinds={"python", "json", "s3", "clickhouse", "ratsit"},
+            tags={
+                "country": "sweden",
+                "source": "ratsit",
+                "source_name": "sweden_ratsit",
+                "entity_type": "company",
+                "layer": "normalized",
+            },
+            metadata={"table": f"{RATSIT_CLICKHOUSE_DATABASE}.{RATSIT_COMPANY_TABLE}"},
+            description=(
+                "Latest successful Ratsit company report content normalized from "
+                "its exact S3 JSON object. This row is the completion marker for "
+                "all child segments of the same report hash."
+            ),
+        ),
+        dg.AssetSpec(
+            RATSIT_COMPANY_INDUSTRY_CODES_TABLE,
+            deps=RATSIT_NORMALIZATION_DEPS,
+            group_name="sweden_ratsit",
+            kinds={"python", "json", "s3", "clickhouse", "ratsit"},
+            tags={
+                "country": "sweden",
+                "source": "ratsit",
+                "source_name": "sweden_ratsit",
+                "entity_type": "company_industry",
+                "layer": "normalized",
+            },
+            metadata={
+                "table": (
+                    f"{RATSIT_CLICKHOUSE_DATABASE}."
+                    f"{RATSIT_COMPANY_INDUSTRY_CODES_TABLE}"
+                )
+            },
+            description="Ratsit company industry-code observations from S3 JSON.",
+        ),
+        dg.AssetSpec(
+            RATSIT_COMPANY_SUMMARIES_TABLE,
+            deps=RATSIT_NORMALIZATION_DEPS,
+            group_name="sweden_ratsit",
+            kinds={"python", "json", "s3", "clickhouse", "ratsit"},
+            tags={
+                "country": "sweden",
+                "source": "ratsit",
+                "source_name": "sweden_ratsit",
+                "entity_type": "company_summary",
+                "layer": "normalized",
+            },
+            metadata={
+                "table": (
+                    f"{RATSIT_CLICKHOUSE_DATABASE}.{RATSIT_COMPANY_SUMMARIES_TABLE}"
+                )
+            },
+            description="Ordered Ratsit company-summary paragraphs from S3 JSON.",
+        ),
+        dg.AssetSpec(
+            RATSIT_RESPONSIBLE_PEOPLE_TABLE,
+            deps=RATSIT_NORMALIZATION_DEPS,
+            group_name="sweden_ratsit",
+            kinds={"python", "json", "s3", "clickhouse", "ratsit"},
+            tags={
+                "country": "sweden",
+                "source": "ratsit",
+                "source_name": "sweden_ratsit",
+                "entity_type": "company_person_observation",
+                "layer": "normalized",
+                "contains_personal_data": "true",
+            },
+            metadata={
+                "table": (
+                    f"{RATSIT_CLICKHOUSE_DATABASE}.{RATSIT_RESPONSIBLE_PEOPLE_TABLE}"
+                )
+            },
+            description=(
+                "Source-level Ratsit responsible-person and role observations."
+            ),
+        ),
+        dg.AssetSpec(
+            RATSIT_ESTABLISHMENTS_TABLE,
+            deps=RATSIT_NORMALIZATION_DEPS,
+            group_name="sweden_ratsit",
+            kinds={"python", "json", "s3", "clickhouse", "ratsit"},
+            tags={
+                "country": "sweden",
+                "source": "ratsit",
+                "source_name": "sweden_ratsit",
+                "entity_type": "establishment",
+                "layer": "normalized",
+            },
+            metadata={
+                "table": (f"{RATSIT_CLICKHOUSE_DATABASE}.{RATSIT_ESTABLISHMENTS_TABLE}")
+            },
+            description=(
+                "Ratsit workplaces normalized as physical company establishments."
+            ),
+        ),
+        dg.AssetSpec(
+            RATSIT_FINANCIAL_REPORTS_TABLE,
+            deps=RATSIT_NORMALIZATION_DEPS,
+            group_name="sweden_ratsit",
+            kinds={"python", "json", "s3", "clickhouse", "ratsit"},
+            tags={
+                "country": "sweden",
+                "source": "ratsit",
+                "source_name": "sweden_ratsit",
+                "entity_type": "financial_report",
+                "layer": "normalized",
+            },
+            metadata={
+                "table": (
+                    f"{RATSIT_CLICKHOUSE_DATABASE}.{RATSIT_FINANCIAL_REPORTS_TABLE}"
+                )
+            },
+            description="Ratsit financial report scopes and monetary units.",
+        ),
+        dg.AssetSpec(
+            RATSIT_FINANCIAL_PERIODS_TABLE,
+            deps=RATSIT_NORMALIZATION_DEPS,
+            group_name="sweden_ratsit",
+            kinds={"python", "json", "s3", "clickhouse", "ratsit"},
+            tags={
+                "country": "sweden",
+                "source": "ratsit",
+                "source_name": "sweden_ratsit",
+                "entity_type": "financial_period",
+                "layer": "normalized",
+            },
+            metadata={
+                "table": (
+                    f"{RATSIT_CLICKHOUSE_DATABASE}.{RATSIT_FINANCIAL_PERIODS_TABLE}"
+                )
+            },
+            description=(
+                "Ratsit income statement, balance sheet, and key-ratio values "
+                "at financial-period grain."
+            ),
+        ),
+    ],
+    pool=RATSIT_NORMALIZE_POOL,
+    can_subset=False,
+)
+def se_ratsit_normalized(
+    context: dg.AssetExecutionContext,
+    clickhouse: ClickhouseResource,
+    sweden_ratsit_object_store: ObjectStoreResource,
+) -> Iterator[dg.MaterializeResult]:
+    """Normalize the latest successful report per company without launching browsers."""
+    normalized_at = datetime.now(UTC)
+    selection = select_latest_unnormalized_ratsit_reports(clickhouse)
+    nace_class_codes = load_nace_rev_2_1_class_codes(clickhouse)
+    context.log.info(
+        "Starting Ratsit JSON normalization: latest_successes=%s "
+        "already_normalized=%s candidates=%s normalizer_version=%s",
+        selection.latest_success_count,
+        selection.already_normalized_count,
+        len(selection.reports),
+        RATSIT_NORMALIZER_VERSION,
+    )
+
+    normalized_reports = []
+    normalization_statistics: Counter[str] = Counter(
+        {key: 0 for key in RATSIT_NORMALIZATION_STATISTIC_KEYS}
+    )
+    for report_index, report in enumerate(selection.reports, start=1):
+        if (
+            report_index == 1
+            or report_index % 20 == 0
+            or report_index == len(selection.reports)
+        ):
+            context.log.info(
+                "Normalizing Ratsit S3 report %s/%s: company_id=%s object_key=%s",
+                report_index,
+                len(selection.reports),
+                report.company_id,
+                report.result_object_key,
+            )
+        document = sweden_ratsit_object_store.read_bytes(
+            report.result_object_key,
+            bucket=report.result_bucket,
+        )
+        normalized = normalize_ratsit_report(
+            report,
+            document=document,
+            normalized_at=normalized_at,
+            nace_class_codes=nace_class_codes,
+        )
+        normalized_reports.append(normalized)
+        normalization_statistics.update(normalized.statistics)
+
+    inserted_rows = insert_normalized_ratsit_reports(
+        clickhouse,
+        reports=tuple(normalized_reports),
+    )
+    context.log.info(
+        "Finished Ratsit JSON normalization: candidates=%s inserted_rows=%s",
+        len(normalized_reports),
+        inserted_rows,
+    )
+    common_metadata = {
+        "latest_success_count": selection.latest_success_count,
+        "already_normalized_count": selection.already_normalized_count,
+        "normalized_report_count": len(normalized_reports),
+        "normalizer_version": RATSIT_NORMALIZER_VERSION,
+        "nace_revision": RATSIT_NACE_REVISION,
+        "nace_class_reference_count": len(nace_class_codes),
+        "normalized_at": normalized_at.isoformat(),
+        "result_object_keys": [
+            report.result_object_key for report in selection.reports
+        ],
+        **normalization_statistics,
+    }
+    for table in RATSIT_NORMALIZED_TABLES:
+        yield dg.MaterializeResult(
+            asset_key=table,
+            metadata={
+                **common_metadata,
+                "inserted_rows": inserted_rows[table],
+                "table": f"{RATSIT_CLICKHOUSE_DATABASE}.{table}",
+            },
+        )
+
+
 se_ratsit_scan_dispatch_job = dg.define_asset_job(
     name="se_ratsit_scan_dispatch_job",
     selection=dg.AssetSelection.assets(se_ratsit_scan_dispatch),
     description="Run the fixed 100-company Ratsit scan.",
 )
 
+se_ratsit_normalize_job = dg.define_asset_job(
+    name="se_ratsit_normalize_job",
+    selection=dg.AssetSelection.assets(*RATSIT_NORMALIZED_TABLES),
+    description=(
+        "Normalize each company's latest successful Ratsit S3 report into "
+        "source-specific ClickHouse tables."
+    ),
+)
+
 
 defs = dg.Definitions(
-    assets=[se_ratsit_scan_dispatch],
-    jobs=[se_ratsit_scan_dispatch_job],
+    assets=[se_ratsit_scan_dispatch, se_ratsit_normalized],
+    jobs=[se_ratsit_scan_dispatch_job, se_ratsit_normalize_job],
     resources={
         "sweden_ratsit_browser": SwedenRatsitBrowserResource(
             crawl_proxy1=dg.EnvVar("crawl_proxy1"),

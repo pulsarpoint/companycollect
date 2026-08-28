@@ -355,6 +355,7 @@ EXPECTED_MIGRATIONS = (
     "000343_corpscout_se_ratsit_normalized_segments",
     "000344_corpscout_se_companies_serving_market_flags",
     "000345_corpscout_drop_serving_retired",
+    "000346_corpscout_se_ratsit_normalization_v2",
 )
 
 NOOP_MIGRATIONS = {"000276_noop"}
@@ -3771,6 +3772,45 @@ def test_ratsit_normalized_segment_tables_match_report_json_shape() -> None:
     assert "financial_report_index UInt16" in up_sql
     assert "period_index UInt16" in up_sql
     assert "people_at_address_count UInt16" in up_sql
+
+
+def test_ratsit_normalization_v2_migration_is_additive_and_nace_joinable() -> None:
+    up_sql = _migration_sql("000346_corpscout_se_ratsit_normalization_v2.up.sql")
+    down_sql = _migration_sql("000346_corpscout_se_ratsit_normalization_v2.down.sql")
+
+    for column in (
+        "source_industry_code Nullable(String)",
+        "source_industry_code_set LowCardinality(String)",
+        "industry_description_original Nullable(String)",
+        "nace_revision LowCardinality(String)",
+        "nace_code Nullable(String)",
+        "nace_normalized_code Nullable(String)",
+        "nace_mapping_method LowCardinality(String)",
+        "nace_mapping_status LowCardinality(String)",
+    ):
+        assert up_sql.count(column) == 2
+
+    assert "display_name_raw Nullable(String)" in up_sql
+    assert "name Nullable(String)" in up_sql
+    assert "age Nullable(UInt16)" in up_sql
+    assert "identity_available Bool" in up_sql
+    assert "normalizer_version != 'ratsit-normalizer-v2'" in up_sql
+    assert "employee_count_min Nullable(UInt32)" in up_sql
+    assert "employee_count_max Nullable(UInt32)" in up_sql
+    assert "employee_count_open_ended Bool" in up_sql
+    assert "period_kind LowCardinality(String)" in up_sql
+    assert "CREATE VIEW corpscout.se_ratsit_company_industries_with_nace" in up_sql
+    assert "CREATE VIEW corpscout.se_ratsit_establishments_with_nace" in up_sql
+    assert "corpscout.nace_categories" in up_sql
+    assert "NACE_REV_2_1" in up_sql
+    assert "DROP TABLE corpscout.se_ratsit_people_at_address" not in up_sql
+    assert (
+        "DROP VIEW IF EXISTS corpscout.se_ratsit_company_industries_with_nace"
+        in down_sql
+    )
+    assert (
+        "DROP VIEW IF EXISTS corpscout.se_ratsit_establishments_with_nace" in down_sql
+    )
 
 
 def _migration_sql(file_name: str) -> str:

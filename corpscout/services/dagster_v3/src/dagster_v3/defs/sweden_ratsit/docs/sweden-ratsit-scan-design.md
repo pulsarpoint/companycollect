@@ -87,8 +87,11 @@ number matching the requested ID.
 ## Verification
 
 - Contract tests: `tests/test_sweden_ratsit_pilot.py`.
-- Migration contract: migrations `000336`, `000340`, `000341`, `000342`, and
-  `tests/test_clickhouse_migrations.py`.
+- Migration contract: migrations `000336`, `000340`, `000341`, `000342`,
+  `000343`, and `tests/test_clickhouse_migrations.py`.
 - Definitions: `uv run dg check defs`.
 - Runtime: materialize `se_ratsit_scan_dispatch_job`, then inspect its 100 rows in
   `corpscout.se_company_ratsit` by Dagster run ID.
+
+The proposed downstream JSON-to-ClickHouse model is documented in
+`sweden-ratsit-normalization-schema-proposal.md`.

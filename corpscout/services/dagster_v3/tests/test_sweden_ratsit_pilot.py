@@ -456,15 +456,31 @@ def test_scan_defaults_are_exactly_one_hundred_unique_companies() -> None:
     ) == (25, 25, 25, 25)
 
 
-def test_only_dispatch_asset_and_its_existing_job_name_are_registered() -> None:
+def test_ratsit_dispatch_and_normalized_table_assets_are_registered() -> None:
     repository = load_project_defs().get_repository_def()
     asset_keys = repository.asset_graph.get_all_asset_keys()
 
     assert dg.AssetKey("se_ratsit_scan_dispatch") in asset_keys
+    for asset_name in (
+        "se_ratsit_company",
+        "se_ratsit_company_industry_codes",
+        "se_ratsit_company_summaries",
+        "se_ratsit_responsible_people",
+        "se_ratsit_establishments",
+        "se_ratsit_financial_reports",
+        "se_ratsit_financial_periods",
+    ):
+        assert dg.AssetKey(asset_name) in asset_keys
+        assert repository.asset_graph.get(dg.AssetKey(asset_name)).parent_keys == {
+            dg.AssetKey("se_ratsit_scan_dispatch"),
+            dg.AssetKey("nace_categories_clickhouse"),
+        }
+    assert dg.AssetKey("se_ratsit_people_at_address") not in asset_keys
     assert dg.AssetKey("se_ratsit_scan_coverage") not in asset_keys
     assert dg.AssetKey("se_ratsit_pilot_reports_s3") not in asset_keys
     job_names = {job.name for job in repository.get_all_jobs()}
     assert "se_ratsit_scan_dispatch_job" in job_names
+    assert "se_ratsit_normalize_job" in job_names
     assert "se_ratsit_scan_coverage_job" not in job_names
     assert "se_ratsit_scan_job" not in job_names
     assert "se_ratsit_pilot_reports_job" not in job_names
