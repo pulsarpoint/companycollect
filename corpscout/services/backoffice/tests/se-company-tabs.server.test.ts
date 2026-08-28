@@ -32,6 +32,18 @@ import {
   SHELL_REGISTER_SQL,
   loadSeCompanyShell,
 } from "~/lib/se-company-shell.server";
+import { loadSeCompanyContracts } from "~/lib/se-company-contracts.server";
+import {
+  COMPANY_JOBS_CURRENT_SQL,
+  COMPANY_JOBS_SQL,
+  loadSeCompanyJobs,
+} from "~/lib/se-company-jobs.server";
+import {
+  COMPANY_ESEF_FILINGS_SQL,
+  COMPANY_LEI_SQL,
+  loadSeCompanyListed,
+} from "~/lib/se-company-listed.server";
+import { getCountry } from "~/lib/countries";
 
 const COMPANY = "5560125220";
 
@@ -50,6 +62,10 @@ const ALL_SQL: Array<[string, string]> = [
   ["PEOPLE_SQL", PEOPLE_SQL],
   ["PEOPLE_ROLES_SQL", PEOPLE_ROLES_SQL],
   ["COMPANY_DOMAINS_SQL", COMPANY_DOMAINS_SQL],
+  ["COMPANY_JOBS_SQL", COMPANY_JOBS_SQL],
+  ["COMPANY_JOBS_CURRENT_SQL", COMPANY_JOBS_CURRENT_SQL],
+  ["COMPANY_LEI_SQL", COMPANY_LEI_SQL],
+  ["COMPANY_ESEF_FILINGS_SQL", COMPANY_ESEF_FILINGS_SQL],
 ];
 
 beforeEach(() => {
@@ -104,6 +120,14 @@ describe("company area SQL", () => {
       "corpscout.company_person_role_type AS t FINAL",
     );
     expect(COMPANY_DOMAINS_SQL).toContain("corpscout.company_domains AS d FINAL");
+    expect(COMPANY_ESEF_FILINGS_SQL).toContain(
+      "corpscout.esef_filings AS f FINAL",
+    );
+    // The job tables and company_identifier are plain MergeTree snapshots
+    // rebuilt whole per pipeline run: FINAL there is a dedup pass for nothing.
+    for (const sql of [COMPANY_JOBS_SQL, COMPANY_JOBS_CURRENT_SQL, COMPANY_LEI_SQL]) {
+      expect(sql).not.toContain("FINAL");
+    }
     // The address final is a ReplacingMergeTree on resolved_at, so both of its
     // reads take FINAL; the ledger it joins nothing to is a plain MergeTree.
     for (const sql of [ADDRESSES_SQL, REMOVED_SQL, ADDRESS_STATUS_INPUTS_SQL]) {
@@ -285,5 +309,69 @@ describe("tab loaders", () => {
     const people = await loadSeCompanyPeople(COMPANY);
     expect(people.map((person) => person.roles.length)).toEqual([2, 0]);
     expect(people[0].roles[0].role_label).toBe("Board chair");
+  });
+
+  /**
+   * The Contracts tab deliberately owns NO SQL: it sends the exact
+   * publicContractsQuery the SE country config declares, with the same `id`
+   * parameter the public page binds, so the two can never drift apart.
+   */
+  it("sends the SE country config's own public contracts query", async () => {
+    const seQuery = getCountry("se")!.detail!.publicContractsQuery!;
+    // The shape this tab depends on, pinned where the tab reads it.
+    expect(seQuery).toContain("FROM se_government_contracts");
+    expect(seQuery).toContain("WHERE company_id = {id:String}");
+    expect(seQuery).toContain("LIMIT 100");
+    await loadSeCompanyContracts(COMPANY);
+    expect(clickhouse.query).toHaveBeenCalledWith(seQuery, { id: COMPANY });
+  });
+
+  it("marks a job open when the current table still lists it or its interval has no end", async () => {
+    const history = {
+      source_system: "platsbanken",
+      source_job_ad_id: "1",
+      interval_number: 1,
+      active_from: "2026-05-04 08:00:00.000",
+      active_to: "2026-06-30 21:59:59.000",
+      active_to_basis: "application_deadline",
+      is_end_estimated: 1,
+      publication_at: "",
+      application_deadline: "",
+      employer_name: "AB",
+      headline_original: "Säljare",
+    };
+    clickhouse.query.mockImplementation(async (sql: string) => {
+      if (sql === COMPANY_JOBS_SQL) {
+        return [
+          history,
+          { ...history, source_job_ad_id: "2" },
+          { ...history, source_job_ad_id: "3", active_to: "" },
+        ];
+      }
+      return [{ source_system: "platsbanken", source_job_ad_id: "2" }];
+    });
+    const jobs = await loadSeCompanyJobs(COMPANY);
+    expect(jobs.map((job) => job.is_open)).toEqual([0, 1, 1]);
+    for (const [, params] of clickhouse.query.mock.calls) {
+      expect(params).toEqual({ companyId: COMPANY });
+    }
+  });
+
+  it("reads the LEIs and the filings behind them as one listed slice", async () => {
+    await loadSeCompanyListed(COMPANY);
+    const sent = clickhouse.query.mock.calls.map(([sql]) => sql as string);
+    expect(sent).toEqual([COMPANY_LEI_SQL, COMPANY_ESEF_FILINGS_SQL]);
+    for (const [, params] of clickhouse.query.mock.calls) {
+      expect(params).toEqual({ companyId: COMPANY });
+    }
+    // The filings read resolves the company's LEIs the same way the LEI read
+    // does -- same scheme, country and is_current filters -- with the LEI
+    // normalized the way queries.server's ESEF slice normalizes it.
+    expect(COMPANY_ESEF_FILINGS_SQL).toContain("issuer_scheme = 'lei'");
+    expect(COMPANY_ESEF_FILINGS_SQL).toContain("upperUTF8(trimBoth(f.lei))");
+    for (const sql of [COMPANY_LEI_SQL, COMPANY_ESEF_FILINGS_SQL]) {
+      expect(sql).toContain("country_code = 'SE'");
+      expect(sql).toContain("is_current = 1");
+    }
   });
 });

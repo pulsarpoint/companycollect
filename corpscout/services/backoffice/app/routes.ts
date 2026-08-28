@@ -96,7 +96,7 @@ export default [
     // Experiment Task 5, mirroring se/companies/pipeline's confirm-then-launch
     // pattern. A real page, not a sheet: see the route's own docstring.
     route("se/people/pipeline", "routes/admin-se-people-pipeline.tsx"),
-    // One company, five tabs. The layout owns the header and the sub-menu; a
+    // One company, eight tabs. The layout owns the header and the sub-menu; a
     // bare /admin/se/company/:companyId redirects to Info.
     route("se/company/:companyId", "routes/admin-se-company-layout.tsx", [
       index("routes/admin-se-company-index.tsx"),
@@ -105,6 +105,9 @@ export default [
       route("financial", "routes/admin-se-company-financial.tsx"),
       route("people", "routes/admin-se-company-people.tsx"),
       route("domains", "routes/admin-se-company-domains.tsx"),
+      route("contracts", "routes/admin-se-company-contracts.tsx"),
+      route("jobs", "routes/admin-se-company-jobs.tsx"),
+      route("listed", "routes/admin-se-company-listed.tsx"),
     ]),
     // The all-companies LIST area: one tabbed section. The layout owns the
     // header and tab bar; Info is the default (index). Sibling of the

@@ -13,6 +13,9 @@ export const SE_COMPANY_TABS = [
   { value: "financial", label: "Financial" },
   { value: "people", label: "People" },
   { value: "domains", label: "Domains" },
+  { value: "contracts", label: "Contracts" },
+  { value: "jobs", label: "Jobs" },
+  { value: "listed", label: "Listed" },
 ] as const;
 
 export type SeCompanyTab = (typeof SE_COMPANY_TABS)[number]["value"];

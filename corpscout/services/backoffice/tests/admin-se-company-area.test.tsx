@@ -20,7 +20,10 @@ import AdminSwedenCompanyLayout, {
 import { loader as companyIndexLoader } from "~/routes/admin-se-company-index";
 import { SeCompanyHeader } from "~/components/admin/se-company-header";
 import { SeCompanyAddressTab } from "~/components/admin/se-company-address";
+import { SeCompanyContractsTab } from "~/components/admin/se-company-contracts";
 import { SeCompanyDomainsTab } from "~/components/admin/se-company-domains";
+import { SeCompanyJobsTab } from "~/components/admin/se-company-jobs";
+import { SeCompanyListedTab } from "~/components/admin/se-company-listed";
 import { SeCompanyPeopleTab } from "~/components/admin/se-company-people";
 import { SeFinancialsView } from "~/components/financials/se-financials-view";
 import {
@@ -31,7 +34,10 @@ import {
 import type {
   CompanyFinancialSource,
   FinancialSourceYearRow,
+  PublicContractRow,
 } from "~/lib/queries.server";
+import type { SeCompanyJobRow } from "~/lib/se-company-jobs.server";
+import type { SeCompanyListed } from "~/lib/se-company-listed.server";
 import type { SeCompanyDomainRow } from "~/lib/se-company-domains.server";
 import type { SeCompanyPersonRow } from "~/lib/se-company-people.server";
 import type { SeCompanyShell } from "~/lib/se-company-shell.server";
@@ -122,7 +128,7 @@ describe("company area header", () => {
     );
   });
 
-  it("renders all five tabs and marks exactly the active one", () => {
+  it("renders all eight tabs and marks exactly the active one", () => {
     for (const active of SE_COMPANY_TABS) {
       const html = render(
         <SeCompanyHeader shell={shell} tab={active.value} />,
@@ -621,6 +627,163 @@ describe("domains tab", () => {
   });
 });
 
+const contract: PublicContractRow = {
+  source: "sweden_uhm_procurement",
+  notice_ref: "2025/S 001-000001",
+  contract_date: "2025-03-14",
+  buyer_name: "Trafikverket",
+  title: "Road maintenance, region north",
+  amount_original: null,
+  amount_usd: null,
+  currency: "",
+  notice_amount_original: 12500000,
+  notice_amount_usd: 1250000,
+  notice_currency: "SEK",
+  source_url: "",
+};
+
+describe("contracts tab", () => {
+  it("renders the shared public contracts section for exact-matched awards", () => {
+    const html = render(
+      <SeCompanyContractsTab contracts={[contract]} />,
+      seCompanyTabPath(COMPANY_ID, "contracts"),
+    );
+    // The SAME section the public company page renders, not an admin re-take.
+    expect(html).toContain("Government contracts");
+    expect(html).toContain("Trafikverket");
+    expect(html).toContain("Road maintenance, region north");
+    expect(html).toContain(">sweden_uhm_procurement<");
+    // UHM publishes no per-winner figure, so the notice total is labelled.
+    expect(html).toContain("whole notice");
+  });
+
+  it("says so when no award names this company as a winner", () => {
+    const html = render(
+      <SeCompanyContractsTab contracts={[]} />,
+      seCompanyTabPath(COMPANY_ID, "contracts"),
+    );
+    expect(html).toContain("No contract awards");
+    expect(html).toContain(
+      "No exact-matched government contract awards name this company as a winner",
+    );
+  });
+});
+
+const job: SeCompanyJobRow = {
+  source_system: "platsbanken",
+  source_job_ad_id: "29112166",
+  interval_number: 1,
+  active_from: "2026-05-04 08:00:00.000",
+  active_to: "2026-06-30 21:59:59.000",
+  active_to_basis: "application_deadline",
+  is_end_estimated: 1,
+  publication_at: "2026-05-04 08:00:00.000",
+  application_deadline: "2026-06-30 21:59:59.000",
+  employer_name: "Beijer Byggmaterial AB",
+  headline_original: "Säljare till Beijer Bygg i Luleå",
+  is_open: 0,
+};
+
+describe("jobs tab", () => {
+  it("shows headline, active period with estimated end, deadline and source", () => {
+    const html = render(
+      <SeCompanyJobsTab
+        jobs={[
+          job,
+          { ...job, source_job_ad_id: "29112167", active_to: "", is_open: 1 },
+        ]}
+      />,
+      seCompanyTabPath(COMPANY_ID, "jobs"),
+    );
+    expect(html).toContain("Säljare till Beijer Bygg i Luleå");
+    expect(html).toContain("2026-05-04");
+    expect(html).toContain("2026-06-30");
+    // An estimated end is marked, not passed off as stated by the source.
+    expect(html).toContain("(est.)");
+    expect(html).toContain(">platsbanken<");
+    // The open interval wears the badge and says it has no recorded end.
+    expect(html).toContain(">open<");
+    expect(html).toContain("open-ended");
+    expect(html).toContain("2 ad intervals · 1 currently open");
+  });
+
+  // The pipeline has never run, so the empty state must own that fact rather
+  // than implying this one company simply never advertised.
+  it("says the Platsbanken pipeline has not landed data yet when the table is empty", () => {
+    const html = render(
+      <SeCompanyJobsTab jobs={[]} />,
+      seCompanyTabPath(COMPANY_ID, "jobs"),
+    );
+    expect(html).toContain("No job-ad data collected for this company");
+    expect(html).toContain("The Platsbanken pipeline has not landed data yet");
+  });
+});
+
+const listedWithFiling: SeCompanyListed = {
+  leis: [
+    {
+      lei: "549300W61XW8OFGBG077",
+      entity_status: "ACTIVE",
+      registration_status: "ISSUED",
+    },
+  ],
+  filings: [
+    {
+      period_end: "2025-12-31",
+      fxo_id: "549300W61XW8OFGBG077-2025-12-31-ESEF-SE-0",
+      lei: "549300W61XW8OFGBG077",
+      entity_name: "Beijer Byggmaterial AB (publ)",
+      country: "SE",
+      date_added: "2026-04-30",
+      viewer_url: "https://filings.xbrl.org/example/viewer.html",
+    },
+  ],
+};
+
+describe("listed tab", () => {
+  it("says publicly traded, names the LEI, and links each filing to the public financials page", () => {
+    const html = render(
+      <SeCompanyListedTab companyId={COMPANY_ID} listed={listedWithFiling} />,
+      seCompanyTabPath(COMPANY_ID, "listed"),
+    );
+    expect(html).toContain("Publicly traded");
+    expect(html).not.toContain("Not publicly traded");
+    expect(html).toContain("549300W61XW8OFGBG077");
+    expect(html).toContain(">ACTIVE<");
+    expect(html).toContain("ESEF filings");
+    expect(html).toContain("2025-12-31");
+    expect(html).toContain("Beijer Byggmaterial AB (publ)");
+    expect(html).toContain(`href="/company/se/${COMPANY_ID}/financials"`);
+  });
+
+  it("says not publicly traded when the LEI has no ESEF filing behind it", () => {
+    const html = render(
+      <SeCompanyListedTab
+        companyId={COMPANY_ID}
+        listed={{ leis: listedWithFiling.leis, filings: [] }}
+      />,
+      seCompanyTabPath(COMPANY_ID, "listed"),
+    );
+    expect(html).toContain("Not publicly traded");
+    // The LEI still shows: holding one is a fact, just not a listing.
+    expect(html).toContain("549300W61XW8OFGBG077");
+    expect(html).toContain("no ESEF filings");
+    expect(html).not.toContain("ESEF filings</div>");
+  });
+
+  it("says so when no current LEI links to the company at all", () => {
+    const html = render(
+      <SeCompanyListedTab
+        companyId={COMPANY_ID}
+        listed={{ leis: [], filings: [] }}
+      />,
+      seCompanyTabPath(COMPANY_ID, "listed"),
+    );
+    expect(html).toContain("No LEI recorded");
+    expect(html).not.toContain("Publicly traded");
+  });
+});
+
 describe("the Sources strip every tab opens with", () => {
   // Task 20: the list page says 'BSEW' in letters; each tab has to say the
   // same thing in words, derived from what that tab ALREADY loaded -- no tab
@@ -689,13 +852,16 @@ describe("the Sources strip every tab opens with", () => {
 });
 
 describe("tab labels", () => {
-  it("is exactly Info, Address, Financial, People, Domains, in that order", () => {
+  it("is exactly Info, Address, Financial, People, Domains, Contracts, Jobs, Listed, in that order", () => {
     expect(SE_COMPANY_TABS.map((tab) => tab.label)).toEqual([
       "Info",
       "Address",
       "Financial",
       "People",
       "Domains",
+      "Contracts",
+      "Jobs",
+      "Listed",
     ]);
     const values: SeCompanyTab[] = SE_COMPANY_TABS.map((tab) => tab.value);
     expect(values).toEqual([
@@ -704,6 +870,9 @@ describe("tab labels", () => {
       "financial",
       "people",
       "domains",
+      "contracts",
+      "jobs",
+      "listed",
     ]);
   });
 });
