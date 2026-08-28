@@ -1,4 +1,4 @@
-"""Migration 000338: the serving view widened with translations, pinned to its builder.
+"""Migration 000344: the serving view widened with market flags, pinned to its builder.
 
 `corpscout.se_companies_serving` is the ONE wide per-company row every admin companies list
 page reads: the info-list columns, the presence and source flags, the address JSON + primary
@@ -20,7 +20,7 @@ from dagster_v3.defs.sweden_company.companies_current import (
 )
 
 MIGRATIONS_DIR = Path(__file__).resolve().parents[3] / "clickhouse" / "migrations"
-MIGRATION = "000338_corpscout_se_companies_serving_translations"
+MIGRATION = "000344_corpscout_se_companies_serving_market_flags"
 VIEW = "corpscout.se_companies_serving"
 NEXT = "corpscout.se_companies_serving_next"
 RETIRED = "corpscout.se_companies_serving_retired"
@@ -92,6 +92,13 @@ def test_the_pin_is_not_vacuous() -> None:
     assert "se_code_labels" in embedded
     assert "status_reason_label_en" in embedded
     assert "bolagsverket_source_record_uid" in embedded
+    # The market flags (owner 2026-08-28).
+    assert "is_publicly_traded" in embedded
+    assert "has_government_contracts" in embedded
+    assert "has_job_ads" in embedded
+    assert "esef_filings" in embedded
+    assert "se_government_contracts" in embedded
+    assert "company_job_history" in embedded
     assert "LEFT JOIN aggregated" in embedded
     assert "LEFT JOIN primary_address" in embedded
     assert "INNER JOIN corpscout.se_company_info" not in embedded
@@ -104,8 +111,11 @@ def test_the_up_migration_is_a_staged_swap_waited_on_before_the_rename() -> None
     UNKNOWN_TABLE and never an empty view."""
     statements = _statements(_sql("up"))
 
-    assert len(statements) == 4
+    assert len(statements) == 5
     assert statements[0] == "CREATE DATABASE IF NOT EXISTS corpscout"
+    # Learned from 000338's apply: the old view's refresh is stopped first so the _next
+    # build cannot OOM-collide with it on the server memory cap.
+    assert _body(statements[1]) == f"SYSTEM STOP VIEW {VIEW}"
 
     create = _create_view_statement(_sql("up"))
     assert _body(create).startswith(f"CREATE MATERIALIZED VIEW {NEXT}\n")
@@ -115,9 +125,9 @@ def test_the_up_migration_is_a_staged_swap_waited_on_before_the_rename() -> None
     assert "APPEND" not in create
     assert "POPULATE" not in create
 
-    assert statements[2] == f"SYSTEM WAIT VIEW {NEXT}"
+    assert statements[3] == f"SYSTEM WAIT VIEW {NEXT}"
 
-    rename = _body(statements[3])
+    rename = _body(statements[4])
     assert rename.startswith("RENAME TABLE")
     assert f"{VIEW} TO {RETIRED}" in rename
     assert f"{NEXT} TO {VIEW}" in rename
@@ -131,7 +141,8 @@ def test_the_up_migration_drops_nothing() -> None:
     assert "DROP" not in _executable(up).upper()
 
 
-def test_the_down_migration_swaps_back_and_discards_the_translated_render() -> None:
+def test_the_down_migration_swaps_back_restarts_and_discards_the_flags_render() -> None:
     down = _executable(_sql("down"))
     assert f"{RETIRED} TO {VIEW}" in down
-    assert "DROP VIEW IF EXISTS corpscout.se_companies_serving_translated_discard" in down
+    assert f"SYSTEM START VIEW {VIEW}" in down
+    assert "DROP VIEW IF EXISTS corpscout.se_companies_serving_flags_discard" in down

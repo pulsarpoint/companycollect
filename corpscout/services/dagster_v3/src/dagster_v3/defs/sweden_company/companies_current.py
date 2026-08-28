@@ -169,6 +169,25 @@ DOMAINS_SET = (
     f"SELECT company_id FROM {CLICKHOUSE_DATABASE}.company_domains "
     "WHERE country_code = 'SE'"
 )
+# An ESEF filing exists for the company's LEI => listed on an EU regulated market. Keyed on
+# esef_filings (the filings.xbrl.org index -- ALL filers), not esef_financial_metrics (only
+# extracted ones), through the same LEI resolution the ESEF financial arm uses.
+PUBLICLY_TRADED_SET = (
+    f"SELECT ci.company_id FROM {CLICKHOUSE_DATABASE}.company_identifier AS ci "
+    "WHERE ci.issuer_scheme = 'lei' AND ci.country_code = 'SE' AND ci.is_current = 1 "
+    f"AND ci.issuer_id IN (SELECT upperUTF8(trimBoth(f.lei)) FROM {CLICKHOUSE_DATABASE}.esef_filings AS f)"
+)
+# Exact-matched SE companies that WON a government contract (UHM + TED), per the same
+# company-keyed contracts view the public contracts pages read.
+GOVERNMENT_CONTRACTS_SET = (
+    f"SELECT company_id FROM {CLICKHOUSE_DATABASE}.se_government_contracts"
+)
+# Companies with a Platsbanken job ad, open now or in the past -- company_job_history is the
+# normalized company-keyed layer (000302); one interval row per ad lifetime.
+JOB_ADS_SET = (
+    f"SELECT company_id FROM {CLICKHOUSE_DATABASE}.company_job_history "
+    "WHERE country_code = 'SE'"
+)
 
 # The registered-activity translation and the status-reason label, absorbed VERBATIM from the
 # retired corpscout.se_companies_translated view (migration 000252's rendering) -- migration
@@ -275,6 +294,9 @@ SELECT
   toUInt8(address_bolagsverket OR fin_bolagsverket OR people_bolagsverket) AS source_bolagsverket,
   toUInt8(desc_esef OR has_lei OR fin_esef OR people_esef) AS source_esef,
   toUInt8(has_wikidata OR desc_wikidata) AS source_wikidata,
+  is_publicly_traded,
+  has_government_contracts,
+  has_job_ads,
   addresses,
   address_count,
   primary_street_address,
@@ -309,6 +331,9 @@ FROM (
     toUInt8(i.company_id IN ({PEOPLE_BOLAGSVERKET_SET})) AS people_bolagsverket,
     toUInt8(i.company_id IN ({PEOPLE_ESEF_SET})) AS people_esef,
     toUInt8(i.company_id IN ({DOMAINS_SET})) AS has_domains,
+    toUInt8(i.company_id IN ({PUBLICLY_TRADED_SET})) AS is_publicly_traded,
+    toUInt8(i.company_id IN ({GOVERNMENT_CONTRACTS_SET})) AS has_government_contracts,
+    toUInt8(i.company_id IN ({JOB_ADS_SET})) AS has_job_ads,
     toUInt8(has(i.description_sources, 'esef')) AS desc_esef,
     toUInt8(i.lei IS NOT NULL) AS has_lei,
     toUInt8(i.wikidata_id IS NOT NULL) AS has_wikidata,

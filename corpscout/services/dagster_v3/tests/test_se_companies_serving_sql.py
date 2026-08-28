@@ -218,6 +218,9 @@ def _script(*, join_use_nulls: int) -> str:
         "CREATE TABLE corpscout.se_company_person (company_id String) ENGINE = MergeTree ORDER BY company_id;",
         "CREATE TABLE corpscout.se_company_person_role (company_id String, sources Array(String)) ENGINE = MergeTree ORDER BY company_id;",
         "CREATE TABLE corpscout.company_domains (company_id String, country_code String) ENGINE = MergeTree ORDER BY company_id;",
+        "CREATE TABLE corpscout.esef_filings (lei String) ENGINE = MergeTree ORDER BY lei;",
+        "CREATE TABLE corpscout.se_government_contracts (company_id String) ENGINE = MergeTree ORDER BY company_id;",
+        "CREATE TABLE corpscout.company_job_history (company_id String, country_code String) ENGINE = MergeTree ORDER BY company_id;",
         # Spine rows: COARSE has a translated activity + a labeled status reason; PRECISE has
         # an activity with NO translation row (text_en must stay ''); NOSERVED has no spine
         # row at all (every spine-derived field folds to '').
@@ -230,6 +233,14 @@ def _script(*, join_use_nulls: int) -> str:
         f"INSERT INTO corpscout.se_company_person_role VALUES ('{PRECISE}', ['esef']);",
         # The SE filter must hold: NOSERVED's domain is Norwegian and must not count.
         f"INSERT INTO corpscout.company_domains VALUES ('{COARSE}', 'SE'), ('{NOSERVED}', 'NO');",
+        # Market flags: PRECISE is listed (its LEI has an ESEF filing, resolved through
+        # company_identifier -- lowercase in the filing index, upper-trimmed by the arm);
+        # COARSE won a government contract; POSTAL_BOX has job-ad history, and NOSERVED's
+        # job rows are Norwegian so the SE filter must exclude them.
+        f"INSERT INTO corpscout.company_identifier VALUES ('{PRECISE}', 'lei', 'SE', 1, 'LEI123');",
+        "INSERT INTO corpscout.esef_filings VALUES (' lei123 ');",
+        f"INSERT INTO corpscout.se_government_contracts VALUES ('{COARSE}');",
+        f"INSERT INTO corpscout.company_job_history VALUES ('{POSTAL_BOX}', 'SE'), ('{NOSERVED}', 'NO');",
         f"INSERT INTO corpscout.se_company_info ({INFO_COLUMNS}) VALUES\n"
         + ",\n".join(
             (
@@ -334,6 +345,19 @@ def test_translations_are_absorbed_from_the_spine_join(rows: dict[str, dict]) ->
     assert rows[NOSERVED]["activity_description"] == ""
     assert rows[NOSERVED]["activity_description_en"] == ""
     assert rows[NOSERVED]["bolagsverket_source_record_uid"] == ""
+
+
+def test_market_flags_come_from_their_own_tables(rows: dict[str, dict]) -> None:
+    # is_publicly_traded: an ESEF filing for the company's LEI, case/whitespace-normalized.
+    assert rows[PRECISE]["is_publicly_traded"] == 1
+    assert rows[COARSE]["is_publicly_traded"] == 0
+    # has_government_contracts: exact-matched winner rows only.
+    assert rows[COARSE]["has_government_contracts"] == 1
+    assert rows[PRECISE]["has_government_contracts"] == 0
+    # has_job_ads honors the SE filter: NOSERVED's Norwegian ads must not count.
+    assert rows[POSTAL_BOX]["has_job_ads"] == 1
+    assert rows[NOSERVED]["has_job_ads"] == 0
+    assert rows[NOADDRESS]["has_job_ads"] == 0
 
 
 def test_source_flags_or_their_arms_together(rows: dict[str, dict]) -> None:

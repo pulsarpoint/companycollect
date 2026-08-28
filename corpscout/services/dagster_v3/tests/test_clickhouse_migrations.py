@@ -352,6 +352,8 @@ EXPECTED_MIGRATIONS = (
     "000340_corpscout_se_company_ratsit_proxy_route",
     "000341_corpscout_se_company_ratsit_not_found",
     "000342_corpscout_se_company_ratsit_not_found_outcome",
+    "000343_corpscout_se_ratsit_normalized_segments",
+    "000344_corpscout_se_companies_serving_market_flags",
 )
 
 NOOP_MIGRATIONS = {"000276_noop"}
@@ -3733,6 +3735,41 @@ def test_ratsit_not_found_outcome_is_distinct_from_failure() -> None:
     assert "failure_type IN ('navigation', 'http', 'parse')" in up_sql
     assert "OR outcome = 'not_found'" in up_sql
     assert "outcome IN ('success', 'failure')" in down_sql
+
+
+def test_ratsit_normalized_segment_tables_match_report_json_shape() -> None:
+    up_sql = _migration_sql("000343_corpscout_se_ratsit_normalized_segments.up.sql")
+    down_sql = _migration_sql("000343_corpscout_se_ratsit_normalized_segments.down.sql")
+    tables = (
+        "se_ratsit_company",
+        "se_ratsit_company_industry_codes",
+        "se_ratsit_company_summaries",
+        "se_ratsit_responsible_people",
+        "se_ratsit_establishments",
+        "se_ratsit_financial_reports",
+        "se_ratsit_financial_periods",
+        "se_ratsit_people_at_address",
+    )
+
+    for table in tables:
+        assert f"CREATE TABLE IF NOT EXISTS corpscout.{table}" in up_sql
+        assert f"DROP TABLE IF EXISTS corpscout.{table}" in down_sql
+
+    for common_column in (
+        "company_id String",
+        "result_sha256 FixedString(64)",
+        "normalizer_version LowCardinality(String)",
+        "normalized_at DateTime64(6, 'UTC')",
+    ):
+        assert up_sql.count(common_column) == len(tables)
+
+    assert up_sql.count("ENGINE = ReplacingMergeTree(normalized_at)") == len(tables)
+    assert "PARTITION BY" not in up_sql
+    assert "se_ratsit_workplaces" not in up_sql
+    assert "establishment_count UInt16" in up_sql
+    assert "financial_report_index UInt16" in up_sql
+    assert "period_index UInt16" in up_sql
+    assert "people_at_address_count UInt16" in up_sql
 
 
 def _migration_sql(file_name: str) -> str:
