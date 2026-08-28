@@ -144,6 +144,30 @@ export const PROFILE_DATATYPES = [
 
 export type ProfileDatatypeKey = (typeof PROFILE_DATATYPES)[number]["key"];
 
+const PROFILE_DATATYPE_BY_KEY = new Map<string, (typeof PROFILE_DATATYPES)[number]>(
+  PROFILE_DATATYPES.map((datatype) => [datatype.key, datatype]),
+);
+
+/**
+ * The catalog's name for a datatype KEY ("has_job_ads" -> "Job ads"), falling
+ * back to the key itself for one it does not name -- the same contract as
+ * `profileSourceLabel`, and for the same reason: the sheet's checkboxes and
+ * the applied-filter chips must spell a datatype one way, not two.
+ */
+export function profileDatatypeLabel(key: string): string {
+  return PROFILE_DATATYPE_BY_KEY.get(key)?.label ?? key;
+}
+
+/**
+ * The `?datatype=` chip's param token: chips remove by param, and seven chips
+ * all spelled `datatype` would each remove all of them, so a datatype chip's
+ * token names its key too. ONE builder, used by the chip and by the search
+ * entries it removes from, so they can never disagree on the spelling.
+ */
+export function datatypeChipParam(key: ProfileDatatypeKey): string {
+  return `datatype:${key}`;
+}
+
 /** Task 17 (owner addendum 2026-08-23): the company-info list filters
  * COMPANIES. Its description-PROVENANCE filters (language, suggestion,
  * multi-source, has-corrections) are gone -- that story is the detail page's.
@@ -160,6 +184,12 @@ export interface SeCompanyInfoTableFilters {
   description: string;
   /** "" | one of PROFILE_SOURCE_VALUES -- companies that HAVE that source. */
   source: string;
+  /**
+   * PROFILE_DATATYPES keys, deduped and in the catalog's order -- companies
+   * that have ALL of them (each travels as a repeated `?datatype=` param, each
+   * becomes one ANDed `= 1` predicate). Empty means no datatype filter.
+   */
+  datatypes: readonly ProfileDatatypeKey[];
 }
 
 export const EMPTY_INFO_FILTERS: SeCompanyInfoTableFilters = {
@@ -170,6 +200,7 @@ export const EMPTY_INFO_FILTERS: SeCompanyInfoTableFilters = {
   entity: "",
   description: "",
   source: "",
+  datatypes: [],
 };
 
 export interface SeCompanyInfoCorrectionsTableFilters {
@@ -226,6 +257,12 @@ export function infoFilterChips(
   if (filters.description) {
     chips.push(chip("description", `Description ${filters.description}`));
   }
+  // One chip per selected datatype (they AND together, and each is removable
+  // on its own), in the catalog order the parse already normalized to. The
+  // param token carries the key so removing one keeps the rest.
+  for (const key of filters.datatypes) {
+    chips.push(chip(datatypeChipParam(key), `Has ${profileDatatypeLabel(key)}`));
+  }
   if (filters.source) {
     // Named, not spelled: the chip says "Source Wikidata", not "wikidata".
     chips.push(chip("source", `Source ${profileSourceLabel(filters.source)}`));
@@ -246,15 +283,22 @@ export function correctionFilterChips(
   return chips;
 }
 
+/** One URL param the search string carries: `param=value`, removable by a chip
+ * whose token defaults to the param name. A repeated param (`datatype`) gives
+ * each of its entries a DISTINCT token, so one chip's X removes one value. */
+type SearchEntry = [param: string, value: string, token?: string];
+
 function searchString(
-  entries: Array<[string, string]>,
+  entries: SearchEntry[],
   view: TableView,
   omit?: string,
 ): string {
   const params = new URLSearchParams();
-  for (const [key, value] of entries) {
-    if (value === "" || key === omit) continue;
-    params.set(key, value);
+  for (const [key, value, token] of entries) {
+    if (value === "" || (token ?? key) === omit) continue;
+    // append, not set: single-valued params occur once anyway, and the
+    // datatype entries must all travel (`?datatype=a&datatype=b`).
+    params.append(key, value);
   }
   // Sorting and page size are not filters: clearing or removing one must not
   // silently throw the reviewer back to the default order or page size.
@@ -278,6 +322,9 @@ export function infoListSearch(
       ["legalForm", filters.legalForm],
       ["entity", filters.entity],
       ["description", filters.description],
+      ...filters.datatypes.map(
+        (key): SearchEntry => ["datatype", key, datatypeChipParam(key)],
+      ),
       ["source", filters.source],
     ],
     view,
@@ -383,6 +430,28 @@ const ENTITY_VALUES = ["legal", "sole"] as const;
  * the URL whitelist are one list rather than two that can drift. */
 export const YES_NO_VALUES = ["yes", "no"] as const;
 
+/**
+ * The `?datatype=` params as APPLIED: repeated params (what the sheet's
+ * checkboxes submit), with a comma-joined single param tolerated (what a
+ * hand-edited URL tends to spell). Filtering the CATALOG by what arrived --
+ * rather than the arrivals by the catalog -- does the whole contract in one
+ * pass: unknown values silently drop (the module's convention: applied
+ * filters only), duplicates collapse, and the result is always in the
+ * catalog's order, so the chips and the SQL are deterministic no matter how
+ * the URL ordered them.
+ */
+function datatypeValues(url: URL): ProfileDatatypeKey[] {
+  const requested = new Set(
+    url.searchParams
+      .getAll("datatype")
+      .flatMap((value) => value.split(","))
+      .map((value) => value.trim()),
+  );
+  return PROFILE_DATATYPES.filter((datatype) => requested.has(datatype.key)).map(
+    (datatype) => datatype.key,
+  );
+}
+
 export function parseInfoFilters(url: URL): SeCompanyInfoTableFilters {
   return {
     companyId: filterValue(url, "companyId"),
@@ -394,6 +463,7 @@ export function parseInfoFilters(url: URL): SeCompanyInfoTableFilters {
     // Whitelisted against the catalog: a stale `?source=llm` from the removed
     // description-provenance filter names no source and is simply dropped.
     source: filterValue(url, "source", PROFILE_SOURCE_VALUES),
+    datatypes: datatypeValues(url),
   };
 }
 

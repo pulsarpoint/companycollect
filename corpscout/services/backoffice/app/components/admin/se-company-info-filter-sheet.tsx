@@ -4,6 +4,7 @@ import { ListFilterIcon, XIcon } from "lucide-react";
 import { legalFormOptionLabel } from "~/lib/se-legal-form";
 import { Badge } from "~/components/ui/badge";
 import { Button } from "~/components/ui/button";
+import { Checkbox } from "~/components/ui/checkbox";
 import { Input } from "~/components/ui/input";
 import { Label } from "~/components/ui/label";
 import {
@@ -35,6 +36,7 @@ import {
   infoListSearch,
   optionLabel,
   optionValue,
+  PROFILE_DATATYPES,
   PROFILE_SOURCE_VALUES,
   profileSourceLabel,
   selectValue,
@@ -213,6 +215,34 @@ export function SeCompanyInfoFilterFields({
           options={YES_NO_VALUES}
         />
       </Field>
+      <fieldset className="flex flex-col gap-1.5">
+        {/* The presence columns as a filter: checkboxes, because unlike the
+            single-choice selects above a reviewer may require several at once
+            -- and they AND together (each becomes its own `= 1` predicate), so
+            the description says "ALL" in as many words. Built by mapping the
+            catalog, like the columns themselves, so the group can never offer
+            a flag the table does not show. Each checkbox submits the same
+            `datatype` name with its own key as the value: the plain GET form
+            emits one repeated `?datatype=` param per ticked box. */}
+        <Label className="text-xs font-medium">Has data</Label>
+        <p className="text-xs text-muted-foreground">
+          Only companies that have ALL selected data.
+        </p>
+        {PROFILE_DATATYPES.map((datatype) => (
+          <label
+            key={datatype.key}
+            className="flex cursor-pointer items-center gap-2 text-sm"
+          >
+            <Checkbox
+              name="datatype"
+              value={datatype.key}
+              defaultChecked={filters.datatypes.includes(datatype.key)}
+              aria-label={`Has ${datatype.label}`}
+            />
+            {datatype.label}
+          </label>
+        ))}
+      </fieldset>
       <Field label="Source">
         {/* Which registers built the profile, in ANY datatype -- the same
             question the Sources column's letters answer, and the same

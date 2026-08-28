@@ -22,6 +22,7 @@ import type {
   SeCompanyInfoListRow,
 } from "~/lib/se-company-info-lists.server";
 import {
+  datatypeChipParam,
   EMPTY_INFO_FILTERS,
   infoFilterChips,
   infoListSearch,
@@ -30,6 +31,7 @@ import {
   parseInfoFilters,
   parseListView,
   PROFILE_DATATYPES,
+  profileDatatypeLabel,
   PROFILE_SOURCES,
   PROFILE_SOURCES_LEGEND,
   profileSourceLabel,
@@ -693,6 +695,14 @@ describe("SeCompanyInfoTable filter sheet", () => {
     // Seven filters are set on APPLIED_FILTERS, and the badge says so.
     expect(infoFilterChips(APPLIED_FILTERS)).toHaveLength(7);
     expect(html).toContain(">7<");
+    // The badge is the chip count, so EACH selected datatype counts as one --
+    // the same one-chip-one-count rule every other filter follows.
+    const withDatatypes = {
+      ...APPLIED_FILTERS,
+      datatypes: ["has_address", "has_people"] as const,
+    };
+    expect(infoFilterChips(withDatatypes)).toHaveLength(9);
+    expect(render({ filters: withDatatypes })).toContain(">9<");
   });
 
   it("summarises each applied filter as a chip whose X re-navigates without that param", () => {
@@ -803,6 +813,32 @@ describe("SeCompanyInfoFilterFields", () => {
     expect(
       legalFormOptionLabel({ code: "", label_sv: "", label_en: "" }),
     ).toBe("(none)");
+  });
+
+  it("offers a \"Has data\" checkbox per catalog datatype, saying selections must ALL be present", () => {
+    const html = renderFields();
+    expect(html).toContain("Has data");
+    // AND semantics are the whole point of the group, so it says so in words.
+    expect(html).toContain("Only companies that have ALL selected data.");
+    // One checkbox per catalog entry, every one submitting the SAME `datatype`
+    // name with its own key as the value -- the plain GET form then emits one
+    // repeated `?datatype=` param per ticked box.
+    for (const datatype of PROFILE_DATATYPES) {
+      expect(html).toContain(`name="datatype" value="${datatype.key}"`);
+      expect(html).toContain(`aria-label="Has ${datatype.label}"`);
+      expect(html).toContain(datatype.label);
+    }
+  });
+
+  it("renders a selected datatype's checkbox checked, and an unselected one not", () => {
+    const html = renderFields({
+      ...EMPTY_INFO_FILTERS,
+      datatypes: ["has_address", "has_job_ads"],
+    });
+    expect(html).toContain('name="datatype" checked="" value="has_address"');
+    expect(html).toContain('name="datatype" checked="" value="has_job_ads"');
+    expect(html).toContain('name="datatype" value="has_people"');
+    expect(html).not.toContain('checked="" value="has_people"');
   });
 
   it("selects \"Any\" for an unset filter and the applied value otherwise", () => {
@@ -918,6 +954,79 @@ describe("parseInfoFilters", () => {
       expect(filters.source).toBe(source.value);
       expect(infoFilterChips(filters)).toEqual([
         { param: "source", label: `Source ${source.label}` },
+      ]);
+    }
+  });
+
+  it("reads repeated ?datatype= params, normalized to the catalog's order", () => {
+    // The URL's order is whatever the reviewer clicked last; the parsed array
+    // is always the catalog's, so the chips and the SQL are deterministic.
+    const filters = parseInfoFilters(
+      at("?datatype=has_job_ads&datatype=has_address&datatype=has_people"),
+    );
+    expect(filters.datatypes).toEqual(["has_address", "has_people", "has_job_ads"]);
+    expect(filters).toEqual({
+      ...EMPTY_INFO_FILTERS,
+      datatypes: ["has_address", "has_people", "has_job_ads"],
+    });
+    // Round trip: the parsed filters rebuild repeated params, in that order.
+    const search = infoListSearch(filters, {
+      sort: "company_id",
+      dir: "asc",
+      pageSize: 50,
+    });
+    expect(search).toBe(
+      "?datatype=has_address&datatype=has_people&datatype=has_job_ads" +
+        "&sort=company_id&dir=asc&pageSize=50",
+    );
+    expect(parseInfoFilters(at(search))).toEqual(filters);
+  });
+
+  it("tolerates a comma-joined single ?datatype= param, and dedupes", () => {
+    expect(
+      parseInfoFilters(at("?datatype=has_domains,has_address, has_domains")).datatypes,
+    ).toEqual(["has_address", "has_domains"]);
+    expect(
+      parseInfoFilters(at("?datatype=has_people&datatype=has_people")).datatypes,
+    ).toEqual(["has_people"]);
+  });
+
+  it("silently drops a ?datatype= value the catalog does not name", () => {
+    // The module's convention: applied filters only. `has_description` is the
+    // description filter's flag, not a catalog datatype -- it drops too.
+    expect(parseInfoFilters(at("?datatype=bogus")).datatypes).toEqual([]);
+    expect(parseInfoFilters(at("?datatype=bogus")).description).toBe("");
+    expect(infoFilterChips(parseInfoFilters(at("?datatype=bogus")))).toEqual([]);
+    expect(
+      parseInfoFilters(at("?datatype=has_description&datatype=has_financial")).datatypes,
+    ).toEqual(["has_financial"]);
+    expect(parseInfoFilters(at("?datatype=")).datatypes).toEqual([]);
+  });
+
+  it("summarises each selected datatype as its own removable chip, named from the catalog", () => {
+    const filters = parseInfoFilters(at("?datatype=has_people&datatype=has_address"));
+    expect(infoFilterChips(filters)).toEqual([
+      { param: "datatype:has_address", label: "Has Address" },
+      { param: "datatype:has_people", label: "Has People" },
+    ]);
+    // A chip's X removes ITS datatype and keeps the rest (and every other
+    // filter): the param token names the key, not just `datatype`.
+    const without = infoListSearch(
+      { ...filters, source: "esef" },
+      { sort: "company_id", dir: "asc", pageSize: 50 },
+      datatypeChipParam("has_people"),
+    );
+    expect(without).toContain("datatype=has_address");
+    expect(without).not.toContain("has_people");
+    expect(without).toContain("source=esef");
+    // Every catalog datatype chips with its own label, one lookup for both
+    // the sheet and the chip.
+    for (const datatype of PROFILE_DATATYPES) {
+      expect(profileDatatypeLabel(datatype.key)).toBe(datatype.label);
+      expect(
+        infoFilterChips({ ...EMPTY_INFO_FILTERS, datatypes: [datatype.key] }),
+      ).toEqual([
+        { param: datatypeChipParam(datatype.key), label: `Has ${datatype.label}` },
       ]);
     }
   });

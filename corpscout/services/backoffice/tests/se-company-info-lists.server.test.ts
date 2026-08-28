@@ -117,6 +117,44 @@ describe("buildInfoListFilter", () => {
     }
   });
 
+  it("builds one `= 1` predicate per selected datatype, off the flag column itself", () => {
+    // Every catalog datatype is covered, so a new one cannot arrive
+    // filter-less -- and the predicate is the very expression the column and
+    // its sort use, so the tick a row shows and the rows a filter returns can
+    // never disagree.
+    for (const datatype of PROFILE_DATATYPES) {
+      expect(buildInfoListFilter({ datatypes: [datatype.key] })).toEqual({
+        where: [`${DATATYPE_PRESENCE_EXPR[datatype.key]} = 1`],
+        params: {},
+      });
+    }
+    expect(buildInfoListFilter({ datatypes: ["has_people"] })).toEqual({
+      where: ["i.has_people = 1"],
+      params: {},
+    });
+  });
+
+  it("ANDs several selected datatypes: the reviewer asks for companies with ALL of them", () => {
+    expect(
+      buildInfoListFilter({ datatypes: ["has_address", "has_people", "has_job_ads"] }),
+    ).toEqual({
+      where: ["i.has_address = 1", "i.has_people = 1", "i.has_job_ads = 1"],
+      params: {},
+    });
+  });
+
+  it("adds nothing for an empty datatype array, and drops a key the catalog does not name", () => {
+    expect(buildInfoListFilter({ datatypes: [] })).toEqual({ where: [], params: {} });
+    // Same key-names-a-predicate rule as `source`: an unknown value finds no
+    // expression, so nothing from the URL ever reaches SQL as text.
+    expect(
+      buildInfoListFilter({ datatypes: ["has_description", "bogus", "1=1) OR ("] }),
+    ).toEqual({ where: [], params: {} });
+    expect(
+      buildInfoListFilter({ datatypes: ["bogus", "has_domains"] }),
+    ).toEqual({ where: ["i.has_domains = 1"], params: {} });
+  });
+
   it("treats the select's 'any' sentinel and a blank as absent on every data-driven filter", () => {
     for (const filters of [
       { status: "any" },
@@ -159,6 +197,7 @@ describe("buildInfoListFilter", () => {
       legalForm: "AB",
       description: "yes",
       source: "wikidata",
+      datatypes: ["has_financial", "has_domains"],
     });
     expect(where).toEqual([
       "i.company_id = {companyId:String}",
@@ -168,6 +207,8 @@ describe("buildInfoListFilter", () => {
       "i.legal_form_code = {legalForm:String}",
       "i.has_description = 1",
       "i.source_wikidata = 1",
+      "i.has_financial = 1",
+      "i.has_domains = 1",
     ]);
     expect(params).toEqual({
       companyId: "5565200028",
