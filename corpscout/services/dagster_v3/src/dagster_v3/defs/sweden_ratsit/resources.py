@@ -6,6 +6,7 @@ from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from typing import Any, Literal, Self
+from urllib.parse import parse_qsl, urlsplit
 
 import dagster as dg
 from cloakbrowser import launch
@@ -39,7 +40,7 @@ RATSIT_BROWSER_WORKER_NAMES: tuple[RatsitBrowserWorkerName, ...] = (
 )
 RATSIT_BROWSER_WORKER_COUNT = len(RATSIT_BROWSER_WORKER_NAMES)
 
-type RatsitFailureType = Literal["navigation", "http", "parse"]
+type RatsitFailureType = Literal["navigation", "http", "parse", "not_found"]
 
 
 @dataclass(frozen=True)
@@ -195,9 +196,7 @@ class SwedenRatsitBrowserResource(dg.ConfigurableResource):
             connection_mode: RatsitConnectionMode = (
                 "direct" if worker_name == "direct" else "proxy"
             )
-            proxy_name: RatsitProxyName = (
-                "" if worker_name == "direct" else worker_name
-            )
+            proxy_name: RatsitProxyName = "" if worker_name == "direct" else worker_name
             for company_id in company_ids:
                 previous_request_started_at = _wait_for_request_slot(
                     previous_request_started_at,
@@ -269,6 +268,20 @@ class SwedenRatsitBrowserResource(dg.ConfigurableResource):
             )
 
         status = int(response.status)
+        if status == 404:
+            return RatsitCompanyFailure(
+                company_id=company_id,
+                connection_mode=connection_mode,
+                proxy_name=proxy_name,
+                requested_url=requested_url,
+                source_url=source_url,
+                fetched_at=_aware_utc_now(now),
+                error_type="not_found",
+                message="Ratsit returned HTTP status 404",
+                http_status=status,
+                html_sha256=None,
+                diagnostic_html=None,
+            )
         if not 200 <= status < 400:
             return RatsitCompanyFailure(
                 company_id=company_id,
@@ -284,13 +297,8 @@ class SwedenRatsitBrowserResource(dg.ConfigurableResource):
                 diagnostic_html=None,
             )
 
-        try:
-            page.locator(PAGE_CONTENT_SELECTOR).first.wait_for(
-                state="visible",
-                timeout=self.page_timeout_ms,
-            )
-        except Exception:
-            return _parse_failure(
+        if _is_missing_company_redirect(source_url):
+            return _diagnostic_failure(
                 page,
                 company_id=company_id,
                 connection_mode=connection_mode,
@@ -299,6 +307,26 @@ class SwedenRatsitBrowserResource(dg.ConfigurableResource):
                 source_url=source_url,
                 fetched_at=_aware_utc_now(now),
                 status=status,
+                error_type="not_found",
+                message="Ratsit redirected to /foretag?saknas",
+            )
+
+        try:
+            page.locator(PAGE_CONTENT_SELECTOR).first.wait_for(
+                state="visible",
+                timeout=self.page_timeout_ms,
+            )
+        except Exception:
+            return _diagnostic_failure(
+                page,
+                company_id=company_id,
+                connection_mode=connection_mode,
+                proxy_name=proxy_name,
+                requested_url=requested_url,
+                source_url=source_url,
+                fetched_at=_aware_utc_now(now),
+                status=status,
+                error_type="parse",
                 message=(
                     f"Ratsit content selector was not visible: {PAGE_CONTENT_SELECTOR}"
                 ),
@@ -417,7 +445,19 @@ def _source_url(page: Any, requested_url: str) -> str:
         return requested_url
 
 
-def _parse_failure(
+def _is_missing_company_redirect(url: str) -> bool:
+    parsed_url = urlsplit(url)
+    if parsed_url.hostname not in {"ratsit.se", "www.ratsit.se"}:
+        return False
+    if parsed_url.path.rstrip("/") != "/foretag":
+        return False
+    return any(
+        name == "saknas"
+        for name, _value in parse_qsl(parsed_url.query, keep_blank_values=True)
+    )
+
+
+def _diagnostic_failure(
     page: Any,
     *,
     company_id: str,
@@ -427,6 +467,7 @@ def _parse_failure(
     source_url: str,
     fetched_at: datetime,
     status: int,
+    error_type: Literal["parse", "not_found"],
     message: str,
 ) -> RatsitCompanyFailure:
     try:
@@ -440,7 +481,7 @@ def _parse_failure(
         requested_url=requested_url,
         source_url=source_url,
         fetched_at=fetched_at,
-        error_type="parse",
+        error_type=error_type,
         message=message,
         http_status=status,
         html_sha256=(

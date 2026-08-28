@@ -313,9 +313,7 @@ def test_browser_resource_runs_four_round_robin_workers_and_preserves_order() ->
 
     assert [result.company_id for result in reports] == list(company_ids)
     assert all(isinstance(result, RatsitCompanyReport) for result in reports)
-    assert [
-        (result.connection_mode, result.proxy_name) for result in reports
-    ] == [
+    assert [(result.connection_mode, result.proxy_name) for result in reports] == [
         ("direct", ""),
         ("proxy", "crawl_proxy1"),
         ("proxy", "crawl_proxy2"),
@@ -388,6 +386,58 @@ def test_browser_resource_keeps_rendered_html_when_required_fields_are_missing()
     assert failure.html_sha256 is not None
 
 
+def test_browser_resource_treats_ratsit_missing_redirect_as_not_found() -> None:
+    clock = FakeClock()
+    missing_html = "<html><body>Företaget saknas</body></html>"
+    page = FakePage(
+        [(200, "https://www.ratsit.se/foretag?saknas", missing_html)],
+        clock=clock,
+    )
+
+    results = list(
+        _ratsit_browser_resource().iter_company_reports(
+            (COMPANY_ID,),
+            launcher=lambda **_: FakeBrowser(page),
+            monotonic=clock.monotonic,
+            sleep=clock.sleep,
+            now=lambda: FETCHED_AT,
+        )
+    )
+
+    assert len(results) == 1
+    failure = results[0]
+    assert isinstance(failure, RatsitCompanyFailure)
+    assert failure.error_type == "not_found"
+    assert failure.http_status == 200
+    assert failure.source_url == "https://www.ratsit.se/foretag?saknas"
+    assert failure.message == "Ratsit redirected to /foretag?saknas"
+    assert failure.diagnostic_html == missing_html.encode()
+    assert failure.html_sha256 is not None
+    assert page._locator.wait_calls == []
+
+
+def test_browser_resource_treats_http_404_as_not_found() -> None:
+    clock = FakeClock()
+    page = FakePage([(404, COMPANY_URL, "not found")], clock=clock)
+
+    results = list(
+        _ratsit_browser_resource().iter_company_reports(
+            (COMPANY_ID,),
+            launcher=lambda **_: FakeBrowser(page),
+            monotonic=clock.monotonic,
+            sleep=clock.sleep,
+            now=lambda: FETCHED_AT,
+        )
+    )
+
+    assert len(results) == 1
+    failure = results[0]
+    assert isinstance(failure, RatsitCompanyFailure)
+    assert failure.error_type == "not_found"
+    assert failure.http_status == 404
+    assert failure.diagnostic_html is None
+
+
 def test_scan_defaults_are_exactly_one_hundred_unique_companies() -> None:
     assert RATSIT_MAX_COMPANIES == 100
     assert len(RATSIT_COMPANY_IDS) == RATSIT_MAX_COMPANIES
@@ -417,7 +467,7 @@ def test_only_dispatch_asset_and_its_existing_job_name_are_registered() -> None:
     assert "se_ratsit_pilot_reports_job" not in job_names
 
 
-def test_scan_writes_run_scoped_results_and_only_parse_failures_keep_html() -> None:
+def test_scan_writes_run_scoped_results_and_keeps_diagnostic_html() -> None:
     report = RatsitCompanyReport(
         company_id=COMPANY_ID,
         connection_mode="direct",
@@ -495,6 +545,49 @@ def test_scan_writes_run_scoped_results_and_only_parse_failures_keep_html() -> N
     ) == ("proxy", "crawl_proxy1")
     assert summary.results[0].result_size_bytes == len(object_store.objects[report_key])
     assert len(summary.results[0].result_sha256) == 64
+
+
+def test_scan_keeps_missing_company_redirect_html() -> None:
+    missing_html = "<html><body>Företaget saknas</body></html>".encode()
+    missing_company = RatsitCompanyFailure(
+        company_id=COMPANY_ID,
+        connection_mode="direct",
+        proxy_name="",
+        requested_url=f"https://www.ratsit.se/{COMPANY_ID}",
+        source_url="https://www.ratsit.se/foretag?saknas",
+        fetched_at=FETCHED_AT,
+        error_type="not_found",
+        message="Ratsit redirected to /foretag?saknas",
+        http_status=200,
+        html_sha256="c" * 64,
+        diagnostic_html=missing_html,
+    )
+    object_store = FakeObjectStore()
+
+    summary = write_ratsit_scan(
+        object_store=object_store,  # type: ignore[arg-type]
+        ratsit=FakeRatsitResource([missing_company]),  # type: ignore[arg-type]
+        company_ids=(COMPANY_ID,),
+        scan_id="missing-company-scan",
+        started_at=FETCHED_AT,
+        completed_at=FETCHED_AT,
+    )
+
+    error_key = ratsit_result_object_key(
+        COMPANY_ID,
+        "missing-company-scan",
+        "error.json",
+    )
+    html_key = ratsit_result_object_key(
+        COMPANY_ID,
+        "missing-company-scan",
+        "diagnostic.html.gz",
+    )
+    assert set(object_store.objects) == {error_key, html_key}
+    assert gzip.decompress(object_store.objects[html_key]) == missing_html
+    assert summary.results[0].failure_type == "not_found"
+    assert summary.results[0].diagnostic_object_key == html_key
+    assert summary.diagnostic_html_count == 1
 
 
 def test_identical_report_hash_reuses_old_s3_path_for_new_scan() -> None:

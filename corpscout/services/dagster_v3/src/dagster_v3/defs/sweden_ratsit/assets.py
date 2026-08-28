@@ -361,7 +361,7 @@ def write_ratsit_scan(
         object_store.write_json(error_key, error_json, bucket=RATSIT_S3_BUCKET)
         written_object_count += 1
         diagnostic_object_key = ""
-        if result.error_type == "parse" and result.diagnostic_html is not None:
+        if result.diagnostic_html is not None:
             diagnostic_object_key = ratsit_result_object_key(
                 result.company_id,
                 scan_id,

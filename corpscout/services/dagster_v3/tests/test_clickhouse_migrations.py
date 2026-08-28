@@ -350,6 +350,7 @@ EXPECTED_MIGRATIONS = (
     "000338_corpscout_se_companies_serving_translations",
     "000339_corpscout_retire_se_companies_translated",
     "000340_corpscout_se_company_ratsit_proxy_route",
+    "000341_corpscout_se_company_ratsit_not_found",
 )
 
 NOOP_MIGRATIONS = {"000276_noop"}
@@ -3633,9 +3634,7 @@ def test_ratsit_reports_migration_replaces_temporal_results_with_s3_catalog() ->
     down_sql = _migration_sql("000334_corpscout_se_company_ratsit_reports.down.sql")
 
     assert "DROP TABLE IF EXISTS corpscout.se_company_ratsit" in up_sql
-    assert (
-        "CREATE TABLE IF NOT EXISTS corpscout.se_company_ratsit" in up_sql
-    )
+    assert "CREATE TABLE IF NOT EXISTS corpscout.se_company_ratsit" in up_sql
     for column in (
         "report_bucket LowCardinality(String)",
         "report_object_key String",
@@ -3696,9 +3695,7 @@ def test_ratsit_scan_history_migration_tracks_company_results_and_reuse() -> Non
 
 def test_ratsit_proxy_route_migration_tracks_safe_worker_names() -> None:
     up_sql = _migration_sql("000340_corpscout_se_company_ratsit_proxy_route.up.sql")
-    down_sql = _migration_sql(
-        "000340_corpscout_se_company_ratsit_proxy_route.down.sql"
-    )
+    down_sql = _migration_sql("000340_corpscout_se_company_ratsit_proxy_route.down.sql")
 
     assert "connection_mode LowCardinality(String)" in up_sql
     assert "proxy_name LowCardinality(String)" in up_sql
@@ -3709,6 +3706,16 @@ def test_ratsit_proxy_route_migration_tracks_safe_worker_names() -> None:
     assert "crawl_proxy1=" not in up_sql
     assert "DROP COLUMN IF EXISTS proxy_name" in down_sql
     assert "DROP COLUMN IF EXISTS connection_mode" in down_sql
+
+
+def test_ratsit_not_found_migration_allows_missing_company_diagnostics() -> None:
+    up_sql = _migration_sql("000341_corpscout_se_company_ratsit_not_found.up.sql")
+    down_sql = _migration_sql("000341_corpscout_se_company_ratsit_not_found.down.sql")
+
+    assert "'navigation', 'http', 'parse', 'not_found'" in up_sql
+    assert "failure_type IN ('parse', 'not_found')" in up_sql
+    assert "'navigation', 'http', 'parse'" in down_sql
+    assert "diagnostic_object_key = '' OR failure_type = 'parse'" in down_sql
 
 
 def _migration_sql(file_name: str) -> str:

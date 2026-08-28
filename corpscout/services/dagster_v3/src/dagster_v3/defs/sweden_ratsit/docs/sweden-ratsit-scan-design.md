@@ -33,7 +33,8 @@ per-company prefix in `source-sweden-ratsit`:
   `sweden_ratsit/pilot/company_id=<id>/<scan_id>_report.json`;
 - navigation, HTTP, or parse failure:
   `sweden_ratsit/pilot/company_id=<id>/<scan_id>_error.json`;
-- parse diagnostic, when rendered HTML exists:
+- failure diagnostic, when rendered HTML exists for a parse failure or missing
+  company redirect:
   `sweden_ratsit/pilot/company_id=<id>/<scan_id>_diagnostic.html.gz`.
 
 The success JSON envelope deliberately excludes the scan ID, fetch time, and
@@ -69,6 +70,10 @@ grouped by these four route names.
 
 ## Parser output
 
+HTTP 404 responses and Ratsit's successful redirect to `/foretag?saknas` are
+stored as `not_found` failures. The redirect response keeps compressed rendered
+HTML for diagnosis, without waiting for the normal company-content selector.
+
 The pure `lxml` parser extracts company identity, status, legal form, address,
 industry, description, responsible people, workplaces, people at the address,
 coordinates, and available company/consolidated financial periods. A page is
@@ -78,7 +83,7 @@ number matching the requested ID.
 ## Verification
 
 - Contract tests: `tests/test_sweden_ratsit_pilot.py`.
-- Migration contract: migrations `000336`, `000340`, and
+- Migration contract: migrations `000336`, `000340`, `000341`, and
   `tests/test_clickhouse_migrations.py`.
 - Definitions: `uv run dg check defs`.
 - Runtime: materialize `se_ratsit_scan_dispatch_job`, then inspect its 100 rows in
