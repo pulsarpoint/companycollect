@@ -354,6 +354,7 @@ EXPECTED_MIGRATIONS = (
     "000342_corpscout_se_company_ratsit_not_found_outcome",
     "000343_corpscout_se_ratsit_normalized_segments",
     "000344_corpscout_se_companies_serving_market_flags",
+    "000345_corpscout_drop_serving_retired",
 )
 
 NOOP_MIGRATIONS = {"000276_noop"}
