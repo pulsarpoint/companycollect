@@ -343,6 +343,8 @@ EXPECTED_MIGRATIONS = (
     "000331_corpscout_se_company_person_views_observed_at",
     "000332_corpscout_retire_se_company_person_draft",
     "000333_corpscout_retire_country_person_tables",
+    "000334_corpscout_se_company_ratsit_reports",
+    "000335_corpscout_se_companies_serving",
 )
 
 NOOP_MIGRATIONS = {"000276_noop"}
@@ -3621,6 +3623,48 @@ def test_ratsit_sole_trader_id_migration_repairs_applied_constraints() -> None:
 
     assert "^[0-9]{10}$" in down_sql
     assert "concat('https://www.ratsit.se/', company_id)" in down_sql
+
+
+def test_ratsit_reports_migration_replaces_temporal_results_with_s3_catalog() -> None:
+    up_sql = _migration_sql(
+        "000334_corpscout_se_company_ratsit_reports.up.sql"
+    )
+    down_sql = _migration_sql(
+        "000334_corpscout_se_company_ratsit_reports.down.sql"
+    )
+
+    assert "DROP VIEW IF EXISTS corpscout.se_company_ratsit_current" in up_sql
+    assert (
+        "DROP TABLE IF EXISTS corpscout.se_company_ratsit_crawl_results" in up_sql
+    )
+    assert (
+        "CREATE TABLE IF NOT EXISTS corpscout.se_company_ratsit_crawl_results"
+        in up_sql
+    )
+    for column in (
+        "report_bucket LowCardinality(String)",
+        "report_object_key String",
+        "report_sha256 FixedString(64)",
+        "report_size_bytes UInt64",
+        "report_payload_sha256 FixedString(64)",
+        "source_html_sha256 FixedString(64)",
+        "schema_version UInt16",
+        "parser_version LowCardinality(String)",
+        "dagster_run_id String",
+        "fetched_at DateTime64(6, 'UTC')",
+        "recorded_at DateTime64(6, 'UTC')",
+    ):
+        assert column in up_sql
+
+    assert "ENGINE = ReplacingMergeTree(recorded_at)" in up_sql
+    assert "ORDER BY company_id" in up_sql
+    assert "PARTITION BY" not in up_sql
+    assert "FROM corpscout.se_company_ratsit_crawl_results FINAL" in up_sql
+    assert "temporal_workflow_id" not in up_sql
+    assert "batch_id" not in up_sql
+
+    assert "batch_id UUID" in down_sql
+    assert "temporal_workflow_id String" in down_sql
 
 
 def _migration_sql(file_name: str) -> str:

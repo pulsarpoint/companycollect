@@ -203,6 +203,186 @@ INNER JOIN primary_address AS pa ON pa.company_id = agg.company_id
 ORDER BY agg.company_id"""
 
 
+# --- The consolidated serving view (migration 000335) ----------------------------------------
+# corpscout.se_companies_serving SUPERSEDES se_companies_current as the one wide per-company
+# row every admin companies list page reads: the info-list columns (name/status/legal form/
+# description flag), the datatype presence flags and per-register source flags that used to be
+# computed as IN-set subqueries on every backoffice page load (measured ~1.4s/page, owner
+# 2026-08-28), AND the address JSON + primary geocode summary se_companies_current carried.
+# Base changes from "companies with a current address" (INNER JOIN) to ALL of se_company_info
+# (LEFT JOIN): the info list shows every published company, addressed or not.
+#
+# The presence-set subqueries below are the single source of truth the backoffice's
+# COMPANY_SETS used to hand-carry; after the repoint the backoffice reads these as plain
+# columns and only the ledger/filter queries keep their own SQL.
+
+SE_COMPANIES_SERVING_VIEW = "se_companies_serving"
+
+BOLAGSVERKET_FINANCIAL_SET = (
+    f"SELECT company_id FROM {CLICKHOUSE_DATABASE}.se_bolagsverket_financial_metrics"
+)
+ESEF_FINANCIAL_SET = (
+    f"SELECT ci.company_id FROM {CLICKHOUSE_DATABASE}.company_identifier AS ci "
+    "WHERE ci.issuer_scheme = 'lei' AND ci.country_code = 'SE' AND ci.is_current = 1 "
+    f"AND ci.issuer_id IN (SELECT upperUTF8(trimBoth(m.lei)) FROM {CLICKHOUSE_DATABASE}.esef_financial_metrics AS m)"
+)
+FINANCIAL_REPORTS_SET = (
+    f"SELECT company_id FROM {CLICKHOUSE_DATABASE}.se_financial_reports"
+)
+PEOPLE_SET = f"SELECT company_id FROM {CLICKHOUSE_DATABASE}.se_company_person"
+PEOPLE_BOLAGSVERKET_SET = (
+    f"SELECT company_id FROM {CLICKHOUSE_DATABASE}.se_company_person_role "
+    "WHERE has(sources, 'bolagsverket')"
+)
+PEOPLE_ESEF_SET = (
+    f"SELECT company_id FROM {CLICKHOUSE_DATABASE}.se_company_person_role "
+    "WHERE has(sources, 'esef')"
+)
+DOMAINS_SET = (
+    f"SELECT company_id FROM {CLICKHOUSE_DATABASE}.company_domains "
+    "WHERE country_code = 'SE'"
+)
+
+
+def build_se_companies_serving_sql() -> str:
+    """One wide row per published SE company: info-list columns, presence flags, source
+    flags, current addresses as JSON, and the primary-address geocode summary.
+
+    The inner SELECT computes each presence ARM exactly once (each `IN (...)` builds its
+    hash set once per refresh); the outer SELECT derives the composite flags from the arms.
+    Address columns come from the same three CTEs se_companies_current used, LEFT-joined so
+    a company with no current address still gets a row -- its `addresses` folds to '[]'
+    (via coalesce/nullIf, correct under both join_use_nulls settings) and its primary
+    summary to the same ''/NULL an absent overlay row produces.
+
+    Flag semantics are ported verbatim from the backoffice's DATATYPE_PRESENCE_EXPR /
+    PROFILE_SOURCE_PREDICATES (se-company-info-lists.server.ts, owner ruling 2026-08-25:
+    has_financial is extracted metrics OR filed reports; the SCB flag is omitted -- it is 1
+    for every row by construction, the reader hard-codes its letter).
+    """
+    address_map = _address_map_expression()
+    return f"""WITH company_addresses AS (
+  SELECT
+    a.company_id AS company_id,
+    a.address_key AS address_key,
+    a.address_type AS address_type,
+    toUInt8(has(a.sources, 'bolagsverket')) AS from_bolagsverket,
+    ifNull(a.street_address, '') AS street_address,
+    ifNull(a.postal_code, '') AS postal_code,
+    ifNull(a.city, '') AS city,
+    ifNull(toString(a.address_id), '') AS address_id,
+    toString(a.geocode_status) AS geocode_status,
+    ifNull(s.geocode_precision, '') AS geocode_precision,
+    ifNull(s.geocode_provider, '') AS geocode_provider,
+    s.latitude AS latitude,
+    s.longitude AS longitude
+  FROM {COMPANY_ADDRESS_TABLE} AS a FINAL
+  LEFT JOIN {SERVED_GEOCODES_TABLE} AS s
+    ON toString(s.address_id) = ifNull(toString(a.address_id), '')
+  WHERE a.is_current
+),
+primary_address AS (
+  SELECT
+    company_id,
+    street_address AS primary_street_address,
+    postal_code AS primary_postal_code,
+    city AS primary_city,
+    geocode_status AS primary_geocode_status,
+    {_geocode_class_expr("geocode_status", "geocode_provider")} AS primary_geocode_class,
+    geocode_precision AS primary_geocode_precision,
+    geocode_provider AS primary_geocode_provider,
+    latitude AS primary_latitude,
+    longitude AS primary_longitude
+  FROM company_addresses
+  ORDER BY {_PRIMARY_ORDER_BY}
+  LIMIT 1 BY company_id
+),
+aggregated AS (
+  SELECT
+    ca.company_id AS company_id,
+    toJSONString(groupArray({address_map})) AS addresses,
+    toUInt32(count()) AS address_count,
+    toUInt8(max(ca.from_bolagsverket)) AS address_bolagsverket
+  FROM company_addresses AS ca
+  GROUP BY ca.company_id
+)
+SELECT
+  company_id,
+  legal_name,
+  status,
+  legal_form_code,
+  legal_form_label_en,
+  legal_form_label_sv,
+  has_description,
+  has_address,
+  toUInt8(fin_bolagsverket OR fin_esef OR fin_reports) AS has_financial,
+  has_people,
+  has_domains,
+  toUInt8(address_bolagsverket OR fin_bolagsverket OR people_bolagsverket) AS source_bolagsverket,
+  toUInt8(desc_esef OR has_lei OR fin_esef OR people_esef) AS source_esef,
+  toUInt8(has_wikidata OR desc_wikidata) AS source_wikidata,
+  addresses,
+  address_count,
+  primary_street_address,
+  primary_postal_code,
+  primary_city,
+  primary_geocode_status,
+  primary_geocode_class,
+  primary_geocode_precision,
+  primary_geocode_provider,
+  primary_latitude,
+  primary_longitude
+FROM (
+  SELECT
+    i.company_id AS company_id,
+    i.legal_name AS legal_name,
+    toString(i.status) AS status,
+    ifNull(i.legal_form_code, '') AS legal_form_code,
+    i.legal_form_label_en AS legal_form_label_en,
+    i.legal_form_label_sv AS legal_form_label_sv,
+    toUInt8(i.description IS NOT NULL) AS has_description,
+    toUInt8(ifNull(agg.address_count, 0) > 0) AS has_address,
+    toUInt8(i.company_id IN ({BOLAGSVERKET_FINANCIAL_SET})) AS fin_bolagsverket,
+    toUInt8(i.company_id IN ({ESEF_FINANCIAL_SET})) AS fin_esef,
+    toUInt8(i.company_id IN ({FINANCIAL_REPORTS_SET})) AS fin_reports,
+    toUInt8(i.company_id IN ({PEOPLE_SET})) AS has_people,
+    toUInt8(i.company_id IN ({PEOPLE_BOLAGSVERKET_SET})) AS people_bolagsverket,
+    toUInt8(i.company_id IN ({PEOPLE_ESEF_SET})) AS people_esef,
+    toUInt8(i.company_id IN ({DOMAINS_SET})) AS has_domains,
+    toUInt8(has(i.description_sources, 'esef')) AS desc_esef,
+    toUInt8(i.lei IS NOT NULL) AS has_lei,
+    toUInt8(i.wikidata_id IS NOT NULL) AS has_wikidata,
+    toUInt8(has(i.description_sources, 'wikidata')) AS desc_wikidata,
+    toUInt8(ifNull(agg.address_bolagsverket, 0)) AS address_bolagsverket,
+    coalesce(nullIf(agg.addresses, ''), '[]') AS addresses,
+    toUInt32(ifNull(agg.address_count, 0)) AS address_count,
+    ifNull(pa.primary_street_address, '') AS primary_street_address,
+    ifNull(pa.primary_postal_code, '') AS primary_postal_code,
+    ifNull(pa.primary_city, '') AS primary_city,
+    ifNull(pa.primary_geocode_status, '') AS primary_geocode_status,
+    ifNull(pa.primary_geocode_class, '') AS primary_geocode_class,
+    ifNull(pa.primary_geocode_precision, '') AS primary_geocode_precision,
+    ifNull(pa.primary_geocode_provider, '') AS primary_geocode_provider,
+    pa.primary_latitude AS primary_latitude,
+    pa.primary_longitude AS primary_longitude
+  FROM {COMPANY_INFO_TABLE} AS i FINAL
+  LEFT JOIN aggregated AS agg ON agg.company_id = i.company_id
+  LEFT JOIN primary_address AS pa ON pa.company_id = i.company_id
+)
+ORDER BY company_id"""
+
+
+# Three times the REFRESH EVERY 15 MINUTE interval migration 000335 gives the serving view.
+MAX_COMPANIES_SERVING_REFRESH_AGE = timedelta(minutes=45)
+
+SE_COMPANIES_SERVING_REFRESH_SQL = f"""SELECT
+    status,
+    exception,
+    toUnixTimestamp(last_success_time)
+FROM system.view_refreshes
+WHERE database = '{CLICKHOUSE_DATABASE}'
+  AND view = '{SE_COMPANIES_SERVING_VIEW}'"""
+
 
 # --- Serving-view refresh health -------------------------------------------------------------
 # The refreshable MV migration 000326 creates has no Dagster asset that recomputes it -- so, as
