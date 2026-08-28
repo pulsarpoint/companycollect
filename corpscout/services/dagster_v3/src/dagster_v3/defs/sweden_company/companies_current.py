@@ -169,13 +169,14 @@ DOMAINS_SET = (
     f"SELECT company_id FROM {CLICKHOUSE_DATABASE}.company_domains "
     "WHERE country_code = 'SE'"
 )
-# An ESEF filing exists for the company's LEI => listed on an EU regulated market. Keyed on
-# esef_filings (the filings.xbrl.org index -- ALL filers), not esef_financial_metrics (only
-# extracted ones), through the same LEI resolution the ESEF financial arm uses.
+# The company has a resolved EODHD stock-market listing (company_traded_symbols, the
+# company_markets module's precomputed FIRDS+GLEIF+EODHD resolve, refreshed daily). Owner
+# 2026-08-28: this REPLACES the earlier ESEF-filing signal -- EODHD covers First North/NGM/
+# Spotlight listings that never file ESEF (826 SE companies vs ESEF's 403), and it is market
+# truth rather than a filing obligation.
 PUBLICLY_TRADED_SET = (
-    f"SELECT ci.company_id FROM {CLICKHOUSE_DATABASE}.company_identifier AS ci "
-    "WHERE ci.issuer_scheme = 'lei' AND ci.country_code = 'SE' AND ci.is_current = 1 "
-    f"AND ci.issuer_id IN (SELECT upperUTF8(trimBoth(f.lei)) FROM {CLICKHOUSE_DATABASE}.esef_filings AS f)"
+    f"SELECT company_id FROM {CLICKHOUSE_DATABASE}.company_traded_symbols "
+    "WHERE country_code = 'SE'"
 )
 # Exact-matched SE companies that WON a government contract (UHM + TED), per the same
 # company-keyed contracts view the public contracts pages read.

@@ -719,68 +719,117 @@ describe("jobs tab", () => {
   });
 });
 
-const listedWithFiling: SeCompanyListed = {
+/** Handelsbanken-shaped: a Stockholm home line plus an LSE cross-listing, the
+ * quote led by the Stockholm line. */
+const listedTraded: SeCompanyListed = {
   leis: [
     {
-      lei: "549300W61XW8OFGBG077",
+      lei: "NHBDILHZTYCNBV5UYZ31",
       entity_status: "ACTIVE",
       registration_status: "ISSUED",
     },
   ],
-  filings: [
+  symbols: [
     {
-      period_end: "2025-12-31",
-      fxo_id: "549300W61XW8OFGBG077-2025-12-31-ESEF-SE-0",
-      lei: "549300W61XW8OFGBG077",
-      entity_name: "Beijer Byggmaterial AB (publ)",
-      country: "SE",
-      date_added: "2026-04-30",
-      viewer_url: "https://filings.xbrl.org/example/viewer.html",
+      isin: "SE0007100599",
+      eodhd_symbol_key: "0R7S.LSE",
+      ticker: "0R7S",
+      exchange_code: "LSE",
     },
+    {
+      isin: "SE0007100599",
+      eodhd_symbol_key: "SHB-A.ST",
+      ticker: "SHB-A",
+      exchange_code: "ST",
+    },
+  ],
+  summary: {
+    year: 2025,
+    venues: 4,
+    lead_venue: "ST",
+    lead_currency: "SEK",
+    last_close: 122.15,
+    last_day: "2025-12-30",
+    traded_usd: 31_500_000_000,
+  },
+  leadSymbolKey: "SHB-A.ST",
+  prices: [
+    { price_date: "2025-09-01", close: 118.4 },
+    { price_date: "2025-12-30", close: 122.15 },
   ],
 };
 
 describe("listed tab", () => {
-  it("says publicly traded, names the LEI, and links each filing to the public financials page", () => {
+  it("says publicly traded from the EODHD resolve, quotes the lead line, and charts a year of closes", () => {
     const html = render(
-      <SeCompanyListedTab companyId={COMPANY_ID} listed={listedWithFiling} />,
+      <SeCompanyListedTab companyId={COMPANY_ID} listed={listedTraded} />,
       seCompanyTabPath(COMPANY_ID, "listed"),
     );
     expect(html).toContain("Publicly traded");
     expect(html).not.toContain("Not publicly traded");
-    expect(html).toContain("549300W61XW8OFGBG077");
-    expect(html).toContain(">ACTIVE<");
-    expect(html).toContain("ESEF filings");
-    expect(html).toContain("2025-12-31");
-    expect(html).toContain("Beijer Byggmaterial AB (publ)");
-    expect(html).toContain(`href="/company/se/${COMPANY_ID}/financials"`);
+    // The quote is the lead line's: ticker, venue, close in the lead
+    // currency on its day, and the turnover figure labelled for what it is.
+    expect(html).toContain("SHB-A");
+    expect(html).toContain(">ST<");
+    expect(html).toContain("122.15");
+    expect(html).toContain("SEK");
+    expect(html).toContain("2025-12-30");
+    expect(html).toContain("Traded value");
+    expect(html).toContain("$31.5B");
+    // Turnover is NOT market capitalisation, and the label must never say so.
+    expect(html).not.toContain("Market cap");
+    // The chart rendered (ChartContainer's slot) for the lead symbol.
+    expect(html).toContain('data-slot="chart"');
+    // Both listed lines are rows: the LSE cross-listing is real, with ISIN.
+    expect(html).toContain("0R7S");
+    expect(html).toContain(">LSE<");
+    expect(html).toContain("SE0007100599");
+    // The LEI still shows as identity context.
+    expect(html).toContain("NHBDILHZTYCNBV5UYZ31");
+    // ESEF is not trading information: no filings table, ever.
+    expect(html).not.toContain("ESEF");
   });
 
-  it("says not publicly traded when the LEI has no ESEF filing behind it", () => {
+  it("skips the chart and blanks the quote when the symbol has no prices or summary yet", () => {
     const html = render(
       <SeCompanyListedTab
         companyId={COMPANY_ID}
-        listed={{ leis: listedWithFiling.leis, filings: [] }}
+        listed={{
+          ...listedTraded,
+          summary: null,
+          leadSymbolKey: "0R7S.LSE",
+          prices: [],
+        }}
+      />,
+      seCompanyTabPath(COMPANY_ID, "listed"),
+    );
+    // Still traded: the verdict is the symbol resolve, not the summary.
+    expect(html).toContain("Publicly traded");
+    expect(html).not.toContain('data-slot="chart"');
+    // The summary lag is said out loud rather than rendered as zeros.
+    expect(html).toContain("No market summary row yet");
+    expect(html).not.toContain("$31.5B");
+  });
+
+  it("says not publicly traded when no EODHD symbol resolves, naming the detection", () => {
+    const html = render(
+      <SeCompanyListedTab
+        companyId={COMPANY_ID}
+        listed={{
+          leis: listedTraded.leis,
+          symbols: [],
+          summary: null,
+          leadSymbolKey: "",
+          prices: [],
+        }}
       />,
       seCompanyTabPath(COMPANY_ID, "listed"),
     );
     expect(html).toContain("Not publicly traded");
+    expect(html).toContain("No EODHD symbol resolves to this company");
     // The LEI still shows: holding one is a fact, just not a listing.
-    expect(html).toContain("549300W61XW8OFGBG077");
-    expect(html).toContain("no ESEF filings");
-    expect(html).not.toContain("ESEF filings</div>");
-  });
-
-  it("says so when no current LEI links to the company at all", () => {
-    const html = render(
-      <SeCompanyListedTab
-        companyId={COMPANY_ID}
-        listed={{ leis: [], filings: [] }}
-      />,
-      seCompanyTabPath(COMPANY_ID, "listed"),
-    );
-    expect(html).toContain("No LEI recorded");
-    expect(html).not.toContain("Publicly traded");
+    expect(html).toContain("NHBDILHZTYCNBV5UYZ31");
+    expect(html).not.toContain('data-slot="chart"');
   });
 });
 

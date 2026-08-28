@@ -1,5 +1,5 @@
 import { LandmarkIcon } from "lucide-react";
-import { Link } from "react-router";
+import { Area, AreaChart, CartesianGrid, XAxis, YAxis } from "recharts";
 import { Badge } from "~/components/ui/badge";
 import {
   Card,
@@ -8,6 +8,12 @@ import {
   CardHeader,
   CardTitle,
 } from "~/components/ui/card";
+import {
+  ChartContainer,
+  ChartTooltip,
+  ChartTooltipContent,
+  type ChartConfig,
+} from "~/components/ui/chart";
 import {
   Empty,
   EmptyDescription,
@@ -25,140 +31,277 @@ import {
 } from "~/components/ui/table";
 import type { SeCompanyListed } from "~/lib/se-company-listed.server";
 
+const compactUsd = new Intl.NumberFormat("en-US", {
+  notation: "compact",
+  maximumFractionDigits: 1,
+});
+
+const priceFormat = new Intl.NumberFormat("en-US", {
+  maximumFractionDigits: 2,
+  minimumFractionDigits: 2,
+});
+
+/** The LEI line the verdict card and the not-traded state both show: holding
+ * an LEI is identity context, not the trading verdict. */
+function LeiList({ leis }: { leis: SeCompanyListed["leis"] }) {
+  if (leis.length === 0) return null;
+  return (
+    <div className="flex flex-col gap-1">
+      <span className="text-xs font-medium uppercase tracking-wide text-muted-foreground">
+        LEI{leis.length === 1 ? "" : "s"}
+      </span>
+      <ul className="flex flex-col gap-1 text-sm">
+        {leis.map((row) => (
+          <li key={row.lei} className="flex flex-wrap items-center gap-2">
+            <span className="font-mono">{row.lei}</span>
+            {row.entity_status === "" ? null : (
+              <Badge variant="outline">{row.entity_status}</Badge>
+            )}
+            {row.registration_status === "" ? null : (
+              <Badge variant="outline">{row.registration_status}</Badge>
+            )}
+          </li>
+        ))}
+      </ul>
+    </div>
+  );
+}
+
 /**
- * The company's public-market identity: a traded / not-traded verdict, its
- * current LEI(s), and every ESEF annual financial report filed under them.
+ * The company's public-market state, built on the EODHD market facts.
  *
- * The verdict is "at least one ESEF filing", not "has an LEI": LEIs are
- * issued for derivatives reporting and much else, while an ESEF annual
- * financial report is filed only by issuers on an EU regulated market.
+ * The verdict is "an EODHD symbol resolved to this company": ESMA FIRDS gives
+ * ISIN -> issuer LEI, GLEIF gives LEI -> registration number, the register
+ * turns that into our company_id, and EODHD's ISIN closes the chain. ESEF
+ * filings deliberately play NO part here — a filing is a reporting fact, not
+ * trading information.
  */
 export function SeCompanyListedTab({
-  companyId,
   listed,
 }: {
   companyId: string;
   listed: SeCompanyListed;
 }) {
-  const { leis, filings } = listed;
-  if (leis.length === 0) {
+  const { leis, symbols, summary, leadSymbolKey, prices } = listed;
+
+  if (symbols.length === 0) {
     return (
-      <Empty className="border">
-        <EmptyHeader>
-          <EmptyMedia variant="icon">
-            <LandmarkIcon />
-          </EmptyMedia>
-          <EmptyTitle>No LEI recorded</EmptyTitle>
-          <EmptyDescription>
-            No current LEI links to this company in company_identifier, so
-            there is no public-market identity to show. Nearly all Swedish
-            companies are in this state -- an LEI is only ever obtained for
-            financial-market activity.
-          </EmptyDescription>
-        </EmptyHeader>
-      </Empty>
+      <section className="flex flex-col gap-4">
+        <Empty className="border">
+          <EmptyHeader>
+            <EmptyMedia variant="icon">
+              <LandmarkIcon />
+            </EmptyMedia>
+            <EmptyTitle>Not publicly traded</EmptyTitle>
+            <EmptyDescription>
+              No EODHD symbol resolves to this company — detection follows the
+              deterministic ISIN → LEI → register chain into
+              company_traded_symbols, and no listed line matched. Nearly all
+              Swedish companies are in this state.
+            </EmptyDescription>
+          </EmptyHeader>
+        </Empty>
+        {leis.length === 0 ? null : (
+          <Card>
+            <CardHeader>
+              <CardTitle className="text-base">Identity</CardTitle>
+              <CardDescription>
+                The company holds an LEI, which alone does not mean a listing —
+                LEIs are issued for derivatives reporting and much else.
+              </CardDescription>
+            </CardHeader>
+            <CardContent>
+              <LeiList leis={leis} />
+            </CardContent>
+          </Card>
+        )}
+      </section>
     );
   }
-  const traded = filings.length > 0;
-  const financialsHref = `/company/se/${encodeURIComponent(companyId)}/financials`;
+
+  const lead =
+    symbols.find((s) => s.eodhd_symbol_key === leadSymbolKey) ?? symbols[0];
+  const currency = summary?.lead_currency ?? "";
+  const chartConfig = {
+    close: {
+      label: `Close${currency === "" ? "" : ` (${currency})`}`,
+      color: "var(--chart-1)",
+    },
+  } satisfies ChartConfig;
+
   return (
     <section className="flex flex-col gap-4">
       <Card>
         <CardHeader>
           <div className="flex flex-wrap items-center gap-2">
-            <CardTitle className="text-base">
-              {traded ? "Publicly traded" : "Not publicly traded"}
-            </CardTitle>
-            <Badge variant={traded ? "default" : "outline"}>
-              {traded
-                ? `${filings.length} ESEF filing${filings.length === 1 ? "" : "s"}`
-                : "no ESEF filings"}
+            <CardTitle className="text-base">Publicly traded</CardTitle>
+            <Badge variant="default">
+              {symbols.length} listing{symbols.length === 1 ? "" : "s"}
             </Badge>
           </div>
           <CardDescription>
-            {traded
-              ? "At least one ESEF annual financial report is filed under this company's LEI, which only issuers on an EU regulated market file."
-              : "This company holds an LEI but no ESEF annual financial report is filed under it. An LEI alone does not mean a listing."}
+            EODHD resolves {symbols.length === 1 ? "a listed line" : "listed lines"}{" "}
+            to this company through the ISIN → LEI → register identity chain.
           </CardDescription>
         </CardHeader>
-        <CardContent className="flex flex-col gap-1">
-          <span className="text-xs font-medium uppercase tracking-wide text-muted-foreground">
-            LEI{leis.length === 1 ? "" : "s"}
-          </span>
-          <ul className="flex flex-col gap-1 text-sm">
-            {leis.map((row) => (
-              <li key={row.lei} className="flex flex-wrap items-center gap-2">
-                <span className="font-mono">{row.lei}</span>
-                {row.entity_status === "" ? null : (
-                  <Badge variant="outline">{row.entity_status}</Badge>
+        <CardContent className="flex flex-col gap-4">
+          <dl className="grid grid-cols-2 gap-x-6 gap-y-3 text-sm sm:grid-cols-4">
+            <div className="flex flex-col">
+              <dt className="text-xs font-medium uppercase tracking-wide text-muted-foreground">
+                Lead listing
+              </dt>
+              <dd className="flex flex-wrap items-center gap-1 font-medium">
+                <span>{lead.ticker}</span>
+                <Badge variant="outline">{lead.exchange_code}</Badge>
+              </dd>
+            </div>
+            <div className="flex flex-col">
+              <dt className="text-xs font-medium uppercase tracking-wide text-muted-foreground">
+                Last close
+              </dt>
+              <dd className="tabular-nums">
+                {summary?.last_close == null ? (
+                  <span className="text-muted-foreground">—</span>
+                ) : (
+                  <>
+                    {priceFormat.format(summary.last_close)}{" "}
+                    {summary.lead_currency}
+                    {summary.last_day === "" ? null : (
+                      <span className="text-muted-foreground text-xs">
+                        {" "}
+                        ({summary.last_day})
+                      </span>
+                    )}
+                  </>
                 )}
-                {row.registration_status === "" ? null : (
-                  <Badge variant="outline">{row.registration_status}</Badge>
+              </dd>
+            </div>
+            <div className="flex flex-col">
+              <dt className="text-xs font-medium uppercase tracking-wide text-muted-foreground">
+                Traded value
+              </dt>
+              <dd className="tabular-nums">
+                {summary === null ? (
+                  <span className="text-muted-foreground">—</span>
+                ) : (
+                  <>
+                    ${compactUsd.format(summary.traded_usd)}
+                    <span className="text-muted-foreground text-xs">
+                      {" "}
+                      ({summary.year} turnover)
+                    </span>
+                  </>
                 )}
-              </li>
-            ))}
-          </ul>
+              </dd>
+            </div>
+            <div className="flex flex-col">
+              <dt className="text-xs font-medium uppercase tracking-wide text-muted-foreground">
+                Venues
+              </dt>
+              <dd className="tabular-nums">
+                {summary === null ? (
+                  <span className="text-muted-foreground">—</span>
+                ) : (
+                  summary.venues
+                )}
+              </dd>
+            </div>
+          </dl>
+          {summary === null ? (
+            <p className="text-muted-foreground text-xs">
+              No market summary row yet — the summary asset runs separately
+              from the symbol resolve, so quote and turnover can lag a new
+              listing.
+            </p>
+          ) : null}
+          <LeiList leis={leis} />
         </CardContent>
       </Card>
 
-      {traded ? (
+      {prices.length < 2 ? null : (
         <Card>
           <CardHeader>
-            <CardTitle className="text-base">ESEF filings</CardTitle>
+            <CardTitle className="text-base">
+              {lead.ticker} · {lead.exchange_code} — 1 year
+            </CardTitle>
+            <CardDescription>
+              Daily close for the lead listing, from EODHD end-of-day prices.
+            </CardDescription>
           </CardHeader>
-          <CardContent className="space-y-4">
-            <div className="overflow-x-auto">
-              <Table className="min-w-[36rem]">
-                <TableHeader>
-                  <TableRow>
-                    <TableHead>Period end</TableHead>
-                    <TableHead>Entity</TableHead>
-                    <TableHead>Country</TableHead>
-                    <TableHead>Added</TableHead>
-                    <TableHead>Filing</TableHead>
-                  </TableRow>
-                </TableHeader>
-                <TableBody>
-                  {filings.map((filing) => (
-                    <TableRow key={filing.fxo_id}>
-                      <TableCell className="tabular-nums align-top whitespace-nowrap">
-                        <Link
-                          className="underline underline-offset-2"
-                          to={financialsHref}
-                        >
-                          {filing.period_end}
-                        </Link>
-                      </TableCell>
-                      <TableCell className="align-top">
-                        {filing.entity_name}
-                      </TableCell>
-                      <TableCell className="align-top">
-                        {filing.country}
-                      </TableCell>
-                      <TableCell className="tabular-nums align-top whitespace-nowrap">
-                        {filing.date_added}
-                      </TableCell>
-                      <TableCell className="align-top">
-                        <span className="text-muted-foreground font-mono text-xs">
-                          {filing.fxo_id}
-                        </span>
-                      </TableCell>
-                    </TableRow>
-                  ))}
-                </TableBody>
-              </Table>
-            </div>
-            <p className="text-muted-foreground text-xs">
-              Each period links to the{" "}
-              <Link className="underline underline-offset-2" to={financialsHref}>
-                public financials page
-              </Link>
-              , where the ESEF source carries the extracted figures and the
-              document reader.
-            </p>
+          <CardContent>
+            <ChartContainer config={chartConfig} className="h-56 w-full">
+              <AreaChart data={prices}>
+                <CartesianGrid vertical={false} />
+                <XAxis
+                  dataKey="price_date"
+                  tickLine={false}
+                  axisLine={false}
+                  minTickGap={48}
+                />
+                <YAxis
+                  dataKey="close"
+                  tickLine={false}
+                  axisLine={false}
+                  width={56}
+                  domain={["auto", "auto"]}
+                />
+                <ChartTooltip content={<ChartTooltipContent />} />
+                <Area
+                  dataKey="close"
+                  type="monotone"
+                  stroke="var(--color-close)"
+                  fill="var(--color-close)"
+                  fillOpacity={0.15}
+                  dot={false}
+                />
+              </AreaChart>
+            </ChartContainer>
           </CardContent>
         </Card>
-      ) : null}
+      )}
+
+      <Card>
+        <CardHeader>
+          <CardTitle className="text-base">Listings</CardTitle>
+          <CardDescription>
+            One row per listed line — cross-listings on foreign venues are real
+            rows, not duplicates.
+          </CardDescription>
+        </CardHeader>
+        <CardContent>
+          <div className="overflow-x-auto">
+            <Table className="min-w-[28rem]">
+              <TableHeader>
+                <TableRow>
+                  <TableHead>Ticker</TableHead>
+                  <TableHead>Exchange</TableHead>
+                  <TableHead>ISIN</TableHead>
+                </TableRow>
+              </TableHeader>
+              <TableBody>
+                {symbols.map((symbol) => (
+                  <TableRow key={symbol.eodhd_symbol_key}>
+                    <TableCell className="align-top font-medium">
+                      {symbol.ticker}
+                      {symbol.eodhd_symbol_key === lead.eodhd_symbol_key ? (
+                        <Badge variant="outline" className="ml-2">
+                          lead
+                        </Badge>
+                      ) : null}
+                    </TableCell>
+                    <TableCell className="align-top">
+                      {symbol.exchange_code}
+                    </TableCell>
+                    <TableCell className="align-top font-mono text-xs">
+                      {symbol.isin}
+                    </TableCell>
+                  </TableRow>
+                ))}
+              </TableBody>
+            </Table>
+          </div>
+        </CardContent>
+      </Card>
     </section>
   );
 }
