@@ -1,4 +1,34 @@
+import tempfile
+import zipfile
+from contextlib import nullcontext
+from pathlib import Path
+
 import dagster as dg
+import pytest
+
+from dagster_v3.defs.sweden_platsbanken import assets
+
+
+class _DuckDBResource:
+    def get_connection(self) -> nullcontext[object]:
+        return nullcontext(object())
+
+
+class _HistoricalObjectStore:
+    def __init__(self) -> None:
+        self.downloaded_paths: list[Path] = []
+
+    def download_file(
+        self,
+        key: str,
+        target_path: Path,
+        bucket: str | None = None,
+    ) -> None:
+        if self.downloaded_paths:
+            assert not self.downloaded_paths[-1].parent.exists()
+        with zipfile.ZipFile(target_path, "w") as archive:
+            archive.writestr("jobs.jsonl", f'{{"object_key":"{key}"}}\n')
+        self.downloaded_paths.append(target_path)
 
 
 def test_platsbanken_assets_and_manual_jobs_are_registered() -> None:
@@ -78,6 +108,59 @@ def test_company_projection_requires_all_history_sources_and_company_spine() -> 
         dg.AssetKey("sweden_platsbanken_jobstream_events_clickhouse"),
         dg.AssetKey("sweden_company_companies_clickhouse"),
     }
+
+
+def test_historical_raw_duckdb_releases_each_archive_before_downloading_next(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    original_temporary_directory = tempfile.TemporaryDirectory
+    object_store = _HistoricalObjectStore()
+    loaded_paths: list[Path] = []
+
+    monkeypatch.setattr(
+        assets.tempfile,
+        "TemporaryDirectory",
+        lambda **kwargs: original_temporary_directory(dir=tmp_path, **kwargs),
+    )
+    monkeypatch.setattr(
+        assets,
+        "latest_historical_manifest",
+        lambda _object_store: {
+            "source_run_id": "historical-run",
+            "retrieved_at": "2026-08-28T12:00:00+00:00",
+            "archives": [
+                {
+                    "object_key": "historical/2016.zip",
+                    "source_url": "https://example.test/2016.zip",
+                },
+                {
+                    "object_key": "historical/2017.zip",
+                    "source_url": "https://example.test/2017.zip",
+                },
+            ],
+        },
+    )
+
+    def load_jsonl(**parameters: object) -> int:
+        jsonl_path = parameters["jsonl_path"]
+        assert isinstance(jsonl_path, Path)
+        assert jsonl_path.exists()
+        loaded_paths.append(jsonl_path)
+        return 1
+
+    monkeypatch.setattr(assets, "replace_raw_jsonl_table", load_jsonl)
+    monkeypatch.setattr(assets, "append_raw_jsonl_table", load_jsonl)
+
+    result = assets.sweden_platsbanken_historical_raw_duckdb.node_def.compute_fn.decorated_fn(
+        sweden_platsbanken_duckdb=_DuckDBResource(),
+        sweden_platsbanken_object_store=object_store,
+    )
+
+    assert result.metadata["archive_count"] == 2
+    assert result.metadata["raw_rows"] == 2
+    assert len(loaded_paths) == 2
+    assert all(not path.parent.exists() for path in loaded_paths)
 
 
 def _job_assets(repository: object, job_name: str) -> set[str]:

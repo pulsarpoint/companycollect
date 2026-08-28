@@ -98,10 +98,12 @@ def sweden_platsbanken_historical_raw_duckdb(
 
     DUCKDB_PATH.parent.mkdir(parents=True, exist_ok=True)
     total_rows = 0
-    with tempfile.TemporaryDirectory(prefix="sweden_platsbanken_archives_") as temp:
-        temp_path = Path(temp)
-        with sweden_platsbanken_duckdb.get_connection() as connection:
-            for index, archive in enumerate(archives):
+    with sweden_platsbanken_duckdb.get_connection() as connection:
+        for index, archive in enumerate(archives):
+            with tempfile.TemporaryDirectory(
+                prefix="sweden_platsbanken_archive_"
+            ) as temp:
+                temp_path = Path(temp)
                 archive_path = temp_path / f"archive-{index}.zip"
                 jsonl_path = temp_path / f"archive-{index}.jsonl"
                 sweden_platsbanken_object_store.download_file(
