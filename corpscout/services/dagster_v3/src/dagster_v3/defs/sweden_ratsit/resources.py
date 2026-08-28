@@ -407,7 +407,10 @@ class SwedenRatsitBrowserResource(dg.ConfigurableResource):
         html_sha256 = hashlib.sha256(html_bytes).hexdigest()
         try:
             report = parse_company_page(page_html, source_url=source_url)
-            _validate_company_report(report, expected_company_id=company_id)
+            validate_ratsit_company_report(
+                report,
+                expected_company_id=company_id,
+            )
         except Exception as error:
             return RatsitCompanyFailure(
                 company_id=company_id,
@@ -548,7 +551,7 @@ def _rendered_html_diagnostic(page: Any) -> bytes | None:
         return None
 
 
-def _validate_company_report(
+def validate_ratsit_company_report(
     report: Mapping[str, object],
     *,
     expected_company_id: str,

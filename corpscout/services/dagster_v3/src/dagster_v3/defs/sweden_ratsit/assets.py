@@ -6,8 +6,9 @@ import time
 import zlib
 from collections import Counter
 from collections.abc import Callable, Iterator, Mapping
+from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from typing import Literal
 
 import dagster as dg
@@ -42,6 +43,7 @@ from dagster_v3.defs.sweden_ratsit.resources import (
     RatsitProxyName,
     SwedenRatsitBrowserResource,
     ratsit_round_robin_assignments,
+    validate_ratsit_company_report,
 )
 
 RATSIT_MAX_COMPANIES = RATSIT_HARD_MAX_COMPANIES
@@ -57,6 +59,8 @@ RATSIT_RESULT_TABLE = "se_company_ratsit"
 RATSIT_BUCKET_COUNT = 128
 RATSIT_PROGRESS_LOG_EVERY_RESULTS = 25
 RATSIT_PROGRESS_LOG_EVERY_SECONDS = 30.0
+RATSIT_SUCCESS_FRESHNESS = timedelta(days=30)
+RATSIT_S3_FRESHNESS_WORKER_COUNT = 16
 RATSIT_PARTITIONS = dg.StaticPartitionsDefinition(
     [f"bucket_{bucket_index:03d}" for bucket_index in range(RATSIT_BUCKET_COUNT)]
 )
@@ -99,6 +103,15 @@ class StoredRatsitReport:
     result_bucket: str
     result_object_key: str
     result_size_bytes: int
+
+
+@dataclass(frozen=True)
+class RatsitScanSelection:
+    active_company_ids: tuple[str, ...]
+    clickhouse_fresh_company_ids: tuple[str, ...]
+    s3_fresh_company_ids: tuple[str, ...]
+    selected_company_ids: tuple[str, ...]
+    freshness_cutoff: datetime
 
 
 @dataclass(frozen=True)
@@ -210,6 +223,124 @@ def load_active_ratsit_company_ids(
     return company_ids
 
 
+def load_fresh_ratsit_company_ids_from_clickhouse(
+    clickhouse: ClickhouseResource,
+    company_ids: tuple[str, ...],
+    freshness_cutoff: datetime,
+) -> frozenset[str]:
+    _require_aware_timestamp(freshness_cutoff, label="freshness cutoff")
+    if not company_ids:
+        return frozenset()
+
+    assert_clickhouse_tables_exist(
+        clickhouse,
+        database=RATSIT_CLICKHOUSE_DATABASE,
+        tables=(RATSIT_RESULT_TABLE,),
+    )
+    with clickhouse.get_connection() as client:
+        rows = client.execute(
+            f"""
+            SELECT DISTINCT company_id
+            FROM {RATSIT_CLICKHOUSE_DATABASE}.{RATSIT_RESULT_TABLE} FINAL
+            WHERE outcome = 'success'
+              AND http_status = 200
+              AND fetched_at >= %(freshness_cutoff)s
+              AND company_id IN %(company_ids)s
+            """,
+            {
+                "company_ids": company_ids,
+                "freshness_cutoff": freshness_cutoff,
+            },
+        )
+
+    fresh_company_ids = frozenset(str(row[0]) for row in rows)
+    unexpected_company_ids = fresh_company_ids.difference(company_ids)
+    if unexpected_company_ids:
+        raise RuntimeError(
+            "ClickHouse returned unselected Ratsit companies: "
+            f"{', '.join(sorted(unexpected_company_ids)[:5])}"
+        )
+    return fresh_company_ids
+
+
+def load_fresh_ratsit_company_ids_from_s3(
+    object_store: ObjectStoreResource,
+    company_ids: tuple[str, ...],
+    freshness_cutoff: datetime,
+) -> frozenset[str]:
+    _require_aware_timestamp(freshness_cutoff, label="freshness cutoff")
+    if not company_ids:
+        return frozenset()
+
+    object_store.client()
+    worker_count = min(RATSIT_S3_FRESHNESS_WORKER_COUNT, len(company_ids))
+    with ThreadPoolExecutor(
+        max_workers=worker_count,
+        thread_name_prefix="ratsit_s3_freshness",
+    ) as executor:
+        freshness_results = executor.map(
+            lambda company_id: _has_fresh_ratsit_report_in_s3(
+                object_store,
+                company_id=company_id,
+                freshness_cutoff=freshness_cutoff,
+            ),
+            company_ids,
+        )
+        return frozenset(
+            company_id
+            for company_id, is_fresh in zip(
+                company_ids,
+                freshness_results,
+                strict=True,
+            )
+            if is_fresh
+        )
+
+
+def select_ratsit_companies_for_scan(
+    *,
+    clickhouse: ClickhouseResource,
+    object_store: ObjectStoreResource,
+    active_company_ids: tuple[str, ...],
+    freshness_cutoff: datetime,
+) -> RatsitScanSelection:
+    clickhouse_fresh_company_ids = load_fresh_ratsit_company_ids_from_clickhouse(
+        clickhouse,
+        active_company_ids,
+        freshness_cutoff,
+    )
+    s3_candidates = tuple(
+        company_id
+        for company_id in active_company_ids
+        if company_id not in clickhouse_fresh_company_ids
+    )
+    s3_fresh_company_ids = load_fresh_ratsit_company_ids_from_s3(
+        object_store,
+        s3_candidates,
+        freshness_cutoff,
+    )
+    selected_company_ids = tuple(
+        company_id
+        for company_id in s3_candidates
+        if company_id not in s3_fresh_company_ids
+    )
+    return RatsitScanSelection(
+        active_company_ids=active_company_ids,
+        clickhouse_fresh_company_ids=tuple(
+            company_id
+            for company_id in active_company_ids
+            if company_id in clickhouse_fresh_company_ids
+        ),
+        s3_fresh_company_ids=tuple(
+            company_id
+            for company_id in active_company_ids
+            if company_id in s3_fresh_company_ids
+        ),
+        selected_company_ids=selected_company_ids,
+        freshness_cutoff=freshness_cutoff,
+    )
+
+
 def ratsit_result_object_key(
     company_id: str,
     scan_id: str,
@@ -282,7 +413,8 @@ def write_ratsit_scan(
     if len(selected_company_ids) != len(company_ids):
         raise ValueError("Ratsit company IDs must be unique")
 
-    object_store.ensure_bucket(bucket=RATSIT_S3_BUCKET)
+    if company_ids:
+        object_store.ensure_bucket(bucket=RATSIT_S3_BUCKET)
     stored_reports = reusable_reports or {}
     scan_results: list[RatsitScanResult] = []
     resolved_company_ids: set[str] = set()
@@ -442,9 +574,7 @@ def write_ratsit_scan(
             "Ratsit browser did not return every selected company; missing "
             f"{', '.join(missing_company_ids[:5])}"
         )
-    scan_results_by_company = {
-        result.company_id: result for result in scan_results
-    }
+    scan_results_by_company = {result.company_id: result for result in scan_results}
     ordered_scan_results = tuple(
         scan_results_by_company[company_id] for company_id in company_ids
     )
@@ -477,17 +607,20 @@ def persist_ratsit_scan(
     *,
     recorded_at: datetime | None = None,
 ) -> int:
-    assert_clickhouse_tables_exist(
-        clickhouse,
-        database=RATSIT_CLICKHOUSE_DATABASE,
-        tables=(RATSIT_RESULT_TABLE,),
-    )
     indexed_at = recorded_at or datetime.now(UTC)
     _require_aware_timestamp(indexed_at, label="scan index")
     if summary.completed_at > indexed_at:
         raise ValueError("Ratsit scan cannot be indexed before it completed")
     if len(summary.results) != len(summary.selected_company_ids):
         raise ValueError("A completed Ratsit scan must have one result per company")
+    if not summary.results:
+        return 0
+
+    assert_clickhouse_tables_exist(
+        clickhouse,
+        database=RATSIT_CLICKHOUSE_DATABASE,
+        tables=(RATSIT_RESULT_TABLE,),
+    )
 
     result_rows = [
         (
@@ -529,6 +662,95 @@ def persist_ratsit_scan(
 def _company_prefix(company_id: str) -> str:
     _validate_ratsit_company_id(company_id)
     return f"{RATSIT_S3_PREFIX}/company_id={company_id}"
+
+
+def _has_fresh_ratsit_report_in_s3(
+    object_store: ObjectStoreResource,
+    *,
+    company_id: str,
+    freshness_cutoff: datetime,
+) -> bool:
+    company_prefix = f"{_company_prefix(company_id)}/"
+    recent_report_objects = []
+    for stored_object in object_store.list_objects(
+        company_prefix,
+        bucket=RATSIT_S3_BUCKET,
+    ):
+        _require_aware_timestamp(
+            stored_object.last_modified,
+            label="S3 LastModified",
+        )
+        if not _is_ratsit_report_object_key(
+            stored_object.key,
+            company_prefix=company_prefix,
+        ):
+            continue
+        if stored_object.last_modified.astimezone(UTC) < freshness_cutoff:
+            continue
+        recent_report_objects.append(stored_object)
+
+    for stored_object in sorted(
+        recent_report_objects,
+        key=lambda item: item.last_modified,
+        reverse=True,
+    ):
+        report_bytes = object_store.read_bytes(
+            stored_object.key,
+            bucket=RATSIT_S3_BUCKET,
+        )
+        try:
+            report_document = json.loads(report_bytes)
+        except json.JSONDecodeError, UnicodeDecodeError:
+            continue
+        if _is_valid_stored_ratsit_report(
+            report_document,
+            expected_company_id=company_id,
+        ):
+            return True
+    return False
+
+
+def _is_ratsit_report_object_key(key: str, *, company_prefix: str) -> bool:
+    if not key.startswith(company_prefix):
+        return False
+    object_name = key.removeprefix(company_prefix)
+    return (
+        re.fullmatch(
+            r"[A-Za-z0-9][A-Za-z0-9._-]{0,127}_report\.json",
+            object_name,
+        )
+        is not None
+    )
+
+
+def _is_valid_stored_ratsit_report(
+    document: object,
+    *,
+    expected_company_id: str,
+) -> bool:
+    if not isinstance(document, Mapping):
+        return False
+    if document.get("schema_version") != RATSIT_SCHEMA_VERSION:
+        return False
+    if document.get("parser_version") != RATSIT_PARSER_VERSION:
+        return False
+    if document.get("company_id") != expected_company_id:
+        return False
+    if not isinstance(document.get("requested_url"), str):
+        return False
+    if not isinstance(document.get("source_url"), str):
+        return False
+    report = document.get("report")
+    if not isinstance(report, Mapping):
+        return False
+    try:
+        validate_ratsit_company_report(
+            report,
+            expected_company_id=expected_company_id,
+        )
+    except ValueError:
+        return False
+    return True
 
 
 def _validate_ratsit_company_id(company_id: str) -> None:
@@ -637,6 +859,8 @@ def _require_aware_timestamp(value: datetime, *, label: str) -> None:
     pool=RATSIT_BROWSER_POOL,
     description=(
         "Selects one of 128 stable CRC32 buckets from active corpscout.se_companies, "
+        "skips companies successfully fetched in the previous 30 days using "
+        "ClickHouse fetched_at or an existing valid S3 report's LastModified, "
         "then renders and parses its Ratsit pages with four parallel headless "
         "CloakBrowsers: one direct and three proxied. Each browser spaces request "
         "starts by at least two seconds. Every company outcome is indexed by "
@@ -653,19 +877,43 @@ def se_ratsit_scan_dispatch(
     partition_key = context.partition_key
     scan_id = context.run.run_id
     started_at = datetime.now(UTC)
-    company_ids = load_active_ratsit_company_ids(clickhouse, partition_key)
+    active_company_ids = load_active_ratsit_company_ids(clickhouse, partition_key)
+    freshness_cutoff = started_at - RATSIT_SUCCESS_FRESHNESS
     context.log.info(
-        "Starting Ratsit scan: scan_id=%s partition=%s companies=%s browser_workers=%s "
-        "request_interval_seconds=%s",
+        "Selecting Ratsit companies: scan_id=%s partition=%s active_companies=%s "
+        "freshness_cutoff=%s",
         scan_id,
         partition_key,
+        len(active_company_ids),
+        freshness_cutoff.isoformat(),
+    )
+    selection = select_ratsit_companies_for_scan(
+        clickhouse=clickhouse,
+        object_store=sweden_ratsit_object_store,
+        active_company_ids=active_company_ids,
+        freshness_cutoff=freshness_cutoff,
+    )
+    company_ids = selection.selected_company_ids
+    context.log.info(
+        "Starting Ratsit scan: scan_id=%s partition=%s active_companies=%s "
+        "skipped_clickhouse=%s skipped_s3=%s selected_companies=%s "
+        "browser_workers=%s request_interval_seconds=%s",
+        scan_id,
+        partition_key,
+        len(active_company_ids),
+        len(selection.clickhouse_fresh_company_ids),
+        len(selection.s3_fresh_company_ids),
         len(company_ids),
         RATSIT_BROWSER_WORKER_COUNT,
         sweden_ratsit_browser.request_interval_seconds,
     )
-    reusable_reports = load_reusable_ratsit_reports(
-        clickhouse,
-        company_ids,
+    reusable_reports = (
+        load_reusable_ratsit_reports(
+            clickhouse,
+            company_ids,
+        )
+        if company_ids
+        else {}
     )
     progress_started_at = time.monotonic()
     last_progress_logged_at = progress_started_at
@@ -752,9 +1000,24 @@ def se_ratsit_scan_dispatch(
             "partition_key": partition_key,
             "hash_algorithm": "CRC32",
             "hash_bucket_count": RATSIT_BUCKET_COUNT,
+            "active_company_count": len(selection.active_company_ids),
+            "freshness_window_days": RATSIT_SUCCESS_FRESHNESS.days,
+            "freshness_cutoff": selection.freshness_cutoff.isoformat(),
+            "skipped_recent_clickhouse_count": len(
+                selection.clickhouse_fresh_company_ids
+            ),
+            "skipped_recent_s3_count": len(selection.s3_fresh_company_ids),
+            "skipped_recent_total_count": (
+                len(selection.clickhouse_fresh_company_ids)
+                + len(selection.s3_fresh_company_ids)
+            ),
             "selected_company_count": len(summary.selected_company_ids),
-            "first_company_id": summary.selected_company_ids[0],
-            "last_company_id": summary.selected_company_ids[-1],
+            "first_company_id": (
+                summary.selected_company_ids[0] if summary.selected_company_ids else ""
+            ),
+            "last_company_id": (
+                summary.selected_company_ids[-1] if summary.selected_company_ids else ""
+            ),
             "success_count": summary.success_count,
             "not_found_count": summary.not_found_count,
             "failure_count": summary.failure_count,

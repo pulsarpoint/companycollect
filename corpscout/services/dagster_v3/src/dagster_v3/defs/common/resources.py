@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 from collections.abc import Mapping, Sequence
+from dataclasses import dataclass
+from datetime import datetime
 from pathlib import Path
 from typing import Any, Protocol
 
@@ -9,6 +11,12 @@ import dagster as dg
 from boto3.s3.transfer import TransferConfig
 from botocore.config import Config
 from pydantic import PrivateAttr
+
+
+@dataclass(frozen=True)
+class ObjectStoreObject:
+    key: str
+    last_modified: datetime
 
 
 class S3Client(Protocol):
@@ -147,6 +155,30 @@ class ObjectStoreResource(dg.ConfigurableResource):
             for page in paginator.paginate(Bucket=target_bucket, Prefix=prefix)
             for item in page.get("Contents", [])
         ]
+
+    def list_objects(
+        self,
+        prefix: str,
+        bucket: str | None = None,
+    ) -> list[ObjectStoreObject]:
+        target_bucket = bucket or self.bucket
+        paginator = self.client().get_paginator("list_objects_v2")
+        objects: list[ObjectStoreObject] = []
+        for page in paginator.paginate(Bucket=target_bucket, Prefix=prefix):
+            for item in page.get("Contents", []):
+                key = item.get("Key")
+                last_modified = item.get("LastModified")
+                if not isinstance(key, str) or not isinstance(last_modified, datetime):
+                    raise ValueError(
+                        "S3 object listing did not contain a key and LastModified timestamp"
+                    )
+                objects.append(
+                    ObjectStoreObject(
+                        key=key,
+                        last_modified=last_modified,
+                    )
+                )
+        return objects
 
     def delete_keys(
         self, keys: list[str] | tuple[str, ...], bucket: str | None = None

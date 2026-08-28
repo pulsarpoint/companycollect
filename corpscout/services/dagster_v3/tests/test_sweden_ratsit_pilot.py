@@ -1,7 +1,7 @@
 import gzip
 import json
 from contextlib import contextmanager
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from threading import Barrier
 from typing import Any
 
@@ -9,20 +9,27 @@ import dagster as dg
 import pytest
 
 from dagster_v3.definitions import defs as load_project_defs
+from dagster_v3.defs.common.resources import ObjectStoreObject
 from dagster_v3.defs.sweden_ratsit.assets import (
     RATSIT_BUCKET_COUNT,
     RATSIT_CLICKHOUSE_DATABASE,
     RATSIT_MAX_COMPANIES,
     RATSIT_PARTITIONS,
+    RATSIT_PARSER_VERSION,
     RATSIT_RESULT_COLUMNS,
     RATSIT_RESULT_TABLE,
     RATSIT_S3_BUCKET,
+    RATSIT_SCHEMA_VERSION,
+    RATSIT_SUCCESS_FRESHNESS,
     RatsitScanProgress,
     StoredRatsitReport,
     load_active_ratsit_company_ids,
+    load_fresh_ratsit_company_ids_from_clickhouse,
+    load_fresh_ratsit_company_ids_from_s3,
     persist_ratsit_scan,
     ratsit_bucket_key,
     ratsit_result_object_key,
+    select_ratsit_companies_for_scan,
     write_ratsit_scan,
 )
 from dagster_v3.defs.sweden_ratsit.parser import parse_company_page
@@ -180,7 +187,13 @@ class FakeBrowser:
 class FakeObjectStore:
     def __init__(self) -> None:
         self.objects: dict[str, bytes] = {}
+        self.last_modified: dict[str, datetime] = {}
         self.ensured_buckets: list[str] = []
+        self.listed_prefixes: list[str] = []
+        self.read_keys: list[str] = []
+
+    def client(self) -> "FakeObjectStore":
+        return self
 
     def ensure_bucket(self, bucket: str | None = None) -> None:
         assert bucket is not None
@@ -194,6 +207,7 @@ class FakeObjectStore:
     ) -> None:
         assert bucket == RATSIT_S3_BUCKET
         self.objects[key] = body.encode()
+        self.last_modified[key] = FETCHED_AT
 
     def write_bytes(
         self,
@@ -203,6 +217,28 @@ class FakeObjectStore:
     ) -> None:
         assert bucket == RATSIT_S3_BUCKET
         self.objects[key] = body
+        self.last_modified[key] = FETCHED_AT
+
+    def list_objects(
+        self,
+        prefix: str,
+        bucket: str | None = None,
+    ) -> list[ObjectStoreObject]:
+        assert bucket == RATSIT_S3_BUCKET
+        self.listed_prefixes.append(prefix)
+        return [
+            ObjectStoreObject(
+                key=key,
+                last_modified=self.last_modified[key],
+            )
+            for key in self.objects
+            if key.startswith(prefix)
+        ]
+
+    def read_bytes(self, key: str, bucket: str | None = None) -> bytes:
+        assert bucket == RATSIT_S3_BUCKET
+        self.read_keys.append(key)
+        return self.objects[key]
 
 
 class FakeRatsitResource:
@@ -225,9 +261,11 @@ class FakeClickHouseClient:
         self,
         *,
         active_company_rows: list[tuple[str]] | None = None,
+        fresh_company_rows: list[tuple[str]] | None = None,
     ) -> None:
         self.calls: list[tuple[str, object | None]] = []
         self.active_company_rows = active_company_rows or []
+        self.fresh_company_rows = fresh_company_rows or []
 
     def execute(self, sql: str, parameters: object | None = None):
         self.calls.append((sql, parameters))
@@ -236,6 +274,11 @@ class FakeClickHouseClient:
             return [(table,) for table in parameters["tables"]]
         if "FROM corpscout.se_companies FINAL" in sql:
             return self.active_company_rows
+        if (
+            "FROM corpscout.se_company_ratsit FINAL" in sql
+            and "fetched_at >= %(freshness_cutoff)s" in sql
+        ):
+            return self.fresh_company_rows
         return []
 
 
@@ -246,6 +289,24 @@ class FakeClickHouseResource:
     @contextmanager
     def get_connection(self):
         yield self.client
+
+
+def _stored_report_json(company_id: str) -> bytes:
+    return json.dumps(
+        {
+            "schema_version": RATSIT_SCHEMA_VERSION,
+            "parser_version": RATSIT_PARSER_VERSION,
+            "company_id": company_id,
+            "requested_url": f"https://www.ratsit.se/{company_id[-10:]}",
+            "source_url": (f"https://www.ratsit.se/{company_id[-10:]}-Test_Company"),
+            "report": {
+                "company": {
+                    "name": "Test Company AB",
+                    "organization_number": (f"{company_id[-10:-4]}-{company_id[-4:]}"),
+                }
+            },
+        }
+    ).encode()
 
 
 def _ratsit_browser_resource(
@@ -376,7 +437,9 @@ def test_browser_resource_streams_all_four_round_robin_workers() -> None:
     assert all(browser.closed is True for browser in browsers.values())
 
 
-def test_browser_resource_rejects_more_than_configured_companies_before_launch() -> None:
+def test_browser_resource_rejects_more_than_configured_companies_before_launch() -> (
+    None
+):
     launch_count = 0
 
     def launcher(**_: Any) -> FakeBrowser:
@@ -521,6 +584,197 @@ def test_active_company_selection_reads_one_crc32_bucket() -> None:
     assert parameters == {"bucket_count": 128, "bucket_index": 94}
 
 
+def test_clickhouse_freshness_uses_success_http_200_and_fetched_at() -> None:
+    freshness_cutoff = FETCHED_AT - RATSIT_SUCCESS_FRESHNESS
+    client = FakeClickHouseClient(fresh_company_rows=[(COMPANY_ID,)])
+
+    fresh_company_ids = load_fresh_ratsit_company_ids_from_clickhouse(
+        FakeClickHouseResource(client),  # type: ignore[arg-type]
+        (COMPANY_ID, "5560125790"),
+        freshness_cutoff,
+    )
+
+    assert fresh_company_ids == frozenset({COMPANY_ID})
+    selection_sql, parameters = next(
+        (sql, parameters)
+        for sql, parameters in client.calls
+        if "fetched_at >= %(freshness_cutoff)s" in sql
+    )
+    assert "outcome = 'success'" in selection_sql
+    assert "http_status = 200" in selection_sql
+    assert parameters == {
+        "company_ids": (COMPANY_ID, "5560125790"),
+        "freshness_cutoff": freshness_cutoff,
+    }
+
+
+def test_scan_selection_checks_s3_only_after_clickhouse_fallback() -> None:
+    clickhouse_company_id = COMPANY_ID
+    s3_company_id = "5560125790"
+    retry_company_id = "5560160680"
+    active_company_ids = (
+        clickhouse_company_id,
+        s3_company_id,
+        retry_company_id,
+    )
+    freshness_cutoff = FETCHED_AT - RATSIT_SUCCESS_FRESHNESS
+    client = FakeClickHouseClient(
+        fresh_company_rows=[(clickhouse_company_id,)],
+    )
+    object_store = FakeObjectStore()
+    s3_report_key = ratsit_result_object_key(
+        s3_company_id,
+        "completed-scan",
+        "report.json",
+    )
+    object_store.objects[s3_report_key] = _stored_report_json(s3_company_id)
+    object_store.last_modified[s3_report_key] = FETCHED_AT
+    retry_error_key = ratsit_result_object_key(
+        retry_company_id,
+        "rate-limited-scan",
+        "error.json",
+    )
+    object_store.objects[retry_error_key] = json.dumps(
+        {"http_status": 429, "outcome": "failure"}
+    ).encode()
+    object_store.last_modified[retry_error_key] = FETCHED_AT
+
+    selection = select_ratsit_companies_for_scan(
+        clickhouse=FakeClickHouseResource(client),  # type: ignore[arg-type]
+        object_store=object_store,  # type: ignore[arg-type]
+        active_company_ids=active_company_ids,
+        freshness_cutoff=freshness_cutoff,
+    )
+
+    assert selection.clickhouse_fresh_company_ids == (clickhouse_company_id,)
+    assert selection.s3_fresh_company_ids == (s3_company_id,)
+    assert selection.selected_company_ids == (retry_company_id,)
+    assert selection.freshness_cutoff == freshness_cutoff
+    assert set(object_store.listed_prefixes) == {
+        f"sweden_ratsit/pilot/company_id={s3_company_id}/",
+        f"sweden_ratsit/pilot/company_id={retry_company_id}/",
+    }
+    assert not any(
+        f"company_id={clickhouse_company_id}/" in prefix
+        for prefix in object_store.listed_prefixes
+    )
+    assert object_store.read_keys == [s3_report_key]
+
+
+def test_s3_freshness_rejects_report_older_than_thirty_days() -> None:
+    freshness_cutoff = FETCHED_AT - RATSIT_SUCCESS_FRESHNESS
+    object_store = FakeObjectStore()
+    report_key = ratsit_result_object_key(
+        COMPANY_ID,
+        "stale-scan",
+        "report.json",
+    )
+    object_store.objects[report_key] = _stored_report_json(COMPANY_ID)
+    object_store.last_modified[report_key] = freshness_cutoff - timedelta(seconds=1)
+
+    fresh_company_ids = load_fresh_ratsit_company_ids_from_s3(
+        object_store,  # type: ignore[arg-type]
+        (COMPANY_ID,),
+        freshness_cutoff,
+    )
+
+    assert fresh_company_ids == frozenset()
+    assert object_store.read_keys == []
+
+
+@pytest.mark.parametrize(
+    "report_body",
+    (
+        b"{not-json",
+        _stored_report_json("5560125790"),
+    ),
+)
+def test_s3_freshness_rejects_invalid_or_mismatched_report(
+    report_body: bytes,
+) -> None:
+    freshness_cutoff = FETCHED_AT - RATSIT_SUCCESS_FRESHNESS
+    object_store = FakeObjectStore()
+    report_key = ratsit_result_object_key(
+        COMPANY_ID,
+        "invalid-scan",
+        "report.json",
+    )
+    object_store.objects[report_key] = report_body
+    object_store.last_modified[report_key] = FETCHED_AT
+
+    fresh_company_ids = load_fresh_ratsit_company_ids_from_s3(
+        object_store,  # type: ignore[arg-type]
+        (COMPANY_ID,),
+        freshness_cutoff,
+    )
+
+    assert fresh_company_ids == frozenset()
+
+
+def test_s3_freshness_ignores_retryable_errors_and_not_found_results() -> None:
+    freshness_cutoff = FETCHED_AT - RATSIT_SUCCESS_FRESHNESS
+    object_store = FakeObjectStore()
+    result_keys = (
+        ratsit_result_object_key(COMPANY_ID, "rate-limited", "error.json"),
+        ratsit_result_object_key(COMPANY_ID, "server-error", "error.json"),
+        ratsit_result_object_key(COMPANY_ID, "not-found", "not_found.json"),
+    )
+    payloads = (
+        {"outcome": "failure", "http_status": 429},
+        {"outcome": "failure", "http_status": 500},
+        {"outcome": "not_found", "http_status": 200},
+    )
+    for result_key, payload in zip(result_keys, payloads, strict=True):
+        object_store.objects[result_key] = json.dumps(payload).encode()
+        object_store.last_modified[result_key] = FETCHED_AT
+
+    fresh_company_ids = load_fresh_ratsit_company_ids_from_s3(
+        object_store,  # type: ignore[arg-type]
+        (COMPANY_ID,),
+        freshness_cutoff,
+    )
+
+    assert fresh_company_ids == frozenset()
+    assert object_store.read_keys == []
+
+
+def test_fully_fresh_selection_does_not_write_or_index_an_empty_scan() -> None:
+    freshness_cutoff = FETCHED_AT - RATSIT_SUCCESS_FRESHNESS
+    client = FakeClickHouseClient(fresh_company_rows=[(COMPANY_ID,)])
+    clickhouse = FakeClickHouseResource(client)
+    object_store = FakeObjectStore()
+    selection = select_ratsit_companies_for_scan(
+        clickhouse=clickhouse,  # type: ignore[arg-type]
+        object_store=object_store,  # type: ignore[arg-type]
+        active_company_ids=(COMPANY_ID,),
+        freshness_cutoff=freshness_cutoff,
+    )
+    ratsit = FakeRatsitResource([])
+
+    summary = write_ratsit_scan(
+        object_store=object_store,  # type: ignore[arg-type]
+        ratsit=ratsit,  # type: ignore[arg-type]
+        company_ids=selection.selected_company_ids,
+        scan_id="fully-cached-scan",
+        on_progress=ignore_scan_progress,
+        started_at=FETCHED_AT,
+        completed_at=FETCHED_AT,
+    )
+    indexed_result_count = persist_ratsit_scan(
+        clickhouse,  # type: ignore[arg-type]
+        summary,
+        recorded_at=FETCHED_AT,
+    )
+
+    assert selection.selected_company_ids == ()
+    assert ratsit.requested_ids == ()
+    assert summary.results == ()
+    assert object_store.ensured_buckets == []
+    assert object_store.objects == {}
+    assert indexed_result_count == 0
+    assert not any("INSERT INTO" in sql for sql, _ in client.calls)
+
+
 def test_browser_preserves_canonical_twelve_digit_id_but_requests_final_ten() -> None:
     company_id = "191511286237"
     page = FakePage(
@@ -557,9 +811,7 @@ def test_ratsit_dispatch_and_normalized_table_assets_are_registered() -> None:
 
     assert dg.AssetKey("se_ratsit_scan_dispatch") in asset_keys
     scan_node = repository.asset_graph.get(dg.AssetKey("se_ratsit_scan_dispatch"))
-    assert scan_node.parent_keys == {
-        dg.AssetKey("sweden_company_companies_clickhouse")
-    }
+    assert scan_node.parent_keys == {dg.AssetKey("sweden_company_companies_clickhouse")}
     assert scan_node.partitions_def == RATSIT_PARTITIONS
     for asset_name in (
         "se_ratsit_company",

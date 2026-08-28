@@ -1,6 +1,7 @@
 import importlib
 from collections.abc import Iterator
 from contextlib import contextmanager
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
@@ -88,6 +89,48 @@ def test_object_store_accepts_explicit_transfer_config(tmp_path: Path) -> None:
     )
 
     assert client.transfer_config is transfer_config
+
+
+def test_object_store_lists_keys_with_last_modified_timestamps() -> None:
+    resources = importlib.import_module("dagster_v3.defs.common.resources")
+    last_modified = datetime(2026, 8, 28, 10, 30, tzinfo=UTC)
+
+    class FakePaginator:
+        def paginate(self, **kwargs: str):
+            assert kwargs == {
+                "Bucket": "source-sweden-ratsit",
+                "Prefix": "sweden_ratsit/pilot/company_id=5560004615/",
+            }
+            return [
+                {
+                    "Contents": [
+                        {
+                            "Key": (
+                                "sweden_ratsit/pilot/company_id=5560004615/"
+                                "scan-1_report.json"
+                            ),
+                            "LastModified": last_modified,
+                        }
+                    ]
+                }
+            ]
+
+    class FakeClient:
+        def get_paginator(self, operation_name: str) -> FakePaginator:
+            assert operation_name == "list_objects_v2"
+            return FakePaginator()
+
+    resource = resources.ObjectStoreResource(s3_client=FakeClient())
+
+    assert resource.list_objects(
+        "sweden_ratsit/pilot/company_id=5560004615/",
+        bucket="source-sweden-ratsit",
+    ) == [
+        resources.ObjectStoreObject(
+            key=("sweden_ratsit/pilot/company_id=5560004615/scan-1_report.json"),
+            last_modified=last_modified,
+        )
+    ]
 
 
 def test_project_clickhouse_resource_uses_official_dagster_resource(
