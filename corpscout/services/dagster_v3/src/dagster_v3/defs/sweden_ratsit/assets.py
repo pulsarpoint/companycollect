@@ -2,6 +2,7 @@ import gzip
 import hashlib
 import json
 import re
+import zlib
 from collections import Counter
 from collections.abc import Iterator, Mapping
 from dataclasses import dataclass
@@ -42,108 +43,6 @@ from dagster_v3.defs.sweden_ratsit.resources import (
     ratsit_round_robin_assignments,
 )
 
-RATSIT_COMPANY_IDS = (
-    "5560004615",  # Skanska AB
-    "5560125790",  # Aktiebolaget Volvo
-    "5560160680",  # Telefonaktiebolaget LM Ericsson
-    "5560094178",  # Aktiebolaget Electrolux
-    "5560073495",  # Aktiebolaget SKF
-    "5560593575",  # ASSA ABLOY AB
-    "5560142720",  # Atlas Copco Aktiebolag
-    "5560003468",  # Sandvik Aktiebolag
-    "5560427220",  # H & M Hennes & Mauritz AB
-    "5561034249",  # Telia Company AB
-    "5560482837",  # ICA Gruppen Aktiebolag
-    "5563027241",  # Securitas AB
-    "5563255511",  # Essity Aktiebolag (publ)
-    "5560514142",  # Boliden AB
-    "5565878054",  # Alfa Laval AB
-    "5560614330",  # Peab AB
-    "5020329081",  # Skandinaviska Enskilda Banken AB
-    "5560345174",  # NCC AKTIEBOLAG
-    "5560360793",  # SAAB Aktiebolag
-    "5560840976",  # Scania CV Aktiebolag
-    "5560001629",  # Nouryon International AB
-    "5560001991",  # Bengtsfors Kraft- och industri Aktiebolag
-    "5560002221",  # Nordic Paper Seffle AB
-    "5560003575",  # Axfood Snabbgross AB
-    "5560005190",  # Fastighetsaktiebolaget Mösseberg
-    "5560005323",  # Göteborgs is Aktiebolag
-    "5560005331",  # Husqvarna AB
-    "5560006628",  # KFUK-KFUM:s i Eskilstuna Fastighetsaktiebolag
-    "5560008038",  # Fastighetsaktiebolaget Skeppsbron
-    "5560011248",  # Karlskoga Industrifastighets AB
-    "5560013301",  # Holmen Aktiebolag
-    "5560016122",  # Gränges AB
-    "5560016817",  # Fastighetsaktiebolaget Bubblan i Åre
-    "5560019282",  # Hellekis Säteri Aktiebolag
-    "5560019399",  # Växthuset i Ås Aktiebolag
-    "5560019480",  # Sundsvalls Hantverksförening Aktiebolag
-    "5560020017",  # Malmö Frimurare Byggnads Aktiebolag
-    "5560020165",  # Fastighets AB Bergshamra sågen
-    "5560020231",  # Nobel Biocare AB
-    "5560022617",  # Ursviken Technology AB
-    "5560022807",  # Aktiebolaget Carl Söderberg
-    "5560025156",  # Svenska Granitindustri Aktiebolag
-    "5560026113",  # Gränges Finspång AB
-    "5560026311",  # Byggnadsaktiebolaget Engelbrekt
-    "5560026501",  # Virgula Aktiebolag
-    "5560026766",  # Biovestor Aktiebolag
-    "5560027327",  # Gårda Fabrikers Aktiebolag
-    "5560028150",  # Härlingstorps Aktiebolag
-    "5560029265",  # Odd Fellow i Göteborg Förvaltnings AB
-    "5560029539",  # Medevi Brunn AB
-    "5560029729",  # Aktiebolaget Jersey Depot
-    "5560030354",  # Electrolux Professional AB (publ)
-    "5560031212",  # Stockholms Borstbinderi Aktiebolag
-    "5560031386",  # Tidningshuset Storstadspress Aktiebolag
-    "5560031410",  # Ammers Såg & Qvarn AB
-    "5560031634",  # Alen Livs AB
-    "5560032046",  # Golltan AB
-    "5560032764",  # Rederiaktiebolaget Roslagen
-    "5560032921",  # Siemens Aktiebolag
-    "5560033143",  # ActiVera Sweden AB
-    "5560033457",  # Gertrud Fastigheter AB
-    "5560033978",  # Aktiebolaget Borås Tidning
-    "5560035643",  # Karlsö jagt- och djurskyddsförenings aktiebolag
-    "5560035874",  # Talent Plastics Laxå AB
-    "5560041161",  # Nordemans Förvaltnings Aktiebolag
-    "5560041708",  # Aktiebolaget 3127 Alfhem
-    "5560042060",  # Mo och Domsjö Aktiebolag
-    "5560044736",  # Sten och Tegelaktiebolaget
-    "5560047127",  # Lyckornagruppen AB
-    "5560048372",  # Svenska Fastighetsaktiebolaget
-    "5560049529",  # Masmästaren Näktergalen AB
-    "5560050204",  # Carl Folke & Co Aktiebolag
-    "5560050832",  # C.J.Walls sågeri och trävaru aktiebolag
-    "5560052358",  # Festspecialisten Buttericks Aktiebolag
-    "5560053331",  # SILIKATENS SERVICE Aktiebolag
-    "5560057662",  # Urbana Holding AB
-    "5560059759",  # Aktiebolaget Gäddeglo Tegelbruk
-    "5560059775",  # Byggnadsaktiebolaget Unitas i Wisby
-    "5560062761",  # Gripsholms-Mariefreds Ångfartygsaktiebolag
-    "5560063421",  # Trelleborg AB
-    "5560068321",  # Sätuna aktiebolag
-    "5560068586",  # BonBalance AB
-    "5560068701",  # Aktiebolaget Himmelsö
-    "5560068990",  # Fastighetsaktiebolaget Vinaman
-    "5560069840",  # Starbo Bruk Aktiebolag
-    "5560070756",  # Tantum AB
-    "5560071473",  # Smörjteknik Norden AB
-    "5560071671",  # Starfors Säteri AB
-    "5560073800",  # Västkustens Skogs AB
-    "5560073842",  # Fjällnäs Aktiebolag
-    "5560074626",  # Söderströmgruppen Aktiebolag
-    "5560075557",  # Handelsaktiebolaget i Ousby
-    "5560079799",  # Triangelbolaget D4 Aktiebolag
-    "5560081621",  # Elanders AB
-    "5560082892",  # Flerohopps Bruks Aktiebolag
-    "5560083585",  # Ratos AB
-    "5560085440",  # Disperator AB
-    "5560086661",  # ABW Equipment AB
-    "5560087743",  # Aktiebolaget Karlshälls Granitindustri
-    "5560088402",  # Aktiebolaget Ingarö Strand
-)
 RATSIT_MAX_COMPANIES = RATSIT_HARD_MAX_COMPANIES
 RATSIT_S3_BUCKET = "source-sweden-ratsit"
 RATSIT_S3_PREFIX = "sweden_ratsit/pilot"
@@ -152,7 +51,12 @@ RATSIT_PARSER_VERSION = "ratsit-html-v1"
 RATSIT_BROWSER_POOL = "sweden_ratsit_browser"
 RATSIT_NORMALIZE_POOL = "sweden_ratsit_normalize"
 RATSIT_CLICKHOUSE_DATABASE = "corpscout"
+RATSIT_ACTIVE_COMPANIES_TABLE = "se_companies"
 RATSIT_RESULT_TABLE = "se_company_ratsit"
+RATSIT_BUCKET_COUNT = 128
+RATSIT_PARTITIONS = dg.StaticPartitionsDefinition(
+    [f"bucket_{bucket_index:03d}" for bucket_index in range(RATSIT_BUCKET_COUNT)]
+)
 
 RATSIT_RESULT_COLUMNS = (
     "scan_id",
@@ -237,6 +141,58 @@ class RatsitScanSummary:
         return tuple(result.result_object_key for result in self.results)
 
 
+def ratsit_bucket_key(company_id: str) -> str:
+    _validate_ratsit_company_id(company_id)
+    bucket_index = zlib.crc32(company_id.encode("ascii")) % RATSIT_BUCKET_COUNT
+    return f"bucket_{bucket_index:03d}"
+
+
+def load_active_ratsit_company_ids(
+    clickhouse: ClickhouseResource,
+    partition_key: str,
+) -> tuple[str, ...]:
+    bucket_index = _ratsit_bucket_index(partition_key)
+    assert_clickhouse_tables_exist(
+        clickhouse,
+        database=RATSIT_CLICKHOUSE_DATABASE,
+        tables=(RATSIT_ACTIVE_COMPANIES_TABLE,),
+    )
+    with clickhouse.get_connection() as client:
+        rows = client.execute(
+            f"""
+            SELECT company_id
+            FROM {RATSIT_CLICKHOUSE_DATABASE}.{RATSIT_ACTIVE_COMPANIES_TABLE} FINAL
+            WHERE status = 'active'
+              AND modulo(CRC32(company_id), %(bucket_count)s) = %(bucket_index)s
+            ORDER BY company_id
+            """,
+            {
+                "bucket_count": RATSIT_BUCKET_COUNT,
+                "bucket_index": bucket_index,
+            },
+        )
+
+    company_ids = tuple(str(row[0]) for row in rows)
+    if not company_ids:
+        raise ValueError(f"Ratsit partition {partition_key} has no active companies")
+    if len(company_ids) > RATSIT_MAX_COMPANIES:
+        raise ValueError(
+            f"Ratsit partition {partition_key} contains {len(company_ids)} companies; "
+            f"the safety limit is {RATSIT_MAX_COMPANIES}"
+        )
+    if len(set(company_ids)) != len(company_ids):
+        raise ValueError(
+            f"Ratsit partition {partition_key} contains duplicate company IDs"
+        )
+    for company_id in company_ids:
+        _validate_ratsit_company_id(company_id)
+        if ratsit_bucket_key(company_id) != partition_key:
+            raise ValueError(
+                f"Ratsit company {company_id} does not belong to {partition_key}"
+            )
+    return company_ids
+
+
 def ratsit_result_object_key(
     company_id: str,
     scan_id: str,
@@ -304,16 +260,14 @@ def write_ratsit_scan(
 
     scan_started_at = started_at or datetime.now(UTC)
     _require_aware_timestamp(scan_started_at, label="scan start")
-    results = tuple(ratsit.iter_company_reports(company_ids))
-    resolved_company_ids = tuple(result.company_id for result in results)
-    if resolved_company_ids != company_ids:
-        raise RuntimeError(
-            "Ratsit browser did not resolve each selected company exactly once"
-        )
+    selected_company_ids = set(company_ids)
+    if len(selected_company_ids) != len(company_ids):
+        raise ValueError("Ratsit company IDs must be unique")
 
     object_store.ensure_bucket(bucket=RATSIT_S3_BUCKET)
     stored_reports = reusable_reports or {}
     scan_results: list[RatsitScanResult] = []
+    resolved_company_ids: set[str] = set()
     success_count = 0
     not_found_count = 0
     failure_count = 0
@@ -321,7 +275,16 @@ def write_ratsit_scan(
     diagnostic_html_count = 0
     written_object_count = 0
 
-    for result in results:
+    for result in ratsit.iter_company_reports(company_ids):
+        if result.company_id not in selected_company_ids:
+            raise RuntimeError(
+                f"Ratsit browser returned unselected company {result.company_id}"
+            )
+        if result.company_id in resolved_company_ids:
+            raise RuntimeError(
+                f"Ratsit browser returned company {result.company_id} more than once"
+            )
+        resolved_company_ids.add(result.company_id)
         if isinstance(result, RatsitCompanyReport):
             report_json = _report_json(result)
             report_sha256 = _sha256(report_json)
@@ -440,11 +403,24 @@ def write_ratsit_scan(
             )
         )
 
+    if resolved_company_ids != selected_company_ids:
+        missing_company_ids = sorted(selected_company_ids - resolved_company_ids)
+        raise RuntimeError(
+            "Ratsit browser did not return every selected company; missing "
+            f"{', '.join(missing_company_ids[:5])}"
+        )
+    scan_results_by_company = {
+        result.company_id: result for result in scan_results
+    }
+    ordered_scan_results = tuple(
+        scan_results_by_company[company_id] for company_id in company_ids
+    )
+
     scan_completed_at = completed_at or datetime.now(UTC)
     _require_aware_timestamp(scan_completed_at, label="scan completion")
     if scan_completed_at < scan_started_at:
         raise ValueError("Ratsit scan cannot complete before it starts")
-    if any(result.fetched_at > scan_completed_at for result in scan_results):
+    if any(result.fetched_at > scan_completed_at for result in ordered_scan_results):
         raise ValueError("Ratsit scan cannot complete before a company was fetched")
 
     return RatsitScanSummary(
@@ -452,7 +428,7 @@ def write_ratsit_scan(
         selected_company_ids=company_ids,
         started_at=scan_started_at,
         completed_at=scan_completed_at,
-        results=tuple(scan_results),
+        results=ordered_scan_results,
         success_count=success_count,
         not_found_count=not_found_count,
         failure_count=failure_count,
@@ -518,9 +494,25 @@ def persist_ratsit_scan(
 
 
 def _company_prefix(company_id: str) -> str:
-    if re.fullmatch(r"[0-9]{10}", company_id) is None:
-        raise ValueError("Ratsit company ID must contain exactly ten digits")
+    _validate_ratsit_company_id(company_id)
     return f"{RATSIT_S3_PREFIX}/company_id={company_id}"
+
+
+def _validate_ratsit_company_id(company_id: str) -> None:
+    if re.fullmatch(r"(?:[0-9]{10}|[0-9]{12})", company_id) is None:
+        raise ValueError("Ratsit company ID must contain ten or twelve digits")
+
+
+def _ratsit_bucket_index(partition_key: str) -> int:
+    prefix, separator, suffix = partition_key.partition("_")
+    if prefix != "bucket" or separator == "" or not suffix.isdigit():
+        raise ValueError(f"Invalid Ratsit partition: {partition_key!r}")
+    bucket_index = int(suffix)
+    if not 0 <= bucket_index < RATSIT_BUCKET_COUNT:
+        raise ValueError(f"Ratsit partition is out of range: {partition_key}")
+    if partition_key != f"bucket_{bucket_index:03d}":
+        raise ValueError(f"Invalid Ratsit partition: {partition_key!r}")
+    return bucket_index
 
 
 def _validate_scan_id(scan_id: str) -> None:
@@ -597,6 +589,7 @@ def _require_aware_timestamp(value: datetime, *, label: str) -> None:
 
 
 @dg.asset(
+    deps=[dg.AssetKey("sweden_company_companies_clickhouse")],
     group_name="sweden_ratsit",
     kinds={"python", "browser", "html", "json", "s3", "clickhouse", "ratsit"},
     tags={
@@ -606,14 +599,16 @@ def _require_aware_timestamp(value: datetime, *, label: str) -> None:
         "entity_type": "company",
         "layer": "scan_dispatch",
     },
+    partitions_def=RATSIT_PARTITIONS,
+    backfill_policy=dg.BackfillPolicy.multi_run(max_partitions_per_run=1),
     pool=RATSIT_BROWSER_POOL,
     description=(
-        "Renders and parses the same 100 Ratsit company pages with four parallel "
-        "headless CloakBrowsers: one direct and three proxied. Companies are "
-        "assigned round-robin, and each browser spaces request starts by at "
-        "least two seconds. Every company outcome is indexed by Dagster run ID "
-        "in ClickHouse. Changed reports are written to per-company run-ID keys; "
-        "identical report hashes reuse the prior S3 object."
+        "Selects one of 128 stable CRC32 buckets from active corpscout.se_companies, "
+        "then renders and parses its Ratsit pages with four parallel headless "
+        "CloakBrowsers: one direct and three proxied. Each browser spaces request "
+        "starts by at least two seconds. Every company outcome is indexed by "
+        "Dagster run ID in ClickHouse. Changed reports are written to per-company "
+        "run-ID keys; identical report hashes reuse the prior S3 object."
     ),
 )
 def se_ratsit_scan_dispatch(
@@ -622,29 +617,33 @@ def se_ratsit_scan_dispatch(
     sweden_ratsit_browser: SwedenRatsitBrowserResource,
     sweden_ratsit_object_store: ObjectStoreResource,
 ) -> dg.MaterializeResult:
+    partition_key = context.partition_key
     scan_id = context.run.run_id
     started_at = datetime.now(UTC)
+    company_ids = load_active_ratsit_company_ids(clickhouse, partition_key)
     context.log.info(
-        "Starting Ratsit scan: scan_id=%s companies=%s browser_workers=%s "
+        "Starting Ratsit scan: scan_id=%s partition=%s companies=%s browser_workers=%s "
         "request_interval_seconds=%s",
         scan_id,
-        len(RATSIT_COMPANY_IDS),
+        partition_key,
+        len(company_ids),
         RATSIT_BROWSER_WORKER_COUNT,
         sweden_ratsit_browser.request_interval_seconds,
     )
     reusable_reports = load_reusable_ratsit_reports(
         clickhouse,
-        RATSIT_COMPANY_IDS,
+        company_ids,
     )
     summary = write_ratsit_scan(
         object_store=sweden_ratsit_object_store,
         ratsit=sweden_ratsit_browser,
-        company_ids=RATSIT_COMPANY_IDS,
+        company_ids=company_ids,
         scan_id=scan_id,
         reusable_reports=reusable_reports,
         started_at=started_at,
     )
     indexed_result_count = persist_ratsit_scan(clickhouse, summary)
+    browser_assignments = ratsit_round_robin_assignments(summary.selected_company_ids)
     http_429_counts_by_route = {
         worker_name: sum(
             1
@@ -652,9 +651,7 @@ def se_ratsit_scan_dispatch(
             if result.http_status == 429
             and (result.proxy_name if result.proxy_name else "direct") == worker_name
         )
-        for worker_name, _ in ratsit_round_robin_assignments(
-            summary.selected_company_ids
-        )
+        for worker_name, _ in browser_assignments
     }
     http_429_count = sum(http_429_counts_by_route.values())
 
@@ -672,7 +669,12 @@ def se_ratsit_scan_dispatch(
     return dg.MaterializeResult(
         metadata={
             "scan_id": scan_id,
+            "partition_key": partition_key,
+            "hash_algorithm": "CRC32",
+            "hash_bucket_count": RATSIT_BUCKET_COUNT,
             "selected_company_count": len(summary.selected_company_ids),
+            "first_company_id": summary.selected_company_ids[0],
+            "last_company_id": summary.selected_company_ids[-1],
             "success_count": summary.success_count,
             "not_found_count": summary.not_found_count,
             "failure_count": summary.failure_count,
@@ -680,18 +682,14 @@ def se_ratsit_scan_dispatch(
             "diagnostic_html_count": summary.diagnostic_html_count,
             "written_object_count": summary.written_object_count,
             "indexed_result_count": indexed_result_count,
-            "company_ids": list(summary.selected_company_ids),
-            "browser_assignments": {
-                worker_name: list(company_ids)
-                for worker_name, company_ids in ratsit_round_robin_assignments(
-                    summary.selected_company_ids
-                )
+            "browser_assignment_counts": {
+                worker_name: len(assigned_company_ids)
+                for worker_name, assigned_company_ids in browser_assignments
             },
             "browser_worker_count": RATSIT_BROWSER_WORKER_COUNT,
             "proxy_browser_count": RATSIT_BROWSER_WORKER_COUNT - 1,
             "http_429_count": http_429_count,
             "http_429_counts_by_route": http_429_counts_by_route,
-            "result_object_keys": list(summary.result_object_keys),
             "result_table": (f"{RATSIT_CLICKHOUSE_DATABASE}.{RATSIT_RESULT_TABLE}"),
             "headless": sweden_ratsit_browser.headless,
             "request_interval_seconds": (
@@ -859,6 +857,8 @@ RATSIT_NORMALIZATION_DEPS = (
             ),
         ),
     ],
+    partitions_def=RATSIT_PARTITIONS,
+    backfill_policy=dg.BackfillPolicy.multi_run(max_partitions_per_run=1),
     pool=RATSIT_NORMALIZE_POOL,
     can_subset=False,
 )
@@ -868,12 +868,19 @@ def se_ratsit_normalized(
     sweden_ratsit_object_store: ObjectStoreResource,
 ) -> Iterator[dg.MaterializeResult]:
     """Normalize the latest successful report per company without launching browsers."""
+    partition_key = context.partition_key
+    bucket_index = _ratsit_bucket_index(partition_key)
     normalized_at = datetime.now(UTC)
-    selection = select_latest_unnormalized_ratsit_reports(clickhouse)
+    selection = select_latest_unnormalized_ratsit_reports(
+        clickhouse,
+        bucket_count=RATSIT_BUCKET_COUNT,
+        bucket_index=bucket_index,
+    )
     nace_class_codes = load_nace_rev_2_1_class_codes(clickhouse)
     context.log.info(
-        "Starting Ratsit JSON normalization: latest_successes=%s "
+        "Starting Ratsit JSON normalization: partition=%s latest_successes=%s "
         "already_normalized=%s candidates=%s normalizer_version=%s",
+        partition_key,
         selection.latest_success_count,
         selection.already_normalized_count,
         len(selection.reports),
@@ -920,6 +927,9 @@ def se_ratsit_normalized(
         inserted_rows,
     )
     common_metadata = {
+        "partition_key": partition_key,
+        "hash_algorithm": "CRC32",
+        "hash_bucket_count": RATSIT_BUCKET_COUNT,
         "latest_success_count": selection.latest_success_count,
         "already_normalized_count": selection.already_normalized_count,
         "normalized_report_count": len(normalized_reports),
@@ -927,9 +937,7 @@ def se_ratsit_normalized(
         "nace_revision": RATSIT_NACE_REVISION,
         "nace_class_reference_count": len(nace_class_codes),
         "normalized_at": normalized_at.isoformat(),
-        "result_object_keys": [
-            report.result_object_key for report in selection.reports
-        ],
+        "result_object_key_count": len(selection.reports),
         **normalization_statistics,
     }
     for table in RATSIT_NORMALIZED_TABLES:
@@ -946,15 +954,15 @@ def se_ratsit_normalized(
 se_ratsit_scan_dispatch_job = dg.define_asset_job(
     name="se_ratsit_scan_dispatch_job",
     selection=dg.AssetSelection.assets(se_ratsit_scan_dispatch),
-    description="Run the fixed 100-company Ratsit scan.",
+    description="Run one stable bucket of active Swedish companies through Ratsit.",
 )
 
 se_ratsit_normalize_job = dg.define_asset_job(
     name="se_ratsit_normalize_job",
     selection=dg.AssetSelection.assets(*RATSIT_NORMALIZED_TABLES),
     description=(
-        "Normalize each company's latest successful Ratsit S3 report into "
-        "source-specific ClickHouse tables."
+        "Normalize one bucket of companies' latest successful Ratsit S3 reports "
+        "into source-specific ClickHouse tables."
     ),
 )
 

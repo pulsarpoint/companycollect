@@ -563,7 +563,9 @@ def test_latest_success_selection_skips_an_already_normalized_hash() -> None:
     )
 
     selection = select_latest_unnormalized_ratsit_reports(
-        FakeClickHouseResource(client)  # type: ignore[arg-type]
+        FakeClickHouseResource(client),  # type: ignore[arg-type]
+        bucket_count=128,
+        bucket_index=65,
     )
 
     assert selection.latest_success_count == 2
@@ -575,8 +577,26 @@ def test_latest_success_selection_skips_an_already_normalized_hash() -> None:
         if "FROM corpscout.se_company_ratsit FINAL" in sql
     )
     assert "WHERE outcome = 'success'" in latest_sql
+    assert "modulo(CRC32(company_id), %(bucket_count)s)" in latest_sql
     assert "argMax(" in latest_sql
     assert "GROUP BY company_id" in latest_sql
+    latest_parameters = next(
+        parameters
+        for sql, parameters in client.calls
+        if "FROM corpscout.se_company_ratsit FINAL" in sql
+    )
+    assert latest_parameters == {"bucket_count": 128, "bucket_index": 65}
+    existing_sql, existing_parameters = next(
+        (sql, parameters)
+        for sql, parameters in client.calls
+        if "FROM corpscout.se_ratsit_company FINAL" in sql
+    )
+    assert "modulo(CRC32(company_id), %(bucket_count)s)" in existing_sql
+    assert existing_parameters == {
+        "normalizer_version": RATSIT_NORMALIZER_VERSION,
+        "bucket_count": 128,
+        "bucket_index": 65,
+    }
 
 
 def test_normalized_rows_are_inserted_with_company_completion_marker_last() -> None:

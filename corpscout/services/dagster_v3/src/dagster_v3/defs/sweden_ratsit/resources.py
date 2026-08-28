@@ -5,6 +5,8 @@ from collections.abc import Callable, Iterator, Mapping, Sequence
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
 from datetime import UTC, datetime
+from queue import Queue
+from threading import Event
 from typing import Any, Literal, Self
 from urllib.parse import parse_qsl, urlsplit
 
@@ -20,7 +22,7 @@ from dagster_v3.defs.sweden_ratsit.parser import (
 )
 
 RATSIT_BASE_URL = "https://www.ratsit.se"
-RATSIT_HARD_MAX_COMPANIES = 100
+RATSIT_HARD_MAX_COMPANIES = 50_000
 RATSIT_MIN_REQUEST_INTERVAL_SECONDS = 2.0
 RATSIT_DEFAULT_PAGE_TIMEOUT_MS = 60_000
 type RatsitBrowserWorkerName = Literal[
@@ -93,7 +95,7 @@ type RatsitCompanyResult = (
 
 
 class SwedenRatsitBrowserResource(dg.ConfigurableResource):
-    """Four concurrent CloakBrowser workers for a fixed Ratsit scan."""
+    """Four concurrent CloakBrowser workers for one Ratsit company partition."""
 
     base_url: str = RATSIT_BASE_URL
     headless: bool = True
@@ -155,12 +157,15 @@ class SwedenRatsitBrowserResource(dg.ConfigurableResource):
             if worker_company_ids
         )
 
+        events: Queue[RatsitCompanyResult | Exception | None] = Queue()
+        stop_requested = Event()
+
         def fetch_worker(
             worker: tuple[RatsitBrowserWorkerName, str | None, tuple[str, ...]],
-        ) -> tuple[RatsitCompanyResult, ...]:
+        ) -> None:
             worker_name, proxy_url, worker_company_ids = worker
-            return tuple(
-                self._iter_browser_reports(
+            try:
+                for result in self._iter_browser_reports(
                     worker_company_ids,
                     worker_name=worker_name,
                     proxy_url=proxy_url,
@@ -168,28 +173,51 @@ class SwedenRatsitBrowserResource(dg.ConfigurableResource):
                     monotonic=monotonic,
                     sleep=sleep,
                     now=now,
-                )
-            )
+                ):
+                    if stop_requested.is_set():
+                        break
+                    events.put(result)
+            except Exception as error:
+                stop_requested.set()
+                events.put(error)
+            finally:
+                events.put(None)
 
         with ThreadPoolExecutor(
             max_workers=len(active_workers),
             thread_name_prefix="ratsit_browser",
         ) as executor:
-            worker_results = tuple(executor.map(fetch_worker, active_workers))
+            futures = tuple(
+                executor.submit(fetch_worker, worker) for worker in active_workers
+            )
+            completed_workers = 0
+            worker_error: Exception | None = None
+            resolved_company_ids: list[str] = []
+            try:
+                while completed_workers < len(active_workers):
+                    event = events.get()
+                    if event is None:
+                        completed_workers += 1
+                        continue
+                    if isinstance(event, Exception):
+                        worker_error = worker_error or event
+                        continue
+                    if worker_error is None:
+                        resolved_company_ids.append(event.company_id)
+                        yield event
+                for future in futures:
+                    future.result()
+                if worker_error is not None:
+                    raise worker_error
+            finally:
+                stop_requested.set()
 
-        results = tuple(
-            result for worker_result in worker_results for result in worker_result
-        )
-        resolved_company_ids = tuple(result.company_id for result in results)
         if len(resolved_company_ids) != len(selected_company_ids) or set(
             resolved_company_ids
         ) != set(selected_company_ids):
             raise RuntimeError(
                 "Ratsit browser workers did not return each selected company exactly once"
             )
-
-        ordered_results = {result.company_id: result for result in results}
-        yield from (ordered_results[company_id] for company_id in selected_company_ids)
 
     def _iter_browser_reports(
         self,
@@ -410,7 +438,7 @@ class SwedenRatsitBrowserResource(dg.ConfigurableResource):
 
 def ratsit_company_url(base_url: str, company_id: str) -> str:
     _validate_company_id(company_id)
-    return validate_ratsit_url(f"{base_url.rstrip('/')}/{company_id}")
+    return validate_ratsit_url(f"{base_url.rstrip('/')}/{company_id[-10:]}")
 
 
 def ratsit_round_robin_assignments(
@@ -439,8 +467,8 @@ def _validate_company_ids(
 
 
 def _validate_company_id(company_id: str) -> None:
-    if re.fullmatch(r"[0-9]{10}", company_id) is None:
-        raise ValueError("Ratsit company ID must contain exactly ten digits")
+    if re.fullmatch(r"(?:[0-9]{10}|[0-9]{12})", company_id) is None:
+        raise ValueError("Ratsit company ID must contain ten or twelve digits")
 
 
 def _wait_for_request_slot(
@@ -535,7 +563,7 @@ def _validate_company_report(
     if not isinstance(organization_number, str):
         raise ValueError("Ratsit company page did not contain an organization number")
     normalized_number = re.sub(r"\D", "", organization_number)
-    if normalized_number != expected_company_id:
+    if normalized_number != expected_company_id[-10:]:
         raise ValueError(
             "Ratsit organization number did not match the requested company"
         )

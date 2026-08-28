@@ -358,6 +358,7 @@ EXPECTED_MIGRATIONS = (
     "000346_corpscout_se_ratsit_normalization_v2",
     "000347_corpscout_se_companies_serving_eodhd_listed",
     "000348_corpscout_drop_serving_retired_v2",
+    "000349_corpscout_se_company_ratsit_partition_ids",
 )
 
 NOOP_MIGRATIONS = {"000276_noop"}
@@ -3634,6 +3635,20 @@ def test_ratsit_sole_trader_id_migration_repairs_applied_constraints() -> None:
 
     assert "^[0-9]{10}$" in down_sql
     assert "concat('https://www.ratsit.se/', company_id)" in down_sql
+
+
+def test_ratsit_partition_ids_migration_restores_canonical_company_ids() -> None:
+    up_sql = _migration_sql(
+        "000349_corpscout_se_company_ratsit_partition_ids.up.sql"
+    )
+    down_sql = _migration_sql(
+        "000349_corpscout_se_company_ratsit_partition_ids.down.sql"
+    )
+
+    assert "ALTER TABLE corpscout.se_company_ratsit" in up_sql
+    assert "DROP CONSTRAINT se_company_ratsit_company_id" in up_sql
+    assert "^([0-9]{10}|[0-9]{12})$" in up_sql
+    assert "^[0-9]{10}$" in down_sql
 
 
 def test_ratsit_reports_migration_replaces_temporal_results_with_s3_catalog() -> None:

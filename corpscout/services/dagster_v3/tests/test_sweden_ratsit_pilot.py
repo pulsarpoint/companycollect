@@ -10,14 +10,17 @@ import pytest
 
 from dagster_v3.definitions import defs as load_project_defs
 from dagster_v3.defs.sweden_ratsit.assets import (
+    RATSIT_BUCKET_COUNT,
     RATSIT_CLICKHOUSE_DATABASE,
-    RATSIT_COMPANY_IDS,
     RATSIT_MAX_COMPANIES,
+    RATSIT_PARTITIONS,
     RATSIT_RESULT_COLUMNS,
     RATSIT_RESULT_TABLE,
     RATSIT_S3_BUCKET,
     StoredRatsitReport,
+    load_active_ratsit_company_ids,
     persist_ratsit_scan,
+    ratsit_bucket_key,
     ratsit_result_object_key,
     write_ratsit_scan,
 )
@@ -28,6 +31,7 @@ from dagster_v3.defs.sweden_ratsit.resources import (
     RatsitCompanyNotFound,
     RatsitCompanyReport,
     SwedenRatsitBrowserResource,
+    ratsit_company_url,
     ratsit_round_robin_assignments,
 )
 
@@ -38,6 +42,13 @@ TEST_PROXY_URLS = (
     "http://proxy-user:proxy-password@proxy1.example:8080",
     "http://proxy-user:proxy-password@proxy2.example:8080",
     "http://proxy-user:proxy-password@proxy3.example:8080",
+)
+ROUND_ROBIN_COMPANY_IDS = (
+    "5560004615",
+    "5560125790",
+    "5560160680",
+    "5560094178",
+    "5560073495",
 )
 
 COMPANY_HTML = """
@@ -203,13 +214,21 @@ class FakeRatsitResource:
 
 
 class FakeClickHouseClient:
-    def __init__(self) -> None:
+    def __init__(
+        self,
+        *,
+        active_company_rows: list[tuple[str]] | None = None,
+    ) -> None:
         self.calls: list[tuple[str, object | None]] = []
+        self.active_company_rows = active_company_rows or []
 
     def execute(self, sql: str, parameters: object | None = None):
         self.calls.append((sql, parameters))
         if "FROM system.tables" in sql:
-            return [(RATSIT_RESULT_TABLE,)]
+            assert isinstance(parameters, dict)
+            return [(table,) for table in parameters["tables"]]
+        if "FROM corpscout.se_companies FINAL" in sql:
+            return self.active_company_rows
         return []
 
 
@@ -222,11 +241,15 @@ class FakeClickHouseResource:
         yield self.client
 
 
-def _ratsit_browser_resource() -> SwedenRatsitBrowserResource:
+def _ratsit_browser_resource(
+    *,
+    max_companies: int = RATSIT_MAX_COMPANIES,
+) -> SwedenRatsitBrowserResource:
     return SwedenRatsitBrowserResource(
         crawl_proxy1=TEST_PROXY_URLS[0],
         crawl_proxy2=TEST_PROXY_URLS[1],
         crawl_proxy3=TEST_PROXY_URLS[2],
+        max_companies=max_companies,
     )
 
 
@@ -272,8 +295,8 @@ def test_parser_extracts_company_identity_address_description_and_financials() -
     ]
 
 
-def test_browser_resource_runs_four_round_robin_workers_and_preserves_order() -> None:
-    company_ids = RATSIT_COMPANY_IDS[:5]
+def test_browser_resource_streams_all_four_round_robin_workers() -> None:
+    company_ids = ROUND_ROBIN_COMPANY_IDS
     proxy_urls = (None, *TEST_PROXY_URLS)
     clock = FakeClock()
     browsers: dict[str | None, FakeBrowser] = {}
@@ -314,9 +337,16 @@ def test_browser_resource_runs_four_round_robin_workers_and_preserves_order() ->
         )
     )
 
-    assert [result.company_id for result in reports] == list(company_ids)
+    reports_by_company = {result.company_id: result for result in reports}
+    assert set(reports_by_company) == set(company_ids)
     assert all(isinstance(result, RatsitCompanyReport) for result in reports)
-    assert [(result.connection_mode, result.proxy_name) for result in reports] == [
+    assert [
+        (
+            reports_by_company[company_id].connection_mode,
+            reports_by_company[company_id].proxy_name,
+        )
+        for company_id in company_ids
+    ] == [
         ("direct", ""),
         ("proxy", "crawl_proxy1"),
         ("proxy", "crawl_proxy2"),
@@ -339,9 +369,7 @@ def test_browser_resource_runs_four_round_robin_workers_and_preserves_order() ->
     assert all(browser.closed is True for browser in browsers.values())
 
 
-def test_browser_resource_rejects_more_than_one_hundred_companies_before_launch() -> (
-    None
-):
+def test_browser_resource_rejects_more_than_configured_companies_before_launch() -> None:
     launch_count = 0
 
     def launcher(**_: Any) -> FakeBrowser:
@@ -349,10 +377,10 @@ def test_browser_resource_rejects_more_than_one_hundred_companies_before_launch(
         launch_count += 1
         raise AssertionError("browser must not start")
 
-    with pytest.raises(ValueError, match="at most 100"):
+    with pytest.raises(ValueError, match="at most 2"):
         list(
-            _ratsit_browser_resource().iter_company_reports(
-                tuple(f"{i:010d}" for i in range(101)),
+            _ratsit_browser_resource(max_companies=2).iter_company_reports(
+                ("5560004615", "5560125790", "5560160680"),
                 launcher=launcher,
             )
         )
@@ -441,19 +469,79 @@ def test_browser_resource_treats_http_404_as_not_found() -> None:
     assert failure.diagnostic_html is None
 
 
-def test_scan_defaults_are_exactly_one_hundred_unique_companies() -> None:
-    assert RATSIT_MAX_COMPANIES == 100
-    assert len(RATSIT_COMPANY_IDS) == RATSIT_MAX_COMPANIES
-    assert len(set(RATSIT_COMPANY_IDS)) == RATSIT_MAX_COMPANIES
-    assert all(
-        len(company_id) == 10 and company_id.isdigit()
-        for company_id in RATSIT_COMPANY_IDS
+def test_ratsit_partition_definition_has_128_canonical_bucket_keys() -> None:
+    partition_keys = RATSIT_PARTITIONS.get_partition_keys()
+
+    assert RATSIT_BUCKET_COUNT == 128
+    assert len(partition_keys) == RATSIT_BUCKET_COUNT
+    assert partition_keys[0] == "bucket_000"
+    assert partition_keys[-1] == "bucket_127"
+    assert RATSIT_MAX_COMPANIES == 50_000
+
+
+@pytest.mark.parametrize(
+    ("company_id", "expected_bucket"),
+    (
+        ("5560004615", "bucket_081"),
+        ("5560125790", "bucket_065"),
+        ("191511286237", "bucket_094"),
+    ),
+)
+def test_ratsit_bucket_key_is_stable_for_canonical_company_ids(
+    company_id: str,
+    expected_bucket: str,
+) -> None:
+    assert ratsit_bucket_key(company_id) == expected_bucket
+
+
+def test_active_company_selection_reads_one_crc32_bucket() -> None:
+    client = FakeClickHouseClient(active_company_rows=[("191511286237",)])
+
+    company_ids = load_active_ratsit_company_ids(
+        FakeClickHouseResource(client),  # type: ignore[arg-type]
+        "bucket_094",
     )
-    assert RATSIT_COMPANY_IDS[:2] == ("5560004615", "5560125790")
-    assert tuple(
-        len(company_ids)
-        for _, company_ids in ratsit_round_robin_assignments(RATSIT_COMPANY_IDS)
-    ) == (25, 25, 25, 25)
+
+    assert company_ids == ("191511286237",)
+    selection_sql, parameters = next(
+        (sql, parameters)
+        for sql, parameters in client.calls
+        if "FROM corpscout.se_companies FINAL" in sql
+    )
+    assert "status = 'active'" in selection_sql
+    assert "modulo(CRC32(company_id), %(bucket_count)s)" in selection_sql
+    assert "ORDER BY company_id" in selection_sql
+    assert parameters == {"bucket_count": 128, "bucket_index": 94}
+
+
+def test_browser_preserves_canonical_twelve_digit_id_but_requests_final_ten() -> None:
+    company_id = "191511286237"
+    page = FakePage(
+        [
+            (
+                200,
+                "https://www.ratsit.se/1511286237-Test_Company",
+                COMPANY_HTML.replace("556000-4615", "151128-6237"),
+            )
+        ],
+        clock=FakeClock(),
+    )
+
+    [result] = list(
+        _ratsit_browser_resource().iter_company_reports(
+            (company_id,),
+            launcher=lambda **_: FakeBrowser(page),
+            now=lambda: FETCHED_AT,
+        )
+    )
+
+    assert isinstance(result, RatsitCompanyReport)
+    assert result.company_id == company_id
+    assert result.requested_url == "https://www.ratsit.se/1511286237"
+    assert page.goto_calls[0]["url"] == result.requested_url
+    assert ratsit_company_url("https://www.ratsit.se", company_id) == (
+        result.requested_url
+    )
 
 
 def test_ratsit_dispatch_and_normalized_table_assets_are_registered() -> None:
@@ -461,6 +549,11 @@ def test_ratsit_dispatch_and_normalized_table_assets_are_registered() -> None:
     asset_keys = repository.asset_graph.get_all_asset_keys()
 
     assert dg.AssetKey("se_ratsit_scan_dispatch") in asset_keys
+    scan_node = repository.asset_graph.get(dg.AssetKey("se_ratsit_scan_dispatch"))
+    assert scan_node.parent_keys == {
+        dg.AssetKey("sweden_company_companies_clickhouse")
+    }
+    assert scan_node.partitions_def == RATSIT_PARTITIONS
     for asset_name in (
         "se_ratsit_company",
         "se_ratsit_company_industry_codes",
@@ -475,6 +568,10 @@ def test_ratsit_dispatch_and_normalized_table_assets_are_registered() -> None:
             dg.AssetKey("se_ratsit_scan_dispatch"),
             dg.AssetKey("nace_categories_clickhouse"),
         }
+        assert (
+            repository.asset_graph.get(dg.AssetKey(asset_name)).partitions_def
+            == RATSIT_PARTITIONS
+        )
     assert dg.AssetKey("se_ratsit_people_at_address") not in asset_keys
     assert dg.AssetKey("se_ratsit_scan_coverage") not in asset_keys
     assert dg.AssetKey("se_ratsit_pilot_reports_s3") not in asset_keys
@@ -511,7 +608,7 @@ def test_scan_writes_run_scoped_results_and_keeps_diagnostic_html() -> None:
         diagnostic_html=b"<html>unexpected page</html>",
     )
     object_store = FakeObjectStore()
-    ratsit = FakeRatsitResource([report, parse_failure])
+    ratsit = FakeRatsitResource([parse_failure, report])
 
     summary = write_ratsit_scan(
         object_store=object_store,  # type: ignore[arg-type]

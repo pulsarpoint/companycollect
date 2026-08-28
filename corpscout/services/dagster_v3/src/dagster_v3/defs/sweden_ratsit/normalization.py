@@ -410,7 +410,14 @@ class _ReportEnvelope(_RatsitJsonModel):
 
 def select_latest_unnormalized_ratsit_reports(
     clickhouse: ClickhouseResource,
+    *,
+    bucket_count: int,
+    bucket_index: int,
 ) -> RatsitNormalizationSelection:
+    if bucket_count <= 0:
+        raise ValueError("Ratsit normalization bucket count must be positive")
+    if not 0 <= bucket_index < bucket_count:
+        raise ValueError("Ratsit normalization bucket index is out of range")
     assert_clickhouse_tables_exist(
         clickhouse,
         database=RATSIT_CLICKHOUSE_DATABASE,
@@ -448,18 +455,25 @@ def select_latest_unnormalized_ratsit_reports(
                     ) AS latest
                 FROM {RATSIT_CLICKHOUSE_DATABASE}.{RATSIT_SCAN_RESULT_TABLE} FINAL
                 WHERE outcome = 'success'
+                  AND modulo(CRC32(company_id), %(bucket_count)s) = %(bucket_index)s
                 GROUP BY company_id
             )
             ORDER BY company_id
-            """
+            """,
+            {"bucket_count": bucket_count, "bucket_index": bucket_index},
         )
         existing_rows = client.execute(
             f"""
             SELECT company_id, toString(result_sha256)
             FROM {RATSIT_CLICKHOUSE_DATABASE}.{RATSIT_COMPANY_TABLE} FINAL
             WHERE normalizer_version = %(normalizer_version)s
+              AND modulo(CRC32(company_id), %(bucket_count)s) = %(bucket_index)s
             """,
-            {"normalizer_version": RATSIT_NORMALIZER_VERSION},
+            {
+                "normalizer_version": RATSIT_NORMALIZER_VERSION,
+                "bucket_count": bucket_count,
+                "bucket_index": bucket_index,
+            },
         )
 
     normalized_keys = {(str(row[0]), str(row[1])) for row in existing_rows}
