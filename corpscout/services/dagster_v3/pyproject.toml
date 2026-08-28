@@ -34,7 +34,6 @@ dependencies = [
     "pymupdf>=1.28.0",
     "python-dotenv>=1.0",
     "requests>=2.34.2",
-    "temporalio>=1.28.0",
     "tldextract>=5.3.0",
     "warcio>=1.8.1",
     "whoisit>=4.0.4,<5",
