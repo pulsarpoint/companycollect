@@ -289,6 +289,9 @@ describe("company list SQL shape (the se_companies_serving view)", () => {
       has_financial: "i.has_financial",
       has_people: "i.has_people",
       has_domains: "i.has_domains",
+      is_publicly_traded: "i.is_publicly_traded",
+      has_government_contracts: "i.has_government_contracts",
+      has_job_ads: "i.has_job_ads",
     });
   });
 
@@ -621,6 +624,9 @@ describe("server-side sorting", () => {
       "has_financial",
       "has_people",
       "has_domains",
+      "is_publicly_traded",
+      "has_government_contracts",
+      "has_job_ads",
       "profile_sources",
     ]);
     expect(Object.keys(CORRECTION_SORT_COLUMNS)).toEqual([

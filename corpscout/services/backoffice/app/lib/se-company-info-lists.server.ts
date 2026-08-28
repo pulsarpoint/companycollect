@@ -152,6 +152,13 @@ export interface SeCompanyInfoListRow {
   has_people: number;
   /** 0 | 1 -- has a Swedish row in the unified corpscout.company_domains. */
   has_domains: number;
+  /** 0 | 1 -- an ESEF filing exists for the company's LEI (listed on an EU
+   * regulated market). */
+  is_publicly_traded: number;
+  /** 0 | 1 -- exact-matched winner rows in corpscout.se_government_contracts. */
+  has_government_contracts: number;
+  /** 0 | 1 -- Platsbanken job-ad history (open now or in the past). */
+  has_job_ads: number;
   /**
    * Which registers built this profile, as the catalog's letters in canonical
    * order: 'B' (Bolagsverket), 'S' (SCB, always), 'E' (ESEF), 'W' (Wikidata).
@@ -232,6 +239,9 @@ export const DATATYPE_PRESENCE_EXPR: Record<ProfileDatatypeKey, string> = {
   has_financial: "i.has_financial",
   has_people: "i.has_people",
   has_domains: "i.has_domains",
+  is_publicly_traded: "i.is_publicly_traded",
+  has_government_contracts: "i.has_government_contracts",
+  has_job_ads: "i.has_job_ads",
 };
 
 /**
@@ -299,6 +309,9 @@ export const INFO_SORT_COLUMNS = {
   has_financial: DATATYPE_PRESENCE_EXPR.has_financial,
   has_people: DATATYPE_PRESENCE_EXPR.has_people,
   has_domains: DATATYPE_PRESENCE_EXPR.has_domains,
+  is_publicly_traded: DATATYPE_PRESENCE_EXPR.is_publicly_traded,
+  has_government_contracts: DATATYPE_PRESENCE_EXPR.has_government_contracts,
+  has_job_ads: DATATYPE_PRESENCE_EXPR.has_job_ads,
   profile_sources: PROFILE_SOURCES_EXPR,
 } as const;
 

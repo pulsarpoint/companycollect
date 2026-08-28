@@ -60,6 +60,9 @@ const ROW: SeCompanyInfoListRow = {
   has_financial: 1,
   has_people: 0,
   has_domains: 1,
+  is_publicly_traded: 1,
+  has_government_contracts: 0,
+  has_job_ads: 0,
   profile_sources: "BSEW",
 };
 
@@ -253,6 +256,9 @@ describe("SeCompanyInfoTable", () => {
           has_financial: 0,
           has_people: 1,
           has_domains: 0,
+          is_publicly_traded: 0,
+          has_government_contracts: 0,
+          has_job_ads: 0,
           profile_sources: "S",
         },
       ],
