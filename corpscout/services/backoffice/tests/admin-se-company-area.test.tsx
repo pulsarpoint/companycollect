@@ -26,6 +26,8 @@ import { SeCompanyJobsTab } from "~/components/admin/se-company-jobs";
 import { SeCompanyListedTab } from "~/components/admin/se-company-listed";
 import { SeCompanyPeopleTab } from "~/components/admin/se-company-people";
 import { SeFinancialsView } from "~/components/financials/se-financials-view";
+import AdminSwedenCompanyTechnology from "~/routes/admin-se-company-technology";
+import { buildWebTechnologyHistory } from "~/lib/web-technology-history";
 import {
   loadSeCompanyAddresses,
   type SeCompanyAddressCorrectionRow,
@@ -33,6 +35,8 @@ import {
 } from "~/lib/se-company-address.server";
 import type {
   CompanyFinancialSource,
+  CompanyTechnologyDetail,
+  DomainRow,
   FinancialSourceYearRow,
   PublicContractRow,
 } from "~/lib/queries.server";
@@ -128,7 +132,7 @@ describe("company area header", () => {
     );
   });
 
-  it("renders all eight tabs and marks exactly the active one", () => {
+  it("renders all nine tabs and marks exactly the active one", () => {
     for (const active of SE_COMPANY_TABS) {
       const html = render(
         <SeCompanyHeader shell={shell} tab={active.value} />,
@@ -627,6 +631,118 @@ describe("domains tab", () => {
   });
 });
 
+/** The PUBLIC page's domain shape -- the technology tab reuses the public
+ * technology detail, not the admin domain review rows. */
+const techDomain: DomainRow = {
+  domain: "beijerbygg.se",
+  website_url: "https://www.beijerbygg.se",
+  domain_source: "wikidata",
+  confidence: 1,
+  is_primary: 1,
+  source_names: ["wikidata"],
+  review_status: "confirmed_primary",
+};
+
+/** The route component's props are React Router's generated
+ * `Route.ComponentProps`; a test drives only loaderData and params. */
+type TechnologyProps = Parameters<typeof AdminSwedenCompanyTechnology>[0];
+
+function technologyProps(detail: CompanyTechnologyDetail): TechnologyProps {
+  return {
+    loaderData: detail,
+    params: { companyId: COMPANY_ID },
+  } as unknown as TechnologyProps;
+}
+
+describe("technology tab", () => {
+  // The tab IS the public technology experience: the same shared sections the
+  // public /company/se/:id/technology page renders, deep-linking into the
+  // public web-intelligence, infrastructure, and IP readers.
+  const publicBase = `/company/se/${COMPANY_ID}/technology`;
+
+  it("renders the shared domains section and the three public deep links", () => {
+    const html = render(
+      <AdminSwedenCompanyTechnology
+        {...technologyProps({
+          domains: [techDomain],
+          selectedDomain: techDomain.domain,
+          webTechnologyHistory: null,
+        })}
+      />,
+      seCompanyTabPath(COMPANY_ID, "technology"),
+    );
+    expect(html).toContain("Web presence");
+    expect(html).toContain("beijerbygg.se");
+    expect(html).toContain(">Selected<");
+    expect(html).toContain(">wikidata<");
+    // The deep links carry the selected domain so the public readers open on
+    // the same domain the admin was looking at.
+    expect(html).toContain(
+      `href="${publicBase}/web-intelligence?domain=beijerbygg.se"`,
+    );
+    expect(html).toContain(
+      `href="${publicBase}/infrastructure?domain=beijerbygg.se"`,
+    );
+    expect(html).toContain(
+      `href="${publicBase}/ip-addresses?domain=beijerbygg.se"`,
+    );
+  });
+
+  it("renders the crawl-history section when the selected domain has detections", () => {
+    const history = buildWebTechnologyHistory(
+      techDomain.domain,
+      [
+        {
+          crawlId: "CC-MAIN-2026-26",
+          observedPages: 12,
+          processedAt: "2026-07-01 10:00:00.000",
+        },
+      ],
+      [
+        {
+          crawlId: "CC-MAIN-2026-26",
+          name: "WordPress",
+          categories: ["CMS"],
+          versions: ["6.5"],
+          confidence: 100,
+          detectedPages: 8,
+          sampleUrls: ["https://www.beijerbygg.se/"],
+        },
+      ],
+    );
+    const html = render(
+      <AdminSwedenCompanyTechnology
+        {...technologyProps({
+          domains: [techDomain],
+          selectedDomain: techDomain.domain,
+          webTechnologyHistory: history,
+        })}
+      />,
+      seCompanyTabPath(COMPANY_ID, "technology"),
+    );
+    expect(html).toContain("WordPress");
+    expect(html).toContain("CC-MAIN-2026-26");
+  });
+
+  // The public page 404s on an empty result; the admin tab must not -- a
+  // reviewer needs the tab to say "nothing yet", not vanish.
+  it("shows an empty state instead of throwing when no domain is known", () => {
+    const html = render(
+      <AdminSwedenCompanyTechnology
+        {...technologyProps({
+          domains: [],
+          selectedDomain: "",
+          webTechnologyHistory: null,
+        })}
+      />,
+      seCompanyTabPath(COMPANY_ID, "technology"),
+    );
+    expect(html).toContain("No technology data for this company yet");
+    expect(html).not.toContain("Web presence");
+    expect(html).not.toContain(`href="${publicBase}/web-intelligence`);
+  });
+});
+
 const contract: PublicContractRow = {
   source: "sweden_uhm_procurement",
   notice_ref: "2025/S 001-000001",
@@ -998,13 +1114,14 @@ describe("the Sources strip every tab opens with", () => {
 });
 
 describe("tab labels", () => {
-  it("is exactly Info, Address, Financial, People, Domains, Contracts, Jobs, Listed, in that order", () => {
+  it("is exactly Info, Address, Financial, People, Domains, Technology, Contracts, Jobs, Listed, in that order", () => {
     expect(SE_COMPANY_TABS.map((tab) => tab.label)).toEqual([
       "Info",
       "Address",
       "Financial",
       "People",
       "Domains",
+      "Technology",
       "Contracts",
       "Jobs",
       "Publicly traded",
@@ -1016,6 +1133,7 @@ describe("tab labels", () => {
       "financial",
       "people",
       "domains",
+      "technology",
       "contracts",
       "jobs",
       "listed",
