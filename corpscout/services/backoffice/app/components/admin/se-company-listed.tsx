@@ -1,4 +1,5 @@
 import { LandmarkIcon } from "lucide-react";
+import { Link } from "react-router";
 import { Area, Bar, CartesianGrid, ComposedChart, XAxis, YAxis } from "recharts";
 import { Badge } from "~/components/ui/badge";
 import {
@@ -250,7 +251,7 @@ export function SeCompanyListedTab({
   companyId: string;
   listed: SeCompanyListed;
 }) {
-  const { leis, symbols, summary, summaries, leadSymbolKey, prices, stats } =
+  const { leis, symbols, summary, summaries, leadSymbolKey, chartSymbolKey, prices, stats } =
     listed;
 
   if (symbols.length === 0) {
@@ -290,10 +291,19 @@ export function SeCompanyListedTab({
 
   const lead =
     symbols.find((s) => s.eodhd_symbol_key === leadSymbolKey) ?? symbols[0];
+  const chartLine =
+    symbols.find((s) => s.eodhd_symbol_key === chartSymbolKey) ?? lead;
   const instrumentCount = new Set(symbols.map((s) => s.isin)).size;
-  // The summary names the lead currency; before the summary asset has run,
-  // the lead line's own EODHD quote currency stands in.
-  const currency = summary?.lead_currency ?? lead.quote_currency;
+  // The chart's currency is the CHARTED line's quote currency; the summary's
+  // lead currency only stands in when the lead itself is charted and the
+  // symbol row carries no currency.
+  const chartIsLead = chartLine.eodhd_symbol_key === lead.eodhd_symbol_key;
+  const currency =
+    chartLine.quote_currency !== ""
+      ? chartLine.quote_currency
+      : chartIsLead
+        ? (summary?.lead_currency ?? "")
+        : "";
   const chartConfig = {
     close: {
       label: `Close${currency === "" ? "" : ` (${currency})`}`,
@@ -409,7 +419,7 @@ export function SeCompanyListedTab({
         <Card>
           <CardHeader>
             <CardTitle className="text-base">
-              {lead.ticker} · {exchangeLabel(lead.exchange_code)} — 5 years
+              {chartLine.ticker} · {exchangeLabel(chartLine.exchange_code)} — 5 years
               {currency === "" ? "" : ` · ${currency}`}
             </CardTitle>
             <CardDescription>
@@ -500,9 +510,19 @@ export function SeCompanyListedTab({
                   >
                     <TableCell className="align-top font-medium">
                       <div className="flex flex-wrap items-center gap-2">
-                        {symbol.ticker}
+                        <Link
+                          className="underline underline-offset-2"
+                          to={`?line=${encodeURIComponent(symbol.eodhd_symbol_key)}`}
+                          preventScrollReset
+                        >
+                          {symbol.ticker}
+                        </Link>
                         {symbol.eodhd_symbol_key === lead.eodhd_symbol_key ? (
                           <Badge variant="outline">lead</Badge>
+                        ) : null}
+                        {symbol.eodhd_symbol_key ===
+                        chartLine.eodhd_symbol_key ? (
+                          <Badge variant="secondary">charted</Badge>
                         ) : null}
                         {symbol.instrument_type === "" ||
                         symbol.instrument_type === "Common Stock" ? null : (

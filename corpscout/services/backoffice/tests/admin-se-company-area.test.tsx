@@ -787,6 +787,7 @@ const listedTraded: SeCompanyListed = {
   },
   summaries: SUMMARIES_FIXTURE,
   leadSymbolKey: "SHB-A.ST",
+  chartSymbolKey: "SHB-A.ST",
   prices: [
     { price_date: "2025-09-01", close: 118.4, high: 119.2, low: 117.5, adjusted_close: 117.9, volume: 4_800_000 },
     { price_date: "2025-12-30", close: 122.15, high: 122.9, low: 121.1, adjusted_close: 122.15, volume: 5_400_000 },
@@ -807,6 +808,27 @@ const listedTraded: SeCompanyListed = {
 };
 
 describe("listed tab", () => {
+  it("charts the selected line and badges it, keeping the lead badge separate", () => {
+    const html = render(
+      <SeCompanyListedTab
+        companyId={COMPANY_ID}
+        listed={{
+          ...listedTraded,
+          chartSymbolKey: "0R7S.LSE",
+        }}
+      />,
+      seCompanyTabPath(COMPANY_ID, "listed"),
+    );
+    // The chart card names the SELECTED line, not the lead.
+    expect(html).toContain("0R7S · London Stock Exchange");
+    expect(html).toContain(">charted<");
+    // The lead badge stays on the lead row; ticker cells are selection links.
+    expect(html).toContain(">lead<");
+    expect(html).toContain('?line=SHB-A.ST');
+    expect(html).toContain('?line=0R7S.LSE');
+  });
+
+
   it("says publicly traded from the EODHD resolve, quotes the lead line, and charts a year of closes", () => {
     const html = render(
       <SeCompanyListedTab companyId={COMPANY_ID} listed={listedTraded} />,
@@ -868,6 +890,7 @@ describe("listed tab", () => {
           summary: null,
           summaries: [],
           leadSymbolKey: "0R7S.LSE",
+          chartSymbolKey: "0R7S.LSE",
           prices: [],
           stats: null,
         }}
@@ -892,6 +915,7 @@ describe("listed tab", () => {
           summary: null,
           summaries: [],
           leadSymbolKey: "",
+          chartSymbolKey: "",
           prices: [],
           stats: null,
         }}

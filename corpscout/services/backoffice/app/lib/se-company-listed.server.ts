@@ -177,6 +177,9 @@ export interface SeCompanyListed {
    * summary's lead venue, or the first row when the venues disagree. Empty
    * string when the company is not traded. */
   leadSymbolKey: string;
+  /** The line the chart and stats describe: the validated ?line= selection,
+   * or the lead. */
+  chartSymbolKey: string;
   prices: SeCompanyPricePoint[];
   /** Derived from `prices` at load time; null when the series is empty. */
   stats: SeCompanyMarketStats | null;
@@ -320,6 +323,7 @@ export function pickLeadSymbol(
  */
 export async function loadSeCompanyListed(
   companyId: string,
+  requestedLineKey?: string,
 ): Promise<SeCompanyListed> {
   const [leis, symbols, summaryRows] = await Promise.all([
     chQuery<SeCompanyLeiRow>(COMPANY_LEI_SQL, { companyId }),
@@ -341,11 +345,16 @@ export async function loadSeCompanyListed(
   const summary = summaries[0] ?? null;
 
   const lead = pickLeadSymbol(symbols, summary);
+  // The charted line: the ?line= selection when it names one of THIS
+  // company's rows (the URL is user input -- an unknown key silently falls
+  // back rather than charting an arbitrary symbol), else the lead.
+  const chart =
+    symbols.find((s) => s.eodhd_symbol_key === requestedLineKey) ?? lead;
   const prices =
-    lead === null
+    chart === null
       ? []
       : await chQuery<SeCompanyPricePoint>(COMPANY_LEAD_PRICES_SQL, {
-          symbolKey: lead.eodhd_symbol_key,
+          symbolKey: chart.eodhd_symbol_key,
         });
 
   return {
@@ -354,6 +363,7 @@ export async function loadSeCompanyListed(
     summary,
     summaries,
     leadSymbolKey: lead === null ? "" : lead.eodhd_symbol_key,
+    chartSymbolKey: chart === null ? "" : chart.eodhd_symbol_key,
     prices,
     stats: computeMarketStats(prices, new Date().toISOString().slice(0, 10)),
   };
