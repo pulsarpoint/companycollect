@@ -349,6 +349,7 @@ EXPECTED_MIGRATIONS = (
     "000337_corpscout_retire_se_companies_current",
     "000338_corpscout_se_companies_serving_translations",
     "000339_corpscout_retire_se_companies_translated",
+    "000340_corpscout_se_company_ratsit_proxy_route",
 )
 
 NOOP_MIGRATIONS = {"000276_noop"}
@@ -3691,6 +3692,23 @@ def test_ratsit_scan_history_migration_tracks_company_results_and_reuse() -> Non
     assert "se_company_ratsit_scans" not in up_sql
     assert "se_company_ratsit_scans" not in down_sql
     assert "WHERE outcome = 'success'" in down_sql
+
+
+def test_ratsit_proxy_route_migration_tracks_safe_worker_names() -> None:
+    up_sql = _migration_sql("000340_corpscout_se_company_ratsit_proxy_route.up.sql")
+    down_sql = _migration_sql(
+        "000340_corpscout_se_company_ratsit_proxy_route.down.sql"
+    )
+
+    assert "connection_mode LowCardinality(String)" in up_sql
+    assert "proxy_name LowCardinality(String)" in up_sql
+    assert "connection_mode = 'direct' AND proxy_name = ''" in up_sql
+    assert "connection_mode = 'proxy'" in up_sql
+    for proxy_name in ("crawl_proxy1", "crawl_proxy2", "crawl_proxy3"):
+        assert proxy_name in up_sql
+    assert "crawl_proxy1=" not in up_sql
+    assert "DROP COLUMN IF EXISTS proxy_name" in down_sql
+    assert "DROP COLUMN IF EXISTS connection_mode" in down_sql
 
 
 def _migration_sql(file_name: str) -> str:

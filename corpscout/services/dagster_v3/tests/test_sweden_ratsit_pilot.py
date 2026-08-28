@@ -2,6 +2,7 @@ import gzip
 import json
 from contextlib import contextmanager
 from datetime import UTC, datetime
+from threading import Barrier
 from typing import Any
 
 import dagster as dg
@@ -22,14 +23,21 @@ from dagster_v3.defs.sweden_ratsit.assets import (
 )
 from dagster_v3.defs.sweden_ratsit.parser import parse_company_page
 from dagster_v3.defs.sweden_ratsit.resources import (
+    RATSIT_BROWSER_WORKER_COUNT,
     RatsitCompanyFailure,
     RatsitCompanyReport,
     SwedenRatsitBrowserResource,
+    ratsit_round_robin_assignments,
 )
 
 COMPANY_ID = "5560004615"
 COMPANY_URL = f"https://www.ratsit.se/{COMPANY_ID}-Skanska_AB"
 FETCHED_AT = datetime(2026, 8, 28, 10, 30, tzinfo=UTC)
+TEST_PROXY_URLS = (
+    "http://proxy-user:proxy-password@proxy1.example:8080",
+    "http://proxy-user:proxy-password@proxy2.example:8080",
+    "http://proxy-user:proxy-password@proxy3.example:8080",
+)
 
 COMPANY_HTML = """
 <html>
@@ -211,6 +219,14 @@ class FakeClickHouseResource:
         yield self.client
 
 
+def _ratsit_browser_resource() -> SwedenRatsitBrowserResource:
+    return SwedenRatsitBrowserResource(
+        crawl_proxy1=TEST_PROXY_URLS[0],
+        crawl_proxy2=TEST_PROXY_URLS[1],
+        crawl_proxy3=TEST_PROXY_URLS[2],
+    )
+
+
 def test_parser_extracts_company_identity_address_description_and_financials() -> None:
     report = parse_company_page(COMPANY_HTML, source_url=COMPANY_URL)
 
@@ -253,28 +269,41 @@ def test_parser_extracts_company_identity_address_description_and_financials() -
     ]
 
 
-def test_browser_resource_reuses_one_headless_browser_and_spaces_request_starts() -> (
-    None
-):
+def test_browser_resource_runs_four_round_robin_workers_and_preserves_order() -> None:
+    company_ids = RATSIT_COMPANY_IDS[:5]
+    proxy_urls = (None, *TEST_PROXY_URLS)
     clock = FakeClock()
-    second_url = "https://www.ratsit.se/5560125790-AB_Volvo"
-    second_html = COMPANY_HTML.replace(COMPANY_ID, "5560125790").replace(
-        "556000-4615", "556012-5790"
-    )
-    page = FakePage(
-        [(200, COMPANY_URL, COMPANY_HTML), (200, second_url, second_html)],
-        clock=clock,
-    )
-    browser = FakeBrowser(page)
+    browsers: dict[str | None, FakeBrowser] = {}
+    for worker_index, proxy_url in enumerate(proxy_urls):
+        worker_company_ids = company_ids[worker_index::RATSIT_BROWSER_WORKER_COUNT]
+        browsers[proxy_url] = FakeBrowser(
+            FakePage(
+                [
+                    (
+                        200,
+                        f"https://www.ratsit.se/{company_id}-Test_Company",
+                        COMPANY_HTML.replace(
+                            "556000-4615",
+                            f"{company_id[:6]}-{company_id[6:]}",
+                        ),
+                    )
+                    for company_id in worker_company_ids
+                ],
+                clock=clock,
+            )
+        )
+
+    launch_barrier = Barrier(RATSIT_BROWSER_WORKER_COUNT)
     launch_calls: list[dict[str, Any]] = []
 
     def launcher(**kwargs: Any) -> FakeBrowser:
         launch_calls.append(kwargs)
-        return browser
+        launch_barrier.wait(timeout=5)
+        return browsers[kwargs["proxy"]]
 
     reports = list(
-        SwedenRatsitBrowserResource().iter_company_reports(
-            (COMPANY_ID, "5560125790"),
+        _ratsit_browser_resource().iter_company_reports(
+            company_ids,
             launcher=launcher,
             monotonic=clock.monotonic,
             sleep=clock.sleep,
@@ -282,17 +311,36 @@ def test_browser_resource_reuses_one_headless_browser_and_spaces_request_starts(
         )
     )
 
-    assert [result.company_id for result in reports] == [COMPANY_ID, "5560125790"]
+    assert [result.company_id for result in reports] == list(company_ids)
     assert all(isinstance(result, RatsitCompanyReport) for result in reports)
-    assert launch_calls == [{"headless": True}]
-    assert browser.new_page_count == 1
-    assert page.request_starts == [0.0, 2.0]
+    assert [
+        (result.connection_mode, result.proxy_name) for result in reports
+    ] == [
+        ("direct", ""),
+        ("proxy", "crawl_proxy1"),
+        ("proxy", "crawl_proxy2"),
+        ("proxy", "crawl_proxy3"),
+        ("direct", ""),
+    ]
+    assert len(launch_calls) == RATSIT_BROWSER_WORKER_COUNT
+    assert {call["proxy"] for call in launch_calls} == set(proxy_urls)
+    assert all(call["headless"] is True for call in launch_calls)
+    assert ratsit_round_robin_assignments(company_ids) == (
+        ("direct", (company_ids[0], company_ids[4])),
+        ("crawl_proxy1", (company_ids[1],)),
+        ("crawl_proxy2", (company_ids[2],)),
+        ("crawl_proxy3", (company_ids[3],)),
+    )
+    assert browsers[None].page.request_starts == [0.0, 2.0]
     assert clock.sleeps == [2.0]
-    assert page.closed is True
-    assert browser.closed is True
+    assert all(browser.new_page_count == 1 for browser in browsers.values())
+    assert all(browser.page.closed is True for browser in browsers.values())
+    assert all(browser.closed is True for browser in browsers.values())
 
 
-def test_browser_resource_rejects_more_than_twenty_companies_before_launch() -> None:
+def test_browser_resource_rejects_more_than_one_hundred_companies_before_launch() -> (
+    None
+):
     launch_count = 0
 
     def launcher(**_: Any) -> FakeBrowser:
@@ -300,10 +348,10 @@ def test_browser_resource_rejects_more_than_twenty_companies_before_launch() -> 
         launch_count += 1
         raise AssertionError("browser must not start")
 
-    with pytest.raises(ValueError, match="at most 20"):
+    with pytest.raises(ValueError, match="at most 100"):
         list(
-            SwedenRatsitBrowserResource().iter_company_reports(
-                tuple(f"556000{i:04d}" for i in range(21)),
+            _ratsit_browser_resource().iter_company_reports(
+                tuple(f"{i:010d}" for i in range(101)),
                 launcher=launcher,
             )
         )
@@ -321,7 +369,7 @@ def test_browser_resource_keeps_rendered_html_when_required_fields_are_missing()
     page = FakePage([(200, COMPANY_URL, unexpected_html)], clock=clock)
 
     results = list(
-        SwedenRatsitBrowserResource().iter_company_reports(
+        _ratsit_browser_resource().iter_company_reports(
             (COMPANY_ID,),
             launcher=lambda **_: FakeBrowser(page),
             monotonic=clock.monotonic,
@@ -334,13 +382,14 @@ def test_browser_resource_keeps_rendered_html_when_required_fields_are_missing()
     failure = results[0]
     assert isinstance(failure, RatsitCompanyFailure)
     assert failure.error_type == "parse"
+    assert (failure.connection_mode, failure.proxy_name) == ("direct", "")
     assert "company name" in failure.message
     assert failure.diagnostic_html == unexpected_html.encode()
     assert failure.html_sha256 is not None
 
 
-def test_scan_defaults_are_exactly_twenty_unique_companies() -> None:
-    assert RATSIT_MAX_COMPANIES == 20
+def test_scan_defaults_are_exactly_one_hundred_unique_companies() -> None:
+    assert RATSIT_MAX_COMPANIES == 100
     assert len(RATSIT_COMPANY_IDS) == RATSIT_MAX_COMPANIES
     assert len(set(RATSIT_COMPANY_IDS)) == RATSIT_MAX_COMPANIES
     assert all(
@@ -348,6 +397,10 @@ def test_scan_defaults_are_exactly_twenty_unique_companies() -> None:
         for company_id in RATSIT_COMPANY_IDS
     )
     assert RATSIT_COMPANY_IDS[:2] == ("5560004615", "5560125790")
+    assert tuple(
+        len(company_ids)
+        for _, company_ids in ratsit_round_robin_assignments(RATSIT_COMPANY_IDS)
+    ) == (25, 25, 25, 25)
 
 
 def test_only_dispatch_asset_and_its_existing_job_name_are_registered() -> None:
@@ -367,6 +420,8 @@ def test_only_dispatch_asset_and_its_existing_job_name_are_registered() -> None:
 def test_scan_writes_run_scoped_results_and_only_parse_failures_keep_html() -> None:
     report = RatsitCompanyReport(
         company_id=COMPANY_ID,
+        connection_mode="direct",
+        proxy_name="",
         requested_url=f"https://www.ratsit.se/{COMPANY_ID}",
         source_url=COMPANY_URL,
         fetched_at=FETCHED_AT,
@@ -375,6 +430,8 @@ def test_scan_writes_run_scoped_results_and_only_parse_failures_keep_html() -> N
     )
     parse_failure = RatsitCompanyFailure(
         company_id="5560125790",
+        connection_mode="proxy",
+        proxy_name="crawl_proxy1",
         requested_url="https://www.ratsit.se/5560125790",
         source_url="https://www.ratsit.se/5560125790-AB_Volvo",
         fetched_at=FETCHED_AT,
@@ -428,6 +485,14 @@ def test_scan_writes_run_scoped_results_and_only_parse_failures_keep_html() -> N
         "failure",
         "parse",
     )
+    assert (
+        summary.results[0].connection_mode,
+        summary.results[0].proxy_name,
+    ) == ("direct", "")
+    assert (
+        summary.results[1].connection_mode,
+        summary.results[1].proxy_name,
+    ) == ("proxy", "crawl_proxy1")
     assert summary.results[0].result_size_bytes == len(object_store.objects[report_key])
     assert len(summary.results[0].result_sha256) == 64
 
@@ -435,6 +500,8 @@ def test_scan_writes_run_scoped_results_and_only_parse_failures_keep_html() -> N
 def test_identical_report_hash_reuses_old_s3_path_for_new_scan() -> None:
     report = RatsitCompanyReport(
         company_id=COMPANY_ID,
+        connection_mode="direct",
+        proxy_name="",
         requested_url=f"https://www.ratsit.se/{COMPANY_ID}",
         source_url=COMPANY_URL,
         fetched_at=FETCHED_AT,
@@ -459,10 +526,20 @@ def test_identical_report_hash_reuses_old_s3_path_for_new_scan() -> None:
         result_size_bytes=first_result.result_size_bytes,
     )
     second_store = FakeObjectStore()
+    proxied_report = RatsitCompanyReport(
+        company_id=COMPANY_ID,
+        connection_mode="proxy",
+        proxy_name="crawl_proxy1",
+        requested_url=report.requested_url,
+        source_url=report.source_url,
+        fetched_at=report.fetched_at,
+        html_sha256=report.html_sha256,
+        report=report.report,
+    )
 
     second = write_ratsit_scan(
         object_store=second_store,  # type: ignore[arg-type]
-        ratsit=FakeRatsitResource([report]),  # type: ignore[arg-type]
+        ratsit=FakeRatsitResource([proxied_report]),  # type: ignore[arg-type]
         company_ids=(COMPANY_ID,),
         scan_id="scan-run-2",
         reusable_reports={(COMPANY_ID, reusable.result_sha256): reusable},
@@ -475,6 +552,10 @@ def test_identical_report_hash_reuses_old_s3_path_for_new_scan() -> None:
     assert second.written_object_count == 0
     assert second.results[0].scan_id == "scan-run-2"
     assert second.results[0].report_reused is True
+    assert (
+        second.results[0].connection_mode,
+        second.results[0].proxy_name,
+    ) == ("proxy", "crawl_proxy1")
     assert second.results[0].result_object_key == first_result.result_object_key
     assert "scan-run-1_report.json" in second.results[0].result_object_key
 
@@ -482,6 +563,8 @@ def test_identical_report_hash_reuses_old_s3_path_for_new_scan() -> None:
 def test_changed_report_writes_new_scan_id_object() -> None:
     original = RatsitCompanyReport(
         company_id=COMPANY_ID,
+        connection_mode="direct",
+        proxy_name="",
         requested_url=f"https://www.ratsit.se/{COMPANY_ID}",
         source_url=COMPANY_URL,
         fetched_at=FETCHED_AT,
@@ -490,6 +573,8 @@ def test_changed_report_writes_new_scan_id_object() -> None:
     )
     changed = RatsitCompanyReport(
         company_id=COMPANY_ID,
+        connection_mode="proxy",
+        proxy_name="crawl_proxy2",
         requested_url=f"https://www.ratsit.se/{COMPANY_ID}",
         source_url=COMPANY_URL,
         fetched_at=FETCHED_AT,
@@ -534,6 +619,8 @@ def test_changed_report_writes_new_scan_id_object() -> None:
 def test_completed_scan_persists_company_result_rows() -> None:
     report = RatsitCompanyReport(
         company_id=COMPANY_ID,
+        connection_mode="proxy",
+        proxy_name="crawl_proxy3",
         requested_url=f"https://www.ratsit.se/{COMPANY_ID}",
         source_url=COMPANY_URL,
         fetched_at=FETCHED_AT,
@@ -565,7 +652,14 @@ def test_completed_scan_persists_company_result_rows() -> None:
     assert ", ".join(RATSIT_RESULT_COLUMNS) in result_sql
     assert isinstance(result_rows, list)
     [result_row] = result_rows
-    assert result_row[0:4] == ("scan-run-1", COMPANY_ID, "success", "")
-    assert result_row[8] == ratsit_result_object_key(
+    assert result_row[0:6] == (
+        "scan-run-1",
+        COMPANY_ID,
+        "success",
+        "",
+        "proxy",
+        "crawl_proxy3",
+    )
+    assert result_row[10] == ratsit_result_object_key(
         COMPANY_ID, "scan-run-1", "report.json"
     )

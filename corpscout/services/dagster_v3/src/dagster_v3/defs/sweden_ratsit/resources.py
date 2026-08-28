@@ -2,6 +2,7 @@ import hashlib
 import re
 import time
 from collections.abc import Callable, Iterator, Mapping, Sequence
+from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from typing import Any, Literal, Self
@@ -18,9 +19,25 @@ from dagster_v3.defs.sweden_ratsit.parser import (
 )
 
 RATSIT_BASE_URL = "https://www.ratsit.se"
-RATSIT_HARD_MAX_COMPANIES = 20
+RATSIT_HARD_MAX_COMPANIES = 100
 RATSIT_MIN_REQUEST_INTERVAL_SECONDS = 2.0
 RATSIT_DEFAULT_PAGE_TIMEOUT_MS = 60_000
+type RatsitBrowserWorkerName = Literal[
+    "direct",
+    "crawl_proxy1",
+    "crawl_proxy2",
+    "crawl_proxy3",
+]
+type RatsitConnectionMode = Literal["direct", "proxy"]
+type RatsitProxyName = Literal["", "crawl_proxy1", "crawl_proxy2", "crawl_proxy3"]
+
+RATSIT_BROWSER_WORKER_NAMES: tuple[RatsitBrowserWorkerName, ...] = (
+    "direct",
+    "crawl_proxy1",
+    "crawl_proxy2",
+    "crawl_proxy3",
+)
+RATSIT_BROWSER_WORKER_COUNT = len(RATSIT_BROWSER_WORKER_NAMES)
 
 type RatsitFailureType = Literal["navigation", "http", "parse"]
 
@@ -28,6 +45,8 @@ type RatsitFailureType = Literal["navigation", "http", "parse"]
 @dataclass(frozen=True)
 class RatsitCompanyReport:
     company_id: str
+    connection_mode: RatsitConnectionMode
+    proxy_name: RatsitProxyName
     requested_url: str
     source_url: str
     fetched_at: datetime
@@ -39,6 +58,8 @@ class RatsitCompanyReport:
 @dataclass(frozen=True)
 class RatsitCompanyFailure:
     company_id: str
+    connection_mode: RatsitConnectionMode
+    proxy_name: RatsitProxyName
     requested_url: str
     source_url: str
     fetched_at: datetime
@@ -50,13 +71,16 @@ class RatsitCompanyFailure:
 
 
 class SwedenRatsitBrowserResource(dg.ConfigurableResource):
-    """One deliberately constrained CloakBrowser for a fixed Ratsit scan."""
+    """Four concurrent CloakBrowser workers for a fixed Ratsit scan."""
 
     base_url: str = RATSIT_BASE_URL
     headless: bool = True
     max_companies: int = RATSIT_HARD_MAX_COMPANIES
     request_interval_seconds: float = RATSIT_MIN_REQUEST_INTERVAL_SECONDS
     page_timeout_ms: int = RATSIT_DEFAULT_PAGE_TIMEOUT_MS
+    crawl_proxy1: str
+    crawl_proxy2: str
+    crawl_proxy3: str
 
     @model_validator(mode="after")
     def validate_configuration(self) -> Self:
@@ -74,6 +98,11 @@ class SwedenRatsitBrowserResource(dg.ConfigurableResource):
             )
         if self.page_timeout_ms <= 0:
             raise ValueError("page_timeout_ms must be positive")
+        proxies = (self.crawl_proxy1, self.crawl_proxy2, self.crawl_proxy3)
+        if any(proxy.strip() == "" for proxy in proxies):
+            raise ValueError("all three Ratsit crawl proxies must be configured")
+        if len(set(proxies)) != len(proxies):
+            raise ValueError("Ratsit crawl proxies must be distinct")
         return self
 
     def iter_company_reports(
@@ -92,19 +121,84 @@ class SwedenRatsitBrowserResource(dg.ConfigurableResource):
         if not selected_company_ids:
             return
 
+        assignments = ratsit_round_robin_assignments(selected_company_ids)
+        proxy_urls = (None, self.crawl_proxy1, self.crawl_proxy2, self.crawl_proxy3)
+        active_workers = tuple(
+            (worker_name, proxy_url, worker_company_ids)
+            for (worker_name, worker_company_ids), proxy_url in zip(
+                assignments,
+                proxy_urls,
+                strict=True,
+            )
+            if worker_company_ids
+        )
+
+        def fetch_worker(
+            worker: tuple[RatsitBrowserWorkerName, str | None, tuple[str, ...]],
+        ) -> tuple[RatsitCompanyReport | RatsitCompanyFailure, ...]:
+            worker_name, proxy_url, worker_company_ids = worker
+            return tuple(
+                self._iter_browser_reports(
+                    worker_company_ids,
+                    worker_name=worker_name,
+                    proxy_url=proxy_url,
+                    launcher=launcher,
+                    monotonic=monotonic,
+                    sleep=sleep,
+                    now=now,
+                )
+            )
+
+        with ThreadPoolExecutor(
+            max_workers=len(active_workers),
+            thread_name_prefix="ratsit_browser",
+        ) as executor:
+            worker_results = tuple(executor.map(fetch_worker, active_workers))
+
+        results = tuple(
+            result for worker_result in worker_results for result in worker_result
+        )
+        resolved_company_ids = tuple(result.company_id for result in results)
+        if len(resolved_company_ids) != len(selected_company_ids) or set(
+            resolved_company_ids
+        ) != set(selected_company_ids):
+            raise RuntimeError(
+                "Ratsit browser workers did not return each selected company exactly once"
+            )
+
+        ordered_results = {result.company_id: result for result in results}
+        yield from (ordered_results[company_id] for company_id in selected_company_ids)
+
+    def _iter_browser_reports(
+        self,
+        company_ids: tuple[str, ...],
+        *,
+        worker_name: RatsitBrowserWorkerName,
+        proxy_url: str | None,
+        launcher: Callable[..., Any],
+        monotonic: Callable[[], float],
+        sleep: Callable[[float], None],
+        now: Callable[[], datetime],
+    ) -> Iterator[RatsitCompanyReport | RatsitCompanyFailure]:
         try:
-            browser = launcher(headless=self.headless)
+            browser = launcher(headless=self.headless, proxy=proxy_url)
         except Exception:
             raise RuntimeError(
-                "Ratsit browser failed to start; verify the CloakBrowser "
-                "binary and runtime dependencies"
+                f"Ratsit browser worker {worker_name} failed to start; verify the "
+                "CloakBrowser binary, proxy, and runtime dependencies"
             ) from None
 
         page: Any | None = None
         try:
             page = browser.new_page()
             previous_request_started_at: float | None = None
-            for company_id in selected_company_ids:
+            connection_mode: RatsitConnectionMode = (
+                "direct" if worker_name == "direct" else "proxy"
+            )
+            proxy_name: RatsitProxyName = (
+                "" if worker_name == "direct" else worker_name
+            )
+            for company_id in company_ids:
                 previous_request_started_at = _wait_for_request_slot(
                     previous_request_started_at,
                     request_interval_seconds=self.request_interval_seconds,
@@ -115,6 +209,8 @@ class SwedenRatsitBrowserResource(dg.ConfigurableResource):
                 yield self._fetch_company(
                     page,
                     company_id=company_id,
+                    connection_mode=connection_mode,
+                    proxy_name=proxy_name,
                     requested_url=requested_url,
                     now=now,
                 )
@@ -130,6 +226,8 @@ class SwedenRatsitBrowserResource(dg.ConfigurableResource):
         page: Any,
         *,
         company_id: str,
+        connection_mode: RatsitConnectionMode,
+        proxy_name: RatsitProxyName,
         requested_url: str,
         now: Callable[[], datetime],
     ) -> RatsitCompanyReport | RatsitCompanyFailure:
@@ -142,6 +240,8 @@ class SwedenRatsitBrowserResource(dg.ConfigurableResource):
         except Exception:
             return RatsitCompanyFailure(
                 company_id=company_id,
+                connection_mode=connection_mode,
+                proxy_name=proxy_name,
                 requested_url=requested_url,
                 source_url=requested_url,
                 fetched_at=_aware_utc_now(now),
@@ -156,6 +256,8 @@ class SwedenRatsitBrowserResource(dg.ConfigurableResource):
         if response is None:
             return RatsitCompanyFailure(
                 company_id=company_id,
+                connection_mode=connection_mode,
+                proxy_name=proxy_name,
                 requested_url=requested_url,
                 source_url=source_url,
                 fetched_at=_aware_utc_now(now),
@@ -170,6 +272,8 @@ class SwedenRatsitBrowserResource(dg.ConfigurableResource):
         if not 200 <= status < 400:
             return RatsitCompanyFailure(
                 company_id=company_id,
+                connection_mode=connection_mode,
+                proxy_name=proxy_name,
                 requested_url=requested_url,
                 source_url=source_url,
                 fetched_at=_aware_utc_now(now),
@@ -189,6 +293,8 @@ class SwedenRatsitBrowserResource(dg.ConfigurableResource):
             return _parse_failure(
                 page,
                 company_id=company_id,
+                connection_mode=connection_mode,
+                proxy_name=proxy_name,
                 requested_url=requested_url,
                 source_url=source_url,
                 fetched_at=_aware_utc_now(now),
@@ -203,6 +309,8 @@ class SwedenRatsitBrowserResource(dg.ConfigurableResource):
         except Exception:
             return RatsitCompanyFailure(
                 company_id=company_id,
+                connection_mode=connection_mode,
+                proxy_name=proxy_name,
                 requested_url=requested_url,
                 source_url=source_url,
                 fetched_at=_aware_utc_now(now),
@@ -221,6 +329,8 @@ class SwedenRatsitBrowserResource(dg.ConfigurableResource):
         except Exception as error:
             return RatsitCompanyFailure(
                 company_id=company_id,
+                connection_mode=connection_mode,
+                proxy_name=proxy_name,
                 requested_url=requested_url,
                 source_url=source_url,
                 fetched_at=_aware_utc_now(now),
@@ -233,6 +343,8 @@ class SwedenRatsitBrowserResource(dg.ConfigurableResource):
 
         return RatsitCompanyReport(
             company_id=company_id,
+            connection_mode=connection_mode,
+            proxy_name=proxy_name,
             requested_url=requested_url,
             source_url=source_url,
             fetched_at=_aware_utc_now(now),
@@ -245,6 +357,16 @@ class SwedenRatsitBrowserResource(dg.ConfigurableResource):
 def ratsit_company_url(base_url: str, company_id: str) -> str:
     _validate_company_id(company_id)
     return validate_ratsit_url(f"{base_url.rstrip('/')}/{company_id}")
+
+
+def ratsit_round_robin_assignments(
+    company_ids: Sequence[str],
+) -> tuple[tuple[RatsitBrowserWorkerName, tuple[str, ...]], ...]:
+    selected_company_ids = tuple(company_ids)
+    return tuple(
+        (worker_name, selected_company_ids[worker_index::RATSIT_BROWSER_WORKER_COUNT])
+        for worker_index, worker_name in enumerate(RATSIT_BROWSER_WORKER_NAMES)
+    )
 
 
 def _validate_company_ids(
@@ -299,6 +421,8 @@ def _parse_failure(
     page: Any,
     *,
     company_id: str,
+    connection_mode: RatsitConnectionMode,
+    proxy_name: RatsitProxyName,
     requested_url: str,
     source_url: str,
     fetched_at: datetime,
@@ -311,6 +435,8 @@ def _parse_failure(
         html_bytes = None
     return RatsitCompanyFailure(
         company_id=company_id,
+        connection_mode=connection_mode,
+        proxy_name=proxy_name,
         requested_url=requested_url,
         source_url=source_url,
         fetched_at=fetched_at,

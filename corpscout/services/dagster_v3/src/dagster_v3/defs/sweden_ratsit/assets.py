@@ -13,10 +13,14 @@ from dagster_clickhouse import ClickhouseResource
 from dagster_v3.defs.clickhouse.resolved import assert_clickhouse_tables_exist
 from dagster_v3.defs.common.resources import ObjectStoreResource
 from dagster_v3.defs.sweden_ratsit.resources import (
+    RATSIT_BROWSER_WORKER_COUNT,
     RATSIT_HARD_MAX_COMPANIES,
+    RatsitConnectionMode,
     RatsitCompanyFailure,
     RatsitCompanyReport,
+    RatsitProxyName,
     SwedenRatsitBrowserResource,
+    ratsit_round_robin_assignments,
 )
 
 RATSIT_COMPANY_IDS = (
@@ -40,6 +44,86 @@ RATSIT_COMPANY_IDS = (
     "5560345174",  # NCC AKTIEBOLAG
     "5560360793",  # SAAB Aktiebolag
     "5560840976",  # Scania CV Aktiebolag
+    "5560001629",  # Nouryon International AB
+    "5560001991",  # Bengtsfors Kraft- och industri Aktiebolag
+    "5560002221",  # Nordic Paper Seffle AB
+    "5560003575",  # Axfood Snabbgross AB
+    "5560005190",  # Fastighetsaktiebolaget Mösseberg
+    "5560005323",  # Göteborgs is Aktiebolag
+    "5560005331",  # Husqvarna AB
+    "5560006628",  # KFUK-KFUM:s i Eskilstuna Fastighetsaktiebolag
+    "5560008038",  # Fastighetsaktiebolaget Skeppsbron
+    "5560011248",  # Karlskoga Industrifastighets AB
+    "5560013301",  # Holmen Aktiebolag
+    "5560016122",  # Gränges AB
+    "5560016817",  # Fastighetsaktiebolaget Bubblan i Åre
+    "5560019282",  # Hellekis Säteri Aktiebolag
+    "5560019399",  # Växthuset i Ås Aktiebolag
+    "5560019480",  # Sundsvalls Hantverksförening Aktiebolag
+    "5560020017",  # Malmö Frimurare Byggnads Aktiebolag
+    "5560020165",  # Fastighets AB Bergshamra sågen
+    "5560020231",  # Nobel Biocare AB
+    "5560022617",  # Ursviken Technology AB
+    "5560022807",  # Aktiebolaget Carl Söderberg
+    "5560025156",  # Svenska Granitindustri Aktiebolag
+    "5560026113",  # Gränges Finspång AB
+    "5560026311",  # Byggnadsaktiebolaget Engelbrekt
+    "5560026501",  # Virgula Aktiebolag
+    "5560026766",  # Biovestor Aktiebolag
+    "5560027327",  # Gårda Fabrikers Aktiebolag
+    "5560028150",  # Härlingstorps Aktiebolag
+    "5560029265",  # Odd Fellow i Göteborg Förvaltnings AB
+    "5560029539",  # Medevi Brunn AB
+    "5560029729",  # Aktiebolaget Jersey Depot
+    "5560030354",  # Electrolux Professional AB (publ)
+    "5560031212",  # Stockholms Borstbinderi Aktiebolag
+    "5560031386",  # Tidningshuset Storstadspress Aktiebolag
+    "5560031410",  # Ammers Såg & Qvarn AB
+    "5560031634",  # Alen Livs AB
+    "5560032046",  # Golltan AB
+    "5560032764",  # Rederiaktiebolaget Roslagen
+    "5560032921",  # Siemens Aktiebolag
+    "5560033143",  # ActiVera Sweden AB
+    "5560033457",  # Gertrud Fastigheter AB
+    "5560033978",  # Aktiebolaget Borås Tidning
+    "5560035643",  # Karlsö jagt- och djurskyddsförenings aktiebolag
+    "5560035874",  # Talent Plastics Laxå AB
+    "5560041161",  # Nordemans Förvaltnings Aktiebolag
+    "5560041708",  # Aktiebolaget 3127 Alfhem
+    "5560042060",  # Mo och Domsjö Aktiebolag
+    "5560044736",  # Sten och Tegelaktiebolaget
+    "5560047127",  # Lyckornagruppen AB
+    "5560048372",  # Svenska Fastighetsaktiebolaget
+    "5560049529",  # Masmästaren Näktergalen AB
+    "5560050204",  # Carl Folke & Co Aktiebolag
+    "5560050832",  # C.J.Walls sågeri och trävaru aktiebolag
+    "5560052358",  # Festspecialisten Buttericks Aktiebolag
+    "5560053331",  # SILIKATENS SERVICE Aktiebolag
+    "5560057662",  # Urbana Holding AB
+    "5560059759",  # Aktiebolaget Gäddeglo Tegelbruk
+    "5560059775",  # Byggnadsaktiebolaget Unitas i Wisby
+    "5560062761",  # Gripsholms-Mariefreds Ångfartygsaktiebolag
+    "5560063421",  # Trelleborg AB
+    "5560068321",  # Sätuna aktiebolag
+    "5560068586",  # BonBalance AB
+    "5560068701",  # Aktiebolaget Himmelsö
+    "5560068990",  # Fastighetsaktiebolaget Vinaman
+    "5560069840",  # Starbo Bruk Aktiebolag
+    "5560070756",  # Tantum AB
+    "5560071473",  # Smörjteknik Norden AB
+    "5560071671",  # Starfors Säteri AB
+    "5560073800",  # Västkustens Skogs AB
+    "5560073842",  # Fjällnäs Aktiebolag
+    "5560074626",  # Söderströmgruppen Aktiebolag
+    "5560075557",  # Handelsaktiebolaget i Ousby
+    "5560079799",  # Triangelbolaget D4 Aktiebolag
+    "5560081621",  # Elanders AB
+    "5560082892",  # Flerohopps Bruks Aktiebolag
+    "5560083585",  # Ratos AB
+    "5560085440",  # Disperator AB
+    "5560086661",  # ABW Equipment AB
+    "5560087743",  # Aktiebolaget Karlshälls Granitindustri
+    "5560088402",  # Aktiebolaget Ingarö Strand
 )
 RATSIT_MAX_COMPANIES = RATSIT_HARD_MAX_COMPANIES
 RATSIT_S3_BUCKET = "source-sweden-ratsit"
@@ -55,6 +139,8 @@ RATSIT_RESULT_COLUMNS = (
     "company_id",
     "outcome",
     "failure_type",
+    "connection_mode",
+    "proxy_name",
     "requested_url",
     "source_url",
     "http_status",
@@ -93,6 +179,8 @@ class RatsitScanResult:
     company_id: str
     outcome: str
     failure_type: str
+    connection_mode: RatsitConnectionMode
+    proxy_name: RatsitProxyName
     requested_url: str
     source_url: str
     http_status: int | None
@@ -243,6 +331,8 @@ def write_ratsit_scan(
                     company_id=result.company_id,
                     outcome="success",
                     failure_type="",
+                    connection_mode=result.connection_mode,
+                    proxy_name=result.proxy_name,
                     requested_url=result.requested_url,
                     source_url=result.source_url,
                     http_status=result.http_status,
@@ -291,6 +381,8 @@ def write_ratsit_scan(
                 company_id=result.company_id,
                 outcome="failure",
                 failure_type=result.error_type,
+                connection_mode=result.connection_mode,
+                proxy_name=result.proxy_name,
                 requested_url=result.requested_url,
                 source_url=result.source_url,
                 http_status=result.http_status,
@@ -354,6 +446,8 @@ def persist_ratsit_scan(
             result.company_id,
             result.outcome,
             result.failure_type,
+            result.connection_mode,
+            result.proxy_name,
             result.requested_url,
             result.source_url,
             result.http_status,
@@ -455,11 +549,12 @@ def _require_aware_timestamp(value: datetime, *, label: str) -> None:
     },
     pool=RATSIT_BROWSER_POOL,
     description=(
-        "Renders and parses the same 20 Ratsit company pages in one headless "
-        "CloakBrowser, with request starts at least two seconds apart. Every "
-        "company outcome is indexed by Dagster run ID in ClickHouse. Changed "
-        "reports are written to per-company run-ID keys; identical report "
-        "hashes reuse the prior S3 object."
+        "Renders and parses the same 100 Ratsit company pages with four parallel "
+        "headless CloakBrowsers: one direct and three proxied. Companies are "
+        "assigned round-robin, and each browser spaces request starts by at "
+        "least two seconds. Every company outcome is indexed by Dagster run ID "
+        "in ClickHouse. Changed reports are written to per-company run-ID keys; "
+        "identical report hashes reuse the prior S3 object."
     ),
 )
 def se_ratsit_scan_dispatch(
@@ -471,9 +566,11 @@ def se_ratsit_scan_dispatch(
     scan_id = context.run.run_id
     started_at = datetime.now(UTC)
     context.log.info(
-        "Starting Ratsit scan: scan_id=%s companies=%s request_interval_seconds=%s",
+        "Starting Ratsit scan: scan_id=%s companies=%s browser_workers=%s "
+        "request_interval_seconds=%s",
         scan_id,
         len(RATSIT_COMPANY_IDS),
+        RATSIT_BROWSER_WORKER_COUNT,
         sweden_ratsit_browser.request_interval_seconds,
     )
     reusable_reports = load_reusable_ratsit_reports(
@@ -489,15 +586,28 @@ def se_ratsit_scan_dispatch(
         started_at=started_at,
     )
     indexed_result_count = persist_ratsit_scan(clickhouse, summary)
+    http_429_counts_by_route = {
+        worker_name: sum(
+            1
+            for result in summary.results
+            if result.http_status == 429
+            and (result.proxy_name if result.proxy_name else "direct") == worker_name
+        )
+        for worker_name, _ in ratsit_round_robin_assignments(
+            summary.selected_company_ids
+        )
+    }
+    http_429_count = sum(http_429_counts_by_route.values())
 
     context.log.info(
         "Finished Ratsit scan: scan_id=%s successes=%s failures=%s reused=%s "
-        "objects_written=%s",
+        "objects_written=%s http_429s=%s",
         scan_id,
         summary.success_count,
         summary.failure_count,
         summary.reused_report_count,
         summary.written_object_count,
+        http_429_count,
     )
     return dg.MaterializeResult(
         metadata={
@@ -510,11 +620,25 @@ def se_ratsit_scan_dispatch(
             "written_object_count": summary.written_object_count,
             "indexed_result_count": indexed_result_count,
             "company_ids": list(summary.selected_company_ids),
+            "browser_assignments": {
+                worker_name: list(company_ids)
+                for worker_name, company_ids in ratsit_round_robin_assignments(
+                    summary.selected_company_ids
+                )
+            },
+            "browser_worker_count": RATSIT_BROWSER_WORKER_COUNT,
+            "proxy_browser_count": RATSIT_BROWSER_WORKER_COUNT - 1,
+            "http_429_count": http_429_count,
+            "http_429_counts_by_route": http_429_counts_by_route,
             "result_object_keys": list(summary.result_object_keys),
             "result_table": (f"{RATSIT_CLICKHOUSE_DATABASE}.{RATSIT_RESULT_TABLE}"),
             "headless": sweden_ratsit_browser.headless,
             "request_interval_seconds": (
                 sweden_ratsit_browser.request_interval_seconds
+            ),
+            "effective_average_request_interval_seconds": (
+                sweden_ratsit_browser.request_interval_seconds
+                / RATSIT_BROWSER_WORKER_COUNT
             ),
             "schema_version": RATSIT_SCHEMA_VERSION,
             "parser_version": RATSIT_PARSER_VERSION,
@@ -527,7 +651,7 @@ def se_ratsit_scan_dispatch(
 se_ratsit_scan_dispatch_job = dg.define_asset_job(
     name="se_ratsit_scan_dispatch_job",
     selection=dg.AssetSelection.assets(se_ratsit_scan_dispatch),
-    description="Run the fixed 20-company Ratsit scan.",
+    description="Run the fixed 100-company Ratsit scan.",
 )
 
 
@@ -535,7 +659,11 @@ defs = dg.Definitions(
     assets=[se_ratsit_scan_dispatch],
     jobs=[se_ratsit_scan_dispatch_job],
     resources={
-        "sweden_ratsit_browser": SwedenRatsitBrowserResource(),
+        "sweden_ratsit_browser": SwedenRatsitBrowserResource(
+            crawl_proxy1=dg.EnvVar("crawl_proxy1"),
+            crawl_proxy2=dg.EnvVar("crawl_proxy2"),
+            crawl_proxy3=dg.EnvVar("crawl_proxy3"),
+        ),
         "sweden_ratsit_object_store": ObjectStoreResource(bucket=RATSIT_S3_BUCKET),
     },
 )
