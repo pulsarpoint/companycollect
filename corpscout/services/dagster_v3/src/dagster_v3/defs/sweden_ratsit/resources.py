@@ -40,7 +40,8 @@ RATSIT_BROWSER_WORKER_NAMES: tuple[RatsitBrowserWorkerName, ...] = (
 )
 RATSIT_BROWSER_WORKER_COUNT = len(RATSIT_BROWSER_WORKER_NAMES)
 
-type RatsitFailureType = Literal["navigation", "http", "parse", "not_found"]
+type RatsitFailureType = Literal["navigation", "http", "parse"]
+type RatsitNotFoundReason = Literal["http_not_found", "ratsit_missing"]
 
 
 @dataclass(frozen=True)
@@ -69,6 +70,26 @@ class RatsitCompanyFailure:
     http_status: int | None
     html_sha256: str | None
     diagnostic_html: bytes | None
+
+
+@dataclass(frozen=True)
+class RatsitCompanyNotFound:
+    company_id: str
+    connection_mode: RatsitConnectionMode
+    proxy_name: RatsitProxyName
+    requested_url: str
+    source_url: str
+    fetched_at: datetime
+    reason: RatsitNotFoundReason
+    message: str
+    http_status: int
+    html_sha256: str | None
+    diagnostic_html: bytes | None
+
+
+type RatsitCompanyResult = (
+    RatsitCompanyReport | RatsitCompanyFailure | RatsitCompanyNotFound
+)
 
 
 class SwedenRatsitBrowserResource(dg.ConfigurableResource):
@@ -114,7 +135,7 @@ class SwedenRatsitBrowserResource(dg.ConfigurableResource):
         monotonic: Callable[[], float] = time.monotonic,
         sleep: Callable[[float], None] = time.sleep,
         now: Callable[[], datetime] = lambda: datetime.now(UTC),
-    ) -> Iterator[RatsitCompanyReport | RatsitCompanyFailure]:
+    ) -> Iterator[RatsitCompanyResult]:
         selected_company_ids = _validate_company_ids(
             company_ids,
             max_companies=self.max_companies,
@@ -136,7 +157,7 @@ class SwedenRatsitBrowserResource(dg.ConfigurableResource):
 
         def fetch_worker(
             worker: tuple[RatsitBrowserWorkerName, str | None, tuple[str, ...]],
-        ) -> tuple[RatsitCompanyReport | RatsitCompanyFailure, ...]:
+        ) -> tuple[RatsitCompanyResult, ...]:
             worker_name, proxy_url, worker_company_ids = worker
             return tuple(
                 self._iter_browser_reports(
@@ -180,7 +201,7 @@ class SwedenRatsitBrowserResource(dg.ConfigurableResource):
         monotonic: Callable[[], float],
         sleep: Callable[[float], None],
         now: Callable[[], datetime],
-    ) -> Iterator[RatsitCompanyReport | RatsitCompanyFailure]:
+    ) -> Iterator[RatsitCompanyResult]:
         try:
             browser = launcher(headless=self.headless, proxy=proxy_url)
         except Exception:
@@ -229,7 +250,7 @@ class SwedenRatsitBrowserResource(dg.ConfigurableResource):
         proxy_name: RatsitProxyName,
         requested_url: str,
         now: Callable[[], datetime],
-    ) -> RatsitCompanyReport | RatsitCompanyFailure:
+    ) -> RatsitCompanyResult:
         try:
             response = page.goto(
                 requested_url,
@@ -269,14 +290,14 @@ class SwedenRatsitBrowserResource(dg.ConfigurableResource):
 
         status = int(response.status)
         if status == 404:
-            return RatsitCompanyFailure(
+            return RatsitCompanyNotFound(
                 company_id=company_id,
                 connection_mode=connection_mode,
                 proxy_name=proxy_name,
                 requested_url=requested_url,
                 source_url=source_url,
                 fetched_at=_aware_utc_now(now),
-                error_type="not_found",
+                reason="http_not_found",
                 message="Ratsit returned HTTP status 404",
                 http_status=status,
                 html_sha256=None,
@@ -298,17 +319,23 @@ class SwedenRatsitBrowserResource(dg.ConfigurableResource):
             )
 
         if _is_missing_company_redirect(source_url):
-            return _diagnostic_failure(
-                page,
+            diagnostic_html = _rendered_html_diagnostic(page)
+            return RatsitCompanyNotFound(
                 company_id=company_id,
                 connection_mode=connection_mode,
                 proxy_name=proxy_name,
                 requested_url=requested_url,
                 source_url=source_url,
                 fetched_at=_aware_utc_now(now),
-                status=status,
-                error_type="not_found",
+                reason="ratsit_missing",
                 message="Ratsit redirected to /foretag?saknas",
+                http_status=status,
+                html_sha256=(
+                    hashlib.sha256(diagnostic_html).hexdigest()
+                    if diagnostic_html is not None
+                    else None
+                ),
+                diagnostic_html=diagnostic_html,
             )
 
         try:
@@ -326,7 +353,6 @@ class SwedenRatsitBrowserResource(dg.ConfigurableResource):
                 source_url=source_url,
                 fetched_at=_aware_utc_now(now),
                 status=status,
-                error_type="parse",
                 message=(
                     f"Ratsit content selector was not visible: {PAGE_CONTENT_SELECTOR}"
                 ),
@@ -467,13 +493,9 @@ def _diagnostic_failure(
     source_url: str,
     fetched_at: datetime,
     status: int,
-    error_type: Literal["parse", "not_found"],
     message: str,
 ) -> RatsitCompanyFailure:
-    try:
-        html_bytes = page.content().encode("utf-8")
-    except Exception:
-        html_bytes = None
+    html_bytes = _rendered_html_diagnostic(page)
     return RatsitCompanyFailure(
         company_id=company_id,
         connection_mode=connection_mode,
@@ -481,7 +503,7 @@ def _diagnostic_failure(
         requested_url=requested_url,
         source_url=source_url,
         fetched_at=fetched_at,
-        error_type=error_type,
+        error_type="parse",
         message=message,
         http_status=status,
         html_sha256=(
@@ -489,6 +511,13 @@ def _diagnostic_failure(
         ),
         diagnostic_html=html_bytes,
     )
+
+
+def _rendered_html_diagnostic(page: Any) -> bytes | None:
+    try:
+        return page.content().encode("utf-8")
+    except Exception:
+        return None
 
 
 def _validate_company_report(

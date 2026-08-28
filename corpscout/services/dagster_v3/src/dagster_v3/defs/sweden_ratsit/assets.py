@@ -17,6 +17,7 @@ from dagster_v3.defs.sweden_ratsit.resources import (
     RATSIT_HARD_MAX_COMPANIES,
     RatsitConnectionMode,
     RatsitCompanyFailure,
+    RatsitCompanyNotFound,
     RatsitCompanyReport,
     RatsitProxyName,
     SwedenRatsitBrowserResource,
@@ -160,6 +161,7 @@ RATSIT_RESULT_COLUMNS = (
 type RatsitResultFilename = Literal[
     "report.json",
     "error.json",
+    "not_found.json",
     "diagnostic.html.gz",
 ]
 
@@ -205,6 +207,7 @@ class RatsitScanSummary:
     completed_at: datetime
     results: tuple[RatsitScanResult, ...]
     success_count: int
+    not_found_count: int
     failure_count: int
     reused_report_count: int
     diagnostic_html_count: int
@@ -293,6 +296,7 @@ def write_ratsit_scan(
     stored_reports = reusable_reports or {}
     scan_results: list[RatsitScanResult] = []
     success_count = 0
+    not_found_count = 0
     failure_count = 0
     reused_report_count = 0
     diagnostic_html_count = 0
@@ -352,13 +356,30 @@ def write_ratsit_scan(
             success_count += 1
             continue
 
-        error_json = _error_json(result, scan_id=scan_id)
-        error_key = ratsit_result_object_key(
-            result.company_id,
-            scan_id,
-            "error.json",
-        )
-        object_store.write_json(error_key, error_json, bucket=RATSIT_S3_BUCKET)
+        if isinstance(result, RatsitCompanyNotFound):
+            result_json = _not_found_json(result, scan_id=scan_id)
+            result_key = ratsit_result_object_key(
+                result.company_id,
+                scan_id,
+                "not_found.json",
+            )
+            outcome = "not_found"
+            failure_type = ""
+            error_message = ""
+            not_found_count += 1
+        else:
+            result_json = _error_json(result, scan_id=scan_id)
+            result_key = ratsit_result_object_key(
+                result.company_id,
+                scan_id,
+                "error.json",
+            )
+            outcome = "failure"
+            failure_type = result.error_type
+            error_message = result.message
+            failure_count += 1
+
+        object_store.write_json(result_key, result_json, bucket=RATSIT_S3_BUCKET)
         written_object_count += 1
         diagnostic_object_key = ""
         if result.diagnostic_html is not None:
@@ -379,27 +400,26 @@ def write_ratsit_scan(
             RatsitScanResult(
                 scan_id=scan_id,
                 company_id=result.company_id,
-                outcome="failure",
-                failure_type=result.error_type,
+                outcome=outcome,
+                failure_type=failure_type,
                 connection_mode=result.connection_mode,
                 proxy_name=result.proxy_name,
                 requested_url=result.requested_url,
                 source_url=result.source_url,
                 http_status=result.http_status,
                 result_bucket=RATSIT_S3_BUCKET,
-                result_object_key=error_key,
-                result_sha256=_sha256(error_json),
-                result_size_bytes=len(error_json.encode("utf-8")),
+                result_object_key=result_key,
+                result_sha256=_sha256(result_json),
+                result_size_bytes=len(result_json.encode("utf-8")),
                 report_reused=False,
                 source_html_sha256=result.html_sha256,
                 diagnostic_object_key=diagnostic_object_key,
                 schema_version=RATSIT_SCHEMA_VERSION,
                 parser_version=RATSIT_PARSER_VERSION,
                 fetched_at=result.fetched_at,
-                error_message=result.message,
+                error_message=error_message,
             )
         )
-        failure_count += 1
 
     scan_completed_at = completed_at or datetime.now(UTC)
     _require_aware_timestamp(scan_completed_at, label="scan completion")
@@ -415,6 +435,7 @@ def write_ratsit_scan(
         completed_at=scan_completed_at,
         results=tuple(scan_results),
         success_count=success_count,
+        not_found_count=not_found_count,
         failure_count=failure_count,
         reused_report_count=reused_report_count,
         diagnostic_html_count=diagnostic_html_count,
@@ -519,6 +540,25 @@ def _error_json(failure: RatsitCompanyFailure, *, scan_id: str) -> str:
     )
 
 
+def _not_found_json(result: RatsitCompanyNotFound, *, scan_id: str) -> str:
+    return _json_document(
+        {
+            "schema_version": RATSIT_SCHEMA_VERSION,
+            "parser_version": RATSIT_PARSER_VERSION,
+            "scan_id": scan_id,
+            "company_id": result.company_id,
+            "requested_url": result.requested_url,
+            "source_url": result.source_url,
+            "fetched_at": result.fetched_at.isoformat(),
+            "outcome": "not_found",
+            "reason": result.reason,
+            "message": result.message,
+            "http_status": result.http_status,
+            "html_sha256": result.html_sha256,
+        }
+    )
+
+
 def _json_document(value: object) -> str:
     return json.dumps(
         value,
@@ -600,10 +640,11 @@ def se_ratsit_scan_dispatch(
     http_429_count = sum(http_429_counts_by_route.values())
 
     context.log.info(
-        "Finished Ratsit scan: scan_id=%s successes=%s failures=%s reused=%s "
-        "objects_written=%s http_429s=%s",
+        "Finished Ratsit scan: scan_id=%s successes=%s not_found=%s failures=%s "
+        "reused=%s objects_written=%s http_429s=%s",
         scan_id,
         summary.success_count,
+        summary.not_found_count,
         summary.failure_count,
         summary.reused_report_count,
         summary.written_object_count,
@@ -614,6 +655,7 @@ def se_ratsit_scan_dispatch(
             "scan_id": scan_id,
             "selected_company_count": len(summary.selected_company_ids),
             "success_count": summary.success_count,
+            "not_found_count": summary.not_found_count,
             "failure_count": summary.failure_count,
             "reused_report_count": summary.reused_report_count,
             "diagnostic_html_count": summary.diagnostic_html_count,

@@ -33,6 +33,8 @@ per-company prefix in `source-sweden-ratsit`:
   `sweden_ratsit/pilot/company_id=<id>/<scan_id>_report.json`;
 - navigation, HTTP, or parse failure:
   `sweden_ratsit/pilot/company_id=<id>/<scan_id>_error.json`;
+- company not found on Ratsit:
+  `sweden_ratsit/pilot/company_id=<id>/<scan_id>_not_found.json`;
 - failure diagnostic, when rendered HTML exists for a parse failure or missing
   company redirect:
   `sweden_ratsit/pilot/company_id=<id>/<scan_id>_diagnostic.html.gz`.
@@ -46,33 +48,35 @@ up all prior successful hashes for the company:
 - an identical hash writes no JSON object; the new ClickHouse result row points
   to the earlier object's exact bucket and key and sets `report_reused = 1`.
 
-Failures are scan-specific and always write a new error JSON. Successful rendered
-HTML is not retained. HTML is compressed only for parse failures, where it can
-explain a selector or page-shape problem without another request.
+Failures and not-found outcomes are scan-specific and always write a new JSON.
+Successful rendered HTML is not retained. HTML is compressed for parse failures
+and missing-company redirects, where it can explain the result without another
+request.
 
 ## ClickHouse history
 
 `corpscout.se_company_ratsit` has one row per
-`(scan_id, company_id)`. Every successful or failed company result contains the
-exact S3 bucket, object key, JSON SHA-256, byte size, fetch metadata, and optional
-diagnostic key. Reused rows retain the new scan ID while pointing to the old S3
-report object.
+`(scan_id, company_id)`. Every company result contains the exact S3 bucket,
+object key, JSON SHA-256, byte size, fetch metadata, and optional diagnostic key.
+Reused rows retain the new scan ID while pointing to the old S3 report object.
 
-`outcome` is either `success` or `failure`. For failed rows, `failure_type`
-identifies `navigation`, `http`, or `parse`; successful rows have an empty
-`failure_type`. `connection_mode` identifies a direct or proxied request, and
-`proxy_name` is empty for direct requests or contains the safe logical worker
-name `crawl_proxy1`, `crawl_proxy2`, or `crawl_proxy3`. Credential-bearing proxy
-URLs are never persisted. Consumers select the latest successful report directly
-from this single table, so a newer failure does not hide the last usable S3
-pointer. Materialization metadata includes the total HTTP 429 count and counts
-grouped by these four route names.
+`outcome` is `success`, `failure`, or `not_found`. For failed rows,
+`failure_type` identifies `navigation`, `http`, or `parse`; success and
+`not_found` rows have an empty `failure_type`. `connection_mode` identifies a
+direct or proxied request, and `proxy_name` is empty for direct requests or
+contains the safe logical worker name `crawl_proxy1`, `crawl_proxy2`, or
+`crawl_proxy3`. Credential-bearing proxy URLs are never persisted. Consumers
+select the latest successful report directly from this single table, so a newer
+failure or not-found result does not hide the last usable S3 pointer.
+Materialization metadata includes not-found, HTTP 429, and per-route 429 counts.
 
 ## Parser output
 
 HTTP 404 responses and Ratsit's successful redirect to `/foretag?saknas` are
-stored as `not_found` failures. The redirect response keeps compressed rendered
-HTML for diagnosis, without waiting for the normal company-content selector.
+stored as the distinct `not_found` outcome. The not-found JSON records whether
+the evidence was `http_not_found` or `ratsit_missing`. The redirect response
+keeps compressed rendered HTML for diagnosis, without waiting for the normal
+company-content selector.
 
 The pure `lxml` parser extracts company identity, status, legal form, address,
 industry, description, responsible people, workplaces, people at the address,
@@ -83,7 +87,7 @@ number matching the requested ID.
 ## Verification
 
 - Contract tests: `tests/test_sweden_ratsit_pilot.py`.
-- Migration contract: migrations `000336`, `000340`, `000341`, and
+- Migration contract: migrations `000336`, `000340`, `000341`, `000342`, and
   `tests/test_clickhouse_migrations.py`.
 - Definitions: `uv run dg check defs`.
 - Runtime: materialize `se_ratsit_scan_dispatch_job`, then inspect its 100 rows in

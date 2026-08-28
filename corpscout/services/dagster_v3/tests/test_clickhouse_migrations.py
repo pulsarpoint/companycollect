@@ -351,6 +351,7 @@ EXPECTED_MIGRATIONS = (
     "000339_corpscout_retire_se_companies_translated",
     "000340_corpscout_se_company_ratsit_proxy_route",
     "000341_corpscout_se_company_ratsit_not_found",
+    "000342_corpscout_se_company_ratsit_not_found_outcome",
 )
 
 NOOP_MIGRATIONS = {"000276_noop"}
@@ -3716,6 +3717,22 @@ def test_ratsit_not_found_migration_allows_missing_company_diagnostics() -> None
     assert "failure_type IN ('parse', 'not_found')" in up_sql
     assert "'navigation', 'http', 'parse'" in down_sql
     assert "diagnostic_object_key = '' OR failure_type = 'parse'" in down_sql
+
+
+def test_ratsit_not_found_outcome_is_distinct_from_failure() -> None:
+    up_sql = _migration_sql(
+        "000342_corpscout_se_company_ratsit_not_found_outcome.up.sql"
+    )
+    down_sql = _migration_sql(
+        "000342_corpscout_se_company_ratsit_not_found_outcome.down.sql"
+    )
+
+    assert "outcome IN ('success', 'failure', 'not_found')" in up_sql
+    assert "outcome = 'not_found' AND failure_type = ''" in up_sql
+    assert "outcome = 'failure'" in up_sql
+    assert "failure_type IN ('navigation', 'http', 'parse')" in up_sql
+    assert "OR outcome = 'not_found'" in up_sql
+    assert "outcome IN ('success', 'failure')" in down_sql
 
 
 def _migration_sql(file_name: str) -> str:

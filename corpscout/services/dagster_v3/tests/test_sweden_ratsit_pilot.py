@@ -25,6 +25,7 @@ from dagster_v3.defs.sweden_ratsit.parser import parse_company_page
 from dagster_v3.defs.sweden_ratsit.resources import (
     RATSIT_BROWSER_WORKER_COUNT,
     RatsitCompanyFailure,
+    RatsitCompanyNotFound,
     RatsitCompanyReport,
     SwedenRatsitBrowserResource,
     ratsit_round_robin_assignments,
@@ -189,7 +190,9 @@ class FakeObjectStore:
 class FakeRatsitResource:
     def __init__(
         self,
-        results: list[RatsitCompanyReport | RatsitCompanyFailure],
+        results: list[
+            RatsitCompanyReport | RatsitCompanyFailure | RatsitCompanyNotFound
+        ],
     ) -> None:
         self.results = results
         self.requested_ids: tuple[str, ...] | None = None
@@ -406,8 +409,8 @@ def test_browser_resource_treats_ratsit_missing_redirect_as_not_found() -> None:
 
     assert len(results) == 1
     failure = results[0]
-    assert isinstance(failure, RatsitCompanyFailure)
-    assert failure.error_type == "not_found"
+    assert isinstance(failure, RatsitCompanyNotFound)
+    assert failure.reason == "ratsit_missing"
     assert failure.http_status == 200
     assert failure.source_url == "https://www.ratsit.se/foretag?saknas"
     assert failure.message == "Ratsit redirected to /foretag?saknas"
@@ -432,8 +435,8 @@ def test_browser_resource_treats_http_404_as_not_found() -> None:
 
     assert len(results) == 1
     failure = results[0]
-    assert isinstance(failure, RatsitCompanyFailure)
-    assert failure.error_type == "not_found"
+    assert isinstance(failure, RatsitCompanyNotFound)
+    assert failure.reason == "http_not_found"
     assert failure.http_status == 404
     assert failure.diagnostic_html is None
 
@@ -549,14 +552,14 @@ def test_scan_writes_run_scoped_results_and_keeps_diagnostic_html() -> None:
 
 def test_scan_keeps_missing_company_redirect_html() -> None:
     missing_html = "<html><body>Företaget saknas</body></html>".encode()
-    missing_company = RatsitCompanyFailure(
+    missing_company = RatsitCompanyNotFound(
         company_id=COMPANY_ID,
         connection_mode="direct",
         proxy_name="",
         requested_url=f"https://www.ratsit.se/{COMPANY_ID}",
         source_url="https://www.ratsit.se/foretag?saknas",
         fetched_at=FETCHED_AT,
-        error_type="not_found",
+        reason="ratsit_missing",
         message="Ratsit redirected to /foretag?saknas",
         http_status=200,
         html_sha256="c" * 64,
@@ -573,20 +576,28 @@ def test_scan_keeps_missing_company_redirect_html() -> None:
         completed_at=FETCHED_AT,
     )
 
-    error_key = ratsit_result_object_key(
+    not_found_key = ratsit_result_object_key(
         COMPANY_ID,
         "missing-company-scan",
-        "error.json",
+        "not_found.json",
     )
     html_key = ratsit_result_object_key(
         COMPANY_ID,
         "missing-company-scan",
         "diagnostic.html.gz",
     )
-    assert set(object_store.objects) == {error_key, html_key}
+    assert set(object_store.objects) == {not_found_key, html_key}
+    not_found_payload = json.loads(object_store.objects[not_found_key])
+    assert not_found_payload["outcome"] == "not_found"
+    assert not_found_payload["reason"] == "ratsit_missing"
     assert gzip.decompress(object_store.objects[html_key]) == missing_html
-    assert summary.results[0].failure_type == "not_found"
+    assert summary.results[0].outcome == "not_found"
+    assert summary.results[0].failure_type == ""
+    assert summary.results[0].error_message == ""
     assert summary.results[0].diagnostic_object_key == html_key
+    assert summary.success_count == 0
+    assert summary.not_found_count == 1
+    assert summary.failure_count == 0
     assert summary.diagnostic_html_count == 1
 
 
