@@ -2,16 +2,23 @@
  * The `/admin/se/companies/geocoding` list: one row per Swedish company that
  * has a published address, showing that address's geocode outcome.
  *
- * SOURCE: corpscout.se_companies_current -- the per-company serving
- * materialized view (migration 000326, built from
- * dagster_v3 sweden_company/companies_current.py). It holds ONE ROW PER
- * COMPANY, refreshed hourly, having ALREADY paid -- once, at refresh time --
- * the expensive work this tab used to redo on every request: the FINAL merges
- * on se_company_address/se_company_info, the primary-address pick, and the
- * LEFT JOIN to the se_address_geocodes_served overlay. Serving reads the plain
- * MergeTree behind the view: NO FINAL, NO join. The previous ~20s page load
- * (recomputing all of that per request) becomes a sub-second scan of a table
- * keyed ORDER BY company_id.
+ * SOURCE: corpscout.se_companies_serving -- the consolidated per-company
+ * serving materialized view (migration 000335, built from
+ * dagster_v3 sweden_company/companies_current.py, superseding the
+ * se_companies_current view of migration 000326). It holds ONE ROW PER
+ * COMPANY, refreshed every 15 minutes, having ALREADY paid -- once, at
+ * refresh time -- the expensive work this tab used to redo on every request:
+ * the FINAL merges on se_company_address/se_company_info, the primary-address
+ * pick, and the LEFT JOIN to the se_address_geocodes_served overlay. Serving
+ * reads the plain MergeTree behind the view: NO FINAL, NO join. The previous
+ * ~20s page load (recomputing all of that per request) becomes a sub-second
+ * scan of a table keyed ORDER BY company_id.
+ *
+ * One thing DID widen with 000335: se_companies_current only had companies
+ * WITH a current address, while se_companies_serving has ALL of
+ * se_company_info -- so every query here filters `has_address = 1`
+ * (GEOCODING_ADDRESS_FILTER_SQL) to keep this tab exactly the "companies with
+ * a published address" list it has always been.
  *
  * The view carries the PRIMARY address's own summary as flat columns:
  * `primary_geocode_class` (the coarse-aware class -- vocabulary
@@ -35,7 +42,10 @@
  */
 import { chQuery } from "~/lib/clickhouse.server";
 import { clampPage, clampPageSize } from "~/lib/paging";
-import { PAGE_LIMIT_OFFSET_SQL } from "~/lib/se-company-info-lists.server";
+import {
+  PAGE_LIMIT_OFFSET_SQL,
+  SE_COMPANIES_SERVING_TABLE,
+} from "~/lib/se-company-info-lists.server";
 import type {
   GeocodeListFilter,
   GeocodeStatusClass,
@@ -45,10 +55,19 @@ import type {
 /* The serving view: one row per company, geocode summary precomputed    */
 /* -------------------------------------------------------------------- */
 
-/** The per-company serving MV (migration 000326). Read as a plain MergeTree --
- * no FINAL, no join: every merge/join/aggregation this tab needs was resolved
- * once at the view's hourly refresh. */
-export const SE_COMPANIES_CURRENT_TABLE = "corpscout.se_companies_current";
+/** The consolidated per-company serving MV (migration 000335) -- the ONE
+ * constant both admin companies pages read, re-exported from the info list
+ * module that owns it. Read as a plain MergeTree -- no FINAL, no join: every
+ * merge/join/aggregation this tab needs was resolved once at the view's
+ * 15-minute refresh. */
+export { SE_COMPANIES_SERVING_TABLE };
+
+/** The serving view's base is ALL published companies (000335 widened it past
+ * se_companies_current's with-an-address base), so this tab -- the geocode
+ * triage of companies WITH a current address -- ANDs the view's precomputed
+ * address flag onto every query. `has_address = 1` is exactly "address_count
+ * > 0": both are written from the same current-address join at refresh time. */
+export const GEOCODING_ADDRESS_FILTER_SQL = "has_address = 1";
 
 /** The precomputed class column every filter predicate and the list badge read.
  * `primary_geocode_class` is the coarse-aware class of the company's PRIMARY
@@ -142,7 +161,7 @@ export const GEOCODING_LIST_SELECT_SQL = `SELECT
   primary_geocode_precision AS geocode_precision,
   primary_geocode_provider AS geocode_provider,
   primary_geocode_class AS geocode_class
-FROM ${SE_COMPANIES_CURRENT_TABLE}`;
+FROM ${SE_COMPANIES_SERVING_TABLE}`;
 
 function pageParams(query: { page: number; pageSize: number }): {
   limit: number;
@@ -163,7 +182,7 @@ export async function listSeCompanyGeocodingPage(
   const { limit, offset } = pageParams(query);
   const rows = await chQuery<SeCompanyGeocodingListRow>(
     `${GEOCODING_LIST_SELECT_SQL}
-WHERE ${GEOCODE_LIST_FILTER_SQL[query.filter]}
+WHERE ${GEOCODING_ADDRESS_FILTER_SQL} AND ${GEOCODE_LIST_FILTER_SQL[query.filter]}
 ORDER BY company_id ASC
 ${PAGE_LIMIT_OFFSET_SQL}`,
     { limit, offset },
@@ -185,11 +204,12 @@ export interface SeCompanyGeocodingCounts {
   noOutcome: number;
 }
 
-/** One scan of the serving view -- the SAME table the row list reads -- for
- * every number the strip shows, and for the chosen filter's own pagination
- * total (`total` when `filter` is "all", the matching field otherwise -- see
- * `countForFilter`). Reads the precomputed `primary_geocode_class` buckets;
- * no FINAL, no join, no GROUP BY. */
+/** One scan of the serving view -- the SAME table (and the same has_address
+ * base filter) as the row list -- for every number the strip shows, and for
+ * the chosen filter's own pagination total (`total` when `filter` is "all",
+ * the matching field otherwise -- see `countForFilter`). Reads the
+ * precomputed `primary_geocode_class` buckets; no FINAL, no join, no
+ * GROUP BY. */
 export const GEOCODING_COUNTS_SQL = `SELECT
   toString(count()) AS total,
   toString(countIf(${GEOCODE_LIST_FILTER_SQL.needs_attention})) AS needs_attention,
@@ -198,7 +218,8 @@ export const GEOCODING_COUNTS_SQL = `SELECT
   toString(countIf(${GEOCODE_LIST_FILTER_SQL.ambiguous})) AS ambiguous,
   toString(countIf(${GEOCODE_LIST_FILTER_SQL.unmatched})) AS unmatched,
   toString(countIf(${GEOCODE_LIST_FILTER_SQL.no_outcome})) AS no_outcome
-FROM ${SE_COMPANIES_CURRENT_TABLE}`;
+FROM ${SE_COMPANIES_SERVING_TABLE}
+WHERE ${GEOCODING_ADDRESS_FILTER_SQL}`;
 
 export async function loadSeCompanyGeocodingCounts(): Promise<SeCompanyGeocodingCounts> {
   const [row] = await chQuery<{

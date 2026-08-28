@@ -6,24 +6,26 @@ vi.mock("~/lib/clickhouse.server", () => ({ chQuery: clickhouse.query }));
 import {
   countForFilter,
   GEOCODE_LIST_FILTER_SQL,
+  GEOCODING_ADDRESS_FILTER_SQL,
   GEOCODING_COUNTS_SQL,
   GEOCODING_LIST_SELECT_SQL,
   listSeCompanyGeocodingPage,
   loadSeCompanyGeocodingCounts,
   PRIMARY_GEOCODE_CLASS_COLUMN,
-  SE_COMPANIES_CURRENT_TABLE,
+  SE_COMPANIES_SERVING_TABLE,
 } from "~/lib/se-company-geocoding-list.server";
 import { PAGE_LIMIT_OFFSET_SQL } from "~/lib/se-company-info-lists.server";
 import { GEOCODE_LIST_FILTERS } from "~/lib/se-company-geocoding-filters";
 
 describe("the serving view: read directly, NO FINAL, NO join", () => {
-  it("the list SELECT reads corpscout.se_companies_current as a plain table", () => {
-    // The whole point of Task 3: the tab used to recompute FINAL merges on
+  it("the list SELECT reads corpscout.se_companies_serving as a plain table", () => {
+    // The whole point of Task 3 (repointed to the consolidated view by
+    // migration 000335): the tab used to recompute FINAL merges on
     // se_company_address/se_company_info + the served-overlay join + a
     // primary-address pick on every request (~20s). It now scans the
-    // per-company serving MV (migration 000326), which paid all of that once at
-    // refresh time. Pinned whole so no FINAL/join can creep back in.
-    expect(SE_COMPANIES_CURRENT_TABLE).toBe("corpscout.se_companies_current");
+    // per-company serving MV, which paid all of that once at refresh time.
+    // Pinned whole so no FINAL/join can creep back in.
+    expect(SE_COMPANIES_SERVING_TABLE).toBe("corpscout.se_companies_serving");
     expect(GEOCODING_LIST_SELECT_SQL).toBe(`SELECT
   company_id AS company_id,
   legal_name AS legal_name,
@@ -34,20 +36,32 @@ describe("the serving view: read directly, NO FINAL, NO join", () => {
   primary_geocode_precision AS geocode_precision,
   primary_geocode_provider AS geocode_provider,
   primary_geocode_class AS geocode_class
-FROM corpscout.se_companies_current`);
+FROM corpscout.se_companies_serving`);
   });
 
   it("neither the list nor the counts query FINALs anything or joins any table", () => {
     for (const sql of [GEOCODING_LIST_SELECT_SQL, GEOCODING_COUNTS_SQL]) {
-      expect(sql).toContain("FROM corpscout.se_companies_current");
+      expect(sql).toContain("FROM corpscout.se_companies_serving");
       expect(sql).not.toContain("FINAL");
       expect(sql).not.toContain("JOIN");
-      // The pre-repoint inputs the MV subsumed -- none may be read here anymore.
+      // The pre-repoint inputs the MV subsumed -- none may be read here
+      // anymore. (The retired se_companies_current view neither.)
+      expect(sql).not.toContain("se_companies_current");
       expect(sql).not.toContain("se_company_address");
       expect(sql).not.toContain("se_company_info");
       expect(sql).not.toContain("se_address_geocodes_served");
       expect(sql).not.toContain("se_address_geocodes_current");
     }
+  });
+
+  it("filters every query to companies WITH a current address -- the base 000335 widened", () => {
+    // se_companies_current only held companies with a current address;
+    // se_companies_serving holds ALL of se_company_info. The has_address flag
+    // keeps this tab exactly the row set it has always shown.
+    expect(GEOCODING_ADDRESS_FILTER_SQL).toBe("has_address = 1");
+    expect(GEOCODING_COUNTS_SQL).toContain(
+      `WHERE ${GEOCODING_ADDRESS_FILTER_SQL}`,
+    );
   });
 
   it("the list projects the primary address's display fields aliased to the row's own names", () => {
@@ -133,7 +147,11 @@ describe("listSeCompanyGeocodingPage", () => {
     expect(clickhouse.query).toHaveBeenCalledTimes(1);
     const [sql, params] = clickhouse.query.mock.calls[0];
     expect(sql).toContain(GEOCODING_LIST_SELECT_SQL);
-    expect(sql).toContain(`WHERE ${GEOCODE_LIST_FILTER_SQL.needs_attention}`);
+    // The widened-base guard first, then the chosen class -- every list page
+    // is scoped to companies with a current address.
+    expect(sql).toContain(
+      `WHERE ${GEOCODING_ADDRESS_FILTER_SQL} AND ${GEOCODE_LIST_FILTER_SQL.needs_attention}`,
+    );
     expect(sql).toContain("ORDER BY company_id ASC");
     expect(sql).toContain(PAGE_LIMIT_OFFSET_SQL);
     expect(params).toEqual({ limit: 50, offset: 0 });
@@ -145,7 +163,9 @@ describe("listSeCompanyGeocodingPage", () => {
       clickhouse.query.mockResolvedValueOnce([]);
       await listSeCompanyGeocodingPage({ filter, page: 1, pageSize: 50 });
       const [sql] = clickhouse.query.mock.calls[0];
-      expect(sql).toContain(`WHERE ${GEOCODE_LIST_FILTER_SQL[filter]}`);
+      expect(sql).toContain(
+        `WHERE ${GEOCODING_ADDRESS_FILTER_SQL} AND ${GEOCODE_LIST_FILTER_SQL[filter]}`,
+      );
     }
   });
 
