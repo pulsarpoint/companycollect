@@ -19,6 +19,23 @@ from dagster_v3.defs.company_markets import sql, tables
 GROUP_NAME = "company_markets"
 
 
+# The identity joins behind these SELECTs (instrument_venues 15.0M x
+# instrument_issuer 9.1M x company_identifier) held their whole hash tables in
+# memory and hit the server's total-memory cap (Code 241, 2026-08-28) once
+# corpscout.se_companies_serving's 15-minute refresh started sharing the same
+# 27.31 GiB budget. grace_hash spills join buckets to disk and the external
+# group-by/sort thresholds do the same for aggregation, so the query is slower
+# but bounded -- max_memory_usage keeps it well under the shared cap even when
+# a serving refresh runs concurrently.
+_HEAVY_QUERY_SETTINGS = {
+    "join_algorithm": "grace_hash",
+    "grace_hash_join_initial_buckets": 16,
+    "max_bytes_before_external_group_by": 8 * 1024**3,
+    "max_bytes_before_external_sort": 8 * 1024**3,
+    "max_memory_usage": 14 * 1024**3,
+}
+
+
 def _replace_from_select(
     context: AssetExecutionContext,
     clickhouse: ClickhouseResource,
@@ -36,7 +53,9 @@ def _replace_from_select(
         try:
             client.execute(f"CREATE TABLE {stage} AS {qualified}")
             client.execute(
-                f"INSERT INTO {stage} {select}", {"resolved_at": resolved_at}
+                f"INSERT INTO {stage} {select}",
+                {"resolved_at": resolved_at},
+                settings=_HEAVY_QUERY_SETTINGS,
             )
             rows = int(client.execute(f"SELECT count() FROM {stage}")[0][0])
             if rows < minimum_rows:
