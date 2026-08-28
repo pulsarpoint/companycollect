@@ -6,7 +6,6 @@ vi.mock("~/lib/clickhouse.server", () => ({ chQuery: clickhouse.query }));
 import {
   buildCorrectionsListFilter,
   buildInfoListFilter,
-  COMPANY_SETS,
   DATATYPE_PRESENCE_EXPR,
   CORRECTION_FILTER_OPTIONS_SQL,
   CORRECTION_SORT_COLUMNS,
@@ -32,6 +31,7 @@ import {
   resolveCorrectionsSort,
   resolveInfoSort,
   SCOPED_PUBLISHED_JOIN_SQL,
+  SE_COMPANIES_SERVING_TABLE,
   UNDONE_CTE_SQL,
 } from "~/lib/se-company-info-lists.server";
 import {
@@ -64,23 +64,25 @@ describe("buildInfoListFilter", () => {
       where: ["length(i.company_id) = 12"],
       params: {},
     });
+    // The serving view's status and legal_form_code are plain ''-folded
+    // Strings, so neither predicate needs the old toString/ifNull guards.
     expect(buildInfoListFilter({ status: "active" })).toEqual({
-      where: ["toString(i.status) = {status:String}"],
+      where: ["i.status = {status:String}"],
       params: { status: "active" },
     });
     expect(buildInfoListFilter({ legalForm: "AB" })).toEqual({
-      where: ["ifNull(i.legal_form_code, '') = {legalForm:String}"],
+      where: ["i.legal_form_code = {legalForm:String}"],
       params: { legalForm: "AB" },
     });
-    // Task 17: the one description-shaped thing this list still says -- does the
-    // company have a published description at all? IS NOT NULL, never `!= ''`:
-    // the column is Nullable and the merge writes NULL for "no text".
+    // Task 17: the one description-shaped thing this list still says -- does
+    // the company have a published description at all? The serving view's
+    // precomputed flag (the description TEXT is not a view column at all).
     expect(buildInfoListFilter({ description: "yes" })).toEqual({
-      where: ["i.description IS NOT NULL"],
+      where: ["i.has_description = 1"],
       params: {},
     });
     expect(buildInfoListFilter({ description: "no" })).toEqual({
-      where: ["i.description IS NULL"],
+      where: ["i.has_description = 0"],
       params: {},
     });
     // Sources: one predicate per source a profile can be built from, reusing
@@ -162,10 +164,10 @@ describe("buildInfoListFilter", () => {
       "i.company_id = {companyId:String}",
       "i.legal_name ILIKE {name:String}",
       "length(i.company_id) = 10",
-      "toString(i.status) = {status:String}",
-      "ifNull(i.legal_form_code, '') = {legalForm:String}",
-      "i.description IS NOT NULL",
-      "(i.wikidata_id IS NOT NULL OR has(i.description_sources, 'wikidata'))",
+      "i.status = {status:String}",
+      "i.legal_form_code = {legalForm:String}",
+      "i.has_description = 1",
+      "i.source_wikidata = 1",
     ]);
     expect(params).toEqual({
       companyId: "5565200028",
@@ -176,11 +178,31 @@ describe("buildInfoListFilter", () => {
   });
 });
 
-describe("se_company_info list SQL shape", () => {
-  it("reads FINAL, projects the company columns plus one description yes/no, and pages with named LIMIT/OFFSET params", () => {
-    expect(INFO_LIST_SELECT_SQL).toContain("FROM corpscout.se_company_info AS i FINAL");
+describe("company list SQL shape (the se_companies_serving view)", () => {
+  it("reads the serving view as a plain table -- NO FINAL -- and projects the precomputed description flag", () => {
+    expect(SE_COMPANIES_SERVING_TABLE).toBe("corpscout.se_companies_serving");
     expect(INFO_LIST_SELECT_SQL).toContain(
-      "toUInt8(i.description IS NOT NULL) AS has_description",
+      "FROM corpscout.se_companies_serving AS i",
+    );
+    // The whole point of the repoint: the presence/source flags this page used
+    // to recompute per load as IN-subqueries over five datatype tables (~1.4s
+    // list + ~1.6s counts) are precomputed in the view (migration 000335, the
+    // Dagster builder build_se_companies_serving_sql owns the semantics), so
+    // no query here may FINAL anything or build an IN-set again.
+    for (const sql of [INFO_LIST_SELECT_SQL, INFO_COUNTS_SQL, INFO_FILTER_OPTIONS_SQL]) {
+      expect(sql).not.toContain("FINAL");
+      expect(sql).not.toContain("se_company_info");
+      expect(sql).not.toContain("se_company_address");
+      expect(sql).not.toContain("se_bolagsverket_financial_metrics");
+      expect(sql).not.toContain("esef_financial_metrics");
+      expect(sql).not.toContain("se_financial_reports");
+      expect(sql).not.toContain("company_identifier");
+      expect(sql).not.toContain("se_company_person");
+      expect(sql).not.toContain("company_domains");
+      expect(sql).not.toContain("company_id IN (");
+    }
+    expect(INFO_LIST_SELECT_SQL).toContain(
+      "i.has_description AS has_description",
     );
     expect(INFO_LIST_SELECT_SQL).toContain(
       "if(length(i.company_id) = 12, 'sole', 'legal') AS entity_type",
@@ -201,11 +223,11 @@ describe("se_company_info list SQL shape", () => {
     );
     // Task 17: no description text crosses the wire for this list at all -- so
     // no snippet, and none of the provenance columns the detail page shows.
-    // description_sources is READ (inside the has() terms above) but never
-    // projected: the reviewer gets 'SEW', not a 300-byte array per row.
+    // The serving view doesn't even carry them: the letters come from stored
+    // flags, not from reading description_sources per row.
     for (const gone of [
       "substringUTF8",
-      "i.description_sources AS",
+      "description_sources",
       "description_source_record_uids",
       "description_source_count",
       "description_language",
@@ -215,36 +237,29 @@ describe("se_company_info list SQL shape", () => {
     ]) {
       expect(INFO_LIST_SELECT_SQL).not.toContain(gone);
     }
-    expect(INFO_COUNTS_SQL).toContain("FROM corpscout.se_company_info AS i FINAL");
+    expect(INFO_COUNTS_SQL).toContain(
+      "FROM corpscout.se_companies_serving AS i",
+    );
     expect(PAGE_LIMIT_OFFSET_SQL).toBe("LIMIT {limit:UInt32} OFFSET {offset:UInt32}");
   });
 
   it("derives the Sources letters in one pinned expression: B, then S, then E, then W", () => {
     // Pinned WHOLE, not by fragments: this string is the column, the sort key
     // and (term by term) the filter, so a silent edit to any part of it -- a
-    // dropped OR arm, a swapped letter, a reordered concat, a table swapped
-    // for a cheaper-looking one -- must fail here.
+    // dropped flag, a swapped letter, a reordered concat, an IN-subquery
+    // creeping back in -- must fail here.
     //
-    // The letters are the UNION across all five datatypes, which is the whole
-    // point of the column: 'E' is earned by an ESEF-sourced FILING (404
-    // companies) far more often than by the description artifact (2), and 'B'
-    // exists at all only because Bolagsverket writes addresses, accounts and
-    // people but never a description.
-    //
-    // `lei IS NOT NULL` is belt and braces, NOT coverage: se_company_info.lei
-    // is written only from the ESEF artifact (info_rules.py: `lei=_text(
-    // esef.values.get("lei")) if esef else None`, and no correction kind can
-    // set it), but every ESEF merge participation also writes 'esef' into
-    // description_sources today, so the two arms name the same rows. It guards
-    // a future filing that carries a LEI and no description. Wikidata's own
-    // arm is the mirror image: wikidata_id is written only from the Wikidata
-    // artifact, and a Wikidata row may contribute no description.
+    // The letters read the view's STORED flags (which tables earn a register
+    // its flag is settled in the Dagster builder, migration 000335). SCB has
+    // no stored flag on purpose: it is 1 for every row by construction (owner
+    // ruling: SCB is the register base), so its letter is the `if(1, ...)`
+    // tautology.
     expect(PROFILE_SOURCES_EXPR).toBe(
       `concat(
-  if((i.company_id IN (SELECT company_id FROM corpscout.se_company_address FINAL WHERE is_current AND has(sources, 'bolagsverket')) OR i.company_id IN (SELECT company_id FROM corpscout.se_bolagsverket_financial_metrics) OR i.company_id IN (SELECT company_id FROM corpscout.se_company_person_role WHERE has(sources, 'bolagsverket'))), 'B', ''),
+  if(i.source_bolagsverket = 1, 'B', ''),
   if(1, 'S', ''),
-  if((has(i.description_sources, 'esef') OR i.lei IS NOT NULL OR i.company_id IN (SELECT ci.company_id FROM corpscout.company_identifier AS ci WHERE ci.issuer_scheme = 'lei' AND ci.country_code = 'SE' AND ci.is_current = 1 AND ci.issuer_id IN (SELECT upperUTF8(trimBoth(m.lei)) FROM corpscout.esef_financial_metrics AS m)) OR i.company_id IN (SELECT company_id FROM corpscout.se_company_person_role WHERE has(sources, 'esef'))), 'E', ''),
-  if((i.wikidata_id IS NOT NULL OR has(i.description_sources, 'wikidata')), 'W', '')
+  if(i.source_esef = 1, 'E', ''),
+  if(i.source_wikidata = 1, 'W', '')
 )`,
     );
     // One predicate per catalog source, in the catalog's order, and the concat
@@ -259,144 +274,51 @@ describe("se_company_info list SQL shape", () => {
     }
   });
 
-  it("reads every datatype's presence from that datatype's OWN final table, once", () => {
-    // Each set is the table the matching tab reads (see the per-tab server
-    // modules), so "the list says Address ✓" and "the Address tab has cards"
-    // cannot disagree.
-    expect(COMPANY_SETS.address).toBe(
-      "SELECT company_id FROM corpscout.se_company_address FINAL WHERE is_current",
-    );
-    expect(COMPANY_SETS.people).toBe(
-      "SELECT company_id FROM corpscout.se_company_person",
-    );
-    // company_domains is the UNIFIED register: without the country filter this
-    // column would tick for a foreign company that happens to share an id.
-    expect(COMPANY_SETS.domains).toBe(
-      "SELECT company_id FROM corpscout.company_domains WHERE country_code = 'SE'",
-    );
-    // The reports arm reads the parser's own report ledger -- widened in
-    // 2026-08-25 so the list can't show "—" for a company that has a parsed
-    // filing but no extracted metric yet.
-    expect(COMPANY_SETS.financialReports).toBe(
-      "SELECT company_id FROM corpscout.se_financial_reports",
-    );
-    // FINAL only where a flag is flipped in place by a later part. address's
-    // is_current is (a tombstoned address must not read as live); the other
-    // four tables never withdraw a row via an in-place flag -- se_financial_
-    // reports withdraws one by physically deleting it (partition-scoped
-    // delete+insert, see COMPANY_SETS's doc comment) -- so paying for a merge
-    // would be waste.
-    expect(COMPANY_SETS.address).toContain("FINAL");
-    expect(COMPANY_SETS.addressBolagsverket).toContain("FINAL");
-    for (const set of [
-      COMPANY_SETS.people,
-      COMPANY_SETS.domains,
-      COMPANY_SETS.financialBolagsverket,
-      COMPANY_SETS.financialEsef,
-      COMPANY_SETS.financialReports,
-    ]) {
-      expect(set).not.toContain("FINAL");
-    }
-    // ESEF financials are keyed by LEI, so they reach a company through
-    // company_identifier exactly as se_financials_esef_current's own INNER
-    // JOIN does -- scoped to SE and to the current identifier, or a foreign
-    // issuer's LEI would tick a Swedish company's row.
-    expect(COMPANY_SETS.financialEsef).toContain("corpscout.company_identifier");
-    expect(COMPANY_SETS.financialEsef).toContain("ci.issuer_scheme = 'lei'");
-    expect(COMPANY_SETS.financialEsef).toContain("ci.country_code = 'SE'");
-    expect(COMPANY_SETS.financialEsef).toContain("ci.is_current = 1");
-    expect(COMPANY_SETS.financialEsef).toContain(
-      "corpscout.esef_financial_metrics",
-    );
-  });
-
-  it("gives every catalog datatype a presence expression built from those sets", () => {
+  it("reads every datatype's presence from the view's own precomputed flag column", () => {
     // Keyed by the client-safe catalog, so a datatype shown as a column always
     // has SQL behind it (the Record type is the compile-time half of this).
+    // Each entry is a plain column of the serving view -- the per-datatype
+    // IN-sets this page used to spell (COMPANY_SETS) moved into the Dagster
+    // builder (build_se_companies_serving_sql), flag semantics intact: the
+    // three-arm has_financial owner ruling included.
     expect(Object.keys(DATATYPE_PRESENCE_EXPR)).toEqual(
       PROFILE_DATATYPES.map((datatype) => datatype.key),
     );
-    expect(DATATYPE_PRESENCE_EXPR.has_address).toBe(
-      `i.company_id IN (${COMPANY_SETS.address})`,
-    );
-    expect(DATATYPE_PRESENCE_EXPR.has_people).toBe(
-      `i.company_id IN (${COMPANY_SETS.people})`,
-    );
-    expect(DATATYPE_PRESENCE_EXPR.has_domains).toBe(
-      `i.company_id IN (${COMPANY_SETS.domains})`,
-    );
-    // Financial presence is the OR of THREE arms -- the two REGISTER arms
-    // (spelled with the very sets the B and E letters use) plus the reports
-    // arm (owner ruling 2026-08-24 addendum: ✓ means ANY financial data, not
-    // just extracted figures, so the list can't show "—" under a Filed
-    // reports card). Pinned WHOLE: dropping any arm -- especially the reports
-    // arm regressing the 199-company reconciliation gap back open -- fails
-    // this test, not just a `.toContain`.
-    expect(DATATYPE_PRESENCE_EXPR.has_financial).toBe(
-      `(i.company_id IN (${COMPANY_SETS.financialBolagsverket})` +
-        ` OR i.company_id IN (${COMPANY_SETS.financialEsef})` +
-        ` OR i.company_id IN (${COMPANY_SETS.financialReports}))`,
-    );
-    expect(PROFILE_SOURCE_PREDICATES.bolagsverket).toContain(
-      `i.company_id IN (${COMPANY_SETS.financialBolagsverket})`,
-    );
-    expect(PROFILE_SOURCE_PREDICATES.esef).toContain(
-      `i.company_id IN (${COMPANY_SETS.financialEsef})`,
-    );
-    // The reports arm is deliberately NOT folded into either register letter
-    // (se_financial_reports does not say, in this query, which register filed
-    // the report) -- see PROFILE_SOURCE_PREDICATES's doc comment. Financial ✓
-    // can therefore no longer be relied on to imply a B or E letter.
-    expect(PROFILE_SOURCE_PREDICATES.bolagsverket).not.toContain(
-      "se_financial_reports",
-    );
-    expect(PROFILE_SOURCE_PREDICATES.esef).not.toContain(
-      "se_financial_reports",
-    );
+    expect(DATATYPE_PRESENCE_EXPR).toEqual({
+      has_address: "i.has_address",
+      has_financial: "i.has_financial",
+      has_people: "i.has_people",
+      has_domains: "i.has_domains",
+    });
   });
 
-  it("projects one UInt8 presence column per catalog datatype, and reads description_sources only inside has()", () => {
+  it("projects one presence column per catalog datatype, straight off the flags", () => {
     for (const datatype of PROFILE_DATATYPES) {
       expect(INFO_LIST_SELECT_SQL).toContain(
-        `toUInt8(${DATATYPE_PRESENCE_EXPR[datatype.key]}) AS ${datatype.key},`,
+        `${DATATYPE_PRESENCE_EXPR[datatype.key]} AS ${datatype.key},`,
       );
     }
-    // EVERY mention of description_sources in the list SELECT sits inside a
-    // has() term -- the array itself must never be projected. A weaker
-    // `not.toContain("i.description_sources AS")` pin would pass on
-    // `arraySort(i.description_sources) AS x`, which would put a 300-byte
-    // array on every one of 50 rows.
-    const term = "description_sources";
-    for (let at = INFO_LIST_SELECT_SQL.indexOf(term); at !== -1;
-         at = INFO_LIST_SELECT_SQL.indexOf(term, at + 1)) {
-      expect(INFO_LIST_SELECT_SQL.slice(at - "has(i.".length, at)).toBe("has(i.");
-    }
-    // ...and it IS read: a pin that passes because the column vanished proves
-    // nothing.
-    expect(INFO_LIST_SELECT_SQL).toContain(term);
   });
 });
 
 describe("listSeCompanyInfoPage", () => {
   beforeEach(() => clickhouse.query.mockReset());
 
-  it("reads FINAL, orders by company_id, pages with named LIMIT/OFFSET params, and runs no separate count() query", async () => {
+  it("reads the serving view without FINAL, orders by company_id, pages with named LIMIT/OFFSET params, and runs no separate count() query", async () => {
     clickhouse.query.mockResolvedValueOnce([]);
     const page = await listSeCompanyInfoPage({ page: 1, pageSize: 50 });
 
     expect(page).toEqual({ rows: [] });
     // Exactly one query: the row query. The pagination total comes from
     // loadSeCompanyInfoCounts instead (see that function's doc comment) -- one
-    // fewer FINAL scan per page load.
+    // fewer scan of the view per page load.
     expect(clickhouse.query).toHaveBeenCalledTimes(1);
     const [rowsSql, rowsParams] = clickhouse.query.mock.calls[0];
-    expect(rowsSql).toContain("FROM corpscout.se_company_info AS i FINAL");
+    expect(rowsSql).toContain("FROM corpscout.se_companies_serving AS i");
+    expect(rowsSql).not.toContain("FINAL");
     expect(rowsSql).toContain("ORDER BY i.company_id");
     expect(rowsSql).toContain(PAGE_LIMIT_OFFSET_SQL);
-    // The presence sets have WHERE clauses of their own (is_current, the SE
-    // scope), all of them INLINE inside a subquery; it is the *outer*,
-    // line-starting filter clause that must be absent when nothing is filtered
-    // -- the same distinction the corrections list's CTE forced.
+    // No filter set -> no WHERE clause at all, not a no-op one.
     expect(rowsSql).not.toContain("\nWHERE ");
     expect(rowsParams).toEqual({ limit: 50, offset: 0 });
   });
@@ -418,7 +340,7 @@ describe("listSeCompanyInfoPage", () => {
 
     const [rowsSql, rowsParams] = clickhouse.query.mock.calls[0];
     expect(rowsSql).toContain(
-      "WHERE toString(i.status) = {status:String} AND i.description IS NULL",
+      "WHERE i.status = {status:String} AND i.has_description = 0",
     );
     expect(rowsParams).toEqual({ status: "active", limit: 50, offset: 50 });
   });
@@ -439,8 +361,8 @@ describe("loadSeCompanyInfoCounts", () => {
     const [sql, params] = clickhouse.query.mock.calls[0];
     expect(sql).toContain(INFO_COUNTS_SQL);
     expect(sql).toContain("WHERE length(i.company_id) = 10");
-    expect(sql).toContain("countIf(i.description IS NOT NULL)");
-    expect(sql).toContain("countIf(i.description IS NULL)");
+    expect(sql).toContain("countIf(i.has_description = 1)");
+    expect(sql).toContain("countIf(i.has_description = 0)");
     // Task 17: the model/review totals belong to the pipeline page, not here.
     expect(sql).not.toContain("description_source_count");
     expect(sql).not.toContain("GROUP BY");
@@ -630,9 +552,9 @@ describe("server-side sorting", () => {
     expect(infoOrderBySql("legal_name", "desc")).toBe(
       "ORDER BY i.legal_name DESC, i.company_id ASC",
     );
-    // A computed column sorts by its expression, not by the SELECT alias.
+    // has_description is a plain flag column of the view now.
     expect(infoOrderBySql("has_description", "desc")).toBe(
-      "ORDER BY (i.description IS NOT NULL) DESC, i.company_id ASC",
+      "ORDER BY i.has_description DESC, i.company_id ASC",
     );
     expect(infoOrderBySql("entity_type", "asc")).toBe(
       "ORDER BY length(i.company_id) ASC, i.company_id ASC",
@@ -641,10 +563,9 @@ describe("server-side sorting", () => {
     expect(infoOrderBySql("profile_sources", "desc")).toBe(
       `ORDER BY ${PROFILE_SOURCES_EXPR} DESC, i.company_id ASC`,
     );
-    // Every presence column sorts by the SAME expression it is projected from,
-    // never by its SELECT alias (ClickHouse does not guarantee an alias is
-    // visible to ORDER BY at the same level) -- so "which companies have no
-    // domains" is one header click over 3.5M rows.
+    // Every presence column sorts by the SAME flag column it is projected
+    // from -- so "which companies have no domains" is one header click over
+    // 3.5M rows.
     for (const datatype of PROFILE_DATATYPES) {
       expect(infoOrderBySql(datatype.key, "asc")).toBe(
         `ORDER BY ${DATATYPE_PRESENCE_EXPR[datatype.key]} ASC, i.company_id ASC`,
@@ -721,7 +642,7 @@ describe("discrete filter options", () => {
     resetSeCompanyInfoFilterOptionsCache();
   });
 
-  it("reads every data-driven option list of a table in ONE query, over FINAL", async () => {
+  it("reads every data-driven option list of a table in ONE query, off the serving view", async () => {
     clickhouse.query.mockResolvedValueOnce([
       {
         statuses: ["active", "dissolved"],
@@ -743,7 +664,9 @@ describe("discrete filter options", () => {
 
     expect(clickhouse.query).toHaveBeenCalledTimes(1);
     expect(clickhouse.query.mock.calls[0][0]).toBe(INFO_FILTER_OPTIONS_SQL);
-    expect(INFO_FILTER_OPTIONS_SQL).toContain("FROM corpscout.se_company_info AS i FINAL");
+    expect(INFO_FILTER_OPTIONS_SQL).toContain(
+      "FROM corpscout.se_companies_serving AS i",
+    );
     for (const column of ["i.status", "i.legal_form_code"]) {
       expect(INFO_FILTER_OPTIONS_SQL).toContain(`groupUniqArray(`);
       expect(INFO_FILTER_OPTIONS_SQL).toContain(column);

@@ -1,12 +1,15 @@
 /**
- * The two `/admin/se/companies*` list pages: every published
- * `se_company_info` row (3.5M, ReplacingMergeTree ORDER BY company_id) and
- * the full `se_company_info_correction` ledger. Both mirror
- * se-company-info.server.ts's client/query style -- explicit column
- * aliasing, hash/UUID columns wrapped in toString() -- but add server-side
- * paging and optional URL-driven filters, so the WHERE clause is built
- * dynamically (like procurements.server.ts's buildSourceFilter) instead of
- * being a fixed string.
+ * The two `/admin/se/companies*` list pages: every published SE company
+ * (3.5M rows, read off the consolidated serving view
+ * `corpscout.se_companies_serving` -- see SE_COMPANIES_SERVING_TABLE) and
+ * the full `se_company_info_correction` ledger (which still reads
+ * `se_company_info` itself: correction status is about the published row,
+ * not the serving copy). Both mirror se-company-info.server.ts's
+ * client/query style -- explicit column aliasing, hash/UUID columns wrapped
+ * in toString() -- but add server-side paging and optional URL-driven
+ * filters, so the WHERE clause is built dynamically (like
+ * procurements.server.ts's buildSourceFilter) instead of being a fixed
+ * string.
  */
 import { chQuery } from "~/lib/clickhouse.server";
 import type { LegalFormLabels } from "~/lib/se-legal-form";
@@ -62,12 +65,12 @@ interface SortTerm {
  * with any tiebreak that IS the sorted column dropped (so the default sort
  * still reads `ORDER BY i.company_id ASC`, not the same column twice).
  *
- * Cost note: se_company_info is a 3.5M-row ReplacingMergeTree ordered by
- * company_id, so sorting a page by any other column is a top-N sort over the
- * FINAL-merged result (`ORDER BY ... LIMIT/OFFSET`), which ClickHouse does in
- * one pass with a bounded heap -- fine for an admin list. A DEEP page on such
- * a sort (offset in the hundreds of thousands) degenerates into a full sort;
- * that is accepted here rather than restricting sorting to the key.
+ * Cost note: se_companies_serving is a 3.5M-row plain MergeTree ordered by
+ * company_id, so sorting a page by any other column is a top-N sort
+ * (`ORDER BY ... LIMIT/OFFSET`), which ClickHouse does in one pass with a
+ * bounded heap -- fine for an admin list. A DEEP page on such a sort (offset
+ * in the hundreds of thousands) degenerates into a full sort; that is
+ * accepted here rather than restricting sorting to the key.
  */
 function orderBySql(primary: SortTerm, tiebreaks: readonly SortTerm[]): string {
   const terms = [
@@ -105,7 +108,7 @@ function pageParams(query: { page: number; pageSize: number }): {
 export const PAGE_LIMIT_OFFSET_SQL = "LIMIT {limit:UInt32} OFFSET {offset:UInt32}";
 
 /* -------------------------------------------------------------------- */
-/* Page 1: /admin/se/companies -- the se_company_info table          */
+/* Page 1: /admin/se/companies -- the se_companies_serving view      */
 /* -------------------------------------------------------------------- */
 
 /**
@@ -131,7 +134,8 @@ export interface SeCompanyInfoListRow {
   legal_form_label_sv: string;
   /** "legal" (10-digit org number) | "sole" (12-digit personnummer-based id). */
   entity_type: string;
-  /** 0 | 1 -- `description IS NOT NULL`, projected as UInt8 (see the SELECT). */
+  /** 0 | 1 -- the serving view's own precomputed flag (`description IS NOT
+   * NULL` at refresh time). */
   has_description: number;
   /** 0 | 1 -- has a live row in corpscout.se_company_address. */
   has_address: number;
@@ -185,142 +189,49 @@ export interface SeCompanyInfoListQuery extends SeCompanyInfoListFilters {
 }
 
 /* -------------------------------------------------------------------- */
-/* The Sources column: which registers built this company's profile      */
+/* The serving view: presence flags and Sources letters, precomputed     */
 /* -------------------------------------------------------------------- */
 
 /**
- * One SET of company ids per datatype-and-register question this page asks,
- * each read from that datatype's OWN final/serving table and each spelled
- * exactly once. Everything downstream -- the four presence columns, the four
- * source predicates, the Sources letters, the `?source=` filter -- is built by
- * naming a member of this record, so a table or a flag can only be wrong here.
+ * SOURCE: `corpscout.se_companies_serving` -- the consolidated per-company
+ * serving MV (migration 000335, refreshed every 15 minutes, built by
+ * dagster_v3 sweden_company/companies_current.py `build_se_companies_serving_sql`).
+ * ONE wide row per published SE company, plain MergeTree ORDER BY company_id,
+ * read with NO FINAL.
  *
- * They are used as `company_id IN (<set>)` (see `hasCompanyIn`) rather than as
- * LEFT JOINs: ClickHouse builds each distinct subquery into one hash set once
- * per query and probes it per row, while a LEFT JOIN onto the 3.5M-row
- * `se_company_info ... FINAL` on the left is the very shape that made
- * PEOPLE_ROLES_SQL fail with NOT_FOUND_COLUMN_IN_BLOCK (see
- * se-company-people.server.ts). Two members with the SAME text are one set at
- * runtime, which is why the ESEF and Bolagsverket financial arms are reused
- * verbatim by `has_financial` instead of being spelled a second way.
+ * The five presence flags (has_description/has_address/has_financial/
+ * has_people/has_domains) and the three stored source flags
+ * (source_bolagsverket/source_esef/source_wikidata) are PRECOMPUTED there.
+ * This page used to derive them per load as `company_id IN (<subquery>)` sets
+ * over each datatype's own final table (~1.4s for the list + ~1.6s for the
+ * counts, every click); the serving view pays that once at refresh time and
+ * answers the same questions as plain-column reads in 40-80ms.
  *
- * Which table is authoritative for which register, verified read-only against
- * the pipelines that write them (2026-08-24):
- *
- * - address: `se_company_address.sources` is written by se_company/address.py,
- *   whose ARTIFACT_TABLES map is exactly {bolagsverket, scb} -- so 'bolagsverket'
- *   in that array is the register itself, not a guess. FINAL is not optional:
- *   `is_current` is flipped in place by a later part when an address is
- *   tombstoned, so a pre-merge part would report a removed address as live.
- * - financial (Bolagsverket): se_bolagsverket_financial_metrics is the table
- *   `company_financials_latest/sql.py` builds SE's se_company_financials_latest
- *   FROM (`SOURCES["se"]["table"]`), and the one se_financials_bolagsverket_current
- *   -- the view the Financial tab renders -- aggregates. Reading the metrics
- *   directly is self-evidently Bolagsverket's; the serving table has no source
- *   column at all. Live check: both name the same 577,645 companies.
- * - financial (ESEF): esef_financial_metrics is keyed by LEI, so it reaches a
- *   company through corpscout.company_identifier exactly as
- *   se_financials_esef_current's own INNER JOIN does (issuer_scheme 'lei',
- *   country SE, is_current). Live check: this predicate and the view both name
- *   404 companies.
- * - financial (filed reports, task 2026-08-25 owner ruling): se_financial_reports
- *   is the parser's own report ledger, the table behind every extracted figure
- *   (the retired admin tab's "Filed reports" card read it directly as
- *   `WHERE company_id = {companyId:String}`, FINAL to show a re-parsed filing
- *   once). It is a ReplacingMergeTree(resolved_at) keyed on (company_id,
- *   ifNull(report_period_end, ...), statement_key); verified read-only against
- *   its writer (upsert_sweden_financial_reports_partition,
- *   dagster_v3/defs/sweden_financial/clickhouse.py): a partition refresh
- *   PHYSICALLY deletes the superseded rows by source_archive_key and then
- *   inserts the new set -- there is no is_current-style flag flipped in place
- *   the way se_company_address tombstones an address. So a bare `company_id IN
- *   (SELECT company_id FROM se_financial_reports)` needs no FINAL for the same
- *   reason financialBolagsverket/financialEsef need none: a row that still
- *   exists in the table (merged or not) was never a live row hidden behind a
- *   flag, it either still has a filed report or it and its rows are gone.
- *   This is the arm that closes the reconciliation gap the owner ruled on: 199 (live-verified; the ~287 estimate double-counted 87 companies the raw-metric arms already cover)
- *   companies have a row here with neither a Bolagsverket nor an ESEF
- *   extracted metric, so before this arm the list showed them "—" while their
- *   Financial tab rendered a Filed reports card.
- * - people: se_company_person is the published row (no is_current, no
- *   tombstone -- a row is never withdrawn, so no FINAL is needed to answer
- *   "does this company have one"), and se_company_person_role.sources is the
- *   people datatype's own provenance, written by company_people/roles.py as
- *   `groupUniqArray(roles.source)` over drafts whose `source` literal is
- *   'bolagsverket' or 'esef' (company_people/draft.py). The DRAFT layer carries
- *   the same registers at much larger scale, but it is evidence, not a final,
- *   and adds nothing here: live check 2026-08-24 found exactly 1 company whose
- *   Bolagsverket people are not already Bolagsverket by address or accounts,
- *   and 0 for ESEF and Wikidata.
- * - domains: company_domains is the UNIFIED register, so it is filtered to
- *   'SE' here exactly as se-company-domains.server.ts does. Its own
- *   source_names ('common_crawl_identity', 'wikidata', 'esef_filing') are NOT
- *   folded into the letters -- see PROFILE_SOURCE_PREDICATES.
+ * The flags' single source of truth is now the Dagster builder: which table
+ * is authoritative for which register, the is_current/FINAL reasoning per
+ * datatype, the owner ruling that `has_financial` means ANY financial data
+ * (extracted Bolagsverket/ESEF metrics OR a filed/parsed report), and the
+ * ruling that the filed-reports arm feeds NO letter all live in
+ * `build_se_companies_serving_sql`'s doc comments -- this module only names
+ * the columns. The SCB flag is deliberately NOT stored: it is 1 for every row
+ * by construction (owner ruling: SCB is the register base), so its letter is
+ * hard-coded via the `"1"` predicate below.
  */
-export const COMPANY_SETS = {
-  address: `SELECT company_id FROM corpscout.se_company_address FINAL WHERE is_current`,
-  addressBolagsverket: `SELECT company_id FROM corpscout.se_company_address FINAL WHERE is_current AND has(sources, 'bolagsverket')`,
-  financialBolagsverket: `SELECT company_id FROM corpscout.se_bolagsverket_financial_metrics`,
-  financialEsef: `SELECT ci.company_id FROM corpscout.company_identifier AS ci WHERE ci.issuer_scheme = 'lei' AND ci.country_code = 'SE' AND ci.is_current = 1 AND ci.issuer_id IN (SELECT upperUTF8(trimBoth(m.lei)) FROM corpscout.esef_financial_metrics AS m)`,
-  financialReports: `SELECT company_id FROM corpscout.se_financial_reports`,
-  people: `SELECT company_id FROM corpscout.se_company_person`,
-  peopleBolagsverket: `SELECT company_id FROM corpscout.se_company_person_role WHERE has(sources, 'bolagsverket')`,
-  peopleEsef: `SELECT company_id FROM corpscout.se_company_person_role WHERE has(sources, 'esef')`,
-  domains: `SELECT company_id FROM corpscout.company_domains WHERE country_code = 'SE'`,
-} as const;
-
-/** "This list row's company is in that set." The alias is the list query's
- * own `i`, so every derived expression below is valid in its SELECT, its
- * WHERE and its ORDER BY alike. */
-function hasCompanyIn(set: string): string {
-  return `i.company_id IN (${set})`;
-}
-
-/** `(a OR b OR ...)`, parenthesised so it can be dropped into a concat arm, a
- * WHERE clause or an ORDER BY term without changing what it means. */
-function anyOf(...terms: readonly string[]): string {
-  return `(${terms.join(" OR ")})`;
-}
+export const SE_COMPANIES_SERVING_TABLE = "corpscout.se_companies_serving";
 
 /**
- * The four presence columns, one expression per datatype, keyed by the
- * client-safe catalog's own keys -- so a datatype added to PROFILE_DATATYPES
- * without an expression here is a compile error, never a column of blanks.
- *
- * `has_financial` is the OR of THREE arms, not a fourth read of
- * se_company_financials_latest: the two REGISTER arms are exactly the two
- * views the Financial tab renders as extracted figures
- * (SWEDEN_FINANCIAL_SOURCE_VIEWS in queries.server.ts), and
- * `financialReports` is the parser's report ledger behind them
- * (se_financial_reports -- see COMPANY_SETS's doc comment).
- *
- * Owner ruling (2026-08-24 addendum, applied 2026-08-25): ✓ means ANY
- * financial data -- extracted figures OR filed/parsed reports -- not "has
- * extracted metrics", so the list can never show "—" for a company whose
- * Financial tab renders a card. This is a deliberate widening: before it, 199 (live-verified)
- * companies with a parsed filing but zero extracted metrics showed "—" here
- * while their tab showed a Filed reports card, contradicting the list.
- *
- * It also DROPS a previous by-construction invariant worth naming explicitly:
- * with only the two register arms, Financial ✓ could never appear without a B
- * or E letter in Sources, because those same two arms fed
- * PROFILE_SOURCE_PREDICATES.bolagsverket/esef. `financialReports` does NOT
- * feed either letter (se_financial_reports does not, in this query, say which
- * register filed the report -- see PROFILE_SOURCE_PREDICATES's doc comment),
- * so a company can now show Financial ✓ from a filed report alone, with
- * neither letter. In practice this stays rare -- Bolagsverket's own
- * near-universal address coverage still earns most such rows a B -- but it is
- * no longer guaranteed by the SQL the way it was.
+ * The four presence columns, keyed by the client-safe catalog's own keys --
+ * so a datatype added to PROFILE_DATATYPES without a column here is a compile
+ * error, never a column of blanks. Each is the serving view's precomputed
+ * UInt8 flag (semantics settled in the Dagster builder -- see
+ * SE_COMPANIES_SERVING_TABLE's doc comment), read with the list query's own
+ * `i` alias so the same text is valid in its SELECT, WHERE and ORDER BY alike.
  */
 export const DATATYPE_PRESENCE_EXPR: Record<ProfileDatatypeKey, string> = {
-  has_address: hasCompanyIn(COMPANY_SETS.address),
-  has_financial: anyOf(
-    hasCompanyIn(COMPANY_SETS.financialBolagsverket),
-    hasCompanyIn(COMPANY_SETS.financialEsef),
-    hasCompanyIn(COMPANY_SETS.financialReports),
-  ),
-  has_people: hasCompanyIn(COMPANY_SETS.people),
-  has_domains: hasCompanyIn(COMPANY_SETS.domains),
+  has_address: "i.has_address",
+  has_financial: "i.has_financial",
+  has_people: "i.has_people",
+  has_domains: "i.has_domains",
 };
 
 /**
@@ -331,61 +242,25 @@ export const DATATYPE_PRESENCE_EXPR: Record<ProfileDatatypeKey, string> = {
  * its WHERE predicate, so the letter a row shows and the rows a filter returns
  * can never disagree.
  *
- * - bolagsverket: the address it registered, the annual accounts it holds, or
- *   the roles its people evidence carried. Near-universal in practice (2.86M
- *   of 3.52M companies) -- that is the register's reach, not a bug.
+ * Each is the serving view's stored flag; WHICH tables earn a register its
+ * flag (addresses/accounts/people for Bolagsverket; description/LEI/filing/
+ * people for ESEF; wikidata_id/description for Wikidata; NOT
+ * company_domains.source_names, NOT the filed-reports arm) is settled in the
+ * Dagster builder now -- see SE_COMPANIES_SERVING_TABLE's doc comment.
+ *
  * - scb: the tautology, on the owner's ruling that SCB is the register base.
- *   It is true by construction, not by luck: info_rules.py's merge returns
- *   None without an SCB row, so an `se_company_info` row without SCB behind it
- *   cannot exist. Kept as a real predicate so the filter has one uniform shape.
- * - esef: the description artifact, an ESEF-sourced filing behind the
- *   Financial tab, or ESEF role evidence. The FILING arm is what makes this
- *   letter worth anything: description_sources names ESEF for 2 companies,
- *   while 404 have ESEF financials. `lei IS NOT NULL` is kept as belt and
- *   braces, NOT for coverage -- se_company_info.lei is written only from the
- *   ESEF artifact (info_rules.py: `lei=_text(esef.values.get("lei")) if esef
- *   else None`, and no correction kind can set it), but today every ESEF merge
- *   participation also writes 'esef' into description_sources, so the two arms
- *   name the same 2 companies. It guards a future filing that carries a LEI
- *   and no description.
- * - wikidata: the mirror image -- wikidata_id is written only from the
- *   Wikidata artifact, and a Wikidata row may exist without contributing a
- *   description.
- *
- * NOT folded in: company_domains.source_names. A domain suggested by
- * 'wikidata' or 'esef_filing' is evidence about a WEBSITE, not a register that
- * built the company profile, and 'common_crawl_identity' has no letter at all;
- * the Domains presence column is where that datatype speaks. (Live check
- * 2026-08-24, corrected by review 2026-08-25: folding them in would move ZERO companies --
- * every published company with a wikidata-sourced domain already carries W via wikidata_id.)
- *
- * ALSO NOT folded in: COMPANY_SETS.financialReports (se_financial_reports),
- * added 2026-08-25 to widen `has_financial` (see DATATYPE_PRESENCE_EXPR's doc
- * comment). That table carries no column this query reads to say which
- * register filed the report, so a company earning Financial ✓ from a filed
- * report alone does not automatically earn a B or E letter here -- unlike the
- * two register arms, which double as both a letter and a presence check.
+ *   True by construction (info_rules.py's merge returns None without an SCB
+ *   row), which is exactly why the view stores no flag for it; kept as a real
+ *   predicate so the filter has one uniform shape.
  *
  * Keyed by ProfileSourceValue, so adding a source to the catalog without a
  * predicate here is a type error rather than a silently missing letter.
  */
 export const PROFILE_SOURCE_PREDICATES: Record<ProfileSourceValue, string> = {
-  bolagsverket: anyOf(
-    hasCompanyIn(COMPANY_SETS.addressBolagsverket),
-    hasCompanyIn(COMPANY_SETS.financialBolagsverket),
-    hasCompanyIn(COMPANY_SETS.peopleBolagsverket),
-  ),
+  bolagsverket: "i.source_bolagsverket = 1",
   scb: "1",
-  esef: anyOf(
-    "has(i.description_sources, 'esef')",
-    "i.lei IS NOT NULL",
-    hasCompanyIn(COMPANY_SETS.financialEsef),
-    hasCompanyIn(COMPANY_SETS.peopleEsef),
-  ),
-  wikidata: anyOf(
-    "i.wikidata_id IS NOT NULL",
-    "has(i.description_sources, 'wikidata')",
-  ),
+  esef: "i.source_esef = 1",
+  wikidata: "i.source_wikidata = 1",
 };
 
 /**
@@ -417,9 +292,9 @@ export const INFO_SORT_COLUMNS = {
   status: "i.status",
   legal_form_code: "i.legal_form_code",
   entity_type: "length(i.company_id)",
-  has_description: "(i.description IS NOT NULL)",
-  // Each presence column sorts by the very IN-set expression it is projected
-  // from, so "show me the companies with no address" is one header click.
+  has_description: "i.has_description",
+  // Each presence column sorts by the very flag column it is projected from,
+  // so "show me the companies with no address" is one header click.
   has_address: DATATYPE_PRESENCE_EXPR.has_address,
   has_financial: DATATYPE_PRESENCE_EXPR.has_financial,
   has_people: DATATYPE_PRESENCE_EXPR.has_people,
@@ -496,23 +371,23 @@ export function buildInfoListFilter(
   }
   const status = discreteValue(filters.status);
   if (status !== null) {
-    where.push("toString(i.status) = {status:String}");
+    where.push("i.status = {status:String}");
     params.status = status;
   }
-  // legal_form_code is the one Nullable column among the discrete filters, so
-  // its predicate carries the same ifNull guard its option list does --
-  // otherwise "no legal form code" could never be selected.
+  // legal_form_code was Nullable on se_company_info; the serving view folds
+  // its NULL to '' (the same '' the "none" option filters on), so the
+  // predicate needs no ifNull guard any more.
   const legalForm = discreteValue(filters.legalForm);
   if (legalForm !== null) {
-    where.push("ifNull(i.legal_form_code, '') = {legalForm:String}");
+    where.push("i.legal_form_code = {legalForm:String}");
     params.legalForm = legalForm;
   }
-  // IS NOT NULL, never `!= ''`: description is Nullable and the merge writes
-  // NULL for "this company has no description", which is what this asks.
+  // The serving view's precomputed flag (description IS NOT NULL at refresh
+  // time) -- the description text itself is not a column of the view at all.
   if (filters.description === "yes") {
-    where.push("i.description IS NOT NULL");
+    where.push("i.has_description = 1");
   } else if (filters.description === "no") {
-    where.push("i.description IS NULL");
+    where.push("i.has_description = 0");
   }
   // The value NAMES a predicate, it never becomes one: an unknown source (the
   // select's "any", a stale `?source=llm`, anything hand-typed) simply finds
@@ -524,38 +399,40 @@ export function buildInfoListFilter(
   return { where, params };
 }
 
-/** No description TEXT crosses the wire for this list: the page shows whether
- * there is one, not what it says, so 3.5M descriptions stay in ClickHouse.
- * entity_type is derived from the id length -- 000299 admitted 12-digit
- * personnummer-based sole-trader ids beside the 10-digit org numbers.
+/** No description TEXT crosses the wire for this list (the serving view does
+ * not even carry it): the page shows whether there is one, not what it says,
+ * so 3.5M descriptions stay in ClickHouse. entity_type is derived from the id
+ * length -- 000299 admitted 12-digit personnummer-based sole-trader ids
+ * beside the 10-digit org numbers.
  *
  * The presence columns are projected FROM the catalog, in its order, so the
- * SELECT cannot offer a column the header row does not name (or vice versa),
- * and each is a UInt8 for the same reason has_description is: one predictable
- * JSON shape rather than whatever the driver makes of a boolean. */
+ * SELECT cannot offer a column the header row does not name (or vice versa);
+ * each is the view's own precomputed UInt8 flag -- a plain column read, NO
+ * FINAL, no IN-subqueries (see SE_COMPANIES_SERVING_TABLE). */
 export const INFO_LIST_SELECT_SQL = `SELECT
   i.company_id AS company_id,
   i.legal_name AS legal_name,
-  toString(i.status) AS status,
-  ifNull(i.legal_form_code, '') AS legal_form_code,
+  i.status AS status,
+  i.legal_form_code AS legal_form_code,
   i.legal_form_label_en AS legal_form_label_en,
   i.legal_form_label_sv AS legal_form_label_sv,
   if(length(i.company_id) = 12, 'sole', 'legal') AS entity_type,
-  toUInt8(i.description IS NOT NULL) AS has_description,
+  i.has_description AS has_description,
 ${PROFILE_DATATYPES.map(
   (datatype) =>
-    `  toUInt8(${DATATYPE_PRESENCE_EXPR[datatype.key]}) AS ${datatype.key},`,
+    `  ${DATATYPE_PRESENCE_EXPR[datatype.key]} AS ${datatype.key},`,
 ).join("\n")}
   ${PROFILE_SOURCES_EXPR} AS profile_sources
-FROM corpscout.se_company_info AS i FINAL`;
+FROM ${SE_COMPANIES_SERVING_TABLE} AS i`;
 
 /** One scan for all three numbers: the strip's totals and the table's own
- * pagination total (see `listSeCompanyInfoPage`). */
+ * pagination total (see `listSeCompanyInfoPage`). Same table, same NO FINAL:
+ * countIf over the precomputed flag instead of a Nullable-text check. */
 export const INFO_COUNTS_SQL = `SELECT
   toString(count()) AS total,
-  toString(countIf(i.description IS NOT NULL)) AS with_description,
-  toString(countIf(i.description IS NULL)) AS without_description
-FROM corpscout.se_company_info AS i FINAL`;
+  toString(countIf(i.has_description = 1)) AS with_description,
+  toString(countIf(i.has_description = 0)) AS without_description
+FROM ${SE_COMPANIES_SERVING_TABLE} AS i`;
 
 function infoFilterClause(filters: SeCompanyInfoListFilters): {
   filter: string;
@@ -569,7 +446,7 @@ function infoFilterClause(filters: SeCompanyInfoListFilters): {
 
 /** No count() query: the page's total is `loadSeCompanyInfoCounts`'s `total`,
  * which shares this exact WHERE and is loaded alongside this call anyway for
- * the counts strip -- one fewer FINAL scan over 3.5M rows per page load. */
+ * the counts strip -- one fewer scan over the 3.5M-row view per page load. */
 export async function listSeCompanyInfoPage(
   query: SeCompanyInfoListQuery,
 ): Promise<SeCompanyInfoListPage> {
@@ -617,8 +494,8 @@ export async function loadSeCompanyInfoCounts(
  * How long a table's option lists are served from memory. They are the
  * DISTINCT values of a few low-cardinality columns -- a new status or legal
  * form code appearing ten minutes late in a filter list costs nothing, while
- * scanning 3.5M FINAL-merged rows on every page load would cost a second on
- * every reviewer's every click.
+ * scanning the 3.5M-row serving view on every page load would still be a
+ * needless per-click read (cheap as the view is, cached beats re-scanned).
  */
 export const FILTER_OPTIONS_TTL_MS = 10 * 60 * 1000;
 
@@ -638,16 +515,15 @@ export interface SeCompanyInfoCorrectionFilterOptions {
 }
 
 /**
- * ONE query for the two data-driven option lists of se_company_info, read FINAL
- * like every other query against it (a company's status is whatever its newest
- * version says, so the pre-merge parts would offer values no live row has).
- * `groupUniqArray` over a LowCardinality column is a dictionary walk, not a
- * per-row aggregation; `arraySort` makes the option order stable between
- * loads. legal_form_code is Nullable, so its NULL is folded into '' -- the
- * value the "none" option filters on.
+ * ONE query for the two data-driven option lists of the company list, read
+ * off the serving view like the list itself (NO FINAL -- the view is a plain
+ * MergeTree, and its refresh already folded legal_form_code's NULL into ''
+ * -- the value the "none" option filters on). `groupUniqArray` over a
+ * low-cardinality column is cheap; `arraySort` makes the option order stable
+ * between loads.
  *
  * The legal-form LABELS come from the curated dictionary rather than from the
- * rows' own copies of them: se_company_info carries one label pair per ROW, and
+ * rows' own copies of them: the view carries one label pair per ROW, and
  * during a label rollout the same code appears with the old pair on rows not
  * yet re-resolved and the new pair on the rest -- a groupUniqArray over that
  * would offer the same code twice. The dictionary has exactly one live row per
@@ -668,8 +544,8 @@ export const INFO_FILTER_OPTIONS_SQL = `WITH legal_form_labels AS (
   GROUP BY l.code
 )
 SELECT
-  arraySort(groupUniqArray(toString(i.status))) AS statuses,
-  arraySort(groupUniqArray(ifNull(i.legal_form_code, ''))) AS legal_form_codes,
+  arraySort(groupUniqArray(i.status)) AS statuses,
+  arraySort(groupUniqArray(i.legal_form_code)) AS legal_form_codes,
   (
     SELECT groupArray(CAST(
       (code, label_sv, label_en),
@@ -677,7 +553,7 @@ SELECT
     ))
     FROM legal_form_labels
   ) AS legal_form_labels
-FROM corpscout.se_company_info AS i FINAL`;
+FROM ${SE_COMPANIES_SERVING_TABLE} AS i`;
 
 /** The ledger's only data-driven discrete column: correction_kind and the
  * computed status are fixed enums the review page already defines. No FINAL --

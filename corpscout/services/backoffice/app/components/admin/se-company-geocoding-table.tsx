@@ -74,7 +74,7 @@ function geocodeBadgeTitle(row: SeCompanyGeocodingListRow): string {
 }
 
 /** `row.geocode_class` is precomputed in the serving view
- * (corpscout.se_companies_current's `primary_geocode_class`, read straight
+ * (corpscout.se_companies_serving's `primary_geocode_class`, read straight
  * through by se-company-geocoding-list.server.ts), not re-derived here -- a
  * status/provider pair this tab has never seen cannot be classified two
  * different ways by two copies of the same multiIf. */
