@@ -2,9 +2,13 @@ import json
 from datetime import UTC, datetime
 from pathlib import Path
 
+import pytest
+
 from dagster_v3.defs.sweden_platsbanken.source import (
     discover_historical_archive_urls,
+    historical_archive_year,
     resolve_jobstream_event_window,
+    sync_historical_archives,
     sync_jobstream_snapshot,
 )
 
@@ -12,6 +16,7 @@ from dagster_v3.defs.sweden_platsbanken.source import (
 class _Response:
     def __init__(self, body: bytes) -> None:
         self.body = body
+        self.text = body.decode()
         self.headers = {"Content-Length": str(len(body))}
 
     def raise_for_status(self) -> None:
@@ -27,15 +32,17 @@ class _Response:
 class _Session:
     def __init__(self, response: _Response) -> None:
         self.response = response
+        self.requested_urls: list[str] = []
 
     def get(
         self,
         url: str,
         *,
         timeout: int,
-        stream: bool,
-        headers: dict[str, str],
+        stream: bool = False,
+        headers: dict[str, str] | None = None,
     ) -> _Response:
+        self.requested_urls.append(url)
         return self.response
 
 
@@ -91,6 +98,104 @@ def test_historical_catalog_keeps_complete_zip_archives_only() -> None:
         "https://data.jobtechdev.se/annonser/historiska/berikade/kompletta/"
         "2026-Q1_beta1_jsonl.zip",
     )
+
+
+def test_historical_archive_year_accepts_annual_and_quarterly_files() -> None:
+    assert historical_archive_year("https://example.test/2016.zip") == "2016"
+    assert (
+        historical_archive_year(
+            "https://data.jobtechdev.se/annonser/historiska/berikade/kompletta/"
+            "2025_beta1_jsonl.zip"
+        )
+        == "2025"
+    )
+    assert (
+        historical_archive_year(
+            "https://data.jobtechdev.se/annonser/historiska/berikade/kompletta/"
+            "2026-Q1_beta1_jsonl.zip"
+        )
+        == "2026"
+    )
+
+    with pytest.raises(ValueError, match="archive year"):
+        historical_archive_year("https://example.test/historical-latest.zip")
+
+
+def test_historical_sync_downloads_and_manifests_only_the_partition_year() -> None:
+    catalog = b"""
+    <a href="/annonser/historiska/berikade/kompletta/2025_beta1_jsonl.zip">2025</a>
+    <a href="/annonser/historiska/berikade/kompletta/2026-Q1_beta1_jsonl.zip">2026 Q1</a>
+    """
+    session = _Session(_Response(catalog))
+    store = _ObjectStore()
+
+    manifest = sync_historical_archives(
+        object_store=store,  # type: ignore[arg-type]
+        run_id="historical-2025",
+        retrieved_at=datetime(2026, 8, 28, 12, 0, tzinfo=UTC),
+        refresh_existing=False,
+        archive_year="2025",
+        session=session,  # type: ignore[arg-type]
+    )
+
+    assert manifest["partition_year"] == "2025"
+    assert [archive["source_file"] for archive in manifest["archives"]] == [
+        "2025_beta1_jsonl.zip"
+    ]
+    assert "historical/year=2025" in str(manifest["manifest_key"])
+    assert session.requested_urls == [
+        "https://data.jobtechdev.se/annonser/historiska/berikade/kompletta/",
+        "https://data.jobtechdev.se/annonser/historiska/berikade/kompletta/"
+        "2025_beta1_jsonl.zip",
+    ]
+
+
+def test_historical_sync_reuses_objects_from_the_legacy_global_manifest() -> None:
+    archive_url = (
+        "https://data.jobtechdev.se/annonser/historiska/berikade/kompletta/"
+        "2025_beta1_jsonl.zip"
+    )
+    object_key = (
+        "historical/source_file=2025_beta1_jsonl.zip/"
+        "sha256=previous/2025_beta1_jsonl.zip"
+    )
+    catalog = f'<a href="{archive_url}">2025</a>'.encode()
+    session = _Session(_Response(catalog))
+    store = _ObjectStore()
+    store.objects[object_key] = b"existing archive"
+    store.objects["manifests/historical/retrieved_at=2026-08-01/run_id=legacy.json"] = (
+        json.dumps(
+            {
+                "retrieved_at": "2026-08-01T00:00:00+00:00",
+                "archives": [
+                    {
+                        "source_url": archive_url,
+                        "source_file": "2025_beta1_jsonl.zip",
+                        "object_key": object_key,
+                        "sha256": "previous",
+                        "size_bytes": len(store.objects[object_key]),
+                        "etag": "",
+                        "last_modified": "",
+                        "downloaded": True,
+                    }
+                ],
+            }
+        ).encode()
+    )
+
+    manifest = sync_historical_archives(
+        object_store=store,  # type: ignore[arg-type]
+        run_id="historical-2025",
+        retrieved_at=datetime(2026, 8, 28, 12, 0, tzinfo=UTC),
+        refresh_existing=False,
+        archive_year="2025",
+        session=session,  # type: ignore[arg-type]
+    )
+
+    assert manifest["archives"][0]["downloaded"] is False
+    assert session.requested_urls == [
+        "https://data.jobtechdev.se/annonser/historiska/berikade/kompletta/"
+    ]
 
 
 def test_snapshot_sync_preserves_job_and_employer_contacts() -> None:

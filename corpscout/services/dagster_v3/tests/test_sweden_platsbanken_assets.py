@@ -1,17 +1,14 @@
 import tempfile
 import zipfile
 from contextlib import nullcontext
+from datetime import UTC, datetime
 from pathlib import Path
 
 import dagster as dg
 import pytest
 
 from dagster_v3.defs.sweden_platsbanken import assets
-
-
-class _DuckDBResource:
-    def get_connection(self) -> nullcontext[object]:
-        return nullcontext(object())
+from dagster_v3.defs.sweden_platsbanken import tables
 
 
 class _HistoricalObjectStore:
@@ -55,11 +52,22 @@ def test_platsbanken_assets_and_manual_jobs_are_registered() -> None:
         {key.path[-1] for key in asset_graph.get_all_asset_keys()}
     )
 
+    historical_assets = {
+        "sweden_platsbanken_historical_archives_s3",
+        "sweden_platsbanken_historical_raw_duckdb",
+        "sweden_platsbanken_historical_normalized_duckdb",
+        "sweden_platsbanken_historical_clickhouse",
+    }
     for asset_name in expected_assets:
         node = asset_graph.get(dg.AssetKey(asset_name))
         assert node.group_name == "sweden_platsbanken"
-        assert node.partitions_def is None
-        if "duckdb" in asset_name or asset_name.endswith("historical_clickhouse"):
+        if asset_name in historical_assets:
+            assert node.partitions_def == assets.HISTORICAL_PARTITIONS
+            assert node.backfill_policy == assets.HISTORICAL_BACKFILL_POLICY
+            assert node.pools == {"sweden_platsbanken_duckdb"}
+        else:
+            assert node.partitions_def is None
+        if "duckdb" in asset_name:
             assert node.pools == {"sweden_platsbanken_duckdb"}
         if asset_name.endswith("snapshot_clickhouse"):
             assert node.pools == {"sweden_platsbanken_duckdb"}
@@ -71,7 +79,9 @@ def test_platsbanken_assets_and_manual_jobs_are_registered() -> None:
         "sweden_platsbanken_historical_raw_duckdb",
         "sweden_platsbanken_historical_normalized_duckdb",
         "sweden_platsbanken_historical_clickhouse",
-        "sweden_platsbanken_company_jobs_clickhouse",
+    }
+    assert _job_assets(repository, "sweden_platsbanken_company_jobs_job") == {
+        "sweden_platsbanken_company_jobs_clickhouse"
     }
     assert _job_assets(repository, "sweden_platsbanken_jobstream_bootstrap_job") == {
         "sweden_platsbanken_jobstream_snapshot_s3",
@@ -110,6 +120,27 @@ def test_company_projection_requires_all_history_sources_and_company_spine() -> 
     }
 
 
+def test_historical_partitions_cover_complete_and_current_archive_years() -> None:
+    partition_keys = assets.HISTORICAL_PARTITIONS.get_partition_keys(
+        current_time=datetime(2026, 8, 28, tzinfo=UTC)
+    )
+
+    assert partition_keys == [str(year) for year in range(2016, 2027)]
+
+
+def test_historical_partition_uses_an_isolated_duckdb_file() -> None:
+    first = tables.partition_duckdb_path("2016")
+    second = tables.partition_duckdb_path("2017")
+
+    assert first != second
+    assert "partition_key=2016" in str(first)
+    assert "partition_key=2017" in str(second)
+
+    for invalid in ("", "../escape", "2016-1", "not-a-year"):
+        with pytest.raises(ValueError):
+            tables.partition_duckdb_path(invalid)
+
+
 def test_historical_raw_duckdb_releases_each_archive_before_downloading_next(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
@@ -117,6 +148,7 @@ def test_historical_raw_duckdb_releases_each_archive_before_downloading_next(
     original_temporary_directory = tempfile.TemporaryDirectory
     object_store = _HistoricalObjectStore()
     loaded_paths: list[Path] = []
+    opened_partitions: list[tuple[str, str]] = []
 
     monkeypatch.setattr(
         assets.tempfile,
@@ -126,20 +158,30 @@ def test_historical_raw_duckdb_releases_each_archive_before_downloading_next(
     monkeypatch.setattr(
         assets,
         "latest_historical_manifest",
-        lambda _object_store: {
+        lambda _object_store, partition_year: {
             "source_run_id": "historical-run",
             "retrieved_at": "2026-08-28T12:00:00+00:00",
+            "partition_year": partition_year,
             "archives": [
                 {
                     "object_key": "historical/2016.zip",
                     "source_url": "https://example.test/2016.zip",
                 },
                 {
-                    "object_key": "historical/2017.zip",
-                    "source_url": "https://example.test/2017.zip",
+                    "object_key": "historical/2016-Q4.zip",
+                    "source_url": "https://example.test/2016-Q4.zip",
                 },
             ],
         },
+    )
+
+    def open_partition(*, source: str, partition: str) -> nullcontext[object]:
+        opened_partitions.append((source, partition))
+        return nullcontext(object())
+
+    monkeypatch.setattr(assets, "open_partition_duckdb", open_partition)
+    monkeypatch.setattr(
+        assets, "apply_duckdb_runtime_settings", lambda *args, **kwargs: None
     )
 
     def load_jsonl(**parameters: object) -> int:
@@ -153,12 +195,14 @@ def test_historical_raw_duckdb_releases_each_archive_before_downloading_next(
     monkeypatch.setattr(assets, "append_raw_jsonl_table", load_jsonl)
 
     result = assets.sweden_platsbanken_historical_raw_duckdb.node_def.compute_fn.decorated_fn(
-        sweden_platsbanken_duckdb=_DuckDBResource(),
+        context=dg.build_asset_context(partition_key="2016"),
         sweden_platsbanken_object_store=object_store,
     )
 
     assert result.metadata["archive_count"] == 2
     assert result.metadata["raw_rows"] == 2
+    assert result.metadata["partition_year"] == "2016"
+    assert opened_partitions == [("sweden_platsbanken", "2016")]
     assert len(loaded_paths) == 2
     assert all(not path.parent.exists() for path in loaded_paths)
 

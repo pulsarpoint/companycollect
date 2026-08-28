@@ -10,6 +10,11 @@ from dagster_v3.defs.common.duckdb_resources import (
     duckdb_resource,
     read_only_duckdb_connection,
 )
+from dagster_v3.defs.common.duckdb_runtime import apply_duckdb_runtime_settings
+from dagster_v3.defs.common.partition_duckdb import (
+    open_partition_duckdb,
+    require_partition_duckdb,
+)
 from dagster_v3.defs.common.resources import ObjectStoreResource
 from dagster_v3.defs.sweden_platsbanken import tables
 from dagster_v3.defs.sweden_platsbanken.clickhouse import (
@@ -35,6 +40,14 @@ from dagster_v3.defs.sweden_platsbanken.source import (
 
 DUCKDB_PATH = Path("data") / tables.DUCKDB_FILE_NAME
 DUCKDB_POOL = "sweden_platsbanken_duckdb"
+HISTORICAL_PARTITIONS = dg.TimeWindowPartitionsDefinition(
+    start="2016",
+    fmt="%Y",
+    cron_schedule="0 0 1 1 *",
+    timezone="UTC",
+    end_offset=1,
+)
+HISTORICAL_BACKFILL_POLICY = dg.BackfillPolicy.multi_run(max_partitions_per_run=1)
 
 
 class HistoricalArchivesConfig(dg.Config):
@@ -47,11 +60,14 @@ class JobStreamEventsConfig(dg.Config):
 
 
 @dg.asset(
+    partitions_def=HISTORICAL_PARTITIONS,
+    backfill_policy=HISTORICAL_BACKFILL_POLICY,
     group_name=tables.GROUP_NAME,
     kinds={"python", "zip", "s3"},
+    pool=DUCKDB_POOL,
     description=(
-        "Stores every complete yearly/quarterly JobTech historical job-ad ZIP "
-        "in content-addressed object storage with a replay manifest."
+        "Stores one year's complete JobTech historical job-ad ZIP archives in "
+        "content-addressed object storage with a partition replay manifest."
     ),
 )
 def sweden_platsbanken_historical_archives_s3(
@@ -64,6 +80,7 @@ def sweden_platsbanken_historical_archives_s3(
         run_id=context.run.run_id,
         retrieved_at=datetime.now(UTC),
         refresh_existing=config.refresh_existing,
+        archive_year=context.partition_key,
     )
     archives = list(manifest["archives"])
     return dg.MaterializeResult(
@@ -72,6 +89,7 @@ def sweden_platsbanken_historical_archives_s3(
             "downloaded_count": sum(bool(item["downloaded"]) for item in archives),
             "total_size_bytes": sum(int(item["size_bytes"]) for item in archives),
             "manifest_key": str(manifest["manifest_key"]),
+            "partition_year": context.partition_key,
             "source_url": tables.HISTORICAL_CATALOG_URL,
         }
     )
@@ -79,26 +97,39 @@ def sweden_platsbanken_historical_archives_s3(
 
 @dg.asset(
     deps=[dg.AssetKey("sweden_platsbanken_historical_archives_s3")],
+    partitions_def=HISTORICAL_PARTITIONS,
+    backfill_policy=HISTORICAL_BACKFILL_POLICY,
     group_name=tables.GROUP_NAME,
     kinds={"python", "zip", "jsonl", "s3", "duckdb"},
     pool=DUCKDB_POOL,
     description=(
-        "Loads every complete historical archive into one auditable DuckDB JSON "
-        "staging table using DuckDB's set-based JSON reader."
+        "Loads one historical year into an isolated auditable DuckDB JSON staging "
+        "table using DuckDB's set-based JSON reader."
     ),
 )
 def sweden_platsbanken_historical_raw_duckdb(
-    sweden_platsbanken_duckdb: DuckDBResource,
+    context: dg.AssetExecutionContext,
     sweden_platsbanken_object_store: ObjectStoreResource,
 ) -> dg.MaterializeResult:
-    manifest = latest_historical_manifest(sweden_platsbanken_object_store)
+    partition_year = context.partition_key
+    manifest = latest_historical_manifest(
+        sweden_platsbanken_object_store, partition_year
+    )
     archives = list(manifest["archives"])
     if not archives:
-        raise ValueError("Historical Platsbanken manifest contains no archives")
+        raise ValueError(
+            f"Historical Platsbanken manifest for {partition_year} contains no archives"
+        )
 
-    DUCKDB_PATH.parent.mkdir(parents=True, exist_ok=True)
+    partition_path = tables.partition_duckdb_path(partition_year)
     total_rows = 0
-    with sweden_platsbanken_duckdb.get_connection() as connection:
+    with open_partition_duckdb(
+        source=tables.SOURCE_SLUG, partition=partition_year
+    ) as connection:
+        apply_duckdb_runtime_settings(
+            connection,
+            default_temp_directory=partition_path.parent / "duckdb_tmp",
+        )
         for index, archive in enumerate(archives):
             with tempfile.TemporaryDirectory(
                 prefix="sweden_platsbanken_archive_"
@@ -130,6 +161,8 @@ def sweden_platsbanken_historical_raw_duckdb(
         metadata={
             "archive_count": len(archives),
             "raw_rows": total_rows,
+            "partition_year": partition_year,
+            "duckdb_path": str(partition_path),
             "duckdb_table": (f"{tables.DUCKDB_SCHEMA}.{tables.HISTORICAL_RAW_TABLE}"),
         }
     )
@@ -137,6 +170,8 @@ def sweden_platsbanken_historical_raw_duckdb(
 
 @dg.asset(
     deps=[dg.AssetKey("sweden_platsbanken_historical_raw_duckdb")],
+    partitions_def=HISTORICAL_PARTITIONS,
+    backfill_policy=HISTORICAL_BACKFILL_POLICY,
     group_name=tables.GROUP_NAME,
     kinds={"python", "duckdb", "sql"},
     pool=DUCKDB_POOL,
@@ -147,9 +182,16 @@ def sweden_platsbanken_historical_raw_duckdb(
 )
 def sweden_platsbanken_historical_normalized_duckdb(
     context: dg.AssetExecutionContext,
-    sweden_platsbanken_duckdb: DuckDBResource,
 ) -> dg.MaterializeResult:
-    with sweden_platsbanken_duckdb.get_connection() as connection:
+    partition_year = context.partition_key
+    partition_path = tables.partition_duckdb_path(partition_year)
+    with require_partition_duckdb(
+        source=tables.SOURCE_SLUG, partition=partition_year
+    ) as connection:
+        apply_duckdb_runtime_settings(
+            connection,
+            default_temp_directory=partition_path.parent / "duckdb_tmp",
+        )
         counts = build_normalized_tables(
             connection=connection,
             raw_table=tables.HISTORICAL_RAW_TABLE,
@@ -159,11 +201,19 @@ def sweden_platsbanken_historical_normalized_duckdb(
             contacts_table=tables.HISTORICAL_CONTACTS_TABLE,
             log=context.log.info,
         )
-    return dg.MaterializeResult(metadata=counts)
+    return dg.MaterializeResult(
+        metadata={
+            **counts,
+            "partition_year": partition_year,
+            "duckdb_path": str(partition_path),
+        }
+    )
 
 
 @dg.asset(
     deps=[dg.AssetKey("sweden_platsbanken_historical_normalized_duckdb")],
+    partitions_def=HISTORICAL_PARTITIONS,
+    backfill_policy=HISTORICAL_BACKFILL_POLICY,
     group_name=tables.GROUP_NAME,
     kinds={"python", "duckdb", "clickhouse"},
     pool=DUCKDB_POOL,
@@ -175,9 +225,16 @@ def sweden_platsbanken_historical_normalized_duckdb(
 def sweden_platsbanken_historical_clickhouse(
     context: dg.AssetExecutionContext,
     clickhouse: ClickhouseResource,
-    sweden_platsbanken_duckdb: DuckDBResource,
 ) -> dg.MaterializeResult:
-    with read_only_duckdb_connection(sweden_platsbanken_duckdb) as connection:
+    partition_year = context.partition_key
+    partition_path = tables.partition_duckdb_path(partition_year)
+    with require_partition_duckdb(
+        source=tables.SOURCE_SLUG, partition=partition_year
+    ) as connection:
+        apply_duckdb_runtime_settings(
+            connection,
+            default_temp_directory=partition_path.parent / "duckdb_tmp",
+        )
         counts = append_job_history_batch(
             duckdb_connection=connection,
             clickhouse=clickhouse,
@@ -187,7 +244,13 @@ def sweden_platsbanken_historical_clickhouse(
             contacts_table=tables.HISTORICAL_CONTACTS_TABLE,
             log=context.log.info,
         )
-    return dg.MaterializeResult(metadata=counts)
+    return dg.MaterializeResult(
+        metadata={
+            **counts,
+            "partition_year": partition_year,
+            "duckdb_path": str(partition_path),
+        }
+    )
 
 
 @dg.asset(
@@ -462,8 +525,12 @@ sweden_platsbanken_historical_backfill_job = dg.define_asset_job(
         "sweden_platsbanken_historical_raw_duckdb",
         "sweden_platsbanken_historical_normalized_duckdb",
         "sweden_platsbanken_historical_clickhouse",
-        "sweden_platsbanken_company_jobs_clickhouse",
     ),
+)
+
+sweden_platsbanken_company_jobs_job = dg.define_asset_job(
+    "sweden_platsbanken_company_jobs_job",
+    selection=dg.AssetSelection.assets("sweden_platsbanken_company_jobs_clickhouse"),
 )
 
 sweden_platsbanken_jobstream_bootstrap_job = dg.define_asset_job(
@@ -506,6 +573,7 @@ defs = dg.Definitions(
     ],
     jobs=[
         sweden_platsbanken_historical_backfill_job,
+        sweden_platsbanken_company_jobs_job,
         sweden_platsbanken_jobstream_bootstrap_job,
         sweden_platsbanken_jobstream_incremental_job,
     ],

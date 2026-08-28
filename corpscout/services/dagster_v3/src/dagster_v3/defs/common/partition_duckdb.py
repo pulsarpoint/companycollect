@@ -39,9 +39,9 @@ from pathlib import Path
 # so an operator can tell which month a file holds by looking at the directory.
 DUCKDB_ROOT = Path("data")
 
-# Every caller is a MonthlyPartitionsDefinition, whose keys are the first day of
-# the month.
-_PARTITION_KEY = re.compile(r"\d{4}-\d{2}-\d{2}")
+# Most callers use monthly or weekly ISO-date keys. Annual bulk sources use a
+# four-digit year so the source archive and Dagster partition have the same key.
+_PARTITION_KEY = re.compile(r"(?:\d{4}|\d{4}-\d{2}-\d{2})")
 
 
 def partition_duckdb_path(*, source: str, partition: str) -> Path:
@@ -55,10 +55,12 @@ def partition_duckdb_path(*, source: str, partition: str) -> Path:
     """
     if not _PARTITION_KEY.fullmatch(partition):
         raise ValueError(
-            f"partition must be YYYY-MM-DD, got {partition!r} -- it is used as a "
-            f"directory name"
+            f"partition must be YYYY or YYYY-MM-DD, got {partition!r} -- it is "
+            "used as a directory name"
         )
-    return DUCKDB_ROOT / source / "duckdb" / f"partition_key={partition}" / "data.duckdb"
+    return (
+        DUCKDB_ROOT / source / "duckdb" / f"partition_key={partition}" / "data.duckdb"
+    )
 
 
 def open_partition_duckdb(*, source: str, partition: str):

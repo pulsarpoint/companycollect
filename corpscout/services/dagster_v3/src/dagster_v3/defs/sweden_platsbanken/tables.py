@@ -1,3 +1,10 @@
+from pathlib import Path
+
+from dagster_v3.defs.common.partition_duckdb import (
+    partition_duckdb_path as _partition_duckdb_path,
+)
+
+
 SOURCE_SLUG = "sweden_platsbanken"
 GROUP_NAME = "sweden_platsbanken"
 COUNTRY_CODE = "SE"
@@ -177,3 +184,8 @@ APPEND_TABLES = (
     (REQUIREMENTS_TABLE, REQUIREMENT_COLUMNS, "requirement_uid"),
     (CONTACTS_TABLE, CONTACT_COLUMNS, "contact_uid"),
 )
+
+
+def partition_duckdb_path(partition: str) -> Path:
+    """Return the isolated DuckDB path for one historical archive year."""
+    return _partition_duckdb_path(source=SOURCE_SLUG, partition=partition)

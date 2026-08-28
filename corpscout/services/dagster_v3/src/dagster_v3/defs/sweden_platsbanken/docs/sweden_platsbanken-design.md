@@ -3,8 +3,10 @@
 ## 1. Source overview
 
 - **Country / source**: Sweden — Arbetsförmedlingen JobTech Platsbanken
-- **Module**: `defs/sweden_platsbanken/` · DuckDB file
-  `data/sweden_platsbanken_source.duckdb` · pool `sweden_platsbanken_duckdb`
+- **Module**: `defs/sweden_platsbanken/` · historical DuckDB files
+  `data/sweden_platsbanken/duckdb/partition_key=<year>/data.duckdb` · live
+  snapshot/event DuckDB file `data/sweden_platsbanken_source.duckdb` · pool
+  `sweden_platsbanken_duckdb`
 - **ClickHouse migrations**: `000302_corpscout_se_platsbanken_jobs` and
   `000303_corpscout_se_platsbanken_job_contacts`
 - **License/authentication**: CC0, no subscription or API key
@@ -27,8 +29,9 @@ Two modes are required because the source exposes two different historical
 guarantees:
 
 1. The 2016+ archive is a finite collection of immutable bulk ZIP JSONL files.
-   It is a one-time backfill and object-storage checkpoint, not a scheduled full
-   refresh.
+   It is a one-time annual-partition backfill and object-storage checkpoint, not
+   a scheduled full refresh. Completed annual files and any quarterly files for
+   an in-progress year share the same `YYYY` partition.
 2. JobStream is an append-only windowed API after a one-time current snapshot.
    Event manifests persist `updated_before`; the next run starts five minutes
    earlier to replay late/boundary events. Deterministic event/version UIDs make
@@ -44,13 +47,21 @@ stable UIDs.
 
 - HTTP uses dlt's retrying request client. Large transfers also have a
   whole-download retry and `Content-Length` validation.
-- ZIP members are extracted one archive at a time. DuckDB
-  `read_json_objects(..., format='newline_delimited')` loads rows set-wise.
+- Historical assets use annual Dagster partitions from 2016 through the current
+  year, with one partition per run. The source catalog is filtered before
+  download and each partition gets its own replay manifest.
+- ZIP members are extracted one archive at a time. All annual/quarterly archives
+  belonging to the selected year are loaded into that year's isolated DuckDB
+  file with `read_json_objects(..., format='newline_delimited')`.
 - DuckDB raw tables retain the JSON payload, payload hash, source object key,
   source URL, run id, line number, and retrieval timestamp.
 - Official archive files and JobStream JSONL responses are stored unchanged in
   RustFS. This retains the source evidence needed to reproduce every normalized
   job version, including application and employer contact fields.
+- The single-slot `sweden_platsbanken_duckdb` pool covers historical download,
+  raw loading, normalization, and export. A multi-run backfill therefore keeps
+  one I/O-heavy operation active at a time even when Dagster queues many annual
+  partition runs.
 
 ## 4. Transform
 
@@ -125,11 +136,20 @@ does not publish a normalized monetary salary amount/currency pair.
 
 ## 8. Scheduling
 
-Three manual jobs are registered:
+Four manual jobs are registered:
 
-- `sweden_platsbanken_historical_backfill_job` — one-time archive backfill;
+- `sweden_platsbanken_historical_backfill_job` — one-time 2016+ annual-partition
+  archive backfill, one partition per run;
+- `sweden_platsbanken_company_jobs_job` — explicit global interval/company
+  projection after the required history sources have landed;
 - `sweden_platsbanken_jobstream_bootstrap_job` — one-time live snapshot;
 - `sweden_platsbanken_jobstream_incremental_job` — subsequent stream windows.
+
+The global company projection is deliberately outside the annual historical
+backfill. Rebuilding it for every year would repeatedly scan incomplete global
+history. Run it once after the historical partitions and live bootstrap have
+landed; the bootstrap and incremental jobs also refresh it after their own
+source updates.
 
 No schedule is enabled until migrations are applied and all three jobs have
 been manually materialized and reconciled. The incremental job intentionally
@@ -148,6 +168,10 @@ reconciliation could hide removal transitions.
   estimated and are labelled accordingly.
 - Current snapshots must not be scheduled as ordinary incremental refreshes
   until absence reconciliation exists.
+- Whole-history DuckDB normalization repeatedly scanned and rewrote the complete
+  multi-gigabyte corpus, saturating worker I/O and making retries all-or-nothing.
+  Annual isolated databases bound scan, spill, and retry scope to one source
+  period without changing the stable ClickHouse UID semantics.
 
 ## 10. Verification
 
@@ -157,5 +181,6 @@ reconciliation could hide removal transitions.
   `tests/test_sweden_platsbanken_normalize.py`, and
   `tests/test_sweden_platsbanken_clickhouse.py`.
 - Definition validation: `uv run dg check defs`.
-- Live order: apply migration → historical backfill → JobStream bootstrap →
-  incremental window → compare source/version/event/interval/company counts.
+- Live order: apply migration → all historical year partitions → JobStream
+  bootstrap → optional incremental window → final company projection → compare
+  source/version/event/interval/company counts.

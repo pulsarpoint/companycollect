@@ -53,6 +53,22 @@ def discover_historical_archive_urls(
     return tuple(sorted(urls))
 
 
+def historical_archive_year(archive_url: str) -> str:
+    """Return the year prefix shared by annual and quarterly archive names."""
+    source_file = Path(urlparse(archive_url).path).name
+    year = source_file[:4]
+    if (
+        len(source_file) < 5
+        or len(year) != 4
+        or not year.isdigit()
+        or source_file[4] not in {"-", ".", "_"}
+    ):
+        raise ValueError(
+            f"Cannot determine historical archive year from {archive_url!r}"
+        )
+    return year
+
+
 def count_jobstream_jsonl_records(source_path: Path) -> int:
     """Validate a JobStream JSONL response and return its non-empty row count."""
     row_count = 0
@@ -88,9 +104,11 @@ def sync_historical_archives(
     run_id: str,
     retrieved_at: datetime,
     refresh_existing: bool,
+    archive_year: str,
     session: requests.Session | None = None,
 ) -> dict[str, Any]:
-    """Store every complete JobTech historical ZIP and a replay manifest."""
+    """Store one year's complete JobTech archives and a replay manifest."""
+    _validate_historical_archive_year(archive_year)
     object_store.ensure_bucket(tables.S3_BUCKET)
     owns_session = session is None
     http_session = session or jobtech_http_session()
@@ -100,21 +118,33 @@ def sync_historical_archives(
             timeout=DEFAULT_TIMEOUT_SECONDS,
         )
         response.raise_for_status()
-        archive_urls = discover_historical_archive_urls(
-            response.text,
-            catalog_url=tables.HISTORICAL_CATALOG_URL,
+        archive_urls = tuple(
+            archive_url
+            for archive_url in discover_historical_archive_urls(
+                response.text,
+                catalog_url=tables.HISTORICAL_CATALOG_URL,
+            )
+            if historical_archive_year(archive_url) == archive_year
         )
         if not archive_urls:
             raise ValueError(
-                "JobTech historical catalog contains no complete ZIP archives"
+                "JobTech historical catalog contains no complete ZIP archives "
+                f"for {archive_year}"
             )
 
         previous = _optional_latest_manifest(
             object_store,
-            f"{tables.MANIFEST_PREFIX}/historical",
+            _historical_manifest_prefix(archive_year),
         )
+        if not previous:
+            previous = _optional_latest_manifest(
+                object_store,
+                f"{tables.MANIFEST_PREFIX}/historical/retrieved_at=",
+            )
         previous_by_url = {
-            str(entry["source_url"]): entry for entry in previous.get("archives", [])
+            str(entry["source_url"]): entry
+            for entry in previous.get("archives", [])
+            if historical_archive_year(str(entry["source_url"])) == archive_year
         }
         entries: list[dict[str, Any]] = []
         for archive_url in archive_urls:
@@ -141,12 +171,15 @@ def sync_historical_archives(
         if owns_session:
             http_session.close()
 
-    manifest_key = _manifest_key("historical", run_id, retrieved_at)
+    manifest_key = _manifest_key(
+        f"historical/year={archive_year}", run_id, retrieved_at
+    )
     manifest = {
         "source_slug": tables.SOURCE_SLUG,
         "source_run_id": run_id,
         "source_url": tables.HISTORICAL_CATALOG_URL,
         "retrieved_at": retrieved_at.astimezone(UTC).isoformat(),
+        "partition_year": archive_year,
         "archives": entries,
     }
     object_store.write_json(
@@ -251,11 +284,13 @@ def resolve_jobstream_event_window(
 
 def latest_historical_manifest(
     object_store: ObjectStoreResource,
+    archive_year: str,
 ) -> dict[str, Any]:
+    _validate_historical_archive_year(archive_year)
     return _latest_manifest(
         object_store,
-        f"{tables.MANIFEST_PREFIX}/historical",
-        "historical archives",
+        _historical_manifest_prefix(archive_year),
+        f"historical archives for {archive_year}",
     )
 
 
@@ -501,6 +536,15 @@ def _manifest_key(kind: str, run_id: str, retrieved_at: datetime) -> str:
     return (
         f"{tables.MANIFEST_PREFIX}/{kind}/retrieved_at={timestamp}/run_id={run_id}.json"
     )
+
+
+def _historical_manifest_prefix(archive_year: str) -> str:
+    return f"{tables.MANIFEST_PREFIX}/historical/year={archive_year}"
+
+
+def _validate_historical_archive_year(archive_year: str) -> None:
+    if len(archive_year) != 4 or not archive_year.isdigit():
+        raise ValueError(f"Historical archive year must be YYYY, got {archive_year!r}")
 
 
 def _sha256_file(path: Path) -> str:
