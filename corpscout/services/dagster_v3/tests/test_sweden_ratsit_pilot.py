@@ -17,6 +17,7 @@ from dagster_v3.defs.sweden_ratsit.assets import (
     RATSIT_RESULT_COLUMNS,
     RATSIT_RESULT_TABLE,
     RATSIT_S3_BUCKET,
+    RatsitScanProgress,
     StoredRatsitReport,
     load_active_ratsit_company_ids,
     persist_ratsit_scan,
@@ -43,6 +44,12 @@ TEST_PROXY_URLS = (
     "http://proxy-user:proxy-password@proxy2.example:8080",
     "http://proxy-user:proxy-password@proxy3.example:8080",
 )
+
+
+def ignore_scan_progress(_progress: RatsitScanProgress) -> None:
+    pass
+
+
 ROUND_ROBIN_COMPANY_IDS = (
     "5560004615",
     "5560125790",
@@ -609,12 +616,14 @@ def test_scan_writes_run_scoped_results_and_keeps_diagnostic_html() -> None:
     )
     object_store = FakeObjectStore()
     ratsit = FakeRatsitResource([parse_failure, report])
+    progress: list[RatsitScanProgress] = []
 
     summary = write_ratsit_scan(
         object_store=object_store,  # type: ignore[arg-type]
         ratsit=ratsit,  # type: ignore[arg-type]
         company_ids=(COMPANY_ID, "5560125790"),
         scan_id="scan-run-1",
+        on_progress=progress.append,
         started_at=FETCHED_AT,
         completed_at=FETCHED_AT,
     )
@@ -661,6 +670,14 @@ def test_scan_writes_run_scoped_results_and_keeps_diagnostic_html() -> None:
     ) == ("proxy", "crawl_proxy1")
     assert summary.results[0].result_size_bytes == len(object_store.objects[report_key])
     assert len(summary.results[0].result_sha256) == 64
+    assert [event.completed_count for event in progress] == [1, 2]
+    assert [event.latest_result.company_id for event in progress] == [
+        "5560125790",
+        COMPANY_ID,
+    ]
+    assert progress[-1].total_count == 2
+    assert progress[-1].success_count == 1
+    assert progress[-1].failure_count == 1
 
 
 def test_scan_keeps_missing_company_redirect_html() -> None:
@@ -685,6 +702,7 @@ def test_scan_keeps_missing_company_redirect_html() -> None:
         ratsit=FakeRatsitResource([missing_company]),  # type: ignore[arg-type]
         company_ids=(COMPANY_ID,),
         scan_id="missing-company-scan",
+        on_progress=ignore_scan_progress,
         started_at=FETCHED_AT,
         completed_at=FETCHED_AT,
     )
@@ -731,6 +749,7 @@ def test_identical_report_hash_reuses_old_s3_path_for_new_scan() -> None:
         ratsit=FakeRatsitResource([report]),  # type: ignore[arg-type]
         company_ids=(COMPANY_ID,),
         scan_id="scan-run-1",
+        on_progress=ignore_scan_progress,
         started_at=FETCHED_AT,
         completed_at=FETCHED_AT,
     )
@@ -759,6 +778,7 @@ def test_identical_report_hash_reuses_old_s3_path_for_new_scan() -> None:
         ratsit=FakeRatsitResource([proxied_report]),  # type: ignore[arg-type]
         company_ids=(COMPANY_ID,),
         scan_id="scan-run-2",
+        on_progress=ignore_scan_progress,
         reusable_reports={(COMPANY_ID, reusable.result_sha256): reusable},
         started_at=FETCHED_AT,
         completed_at=FETCHED_AT,
@@ -803,6 +823,7 @@ def test_changed_report_writes_new_scan_id_object() -> None:
         ratsit=FakeRatsitResource([original]),  # type: ignore[arg-type]
         company_ids=(COMPANY_ID,),
         scan_id="scan-run-1",
+        on_progress=ignore_scan_progress,
         started_at=FETCHED_AT,
         completed_at=FETCHED_AT,
     )
@@ -821,6 +842,7 @@ def test_changed_report_writes_new_scan_id_object() -> None:
         ratsit=FakeRatsitResource([changed]),  # type: ignore[arg-type]
         company_ids=(COMPANY_ID,),
         scan_id="scan-run-2",
+        on_progress=ignore_scan_progress,
         reusable_reports={(COMPANY_ID, reusable.result_sha256): reusable},
         started_at=FETCHED_AT,
         completed_at=FETCHED_AT,
@@ -849,6 +871,7 @@ def test_completed_scan_persists_company_result_rows() -> None:
         ratsit=FakeRatsitResource([report]),  # type: ignore[arg-type]
         company_ids=(COMPANY_ID,),
         scan_id="scan-run-1",
+        on_progress=ignore_scan_progress,
         started_at=FETCHED_AT,
         completed_at=FETCHED_AT,
     )

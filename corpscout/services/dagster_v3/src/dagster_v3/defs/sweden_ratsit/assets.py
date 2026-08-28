@@ -2,9 +2,10 @@ import gzip
 import hashlib
 import json
 import re
+import time
 import zlib
 from collections import Counter
-from collections.abc import Iterator, Mapping
+from collections.abc import Callable, Iterator, Mapping
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from typing import Literal
@@ -54,6 +55,8 @@ RATSIT_CLICKHOUSE_DATABASE = "corpscout"
 RATSIT_ACTIVE_COMPANIES_TABLE = "se_companies"
 RATSIT_RESULT_TABLE = "se_company_ratsit"
 RATSIT_BUCKET_COUNT = 128
+RATSIT_PROGRESS_LOG_EVERY_RESULTS = 25
+RATSIT_PROGRESS_LOG_EVERY_SECONDS = 30.0
 RATSIT_PARTITIONS = dg.StaticPartitionsDefinition(
     [f"bucket_{bucket_index:03d}" for bucket_index in range(RATSIT_BUCKET_COUNT)]
 )
@@ -139,6 +142,20 @@ class RatsitScanSummary:
     @property
     def result_object_keys(self) -> tuple[str, ...]:
         return tuple(result.result_object_key for result in self.results)
+
+
+@dataclass(frozen=True)
+class RatsitScanProgress:
+    total_count: int
+    completed_count: int
+    success_count: int
+    not_found_count: int
+    failure_count: int
+    reused_report_count: int
+    latest_result: RatsitScanResult
+
+
+type RatsitScanProgressCallback = Callable[[RatsitScanProgress], None]
 
 
 def ratsit_bucket_key(company_id: str) -> str:
@@ -250,6 +267,7 @@ def write_ratsit_scan(
     ratsit: SwedenRatsitBrowserResource,
     company_ids: tuple[str, ...],
     scan_id: str,
+    on_progress: RatsitScanProgressCallback,
     reusable_reports: Mapping[tuple[str, str], StoredRatsitReport] | None = None,
     started_at: datetime | None = None,
     completed_at: datetime | None = None,
@@ -274,6 +292,19 @@ def write_ratsit_scan(
     reused_report_count = 0
     diagnostic_html_count = 0
     written_object_count = 0
+
+    def report_progress(latest_result: RatsitScanResult) -> None:
+        on_progress(
+            RatsitScanProgress(
+                total_count=len(company_ids),
+                completed_count=len(scan_results),
+                success_count=success_count,
+                not_found_count=not_found_count,
+                failure_count=failure_count,
+                reused_report_count=reused_report_count,
+                latest_result=latest_result,
+            )
+        )
 
     for result in ratsit.iter_company_reports(company_ids):
         if result.company_id not in selected_company_ids:
@@ -336,6 +367,7 @@ def write_ratsit_scan(
                 )
             )
             success_count += 1
+            report_progress(scan_results[-1])
             continue
 
         if isinstance(result, RatsitCompanyNotFound):
@@ -402,6 +434,7 @@ def write_ratsit_scan(
                 error_message=error_message,
             )
         )
+        report_progress(scan_results[-1])
 
     if resolved_company_ids != selected_company_ids:
         missing_company_ids = sorted(selected_company_ids - resolved_company_ids)
@@ -634,11 +667,58 @@ def se_ratsit_scan_dispatch(
         clickhouse,
         company_ids,
     )
+    progress_started_at = time.monotonic()
+    last_progress_logged_at = progress_started_at
+
+    def log_progress(progress: RatsitScanProgress) -> None:
+        nonlocal last_progress_logged_at
+
+        logged_at = time.monotonic()
+        should_log = (
+            progress.completed_count == 1
+            or progress.completed_count == progress.total_count
+            or progress.completed_count % RATSIT_PROGRESS_LOG_EVERY_RESULTS == 0
+            or logged_at - last_progress_logged_at >= RATSIT_PROGRESS_LOG_EVERY_SECONDS
+        )
+        if not should_log:
+            return
+
+        elapsed_seconds = max(logged_at - progress_started_at, 0.001)
+        companies_per_minute = progress.completed_count / elapsed_seconds * 60
+        remaining_count = progress.total_count - progress.completed_count
+        eta_seconds = remaining_count / (progress.completed_count / elapsed_seconds)
+        latest_result = progress.latest_result
+        context.log.info(
+            "Ratsit scan progress: partition=%s completed=%s/%s percent=%.1f "
+            "success=%s not_found=%s failure=%s reused=%s "
+            "rate_companies_per_minute=%.1f elapsed_seconds=%s eta_seconds=%s "
+            "last_company_id=%s last_outcome=%s last_route=%s "
+            "last_http_status=%s last_failure_type=%s",
+            partition_key,
+            progress.completed_count,
+            progress.total_count,
+            progress.completed_count / progress.total_count * 100,
+            progress.success_count,
+            progress.not_found_count,
+            progress.failure_count,
+            progress.reused_report_count,
+            companies_per_minute,
+            round(elapsed_seconds),
+            round(eta_seconds),
+            latest_result.company_id,
+            latest_result.outcome,
+            latest_result.proxy_name or "direct",
+            latest_result.http_status,
+            latest_result.failure_type,
+        )
+        last_progress_logged_at = logged_at
+
     summary = write_ratsit_scan(
         object_store=sweden_ratsit_object_store,
         ratsit=sweden_ratsit_browser,
         company_ids=company_ids,
         scan_id=scan_id,
+        on_progress=log_progress,
         reusable_reports=reusable_reports,
         started_at=started_at,
     )
