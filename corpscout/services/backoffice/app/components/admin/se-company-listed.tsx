@@ -93,13 +93,79 @@ function LeiList({ leis }: { leis: SeCompanyListed["leis"] }) {
  * filings deliberately play NO part here — a filing is a reporting fact, not
  * trading information.
  */
+function TradedByYearCard({
+  summaries,
+}: {
+  summaries: SeCompanyListed["summaries"];
+}) {
+  if (summaries.length === 0) return null;
+  const cumulative = summaries.reduce((sum, row) => sum + row.traded_usd, 0);
+  const first = summaries[summaries.length - 1].year;
+  const last = summaries[0].year;
+  return (
+    <Card>
+      <CardHeader>
+        <CardTitle className="text-base">Trading by year</CardTitle>
+        <CardDescription>
+          One row per calendar year the company traded: that year's turnover
+          across all venues (USD), the year-end close on the lead venue, and
+          the venue count. The bottom row is the cumulative turnover for every
+          year we hold.
+        </CardDescription>
+      </CardHeader>
+      <CardContent>
+        <Table className="min-w-[28rem]">
+          <TableHeader>
+            <TableRow>
+              <TableHead>Year</TableHead>
+              <TableHead className="text-right">Traded value (USD)</TableHead>
+              <TableHead className="text-right">Year-end close</TableHead>
+              <TableHead className="text-right">Venues</TableHead>
+            </TableRow>
+          </TableHeader>
+          <TableBody>
+            {summaries.map((row) => (
+              <TableRow key={row.year}>
+                <TableCell className="font-medium tabular-nums">{row.year}</TableCell>
+                <TableCell className="text-right tabular-nums">
+                  ${compactUsd.format(row.traded_usd)}
+                </TableCell>
+                <TableCell className="text-right tabular-nums">
+                  {row.last_close === null
+                    ? "—"
+                    : `${priceFormat.format(row.last_close)} ${row.lead_currency}`}
+                </TableCell>
+                <TableCell className="text-right tabular-nums">{row.venues}</TableCell>
+              </TableRow>
+            ))}
+            <TableRow className="border-t-2 font-medium">
+              <TableCell>
+                All years
+                <span className="text-muted-foreground text-xs font-normal">
+                  {" "}
+                  ({first}–{last})
+                </span>
+              </TableCell>
+              <TableCell className="text-right tabular-nums">
+                ${compactUsd.format(cumulative)}
+              </TableCell>
+              <TableCell className="text-right text-muted-foreground">—</TableCell>
+              <TableCell className="text-right text-muted-foreground">—</TableCell>
+            </TableRow>
+          </TableBody>
+        </Table>
+      </CardContent>
+    </Card>
+  );
+}
+
 export function SeCompanyListedTab({
   listed,
 }: {
   companyId: string;
   listed: SeCompanyListed;
 }) {
-  const { leis, symbols, summary, leadSymbolKey, prices } = listed;
+  const { leis, symbols, summary, summaries, leadSymbolKey, prices } = listed;
 
   if (symbols.length === 0) {
     return (
@@ -210,7 +276,7 @@ export function SeCompanyListedTab({
                     ${compactUsd.format(summary.traded_usd)}
                     <span className="text-muted-foreground text-xs">
                       {" "}
-                      ({summary.year} turnover)
+                      ({summary.year} turnover — see Trading by year)
                     </span>
                   </>
                 )}
@@ -239,6 +305,8 @@ export function SeCompanyListedTab({
           <LeiList leis={leis} />
         </CardContent>
       </Card>
+
+      <TradedByYearCard summaries={summaries} />
 
       {prices.length < 2 ? null : (
         <Card>
@@ -317,7 +385,10 @@ export function SeCompanyListedTab({
                       ) : null}
                     </TableCell>
                     <TableCell className="align-top">
-                      {symbol.exchange_code}
+                      <Badge variant="outline">{symbol.exchange_code}</Badge>{" "}
+                      <span className="text-muted-foreground text-xs">
+                        {exchangeLabel(symbol.exchange_code)}
+                      </span>
                     </TableCell>
                     <TableCell className="align-top font-mono text-xs">
                       {symbol.isin}

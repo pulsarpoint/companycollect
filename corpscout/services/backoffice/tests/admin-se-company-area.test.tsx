@@ -719,6 +719,29 @@ describe("jobs tab", () => {
   });
 });
 
+/** Two traded years, newest first — summaries[0] doubles as the headline
+ * summary. */
+const SUMMARIES_FIXTURE: SeCompanyListed["summaries"] = [
+  {
+    year: 2025,
+    venues: 4,
+    lead_venue: "ST",
+    lead_currency: "SEK",
+    last_close: 122.15,
+    last_day: "2025-12-30",
+    traded_usd: 31_500_000_000,
+  },
+  {
+    year: 2024,
+    venues: 4,
+    lead_venue: "ST",
+    lead_currency: "SEK",
+    last_close: 101.4,
+    last_day: "2024-12-30",
+    traded_usd: 18_500_000_000,
+  },
+];
+
 /** Handelsbanken-shaped: a Stockholm home line plus an LSE cross-listing, the
  * quote led by the Stockholm line. */
 const listedTraded: SeCompanyListed = {
@@ -752,6 +775,7 @@ const listedTraded: SeCompanyListed = {
     last_day: "2025-12-30",
     traded_usd: 31_500_000_000,
   },
+  summaries: SUMMARIES_FIXTURE,
   leadSymbolKey: "SHB-A.ST",
   prices: [
     { price_date: "2025-09-01", close: 118.4 },
@@ -797,6 +821,7 @@ describe("listed tab", () => {
         listed={{
           ...listedTraded,
           summary: null,
+          summaries: [],
           leadSymbolKey: "0R7S.LSE",
           prices: [],
         }}
@@ -819,6 +844,7 @@ describe("listed tab", () => {
           leis: listedTraded.leis,
           symbols: [],
           summary: null,
+          summaries: [],
           leadSymbolKey: "",
           prices: [],
         }}

@@ -71,9 +71,13 @@ LIMIT 100`;
 
 /**
  * company_market_summary is keyed per (country, year, company) since migration
- * 000223, so the tab reads the most recent year's row: quoted price, its venue
- * and currency (chosen by traded value — see migration 000222's comments), and
- * that year's turnover. traded_usd is TURNOVER, never market cap.
+ * 000223: one row per YEAR the company traded — quoted price at that year's
+ * end, its venue and currency (chosen by traded value — see migration
+ * 000222's comments), and that year's turnover. The tab reads EVERY year
+ * (owner 2026-08-28: per-year AND cumulative, not one unexplained figure);
+ * the newest row doubles as the headline quote. traded_usd is TURNOVER,
+ * never market cap. LIMIT 50 is a backstop, not paging — the price history
+ * starts in 2020.
  */
 export const COMPANY_MARKET_SUMMARY_SQL = `SELECT
   toString(m.year) AS year,
@@ -87,7 +91,7 @@ FROM corpscout.company_market_summary AS m
 WHERE m.country_code = 'SE'
   AND m.company_id = {companyId:String}
 ORDER BY m.year DESC
-LIMIT 1`;
+LIMIT 50`;
 
 /**
  * One year of daily closes for ONE symbol — a keyed read on the table's own
@@ -112,6 +116,8 @@ export interface SeCompanyListed {
   leis: SeCompanyLeiRow[];
   symbols: SeCompanyTradedSymbolRow[];
   summary: SeCompanyMarketSummary | null;
+  /** Every traded year, newest first — `summary` is summaries[0]. */
+  summaries: SeCompanyMarketSummary[];
   /** The symbol the chart and quote describe: the traded_symbols row on the
    * summary's lead venue, or the first row when the venues disagree. Empty
    * string when the company is not traded. */
@@ -168,19 +174,16 @@ export async function loadSeCompanyListed(
     chQuery<RawSummaryRow>(COMPANY_MARKET_SUMMARY_SQL, { companyId }),
   ]);
 
-  const raw = summaryRows[0];
-  const summary: SeCompanyMarketSummary | null =
-    raw === undefined
-      ? null
-      : {
-          year: Number(raw.year),
-          venues: Number(raw.venues),
-          lead_venue: raw.lead_venue,
-          lead_currency: raw.lead_currency,
-          last_close: raw.last_close === null ? null : Number(raw.last_close),
-          last_day: raw.last_day ?? "",
-          traded_usd: Number(raw.traded_usd),
-        };
+  const summaries: SeCompanyMarketSummary[] = summaryRows.map((raw) => ({
+    year: Number(raw.year),
+    venues: Number(raw.venues),
+    lead_venue: raw.lead_venue,
+    lead_currency: raw.lead_currency,
+    last_close: raw.last_close === null ? null : Number(raw.last_close),
+    last_day: raw.last_day ?? "",
+    traded_usd: Number(raw.traded_usd),
+  }));
+  const summary = summaries[0] ?? null;
 
   const lead = pickLeadSymbol(symbols, summary);
   const prices =
@@ -194,6 +197,7 @@ export async function loadSeCompanyListed(
     leis,
     symbols,
     summary,
+    summaries,
     leadSymbolKey: lead === null ? "" : lead.eodhd_symbol_key,
     prices,
   };

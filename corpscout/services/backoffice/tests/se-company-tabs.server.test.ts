@@ -445,7 +445,8 @@ describe("tab loaders", () => {
     // The summary reads ONE row -- the most recent year -- and the price read
     // is keyed and bounded to a trading year.
     expect(COMPANY_MARKET_SUMMARY_SQL).toContain("ORDER BY m.year DESC");
-    expect(COMPANY_MARKET_SUMMARY_SQL).toContain("LIMIT 1");
+    // Every traded year plus headroom -- the per-year table needs them all.
+    expect(COMPANY_MARKET_SUMMARY_SQL).toContain("LIMIT 50");
     expect(COMPANY_LEAD_PRICES_SQL).toContain(
       "eodhd_symbol_key = {symbolKey:String}",
     );
