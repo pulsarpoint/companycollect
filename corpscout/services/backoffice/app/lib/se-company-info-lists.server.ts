@@ -224,10 +224,10 @@ export interface SeCompanyInfoListQuery extends SeCompanyInfoListFilters {
  *   country SE, is_current). Live check: this predicate and the view both name
  *   404 companies.
  * - financial (filed reports, task 2026-08-25 owner ruling): se_financial_reports
- *   is the exact table `FINANCIAL_REPORTS_SQL` in se-company-financial.server.ts
- *   reads for the Financial tab's "Filed reports" card (`WHERE company_id =
- *   {companyId:String}`, FINAL to show a re-parsed filing once as its newest
- *   version). It is a ReplacingMergeTree(resolved_at) keyed on (company_id,
+ *   is the parser's own report ledger, the table behind every extracted figure
+ *   (the retired admin tab's "Filed reports" card read it directly as
+ *   `WHERE company_id = {companyId:String}`, FINAL to show a re-parsed filing
+ *   once). It is a ReplacingMergeTree(resolved_at) keyed on (company_id,
  *   ifNull(report_period_end, ...), statement_key); verified read-only against
  *   its writer (upsert_sweden_financial_reports_partition,
  *   dagster_v3/defs/sweden_financial/clickhouse.py): a partition refresh
@@ -289,10 +289,10 @@ function anyOf(...terms: readonly string[]): string {
  *
  * `has_financial` is the OR of THREE arms, not a fourth read of
  * se_company_financials_latest: the two REGISTER arms are exactly the two
- * views the Financial tab renders as extracted figures (SOURCE_VIEWS in
- * se-company-financial.server.ts), and `financialReports` is that same tab's
- * "Filed reports" card source (se_financial_reports, read exactly as
- * FINANCIAL_REPORTS_SQL there reads it -- see COMPANY_SETS's doc comment).
+ * views the Financial tab renders as extracted figures
+ * (SWEDEN_FINANCIAL_SOURCE_VIEWS in queries.server.ts), and
+ * `financialReports` is the parser's report ledger behind them
+ * (se_financial_reports -- see COMPANY_SETS's doc comment).
  *
  * Owner ruling (2026-08-24 addendum, applied 2026-08-25): ✓ means ANY
  * financial data -- extracted figures OR filed/parsed reports -- not "has

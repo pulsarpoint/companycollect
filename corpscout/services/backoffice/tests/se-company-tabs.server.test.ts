@@ -21,13 +21,6 @@ import {
   loadSeCompanyDomains,
 } from "~/lib/se-company-domains.server";
 import {
-  FINANCIALS_LATEST_SQL,
-  FINANCIAL_REPORTS_SQL,
-  SOURCE_VIEWS,
-  financialSourceYearsSql,
-  loadSeCompanyFinancialDetail,
-} from "~/lib/se-company-financial.server";
-import {
   PEOPLE_ROLES_SQL,
   PEOPLE_SQL,
   loadSeCompanyPeople,
@@ -42,8 +35,9 @@ import {
 
 const COMPANY = "5560125220";
 
-/** Every statement the company area sends, with the two view-built ones
- * expanded from their allowlist. */
+/** Every statement the company area's own tab loaders send. The Financial
+ * tab is not here: it renders the public financials experience through
+ * `getCompanyFinancialDetail` (queries.server), whose SQL has its own tests. */
 const ALL_SQL: Array<[string, string]> = [
   ["SHELL_INFO_SQL", SHELL_INFO_SQL],
   ["SHELL_REGISTER_SQL", SHELL_REGISTER_SQL],
@@ -53,18 +47,9 @@ const ALL_SQL: Array<[string, string]> = [
   ["REMOVED_SQL", REMOVED_SQL],
   ["ADDRESS_CORRECTIONS_SQL", ADDRESS_CORRECTIONS_SQL],
   ["ADDRESS_STATUS_INPUTS_SQL", ADDRESS_STATUS_INPUTS_SQL],
-  ["FINANCIALS_LATEST_SQL", FINANCIALS_LATEST_SQL],
-  ["FINANCIAL_REPORTS_SQL", FINANCIAL_REPORTS_SQL],
   ["PEOPLE_SQL", PEOPLE_SQL],
   ["PEOPLE_ROLES_SQL", PEOPLE_ROLES_SQL],
   ["COMPANY_DOMAINS_SQL", COMPANY_DOMAINS_SQL],
-  ...SOURCE_VIEWS.map(
-    (source) =>
-      [`years(${source.view})`, financialSourceYearsSql(source.view)] as [
-        string,
-        string,
-      ],
-  ),
 ];
 
 beforeEach(() => {
@@ -77,8 +62,7 @@ describe("company area SQL", () => {
     for (const [name, sql] of ALL_SQL) {
       expect(sql, name).not.toContain(COMPANY);
       // A `${` surviving into a shipped statement means a value was
-      // interpolated; the view builder's own `${view}` is expanded above, so
-      // nothing here may carry one.
+      // interpolated, so nothing here may carry one.
       expect(sql, name).not.toContain("${");
     }
   });
@@ -114,9 +98,6 @@ describe("company area SQL", () => {
       expect([SHELL_INFO_SQL, SHELL_REGISTER_SQL, SHELL_ENTITY_TYPE_SQL].join("\n"))
         .toContain(table);
     }
-    expect(FINANCIAL_REPORTS_SQL).toContain(
-      "corpscout.se_financial_reports AS r FINAL",
-    );
     expect(PEOPLE_SQL).toContain("corpscout.se_company_person AS p FINAL");
     expect(PEOPLE_ROLES_SQL).toContain("corpscout.se_company_person_role FINAL");
     expect(PEOPLE_ROLES_SQL).toContain(
@@ -129,9 +110,6 @@ describe("company area SQL", () => {
       expect(sql).toContain("corpscout.se_company_address AS a FINAL");
     }
     expect(ADDRESS_CORRECTIONS_SQL).not.toContain("FINAL");
-
-    // Snapshot tables: no FINAL anywhere in the statements that read them.
-    expect(FINANCIALS_LATEST_SQL).not.toContain("FINAL");
   });
 
   /**
@@ -289,34 +267,6 @@ describe("tab loaders", () => {
     expect(clickhouse.query).toHaveBeenCalledWith(COMPANY_DOMAINS_SQL, {
       companyId: COMPANY,
     });
-  });
-
-  it("reads only the two allowlisted financial views", async () => {
-    await loadSeCompanyFinancialDetail(COMPANY);
-    const sent = clickhouse.query.mock.calls.map(([sql]) => sql as string);
-    expect(sent).toContain(FINANCIALS_LATEST_SQL);
-    expect(sent).toContain(FINANCIAL_REPORTS_SQL);
-    for (const source of SOURCE_VIEWS) {
-      expect(sent).toContain(financialSourceYearsSql(source.view));
-    }
-    expect(sent).toHaveLength(2 + SOURCE_VIEWS.length);
-  });
-
-  it("keeps a source's years under its own id, empty ones included", async () => {
-    clickhouse.query.mockImplementation(async (sql: string) => {
-      if (sql === financialSourceYearsSql("se_financials_bolagsverket_current")) {
-        return [{ source_id: "bolagsverket-annual-accounts", fiscal_year: "2025" }];
-      }
-      return [];
-    });
-    const detail = await loadSeCompanyFinancialDetail(COMPANY);
-    expect(detail.latest).toBeNull();
-    expect(detail.sources.map((source) => source.source_id)).toEqual([
-      "bolagsverket-annual-accounts",
-      "esef",
-    ]);
-    expect(detail.sources[0].years).toHaveLength(1);
-    expect(detail.sources[1].years).toEqual([]);
   });
 
   it("hangs each person's roles off that person, and leaves roleless ones empty", async () => {
