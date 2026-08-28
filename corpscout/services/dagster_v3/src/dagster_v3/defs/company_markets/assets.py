@@ -28,7 +28,12 @@ GROUP_NAME = "company_markets"
 # but bounded -- max_memory_usage keeps it well under the shared cap even when
 # a serving refresh runs concurrently.
 _HEAVY_QUERY_SETTINGS = {
-    "join_algorithm": "grace_hash",
+    # A priority list, not one algorithm: ClickHouse picks the first that fits
+    # each join. The Brazil B3 branch joins on OR'd keys, which ONLY plain hash
+    # supports (Code 48) -- its right side is just the B3 symbol subset, so an
+    # in-memory hash there is small; the big equi-key LEI joins take grace_hash
+    # and spill.
+    "join_algorithm": "grace_hash,hash",
     "grace_hash_join_initial_buckets": 16,
     "max_bytes_before_external_group_by": 8 * 1024**3,
     "max_bytes_before_external_sort": 8 * 1024**3,
