@@ -753,17 +753,27 @@ const listedTraded: SeCompanyListed = {
     },
   ],
   symbols: [
+    // The cross-listing carries the enrichment worth testing: its own quote
+    // currency, a non-common instrument type, and a delisting flag.
     {
       isin: "SE0007100599",
       eodhd_symbol_key: "0R7S.LSE",
       ticker: "0R7S",
       exchange_code: "LSE",
+      symbol_name: "Svenska Handelsbanken AB",
+      instrument_type: "Preferred Stock",
+      quote_currency: "GBP",
+      is_delisted: 1,
     },
     {
       isin: "SE0007100599",
       eodhd_symbol_key: "SHB-A.ST",
       ticker: "SHB-A",
       exchange_code: "ST",
+      symbol_name: "Svenska Handelsbanken AB (publ)",
+      instrument_type: "Common Stock",
+      quote_currency: "SEK",
+      is_delisted: 0,
     },
   ],
   summary: {
@@ -778,9 +788,22 @@ const listedTraded: SeCompanyListed = {
   summaries: SUMMARIES_FIXTURE,
   leadSymbolKey: "SHB-A.ST",
   prices: [
-    { price_date: "2025-09-01", close: 118.4 },
-    { price_date: "2025-12-30", close: 122.15 },
+    { price_date: "2025-09-01", close: 118.4, high: 119.2, low: 117.5, adjusted_close: 117.9, volume: 4_800_000 },
+    { price_date: "2025-12-30", close: 122.15, high: 122.9, low: 121.1, adjusted_close: 122.15, volume: 5_400_000 },
   ],
+  // SHB-A.ST-shaped stats, precomputed by the loader — the component only
+  // renders them.
+  stats: {
+    high52w: 149.7,
+    low52w: 116.8,
+    avgVolume: 5_170_000,
+    returns: [
+      { label: "1M", value: 0.021 },
+      { label: "YTD", value: -0.034 },
+      { label: "1Y", value: 0.089 },
+      { label: "5Y", value: 0.42 },
+    ],
+  },
 };
 
 describe("listed tab", () => {
@@ -804,10 +827,32 @@ describe("listed tab", () => {
     expect(html).not.toContain("Market cap");
     // The chart rendered (ChartContainer's slot) for the lead symbol.
     expect(html).toContain('data-slot="chart"');
+    // The stat strip: 52-week range in the lead currency, average volume,
+    // and the four returns -- gains green, losses red, both theme-aware.
+    expect(html).toContain("52-week range");
+    expect(html).toContain("116.80 – 149.70 SEK");
+    expect(html).toContain("Avg volume (1Y)");
+    expect(html).toContain("5.17M");
+    expect(html).toContain("+2.1%");
+    expect(html).toContain("text-emerald-600");
+    expect(html).toContain("-3.4%");
+    expect(html).toContain("text-red-600");
+    expect(html).toContain(">1M<");
+    expect(html).toContain(">YTD<");
     // Both listed lines are rows: the LSE cross-listing is real, with ISIN.
     expect(html).toContain("0R7S");
     expect(html).toContain(">LSE<");
     expect(html).toContain("SE0007100599");
+    // The enrichment from eodhd_symbols: the official name (lead line's also
+    // sits in the verdict card), each line's own quote currency, a type
+    // badge only when the instrument is not common stock, and the delisted
+    // mark on the dead cross-listing.
+    expect(html).toContain("Svenska Handelsbanken AB (publ)");
+    expect(html).toContain(">SEK<");
+    expect(html).toContain(">GBP<");
+    expect(html).toContain(">Preferred Stock<");
+    expect(html).not.toContain(">Common Stock<");
+    expect(html).toContain(">delisted<");
     // The LEI still shows as identity context.
     expect(html).toContain("NHBDILHZTYCNBV5UYZ31");
     // ESEF is not trading information: no filings table, ever.
@@ -824,6 +869,7 @@ describe("listed tab", () => {
           summaries: [],
           leadSymbolKey: "0R7S.LSE",
           prices: [],
+          stats: null,
         }}
       />,
       seCompanyTabPath(COMPANY_ID, "listed"),
@@ -847,6 +893,7 @@ describe("listed tab", () => {
           summaries: [],
           leadSymbolKey: "",
           prices: [],
+          stats: null,
         }}
       />,
       seCompanyTabPath(COMPANY_ID, "listed"),
