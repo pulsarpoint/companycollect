@@ -5,7 +5,7 @@ sources:
     schema: corpscout
     tables:
       - name: se_companies
-      - name: se_companies_translated
+      - name: se_companies_serving
       - name: se_financial_reports
       - name: company_identifier
       - name: gleif_lei_records

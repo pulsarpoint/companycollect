@@ -22,7 +22,10 @@ registry_descriptions AS (
         '' AS model_name,
         '' AS prompt_version,
         updated_from_raw_at AS extracted_at
-    FROM {{ source('corpscout', 'se_companies_translated') }}
+    -- se_companies_serving (refreshable MV, migration 000338) absorbed the retired
+    -- se_companies_translated view's columns verbatim; refreshed every 15 minutes, which
+    -- bounds this model's staleness the same way the serving pages accept.
+    FROM {{ source('corpscout', 'se_companies_serving') }}
     WHERE ifNull(activity_description, '') != ''
       AND bolagsverket_source_record_uid != ''
 ),
