@@ -39,9 +39,12 @@ import {
   loadSeCompanyJobs,
 } from "~/lib/se-company-jobs.server";
 import {
-  COMPANY_ESEF_FILINGS_SQL,
+  COMPANY_LEAD_PRICES_SQL,
   COMPANY_LEI_SQL,
+  COMPANY_MARKET_SUMMARY_SQL,
+  COMPANY_TRADED_SYMBOLS_SQL,
   loadSeCompanyListed,
+  pickLeadSymbol,
 } from "~/lib/se-company-listed.server";
 import { getCountry } from "~/lib/countries";
 
@@ -65,7 +68,9 @@ const ALL_SQL: Array<[string, string]> = [
   ["COMPANY_JOBS_SQL", COMPANY_JOBS_SQL],
   ["COMPANY_JOBS_CURRENT_SQL", COMPANY_JOBS_CURRENT_SQL],
   ["COMPANY_LEI_SQL", COMPANY_LEI_SQL],
-  ["COMPANY_ESEF_FILINGS_SQL", COMPANY_ESEF_FILINGS_SQL],
+  ["COMPANY_TRADED_SYMBOLS_SQL", COMPANY_TRADED_SYMBOLS_SQL],
+  ["COMPANY_MARKET_SUMMARY_SQL", COMPANY_MARKET_SUMMARY_SQL],
+  ["COMPANY_LEAD_PRICES_SQL", COMPANY_LEAD_PRICES_SQL],
 ];
 
 beforeEach(() => {
@@ -120,12 +125,21 @@ describe("company area SQL", () => {
       "corpscout.company_person_role_type AS t FINAL",
     );
     expect(COMPANY_DOMAINS_SQL).toContain("corpscout.company_domains AS d FINAL");
-    expect(COMPANY_ESEF_FILINGS_SQL).toContain(
-      "corpscout.esef_filings AS f FINAL",
+    // eodhd_eod_prices is a ReplacingMergeTree on retrieved_at: a re-fetched
+    // trading day must show once, in its newest state.
+    expect(COMPANY_LEAD_PRICES_SQL).toContain(
+      "corpscout.eodhd_eod_prices AS p FINAL",
     );
-    // The job tables and company_identifier are plain MergeTree snapshots
-    // rebuilt whole per pipeline run: FINAL there is a dedup pass for nothing.
-    for (const sql of [COMPANY_JOBS_SQL, COMPANY_JOBS_CURRENT_SQL, COMPANY_LEI_SQL]) {
+    // The job tables, company_identifier and the market fact tables are plain
+    // MergeTree snapshots rebuilt whole per pipeline run: FINAL there is a
+    // dedup pass for nothing.
+    for (const sql of [
+      COMPANY_JOBS_SQL,
+      COMPANY_JOBS_CURRENT_SQL,
+      COMPANY_LEI_SQL,
+      COMPANY_TRADED_SYMBOLS_SQL,
+      COMPANY_MARKET_SUMMARY_SQL,
+    ]) {
       expect(sql).not.toContain("FINAL");
     }
     // The address final is a ReplacingMergeTree on resolved_at, so both of its
@@ -357,21 +371,106 @@ describe("tab loaders", () => {
     }
   });
 
-  it("reads the LEIs and the filings behind them as one listed slice", async () => {
-    await loadSeCompanyListed(COMPANY);
+  /**
+   * The Publicly traded tab reads the EODHD market facts, not ESEF: a filing
+   * is a reporting fact, not trading information. The identity reads are
+   * scoped by (country_code, company_id) -- a bare company_id is not unique
+   * across registers -- and the price read is keyed on the price table's own
+   * primary key (eodhd_symbol_key), never a scan.
+   */
+  it("reads symbols, summary and the LEIs, then prices for the LEAD symbol only", async () => {
+    clickhouse.query.mockImplementation(async (sql: string) => {
+      if (sql === COMPANY_TRADED_SYMBOLS_SQL) {
+        return [
+          { isin: "SE0007100599", eodhd_symbol_key: "0R7S.LSE", ticker: "0R7S", exchange_code: "LSE" },
+          { isin: "SE0007100599", eodhd_symbol_key: "SHB-A.ST", ticker: "SHB-A", exchange_code: "ST" },
+        ];
+      }
+      if (sql === COMPANY_MARKET_SUMMARY_SQL) {
+        return [
+          { year: "2025", venues: "4", lead_venue: "ST", lead_currency: "SEK", last_close: "122.15", last_day: "2025-12-30", traded_usd: "31500000000.00" },
+        ];
+      }
+      if (sql === COMPANY_LEAD_PRICES_SQL) {
+        return [{ price_date: "2025-12-30", close: 122.15 }];
+      }
+      return [];
+    });
+    const listed = await loadSeCompanyListed(COMPANY);
     const sent = clickhouse.query.mock.calls.map(([sql]) => sql as string);
-    expect(sent).toEqual([COMPANY_LEI_SQL, COMPANY_ESEF_FILINGS_SQL]);
-    for (const [, params] of clickhouse.query.mock.calls) {
-      expect(params).toEqual({ companyId: COMPANY });
+    expect(sent).toEqual([
+      COMPANY_LEI_SQL,
+      COMPANY_TRADED_SYMBOLS_SQL,
+      COMPANY_MARKET_SUMMARY_SQL,
+      COMPANY_LEAD_PRICES_SQL,
+    ]);
+    for (const [sql, params] of clickhouse.query.mock.calls) {
+      if (sql === COMPANY_LEAD_PRICES_SQL) {
+        // The chart follows the QUOTE: SHB-A.ST is read because the summary's
+        // lead venue is ST, even though the LSE line sorts first.
+        expect(params).toEqual({ symbolKey: "SHB-A.ST" });
+      } else {
+        expect(params).toEqual({ companyId: COMPANY });
+      }
     }
-    // The filings read resolves the company's LEIs the same way the LEI read
-    // does -- same scheme, country and is_current filters -- with the LEI
-    // normalized the way queries.server's ESEF slice normalizes it.
-    expect(COMPANY_ESEF_FILINGS_SQL).toContain("issuer_scheme = 'lei'");
-    expect(COMPANY_ESEF_FILINGS_SQL).toContain("upperUTF8(trimBoth(f.lei))");
-    for (const sql of [COMPANY_LEI_SQL, COMPANY_ESEF_FILINGS_SQL]) {
+    expect(listed.leadSymbolKey).toBe("SHB-A.ST");
+    expect(listed.summary).toEqual({
+      year: 2025,
+      venues: 4,
+      lead_venue: "ST",
+      lead_currency: "SEK",
+      last_close: 122.15,
+      last_day: "2025-12-30",
+      traded_usd: 31500000000,
+    });
+    expect(listed.prices).toEqual([{ price_date: "2025-12-30", close: 122.15 }]);
+
+    // The shape this tab depends on: EODHD market tables only -- ESEF is not
+    // trading information and must never come back to this loader.
+    expect(COMPANY_TRADED_SYMBOLS_SQL).toContain("corpscout.company_traded_symbols");
+    expect(COMPANY_MARKET_SUMMARY_SQL).toContain("corpscout.company_market_summary");
+    expect(COMPANY_LEAD_PRICES_SQL).toContain("corpscout.eodhd_eod_prices");
+    for (const [name, sql] of ALL_SQL) {
+      expect(sql, name).not.toContain("esef_filings");
+    }
+    for (const sql of [COMPANY_TRADED_SYMBOLS_SQL, COMPANY_MARKET_SUMMARY_SQL]) {
       expect(sql).toContain("country_code = 'SE'");
-      expect(sql).toContain("is_current = 1");
+      expect(sql).toContain("company_id = {companyId:String}");
     }
+    // The summary reads ONE row -- the most recent year -- and the price read
+    // is keyed and bounded to a trading year.
+    expect(COMPANY_MARKET_SUMMARY_SQL).toContain("ORDER BY m.year DESC");
+    expect(COMPANY_MARKET_SUMMARY_SQL).toContain("LIMIT 1");
+    expect(COMPANY_LEAD_PRICES_SQL).toContain(
+      "eodhd_symbol_key = {symbolKey:String}",
+    );
+    expect(COMPANY_LEAD_PRICES_SQL).toContain(
+      "price_date >= today() - INTERVAL 1 YEAR",
+    );
+    expect(COMPANY_LEI_SQL).toContain("is_current = 1");
+  });
+
+  it("skips the price read entirely when no symbol resolves", async () => {
+    const listed = await loadSeCompanyListed(COMPANY);
+    expect(
+      clickhouse.query.mock.calls.some(([sql]) => sql === COMPANY_LEAD_PRICES_SQL),
+    ).toBe(false);
+    expect(listed.symbols).toEqual([]);
+    expect(listed.summary).toBeNull();
+    expect(listed.leadSymbolKey).toBe("");
+    expect(listed.prices).toEqual([]);
+  });
+
+  it("falls back to the first symbol when no line sits on the lead venue", () => {
+    const lse = { isin: "SE1", eodhd_symbol_key: "0R7S.LSE", ticker: "0R7S", exchange_code: "LSE" };
+    const st = { isin: "SE1", eodhd_symbol_key: "SHB-A.ST", ticker: "SHB-A", exchange_code: "ST" };
+    const summary = {
+      year: 2025, venues: 2, lead_venue: "XETRA", lead_currency: "EUR",
+      last_close: 10, last_day: "2025-12-30", traded_usd: 1,
+    };
+    expect(pickLeadSymbol([lse, st], summary)).toBe(lse);
+    expect(pickLeadSymbol([lse, st], { ...summary, lead_venue: "ST" })).toBe(st);
+    expect(pickLeadSymbol([lse, st], null)).toBe(lse);
+    expect(pickLeadSymbol([], summary)).toBeNull();
   });
 });
