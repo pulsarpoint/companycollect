@@ -358,7 +358,12 @@ FROM (
   LEFT JOIN aggregated AS agg ON agg.company_id = i.company_id
   LEFT JOIN primary_address AS pa ON pa.company_id = i.company_id
 )
-ORDER BY company_id"""
+ORDER BY company_id
+SETTINGS join_algorithm = 'grace_hash,hash',
+    grace_hash_join_initial_buckets = 16,
+    max_bytes_before_external_group_by = 8589934592,
+    max_bytes_before_external_sort = 8589934592,
+    max_memory_usage = 12884901888"""
 
 
 # Three times the REFRESH EVERY 15 MINUTE interval migration 000335 gives the serving view.

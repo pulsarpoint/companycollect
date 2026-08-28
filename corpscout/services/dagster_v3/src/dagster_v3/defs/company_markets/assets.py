@@ -37,7 +37,7 @@ _HEAVY_QUERY_SETTINGS = {
     "grace_hash_join_initial_buckets": 16,
     "max_bytes_before_external_group_by": 8 * 1024**3,
     "max_bytes_before_external_sort": 8 * 1024**3,
-    "max_memory_usage": 14 * 1024**3,
+    "max_memory_usage": 12 * 1024**3,
 }
 
 

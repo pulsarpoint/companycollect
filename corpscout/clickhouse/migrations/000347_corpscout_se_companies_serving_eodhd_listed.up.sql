@@ -6,6 +6,12 @@ CREATE DATABASE IF NOT EXISTS corpscout;
 -- companies vs ESEF's 403 (owner 2026-08-28, alongside the Publicly traded tab's rebuild on
 -- the same tables). Same staged swap as 000344, SYSTEM STOP VIEW guard included.
 --
+-- ALSO BOUNDS THE REFRESH ITSELF: the SELECT now carries trailing SETTINGS (grace_hash
+-- spill joins, external group-by/sort, max_memory_usage 12 GiB) -- the unbounded refresh
+-- peaked high enough to starve the daily company_markets resolve on the server's shared
+-- 27.31 GiB cap (Code 241, 2026-08-28). Slower (~148s measured vs ~40s) but bounded, which
+-- a 15-minute cadence absorbs easily.
+--
 -- THE SELECT BELOW IS NOT HAND-WRITTEN AND MUST NOT BE HAND-EDITED -- exact rendering of
 -- companies_current.build_se_companies_serving_sql(), drift-pinned by dagster_v3
 -- tests/test_se_companies_serving_mv.py (now pointing at THIS migration).
@@ -178,7 +184,12 @@ FROM (
   LEFT JOIN aggregated AS agg ON agg.company_id = i.company_id
   LEFT JOIN primary_address AS pa ON pa.company_id = i.company_id
 )
-ORDER BY company_id;
+ORDER BY company_id
+SETTINGS join_algorithm = 'grace_hash,hash',
+    grace_hash_join_initial_buckets = 16,
+    max_bytes_before_external_group_by = 8589934592,
+    max_bytes_before_external_sort = 8589934592,
+    max_memory_usage = 12884901888;
 
 SYSTEM WAIT VIEW corpscout.se_companies_serving_next;
 
