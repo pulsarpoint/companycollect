@@ -36,6 +36,23 @@ const compactUsd = new Intl.NumberFormat("en-US", {
   maximumFractionDigits: 1,
 });
 
+/** EODHD exchange codes spelled out for the venues our companies actually
+ * trade on; an unknown code falls back to itself rather than a blank. */
+const EXCHANGE_NAMES: Record<string, string> = {
+  ST: "Nasdaq Stockholm",
+  LSE: "London Stock Exchange",
+  F: "Frankfurt",
+  STU: "Stuttgart",
+  US: "US (NYSE/NASDAQ/OTC)",
+  OL: "Oslo Børs",
+  HE: "Nasdaq Helsinki",
+  CO: "Nasdaq Copenhagen",
+};
+
+function exchangeLabel(code: string): string {
+  return EXCHANGE_NAMES[code] ?? code;
+}
+
 const priceFormat = new Intl.NumberFormat("en-US", {
   maximumFractionDigits: 2,
   minimumFractionDigits: 2,
@@ -121,6 +138,7 @@ export function SeCompanyListedTab({
 
   const lead =
     symbols.find((s) => s.eodhd_symbol_key === leadSymbolKey) ?? symbols[0];
+  const instrumentCount = new Set(symbols.map((s) => s.isin)).size;
   const currency = summary?.lead_currency ?? "";
   const chartConfig = {
     close: {
@@ -140,8 +158,12 @@ export function SeCompanyListedTab({
             </Badge>
           </div>
           <CardDescription>
-            EODHD resolves {symbols.length === 1 ? "a listed line" : "listed lines"}{" "}
-            to this company through the ISIN → LEI → register identity chain.
+            {instrumentCount === 1
+              ? "One instrument (ISIN)"
+              : `${instrumentCount} instruments (distinct ISINs — share classes / depositary receipts)`}{" "}
+            quoted as {symbols.length} listed line
+            {symbols.length === 1 ? "" : "s"} across venues, resolved to this
+            company through the ISIN → LEI → register identity chain.
           </CardDescription>
         </CardHeader>
         <CardContent className="flex flex-col gap-4">
@@ -222,10 +244,13 @@ export function SeCompanyListedTab({
         <Card>
           <CardHeader>
             <CardTitle className="text-base">
-              {lead.ticker} · {lead.exchange_code} — 1 year
+              {lead.ticker} · {exchangeLabel(lead.exchange_code)} — 5 years
+              {currency === "" ? "" : ` · ${currency}`}
             </CardTitle>
             <CardDescription>
-              Daily close for the lead listing, from EODHD end-of-day prices.
+              Daily close for the lead listing
+              {currency === "" ? "" : ` in ${currency}`}, from EODHD end-of-day
+              prices.
             </CardDescription>
           </CardHeader>
           <CardContent>
@@ -264,8 +289,10 @@ export function SeCompanyListedTab({
         <CardHeader>
           <CardTitle className="text-base">Listings</CardTitle>
           <CardDescription>
-            One row per listed line — cross-listings on foreign venues are real
-            rows, not duplicates.
+            One row per listed line. The SAME instrument (ISIN) quoted on
+            several venues appears once per venue — cross-listings, not
+            duplicates; a different ISIN is a different instrument (another
+            share class or a depositary receipt).
           </CardDescription>
         </CardHeader>
         <CardContent>

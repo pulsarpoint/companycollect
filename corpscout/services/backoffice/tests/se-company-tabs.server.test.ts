@@ -100,7 +100,12 @@ describe("company area SQL", () => {
       if (sql === ADDRESS_STATUS_INPUTS_SQL) continue;
       expect(sql, name).toMatch(/LIMIT \d+/);
       const limit = Number(/LIMIT (\d+)/.exec(sql)?.[1] ?? "0");
-      expect(limit, name).toBeLessThanOrEqual(900);
+      // The lead-price series is the one deliberately larger read: five years
+      // of ~260 sessions, keyed on one symbol -- still a bounded primary-key
+      // scan, not a table walk.
+      expect(limit, name).toBeLessThanOrEqual(
+        sql === COMPANY_LEAD_PRICES_SQL ? 1500 : 900,
+      );
     }
     expect(ADDRESS_STATUS_INPUTS_SQL).not.toMatch(/LIMIT/);
     expect(ADDRESS_STATUS_INPUTS_SQL).not.toContain("GROUP BY");
@@ -445,7 +450,7 @@ describe("tab loaders", () => {
       "eodhd_symbol_key = {symbolKey:String}",
     );
     expect(COMPANY_LEAD_PRICES_SQL).toContain(
-      "price_date >= today() - INTERVAL 1 YEAR",
+      "price_date >= today() - INTERVAL 5 YEAR",
     );
     expect(COMPANY_LEI_SQL).toContain("is_current = 1");
   });

@@ -93,19 +93,20 @@ LIMIT 1`;
  * One year of daily closes for ONE symbol — a keyed read on the table's own
  * primary key (eodhd_symbol_key, price_date), so it never scans the 15M-row
  * price history. eodhd_eod_prices is a ReplacingMergeTree on retrieved_at, so
- * FINAL: a re-fetched day must show once, in its newest state. A trading year
- * has ~260 sessions; LIMIT 400 bounds a malformed backfill without ever
- * clipping a real year.
+ * FINAL: a re-fetched day must show once, in its newest state. Five years of
+ * ~260 sessions each is ~1,300 rows; LIMIT 1500 bounds a malformed backfill
+ * without ever clipping the real window (owner 2026-08-28: one year was too
+ * short -- the price history goes back to 2020).
  */
 export const COMPANY_LEAD_PRICES_SQL = `SELECT
   toString(p.price_date) AS price_date,
   toFloat64(p.close) AS close
 FROM corpscout.eodhd_eod_prices AS p FINAL
 WHERE p.eodhd_symbol_key = {symbolKey:String}
-  AND p.price_date >= today() - INTERVAL 1 YEAR
+  AND p.price_date >= today() - INTERVAL 5 YEAR
   AND p.close IS NOT NULL
 ORDER BY p.price_date
-LIMIT 400`;
+LIMIT 1500`;
 
 export interface SeCompanyListed {
   leis: SeCompanyLeiRow[];
