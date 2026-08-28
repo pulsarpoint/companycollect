@@ -1,11 +1,11 @@
-"""The `corpscout.se_companies_current` serving SELECT: one denormalized row per company.
+"""The `corpscout.se_companies_serving` serving SELECT: one wide denormalized row per company.
 
 The companies/geocoding admin surfaces need a per-company row -- legal name, the company's
 current addresses as a JSON array, and a pre-computed geocode summary for the PRIMARY address
 -- without paying the FINAL merges on `se_company_address`/`se_company_info`, the served-view
 join, and the per-company aggregation on every request. This module is the single source of
-truth for that SELECT; migration 000326 materializes it as a refreshable MV and the backoffice
-list reads the materialized table (Task 3).
+truth for that SELECT; migration 000335 materializes it as a refreshable MV and the backoffice
+admin companies pages read the materialized table.
 
 WHAT IT AGGREGATES.
 
@@ -128,79 +128,6 @@ def _address_map_expression() -> str:
     }
     pairs = ",\n      ".join(f"'{key}', {values[key]}" for key in ADDRESS_ELEMENT_KEYS)
     return f"map(\n      {pairs}\n    )"
-
-
-def build_se_companies_current_sql() -> str:
-    """One row per SE company: legal name, current addresses as JSON, primary geocode summary.
-
-    A self-contained SELECT the migration wraps in a refreshable MV. `company_addresses`
-    enriches each current published address with its served-overlay geocode and its coarse-aware
-    class; `primary_address` picks the one summary row per company by the geocoding list's own
-    rule; `aggregated` folds every current address into the JSON array and the count. The trailing
-    SELECT joins the three plus `se_company_info` for the name.
-    """
-    address_map = _address_map_expression()
-    return f"""WITH company_addresses AS (
-  SELECT
-    a.company_id AS company_id,
-    a.address_key AS address_key,
-    a.address_type AS address_type,
-    ifNull(a.street_address, '') AS street_address,
-    ifNull(a.postal_code, '') AS postal_code,
-    ifNull(a.city, '') AS city,
-    ifNull(toString(a.address_id), '') AS address_id,
-    toString(a.geocode_status) AS geocode_status,
-    ifNull(s.geocode_precision, '') AS geocode_precision,
-    ifNull(s.geocode_provider, '') AS geocode_provider,
-    s.latitude AS latitude,
-    s.longitude AS longitude
-  FROM {COMPANY_ADDRESS_TABLE} AS a FINAL
-  LEFT JOIN {SERVED_GEOCODES_TABLE} AS s
-    ON toString(s.address_id) = ifNull(toString(a.address_id), '')
-  WHERE a.is_current
-),
-primary_address AS (
-  SELECT
-    company_id,
-    street_address AS primary_street_address,
-    postal_code AS primary_postal_code,
-    city AS primary_city,
-    geocode_status AS primary_geocode_status,
-    {_geocode_class_expr("geocode_status", "geocode_provider")} AS primary_geocode_class,
-    geocode_precision AS primary_geocode_precision,
-    geocode_provider AS primary_geocode_provider,
-    latitude AS primary_latitude,
-    longitude AS primary_longitude
-  FROM company_addresses
-  ORDER BY {_PRIMARY_ORDER_BY}
-  LIMIT 1 BY company_id
-),
-aggregated AS (
-  SELECT
-    ca.company_id AS company_id,
-    toJSONString(groupArray({address_map})) AS addresses,
-    toUInt32(count()) AS address_count
-  FROM company_addresses AS ca
-  GROUP BY ca.company_id
-)
-SELECT
-  agg.company_id AS company_id,
-  i.legal_name AS legal_name,
-  agg.addresses AS addresses,
-  agg.address_count AS address_count,
-  pa.primary_street_address AS primary_street_address,
-  pa.primary_postal_code AS primary_postal_code,
-  pa.primary_city AS primary_city,
-  pa.primary_geocode_status AS primary_geocode_status,
-  pa.primary_geocode_class AS primary_geocode_class,
-  pa.primary_geocode_precision AS primary_geocode_precision,
-  pa.primary_geocode_provider AS primary_geocode_provider,
-  pa.primary_latitude AS primary_latitude,
-  pa.primary_longitude AS primary_longitude
-FROM aggregated AS agg
-INNER JOIN {COMPANY_INFO_TABLE} AS i FINAL ON i.company_id = agg.company_id
-INNER JOIN primary_address AS pa ON pa.company_id = agg.company_id
-ORDER BY agg.company_id"""
 
 
 # --- The consolidated serving view (migration 000335) ----------------------------------------
@@ -384,35 +311,12 @@ WHERE database = '{CLICKHOUSE_DATABASE}'
   AND view = '{SE_COMPANIES_SERVING_VIEW}'"""
 
 
-# --- Serving-view refresh health -------------------------------------------------------------
-# The refreshable MV migration 000326 creates has no Dagster asset that recomputes it -- so, as
-# with se_address_geocodes_current (migration 000320), the only place its health is visible is
-# its refresh state in system.view_refreshes. Task 2b's sweden_companies_current_clickhouse asset
-# reads SE_COMPANIES_CURRENT_REFRESH_SQL and reports companies_current_refresh_is_healthy(...);
-# the SQL and the predicate live here beside the builder so both are importable and unit-testable
-# without pulling in the asset module. This mirrors sweden_address_geocodes_serving_view_refresh_check.
-
-SE_COMPANIES_CURRENT_VIEW = "se_companies_current"
-
-# Three times the REFRESH EVERY 1 HOUR interval migration 000326 gave the view. One interval
-# would fire on any refresh that merely ran long; three means two consecutive refreshes had to
-# have been missed entirely before this reports unhealthy. Mirrors the 000320 view's budget.
-MAX_COMPANIES_CURRENT_REFRESH_AGE = timedelta(hours=3)
-
-# The refresh instant is fetched as an epoch INTEGER, not a DateTime: `last_success_time` is
-# Nullable(DateTime) with no timezone in its type, so the driver hands back a NAIVE datetime in
-# the SERVER's timezone -- comparing that against a UTC `now` is wrong by the server's offset
-# (most of a three-hour budget on a Europe/Stockholm server). toUnixTimestamp is the absolute
-# tick and an int crosses the driver unambiguously. Status is selected but never gated: a view
-# mid-refresh (Running) is healthy if its LAST success is recent, and one stuck retrying is
-# unhealthy for the same reason -- both are answered by exception + last_success_time.
-SE_COMPANIES_CURRENT_REFRESH_SQL = f"""SELECT
-    status,
-    exception,
-    toUnixTimestamp(last_success_time)
-FROM system.view_refreshes
-WHERE database = '{CLICKHOUSE_DATABASE}'
-  AND view = '{SE_COMPANIES_CURRENT_VIEW}'"""
+# --- Refresh health -------------------------------------------------------------------------
+# companies_current_refresh_is_healthy is the generic predicate on system.view_refreshes rows
+# (fetched via SE_COMPANIES_SERVING_REFRESH_SQL above); the weekly refresh asset's check
+# (companies_current_asset.py) applies it to the serving view. The epoch-int fetch exists
+# because last_success_time is a timezone-naive DateTime in the driver -- toUnixTimestamp is
+# the unambiguous absolute tick.
 
 
 def companies_current_refresh_is_healthy(
@@ -422,13 +326,13 @@ def companies_current_refresh_is_healthy(
     last_success_epoch_seconds: int | None,
     now: datetime,
 ) -> bool:
-    """Whether corpscout.se_companies_current is still being refreshed.
+    """Whether corpscout.se_companies_serving is still being refreshed.
 
     Fails in four ways, each a way the serving surface goes wrong while still answering fast:
 
     - NO ROW. system.view_refreshes lists every refreshable view ClickHouse knows; a WHERE that
-      names one database and one view returning nothing means se_companies_current is not a
-      refreshable view on this server -- migration 000326 was not applied, or something replaced
+      names one database and one view returning nothing means se_companies_serving is not a
+      refreshable view on this server -- migration 000335 was not applied, or something replaced
       the view with a table. `row_found=False` fails.
     - AN EXCEPTION. A view whose refresh throws keeps serving its last good contents at full
       speed, so staleness is the only visible symptom and the age term alone would not report it
@@ -446,4 +350,4 @@ def companies_current_refresh_is_healthy(
     if last_success_epoch_seconds is None:
         return False
     last_success = datetime.fromtimestamp(int(last_success_epoch_seconds), tz=UTC)
-    return now.astimezone(UTC) - last_success <= MAX_COMPANIES_CURRENT_REFRESH_AGE
+    return now.astimezone(UTC) - last_success <= MAX_COMPANIES_SERVING_REFRESH_AGE

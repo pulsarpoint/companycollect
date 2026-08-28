@@ -1,4 +1,4 @@
-"""Execute build_se_companies_current_sql() against a real ClickHouse engine.
+"""Execute build_se_companies_serving_sql() against a real ClickHouse engine.
 
 The SQL-text is generated, so the risk this test covers is behavioural, not spelling: that the
 FINAL merges, the served-overlay LEFT JOIN, the per-company JSON aggregation and the
@@ -37,7 +37,7 @@ from datetime import UTC, datetime
 import pytest
 
 from dagster_v3.defs.sweden_company.companies_current import (
-    build_se_companies_current_sql,
+    build_se_companies_serving_sql,
 )
 from tests.se_company_ddl import table_block
 from tests.test_se_company_person_clickhouse_local import (
@@ -53,6 +53,7 @@ COARSE = "5560000011"
 PRECISE = "5560000022"
 NOSERVED = "5560000033"
 POSTAL_BOX = "5560000044"
+NOADDRESS = "5560000055"
 
 # address_id -> the served-overlay row (precise or coarse). Absent ids have no served row.
 PRECISE_LAT, PRECISE_LON = 59.3300, 18.0600
@@ -198,8 +199,28 @@ def _script(*, join_use_nulls: int) -> str:
         f"SET join_use_nulls = {join_use_nulls};",
         "CREATE DATABASE IF NOT EXISTS corpscout;",
         table_block("se_company_info"),
+        # 000306's label columns, replayed the way prod got them (table_block renders only
+        # the CREATE migration).
+        "ALTER TABLE corpscout.se_company_info "
+        "ADD COLUMN IF NOT EXISTS legal_form_label_en String DEFAULT '' AFTER legal_form_code, "
+        "ADD COLUMN IF NOT EXISTS legal_form_label_sv String DEFAULT '' AFTER legal_form_label_en;",
         table_block("se_company_address"),
         _served_table_ddl() + ";",
+        # Stubs for the presence-set reads: only the columns the serving SELECT's
+        # IN-subqueries touch. Seeds prove each arm independently.
+        "CREATE TABLE corpscout.se_bolagsverket_financial_metrics (company_id String) ENGINE = MergeTree ORDER BY company_id;",
+        "CREATE TABLE corpscout.company_identifier (company_id String, issuer_scheme String, country_code String, is_current UInt8, issuer_id String) ENGINE = MergeTree ORDER BY company_id;",
+        "CREATE TABLE corpscout.esef_financial_metrics (lei String) ENGINE = MergeTree ORDER BY lei;",
+        "CREATE TABLE corpscout.se_financial_reports (company_id String) ENGINE = MergeTree ORDER BY company_id;",
+        "CREATE TABLE corpscout.se_company_person (company_id String) ENGINE = MergeTree ORDER BY company_id;",
+        "CREATE TABLE corpscout.se_company_person_role (company_id String, sources Array(String)) ENGINE = MergeTree ORDER BY company_id;",
+        "CREATE TABLE corpscout.company_domains (company_id String, country_code String) ENGINE = MergeTree ORDER BY company_id;",
+        f"INSERT INTO corpscout.se_bolagsverket_financial_metrics VALUES ('{PRECISE}');",
+        f"INSERT INTO corpscout.se_financial_reports VALUES ('{COARSE}');",
+        f"INSERT INTO corpscout.se_company_person VALUES ('{PRECISE}');",
+        f"INSERT INTO corpscout.se_company_person_role VALUES ('{PRECISE}', ['esef']);",
+        # The SE filter must hold: NOSERVED's domain is Norwegian and must not count.
+        f"INSERT INTO corpscout.company_domains VALUES ('{COARSE}', 'SE'), ('{NOSERVED}', 'NO');",
         f"INSERT INTO corpscout.se_company_info ({INFO_COLUMNS}) VALUES\n"
         + ",\n".join(
             (
@@ -207,6 +228,7 @@ def _script(*, join_use_nulls: int) -> str:
                 _info_row(PRECISE, "Precise AB"),
                 _info_row(NOSERVED, "Noserved AB"),
                 _info_row(POSTAL_BOX, "Postal Box AB"),
+                _info_row(NOADDRESS, "Addressless AB"),
             )
         )
         + ";",
@@ -217,7 +239,7 @@ def _script(*, join_use_nulls: int) -> str:
         "(address_id, geocode_precision, geocode_provider, latitude, longitude) VALUES\n"
         + ",\n".join(_served_row(row) for row in SERVED_ROWS)
         + ";",
-        f"SELECT * FROM (\n{build_se_companies_current_sql()}\n) FORMAT JSONEachRow;",
+        f"SELECT * FROM (\n{build_se_companies_serving_sql()}\n) FORMAT JSONEachRow;",
     ]
     return "\n".join(parts) + "\n"
 
@@ -253,15 +275,61 @@ def _addresses(row: dict) -> dict[str, dict]:
     return {element["address_id"]: element for element in json.loads(row["addresses"])}
 
 
-def test_one_row_per_company(rows: dict[str, dict]) -> None:
-    assert set(rows) == {COARSE, PRECISE, NOSERVED, POSTAL_BOX}
+def test_one_row_per_company_including_the_addressless(rows: dict[str, dict]) -> None:
+    # The widened base: a published company with NO current address still gets a row.
+    assert set(rows) == {COARSE, PRECISE, NOSERVED, POSTAL_BOX, NOADDRESS}
 
 
-def test_legal_name_is_inner_joined_from_company_info(rows: dict[str, dict]) -> None:
+def test_an_addressless_company_serves_an_empty_address_summary(
+    rows: dict[str, dict],
+) -> None:
+    row = rows[NOADDRESS]
+    assert row["has_address"] == 0
+    assert row["address_count"] == 0
+    assert json.loads(row["addresses"]) == []
+    assert row["primary_street_address"] == ""
+    assert row["primary_geocode_class"] == ""
+    assert row["primary_latitude"] is None
+    assert row["primary_longitude"] is None
+
+
+def test_presence_flags_come_from_the_child_tables(rows: dict[str, dict]) -> None:
+    # has_financial: PRECISE via extracted metrics, COARSE via a filed report --
+    # the owner's 2026-08-25 widening -- and nothing else.
+    assert rows[PRECISE]["has_financial"] == 1
+    assert rows[COARSE]["has_financial"] == 1
+    assert rows[NOSERVED]["has_financial"] == 0
+    assert rows[POSTAL_BOX]["has_financial"] == 0
+    # has_domains honors the SE filter: NOSERVED's Norwegian domain must not count.
+    assert rows[COARSE]["has_domains"] == 1
+    assert rows[NOSERVED]["has_domains"] == 0
+    assert rows[PRECISE]["has_people"] == 1
+    assert rows[COARSE]["has_people"] == 0
+    for company in (COARSE, PRECISE, NOSERVED, POSTAL_BOX):
+        assert rows[company]["has_address"] == 1
+        assert rows[company]["has_description"] == 0
+
+
+def test_source_flags_or_their_arms_together(rows: dict[str, dict]) -> None:
+    # Every addressed fixture row's address is sourced from bolagsverket -> B; PRECISE
+    # also earns B via its metrics arm. The addressless company has no B arm at all.
+    for company in (COARSE, PRECISE, NOSERVED, POSTAL_BOX):
+        assert rows[company]["source_bolagsverket"] == 1
+    assert rows[NOADDRESS]["source_bolagsverket"] == 0
+    # E: PRECISE via its esef role evidence; nothing else has an arm.
+    assert rows[PRECISE]["source_esef"] == 1
+    assert rows[COARSE]["source_esef"] == 0
+    # W: no fixture row carries wikidata evidence.
+    for company in rows:
+        assert rows[company]["source_wikidata"] == 0
+
+
+def test_legal_name_comes_from_company_info(rows: dict[str, dict]) -> None:
     assert rows[COARSE]["legal_name"] == "Coarse AB"
     assert rows[PRECISE]["legal_name"] == "Precise AB"
     assert rows[NOSERVED]["legal_name"] == "Noserved AB"
     assert rows[POSTAL_BOX]["legal_name"] == "Postal Box AB"
+    assert rows[NOADDRESS]["legal_name"] == "Addressless AB"
 
 
 def test_address_count_matches_current_addresses(rows: dict[str, dict]) -> None:

@@ -345,6 +345,8 @@ EXPECTED_MIGRATIONS = (
     "000333_corpscout_retire_country_person_tables",
     "000334_corpscout_se_company_ratsit_reports",
     "000335_corpscout_se_companies_serving",
+    "000336_corpscout_se_company_ratsit_scan_history",
+    "000337_corpscout_retire_se_companies_current",
 )
 
 NOOP_MIGRATIONS = {"000276_noop"}
@@ -3608,9 +3610,7 @@ def test_normalized_sweden_company_people_table_is_migrated() -> None:
 
 
 def test_ratsit_sole_trader_id_migration_repairs_applied_constraints() -> None:
-    up_sql = _migration_sql(
-        "000329_corpscout_se_company_ratsit_sole_trader_ids.up.sql"
-    )
+    up_sql = _migration_sql("000329_corpscout_se_company_ratsit_sole_trader_ids.up.sql")
     down_sql = _migration_sql(
         "000329_corpscout_se_company_ratsit_sole_trader_ids.down.sql"
     )
@@ -3626,20 +3626,13 @@ def test_ratsit_sole_trader_id_migration_repairs_applied_constraints() -> None:
 
 
 def test_ratsit_reports_migration_replaces_temporal_results_with_s3_catalog() -> None:
-    up_sql = _migration_sql(
-        "000334_corpscout_se_company_ratsit_reports.up.sql"
-    )
-    down_sql = _migration_sql(
-        "000334_corpscout_se_company_ratsit_reports.down.sql"
-    )
+    up_sql = _migration_sql("000334_corpscout_se_company_ratsit_reports.up.sql")
+    down_sql = _migration_sql("000334_corpscout_se_company_ratsit_reports.down.sql")
 
     assert "DROP VIEW IF EXISTS corpscout.se_company_ratsit_current" in up_sql
+    assert "DROP TABLE IF EXISTS corpscout.se_company_ratsit_crawl_results" in up_sql
     assert (
-        "DROP TABLE IF EXISTS corpscout.se_company_ratsit_crawl_results" in up_sql
-    )
-    assert (
-        "CREATE TABLE IF NOT EXISTS corpscout.se_company_ratsit_crawl_results"
-        in up_sql
+        "CREATE TABLE IF NOT EXISTS corpscout.se_company_ratsit_crawl_results" in up_sql
     )
     for column in (
         "report_bucket LowCardinality(String)",
@@ -3665,6 +3658,36 @@ def test_ratsit_reports_migration_replaces_temporal_results_with_s3_catalog() ->
 
     assert "batch_id UUID" in down_sql
     assert "temporal_workflow_id String" in down_sql
+
+
+def test_ratsit_scan_history_migration_tracks_every_scan_and_reused_report() -> None:
+    up_sql = _migration_sql("000336_corpscout_se_company_ratsit_scan_history.up.sql")
+    down_sql = _migration_sql(
+        "000336_corpscout_se_company_ratsit_scan_history.down.sql"
+    )
+
+    assert "CREATE TABLE corpscout.se_company_ratsit_crawl_results_next" in up_sql
+    assert "CREATE TABLE IF NOT EXISTS corpscout.se_company_ratsit_scans" in up_sql
+    for column in (
+        "scan_id String",
+        "outcome LowCardinality(String)",
+        "result_bucket LowCardinality(String)",
+        "result_object_key String",
+        "result_sha256 FixedString(64)",
+        "result_size_bytes UInt64",
+        "report_reused UInt8",
+        "source_html_sha256 Nullable(FixedString(64))",
+        "diagnostic_object_key String",
+    ):
+        assert column in up_sql
+
+    assert "ORDER BY (scan_id, company_id)" in up_sql
+    assert "ORDER BY scan_id" in up_sql
+    assert "GROUP BY dagster_run_id" in up_sql
+    assert "latest successful report" in up_sql
+    assert "report_object_key" in up_sql
+    assert "DROP TABLE IF EXISTS corpscout.se_company_ratsit_scans" in down_sql
+    assert "WHERE outcome = 'success'" in down_sql
 
 
 def _migration_sql(file_name: str) -> str:
