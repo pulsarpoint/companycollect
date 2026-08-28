@@ -137,7 +137,7 @@ export const PROFILE_DATATYPES = [
   { key: "has_financial", label: "Financial" },
   { key: "has_people", label: "People" },
   { key: "has_domains", label: "Domains" },
-  { key: "is_publicly_traded", label: "Listed" },
+  { key: "is_publicly_traded", label: "Publicly traded" },
   { key: "has_government_contracts", label: "Gov. contracts" },
   { key: "has_job_ads", label: "Job ads" },
 ] as const;

@@ -861,7 +861,7 @@ describe("tab labels", () => {
       "Domains",
       "Contracts",
       "Jobs",
-      "Listed",
+      "Publicly traded",
     ]);
     const values: SeCompanyTab[] = SE_COMPANY_TABS.map((tab) => tab.value);
     expect(values).toEqual([
