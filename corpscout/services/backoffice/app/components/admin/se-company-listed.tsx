@@ -1,5 +1,5 @@
 import { LandmarkIcon } from "lucide-react";
-import { Area, AreaChart, CartesianGrid, XAxis, YAxis } from "recharts";
+import { Area, Bar, CartesianGrid, ComposedChart, XAxis, YAxis } from "recharts";
 import { Badge } from "~/components/ui/badge";
 import {
   Card,
@@ -57,6 +57,91 @@ const priceFormat = new Intl.NumberFormat("en-US", {
   maximumFractionDigits: 2,
   minimumFractionDigits: 2,
 });
+
+const compactCount = new Intl.NumberFormat("en-US", {
+  notation: "compact",
+  maximumFractionDigits: 2,
+});
+
+const signedPercent = new Intl.NumberFormat("en-US", {
+  style: "percent",
+  maximumFractionDigits: 1,
+  signDisplay: "always",
+});
+
+/** A signed, coloured return figure — green up, red down, muted em dash when
+ * the series does not reach the window. */
+function ReturnStat({
+  label,
+  value,
+}: {
+  label: string;
+  value: number | null;
+}) {
+  const tone =
+    value === null || value === 0
+      ? "text-muted-foreground"
+      : value > 0
+        ? "text-emerald-600 dark:text-emerald-400"
+        : "text-red-600 dark:text-red-400";
+  return (
+    <div className="flex flex-col">
+      <dt className="text-xs font-medium uppercase tracking-wide text-muted-foreground">
+        {label}
+      </dt>
+      <dd className={`tabular-nums font-medium ${tone}`}>
+        {value === null ? "—" : signedPercent.format(value)}
+      </dd>
+    </div>
+  );
+}
+
+/** The key-stats strip above the price chart: 52-week range and average
+ * volume over the trailing 365 days, plus the headline returns. Every price
+ * figure carries the lead currency; returns are adjusted-close based. */
+function MarketStatStrip({
+  stats,
+  currency,
+}: {
+  stats: NonNullable<SeCompanyListed["stats"]>;
+  currency: string;
+}) {
+  return (
+    <dl className="grid grid-cols-2 gap-x-6 gap-y-3 border-b pb-4 text-sm sm:grid-cols-3 lg:grid-cols-6">
+      <div className="flex flex-col">
+        <dt className="text-xs font-medium uppercase tracking-wide text-muted-foreground">
+          52-week range
+        </dt>
+        <dd className="tabular-nums">
+          {stats.low52w === null || stats.high52w === null ? (
+            <span className="text-muted-foreground">—</span>
+          ) : (
+            <>
+              {priceFormat.format(stats.low52w)} –{" "}
+              {priceFormat.format(stats.high52w)}
+              {currency === "" ? "" : ` ${currency}`}
+            </>
+          )}
+        </dd>
+      </div>
+      <div className="flex flex-col">
+        <dt className="text-xs font-medium uppercase tracking-wide text-muted-foreground">
+          Avg volume (1Y)
+        </dt>
+        <dd className="tabular-nums">
+          {stats.avgVolume === null ? (
+            <span className="text-muted-foreground">—</span>
+          ) : (
+            compactCount.format(stats.avgVolume)
+          )}
+        </dd>
+      </div>
+      {stats.returns.map((entry) => (
+        <ReturnStat key={entry.label} label={entry.label} value={entry.value} />
+      ))}
+    </dl>
+  );
+}
 
 /** The LEI line the verdict card and the not-traded state both show: holding
  * an LEI is identity context, not the trading verdict. */
@@ -165,7 +250,8 @@ export function SeCompanyListedTab({
   companyId: string;
   listed: SeCompanyListed;
 }) {
-  const { leis, symbols, summary, summaries, leadSymbolKey, prices } = listed;
+  const { leis, symbols, summary, summaries, leadSymbolKey, prices, stats } =
+    listed;
 
   if (symbols.length === 0) {
     return (
@@ -205,11 +291,17 @@ export function SeCompanyListedTab({
   const lead =
     symbols.find((s) => s.eodhd_symbol_key === leadSymbolKey) ?? symbols[0];
   const instrumentCount = new Set(symbols.map((s) => s.isin)).size;
-  const currency = summary?.lead_currency ?? "";
+  // The summary names the lead currency; before the summary asset has run,
+  // the lead line's own EODHD quote currency stands in.
+  const currency = summary?.lead_currency ?? lead.quote_currency;
   const chartConfig = {
     close: {
       label: `Close${currency === "" ? "" : ` (${currency})`}`,
       color: "var(--chart-1)",
+    },
+    volume: {
+      label: "Volume",
+      color: "var(--muted-foreground)",
     },
   } satisfies ChartConfig;
 
@@ -242,6 +334,11 @@ export function SeCompanyListedTab({
                 <span>{lead.ticker}</span>
                 <Badge variant="outline">{lead.exchange_code}</Badge>
               </dd>
+              {lead.symbol_name === "" ? null : (
+                <span className="text-muted-foreground text-xs">
+                  {lead.symbol_name}
+                </span>
+              )}
             </div>
             <div className="flex flex-col">
               <dt className="text-xs font-medium uppercase tracking-wide text-muted-foreground">
@@ -316,14 +413,18 @@ export function SeCompanyListedTab({
               {currency === "" ? "" : ` · ${currency}`}
             </CardTitle>
             <CardDescription>
-              Daily close for the lead listing
+              Daily close and volume for the lead listing
               {currency === "" ? "" : ` in ${currency}`}, from EODHD end-of-day
-              prices.
+              prices. Range, volume and returns cover the trailing windows;
+              returns use the adjusted close.
             </CardDescription>
           </CardHeader>
-          <CardContent>
-            <ChartContainer config={chartConfig} className="h-56 w-full">
-              <AreaChart data={prices}>
+          <CardContent className="flex flex-col gap-4">
+            {stats === null ? null : (
+              <MarketStatStrip stats={stats} currency={currency} />
+            )}
+            <ChartContainer config={chartConfig} className="h-64 w-full">
+              <ComposedChart data={prices}>
                 <CartesianGrid vertical={false} />
                 <XAxis
                   dataKey="price_date"
@@ -332,14 +433,29 @@ export function SeCompanyListedTab({
                   minTickGap={48}
                 />
                 <YAxis
+                  yAxisId="close"
                   dataKey="close"
                   tickLine={false}
                   axisLine={false}
                   width={56}
                   domain={["auto", "auto"]}
                 />
+                {/* Hidden volume axis scaled so the bars stay a muted band in
+                    the bottom quarter, under the price line. */}
+                <YAxis
+                  yAxisId="volume"
+                  hide
+                  domain={[0, (dataMax: number) => dataMax * 4]}
+                />
                 <ChartTooltip content={<ChartTooltipContent />} />
+                <Bar
+                  yAxisId="volume"
+                  dataKey="volume"
+                  fill="var(--color-volume)"
+                  fillOpacity={0.25}
+                />
                 <Area
+                  yAxisId="close"
                   dataKey="close"
                   type="monotone"
                   stroke="var(--color-close)"
@@ -347,7 +463,7 @@ export function SeCompanyListedTab({
                   fillOpacity={0.15}
                   dot={false}
                 />
-              </AreaChart>
+              </ComposedChart>
             </ChartContainer>
           </CardContent>
         </Card>
@@ -365,30 +481,57 @@ export function SeCompanyListedTab({
         </CardHeader>
         <CardContent>
           <div className="overflow-x-auto">
-            <Table className="min-w-[28rem]">
+            <Table className="min-w-[36rem]">
               <TableHeader>
                 <TableRow>
                   <TableHead>Ticker</TableHead>
                   <TableHead>Exchange</TableHead>
+                  <TableHead>Currency</TableHead>
                   <TableHead>ISIN</TableHead>
                 </TableRow>
               </TableHeader>
               <TableBody>
                 {symbols.map((symbol) => (
-                  <TableRow key={symbol.eodhd_symbol_key}>
+                  <TableRow
+                    key={symbol.eodhd_symbol_key}
+                    className={
+                      symbol.is_delisted === 1 ? "text-muted-foreground" : undefined
+                    }
+                  >
                     <TableCell className="align-top font-medium">
-                      {symbol.ticker}
-                      {symbol.eodhd_symbol_key === lead.eodhd_symbol_key ? (
-                        <Badge variant="outline" className="ml-2">
-                          lead
-                        </Badge>
-                      ) : null}
+                      <div className="flex flex-wrap items-center gap-2">
+                        {symbol.ticker}
+                        {symbol.eodhd_symbol_key === lead.eodhd_symbol_key ? (
+                          <Badge variant="outline">lead</Badge>
+                        ) : null}
+                        {symbol.instrument_type === "" ||
+                        symbol.instrument_type === "Common Stock" ? null : (
+                          <Badge variant="secondary">
+                            {symbol.instrument_type}
+                          </Badge>
+                        )}
+                        {symbol.is_delisted === 1 ? (
+                          <Badge variant="destructive">delisted</Badge>
+                        ) : null}
+                      </div>
+                      {symbol.symbol_name === "" ? null : (
+                        <div className="text-muted-foreground text-xs font-normal">
+                          {symbol.symbol_name}
+                        </div>
+                      )}
                     </TableCell>
                     <TableCell className="align-top">
                       <Badge variant="outline">{symbol.exchange_code}</Badge>{" "}
                       <span className="text-muted-foreground text-xs">
                         {exchangeLabel(symbol.exchange_code)}
                       </span>
+                    </TableCell>
+                    <TableCell className="align-top tabular-nums">
+                      {symbol.quote_currency === "" ? (
+                        <span className="text-muted-foreground">—</span>
+                      ) : (
+                        symbol.quote_currency
+                      )}
                     </TableCell>
                     <TableCell className="align-top font-mono text-xs">
                       {symbol.isin}
