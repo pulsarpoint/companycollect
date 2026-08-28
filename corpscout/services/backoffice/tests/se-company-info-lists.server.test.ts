@@ -274,10 +274,9 @@ describe("se_company_info list SQL shape", () => {
     expect(COMPANY_SETS.domains).toBe(
       "SELECT company_id FROM corpscout.company_domains WHERE country_code = 'SE'",
     );
-    // The reports arm reads exactly the table the Financial tab's "Filed
-    // reports" card reads (FINANCIAL_REPORTS_SQL in
-    // se-company-financial.server.ts) -- widened in 2026-08-25 so the list
-    // can't show "—" for a company whose tab renders that card.
+    // The reports arm reads the parser's own report ledger -- widened in
+    // 2026-08-25 so the list can't show "—" for a company that has a parsed
+    // filing but no extracted metric yet.
     expect(COMPANY_SETS.financialReports).toBe(
       "SELECT company_id FROM corpscout.se_financial_reports",
     );

@@ -21,15 +21,18 @@ import { loader as companyIndexLoader } from "~/routes/admin-se-company-index";
 import { SeCompanyHeader } from "~/components/admin/se-company-header";
 import { SeCompanyAddressTab } from "~/components/admin/se-company-address";
 import { SeCompanyDomainsTab } from "~/components/admin/se-company-domains";
-import { SeCompanyFinancialTab } from "~/components/admin/se-company-financial";
 import { SeCompanyPeopleTab } from "~/components/admin/se-company-people";
+import { SeFinancialsView } from "~/components/financials/se-financials-view";
 import {
   loadSeCompanyAddresses,
   type SeCompanyAddressCorrectionRow,
   type SeCompanyAddressRow,
 } from "~/lib/se-company-address.server";
+import type {
+  CompanyFinancialSource,
+  FinancialSourceYearRow,
+} from "~/lib/queries.server";
 import type { SeCompanyDomainRow } from "~/lib/se-company-domains.server";
-import type { SeCompanyFinancialDetail } from "~/lib/se-company-financial.server";
 import type { SeCompanyPersonRow } from "~/lib/se-company-people.server";
 import type { SeCompanyShell } from "~/lib/se-company-shell.server";
 import {
@@ -304,126 +307,161 @@ describe("address tab", () => {
   });
 });
 
-const financials: SeCompanyFinancialDetail = {
-  latest: {
-    fiscal_year: "2025",
-    period_end_date: "2025-12-31",
-    currency: "SEK",
-    revenue_amount_original: "72852346",
-    revenue_amount_usd: "7910318.028908",
-    net_result_amount_original: "7219201",
-    net_result_amount_usd: "783861.865266",
-    total_assets_amount_original: "26884241",
-    total_assets_amount_usd: "2919094.688808",
-    equity_amount_original: "10823518",
-    equity_amount_usd: "1175219.114723",
-    employees: "18",
-    years_count: "3",
-    resolved_at: "2026-08-23 04:30:46.925",
-  },
-  sources: [
+const financialYear: FinancialSourceYearRow = {
+  source_id: "bolagsverket-annual-accounts",
+  accounting_scope: "standalone",
+  source_document_id: "f132e16d",
+  source_record_uids: [],
+  source_url: "",
+  viewer_url: "",
+  fiscal_year: "2025",
+  currency: "SEK",
+  report_period_start: "2025-01-01",
+  report_period_end: "2025-12-31",
+  revenue_amount_original: 72852346,
+  revenue_amount_usd: 7910318,
+  operating_result_amount_original: 9117124,
+  operating_result_amount_usd: null,
+  net_result_amount_original: 7219201,
+  net_result_amount_usd: 783861,
+  total_assets_amount_original: 26884241,
+  total_assets_amount_usd: 2919094,
+  equity_amount_original: 10823518,
+  equity_amount_usd: 1175219,
+  employees: 18,
+  source_fact_count: 172,
+  mapped_fact_count: 14,
+  observation: "filed",
+  fx_rate_to_usd: 0.108580141385,
+  fx_rate_date: "2025-12-31",
+  fx_source: "ECB EXR",
+};
+
+const registrySource: CompanyFinancialSource = {
+  id: "bolagsverket-annual-accounts",
+  kind: "registry",
+  title: "Bolagsverket annual accounts",
+  description:
+    "Standardized figures from the legal entity's digitally filed annual reports.",
+  yearFacts: true,
+  financials: [financialYear],
+  documents: [
     {
-      source_id: "bolagsverket-annual-accounts",
-      view: "se_financials_bolagsverket_current",
-      years: [
-        {
-          source_id: "bolagsverket-annual-accounts",
-          accounting_scope: "standalone",
-          source_document_id: "f132e16d",
-          fiscal_year: "2025",
-          report_period_start: "2025-01-01",
-          report_period_end: "2025-12-31",
-          currency: "SEK",
-          revenue_amount_original: "72852346",
-          operating_result_amount_original: "9117124",
-          net_result_amount_original: "7219201",
-          total_assets_amount_original: "26884241",
-          equity_amount_original: "10823518",
-          liabilities_amount_original: "16060723",
-          cash_and_bank_amount_original: "6070053",
-          current_assets_amount_original: "26788181",
-          current_liabilities_amount_original: "14032036",
-          personnel_expenses_amount_original: "15697959",
-          wages_and_salaries_amount_original: "",
-          employees: "18",
-          revenue_amount_usd: "7910318.028908",
-          net_result_amount_usd: "783861.865266",
-          observation: "filed",
-          source_fact_count: "172",
-          mapped_fact_count: "14",
-          mapping_version: "sweden-bolagsverket-observations-metrics-v3",
-          fx_rate_to_usd: "0.108580141385",
-          fx_rate_date: "2025-12-31",
-          fx_source: "ECB EXR",
-          source_url: "",
-          viewer_url: "",
-        },
-      ],
+      documentId: "doc-1",
+      filingYear: 2025,
+      sourceFileName: "arsredovisning-2025.pdf",
+      sourceUrl: "https://example.invalid/arsredovisning-2025.pdf",
+      factCount: 18,
+      pageCount: 12,
+      nativeTextPageCount: 12,
+      ocrPageCount: 0,
+      pdfSizeBytes: 100000,
+      parseStatus: "loaded",
+      parseWarnings: "",
+      retrievedAt: "2026-08-08 06:43:03.907",
+      resolvedAt: "2026-08-08 06:43:03.907",
+      hasReportMetadata: true,
     },
-    { source_id: "esef", view: "se_financials_esef_current", years: [] },
   ],
-  reports: [
+};
+
+const esefSource: CompanyFinancialSource = {
+  id: "esef",
+  kind: "esef",
+  title: "ESEF consolidated IFRS",
+  description:
+    "Standardized group figures from filed ESEF annual financial reports.",
+  financials: [
     {
-      source_slug: "sweden_financial",
-      statement_key: "618cc95990c5",
-      source_record_uid: "cb658443f00c",
-      fiscal_year: "2025",
-      report_period_start: "2025-01-01",
-      report_period_end: "2025-12-31",
-      reported_company_name: "Strive Stories AB",
-      report_language: "",
-      taxonomy_entrypoint: "http://xbrl.taxonomier.se/se/fr/ar/rar/2020-12-01/se-ar-rar-2020-12-01.xsd",
-      source_archive_name: "25_9.zip",
-      nested_zip_name: "5592990765_2025-12-31.zip",
-      xhtml_object_key: "sweden_financial/report_xhtml/…",
-      xhtml_sha256: "81b92c09",
-      facts_count: "18",
-      contexts_count: "1",
-      units_count: "0",
-      parser_version: "sweden-financial-ixbrl-v1",
-      resolved_at: "2026-08-08 06:43:03.907",
+      ...financialYear,
+      source_id: "esef",
+      accounting_scope: "consolidated",
+      source_document_id: "esef-doc-9",
     },
   ],
 };
 
 describe("financial tab", () => {
-  it("shows the served row, the per-source years and the filed reports", () => {
-    const html = render(
-      <SeCompanyFinancialTab companyId={COMPANY_ID} detail={financials} />,
-      seCompanyTabPath(COMPANY_ID, "financial"),
-    );
-    expect(html).toContain("Latest figures");
-    expect(html).toContain("Bolagsverket annual accounts");
-    expect(html).toContain("Filed reports");
-    // A source with no year is not shown as an empty table.
-    expect(html).not.toContain("ESEF consolidated IFRS");
-    // Amounts are grouped but never rescaled: a reviewer checks them against a
-    // filing, and the currency is whatever was stored.
-    expect(html).toContain("72,852,346");
-    expect(html).toContain(">SEK<");
-    expect(html).toContain("tabular-nums");
-    expect(html).toContain("filed");
-    expect(html).toContain("Strive Stories AB");
-    // The year links through to the tagged facts for that year.
-    expect(html).toContain(`href="/company/se/${COMPANY_ID}/facts/2025"`);
-  });
+  // The tab IS the public financials experience: the shared SeFinancialsView
+  // the public /company/se/:id/financials page renders, deep-linking into the
+  // public facts and report readers rather than duplicating them.
+  const basePath = `/company/se/${COMPANY_ID}/financials`;
+  const factsBase = `/company/se/${COMPANY_ID}/facts`;
 
-  it("says so when nothing has been filed, parsed or resolved", () => {
+  it("renders the source switcher and the selected registry source's overview", () => {
     const html = render(
-      <SeCompanyFinancialTab
-        companyId={COMPANY_ID}
-        detail={{
-          latest: null,
-          sources: financials.sources.map((source) => ({
-            ...source,
-            years: [],
-          })),
-          reports: [],
-        }}
+      <SeFinancialsView
+        financialSources={[registrySource, esefSource]}
+        filingStatus={null}
+        basePath={basePath}
+        factsBase={factsBase}
       />,
       seCompanyTabPath(COMPANY_ID, "financial"),
     );
-    expect(html).toContain("No financials recorded");
+    // The switcher names both sources; the first one is the selected overview.
+    expect(html).toContain("Financial source");
+    expect(html).toContain(">Bolagsverket<");
+    expect(html).toContain(">ESEF<");
+    expect(html).toContain("Financial overview");
+    expect(html).toContain("Financial year 2025");
+    // Facts links point at the PUBLIC facts reader.
+    expect(html).toContain(`href="${factsBase}/2025"`);
+    // The registry source carries its document table, deep-linking to the
+    // public report reader under the public financials base path.
+    expect(html).toContain("Source documents");
+    expect(html).toContain("arsredovisning-2025.pdf");
+    expect(html).toContain(`href="${basePath}/doc-1"`);
+  });
+
+  it("points an ESEF source's year facts at the public ESEF document reader", () => {
+    const html = render(
+      <SeFinancialsView
+        financialSources={[esefSource]}
+        filingStatus={null}
+        basePath={basePath}
+        factsBase={factsBase}
+      />,
+      seCompanyTabPath(COMPANY_ID, "financial"),
+    );
+    expect(html).toContain(`href="${basePath}/esef/esef-doc-9"`);
+    // An ESEF source never links to the registry facts pages.
+    expect(html).not.toContain(`href="${factsBase}/2025"`);
+  });
+
+  it("says so when no source has anything filed", () => {
+    const html = render(
+      <SeFinancialsView
+        financialSources={[]}
+        filingStatus={null}
+        basePath={basePath}
+        factsBase={factsBase}
+      />,
+      seCompanyTabPath(COMPANY_ID, "financial"),
+    );
+    expect(html).toContain(
+      "No digitally filed annual report found in our sources.",
+    );
+  });
+
+  it("names the filing status when the register says the report is missing", () => {
+    const html = render(
+      <SeFinancialsView
+        financialSources={[]}
+        filingStatus={{
+          status: "not_submitted",
+          reportPeriodEnd: null,
+          filingRegisteredOn: null,
+          sourceFileFormat: null,
+          bolagsverketDocumentId: null,
+          sourceSlug: null,
+          observedAt: null,
+        }}
+        basePath={basePath}
+        factsBase={factsBase}
+      />,
+      seCompanyTabPath(COMPANY_ID, "financial"),
+    );
+    expect(html).toContain("Annual report not submitted.");
   });
 });
 
@@ -606,15 +644,8 @@ describe("the Sources strip every tab opens with", () => {
     expect(html).toContain('data-source-strip="Bolagsverket,SCB"');
   });
 
-  it("names only the financial sources that actually filed years", () => {
-    const html = render(
-      <SeCompanyFinancialTab companyId={COMPANY_ID} detail={financials} />,
-      seCompanyTabPath(COMPANY_ID, "financial"),
-    );
-    // The fixture's ESEF view returned no years, so it is not a source card
-    // and must not be a name in the strip either.
-    expect(html).toContain('data-source-strip="Bolagsverket"');
-  });
+  // The Financial tab has no strip since it became the shared public
+  // financials view: the source switcher already names each register.
 
   it("names the registers behind the people's ROLES, and says nothing when no role resolved", () => {
     const html = render(
