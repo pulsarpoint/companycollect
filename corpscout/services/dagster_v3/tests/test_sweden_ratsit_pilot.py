@@ -437,6 +437,170 @@ def test_browser_resource_streams_all_four_round_robin_workers() -> None:
     assert all(browser.closed is True for browser in browsers.values())
 
 
+def test_browser_resource_requeues_429_on_next_route_after_backoff() -> None:
+    clock = FakeClock()
+    direct_browser = FakeBrowser(
+        FakePage(
+            [(429, ratsit_company_url("https://www.ratsit.se", COMPANY_ID), "")],
+            clock=clock,
+        )
+    )
+    proxy_browser = FakeBrowser(
+        FakePage([(200, COMPANY_URL, COMPANY_HTML)], clock=clock)
+    )
+    browsers = {
+        None: direct_browser,
+        TEST_PROXY_URLS[0]: proxy_browser,
+    }
+    launch_calls: list[dict[str, Any]] = []
+
+    def launcher(**kwargs: Any) -> FakeBrowser:
+        launch_calls.append(kwargs)
+        return browsers[kwargs["proxy"]]
+
+    results = list(
+        _ratsit_browser_resource().iter_company_reports(
+            (COMPANY_ID,),
+            launcher=launcher,
+            monotonic=clock.monotonic,
+            sleep=clock.sleep,
+            now=lambda: FETCHED_AT,
+        )
+    )
+
+    assert len(results) == 1
+    report = results[0]
+    assert isinstance(report, RatsitCompanyReport)
+    assert (report.proxy_name, report.attempt_count) == ("crawl_proxy1", 2)
+    assert [call["proxy"] for call in launch_calls] == [None, TEST_PROXY_URLS[0]]
+    assert clock.sleeps == [30.0]
+    assert direct_browser.closed is True
+    assert proxy_browser.closed is True
+
+
+def test_browser_resource_keeps_429_retry_queue_order_and_slows_requests() -> None:
+    company_ids = ROUND_ROBIN_COMPANY_IDS
+    clock = FakeClock()
+    initial_browsers: dict[str | None, FakeBrowser] = {}
+    for worker_index, proxy_url in enumerate((None, *TEST_PROXY_URLS)):
+        worker_company_ids = company_ids[worker_index::RATSIT_BROWSER_WORKER_COUNT]
+        pages = [
+            (
+                429 if proxy_url is None else 200,
+                f"https://www.ratsit.se/{company_id}-Test_Company",
+                COMPANY_HTML.replace(
+                    "556000-4615",
+                    f"{company_id[:6]}-{company_id[6:]}",
+                ),
+            )
+            for company_id in worker_company_ids
+        ]
+        initial_browsers[proxy_url] = FakeBrowser(FakePage(pages, clock=clock))
+
+    retry_page = FakePage(
+        [
+            (
+                200,
+                f"https://www.ratsit.se/{company_id}-Test_Company",
+                COMPANY_HTML.replace(
+                    "556000-4615",
+                    f"{company_id[:6]}-{company_id[6:]}",
+                ),
+            )
+            for company_id in (company_ids[0], company_ids[4])
+        ],
+        clock=clock,
+    )
+    browsers_by_proxy = {
+        None: [initial_browsers[None]],
+        TEST_PROXY_URLS[0]: [
+            initial_browsers[TEST_PROXY_URLS[0]],
+            FakeBrowser(retry_page),
+        ],
+        TEST_PROXY_URLS[1]: [initial_browsers[TEST_PROXY_URLS[1]]],
+        TEST_PROXY_URLS[2]: [initial_browsers[TEST_PROXY_URLS[2]]],
+    }
+
+    def launcher(**kwargs: Any) -> FakeBrowser:
+        return browsers_by_proxy[kwargs["proxy"]].pop(0)
+
+    results = list(
+        _ratsit_browser_resource().iter_company_reports(
+            company_ids,
+            launcher=launcher,
+            monotonic=clock.monotonic,
+            sleep=clock.sleep,
+            now=lambda: FETCHED_AT,
+        )
+    )
+
+    results_by_company = {result.company_id: result for result in results}
+    assert len(results_by_company) == len(company_ids)
+    assert [call["url"] for call in retry_page.goto_calls] == [
+        ratsit_company_url("https://www.ratsit.se", company_ids[0]),
+        ratsit_company_url("https://www.ratsit.se", company_ids[4]),
+    ]
+    assert retry_page.request_starts[1] - retry_page.request_starts[0] == 3.0
+    assert all(
+        results_by_company[company_id].attempt_count == 2
+        and results_by_company[company_id].proxy_name == "crawl_proxy1"
+        for company_id in (company_ids[0], company_ids[4])
+    )
+
+
+def test_browser_resource_returns_429_after_all_four_routes_are_exhausted() -> None:
+    clock = FakeClock()
+    launch_calls: list[dict[str, Any]] = []
+
+    def launcher(**kwargs: Any) -> FakeBrowser:
+        launch_calls.append(kwargs)
+        return FakeBrowser(FakePage([(429, COMPANY_URL, "")], clock=clock))
+
+    results = list(
+        _ratsit_browser_resource().iter_company_reports(
+            (COMPANY_ID,),
+            launcher=launcher,
+            monotonic=clock.monotonic,
+            sleep=clock.sleep,
+            now=lambda: FETCHED_AT,
+        )
+    )
+
+    assert len(results) == 1
+    failure = results[0]
+    assert isinstance(failure, RatsitCompanyFailure)
+    assert failure.http_status == 429
+    assert (failure.proxy_name, failure.attempt_count) == ("crawl_proxy3", 4)
+    assert [call["proxy"] for call in launch_calls] == [None, *TEST_PROXY_URLS]
+    assert clock.sleeps == [30.0, 45.0, 67.5]
+
+
+def test_browser_resource_does_not_retry_non_429_http_failure() -> None:
+    clock = FakeClock()
+    launch_calls: list[dict[str, Any]] = []
+
+    def launcher(**kwargs: Any) -> FakeBrowser:
+        launch_calls.append(kwargs)
+        return FakeBrowser(FakePage([(500, COMPANY_URL, "")], clock=clock))
+
+    results = list(
+        _ratsit_browser_resource().iter_company_reports(
+            (COMPANY_ID,),
+            launcher=launcher,
+            monotonic=clock.monotonic,
+            sleep=clock.sleep,
+            now=lambda: FETCHED_AT,
+        )
+    )
+
+    assert len(results) == 1
+    failure = results[0]
+    assert isinstance(failure, RatsitCompanyFailure)
+    assert (failure.http_status, failure.attempt_count) == (500, 1)
+    assert [call["proxy"] for call in launch_calls] == [None]
+    assert clock.sleeps == []
+
+
 def test_browser_resource_rejects_more_than_configured_companies_before_launch() -> (
     None
 ):
@@ -865,6 +1029,7 @@ def test_scan_writes_run_scoped_results_and_keeps_diagnostic_html() -> None:
         http_status=200,
         html_sha256="b" * 64,
         diagnostic_html=b"<html>unexpected page</html>",
+        attempt_count=2,
     )
     object_store = FakeObjectStore()
     ratsit = FakeRatsitResource([parse_failure, report])
@@ -893,6 +1058,7 @@ def test_scan_writes_run_scoped_results_and_keeps_diagnostic_html() -> None:
     error_payload = json.loads(object_store.objects[error_key])
     assert error_payload["error_type"] == "parse"
     assert error_payload["scan_id"] == "scan-run-1"
+    assert error_payload["attempt_count"] == 2
     assert gzip.decompress(object_store.objects[html_key]) == (
         b"<html>unexpected page</html>"
     )
@@ -903,6 +1069,10 @@ def test_scan_writes_run_scoped_results_and_keeps_diagnostic_html() -> None:
     assert summary.diagnostic_html_count == 1
     assert summary.written_object_count == 3
     assert summary.reused_report_count == 0
+    assert summary.retried_company_count == 1
+    assert summary.retry_attempt_count == 1
+    assert summary.resolved_after_429_count == 1
+    assert summary.exhausted_429_count == 0
     assert summary.result_object_keys == (report_key, error_key)
     assert (summary.results[0].outcome, summary.results[0].failure_type) == (
         "success",
@@ -930,6 +1100,11 @@ def test_scan_writes_run_scoped_results_and_keeps_diagnostic_html() -> None:
     assert progress[-1].total_count == 2
     assert progress[-1].success_count == 1
     assert progress[-1].failure_count == 1
+    assert progress[0].latest_attempt_count == 2
+    assert progress[-1].retried_company_count == 1
+    assert progress[-1].retry_attempt_count == 1
+    assert progress[-1].resolved_after_429_count == 1
+    assert progress[-1].exhausted_429_count == 0
 
 
 def test_scan_keeps_missing_company_redirect_html() -> None:
