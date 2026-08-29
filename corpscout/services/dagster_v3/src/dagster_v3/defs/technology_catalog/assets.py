@@ -257,48 +257,46 @@ GROUP BY technology""",
 
 
 @dg.asset(
-    name="technology_se_companies_clickhouse",
+    name="technology_companies_clickhouse",
     deps=[dg.AssetKey("technology_catalog_clickhouse")],
     group_name=GROUP_NAME,
     kinds={"clickhouse", "sql"},
     description=(
-        "Weekly SE adoption rollup: (technology, company_id, root_domain) for "
-        "every Swedish company domain (corpscout.technology_se_companies, "
-        "migration 000353). The equivalent live read still touches ~491M rows "
-        "and cost 15-18s per technology detail page load (measured "
-        "2026-08-29); one pruned scan per week here instead."
+        "Weekly company-adoption rollup: (technology, country_code, "
+        "company_id, root_domain) for every company domain in company_domains "
+        "(corpscout.technology_companies, migration 000354 -- country-generic, "
+        "new countries appear automatically). The equivalent live read touched "
+        "~491M rows at 15-18s per detail page load."
     ),
 )
-def technology_se_companies_clickhouse(
+def technology_companies_clickhouse(
     context: AssetExecutionContext,
     clickhouse: ClickhouseResource,
 ) -> dg.MaterializeResult:
     assert_clickhouse_tables_exist(
         clickhouse,
         database=RESOLVED_DATABASE,
-        tables=("technology_se_companies",),
+        tables=("technology_companies",),
     )
-    qualified = f"`{RESOLVED_DATABASE}`.`technology_se_companies`"
-    stage = f"`{RESOLVED_DATABASE}`.`_tmp_technology_se_companies_{uuid.uuid4().hex}`"
+    qualified = f"`{RESOLVED_DATABASE}`.`technology_companies`"
+    stage = f"`{RESOLVED_DATABASE}`.`_tmp_technology_companies_{uuid.uuid4().hex}`"
     computed_at = datetime.now(UTC).replace(tzinfo=None)
     with clickhouse.get_connection() as client:
         try:
             client.execute(f"CREATE TABLE {stage} AS {qualified}")
             client.execute(
-                f"""INSERT INTO {stage} (technology, company_id, root_domain, computed_at)
-SELECT t.technology, cd.company_id, t.root_domain, %(computed_at)s
+                f"""INSERT INTO {stage} (technology, country_code, company_id, root_domain, computed_at)
+SELECT t.technology, cd.country_code, cd.company_id, t.root_domain, %(computed_at)s
 FROM (
     SELECT DISTINCT technology, root_domain
     FROM `{RESOLVED_DATABASE}`.`commoncrawl_page_technologies`
     WHERE root_domain IN (
         SELECT root_domain FROM `{RESOLVED_DATABASE}`.`company_domains`
-        WHERE country_code = 'SE'
     )
 ) AS t
 INNER JOIN (
-    SELECT DISTINCT root_domain, company_id
+    SELECT DISTINCT root_domain, country_code, company_id
     FROM `{RESOLVED_DATABASE}`.`company_domains` FINAL
-    WHERE country_code = 'SE'
 ) AS cd ON cd.root_domain = t.root_domain""",
                 {"computed_at": computed_at},
                 settings={
@@ -309,13 +307,86 @@ INNER JOIN (
             rows = int(client.execute(f"SELECT count() FROM {stage}")[0][0])
             if rows < 1000:
                 raise ValueError(
-                    f"technology_se_companies produced {rows} rows -- ~17k SE "
-                    "domains carry technologies, a short result is a broken scan"
+                    f"technology_companies produced {rows} rows -- thousands "
+                    "of company domains carry technologies, a short result "
+                    "is a broken scan"
                 )
             client.execute(f"EXCHANGE TABLES {stage} AND {qualified}")
         finally:
             client.execute(f"DROP TABLE IF EXISTS {stage}")
-    context.log.info("technology_se_companies: %d rows", rows)
+    context.log.info("technology_companies: %d rows", rows)
+    return dg.MaterializeResult(metadata={"rows": rows})
+
+
+@dg.asset(
+    name="technology_top_domains_clickhouse",
+    deps=[dg.AssetKey("technology_catalog_clickhouse")],
+    group_name=GROUP_NAME,
+    kinds={"clickhouse", "sql"},
+    description=(
+        "Weekly top-domains rollup: the ~500 highest harmonic-centrality "
+        "crawled domains per technology (corpscout.technology_top_domains, "
+        "migration 000354; centrality from commoncrawl_domain_graph_signals). "
+        "A technology's full domain set runs to tens of millions -- ordering "
+        "it live is infeasible."
+    ),
+)
+def technology_top_domains_clickhouse(
+    context: AssetExecutionContext,
+    clickhouse: ClickhouseResource,
+) -> dg.MaterializeResult:
+    assert_clickhouse_tables_exist(
+        clickhouse,
+        database=RESOLVED_DATABASE,
+        tables=("technology_top_domains",),
+    )
+    qualified = f"`{RESOLVED_DATABASE}`.`technology_top_domains`"
+    stage = f"`{RESOLVED_DATABASE}`.`_tmp_technology_top_domains_{uuid.uuid4().hex}`"
+    computed_at = datetime.now(UTC).replace(tzinfo=None)
+    with clickhouse.get_connection() as client:
+        try:
+            client.execute(f"CREATE TABLE {stage} AS {qualified}")
+            client.execute(
+                f"""INSERT INTO {stage}
+    (technology, root_domain, harmonic_centrality, harmonic_rank, computed_at)
+SELECT
+    pairs.technology,
+    pairs.root_domain,
+    signals.harmonic_centrality,
+    signals.harmonic_rank,
+    %(computed_at)s
+FROM (
+    SELECT DISTINCT technology, root_domain
+    FROM `{RESOLVED_DATABASE}`.`commoncrawl_page_technologies`
+) AS pairs
+INNER JOIN (
+    SELECT
+        root_domain,
+        argMax(cc_harmonic_centrality, resolved_at) AS harmonic_centrality,
+        argMax(cc_harmonic_rank, resolved_at) AS harmonic_rank
+    FROM `{RESOLVED_DATABASE}`.`commoncrawl_domain_graph_signals`
+    GROUP BY root_domain
+) AS signals ON signals.root_domain = pairs.root_domain
+ORDER BY pairs.technology, signals.harmonic_centrality DESC
+LIMIT 500 BY pairs.technology""",
+                {"computed_at": computed_at},
+                settings={
+                    "join_algorithm": "grace_hash,hash",
+                    "max_bytes_before_external_group_by": 8 * 1024**3,
+                    "max_bytes_before_external_sort": 8 * 1024**3,
+                    "max_memory_usage": 12 * 1024**3,
+                },
+            )
+            rows = int(client.execute(f"SELECT count() FROM {stage}")[0][0])
+            if rows < 1000:
+                raise ValueError(
+                    f"technology_top_domains produced {rows} rows -- ~4.6k "
+                    "technologies exist, a short result is a broken join"
+                )
+            client.execute(f"EXCHANGE TABLES {stage} AND {qualified}")
+        finally:
+            client.execute(f"DROP TABLE IF EXISTS {stage}")
+    context.log.info("technology_top_domains: %d rows", rows)
     return dg.MaterializeResult(metadata={"rows": rows})
 
 
@@ -324,7 +395,8 @@ technology_catalog_job = dg.define_asset_job(
     selection=dg.AssetSelection.assets(
         technology_catalog_clickhouse,
         technology_adoption_clickhouse,
-        technology_se_companies_clickhouse,
+        technology_companies_clickhouse,
+        technology_top_domains_clickhouse,
     ),
 )
 
@@ -342,7 +414,8 @@ defs = dg.Definitions(
     assets=[
         technology_catalog_clickhouse,
         technology_adoption_clickhouse,
-        technology_se_companies_clickhouse,
+        technology_companies_clickhouse,
+        technology_top_domains_clickhouse,
     ],
     jobs=[technology_catalog_job],
     schedules=[technology_catalog_weekly],
