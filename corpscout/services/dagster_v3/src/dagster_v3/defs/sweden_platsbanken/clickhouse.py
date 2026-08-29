@@ -53,6 +53,14 @@ COMPANY_JOB_COLUMNS = (
 )
 
 
+def _append_stage_anti_join_sql(*, target: str, stage: str, uid_column: str) -> str:
+    return f"""
+    FROM {stage} AS incoming
+    LEFT ANTI JOIN {target} AS existing FINAL
+        ON existing.{uid_column} = incoming.{uid_column}
+    """
+
+
 def append_stage_insert_sql(
     *,
     target: str,
@@ -65,9 +73,7 @@ def append_stage_insert_sql(
     return f"""
     INSERT INTO {target} ({inserted})
     SELECT {selected}
-    FROM {stage} AS incoming
-    LEFT ANTI JOIN {target} FINAL AS existing
-        ON existing.{uid_column} = incoming.{uid_column}
+    {_append_stage_anti_join_sql(target=target, stage=stage, uid_column=uid_column)}
     """
 
 
@@ -117,14 +123,12 @@ def append_job_history_batch(
                     truncate=False,
                     log=log,
                 )
-                [(new_rows,)] = client.execute(
-                    f"""
-                    SELECT count()
-                    FROM {qualified_stage} AS incoming
-                    LEFT ANTI JOIN {qualified_target} FINAL AS existing
-                        ON existing.{uid_column} = incoming.{uid_column}
-                    """
+                anti_join_sql = _append_stage_anti_join_sql(
+                    target=qualified_target,
+                    stage=qualified_stage,
+                    uid_column=uid_column,
                 )
+                [(new_rows,)] = client.execute(f"SELECT count()\n{anti_join_sql}")
                 client.execute(
                     append_stage_insert_sql(
                         target=qualified_target,
@@ -281,7 +285,7 @@ def company_history_insert_sql(
             interval.is_end_estimated,
             {latest_projection}
         FROM {intervals_stage} AS interval
-        INNER JOIN corpscout.se_platsbanken_job_ad_versions FINAL AS version
+        INNER JOIN corpscout.se_platsbanken_job_ad_versions AS version FINAL
             ON version.source_job_ad_id = interval.source_job_ad_id
         WHERE (
             version.publication_at IS NOT NULL

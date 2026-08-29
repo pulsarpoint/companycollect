@@ -31,8 +31,12 @@ def test_history_append_is_idempotent_by_deterministic_uid() -> None:
         columns=tables.VERSION_COLUMNS,
     )
 
-    assert "LEFT ANTI JOIN corpscout.se_platsbanken_job_ad_versions FINAL" in sql
+    assert (
+        "LEFT ANTI JOIN corpscout.se_platsbanken_job_ad_versions AS existing FINAL"
+        in sql
+    )
     assert "existing.version_uid = incoming.version_uid" in sql
+    assert "FINAL AS" not in sql
 
 
 def test_active_intervals_are_derived_from_status_changes() -> None:
@@ -55,7 +59,8 @@ def test_company_history_uses_exact_organization_number_only() -> None:
     assert "INNER ANY JOIN" in sql
     assert "company.company_id = latest.employer_org_number" in sql
     assert "employer_name =" not in sql
-    assert "corpscout.se_platsbanken_job_ad_versions FINAL AS version" in sql
+    assert "corpscout.se_platsbanken_job_ad_versions AS version FINAL" in sql
+    assert "FINAL AS" not in sql
     assert "GROUP BY\n            interval.source_job_ad_id" in sql
 
 
@@ -90,7 +95,9 @@ def test_migration_owns_every_exported_source_table_column() -> None:
         tables.CONTACTS_TABLE: tables.CONTACT_COLUMNS,
     }
     for table_name, columns in contracts.items():
-        table_sql = contacts_sql if table_name == tables.CONTACTS_TABLE else complete_sql
+        table_sql = (
+            contacts_sql if table_name == tables.CONTACTS_TABLE else complete_sql
+        )
         assert f"CREATE TABLE IF NOT EXISTS corpscout.{table_name}" in table_sql
         for column in columns:
             assert (
