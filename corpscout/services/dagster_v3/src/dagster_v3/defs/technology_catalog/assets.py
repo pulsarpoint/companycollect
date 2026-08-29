@@ -256,10 +256,75 @@ GROUP BY technology""",
     return dg.MaterializeResult(metadata={"rows": rows})
 
 
+@dg.asset(
+    name="technology_se_companies_clickhouse",
+    deps=[dg.AssetKey("technology_catalog_clickhouse")],
+    group_name=GROUP_NAME,
+    kinds={"clickhouse", "sql"},
+    description=(
+        "Weekly SE adoption rollup: (technology, company_id, root_domain) for "
+        "every Swedish company domain (corpscout.technology_se_companies, "
+        "migration 000353). The equivalent live read still touches ~491M rows "
+        "and cost 15-18s per technology detail page load (measured "
+        "2026-08-29); one pruned scan per week here instead."
+    ),
+)
+def technology_se_companies_clickhouse(
+    context: AssetExecutionContext,
+    clickhouse: ClickhouseResource,
+) -> dg.MaterializeResult:
+    assert_clickhouse_tables_exist(
+        clickhouse,
+        database=RESOLVED_DATABASE,
+        tables=("technology_se_companies",),
+    )
+    qualified = f"`{RESOLVED_DATABASE}`.`technology_se_companies`"
+    stage = f"`{RESOLVED_DATABASE}`.`_tmp_technology_se_companies_{uuid.uuid4().hex}`"
+    computed_at = datetime.now(UTC).replace(tzinfo=None)
+    with clickhouse.get_connection() as client:
+        try:
+            client.execute(f"CREATE TABLE {stage} AS {qualified}")
+            client.execute(
+                f"""INSERT INTO {stage} (technology, company_id, root_domain, computed_at)
+SELECT t.technology, cd.company_id, t.root_domain, %(computed_at)s
+FROM (
+    SELECT DISTINCT technology, root_domain
+    FROM `{RESOLVED_DATABASE}`.`commoncrawl_page_technologies`
+    WHERE root_domain IN (
+        SELECT root_domain FROM `{RESOLVED_DATABASE}`.`company_domains`
+        WHERE country_code = 'SE'
+    )
+) AS t
+INNER JOIN (
+    SELECT DISTINCT root_domain, company_id
+    FROM `{RESOLVED_DATABASE}`.`company_domains` FINAL
+    WHERE country_code = 'SE'
+) AS cd ON cd.root_domain = t.root_domain""",
+                {"computed_at": computed_at},
+                settings={
+                    "max_bytes_before_external_group_by": 8 * 1024**3,
+                    "max_memory_usage": 12 * 1024**3,
+                },
+            )
+            rows = int(client.execute(f"SELECT count() FROM {stage}")[0][0])
+            if rows < 1000:
+                raise ValueError(
+                    f"technology_se_companies produced {rows} rows -- ~17k SE "
+                    "domains carry technologies, a short result is a broken scan"
+                )
+            client.execute(f"EXCHANGE TABLES {stage} AND {qualified}")
+        finally:
+            client.execute(f"DROP TABLE IF EXISTS {stage}")
+    context.log.info("technology_se_companies: %d rows", rows)
+    return dg.MaterializeResult(metadata={"rows": rows})
+
+
 technology_catalog_job = dg.define_asset_job(
     name="technology_catalog_job",
     selection=dg.AssetSelection.assets(
-        technology_catalog_clickhouse, technology_adoption_clickhouse
+        technology_catalog_clickhouse,
+        technology_adoption_clickhouse,
+        technology_se_companies_clickhouse,
     ),
 )
 
@@ -274,7 +339,11 @@ technology_catalog_weekly = dg.ScheduleDefinition(
 )
 
 defs = dg.Definitions(
-    assets=[technology_catalog_clickhouse, technology_adoption_clickhouse],
+    assets=[
+        technology_catalog_clickhouse,
+        technology_adoption_clickhouse,
+        technology_se_companies_clickhouse,
+    ],
     jobs=[technology_catalog_job],
     schedules=[technology_catalog_weekly],
     resources={
