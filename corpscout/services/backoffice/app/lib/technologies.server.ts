@@ -1,31 +1,34 @@
 /**
  * `/admin/technologies` and `/admin/technologies/:slug`: reads over the
  * technology catalog (`corpscout.technology_catalog`, 7.9k rows,
- * ReplacingMergeTree -- always FINAL, same as technology-catalog.server.ts),
- * the weekly `technology_adoption` rollup, and one LIVE key-pruned query over
- * `commoncrawl_page_technologies` (10.6B rows, sort key head = root_domain).
+ * ReplacingMergeTree -- always FINAL, same as technology-catalog.server.ts)
+ * and the three weekly rollups: `technology_adoption` (per-technology domain
+ * count), `technology_top_domains` (top ~500 crawled domains per technology
+ * by CommonCrawl harmonic centrality) and `technology_companies` (the
+ * companies whose registered domains carry a detection, per country).
  *
- * The rollup MAY BE EMPTY (its first run can still be in flight): every read
- * of it tolerates zero rows -- the list LEFT JOINs it and shows nothing, the
- * detail GROUP BYs it so an empty table yields no row, never a fake zero.
+ * EVERY rollup MAY BE EMPTY (a first population can still be in flight):
+ * every read tolerates zero rows -- the list LEFT JOINs adoption and shows
+ * nothing, the detail reads GROUP BY so an empty table yields no row (a null
+ * "not computed yet", never a fake zero), and the two tab reads simply page
+ * over nothing. The rollups are ReplacingMergeTree(computed_at), so every
+ * read dedupes by its key with argMax/GROUP BY, keeping the latest
+ * computed_at -- never a bare scan that could double-count a week.
  *
- * The Swedish-companies query is the only touch of the 10.6B-row table and
- * is ONLY ever filtered by an explicit root_domain IN (SELECT ... FROM
- * company_domains WHERE country_code = 'SE') set (~17k domains), which
- * ClickHouse materializes first and prunes the sort key with. Grouping the
- * whole table is forbidden in a page load -- that is what the weekly rollup
- * is for.
+ * The old LIVE key-pruned query over `commoncrawl_page_technologies` (10.6B
+ * rows, 15-18s a page load) is gone: the Companies tab reads the
+ * `technology_companies` rollup instead. Touching the 10.6B-row table from a
+ * page load is forbidden -- that is what the weekly rollups are for.
  */
 import { chQuery } from "~/lib/clickhouse.server";
 import { clampPage, clampPageSize } from "~/lib/paging";
 import { PAGE_LIMIT_OFFSET_SQL } from "~/lib/se-company-info-lists.server";
-import {
-  SE_COMPANIES_USING_TECHNOLOGY_LIMIT,
-  type TechnologyListFilters,
-} from "~/lib/technologies";
+import type { TechnologyListFilters } from "~/lib/technologies";
 
 export const TECHNOLOGY_CATALOG_TABLE = "corpscout.technology_catalog";
 export const TECHNOLOGY_ADOPTION_TABLE = "corpscout.technology_adoption";
+export const TECHNOLOGY_TOP_DOMAINS_TABLE = "corpscout.technology_top_domains";
+export const TECHNOLOGY_COMPANIES_TABLE = "corpscout.technology_companies";
 
 /* -------------------------------------------------------------------- */
 /* Index: the catalog as a server-paged list                             */
@@ -265,72 +268,287 @@ export async function loadTechnologyAdoption(
 }
 
 /* -------------------------------------------------------------------- */
-/* Detail: Swedish companies using the technology (live, key-pruned)     */
+/* Detail: the weekly rollups behind the two adoption tabs               */
 /* -------------------------------------------------------------------- */
 
-export interface SeCompanyUsingTechnology {
-  company_id: string;
+/**
+ * The tab header's "computed weekly" stamp: the newest computed_at the rollup
+ * holds for this technology. GROUP BY so an empty rollup (mid first
+ * population) yields ZERO rows -- null, "not computed yet" -- never a zero
+ * date pretending to be a run. One shape for both rollup tables; the table
+ * name comes from the two exported constants above, never from user input.
+ */
+function rollupComputedAtSql(table: string): string {
+  return `SELECT
+  toString(max(computed_at)) AS latest_computed_at
+FROM ${table}
+WHERE technology = {name:String}
+GROUP BY technology`;
+}
+
+export const TECHNOLOGY_TOP_DOMAINS_COMPUTED_AT_SQL = rollupComputedAtSql(
+  TECHNOLOGY_TOP_DOMAINS_TABLE,
+);
+export const TECHNOLOGY_COMPANIES_COMPUTED_AT_SQL = rollupComputedAtSql(
+  TECHNOLOGY_COMPANIES_TABLE,
+);
+
+async function loadRollupComputedAt(
+  sql: string,
+  name: string,
+): Promise<string | null> {
+  const rows = await chQuery<{ latest_computed_at: string }>(sql, { name });
+  return rows[0]?.latest_computed_at ?? null;
+}
+
+/* ---------------------- Domains tab (top domains) -------------------- */
+
+export interface TechnologyDomainRow {
   root_domain: string;
-  /** '' when se_companies has no row for the id (the link still works). */
-  legal_name: string;
+  /** UInt64 arrives quoted from ClickHouse JSON; kept as a string. */
+  harmonic_rank: string;
+  harmonic_centrality: number;
 }
 
 /**
- * The inner IN-subquery hands ClickHouse the explicit SE root_domain set
- * (~17k rows, no FINAL needed -- IN is set semantics, a stale replaced row
- * only widens the probe set) so the 10.6B-row scan prunes on its sort key
- * head. The catalog's exact detector name arrives as a named param, resolved
- * from the slug by the caller -- never interpolated. The join back to
- * company_domains recovers (company_id, root_domain) and reads FINAL like
- * every other company_domains page read; se_companies supplies display
- * names.
+ * ReplacingMergeTree(computed_at) keyed by (technology, root_domain): GROUP
+ * BY the domain and argMax over computed_at so an unmerged week never shows a
+ * domain twice or with a stale rank. The output aliases must NOT reuse the
+ * source column names (see TECHNOLOGY_ADOPTION_SQL's alias-substitution
+ * note). Ordered by harmonic centrality, best-connected domain first; the
+ * rollup itself caps the set at ~500 domains per technology, so paging over
+ * it is cheap.
  */
-export const SE_COMPANIES_USING_TECHNOLOGY_SQL = `SELECT DISTINCT
-  domains.company_id AS company_id,
-  domains.root_domain AS root_domain,
-  companies.legal_name AS legal_name
-FROM corpscout.company_domains AS domains FINAL
-LEFT JOIN corpscout.se_companies AS companies FINAL
-  ON companies.company_id = domains.company_id
-WHERE domains.country_code = 'SE'
-  AND domains.root_domain IN (
-    SELECT DISTINCT root_domain
-    FROM corpscout.commoncrawl_page_technologies
-    WHERE root_domain IN (
-      SELECT root_domain
-      FROM corpscout.company_domains
-      WHERE country_code = 'SE'
-    )
-      AND technology = {name:String}
-  )
-ORDER BY legal_name ASC, company_id ASC, root_domain ASC
-LIMIT ${SE_COMPANIES_USING_TECHNOLOGY_LIMIT}`;
+export const TECHNOLOGY_TOP_DOMAINS_SQL = `SELECT
+  root_domain,
+  toString(argMax(harmonic_rank, computed_at)) AS latest_harmonic_rank,
+  argMax(harmonic_centrality, computed_at) AS latest_harmonic_centrality
+FROM ${TECHNOLOGY_TOP_DOMAINS_TABLE}
+WHERE technology = {name:String}
+GROUP BY root_domain
+ORDER BY latest_harmonic_centrality DESC, root_domain ASC
+${PAGE_LIMIT_OFFSET_SQL}`;
+
+export async function loadTechnologyDomainsPage(
+  name: string,
+  page: number,
+  pageSize: number,
+): Promise<TechnologyDomainRow[]> {
+  const limit = clampPageSize(pageSize);
+  const offset = (clampPage(page) - 1) * limit;
+  const rows = await chQuery<{
+    root_domain: string;
+    latest_harmonic_rank: string;
+    latest_harmonic_centrality: number;
+  }>(TECHNOLOGY_TOP_DOMAINS_SQL, { name, limit, offset });
+  return rows.map((row) => ({
+    root_domain: row.root_domain,
+    harmonic_rank: row.latest_harmonic_rank,
+    harmonic_centrality: row.latest_harmonic_centrality,
+  }));
+}
+
+/** Distinct domains, matching the page query's GROUP BY dedupe. */
+export const TECHNOLOGY_TOP_DOMAINS_COUNT_SQL = `SELECT
+  toString(uniqExact(root_domain)) AS total
+FROM ${TECHNOLOGY_TOP_DOMAINS_TABLE}
+WHERE technology = {name:String}`;
+
+export async function countTechnologyDomains(name: string): Promise<number> {
+  const [row] = await chQuery<{ total: string }>(
+    TECHNOLOGY_TOP_DOMAINS_COUNT_SQL,
+    { name },
+  );
+  return Number(row?.total ?? 0);
+}
+
+export async function loadTechnologyDomainsComputedAt(
+  name: string,
+): Promise<string | null> {
+  return loadRollupComputedAt(TECHNOLOGY_TOP_DOMAINS_COMPUTED_AT_SQL, name);
+}
+
+/* ---------------------- Companies tab (per country) ------------------ */
+
+export interface TechnologyCompanyIndustry {
+  code: string;
+  label: string;
+  is_primary: 0 | 1;
+}
+
+export interface TechnologyCompanyRow {
+  country_code: string;
+  company_id: string;
+  root_domain: string;
+  /** '' when no per-country name source exists for the row (non-SE, or an SE
+   * id se_companies has no row for) -- the link still works. */
+  legal_name: string;
+  /** Empty for non-SE rows -- no per-country industry source yet. */
+  industries: TechnologyCompanyIndustry[];
+}
 
 /**
- * `name` is the catalog's exact `technology` value (detection rows store the
- * detector name, not the slug). Capped rows -- the section is a sample, not
- * an export.
- *
- * Guarded read (mirrors se-people-tasks.server.ts): this is the page's one
- * genuinely heavy query, and while something big (the adoption rollup's own
- * weekly materialization, say) saturates the server it can outlive the
- * client timeout. That must degrade to a section-level notice, never 500 the
- * whole detail page -- the catalog record and rollup count above it are
- * still perfectly renderable.
+ * ReplacingMergeTree(computed_at) keyed by (technology, country_code,
+ * company_id, root_domain): GROUP BY the key IS the dedupe (computed_at is
+ * the only non-key column, and the page does not display it). The optional
+ * country filter is appended only when applied, value always a named param.
  */
-export async function loadSeCompaniesUsingTechnology(
+export const TECHNOLOGY_COMPANIES_SELECT_SQL = `SELECT
+  country_code,
+  company_id,
+  root_domain
+FROM ${TECHNOLOGY_COMPANIES_TABLE}
+WHERE technology = {name:String}`;
+
+const TECHNOLOGY_COMPANIES_TAIL_SQL = `GROUP BY country_code, company_id, root_domain
+ORDER BY country_code ASC, company_id ASC, root_domain ASC
+${PAGE_LIMIT_OFFSET_SQL}`;
+
+const COMPANIES_COUNTRY_FILTER_SQL = "AND country_code = {country:String}";
+
+function companiesFilter(country: string): {
+  filterSql: string;
+  params: Record<string, unknown>;
+} {
+  if (country === "") return { filterSql: "", params: {} };
+  return { filterSql: COMPANIES_COUNTRY_FILTER_SQL, params: { country } };
+}
+
+/**
+ * Display names for the page's SE rows, keyed by the page's own company ids
+ * (a per-page point lookup, same as the old live query's join). Sweden is
+ * the only country with a register table here so far -- when another
+ * country's rollup rows appear, add its name lookup beside this one and
+ * merge it in `loadTechnologyCompaniesPage` (the extension point below).
+ */
+export const TECHNOLOGY_SE_COMPANY_NAMES_SQL = `SELECT
+  company_id,
+  legal_name
+FROM corpscout.se_companies FINAL
+WHERE company_id IN {ids:Array(String)}`;
+
+/**
+ * NACE industries for the page's SE rows, primary classification first.
+ * `se_company_industry_display_current` is already a deduplicated _current
+ * view -- no FINAL/argMax needed, same as company-sections.server.ts's
+ * industries read. Non-SE countries have no industry source yet: same
+ * extension point as the name lookup above.
+ */
+export const TECHNOLOGY_SE_COMPANY_INDUSTRIES_SQL = `SELECT
+  company_id,
+  classification_code AS code,
+  label_en AS label,
+  toUInt8(is_primary) AS is_primary
+FROM corpscout.se_company_industry_display_current
+WHERE company_id IN {ids:Array(String)}
+ORDER BY company_id, is_primary DESC, classification_system, classification_code`;
+
+export async function loadTechnologyCompaniesPage(
   name: string,
-): Promise<{ rows: SeCompanyUsingTechnology[]; error: string }> {
-  try {
-    const rows = await chQuery<SeCompanyUsingTechnology>(
-      SE_COMPANIES_USING_TECHNOLOGY_SQL,
-      { name },
-    );
-    return { rows, error: "" };
-  } catch (error) {
-    return {
-      rows: [],
-      error: error instanceof Error ? error.message : String(error),
-    };
+  country: string,
+  page: number,
+  pageSize: number,
+): Promise<TechnologyCompanyRow[]> {
+  const limit = clampPageSize(pageSize);
+  const offset = (clampPage(page) - 1) * limit;
+  const { filterSql, params } = companiesFilter(country);
+  const base = await chQuery<{
+    country_code: string;
+    company_id: string;
+    root_domain: string;
+  }>(
+    `${TECHNOLOGY_COMPANIES_SELECT_SQL}
+${filterSql ? `  ${filterSql}\n` : ""}${TECHNOLOGY_COMPANIES_TAIL_SQL}`,
+    { ...params, name, limit, offset },
+  );
+
+  // Per-country enrichment, keyed by THIS page's ids only. SE is the only
+  // country with a name/industry source today; other countries fall back to
+  // the bare company_id and an empty industries cell. EXTENSION POINT: a new
+  // country's register lands here as another pair of keyed lookups.
+  const seIds = [
+    ...new Set(
+      base
+        .filter((row) => row.country_code === "SE")
+        .map((row) => row.company_id),
+    ),
+  ];
+  const names = new Map<string, string>();
+  const industries = new Map<string, TechnologyCompanyIndustry[]>();
+  if (seIds.length > 0) {
+    const [nameRows, industryRows] = await Promise.all([
+      chQuery<{ company_id: string; legal_name: string }>(
+        TECHNOLOGY_SE_COMPANY_NAMES_SQL,
+        { ids: seIds },
+      ),
+      chQuery<TechnologyCompanyIndustry & { company_id: string }>(
+        TECHNOLOGY_SE_COMPANY_INDUSTRIES_SQL,
+        { ids: seIds },
+      ),
+    ]);
+    for (const row of nameRows) names.set(row.company_id, row.legal_name);
+    for (const row of industryRows) {
+      const list = industries.get(row.company_id) ?? [];
+      list.push({ code: row.code, label: row.label, is_primary: row.is_primary });
+      industries.set(row.company_id, list);
+    }
   }
+
+  return base.map((row) => ({
+    country_code: row.country_code,
+    company_id: row.company_id,
+    root_domain: row.root_domain,
+    legal_name:
+      row.country_code === "SE" ? (names.get(row.company_id) ?? "") : "",
+    industries:
+      row.country_code === "SE"
+        ? (industries.get(row.company_id) ?? [])
+        : [],
+  }));
+}
+
+/** Distinct rollup keys under the same filter as the page. */
+export const TECHNOLOGY_COMPANIES_COUNT_SQL = `SELECT
+  toString(uniqExact(country_code, company_id, root_domain)) AS total
+FROM ${TECHNOLOGY_COMPANIES_TABLE}
+WHERE technology = {name:String}`;
+
+export async function countTechnologyCompanies(
+  name: string,
+  country: string,
+): Promise<number> {
+  const { filterSql, params } = companiesFilter(country);
+  const [row] = await chQuery<{ total: string }>(
+    `${TECHNOLOGY_COMPANIES_COUNT_SQL}${filterSql ? `\n  ${filterSql}` : ""}`,
+    { ...params, name },
+  );
+  return Number(row?.total ?? 0);
+}
+
+/** The country filter's options: whatever countries the rollup actually
+ * holds for this technology (today only SE; new countries appear here on
+ * their own as the rollup grows). Unfiltered by the applied country, so the
+ * Select can always switch back. */
+export const TECHNOLOGY_COMPANY_COUNTRIES_SQL = `SELECT DISTINCT
+  country_code
+FROM ${TECHNOLOGY_COMPANIES_TABLE}
+WHERE technology = {name:String}
+ORDER BY country_code ASC`;
+
+export async function loadTechnologyCompanyCountries(
+  name: string,
+): Promise<string[]> {
+  const rows = await chQuery<{ country_code: string }>(
+    TECHNOLOGY_COMPANY_COUNTRIES_SQL,
+    { name },
+  );
+  return rows
+    .map((row) => row.country_code)
+    .filter((value) => value !== "");
+}
+
+export async function loadTechnologyCompaniesComputedAt(
+  name: string,
+): Promise<string | null> {
+  return loadRollupComputedAt(TECHNOLOGY_COMPANIES_COMPUTED_AT_SQL, name);
 }

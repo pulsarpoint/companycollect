@@ -1,8 +1,9 @@
 /**
  * SQL-shape tests for `/admin/technologies`'s query builders: FINAL on every
- * catalog read, named params only, LIMITs everywhere, the rollup tolerated
- * empty, and the SE companies query key-pruned through the IN-subquery on
- * company_domains. ClickHouse is faked at the module boundary.
+ * catalog read, named params only, LIMITs everywhere, every weekly rollup
+ * tolerated empty (a first population can be in flight), and the two detail
+ * tab reads deduping their ReplacingMergeTree keys with argMax/GROUP BY.
+ * ClickHouse is faked at the module boundary.
  */
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
@@ -10,21 +11,37 @@ const clickhouse = vi.hoisted(() => ({ query: vi.fn() }));
 vi.mock("~/lib/clickhouse.server", () => ({ chQuery: clickhouse.query }));
 
 import { PAGE_LIMIT_OFFSET_SQL } from "~/lib/se-company-info-lists.server";
-import { SE_COMPANIES_USING_TECHNOLOGY_LIMIT } from "~/lib/technologies";
+import * as technologiesServer from "~/lib/technologies.server";
 import {
   countTechnologies,
+  countTechnologyCompanies,
+  countTechnologyDomains,
   listTechnologiesPage,
-  loadSeCompaniesUsingTechnology,
   loadTechnologyAdoption,
   loadTechnologyCategoryOptions,
+  loadTechnologyCompaniesComputedAt,
+  loadTechnologyCompaniesPage,
+  loadTechnologyCompanyCountries,
   loadTechnologyDetail,
-  SE_COMPANIES_USING_TECHNOLOGY_SQL,
+  loadTechnologyDomainsComputedAt,
+  loadTechnologyDomainsPage,
   TECHNOLOGY_ADOPTION_SQL,
   TECHNOLOGY_ADOPTION_TABLE,
   TECHNOLOGY_CATALOG_TABLE,
   TECHNOLOGY_CATEGORY_OPTIONS_SQL,
+  TECHNOLOGY_COMPANIES_COMPUTED_AT_SQL,
+  TECHNOLOGY_COMPANIES_COUNT_SQL,
+  TECHNOLOGY_COMPANIES_SELECT_SQL,
+  TECHNOLOGY_COMPANIES_TABLE,
+  TECHNOLOGY_COMPANY_COUNTRIES_SQL,
   TECHNOLOGY_DETAIL_SQL,
   TECHNOLOGY_LIST_SELECT_SQL,
+  TECHNOLOGY_SE_COMPANY_INDUSTRIES_SQL,
+  TECHNOLOGY_SE_COMPANY_NAMES_SQL,
+  TECHNOLOGY_TOP_DOMAINS_COMPUTED_AT_SQL,
+  TECHNOLOGY_TOP_DOMAINS_COUNT_SQL,
+  TECHNOLOGY_TOP_DOMAINS_SQL,
+  TECHNOLOGY_TOP_DOMAINS_TABLE,
 } from "~/lib/technologies.server";
 
 const NO_FILTERS = { q: "", category: "" };
@@ -177,41 +194,239 @@ describe("the adoption rollup read", () => {
   });
 });
 
-describe("the live SE companies query", () => {
-  it("prunes the 10.6B-row table through the IN-subquery on company_domains' SE root_domains, name as a named param", async () => {
+describe("the Domains tab read (technology_top_domains)", () => {
+  it("dedupes by root_domain with argMax over computed_at, keyed by the detector name, ordered by centrality desc, paged with named params", async () => {
+    clickhouse.query.mockResolvedValueOnce([
+      {
+        root_domain: "wordpress.org",
+        latest_harmonic_rank: "1",
+        latest_harmonic_centrality: 21534096.5,
+      },
+    ]);
+    const rows = await loadTechnologyDomainsPage("WordPress", 2, 50);
+
+    const sql = TECHNOLOGY_TOP_DOMAINS_SQL;
+    expect(sql).toContain(`FROM ${TECHNOLOGY_TOP_DOMAINS_TABLE}`);
+    expect(sql).toContain("WHERE technology = {name:String}");
+    expect(sql).toContain("GROUP BY root_domain");
+    expect(sql).toContain("argMax(harmonic_rank, computed_at)");
+    expect(sql).toContain("argMax(harmonic_centrality, computed_at)");
+    expect(sql).toContain("ORDER BY latest_harmonic_centrality DESC");
+    expect(sql).toContain(PAGE_LIMIT_OFFSET_SQL);
+    expect(clickhouse.query).toHaveBeenCalledWith(sql, {
+      name: "WordPress",
+      limit: 50,
+      offset: 50,
+    });
+    expect(rows).toEqual([
+      {
+        root_domain: "wordpress.org",
+        harmonic_rank: "1",
+        harmonic_centrality: 21534096.5,
+      },
+    ]);
+  });
+
+  it("counts distinct domains, matching the page's GROUP BY dedupe", async () => {
+    clickhouse.query.mockResolvedValueOnce([{ total: "500" }]);
+    const total = await countTechnologyDomains("WordPress");
+
+    expect(total).toBe(500);
+    expect(TECHNOLOGY_TOP_DOMAINS_COUNT_SQL).toContain(
+      "uniqExact(root_domain)",
+    );
+    expect(TECHNOLOGY_TOP_DOMAINS_COUNT_SQL).toContain(
+      "WHERE technology = {name:String}",
+    );
+    expect(clickhouse.query).toHaveBeenCalledWith(
+      TECHNOLOGY_TOP_DOMAINS_COUNT_SQL,
+      { name: "WordPress" },
+    );
+  });
+
+  it("stamps the tab from max(computed_at), null while the rollup is mid first population", async () => {
     clickhouse.query.mockResolvedValueOnce([]);
-    await loadSeCompaniesUsingTechnology("WordPress");
+    expect(await loadTechnologyDomainsComputedAt("WordPress")).toBeNull();
 
-    const sql = SE_COMPANIES_USING_TECHNOLOGY_SQL;
-    expect(sql).toContain("FROM corpscout.commoncrawl_page_technologies");
-    expect(sql).toContain("root_domain IN (");
-    expect(sql).toContain("FROM corpscout.company_domains");
-    expect(sql).toContain("WHERE country_code = 'SE'");
-    expect(sql).toContain("AND technology = {name:String}");
-    expect(sql).not.toContain("WordPress");
-    expect(clickhouse.query).toHaveBeenCalledWith(sql, { name: "WordPress" });
+    clickhouse.query.mockResolvedValueOnce([
+      { latest_computed_at: "2026-08-24 03:00:00" },
+    ]);
+    expect(await loadTechnologyDomainsComputedAt("WordPress")).toBe(
+      "2026-08-24 03:00:00",
+    );
+    expect(TECHNOLOGY_TOP_DOMAINS_COMPUTED_AT_SQL).toContain("max(computed_at)");
+    expect(TECHNOLOGY_TOP_DOMAINS_COMPUTED_AT_SQL).toContain(
+      "GROUP BY technology",
+    );
+  });
+});
+
+describe("the Companies tab read (technology_companies)", () => {
+  it("dedupes on the rollup key with GROUP BY, keyed by the detector name, no country filter when 'all'", async () => {
+    clickhouse.query.mockResolvedValueOnce([]);
+    const rows = await loadTechnologyCompaniesPage("WordPress", "", 1, 50);
+
+    expect(rows).toEqual([]);
+    // No SE rows on the page: the name/industry lookups never run.
+    expect(clickhouse.query).toHaveBeenCalledTimes(1);
+    const [sql, params] = clickhouse.query.mock.calls[0];
+    expect(sql).toContain(`FROM ${TECHNOLOGY_COMPANIES_TABLE}`);
+    expect(sql).toContain("WHERE technology = {name:String}");
+    expect(sql).toContain("GROUP BY country_code, company_id, root_domain");
+    expect(sql).toContain(PAGE_LIMIT_OFFSET_SQL);
+    expect(sql).not.toContain("{country:String}");
+    expect(params).toEqual({ name: "WordPress", limit: 50, offset: 0 });
   });
 
-  it("joins back to company_domains FINAL for (company_id, root_domain) and caps the list", () => {
-    const sql = SE_COMPANIES_USING_TECHNOLOGY_SQL;
-    expect(sql).toContain("FROM corpscout.company_domains AS domains FINAL");
-    expect(sql).toContain("domains.country_code = 'SE'");
-    expect(sql).toContain("domains.company_id AS company_id");
-    expect(sql).toContain("domains.root_domain AS root_domain");
-    expect(sql).toContain("companies.legal_name AS legal_name");
-    expect(sql).toContain(`LIMIT ${SE_COMPANIES_USING_TECHNOLOGY_LIMIT}`);
+  it("applies the country filter as a named param, never interpolated", async () => {
+    clickhouse.query.mockResolvedValueOnce([]);
+    await loadTechnologyCompaniesPage("WordPress", "SE", 2, 50);
+
+    const [sql, params] = clickhouse.query.mock.calls[0];
+    expect(sql).toContain("AND country_code = {country:String}");
+    expect(sql).not.toContain("'SE'");
+    expect(params).toEqual({
+      name: "WordPress",
+      country: "SE",
+      limit: 50,
+      offset: 50,
+    });
   });
 
-  it("is a guarded read: a ClickHouse failure degrades to an error string, never a thrown 500", async () => {
-    clickhouse.query.mockRejectedValueOnce(new Error("Timeout error."));
-    const result = await loadSeCompaniesUsingTechnology("WordPress");
-    expect(result).toEqual({ rows: [], error: "Timeout error." });
+  it("enriches SE rows with se_companies FINAL names and NACE industries keyed by the page's own ids; non-SE rows stay bare", async () => {
+    clickhouse.query
+      .mockResolvedValueOnce([
+        { country_code: "SE", company_id: "5560125220", root_domain: "example.se" },
+        { country_code: "SE", company_id: "5560125220", root_domain: "other.se" },
+        { country_code: "NO", company_id: "923609016", root_domain: "example.no" },
+      ])
+      .mockResolvedValueOnce([
+        { company_id: "5560125220", legal_name: "Example AB" },
+      ])
+      .mockResolvedValueOnce([
+        { company_id: "5560125220", code: "62.010", label: "Computer programming", is_primary: 1 },
+        { company_id: "5560125220", code: "63.110", label: "Data processing", is_primary: 0 },
+      ]);
+    const rows = await loadTechnologyCompaniesPage("WordPress", "", 1, 50);
+
+    // One page query + one names + one industries lookup, ids DEDUPED.
+    expect(clickhouse.query).toHaveBeenCalledTimes(3);
+    expect(clickhouse.query).toHaveBeenNthCalledWith(
+      2,
+      TECHNOLOGY_SE_COMPANY_NAMES_SQL,
+      { ids: ["5560125220"] },
+    );
+    expect(clickhouse.query).toHaveBeenNthCalledWith(
+      3,
+      TECHNOLOGY_SE_COMPANY_INDUSTRIES_SQL,
+      { ids: ["5560125220"] },
+    );
+    expect(TECHNOLOGY_SE_COMPANY_NAMES_SQL).toContain(
+      "FROM corpscout.se_companies FINAL",
+    );
+    expect(TECHNOLOGY_SE_COMPANY_NAMES_SQL).toContain(
+      "WHERE company_id IN {ids:Array(String)}",
+    );
+    expect(TECHNOLOGY_SE_COMPANY_INDUSTRIES_SQL).toContain(
+      "FROM corpscout.se_company_industry_display_current",
+    );
+    expect(TECHNOLOGY_SE_COMPANY_INDUSTRIES_SQL).toContain(
+      "WHERE company_id IN {ids:Array(String)}",
+    );
+    // Primary classification first.
+    expect(TECHNOLOGY_SE_COMPANY_INDUSTRIES_SQL).toContain("is_primary DESC");
+
+    const industries = [
+      { code: "62.010", label: "Computer programming", is_primary: 1 },
+      { code: "63.110", label: "Data processing", is_primary: 0 },
+    ];
+    expect(rows).toEqual([
+      {
+        country_code: "SE",
+        company_id: "5560125220",
+        root_domain: "example.se",
+        legal_name: "Example AB",
+        industries,
+      },
+      {
+        country_code: "SE",
+        company_id: "5560125220",
+        root_domain: "other.se",
+        legal_name: "Example AB",
+        industries,
+      },
+      // Non-SE: no name/industry source yet -- the id stands in for the name
+      // at render time, industries stay empty (the extension point).
+      {
+        country_code: "NO",
+        company_id: "923609016",
+        root_domain: "example.no",
+        legal_name: "",
+        industries: [],
+      },
+    ]);
   });
 
-  it("never aggregates the whole commoncrawl_page_technologies table", () => {
-    // The only GROUP-less aggregate allowed here is DISTINCT under the
-    // explicit root_domain probe set; a bare GROUP BY over the table would
-    // be the forbidden full-table rollup.
-    expect(SE_COMPANIES_USING_TECHNOLOGY_SQL).not.toContain("GROUP BY");
+  it("counts distinct rollup keys under the same country filter as the page", async () => {
+    clickhouse.query.mockResolvedValueOnce([{ total: "1234" }]);
+    const total = await countTechnologyCompanies("WordPress", "SE");
+
+    expect(total).toBe(1234);
+    expect(TECHNOLOGY_COMPANIES_COUNT_SQL).toContain(
+      "uniqExact(country_code, company_id, root_domain)",
+    );
+    const [sql, params] = clickhouse.query.mock.calls[0];
+    expect(sql).toContain("AND country_code = {country:String}");
+    expect(params).toEqual({ name: "WordPress", country: "SE" });
+  });
+
+  it("offers the country filter's options from the rollup's own DISTINCT values for this technology", async () => {
+    clickhouse.query.mockResolvedValueOnce([
+      { country_code: "NO" },
+      { country_code: "SE" },
+      { country_code: "" },
+    ]);
+    const countries = await loadTechnologyCompanyCountries("WordPress");
+
+    expect(countries).toEqual(["NO", "SE"]);
+    expect(TECHNOLOGY_COMPANY_COUNTRIES_SQL).toContain("SELECT DISTINCT");
+    expect(TECHNOLOGY_COMPANY_COUNTRIES_SQL).toContain(
+      `FROM ${TECHNOLOGY_COMPANIES_TABLE}`,
+    );
+    expect(TECHNOLOGY_COMPANY_COUNTRIES_SQL).toContain(
+      "WHERE technology = {name:String}",
+    );
+    expect(clickhouse.query).toHaveBeenCalledWith(
+      TECHNOLOGY_COMPANY_COUNTRIES_SQL,
+      { name: "WordPress" },
+    );
+  });
+
+  it("stamps the tab from max(computed_at), null while the rollup is mid first population", async () => {
+    clickhouse.query.mockResolvedValueOnce([]);
+    expect(await loadTechnologyCompaniesComputedAt("WordPress")).toBeNull();
+    expect(TECHNOLOGY_COMPANIES_COMPUTED_AT_SQL).toContain(
+      `FROM ${TECHNOLOGY_COMPANIES_TABLE}`,
+    );
+    expect(TECHNOLOGY_COMPANIES_COMPUTED_AT_SQL).toContain("GROUP BY technology");
+  });
+
+  it("the base page read exposes the key columns only -- payload enrichment stays per-page and per-country", () => {
+    expect(TECHNOLOGY_COMPANIES_SELECT_SQL).toContain("country_code");
+    expect(TECHNOLOGY_COMPANIES_SELECT_SQL).toContain("company_id");
+    expect(TECHNOLOGY_COMPANIES_SELECT_SQL).toContain("root_domain");
+  });
+});
+
+describe("the retired live SE companies query", () => {
+  it("is gone: no export touches commoncrawl_page_technologies, and the old loader no longer exists", () => {
+    expect("loadSeCompaniesUsingTechnology" in technologiesServer).toBe(false);
+    expect("SE_COMPANIES_USING_TECHNOLOGY_SQL" in technologiesServer).toBe(false);
+    for (const [name, value] of Object.entries(technologiesServer)) {
+      if (typeof value !== "string") continue;
+      expect(value, `${name} must not touch the 10.6B-row live table`).not.toContain(
+        "commoncrawl_page_technologies",
+      );
+    }
   });
 });
