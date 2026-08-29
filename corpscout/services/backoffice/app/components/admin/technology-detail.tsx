@@ -236,6 +236,15 @@ function DomainsTab({
  * orders is_primary DESC). */
 const INDUSTRY_BADGE_CAP = 4;
 
+/** The industry name alone (owner 2026-08-29: no code prefix on the badge).
+ * label_en from the SE industry view embeds the dotted code ("84.23 Justice
+ * ..."), so any leading code-like token is stripped too; the code survives
+ * in the tooltip. */
+function industryDisplayLabel(industry: { code: string; label: string }): string {
+  const stripped = industry.label.replace(/^\s*\d{2}(?:\.\d+)*\s+/, "").trim();
+  return stripped !== "" ? stripped : industry.label || industry.code;
+}
+
 function IndustriesCell({
   industries,
 }: {
@@ -257,7 +266,7 @@ function IndustriesCell({
           title={`${industry.code} ${industry.label}`}
         >
           <span className="max-w-[14rem] truncate">
-            {industry.code} {industry.label}
+            {industryDisplayLabel(industry)}
           </span>
         </Badge>
       ))}
