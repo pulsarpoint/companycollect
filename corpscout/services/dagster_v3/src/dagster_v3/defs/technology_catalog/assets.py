@@ -346,33 +346,28 @@ def technology_top_domains_clickhouse(
     with clickhouse.get_connection() as client:
         try:
             client.execute(f"CREATE TABLE {stage} AS {qualified}")
-            # Two bounded steps instead of one (the single-query form OOMed at
-            # its 12 GiB cap building the 121M-domain join side, Code 241):
-            # (1) the latest signal per domain lands in a temp MergeTree
-            # sorted by root_domain (external group-by spills), then (2) a
-            # full_sorting_merge join streams both sorted sides off disk --
-            # no in-memory hash of 121M domains anywhere.
+            # Bounded build, third iteration (the one-query hash join and the
+            # GROUP BY temp both OOMed on 121M-domain hash arenas -- a resize
+            # doubles in ONE allocation, blowing the cap before external spill
+            # engages). No large aggregation anywhere now: every signal row
+            # streams into a ReplacingMergeTree temp (memory-flat), sorted-
+            # merge FINAL dedupes it during the read, and the join runs
+            # full_sorting_merge with early spill thresholds.
             signals = f"`{RESOLVED_DATABASE}`.`_tmp_signals_latest_{uuid.uuid4().hex}`"
             try:
                 client.execute(
                     f"""CREATE TABLE {signals} (
     root_domain String,
     harmonic_centrality Float64,
-    harmonic_rank UInt64
-) ENGINE = MergeTree ORDER BY root_domain"""
+    harmonic_rank UInt64,
+    resolved_at DateTime64(3, 'UTC')
+) ENGINE = ReplacingMergeTree(resolved_at) ORDER BY root_domain"""
                 )
                 client.execute(
                     f"""INSERT INTO {signals}
-SELECT
-    root_domain,
-    argMax(cc_harmonic_centrality, resolved_at),
-    argMax(cc_harmonic_rank, resolved_at)
-FROM `{RESOLVED_DATABASE}`.`commoncrawl_domain_graph_signals`
-GROUP BY root_domain""",
-                    settings={
-                        "max_bytes_before_external_group_by": 6 * 1024**3,
-                        "max_memory_usage": 12 * 1024**3,
-                    },
+SELECT root_domain, cc_harmonic_centrality, cc_harmonic_rank, resolved_at
+FROM `{RESOLVED_DATABASE}`.`commoncrawl_domain_graph_signals`""",
+                    settings={"max_memory_usage": 8 * 1024**3},
                 )
                 client.execute(
                     f"""INSERT INTO {stage}
@@ -387,15 +382,17 @@ FROM (
     SELECT DISTINCT technology, root_domain
     FROM `{RESOLVED_DATABASE}`.`commoncrawl_page_technologies`
 ) AS pairs
-INNER JOIN {signals} AS signals
-    ON signals.root_domain = pairs.root_domain
+INNER JOIN (
+    SELECT root_domain, harmonic_centrality, harmonic_rank
+    FROM {signals} FINAL
+) AS signals ON signals.root_domain = pairs.root_domain
 ORDER BY pairs.technology, signals.harmonic_centrality DESC
 LIMIT 500 BY pairs.technology""",
                     {"computed_at": computed_at},
                     settings={
                         "join_algorithm": "full_sorting_merge",
-                        "max_bytes_before_external_sort": 6 * 1024**3,
-                        "max_bytes_before_external_group_by": 6 * 1024**3,
+                        "max_bytes_before_external_sort": 2 * 1024**3,
+                        "max_bytes_before_external_group_by": 2 * 1024**3,
                         "max_memory_usage": 12 * 1024**3,
                     },
                 )
