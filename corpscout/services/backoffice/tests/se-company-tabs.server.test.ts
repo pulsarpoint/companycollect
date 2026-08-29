@@ -34,8 +34,13 @@ import {
 } from "~/lib/se-company-shell.server";
 import { loadSeCompanyContracts } from "~/lib/se-company-contracts.server";
 import {
+  COMPANY_JOB_AD_CONTACTS_SQL,
+  COMPANY_JOB_AD_REQUIREMENTS_SQL,
+  COMPANY_JOB_AD_SQL,
+  COMPANY_JOB_AD_VERSION_SQL,
   COMPANY_JOBS_CURRENT_SQL,
   COMPANY_JOBS_SQL,
+  loadSeCompanyJobAdDetail,
   loadSeCompanyJobs,
 } from "~/lib/se-company-jobs.server";
 import {
@@ -69,6 +74,10 @@ const ALL_SQL: Array<[string, string]> = [
   ["COMPANY_DOMAINS_SQL", COMPANY_DOMAINS_SQL],
   ["COMPANY_JOBS_SQL", COMPANY_JOBS_SQL],
   ["COMPANY_JOBS_CURRENT_SQL", COMPANY_JOBS_CURRENT_SQL],
+  ["COMPANY_JOB_AD_SQL", COMPANY_JOB_AD_SQL],
+  ["COMPANY_JOB_AD_VERSION_SQL", COMPANY_JOB_AD_VERSION_SQL],
+  ["COMPANY_JOB_AD_REQUIREMENTS_SQL", COMPANY_JOB_AD_REQUIREMENTS_SQL],
+  ["COMPANY_JOB_AD_CONTACTS_SQL", COMPANY_JOB_AD_CONTACTS_SQL],
   ["COMPANY_LEI_SQL", COMPANY_LEI_SQL],
   ["COMPANY_TRADED_SYMBOLS_SQL", COMPANY_TRADED_SYMBOLS_SQL],
   ["COMPANY_MARKET_SUMMARY_SQL", COMPANY_MARKET_SUMMARY_SQL],
@@ -143,11 +152,30 @@ describe("company area SQL", () => {
     for (const sql of [
       COMPANY_JOBS_SQL,
       COMPANY_JOBS_CURRENT_SQL,
+      COMPANY_JOB_AD_SQL,
       COMPANY_LEI_SQL,
       COMPANY_MARKET_SUMMARY_SQL,
     ]) {
       expect(sql).not.toContain("FINAL");
     }
+    // The raw Platsbanken requirement/contact tables ARE
+    // ReplacingMergeTree(ingested_at) and return many rows per ad, so a
+    // re-ingested row would show twice without FINAL.
+    expect(COMPANY_JOB_AD_REQUIREMENTS_SQL).toContain(
+      "corpscout.se_platsbanken_job_ad_requirement_versions AS r FINAL",
+    );
+    expect(COMPANY_JOB_AD_CONTACTS_SQL).toContain(
+      "corpscout.se_platsbanken_job_ad_contact_versions AS c FINAL",
+    );
+    // The version table is Replacing too, but its sorting key includes
+    // version_at, so FINAL cannot fold versions into "the latest" -- that
+    // read orders by version_at (ingested_at tiebreak) and takes one row,
+    // which makes FINAL a dedup pass for nothing there as well.
+    expect(COMPANY_JOB_AD_VERSION_SQL).not.toContain("FINAL");
+    expect(COMPANY_JOB_AD_VERSION_SQL).toContain(
+      "ORDER BY v.version_at DESC, v.ingested_at DESC",
+    );
+    expect(COMPANY_JOB_AD_VERSION_SQL).toContain("LIMIT 1");
     // company_traded_symbols itself is a rebuilt-whole snapshot (no FINAL),
     // but the eodhd_symbols dimension it joins IS a ReplacingMergeTree on
     // retrieved_at, so the joined side alone takes FINAL.
@@ -383,6 +411,144 @@ describe("tab loaders", () => {
     expect(jobs.map((job) => job.is_open)).toEqual([0, 1, 1]);
     for (const [, params] of clickhouse.query.mock.calls) {
       expect(params).toEqual({ companyId: COMPANY });
+    }
+  });
+
+  it("enriches the job list without ever shipping the full ad text in it", () => {
+    // description_text_original is the FULL ad body (large, ZSTD(6) on disk):
+    // it belongs to the one-ad detail read only, never the 200-row list.
+    expect(COMPANY_JOBS_SQL).not.toContain("description_text_original");
+    expect(COMPANY_JOBS_CURRENT_SQL).not.toContain("description_text_original");
+    for (const column of [
+      "occupation_label",
+      "municipality_name",
+      "region_name",
+      "employment_type_label",
+      "working_hours_label",
+      "number_of_vacancies",
+      "webpage_url",
+    ]) {
+      expect(COMPANY_JOBS_SQL).toContain(column);
+    }
+    // Archive eras differ in which taxonomy level they filled in, so the
+    // occupation column falls back to the GROUP label.
+    expect(COMPANY_JOBS_SQL).toContain("occupation_group_label_original");
+  });
+
+  const AD_ID = "29112166";
+  const VERSION_UID = "a".repeat(64);
+  const adRow = {
+    source_job_ad_id: AD_ID,
+    headline_original: "Säljare till Beijer Bygg i Luleå",
+    description_text_original: "Om rollen\n\nDu säljer byggmaterial.",
+    detected_language: "sv",
+    webpage_url: `https://arbetsformedlingen.se/platsbanken/annonser/${AD_ID}`,
+  };
+  const versionRow = {
+    version_uid: VERSION_UID,
+    salary_type_label: "Fast månads- vecko- eller timlön",
+    salary_description: "",
+    scope_min: 50,
+    scope_max: 100,
+    experience_required: 1,
+    driving_license_required: 0,
+    access_to_own_car: null,
+    employer_workplace: "Beijer Luleå",
+    street_address: "Storgatan 1",
+    postcode: "97231",
+    city: "Luleå",
+    application_email: "",
+    application_url: "https://example.com/apply",
+    application_information: "",
+  };
+
+  it("keys every read by the validated ad and takes the LATEST version's rows", async () => {
+    clickhouse.query.mockImplementation(async (sql: string) => {
+      if (sql === COMPANY_JOB_AD_SQL) return [adRow];
+      if (sql === COMPANY_JOB_AD_VERSION_SQL) return [versionRow];
+      if (sql === COMPANY_JOB_AD_REQUIREMENTS_SQL) {
+        return [
+          { requirement_level: "must_have", requirement_type: "work_experience", label_original: "Säljare", weight: 10 },
+          { requirement_level: "nice_to_have", requirement_type: "language", label_original: "Engelska", weight: null },
+        ];
+      }
+      return [
+        { contact_index: 0, name: "Anna Ek", description: "", email: "anna@beijer.se", telephone: "+46 70 000 00 00", contact_type: "Rekryterande chef" },
+      ];
+    });
+    const detail = await loadSeCompanyJobAdDetail(COMPANY, AD_ID);
+    // The ownership gate runs FIRST; the raw per-ad tables are consulted only
+    // after the keyed history read vouched for the id, and the requirement
+    // and contact reads are pinned to the version the version read returned.
+    expect(clickhouse.query.mock.calls.map(([sql]) => sql)).toEqual([
+      COMPANY_JOB_AD_SQL,
+      COMPANY_JOB_AD_VERSION_SQL,
+      COMPANY_JOB_AD_REQUIREMENTS_SQL,
+      COMPANY_JOB_AD_CONTACTS_SQL,
+    ]);
+    expect(clickhouse.query).toHaveBeenCalledWith(COMPANY_JOB_AD_SQL, {
+      companyId: COMPANY,
+      adId: AD_ID,
+    });
+    expect(clickhouse.query).toHaveBeenCalledWith(
+      COMPANY_JOB_AD_REQUIREMENTS_SQL,
+      { adId: AD_ID, versionUid: VERSION_UID },
+    );
+    expect(clickhouse.query).toHaveBeenCalledWith(COMPANY_JOB_AD_CONTACTS_SQL, {
+      adId: AD_ID,
+      versionUid: VERSION_UID,
+    });
+    expect(detail?.description_text_original).toBe(adRow.description_text_original);
+    expect(detail?.extras).not.toBeNull();
+    expect(detail?.extras).not.toHaveProperty("version_uid");
+    expect(detail?.extras?.scope_min).toBe(50);
+    expect(detail?.requirements).toHaveLength(2);
+    expect(detail?.contacts[0].name).toBe("Anna Ek");
+  });
+
+  it("is null for an ad this company does not own, and stops at the gate", async () => {
+    const detail = await loadSeCompanyJobAdDetail(COMPANY, "999999");
+    expect(detail).toBeNull();
+    // No history row means NO raw-table read happens for the untrusted id.
+    expect(clickhouse.query.mock.calls.map(([sql]) => sql)).toEqual([
+      COMPANY_JOB_AD_SQL,
+    ]);
+  });
+
+  it("still returns the description when the ad has no raw version row", async () => {
+    clickhouse.query.mockImplementation(async (sql: string) =>
+      sql === COMPANY_JOB_AD_SQL ? [adRow] : [],
+    );
+    const detail = await loadSeCompanyJobAdDetail(COMPANY, AD_ID);
+    expect(detail).toEqual({
+      ...adRow,
+      extras: null,
+      requirements: [],
+      contacts: [],
+    });
+    // With no version there is no version_uid to key on, so neither the
+    // requirement nor the contact read is sent.
+    expect(clickhouse.query.mock.calls.map(([sql]) => sql)).toEqual([
+      COMPANY_JOB_AD_SQL,
+      COMPANY_JOB_AD_VERSION_SQL,
+    ]);
+  });
+
+  it("keys the gate by company AND ad, and the raw reads by ad and version", () => {
+    expect(COMPANY_JOB_AD_SQL).toContain("h.country_code = 'SE'");
+    expect(COMPANY_JOB_AD_SQL).toContain("h.company_id = {companyId:String}");
+    expect(COMPANY_JOB_AD_SQL).toContain(
+      "h.source_job_ad_id = {adId:String}",
+    );
+    // A republished ad has several intervals; the newest one's text wins.
+    expect(COMPANY_JOB_AD_SQL).toContain("ORDER BY h.interval_number DESC");
+    expect(COMPANY_JOB_AD_SQL).toContain("LIMIT 1");
+    for (const sql of [
+      COMPANY_JOB_AD_REQUIREMENTS_SQL,
+      COMPANY_JOB_AD_CONTACTS_SQL,
+    ]) {
+      expect(sql).toContain("source_job_ad_id = {adId:String}");
+      expect(sql).toContain("version_uid = {versionUid:String}");
     }
   });
 

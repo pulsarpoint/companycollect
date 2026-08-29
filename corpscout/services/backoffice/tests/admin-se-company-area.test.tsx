@@ -46,7 +46,10 @@ import type {
   FinancialSourceYearRow,
   PublicContractRow,
 } from "~/lib/queries.server";
-import type { SeCompanyJobRow } from "~/lib/se-company-jobs.server";
+import type {
+  SeCompanyJobAdDetail,
+  SeCompanyJobRow,
+} from "~/lib/se-company-jobs.server";
 import type { SeCompanyListed } from "~/lib/se-company-listed.server";
 import type { SeCompanyDomainRow } from "~/lib/se-company-domains.server";
 import type { SeCompanyPersonRow } from "~/lib/se-company-people.server";
@@ -979,7 +982,46 @@ const job: SeCompanyJobRow = {
   application_deadline: "2026-06-30 21:59:59.000",
   employer_name: "Beijer Byggmaterial AB",
   headline_original: "Säljare till Beijer Bygg i Luleå",
+  occupation_label: "Utesäljare",
+  municipality_name: "Luleå",
+  region_name: "Norrbottens län",
+  employment_type_label: "Tillsvidareanställning",
+  working_hours_label: "Heltid",
+  number_of_vacancies: 1,
+  webpage_url: "https://arbetsformedlingen.se/platsbanken/annonser/29112166",
   is_open: 0,
+};
+
+const adDetail: SeCompanyJobAdDetail = {
+  source_job_ad_id: "29112166",
+  headline_original: "Säljare till Beijer Bygg i Luleå",
+  description_text_original: "Om rollen\n\nDu säljer byggmaterial i butik.",
+  detected_language: "sv",
+  webpage_url: "https://arbetsformedlingen.se/platsbanken/annonser/29112166",
+  extras: {
+    salary_type_label: "Fast månads- vecko- eller timlön",
+    salary_description: "Fast lön + provision",
+    scope_min: 50,
+    scope_max: 100,
+    experience_required: 1,
+    driving_license_required: 1,
+    access_to_own_car: null,
+    employer_workplace: "Beijer Luleå",
+    street_address: "Storgatan 1",
+    postcode: "97231",
+    city: "Luleå",
+    application_email: "jobb@beijer.se",
+    application_url: "",
+    application_information: "",
+  },
+  requirements: [
+    { requirement_level: "must_have", requirement_type: "work_experience", label_original: "Säljare, dagligvaror", weight: 10 },
+    { requirement_level: "must_have", requirement_type: "driving_license", label_original: "B", weight: 10 },
+    { requirement_level: "nice_to_have", requirement_type: "language", label_original: "Engelska", weight: null },
+  ],
+  contacts: [
+    { contact_index: 0, name: "Anna Ek", description: "", email: "anna.ek@beijer.se", telephone: "+46 70 000 00 00", contact_type: "Rekryterande chef" },
+  ],
 };
 
 describe("jobs tab", () => {
@@ -1005,15 +1047,102 @@ describe("jobs tab", () => {
     expect(html).toContain("2 ad intervals · 1 currently open");
   });
 
-  // The pipeline has never run, so the empty state must own that fact rather
-  // than implying this one company simply never advertised.
-  it("says the Platsbanken pipeline has not landed data yet when the table is empty", () => {
+  it("shows occupation with type/hours, location with region tooltip, and the ad links", () => {
+    const html = render(
+      <SeCompanyJobsTab jobs={[job]} />,
+      seCompanyTabPath(COMPANY_ID, "jobs"),
+    );
+    expect(html).toContain("Utesäljare");
+    // Employment type and working hours share one muted secondary line.
+    expect(html).toContain("Tillsvidareanställning · Heltid");
+    expect(html).toContain("Luleå");
+    expect(html).toContain('title="Norrbottens län"');
+    // The headline selects the ad via ?ad= (resolved against the tab path),
+    // the icon opens Platsbanken.
+    expect(html).toContain('?ad=29112166"');
+    expect(html).toContain(
+      'href="https://arbetsformedlingen.se/platsbanken/annonser/29112166"',
+    );
+    // One vacancy is the norm, so no badge for it.
+    expect(html).not.toContain("1 vacancies");
+  });
+
+  it("wears a vacancies badge only when an ad seeks more than one person", () => {
+    const html = render(
+      <SeCompanyJobsTab jobs={[{ ...job, number_of_vacancies: 5 }]} />,
+      seCompanyTabPath(COMPANY_ID, "jobs"),
+    );
+    expect(html).toContain("5 vacancies");
+  });
+
+  it("renders the ?ad= detail card: facts, grouped requirements, contacts, text", () => {
+    const path = seCompanyTabPath(COMPANY_ID, "jobs");
+    const html = render(
+      <SeCompanyJobsTab jobs={[job]} adDetail={adDetail} />,
+      `${path}?ad=29112166`,
+    );
+    // Latest-version facts.
+    expect(html).toContain(
+      "Fast månads- vecko- eller timlön · Fast lön + provision",
+    );
+    expect(html).toContain("50–100%");
+    expect(html).toContain("Beijer Luleå");
+    expect(html).toContain("Storgatan 1, 97231 Luleå");
+    expect(html).toContain("jobb@beijer.se");
+    // Requirements grouped by level, each with its type badge.
+    expect(html).toContain("Must have");
+    expect(html).toContain("Nice to have");
+    expect(html).toContain("Säljare, dagligvaror");
+    expect(html).toContain(">experience<");
+    expect(html).toContain(">driving licence<");
+    expect(html).toContain("Engelska");
+    // Contacts with their free-text role.
+    expect(html).toContain("Anna Ek");
+    expect(html).toContain("Rekryterande chef");
+    expect(html).toContain("mailto:anna.ek@beijer.se");
+    // The ad text renders as readable text, and the close link drops ?ad=.
+    expect(html).toContain("Du säljer byggmaterial i butik.");
+    expect(html).toContain("whitespace-pre-line");
+    expect(html).toContain(`href="${path}"`);
+    // The selected row is marked.
+    expect(html).toContain('data-state="selected"');
+  });
+
+  it("renders the plain list when the ?ad= id was not this company's (detail null)", () => {
+    const html = render(
+      <SeCompanyJobsTab jobs={[job]} adDetail={null} />,
+      `${seCompanyTabPath(COMPANY_ID, "jobs")}?ad=999999`,
+    );
+    expect(html).toContain("Säljare till Beijer Bygg i Luleå");
+    expect(html).not.toContain("Must have");
+    expect(html).not.toContain('data-state="selected"');
+  });
+
+  it("says the description-only detail is missing its raw version when extras are null", () => {
+    const html = render(
+      <SeCompanyJobsTab
+        jobs={[job]}
+        adDetail={{ ...adDetail, extras: null, requirements: [], contacts: [] }}
+      />,
+      `${seCompanyTabPath(COMPANY_ID, "jobs")}?ad=29112166`,
+    );
+    expect(html).toContain("No raw ad version found");
+    expect(html).toContain("Du säljer byggmaterial i butik.");
+    expect(html).not.toContain("Must have");
+  });
+
+  // The pipeline HAS landed data (21k companies), so an empty tab means this
+  // company was not matched -- the copy must not blame the pipeline anymore.
+  it("says no ads matched this company when the table is empty", () => {
     const html = render(
       <SeCompanyJobsTab jobs={[]} />,
       seCompanyTabPath(COMPANY_ID, "jobs"),
     );
-    expect(html).toContain("No job-ad data collected for this company");
-    expect(html).toContain("The Platsbanken pipeline has not landed data yet");
+    expect(html).toContain("No job ads recorded for this company");
+    // JSX collapses the source's line breaks to single spaces.
+    expect(html).toContain(
+      "neither the historical archives nor the live JobStream feed matched any to this one",
+    );
   });
 });
 
