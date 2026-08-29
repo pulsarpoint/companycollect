@@ -40,10 +40,26 @@ function useSeCompanyLabel(companyId: string): string {
   return data?.shell?.legal_name ?? companyId;
 }
 
+/**
+ * The technology crumb reads the detail route's own loader data (same
+ * reasoning as `useSeCompanyLabel`); a slug whose loader has not resolved
+ * (or that 404s) falls back to the decoded slug, still a true label.
+ */
+function useTechnologyLabel(pathname: string): string {
+  const data = useRouteLoaderData("routes/admin-technology-detail") as
+    | { technology: { technology: string } }
+    | undefined;
+  const slug = pathname.slice("/admin/technologies/".length).split("/")[0] ?? "";
+  return data?.technology.technology ?? decodeURIComponent(slug);
+}
+
 function AdminBreadcrumbs() {
   const { pathname } = useLocation();
   const companyId = seCompanyIdFromPath(pathname);
   const companyLabel = useSeCompanyLabel(companyId);
+  const technologyLabel = useTechnologyLabel(pathname);
+  const onTechnologiesIndexPage = pathname === "/admin/technologies";
+  const onTechnologyDetailPage = pathname.startsWith("/admin/technologies/");
   const onGeneralRolesPage = pathname === "/admin/general/roles";
   const onLlmSettingsPage = pathname === "/admin/settings/llms";
   const onEsefPage = pathname === "/admin/esef";
@@ -67,6 +83,36 @@ function AdminBreadcrumbs() {
           <BreadcrumbItem>
             <BreadcrumbPage>ESEF</BreadcrumbPage>
           </BreadcrumbItem>
+        </BreadcrumbList>
+      </Breadcrumb>
+    );
+  }
+
+  if (onTechnologiesIndexPage || onTechnologyDetailPage) {
+    return (
+      <Breadcrumb>
+        <BreadcrumbList>
+          <BreadcrumbItem className="hidden sm:block">
+            <BreadcrumbLink render={<Link to="/admin" />}>Admin</BreadcrumbLink>
+          </BreadcrumbItem>
+          <BreadcrumbSeparator className="hidden sm:block" />
+          <BreadcrumbItem>
+            {onTechnologiesIndexPage ? (
+              <BreadcrumbPage>Technologies</BreadcrumbPage>
+            ) : (
+              <BreadcrumbLink render={<Link to="/admin/technologies" />}>
+                Technologies
+              </BreadcrumbLink>
+            )}
+          </BreadcrumbItem>
+          {onTechnologyDetailPage ? (
+            <>
+              <BreadcrumbSeparator />
+              <BreadcrumbItem>
+                <BreadcrumbPage>{technologyLabel}</BreadcrumbPage>
+              </BreadcrumbItem>
+            </>
+          ) : null}
         </BreadcrumbList>
       </Breadcrumb>
     );

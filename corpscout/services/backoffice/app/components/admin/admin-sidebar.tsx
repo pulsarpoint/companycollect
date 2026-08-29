@@ -1,6 +1,7 @@
 import { Link, useLocation } from "react-router";
 import {
   ArrowLeftIcon,
+  BlocksIcon,
   Building2Icon,
   BotIcon,
   BrainCircuitIcon,
@@ -134,6 +135,21 @@ export function AdminSidebar() {
               >
                 <DatabaseZapIcon />
                 <span>ESEF</span>
+              </SidebarMenuButton>
+            </SidebarMenuItem>
+            <SidebarMenuItem>
+              <SidebarMenuButton
+                // Active on the whole subtree: the list AND every
+                // /admin/technologies/:slug detail page.
+                isActive={
+                  pathname === "/admin/technologies" ||
+                  pathname.startsWith("/admin/technologies/")
+                }
+                tooltip="Technology catalog"
+                render={<Link to="/admin/technologies" />}
+              >
+                <BlocksIcon />
+                <span>Technologies</span>
               </SidebarMenuButton>
             </SidebarMenuItem>
             <Collapsible

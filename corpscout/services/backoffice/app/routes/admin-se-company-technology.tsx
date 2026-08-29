@@ -43,6 +43,7 @@ export default function AdminSwedenCompanyTechnology({
         <WebTechnologyHistorySection
           history={webTechnologyHistory}
           catalog={technologyCatalog}
+          linkTechnologies
         />
       ) : null}
     </div>

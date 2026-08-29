@@ -1,4 +1,8 @@
+import { Link } from "react-router";
+// Type-only: erased at build, keeps the ClickHouse module out of the client
+// bundle (see backoffice/CLAUDE.md on `.server` imports in components).
 import type { TechnologyCatalogEntry } from "~/lib/technology-catalog.server";
+import { technologyDetailPath } from "~/lib/technologies";
 import { cn } from "~/lib/utils";
 
 /**
@@ -42,10 +46,17 @@ export function TechnologyLabel({
   name,
   entry,
   className,
+  linkToCatalog = false,
 }: {
   name: string;
   entry?: TechnologyCatalogEntry;
   className?: string;
+  /**
+   * ADMIN pages only: link the name to /admin/technologies/:slug when the
+   * enrichment map knows the catalog slug. Public pages keep the default
+   * plain label -- they must never point into the admin area.
+   */
+  linkToCatalog?: boolean;
 }) {
   return (
     <span
@@ -53,7 +64,16 @@ export function TechnologyLabel({
       title={entry?.description || undefined}
     >
       <TechnologyIcon name={name} entry={entry} />
-      <span>{name}</span>
+      {linkToCatalog && entry?.slug ? (
+        <Link
+          to={technologyDetailPath(entry.slug)}
+          className="underline-offset-2 hover:underline"
+        >
+          {name}
+        </Link>
+      ) : (
+        <span>{name}</span>
+      )}
     </span>
   );
 }

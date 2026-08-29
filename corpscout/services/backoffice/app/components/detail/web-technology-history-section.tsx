@@ -1,4 +1,5 @@
 import { History, Layers3 } from "lucide-react";
+import { Link } from "react-router";
 import {
   Accordion,
   AccordionContent,
@@ -26,6 +27,7 @@ import {
   TechnologyLabel,
 } from "~/components/detail/technology-label";
 import type { TechnologyCatalogEntry } from "~/lib/technology-catalog.server";
+import { technologyDetailPath } from "~/lib/technologies";
 import type {
   CompanyWebTechnologyHistory,
   WebTechnologyCrawlSnapshot,
@@ -70,9 +72,11 @@ function TechnologyStateBadge({
 function TechnologySummaryTable({
   history,
   catalog,
+  linkTechnologies,
 }: {
   history: CompanyWebTechnologyHistory;
   catalog: TechnologyCatalog;
+  linkTechnologies: boolean;
 }) {
   return (
     <Table>
@@ -93,7 +97,16 @@ function TechnologySummaryTable({
               <div className="flex flex-col gap-1">
                 <span className="flex items-center gap-1.5 font-medium">
                   <TechnologyIcon name={technology.name} entry={entry} />
-                  {technology.name}
+                  {linkTechnologies && entry?.slug ? (
+                    <Link
+                      to={technologyDetailPath(entry.slug)}
+                      className="underline-offset-2 hover:underline"
+                    >
+                      {technology.name}
+                    </Link>
+                  ) : (
+                    technology.name
+                  )}
                   {entry?.website ? (
                     <a
                       href={entry.website}
@@ -216,9 +229,11 @@ function CrawlChanges({
 function SnapshotDetectionTable({
   snapshot,
   catalog,
+  linkTechnologies,
 }: {
   snapshot: WebTechnologyCrawlSnapshot;
   catalog: TechnologyCatalog;
+  linkTechnologies: boolean;
 }) {
   return (
     <Table>
@@ -238,6 +253,7 @@ function SnapshotDetectionTable({
               <TechnologyLabel
                 name={detection.name}
                 entry={catalog[detection.name]}
+                linkToCatalog={linkTechnologies}
               />
             </TableCell>
             <TableCell className="max-w-64 whitespace-normal">
@@ -314,9 +330,13 @@ function SnapshotSummary({
 export function WebTechnologyHistorySection({
   history,
   catalog = {},
+  linkTechnologies = false,
 }: {
   history: CompanyWebTechnologyHistory;
   catalog?: TechnologyCatalog;
+  /** ADMIN pages only: technology names link to /admin/technologies/:slug
+   * when the catalog knows the slug. Public pages keep plain labels. */
+  linkTechnologies?: boolean;
 }) {
   const detectedLatest = history.technologies.filter(
     (technology) => technology.state === "detected_latest",
@@ -362,7 +382,11 @@ export function WebTechnologyHistorySection({
               </span>
             ) : null}
           </div>
-          <TechnologySummaryTable history={history} catalog={catalog} />
+          <TechnologySummaryTable
+            history={history}
+            catalog={catalog}
+            linkTechnologies={linkTechnologies}
+          />
         </CardContent>
       </Card>
 
@@ -398,6 +422,7 @@ export function WebTechnologyHistorySection({
                     <SnapshotDetectionTable
                       snapshot={snapshot}
                       catalog={catalog}
+                      linkTechnologies={linkTechnologies}
                     />
                   </div>
                 </AccordionContent>
