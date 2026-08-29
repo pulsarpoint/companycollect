@@ -3,7 +3,7 @@ import re
 import time
 from collections.abc import Callable, Iterator, Mapping, Sequence
 from concurrent.futures import ThreadPoolExecutor
-from dataclasses import dataclass, replace
+from dataclasses import dataclass
 from datetime import UTC, datetime
 from queue import Queue
 from threading import Event
@@ -25,9 +25,6 @@ RATSIT_BASE_URL = "https://www.ratsit.se"
 RATSIT_HARD_MAX_COMPANIES = 50_000
 RATSIT_MIN_REQUEST_INTERVAL_SECONDS = 2.0
 RATSIT_DEFAULT_PAGE_TIMEOUT_MS = 60_000
-RATSIT_DEFAULT_HTTP_429_MAX_ATTEMPTS = 4
-RATSIT_DEFAULT_HTTP_429_RETRY_BACKOFF_SECONDS = 30.0
-RATSIT_DEFAULT_HTTP_429_SLOWDOWN_MULTIPLIER = 1.5
 type RatsitBrowserWorkerName = Literal[
     "direct",
     "crawl_proxy1",
@@ -60,7 +57,6 @@ class RatsitCompanyReport:
     html_sha256: str
     report: JsonObject
     http_status: int = 200
-    attempt_count: int = 1
 
 
 @dataclass(frozen=True)
@@ -76,7 +72,6 @@ class RatsitCompanyFailure:
     http_status: int | None
     html_sha256: str | None
     diagnostic_html: bytes | None
-    attempt_count: int = 1
 
 
 @dataclass(frozen=True)
@@ -92,19 +87,11 @@ class RatsitCompanyNotFound:
     http_status: int
     html_sha256: str | None
     diagnostic_html: bytes | None
-    attempt_count: int = 1
 
 
 type RatsitCompanyResult = (
     RatsitCompanyReport | RatsitCompanyFailure | RatsitCompanyNotFound
 )
-
-
-@dataclass(frozen=True)
-class _RatsitQueuedCompany:
-    company_id: str
-    worker_index: int
-    attempt_count: int
 
 
 class SwedenRatsitBrowserResource(dg.ConfigurableResource):
@@ -115,11 +102,6 @@ class SwedenRatsitBrowserResource(dg.ConfigurableResource):
     max_companies: int = RATSIT_HARD_MAX_COMPANIES
     request_interval_seconds: float = RATSIT_MIN_REQUEST_INTERVAL_SECONDS
     page_timeout_ms: int = RATSIT_DEFAULT_PAGE_TIMEOUT_MS
-    http_429_max_attempts: int = RATSIT_DEFAULT_HTTP_429_MAX_ATTEMPTS
-    http_429_retry_backoff_seconds: float = (
-        RATSIT_DEFAULT_HTTP_429_RETRY_BACKOFF_SECONDS
-    )
-    http_429_slowdown_multiplier: float = RATSIT_DEFAULT_HTTP_429_SLOWDOWN_MULTIPLIER
     crawl_proxy1: str
     crawl_proxy2: str
     crawl_proxy3: str
@@ -140,15 +122,6 @@ class SwedenRatsitBrowserResource(dg.ConfigurableResource):
             )
         if self.page_timeout_ms <= 0:
             raise ValueError("page_timeout_ms must be positive")
-        if not 1 <= self.http_429_max_attempts <= RATSIT_BROWSER_WORKER_COUNT:
-            raise ValueError(
-                "http_429_max_attempts must be between 1 and "
-                f"{RATSIT_BROWSER_WORKER_COUNT}"
-            )
-        if self.http_429_retry_backoff_seconds <= 0:
-            raise ValueError("http_429_retry_backoff_seconds must be positive")
-        if self.http_429_slowdown_multiplier <= 1:
-            raise ValueError("http_429_slowdown_multiplier must be greater than 1")
         proxies = (self.crawl_proxy1, self.crawl_proxy2, self.crawl_proxy3)
         if any(proxy.strip() == "" for proxy in proxies):
             raise ValueError("all three Ratsit crawl proxies must be configured")
@@ -172,121 +145,17 @@ class SwedenRatsitBrowserResource(dg.ConfigurableResource):
         if not selected_company_ids:
             return
 
+        assignments = ratsit_round_robin_assignments(selected_company_ids)
         proxy_urls = (None, self.crawl_proxy1, self.crawl_proxy2, self.crawl_proxy3)
-        queued_companies = tuple(
-            _RatsitQueuedCompany(
-                company_id=company_id,
-                worker_index=company_index % RATSIT_BROWSER_WORKER_COUNT,
-                attempt_count=1,
+        active_workers = tuple(
+            (worker_name, proxy_url, worker_company_ids)
+            for (worker_name, worker_company_ids), proxy_url in zip(
+                assignments,
+                proxy_urls,
+                strict=True,
             )
-            for company_index, company_id in enumerate(selected_company_ids)
+            if worker_company_ids
         )
-        resolved_company_ids: list[str] = []
-
-        while queued_companies:
-            attempt_counts = {company.attempt_count for company in queued_companies}
-            if len(attempt_counts) != 1:
-                raise RuntimeError("Ratsit retry queue contains mixed attempt counts")
-            attempt_count = attempt_counts.pop()
-            if attempt_count > 1:
-                retry_backoff_seconds = self.http_429_retry_backoff_seconds * (
-                    self.http_429_slowdown_multiplier ** (attempt_count - 2)
-                )
-                sleep(retry_backoff_seconds)
-
-            worker_company_ids = tuple(
-                tuple(
-                    queued.company_id
-                    for queued in queued_companies
-                    if queued.worker_index == worker_index
-                )
-                for worker_index in range(RATSIT_BROWSER_WORKER_COUNT)
-            )
-            active_workers = tuple(
-                (worker_name, proxy_url, assigned_company_ids)
-                for worker_name, proxy_url, assigned_company_ids in zip(
-                    RATSIT_BROWSER_WORKER_NAMES,
-                    proxy_urls,
-                    worker_company_ids,
-                    strict=True,
-                )
-                if assigned_company_ids
-            )
-            queued_by_company_id = {
-                company.company_id: company for company in queued_companies
-            }
-            retry_company_ids: set[str] = set()
-            wave_result_company_ids: set[str] = set()
-            request_interval_seconds = self.request_interval_seconds * (
-                self.http_429_slowdown_multiplier ** (attempt_count - 1)
-            )
-
-            for result in self._iter_browser_wave(
-                active_workers,
-                request_interval_seconds=request_interval_seconds,
-                launcher=launcher,
-                monotonic=monotonic,
-                sleep=sleep,
-                now=now,
-            ):
-                if result.company_id in wave_result_company_ids:
-                    raise RuntimeError(
-                        "Ratsit browser workers returned a company more than once "
-                        "in one attempt"
-                    )
-                wave_result_company_ids.add(result.company_id)
-                result = replace(result, attempt_count=attempt_count)
-                if (
-                    isinstance(result, RatsitCompanyFailure)
-                    and result.http_status == 429
-                    and attempt_count < self.http_429_max_attempts
-                ):
-                    retry_company_ids.add(result.company_id)
-                    continue
-
-                resolved_company_ids.append(result.company_id)
-                yield result
-
-            if wave_result_company_ids != set(queued_by_company_id):
-                missing_company_ids = sorted(
-                    set(queued_by_company_id) - wave_result_company_ids
-                )
-                raise RuntimeError(
-                    "Ratsit browser workers did not return every queued company; "
-                    f"missing {', '.join(missing_company_ids[:5])}"
-                )
-
-            queued_companies = tuple(
-                _RatsitQueuedCompany(
-                    company_id=queued.company_id,
-                    worker_index=(
-                        (queued.worker_index + 1) % RATSIT_BROWSER_WORKER_COUNT
-                    ),
-                    attempt_count=queued.attempt_count + 1,
-                )
-                for queued in queued_companies
-                if queued.company_id in retry_company_ids
-            )
-
-        if len(resolved_company_ids) != len(selected_company_ids) or set(
-            resolved_company_ids
-        ) != set(selected_company_ids):
-            raise RuntimeError(
-                "Ratsit browser workers did not return each selected company exactly once"
-            )
-
-    def _iter_browser_wave(
-        self,
-        active_workers: tuple[
-            tuple[RatsitBrowserWorkerName, str | None, tuple[str, ...]], ...
-        ],
-        *,
-        request_interval_seconds: float,
-        launcher: Callable[..., Any],
-        monotonic: Callable[[], float],
-        sleep: Callable[[float], None],
-        now: Callable[[], datetime],
-    ) -> Iterator[RatsitCompanyResult]:
 
         events: Queue[RatsitCompanyResult | Exception | None] = Queue()
         stop_requested = Event()
@@ -300,7 +169,6 @@ class SwedenRatsitBrowserResource(dg.ConfigurableResource):
                     worker_company_ids,
                     worker_name=worker_name,
                     proxy_url=proxy_url,
-                    request_interval_seconds=request_interval_seconds,
                     launcher=launcher,
                     monotonic=monotonic,
                     sleep=sleep,
@@ -324,6 +192,7 @@ class SwedenRatsitBrowserResource(dg.ConfigurableResource):
             )
             completed_workers = 0
             worker_error: Exception | None = None
+            resolved_company_ids: list[str] = []
             try:
                 while completed_workers < len(active_workers):
                     event = events.get()
@@ -334,6 +203,7 @@ class SwedenRatsitBrowserResource(dg.ConfigurableResource):
                         worker_error = worker_error or event
                         continue
                     if worker_error is None:
+                        resolved_company_ids.append(event.company_id)
                         yield event
                 for future in futures:
                     future.result()
@@ -342,13 +212,19 @@ class SwedenRatsitBrowserResource(dg.ConfigurableResource):
             finally:
                 stop_requested.set()
 
+        if len(resolved_company_ids) != len(selected_company_ids) or set(
+            resolved_company_ids
+        ) != set(selected_company_ids):
+            raise RuntimeError(
+                "Ratsit browser workers did not return each selected company exactly once"
+            )
+
     def _iter_browser_reports(
         self,
         company_ids: tuple[str, ...],
         *,
         worker_name: RatsitBrowserWorkerName,
         proxy_url: str | None,
-        request_interval_seconds: float,
         launcher: Callable[..., Any],
         monotonic: Callable[[], float],
         sleep: Callable[[float], None],
@@ -373,7 +249,7 @@ class SwedenRatsitBrowserResource(dg.ConfigurableResource):
             for company_id in company_ids:
                 previous_request_started_at = _wait_for_request_slot(
                     previous_request_started_at,
-                    request_interval_seconds=request_interval_seconds,
+                    request_interval_seconds=self.request_interval_seconds,
                     monotonic=monotonic,
                     sleep=sleep,
                 )

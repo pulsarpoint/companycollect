@@ -30,6 +30,7 @@ from dagster_v3.defs.sweden_ratsit.assets import (
     ratsit_bucket_key,
     ratsit_result_object_key,
     select_ratsit_companies_for_scan,
+    se_ratsit_scan_dispatch,
     write_ratsit_scan,
 )
 from dagster_v3.defs.sweden_ratsit.parser import parse_company_page
@@ -250,6 +251,8 @@ class FakeRatsitResource:
     ) -> None:
         self.results = results
         self.requested_ids: tuple[str, ...] | None = None
+        self.headless = True
+        self.request_interval_seconds = 2.0
 
     def iter_company_reports(self, company_ids: tuple[str, ...]):
         self.requested_ids = company_ids
@@ -289,6 +292,32 @@ class FakeClickHouseResource:
     @contextmanager
     def get_connection(self):
         yield self.client
+
+
+class FakeDagsterInstance:
+    def __init__(self) -> None:
+        self.added_run_tags: list[tuple[str, dict[str, str]]] = []
+
+    def add_run_tags(self, run_id: str, tags: dict[str, str]) -> None:
+        self.added_run_tags.append((run_id, tags))
+
+
+class FakeDagsterLog:
+    def info(self, _message: str, *_args: object) -> None:
+        pass
+
+
+class FakeDagsterRun:
+    def __init__(self, run_id: str) -> None:
+        self.run_id = run_id
+
+
+class FakeRatsitAssetContext:
+    def __init__(self, *, partition_key: str, run_id: str) -> None:
+        self.partition_key = partition_key
+        self.run = FakeDagsterRun(run_id)
+        self.instance = FakeDagsterInstance()
+        self.log = FakeDagsterLog()
 
 
 def _stored_report_json(company_id: str) -> bytes:
@@ -437,118 +466,7 @@ def test_browser_resource_streams_all_four_round_robin_workers() -> None:
     assert all(browser.closed is True for browser in browsers.values())
 
 
-def test_browser_resource_requeues_429_on_next_route_after_backoff() -> None:
-    clock = FakeClock()
-    direct_browser = FakeBrowser(
-        FakePage(
-            [(429, ratsit_company_url("https://www.ratsit.se", COMPANY_ID), "")],
-            clock=clock,
-        )
-    )
-    proxy_browser = FakeBrowser(
-        FakePage([(200, COMPANY_URL, COMPANY_HTML)], clock=clock)
-    )
-    browsers = {
-        None: direct_browser,
-        TEST_PROXY_URLS[0]: proxy_browser,
-    }
-    launch_calls: list[dict[str, Any]] = []
-
-    def launcher(**kwargs: Any) -> FakeBrowser:
-        launch_calls.append(kwargs)
-        return browsers[kwargs["proxy"]]
-
-    results = list(
-        _ratsit_browser_resource().iter_company_reports(
-            (COMPANY_ID,),
-            launcher=launcher,
-            monotonic=clock.monotonic,
-            sleep=clock.sleep,
-            now=lambda: FETCHED_AT,
-        )
-    )
-
-    assert len(results) == 1
-    report = results[0]
-    assert isinstance(report, RatsitCompanyReport)
-    assert (report.proxy_name, report.attempt_count) == ("crawl_proxy1", 2)
-    assert [call["proxy"] for call in launch_calls] == [None, TEST_PROXY_URLS[0]]
-    assert clock.sleeps == [30.0]
-    assert direct_browser.closed is True
-    assert proxy_browser.closed is True
-
-
-def test_browser_resource_keeps_429_retry_queue_order_and_slows_requests() -> None:
-    company_ids = ROUND_ROBIN_COMPANY_IDS
-    clock = FakeClock()
-    initial_browsers: dict[str | None, FakeBrowser] = {}
-    for worker_index, proxy_url in enumerate((None, *TEST_PROXY_URLS)):
-        worker_company_ids = company_ids[worker_index::RATSIT_BROWSER_WORKER_COUNT]
-        pages = [
-            (
-                429 if proxy_url is None else 200,
-                f"https://www.ratsit.se/{company_id}-Test_Company",
-                COMPANY_HTML.replace(
-                    "556000-4615",
-                    f"{company_id[:6]}-{company_id[6:]}",
-                ),
-            )
-            for company_id in worker_company_ids
-        ]
-        initial_browsers[proxy_url] = FakeBrowser(FakePage(pages, clock=clock))
-
-    retry_page = FakePage(
-        [
-            (
-                200,
-                f"https://www.ratsit.se/{company_id}-Test_Company",
-                COMPANY_HTML.replace(
-                    "556000-4615",
-                    f"{company_id[:6]}-{company_id[6:]}",
-                ),
-            )
-            for company_id in (company_ids[0], company_ids[4])
-        ],
-        clock=clock,
-    )
-    browsers_by_proxy = {
-        None: [initial_browsers[None]],
-        TEST_PROXY_URLS[0]: [
-            initial_browsers[TEST_PROXY_URLS[0]],
-            FakeBrowser(retry_page),
-        ],
-        TEST_PROXY_URLS[1]: [initial_browsers[TEST_PROXY_URLS[1]]],
-        TEST_PROXY_URLS[2]: [initial_browsers[TEST_PROXY_URLS[2]]],
-    }
-
-    def launcher(**kwargs: Any) -> FakeBrowser:
-        return browsers_by_proxy[kwargs["proxy"]].pop(0)
-
-    results = list(
-        _ratsit_browser_resource().iter_company_reports(
-            company_ids,
-            launcher=launcher,
-            monotonic=clock.monotonic,
-            sleep=clock.sleep,
-            now=lambda: FETCHED_AT,
-        )
-    )
-
-    results_by_company = {result.company_id: result for result in results}
-    assert len(results_by_company) == len(company_ids)
-    assert [call["url"] for call in retry_page.goto_calls] == [
-        ratsit_company_url("https://www.ratsit.se", company_ids[0]),
-        ratsit_company_url("https://www.ratsit.se", company_ids[4]),
-    ]
-    assert retry_page.request_starts[1] - retry_page.request_starts[0] == 3.0
-    assert all(
-        results_by_company[company_id].attempt_count == 2
-        and results_by_company[company_id].proxy_name == "crawl_proxy1"
-        for company_id in (company_ids[0], company_ids[4])
-    )
-
-
-def test_browser_resource_returns_429_after_all_four_routes_are_exhausted() -> None:
+def test_browser_resource_returns_429_without_retrying_another_route() -> None:
     clock = FakeClock()
     launch_calls: list[dict[str, Any]] = []
 
@@ -570,33 +488,7 @@ def test_browser_resource_returns_429_after_all_four_routes_are_exhausted() -> N
     failure = results[0]
     assert isinstance(failure, RatsitCompanyFailure)
     assert failure.http_status == 429
-    assert (failure.proxy_name, failure.attempt_count) == ("crawl_proxy3", 4)
-    assert [call["proxy"] for call in launch_calls] == [None, *TEST_PROXY_URLS]
-    assert clock.sleeps == [30.0, 45.0, 67.5]
-
-
-def test_browser_resource_does_not_retry_non_429_http_failure() -> None:
-    clock = FakeClock()
-    launch_calls: list[dict[str, Any]] = []
-
-    def launcher(**kwargs: Any) -> FakeBrowser:
-        launch_calls.append(kwargs)
-        return FakeBrowser(FakePage([(500, COMPANY_URL, "")], clock=clock))
-
-    results = list(
-        _ratsit_browser_resource().iter_company_reports(
-            (COMPANY_ID,),
-            launcher=launcher,
-            monotonic=clock.monotonic,
-            sleep=clock.sleep,
-            now=lambda: FETCHED_AT,
-        )
-    )
-
-    assert len(results) == 1
-    failure = results[0]
-    assert isinstance(failure, RatsitCompanyFailure)
-    assert (failure.http_status, failure.attempt_count) == (500, 1)
+    assert failure.proxy_name == ""
     assert [call["proxy"] for call in launch_calls] == [None]
     assert clock.sleeps == []
 
@@ -1006,6 +898,86 @@ def test_ratsit_dispatch_and_normalized_table_assets_are_registered() -> None:
     assert "se_ratsit_pilot_reports_job" not in job_names
 
 
+def test_dispatch_persists_every_result_before_failing_a_rate_limited_bucket() -> None:
+    scan_id = "rate-limited-bucket"
+    rate_limited_company_id = "5560094178"
+    successful_company_id = "5560073495"
+    partition_key = ratsit_bucket_key(rate_limited_company_id)
+    assert ratsit_bucket_key(successful_company_id) == partition_key
+    context = FakeRatsitAssetContext(partition_key=partition_key, run_id=scan_id)
+    clickhouse_client = FakeClickHouseClient(
+        active_company_rows=[
+            (rate_limited_company_id,),
+            (successful_company_id,),
+        ]
+    )
+    clickhouse = FakeClickHouseResource(clickhouse_client)
+    object_store = FakeObjectStore()
+    rate_limited = RatsitCompanyFailure(
+        company_id=rate_limited_company_id,
+        connection_mode="direct",
+        proxy_name="",
+        requested_url=f"https://www.ratsit.se/{rate_limited_company_id}",
+        source_url=f"https://www.ratsit.se/{rate_limited_company_id}",
+        fetched_at=FETCHED_AT,
+        error_type="http",
+        message="Ratsit returned HTTP status 429",
+        http_status=429,
+        html_sha256=None,
+        diagnostic_html=None,
+    )
+    successful = RatsitCompanyReport(
+        company_id=successful_company_id,
+        connection_mode="proxy",
+        proxy_name="crawl_proxy1",
+        requested_url=f"https://www.ratsit.se/{successful_company_id}",
+        source_url=f"https://www.ratsit.se/{successful_company_id}-Test_AB",
+        fetched_at=FETCHED_AT,
+        html_sha256="a" * 64,
+        report={
+            "company": {
+                "name": "Test AB",
+                "organization_number": "556007-3495",
+            }
+        },
+    )
+
+    with pytest.raises(dg.Failure, match="completed with 1 HTTP 429") as exc_info:
+        se_ratsit_scan_dispatch.node_def.compute_fn.decorated_fn(
+            context,
+            clickhouse,
+            FakeRatsitResource([rate_limited, successful]),
+            object_store,
+        )
+
+    error_key = ratsit_result_object_key(
+        rate_limited_company_id,
+        scan_id,
+        "error.json",
+    )
+    report_key = ratsit_result_object_key(
+        successful_company_id,
+        scan_id,
+        "report.json",
+    )
+    assert error_key in object_store.objects
+    assert report_key in object_store.objects
+    insert_calls = [
+        (sql, parameters)
+        for sql, parameters in clickhouse_client.calls
+        if sql.lstrip().startswith("INSERT INTO corpscout.se_company_ratsit")
+    ]
+    assert len(insert_calls) == 1
+    assert len(insert_calls[0][1]) == 2
+    assert {row[8] for row in insert_calls[0][1]} == {200, 429}
+    assert context.instance.added_run_tags == [(scan_id, {"dagster/max_retries": "0"})]
+    failure = exc_info.value
+    assert failure.allow_retries is False
+    assert failure.metadata["http_429_count"].value == 1
+    assert failure.metadata["indexed_result_count"].value == 2
+    assert failure.metadata["bucket_status"].value == "failed_http_429"
+
+
 def test_scan_writes_run_scoped_results_and_keeps_diagnostic_html() -> None:
     report = RatsitCompanyReport(
         company_id=COMPANY_ID,
@@ -1029,7 +1001,6 @@ def test_scan_writes_run_scoped_results_and_keeps_diagnostic_html() -> None:
         http_status=200,
         html_sha256="b" * 64,
         diagnostic_html=b"<html>unexpected page</html>",
-        attempt_count=2,
     )
     object_store = FakeObjectStore()
     ratsit = FakeRatsitResource([parse_failure, report])
@@ -1058,7 +1029,6 @@ def test_scan_writes_run_scoped_results_and_keeps_diagnostic_html() -> None:
     error_payload = json.loads(object_store.objects[error_key])
     assert error_payload["error_type"] == "parse"
     assert error_payload["scan_id"] == "scan-run-1"
-    assert error_payload["attempt_count"] == 2
     assert gzip.decompress(object_store.objects[html_key]) == (
         b"<html>unexpected page</html>"
     )
@@ -1069,10 +1039,6 @@ def test_scan_writes_run_scoped_results_and_keeps_diagnostic_html() -> None:
     assert summary.diagnostic_html_count == 1
     assert summary.written_object_count == 3
     assert summary.reused_report_count == 0
-    assert summary.retried_company_count == 1
-    assert summary.retry_attempt_count == 1
-    assert summary.resolved_after_429_count == 1
-    assert summary.exhausted_429_count == 0
     assert summary.result_object_keys == (report_key, error_key)
     assert (summary.results[0].outcome, summary.results[0].failure_type) == (
         "success",
@@ -1100,11 +1066,6 @@ def test_scan_writes_run_scoped_results_and_keeps_diagnostic_html() -> None:
     assert progress[-1].total_count == 2
     assert progress[-1].success_count == 1
     assert progress[-1].failure_count == 1
-    assert progress[0].latest_attempt_count == 2
-    assert progress[-1].retried_company_count == 1
-    assert progress[-1].retry_attempt_count == 1
-    assert progress[-1].resolved_after_429_count == 1
-    assert progress[-1].exhausted_429_count == 0
 
 
 def test_scan_keeps_missing_company_redirect_html() -> None:

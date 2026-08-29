@@ -151,10 +151,6 @@ class RatsitScanSummary:
     reused_report_count: int
     diagnostic_html_count: int
     written_object_count: int
-    retried_company_count: int
-    retry_attempt_count: int
-    resolved_after_429_count: int
-    exhausted_429_count: int
 
     @property
     def result_object_keys(self) -> tuple[str, ...]:
@@ -169,11 +165,6 @@ class RatsitScanProgress:
     not_found_count: int
     failure_count: int
     reused_report_count: int
-    retried_company_count: int
-    retry_attempt_count: int
-    resolved_after_429_count: int
-    exhausted_429_count: int
-    latest_attempt_count: int
     latest_result: RatsitScanResult
 
 
@@ -433,16 +424,8 @@ def write_ratsit_scan(
     reused_report_count = 0
     diagnostic_html_count = 0
     written_object_count = 0
-    retried_company_count = 0
-    retry_attempt_count = 0
-    resolved_after_429_count = 0
-    exhausted_429_count = 0
 
-    def report_progress(
-        latest_result: RatsitScanResult,
-        *,
-        latest_attempt_count: int,
-    ) -> None:
+    def report_progress(latest_result: RatsitScanResult) -> None:
         on_progress(
             RatsitScanProgress(
                 total_count=len(company_ids),
@@ -451,11 +434,6 @@ def write_ratsit_scan(
                 not_found_count=not_found_count,
                 failure_count=failure_count,
                 reused_report_count=reused_report_count,
-                retried_company_count=retried_company_count,
-                retry_attempt_count=retry_attempt_count,
-                resolved_after_429_count=resolved_after_429_count,
-                exhausted_429_count=exhausted_429_count,
-                latest_attempt_count=latest_attempt_count,
                 latest_result=latest_result,
             )
         )
@@ -470,13 +448,6 @@ def write_ratsit_scan(
                 f"Ratsit browser returned company {result.company_id} more than once"
             )
         resolved_company_ids.add(result.company_id)
-        retry_attempt_count += result.attempt_count - 1
-        if result.attempt_count > 1:
-            retried_company_count += 1
-            if result.http_status != 429:
-                resolved_after_429_count += 1
-        if result.http_status == 429:
-            exhausted_429_count += 1
         if isinstance(result, RatsitCompanyReport):
             report_json = _report_json(result)
             report_sha256 = _sha256(report_json)
@@ -528,10 +499,7 @@ def write_ratsit_scan(
                 )
             )
             success_count += 1
-            report_progress(
-                scan_results[-1],
-                latest_attempt_count=result.attempt_count,
-            )
+            report_progress(scan_results[-1])
             continue
 
         if isinstance(result, RatsitCompanyNotFound):
@@ -598,10 +566,7 @@ def write_ratsit_scan(
                 error_message=error_message,
             )
         )
-        report_progress(
-            scan_results[-1],
-            latest_attempt_count=result.attempt_count,
-        )
+        report_progress(scan_results[-1])
 
     if resolved_company_ids != selected_company_ids:
         missing_company_ids = sorted(selected_company_ids - resolved_company_ids)
@@ -633,10 +598,6 @@ def write_ratsit_scan(
         reused_report_count=reused_report_count,
         diagnostic_html_count=diagnostic_html_count,
         written_object_count=written_object_count,
-        retried_company_count=retried_company_count,
-        retry_attempt_count=retry_attempt_count,
-        resolved_after_429_count=resolved_after_429_count,
-        exhausted_429_count=exhausted_429_count,
     )
 
 
@@ -841,7 +802,6 @@ def _error_json(failure: RatsitCompanyFailure, *, scan_id: str) -> str:
             "message": failure.message,
             "http_status": failure.http_status,
             "html_sha256": failure.html_sha256,
-            "attempt_count": failure.attempt_count,
         }
     )
 
@@ -861,7 +821,6 @@ def _not_found_json(result: RatsitCompanyNotFound, *, scan_id: str) -> str:
             "message": result.message,
             "http_status": result.http_status,
             "html_sha256": result.html_sha256,
-            "attempt_count": result.attempt_count,
         }
     )
 
@@ -904,11 +863,11 @@ def _require_aware_timestamp(value: datetime, *, label: str) -> None:
         "ClickHouse fetched_at or an existing valid S3 report's LastModified, "
         "then renders and parses its Ratsit pages with four parallel headless "
         "CloakBrowsers: one direct and three proxied. Each browser spaces request "
-        "starts by at least two seconds. HTTP 429 responses move to a bounded "
-        "retry queue, rotate to the next route, and use progressively slower "
-        "request spacing. Every company outcome is indexed by "
+        "starts by at least two seconds. Every company outcome is indexed by "
         "Dagster run ID in ClickHouse. Changed reports are written to per-company "
-        "run-ID keys; identical report hashes reuse the prior S3 object."
+        "run-ID keys; identical report hashes reuse the prior S3 object. A bucket "
+        "with any HTTP 429 outcomes is marked failed only after all selected "
+        "companies and result writes are complete."
     ),
 )
 def se_ratsit_scan_dispatch(
@@ -982,11 +941,9 @@ def se_ratsit_scan_dispatch(
         context.log.info(
             "Ratsit scan progress: partition=%s completed=%s/%s percent=%.1f "
             "success=%s not_found=%s failure=%s reused=%s "
-            "retried_companies=%s retry_attempts=%s resolved_after_429=%s "
-            "exhausted_429=%s "
             "rate_companies_per_minute=%.1f elapsed_seconds=%s eta_seconds=%s "
             "last_company_id=%s last_outcome=%s last_route=%s "
-            "last_http_status=%s last_failure_type=%s last_attempt=%s",
+            "last_http_status=%s last_failure_type=%s",
             partition_key,
             progress.completed_count,
             progress.total_count,
@@ -995,10 +952,6 @@ def se_ratsit_scan_dispatch(
             progress.not_found_count,
             progress.failure_count,
             progress.reused_report_count,
-            progress.retried_company_count,
-            progress.retry_attempt_count,
-            progress.resolved_after_429_count,
-            progress.exhausted_429_count,
             companies_per_minute,
             round(elapsed_seconds),
             round(eta_seconds),
@@ -1007,7 +960,6 @@ def se_ratsit_scan_dispatch(
             latest_result.proxy_name or "direct",
             latest_result.http_status,
             latest_result.failure_type,
-            progress.latest_attempt_count,
         )
         last_progress_logged_at = logged_at
 
@@ -1035,84 +987,74 @@ def se_ratsit_scan_dispatch(
 
     context.log.info(
         "Finished Ratsit scan: scan_id=%s successes=%s not_found=%s failures=%s "
-        "reused=%s objects_written=%s retried_companies=%s retry_attempts=%s "
-        "resolved_after_429=%s exhausted_429=%s",
+        "reused=%s objects_written=%s http_429s=%s",
         scan_id,
         summary.success_count,
         summary.not_found_count,
         summary.failure_count,
         summary.reused_report_count,
         summary.written_object_count,
-        summary.retried_company_count,
-        summary.retry_attempt_count,
-        summary.resolved_after_429_count,
-        summary.exhausted_429_count,
+        http_429_count,
     )
-    return dg.MaterializeResult(
-        metadata={
-            "scan_id": scan_id,
-            "partition_key": partition_key,
-            "hash_algorithm": "CRC32",
-            "hash_bucket_count": RATSIT_BUCKET_COUNT,
-            "active_company_count": len(selection.active_company_ids),
-            "freshness_window_days": RATSIT_SUCCESS_FRESHNESS.days,
-            "freshness_cutoff": selection.freshness_cutoff.isoformat(),
-            "skipped_recent_clickhouse_count": len(
-                selection.clickhouse_fresh_company_ids
+    materialization_metadata = {
+        "scan_id": scan_id,
+        "partition_key": partition_key,
+        "hash_algorithm": "CRC32",
+        "hash_bucket_count": RATSIT_BUCKET_COUNT,
+        "active_company_count": len(selection.active_company_ids),
+        "freshness_window_days": RATSIT_SUCCESS_FRESHNESS.days,
+        "freshness_cutoff": selection.freshness_cutoff.isoformat(),
+        "skipped_recent_clickhouse_count": len(selection.clickhouse_fresh_company_ids),
+        "skipped_recent_s3_count": len(selection.s3_fresh_company_ids),
+        "skipped_recent_total_count": (
+            len(selection.clickhouse_fresh_company_ids)
+            + len(selection.s3_fresh_company_ids)
+        ),
+        "selected_company_count": len(summary.selected_company_ids),
+        "first_company_id": (
+            summary.selected_company_ids[0] if summary.selected_company_ids else ""
+        ),
+        "last_company_id": (
+            summary.selected_company_ids[-1] if summary.selected_company_ids else ""
+        ),
+        "success_count": summary.success_count,
+        "not_found_count": summary.not_found_count,
+        "failure_count": summary.failure_count,
+        "reused_report_count": summary.reused_report_count,
+        "diagnostic_html_count": summary.diagnostic_html_count,
+        "written_object_count": summary.written_object_count,
+        "indexed_result_count": indexed_result_count,
+        "browser_assignment_counts": {
+            worker_name: len(assigned_company_ids)
+            for worker_name, assigned_company_ids in browser_assignments
+        },
+        "browser_worker_count": RATSIT_BROWSER_WORKER_COUNT,
+        "proxy_browser_count": RATSIT_BROWSER_WORKER_COUNT - 1,
+        "http_429_count": http_429_count,
+        "http_429_counts_by_route": http_429_counts_by_route,
+        "result_table": (f"{RATSIT_CLICKHOUSE_DATABASE}.{RATSIT_RESULT_TABLE}"),
+        "headless": sweden_ratsit_browser.headless,
+        "request_interval_seconds": (sweden_ratsit_browser.request_interval_seconds),
+        "effective_average_request_interval_seconds": (
+            sweden_ratsit_browser.request_interval_seconds / RATSIT_BROWSER_WORKER_COUNT
+        ),
+        "schema_version": RATSIT_SCHEMA_VERSION,
+        "parser_version": RATSIT_PARSER_VERSION,
+        "s3_bucket": RATSIT_S3_BUCKET,
+        "s3_prefix": f"{RATSIT_S3_PREFIX}/",
+        "bucket_status": "failed_http_429" if http_429_count > 0 else "success",
+    }
+    if http_429_count > 0:
+        context.instance.add_run_tags(scan_id, {"dagster/max_retries": "0"})
+        raise dg.Failure(
+            description=(
+                f"Ratsit bucket {partition_key} completed with {http_429_count} "
+                "HTTP 429 outcomes"
             ),
-            "skipped_recent_s3_count": len(selection.s3_fresh_company_ids),
-            "skipped_recent_total_count": (
-                len(selection.clickhouse_fresh_company_ids)
-                + len(selection.s3_fresh_company_ids)
-            ),
-            "selected_company_count": len(summary.selected_company_ids),
-            "first_company_id": (
-                summary.selected_company_ids[0] if summary.selected_company_ids else ""
-            ),
-            "last_company_id": (
-                summary.selected_company_ids[-1] if summary.selected_company_ids else ""
-            ),
-            "success_count": summary.success_count,
-            "not_found_count": summary.not_found_count,
-            "failure_count": summary.failure_count,
-            "reused_report_count": summary.reused_report_count,
-            "retried_company_count": summary.retried_company_count,
-            "retry_attempt_count": summary.retry_attempt_count,
-            "resolved_after_429_count": summary.resolved_after_429_count,
-            "exhausted_429_count": summary.exhausted_429_count,
-            "diagnostic_html_count": summary.diagnostic_html_count,
-            "written_object_count": summary.written_object_count,
-            "indexed_result_count": indexed_result_count,
-            "browser_assignment_counts": {
-                worker_name: len(assigned_company_ids)
-                for worker_name, assigned_company_ids in browser_assignments
-            },
-            "browser_worker_count": RATSIT_BROWSER_WORKER_COUNT,
-            "proxy_browser_count": RATSIT_BROWSER_WORKER_COUNT - 1,
-            "http_429_count": http_429_count,
-            "http_429_counts_by_route": http_429_counts_by_route,
-            "result_table": (f"{RATSIT_CLICKHOUSE_DATABASE}.{RATSIT_RESULT_TABLE}"),
-            "headless": sweden_ratsit_browser.headless,
-            "request_interval_seconds": (
-                sweden_ratsit_browser.request_interval_seconds
-            ),
-            "http_429_max_attempts": sweden_ratsit_browser.http_429_max_attempts,
-            "http_429_retry_backoff_seconds": (
-                sweden_ratsit_browser.http_429_retry_backoff_seconds
-            ),
-            "http_429_slowdown_multiplier": (
-                sweden_ratsit_browser.http_429_slowdown_multiplier
-            ),
-            "effective_average_request_interval_seconds": (
-                sweden_ratsit_browser.request_interval_seconds
-                / RATSIT_BROWSER_WORKER_COUNT
-            ),
-            "schema_version": RATSIT_SCHEMA_VERSION,
-            "parser_version": RATSIT_PARSER_VERSION,
-            "s3_bucket": RATSIT_S3_BUCKET,
-            "s3_prefix": f"{RATSIT_S3_PREFIX}/",
-        }
-    )
+            metadata=materialization_metadata,
+            allow_retries=False,
+        )
+    return dg.MaterializeResult(metadata=materialization_metadata)
 
 
 RATSIT_NORMALIZATION_DEPS = (
