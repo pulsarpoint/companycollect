@@ -22,7 +22,7 @@ import { SeCompanyHeader } from "~/components/admin/se-company-header";
 import { SeCompanyAddressTab } from "~/components/admin/se-company-address";
 import { SeCompanyContractsTab } from "~/components/admin/se-company-contracts";
 import { SeCompanyDomainsTab } from "~/components/admin/se-company-domains";
-import { SeCompanyJobsTab } from "~/components/admin/se-company-jobs";
+import { formatAdText, SeCompanyJobsTab } from "~/components/admin/se-company-jobs";
 import { SeCompanyListedTab } from "~/components/admin/se-company-listed";
 import { SeCompanyPeopleTab } from "~/components/admin/se-company-people";
 import { SeFinancialsView } from "~/components/financials/se-financials-view";
@@ -1024,6 +1024,37 @@ const adDetail: SeCompanyJobAdDetail = {
   ],
 };
 
+describe("formatAdText", () => {
+  it("splits Platsbanken plain text into headings, paragraphs and bullet lists", () => {
+    const blocks = formatAdText(
+      "Vi söker dig som vill utveckla polisens system.\n" +
+        "Vi erbjuder:\n" +
+        "●      Flexibla arbetstider.\n" +
+        "●      Friskvårdsbidrag på 4 000 kr.\n" +
+        "Arbetsbeskrivning\n" +
+        "Läs mer på https://polisen.se/jobb och ansök idag.",
+    );
+    expect(blocks).toEqual([
+      { kind: "paragraph", text: "Vi söker dig som vill utveckla polisens system." },
+      { kind: "heading", text: "Vi erbjuder:" },
+      {
+        kind: "list",
+        items: ["Flexibla arbetstider.", "Friskvårdsbidrag på 4 000 kr."],
+      },
+      { kind: "heading", text: "Arbetsbeskrivning" },
+      {
+        kind: "paragraph",
+        text: "Läs mer på https://polisen.se/jobb och ansök idag.",
+      },
+    ]);
+  });
+
+  it("treats long or sentence-ending lines as paragraphs, never headings", () => {
+    const blocks = formatAdText("Kort rad som slutar med punkt.");
+    expect(blocks[0].kind).toBe("paragraph");
+  });
+});
+
 describe("jobs tab", () => {
   it("shows headline, active period with estimated end, deadline and source", () => {
     const html = render(
@@ -1102,7 +1133,10 @@ describe("jobs tab", () => {
     expect(html).toContain("mailto:anna.ek@beijer.se");
     // The ad text renders as readable text, and the close link drops ?ad=.
     expect(html).toContain("Du säljer byggmaterial i butik.");
-    expect(html).toContain("whitespace-pre-line");
+    // The ad text renders as structured blocks: the short lead line becomes a
+    // heading, body lines paragraphs.
+    expect(html).toContain('class="mt-4 font-medium first:mt-0"');
+    expect(html).toContain("max-w-prose");
     expect(html).toContain(`href="${path}"`);
     // The selected row is marked.
     expect(html).toContain('data-state="selected"');

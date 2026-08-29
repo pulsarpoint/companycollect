@@ -58,6 +58,99 @@ export function normalizeAdText(text: string): string {
   return out.replace(/\n{3,}/g, "\n\n").trim();
 }
 
+export type AdTextBlock =
+  | { kind: "heading"; text: string }
+  | { kind: "paragraph"; text: string }
+  | { kind: "list"; items: string[] };
+
+const BULLET_RE = /^[●•▪◦*–-]\s+/;
+
+/** Platsbanken ad text is plain text with strong conventions: `●` bullet
+ * lines, short colon-ended lead-ins ("Vi erbjuder:") and short standalone
+ * heading lines ("Arbetsbeskrivning"). This turns the normalized text into
+ * renderable blocks so the ad reads like the original posting instead of a
+ * wall of lines. Conservative on purpose: anything unrecognized is a
+ * paragraph. */
+export function formatAdText(text: string): AdTextBlock[] {
+  const blocks: AdTextBlock[] = [];
+  let list: string[] | null = null;
+  const flushList = () => {
+    if (list !== null && list.length > 0) blocks.push({ kind: "list", items: list });
+    list = null;
+  };
+  for (const raw of normalizeAdText(text).split("\n")) {
+    const line = raw.trim();
+    if (line === "") {
+      flushList();
+      continue;
+    }
+    if (BULLET_RE.test(line)) {
+      (list ??= []).push(line.replace(BULLET_RE, "").trim());
+      continue;
+    }
+    flushList();
+    const isHeading =
+      line.length <= 60 &&
+      !/[.!?…]$/.test(line) &&
+      (/:$/.test(line) || (!line.includes(" http") && line.split(/\s+/).length <= 6));
+    blocks.push({ kind: isHeading ? "heading" : "paragraph", text: line });
+  }
+  flushList();
+  return blocks;
+}
+
+const URL_RE = /(https?:\/\/[^\s)]+)/g;
+
+/** Inline text with bare URLs turned into external links. */
+function AdInlineText({ text }: { text: string }) {
+  const parts = text.split(URL_RE);
+  return (
+    <>
+      {parts.map((part, index) =>
+        /^https?:\/\//.test(part) ? (
+          <a
+            key={index}
+            href={part}
+            target="_blank"
+            rel="noreferrer"
+            className="break-all underline underline-offset-2"
+          >
+            {part}
+          </a>
+        ) : (
+          <span key={index}>{part}</span>
+        ),
+      )}
+    </>
+  );
+}
+
+function AdTextBlocks({ blocks }: { blocks: AdTextBlock[] }) {
+  return (
+    <div className="max-w-prose space-y-2.5 text-sm leading-relaxed">
+      {blocks.map((block, index) =>
+        block.kind === "heading" ? (
+          <p key={index} className="mt-4 font-medium first:mt-0">
+            <AdInlineText text={block.text} />
+          </p>
+        ) : block.kind === "list" ? (
+          <ul key={index} className="list-disc space-y-1 pl-5">
+            {block.items.map((item, itemIndex) => (
+              <li key={itemIndex}>
+                <AdInlineText text={item} />
+              </li>
+            ))}
+          </ul>
+        ) : (
+          <p key={index}>
+            <AdInlineText text={block.text} />
+          </p>
+        ),
+      )}
+    </div>
+  );
+}
+
 /** Human wording for the verified requirement_type vocabulary; an unknown
  * value falls back to its own words instead of hiding. */
 const REQUIREMENT_TYPE_LABELS: Record<string, string> = {
@@ -297,13 +390,11 @@ function SeCompanyJobAdDetailCard({
           </div>
         )}
         {description === "" ? null : (
-          <div className="flex flex-col gap-1">
+          <div className="flex flex-col gap-2 border-t pt-4">
             <span className="text-muted-foreground text-xs font-medium tracking-wide uppercase">
               Ad text
             </span>
-            <p className="max-w-prose text-sm whitespace-pre-line">
-              {description}
-            </p>
+            <AdTextBlocks blocks={formatAdText(description)} />
           </div>
         )}
       </CardContent>
