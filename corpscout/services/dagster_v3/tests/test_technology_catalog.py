@@ -1,0 +1,362 @@
+"""Technology catalog: merge/slug/resolution units, icon sync, CH contract.
+
+No live network anywhere — the overlay fetcher and S3 client are injected
+fakes, and the extension layer is a fixture mini-bundle on disk.
+"""
+
+import json
+from datetime import UTC, datetime
+from pathlib import Path
+
+import pytest
+
+from dagster_v3.defs.technology_catalog import tables
+from dagster_v3.defs.technology_catalog.assets import build_rows
+from dagster_v3.defs.technology_catalog.catalog import (
+    CatalogLayer,
+    load_extension_layer,
+    merge_layers,
+    slugify,
+)
+from dagster_v3.defs.technology_catalog.icons import icon_ref, sync_icons
+from dagster_v3.defs.technology_catalog.source import overlay_raw_url
+
+MIGRATION = (
+    Path(__file__).resolve().parents[3]
+    / "clickhouse"
+    / "migrations"
+    / "000350_corpscout_technology_catalog.up.sql"
+).read_text()
+
+OVERLAY_SHA = "b0e1186877307b246769bdeab61f270b597f6886"
+
+
+def extension_layer() -> CatalogLayer:
+    return CatalogLayer(
+        technologies={
+            "Shared Tech": {
+                "cats": [1],
+                "description": "extension description",
+                "website": "https://extension.example",
+                "icon": "Shared Tech.svg",
+                "oss": True,
+            },
+            "Extension Only": {
+                "cats": [1, 2],
+                "description": "stays from the frozen layer",
+                "icon": "Extension Only.png",
+                "saas": True,
+                "pricing": ["freemium"],
+            },
+            "No Icon Tech": {"cats": [99]},
+        },
+        categories={
+            1: {"name": "CMS (extension)", "groups": [3]},
+            2: {"name": "Message boards", "groups": [3, 4]},
+        },
+        groups={3: "Content", 4: "Communication"},
+        source=tables.EXTENSION_SOURCE,
+        source_version=tables.EXTENSION_VERSION,
+    )
+
+
+def overlay_layer() -> CatalogLayer:
+    return CatalogLayer(
+        technologies={
+            "Shared Tech": {
+                "cats": [1],
+                "description": "overlay description",
+                "website": "https://overlay.example",
+                "icon": "Shared Tech.svg",
+                "saas": True,
+            },
+            "Overlay Only": {
+                "cats": [1],
+                "description": "new in the public catalog",
+                "icon": "Overlay Only.svg",
+            },
+        },
+        categories={1: {"name": "CMS (overlay)", "groups": [7]}},
+        groups={7: "Overlay Group"},
+        source=tables.OVERLAY_SOURCE,
+        source_version=OVERLAY_SHA,
+    )
+
+
+def merged_by_name():
+    merged = merge_layers(extension_layer(), overlay_layer())
+    return {technology.technology: technology for technology in merged}
+
+
+def test_slugify_rules():
+    assert slugify("Google Analytics") == "google-analytics"
+    assert slugify("1C-Bitrix") == "1c-bitrix"
+    assert slugify("Node.js") == "node-js"
+    assert slugify("  --Weird__Name!!") == "weird-name"
+    assert slugify("ALL CAPS") == "all-caps"
+    # Stable: same input, same output.
+    assert slugify("Node.js") == slugify("Node.js")
+
+
+def test_overlay_wins_for_shared_name():
+    shared = merged_by_name()["Shared Tech"]
+    assert shared.description == "overlay description"
+    assert shared.website == "https://overlay.example"
+    assert shared.saas is True
+    assert shared.oss is False  # the extension's oss flag does not bleed through
+    assert shared.source == tables.OVERLAY_SOURCE
+    assert shared.source_version == OVERLAY_SHA
+
+
+def test_extension_only_name_survives():
+    extension_only = merged_by_name()["Extension Only"]
+    assert extension_only.source == tables.EXTENSION_SOURCE
+    assert extension_only.source_version == tables.EXTENSION_VERSION
+    assert extension_only.pricing == ("freemium",)
+    assert extension_only.saas is True
+
+
+def test_overlay_only_name_included():
+    assert merged_by_name()["Overlay Only"].source == tables.OVERLAY_SOURCE
+
+
+def test_categories_resolved_via_owning_layer():
+    merged = merged_by_name()
+    # Category id 1 exists in both layers with different names; each row must
+    # resolve through the layer it came from.
+    assert merged["Shared Tech"].categories == ("CMS (overlay)",)
+    assert merged["Shared Tech"].groups == ("Overlay Group",)
+    assert merged["Extension Only"].categories == ("CMS (extension)", "Message boards")
+    assert merged["Extension Only"].groups == ("Content", "Communication")
+
+
+def test_unknown_category_id_keeps_id_without_name():
+    no_icon = merged_by_name()["No Icon Tech"]
+    assert no_icon.category_ids == (99,)
+    assert no_icon.categories == ()
+    assert no_icon.groups == ()
+
+
+def test_merge_is_sorted_by_name():
+    names = [t.technology for t in merge_layers(extension_layer(), overlay_layer())]
+    assert names == sorted(names)
+
+
+def test_icon_ref_key_and_content_type():
+    svg = icon_ref("shared-tech", "Shared Tech.svg")
+    assert svg.object_key == "icons/shared-tech.svg"
+    assert svg.content_type == "image/svg+xml"
+    png = icon_ref("extension-only", "Extension Only.PNG")
+    assert png.object_key == "icons/extension-only.png"
+    assert png.content_type == "image/png"
+
+
+def test_overlay_raw_url_is_pinned_to_commit():
+    assert (
+        overlay_raw_url(OVERLAY_SHA, "src/categories.json")
+        == "https://raw.githubusercontent.com/enthec/webappanalyzer/"
+        f"{OVERLAY_SHA}/src/categories.json"
+    )
+
+
+class FakeIconBucket:
+    def __init__(self):
+        self.objects: dict[str, tuple[bytes, str]] = {}
+        self.puts = 0
+        self.heads = 0
+
+    def head_object(self, *, Bucket: str, Key: str):
+        self.heads += 1
+        if Key not in self.objects:
+            error = Exception("missing")
+            error.response = {"Error": {"Code": "404"}}  # type: ignore[attr-defined]
+            raise error
+        return {"ContentLength": len(self.objects[Key][0])}
+
+    def put_object(self, *, Bucket: str, Key: str, Body: bytes, ContentType: str):
+        self.puts += 1
+        self.objects[Key] = (Body, ContentType)
+
+
+@pytest.fixture
+def bundle_icons(tmp_path: Path) -> Path:
+    icons_dir = tmp_path / "images" / "icons"
+    icons_dir.mkdir(parents=True)
+    (icons_dir / "Shared Tech.svg").write_bytes(b"<svg>shared</svg>")
+    (icons_dir / "Extension Only.png").write_bytes(b"png-bytes")
+    return icons_dir
+
+
+def run_sync(bundle_icons: Path, bucket: FakeIconBucket, fetched: list[str]):
+    def fake_fetch(filename: str) -> bytes | None:
+        fetched.append(filename)
+        if filename == "Overlay Only.svg":
+            return b"<svg>overlay</svg>"
+        return None
+
+    return sync_icons(
+        merge_layers(extension_layer(), overlay_layer()),
+        bundle_icons_dir=bundle_icons,
+        s3_client=bucket,
+        bucket=tables.ICON_BUCKET,
+        fetch_overlay_icon=fake_fetch,
+    )
+
+
+def test_sync_icons_uploads_and_sources_correct_layers(bundle_icons: Path):
+    bucket = FakeIconBucket()
+    fetched: list[str] = []
+    result = run_sync(bundle_icons, bucket, fetched)
+
+    # "Shared Tech" wins from the overlay but its icon file exists locally
+    # under the identical name, so it must NOT be fetched from GitHub.
+    assert fetched == ["Overlay Only.svg"]
+    assert result.overlay_fetches == 1
+    assert result.uploaded == 3
+    assert result.skipped == 0
+    assert result.missing == 1  # No Icon Tech carries no icon filename
+
+    assert bucket.objects["icons/shared-tech.svg"] == (
+        b"<svg>shared</svg>",
+        "image/svg+xml",
+    )
+    assert bucket.objects["icons/extension-only.png"] == (b"png-bytes", "image/png")
+    assert bucket.objects["icons/overlay-only.svg"] == (
+        b"<svg>overlay</svg>",
+        "image/svg+xml",
+    )
+    assert result.refs["Extension Only"].object_key == "icons/extension-only.png"
+    assert "No Icon Tech" not in result.refs
+
+
+def test_sync_icons_second_run_skips_existing_same_size(bundle_icons: Path):
+    bucket = FakeIconBucket()
+    run_sync(bundle_icons, bucket, [])
+    first_puts = bucket.puts
+    result = run_sync(bundle_icons, bucket, [])
+    assert bucket.puts == first_puts  # nothing re-uploaded
+    assert result.uploaded == 0
+    assert result.skipped == 3
+    # The rows still carry the keys even when every upload was skipped.
+    assert result.refs["Shared Tech"].object_key == "icons/shared-tech.svg"
+
+
+def test_sync_icons_reuploads_when_size_differs(bundle_icons: Path):
+    bucket = FakeIconBucket()
+    run_sync(bundle_icons, bucket, [])
+    bucket.objects["icons/shared-tech.svg"] = (b"stale", "image/svg+xml")
+    result = run_sync(bundle_icons, bucket, [])
+    assert result.uploaded == 1
+    assert result.skipped == 2
+    assert bucket.objects["icons/shared-tech.svg"][0] == b"<svg>shared</svg>"
+
+
+def test_sync_icons_missing_everywhere_yields_no_ref(bundle_icons: Path):
+    (bundle_icons / "Overlay Only.svg").unlink(missing_ok=True)
+
+    bucket = FakeIconBucket()
+
+    def fetch_nothing(filename: str) -> bytes | None:
+        return None
+
+    result = sync_icons(
+        merge_layers(extension_layer(), overlay_layer()),
+        bundle_icons_dir=bundle_icons,
+        s3_client=bucket,
+        bucket=tables.ICON_BUCKET,
+        fetch_overlay_icon=fetch_nothing,
+    )
+    assert "Overlay Only" not in result.refs
+    assert result.missing == 2  # Overlay Only (404) + No Icon Tech (no filename)
+
+
+def test_build_rows_match_column_contract(bundle_icons: Path):
+    merged = merge_layers(extension_layer(), overlay_layer())
+    bucket = FakeIconBucket()
+    result = run_sync(bundle_icons, bucket, [])
+    rows = build_rows(
+        merged,
+        result,
+        source_run_id="run-1",
+        updated_at=datetime.now(UTC).replace(tzinfo=None),
+    )
+    assert len(rows) == len(merged)
+    columns = tables.TECHNOLOGY_CATALOG_COLUMNS
+    for row in rows:
+        assert len(row) == len(columns)
+    by_name = {row[0]: dict(zip(columns, row, strict=True)) for row in rows}
+    shared = by_name["Shared Tech"]
+    assert shared["slug"] == "shared-tech"
+    assert shared["icon_object_key"] == "icons/shared-tech.svg"
+    assert shared["icon_content_type"] == "image/svg+xml"
+    assert shared["saas"] == 1
+    assert shared["oss"] == 0
+    assert shared["source"] == tables.OVERLAY_SOURCE
+    assert shared["source_version"] == OVERLAY_SHA
+    assert shared["source_run_id"] == "run-1"
+    no_icon = by_name["No Icon Tech"]
+    assert no_icon["icon_object_key"] == ""
+    assert no_icon["icon_content_type"] == ""
+
+
+def test_load_extension_layer_reads_letter_files(tmp_path: Path):
+    technologies = tmp_path / "technologies"
+    technologies.mkdir()
+    for letter in ["_", *"abcdefghijklmnopqrstuvwxyz"]:
+        (technologies / f"{letter}.json").write_text("{}")
+    (technologies / "s.json").write_text(
+        json.dumps({"Some Tech": {"cats": [1], "icon": "Some Tech.svg"}})
+    )
+    (tmp_path / "categories.json").write_text(
+        json.dumps({"1": {"name": "CMS", "groups": [3], "priority": 1}})
+    )
+    (tmp_path / "groups.json").write_text(json.dumps({"3": {"name": "Content"}}))
+
+    layer = load_extension_layer(tmp_path)
+    assert layer.source == tables.EXTENSION_SOURCE
+    assert layer.source_version == tables.EXTENSION_VERSION
+    assert layer.technologies["Some Tech"]["icon"] == "Some Tech.svg"
+    assert layer.categories[1]["name"] == "CMS"
+    assert layer.groups[3] == "Content"
+
+
+def test_load_extension_layer_missing_dir_names_the_override():
+    with pytest.raises(FileNotFoundError, match="TECHNOLOGY_CATALOG_EXTENSION_DIR"):
+        load_extension_layer(Path("/nonexistent/technology-catalog-bundle"))
+
+
+# --- ClickHouse contract: migration 000350 owns the schema -------------------
+
+
+def test_migration_creates_the_table():
+    assert (
+        f"CREATE TABLE IF NOT EXISTS corpscout.{tables.TECHNOLOGY_CATALOG_TABLE}"
+        in MIGRATION
+    )
+
+
+def test_export_columns_match_migration():
+    for column in tables.TECHNOLOGY_CATALOG_COLUMNS:
+        assert f"    {column} " in MIGRATION, f"missing {column} in migration"
+
+
+def test_export_columns_are_unique_and_ordered():
+    columns = tables.TECHNOLOGY_CATALOG_COLUMNS
+    assert len(columns) == len(set(columns))
+    assert columns[0] == "technology"
+    assert columns[1] == "slug"
+    assert columns[-2:] == ("source_run_id", "updated_at")
+    # Every column the migration declares is exported: the count must match
+    # the number of column definition lines in the CREATE TABLE.
+    declared = [
+        line
+        for line in MIGRATION.splitlines()
+        if line.startswith("    ") and not line.lstrip().startswith("--")
+    ]
+    assert len(declared) == len(columns)
+
+
+def test_row_floor_guards_the_extension_baseline():
+    # 7,278 technologies ship in the extension bundle alone; the floor must
+    # stay high enough to catch a half-broken merge.
+    assert tables.MIN_TECHNOLOGY_CATALOG_ROWS == 5_000

@@ -1,0 +1,49 @@
+"""Names and contracts for the technology catalog publish.
+
+The ClickHouse schema is owned by migration 000350; the column order here is
+the insert contract with that migration and is pinned by
+tests/test_technology_catalog.py.
+"""
+
+TECHNOLOGY_CATALOG_TABLE = "technology_catalog"
+
+TECHNOLOGY_CATALOG_TABLES = (TECHNOLOGY_CATALOG_TABLE,)
+
+# Column order is the contract with migration 000350.
+TECHNOLOGY_CATALOG_COLUMNS = (
+    "technology",
+    "slug",
+    "description",
+    "website",
+    "category_ids",
+    "categories",
+    "groups",
+    "icon_object_key",
+    "icon_content_type",
+    "saas",
+    "oss",
+    "pricing",
+    "source",
+    "source_version",
+    "source_run_id",
+    "updated_at",
+)
+
+# The frozen extension bundle alone carries 7,278 technologies and the overlay
+# only ever adds names, so a result below this floor means a broken merge or a
+# truncated fetch, never a legitimate catalog. Refuse to swap rather than
+# shrink the table the technology pages read.
+MIN_TECHNOLOGY_CATALOG_ROWS = 5_000
+
+# Dedicated bucket for technology icons. This module creates it if absent and
+# only ever adds objects to it; no other bucket is touched.
+ICON_BUCKET = "technology-icons"
+ICON_KEY_PREFIX = "icons/"
+
+# The vendored Wappalyzer extension bundle (frozen bootstrap layer).
+EXTENSION_SOURCE = "extension-6.12.5"
+EXTENSION_VERSION = "6.12.5"
+
+# The maintained public continuation of the wappalyzer catalog (weekly
+# overlay). source_version for these rows is the pinned git commit SHA.
+OVERLAY_SOURCE = "webappanalyzer"
