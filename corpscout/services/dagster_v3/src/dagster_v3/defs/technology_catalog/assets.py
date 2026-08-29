@@ -200,9 +200,67 @@ def _replace_catalog(clickhouse: ClickhouseResource, rows: list[tuple]) -> int:
     return row_count
 
 
+@dg.asset(
+    name="technology_adoption_clickhouse",
+    deps=[dg.AssetKey("technology_catalog_clickhouse")],
+    group_name=GROUP_NAME,
+    kinds={"clickhouse", "sql"},
+    description=(
+        "Global adoption rollup: distinct crawled root domains per technology "
+        "(corpscout.technology_adoption, migration 000351). One GROUP BY pass "
+        "over commoncrawl_page_technologies -- `technology` sits last in that "
+        "table's sort key, so live per-technology counts scan all ~10.6B rows "
+        "(6-26s each, measured 2026-08-29); this rollup is what makes the "
+        "number affordable on the technology pages."
+    ),
+)
+def technology_adoption_clickhouse(
+    context: AssetExecutionContext,
+    clickhouse: ClickhouseResource,
+) -> dg.MaterializeResult:
+    assert_clickhouse_tables_exist(
+        clickhouse,
+        database=RESOLVED_DATABASE,
+        tables=("technology_adoption",),
+    )
+    qualified = f"`{RESOLVED_DATABASE}`.`technology_adoption`"
+    stage = f"`{RESOLVED_DATABASE}`.`_tmp_technology_adoption_{uuid.uuid4().hex}`"
+    computed_at = datetime.now(UTC).replace(tzinfo=None)
+    with clickhouse.get_connection() as client:
+        try:
+            client.execute(f"CREATE TABLE {stage} AS {qualified}")
+            client.execute(
+                f"""INSERT INTO {stage} (technology, domain_count, computed_at)
+SELECT technology, uniqExact(root_domain), %(computed_at)s
+FROM `{RESOLVED_DATABASE}`.`commoncrawl_page_technologies`
+GROUP BY technology""",
+                {"computed_at": computed_at},
+                # The scan is the cost, not the 4.6k aggregate states; spill
+                # settings + the memory cap keep it inside the shared budget
+                # (same bounds the serving view and company_markets use).
+                settings={
+                    "max_bytes_before_external_group_by": 8 * 1024**3,
+                    "max_memory_usage": 12 * 1024**3,
+                },
+            )
+            rows = int(client.execute(f"SELECT count() FROM {stage}")[0][0])
+            if rows < 1000:
+                raise ValueError(
+                    f"technology_adoption produced {rows} rows -- the detector "
+                    "vocabulary is ~4.6k names, a short result is a broken scan"
+                )
+            client.execute(f"EXCHANGE TABLES {stage} AND {qualified}")
+        finally:
+            client.execute(f"DROP TABLE IF EXISTS {stage}")
+    context.log.info("technology_adoption: %d rows", rows)
+    return dg.MaterializeResult(metadata={"rows": rows})
+
+
 technology_catalog_job = dg.define_asset_job(
     name="technology_catalog_job",
-    selection=dg.AssetSelection.assets(technology_catalog_clickhouse),
+    selection=dg.AssetSelection.assets(
+        technology_catalog_clickhouse, technology_adoption_clickhouse
+    ),
 )
 
 # Sunday 05:20 UTC — staggered minute unused by any other source. STOPPED by
@@ -216,7 +274,7 @@ technology_catalog_weekly = dg.ScheduleDefinition(
 )
 
 defs = dg.Definitions(
-    assets=[technology_catalog_clickhouse],
+    assets=[technology_catalog_clickhouse, technology_adoption_clickhouse],
     jobs=[technology_catalog_job],
     schedules=[technology_catalog_weekly],
     resources={

@@ -360,6 +360,7 @@ EXPECTED_MIGRATIONS = (
     "000348_corpscout_drop_serving_retired_v2",
     "000349_corpscout_se_company_ratsit_partition_ids",
     "000350_corpscout_technology_catalog",
+    "000351_corpscout_technology_adoption",
 )
 
 NOOP_MIGRATIONS = {"000276_noop"}
