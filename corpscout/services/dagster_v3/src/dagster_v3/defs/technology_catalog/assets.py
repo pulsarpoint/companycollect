@@ -379,8 +379,12 @@ SELECT
     signals.harmonic_rank,
     %(computed_at)s
 FROM (
-    SELECT DISTINCT technology, root_domain
+    -- GROUP BY, deliberately NOT DISTINCT: plain DISTINCT's hash set ignores
+    -- max_bytes_before_external_group_by and OOMed on a ~1B-pair arena
+    -- (Code 241, 8 GiB single chunk); GROUP BY spills to disk.
+    SELECT technology, root_domain
     FROM `{RESOLVED_DATABASE}`.`commoncrawl_page_technologies`
+    GROUP BY technology, root_domain
 ) AS pairs
 INNER JOIN (
     SELECT root_domain, harmonic_centrality, harmonic_rank
