@@ -22,6 +22,10 @@ import {
 import type { FinancialReportDocumentSummary } from "~/lib/norway-financial-reports";
 import { getNorwayFinancialReports } from "~/lib/norway-financial-reports.server";
 import {
+  loadTechnologyCatalogEntries,
+  type TechnologyCatalogEntry,
+} from "~/lib/technology-catalog.server";
+import {
   buildWebTechnologyHistory,
   type CompanyWebTechnologyHistory,
   type WebTechnologyCrawlCoverage,
@@ -797,6 +801,8 @@ export interface CompanyTechnologyDetail {
   domains: DomainRow[];
   selectedDomain: string;
   webTechnologyHistory: CompanyWebTechnologyHistory | null;
+  /** Catalog entries (icon/description/website) for every technology shown. */
+  technologyCatalog: Record<string, TechnologyCatalogEntry>;
 }
 
 export async function getCompanyDomains(
@@ -919,10 +925,19 @@ export async function getCompanyTechnologyDetail(
   const webTechnologyHistory = selectedDomain
     ? await getCompanyWebTechnologyHistory(selectedDomain.domain)
     : null;
+  // Every name a technology page renders (summary rows, snapshot detections,
+  // newly/no-longer-detected badges) appears in the summary list, so one batch
+  // lookup covers the whole page.
+  const technologyCatalog = webTechnologyHistory
+    ? await loadTechnologyCatalogEntries(
+        webTechnologyHistory.technologies.map((technology) => technology.name),
+      )
+    : {};
   return {
     domains,
     selectedDomain: selectedDomain?.domain ?? "",
     webTechnologyHistory,
+    technologyCatalog,
   };
 }
 

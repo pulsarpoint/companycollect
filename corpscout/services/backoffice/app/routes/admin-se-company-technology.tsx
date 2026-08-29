@@ -26,7 +26,8 @@ export async function loader({ params, request }: Route.LoaderArgs) {
 export default function AdminSwedenCompanyTechnology({
   loaderData,
 }: Route.ComponentProps) {
-  const { domains, selectedDomain, webTechnologyHistory } = loaderData;
+  const { domains, selectedDomain, webTechnologyHistory, technologyCatalog } =
+    loaderData;
 
   if (domains.length === 0) {
     return <SeCompanyTechnologyNoDomains />;
@@ -39,7 +40,10 @@ export default function AdminSwedenCompanyTechnology({
         selectedDomain={selectedDomain}
       />
       {webTechnologyHistory?.technologies.length ? (
-        <WebTechnologyHistorySection history={webTechnologyHistory} />
+        <WebTechnologyHistorySection
+          history={webTechnologyHistory}
+          catalog={technologyCatalog}
+        />
       ) : null}
     </div>
   );

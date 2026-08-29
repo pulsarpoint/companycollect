@@ -81,6 +81,9 @@ export default [
     // Old bookmarks: /financials/country/:c still lands on the country page.
     route("financials/country/:country", "routes/financials-country.tsx"),
   ]),
+  // Not a page: streams technology-catalog icons from the object store. The
+  // browser only ever sees this URL — bucket and credentials stay server-side.
+  route("icons/tech/:slug", "routes/tech-icon.ts"),
   route("admin", "routes/admin-layout.tsx", [
     index("routes/admin-index.tsx"),
     route("esef", "routes/admin-esef.tsx"),

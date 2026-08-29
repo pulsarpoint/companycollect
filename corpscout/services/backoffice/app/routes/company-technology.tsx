@@ -37,6 +37,7 @@ export default function CompanyTechnology({
       {loaderData.webTechnologyHistory?.technologies.length ? (
         <WebTechnologyHistorySection
           history={loaderData.webTechnologyHistory}
+          catalog={loaderData.technologyCatalog}
         />
       ) : null}
     </div>

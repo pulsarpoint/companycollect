@@ -768,6 +768,7 @@ describe("technology tab", () => {
           domains: [techDomain],
           selectedDomain: techDomain.domain,
           webTechnologyHistory: null,
+          technologyCatalog: {},
         })}
       />,
       adminTechnologyBase,
@@ -806,6 +807,7 @@ describe("technology tab", () => {
           domains: [techDomain],
           selectedDomain: techDomain.domain,
           webTechnologyHistory: history,
+          technologyCatalog: {},
         })}
       />,
       adminTechnologyBase,
@@ -823,6 +825,7 @@ describe("technology tab", () => {
           domains: [],
           selectedDomain: "",
           webTechnologyHistory: null,
+          technologyCatalog: {},
         })}
       />,
       adminTechnologyBase,

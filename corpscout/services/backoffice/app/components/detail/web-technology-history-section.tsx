@@ -21,10 +21,26 @@ import {
   TableHeader,
   TableRow,
 } from "~/components/ui/table";
+import {
+  TechnologyIcon,
+  TechnologyLabel,
+} from "~/components/detail/technology-label";
+import type { TechnologyCatalogEntry } from "~/lib/technology-catalog.server";
 import type {
   CompanyWebTechnologyHistory,
   WebTechnologyCrawlSnapshot,
 } from "~/lib/web-technology-history";
+
+/** Detector name -> catalog entry (icon, description, website). */
+export type TechnologyCatalog = Record<string, TechnologyCatalogEntry>;
+
+function websiteHostname(website: string): string {
+  try {
+    return new URL(website).hostname.replace(/^www\./, "");
+  } catch {
+    return website;
+  }
+}
 
 const numberFormat = new Intl.NumberFormat("en-US");
 const dateFormat = new Intl.DateTimeFormat("en-GB", {
@@ -53,8 +69,10 @@ function TechnologyStateBadge({
 
 function TechnologySummaryTable({
   history,
+  catalog,
 }: {
   history: CompanyWebTechnologyHistory;
+  catalog: TechnologyCatalog;
 }) {
   return (
     <Table>
@@ -67,11 +85,31 @@ function TechnologySummaryTable({
         </TableRow>
       </TableHeader>
       <TableBody>
-        {history.technologies.map((technology) => (
+        {history.technologies.map((technology) => {
+          const entry = catalog[technology.name];
+          return (
           <TableRow key={technology.name}>
-            <TableCell>
+            <TableCell className="max-w-md whitespace-normal">
               <div className="flex flex-col gap-1">
-                <span className="font-medium">{technology.name}</span>
+                <span className="flex items-center gap-1.5 font-medium">
+                  <TechnologyIcon name={technology.name} entry={entry} />
+                  {technology.name}
+                  {entry?.website ? (
+                    <a
+                      href={entry.website}
+                      target="_blank"
+                      rel="noreferrer"
+                      className="text-muted-foreground text-xs font-normal underline underline-offset-2"
+                    >
+                      {websiteHostname(entry.website)}
+                    </a>
+                  ) : null}
+                </span>
+                {entry?.description ? (
+                  <span className="text-muted-foreground line-clamp-2 text-xs">
+                    {entry.description}
+                  </span>
+                ) : null}
                 {technology.versions.length ? (
                   <span className="text-muted-foreground text-xs">
                     Version{technology.versions.length === 1 ? "" : "s"}{" "}
@@ -102,13 +140,20 @@ function TechnologySummaryTable({
               last detection
             </TableCell>
           </TableRow>
-        ))}
+          );
+        })}
       </TableBody>
     </Table>
   );
 }
 
-function CrawlChanges({ snapshot }: { snapshot: WebTechnologyCrawlSnapshot }) {
+function CrawlChanges({
+  snapshot,
+  catalog,
+}: {
+  snapshot: WebTechnologyCrawlSnapshot;
+  catalog: TechnologyCatalog;
+}) {
   const hasChanges =
     snapshot.newlyDetected.length > 0 || snapshot.noLongerDetected.length > 0;
 
@@ -129,7 +174,12 @@ function CrawlChanges({ snapshot }: { snapshot: WebTechnologyCrawlSnapshot }) {
         <div className="flex flex-wrap gap-1.5">
           {snapshot.newlyDetected.length ? (
             snapshot.newlyDetected.map((technology) => (
-              <Badge key={technology} variant="secondary">
+              <Badge
+                key={technology}
+                variant="secondary"
+                title={catalog[technology]?.description || undefined}
+              >
+                <TechnologyIcon name={technology} entry={catalog[technology]} />
                 {technology}
               </Badge>
             ))
@@ -145,7 +195,12 @@ function CrawlChanges({ snapshot }: { snapshot: WebTechnologyCrawlSnapshot }) {
         <div className="flex flex-wrap gap-1.5">
           {snapshot.noLongerDetected.length ? (
             snapshot.noLongerDetected.map((technology) => (
-              <Badge key={technology} variant="outline">
+              <Badge
+                key={technology}
+                variant="outline"
+                title={catalog[technology]?.description || undefined}
+              >
+                <TechnologyIcon name={technology} entry={catalog[technology]} />
                 {technology}
               </Badge>
             ))
@@ -160,8 +215,10 @@ function CrawlChanges({ snapshot }: { snapshot: WebTechnologyCrawlSnapshot }) {
 
 function SnapshotDetectionTable({
   snapshot,
+  catalog,
 }: {
   snapshot: WebTechnologyCrawlSnapshot;
+  catalog: TechnologyCatalog;
 }) {
   return (
     <Table>
@@ -177,7 +234,12 @@ function SnapshotDetectionTable({
       <TableBody>
         {snapshot.detections.map((detection) => (
           <TableRow key={detection.name}>
-            <TableCell className="font-medium">{detection.name}</TableCell>
+            <TableCell className="font-medium">
+              <TechnologyLabel
+                name={detection.name}
+                entry={catalog[detection.name]}
+              />
+            </TableCell>
             <TableCell className="max-w-64 whitespace-normal">
               <div className="flex flex-wrap gap-1">
                 {detection.categories.map((category) => (
@@ -251,8 +313,10 @@ function SnapshotSummary({
 
 export function WebTechnologyHistorySection({
   history,
+  catalog = {},
 }: {
   history: CompanyWebTechnologyHistory;
+  catalog?: TechnologyCatalog;
 }) {
   const detectedLatest = history.technologies.filter(
     (technology) => technology.state === "detected_latest",
@@ -298,7 +362,7 @@ export function WebTechnologyHistorySection({
               </span>
             ) : null}
           </div>
-          <TechnologySummaryTable history={history} />
+          <TechnologySummaryTable history={history} catalog={catalog} />
         </CardContent>
       </Card>
 
@@ -330,8 +394,11 @@ export function WebTechnologyHistorySection({
                 </AccordionTrigger>
                 <AccordionContent className="pb-0">
                   <div className="flex flex-col gap-4 border-t bg-muted/10 px-4 py-4 sm:px-5">
-                    <CrawlChanges snapshot={snapshot} />
-                    <SnapshotDetectionTable snapshot={snapshot} />
+                    <CrawlChanges snapshot={snapshot} catalog={catalog} />
+                    <SnapshotDetectionTable
+                      snapshot={snapshot}
+                      catalog={catalog}
+                    />
                   </div>
                 </AccordionContent>
               </AccordionItem>

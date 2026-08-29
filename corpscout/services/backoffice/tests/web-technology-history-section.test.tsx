@@ -1,6 +1,9 @@
 import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it } from "vitest";
-import { WebTechnologyHistorySection } from "~/components/detail/web-technology-history-section";
+import {
+  WebTechnologyHistorySection,
+  type TechnologyCatalog,
+} from "~/components/detail/web-technology-history-section";
 import type { CompanyWebTechnologyHistory } from "~/lib/web-technology-history";
 
 const history: CompanyWebTechnologyHistory = {
@@ -99,5 +102,61 @@ describe("WebTechnologyHistorySection", () => {
     expect(html).toContain("No longer detected in this crawl");
     expect(html).toContain("https://example.se/video");
     expect(html).toContain("does not prove installation or removal");
+  });
+
+  const catalog: TechnologyCatalog = {
+    React: {
+      slug: "react",
+      description:
+        "React is an open-source JavaScript library for building user interfaces.",
+      website: "https://react.dev",
+      categories: ["JavaScript frameworks"],
+      saas: false,
+      oss: true,
+      icon: true,
+    },
+    YouTube: {
+      slug: "youtube",
+      description: "YouTube is a video sharing service.",
+      website: "https://www.youtube.com",
+      categories: ["Video players"],
+      saas: true,
+      oss: false,
+      icon: true,
+    },
+  };
+
+  it("renders catalog icons, descriptions, and website links", () => {
+    const html = renderToStaticMarkup(
+      <WebTechnologyHistorySection history={history} catalog={catalog} />,
+    );
+
+    // Icons go through the proxy route, never straight to the object store.
+    expect(html).toContain('src="/icons/tech/react"');
+    expect(html).toContain('src="/icons/tech/youtube"');
+    expect(html).toContain(
+      "React is an open-source JavaScript library for building user interfaces.",
+    );
+    expect(html).toContain('href="https://react.dev"');
+    expect(html).toContain("react.dev");
+  });
+
+  it("falls back to a monogram block for technologies the catalog misses", () => {
+    const html = renderToStaticMarkup(
+      <WebTechnologyHistorySection history={history} catalog={catalog} />,
+    );
+
+    // C3.js has no catalog entry: no icon URL, a monogram stand-in instead.
+    expect(html).not.toContain("/icons/tech/c3");
+    expect(html).toContain('data-slot="technology-monogram"');
+  });
+
+  it("renders every technology without a catalog at all", () => {
+    const html = renderToStaticMarkup(
+      <WebTechnologyHistorySection history={history} />,
+    );
+    expect(html).toContain("React");
+    expect(html).not.toContain("/icons/tech/");
+    expect(html).toContain('data-slot="technology-monogram"');
   });
 });
