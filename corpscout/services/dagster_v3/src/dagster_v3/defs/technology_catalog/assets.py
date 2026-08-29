@@ -346,8 +346,36 @@ def technology_top_domains_clickhouse(
     with clickhouse.get_connection() as client:
         try:
             client.execute(f"CREATE TABLE {stage} AS {qualified}")
-            client.execute(
-                f"""INSERT INTO {stage}
+            # Two bounded steps instead of one (the single-query form OOMed at
+            # its 12 GiB cap building the 121M-domain join side, Code 241):
+            # (1) the latest signal per domain lands in a temp MergeTree
+            # sorted by root_domain (external group-by spills), then (2) a
+            # full_sorting_merge join streams both sorted sides off disk --
+            # no in-memory hash of 121M domains anywhere.
+            signals = f"`{RESOLVED_DATABASE}`.`_tmp_signals_latest_{uuid.uuid4().hex}`"
+            try:
+                client.execute(
+                    f"""CREATE TABLE {signals} (
+    root_domain String,
+    harmonic_centrality Float64,
+    harmonic_rank UInt64
+) ENGINE = MergeTree ORDER BY root_domain"""
+                )
+                client.execute(
+                    f"""INSERT INTO {signals}
+SELECT
+    root_domain,
+    argMax(cc_harmonic_centrality, resolved_at),
+    argMax(cc_harmonic_rank, resolved_at)
+FROM `{RESOLVED_DATABASE}`.`commoncrawl_domain_graph_signals`
+GROUP BY root_domain""",
+                    settings={
+                        "max_bytes_before_external_group_by": 6 * 1024**3,
+                        "max_memory_usage": 12 * 1024**3,
+                    },
+                )
+                client.execute(
+                    f"""INSERT INTO {stage}
     (technology, root_domain, harmonic_centrality, harmonic_rank, computed_at)
 SELECT
     pairs.technology,
@@ -359,24 +387,20 @@ FROM (
     SELECT DISTINCT technology, root_domain
     FROM `{RESOLVED_DATABASE}`.`commoncrawl_page_technologies`
 ) AS pairs
-INNER JOIN (
-    SELECT
-        root_domain,
-        argMax(cc_harmonic_centrality, resolved_at) AS harmonic_centrality,
-        argMax(cc_harmonic_rank, resolved_at) AS harmonic_rank
-    FROM `{RESOLVED_DATABASE}`.`commoncrawl_domain_graph_signals`
-    GROUP BY root_domain
-) AS signals ON signals.root_domain = pairs.root_domain
+INNER JOIN {signals} AS signals
+    ON signals.root_domain = pairs.root_domain
 ORDER BY pairs.technology, signals.harmonic_centrality DESC
 LIMIT 500 BY pairs.technology""",
-                {"computed_at": computed_at},
-                settings={
-                    "join_algorithm": "grace_hash,hash",
-                    "max_bytes_before_external_group_by": 8 * 1024**3,
-                    "max_bytes_before_external_sort": 8 * 1024**3,
-                    "max_memory_usage": 12 * 1024**3,
-                },
-            )
+                    {"computed_at": computed_at},
+                    settings={
+                        "join_algorithm": "full_sorting_merge",
+                        "max_bytes_before_external_sort": 6 * 1024**3,
+                        "max_bytes_before_external_group_by": 6 * 1024**3,
+                        "max_memory_usage": 12 * 1024**3,
+                    },
+                )
+            finally:
+                client.execute(f"DROP TABLE IF EXISTS {signals}")
             rows = int(client.execute(f"SELECT count() FROM {stage}")[0][0])
             if rows < 1000:
                 raise ValueError(
