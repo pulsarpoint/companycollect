@@ -345,6 +345,11 @@ def technology_top_domains_clickhouse(
     computed_at = datetime.now(UTC).replace(tzinfo=None)
     with clickhouse.get_connection() as client:
         try:
+            # The big merge below shares the server memory budget with
+            # se_companies_serving's 15-minute refresh (~12 GiB peaks); pausing
+            # the refresh for the build's duration is the same guard the
+            # serving swap migrations use. Readers are unaffected.
+            client.execute("SYSTEM STOP VIEW corpscout.se_companies_serving")
             client.execute(f"CREATE TABLE {stage} AS {qualified}")
             # Bounded build, third iteration (the one-query hash join and the
             # GROUP BY temp both OOMed on 121M-domain hash arenas -- a resize
@@ -393,11 +398,15 @@ INNER JOIN (
 ORDER BY pairs.technology, signals.harmonic_centrality DESC
 LIMIT 500 BY pairs.technology""",
                     {"computed_at": computed_at},
+                    # 20 GiB: with spill active the merge still crawled to a
+                    # 12 GiB cap (4th iteration); the serving view's refresh is
+                    # PAUSED for the duration (below) so the total stays under
+                    # the 27.31 GiB server budget.
                     settings={
                         "join_algorithm": "full_sorting_merge",
                         "max_bytes_before_external_sort": 2 * 1024**3,
                         "max_bytes_before_external_group_by": 2 * 1024**3,
-                        "max_memory_usage": 12 * 1024**3,
+                        "max_memory_usage": 20 * 1024**3,
                     },
                 )
             finally:
@@ -410,6 +419,7 @@ LIMIT 500 BY pairs.technology""",
                 )
             client.execute(f"EXCHANGE TABLES {stage} AND {qualified}")
         finally:
+            client.execute("SYSTEM START VIEW corpscout.se_companies_serving")
             client.execute(f"DROP TABLE IF EXISTS {stage}")
     context.log.info("technology_top_domains: %d rows", rows)
     return dg.MaterializeResult(metadata={"rows": rows})
