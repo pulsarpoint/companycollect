@@ -597,15 +597,30 @@ def test_vectorscan_safe_accepts_shipped_patterns():
     assert all(detection.vectorscan_safe(p) for p in custom_patterns)
 
 
-def test_candidates_insert_is_one_scan_covering_every_signal():
-    sql = detection.candidates_insert_sql("`db`.`cand`")
+def test_candidates_insert_is_bucket_pruned_and_covers_every_signal():
+    sql = detection.candidates_insert_sql("`db`.`cand`", 3)
     assert sql.count(f"`{'commoncrawl_domain_dns_records'}`") == 1
+    # Verbatim partition-key expression (migration 000161) so pruning engages.
+    assert "cityHash64(root_domain) % 16 = 3" in sql
     for record_type in ("MX", "TXT", "NS", "SOA", "CNAME"):
         assert f"'{record_type}'" in sql
     assert "substringIndex(value, ' ', -1)" in sql  # MX priority prefix
     assert "trim(BOTH '\"' FROM value)" in sql  # TXT quotes
     assert "record_type = 'CNAME' AND name = concat('www.', root_domain)" in sql
     assert "GROUP BY root_domain, record_name, signal_type, candidate" in sql
+
+
+def test_bucket_count_matches_dns_records_partition_key():
+    migration = (
+        Path(__file__).resolve().parents[3]
+        / "clickhouse"
+        / "migrations"
+        / "000161_corpscout_dns_records_seen_window.up.sql"
+    ).read_text()
+    assert (
+        f"cityHash64(root_domain) % {detection.DNS_RECORDS_HASH_BUCKETS}"
+        in migration
+    )
 
 
 def test_detection_insert_sql_uses_one_vectorscan_pass():

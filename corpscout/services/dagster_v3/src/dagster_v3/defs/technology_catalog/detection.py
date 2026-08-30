@@ -25,6 +25,11 @@ from dagster_v3.defs.technology_catalog import tables
 
 DNS_RECORDS_TABLE = "commoncrawl_domain_dns_records"
 
+# The DNS record store is PARTITION BY cityHash64(root_domain) % 16 (migration
+# 000161); extracting candidates one bucket at a time lets ClickHouse prune to
+# a single ~18 GiB partition per query instead of one monolithic 280 GiB scan.
+DNS_RECORDS_HASH_BUCKETS = 16
+
 SELF_HOSTED_TECHNOLOGY = "Self-hosted email"
 SELF_HOSTED_SIGNAL = "self_hosted_email"
 RULE_SOURCE = "rule"
@@ -108,8 +113,12 @@ ENGINE = MergeTree
 ORDER BY (signal_type, root_domain)"""
 
 
-def candidates_insert_sql(candidates: str) -> str:
-    """The single pass over the DNS record store feeding the temp table."""
+def candidates_insert_sql(candidates: str, bucket: int) -> str:
+    """One hash bucket's pass over the DNS record store into the temp table.
+
+    The WHERE clause repeats the table's partition-key expression verbatim so
+    ClickHouse prunes to that single partition.
+    """
     signal_case = " ".join(
         f"WHEN '{record_type}' THEN '{signal}'"
         for signal, (record_type, _) in sorted(_CANDIDATE_EXPRESSIONS.items())
@@ -129,7 +138,8 @@ SELECT
     CASE record_type {signal_case} END AS signal_type,
     CASE record_type {candidate_case} END AS candidate
 FROM `{RESOLVED_DATABASE}`.`{DNS_RECORDS_TABLE}`
-WHERE record_type IN ({record_types})
+WHERE cityHash64(root_domain) % {DNS_RECORDS_HASH_BUCKETS} = {int(bucket)}
+  AND record_type IN ({record_types})
   AND (
     name = root_domain
     OR (record_type = 'CNAME' AND name = concat('www.', root_domain))

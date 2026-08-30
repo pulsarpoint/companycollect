@@ -337,12 +337,21 @@ ORDER BY signal_type, technology, pattern"""
         )
         try:
             client.execute(f"CREATE TABLE {stage} AS {qualified}")
-            # One full scan of the DNS record store feeds every signal; the
-            # matches then read only this compact, signal-sorted temp table.
+            # The record store feeds every signal one hash bucket at a time —
+            # each insert prunes to a single ~18 GiB partition, so no query
+            # runs long and progress is visible per bucket. The matches then
+            # read only the compact, signal-sorted temp table.
             client.execute(detection.candidates_table_ddl(candidates))
-            client.execute(
-                detection.candidates_insert_sql(candidates), settings=settings
-            )
+            for bucket in range(detection.DNS_RECORDS_HASH_BUCKETS):
+                client.execute(
+                    detection.candidates_insert_sql(candidates, bucket),
+                    settings=settings,
+                )
+                context.log.info(
+                    "candidates bucket %d/%d done",
+                    bucket + 1,
+                    detection.DNS_RECORDS_HASH_BUCKETS,
+                )
             candidate_count = int(
                 client.execute(f"SELECT count() FROM {candidates}")[0][0]
             )
