@@ -60,7 +60,11 @@ _ARTIFACT_PACKAGE_DIGEST_PATTERN = re.compile(
 _DOCUMENT_MANIFEST_SCHEMA_VERSION = 3
 _SUPPORTED_DOCUMENT_MANIFEST_SCHEMA_VERSIONS = (2, _DOCUMENT_MANIFEST_SCHEMA_VERSION)
 _DOCUMENT_RESULT_SCHEMA_VERSION = 3
-_DEFAULT_DOCUMENT_PARSE_WORKERS = 4
+# 2, down from 4 (2026-08-31): four Arelle workers uploading artifacts to the
+# rustfs service ON THE SAME HOST drove load to ~160 and froze the machine for
+# ~an hour mid-backfill. Two workers keep the weekly cadence viable and leave
+# the host responsive.
+_DEFAULT_DOCUMENT_PARSE_WORKERS = 2
 _MAX_DOCUMENT_PARSE_WORKERS = 8
 _DOCUMENT_PARSE_TASKS_PER_CHILD = 1
 _DOCUMENT_PUBLICATION_INSERT_BATCH_SIZE = 25_000
