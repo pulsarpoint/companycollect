@@ -1156,6 +1156,13 @@ def _normalized_industry(
     description = _nullable_text(industry.description)
     if code is None and description is None:
         raise ValueError(f"Ratsit {label} has no code or description")
+    empty_description_delimiter = (
+        re.fullmatch(r"(?P<code>\d{5})\s*-\s*", code)
+        if code is not None
+        else None
+    )
+    if empty_description_delimiter is not None:
+        code = empty_description_delimiter.group("code")
     if code is not None and (
         code.casefold() == "uppgift saknas"
         or re.fullmatch(r"00000\s*-?", code) is not None

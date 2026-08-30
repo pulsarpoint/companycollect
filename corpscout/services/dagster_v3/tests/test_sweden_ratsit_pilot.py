@@ -408,6 +408,29 @@ def test_parser_extracts_company_identity_address_description_and_financials() -
     ]
 
 
+def test_parser_handles_establishment_industry_with_empty_description() -> None:
+    workplace_html = COMPANY_HTML.replace(
+        "</body>",
+        """
+        <table>
+          <thead><tr><th>Skanska AB Stockholm</th></tr></thead>
+          <tbody>
+            <tr><td>Arbetsställenummer:</td><td>12345678</td></tr>
+            <tr><td>SNI-kod:</td><td>84111 - </td></tr>
+          </tbody>
+        </table>
+        </body>
+        """,
+    )
+
+    report = parse_company_page(workplace_html, source_url=COMPANY_URL)
+
+    assert report["workplaces"][0]["industry"] == {
+        "code": "84111",
+        "description": None,
+    }
+
+
 def test_browser_resource_streams_all_four_round_robin_workers() -> None:
     company_ids = ROUND_ROBIN_COMPANY_IDS
     proxy_urls = (None, *TEST_PROXY_URLS)

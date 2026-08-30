@@ -416,6 +416,32 @@ def test_valid_unknown_sni_code_is_retained_as_unmapped() -> None:
     assert normalized.statistics["industry_unmapped_count"] == 1
 
 
+def test_normalizer_replays_establishment_sni_with_empty_description_delimiter() -> None:
+    value = json.loads(_report_document())
+    value["report"]["workplaces"][0]["industry"] = {
+        "code": "84111 -",
+        "description": None,
+    }
+    document = _encoded_document(value)
+
+    normalized = normalize_ratsit_report(
+        _latest_report(document),
+        document=document,
+        normalized_at=NORMALIZED_AT,
+        nace_class_codes=frozenset({"6290", "8411"}),
+    )
+
+    establishment = _row(
+        RATSIT_ESTABLISHMENT_COLUMNS,
+        normalized.establishments[0],
+    )
+    assert establishment["source_industry_code"] == "84111"
+    assert establishment["industry_description_original"] is None
+    assert establishment["nace_code"] == "84.11"
+    assert establishment["nace_normalized_code"] == "8411"
+    assert establishment["nace_mapping_status"] == "mapped"
+
+
 def test_company_text_containing_the_cta_phrase_is_not_filtered() -> None:
     value = json.loads(_report_document())
     value["report"]["company"]["summary"] = [

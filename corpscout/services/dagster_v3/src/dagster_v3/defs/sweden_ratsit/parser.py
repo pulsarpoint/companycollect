@@ -224,13 +224,9 @@ def _industry_codes(document: HtmlElement) -> list[JsonObject]:
     )
     industry_codes: list[JsonObject] = []
     for row in rows:
-        code, separator, description = row.partition(" - ")
-        industry_codes.append(
-            {
-                "code": code or None,
-                "description": description if separator else None,
-            }
-        )
+        industry = _industry_value(row)
+        if industry is not None:
+            industry_codes.append(industry)
     return industry_codes
 
 
@@ -809,10 +805,10 @@ def _person_name_and_age(display_name: str) -> tuple[str, int | None]:
 def _industry_value(value: str | None) -> JsonObject | None:
     if value is None:
         return None
-    code, separator, description = value.partition(" - ")
+    code, separator, description = value.partition(" -")
     return {
         "code": code or None,
-        "description": description if separator else None,
+        "description": _normalize_text(description) if separator else None,
     }
 
 
