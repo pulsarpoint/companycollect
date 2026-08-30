@@ -3,9 +3,11 @@
 Each dns_* signal type extracts candidate strings from
 corpscout.commoncrawl_domain_dns_records (apex-scoped; CNAME also covers www)
 and matches ALL of that signal's fingerprint patterns in one Vectorscan pass
-(multiMatchAllIndicesCaseInsensitive) — never one regex scan per pattern.
-Matched indices map back to (technology, pattern, confidence, source) arrays
-bound as query parameters.
+(multiMatchAllIndices) — never one regex scan per pattern. Case-insensitivity
+comes from an inline (?i) prefix on the bound match patterns (this server's
+build has no CaseInsensitive multiMatch variant); the stored matched_pattern
+stays the clean original. Matched indices map back to (technology, pattern,
+confidence, source) arrays bound as query parameters.
 
 Vectorscan rejects a few regex constructs re2 also lacks (lookarounds,
 backreferences); fingerprints using them are skipped with a log line rather
@@ -52,6 +54,11 @@ class SignalFingerprints:
     patterns: list[str]
     confidences: list[int]
     sources: list[str]
+
+    @property
+    def match_patterns(self) -> list[str]:
+        """The patterns as bound to multiMatchAllIndices: (?i)-prefixed."""
+        return [f"(?i){pattern}" for pattern in self.patterns]
 
 
 def vectorscan_safe(pattern: str) -> bool:
@@ -114,7 +121,7 @@ SELECT
 FROM (
     {candidate_sql(signal_type)}
 )
-ARRAY JOIN multiMatchAllIndicesCaseInsensitive(candidate, %(patterns)s) AS match_index"""
+ARRAY JOIN multiMatchAllIndices(candidate, %(match_patterns)s) AS match_index"""
 
 
 def self_hosted_insert_sql(stage: str) -> str:

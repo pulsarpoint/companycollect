@@ -611,11 +611,19 @@ def test_candidate_sql_shapes():
 
 def test_detection_insert_sql_uses_one_vectorscan_pass():
     sql = detection.detection_insert_sql("`db`.`stage`", "dns_mx")
-    assert "multiMatchAllIndicesCaseInsensitive" in sql
+    assert "multiMatchAllIndices(candidate, %(match_patterns)s)" in sql
     assert "ARRAY JOIN" in sql
     assert "'dns_mx' AS signal_type" in sql
     for column in tables.DOMAIN_SIGNAL_TECHNOLOGIES_COLUMNS:
         assert column in sql
+
+
+def test_match_patterns_are_case_insensitive_but_stored_clean():
+    signals, _ = detection.group_fingerprints(
+        [("Loopia", "dns_mx", "\\.loopia\\.se$", 100, "custom")]
+    )
+    assert signals[0].patterns == ["\\.loopia\\.se$"]
+    assert signals[0].match_patterns == ["(?i)\\.loopia\\.se$"]
 
 
 def test_self_hosted_sql_scopes_to_own_domain():

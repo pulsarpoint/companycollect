@@ -340,6 +340,7 @@ ORDER BY signal_type, technology, pattern"""
                     {
                         "technologies": signal.technologies,
                         "patterns": signal.patterns,
+                        "match_patterns": signal.match_patterns,
                         "confidences": signal.confidences,
                         "sources": signal.sources,
                         **scalars,
