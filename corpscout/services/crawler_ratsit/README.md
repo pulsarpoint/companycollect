@@ -117,6 +117,36 @@ full diagnostic document captured in memory. Local inspection does not need
 Temporal, S3, or ClickHouse credentials; only the optional CloakBrowser license
 and the browser-related environment settings are read.
 
+## Extract one page as JSON
+
+Use the standalone extractor to turn a Ratsit company-report URL into normalized
+JSON. It reads the page's JSON-LD first, uses label-anchored XPath selectors as
+fallbacks, and follows the first responsible-person profile to populate
+`people_at_address` by default. For companies with published accounts, the
+`financials` array contains separate `consolidated` and `company` reports when
+both are available. Each report contains the source monetary unit and
+descending fiscal periods with normalized income-statement, balance-sheet,
+key-ratio, dividend, and employee fields.
+
+```shell
+uv run --env-file .env ratsit-extract \
+  'https://www.ratsit.se/361228NGDB-Lindstrom,_Olof_Gunnar' \
+  --config process.toml \
+  --browser direct \
+  --headless
+```
+
+JSON is written to standard output, so it can be redirected to a file. Use
+`--no-follow-people` to avoid the additional personal-profile request. The URL
+must use HTTPS and the `ratsit.se` host. The command reuses the configured
+CloakBrowser profile, proxy, timeout, and optional license settings; it does not
+write to Temporal, S3, or ClickHouse.
+
+Financial values retain Ratsit's displayed scale. For example, a report with
+`"monetary_unit": "MSEK"` returns `1398.0` for a displayed value of
+`1 398,0 MSEK`; percentage fields have a `_percent` suffix. Companies without
+published financial tables return an empty `financials` array.
+
 ## Submit one company
 
 ```shell

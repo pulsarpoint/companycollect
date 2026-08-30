@@ -30,7 +30,8 @@ export default function AdminSeCompaniesLayout() {
         <h1 className="text-2xl font-semibold tracking-tight">Companies</h1>
         <p className="text-sm text-muted-foreground">
           Every Swedish company Dagster publishes, one register read at a time:
-          browse the info list, review geocoding, and (soon) financials.
+          browse the info list, review geocoding, inspect Ratsit captures, and
+          (soon) financials.
         </p>
         {/* NavLinks wearing the shadcn Tabs skin, the same trick as
             SeCompanyHeader: the active tab is a route, so it must be navigable,

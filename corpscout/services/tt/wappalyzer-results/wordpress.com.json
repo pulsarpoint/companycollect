@@ -1,0 +1,1 @@
+{"domain":"wordpress.com","schema_version":1,"stored_at":"2026-08-29T08:15:35.277701+00:00","technologies":[{"categories":[{"id":22,"name":"Web servers","slug":"web-servers"},{"id":64,"name":"Reverse proxies","slug":"reverse-proxies"}],"confidence":100,"name":"Nginx","slug":"nginx","version":""}],"url":"https://wordpress.com/"}
