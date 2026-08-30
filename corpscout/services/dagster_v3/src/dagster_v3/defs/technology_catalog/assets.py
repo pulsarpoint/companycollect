@@ -32,6 +32,10 @@ from dagster_v3.defs.technology_catalog.catalog import (
     load_extension_layer,
     merge_layers,
 )
+from dagster_v3.defs.technology_catalog.fingerprints import (
+    Fingerprint,
+    extract_dns_fingerprints,
+)
 from dagster_v3.defs.technology_catalog.icons import (
     IconRef,
     IconSyncResult,
@@ -166,13 +170,37 @@ def technology_catalog_clickhouse(
         icon_result.overlay_fetches,
     )
 
+    updated_at = datetime.now(UTC).replace(tzinfo=None)
     rows = build_rows(
         merged,
         icon_result,
         source_run_id=context.run_id,
-        updated_at=datetime.now(UTC).replace(tzinfo=None),
+        updated_at=updated_at,
     )
-    row_count = _replace_catalog(clickhouse, rows)
+    row_count = _staged_replace(
+        clickhouse,
+        table=tables.TECHNOLOGY_CATALOG_TABLE,
+        columns=tables.TECHNOLOGY_CATALOG_COLUMNS,
+        rows=rows,
+        floor=tables.MIN_TECHNOLOGY_CATALOG_ROWS,
+    )
+
+    # The executable side of the same merge: the winning entries' Wappalyzer
+    # dns blocks, published in the same run so both tables always carry one
+    # consistent source_version per layer.
+    fingerprints = extract_dns_fingerprints(extension, overlay, custom)
+    fingerprint_count = _staged_replace(
+        clickhouse,
+        table=tables.TECHNOLOGY_FINGERPRINTS_TABLE,
+        columns=tables.TECHNOLOGY_FINGERPRINTS_COLUMNS,
+        rows=build_fingerprint_rows(
+            fingerprints,
+            source_run_id=context.run_id,
+            updated_at=updated_at,
+        ),
+        floor=tables.MIN_TECHNOLOGY_FINGERPRINT_ROWS,
+    )
+    context.log.info("technology_fingerprints: %d rows", fingerprint_count)
 
     per_source = {
         source: sum(1 for technology in merged if technology.source == source)
@@ -192,18 +220,50 @@ def technology_catalog_clickhouse(
             "overlay_icon_fetches": icon_result.overlay_fetches,
             "overlay_sha": overlay_sha,
             "custom_version": custom.source_version,
+            "fingerprint_rows": fingerprint_count,
         }
     )
 
 
-def _replace_catalog(clickhouse: ClickhouseResource, rows: list[tuple]) -> int:
-    """Fill a staging copy, enforce the floor, then swap it in atomically."""
-    qualified = f"`{RESOLVED_DATABASE}`.`{tables.TECHNOLOGY_CATALOG_TABLE}`"
-    stage = (
-        f"`{RESOLVED_DATABASE}`."
-        f"`_tmp_{tables.TECHNOLOGY_CATALOG_TABLE}_{uuid.uuid4().hex}`"
-    )
-    column_list = ", ".join(tables.TECHNOLOGY_CATALOG_COLUMNS)
+def build_fingerprint_rows(
+    fingerprints: list[Fingerprint],
+    *,
+    source_run_id: str,
+    updated_at: datetime,
+) -> list[tuple]:
+    """Rows in tables.TECHNOLOGY_FINGERPRINTS_COLUMNS order (migration 000357)."""
+    return [
+        (
+            fingerprint.technology,
+            fingerprint.signal_type,
+            fingerprint.pattern,
+            fingerprint.confidence,
+            fingerprint.version_template,
+            fingerprint.source,
+            fingerprint.source_version,
+            source_run_id,
+            updated_at,
+        )
+        for fingerprint in fingerprints
+    ]
+
+
+def _staged_replace(
+    clickhouse: ClickhouseResource,
+    *,
+    table: str,
+    columns: tuple[str, ...],
+    rows: list[tuple],
+    floor: int,
+) -> int:
+    """Fill a staging copy, enforce the floor, then swap it in atomically.
+
+    A result below the floor is a broken merge or extraction, never a
+    legitimate publish — refuse to swap rather than shrink a serving table.
+    """
+    qualified = f"`{RESOLVED_DATABASE}`.`{table}`"
+    stage = f"`{RESOLVED_DATABASE}`.`_tmp_{table}_{uuid.uuid4().hex}`"
+    column_list = ", ".join(columns)
 
     with clickhouse.get_connection() as client:
         try:
@@ -211,12 +271,9 @@ def _replace_catalog(clickhouse: ClickhouseResource, rows: list[tuple]) -> int:
             if rows:
                 client.execute(f"INSERT INTO {stage} ({column_list}) VALUES", rows)
             row_count = int(client.execute(f"SELECT count() FROM {stage}")[0][0])
-            if row_count < tables.MIN_TECHNOLOGY_CATALOG_ROWS:
-                # The extension layer alone guarantees 7k+ names; a short
-                # result is a broken merge, never a legitimate catalog.
+            if row_count < floor:
                 raise ValueError(
-                    f"technology_catalog produced {row_count} rows, below the "
-                    f"{tables.MIN_TECHNOLOGY_CATALOG_ROWS} floor"
+                    f"{table} produced {row_count} rows, below the {floor} floor"
                 )
             client.execute(f"EXCHANGE TABLES {stage} AND {qualified}")
         finally:

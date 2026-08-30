@@ -7,7 +7,12 @@ tests/test_technology_catalog.py.
 
 TECHNOLOGY_CATALOG_TABLE = "technology_catalog"
 
-TECHNOLOGY_CATALOG_TABLES = (TECHNOLOGY_CATALOG_TABLE,)
+TECHNOLOGY_FINGERPRINTS_TABLE = "technology_fingerprints"
+
+TECHNOLOGY_CATALOG_TABLES = (
+    TECHNOLOGY_CATALOG_TABLE,
+    TECHNOLOGY_FINGERPRINTS_TABLE,
+)
 
 # Column order is the contract with migration 000350.
 TECHNOLOGY_CATALOG_COLUMNS = (
@@ -34,6 +39,23 @@ TECHNOLOGY_CATALOG_COLUMNS = (
 # truncated fetch, never a legitimate catalog. Refuse to swap rather than
 # shrink the table the technology pages read.
 MIN_TECHNOLOGY_CATALOG_ROWS = 5_000
+
+# Column order is the contract with migration 000357.
+TECHNOLOGY_FINGERPRINTS_COLUMNS = (
+    "technology",
+    "signal_type",
+    "pattern",
+    "confidence",
+    "version_template",
+    "source",
+    "source_version",
+    "source_run_id",
+    "updated_at",
+)
+
+# The public layers carry ~100 dns patterns and our custom entries ~25 more; a
+# result below this floor means a broken extraction, never a legitimate set.
+MIN_TECHNOLOGY_FINGERPRINT_ROWS = 50
 
 # Dedicated bucket for technology icons. This module creates it if absent and
 # only ever adds objects to it; no other bucket is touched.

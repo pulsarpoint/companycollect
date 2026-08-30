@@ -141,21 +141,31 @@ def load_custom_layer(
     )
 
 
-def merge_layers(*layers: CatalogLayer) -> list[MergedTechnology]:
-    """Union of all layers' names; the LAST layer carrying a name wins.
+def winning_entries(
+    *layers: CatalogLayer,
+) -> list[tuple[str, Mapping[str, Any], CatalogLayer]]:
+    """(name, entry, owning layer) per technology; the LAST layer wins a name.
 
     Callers pass layers in precedence order: extension, overlay, custom.
-    Sorted by technology name so every downstream step (icon sync, insert) is
-    deterministic run to run.
+    Sorted by technology name so every downstream step (icon sync, insert,
+    fingerprint extraction) is deterministic run to run.
     """
-    merged: list[MergedTechnology] = []
+    winners: list[tuple[str, Mapping[str, Any], CatalogLayer]] = []
     names = {name for layer in layers for name in layer.technologies}
     for name in sorted(names):
         layer = next(
             layer for layer in reversed(layers) if name in layer.technologies
         )
-        merged.append(_build_entry(name, layer.technologies[name], layer))
-    return merged
+        winners.append((name, layer.technologies[name], layer))
+    return winners
+
+
+def merge_layers(*layers: CatalogLayer) -> list[MergedTechnology]:
+    """Union of all layers' names as catalog rows; the LAST layer wins."""
+    return [
+        _build_entry(name, entry, layer)
+        for name, entry, layer in winning_entries(*layers)
+    ]
 
 
 def _build_entry(

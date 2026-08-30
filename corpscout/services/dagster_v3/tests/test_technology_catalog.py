@@ -11,7 +11,15 @@ from pathlib import Path
 import pytest
 
 from dagster_v3.defs.technology_catalog import tables
-from dagster_v3.defs.technology_catalog.assets import build_rows, custom_source_dir
+from dagster_v3.defs.technology_catalog.assets import (
+    build_fingerprint_rows,
+    build_rows,
+    custom_source_dir,
+)
+from dagster_v3.defs.technology_catalog.fingerprints import (
+    extract_dns_fingerprints,
+    parse_pattern,
+)
 from dagster_v3.defs.technology_catalog.catalog import (
     CatalogLayer,
     load_custom_layer,
@@ -27,6 +35,13 @@ MIGRATION = (
     / "clickhouse"
     / "migrations"
     / "000350_corpscout_technology_catalog.up.sql"
+).read_text()
+
+FINGERPRINTS_MIGRATION = (
+    Path(__file__).resolve().parents[3]
+    / "clickhouse"
+    / "migrations"
+    / "000357_corpscout_technology_fingerprints.up.sql"
 ).read_text()
 
 OVERLAY_SHA = "b0e1186877307b246769bdeab61f270b597f6886"
@@ -426,6 +441,110 @@ def test_shipped_custom_files_load_against_extension_vocabulary():
 def test_load_extension_layer_missing_dir_names_the_override():
     with pytest.raises(FileNotFoundError, match="TECHNOLOGY_CATALOG_EXTENSION_DIR"):
         load_extension_layer(Path("/nonexistent/technology-catalog-bundle"))
+
+
+# --- Fingerprint extraction (migration 000357) -------------------------------
+
+
+def test_parse_pattern_plain_and_tails():
+    assert parse_pattern("aspmx\\.l\\.google\\.com") == (
+        "aspmx\\.l\\.google\\.com",
+        100,
+        "",
+    )
+    assert parse_pattern("regex\\;confidence:50") == ("regex", 50, "")
+    assert parse_pattern("regex\\;version:\\1\\;confidence:20") == (
+        "regex",
+        20,
+        "\\1",
+    )
+
+
+def test_extract_dns_fingerprints_from_winning_layer(tmp_path: Path):
+    custom = custom_layer_from(
+        tmp_path,
+        {
+            "Shared Tech": {
+                "cats": [1],
+                "description": "curated",
+                "dns": {"MX": ["\\.curated\\.example$"], "TXT": "token=\\;confidence:75"},
+            }
+        },
+    )
+    fingerprints = extract_dns_fingerprints(extension_layer(), overlay_layer(), custom)
+    by_signal = {(f.technology, f.signal_type): f for f in fingerprints}
+    mx = by_signal[("Shared Tech", "dns_mx")]
+    assert mx.pattern == "\\.curated\\.example$"
+    assert mx.confidence == 100
+    assert mx.source == tables.CUSTOM_SOURCE
+    txt = by_signal[("Shared Tech", "dns_txt")]
+    assert txt.pattern == "token="
+    assert txt.confidence == 75
+    # Layers without dns blocks contribute nothing.
+    assert {f.technology for f in fingerprints} == {"Shared Tech"}
+
+
+def test_shipped_custom_dns_fingerprints_extract():
+    bundle_dir = Path(__file__).resolve().parents[4] / "extensions" / "6.12.5_0"
+    extension = load_extension_layer(bundle_dir)
+    custom = load_custom_layer(
+        custom_source_dir(),
+        base_categories=extension.categories,
+        base_groups=extension.groups,
+    )
+    fingerprints = extract_dns_fingerprints(extension, custom)
+    custom_fingerprints = [
+        f for f in fingerprints if f.source == tables.CUSTOM_SOURCE
+    ]
+    assert len(custom_fingerprints) >= 20
+    assert all(f.signal_type.startswith("dns_") for f in custom_fingerprints)
+    # The extension bundle's own dns blocks come along (102 patterns counted).
+    assert len(fingerprints) >= tables.MIN_TECHNOLOGY_FINGERPRINT_ROWS
+
+
+def test_build_fingerprint_rows_match_column_contract(tmp_path: Path):
+    custom = custom_layer_from(
+        tmp_path,
+        {
+            "Shared Tech": {
+                "cats": [1],
+                "description": "curated",
+                "dns": {"MX": ["\\.curated\\.example$"]},
+            }
+        },
+    )
+    fingerprints = extract_dns_fingerprints(custom)
+    rows = build_fingerprint_rows(
+        fingerprints,
+        source_run_id="run-1",
+        updated_at=datetime.now(UTC).replace(tzinfo=None),
+    )
+    columns = tables.TECHNOLOGY_FINGERPRINTS_COLUMNS
+    assert rows and all(len(row) == len(columns) for row in rows)
+    row = dict(zip(columns, rows[0], strict=True))
+    assert row["technology"] == "Shared Tech"
+    assert row["signal_type"] == "dns_mx"
+    assert row["source_run_id"] == "run-1"
+
+
+def test_fingerprints_migration_creates_the_table():
+    assert (
+        f"CREATE TABLE IF NOT EXISTS corpscout.{tables.TECHNOLOGY_FINGERPRINTS_TABLE}"
+        in FINGERPRINTS_MIGRATION
+    )
+
+
+def test_fingerprint_columns_match_migration():
+    for column in tables.TECHNOLOGY_FINGERPRINTS_COLUMNS:
+        assert f"    {column} " in FINGERPRINTS_MIGRATION, (
+            f"missing {column} in migration"
+        )
+    declared = [
+        line
+        for line in FINGERPRINTS_MIGRATION.splitlines()
+        if line.startswith("    ") and not line.lstrip().startswith("--")
+    ]
+    assert len(declared) == len(tables.TECHNOLOGY_FINGERPRINTS_COLUMNS)
 
 
 # --- ClickHouse contract: migration 000350 owns the schema -------------------
