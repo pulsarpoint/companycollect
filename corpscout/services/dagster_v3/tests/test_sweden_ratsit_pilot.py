@@ -659,7 +659,7 @@ def test_ratsit_bucket_key_is_stable_for_canonical_company_ids(
     assert ratsit_bucket_key(company_id) == expected_bucket
 
 
-def test_active_company_selection_reads_one_crc32_bucket() -> None:
+def test_active_company_selection_excludes_unavailable_legal_forms() -> None:
     client = FakeClickHouseClient(active_company_rows=[("191511286237",)])
 
     company_ids = load_active_ratsit_company_ids(
@@ -674,9 +674,17 @@ def test_active_company_selection_reads_one_crc32_bucket() -> None:
         if "FROM corpscout.se_companies FINAL" in sql
     )
     assert "status = 'active'" in selection_sql
+    assert (
+        "ifNull(legal_form_code, '') NOT IN %(unavailable_legal_form_codes)s"
+        in selection_sql
+    )
     assert "modulo(CRC32(company_id), %(bucket_count)s)" in selection_sql
     assert "ORDER BY company_id" in selection_sql
-    assert parameters == {"bucket_count": 128, "bucket_index": 94}
+    assert parameters == {
+        "bucket_count": 128,
+        "bucket_index": 94,
+        "unavailable_legal_form_codes": ("E-ORGFO", "10"),
+    }
 
 
 def test_clickhouse_freshness_uses_success_http_200_and_fetched_at() -> None:

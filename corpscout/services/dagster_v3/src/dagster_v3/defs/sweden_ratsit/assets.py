@@ -58,6 +58,7 @@ RATSIT_CLICKHOUSE_DATABASE = "corpscout"
 RATSIT_ACTIVE_COMPANIES_TABLE = "se_companies"
 RATSIT_RESULT_TABLE = "se_company_ratsit"
 RATSIT_BUCKET_COUNT = 128
+RATSIT_UNAVAILABLE_LEGAL_FORM_CODES = ("E-ORGFO", "10")
 RATSIT_PROGRESS_LOG_EVERY_RESULTS = 25
 RATSIT_PROGRESS_LOG_EVERY_SECONDS = 30.0
 RATSIT_SUCCESS_FRESHNESS = timedelta(days=30)
@@ -221,12 +222,14 @@ def load_active_ratsit_company_ids(
             SELECT company_id
             FROM {RATSIT_CLICKHOUSE_DATABASE}.{RATSIT_ACTIVE_COMPANIES_TABLE} FINAL
             WHERE status = 'active'
+              AND ifNull(legal_form_code, '') NOT IN %(unavailable_legal_form_codes)s
               AND modulo(CRC32(company_id), %(bucket_count)s) = %(bucket_index)s
             ORDER BY company_id
             """,
             {
                 "bucket_count": RATSIT_BUCKET_COUNT,
                 "bucket_index": bucket_index,
+                "unavailable_legal_form_codes": RATSIT_UNAVAILABLE_LEGAL_FORM_CODES,
             },
         )
 
