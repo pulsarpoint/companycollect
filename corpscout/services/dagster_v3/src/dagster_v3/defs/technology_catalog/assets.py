@@ -332,11 +332,26 @@ ORDER BY signal_type, technology, pattern"""
                 technology,
                 pattern,
             )
+        candidates = (
+            f"`{RESOLVED_DATABASE}`.`_tmp_dns_signal_candidates_{uuid.uuid4().hex}`"
+        )
         try:
             client.execute(f"CREATE TABLE {stage} AS {qualified}")
+            # One full scan of the DNS record store feeds every signal; the
+            # matches then read only this compact, signal-sorted temp table.
+            client.execute(detection.candidates_table_ddl(candidates))
+            client.execute(
+                detection.candidates_insert_sql(candidates), settings=settings
+            )
+            candidate_count = int(
+                client.execute(f"SELECT count() FROM {candidates}")[0][0]
+            )
+            context.log.info("candidates: %d rows", candidate_count)
             for signal in signals:
                 client.execute(
-                    detection.detection_insert_sql(stage, signal.signal_type),
+                    detection.detection_insert_sql(
+                        stage, candidates, signal.signal_type
+                    ),
                     {
                         "technologies": signal.technologies,
                         "patterns": signal.patterns,
@@ -348,7 +363,9 @@ ORDER BY signal_type, technology, pattern"""
                     settings=settings,
                 )
             client.execute(
-                detection.self_hosted_insert_sql(stage), scalars, settings=settings
+                detection.self_hosted_insert_sql(stage, candidates),
+                scalars,
+                settings=settings,
             )
             per_signal = client.execute(
                 f"SELECT signal_type, count() FROM {stage} GROUP BY signal_type"
@@ -361,6 +378,7 @@ ORDER BY signal_type, technology, pattern"""
                 )
             client.execute(f"EXCHANGE TABLES {stage} AND {qualified}")
         finally:
+            client.execute(f"DROP TABLE IF EXISTS {candidates}")
             client.execute(f"DROP TABLE IF EXISTS {stage}")
     for signal_type, count in sorted(per_signal):
         context.log.info("%s: %d rows", signal_type, count)

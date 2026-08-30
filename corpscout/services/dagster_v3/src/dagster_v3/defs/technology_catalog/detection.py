@@ -89,20 +89,56 @@ def group_fingerprints(
     return [by_signal[signal] for signal in sorted(by_signal)], skipped
 
 
-def candidate_sql(signal_type: str) -> str:
-    """Deduplicated (root_domain, record_name, candidate) rows for one signal."""
-    record_type, expression = _CANDIDATE_EXPRESSIONS[signal_type]
-    if signal_type == "dns_cname":
-        name_filter = "(name = root_domain OR name = concat('www.', root_domain))"
-    else:
-        name_filter = "name = root_domain"
-    return f"""SELECT root_domain, name AS record_name, {expression} AS candidate
+def candidates_table_ddl(candidates: str) -> str:
+    """Temp table holding one row per distinct apex candidate string.
+
+    The DNS record store sorts by root_domain first, so a per-record-type
+    filter is a full 3.4B-row scan; extracting EVERY signal's candidates in a
+    single scan and matching against this compact table (sorted by
+    signal_type) keeps the asset to one big read instead of five.
+    """
+    return f"""CREATE TABLE {candidates}
+(
+    root_domain String,
+    record_name String,
+    signal_type LowCardinality(String),
+    candidate String
+)
+ENGINE = MergeTree
+ORDER BY (signal_type, root_domain)"""
+
+
+def candidates_insert_sql(candidates: str) -> str:
+    """The single pass over the DNS record store feeding the temp table."""
+    signal_case = " ".join(
+        f"WHEN '{record_type}' THEN '{signal}'"
+        for signal, (record_type, _) in sorted(_CANDIDATE_EXPRESSIONS.items())
+    )
+    candidate_case = " ".join(
+        f"WHEN '{record_type}' THEN {expression}"
+        for _, (record_type, expression) in sorted(_CANDIDATE_EXPRESSIONS.items())
+    )
+    record_types = ", ".join(
+        f"'{record_type}'"
+        for record_type, _ in sorted(_CANDIDATE_EXPRESSIONS.values())
+    )
+    return f"""INSERT INTO {candidates} (root_domain, record_name, signal_type, candidate)
+SELECT
+    root_domain,
+    name AS record_name,
+    CASE record_type {signal_case} END AS signal_type,
+    CASE record_type {candidate_case} END AS candidate
 FROM `{RESOLVED_DATABASE}`.`{DNS_RECORDS_TABLE}`
-WHERE record_type = '{record_type}' AND {name_filter} AND candidate != ''
-GROUP BY root_domain, record_name, candidate"""
+WHERE record_type IN ({record_types})
+  AND (
+    name = root_domain
+    OR (record_type = 'CNAME' AND name = concat('www.', root_domain))
+  )
+  AND candidate != ''
+GROUP BY root_domain, record_name, signal_type, candidate"""
 
 
-def detection_insert_sql(stage: str, signal_type: str) -> str:
+def detection_insert_sql(stage: str, candidates: str, signal_type: str) -> str:
     """One Vectorscan pass over the signal's candidates; parameters carry the
     parallel fingerprint arrays and the run/timestamp scalars."""
     column_list = ", ".join(tables.DOMAIN_SIGNAL_TECHNOLOGIES_COLUMNS)
@@ -118,13 +154,12 @@ SELECT
     arrayElement(%(sources)s, match_index) AS source,
     %(source_run_id)s AS source_run_id,
     %(detected_at)s AS detected_at
-FROM (
-    {candidate_sql(signal_type)}
-)
-ARRAY JOIN multiMatchAllIndices(candidate, %(match_patterns)s) AS match_index"""
+FROM {candidates}
+ARRAY JOIN multiMatchAllIndices(candidate, %(match_patterns)s) AS match_index
+WHERE signal_type = '{signal_type}'"""
 
 
-def self_hosted_insert_sql(stage: str) -> str:
+def self_hosted_insert_sql(stage: str, candidates: str) -> str:
     """Apex MX under the domain itself → the pattern-free self-hosted rule.
 
     A subdomain host must end with '.<root_domain>'; the bare-equality branch
@@ -144,8 +179,7 @@ SELECT
     '{RULE_SOURCE}' AS source,
     %(source_run_id)s AS source_run_id,
     %(detected_at)s AS detected_at
-FROM (
-    {candidate_sql("dns_mx")}
-)
-WHERE candidate NOT IN ('~', 'localhost')
+FROM {candidates}
+WHERE signal_type = 'dns_mx'
+  AND candidate NOT IN ('~', 'localhost')
   AND (candidate = root_domain OR endsWith(candidate, concat('.', root_domain)))"""

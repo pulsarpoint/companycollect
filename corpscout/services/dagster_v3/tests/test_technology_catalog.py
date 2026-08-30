@@ -597,23 +597,24 @@ def test_vectorscan_safe_accepts_shipped_patterns():
     assert all(detection.vectorscan_safe(p) for p in custom_patterns)
 
 
-def test_candidate_sql_shapes():
-    mx = detection.candidate_sql("dns_mx")
-    assert "record_type = 'MX'" in mx
-    assert "substringIndex(value, ' ', -1)" in mx  # strips the priority prefix
-    assert "name = root_domain" in mx
-    txt = detection.candidate_sql("dns_txt")
-    assert "record_type = 'TXT'" in txt
-    assert "trim(BOTH '\"' FROM value)" in txt
-    cname = detection.candidate_sql("dns_cname")
-    assert "concat('www.', root_domain)" in cname
+def test_candidates_insert_is_one_scan_covering_every_signal():
+    sql = detection.candidates_insert_sql("`db`.`cand`")
+    assert sql.count(f"`{'commoncrawl_domain_dns_records'}`") == 1
+    for record_type in ("MX", "TXT", "NS", "SOA", "CNAME"):
+        assert f"'{record_type}'" in sql
+    assert "substringIndex(value, ' ', -1)" in sql  # MX priority prefix
+    assert "trim(BOTH '\"' FROM value)" in sql  # TXT quotes
+    assert "record_type = 'CNAME' AND name = concat('www.', root_domain)" in sql
+    assert "GROUP BY root_domain, record_name, signal_type, candidate" in sql
 
 
 def test_detection_insert_sql_uses_one_vectorscan_pass():
-    sql = detection.detection_insert_sql("`db`.`stage`", "dns_mx")
+    sql = detection.detection_insert_sql("`db`.`stage`", "`db`.`cand`", "dns_mx")
     assert "multiMatchAllIndices(candidate, %(match_patterns)s)" in sql
     assert "ARRAY JOIN" in sql
     assert "'dns_mx' AS signal_type" in sql
+    assert "FROM `db`.`cand`" in sql
+    assert "WHERE signal_type = 'dns_mx'" in sql
     for column in tables.DOMAIN_SIGNAL_TECHNOLOGIES_COLUMNS:
         assert column in sql
 
@@ -627,7 +628,8 @@ def test_match_patterns_are_case_insensitive_but_stored_clean():
 
 
 def test_self_hosted_sql_scopes_to_own_domain():
-    sql = detection.self_hosted_insert_sql("`db`.`stage`")
+    sql = detection.self_hosted_insert_sql("`db`.`stage`", "`db`.`cand`")
+    assert "WHERE signal_type = 'dns_mx'" in sql
     assert f"'{detection.SELF_HOSTED_TECHNOLOGY}'" in sql
     assert "endsWith(candidate, concat('.', root_domain))" in sql
     assert "candidate = root_domain" in sql
