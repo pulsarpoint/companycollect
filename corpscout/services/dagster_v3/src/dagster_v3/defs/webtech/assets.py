@@ -1,50 +1,46 @@
-import asyncio
-import os
 import re
-import time
-from collections import Counter
+from datetime import UTC, datetime
 
 import dagster as dg
 from dagster_clickhouse import ClickhouseResource
-from pydantic import Field, field_validator
+from pydantic import field_validator
 
 from dagster_v3.defs.common.resources import ObjectStoreResource
+from dagster_v3.defs.webtech.client import (
+    UnknownRemoteScanError,
+    WebtechApiResource,
+)
 from dagster_v3.defs.webtech.models import (
     WEBTECH_DETECTOR_VERSION,
+    CandidateManifestReference,
+    FinalScanReference,
+    RemoteScanSnapshot,
     WebtechCandidate,
-    WebtechDomainResult,
-)
-from dagster_v3.defs.webtech.scanner import (
-    WebtechScannerSettings,
-    scan_webtech_candidates,
 )
 from dagster_v3.defs.webtech.storage import (
     WEBTECH_CLICKHOUSE_DATABASE,
     WEBTECH_RESULT_TABLE,
-    parse_webtech_s3_path,
-    persist_webtech_results,
+    WebtechS3Destination,
+    index_final_results,
+    write_candidate_manifest,
 )
 
-WEBTECH_PILOT_MAX_HARMONIC_RANK = 1_000
-WEBTECH_PILOT_PARTITION_KEY = "harmonic_top_1000"
-WEBTECH_BROWSER_POOL = "webtech_cloakbrowser_session"
-WEBTECH_PARTITIONS = dg.StaticPartitionsDefinition([WEBTECH_PILOT_PARTITION_KEY])
+WEBTECH_DOMAIN_LIMIT = 1_000_000
+WEBTECH_PARTITION_COUNT = 128
+WEBTECH_DEFAULT_CRAWL_ID = "CC-MAIN-2026-apr-may-jun"
+WEBTECH_PARTITION_KEYS = tuple(
+    f"hash_{partition_index:03d}"
+    for partition_index in range(WEBTECH_PARTITION_COUNT)
+)
+WEBTECH_REMOTE_POOL = "webtech_remote_scanner"
+WEBTECH_PARTITIONS = dg.StaticPartitionsDefinition(WEBTECH_PARTITION_KEYS)
 
 
-class WebtechScanConfig(dg.Config):
-    """Run configuration intentionally capped at the first 1,000 domains."""
+class WebtechCandidateConfig(dg.Config):
+    """Common Crawl snapshot used to build one Webtech hash partition."""
 
-    crawl_id: str
-    max_harmonic_rank: int = Field(
-        default=WEBTECH_PILOT_MAX_HARMONIC_RANK,
-        ge=1,
-        le=WEBTECH_PILOT_MAX_HARMONIC_RANK,
-    )
+    crawl_id: str = WEBTECH_DEFAULT_CRAWL_ID
     force_rescan: bool = False
-    page_worker_count: int = Field(default=10, ge=1, le=20)
-    navigation_timeout_seconds: float = Field(default=60.0, gt=0)
-    report_timeout_seconds: float = Field(default=120.0, gt=0)
-    headless: bool = True
 
     @field_validator("crawl_id")
     @classmethod
@@ -59,45 +55,47 @@ def load_webtech_candidates(
     *,
     partition_key: str,
     crawl_id: str,
-    max_harmonic_rank: int,
     force_rescan: bool,
 ) -> tuple[WebtechCandidate, ...]:
-    """Load the ranked pilot candidates, skipping completed reports."""
-    if partition_key != WEBTECH_PILOT_PARTITION_KEY:
-        raise ValueError(f"Invalid webtech pilot partition: {partition_key!r}")
-    if not 1 <= max_harmonic_rank <= WEBTECH_PILOT_MAX_HARMONIC_RANK:
-        raise ValueError(
-            "max_harmonic_rank must be between 1 and "
-            f"{WEBTECH_PILOT_MAX_HARMONIC_RANK}"
-        )
-    WebtechScanConfig(crawl_id=crawl_id, max_harmonic_rank=max_harmonic_rank)
-
-    completed_filter = ""
+    """Load one top-million hash partition, excluding recently scanned domains."""
+    if partition_key not in WEBTECH_PARTITION_KEYS:
+        raise ValueError(f"Invalid Webtech partition: {partition_key!r}")
+    WebtechCandidateConfig(
+        crawl_id=crawl_id,
+        force_rescan=force_rescan,
+    )
+    recent_scan_filter = ""
     if not force_rescan:
-        completed_filter = f"""
+        recent_scan_filter = f"""
           AND lower(root_domain) NOT IN (
-              SELECT root_domain
+              SELECT lower(root_domain)
               FROM {WEBTECH_CLICKHOUSE_DATABASE}.{WEBTECH_RESULT_TABLE} FINAL
-              WHERE crawl_id = %(crawl_id)s
-                AND detector_version = %(detector_version)s
-                AND outcome = 'success'
+              WHERE detector_version = %(detector_version)s
+                AND scanned_at >= now('UTC') - INTERVAL 1 MONTH
           )
         """
 
+    partition_index = int(partition_key.removeprefix("hash_"))
     with clickhouse.get_connection() as client:
         rows = client.execute(
             f"""
             SELECT lower(root_domain), cc_harmonic_rank
             FROM {WEBTECH_CLICKHOUSE_DATABASE}.commoncrawl_domain_graph_signals FINAL
             WHERE crawl_id = %(crawl_id)s
-              AND cc_harmonic_rank BETWEEN 1 AND %(max_harmonic_rank)s
-              {completed_filter}
+              AND cc_harmonic_rank BETWEEN 1 AND %(harmonic_rank_limit)s
+              AND modulo(
+                  cityHash64(lower(root_domain)),
+                  %(partition_count)s
+              ) = %(partition_index)s
+              {recent_scan_filter}
             ORDER BY cc_harmonic_rank, root_domain
             """,
             {
                 "crawl_id": crawl_id,
                 "detector_version": WEBTECH_DETECTOR_VERSION,
-                "max_harmonic_rank": max_harmonic_rank,
+                "harmonic_rank_limit": WEBTECH_DOMAIN_LIMIT,
+                "partition_count": WEBTECH_PARTITION_COUNT,
+                "partition_index": partition_index,
             },
         )
 
@@ -105,173 +103,276 @@ def load_webtech_candidates(
         WebtechCandidate(root_domain=str(row[0]), harmonic_rank=int(row[1]))
         for row in rows
     )
-    if len(candidates) > max_harmonic_rank:
+    if len(candidates) > WEBTECH_DOMAIN_LIMIT:
         raise RuntimeError(
-            f"Partition {partition_key} returned too many pilot candidates: "
+            f"Partition {partition_key} returned too many candidates: "
             f"{len(candidates)}"
         )
     if len({candidate.root_domain for candidate in candidates}) != len(candidates):
         raise RuntimeError(f"Partition {partition_key} returned duplicate domains")
     for candidate in candidates:
         _validate_root_domain(candidate.root_domain)
-        if candidate.harmonic_rank < 1 or candidate.harmonic_rank > max_harmonic_rank:
-            raise RuntimeError(
-                f"Candidate rank is outside the requested pilot range: {candidate}"
-            )
     return candidates
 
 
-@dg.asset(
-    group_name="webtech",
-    kinds={"python", "browser", "json", "s3", "clickhouse", "commoncrawl"},
-    tags={
-        "source": "commoncrawl_harmonic_rank",
-        "entity_type": "domain",
-        "layer": "web_technology_scan",
-    },
-    partitions_def=WEBTECH_PARTITIONS,
-    backfill_policy=dg.BackfillPolicy.multi_run(max_partitions_per_run=1),
-    pool=WEBTECH_BROWSER_POOL,
-    description=(
-        "Scans the selected Common Crawl harmonic top 1,000 as one pilot "
-        "partition. Each batch owns a fresh CloakBrowser context and uses up to "
-        "ten concurrent one-domain pages with the packaged Wappalyzer extension. "
-        "It writes each terminal outcome to RustFS before its ClickHouse index "
-        "row."
-    ),
-)
-def commoncrawl_webtech_scan_results(
-    context: dg.AssetExecutionContext,
-    config: WebtechScanConfig,
-    clickhouse: ClickhouseResource,
-    webtech_object_store: ObjectStoreResource,
-) -> dg.MaterializeResult:
-    """Materialize the complete bounded webtech pilot in one partition."""
-    asset_started_at = time.perf_counter()
-    partition_key = context.partition_key
-    candidates = load_webtech_candidates(
-        clickhouse,
-        partition_key=partition_key,
-        crawl_id=config.crawl_id,
-        max_harmonic_rank=config.max_harmonic_rank,
-        force_rescan=config.force_rescan,
+def build_webtech_assets(
+    destination: WebtechS3Destination,
+) -> tuple[dg.AssetsDefinition, ...]:
+    """Build the three partition-aligned assets for the remote integration."""
+
+    @dg.asset(
+        name="commoncrawl_webtech_candidates_manifest",
+        group_name="webtech",
+        kinds={"python", "json", "s3", "clickhouse", "commoncrawl"},
+        tags={"source": "commoncrawl_harmonic_rank", "layer": "manifest"},
+        partitions_def=WEBTECH_PARTITIONS,
+        backfill_policy=dg.BackfillPolicy.multi_run(max_partitions_per_run=1),
+        description=(
+            "Selects one of 128 hash partitions from the harmonic top million, "
+            "excludes domains scanned in the last month, and writes an immutable "
+            "candidate manifest to RustFS."
+        ),
     )
-    context.log.info(
-        "Starting webtech pilot: crawl_id=%s partition=%s candidates=%s "
-        "page_workers=%s browser_contexts=%s force_rescan=%s",
-        config.crawl_id,
-        partition_key,
-        len(candidates),
-        min(config.page_worker_count, len(candidates)),
-        (
-            len(candidates) + config.page_worker_count - 1
+    def candidates_manifest(
+        context: dg.AssetExecutionContext,
+        config: WebtechCandidateConfig,
+        clickhouse: ClickhouseResource,
+        webtech_object_store: ObjectStoreResource,
+    ) -> dg.Output[CandidateManifestReference]:
+        candidates = load_webtech_candidates(
+            clickhouse,
+            partition_key=context.partition_key,
+            crawl_id=config.crawl_id,
+            force_rescan=config.force_rescan,
         )
-        // config.page_worker_count,
-        config.force_rescan,
-    )
-
-    completed_count = 0
-
-    def log_progress(result: WebtechDomainResult) -> None:
-        nonlocal completed_count
-        completed_count += 1
+        reference = write_candidate_manifest(
+            object_store=webtech_object_store,
+            destination=destination,
+            crawl_id=config.crawl_id,
+            partition_key=context.partition_key,
+            dagster_run_id=context.run_id,
+            candidates=candidates,
+        )
         context.log.info(
-            "Webtech progress %s/%s: domain=%s rank=%s outcome=%s "
-            "technologies=%s duration_ms=%s",
-            completed_count,
+            "Webtech candidate manifest: crawl_id=%s partition=%s candidates=%s uri=%s",
+            config.crawl_id,
+            context.partition_key,
             len(candidates),
-            result.candidate.root_domain,
-            result.candidate.harmonic_rank,
-            result.outcome,
-            len(result.report.technologies) if result.report is not None else 0,
-            result.duration_ms,
+            reference.uri,
+        )
+        return dg.Output(
+            reference,
+            metadata={
+                "crawl_id": config.crawl_id,
+                "partition_key": context.partition_key,
+                "candidate_count": len(candidates),
+                "harmonic_rank_limit": WEBTECH_DOMAIN_LIMIT,
+                "hash_partition_count": WEBTECH_PARTITION_COUNT,
+                "hash_partition_index": int(
+                    context.partition_key.removeprefix("hash_")
+                ),
+                "freshness_window": "1 month",
+                "detector_version": WEBTECH_DETECTOR_VERSION,
+                "dagster_run_id": context.run_id,
+                "manifest_uri": reference.uri,
+                "manifest_sha256": reference.sha256,
+            },
         )
 
-    scan_started_at = time.perf_counter()
-    results = asyncio.run(
-        scan_webtech_candidates(
-            candidates,
-            settings=WebtechScannerSettings(
-                headless=config.headless,
-                page_worker_count=config.page_worker_count,
-                navigation_timeout_seconds=config.navigation_timeout_seconds,
-                report_timeout_seconds=config.report_timeout_seconds,
-            ),
-            progress_callback=log_progress,
+    @dg.asset(
+        name="commoncrawl_webtech_remote_scan",
+        group_name="webtech",
+        kinds={"python", "browser", "api", "json", "s3"},
+        tags={"source": "webtech_remote_api", "layer": "raw"},
+        partitions_def=WEBTECH_PARTITIONS,
+        backfill_policy=dg.BackfillPolicy.multi_run(max_partitions_per_run=1),
+        pool=WEBTECH_REMOTE_POOL,
+        description=(
+            "Submits the candidate manifest to the remote CloakBrowser service "
+            "and long-polls its compact progress events until the final RustFS "
+            "manifest exists."
+        ),
+    )
+    def remote_scan(
+        context: dg.AssetExecutionContext,
+        commoncrawl_webtech_candidates_manifest: CandidateManifestReference,
+        webtech_api: WebtechApiResource,
+    ) -> dg.Output[FinalScanReference]:
+        manifest_reference = commoncrawl_webtech_candidates_manifest
+        snapshot = webtech_api.submit(manifest_reference)
+        cursor = 0
+        context.log.info(
+            "Remote Webtech scan attached: scan_id=%s status=%s completed=%s/%s",
+            snapshot.scan_id,
+            snapshot.status,
+            snapshot.completed_count,
+            snapshot.total_count,
         )
-    )
-    scan_wall_seconds = time.perf_counter() - scan_started_at
-    s3_path = os.environ.get("WEBTECH_S3_PATH", "").strip()
-    if s3_path == "":
-        raise ValueError("WEBTECH_S3_PATH is required")
-    destination = parse_webtech_s3_path(s3_path)
-    stored = persist_webtech_results(
-        clickhouse=clickhouse,
-        object_store=webtech_object_store,
-        destination=destination,
-        crawl_id=config.crawl_id,
-        partition_key=partition_key,
-        run_id=context.run.run_id,
-        results=results,
-    )
-    outcomes = Counter(result.outcome for result in results)
-    technology_count = sum(
-        len(result.report.technologies)
-        for result in results
-        if result.report is not None
-    )
-    asset_wall_seconds = time.perf_counter() - asset_started_at
-    domains_per_minute = (
-        len(results) / scan_wall_seconds * 60 if scan_wall_seconds > 0 else 0.0
-    )
-    context.log.info(
-        "Finished webtech pilot: crawl_id=%s partition=%s selected=%s stored=%s "
-        "success=%s failures=%s technologies=%s scan_wall_seconds=%.2f "
-        "domains_per_minute=%.2f",
-        config.crawl_id,
-        partition_key,
-        len(candidates),
-        len(stored),
-        outcomes["success"],
-        len(results) - outcomes["success"],
-        technology_count,
-        scan_wall_seconds,
-        domains_per_minute,
-    )
-    return dg.MaterializeResult(
-        metadata={
-            "crawl_id": config.crawl_id,
-            "partition_key": partition_key,
-            "max_harmonic_rank": config.max_harmonic_rank,
-            "selected_domain_count": len(candidates),
-            "stored_result_count": len(stored),
-            "success_count": outcomes["success"],
-            "navigation_error_count": outcomes["navigation_error"],
-            "report_timeout_count": outcomes["report_timeout"],
-            "browser_error_count": outcomes["browser_error"],
-            "technology_detection_count": technology_count,
-            "page_worker_count": min(config.page_worker_count, len(candidates)),
-            "browser_context_count": (
-                len(candidates) + config.page_worker_count - 1
+        try:
+            while snapshot.status in {"pending", "running"}:
+                try:
+                    poll = webtech_api.poll(
+                        snapshot.scan_id,
+                        after_event=cursor,
+                    )
+                except UnknownRemoteScanError:
+                    snapshot = webtech_api.submit(manifest_reference)
+                    cursor = 0
+                    context.log.warning(
+                        "Remote scanner restarted; reattached scan_id=%s "
+                        "completed=%s/%s",
+                        snapshot.scan_id,
+                        snapshot.completed_count,
+                        snapshot.total_count,
+                    )
+                    continue
+                for event in poll.events:
+                    cursor = max(cursor, event.sequence)
+                    context.log.info(
+                        "Webtech batch: scan_id=%s completed=%s/%s window=%s "
+                        "outcomes=%s technologies=%s elapsed_seconds=%.1f "
+                        "rate_per_minute=%.2f",
+                        snapshot.scan_id,
+                        event.completed_count,
+                        event.total_count,
+                        event.window_count,
+                        event.window_outcome_counts,
+                        event.window_technology_count,
+                        event.elapsed_seconds,
+                        event.domains_per_minute,
+                    )
+                snapshot = poll.scan
+        except BaseException:
+            _cancel_remote_scan(context, webtech_api, snapshot)
+            raise
+
+        if snapshot.status != "completed":
+            raise RuntimeError(
+                f"Remote Webtech scan {snapshot.scan_id} ended as "
+                f"{snapshot.status}: {snapshot.error_message}"
             )
-            // config.page_worker_count,
-            "scan_wall_seconds": round(scan_wall_seconds, 3),
-            "domains_per_minute": round(domains_per_minute, 2),
-            "asset_wall_seconds": round(asset_wall_seconds, 3),
-            "detector_version": WEBTECH_DETECTOR_VERSION,
-            "s3_bucket": destination.bucket,
-            "s3_prefix": destination.prefix,
-        }
+        reference = _final_reference(snapshot)
+        context.log.info(
+            "Remote Webtech scan completed: scan_id=%s completed=%s "
+            "outcomes=%s technologies=%s elapsed_seconds=%.1f "
+            "rate_per_minute=%.2f",
+            snapshot.scan_id,
+            snapshot.completed_count,
+            snapshot.outcome_counts,
+            snapshot.technology_count,
+            snapshot.elapsed_seconds,
+            snapshot.domains_per_minute,
+        )
+        return dg.Output(
+            reference,
+            metadata={
+                "scan_id": snapshot.scan_id,
+                "crawl_id": snapshot.crawl_id,
+                "partition_key": snapshot.partition_key,
+                "completed_count": snapshot.completed_count,
+                "outcome_counts": snapshot.outcome_counts,
+                "technology_count": snapshot.technology_count,
+                "elapsed_seconds": round(snapshot.elapsed_seconds, 3),
+                "domains_per_minute": round(snapshot.domains_per_minute, 2),
+                "final_manifest_uri": snapshot.final_manifest_uri,
+            },
+        )
+
+    @dg.asset(
+        name="commoncrawl_webtech_results_clickhouse",
+        group_name="webtech",
+        kinds={"python", "json", "s3", "clickhouse"},
+        tags={"source": "webtech_remote_api", "layer": "index"},
+        partitions_def=WEBTECH_PARTITIONS,
+        backfill_policy=dg.BackfillPolicy.multi_run(max_partitions_per_run=1),
+        description=(
+            "Validates every result named by the final remote manifest and "
+            "indexes its queryable fields in ClickHouse."
+        ),
+    )
+    def results_clickhouse(
+        context: dg.AssetExecutionContext,
+        commoncrawl_webtech_remote_scan: FinalScanReference,
+        clickhouse: ClickhouseResource,
+        webtech_object_store: ObjectStoreResource,
+    ) -> dg.MaterializeResult:
+        reference = commoncrawl_webtech_remote_scan
+        indexed_count = index_final_results(
+            clickhouse=clickhouse,
+            object_store=webtech_object_store,
+            destination=destination,
+            reference=reference,
+            dagster_run_id=context.run_id,
+        )
+        context.log.info(
+            "Indexed remote Webtech results: scan_id=%s rows=%s outcomes=%s",
+            reference.scan_id,
+            indexed_count,
+            reference.outcome_counts,
+        )
+        return dg.MaterializeResult(
+            metadata={
+                "scan_id": reference.scan_id,
+                "crawl_id": reference.crawl_id,
+                "partition_key": reference.partition_key,
+                "indexed_count": indexed_count,
+                "outcome_counts": reference.outcome_counts,
+                "technology_count": reference.technology_count,
+                "scan_elapsed_seconds": round(reference.elapsed_seconds, 3),
+                "domains_per_minute": round(reference.domains_per_minute, 2),
+                "final_manifest_uri": reference.uri,
+                "indexed_at": datetime.now(UTC).isoformat(),
+            }
+        )
+
+    return candidates_manifest, remote_scan, results_clickhouse
+
+
+def build_webtech_job(
+    assets: tuple[dg.AssetsDefinition, ...],
+) -> dg.UnresolvedAssetJobDefinition:
+    """Build the ordered end-to-end job from the component's assets."""
+    return dg.define_asset_job(
+        name="commoncrawl_webtech_scan_job",
+        selection=dg.AssetSelection.assets(*assets),
+        description=(
+            "Build one top-million hash-partition manifest, run the remote scanner, "
+            "and index its final RustFS results in ClickHouse."
+        ),
     )
 
 
-commoncrawl_webtech_scan_job = dg.define_asset_job(
-    name="commoncrawl_webtech_scan_job",
-    selection=dg.AssetSelection.assets(commoncrawl_webtech_scan_results),
-    description=(
-        "Run the complete harmonic top-1,000 Common Crawl webtech pilot."
-    ),
-)
+def _cancel_remote_scan(
+    context: dg.AssetExecutionContext,
+    webtech_api: WebtechApiResource,
+    snapshot: RemoteScanSnapshot,
+) -> None:
+    if snapshot.status not in {"pending", "running"}:
+        return
+    try:
+        webtech_api.cancel(snapshot.scan_id)
+        context.log.info("Cancelled remote Webtech scan %s", snapshot.scan_id)
+    except Exception as error:
+        context.log.warning(
+            "Could not cancel remote Webtech scan %s: %s",
+            snapshot.scan_id,
+            error,
+        )
+
+
+def _final_reference(snapshot: RemoteScanSnapshot) -> FinalScanReference:
+    return FinalScanReference(
+        scan_id=snapshot.scan_id,
+        crawl_id=snapshot.crawl_id,
+        partition_key=snapshot.partition_key,
+        detector_version=snapshot.detector_version,
+        uri=snapshot.final_manifest_uri,
+        total_count=snapshot.total_count,
+        outcome_counts=snapshot.outcome_counts,
+        technology_count=snapshot.technology_count,
+        elapsed_seconds=snapshot.elapsed_seconds,
+        domains_per_minute=snapshot.domains_per_minute,
+    )
 
 
 def _validate_root_domain(root_domain: str) -> None:

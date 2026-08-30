@@ -303,6 +303,23 @@
     "icon": "IconScout.svg",
     "website": "https://iconscout.com"
   },
+  "Iconify": {
+    "cats": [
+      59
+    ],
+    "description": "Iconify is an open-source icon framework that provides a common interface for rendering icons from multiple icon sets in web applications.",
+    "dom": [
+      "iconify-icon",
+      "[class~='iconify'][data-icon]"
+    ],
+    "icon": "Iconify.svg",
+    "oss": true,
+    "scriptSrc": [
+      "code\\.iconify\\.design/(?:iconify-icon/|\\d+/)([\\d.]+)/iconify(?:-icon)?\\.min\\.js\\;version:\\1",
+      "cdn\\.jsdelivr\\.net/npm/iconify-icon@([\\d.]+)/dist/iconify-icon\\.min\\.js\\;version:\\1"
+    ],
+    "website": "https://iconify.design/"
+  },
   "Iconosquare": {
     "cats": [
       10
@@ -1314,7 +1331,6 @@
     ],
     "description": "Inkybay is a Shopify product personalization app for configurable product options, live previews, and print-ready custom orders.",
     "icon": "Inkybay.svg",
-    "implies": "Shopify",
     "js": {
       "EFOLI_INKYBAY_SCRIPTTAG_JS_INIT": "",
       "runInkybayApp": ""
@@ -1323,6 +1339,7 @@
       "low",
       "recurring"
     ],
+    "requires": "Shopify",
     "saas": true,
     "scriptSrc": [
       "\\.inkybay\\.com/shopify/js/inkybay\\.js",
@@ -2624,12 +2641,12 @@
     ],
     "icon": "iPresta.svg",
     "implies": [
-      "PHP",
-      "PrestaShop"
+      "PHP"
     ],
     "meta": {
       "designer": "iPresta"
     },
+    "requires": "PrestaShop",
     "website": "https://ipresta.ir"
   },
   "iRaiser": {

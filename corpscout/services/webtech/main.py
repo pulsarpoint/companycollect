@@ -135,9 +135,7 @@ def build_summary(
         result.timeout_stage for result in results if result.timeout_stage is not None
     )
     report_statuses = Counter(
-        result.report.analysis_status
-        for result in results
-        if result.report is not None
+        result.report.analysis_status for result in results if result.report is not None
     )
     extension_failure_stages = Counter(
         result.report.failure_stage
@@ -216,9 +214,7 @@ def build_summary(
                 "outcome": result.outcome,
                 "timeout_stage": result.timeout_stage,
                 "extension_status": (
-                    result.report.analysis_status
-                    if result.report is not None
-                    else None
+                    result.report.analysis_status if result.report is not None else None
                 ),
                 "extension_failure_stage": (
                     result.report.failure_stage if result.report is not None else None

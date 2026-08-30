@@ -534,7 +534,6 @@
     ],
     "description": "GemPages is a Shopify landing page buidler that empowers SMEs, agency, and freelancers to build their brands and sell online.",
     "icon": "GemPages.svg",
-    "implies": "Shopify",
     "js": {
       "GEMSTORE": "",
       "GEMVENDOR": ""
@@ -543,6 +542,7 @@
       "low",
       "recurring"
     ],
+    "requires": "Shopify",
     "saas": true,
     "scriptSrc": "/files/gempagev\\d+\\.js",
     "website": "https://gempages.net"
@@ -750,13 +750,13 @@
     ],
     "description": "Genlook Virtual try-on is an AI-powered virtual fitting room app for Shopify stores.",
     "icon": "Genlook.svg",
-    "implies": "Shopify",
     "pricing": [
       "freemium",
       "low",
       "recurring",
       "payg"
     ],
+    "requires": "Shopify",
     "saas": true,
     "scriptSrc": "cdn\\.shopify\\.com/extensions/[^/]+/genlook-[^/]+/assets/",
     "website": "https://genlook.app"
@@ -1850,12 +1850,12 @@
     ],
     "description": "Also Bought is a conversion Shopify app by Globo.",
     "icon": "Globo apps.svg",
-    "implies": "Shopify",
     "pricing": [
       "freemium",
       "low",
       "recurring"
     ],
+    "requires": "Shopify",
     "saas": true,
     "scriptSrc": "assets/globo\\.alsobought\\.js",
     "website": "https://apps.shopify.com/globo-related-products"
@@ -1866,10 +1866,10 @@
     ],
     "description": "Globo Color Swatch app gives you a tool to display product variants on both collection page, homepage and product page creatively as a means to enhance customers' experience and stimulate them to purchase.",
     "icon": "Globo apps.svg",
-    "implies": "Shopify",
     "pricing": [
       "freemium"
     ],
+    "requires": "Shopify",
     "saas": true,
     "scriptSrc": "assets/globo\\.swatch\\.data\\.js",
     "website": "https://apps.shopify.com/globo-related-products"
@@ -1881,12 +1881,12 @@
     ],
     "description": "Form Builder is a Shopify form builder app for contact form built by Globo.",
     "icon": "Globo apps.svg",
-    "implies": "Shopify",
     "pricing": [
       "freemium",
       "low",
       "recurring"
     ],
+    "requires": "Shopify",
     "saas": true,
     "scriptSrc": "/assets/globo\\.formbuilder\\.init\\.js",
     "website": "https://apps.shopify.com/form-builder-contact-form"
@@ -1897,7 +1897,6 @@
     ],
     "description": "Globo Pre-Order is a Shopify app for building pre-order functionality on Shopify stores.",
     "icon": "Globo apps.svg",
-    "implies": "Shopify",
     "js": {
       "GloboPreorderParams": ""
     },
@@ -1906,6 +1905,7 @@
       "low",
       "recurring"
     ],
+    "requires": "Shopify",
     "saas": true,
     "website": "https://apps.shopify.com/pre-order-pro"
   },
@@ -3185,7 +3185,6 @@
     ],
     "description": "Govalo is a software startup company that builds a Shopify app.",
     "icon": "Govalo.svg",
-    "implies": "Shopify",
     "js": {
       "Govalo.meta": ""
     },
@@ -3195,6 +3194,7 @@
       "mid",
       "recurring"
     ],
+    "requires": "Shopify",
     "saas": true,
     "scriptSrc": "cdn\\.shopify\\.com/extensions/.+/([\\d\\.]+)/assets/govalo\\.min\\.js\\;version:\\1",
     "website": "https://govalo.com"
@@ -4270,10 +4270,10 @@
       1
     ],
     "icon": "govCMS.svg",
-    "implies": "Drupal",
     "meta": {
       "generator": "Drupal ([\\d]+) \\(https?:\\/\\/drupal\\.org\\) \\+ (?:GovCMS|govCMS)(?: \\(https?:\\/\\/(?:www\\.)?govcms\\.gov\\.au\\))?\\;version:\\1"
     },
+    "requires": "Drupal",
     "website": "https://www.govcms.gov.au"
   },
   "gunicorn": {

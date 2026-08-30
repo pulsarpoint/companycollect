@@ -181,7 +181,7 @@
     ],
     "cpe": "cpe:2.3:a:ubercart:ubercart:*:*:*:*:*:*:*:*",
     "icon": "Ubercart.png",
-    "implies": "Drupal",
+    "requires": "Drupal",
     "scriptSrc": "uc_cart/uc_cart_block\\.js",
     "website": "https://www.ubercart.org"
   },
@@ -267,6 +267,24 @@
     "saas": true,
     "scriptSrc": "static\\.ucraft\\.net",
     "website": "https://www.ucraft.com"
+  },
+  "Uebfaqe": {
+    "cats": [
+      51
+    ],
+    "description": "Uebfaqe is an AI website builder for creating, editing, and publishing sites on hosted subdomains or custom domains.",
+    "icon": "Uebfaqe.svg",
+    "meta": {
+      "generator": "^Uebfaqe$"
+    },
+    "pricing": [
+      "low",
+      "freemium",
+      "recurring"
+    ],
+    "saas": true,
+    "url": "^https?://[^/]+\\.uebfaqe\\.app/",
+    "website": "https://uebfaqe.ai"
   },
   "Ueeshop": {
     "cats": [

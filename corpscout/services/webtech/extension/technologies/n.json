@@ -500,11 +500,11 @@
     ],
     "description": "Neat A/B Testing is a Shopify app built by NeatShift.",
     "icon": "Neat.png",
-    "implies": "Shopify",
     "pricing": [
       "mid",
       "recurring"
     ],
+    "requires": "Shopify",
     "saas": true,
     "scriptSrc": "cdn\\.neatab\\.com/",
     "website": "https://neatab.com"
@@ -1533,6 +1533,23 @@
       "generator": "NitroPack"
     },
     "website": "https://nitropack.io/"
+  },
+  "Nlet School": {
+    "cats": [
+      21
+    ],
+    "description": "Nlet School is a school management platform for admissions, attendance, fees, exams, transportation, and communication.",
+    "icon": "Nlet School.png",
+    "meta": {
+      "author": "^NLET(?: initiatives LLP)?$"
+    },
+    "pricing": [
+      "low",
+      "recurring"
+    ],
+    "saas": true,
+    "url": "^https?://[^./]+\\.nletschool\\.com(?:/|$)",
+    "website": "https://nletschool.com/"
   },
   "NoFraud": {
     "cats": [

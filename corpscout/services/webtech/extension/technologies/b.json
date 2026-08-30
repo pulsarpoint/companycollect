@@ -1027,7 +1027,6 @@
     ],
     "description": "AfterSell is a Shopify app by Beam which helps brands create post purchase offers.",
     "icon": "AfterSell.svg",
-    "implies": "Shopify",
     "js": {
       "aftersell.hooks": ""
     },
@@ -1036,6 +1035,7 @@
       "recurring",
       "low"
     ],
+    "requires": "Shopify",
     "saas": true,
     "scriptSrc": "\\.aftersell\\.app/",
     "website": "https://www.aftersell.com"
@@ -1057,7 +1057,6 @@
     ],
     "description": "OutSell is a Shopify app by Beam. Frequently Bought Together, Discounted Upsell, Also Bought.",
     "icon": "Beam.svg",
-    "implies": "Shopify",
     "js": {
       "outsellAiRecommendationsIsEnabled": "",
       "outsellApp": ""
@@ -1065,6 +1064,7 @@
     "pricing": [
       "freemium"
     ],
+    "requires": "Shopify",
     "saas": true,
     "scriptSrc": "//outsellapp\\.com/",
     "website": "https://apps.shopify.com/outsell"
@@ -1456,7 +1456,6 @@
     ],
     "description": "Better Price is a Shopify app which provide coupons to real leads only when discounted price is requested build by Architechpro.",
     "icon": "Better Price.png",
-    "implies": "Shopify",
     "js": {
       "fc_metafield_betterprice.betterpricesuccess": ""
     },
@@ -1464,6 +1463,7 @@
       "low",
       "recurring"
     ],
+    "requires": "Shopify",
     "saas": true,
     "scriptSrc": "/shopify-apps//js/betterprice/betterprice\\.js",
     "website": "https://apps.shopify.com/better-price"
@@ -2042,6 +2042,46 @@
     ],
     "saas": true,
     "website": "https://www.bisup.com"
+  },
+  "Bit Assist": {
+    "cats": [
+      5
+    ],
+    "description": "Bit Assist is a customer-support widget for embedding messaging channels, contact forms, FAQs, and third-party live-chat services on websites.",
+    "icon": "Bit Assist.svg",
+    "js": {
+      "bit_assist_.api.base": "(?:^|[=/])bit-assist/v1$"
+    },
+    "oss": true,
+    "pricing": [
+      "low",
+      "freemium",
+      "onetime",
+      "recurring"
+    ],
+    "scriptSrc": [
+      "/wp-content/plugins/bit-assist/iframe/bit-assist\\.js(?:\\?ver=(\\d+(?:\\.\\d+)+))?\\;version:\\1",
+      "bit-assist-widget-script-JAVASCRIPT-ASYNC"
+    ],
+    "website": "https://bitassist.co"
+  },
+  "Bit Form": {
+    "cats": [
+      110
+    ],
+    "description": "Bit Form is an open-source WordPress form builder plugin for creating contact, payment, multi-step, conversational, and calculator forms.",
+    "dom": "form[id^='form-bitforms_'].bf-form",
+    "icon": "Bit Form.svg",
+    "oss": true,
+    "pricing": [
+      "low",
+      "freemium",
+      "onetime",
+      "recurring"
+    ],
+    "requires": "WordPress",
+    "scriptSrc": "/wp-content/uploads/bitforms/form-scripts/\\d+/bitform-js-\\d+\\.js",
+    "website": "https://bit-form.com"
   },
   "BitPay": {
     "cats": [
@@ -3000,7 +3040,6 @@
     "description": "Bold Brain help customers discover more products and add more to their cart with dynamic recommendations for Shopify and use advanced analytics.",
     "icon": "Bold.svg",
     "implies": [
-      "Shopify",
       "Bold Commerce"
     ],
     "js": {
@@ -3011,6 +3050,7 @@
       "low",
       "recurring"
     ],
+    "requires": "Shopify",
     "saas": true,
     "scriptSrc": "brain-assets\\.boldapps\\.net/",
     "website": "https://boldcommerce.com/bold-brain"
@@ -3022,7 +3062,6 @@
     "description": "Bold Bundles Shopify app is designed to present recommended product widgets to cross-sell your products.",
     "icon": "Bold.svg",
     "implies": [
-      "Shopify",
       "Bold Commerce"
     ],
     "js": {
@@ -3032,6 +3071,7 @@
       "low",
       "recurring"
     ],
+    "requires": "Shopify",
     "saas": true,
     "scriptSrc": "bundles\\.boldapps\\.net/",
     "website": "https://boldcommerce.com/bundles"
@@ -3062,7 +3102,6 @@
     "description": "Bold Custom Pricing is an app that makes it easy to create a tiered pricing structure for customers.",
     "icon": "Bold.svg",
     "implies": [
-      "Shopify",
       "Bold Commerce"
     ],
     "js": {
@@ -3072,6 +3111,7 @@
       "low",
       "recurring"
     ],
+    "requires": "Shopify",
     "saas": true,
     "scriptSrc": "cp.\\.boldapps\\.net/",
     "website": "https://boldcommerce.com/custom-pricing"
@@ -3083,13 +3123,13 @@
     "description": "Bold Motivator motivate customers to spend more on a store with free shipping and gifts using a customizable banner that counts down how much more they have to buy.",
     "icon": "Bold.svg",
     "implies": [
-      "Shopify",
       "Bold Commerce"
     ],
     "pricing": [
       "recurring",
       "low"
     ],
+    "requires": "Shopify",
     "saas": true,
     "scriptSrc": "motivate\\.boldapps\\.net/",
     "website": "https://boldcommerce.com/motivator"
@@ -3128,7 +3168,6 @@
     "description": "Product Options is a Shopify app which allows customers to customize products with unlimited custom options built by Bold.",
     "icon": "Bold.svg",
     "implies": [
-      "Shopify",
       "Bold Commerce"
     ],
     "js": {
@@ -3138,6 +3177,7 @@
       "low",
       "recurring"
     ],
+    "requires": "Shopify",
     "saas": true,
     "scriptSrc": "option\\.boldapps\\.net/",
     "website": "https://boldcommerce.com/product-options"
@@ -3149,7 +3189,6 @@
     "description": "Bold Subscriptions provides, API-driven customization options to build and scale a subscription service that fits a business.",
     "icon": "Bold.svg",
     "implies": [
-      "Shopify",
       "Bold Commerce"
     ],
     "js": {
@@ -3161,6 +3200,7 @@
       "payg",
       "poa"
     ],
+    "requires": "Shopify",
     "saas": true,
     "scriptSrc": "sub\\.boldapps\\.net/",
     "website": "https://boldcommerce.com/shopify-subscription-app"
@@ -3171,7 +3211,6 @@
     ],
     "description": "Bold Themes is an and WordPress themes.",
     "icon": "Bold Themes.svg",
-    "implies": "WordPress",
     "js": {
       "BoldThemesURI": "",
       "boldthemes_theme_loaded": "^true$"
@@ -3179,6 +3218,7 @@
     "pricing": [
       "onetime"
     ],
+    "requires": "WordPress",
     "website": "https://bold-themes.com/wordpress-themes-plugins/"
   },
   "Bold Upsell": {
@@ -3188,7 +3228,6 @@
     "description": "Bold Upsell allows the substitution or attachment of products to the customers' carts.",
     "icon": "Bold.svg",
     "implies": [
-      "Shopify",
       "Bold Commerce"
     ],
     "js": {
@@ -3199,6 +3238,7 @@
       "recurring",
       "low"
     ],
+    "requires": "Shopify",
     "saas": true,
     "scriptSrc": "upsells\\.boldapps\\.net/",
     "website": "https://boldcommerce.com/upsell"
@@ -3377,7 +3417,6 @@
     ],
     "description": "BookThatApp is a Shopify appointment booking, product rental and class booking app.",
     "icon": "BookThatApp.svg",
-    "implies": "Shopify",
     "js": {
       "BookThatApp": ""
     },
@@ -3385,6 +3424,7 @@
       "low",
       "recurring"
     ],
+    "requires": "Shopify",
     "scriptSrc": "\\.bookthatapp\\.com/",
     "website": "https://www.bookthatapp.com"
   },

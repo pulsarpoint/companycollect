@@ -355,11 +355,11 @@
     "cpe": "cpe:2.3:a:vardot:varbase:*:*:*:*:*:*:*:*",
     "dom": "meta[content='Varbase'],div[class*='varbase_'],div[class*='_varbase'],div[class*='varbase-'],div[class*='block-varbase'],div[class*='blockvarbase']",
     "icon": "varbase.svg",
-    "implies": "Drupal",
     "js": {
       "drupalSettings.ajaxPageState.libraries": ".+varbase_.+"
     },
     "oss": true,
+    "requires": "Drupal",
     "website": "https://www.vardot.com/solutions/varbase"
   },
   "Varify": {
@@ -1918,10 +1918,6 @@
     ],
     "description": "Visual Composer is a web design tool for anyone who uses WordPress.",
     "icon": "visualcomposer.svg",
-    "implies": [
-      "WordPress",
-      "PHP"
-    ],
     "meta": {
       "generator": "Powered by Visual Composer Website Builder"
     },
@@ -1929,6 +1925,7 @@
       "low",
       "recurring"
     ],
+    "requires": "WordPress",
     "website": "https://visualcomposer.com"
   },
   "Visual Portfolio": {

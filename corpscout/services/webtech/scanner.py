@@ -1,11 +1,12 @@
 import asyncio
+import inspect
 import json
 import logging
 import shutil
 import sys
 import tempfile
 import time
-from collections.abc import Callable, Sequence
+from collections.abc import Awaitable, Callable, Sequence
 from contextlib import contextmanager
 from dataclasses import dataclass
 from datetime import UTC, datetime
@@ -115,7 +116,9 @@ class ExtensionReportRouter:
             future.cancel()
 
 
-type WebtechProgressCallback = Callable[[WebtechDomainResult], None]
+type WebtechProgressCallback = Callable[
+    [WebtechDomainResult], Awaitable[None] | None
+]
 
 
 async def scan_webtech_candidates(
@@ -276,7 +279,9 @@ async def _scan_pages(
                 router=router,
                 timeout_seconds=settings.domain_timeout_seconds,
             )
-            progress_callback(result)
+            progress = progress_callback(result)
+            if inspect.isawaitable(progress):
+                await progress
             results[candidate] = result
 
     await asyncio.gather(

@@ -442,6 +442,22 @@
     "saas": true,
     "website": "https://www.magazord.com.br"
   },
+  "Mage Loyalty": {
+    "cats": [
+      84,
+      100
+    ],
+    "description": "Mage Loyalty is a Shopify app for loyalty programs, referrals, wishlists, customer accounts, and memberships.",
+    "icon": "Mage Loyalty.png",
+    "pricing": [
+      "mid",
+      "recurring"
+    ],
+    "requires": "Shopify",
+    "saas": true,
+    "scriptSrc": "cdn\\.shopify\\.com/extensions/[a-f\\d-]+/mage-loyalty-\\d+/assets/",
+    "website": "https://www.mageloyalty.com"
+  },
   "MageMail": {
     "cats": [
       75
@@ -506,7 +522,7 @@
     "scriptSrc": [
       "js/mage",
       "skin/frontend/(?:default|(enterprise))\\;version:\\1?1 (Enterprise):1 (Community)",
-      "skin/frontend/\\;confidence:50\\;version:\\1",
+      "skin/frontend/\\;confidence:50\\;version:1",
       "static/_requirejs\\;confidence:50\\;version:2"
     ],
     "website": "https://magento.com"
@@ -2644,11 +2660,11 @@
     "description": "MemberPress is a WordPress plugin for creating membership sites, selling subscriptions and courses, and restricting access to content.",
     "dom": "link[href*='/wp-content/plugins/memberpress'], script[src*='/wp-content/plugins/memberpress'], [class^='mepr-'], [class*=' mepr-'], [id^='mepr-'], [id^='mepr_']",
     "icon": "MemberPress.svg",
-    "implies": "WordPress",
     "pricing": [
       "low",
       "recurring"
     ],
+    "requires": "WordPress",
     "scriptSrc": "/wp-content/plugins/memberpress(?:[-/])",
     "website": "https://memberpress.com"
   },
@@ -3688,7 +3704,6 @@
     ],
     "description": "MinMaxify is an app that allows Shopify store owners to set minimum and maximum values for customer orders built by Intillium.",
     "icon": "MinMaxify.svg",
-    "implies": "Shopify",
     "js": {
       "minMaxify.checkLimits": "",
       "minMaxify.shop": ""
@@ -3697,6 +3712,7 @@
       "low",
       "recurring"
     ],
+    "requires": "Shopify",
     "saas": true,
     "website": "https://apps.shopify.com/order-limits-minmaxify"
   },
@@ -4721,13 +4737,12 @@
     "description": "Moneris is Canada’s processor of Debit and credit card payments.",
     "icon": "Moneris.svg",
     "implies": [
-      "Moneris",
-      "WooCommerce"
+      "Moneris"
     ],
     "js": {
       "wc_moneris_hosted_tokenization_params": ""
     },
-    "requires": "WordPress",
+    "requires": "WooCommerce",
     "scriptSrc": "/wp-content/plugins/woocommerce-gateway-moneris/",
     "website": "https://wordpress.org/plugins/wc-moneris-payment-gateway"
   },

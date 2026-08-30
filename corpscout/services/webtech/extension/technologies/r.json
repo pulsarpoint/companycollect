@@ -1120,13 +1120,13 @@
     ],
     "description": "ReConvert is a post-purchase upsell & thank you page.",
     "icon": "ReConvert.svg",
-    "implies": "Shopify",
     "pricing": [
       "low",
       "payg",
       "freemium",
       "recurring"
     ],
+    "requires": "Shopify",
     "saas": true,
     "scriptSrc": "\\.stilyoapps\\.com/reconvert/assets/js/store_reconvert_node\\.js",
     "website": "https://www.reconvert.io"
@@ -1711,11 +1711,11 @@
     ],
     "description": "Recomify is a 1-click install, cost-effective smart product recommendation engine.",
     "icon": "Recomify.svg",
-    "implies": "Shopify",
     "pricing": [
       "low",
       "recurring"
     ],
+    "requires": "Shopify",
     "saas": true,
     "scriptSrc": "app\\.recomify\\.com/",
     "website": "https://www.recomify.com"
@@ -1789,12 +1789,12 @@
     ],
     "description": "RecoverMyCart is a Shopify app for abandoned basket recovery.",
     "icon": "RecoverMyCart.png",
-    "implies": "Shopify",
     "pricing": [
       "low",
       "freemium",
       "recurring"
     ],
+    "requires": "Shopify",
     "saas": true,
     "scriptSrc": "cdn\\.recovermycart\\.com",
     "website": "https://app.recovermycart.com/"
@@ -3004,7 +3004,6 @@
     ],
     "description": "Reserve In-Store app will allow customers to reserve an item in a store online to come to pick it up or view the item before making the purchase.",
     "icon": "Reserve In-Store.svg",
-    "implies": "Shopify",
     "js": {
       "reserveInStore.version": "([\\d\\.]+)\\;version:\\1",
       "reserveInStoreJsUrl": "/reserveinstore\\.js.+\\.myshopify\\.com"
@@ -3013,6 +3012,7 @@
       "low",
       "recurring"
     ],
+    "requires": "Shopify",
     "saas": true,
     "website": "https://www.reserveinstore.com"
   },

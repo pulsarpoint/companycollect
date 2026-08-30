@@ -1987,7 +1987,6 @@
     ],
     "description": "Digismoothie Candy Rack is an upsell app for Shopify which allow merchants to offer custom services or bundle products.",
     "icon": "Digismoothie.svg",
-    "implies": "Shopify",
     "js": {
       "CANDYRACK_DOCUMENT_LISTENER": "",
       "candyrackEnableDebug": ""
@@ -1996,6 +1995,7 @@
       "low",
       "recurring"
     ],
+    "requires": "Shopify",
     "saas": true,
     "website": "https://www.digismoothie.com/apps/candy-rack"
   },
@@ -2512,6 +2512,16 @@
     "saas": true,
     "scriptSrc": "dockethosting\\.com/",
     "website": "https://www.yourdocket.com"
+  },
+  "Dockview": {
+    "cats": [
+      66
+    ],
+    "description": "Dockview is a JavaScript layout manager for building dockable panels, tabs, grids, and split views in web applications.",
+    "dom": ".dv-grid-view.dv-dockview",
+    "icon": "Dockview.svg",
+    "oss": true,
+    "website": "https://dockview.dev/"
   },
   "Dockvine": {
     "cats": [
@@ -3554,8 +3564,8 @@
     "dom": "aside#cart-offcanvas, form.commerce-order-item-add-to-cart-form,form.commerce-add-to-cart",
     "html": "<[^>]+(?:id=\"block[_-]commerce[_-]cart[_-]cart|class=\"commerce[_-]product[_-]field)",
     "icon": "Drupal Commerce.svg",
-    "implies": "Drupal",
     "oss": true,
+    "requires": "Drupal",
     "scriptSrc": [
       "/modules/(?:contrib/)?commerce/js/conditions\\.js\\;confidence:50",
       "/profiles/commerce_kickstart/modules/contrib/commerce/modules/checkout/commerce_checkout\\.js\\;confidence:50",

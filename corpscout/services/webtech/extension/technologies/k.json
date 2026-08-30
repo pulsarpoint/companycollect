@@ -18,10 +18,10 @@
     ],
     "description": "K2 is a content management extension for Joomla, developed by JoomlaWorks, that enhances Joomla's capabilities by providing features like rich content forms, nested categories, tags, comments, and more.",
     "icon": "K2.svg",
-    "implies": "Joomla",
     "js": {
       "K2RatingURL": ""
     },
+    "requires": "Joomla",
     "website": "https://getk2.org"
   },
   "K50": {
@@ -1202,7 +1202,6 @@
       "x-kinsta-cache": ""
     },
     "icon": "kinsta.svg",
-    "implies": "WordPress",
     "pricing": [
       "freemium",
       "low",
@@ -2495,11 +2494,14 @@
     "cats": [
       31
     ],
-    "description": "KuronekoServer CDN is a distributed content delivery network utilizing VPS and Cloudflare to enhance performance and reliability.",
-    "dom": "link[href*='cdn.krnk.org/']",
+    "description": "KuronekoServer CDN is a distributed content delivery network for KuronekoServer and its partners. It is not offered to the general public.",
+    "dom": "img[src*='cdn.krnk.org/'], link[href*='cdn.krnk.org/'], script[src*='cdn.krnk.org/']",
+    "headers": {
+      "X-Operated-By": "^KuronekoServer - CDN Server$",
+      "X-Powered-By": "^KuronekoServer CDN$"
+    },
     "icon": "KuronekoServerCDN.svg",
     "saas": true,
-    "scripts": "cdn\\.krnk\\.org/",
     "website": "https://cdn.krnk.org"
   },
   "Kustomer": {

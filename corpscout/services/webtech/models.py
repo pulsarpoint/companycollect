@@ -6,7 +6,7 @@ from uuid import UUID
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
-WEBTECH_EXTENSION_VERSION = "1.4.0"
+WEBTECH_EXTENSION_VERSION = "1.4.1"
 WEBTECH_DETECTOR_VERSION = f"mywappalyzer-{WEBTECH_EXTENSION_VERSION}"
 
 type ExtensionAnalysisStatus = Literal["complete", "partial", "failed"]
@@ -63,7 +63,7 @@ class ExtensionReport(BaseModel):
     schema_version: Literal[3]
     analysis_complete: bool
     analysis_status: ExtensionAnalysisStatus
-    extension_version: Literal["1.4.0"]
+    extension_version: Literal["1.4.1"]
     page_token: UUID
     url: str = Field(min_length=1)
     technologies: list[ExtensionTechnology]
@@ -92,7 +92,9 @@ class ExtensionReport(BaseModel):
             return self
 
         if self.analysis_complete:
-            raise ValueError("partial and failed reports require analysis_complete=false")
+            raise ValueError(
+                "partial and failed reports require analysis_complete=false"
+            )
         if self.failure_stage is None or self.error_message == "":
             raise ValueError("partial and failed reports require failure details")
         return self
@@ -145,7 +147,10 @@ class WebtechDomainResult:
             raise ValueError("only hard_timeout results may have a timeout_stage")
         if self.outcome in {"success", "extension_error"} and self.report is None:
             raise ValueError("extension outcomes require an extension report")
-        if self.outcome not in {"success", "extension_error"} and self.report is not None:
+        if (
+            self.outcome not in {"success", "extension_error"}
+            and self.report is not None
+        ):
             raise ValueError("browser and navigation failures must not have a report")
         if self.outcome == "success" and not self.report.analysis_complete:
             raise ValueError("success results require a complete extension report")

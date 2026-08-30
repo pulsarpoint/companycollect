@@ -1007,7 +1007,6 @@
     "description": "Fera Product Reviews App is a product review and social proof app for Shopify.",
     "icon": "Fera.svg",
     "implies": [
-      "Shopify",
       "Fera"
     ],
     "js": {
@@ -1018,6 +1017,7 @@
       "freemium",
       "recurring"
     ],
+    "requires": "Shopify",
     "saas": true,
     "website": "https://apps.shopify.com/fera"
   },
@@ -3792,6 +3792,23 @@
       "\\bFrance Express\\b"
     ],
     "website": "https://www.france-express.com"
+  },
+  "FrankenPHP": {
+    "cats": [
+      22
+    ],
+    "cpe": "cpe:2.3:a:php:frankenphp:*:*:*:*:*:*:*:*",
+    "description": "FrankenPHP is an application server for PHP built on top of the Caddy web server.",
+    "headers": {
+      "Server": "FrankenPHP"
+    },
+    "icon": "FrankenPHP.svg",
+    "implies": [
+      "Caddy",
+      "PHP"
+    ],
+    "oss": true,
+    "website": "https://frankenphp.dev"
   },
   "Frappe": {
     "cats": [

@@ -2930,10 +2930,10 @@
     ],
     "description": "AiSpeed is a shopify app focused on improving site speed.",
     "icon": "AiSpeed.png",
-    "implies": "Shopify",
     "js": {
       "aispeed_init": ""
     },
+    "requires": "Shopify",
     "scriptSrc": "aispeed\\.js",
     "website": "https://apps.shopify.com/aispeed"
   },
@@ -6263,7 +6263,6 @@
     ],
     "description": "Argento is an optimized and a responsive Magento template designed to enhance website performance and improve user experience.",
     "icon": "Argento.svg",
-    "implies": "Magento",
     "js": {
       "Argento": ""
     },
@@ -6271,6 +6270,7 @@
       "low",
       "recurring"
     ],
+    "requires": "Magento",
     "saas": true,
     "website": "https://argentotheme.com"
   },
@@ -7618,7 +7618,6 @@
     "description": "Autoketing Product Reviews is an application that allows shop owners to manage the product review section on their website.",
     "icon": "Autoketing.svg",
     "implies": [
-      "Shopify",
       "Autoketing"
     ],
     "js": {
@@ -7629,6 +7628,7 @@
       "low",
       "recurring"
     ],
+    "requires": "Shopify",
     "website": "https://apps.shopify.com/product-reviews-autoketing"
   },
   "Automabots": {

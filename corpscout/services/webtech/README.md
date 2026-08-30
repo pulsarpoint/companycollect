@@ -1,7 +1,46 @@
-# Web technology isolation benchmark
+# Web technology scanner
 
-This uv project runs the packaged `mywappalyzer` extension entirely on the local
-machine. It does not use Dagster, ClickHouse, RustFS, S3, or `.env` settings.
+This uv project is the canonical home of the CloakBrowser scanner and packaged
+`mywappalyzer` extension. The embedded application-detection catalog is from
+Wappalyzer 6.12.6; the custom scanner integration that wraps it is extension
+version 1.4.1. It exposes a small authenticated API for Dagster and retains the
+local benchmark CLI for isolated experiments.
+
+## Remote scanner API
+
+Copy `.env.example` to `.env`, provide the API token and RustFS settings, then
+start the service:
+
+```bash
+uv sync --all-groups
+uv run uvicorn service:create_app --factory --host 0.0.0.0 --port 8088
+```
+
+The API contract is intentionally small:
+
+- `GET /healthz`
+- `POST /v1/scans`
+- `GET /v1/scans/{scan_id}?after_event=0&wait_seconds=30`
+- `POST /v1/scans/{scan_id}/cancel`
+
+All `/v1` routes require `Authorization: Bearer $WEBTECH_API_TOKEN`. Dagster
+writes the candidate manifest to RustFS and submits its URI plus SHA-256. The
+service derives an idempotent scan ID from that content and its scanner settings,
+stores each terminal domain result before reusing its worker slot, emits one
+progress event per 20 stored results, and writes `final-manifest.json` last.
+
+Only one scan can be active because one workstation owns the configured browser
+capacity. If the process restarts, Dagster resubmits the same request; the
+service reconstructs already completed domains from RustFS and scans the missing
+ones. There is no service database, message queue, or intermediate batch
+checkpoint.
+
+The checked-in user systemd unit is `deploy/webtech.service`. It runs 20 fresh,
+headless one-page contexts by default, with a 60-second per-domain deadline and
+250 ms launch stagger. Those capacity values belong to the scanner `.env`, not
+Dagster run configuration.
+
+## Isolated benchmark CLI
 
 The CLI can run one or more independent CloakBrowser contexts, with a configurable
 number of pages in each context. Each domain has one hard timeout covering page
@@ -104,3 +143,38 @@ Useful options:
 --output-dir ./output
 --headless / --headed
 ```
+
+## Top-1,000 extension lifecycle benchmark
+
+The controlled 2026-08-30 comparison used the same 32-vCPU host, harmonic
+top-1,000 input, 20 headless fresh contexts, one domain per context, 250 ms
+launch stagger, local dnsmasq, and 40-second domain deadline.
+
+| Metric | Extension 1.3.0 | Extension 1.4.0 |
+| --- | ---: | ---: |
+| Complete successes | 635 | 812 |
+| Hard timeouts | 315 | 124 |
+| Staged extension errors | 0 | 10 |
+| Navigation errors | 49 | 52 |
+| Browser errors | 1 | 2 |
+| Successful technology detections | 6,438 | 8,825 |
+| Wall time | 1,244.458 s | 1,157.780 s |
+| Throughput | 48.21/min | 51.82/min |
+| CPU time | 24,084.909 s | 26,409.732 s |
+| Average cores | 19.35 | 22.81 |
+| Peak memory | 11.66 GiB | 11.90 GiB |
+
+The exact domain comparison moved 215 previous hard timeouts to success, while
+33 previous successes timed out in the new run; 90 domains timed out in both.
+This confirms that fixed finalization and stopping post-finalization request
+analysis remove a large source of nondeterministic report loss. Complete reports
+entered finalization at a median 10.740 seconds and p95 22.162 seconds.
+
+Of the 124 remaining hard timeouts, 111 were waiting for a Wappalyzer report and
+13 were in navigation. A forced Amazon smoke showed why a same-thread watchdog
+cannot eliminate all report timeouts: a synchronous regular-expression analysis
+can occupy the extension service worker beyond the outer deadline, preventing
+both the callback and watchdog timer from running. The next optimization should
+therefore reduce or isolate regex work, using conservative literal/Aho-Corasick
+prefiltering with normal JavaScript regex validation, cooperative chunks, or a
+terminable worker boundary.

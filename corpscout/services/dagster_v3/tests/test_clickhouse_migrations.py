@@ -364,6 +364,8 @@ EXPECTED_MIGRATIONS = (
     "000352_corpscout_webtech_domain_scan_results",
     "000353_corpscout_technology_se_companies",
     "000354_corpscout_technology_adoption_tabs",
+    "000355_corpscout_webtech_scan_id",
+    "000356_corpscout_webtech_error_stages",
 )
 
 NOOP_MIGRATIONS = {"000276_noop"}
@@ -696,6 +698,16 @@ def test_clickhouse_migration_files_are_explicit() -> None:
     )
 
     assert migration_files == expected_files
+
+
+def test_webtech_error_stage_migration_is_queryable_and_reversible() -> None:
+    up_sql = _migration_sql("000356_corpscout_webtech_error_stages.up.sql")
+    down_sql = _migration_sql("000356_corpscout_webtech_error_stages.down.sql")
+
+    assert "timeout_stage LowCardinality(String) DEFAULT ''" in up_sql
+    assert "extension_failure_stage LowCardinality(String) DEFAULT ''" in up_sql
+    assert "DROP COLUMN IF EXISTS extension_failure_stage" in down_sql
+    assert "DROP COLUMN IF EXISTS timeout_stage" in down_sql
 
 
 def test_person_correction_writer_role_is_least_privileged() -> None:

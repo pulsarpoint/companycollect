@@ -591,7 +591,8 @@
     "cpe": "cpe:2.3:a:caddyserver:caddy:*:*:*:*:*:*:*:*",
     "description": "Caddy is a Go-based web server known for its simplicity and automatic HTTPS features.",
     "headers": {
-      "Server": "Caddy"
+      "Server": "Caddy",
+      "Via": "(?:^|,\\s*)\\d+(?:\\.\\d+)?\\s+Caddy(?:\\s|,|$)"
     },
     "icon": "caddy.svg",
     "oss": true,
@@ -1305,11 +1306,11 @@
     ],
     "description": "Cartly Abandoned Cart Recovery by CareCart is a service that helps ecommerce businesses recover lost sales by sending automated reminders to customers who abandon their shopping carts.",
     "icon": "CareCart.svg",
-    "implies": "Shopify",
     "pricing": [
       "low",
       "recurring"
     ],
+    "requires": "Shopify",
     "saas": true,
     "scriptSrc": "app\\.carecart\\.io/api/abandoned-cart/",
     "website": "https://carecart.io/cartly-abandoned-cart-recovery/"
@@ -1321,10 +1322,10 @@
     ],
     "description": "CareCart Sales Pop Up is a stock countdown timer, recent sales notifications, live sales pop up widget.",
     "icon": "CareCart.svg",
-    "implies": "Shopify",
     "pricing": [
       "freemium"
     ],
+    "requires": "Shopify",
     "saas": true,
     "scriptSrc": "sales-pop\\.carecart\\.io/",
     "website": "https://carecart.io/sales-pop-up-app"
@@ -1415,12 +1416,12 @@
     ],
     "description": "Carro connects participating Shopify stores together to enable cross-store selling or the ability for like-minded partners to directly sell each other products without the need for inventory, managing returns, or minimum order quantities.",
     "icon": "Carro.svg",
-    "implies": "Shopify",
     "pricing": [
       "freemium",
       "low",
       "recurring"
     ],
+    "requires": "Shopify",
     "saas": true,
     "scriptSrc": [
       "\\.getcarro\\.com/",
@@ -1503,8 +1504,8 @@
     ],
     "description": "Cart.js is a very small open-source JavaScript library that makes the addition of Ajax cart functionality to your Shopify theme a breeze.",
     "icon": "Cart.js.png",
-    "implies": "Shopify",
     "oss": true,
+    "requires": "Shopify",
     "scriptSrc": "(?:shopify-cartjs/([\\d\\.]+)|assets)/rivets-cart\\.min\\.js\\;version:\\1",
     "website": "https://cartjs.org"
   },
@@ -1583,7 +1584,6 @@
     ],
     "description": "CartPops is a conversion-optimized AJAX fly-out cart solution for WooCommerce that replaces the traditional cart page and is compatible with any theme.",
     "icon": "CartPops.svg",
-    "implies": "WooCommerce",
     "js": {
       "CartPops.drawer": "",
       "CartPopsConfig": ""
@@ -1592,7 +1592,7 @@
       "low",
       "recurring"
     ],
-    "requires": "WordPress",
+    "requires": "WooCommerce",
     "saas": true,
     "website": "https://cartpops.com"
   },
@@ -5310,11 +5310,11 @@
     ],
     "description": "Coin Currency Converter is an automatic currency conversion app for Shopify.",
     "icon": "Coin Currency Converter.svg",
-    "implies": "Shopify",
     "pricing": [
       "low",
       "recurring"
     ],
+    "requires": "Shopify",
     "saas": true,
     "scriptSrc": "/apps/coin/coin\\.js.+\\.myshopify\\.com",
     "website": "https://apps.shopify.com/coin"
@@ -7887,13 +7887,13 @@
     ],
     "description": "Cozy AntiTheft helps you to protect a store content, images and texts from being stolen with a few simple clicks.",
     "icon": "Cozy AntiTheft.svg",
-    "implies": "Shopify",
     "js": {
       "cozyEcoAdnsUa": ""
     },
     "pricing": [
       "freemium"
     ],
+    "requires": "Shopify",
     "saas": true,
     "scriptSrc": "cdncozyantitheft\\.addons\\.business/",
     "website": "https://apps.shopify.com/cozy-antitheft-for-images-and-more"
@@ -8285,7 +8285,6 @@
     "description": "Cross Sell provide recommendations solution for Shopify based sites.",
     "icon": "CrossSell.svg",
     "implies": [
-      "Shopify",
       "Cart Functionality"
     ],
     "pricing": [
@@ -8293,6 +8292,7 @@
       "low",
       "recurring"
     ],
+    "requires": "Shopify",
     "saas": true,
     "scriptSrc": [
       "load\\.csell\\.co"
@@ -8615,14 +8615,13 @@
       "a[href*='cusrev.com/'][href*='/reviews/']"
     ],
     "icon": "CusRev.png",
-    "implies": "WooCommerce",
     "oss": true,
     "pricing": [
       "low",
       "freemium",
       "recurring"
     ],
-    "requires": "WordPress",
+    "requires": "WooCommerce",
     "saas": true,
     "scriptSrc": "/wp-content/plugins/customer-reviews-woocommerce/.+\\.js(?:\\?ver=(\\d+(?:\\.\\d+)+))?\\;version:\\1",
     "website": "https://www.cusrev.com"

@@ -799,8 +799,8 @@
     "description": "Helix Ultimate a free template framework for Joomla.",
     "dom": "header#sp-header, body.helix-ultimate",
     "icon": "HelixUltimate.svg",
-    "implies": "Joomla",
     "oss": true,
+    "requires": "Joomla",
     "website": "https://www.joomshaper.com/joomla-templates/helixultimate"
   },
   "HelixPay": {
@@ -824,7 +824,6 @@
     ],
     "description": "Helixo UFE is a lightweight Shopify upsell sales funnel app.",
     "icon": "Helixo.svg",
-    "implies": "Shopify",
     "js": {
       "ufe.funnelData": "",
       "ufeStore.cartTotal": ""
@@ -834,6 +833,7 @@
       "low",
       "recurring"
     ],
+    "requires": "Shopify",
     "saas": true,
     "website": "https://helixo.co/upsell-funnel-engine/"
   },
@@ -1199,12 +1199,12 @@
     ],
     "description": "Free Shipping Bar is a Shopify app built by Hextom.",
     "icon": "Hextom.png",
-    "implies": "Shopify",
     "pricing": [
       "freemium",
       "low",
       "recurring"
     ],
+    "requires": "Shopify",
     "saas": true,
     "scriptSrc": "\\.hextom\\.com/js/freeshippingbar\\.js",
     "website": "https://hextom.com/case_study/free-shipping-bar"
@@ -1215,7 +1215,6 @@
     ],
     "description": "Ultimate Sales Boost by Hextom is an app designed to help you drive more sales by creating a sense of urgency, scarcity and trust.",
     "icon": "Hextom.png",
-    "implies": "Shopify",
     "js": {
       "hextom_usb": "",
       "ht_usb.isLoaded": ""
@@ -1225,6 +1224,7 @@
       "low",
       "recurring"
     ],
+    "requires": "Shopify",
     "saas": true,
     "scriptSrc": "\\.hextom\\.com/js/ultimatesalesboost\\.js",
     "website": "https://hextom.com/case_study/ultimate-sales-boost"
@@ -2507,11 +2507,11 @@
     ],
     "description": "HulkApps Age Verification allow customers to certify their age before they land in a store.",
     "icon": "HulkApps.svg",
-    "implies": "Shopify",
     "pricing": [
       "low",
       "recurring"
     ],
+    "requires": "Shopify",
     "saas": true,
     "scriptSrc": "age-verification\\.hulkapps\\.com/",
     "website": "https://www.hulkapps.com/products/age-verification-shopify"
@@ -2524,12 +2524,12 @@
     ],
     "description": "HulkApps Form Builder is an application that creates customizable, job-specific forms for unit needs.",
     "icon": "HulkApps.svg",
-    "implies": "Shopify",
     "pricing": [
       "freemium",
       "low",
       "recurring"
     ],
+    "requires": "Shopify",
     "saas": true,
     "scriptSrc": "formbuilder\\.hulkapps\\.com/",
     "website": "https://www.hulkapps.com/products/form-builder-shopify"
@@ -2541,7 +2541,6 @@
     ],
     "description": "HulkApps GDPR/CCPA Compliance Manager is a consent management solution.",
     "icon": "HulkApps.svg",
-    "implies": "Shopify",
     "js": {
       "hulkSetCookie": ""
     },
@@ -2549,6 +2548,7 @@
       "low",
       "recurring"
     ],
+    "requires": "Shopify",
     "saas": true,
     "scriptSrc": "cookiebar\\.hulkapps\\.com/hulk_cookie_bar\\.js",
     "website": "https://www.hulkapps.com/products/gdpr-ccpa-cookie-manager-shopify-app"
@@ -2560,7 +2560,6 @@
     ],
     "description": "HulkApps Infinite Product Options is a unlimited custom options for products.",
     "icon": "HulkApps.svg",
-    "implies": "Shopify",
     "js": {
       "hulkapps.po_url": "productoption\\.hulkapps\\.com"
     },
@@ -2569,6 +2568,7 @@
       "low",
       "recurring"
     ],
+    "requires": "Shopify",
     "saas": true,
     "website": "https://www.hulkapps.com/products/infinite-product-options-shopify"
   },
@@ -2580,7 +2580,6 @@
     "description": "HulkApps Product Reviews is a customer product reviews app for building social proof for store.",
     "dom": "link[href*='reviews.hulkapps.com/']",
     "icon": "HulkApps.svg",
-    "implies": "Shopify",
     "js": {
       "hulkappsProductReview": "",
       "hulkappsReviews": ""
@@ -2590,6 +2589,7 @@
       "low",
       "recurring"
     ],
+    "requires": "Shopify",
     "saas": true,
     "website": "https://www.hulkapps.com/products/product-reviews-shopify"
   },
@@ -2843,7 +2843,6 @@
     "description": "Hyperspeed is the most advanced speed booster for Shopify.",
     "icon": "Hyperspeed.svg",
     "implies": [
-      "Shopify",
       "Instant.Page"
     ],
     "js": {
@@ -2853,6 +2852,7 @@
       "low",
       "recurring"
     ],
+    "requires": "Shopify",
     "saas": true,
     "scriptSrc": "cdn\\.shopify\\.com/.+/assets/hs-(?:instantload|lazysizes)\\.min\\.js",
     "website": "https://www.hyperspeed.me"

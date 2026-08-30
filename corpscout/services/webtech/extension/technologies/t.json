@@ -559,12 +559,12 @@
     ],
     "description": "Tada offers interactive website popups that allow Shopify merchants to collect more emails and increase sales by engaging website visitors through gamification.",
     "icon": "Tada.svg",
-    "implies": "Shopify",
     "pricing": [
       "freemium",
       "payg",
       "recurring"
     ],
+    "requires": "Shopify",
     "saas": true,
     "scriptSrc": "cdn\\.trytada\\.com/",
     "website": "https://trytada.com"
@@ -976,10 +976,12 @@
     "dom": [
       "link[href*='@tanstack']",
       "link[rel='modulepreload'][href*='tanstack-query-']",
-      "link[rel='modulepreload'][href*='tanstack-router-']"
+      "link[rel='modulepreload'][href*='tanstack-router-']",
+      "svg.ts-chart[aria-roledescription='chart'] [data-ts-key]"
     ],
     "icon": "TanStack.svg",
     "js": {
+      "__TSR_ROUTER__": "",
       "__TSS_START_OPTIONS__": ""
     },
     "oss": true,
@@ -2077,13 +2079,13 @@
     "description": "The Newsletter Plugin is a WordPress plugin for managing subscribers and creating, sending, and tracking email campaigns.",
     "dom": "link#newsletter-css[href*='/wp-content/plugins/newsletter/style.css']",
     "icon": "The Newsletter Plugin.svg",
-    "implies": "WordPress",
     "oss": true,
     "pricing": [
       "freemium",
       "low",
       "onetime"
     ],
+    "requires": "WordPress",
     "scriptSrc": "/wp-content/plugins/newsletter/(?:main|subscription/validate)\\.js(?:\\?ver=([\\d.]+))?\\;version:\\1",
     "website": "https://www.thenewsletterplugin.com"
   },
@@ -3353,17 +3355,25 @@
     "cats": [
       6
     ],
-    "description": "Tiktak Pro is an ecommerce platform from Tunisia.",
+    "description": "Tiktak Pro is an ecommerce platform for building online stores and managing orders, deliveries, and customers.",
+    "dom": "html[data-generator='TikTak PRO']",
+    "headers": {
+      "X-Generator": "^TikTak PRO$",
+      "X-Powered-By": "^TikTak PRO$",
+      "X-TikTak-PRO": "^TikTak PRO$"
+    },
     "icon": "Tiktak Pro.svg",
     "meta": {
-      "author": "^tiktak-themes$"
+      "author": "^tiktak-themes$",
+      "generator": "^TikTak PRO$",
+      "powered-by": "^TikTak PRO$"
     },
     "pricing": [
       "low",
       "recurring"
     ],
     "saas": true,
-    "website": "https://tiktakpro.tn"
+    "website": "https://tiktakpro.com"
   },
   "Tilda": {
     "cats": [
@@ -4260,11 +4270,11 @@
     ],
     "description": "Trackify X is a pixel engine that helps merchants backup their pixel data and manage multiple pixels.",
     "icon": "Trackify X.svg",
-    "implies": "Shopify",
     "pricing": [
       "low",
       "recurring"
     ],
+    "requires": "Shopify",
     "saas": true,
     "scriptSrc": "trackifyx\\.redretarget\\.com/",
     "website": "https://trackifyapp.com"
@@ -4450,7 +4460,6 @@
     ],
     "description": "Transcy is a Shopify translation app.",
     "icon": "Transcy.svg",
-    "implies": "Shopify",
     "js": {
       "_transcy": "",
       "transcy_apiURI": "",
@@ -4461,6 +4470,7 @@
       "low",
       "recurring"
     ],
+    "requires": "Shopify",
     "saas": true,
     "website": "https://transcy.io"
   },
@@ -6134,7 +6144,6 @@
     ],
     "description": "Tyslo EasySell replaces default Shopify checkout process by embedding (or popup) a simple order form on the product or cart page.",
     "icon": "Tyslo EasySell.svg",
-    "implies": "Shopify",
     "js": {
       "openTysloForm": "",
       "tysloApplyDiscount": "",
@@ -6146,6 +6155,7 @@
       "freemium",
       "recurring"
     ],
+    "requires": "Shopify",
     "saas": true,
     "website": "https://tyslo.com"
   },

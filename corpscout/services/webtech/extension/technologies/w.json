@@ -1567,11 +1567,8 @@
     ],
     "description": "WebToffee EU Order Withdrawal Button for WooCommerce is an open-source plugin for submitting and managing online order withdrawal requests.",
     "icon": "WebToffee EU Order Withdrawal Button.png",
-    "implies": [
-      "WordPress",
-      "WooCommerce"
-    ],
     "oss": true,
+    "requires": "WooCommerce",
     "scriptSrc": "/wp-content/plugins/wt-eu-withdrawal-button/assets/js/wbte-ewb-frontend(?:\\.min)?\\.js(?:\\?ver=([\\d.]+))?\\;version:\\1",
     "website": "https://wordpress.org/plugins/wt-eu-withdrawal-button/"
   },
@@ -1583,14 +1580,13 @@
     "dom": "link[href*='/wp-content/plugins/payment-gateway-stripe-and-woocommerce-integration/']",
     "icon": "WebToffee.svg",
     "implies": [
-      "Stripe",
-      "WooCommerce"
+      "Stripe"
     ],
     "pricing": [
       "recurring",
       "low"
     ],
-    "requires": "WordPress",
+    "requires": "WooCommerce",
     "saas": true,
     "website": "https://www.webtoffee.com/product/woocommerce-stripe-payment-gateway/"
   },
@@ -2782,11 +2778,11 @@
     ],
     "description": "WideBundle is a Shopify application that allows a merchant to set up bundles on his store.",
     "icon": "WideBundle.svg",
-    "implies": "Shopify",
     "pricing": [
       "low",
       "recurring"
     ],
+    "requires": "Shopify",
     "saas": true,
     "scriptSrc": "//widebundle\\.com/",
     "website": "https://en.widebundle.com"
@@ -3320,11 +3316,11 @@
       }
     },
     "icon": "Wix.svg",
-    "implies": "Wix",
     "pricing": [
       "low",
       "recurring"
     ],
+    "requires": "Wix",
     "saas": true,
     "scripts": "static\\.wixstatic\\.com",
     "website": "https://www.wix.com/freesitebuilder/tae-store"
@@ -3621,12 +3617,11 @@
     "description": "WooCommerce Subscriptions primarily allows you to create and sell subscription products from your WooCommerce shop.",
     "dom": "link[href*='/wp-content/plugins/woocommerce-subscriptions/']",
     "icon": "WooCommerce.svg",
-    "implies": "WooCommerce",
     "pricing": [
       "low",
       "recurring"
     ],
-    "requires": "WordPress",
+    "requires": "WooCommerce",
     "website": "https://woocommerce.com/products/woocommerce-subscriptions"
   },
   "Woodmart": {
@@ -3710,7 +3705,6 @@
     ],
     "description": "Woostify is fast, lightweight, responsive and flexible WooCommerce theme built with SEO, speed, and usability in mind.",
     "icon": "Woostify.svg",
-    "implies": "WooCommerce",
     "js": {
       "woostifyConditionScrolling": "",
       "woostify_woocommerce_general": ""
@@ -3720,7 +3714,7 @@
       "low",
       "recurring"
     ],
-    "requires": "WordPress",
+    "requires": "WooCommerce",
     "scriptSrc": "/wp-content/themes/woostify/",
     "website": "https://woostify.com"
   },

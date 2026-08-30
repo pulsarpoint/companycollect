@@ -18,7 +18,6 @@
     ],
     "description": "YMQ Product Options Variant Option help add a unlimited number of product options to your items so you're not restricted by Shopify's limit of 3 options and 100 variants.",
     "icon": "YMQ Product Options Variant Option.svg",
-    "implies": "Shopify",
     "js": {
       "ymq_option.v": "\\?v=([\\d\\.]+)\\;version:\\1"
     },
@@ -26,6 +25,7 @@
       "low",
       "recurring"
     ],
+    "requires": "Shopify",
     "saas": true,
     "website": "https://apps.shopify.com/ymq-options"
   },
@@ -656,11 +656,11 @@
     "description": "Yoast SEO for Shopify optimizes Shopify shops.",
     "dom": "script#yoast-schema-graph",
     "icon": "yoast-seo-shopify.png",
-    "implies": "Shopify",
     "pricing": [
       "low",
       "recurring"
     ],
+    "requires": "Shopify",
     "saas": true,
     "website": "https://yoast.com/shopify/apps/yoast-seo/"
   },
@@ -940,7 +940,6 @@
     ],
     "description": "YouPay is an alternative method of payment that allows you to give someone else the ability to pay for your shopping cart with no fees or interest.",
     "icon": "YouPay.svg",
-    "implies": "Shopify",
     "js": {
       "YouPay.buttonWindow": "",
       "youpayReady": "",
@@ -949,6 +948,7 @@
     "pricing": [
       "payg"
     ],
+    "requires": "Shopify",
     "saas": true,
     "scriptSrc": "app\\.youpay\\.ai/",
     "website": "https://youpay.co"

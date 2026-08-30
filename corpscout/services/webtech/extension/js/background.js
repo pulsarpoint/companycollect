@@ -4,7 +4,7 @@
 
 importScripts(chrome.runtime.getURL('js/wappalyzer.js'))
 
-const EXTENSION_VERSION = '1.4.0'
+const EXTENSION_VERSION = '1.4.1'
 const ANALYSIS_DEADLINE_MS = 30000
 const REPORT_FINALIZE_DELAY_MS = 250
 const REPORT_RETRY_MS = 5000
@@ -42,6 +42,8 @@ function createPageState(url, pageToken = '') {
     failureStage: '',
     errorMessage: '',
     finalized: false,
+    finalizedAt: 0,
+    finalizedElapsedMs: 0,
     lastReportedSignature: '',
     analysisDeadlineTimer: undefined,
     reportTimer: undefined,
@@ -167,7 +169,7 @@ async function postTechnologyReport(tabId, state) {
   )
   state.stageTimingsMs.report_post_started ??= Math.max(
     observedElapsedMs,
-    Date.now() - state.registeredAt
+    state.finalizedElapsedMs + Math.max(0, Date.now() - state.finalizedAt)
   )
   const payload = {
     schema_version: 3,
@@ -232,6 +234,11 @@ function finalizeAnalysis(
   state.failureStage = failureStage
   state.errorMessage = errorMessage
   state.stageTimingsMs = { ...state.stageTimingsMs, ...stageTimingsMs }
+  state.finalizedAt = Date.now()
+  state.finalizedElapsedMs = Math.max(
+    0,
+    ...Object.values(state.stageTimingsMs).filter(Number.isFinite)
+  )
 
   if (state.analysisDeadlineTimer) {
     clearTimeout(state.analysisDeadlineTimer)

@@ -359,11 +359,11 @@
     ],
     "description": "Easy Hide PayPal hides PayPal button from product page, cart and checkout but keep PayPal as payment option in checkout.",
     "icon": "Easy Hide PayPal.svg",
-    "implies": "Shopify",
     "pricing": [
       "low",
       "recurring"
     ],
+    "requires": "Shopify",
     "saas": true,
     "scriptSrc": "easyhide\\.herculesapps\\.com/",
     "website": "https://apps.shopify.com/easyhide"
@@ -394,12 +394,12 @@
     ],
     "description": "Easy Redirects is a Shopify app built by Eastside, and part of the best Shopify Apps collection.",
     "icon": "Easy Redirects.svg",
-    "implies": "Shopify",
     "pricing": [
       "freemium",
       "low",
       "recurring"
     ],
+    "requires": "Shopify",
     "saas": true,
     "scriptSrc": "easy-redirects\\..+/redirect-app\\.js",
     "website": "https://apps.shopify.com/easyredirects"
@@ -2150,12 +2150,12 @@
     ],
     "description": "Enlistly tracks referral orders in realtime.",
     "icon": "Enlistly.svg",
-    "implies": "Shopify",
     "pricing": [
       "freemium",
       "low",
       "recurring"
     ],
+    "requires": "Shopify",
     "scriptSrc": "cdn\\.enlistly\\.com/",
     "website": "https://enlistly.com"
   },
@@ -2563,10 +2563,10 @@
     ],
     "description": "EraofEcom MTL is a Shopify pop up app that enables you to catch a website visitors.",
     "icon": "EraofEcom.svg",
-    "implies": "Shopify",
     "pricing": [
       "poa"
     ],
+    "requires": "Shopify",
     "saas": true,
     "scriptSrc": "mtl\\.eraofecom\\.org",
     "website": "https://eraofecom.org/collections/tech/products/milk-the-leads"
@@ -2578,7 +2578,6 @@
     "description": "EraofEcom WinAds is a Facebook pixel app for Shopify.",
     "dom": "link[href*='winads.eraofecom.org']",
     "icon": "EraofEcom.svg",
-    "implies": "Shopify",
     "js": {
       "win_ads.baseURL": "winads\\.eraofecom\\.org"
     },
@@ -2586,6 +2585,7 @@
       "low",
       "recurring"
     ],
+    "requires": "Shopify",
     "saas": true,
     "website": "https://eraofecom.org/collections/tech/products/win-ads-manager"
   },
@@ -3211,7 +3211,6 @@
     ],
     "description": "Exemptify allows you to conduct proper EU B2B transactions by validating EU VAT IDs.",
     "icon": "Exemptify.png",
-    "implies": "Shopify",
     "js": {
       "ExemptifyTriggerUpdate": "",
       "m4u_ex_vat_postfix_txt": ""
@@ -3220,6 +3219,7 @@
       "low",
       "recurring"
     ],
+    "requires": "Shopify",
     "saas": true,
     "scriptSrc": "\\.modules4u\\.biz/shopify/exemptify",
     "website": "https://modules4u.biz/exemptify"
@@ -3890,10 +3890,10 @@
     ],
     "description": "eShopCRM is an ecommerce CRM for Shopify.",
     "icon": "eShopCRM.svg",
-    "implies": "Shopify",
     "pricing": [
       "poa"
     ],
+    "requires": "Shopify",
     "saas": true,
     "scriptSrc": "eshopcrm\\.com/",
     "website": "https://eshopcrm.com"

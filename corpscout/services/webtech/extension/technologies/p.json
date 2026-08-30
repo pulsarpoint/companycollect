@@ -363,10 +363,10 @@
     ],
     "description": "Packlink PRO is a multicarrier shipping solutions for ecommerce and marketplaces.",
     "icon": "Packlink.svg",
-    "implies": "Shopify",
     "pricing": [
       "payg"
     ],
+    "requires": "Shopify",
     "saas": true,
     "scriptSrc": "packlink-spf-pro\\.appspot\\.com/.+myshopify\\.com",
     "website": "https://apps.shopify.com/packlink-pro"
@@ -1652,6 +1652,25 @@
     "saas": true,
     "website": "https://www.paylocity.com"
   },
+  "PaymentForm.io": {
+    "cats": [
+      110
+    ],
+    "description": "PaymentForm.io is a form and checkout page builder for collecting payments, selling products, receiving donations, and registering event attendees.",
+    "icon": "PaymentForm.io.svg",
+    "meta": {
+      "generator": "^PaymentForm\\.io$"
+    },
+    "pricing": [
+      "low",
+      "freemium",
+      "recurring"
+    ],
+    "saas": true,
+    "scriptSrc": "(?:^|//)[^/]+\\.paymentform\\.io/payment-form-embed\\.js(?:[?#]|$)",
+    "url": "^https?://[^/]+\\.paymentform\\.io/",
+    "website": "https://paymentform.io"
+  },
   "Paymenter": {
     "cats": [
       1,
@@ -2777,7 +2796,6 @@
     ],
     "description": "PickyStory is the ecommerce conversion platform.",
     "icon": "PickyStory.png",
-    "implies": "Shopify",
     "js": {
       "pickystory.overrideStore": ""
     },
@@ -2785,6 +2803,7 @@
       "freemium",
       "payg"
     ],
+    "requires": "Shopify",
     "saas": true,
     "scriptSrc": "cdn\\.pickystory\\.com/",
     "website": "https://pickystory.com"
@@ -6065,11 +6084,11 @@
     ],
     "description": "Product Personalizer apps can help you to customize your products and offer a more personalized experience for customers.",
     "icon": "Product Personalizer.svg",
-    "implies": "Shopify",
     "pricing": [
       "low",
       "recurring"
     ],
+    "requires": "Shopify",
     "saas": true,
     "scriptSrc": "/product-personalizer/pplr_common\\.js",
     "website": "https://productpersonalizer.com"
@@ -6103,6 +6122,16 @@
     "saas": true,
     "scriptSrc": "widget\\.profeat\\.team/",
     "website": "https://profeat.team"
+  },
+  "Profile Builder": {
+    "cats": [
+      87
+    ],
+    "description": "Profile Builder is a WordPress plugin for creating registration, login, and edit-profile forms, managing user roles, and restricting content.",
+    "dom": "link[href*='/wp-content/plugins/profile-builder/']",
+    "oss": true,
+    "requires": "WordPress",
+    "website": "https://www.cozmoslabs.com/wordpress-profile-builder/"
   },
   "ProfilePress": {
     "cats": [
@@ -7258,13 +7287,13 @@
     "dom": "div.pushdaddy-chats",
     "icon": "PushDaddy.svg",
     "implies": [
-      "WhatsApp Business Chat",
-      "Shopify"
+      "WhatsApp Business Chat"
     ],
     "pricing": [
       "freemium",
       "payg"
     ],
+    "requires": "Shopify",
     "saas": true,
     "scriptSrc": "cdn\\.shopify\\.com/.+/pushdaddy_v([\\d\\.]+).*\\.js\\;version:\\1",
     "website": "https://apps.shopify.com/whatsapp-chat-for-support"

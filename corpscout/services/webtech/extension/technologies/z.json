@@ -1032,7 +1032,6 @@
     ],
     "description": "Zipify Pages the first landing page builder uniquely designed for ecommerce.",
     "icon": "Zipify Pages.svg",
-    "implies": "Shopify",
     "js": {
       "ZipifyPages": ""
     },
@@ -1040,6 +1039,7 @@
       "low",
       "recurring"
     ],
+    "requires": "Shopify",
     "saas": true,
     "website": "https://zipify.com/apps/pages/"
   },

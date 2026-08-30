@@ -340,10 +340,10 @@
     ],
     "description": "SOBI2 is an older version of the SOBI (Simple Open Business Index) directory extension for Joomla.",
     "icon": "Sobi.svg",
-    "implies": "Joomla",
     "js": {
       "sobi2Cats": ""
     },
+    "requires": "Joomla",
     "website": "https://www.sigsiu.net/sobi2.html"
   },
   "SOCi": {
@@ -748,6 +748,22 @@
       "payg"
     ],
     "website": "https://www.sakura.ad.jp"
+  },
+  "Salam": {
+    "cats": [
+      27
+    ],
+    "description": "Salam is an open-source, general-purpose systems programming language with a built-in domain-specific language for generating web interfaces.",
+    "headers": {
+      "Server": "^Salam(?:/([\\d.]+))?$\\;version:\\1",
+      "X-Powered-By": "^Salam(?:/([\\d.]+))?$\\;version:\\1"
+    },
+    "icon": "Salam.svg",
+    "meta": {
+      "generator": "^Salam$"
+    },
+    "oss": true,
+    "website": "https://salamlang.github.io/Salam/"
   },
   "SaleCycle": {
     "cats": [
@@ -1354,6 +1370,9 @@
           "src": "",
           "srcset": ""
         }
+      },
+      "link[rel='dns-prefetch'][href^='https://cdn.sanity.io'],link[rel='preconnect'][href^='https://cdn.sanity.io']": {
+        "exists": ""
       }
     },
     "headers": {
@@ -1961,7 +1980,6 @@
     ],
     "description": "Seal Subscriptions is a Shopify subscriptions app, packed with lots of features, such as automated product swaps, interval changes, payment calendar, Quick Checkout Wizard, and more.",
     "icon": "Seal Subscriptions.svg",
-    "implies": "Shopify",
     "js": {
       "SealSubs.checkout": "",
       "sealsubscriptions_settings_updated": "",
@@ -1972,6 +1990,7 @@
       "low",
       "recurring"
     ],
+    "requires": "Shopify",
     "saas": true,
     "scriptSrc": "\\.sealsubscriptions\\.com/",
     "website": "https://www.sealsubscriptions.com"
@@ -2108,7 +2127,6 @@
     ],
     "description": "Secomapp is a trusted Shopify Expert providing services through Shopify Apps.",
     "icon": "Secomapp.svg",
-    "implies": "Shopify",
     "js": {
       "SECOMAPP": ""
     },
@@ -2117,6 +2135,7 @@
       "low",
       "recurring"
     ],
+    "requires": "Shopify",
     "saas": true,
     "scriptSrc": "cdn\\.secomapp\\.com/",
     "website": "https://www.secomapp.com"
@@ -2151,8 +2170,8 @@
     "description": "Sections.design Shopify App Optimization is a Shopify section written in liquid for the purpose of improving performance of Shopify stores by optimizing how Shopify app loads.",
     "dom": "div#shopify-section-app-optimization",
     "icon": "Sections-Design.png",
-    "implies": "Shopify",
     "oss": true,
+    "requires": "Shopify",
     "website": "https://github.com/mirceapiturca/Sections/tree/master/App%20Optimization"
   },
   "SecureMetrics": {
@@ -2535,7 +2554,6 @@
       }
     },
     "icon": "Sellacious.svg",
-    "implies": "Joomla",
     "js": {
       "SellaciousViewCartAIO": ""
     },
@@ -2545,6 +2563,7 @@
       "recurring",
       "freemium"
     ],
+    "requires": "Joomla",
     "saas": true,
     "website": "https://www.sellacious.com"
   },
@@ -3422,7 +3441,10 @@
       13
     ],
     "description": "Shakebug is a bug and crash reporting platform with session monitoring and product analytics for mobile and web applications.",
-    "dom": "#shakebug-root.sb-ignore",
+    "dom": [
+      "#shakebug-root.sb-ignore",
+      "#shakebug-root.shakebug-wrapper"
+    ],
     "pricing": [
       "freemium",
       "mid",
@@ -3823,11 +3845,11 @@
     ],
     "description": "ShipTection is the easiest way to offer shipping protection on your Shopify site.",
     "icon": "ShipTection.png",
-    "implies": "Shopify",
     "pricing": [
       "mid",
       "recurring"
     ],
+    "requires": "Shopify",
     "saas": true,
     "scriptSrc": "app\\.shiptection\\.com/",
     "website": "https://wamapps.io/pages/shiptection-protection"
@@ -4119,7 +4141,6 @@
     ],
     "description": "ShopPad Infinite Options allows you to create as many custom option fields for your product pages as you need.",
     "icon": "ShopPad.svg",
-    "implies": "Shopify",
     "js": {
       "Shoppad.apps.infiniteoptions": ""
     },
@@ -4127,6 +4148,7 @@
       "low",
       "recurring"
     ],
+    "requires": "Shopify",
     "website": "https://apps.shopify.com/custom-options"
   },
   "ShopSite": {
@@ -4255,7 +4277,6 @@
     ],
     "description": "Shopapps is a trusted Shopify Expert providing services through Shopify Apps.",
     "icon": "Shopapps.svg",
-    "implies": "Shopify",
     "js": {
       "iStockUrl": "iwish\\.myshopapps\\.com/",
       "iWishUrl": "iwish\\.myshopapps\\.com/"
@@ -4264,6 +4285,7 @@
       "low",
       "recurring"
     ],
+    "requires": "Shopify",
     "saas": true,
     "scriptSrc": "cdn\\.myshopapps\\.com/",
     "website": "https://www.shopapps.in"
@@ -4467,7 +4489,7 @@
     ],
     "description": "Shopify Chat is Shopify's native live chat function that allows you to have real-time conversations with customers visiting your Shopify store.",
     "icon": "Shopify.svg",
-    "implies": "Shopify",
+    "requires": "Shopify",
     "scriptSrc": [
       "cdn\\.shopify\\.com/shopifycloud/shopify_chat/"
     ],
@@ -4480,7 +4502,7 @@
     ],
     "description": "Shopify Consent Management let's you create a tracking consent banner for EU customers.",
     "icon": "Shopify.svg",
-    "implies": "Shopify",
+    "requires": "Shopify",
     "scriptSrc": [
       "cookie_consent_shopify\\.js"
     ],
@@ -4493,7 +4515,7 @@
     ],
     "description": "Shopify Geolocation App makes language and country recommendations to customers based on their geographic location and browser or device language.",
     "icon": "Shopify Geolocation App.png",
-    "implies": "Shopify",
+    "requires": "Shopify",
     "scriptSrc": "geolocation-recommendations\\.shopifycloud\\.com/",
     "website": "https://apps.shopify.com/geolocation"
   },
@@ -4504,10 +4526,10 @@
     ],
     "description": "Shopify Product reviews allows you to add a customer review feature to your products.",
     "icon": "Shopify.svg",
-    "implies": "Shopify",
     "js": {
       "SPR": ""
     },
+    "requires": "Shopify",
     "scriptSrc": [
       "productreviews\\.shopifycdn\\.com"
     ],
@@ -5051,13 +5073,32 @@
     "scriptSrc": "/wp-content/plugins/shortcodes-ultimate/.+index\\.js(?:\\?ver=(\\d+(?:\\.\\d+)+))?\\;version:\\1",
     "website": "https://getshortcodes.com"
   },
+  "Shorthand": {
+    "cats": [
+      51
+    ],
+    "description": "Shorthand is a digital publishing platform for creating interactive stories, reports, and other visual content.",
+    "icon": "Shorthand.svg",
+    "js": {
+      "Shorthand": ""
+    },
+    "meta": {
+      "generator": "^Shorthand$"
+    },
+    "pricing": [
+      "mid",
+      "recurring"
+    ],
+    "saas": true,
+    "website": "https://shorthand.com"
+  },
   "Shortly": {
     "cats": [
       100
     ],
     "description": "Shortly help create short URLs for influencer-marketing, social media posts & email-marketing campaigns with your own store domain.",
     "icon": "Shortly.svg",
-    "implies": "Shopify",
+    "requires": "Shopify",
     "scriptSrc": "//shortly\\.shop/",
     "website": "https://apps.shopify.com/shortly"
   },
@@ -5392,6 +5433,20 @@
       "freemium"
     ],
     "website": "https://www.silex.me"
+  },
+  "Silk": {
+    "cats": [
+      66
+    ],
+    "description": "Silk is a React component library for building accessible, native-like swipeable sheets, drawers, and modal overlays.",
+    "dom": "[data-silk]",
+    "icon": "Silk.png",
+    "implies": "React",
+    "pricing": [
+      "mid",
+      "onetime"
+    ],
+    "website": "https://silkhq.com"
   },
   "Silktide": {
     "cats": [
@@ -6764,11 +6819,11 @@
     ],
     "description": "Skio helps brands on Shopify sell subscriptions without ripping their hair out.",
     "icon": "Skio.png",
-    "implies": "Shopify",
     "pricing": [
       "mid",
       "recurring"
     ],
+    "requires": "Shopify",
     "saas": true,
     "scriptSrc": "cdn\\.skio\\.com/",
     "website": "https://skio.com"
@@ -6902,7 +6957,6 @@
     ],
     "description": "SkyVerge is a company which develop extension tools for WooCommerce stores.",
     "icon": "SkyVerge.svg",
-    "implies": "WooCommerce",
     "js": {
       "sv_wc_payment_gateway_payment_form_param": ""
     },
@@ -6910,6 +6964,7 @@
       "low",
       "recurring"
     ],
+    "requires": "WooCommerce",
     "saas": true,
     "scriptSrc": "sv-wc-payment-gateway-payment-form\\.js(?:\\?ver=([\\d.]+))?\\;version:\\1",
     "website": "https://www.skyverge.com"
@@ -8034,10 +8089,10 @@
     ],
     "description": "SobiPro is a directory and listing management extension for Joomla, used to create and manage directories, business listings, and other types of structured content on websites.",
     "icon": "Sobi.svg",
-    "implies": "Joomla",
     "js": {
       "SobiProUrl": ""
     },
+    "requires": "Joomla",
     "website": "https://sigsiu.net/sobipro.html"
   },
   "Sobot Live Chat": {
@@ -9836,7 +9891,6 @@
     ],
     "description": "SpurIT is a team of certified Shopify experts which provide ecommerce software solutions.",
     "icon": "SpurIT.svg",
-    "implies": "Shopify",
     "js": {
       "Spurit.global.version": "(.+)\\;version:\\1"
     },
@@ -9845,6 +9899,7 @@
       "low",
       "recurring"
     ],
+    "requires": "Shopify",
     "saas": true,
     "scriptSrc": "cdn-spurit\\.com/shopify-apps/",
     "website": "https://spur-i-t.com"
@@ -9856,7 +9911,6 @@
     ],
     "description": "SpurIT Abandoned Cart Reminder bring back your Shopify store visitors who moved to another tab by blinking a store tab.",
     "icon": "SpurIT.svg",
-    "implies": "Shopify",
     "js": {
       "ACR_SPURIT_Params.folderCss": "cdn-spurit\\.com/shopify-apps/abandoned-cart-reminder/"
     },
@@ -9864,6 +9918,7 @@
       "low",
       "recurring"
     ],
+    "requires": "Shopify",
     "saas": true,
     "scriptSrc": "cdn-spurit\\.com/shopify-apps/abandoned-cart-reminder/",
     "website": "https://spur-i-t.com/shopify-apps/abandoned-cart-reminder/"
@@ -9876,7 +9931,6 @@
     ],
     "description": "SpurIT Loyalty App is a turnkey solution allowing you to reward existing customers in a number of ways.",
     "icon": "SpurIT.svg",
-    "implies": "Shopify",
     "js": {
       "Spurit.Loyaltypoints": ""
     },
@@ -9884,6 +9938,7 @@
       "low",
       "recurring"
     ],
+    "requires": "Shopify",
     "saas": true,
     "scriptSrc": "cdn-spurit\\.com/shopify-apps/loyaltypoints/",
     "website": "https://spur-i-t.com/shopify-apps/loyalty-points-manager"
@@ -9895,11 +9950,11 @@
     ],
     "description": "SpurIT Partial Payments App allow customers to pay for the order in several ways or to share a payment with other people.",
     "icon": "SpurIT.svg",
-    "implies": "Shopify",
     "pricing": [
       "low",
       "recurring"
     ],
+    "requires": "Shopify",
     "saas": true,
     "scriptSrc": "cdn-spurit\\.com/shopify-apps/split-payments/",
     "website": "https://spur-i-t.com/shopify-apps/split-partial-payments/"
@@ -9911,7 +9966,6 @@
     ],
     "description": "SpurIT Recurring Payments App is a simple way to create a system of bill payment,subscriptions and invoicing.",
     "icon": "SpurIT.svg",
-    "implies": "Shopify",
     "js": {
       "Spurit.recurringInvoices": ""
     },
@@ -9919,6 +9973,7 @@
       "low",
       "recurring"
     ],
+    "requires": "Shopify",
     "saas": true,
     "scriptSrc": "cdn-spurit\\.com/shopify-apps/recurring-invoices/",
     "website": "https://spur-i-t.com/shopify-apps/recurring-order-subscription"
@@ -10081,7 +10136,6 @@
       "server": "Squarespace"
     },
     "icon": "Squarespace.svg",
-    "implies": "Squarespace",
     "js": {
       "SQUARESPACE_ROLLUPS.squarespace-commerce": "",
       "Static.SQUARESPACE_CONTEXT.templateVersion": "^(\\d(?:\\.\\d)?)$\\;version:\\1"
@@ -10090,6 +10144,7 @@
       "low",
       "recurring"
     ],
+    "requires": "Squarespace",
     "saas": true,
     "scriptSrc": "assets\\.squarespace\\.\\w+/universal/scripts-compressed/commerce-\\w+-min\\.[\\w+\\-]+\\.js",
     "website": "https://www.squarespace.com/ecommerce-website"
@@ -11604,6 +11659,7 @@
       11
     ],
     "description": "Substack is an American online platform that provides publishing, payment, analytics, and design infrastructure to support subscription newsletters.",
+    "dom": "iframe[src*='.substack.com/embed']",
     "headers": {
       "x-cluster": "substack",
       "x-served-by": "Substack"
@@ -11974,7 +12030,6 @@
     "description": "SuperPWA helps to easily convert your WordPress website into Progressive Web Apps instantly through our widely used PWA software without in coding.",
     "icon": "superpwa.svg",
     "implies": [
-      "WordPress",
       "PWA"
     ],
     "js": {
@@ -11984,6 +12039,7 @@
       "onetime",
       "recurring"
     ],
+    "requires": "WordPress",
     "website": "https://superpwa.com"
   },
   "SuperPluralAnalytics": {
@@ -12458,7 +12514,6 @@
     ],
     "description": "SweetCode Pixel Manager for WooCommerce is a WordPress plugin for tracking ecommerce conversions across Google Ads, GA4, Meta, TikTok, Pinterest, and Microsoft Ads.",
     "icon": "SweetCode Pixel Manager for WooCommerce.png",
-    "implies": "WooCommerce",
     "js": {
       "pmwDataLayer.version.number": "^(.+)$\\;version:\\1",
       "wpmDataLayer.version.number": "^(.+)$\\;version:\\1"
@@ -12471,6 +12526,7 @@
       "low",
       "recurring"
     ],
+    "requires": "WooCommerce",
     "scriptSrc": [
       "/wp-content/plugins/woocommerce-google-adwords-conversion-tracking-tag/js/public/(?:free/)?pmw-public\\.p1\\.min\\.js(?:\\?ver=([\\d.]+))?\\;version:\\1",
       "/wp-content/plugins/woocommerce-google-adwords-conversion-tracking-tag/js/public/(?:free/)?[a-z-]+\\.[a-f0-9]+\\.chunk\\.min\\.js",

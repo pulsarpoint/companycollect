@@ -1,0 +1,5 @@
+type: dagster_v3.components.webtech_scanner_component.WebtechScannerComponent
+
+attributes:
+  api_url: "{{ env.WEBTECH_API_URL }}"
+  s3_path: "{{ env.WEBTECH_S3_PATH }}"

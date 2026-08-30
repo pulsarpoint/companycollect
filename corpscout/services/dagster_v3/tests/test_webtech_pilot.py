@@ -1,48 +1,41 @@
-import asyncio
+import hashlib
 import json
 from contextlib import contextmanager
 from datetime import UTC, datetime
-from pathlib import Path
 from typing import Any
-from uuid import UUID
 
-import dagster as dg
 import pytest
-from playwright.async_api import Error as PlaywrightError
 from pydantic import ValidationError
 
-from dagster_v3.defs.webtech import scanner as webtech_scanner
+from dagster_v3.components.webtech_scanner_component import (
+    WebtechScannerComponent,
+)
 from dagster_v3.defs.webtech.assets import (
-    WEBTECH_BROWSER_POOL,
-    WEBTECH_PILOT_PARTITION_KEY,
+    WEBTECH_DOMAIN_LIMIT,
+    WEBTECH_PARTITION_COUNT,
+    WEBTECH_PARTITION_KEYS,
     WEBTECH_PARTITIONS,
-    WebtechScanConfig,
-    commoncrawl_webtech_scan_job,
-    commoncrawl_webtech_scan_results,
+    WebtechCandidateConfig,
     load_webtech_candidates,
 )
-from dagster_v3.defs.webtech.definitions import defs as webtech_defs
+from dagster_v3.defs.webtech.client import WebtechApiResource
 from dagster_v3.defs.webtech.models import (
-    ExtensionReport,
+    WEBTECH_DETECTOR_VERSION,
+    FinalScanReference,
     WebtechCandidate,
-    WebtechDomainResult,
-)
-from dagster_v3.defs.webtech.scanner import (
-    ExtensionReportRouter,
-    WebtechScannerSettings,
-    _navigate_page,
-    scan_webtech_candidates,
 )
 from dagster_v3.defs.webtech.storage import (
     WEBTECH_RESULT_COLUMNS,
     WebtechS3Destination,
+    _extension_failure_stage,
+    index_final_results,
     parse_webtech_s3_path,
-    persist_webtech_results,
-    webtech_result_object_key,
+    write_candidate_manifest,
 )
 
 CRAWL_ID = "CC-MAIN-2026-apr-may-jun"
-SCANNED_AT = datetime(2026, 8, 29, 8, 45, tzinfo=UTC)
+PARTITION_KEY = "hash_000"
+SCANNED_AT = datetime(2026, 8, 30, 10, 0, tzinfo=UTC)
 
 
 class FakeClickhouseClient:
@@ -65,13 +58,15 @@ class FakeClickhouse:
 
 
 class FakeObjectStore:
-    def __init__(self, events: list[str]) -> None:
-        self.events = events
-        self.objects: dict[tuple[str, str], str] = {}
+    def __init__(self) -> None:
+        self.objects: dict[tuple[str, str], bytes] = {}
+        self.write_count = 0
 
     def ensure_bucket(self, bucket: str | None = None) -> None:
         assert bucket == "webtech"
-        self.events.append("s3:ensure")
+
+    def exists(self, key: str, bucket: str | None = None) -> bool:
+        return (str(bucket), key) in self.objects
 
     def write_json(
         self,
@@ -79,362 +74,260 @@ class FakeObjectStore:
         body: str,
         bucket: str | None = None,
     ) -> None:
-        assert bucket == "webtech"
-        self.events.append("s3:write")
-        self.objects[(bucket, key)] = body
+        self.write_count += 1
+        self.objects[(str(bucket), key)] = body.encode()
+
+    def read_bytes(self, key: str, bucket: str | None = None) -> bytes:
+        return self.objects[(str(bucket), key)]
 
 
-def _report(*, page_token: str, url: str) -> ExtensionReport:
-    return ExtensionReport.model_validate(
-        {
-            "schema_version": 2,
-            "analysis_complete": True,
-            "extension_version": "1.3.0",
-            "page_token": page_token,
-            "url": url,
-            "technologies": [
-                {
-                    "name": "React",
-                    "slug": "react",
-                    "categories": [
-                        {"id": 12, "name": "JavaScript frameworks", "slug": "javascript-frameworks"}
-                    ],
-                    "confidence": 100,
-                    "version": "18.3.1",
-                }
-            ],
-        }
+def test_webtech_component_builds_three_partition_aligned_assets() -> None:
+    component = WebtechScannerComponent(
+        api_url="http://scanner.test:8088",
+        s3_path="s3://webtech/webtech",
+    )
+    definitions = component.build_defs(None)  # type: ignore[arg-type]
+
+    asset_keys = {
+        key.to_user_string()
+        for asset in definitions.assets or []
+        for key in asset.keys
+    }
+    assert asset_keys == {
+        "commoncrawl_webtech_candidates_manifest",
+        "commoncrawl_webtech_remote_scan",
+        "commoncrawl_webtech_results_clickhouse",
+    }
+    api_resource = (definitions.resources or {})["webtech_api"]
+    assert api_resource.model_dump()["api_token"] == "WEBTECH_API_TOKEN"
+    assert WEBTECH_PARTITIONS.get_partition_keys() == WEBTECH_PARTITION_KEYS
+    assert len(WEBTECH_PARTITION_KEYS) == 128
+    assert WEBTECH_PARTITION_KEYS[0] == "hash_000"
+    assert WEBTECH_PARTITION_KEYS[-1] == "hash_127"
+
+
+def test_webtech_api_resource_survives_dagster_process_reconstruction() -> None:
+    resource = WebtechApiResource(
+        base_url="http://scanner.test:8088",
+        api_token="resolved-test-token",
     )
 
+    reconstructed = resource._with_updated_values({})
 
-def test_webtech_pilot_has_one_top_1000_partition() -> None:
-    assert WEBTECH_PILOT_PARTITION_KEY == "harmonic_top_1000"
-    assert WEBTECH_PARTITIONS.get_partition_keys() == [WEBTECH_PILOT_PARTITION_KEY]
+    assert reconstructed.api_token == "resolved-test-token"
 
 
-def test_pilot_config_is_hard_limited_to_harmonic_top_1000() -> None:
-    config = WebtechScanConfig(crawl_id=CRAWL_ID)
+def test_candidate_config_uses_fixed_top_million_partition_universe() -> None:
+    config = WebtechCandidateConfig()
 
-    assert config.max_harmonic_rank == 1_000
-    assert config.page_worker_count == 10
-    assert config.report_timeout_seconds == 120.0
+    assert config.crawl_id == CRAWL_ID
     assert config.force_rescan is False
-
-    with pytest.raises(ValidationError, match="less than or equal to 1000"):
-        WebtechScanConfig(crawl_id=CRAWL_ID, max_harmonic_rank=1_001)
-
+    assert WEBTECH_DOMAIN_LIMIT == 1_000_000
+    assert WEBTECH_PARTITION_COUNT == 128
     with pytest.raises(ValidationError, match="valid Common Crawl ID"):
-        WebtechScanConfig(crawl_id="latest")
+        WebtechCandidateConfig(crawl_id="latest")
 
 
-def test_candidate_query_uses_requested_crawl_and_rank_without_hash_filter() -> None:
-    client = FakeClickhouseClient(
-        rows=[
-            ("example.com", 1),
-            ("test39.com", 2),
-        ]
-    )
+def test_candidate_query_hashes_top_million_and_skips_recent_scans() -> None:
+    client = FakeClickhouseClient(rows=[("example.com", 1), ("example.org", 2)])
 
     candidates = load_webtech_candidates(
         FakeClickhouse(client),
-        partition_key=WEBTECH_PILOT_PARTITION_KEY,
+        partition_key=PARTITION_KEY,
         crawl_id=CRAWL_ID,
-        max_harmonic_rank=1_000,
         force_rescan=False,
     )
 
     assert candidates == (
         WebtechCandidate(root_domain="example.com", harmonic_rank=1),
-        WebtechCandidate(root_domain="test39.com", harmonic_rank=2),
+        WebtechCandidate(root_domain="example.org", harmonic_rank=2),
     )
     query, parameters = client.calls[-1]
-    assert "commoncrawl_domain_graph_signals FINAL" in query
-    assert "cc_harmonic_rank BETWEEN 1 AND %(max_harmonic_rank)s" in query
-    assert "CRC32" not in query
-    assert "webtech_domain_scan_results FINAL" in query
-    assert "ORDER BY cc_harmonic_rank, root_domain" in query
+    assert "cc_harmonic_rank BETWEEN 1 AND %(harmonic_rank_limit)s" in query
+    assert (
+        "modulo( cityHash64(lower(root_domain)), %(partition_count)s ) "
+        "= %(partition_index)s"
+    ) in " ".join(query.split())
+    assert "scanned_at >= now('UTC') - INTERVAL 1 MONTH" in query
+    assert "outcome = 'success'" not in query
     assert parameters == {
         "crawl_id": CRAWL_ID,
-        "detector_version": "mywappalyzer-1.3.0",
-        "max_harmonic_rank": 1_000,
+        "detector_version": WEBTECH_DETECTOR_VERSION,
+        "harmonic_rank_limit": 1_000_000,
+        "partition_count": 128,
+        "partition_index": 0,
     }
 
 
-def test_extension_report_requires_the_final_schema_v2_message() -> None:
-    page_token = "82b2f177-8143-4103-9ebf-3acc16037819"
-    report = _report(page_token=page_token, url="https://example.com/")
+def test_force_rescan_keeps_partitioning_but_omits_freshness_filter() -> None:
+    client = FakeClickhouseClient()
 
-    assert report.analysis_complete is True
-    assert report.page_token == UUID(page_token)
-    assert report.technologies[0].name == "React"
-
-    invalid = report.model_dump(mode="json")
-    invalid["analysis_complete"] = False
-    with pytest.raises(ValidationError, match="analysis_complete"):
-        ExtensionReport.model_validate(invalid)
-
-
-def test_report_router_keeps_identical_redirect_urls_separate_by_page_token() -> None:
-    first_token = "82b2f177-8143-4103-9ebf-3acc16037819"
-    second_token = "68ee14e1-2054-4546-a4eb-035ad5c70ebd"
-
-    async def route_reports() -> tuple[ExtensionReport, ExtensionReport]:
-        router = ExtensionReportRouter(asyncio.get_running_loop())
-        first_waiter = router.register(UUID(first_token))
-        second_waiter = router.register(UUID(second_token))
-
-        assert router.accept(
-            _report(page_token=second_token, url="https://redirect.example/")
-        )
-        assert router.accept(
-            _report(page_token=first_token, url="https://redirect.example/")
-        )
-
-        return await asyncio.gather(first_waiter, second_waiter)
-
-    first, second = asyncio.run(route_reports())
-
-    assert first.page_token == UUID(first_token)
-    assert second.page_token == UUID(second_token)
-
-
-def test_report_router_buffers_a_report_that_arrives_before_registration() -> None:
-    page_token = "82b2f177-8143-4103-9ebf-3acc16037819"
-
-    async def route_early_report() -> ExtensionReport:
-        router = ExtensionReportRouter(asyncio.get_running_loop())
-        report = _report(page_token=page_token, url="https://example.com/")
-
-        assert router.accept(report)
-        return await router.register(UUID(page_token))
-
-    report = asyncio.run(route_early_report())
-
-    assert report.page_token == UUID(page_token)
-    assert report.url == "https://example.com/"
-
-
-def test_scanner_replaces_the_context_after_each_worker_sized_batch(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    contexts: list[Any] = []
-    profile_dirs: list[str] = []
-    completed_domains: list[str] = []
-
-    class FakePage:
-        def __init__(self) -> None:
-            self.closed = False
-
-        def is_closed(self) -> bool:
-            return self.closed
-
-        async def close(self) -> None:
-            self.closed = True
-
-    class FakeContext:
-        pages: tuple[FakePage, ...] = ()
-
-        def __init__(self) -> None:
-            self.created_pages: list[FakePage] = []
-            self.closed = False
-
-        async def new_page(self) -> FakePage:
-            page = FakePage()
-            self.created_pages.append(page)
-            return page
-
-        async def close(self) -> None:
-            self.closed = True
-
-    async def launch_context(profile_dir: str, **_: Any) -> FakeContext:
-        if contexts:
-            assert contexts[-1].closed is True
-        context = FakeContext()
-        contexts.append(context)
-        profile_dirs.append(profile_dir)
-        return context
-
-    async def scan_candidate(
-        context: FakeContext,
-        page: FakePage,
-        candidate: WebtechCandidate,
-        **_: Any,
-    ) -> tuple[WebtechDomainResult, FakePage]:
-        del context
-        return (
-            WebtechDomainResult.failure(
-                candidate=candidate,
-                outcome="browser_error",
-                requested_url=f"https://{candidate.root_domain}",
-                final_url="",
-                scanned_at=SCANNED_AT,
-                duration_ms=1,
-                http_fallback_used=False,
-                error_message="test result",
-            ),
-            page,
-        )
-
-    monkeypatch.setattr(
-        webtech_scanner,
-        "launch_persistent_context_async",
-        launch_context,
-    )
-    monkeypatch.setattr(webtech_scanner, "_scan_candidate", scan_candidate)
-    candidates = tuple(
-        WebtechCandidate(root_domain=f"example{rank}.com", harmonic_rank=rank)
-        for rank in range(1, 24)
-    )
-
-    results = asyncio.run(
-        scan_webtech_candidates(
-            candidates,
-            settings=WebtechScannerSettings(
-                headless=True,
-                page_worker_count=10,
-                navigation_timeout_seconds=60,
-                report_timeout_seconds=120,
-            ),
-            progress_callback=lambda result: completed_domains.append(
-                result.candidate.root_domain
-            ),
-        )
-    )
-
-    assert [len(context.created_pages) for context in contexts] == [10, 10, 3]
-    assert all(context.closed for context in contexts)
-    assert len(set(profile_dirs)) == 3
-    assert tuple(result.candidate for result in results) == candidates
-    assert completed_domains == [candidate.root_domain for candidate in candidates]
-
-
-def test_navigation_accepts_a_redirect_that_settles_after_interruption() -> None:
-    class RedirectingPage:
-        url = "https://www.example.com/"
-        wait_for_load_state_calls: list[dict[str, Any]] = []
-
-        async def goto(self, url: str, **kwargs: Any) -> None:
-            raise PlaywrightError(
-                f'Navigation to "{url}" is interrupted by another navigation '
-                'to "https://www.example.com/"'
-            )
-
-        async def wait_for_load_state(self, **kwargs: Any) -> None:
-            self.wait_for_load_state_calls.append(kwargs)
-
-    page: Any = RedirectingPage()
-    asyncio.run(
-        _navigate_page(
-            page,
-            "https://example.com",
-            timeout_seconds=60,
-        )
-    )
-
-    assert page.wait_for_load_state_calls == [
-        {"state": "domcontentloaded", "timeout": 5_000}
-    ]
-
-
-def test_webtech_s3_path_and_result_key_are_explicit() -> None:
-    assert parse_webtech_s3_path("s3://webtech/wappalyzer/pilot") == (
-        WebtechS3Destination(bucket="webtech", prefix="wappalyzer/pilot")
-    )
-    assert (
-        webtech_result_object_key(
-            destination=WebtechS3Destination(
-                bucket="webtech",
-                prefix="wappalyzer/pilot",
-            ),
-            crawl_id=CRAWL_ID,
-            root_domain="example.com",
-        )
-        == "wappalyzer/pilot/crawl_id=CC-MAIN-2026-apr-may-jun/root_domain=example.com/report.json"
-    )
-
-    with pytest.raises(ValueError, match="s3://bucket/prefix"):
-        parse_webtech_s3_path("https://webtech/pilot")
-
-
-def test_persistence_writes_json_before_clickhouse_index() -> None:
-    events: list[str] = []
-    object_store = FakeObjectStore(events)
-
-    class OrderedClickhouseClient(FakeClickhouseClient):
-        def execute(self, sql: str, parameters: Any = None) -> list[tuple[Any, ...]]:
-            events.append("clickhouse:write")
-            return super().execute(sql, parameters)
-
-    client = OrderedClickhouseClient()
-    report = _report(
-        page_token="82b2f177-8143-4103-9ebf-3acc16037819",
-        url="https://www.example.com/",
-    )
-    result = WebtechDomainResult.success(
-        candidate=WebtechCandidate(root_domain="example.com", harmonic_rank=1),
-        requested_url="https://example.com",
-        final_url=report.url,
-        report=report,
-        scanned_at=SCANNED_AT,
-        duration_ms=7_250,
-    )
-
-    stored = persist_webtech_results(
-        clickhouse=FakeClickhouse(client),
-        object_store=object_store,
-        destination=WebtechS3Destination(
-            bucket="webtech",
-            prefix="wappalyzer/pilot",
-        ),
+    load_webtech_candidates(
+        FakeClickhouse(client),
+        partition_key="hash_127",
         crawl_id=CRAWL_ID,
-        partition_key=WEBTECH_PILOT_PARTITION_KEY,
-        run_id="pilot-run-1",
-        results=(result,),
+        force_rescan=True,
     )
 
-    assert events == ["s3:ensure", "s3:write", "clickhouse:write"]
-    assert stored[0].s3_uri.startswith("s3://webtech/wappalyzer/pilot/")
-    document = json.loads(next(iter(object_store.objects.values())))
-    assert document["candidate"]["root_domain"] == "example.com"
-    assert document["report"]["schema_version"] == 2
+    query, parameters = client.calls[-1]
+    assert "scanned_at" not in query
+    assert parameters["partition_index"] == 127
 
 
-def test_asset_uses_one_browser_pool_and_one_pilot_partition() -> None:
-    assert commoncrawl_webtech_scan_results.partitions_def is WEBTECH_PARTITIONS
-    assert commoncrawl_webtech_scan_results.backfill_policy == dg.BackfillPolicy.multi_run(
-        max_partitions_per_run=1
-    )
-    assert commoncrawl_webtech_scan_results.op.pool == WEBTECH_BROWSER_POOL
+def test_candidate_query_rejects_unknown_partition() -> None:
+    with pytest.raises(ValueError, match="Invalid Webtech partition"):
+        load_webtech_candidates(
+            FakeClickhouse(FakeClickhouseClient()),
+            partition_key="hash_128",
+            crawl_id=CRAWL_ID,
+            force_rescan=False,
+        )
 
 
-def test_webtech_definitions_register_the_asset_and_job() -> None:
-    assert commoncrawl_webtech_scan_results in webtech_defs.assets
-    assert commoncrawl_webtech_scan_job in webtech_defs.jobs
-
-
-def test_clickhouse_migration_matches_the_insert_column_contract() -> None:
-    migration = (
-        Path(__file__).resolve().parents[3]
-        / "clickhouse"
-        / "migrations"
-        / "000352_corpscout_webtech_domain_scan_results.up.sql"
-    ).read_text(encoding="utf-8")
-
-    assert "CREATE TABLE IF NOT EXISTS corpscout.webtech_domain_scan_results" in migration
-    positions = [migration.index(f"    {column} ") for column in WEBTECH_RESULT_COLUMNS]
-    assert positions == sorted(positions)
-
-
-def test_extension_is_packaged_with_the_dagster_definition() -> None:
-    extension_dir = (
-        Path(__file__).resolve().parents[1]
-        / "src"
-        / "dagster_v3"
-        / "defs"
-        / "webtech"
-        / "extension"
+def test_candidate_manifest_reuses_identical_durable_input() -> None:
+    object_store = FakeObjectStore()
+    destination = parse_webtech_s3_path("s3://webtech/webtech")
+    candidates = (
+        WebtechCandidate(root_domain="example.com", harmonic_rank=1),
+        WebtechCandidate(root_domain="example.org", harmonic_rank=2),
     )
 
-    assert (extension_dir / "manifest.json").is_file()
-    assert (extension_dir / "runtime-config.json").exists() is False
-    assert len(tuple((extension_dir / "technologies").glob("*.json"))) == 27
+    first = write_candidate_manifest(
+        object_store=object_store,
+        destination=destination,
+        crawl_id=CRAWL_ID,
+        partition_key=PARTITION_KEY,
+        dagster_run_id="dagster-run-1",
+        candidates=candidates,
+    )
+    second = write_candidate_manifest(
+        object_store=object_store,
+        destination=destination,
+        crawl_id=CRAWL_ID,
+        partition_key=PARTITION_KEY,
+        dagster_run_id="dagster-run-1",
+        candidates=candidates,
+    )
+
+    assert first == second
+    assert object_store.write_count == 1
+
+
+def test_final_manifest_is_validated_before_clickhouse_index() -> None:
+    object_store = FakeObjectStore()
+    destination = WebtechS3Destination(bucket="webtech", prefix="webtech")
+    scan_id = "ab" * 16
+    result_key = (
+        "webtech/scans/detector_version=mywappalyzer-1.4.1/"
+        f"crawl_id={CRAWL_ID}/partition_key={PARTITION_KEY}/"
+        f"scan_id={scan_id}/results/root_domain=example.com/report.json"
+    )
+    result_document = {
+        "schema_version": 1,
+        "scan_id": scan_id,
+        "crawl_id": CRAWL_ID,
+        "partition_key": PARTITION_KEY,
+        "detector_version": WEBTECH_DETECTOR_VERSION,
+        "candidate": {"root_domain": "example.com", "harmonic_rank": 1},
+        "outcome": "hard_timeout",
+        "requested_url": "http://example.com",
+        "final_url": "",
+        "final_hostname": "",
+        "http_fallback_used": True,
+        "scanned_at": SCANNED_AT.isoformat(),
+        "duration_ms": 500,
+        "error_message": "domain exceeded 60 second deadline",
+        "timeout_stage": "wappalyzer_report",
+        "report": None,
+    }
+    result_body = _json_bytes(result_document)
+    object_store.objects[("webtech", result_key)] = result_body
+    result_sha = hashlib.sha256(result_body).hexdigest()
+    final_key = result_key.rsplit("/results/", maxsplit=1)[0] + "/final-manifest.json"
+    final_document = {
+        "schema_version": 1,
+        "scan_id": scan_id,
+        "crawl_id": CRAWL_ID,
+        "partition_key": PARTITION_KEY,
+        "detector_version": WEBTECH_DETECTOR_VERSION,
+        "candidate_manifest_uri": "s3://webtech/webtech/candidates/manifest.json",
+        "candidate_manifest_sha256": "cd" * 32,
+        "started_at": SCANNED_AT.isoformat(),
+        "finished_at": SCANNED_AT.isoformat(),
+        "elapsed_seconds": 0,
+        "outcome_counts": {"hard_timeout": 1},
+        "technology_count": 0,
+        "scanner_settings": {"browser_count": 20},
+        "results": [
+            {
+                "root_domain": "example.com",
+                "harmonic_rank": 1,
+                "outcome": "hard_timeout",
+                "timeout_stage": "wappalyzer_report",
+                "technology_count": 0,
+                "duration_ms": 500,
+                "object_key": result_key,
+                "sha256": result_sha,
+                "size_bytes": len(result_body),
+            }
+        ],
+    }
+    object_store.objects[("webtech", final_key)] = _json_bytes(final_document)
+    reference = FinalScanReference(
+        scan_id=scan_id,
+        crawl_id=CRAWL_ID,
+        partition_key=PARTITION_KEY,
+        detector_version=WEBTECH_DETECTOR_VERSION,
+        uri=f"s3://webtech/{final_key}",
+        total_count=1,
+        outcome_counts={"hard_timeout": 1},
+        technology_count=0,
+        elapsed_seconds=0,
+        domains_per_minute=0,
+    )
+    clickhouse_client = FakeClickhouseClient()
+
+    indexed = index_final_results(
+        clickhouse=FakeClickhouse(clickhouse_client),
+        object_store=object_store,
+        destination=destination,
+        reference=reference,
+        dagster_run_id="dagster-run-1",
+    )
+
+    assert indexed == 1
+    query, rows = clickhouse_client.calls[-1]
+    assert f"({', '.join(WEBTECH_RESULT_COLUMNS)})" in query
+    assert rows[0][WEBTECH_RESULT_COLUMNS.index("scan_id")] == scan_id
+    assert rows[0][WEBTECH_RESULT_COLUMNS.index("run_id")] == "dagster-run-1"
+    assert rows[0][WEBTECH_RESULT_COLUMNS.index("outcome")] == "hard_timeout"
+    assert (
+        rows[0][WEBTECH_RESULT_COLUMNS.index("timeout_stage")]
+        == "wappalyzer_report"
+    )
+    assert rows[0][WEBTECH_RESULT_COLUMNS.index("extension_failure_stage")] == ""
+
+
+def test_extension_failure_stage_is_read_from_the_full_report() -> None:
+    assert _extension_failure_stage(None) == ""
+    assert _extension_failure_stage({"technologies": []}) == ""
+    assert (
+        _extension_failure_stage(
+            {
+                "technologies": [],
+                "failure_stage": "technology_pattern_matching",
+            }
+        )
+        == "technology_pattern_matching"
+    )
+
+    with pytest.raises(ValueError, match="failure_stage"):
+        _extension_failure_stage({"technologies": [], "failure_stage": 3})
+
+
+def _json_bytes(document: dict[str, object]) -> bytes:
+    return json.dumps(
+        document,
+        separators=(",", ":"),
+        sort_keys=True,
+    ).encode()

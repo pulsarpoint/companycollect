@@ -250,7 +250,6 @@
     ],
     "description": "LangShop is an app for translating Shopify stores.",
     "icon": "LangShop.svg",
-    "implies": "Shopify",
     "js": {
       "LangShop": "",
       "LangShopConfig": "",
@@ -261,6 +260,7 @@
       "recurring",
       "freemium"
     ],
+    "requires": "Shopify",
     "saas": true,
     "scriptSrc": "\\.langshop\\.app/",
     "website": "https://langshop.io"
@@ -529,12 +529,12 @@
     ],
     "description": "LayoutHub is an easy page builder that helps merchants quickly set up an online store with any kind of page type by using our library of pre-designed layouts and blocks.",
     "icon": "LayoutHub.svg",
-    "implies": "Shopify",
     "pricing": [
       "freemium",
       "low",
       "recurring"
     ],
+    "requires": "Shopify",
     "saas": true,
     "scriptSrc": "app\\.layouthub\\.com/shopify/layouthub\\.js",
     "website": "https://layouthub.com"
@@ -999,10 +999,10 @@
     ],
     "description": "Leaflet is the price testing platform for Shopify.",
     "icon": "Leaflet platform.png",
-    "implies": "Shopify",
     "pricing": [
       "payg"
     ],
+    "requires": "Shopify",
     "saas": true,
     "scriptSrc": "scripts\\.leaflet\\.co/",
     "website": "https://join.leaflet.co"
@@ -2311,7 +2311,6 @@
     ],
     "description": "Littledata provides a connection between your Shopify site, marketing channels, and Google Analytics.",
     "icon": "Littledata.svg",
-    "implies": "Shopify",
     "js": {
       "LittledataLayer": "",
       "LittledataLayer.version": "v([\\d\\.]+)\\;version:\\1"
@@ -2320,6 +2319,7 @@
       "mid",
       "recurring"
     ],
+    "requires": "Shopify",
     "requiresCategory": 6,
     "saas": true,
     "website": "https://www.littledata.io"
@@ -2649,11 +2649,11 @@
     ],
     "description": "Livescale is a video platform that enables teams to transform content and ecommerce into a live shopping experience that reaches engages and monetizes audiences with LiveShopping.",
     "icon": "Livescale.svg",
-    "implies": "Shopify",
     "pricing": [
       "mid",
       "recurring"
     ],
+    "requires": "Shopify",
     "saas": true,
     "scriptSrc": "\\.livescale\\.tv/",
     "website": "https://www.livescale.tv"
@@ -2787,7 +2787,6 @@
     ],
     "description": "Locksmith is a shopify app for adding access control capability on shopify stores.",
     "icon": "Locksmith.svg",
-    "implies": "Shopify",
     "js": {
       "Locksmith": ""
     },
@@ -2795,6 +2794,7 @@
       "low",
       "recurring"
     ],
+    "requires": "Shopify",
     "saas": true,
     "website": "https://apps.shopify.com/locksmith"
   },

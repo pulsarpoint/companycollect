@@ -1,13 +1,10 @@
 'use strict'
 /* eslint-env browser */
-/* globals chrome, globalThis */
+/* globals chrome */
 
 function yieldToMain() {
-  if (globalThis?.scheduler?.yield) {
-    return globalThis?.scheduler.yield()
-  }
-
-  // Fall back to yielding with setTimeout.
+  // Prioritized scheduler.yield() continuations can starve page timers while
+  // scanning large DOMs. Rejoin the timer task queue so page work gets a turn.
   return new Promise((resolve) => {
     setTimeout(resolve, 0)
   })
