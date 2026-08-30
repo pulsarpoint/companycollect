@@ -72,6 +72,7 @@ def sync_icons(
     s3_client: IconBucketClient,
     bucket: str,
     fetch_overlay_icon: Callable[[str], bytes | None],
+    extra_icons_dirs: Sequence[Path] = (),
     log: Callable[[str], None] = lambda message: None,
 ) -> IconSyncResult:
     refs: dict[str, IconRef] = {}
@@ -89,10 +90,14 @@ def sync_icons(
             continue
 
         local_path = bundle_icons_dir / technology.icon_filename
+        for extra_dir in extra_icons_dirs:
+            if local_path.is_file():
+                break
+            local_path = extra_dir / technology.icon_filename
         body: bytes | None = None
         size: int | None = None
         if local_path.is_file():
-            # Both layers prefer the vendored file: it avoids thousands of
+            # Every layer prefers a local file: it avoids thousands of
             # GitHub fetches and icon artwork is effectively immutable.
             size = local_path.stat().st_size
         elif technology.source == tables.OVERLAY_SOURCE:
@@ -113,7 +118,7 @@ def sync_icons(
         else:
             log(
                 f"{technology.technology}: icon {technology.icon_filename!r} "
-                "missing from the extension bundle"
+                "missing from the local icon directories"
             )
             missing += 1
             continue

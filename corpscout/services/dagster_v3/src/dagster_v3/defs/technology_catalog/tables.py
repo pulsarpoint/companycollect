@@ -47,3 +47,10 @@ EXTENSION_VERSION = "6.12.5"
 # The maintained public continuation of the wappalyzer catalog (weekly
 # overlay). source_version for these rows is the pinned git commit SHA.
 OVERLAY_SOURCE = "webappanalyzer"
+
+# Our curated entries (topmost layer, wins over both public layers).
+# source_version for these rows is the content hash of the custom files.
+CUSTOM_SOURCE = "custom"
+
+# Custom category ids live at 900+ so upstream vocabularies can never collide.
+CUSTOM_CATEGORY_ID_FLOOR = 900

@@ -1,17 +1,19 @@
 """Pure catalog logic: layer loading, merge, slugs, category resolution.
 
-Two layers feed the catalog:
+Three layers feed the catalog, later ones winning per technology name:
 
-* the vendored Wappalyzer extension bundle (frozen bootstrap, read-only), and
-* the maintained public webappanalyzer catalog (the updatable overlay).
+* the vendored Wappalyzer extension bundle (frozen bootstrap, read-only),
+* the maintained public webappanalyzer catalog (the updatable overlay), and
+* our curated custom entries (repo-owned, webappanalyzer schema).
 
-The overlay wins entirely for any technology name present in both layers.
 Category and group ids are resolved to names via the SAME layer the winning
-entry came from — the two layers' category tables have drifted, so resolving
-an overlay entry against the extension's categories (or vice versa) would
-mislabel it.
+entry came from — the two public layers' category tables have drifted, so
+resolving an overlay entry against the extension's categories (or vice versa)
+would mislabel it. The custom layer's vocabulary is the overlay's plus our own
+additions at ids 900+, so custom entries may reference standard categories.
 """
 
+import hashlib
 import json
 import re
 import string
@@ -92,18 +94,66 @@ def load_extension_layer(bundle_dir: Path) -> CatalogLayer:
     )
 
 
-def merge_layers(
-    extension: CatalogLayer, overlay: CatalogLayer
-) -> list[MergedTechnology]:
-    """Union of both layers' names; the overlay wins where both carry a name.
+def load_custom_layer(
+    custom_dir: Path,
+    *,
+    base_categories: Mapping[int, Mapping[str, Any]],
+    base_groups: Mapping[int, str],
+) -> CatalogLayer:
+    """Read the repo-owned custom entries (webappanalyzer schema).
 
+    The layer's vocabulary is the overlay's plus categories.json additions at
+    ids >= tables.CUSTOM_CATEGORY_ID_FLOOR. Every entry's category ids must
+    resolve — an unresolvable id is a typo, refused at load time rather than
+    published as an unlabeled row. source_version is the content hash of the
+    two files, so the catalog records exactly which revision published.
+    """
+    technologies_path = custom_dir / "technologies.json"
+    categories_path = custom_dir / "categories.json"
+    technologies = json.loads(technologies_path.read_text(encoding="utf-8"))
+    custom_categories = parse_categories(
+        json.loads(categories_path.read_text(encoding="utf-8"))
+    )
+    for category_id in custom_categories:
+        if category_id < tables.CUSTOM_CATEGORY_ID_FLOOR:
+            raise ValueError(
+                f"custom category id {category_id} is below the "
+                f"{tables.CUSTOM_CATEGORY_ID_FLOOR} floor reserved against "
+                "upstream collisions"
+            )
+    categories = {**base_categories, **custom_categories}
+    for name, entry in technologies.items():
+        for category_id in entry.get("cats", ()):
+            if int(category_id) not in categories:
+                raise ValueError(
+                    f"custom technology {name!r} references unknown "
+                    f"category id {category_id}"
+                )
+    digest = hashlib.sha256(
+        technologies_path.read_bytes() + categories_path.read_bytes()
+    ).hexdigest()
+    return CatalogLayer(
+        technologies=technologies,
+        categories=categories,
+        groups=dict(base_groups),
+        source=tables.CUSTOM_SOURCE,
+        source_version=digest[:40],
+    )
+
+
+def merge_layers(*layers: CatalogLayer) -> list[MergedTechnology]:
+    """Union of all layers' names; the LAST layer carrying a name wins.
+
+    Callers pass layers in precedence order: extension, overlay, custom.
     Sorted by technology name so every downstream step (icon sync, insert) is
     deterministic run to run.
     """
     merged: list[MergedTechnology] = []
-    names = set(extension.technologies) | set(overlay.technologies)
+    names = {name for layer in layers for name in layer.technologies}
     for name in sorted(names):
-        layer = overlay if name in overlay.technologies else extension
+        layer = next(
+            layer for layer in reversed(layers) if name in layer.technologies
+        )
         merged.append(_build_entry(name, layer.technologies[name], layer))
     return merged
 

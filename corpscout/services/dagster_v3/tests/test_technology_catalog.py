@@ -11,9 +11,10 @@ from pathlib import Path
 import pytest
 
 from dagster_v3.defs.technology_catalog import tables
-from dagster_v3.defs.technology_catalog.assets import build_rows
+from dagster_v3.defs.technology_catalog.assets import build_rows, custom_source_dir
 from dagster_v3.defs.technology_catalog.catalog import (
     CatalogLayer,
+    load_custom_layer,
     load_extension_layer,
     merge_layers,
     slugify,
@@ -318,6 +319,108 @@ def test_load_extension_layer_reads_letter_files(tmp_path: Path):
     assert layer.technologies["Some Tech"]["icon"] == "Some Tech.svg"
     assert layer.categories[1]["name"] == "CMS"
     assert layer.groups[3] == "Content"
+
+
+def write_custom_files(
+    tmp_path: Path,
+    technologies: dict,
+    categories: dict | None = None,
+) -> Path:
+    custom_dir = tmp_path / "custom"
+    custom_dir.mkdir(parents=True)
+    (custom_dir / "technologies.json").write_text(json.dumps(technologies))
+    (custom_dir / "categories.json").write_text(json.dumps(categories or {}))
+    return custom_dir
+
+
+def custom_layer_from(tmp_path: Path, technologies: dict, categories: dict | None = None):
+    return load_custom_layer(
+        write_custom_files(tmp_path, technologies, categories),
+        base_categories=overlay_layer().categories,
+        base_groups=overlay_layer().groups,
+    )
+
+
+def test_custom_layer_wins_over_both_public_layers(tmp_path: Path):
+    custom = custom_layer_from(
+        tmp_path,
+        {"Shared Tech": {"cats": [1], "description": "curated description"}},
+    )
+    merged = {
+        t.technology: t
+        for t in merge_layers(extension_layer(), overlay_layer(), custom)
+    }
+    shared = merged["Shared Tech"]
+    assert shared.description == "curated description"
+    assert shared.source == tables.CUSTOM_SOURCE
+    assert shared.source_version == custom.source_version
+    # Untouched names keep their original winning layers.
+    assert merged["Overlay Only"].source == tables.OVERLAY_SOURCE
+    assert merged["Extension Only"].source == tables.EXTENSION_SOURCE
+
+
+def test_custom_layer_resolves_standard_and_custom_categories(tmp_path: Path):
+    custom = custom_layer_from(
+        tmp_path,
+        {"Curated Tech": {"cats": [1, 900], "description": "x"}},
+        {"900": {"name": "Email security", "priority": 1}},
+    )
+    merged = {
+        t.technology: t
+        for t in merge_layers(extension_layer(), overlay_layer(), custom)
+    }
+    assert merged["Curated Tech"].categories == ("CMS (overlay)", "Email security")
+
+
+def test_custom_layer_refuses_low_category_ids(tmp_path: Path):
+    with pytest.raises(ValueError, match="below the 900 floor"):
+        custom_layer_from(
+            tmp_path,
+            {},
+            {"88": {"name": "Hosting (collides)", "priority": 1}},
+        )
+
+
+def test_custom_layer_refuses_unknown_category_reference(tmp_path: Path):
+    with pytest.raises(ValueError, match="unknown category id 999"):
+        custom_layer_from(
+            tmp_path,
+            {"Typo Tech": {"cats": [999], "description": "x"}},
+        )
+
+
+def test_custom_layer_version_is_content_hash(tmp_path: Path):
+    technologies = {"Curated Tech": {"cats": [1], "description": "x"}}
+    first = custom_layer_from(tmp_path, technologies)
+    same = load_custom_layer(
+        tmp_path / "custom",
+        base_categories=overlay_layer().categories,
+        base_groups=overlay_layer().groups,
+    )
+    assert first.source_version == same.source_version
+    assert len(first.source_version) == 40
+    changed = custom_layer_from(
+        tmp_path / "changed",
+        {"Curated Tech": {"cats": [1], "description": "y"}},
+    )
+    assert changed.source_version != first.source_version
+
+
+def test_shipped_custom_files_load_against_extension_vocabulary():
+    # The real files must reference only category ids the public vocabulary
+    # (here: the vendored bundle, a close proxy for the overlay) or our own
+    # categories.json can resolve, and every entry needs a description.
+    bundle_dir = Path(__file__).resolve().parents[4] / "extensions" / "6.12.5_0"
+    extension = load_extension_layer(bundle_dir)
+    custom = load_custom_layer(
+        custom_source_dir(),
+        base_categories=extension.categories,
+        base_groups=extension.groups,
+    )
+    assert len(custom.technologies) >= 10
+    for name, entry in custom.technologies.items():
+        assert entry.get("description"), f"{name} has no description"
+        assert entry.get("cats"), f"{name} has no categories"
 
 
 def test_load_extension_layer_missing_dir_names_the_override():

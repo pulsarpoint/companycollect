@@ -28,6 +28,7 @@ from dagster_v3.defs.common.resources import ObjectStoreResource
 from dagster_v3.defs.technology_catalog import tables
 from dagster_v3.defs.technology_catalog.catalog import (
     MergedTechnology,
+    load_custom_layer,
     load_extension_layer,
     merge_layers,
 )
@@ -58,6 +59,11 @@ def extension_bundle_dir() -> Path:
     if override:
         return Path(override)
     return Path(__file__).resolve().parents[7] / "extensions" / "6.12.5_0"
+
+
+def custom_source_dir() -> Path:
+    """The repo-owned custom entries, shipped inside the package."""
+    return Path(__file__).resolve().parent / "custom"
 
 
 def build_rows(
@@ -99,10 +105,10 @@ def build_rows(
     group_name=GROUP_NAME,
     kinds={"python", "s3", "clickhouse"},
     description=(
-        "Merged technology catalog (vendored Wappalyzer extension bundle "
-        "overlaid by the maintained webappanalyzer catalog, newer wins per "
-        "name), icons synced to the technology-icons bucket, published via "
-        "stage + EXCHANGE TABLES."
+        "Merged technology catalog (vendored Wappalyzer extension bundle, "
+        "overlaid by the maintained webappanalyzer catalog, overlaid by our "
+        "repo-owned custom entries — later wins per name), icons synced to "
+        "the technology-icons bucket, published via stage + EXCHANGE TABLES."
     ),
 )
 def technology_catalog_clickhouse(
@@ -128,7 +134,19 @@ def technology_catalog_clickhouse(
         "overlay layer @ %s: %d technologies", overlay_sha, len(overlay.technologies)
     )
 
-    merged = merge_layers(extension, overlay)
+    custom_dir = custom_source_dir()
+    custom = load_custom_layer(
+        custom_dir,
+        base_categories=overlay.categories,
+        base_groups=overlay.groups,
+    )
+    context.log.info(
+        "custom layer @ %s: %d technologies",
+        custom.source_version,
+        len(custom.technologies),
+    )
+
+    merged = merge_layers(extension, overlay, custom)
 
     technology_catalog_object_store.ensure_bucket()
     icon_result = sync_icons(
@@ -137,6 +155,7 @@ def technology_catalog_clickhouse(
         s3_client=technology_catalog_object_store.client(),
         bucket=tables.ICON_BUCKET,
         fetch_overlay_icon=lambda filename: fetch_overlay_icon(overlay_sha, filename),
+        extra_icons_dirs=(custom_dir / "icons",),
         log=context.log.warning,
     )
     context.log.info(
@@ -157,7 +176,11 @@ def technology_catalog_clickhouse(
 
     per_source = {
         source: sum(1 for technology in merged if technology.source == source)
-        for source in (tables.EXTENSION_SOURCE, tables.OVERLAY_SOURCE)
+        for source in (
+            tables.EXTENSION_SOURCE,
+            tables.OVERLAY_SOURCE,
+            tables.CUSTOM_SOURCE,
+        )
     }
     return dg.MaterializeResult(
         metadata={
@@ -168,6 +191,7 @@ def technology_catalog_clickhouse(
             "icons_missing": icon_result.missing,
             "overlay_icon_fetches": icon_result.overlay_fetches,
             "overlay_sha": overlay_sha,
+            "custom_version": custom.source_version,
         }
     )
 
