@@ -32,6 +32,7 @@ from dagster_v3.defs.technology_catalog.catalog import (
     load_extension_layer,
     merge_layers,
 )
+from dagster_v3.defs.technology_catalog import detection
 from dagster_v3.defs.technology_catalog.fingerprints import (
     Fingerprint,
     extract_dns_fingerprints,
@@ -282,8 +283,101 @@ def _staged_replace(
 
 
 @dg.asset(
-    name="technology_adoption_clickhouse",
+    name="domain_signal_technologies_clickhouse",
     deps=[dg.AssetKey("technology_catalog_clickhouse")],
+    group_name=GROUP_NAME,
+    kinds={"clickhouse", "sql"},
+    description=(
+        "DNS-derived technology detections (corpscout.domain_signal_"
+        "technologies, migration 000358): the dns_* fingerprints published "
+        "this run, matched against apex records in commoncrawl_domain_dns_"
+        "records in one Vectorscan pass per signal type, plus the pattern-"
+        "free self-hosted-email rule. Evidence and matched pattern are kept "
+        "per row so serving pages can show why a technology was detected."
+    ),
+)
+def domain_signal_technologies_clickhouse(
+    context: AssetExecutionContext,
+    clickhouse: ClickhouseResource,
+) -> dg.MaterializeResult:
+    assert_clickhouse_tables_exist(
+        clickhouse,
+        database=RESOLVED_DATABASE,
+        tables=(tables.DOMAIN_SIGNAL_TECHNOLOGIES_TABLE,),
+    )
+    qualified = (
+        f"`{RESOLVED_DATABASE}`.`{tables.DOMAIN_SIGNAL_TECHNOLOGIES_TABLE}`"
+    )
+    stage = (
+        f"`{RESOLVED_DATABASE}`."
+        f"`_tmp_{tables.DOMAIN_SIGNAL_TECHNOLOGIES_TABLE}_{uuid.uuid4().hex}`"
+    )
+    detected_at = datetime.now(UTC).replace(tzinfo=None)
+    scalars = {"source_run_id": context.run_id, "detected_at": detected_at}
+    settings = {
+        "max_bytes_before_external_group_by": 8 * 1024**3,
+        "max_memory_usage": 12 * 1024**3,
+    }
+    with clickhouse.get_connection() as client:
+        fingerprint_rows = client.execute(
+            f"""SELECT technology, signal_type, pattern, confidence, source
+FROM `{RESOLVED_DATABASE}`.`{tables.TECHNOLOGY_FINGERPRINTS_TABLE}` FINAL
+ORDER BY signal_type, technology, pattern"""
+        )
+        signals, skipped = detection.group_fingerprints(fingerprint_rows)
+        for technology, pattern in skipped:
+            context.log.warning(
+                "%s: pattern %r uses constructs Vectorscan cannot compile; "
+                "skipped",
+                technology,
+                pattern,
+            )
+        try:
+            client.execute(f"CREATE TABLE {stage} AS {qualified}")
+            for signal in signals:
+                client.execute(
+                    detection.detection_insert_sql(stage, signal.signal_type),
+                    {
+                        "technologies": signal.technologies,
+                        "patterns": signal.patterns,
+                        "confidences": signal.confidences,
+                        "sources": signal.sources,
+                        **scalars,
+                    },
+                    settings=settings,
+                )
+            client.execute(
+                detection.self_hosted_insert_sql(stage), scalars, settings=settings
+            )
+            per_signal = client.execute(
+                f"SELECT signal_type, count() FROM {stage} GROUP BY signal_type"
+            )
+            rows = sum(count for _, count in per_signal)
+            if rows < tables.MIN_DOMAIN_SIGNAL_TECHNOLOGY_ROWS:
+                raise ValueError(
+                    f"domain_signal_technologies produced {rows} rows, below "
+                    f"the {tables.MIN_DOMAIN_SIGNAL_TECHNOLOGY_ROWS} floor"
+                )
+            client.execute(f"EXCHANGE TABLES {stage} AND {qualified}")
+        finally:
+            client.execute(f"DROP TABLE IF EXISTS {stage}")
+    for signal_type, count in sorted(per_signal):
+        context.log.info("%s: %d rows", signal_type, count)
+    return dg.MaterializeResult(
+        metadata={
+            "rows": rows,
+            "skipped_patterns": len(skipped),
+            **{signal_type: count for signal_type, count in per_signal},
+        }
+    )
+
+
+@dg.asset(
+    name="technology_adoption_clickhouse",
+    deps=[
+        dg.AssetKey("technology_catalog_clickhouse"),
+        dg.AssetKey("domain_signal_technologies_clickhouse"),
+    ],
     group_name=GROUP_NAME,
     kinds={"clickhouse", "sql"},
     description=(
@@ -313,7 +407,13 @@ def technology_adoption_clickhouse(
             client.execute(
                 f"""INSERT INTO {stage} (technology, domain_count, computed_at)
 SELECT technology, uniqExact(root_domain), %(computed_at)s
-FROM `{RESOLVED_DATABASE}`.`commoncrawl_page_technologies`
+FROM (
+    SELECT technology, root_domain
+    FROM `{RESOLVED_DATABASE}`.`commoncrawl_page_technologies`
+    UNION ALL
+    SELECT technology, root_domain
+    FROM `{RESOLVED_DATABASE}`.`domain_signal_technologies`
+)
 GROUP BY technology""",
                 {"computed_at": computed_at},
                 # The scan is the cost, not the 4.6k aggregate states; spill
@@ -339,7 +439,10 @@ GROUP BY technology""",
 
 @dg.asset(
     name="technology_companies_clickhouse",
-    deps=[dg.AssetKey("technology_catalog_clickhouse")],
+    deps=[
+        dg.AssetKey("technology_catalog_clickhouse"),
+        dg.AssetKey("domain_signal_technologies_clickhouse"),
+    ],
     group_name=GROUP_NAME,
     kinds={"clickhouse", "sql"},
     description=(
@@ -370,9 +473,18 @@ def technology_companies_clickhouse(
 SELECT t.technology, cd.country_code, cd.company_id, t.root_domain, %(computed_at)s
 FROM (
     SELECT DISTINCT technology, root_domain
-    FROM `{RESOLVED_DATABASE}`.`commoncrawl_page_technologies`
-    WHERE root_domain IN (
-        SELECT root_domain FROM `{RESOLVED_DATABASE}`.`company_domains`
+    FROM (
+        SELECT technology, root_domain
+        FROM `{RESOLVED_DATABASE}`.`commoncrawl_page_technologies`
+        WHERE root_domain IN (
+            SELECT root_domain FROM `{RESOLVED_DATABASE}`.`company_domains`
+        )
+        UNION ALL
+        SELECT technology, root_domain
+        FROM `{RESOLVED_DATABASE}`.`domain_signal_technologies`
+        WHERE root_domain IN (
+            SELECT root_domain FROM `{RESOLVED_DATABASE}`.`company_domains`
+        )
     )
 ) AS t
 INNER JOIN (
@@ -401,7 +513,10 @@ INNER JOIN (
 
 @dg.asset(
     name="technology_top_domains_clickhouse",
-    deps=[dg.AssetKey("technology_catalog_clickhouse")],
+    deps=[
+        dg.AssetKey("technology_catalog_clickhouse"),
+        dg.AssetKey("domain_signal_technologies_clickhouse"),
+    ],
     group_name=GROUP_NAME,
     kinds={"clickhouse", "sql"},
     description=(
@@ -469,7 +584,13 @@ FROM (
     -- max_bytes_before_external_group_by and OOMed on a ~1B-pair arena
     -- (Code 241, 8 GiB single chunk); GROUP BY spills to disk.
     SELECT technology, root_domain
-    FROM `{RESOLVED_DATABASE}`.`commoncrawl_page_technologies`
+    FROM (
+        SELECT technology, root_domain
+        FROM `{RESOLVED_DATABASE}`.`commoncrawl_page_technologies`
+        UNION ALL
+        SELECT technology, root_domain
+        FROM `{RESOLVED_DATABASE}`.`domain_signal_technologies`
+    )
     GROUP BY technology, root_domain
 ) AS pairs
 INNER JOIN (
@@ -510,6 +631,7 @@ technology_catalog_job = dg.define_asset_job(
     name="technology_catalog_job",
     selection=dg.AssetSelection.assets(
         technology_catalog_clickhouse,
+        domain_signal_technologies_clickhouse,
         technology_adoption_clickhouse,
         technology_companies_clickhouse,
         technology_top_domains_clickhouse,
@@ -529,6 +651,7 @@ technology_catalog_weekly = dg.ScheduleDefinition(
 defs = dg.Definitions(
     assets=[
         technology_catalog_clickhouse,
+        domain_signal_technologies_clickhouse,
         technology_adoption_clickhouse,
         technology_companies_clickhouse,
         technology_top_domains_clickhouse,

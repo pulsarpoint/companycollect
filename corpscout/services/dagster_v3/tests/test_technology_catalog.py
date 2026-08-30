@@ -10,7 +10,7 @@ from pathlib import Path
 
 import pytest
 
-from dagster_v3.defs.technology_catalog import tables
+from dagster_v3.defs.technology_catalog import detection, tables
 from dagster_v3.defs.technology_catalog.assets import (
     build_fingerprint_rows,
     build_rows,
@@ -545,6 +545,105 @@ def test_fingerprint_columns_match_migration():
         if line.startswith("    ") and not line.lstrip().startswith("--")
     ]
     assert len(declared) == len(tables.TECHNOLOGY_FINGERPRINTS_COLUMNS)
+
+
+# --- DNS detection (migration 000358) ----------------------------------------
+
+DETECTION_MIGRATION = (
+    Path(__file__).resolve().parents[3]
+    / "clickhouse"
+    / "migrations"
+    / "000358_corpscout_domain_signal_technologies.up.sql"
+).read_text()
+
+
+def test_group_fingerprints_parallel_arrays_and_skips():
+    rows = [
+        ("Google Workspace", "dns_mx", "aspmx\\.l\\.google\\.com", 100, "webappanalyzer"),
+        ("Loopia", "dns_mx", "\\.loopia\\.se$", 100, "custom"),
+        ("Lookaround Tech", "dns_txt", "(?!nope)token", 100, "webappanalyzer"),
+        ("Backref Tech", "dns_txt", "(a)\\1", 100, "webappanalyzer"),
+        ("Token Tech", "dns_txt", "token=", 75, "custom"),
+        ("Future Signal", "spf_include", "ignored", 100, "custom"),
+    ]
+    signals, skipped = detection.group_fingerprints(rows)
+    assert [s.signal_type for s in signals] == ["dns_mx", "dns_txt"]
+    mx = signals[0]
+    assert mx.technologies == ["Google Workspace", "Loopia"]
+    assert mx.patterns == ["aspmx\\.l\\.google\\.com", "\\.loopia\\.se$"]
+    txt = signals[1]
+    assert txt.technologies == ["Token Tech"]
+    assert txt.confidences == [75]
+    assert skipped == [
+        ("Lookaround Tech", "(?!nope)token"),
+        ("Backref Tech", "(a)\\1"),
+    ]
+
+
+def test_vectorscan_safe_accepts_shipped_patterns():
+    bundle_dir = Path(__file__).resolve().parents[4] / "extensions" / "6.12.5_0"
+    extension = load_extension_layer(bundle_dir)
+    custom = load_custom_layer(
+        custom_source_dir(),
+        base_categories=extension.categories,
+        base_groups=extension.groups,
+    )
+    custom_patterns = [
+        f.pattern
+        for f in extract_dns_fingerprints(custom)
+        if f.source == tables.CUSTOM_SOURCE
+    ]
+    assert custom_patterns
+    assert all(detection.vectorscan_safe(p) for p in custom_patterns)
+
+
+def test_candidate_sql_shapes():
+    mx = detection.candidate_sql("dns_mx")
+    assert "record_type = 'MX'" in mx
+    assert "substringIndex(value, ' ', -1)" in mx  # strips the priority prefix
+    assert "name = root_domain" in mx
+    txt = detection.candidate_sql("dns_txt")
+    assert "record_type = 'TXT'" in txt
+    assert "trim(BOTH '\"' FROM value)" in txt
+    cname = detection.candidate_sql("dns_cname")
+    assert "concat('www.', root_domain)" in cname
+
+
+def test_detection_insert_sql_uses_one_vectorscan_pass():
+    sql = detection.detection_insert_sql("`db`.`stage`", "dns_mx")
+    assert "multiMatchAllIndicesCaseInsensitive" in sql
+    assert "ARRAY JOIN" in sql
+    assert "'dns_mx' AS signal_type" in sql
+    for column in tables.DOMAIN_SIGNAL_TECHNOLOGIES_COLUMNS:
+        assert column in sql
+
+
+def test_self_hosted_sql_scopes_to_own_domain():
+    sql = detection.self_hosted_insert_sql("`db`.`stage`")
+    assert f"'{detection.SELF_HOSTED_TECHNOLOGY}'" in sql
+    assert "endsWith(candidate, concat('.', root_domain))" in sql
+    assert "candidate = root_domain" in sql
+    assert "'~', 'localhost'" in sql
+
+
+def test_detection_migration_creates_the_table():
+    assert (
+        "CREATE TABLE IF NOT EXISTS corpscout."
+        f"{tables.DOMAIN_SIGNAL_TECHNOLOGIES_TABLE}" in DETECTION_MIGRATION
+    )
+
+
+def test_detection_columns_match_migration():
+    for column in tables.DOMAIN_SIGNAL_TECHNOLOGIES_COLUMNS:
+        assert f"    {column} " in DETECTION_MIGRATION, (
+            f"missing {column} in migration"
+        )
+    declared = [
+        line
+        for line in DETECTION_MIGRATION.splitlines()
+        if line.startswith("    ") and not line.lstrip().startswith("--")
+    ]
+    assert len(declared) == len(tables.DOMAIN_SIGNAL_TECHNOLOGIES_COLUMNS)
 
 
 # --- ClickHouse contract: migration 000350 owns the schema -------------------
