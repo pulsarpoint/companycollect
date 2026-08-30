@@ -13,6 +13,7 @@ from typing import Literal
 
 import dagster as dg
 from dagster_clickhouse import ClickhouseResource
+from pydantic import Field
 
 from dagster_v3.defs.clickhouse.resolved import assert_clickhouse_tables_exist
 from dagster_v3.defs.common.resources import ObjectStoreResource
@@ -96,6 +97,16 @@ type RatsitResultFilename = Literal[
 ]
 
 
+class RatsitScanConfig(dg.Config):
+    retry_not_found: bool = Field(
+        default=False,
+        description=(
+            "Include companies whose latest Ratsit result is not_found. "
+            "Without this opt-in, prior not-found outcomes are skipped."
+        ),
+    )
+
+
 @dataclass(frozen=True)
 class StoredRatsitReport:
     company_id: str
@@ -110,8 +121,25 @@ class RatsitScanSelection:
     active_company_ids: tuple[str, ...]
     clickhouse_fresh_company_ids: tuple[str, ...]
     s3_fresh_company_ids: tuple[str, ...]
+    not_found_company_ids: tuple[str, ...]
+    non_retryable_failure_company_ids: tuple[str, ...]
     selected_company_ids: tuple[str, ...]
     freshness_cutoff: datetime
+
+
+@dataclass(frozen=True)
+class RatsitLatestOutcome:
+    company_id: str
+    outcome: str
+    http_status: int | None
+
+
+@dataclass(frozen=True)
+class RatsitParentScanResults:
+    parent_scan_id: str
+    result_company_ids: tuple[str, ...]
+    http_429_company_ids: tuple[str, ...]
+    not_found_company_ids: tuple[str, ...]
 
 
 @dataclass(frozen=True)
@@ -297,22 +325,140 @@ def load_fresh_ratsit_company_ids_from_s3(
         )
 
 
+def load_latest_ratsit_outcomes(
+    clickhouse: ClickhouseResource,
+    company_ids: tuple[str, ...],
+) -> dict[str, RatsitLatestOutcome]:
+    if not company_ids:
+        return {}
+
+    assert_clickhouse_tables_exist(
+        clickhouse,
+        database=RATSIT_CLICKHOUSE_DATABASE,
+        tables=(RATSIT_RESULT_TABLE,),
+    )
+    with clickhouse.get_connection() as client:
+        rows = client.execute(
+            f"""
+            SELECT
+                company_id,
+                argMax(
+                    outcome,
+                    tuple(fetched_at, recorded_at, scan_id)
+                ) AS latest_outcome,
+                argMax(
+                    http_status,
+                    tuple(fetched_at, recorded_at, scan_id)
+                ) AS latest_http_status
+            FROM {RATSIT_CLICKHOUSE_DATABASE}.{RATSIT_RESULT_TABLE} FINAL
+            WHERE company_id IN %(company_ids)s
+            GROUP BY company_id
+            """,
+            {"company_ids": company_ids},
+        )
+
+    latest_outcomes = {
+        str(company_id): RatsitLatestOutcome(
+            company_id=str(company_id),
+            outcome=str(outcome),
+            http_status=http_status,
+        )
+        for company_id, outcome, http_status in rows
+    }
+    unexpected_company_ids = latest_outcomes.keys() - set(company_ids)
+    if unexpected_company_ids:
+        raise RuntimeError(
+            "ClickHouse returned unselected Ratsit companies: "
+            f"{', '.join(sorted(unexpected_company_ids)[:5])}"
+        )
+    return latest_outcomes
+
+
+def load_parent_ratsit_scan_results(
+    clickhouse: ClickhouseResource,
+    *,
+    active_company_ids: tuple[str, ...],
+    parent_scan_id: str,
+) -> RatsitParentScanResults:
+    assert_clickhouse_tables_exist(
+        clickhouse,
+        database=RATSIT_CLICKHOUSE_DATABASE,
+        tables=(RATSIT_RESULT_TABLE,),
+    )
+    with clickhouse.get_connection() as client:
+        rows = client.execute(
+            f"""
+            SELECT company_id, outcome, http_status
+            FROM {RATSIT_CLICKHOUSE_DATABASE}.{RATSIT_RESULT_TABLE} FINAL
+            WHERE scan_id = %(parent_scan_id)s
+              AND company_id IN %(company_ids)s
+            """,
+            {
+                "parent_scan_id": parent_scan_id,
+                "company_ids": active_company_ids,
+            },
+        )
+
+    outcomes_by_company_id = {
+        str(company_id): (str(outcome), http_status)
+        for company_id, outcome, http_status in rows
+    }
+    return RatsitParentScanResults(
+        parent_scan_id=parent_scan_id,
+        result_company_ids=tuple(
+            company_id
+            for company_id in active_company_ids
+            if company_id in outcomes_by_company_id
+        ),
+        http_429_company_ids=tuple(
+            company_id
+            for company_id in active_company_ids
+            if company_id in outcomes_by_company_id
+            and outcomes_by_company_id[company_id][1] == 429
+        ),
+        not_found_company_ids=tuple(
+            company_id
+            for company_id in active_company_ids
+            if company_id in outcomes_by_company_id
+            and outcomes_by_company_id[company_id][0] == "not_found"
+        ),
+    )
+
+
 def select_ratsit_companies_for_scan(
     *,
     clickhouse: ClickhouseResource,
     object_store: ObjectStoreResource,
     active_company_ids: tuple[str, ...],
     freshness_cutoff: datetime,
+    retry_not_found: bool = False,
 ) -> RatsitScanSelection:
     clickhouse_fresh_company_ids = load_fresh_ratsit_company_ids_from_clickhouse(
         clickhouse,
         active_company_ids,
         freshness_cutoff,
     )
-    s3_candidates = tuple(
+    outcome_candidates = tuple(
         company_id
         for company_id in active_company_ids
         if company_id not in clickhouse_fresh_company_ids
+    )
+    latest_outcomes = load_latest_ratsit_outcomes(clickhouse, outcome_candidates)
+    not_found_company_ids = frozenset(
+        company_id
+        for company_id, latest_outcome in latest_outcomes.items()
+        if latest_outcome.outcome == "not_found"
+    )
+    non_retryable_failure_company_ids = frozenset(
+        company_id
+        for company_id, latest_outcome in latest_outcomes.items()
+        if latest_outcome.outcome == "failure" and latest_outcome.http_status != 429
+    )
+    s3_candidates = tuple(
+        company_id
+        for company_id in outcome_candidates
+        if company_id not in non_retryable_failure_company_ids
+        and (retry_not_found or company_id not in not_found_company_ids)
     )
     s3_fresh_company_ids = load_fresh_ratsit_company_ids_from_s3(
         object_store,
@@ -335,6 +481,16 @@ def select_ratsit_companies_for_scan(
             company_id
             for company_id in active_company_ids
             if company_id in s3_fresh_company_ids
+        ),
+        not_found_company_ids=tuple(
+            company_id
+            for company_id in active_company_ids
+            if company_id in not_found_company_ids and not retry_not_found
+        ),
+        non_retryable_failure_company_ids=tuple(
+            company_id
+            for company_id in active_company_ids
+            if company_id in non_retryable_failure_company_ids
         ),
         selected_company_ids=selected_company_ids,
         freshness_cutoff=freshness_cutoff,
@@ -860,7 +1016,10 @@ def _require_aware_timestamp(value: datetime, *, label: str) -> None:
     description=(
         "Selects one of 128 stable CRC32 buckets from active corpscout.se_companies, "
         "skips companies successfully fetched in the previous 30 days using "
-        "ClickHouse fetched_at or an existing valid S3 report's LastModified, "
+        "ClickHouse fetched_at or an existing valid S3 report's LastModified, and "
+        "skips prior not-found and non-429 failure results unless explicitly eligible. "
+        "The retry_not_found config opts not-found results back in. A Dagster "
+        "re-execution retries only the parent run's HTTP 429 results by default, "
         "then renders and parses its Ratsit pages with four parallel headless "
         "CloakBrowsers: one direct and three proxied. Each browser spaces request "
         "starts by at least two seconds. Every company outcome is indexed by "
@@ -872,6 +1031,7 @@ def _require_aware_timestamp(value: datetime, *, label: str) -> None:
 )
 def se_ratsit_scan_dispatch(
     context: dg.AssetExecutionContext,
+    config: RatsitScanConfig,
     clickhouse: ClickhouseResource,
     sweden_ratsit_browser: SwedenRatsitBrowserResource,
     sweden_ratsit_object_store: ObjectStoreResource,
@@ -889,26 +1049,98 @@ def se_ratsit_scan_dispatch(
         len(active_company_ids),
         freshness_cutoff.isoformat(),
     )
-    selection = select_ratsit_companies_for_scan(
-        clickhouse=clickhouse,
-        object_store=sweden_ratsit_object_store,
-        active_company_ids=active_company_ids,
-        freshness_cutoff=freshness_cutoff,
+    parent_scan_id = context.run.parent_run_id
+    parent_results = (
+        load_parent_ratsit_scan_results(
+            clickhouse,
+            active_company_ids=active_company_ids,
+            parent_scan_id=parent_scan_id,
+        )
+        if parent_scan_id is not None
+        else None
     )
-    company_ids = selection.selected_company_ids
-    context.log.info(
-        "Starting Ratsit scan: scan_id=%s partition=%s active_companies=%s "
-        "skipped_clickhouse=%s skipped_s3=%s selected_companies=%s "
-        "browser_workers=%s request_interval_seconds=%s",
-        scan_id,
-        partition_key,
-        len(active_company_ids),
-        len(selection.clickhouse_fresh_company_ids),
-        len(selection.s3_fresh_company_ids),
-        len(company_ids),
-        RATSIT_BROWSER_WORKER_COUNT,
-        sweden_ratsit_browser.request_interval_seconds,
-    )
+    if parent_results is not None and parent_results.result_company_ids:
+        retry_company_ids = set(parent_results.http_429_company_ids)
+        if config.retry_not_found:
+            retry_company_ids.update(parent_results.not_found_company_ids)
+        company_ids = tuple(
+            company_id
+            for company_id in active_company_ids
+            if company_id in retry_company_ids
+        )
+        selection_metadata = {
+            "selection_mode": "parent_retry",
+            "parent_scan_id": parent_results.parent_scan_id,
+            "parent_result_count": len(parent_results.result_company_ids),
+            "parent_http_429_count": len(parent_results.http_429_company_ids),
+            "parent_not_found_count": len(parent_results.not_found_company_ids),
+            "retry_not_found": config.retry_not_found,
+            "selected_company_count": len(company_ids),
+        }
+        context.log.info(
+            "Starting Ratsit parent retry: scan_id=%s parent_scan_id=%s "
+            "partition=%s active_companies=%s parent_results=%s "
+            "parent_http_429=%s parent_not_found=%s retry_not_found=%s "
+            "selected_companies=%s browser_workers=%s "
+            "request_interval_seconds=%s",
+            scan_id,
+            parent_results.parent_scan_id,
+            partition_key,
+            len(active_company_ids),
+            len(parent_results.result_company_ids),
+            len(parent_results.http_429_company_ids),
+            len(parent_results.not_found_company_ids),
+            config.retry_not_found,
+            len(company_ids),
+            RATSIT_BROWSER_WORKER_COUNT,
+            sweden_ratsit_browser.request_interval_seconds,
+        )
+    else:
+        selection = select_ratsit_companies_for_scan(
+            clickhouse=clickhouse,
+            object_store=sweden_ratsit_object_store,
+            active_company_ids=active_company_ids,
+            freshness_cutoff=freshness_cutoff,
+            retry_not_found=config.retry_not_found,
+        )
+        company_ids = selection.selected_company_ids
+        selection_metadata = {
+            "selection_mode": "standard",
+            "parent_scan_id": parent_scan_id or "",
+            "freshness_window_days": RATSIT_SUCCESS_FRESHNESS.days,
+            "freshness_cutoff": selection.freshness_cutoff.isoformat(),
+            "skipped_recent_clickhouse_count": len(
+                selection.clickhouse_fresh_company_ids
+            ),
+            "skipped_recent_s3_count": len(selection.s3_fresh_company_ids),
+            "skipped_recent_total_count": (
+                len(selection.clickhouse_fresh_company_ids)
+                + len(selection.s3_fresh_company_ids)
+            ),
+            "skipped_not_found_count": len(selection.not_found_company_ids),
+            "skipped_non_retryable_failure_count": len(
+                selection.non_retryable_failure_company_ids
+            ),
+            "retry_not_found": config.retry_not_found,
+            "selected_company_count": len(company_ids),
+        }
+        context.log.info(
+            "Starting Ratsit scan: scan_id=%s partition=%s active_companies=%s "
+            "skipped_clickhouse=%s skipped_s3=%s skipped_not_found=%s "
+            "skipped_non_retryable_failures=%s retry_not_found=%s "
+            "selected_companies=%s browser_workers=%s request_interval_seconds=%s",
+            scan_id,
+            partition_key,
+            len(active_company_ids),
+            len(selection.clickhouse_fresh_company_ids),
+            len(selection.s3_fresh_company_ids),
+            len(selection.not_found_company_ids),
+            len(selection.non_retryable_failure_company_ids),
+            config.retry_not_found,
+            len(company_ids),
+            RATSIT_BROWSER_WORKER_COUNT,
+            sweden_ratsit_browser.request_interval_seconds,
+        )
     reusable_reports = (
         load_reusable_ratsit_reports(
             clickhouse,
@@ -1001,16 +1233,8 @@ def se_ratsit_scan_dispatch(
         "partition_key": partition_key,
         "hash_algorithm": "CRC32",
         "hash_bucket_count": RATSIT_BUCKET_COUNT,
-        "active_company_count": len(selection.active_company_ids),
-        "freshness_window_days": RATSIT_SUCCESS_FRESHNESS.days,
-        "freshness_cutoff": selection.freshness_cutoff.isoformat(),
-        "skipped_recent_clickhouse_count": len(selection.clickhouse_fresh_company_ids),
-        "skipped_recent_s3_count": len(selection.s3_fresh_company_ids),
-        "skipped_recent_total_count": (
-            len(selection.clickhouse_fresh_company_ids)
-            + len(selection.s3_fresh_company_ids)
-        ),
-        "selected_company_count": len(summary.selected_company_ids),
+        "active_company_count": len(active_company_ids),
+        **selection_metadata,
         "first_company_id": (
             summary.selected_company_ids[0] if summary.selected_company_ids else ""
         ),

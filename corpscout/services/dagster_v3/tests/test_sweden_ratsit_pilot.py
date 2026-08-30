@@ -21,6 +21,7 @@ from dagster_v3.defs.sweden_ratsit.assets import (
     RATSIT_S3_BUCKET,
     RATSIT_SCHEMA_VERSION,
     RATSIT_SUCCESS_FRESHNESS,
+    RatsitScanConfig,
     RatsitScanProgress,
     StoredRatsitReport,
     load_active_ratsit_company_ids,
@@ -265,10 +266,14 @@ class FakeClickHouseClient:
         *,
         active_company_rows: list[tuple[str]] | None = None,
         fresh_company_rows: list[tuple[str]] | None = None,
+        latest_outcome_rows: list[tuple[str, str, int]] | None = None,
+        parent_result_rows: list[tuple[str, str, int]] | None = None,
     ) -> None:
         self.calls: list[tuple[str, object | None]] = []
         self.active_company_rows = active_company_rows or []
         self.fresh_company_rows = fresh_company_rows or []
+        self.latest_outcome_rows = latest_outcome_rows or []
+        self.parent_result_rows = parent_result_rows or []
 
     def execute(self, sql: str, parameters: object | None = None):
         self.calls.append((sql, parameters))
@@ -282,6 +287,10 @@ class FakeClickHouseClient:
             and "fetched_at >= %(freshness_cutoff)s" in sql
         ):
             return self.fresh_company_rows
+        if "AS latest_outcome" in sql:
+            return self.latest_outcome_rows
+        if "scan_id = %(parent_scan_id)s" in sql:
+            return self.parent_result_rows
         return []
 
 
@@ -308,14 +317,21 @@ class FakeDagsterLog:
 
 
 class FakeDagsterRun:
-    def __init__(self, run_id: str) -> None:
+    def __init__(self, run_id: str, parent_run_id: str | None = None) -> None:
         self.run_id = run_id
+        self.parent_run_id = parent_run_id
 
 
 class FakeRatsitAssetContext:
-    def __init__(self, *, partition_key: str, run_id: str) -> None:
+    def __init__(
+        self,
+        *,
+        partition_key: str,
+        run_id: str,
+        parent_run_id: str | None = None,
+    ) -> None:
         self.partition_key = partition_key
-        self.run = FakeDagsterRun(run_id)
+        self.run = FakeDagsterRun(run_id, parent_run_id)
         self.instance = FakeDagsterInstance()
         self.log = FakeDagsterLog()
 
@@ -717,6 +733,60 @@ def test_scan_selection_checks_s3_only_after_clickhouse_fallback() -> None:
     assert object_store.read_keys == [s3_report_key]
 
 
+def test_scan_selection_requires_opt_in_to_retry_not_found_companies() -> None:
+    not_found_company_id = COMPANY_ID
+    unprocessed_company_id = "5560125790"
+    rate_limited_company_id = "5560160680"
+    parse_failure_company_id = "5560094178"
+    active_company_ids = (
+        not_found_company_id,
+        unprocessed_company_id,
+        rate_limited_company_id,
+        parse_failure_company_id,
+    )
+    freshness_cutoff = FETCHED_AT - RATSIT_SUCCESS_FRESHNESS
+    client = FakeClickHouseClient(
+        latest_outcome_rows=[
+            (not_found_company_id, "not_found", 200),
+            (rate_limited_company_id, "failure", 429),
+            (parse_failure_company_id, "failure", 200),
+        ],
+    )
+    object_store = FakeObjectStore()
+
+    default_selection = select_ratsit_companies_for_scan(
+        clickhouse=FakeClickHouseResource(client),  # type: ignore[arg-type]
+        object_store=object_store,  # type: ignore[arg-type]
+        active_company_ids=active_company_ids,
+        freshness_cutoff=freshness_cutoff,
+    )
+    opt_in_selection = select_ratsit_companies_for_scan(
+        clickhouse=FakeClickHouseResource(client),  # type: ignore[arg-type]
+        object_store=object_store,  # type: ignore[arg-type]
+        active_company_ids=active_company_ids,
+        freshness_cutoff=freshness_cutoff,
+        retry_not_found=True,
+    )
+
+    assert default_selection.not_found_company_ids == (not_found_company_id,)
+    assert default_selection.non_retryable_failure_company_ids == (
+        parse_failure_company_id,
+    )
+    assert default_selection.selected_company_ids == (
+        unprocessed_company_id,
+        rate_limited_company_id,
+    )
+    assert opt_in_selection.not_found_company_ids == ()
+    assert opt_in_selection.non_retryable_failure_company_ids == (
+        parse_failure_company_id,
+    )
+    assert opt_in_selection.selected_company_ids == (
+        not_found_company_id,
+        unprocessed_company_id,
+        rate_limited_company_id,
+    )
+
+
 def test_s3_freshness_rejects_report_older_than_thirty_days() -> None:
     freshness_cutoff = FETCHED_AT - RATSIT_SUCCESS_FRESHNESS
     object_store = FakeObjectStore()
@@ -898,6 +968,88 @@ def test_ratsit_dispatch_and_normalized_table_assets_are_registered() -> None:
     assert "se_ratsit_pilot_reports_job" not in job_names
 
 
+@pytest.mark.parametrize(
+    ("retry_not_found", "expected_company_ids"),
+    (
+        (False, ("5560094178",)),
+        (True, ("5560094178", "5560073495")),
+    ),
+)
+def test_dispatch_reexecution_retries_parent_429s_and_opted_in_not_found(
+    retry_not_found: bool,
+    expected_company_ids: tuple[str, ...],
+) -> None:
+    parent_scan_id = "parent-rate-limited-bucket"
+    rate_limited_company_id = "5560094178"
+    not_found_company_id = "5560073495"
+    parse_failure_company_id = "5560000077"
+    active_company_ids = (
+        rate_limited_company_id,
+        not_found_company_id,
+        parse_failure_company_id,
+    )
+    partition_key = ratsit_bucket_key(rate_limited_company_id)
+    assert all(
+        ratsit_bucket_key(company_id) == partition_key
+        for company_id in active_company_ids
+    )
+    context = FakeRatsitAssetContext(
+        partition_key=partition_key,
+        run_id="retry-run",
+        parent_run_id=parent_scan_id,
+    )
+    clickhouse_client = FakeClickHouseClient(
+        active_company_rows=[(company_id,) for company_id in active_company_ids],
+        parent_result_rows=[
+            (rate_limited_company_id, "failure", 429),
+            (not_found_company_id, "not_found", 200),
+            (parse_failure_company_id, "failure", 200),
+        ],
+    )
+    successful_retry = RatsitCompanyReport(
+        company_id=rate_limited_company_id,
+        connection_mode="direct",
+        proxy_name="",
+        requested_url=f"https://www.ratsit.se/{rate_limited_company_id}",
+        source_url=f"https://www.ratsit.se/{rate_limited_company_id}-Test_AB",
+        fetched_at=FETCHED_AT,
+        html_sha256="a" * 64,
+        report={
+            "company": {
+                "name": "Test AB",
+                "organization_number": "556009-4178",
+            }
+        },
+    )
+    retried_not_found = RatsitCompanyNotFound(
+        company_id=not_found_company_id,
+        connection_mode="proxy",
+        proxy_name="crawl_proxy1",
+        requested_url=f"https://www.ratsit.se/{not_found_company_id}",
+        source_url="https://www.ratsit.se/foretag?saknas",
+        fetched_at=FETCHED_AT,
+        reason="ratsit_missing",
+        message="Ratsit redirected to /foretag?saknas",
+        http_status=200,
+        html_sha256="b" * 64,
+        diagnostic_html=b"<html>missing</html>",
+    )
+    retry_results = [successful_retry]
+    if retry_not_found:
+        retry_results.append(retried_not_found)
+    ratsit = FakeRatsitResource(retry_results)
+
+    se_ratsit_scan_dispatch.node_def.compute_fn.decorated_fn(
+        context,
+        RatsitScanConfig(retry_not_found=retry_not_found),
+        FakeClickHouseResource(clickhouse_client),
+        ratsit,
+        FakeObjectStore(),
+    )
+
+    assert ratsit.requested_ids == expected_company_ids
+
+
 def test_dispatch_persists_every_result_before_failing_a_rate_limited_bucket() -> None:
     scan_id = "rate-limited-bucket"
     rate_limited_company_id = "5560094178"
@@ -945,6 +1097,7 @@ def test_dispatch_persists_every_result_before_failing_a_rate_limited_bucket() -
     with pytest.raises(dg.Failure, match="completed with 1 HTTP 429") as exc_info:
         se_ratsit_scan_dispatch.node_def.compute_fn.decorated_fn(
             context,
+            RatsitScanConfig(),
             clickhouse,
             FakeRatsitResource([rate_limited, successful]),
             object_store,

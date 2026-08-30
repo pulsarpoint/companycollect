@@ -2,13 +2,32 @@
 
 ## Source and execution boundary
 
-`se_ratsit_scan_dispatch` renders the same 100 verified active Swedish companies
-on every materialization. Four headless CloakBrowsers run concurrently: one uses
-the server's direct connection and three use `crawl_proxy1`, `crawl_proxy2`, and
-`crawl_proxy3` from the Dagster `.env`. Each browser and page is reused for its
-25-company shard. The Dagster pool `sweden_ratsit_browser` prevents two Ratsit
+`se_ratsit_scan_dispatch` selects one of 128 stable CRC32 partitions from active
+Swedish companies. A standard materialization selects unseen companies, stale
+successes, and companies whose latest result has HTTP status 429. It skips
+successful reports fetched in the previous 30 days, latest non-429 failures,
+and companies whose latest outcome is `not_found`. Setting the asset config
+field `retry_not_found` to `true` explicitly includes those not-found companies.
+Four headless CloakBrowsers run concurrently: one uses the server's direct
+connection and three use `crawl_proxy1`, `crawl_proxy2`, and `crawl_proxy3` from
+the Dagster `.env`. The Dagster pool `sweden_ratsit_browser` prevents two Ratsit
 asset runs from launching browser pools concurrently. The asset has no schedule;
-`se_ratsit_scan_dispatch_job` is launched manually while the pilot is evaluated.
+`se_ratsit_scan_dispatch_job` is launched manually while the source is evaluated.
+
+A Dagster re-execution reads outcomes persisted by its parent run and retries
+only parent rows with HTTP status 429. With `retry_not_found: true`, it also
+includes the parent's not-found rows. Parse, navigation, and other HTTP failures
+are not automatically reissued by a re-execution. If the parent has no persisted
+results, selection falls back to the standard materialization rules.
+
+To opt into not-found retries from the materialization launch config:
+
+```yaml
+ops:
+  se_ratsit_scan_dispatch:
+    config:
+      retry_not_found: true
+```
 
 Companies are assigned deterministically by their position in the fixed list:
 worker `i` receives positions `i, i + 4, i + 8, ...`. This round-robin sharding
@@ -90,8 +109,8 @@ number matching the requested ID.
 - Migration contract: migrations `000336`, `000340`, `000341`, `000342`,
   `000343`, and `tests/test_clickhouse_migrations.py`.
 - Definitions: `uv run dg check defs`.
-- Runtime: materialize `se_ratsit_scan_dispatch_job`, then inspect its 100 rows in
-  `corpscout.se_company_ratsit` by Dagster run ID.
+- Runtime: materialize `se_ratsit_scan_dispatch_job`, then inspect its selected
+  rows in `corpscout.se_company_ratsit` by Dagster run ID.
 
 The proposed downstream JSON-to-ClickHouse model is documented in
 `sweden-ratsit-normalization-schema-proposal.md`.
