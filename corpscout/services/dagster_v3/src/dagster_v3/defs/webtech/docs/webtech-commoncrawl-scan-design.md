@@ -27,7 +27,7 @@ runtime without embedding the secret in component YAML.
 
 ## Partition-aligned assets
 
-All four assets share 128 static partitions, `hash_000` through `hash_127`:
+Four durable assets share 128 static partitions, `hash_000` through `hash_127`:
 
 1. `commoncrawl_webtech_candidates_manifest` selects ordered candidates from
    `corpscout.commoncrawl_domain_graph_signals FINAL` and writes the input
@@ -38,6 +38,14 @@ All four assets share 128 static partitions, `hash_000` through `hash_127`:
    materializes only after the scanner reports completion.
 4. `commoncrawl_webtech_results_clickhouse` validates the final manifest plus
    every referenced object checksum, then inserts the queryable result index.
+
+`commoncrawl_webtech_scan_status` is a separate singleton observation asset.
+While one partition is active, the sensor updates it every 30 seconds with the
+partition key, completed/total counts, outcomes, technologies, progress age,
+elapsed time, throughput, and final-manifest verification state. It is never
+materialized as completed work. `commoncrawl_webtech_scan_submission` means only
+that the asynchronous request was accepted; `commoncrawl_webtech_remote_scan`
+materializes only when the batch is genuinely complete and verified in RustFS.
 
 The candidate universe is fixed in code to `cc_harmonic_rank` 1 through
 1,000,000. Partition ownership is stable and evenly distributed by

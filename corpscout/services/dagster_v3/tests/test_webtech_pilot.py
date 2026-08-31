@@ -17,6 +17,7 @@ from dagster_v3.defs.webtech.assets import (
     WEBTECH_PARTITION_COUNT,
     WEBTECH_PARTITION_KEYS,
     WEBTECH_PARTITIONS,
+    WEBTECH_STATUS_ASSET_KEY,
     WebtechCandidateConfig,
     evaluate_webtech_monitor,
     load_webtech_candidates,
@@ -96,16 +97,18 @@ def test_webtech_component_builds_short_lived_scan_monitoring_definitions() -> N
     )
     definitions = component.build_defs(None)  # type: ignore[arg-type]
 
-    asset_keys = {
-        key.to_user_string()
-        for asset in definitions.assets or []
-        for key in asset.keys
-    }
+    asset_keys: set[str] = set()
+    for asset in definitions.assets or []:
+        if isinstance(asset, dg.AssetSpec):
+            asset_keys.add(asset.key.to_user_string())
+        else:
+            asset_keys.update(key.to_user_string() for key in asset.keys)
     assert asset_keys == {
         "commoncrawl_webtech_candidates_manifest",
         "commoncrawl_webtech_scan_submission",
         "commoncrawl_webtech_remote_scan",
         "commoncrawl_webtech_results_clickhouse",
+        "commoncrawl_webtech_scan_status",
     }
     assert {sensor.name for sensor in definitions.sensors or []} == {
         "commoncrawl_webtech_scan_monitor"
@@ -124,6 +127,7 @@ def test_webtech_component_builds_short_lived_scan_monitoring_definitions() -> N
     assets_by_key = {
         next(iter(asset.keys)).to_user_string(): asset
         for asset in definitions.assets or []
+        if isinstance(asset, dg.AssetsDefinition)
     }
     assert [
         (input_definition.name, input_definition.dagster_type.key)
@@ -183,9 +187,14 @@ def test_webtech_monitor_observes_running_scan_without_launching_run() -> None:
     assert result.run_requests == []
     assert len(result.asset_events) == 1
     observation = result.asset_events[0]
-    assert observation.partition == PARTITION_KEY
+    assert observation.asset_key == WEBTECH_STATUS_ASSET_KEY
+    assert observation.partition is None
+    assert observation.metadata["partition_key"].value == PARTITION_KEY
     assert observation.metadata["status"].value == "running"
     assert observation.metadata["completed_count"].value == 120
+    assert result.skip_reason.skip_message == (
+        "hash_000 running: 120/1000 domains, 50.00/min, progress age 5.0s"
+    )
     assert api.poll_calls == [("scan-running", 0, 0)]
 
 
@@ -215,6 +224,7 @@ def test_webtech_monitor_launches_one_short_finalize_run_on_completion() -> None
     assert request.run_key == "webtech-finalize-scan-completed"
     assert request.tags["webtech/scan_id"] == "scan-completed"
     assert len(result.asset_events) == 1
+    assert result.asset_events[0].asset_key == WEBTECH_STATUS_ASSET_KEY
     assert result.asset_events[0].metadata["s3_manifest_verified"].value is True
 
 
@@ -258,7 +268,9 @@ def test_webtech_monitor_stops_polling_after_the_scan_is_indexed() -> None:
         )
 
     assert result.run_requests == []
-    assert result.asset_events == []
+    assert len(result.asset_events) == 1
+    assert result.asset_events[0].asset_key == WEBTECH_STATUS_ASSET_KEY
+    assert result.asset_events[0].metadata["status"].value == "idle"
     assert result.skip_reason.skip_message == (
         "No active Webtech scan; latest submission scan-indexed is indexed"
     )

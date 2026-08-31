@@ -19,6 +19,7 @@ class WebtechScannerComponent(dg.Component, dg.Model, dg.Resolvable):
             build_webtech_assets,
             build_webtech_jobs,
             build_webtech_monitor_sensor,
+            webtech_status_asset_spec,
         )
         from dagster_v3.defs.webtech.client import WebtechApiResource
         from dagster_v3.defs.webtech.storage import parse_webtech_s3_path
@@ -27,7 +28,7 @@ class WebtechScannerComponent(dg.Component, dg.Model, dg.Resolvable):
         assets = build_webtech_assets(destination)
         submit_job, finalize_job = build_webtech_jobs(assets)
         return dg.Definitions(
-            assets=list(assets),
+            assets=[*assets, webtech_status_asset_spec()],
             jobs=[submit_job, finalize_job],
             sensors=[build_webtech_monitor_sensor(finalize_job, destination)],
             resources={

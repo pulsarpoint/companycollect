@@ -43,8 +43,25 @@ WEBTECH_SUBMISSION_ASSET_KEY = dg.AssetKey(
 )
 WEBTECH_REMOTE_SCAN_ASSET_KEY = dg.AssetKey("commoncrawl_webtech_remote_scan")
 WEBTECH_RESULT_ASSET_KEY = dg.AssetKey("commoncrawl_webtech_results_clickhouse")
+WEBTECH_STATUS_ASSET_KEY = dg.AssetKey("commoncrawl_webtech_scan_status")
 WEBTECH_MONITOR_INTERVAL_SECONDS = 30
 WEBTECH_PARTITIONS = dg.StaticPartitionsDefinition(WEBTECH_PARTITION_KEYS)
+
+
+def webtech_status_asset_spec() -> dg.AssetSpec:
+    """Describe the singleton observation-only remote scan status asset."""
+    return dg.AssetSpec(
+        key=WEBTECH_STATUS_ASSET_KEY,
+        deps=[WEBTECH_SUBMISSION_ASSET_KEY],
+        group_name="webtech",
+        kinds={"api", "s3"},
+        tags={"source": "webtech_remote_api", "layer": "status"},
+        description=(
+            "Singleton live view of the one active remote Webtech partition. "
+            "The monitor sensor records observations every 30 seconds; this "
+            "asset is never materialized as completed work."
+        ),
+    )
 
 
 class WebtechCandidateConfig(dg.Config):
@@ -445,12 +462,26 @@ def evaluate_webtech_monitor(
         partition_key=submission.manifest.partition_key,
     )
     if indexed_scan_id == submission.scan_id:
+        idle_cursor = f"{submission.scan_id}:indexed"
+        asset_events = []
+        if context.cursor != idle_cursor:
+            asset_events.append(
+                dg.AssetObservation(
+                    asset_key=WEBTECH_STATUS_ASSET_KEY,
+                    metadata={
+                        "status": "idle",
+                        "last_partition_key": submission.manifest.partition_key,
+                        "last_scan_id": submission.scan_id,
+                    },
+                )
+            )
         return dg.SensorResult(
             skip_reason=(
                 "No active Webtech scan; latest submission "
                 f"{submission.scan_id} is indexed"
             ),
-            cursor=f"{submission.scan_id}:indexed",
+            asset_events=asset_events,
+            cursor=idle_cursor,
         )
     try:
         snapshot = webtech_api.poll(
@@ -511,10 +542,10 @@ def evaluate_webtech_monitor(
         s3_manifest_verified = True
 
     observation = dg.AssetObservation(
-        asset_key=WEBTECH_SUBMISSION_ASSET_KEY,
-        partition=snapshot.partition_key,
+        asset_key=WEBTECH_STATUS_ASSET_KEY,
         metadata={
             "scan_id": snapshot.scan_id,
+            "partition_key": snapshot.partition_key,
             "status": snapshot.status,
             "completed_count": snapshot.completed_count,
             "total_count": snapshot.total_count,
@@ -549,8 +580,17 @@ def evaluate_webtech_monitor(
             snapshot.status,
             snapshot.error_message,
         )
+    skip_reason = None
+    if not run_requests:
+        skip_reason = (
+            f"{snapshot.partition_key} {snapshot.status}: "
+            f"{snapshot.completed_count}/{snapshot.total_count} domains, "
+            f"{snapshot.domains_per_minute:.2f}/min, "
+            f"progress age {snapshot.progress_age_seconds:.1f}s"
+        )
     return dg.SensorResult(
         run_requests=run_requests,
+        skip_reason=skip_reason,
         asset_events=[observation],
         cursor=(
             f"{snapshot.scan_id}:{snapshot.latest_event_sequence}:"
