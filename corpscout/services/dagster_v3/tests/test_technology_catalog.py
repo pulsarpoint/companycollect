@@ -14,6 +14,7 @@ from dagster_v3.defs.technology_catalog import detection, tables
 from dagster_v3.defs.technology_catalog.assets import (
     build_fingerprint_rows,
     build_rows,
+    custom_definitions_version,
     custom_source_dir,
 )
 from dagster_v3.defs.technology_catalog.fingerprints import (
@@ -560,6 +561,30 @@ def test_shipped_fingerprint_overrides_load_and_compile():
         assert fp.signal_type.startswith("dns_")
         assert detection.vectorscan_safe(fp.pattern), fp.pattern
         assert fp.confidence <= 100
+
+
+def test_definitions_version_tracks_file_content(monkeypatch, tmp_path: Path):
+    # The code_version must change when any custom definition file changes, so
+    # Dagster flags the catalog asset UNSYNCED after an edit is deployed.
+    custom_dir = tmp_path / "custom"
+    custom_dir.mkdir()
+    (custom_dir / "technologies.json").write_text('{"A": {}}')
+    (custom_dir / "categories.json").write_text("{}")
+    (custom_dir / "fingerprints.json").write_text("{}")
+    monkeypatch.setattr(
+        "dagster_v3.defs.technology_catalog.assets.custom_source_dir",
+        lambda: custom_dir,
+    )
+    before = custom_definitions_version()
+    assert len(before) == 12
+    (custom_dir / "fingerprints.json").write_text('{"Stripe": {"TXT": ["x"]}}')
+    assert custom_definitions_version() != before
+    # Stable when nothing changes.
+    assert custom_definitions_version() == custom_definitions_version()
+
+
+def test_shipped_definitions_version_is_nonempty():
+    assert len(custom_definitions_version()) == 12
 
 
 def test_missing_fingerprint_overrides_file_is_empty(tmp_path: Path):

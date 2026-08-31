@@ -11,6 +11,7 @@ Weekly cadence — the overlay repository moves a few times a month, and the
 extension layer never changes at all.
 """
 
+import hashlib
 import os
 import uuid
 from datetime import UTC, datetime
@@ -73,6 +74,30 @@ def custom_source_dir() -> Path:
     return Path(__file__).resolve().parent / "custom"
 
 
+# The repo-owned definition files whose content determines what this asset
+# publishes to ClickHouse. Their combined hash is the asset code_version, so
+# Dagster renders technology_catalog_clickhouse UNSYNCED whenever any of them
+# changes and is deployed but not yet re-materialized — the visible cue that
+# the catalog + fingerprint tables (and therefore the DNS detections) are
+# behind the repo. The overlay SHA is deliberately excluded: it is fetched at
+# run time and the weekly schedule already covers it; this version is only
+# about OUR edits to the custom definitions.
+_DEFINITION_FILES = ("technologies.json", "categories.json", "fingerprints.json")
+
+
+def custom_definitions_version() -> str:
+    """Stable short hash of the custom definition files, for code_version."""
+    hasher = hashlib.sha256()
+    custom_dir = custom_source_dir()
+    for name in _DEFINITION_FILES:
+        path = custom_dir / name
+        # A hash slot per file, present or not, so adding/removing one still
+        # changes the version rather than silently colliding.
+        hasher.update(name.encode())
+        hasher.update(path.read_bytes() if path.is_file() else b"\0")
+    return hasher.hexdigest()[:12]
+
+
 def build_rows(
     technologies: list[MergedTechnology],
     icon_refs: dict[str, IconRef] | IconSyncResult,
@@ -111,6 +136,7 @@ def build_rows(
 @dg.asset(
     group_name=GROUP_NAME,
     kinds={"python", "s3", "clickhouse"},
+    code_version=custom_definitions_version(),
     description=(
         "Merged technology catalog (vendored Wappalyzer extension bundle, "
         "overlaid by the maintained webappanalyzer catalog, overlaid by our "
@@ -314,6 +340,10 @@ DETECTION_PARTITIONS = dg.StaticPartitionsDefinition(
     partitions_def=DETECTION_PARTITIONS,
     backfill_policy=dg.BackfillPolicy.multi_run(max_partitions_per_run=1),
     pool="domain_signal_detection",
+    # Flags every partition UNSYNCED when the fingerprint definitions change
+    # (they drive what this pass detects); bump the suffix by hand when the
+    # detection SQL logic in detection.py changes materially.
+    code_version=f"{custom_definitions_version()}-detect1",
     description=(
         "DNS-derived technology detections (corpscout.domain_signal_"
         "technologies, migration 000359), 128 static hash partitions "
