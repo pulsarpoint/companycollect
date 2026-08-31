@@ -6,3 +6,4 @@ CATALOG_URL = "https://data.jobtechdev.se/annonser/jobtechlinks/index.html"
 
 S3_BUCKET = "source-sweden-jobtech-links"
 SNAPSHOT_PREFIX = "snapshots"
+MANIFEST_PREFIX = "manifests"

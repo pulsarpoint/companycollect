@@ -2,6 +2,7 @@ import json
 import tarfile
 import tempfile
 import time
+from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import UTC, date, datetime
 from hashlib import sha256
@@ -15,11 +16,13 @@ from dlt.sources.helpers import requests as dlt_requests
 
 from dagster_v3.defs.common.resources import ObjectStoreResource
 from dagster_v3.defs.sweden_jobtech_links import tables
+from dagster_v3.defs.sweden_jobtech_links.partitions import archive_window
 
 DEFAULT_TIMEOUT_SECONDS = 600
 DEFAULT_DOWNLOAD_ATTEMPTS = 4
 DEFAULT_RETRY_BASE_SECONDS = 5.0
 DOWNLOAD_CHUNK_BYTES = 1024 * 1024
+PROGRESS_LOG_INTERVAL = 25
 USER_AGENT = "Corpscout/1.0 (Sweden JobTech Links snapshot ingestion)"
 
 _ARCHIVE_FILE_PATTERN = compile_pattern(r"^(\d{4}-\d{2}-\d{2})\.tar\.gz$")
@@ -46,6 +49,33 @@ class StoredSnapshot:
     source_etag: str
     source_last_modified: str
     downloaded: bool
+
+
+@dataclass(frozen=True)
+class StoredSnapshotPartition:
+    partition_key: str
+    manifest_key: str
+    snapshots: tuple[StoredSnapshot, ...]
+
+    @property
+    def selected_count(self) -> int:
+        return len(self.snapshots)
+
+    @property
+    def downloaded_count(self) -> int:
+        return sum(snapshot.downloaded for snapshot in self.snapshots)
+
+    @property
+    def reused_count(self) -> int:
+        return self.selected_count - self.downloaded_count
+
+    @property
+    def total_archive_size_bytes(self) -> int:
+        return sum(snapshot.archive_size_bytes for snapshot in self.snapshots)
+
+    @property
+    def total_raw_member_size_bytes(self) -> int:
+        return sum(snapshot.raw_member_size_bytes for snapshot in self.snapshots)
 
 
 class _LinkParser(HTMLParser):
@@ -116,114 +146,246 @@ def jobtech_links_http_session() -> requests.Session:
     return client.session
 
 
-def sync_latest_snapshot(
-    *,
-    object_store: ObjectStoreResource,
-    run_id: str,
-    retrieved_at: datetime,
+def fetch_snapshot_catalog(
     session: requests.Session | None = None,
-) -> StoredSnapshot:
-    """Download and preserve the newest dated JobTech Links archive."""
-    object_store.ensure_bucket(tables.S3_BUCKET)
+) -> tuple[SnapshotArchive, ...]:
     owns_session = session is None
     http_session = session or jobtech_links_http_session()
     try:
-        catalog_response = http_session.get(
-            tables.CATALOG_URL,
-            timeout=DEFAULT_TIMEOUT_SECONDS,
-        )
-        catalog_response.raise_for_status()
-        archives = discover_snapshot_archives(
-            catalog_response.text,
-            catalog_url=tables.CATALOG_URL,
-        )
-        if not archives:
-            raise ValueError(
-                f"JobTech Links catalog {tables.CATALOG_URL} contains no dated archives"
-            )
-
-        latest_date = archives[-1].snapshot_date
-        latest_archives = tuple(
-            archive for archive in archives if archive.snapshot_date == latest_date
-        )
-        if len(latest_archives) != 1:
-            raise ValueError(
-                "JobTech Links catalog contains multiple archives for latest date "
-                f"{latest_date.isoformat()}"
-            )
-        latest = latest_archives[0]
-
-        with tempfile.TemporaryDirectory(prefix="sweden_jobtech_links_") as temp:
-            archive_path = Path(temp) / latest.source_file
-            download = _download_to_path(
-                session=http_session,
-                source_url=latest.source_url,
-                target_path=archive_path,
-            )
-            raw_member_path, raw_member_size_bytes = _validate_archive(archive_path)
-            archive_sha256 = str(download["sha256"])
-            snapshot_uid = sha256(
-                f"{latest.snapshot_date.isoformat()}\0{archive_sha256}".encode()
-            ).hexdigest()
-            object_prefix = (
-                f"{tables.SNAPSHOT_PREFIX}/"
-                f"snapshot_date={latest.snapshot_date.isoformat()}/"
-                f"sha256={archive_sha256}"
-            )
-            archive_object_key = f"{object_prefix}/{latest.source_file}"
-            metadata_object_key = f"{object_prefix}/metadata.json"
-            downloaded = not object_store.exists(
-                archive_object_key,
-                bucket=tables.S3_BUCKET,
-            )
-            if downloaded:
-                object_store.upload_file(
-                    archive_object_key,
-                    archive_path,
-                    bucket=tables.S3_BUCKET,
-                )
-
-        metadata = {
-            "source_slug": tables.SOURCE_SLUG,
-            "snapshot_uid": snapshot_uid,
-            "snapshot_date": latest.snapshot_date.isoformat(),
-            "catalog_url": tables.CATALOG_URL,
-            "source_url": latest.source_url,
-            "archive_object_key": archive_object_key,
-            "metadata_object_key": metadata_object_key,
-            "archive_sha256": archive_sha256,
-            "archive_size_bytes": int(download["size_bytes"]),
-            "raw_member_path": raw_member_path,
-            "raw_member_size_bytes": raw_member_size_bytes,
-            "source_etag": str(download["etag"]),
-            "source_last_modified": str(download["last_modified"]),
-            "first_retrieved_at": retrieved_at.astimezone(UTC).isoformat(),
-            "first_source_run_id": run_id,
-        }
-        if not object_store.exists(metadata_object_key, bucket=tables.S3_BUCKET):
-            object_store.write_json(
-                metadata_object_key,
-                json.dumps(metadata, ensure_ascii=False, sort_keys=True),
-                bucket=tables.S3_BUCKET,
-            )
-
-        return StoredSnapshot(
-            snapshot_uid=snapshot_uid,
-            snapshot_date=latest.snapshot_date,
-            source_url=latest.source_url,
-            archive_object_key=archive_object_key,
-            metadata_object_key=metadata_object_key,
-            archive_sha256=archive_sha256,
-            archive_size_bytes=int(download["size_bytes"]),
-            raw_member_path=raw_member_path,
-            raw_member_size_bytes=raw_member_size_bytes,
-            source_etag=str(download["etag"]),
-            source_last_modified=str(download["last_modified"]),
-            downloaded=downloaded,
-        )
+        return _fetch_snapshot_catalog(http_session)
     finally:
         if owns_session:
             http_session.close()
+
+
+def sync_snapshot_partition(
+    *,
+    object_store: ObjectStoreResource,
+    partition_key: str,
+    run_id: str,
+    retrieved_at: datetime,
+    refresh_existing: bool,
+    session: requests.Session | None = None,
+    log: Callable[[str], None] | None = None,
+) -> StoredSnapshotPartition:
+    """Preserve every available source archive in one mixed-granularity window."""
+    window = archive_window(partition_key)
+    object_store.ensure_bucket(tables.S3_BUCKET)
+    owns_session = session is None
+    http_session = session or jobtech_links_http_session()
+    logger = log or (lambda _message: None)
+    try:
+        catalog_archives = _fetch_snapshot_catalog(http_session)
+        selected_archives = tuple(
+            archive
+            for archive in catalog_archives
+            if window.start <= archive.snapshot_date < window.end_exclusive
+        )
+        if not selected_archives:
+            raise ValueError(
+                f"JobTech Links partition {partition_key!r} contains no source archives"
+            )
+
+        snapshots: list[StoredSnapshot] = []
+        for index, archive in enumerate(selected_archives, start=1):
+            stored = (
+                None
+                if refresh_existing
+                else _stored_snapshot_for_archive(
+                    object_store=object_store,
+                    archive=archive,
+                )
+            )
+            if stored is None:
+                stored = _store_snapshot_archive(
+                    object_store=object_store,
+                    archive=archive,
+                    run_id=run_id,
+                    retrieved_at=retrieved_at,
+                    session=http_session,
+                )
+            snapshots.append(stored)
+            if (
+                index == 1
+                or index % PROGRESS_LOG_INTERVAL == 0
+                or index == len(selected_archives)
+            ):
+                logger(
+                    f"JobTech Links partition {partition_key}: processed "
+                    f"{index}/{len(selected_archives)} archives "
+                    f"({archive.snapshot_date.isoformat()})"
+                )
+    finally:
+        if owns_session:
+            http_session.close()
+
+    manifest_key = _partition_manifest_key(
+        partition_key=partition_key,
+        run_id=run_id,
+        retrieved_at=retrieved_at,
+    )
+    manifest = {
+        "source_slug": tables.SOURCE_SLUG,
+        "source_run_id": run_id,
+        "catalog_url": tables.CATALOG_URL,
+        "retrieved_at": retrieved_at.astimezone(UTC).isoformat(),
+        "partition_key": partition_key,
+        "window_start": window.start.isoformat(),
+        "window_end_exclusive": window.end_exclusive.isoformat(),
+        "archive_count": len(snapshots),
+        "archives": [
+            {
+                "snapshot_uid": snapshot.snapshot_uid,
+                "snapshot_date": snapshot.snapshot_date.isoformat(),
+                "source_url": snapshot.source_url,
+                "archive_object_key": snapshot.archive_object_key,
+                "metadata_object_key": snapshot.metadata_object_key,
+                "archive_sha256": snapshot.archive_sha256,
+                "archive_size_bytes": snapshot.archive_size_bytes,
+                "raw_member_path": snapshot.raw_member_path,
+                "raw_member_size_bytes": snapshot.raw_member_size_bytes,
+                "source_etag": snapshot.source_etag,
+                "source_last_modified": snapshot.source_last_modified,
+                "downloaded": snapshot.downloaded,
+            }
+            for snapshot in snapshots
+        ],
+    }
+    object_store.write_json(
+        manifest_key,
+        json.dumps(manifest, ensure_ascii=False, sort_keys=True),
+        bucket=tables.S3_BUCKET,
+    )
+    return StoredSnapshotPartition(
+        partition_key=partition_key,
+        manifest_key=manifest_key,
+        snapshots=tuple(snapshots),
+    )
+
+
+def _fetch_snapshot_catalog(session: requests.Session) -> tuple[SnapshotArchive, ...]:
+    response = session.get(
+        tables.CATALOG_URL,
+        timeout=DEFAULT_TIMEOUT_SECONDS,
+    )
+    response.raise_for_status()
+    archives = discover_snapshot_archives(
+        response.text,
+        catalog_url=tables.CATALOG_URL,
+    )
+    if not archives:
+        raise ValueError(
+            f"JobTech Links catalog {tables.CATALOG_URL} contains no dated archives"
+        )
+    return archives
+
+
+def _store_snapshot_archive(
+    *,
+    object_store: ObjectStoreResource,
+    archive: SnapshotArchive,
+    run_id: str,
+    retrieved_at: datetime,
+    session: requests.Session,
+) -> StoredSnapshot:
+    with tempfile.TemporaryDirectory(prefix="sweden_jobtech_links_") as temp:
+        archive_path = Path(temp) / archive.source_file
+        download = _download_to_path(
+            session=session,
+            source_url=archive.source_url,
+            target_path=archive_path,
+        )
+        raw_member_path, raw_member_size_bytes = _validate_archive(archive_path)
+        archive_sha256 = str(download["sha256"])
+        snapshot_uid = sha256(
+            f"{archive.snapshot_date.isoformat()}\0{archive_sha256}".encode()
+        ).hexdigest()
+        object_prefix = (
+            f"{tables.SNAPSHOT_PREFIX}/"
+            f"snapshot_date={archive.snapshot_date.isoformat()}/"
+            f"sha256={archive_sha256}"
+        )
+        archive_object_key = f"{object_prefix}/{archive.source_file}"
+        metadata_object_key = f"{object_prefix}/metadata.json"
+        if not object_store.exists(archive_object_key, bucket=tables.S3_BUCKET):
+            object_store.upload_file(
+                archive_object_key,
+                archive_path,
+                bucket=tables.S3_BUCKET,
+            )
+
+    metadata = {
+        "source_slug": tables.SOURCE_SLUG,
+        "snapshot_uid": snapshot_uid,
+        "snapshot_date": archive.snapshot_date.isoformat(),
+        "catalog_url": tables.CATALOG_URL,
+        "source_url": archive.source_url,
+        "archive_object_key": archive_object_key,
+        "metadata_object_key": metadata_object_key,
+        "archive_sha256": archive_sha256,
+        "archive_size_bytes": int(download["size_bytes"]),
+        "raw_member_path": raw_member_path,
+        "raw_member_size_bytes": raw_member_size_bytes,
+        "source_etag": str(download["etag"]),
+        "source_last_modified": str(download["last_modified"]),
+        "first_retrieved_at": retrieved_at.astimezone(UTC).isoformat(),
+        "first_source_run_id": run_id,
+    }
+    if not object_store.exists(metadata_object_key, bucket=tables.S3_BUCKET):
+        object_store.write_json(
+            metadata_object_key,
+            json.dumps(metadata, ensure_ascii=False, sort_keys=True),
+            bucket=tables.S3_BUCKET,
+        )
+    return _stored_snapshot_from_metadata(metadata, downloaded=True)
+
+
+def _stored_snapshot_for_archive(
+    *,
+    object_store: ObjectStoreResource,
+    archive: SnapshotArchive,
+) -> StoredSnapshot | None:
+    prefix = (
+        f"{tables.SNAPSHOT_PREFIX}/snapshot_date={archive.snapshot_date.isoformat()}/"
+    )
+    candidates: list[dict[str, object]] = []
+    for key in object_store.list_keys(prefix, bucket=tables.S3_BUCKET):
+        if not key.endswith("/metadata.json"):
+            continue
+        metadata = json.loads(object_store.read_bytes(key, bucket=tables.S3_BUCKET))
+        if metadata.get("source_url") != archive.source_url:
+            continue
+        archive_object_key = str(metadata["archive_object_key"])
+        if object_store.exists(archive_object_key, bucket=tables.S3_BUCKET):
+            candidates.append(metadata)
+    if not candidates:
+        return None
+    latest = max(
+        candidates,
+        key=lambda metadata: str(metadata["first_retrieved_at"]),
+    )
+    return _stored_snapshot_from_metadata(latest, downloaded=False)
+
+
+def _stored_snapshot_from_metadata(
+    metadata: dict[str, object],
+    *,
+    downloaded: bool,
+) -> StoredSnapshot:
+    return StoredSnapshot(
+        snapshot_uid=str(metadata["snapshot_uid"]),
+        snapshot_date=date.fromisoformat(str(metadata["snapshot_date"])),
+        source_url=str(metadata["source_url"]),
+        archive_object_key=str(metadata["archive_object_key"]),
+        metadata_object_key=str(metadata["metadata_object_key"]),
+        archive_sha256=str(metadata["archive_sha256"]),
+        archive_size_bytes=int(metadata["archive_size_bytes"]),
+        raw_member_path=str(metadata["raw_member_path"]),
+        raw_member_size_bytes=int(metadata["raw_member_size_bytes"]),
+        source_etag=str(metadata["source_etag"]),
+        source_last_modified=str(metadata["source_last_modified"]),
+        downloaded=downloaded,
+    )
 
 
 def _download_to_path(
@@ -301,3 +463,17 @@ def _validate_archive(archive_path: Path) -> tuple[str, int]:
     if member.size <= 0:
         raise ValueError(f"JobTech Links archive member {member.name!r} is empty")
     return member.name, member.size
+
+
+def _partition_manifest_key(
+    *,
+    partition_key: str,
+    run_id: str,
+    retrieved_at: datetime,
+) -> str:
+    window = archive_window(partition_key)
+    timestamp = retrieved_at.astimezone(UTC).strftime("%Y-%m-%dT%H-%M-%S.%fZ")
+    return (
+        f"{tables.MANIFEST_PREFIX}/{window.kind}={window.value}/"
+        f"retrieved_at={timestamp}/run_id={run_id}.json"
+    )

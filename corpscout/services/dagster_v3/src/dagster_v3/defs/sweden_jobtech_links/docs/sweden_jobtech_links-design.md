@@ -16,22 +16,27 @@ their JobTech Links provenance and must not be deduplicated against Platsbanken.
 
 ## 2. Ingest mode — and why
 
-The first source boundary is a non-partitioned latest-snapshot asset. It reads
-the catalog and selects the greatest valid date rather than assuming that an
-archive exists for the current date. Every distinct archive is stored under a
-date-and-SHA-256 content address, so corrections published under an existing
-date remain distinct and replayable.
+The raw source boundary uses one named dynamic partition set with deliberately
+mixed batch sizes:
 
-Historical partition ingestion is intentionally deferred. The catalog contains
-many daily snapshots, and a history design must distinguish repeated
-observations from actual job content versions before backfilling it.
+- `year:2021` through `year:2025` for the historical backfill;
+- `month:2026-01` through `month:2026-08` for the recent catch-up; and
+- one `day:YYYY-MM-DD` partition per available archive from 2026-09-01 onward.
+
+JobTech publishes daily archives, but running almost 1,900 historical Dagster
+partitions would add orchestration overhead without changing the raw evidence.
+The coarse historical partitions therefore batch source files while every
+archive still receives its own date-and-SHA-256 object key. Daily partitions
+begin at the operational cutover so retries and freshness remain precise.
 
 ## 3. Loading
 
-`sweden_jobtech_links_snapshot_s3` streams the complete archive to a temporary
-file with dlt HTTP retries plus a whole-file retry loop. It validates
-`Content-Length`, computes SHA-256 while downloading, and verifies that the
-tarball contains exactly one non-empty, safe `output.json` member before upload.
+`sweden_jobtech_links_snapshot_s3` resolves its exact partition window against
+the live catalog and processes matching archives sequentially. Each archive is
+streamed to a temporary file with dlt HTTP retries plus a whole-file retry loop.
+The loader validates `Content-Length`, computes SHA-256 while downloading, and
+verifies that the tarball contains exactly one non-empty, safe `output.json`
+member before upload. Only one archive occupies temporary disk at a time.
 
 The archive is preserved byte-for-byte at:
 
@@ -39,8 +44,10 @@ The archive is preserved byte-for-byte at:
 
 An immutable `metadata.json` beside it records the source URL, archive headers,
 member path and size, hash, first retrieval time, and originating Dagster run.
-Repeated materializations may download to verify the current source artifact,
-but never rewrite an already stored content-addressed archive or metadata row.
+Each materialization also writes a run-specific partition manifest containing
+the exact archive catalog for downstream replay. By default, retries reuse
+complete stored archives without downloading them again; `refresh_existing`
+forces a source recheck while preserving any changed content under a new hash.
 
 ## 4. Transform
 
@@ -65,14 +72,25 @@ retain the source value and currency evidence.
 
 ## 8. Scheduling
 
-No schedule is enabled until the asset has been manually materialized and its
-archive/member metadata has been reconciled with the source catalog.
+`sweden_jobtech_links_catalog_sensor` is registered stopped by default. Each
+evaluation reads the source catalog, adds any missing historical/monthly/daily
+dynamic partition keys, and launches runs only for new daily keys from
+2026-09-01 onward. Historical and monthly partitions are registered for manual
+backfill but are never launched automatically.
+
+Register one explicit partition key through Dagster and materialize it before
+enabling the sensor. After its archive/member metadata has been reconciled, the
+sensor's first live tick can register all remaining catalog-backed keys and
+launch any missing daily partitions. Catalog-driven automation is used instead
+of a midnight schedule because archive publication time can vary.
 
 ## 9. Issues found during processing
 
 - The catalog also links DCAT metadata files; discovery therefore accepts only
   exact `YYYY-MM-DD.tar.gz` filenames.
 - Archive dates are source snapshot dates, not job publication dates.
+- A standard Dagster time-window definition cannot change cadence within one
+  asset. Named dynamic keys encode the controlled year/month/day transition.
 - The same vacancy may occur in this source and Platsbanken. Cross-source
   deduplication is explicitly out of scope.
 
@@ -80,5 +98,7 @@ archive/member metadata has been reconciled with the source catalog.
 
 - Unit contract: `tests/test_sweden_jobtech_links_source.py`
 - Definition validation: `uv run dg check defs`
-- Manual gate: materialize `sweden_jobtech_links_snapshot_s3`, inspect S3 archive
-  and metadata keys, and compare hash and byte counts with Dagster metadata.
+- Manual gate: register and materialize one explicit partition of
+  `sweden_jobtech_links_snapshot_s3` while the sensor remains stopped. Inspect
+  its archive, metadata, and partition-manifest keys and compare byte counts
+  with Dagster metadata before enabling daily automation.
