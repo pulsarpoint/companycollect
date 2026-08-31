@@ -373,6 +373,7 @@ EXPECTED_MIGRATIONS = (
     "000362_corpscout_drop_sweden_ats_job_sources",
     "000363_corpscout_se_jobtech_links_jobs",
     "000364_corpscout_esef_personnel_expenses",
+    "000365_corpscout_se_company_info_esef_enrichment",
 )
 
 NOOP_MIGRATIONS = {"000276_noop"}
@@ -3942,6 +3943,24 @@ def test_jobtech_links_migration_owns_source_history_and_company_matches() -> No
     assert "source_links" not in up_sql
     assert "company_job_current" not in up_sql
     assert "company_job_history" not in up_sql
+
+
+def test_se_company_info_esef_enrichment_migration_is_additive() -> None:
+    up = (
+        MIGRATIONS_DIR / "000365_corpscout_se_company_info_esef_enrichment.up.sql"
+    ).read_text()
+    down = (
+        MIGRATIONS_DIR / "000365_corpscout_se_company_info_esef_enrichment.down.sql"
+    ).read_text()
+    for column in (
+        "customer_markets_json",
+        "operating_geographies_json",
+        "material_group_relationships_json",
+    ):
+        assert f"ADD COLUMN IF NOT EXISTS {column} String DEFAULT ''" in up
+        assert f"DROP COLUMN IF EXISTS {column}" in down
+    assert "MATERIALIZED" not in up  # evidence_hash untouched
+    assert "TRUNCATE" not in up
 
 
 def _migration_sql(file_name: str) -> str:
