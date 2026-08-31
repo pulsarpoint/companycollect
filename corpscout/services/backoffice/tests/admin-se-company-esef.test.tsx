@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { renderToStaticMarkup } from "react-dom/server";
+import { createMemoryRouter, RouterProvider } from "react-router";
 import { SeCompanyEsefView } from "~/routes/admin-se-company-esef";
 
 const DETAIL = {
@@ -77,11 +78,36 @@ const DETAIL = {
   relationships: [],
 };
 
+const DETAIL_WITH_INVALID_JSON = {
+  ...DETAIL,
+  information: [
+    {
+      ...DETAIL.information[0],
+      materialGroupRelationshipsJson: "not valid json at all",
+    },
+  ],
+};
+
+function renderWithRouter(
+  companyId: string,
+  detail: typeof DETAIL,
+): string {
+  const router = createMemoryRouter(
+    [
+      {
+        path: "*",
+        element: <SeCompanyEsefView companyId={companyId} detail={detail} />,
+        action: () => null,
+      },
+    ],
+    { initialEntries: ["/admin/se/company/5020077862/esef"] },
+  );
+  return renderToStaticMarkup(<RouterProvider router={router} />);
+}
+
 describe("SeCompanyEsefView", () => {
   it("renders every section with parsed-vs-pending filings", () => {
-    const html = renderToStaticMarkup(
-      <SeCompanyEsefView companyId="5020077862" detail={DETAIL} />,
-    );
+    const html = renderWithRouter("5020077862", DETAIL);
     expect(html).toContain("541");
     expect(html).toContain("Notes (144)");
     expect(html).toContain("Not parsed yet");
@@ -92,5 +118,10 @@ describe("SeCompanyEsefView", () => {
     expect(html).toContain(
       "/company/se/5020077862/financials/esef/NHBDILHZTYCNBV5UYZ31-2023-12-31-ESEF-SE-0",
     );
+  });
+
+  it("renders unparseable JSON as raw text instead of dropping it", () => {
+    const html = renderWithRouter("5020077862", DETAIL_WITH_INVALID_JSON);
+    expect(html).toContain("not valid json at all");
   });
 });

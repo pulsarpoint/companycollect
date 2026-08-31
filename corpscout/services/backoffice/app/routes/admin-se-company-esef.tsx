@@ -1,3 +1,4 @@
+import { Link } from "react-router";
 import type { Route } from "./+types/admin-se-company-esef";
 import {
   loadSeCompanyEsef,
@@ -57,18 +58,18 @@ export function SeCompanyEsefView({
               {filing.factCount > 0 ? (
                 <>
                   <span>{filing.factCount} facts</span>
-                  <a
+                  <Link
                     className="underline"
-                    href={`/company/se/${companyId}/financials/esef/${filing.fxoId}`}
+                    to={`/company/se/${companyId}/financials/esef/${filing.fxoId}`}
                   >
                     Open facts
-                  </a>
-                  <a
+                  </Link>
+                  <Link
                     className="underline"
-                    href={`/company/se/${companyId}/financials/esef/${filing.fxoId}/notes`}
+                    to={`/company/se/${companyId}/financials/esef/${filing.fxoId}/notes`}
                   >
                     Notes ({filing.noteCount})
-                  </a>
+                  </Link>
                 </>
               ) : (
                 <Badge variant="secondary">Not parsed yet</Badge>
@@ -105,8 +106,19 @@ export function SeCompanyEsefView({
             <p className="max-w-[90ch]">{info.companyDescription}</p>
             <div className="grid gap-4 sm:grid-cols-2">
               {JSON_LIST_SECTIONS.map(([key, label]) => {
-                const items = parseJsonList(String(info[key] ?? ""));
-                if (!items || items.length === 0) return null;
+                const raw = String(info[key] ?? "");
+                const items = parseJsonList(raw);
+                // Unparseable or not an array: show the raw text rather than dropping it.
+                if (items === null) {
+                  if (raw.trim() === "") return null;
+                  return (
+                    <section key={key}>
+                      <h3 className="font-medium">{label}</h3>
+                      <p className="break-all text-muted-foreground">{raw}</p>
+                    </section>
+                  );
+                }
+                if (items.length === 0) return null;
                 return (
                   <section key={key}>
                     <h3 className="font-medium">{label}</h3>
