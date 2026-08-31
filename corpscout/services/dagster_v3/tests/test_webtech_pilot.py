@@ -4,7 +4,9 @@ from contextlib import contextmanager
 from datetime import UTC, datetime
 from typing import Any
 
+import dagster as dg
 import pytest
+import requests
 from pydantic import ValidationError
 
 from dagster_v3.components.webtech_scanner_component import (
@@ -16,12 +18,18 @@ from dagster_v3.defs.webtech.assets import (
     WEBTECH_PARTITION_KEYS,
     WEBTECH_PARTITIONS,
     WebtechCandidateConfig,
+    evaluate_webtech_monitor,
     load_webtech_candidates,
 )
-from dagster_v3.defs.webtech.client import WebtechApiResource
+from dagster_v3.defs.webtech.client import (
+    WebtechApiResource,
+    WebtechApiUnavailableError,
+)
 from dagster_v3.defs.webtech.models import (
     WEBTECH_DETECTOR_VERSION,
     FinalScanReference,
+    RemoteScanPollResponse,
+    RemoteScanSnapshot,
     WebtechCandidate,
 )
 from dagster_v3.defs.webtech.storage import (
@@ -81,7 +89,7 @@ class FakeObjectStore:
         return self.objects[(str(bucket), key)]
 
 
-def test_webtech_component_builds_three_partition_aligned_assets() -> None:
+def test_webtech_component_builds_short_lived_scan_monitoring_definitions() -> None:
     component = WebtechScannerComponent(
         api_url="http://scanner.test:8088",
         s3_path="s3://webtech/webtech",
@@ -95,8 +103,16 @@ def test_webtech_component_builds_three_partition_aligned_assets() -> None:
     }
     assert asset_keys == {
         "commoncrawl_webtech_candidates_manifest",
+        "commoncrawl_webtech_scan_submission",
         "commoncrawl_webtech_remote_scan",
         "commoncrawl_webtech_results_clickhouse",
+    }
+    assert {sensor.name for sensor in definitions.sensors or []} == {
+        "commoncrawl_webtech_scan_monitor"
+    }
+    assert {job.name for job in definitions.jobs or []} == {
+        "commoncrawl_webtech_finalize_job",
+        "commoncrawl_webtech_scan_job",
     }
     api_resource = (definitions.resources or {})["webtech_api"]
     assert api_resource.model_dump()["api_token"] == "WEBTECH_API_TOKEN"
@@ -115,6 +131,119 @@ def test_webtech_api_resource_survives_dagster_process_reconstruction() -> None:
     reconstructed = resource._with_updated_values({})
 
     assert reconstructed.api_token == "resolved-test-token"
+
+
+def test_webtech_api_transport_failure_is_retryable(monkeypatch) -> None:
+    resource = WebtechApiResource(
+        base_url="http://scanner.test:8088",
+        api_token="resolved-test-token",
+    )
+
+    def fail_request(*args, **kwargs):
+        del args, kwargs
+        raise requests.ReadTimeout("scanner poll timed out")
+
+    monkeypatch.setattr(requests, "request", fail_request)
+
+    with pytest.raises(WebtechApiUnavailableError, match="scanner poll timed out"):
+        resource.poll("scan-1", after_event=12)
+
+
+def test_webtech_monitor_observes_running_scan_without_launching_run() -> None:
+    instance = dg.DagsterInstance.ephemeral()
+    _report_submission(instance, scan_id="scan-running")
+    api = FakeWebtechApi(_remote_snapshot("running", completed_count=120))
+
+    with dg.build_sensor_context(instance=instance) as context:
+        result = evaluate_webtech_monitor(context, api)
+
+    assert result.run_requests == []
+    assert len(result.asset_events) == 1
+    observation = result.asset_events[0]
+    assert observation.partition == PARTITION_KEY
+    assert observation.metadata["status"].value == "running"
+    assert observation.metadata["completed_count"].value == 120
+    assert api.poll_calls == [("scan-running", 0, 0)]
+
+
+def test_webtech_monitor_launches_one_short_finalize_run_on_completion() -> None:
+    instance = dg.DagsterInstance.ephemeral()
+    _report_submission(instance, scan_id="scan-completed")
+    api = FakeWebtechApi(_remote_snapshot("completed", completed_count=1_000))
+
+    with dg.build_sensor_context(instance=instance) as context:
+        result = evaluate_webtech_monitor(context, api)
+
+    assert len(result.run_requests) == 1
+    request = result.run_requests[0]
+    assert request.partition_key == PARTITION_KEY
+    assert request.run_key == "webtech-finalize-scan-completed"
+    assert request.tags["webtech/scan_id"] == "scan-completed"
+    assert len(result.asset_events) == 1
+
+
+class FakeWebtechApi:
+    def __init__(self, snapshot: RemoteScanSnapshot) -> None:
+        self.snapshot = snapshot
+        self.poll_calls: list[tuple[str, int, int]] = []
+
+    def poll(
+        self,
+        scan_id: str,
+        *,
+        after_event: int,
+        wait_seconds: int,
+    ) -> RemoteScanPollResponse:
+        self.poll_calls.append((scan_id, after_event, wait_seconds))
+        return RemoteScanPollResponse(scan=self.snapshot, events=[])
+
+
+def _report_submission(instance: dg.DagsterInstance, *, scan_id: str) -> None:
+    instance.report_runless_asset_event(
+        dg.AssetMaterialization(
+            asset_key="commoncrawl_webtech_scan_submission",
+            partition=PARTITION_KEY,
+            metadata={
+                "scan_id": scan_id,
+                "crawl_id": CRAWL_ID,
+                "partition_key": PARTITION_KEY,
+                "detector_version": WEBTECH_DETECTOR_VERSION,
+                "candidate_manifest_uri": "s3://webtech/webtech/candidates/test.json",
+                "candidate_manifest_sha256": "ab" * 32,
+                "candidate_manifest_dagster_run_id": "manifest-run",
+                "candidate_count": 1_000,
+            },
+        )
+    )
+
+
+def _remote_snapshot(
+    status: str,
+    *,
+    completed_count: int,
+) -> RemoteScanSnapshot:
+    return RemoteScanSnapshot(
+        scan_id=f"scan-{status}",
+        status=status,
+        crawl_id=CRAWL_ID,
+        partition_key=PARTITION_KEY,
+        detector_version=WEBTECH_DETECTOR_VERSION,
+        candidate_manifest_uri="s3://webtech/webtech/candidates/test.json",
+        result_prefix_uri="s3://webtech/webtech/scans/test/results",
+        final_manifest_uri="s3://webtech/webtech/scans/test/final-manifest.json",
+        total_count=1_000,
+        completed_count=completed_count,
+        outcome_counts={"success": completed_count},
+        technology_count=completed_count * 3,
+        started_at=SCANNED_AT,
+        finished_at=SCANNED_AT if status == "completed" else None,
+        last_progress_at=SCANNED_AT,
+        elapsed_seconds=120,
+        progress_age_seconds=5,
+        domains_per_minute=50,
+        latest_event_sequence=completed_count // 20,
+        error_message="",
+    )
 
 
 def test_candidate_config_uses_fixed_top_million_partition_universe() -> None:

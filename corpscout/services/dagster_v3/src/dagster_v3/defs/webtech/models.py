@@ -52,6 +52,15 @@ class CandidateManifestReference:
     candidate_count: int
 
 
+@dataclass(frozen=True, slots=True)
+class SubmittedScanReference:
+    """A short-lived Dagster submission attached to a remote scanner job."""
+
+    scan_id: str
+    status: RemoteScanStatus
+    manifest: CandidateManifestReference
+
+
 class StoredResultReference(BaseModel):
     """One result object entry in the remote final manifest."""
 
@@ -162,7 +171,9 @@ class RemoteScanSnapshot(BaseModel):
     technology_count: int
     started_at: datetime | None
     finished_at: datetime | None
+    last_progress_at: datetime | None
     elapsed_seconds: float
+    progress_age_seconds: float
     domains_per_minute: float
     latest_event_sequence: int
     error_message: str

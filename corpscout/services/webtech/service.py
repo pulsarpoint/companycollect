@@ -73,10 +73,27 @@ def create_app(
     @app.get("/healthz")
     async def healthz() -> dict[str, object]:
         active_scan_id = coordinator.active_scan_id
+        active_job = (
+            coordinator.jobs.get(active_scan_id)
+            if active_scan_id is not None
+            else None
+        )
+        snapshot = active_job.snapshot() if active_job is not None else None
         return {
             "status": "ok",
             "active_scan": active_scan_id is not None,
             "active_scan_id": active_scan_id,
+            "active_scan_status": snapshot.status if snapshot is not None else None,
+            "completed_count": (
+                snapshot.completed_count if snapshot is not None else None
+            ),
+            "total_count": snapshot.total_count if snapshot is not None else None,
+            "progress_age_seconds": (
+                snapshot.progress_age_seconds if snapshot is not None else None
+            ),
+            "domains_per_minute": (
+                snapshot.domains_per_minute if snapshot is not None else None
+            ),
         }
 
     @app.post(

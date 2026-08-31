@@ -27,15 +27,16 @@ runtime without embedding the secret in component YAML.
 
 ## Partition-aligned assets
 
-All three assets share 128 static partitions, `hash_000` through `hash_127`:
+All four assets share 128 static partitions, `hash_000` through `hash_127`:
 
 1. `commoncrawl_webtech_candidates_manifest` selects ordered candidates from
    `corpscout.commoncrawl_domain_graph_signals FINAL` and writes the input
    manifest to RustFS.
-2. `commoncrawl_webtech_remote_scan` submits that content-addressed input to the
-   scanner API, long-polls progress, and materializes only after the remote final
-   manifest exists.
-3. `commoncrawl_webtech_results_clickhouse` validates the final manifest plus
+2. `commoncrawl_webtech_scan_submission` submits that content-addressed input
+   and materializes immediately with the deterministic remote scan ID.
+3. `commoncrawl_webtech_remote_scan` is a short finalization step that
+   materializes only after the scanner reports completion.
+4. `commoncrawl_webtech_results_clickhouse` validates the final manifest plus
    every referenced object checksum, then inserts the queryable result index.
 
 The candidate universe is fixed in code to `cc_harmonic_rank` 1 through
@@ -55,9 +56,17 @@ Common Crawl snapshot does not immediately rescan the same site. Setting
 `force_rescan=true` explicitly bypasses only this freshness predicate; it does
 not change the top-million boundary or hash ownership.
 
-The manual `commoncrawl_webtech_scan_job` selects the complete three-asset
-chain. The `webtech_remote_scanner` Dagster pool must be limited to one while a
-single workstation owns all browser capacity.
+The manual `commoncrawl_webtech_scan_job` selects only the candidate and
+submission assets, then exits. The scanner API enforces its one-active-scan
+limit. Operators therefore launch partitions one at a time; a second submission
+while the workstation is occupied fails clearly with HTTP 409.
+
+The always-enabled `commoncrawl_webtech_scan_monitor` sensor performs one
+zero-wait status request every 30 seconds. Each tick writes one compact sensor
+log and one partitioned asset observation with status, completed/total,
+outcomes, technologies, progress age, elapsed time, and throughput. A completed
+scan produces one deduplicated `commoncrawl_webtech_finalize_job` request keyed
+by scan ID. The finalization and ClickHouse indexing run is short-lived.
 
 ## API and lifecycle
 
@@ -92,16 +101,17 @@ Each context therefore serves one domain and is torn down completely. The pool
 keeps up to 20 domains active and starts the next context when one result has
 been persisted. There is no synchronized 20-domain execution barrier.
 
-Dagster long-polls with an event cursor. After every 20 terminal, stored domain
-outcomes—and after the final short window—the service emits one compact event.
-Dagster writes one log line containing cumulative completed/total, window
-outcomes, technologies, elapsed time, and throughput. It does not log every
-domain.
+The scanner logs one structured progress line after every 20 stored domain
+outcomes, plus start, heartbeat, stalled, completion, failure, and cancellation
+lines in its systemd journal. `/healthz` exposes the active scan ID,
+completed/total, progress age, and throughput. No CPU polling is required to
+distinguish active progress, stalled work, completed work, and an idle service.
 
-If a Dagster run is interrupted, its asset calls the remote cancellation
-endpoint. If the service restarts, the next poll returns unknown; Dagster repeats
-the idempotent submit. The service reconstructs already stored domains from
-RustFS and scans only missing candidates.
+Dagster does not keep a run or worker alive while browsers execute. If Dagster
+restarts, the sensor resumes its bounded ticks from the latest durable
+submission materialization. If the scanner service restarts and forgets the
+in-memory scan, the sensor repeats the idempotent submit; the service reconstructs
+stored domains from RustFS and scans only missing candidates.
 
 ## Durable object contract
 
@@ -175,8 +185,9 @@ uv run dg check defs
 Before launching all 128 production partitions, the first partition
 materialization must confirm:
 
-- all three assets materialize and the final/index counts agree;
-- progress remains visible as one line per 20 stored domains;
+- all four assets materialize and the final/index counts agree;
+- the submission run exits immediately and progress appears as a sensor log and
+  asset observation every 30 seconds;
 - restart and cancellation leave resumable per-domain objects;
 - timeout stages, success rate, and empty-success rate are acceptable;
 - workstation CPU and memory remain bounded;
@@ -215,3 +226,11 @@ ranged from 7,609 to 8,069. `hash_000` wrote a 438,382-byte schema-v2 JSON
 manifest with 7,766 candidates, spanning harmonic ranks 70 through 999,784. At
 that materialization time no `hash_000` domain had a current-detector result in
 the prior month, so the freshness predicate skipped zero rows in that partition.
+
+The first production `hash_003` scan exposed why Dagster must not wait inside an
+asset. Scanner job `a1c846872118b608f7e9a38e886b76c1` completed all 7,915
+domains and wrote its final manifest, but the Dagster systemd supervisor was
+stopped during execution. After its graceful-stop timeout, systemd killed the
+run worker at 5,640/7,915. The remote work continued correctly while the Dagster
+run remained orphaned as `STARTED`. The submission/sensor/finalization split
+removes that long-lived worker and pool-slot failure mode.

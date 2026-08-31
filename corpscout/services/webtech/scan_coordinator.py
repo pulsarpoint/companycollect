@@ -24,7 +24,9 @@ from service_models import (
     StoredResultReference,
 )
 
-LOGGER = logging.getLogger(__name__)
+LOGGER = logging.getLogger("uvicorn.error")
+SCAN_HEARTBEAT_SECONDS = 60.0
+SCAN_STALLED_AFTER_SECONDS = 120.0
 
 type ScanFunction = Callable[..., Awaitable[tuple[WebtechDomainResult, ...]]]
 
@@ -67,6 +69,8 @@ class ScanJob:
         self._pending_event_results: list[StoredResultReference] = []
         self._condition = asyncio.Condition()
         self._started_monotonic: float | None = None
+        self._last_progress_at: datetime | None = None
+        self._last_progress_monotonic: float | None = None
 
     @classmethod
     def from_final_manifest(
@@ -93,6 +97,7 @@ class ScanJob:
         job.status = "completed"
         job.started_at = manifest.started_at
         job.finished_at = manifest.finished_at
+        job._last_progress_at = manifest.finished_at
         return job
 
     async def mark_running(self) -> None:
@@ -102,12 +107,16 @@ class ScanJob:
             self.finished_at = None
             self.error_message = ""
             self._started_monotonic = time.monotonic()
+            self._last_progress_at = self.started_at
+            self._last_progress_monotonic = self._started_monotonic
             self._condition.notify_all()
 
     async def record_result(self, result: StoredResultReference) -> None:
         async with self._condition:
             self.results[result.root_domain] = result
             self._pending_event_results.append(result)
+            self._last_progress_at = datetime.now(UTC)
+            self._last_progress_monotonic = time.monotonic()
             if len(self._pending_event_results) >= self.progress_batch_size:
                 self._publish_progress_event()
             self._condition.notify_all()
@@ -186,7 +195,9 @@ class ScanJob:
             ),
             started_at=self.started_at,
             finished_at=self.finished_at,
+            last_progress_at=self._last_progress_at,
             elapsed_seconds=round(elapsed_seconds, 3),
+            progress_age_seconds=round(self._progress_age_seconds(), 3),
             domains_per_minute=round(
                 completed_count / elapsed_seconds * 60
                 if elapsed_seconds > 0
@@ -207,24 +218,38 @@ class ScanJob:
         elapsed_seconds = self._elapsed_seconds()
         completed_count = len(self.results)
         outcomes = Counter(result.outcome for result in window)
-        self.events.append(
-            ScanProgressEvent(
-                sequence=self._latest_event_sequence + 1,
-                completed_count=completed_count,
-                total_count=len(self.manifest.candidates),
-                window_count=len(window),
-                window_outcome_counts=dict(sorted(outcomes.items())),
-                window_technology_count=sum(
-                    result.technology_count for result in window
-                ),
-                elapsed_seconds=round(elapsed_seconds, 3),
-                domains_per_minute=round(
-                    completed_count / elapsed_seconds * 60
-                    if elapsed_seconds > 0
-                    else 0.0,
-                    2,
-                ),
-            )
+        event = ScanProgressEvent(
+            sequence=self._latest_event_sequence + 1,
+            completed_count=completed_count,
+            total_count=len(self.manifest.candidates),
+            window_count=len(window),
+            window_outcome_counts=dict(sorted(outcomes.items())),
+            window_technology_count=sum(
+                result.technology_count for result in window
+            ),
+            elapsed_seconds=round(elapsed_seconds, 3),
+            domains_per_minute=round(
+                completed_count / elapsed_seconds * 60
+                if elapsed_seconds > 0
+                else 0.0,
+                2,
+            ),
+        )
+        self.events.append(event)
+        LOGGER.info(
+            "Webtech scan progress scan_id=%s partition=%s completed=%s/%s "
+            "batch=%s outcomes=%s technologies=%s elapsed_seconds=%.1f "
+            "rate_per_minute=%.2f sequence=%s",
+            self.scan_id,
+            self.request.partition_key,
+            event.completed_count,
+            event.total_count,
+            event.window_count,
+            event.window_outcome_counts,
+            event.window_technology_count,
+            event.elapsed_seconds,
+            event.domains_per_minute,
+            event.sequence,
         )
 
     def _elapsed_seconds(self) -> float:
@@ -235,6 +260,18 @@ class ScanJob:
         if self._started_monotonic is not None:
             return max(0.0, time.monotonic() - self._started_monotonic)
         return max(0.0, (datetime.now(UTC) - self.started_at).total_seconds())
+
+    def _progress_age_seconds(self) -> float:
+        if self.status not in {"pending", "running"}:
+            return 0.0
+        if self._last_progress_monotonic is not None:
+            return max(0.0, time.monotonic() - self._last_progress_monotonic)
+        if self._last_progress_at is not None:
+            return max(
+                0.0,
+                (datetime.now(UTC) - self._last_progress_at).total_seconds(),
+            )
+        return 0.0
 
 
 class ScanCoordinator:
@@ -260,8 +297,27 @@ class ScanCoordinator:
             scan_id = self._scan_id(request)
             existing = self.jobs.get(scan_id)
             if existing is not None and existing.status in {"pending", "running"}:
+                snapshot = existing.snapshot()
+                LOGGER.info(
+                    "Webtech scan reattached scan_id=%s partition=%s "
+                    "status=%s completed=%s/%s progress_age_seconds=%.1f",
+                    scan_id,
+                    request.partition_key,
+                    snapshot.status,
+                    snapshot.completed_count,
+                    snapshot.total_count,
+                    snapshot.progress_age_seconds,
+                )
                 return existing.snapshot()
             if existing is not None and existing.status == "completed":
+                LOGGER.info(
+                    "Webtech scan reused scan_id=%s partition=%s source=memory "
+                    "completed=%s/%s",
+                    scan_id,
+                    request.partition_key,
+                    existing.snapshot().completed_count,
+                    existing.snapshot().total_count,
+                )
                 return existing.snapshot()
             if self.active_scan_id is not None:
                 active = self.jobs.get(self.active_scan_id)
@@ -299,6 +355,15 @@ class ScanCoordinator:
                     progress_batch_size=self.settings.progress_batch_size,
                 )
                 self.jobs[scan_id] = job
+                LOGGER.info(
+                    "Webtech scan reused scan_id=%s partition=%s "
+                    "source=final_manifest completed=%s/%s uri=%s",
+                    scan_id,
+                    request.partition_key,
+                    len(job.results),
+                    len(manifest.candidates),
+                    final_location.uri,
+                )
                 return job.snapshot()
 
             recovered = await asyncio.to_thread(
@@ -318,6 +383,16 @@ class ScanCoordinator:
             )
             self.jobs[scan_id] = job
             self.active_scan_id = scan_id
+            LOGGER.info(
+                "Webtech scan accepted scan_id=%s crawl_id=%s partition=%s "
+                "total=%s recovered=%s manifest_uri=%s",
+                scan_id,
+                request.crawl_id,
+                request.partition_key,
+                len(manifest.candidates),
+                len(recovered),
+                request.candidate_manifest_uri,
+            )
             job.task = asyncio.create_task(
                 self._run(job),
                 name=f"webtech-scan-{scan_id}",
@@ -368,6 +443,24 @@ class ScanCoordinator:
             )
             for candidate in job.manifest.candidates
             if candidate.root_domain not in job.results
+        )
+        LOGGER.info(
+            "Webtech scan started scan_id=%s partition=%s total=%s recovered=%s "
+            "remaining=%s browsers=%s pages_per_browser=%s "
+            "domain_timeout_seconds=%s domains_per_context=%s",
+            job.scan_id,
+            job.request.partition_key,
+            len(job.manifest.candidates),
+            len(job.results),
+            len(remaining_candidates),
+            self.settings.browser_count,
+            self.settings.pages_per_browser,
+            self.settings.domain_timeout_seconds,
+            self.settings.domains_per_context,
+        )
+        heartbeat_task = asyncio.create_task(
+            self._log_progress_heartbeats(job),
+            name=f"webtech-heartbeat-{job.scan_id}",
         )
 
         async def persist_result(result: WebtechDomainResult) -> None:
@@ -426,16 +519,79 @@ class ScanCoordinator:
                 final_manifest,
             )
             await job.mark_completed(finished_at)
+            snapshot = job.snapshot()
+            LOGGER.info(
+                "Webtech scan completed scan_id=%s partition=%s completed=%s/%s "
+                "outcomes=%s technologies=%s elapsed_seconds=%.1f "
+                "rate_per_minute=%.2f final_manifest_uri=%s",
+                job.scan_id,
+                job.request.partition_key,
+                snapshot.completed_count,
+                snapshot.total_count,
+                snapshot.outcome_counts,
+                snapshot.technology_count,
+                snapshot.elapsed_seconds,
+                snapshot.domains_per_minute,
+                snapshot.final_manifest_uri,
+            )
         except asyncio.CancelledError:
             await job.mark_cancelled()
+            LOGGER.warning(
+                "Webtech scan cancelled scan_id=%s partition=%s completed=%s/%s",
+                job.scan_id,
+                job.request.partition_key,
+                len(job.results),
+                len(job.manifest.candidates),
+            )
             raise
         except Exception as error:
-            LOGGER.exception("Webtech scan %s failed", job.scan_id)
+            LOGGER.exception(
+                "Webtech scan failed scan_id=%s partition=%s completed=%s/%s",
+                job.scan_id,
+                job.request.partition_key,
+                len(job.results),
+                len(job.manifest.candidates),
+            )
             await job.mark_failed(str(error) or type(error).__name__)
         finally:
+            heartbeat_task.cancel()
+            await asyncio.gather(heartbeat_task, return_exceptions=True)
             async with self._lock:
                 if self.active_scan_id == job.scan_id:
                     self.active_scan_id = None
+
+    async def _log_progress_heartbeats(self, job: ScanJob) -> None:
+        while job.status in {"pending", "running"}:
+            await asyncio.sleep(SCAN_HEARTBEAT_SECONDS)
+            snapshot = job.snapshot()
+            if snapshot.status not in {"pending", "running"}:
+                return
+            if snapshot.progress_age_seconds >= SCAN_STALLED_AFTER_SECONDS:
+                LOGGER.warning(
+                    "Webtech scan stalled scan_id=%s partition=%s "
+                    "completed=%s/%s progress_age_seconds=%.1f "
+                    "elapsed_seconds=%.1f rate_per_minute=%.2f",
+                    snapshot.scan_id,
+                    snapshot.partition_key,
+                    snapshot.completed_count,
+                    snapshot.total_count,
+                    snapshot.progress_age_seconds,
+                    snapshot.elapsed_seconds,
+                    snapshot.domains_per_minute,
+                )
+                continue
+            LOGGER.info(
+                "Webtech scan heartbeat scan_id=%s partition=%s "
+                "completed=%s/%s progress_age_seconds=%.1f "
+                "elapsed_seconds=%.1f rate_per_minute=%.2f",
+                snapshot.scan_id,
+                snapshot.partition_key,
+                snapshot.completed_count,
+                snapshot.total_count,
+                snapshot.progress_age_seconds,
+                snapshot.elapsed_seconds,
+                snapshot.domains_per_minute,
+            )
 
     def _load_manifest(self, request: ScanRequest) -> CandidateManifest:
         location = self.store.parse_allowed_uri(request.candidate_manifest_uri)

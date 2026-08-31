@@ -15,6 +15,10 @@ class UnknownRemoteScanError(RuntimeError):
     """The scanner restarted and no longer has the scan in memory."""
 
 
+class WebtechApiUnavailableError(RuntimeError):
+    """A transient transport failure prevented a scanner API request."""
+
+
 class WebtechApiResource(dg.ConfigurableResource):
     """Authenticated client for the remote Webtech workstation."""
 
@@ -86,7 +90,7 @@ class WebtechApiResource(dg.ConfigurableResource):
                 **kwargs,
             )
         except requests.RequestException as error:
-            raise RuntimeError(
+            raise WebtechApiUnavailableError(
                 f"Webtech API request failed: {method} {path}: {error}"
             ) from error
         if allow_not_found and response.status_code == 404:

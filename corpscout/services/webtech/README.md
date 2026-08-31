@@ -29,8 +29,15 @@ service derives an idempotent scan ID from that content and its scanner settings
 stores each terminal domain result before reusing its worker slot, emits one
 progress event per 20 stored results, and writes `final-manifest.json` last.
 
+The service writes lifecycle logs for scan acceptance, start, every 20-result
+progress window, periodic heartbeat, stalled progress, completion, failure, and
+cancellation. `/healthz` reports the active scan ID, completed/total counts,
+seconds since the last stored result, and current throughput; service activity
+does not need to be inferred from CPU utilization.
+
 Only one scan can be active because one workstation owns the configured browser
-capacity. If the process restarts, Dagster resubmits the same request; the
+capacity. Dagster submits and exits, then its sensor performs a zero-wait status
+request every 30 seconds. If the process restarts, the sensor resubmits the same request; the
 service reconstructs already completed domains from RustFS and scans the missing
 ones. There is no service database, message queue, or intermediate batch
 checkpoint.
@@ -39,6 +46,11 @@ The checked-in user systemd unit is `deploy/webtech.service`. It runs 20 fresh,
 headless one-page contexts by default, with a 60-second per-domain deadline and
 250 ms launch stagger. Those capacity values belong to the scanner `.env`, not
 Dagster run configuration.
+
+Production deployment is managed by `ansible/site.yml`. The playbook preserves
+the server-owned `.env` and runtime directories, refuses to deploy during an
+active scan, restarts only when deployment content changes, and verifies the
+service health endpoint. See `ansible/README.md` for prerequisites and commands.
 
 ## Isolated benchmark CLI
 

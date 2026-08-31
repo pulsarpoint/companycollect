@@ -1,0 +1,11 @@
+.env
+.venv/
+.cloakbrowser-profile/
+output/
+__pycache__/
+*.pyc
+*.pyo
+.pytest_cache/
+.ruff_cache/
+.coverage
+.DS_Store

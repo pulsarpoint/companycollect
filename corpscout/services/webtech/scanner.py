@@ -343,8 +343,9 @@ async def _close_page(page: Page, root_domain: str) -> None:
             await page.close()
     except (TimeoutError, PlaywrightError) as error:
         logging.getLogger(__name__).warning(
-            "Page cleanup failed for %s: %s",
+            "Page cleanup failed domain=%s error_type=%s error=%r",
             root_domain,
+            type(error).__name__,
             error,
         )
 
@@ -356,7 +357,8 @@ async def _close_context(context: BrowserContext) -> None:
             await context.close()
     except (TimeoutError, PlaywrightError) as error:
         logging.getLogger(__name__).warning(
-            "CloakBrowser context cleanup failed: %s",
+            "CloakBrowser context cleanup failed error_type=%s error=%r",
+            type(error).__name__,
             error,
         )
 

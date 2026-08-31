@@ -181,7 +181,9 @@ class ScanSnapshot(BaseModel):
     technology_count: int = Field(ge=0)
     started_at: datetime | None
     finished_at: datetime | None
+    last_progress_at: datetime | None
     elapsed_seconds: float = Field(ge=0)
+    progress_age_seconds: float = Field(ge=0)
     domains_per_minute: float = Field(ge=0)
     latest_event_sequence: int = Field(ge=0)
     error_message: str

@@ -1,0 +1,292 @@
+---
+- name: Deploy the Corpscout Webtech scanner
+  hosts: webtech_hosts
+  gather_facts: true
+  vars:
+    webtech_source_dir: "{{ playbook_dir }}/.."
+    webtech_deploy_dir: /opt/companycollect/corpscout/webtech
+    webtech_service_name: webtech.service
+    webtech_user_unit_dir: "{{ ansible_facts.user_dir }}/.config/systemd/user"
+    webtech_user_runtime_dir: "/run/user/{{ ansible_facts.user_uid }}"
+
+  tasks:
+    - name: Inspect required local Webtech files
+      ansible.builtin.stat:
+        path: "{{ item }}"
+      loop:
+        - "{{ webtech_source_dir }}/pyproject.toml"
+        - "{{ webtech_source_dir }}/uv.lock"
+        - "{{ webtech_source_dir }}/service.py"
+        - "{{ webtech_source_dir }}/extension/manifest.json"
+        - "{{ webtech_source_dir }}/deploy/webtech.service"
+      register: webtech_local_files
+      delegate_to: localhost
+      run_once: true
+
+    - name: Require a complete local Webtech source tree
+      ansible.builtin.assert:
+        that:
+          - webtech_local_files.results | map(attribute='stat.exists') | min
+        fail_msg: >-
+          Run this playbook from services/webtech/ansible. The local Webtech
+          source tree is incomplete.
+      delegate_to: localhost
+      run_once: true
+
+    - name: Verify deployment tools on the control machine
+      ansible.builtin.command:
+        argv:
+          - /bin/sh
+          - -c
+          - command -v uv >/dev/null && command -v rsync >/dev/null && command -v node >/dev/null
+      delegate_to: localhost
+      run_once: true
+      check_mode: false
+      changed_when: false
+
+    - name: Run the local Webtech tests
+      ansible.builtin.command:
+        argv:
+          - uv
+          - run
+          - --frozen
+          - --no-sync
+          - pytest
+          - -q
+        chdir: "{{ webtech_source_dir }}"
+      delegate_to: localhost
+      run_once: true
+      check_mode: false
+      changed_when: false
+
+    - name: Run the local Webtech Ruff checks
+      ansible.builtin.command:
+        argv:
+          - uv
+          - run
+          - --frozen
+          - --no-sync
+          - ruff
+          - check
+          - .
+        chdir: "{{ webtech_source_dir }}"
+      delegate_to: localhost
+      run_once: true
+      check_mode: false
+      changed_when: false
+
+    - name: Validate the packaged extension JavaScript
+      ansible.builtin.command:
+        argv:
+          - node
+          - --check
+          - "{{ item }}"
+      loop: "{{ query('ansible.builtin.fileglob', webtech_source_dir ~ '/extension/js/*.js') }}"
+      delegate_to: localhost
+      run_once: true
+      check_mode: false
+      changed_when: false
+
+    - name: Verify deployment tools on the Webtech host
+      ansible.builtin.command:
+        argv:
+          - /bin/sh
+          - -c
+          - command -v uv && command -v rsync && command -v systemctl
+      register: webtech_remote_tools
+      check_mode: false
+      changed_when: false
+
+    - name: Record the target uv executable
+      ansible.builtin.set_fact:
+        webtech_uv_binary: "{{ webtech_remote_tools.stdout_lines[0] }}"
+
+    - name: Create the Webtech deployment directories
+      ansible.builtin.file:
+        path: "{{ item }}"
+        state: directory
+        mode: "0755"
+      loop:
+        - "{{ webtech_deploy_dir }}"
+        - "{{ webtech_user_unit_dir }}"
+
+    - name: Inspect the server-owned Webtech environment
+      ansible.builtin.stat:
+        path: "{{ webtech_deploy_dir }}/.env"
+      register: webtech_environment
+
+    - name: Require the private server-owned Webtech environment
+      ansible.builtin.assert:
+        that:
+          - webtech_environment.stat.isreg | default(false)
+          - webtech_environment.stat.mode == '0600'
+          - webtech_environment.stat.pw_name == ansible_user
+        fail_msg: >-
+          Provision {{ webtech_deploy_dir }}/.env as {{ ansible_user }} with
+          mode 0600 before deploying. Ansible preserves this file and never
+          copies secrets from the control machine.
+
+    - name: Inspect the existing Webtech service state
+      ansible.builtin.command:
+        argv:
+          - systemctl
+          - --user
+          - is-active
+          - --quiet
+          - "{{ webtech_service_name }}"
+      environment:
+        XDG_RUNTIME_DIR: "{{ webtech_user_runtime_dir }}"
+      register: webtech_service_state
+      check_mode: false
+      changed_when: false
+      failed_when: webtech_service_state.rc not in [0, 3, 4]
+
+    - name: Read the running Webtech service health
+      ansible.builtin.uri:
+        url: http://127.0.0.1:8088/healthz
+        return_content: true
+        status_code: 200
+      register: webtech_health_before_deploy
+      check_mode: false
+      changed_when: false
+      when: webtech_service_state.rc == 0
+
+    - name: Refuse to deploy during an active scan
+      ansible.builtin.assert:
+        that:
+          - not (webtech_health_before_deploy.json.active_scan | bool)
+        fail_msg: >-
+          Webtech scan {{ webtech_health_before_deploy.json.active_scan_id }} is
+          active. Wait for it to finish or cancel it explicitly before deploying.
+      when: webtech_service_state.rc == 0
+
+    - name: Preview the Webtech source synchronization
+      ansible.builtin.command:
+        argv:
+          - rsync
+          - --archive
+          - --no-owner
+          - --no-group
+          - --delete-after
+          - --delay-updates
+          - --omit-dir-times
+          - --itemize-changes
+          - --dry-run
+          - "--exclude-from={{ playbook_dir }}/rsync-excludes.txt"
+          - "{{ webtech_source_dir }}/"
+          - >-
+            {{ ansible_user }}@{{ ansible_host }}:{{ webtech_deploy_dir }}/
+      register: webtech_rsync_preview
+      delegate_to: localhost
+      check_mode: false
+      changed_when: >-
+        webtech_rsync_preview.stdout_lines
+        | reject('equalto', '')
+        | list
+        | length > 0
+
+    - name: Record whether Webtech source changed
+      ansible.builtin.set_fact:
+        webtech_source_changed: >-
+          {{
+            webtech_rsync_preview.stdout_lines
+            | reject('equalto', '')
+            | list
+            | length > 0
+          }}
+
+    - name: Report the Webtech deployment preview
+      ansible.builtin.debug:
+        msg:
+          source_changed: "{{ webtech_source_changed }}"
+          service_restart_requested: "{{ webtech_source_changed }}"
+          preserved_paths: [.env, .venv, output, .cloakbrowser-profile]
+
+    - name: Synchronize the Webtech source
+      ansible.builtin.command:
+        argv:
+          - rsync
+          - --archive
+          - --no-owner
+          - --no-group
+          - --delete-after
+          - --delay-updates
+          - --omit-dir-times
+          - --itemize-changes
+          - "--exclude-from={{ playbook_dir }}/rsync-excludes.txt"
+          - "{{ webtech_source_dir }}/"
+          - >-
+            {{ ansible_user }}@{{ ansible_host }}:{{ webtech_deploy_dir }}/
+      delegate_to: localhost
+      when:
+        - not ansible_check_mode
+        - webtech_source_changed
+      changed_when: true
+      notify: Restart Webtech scanner
+
+    - name: Inspect the target Webtech virtual environment
+      ansible.builtin.stat:
+        path: "{{ webtech_deploy_dir }}/.venv/bin/uvicorn"
+      register: webtech_uvicorn
+
+    - name: Synchronize the target Webtech Python environment
+      ansible.builtin.command:
+        argv:
+          - "{{ webtech_uv_binary }}"
+          - sync
+          - --frozen
+          - --all-groups
+        chdir: "{{ webtech_deploy_dir }}"
+      when:
+        - not ansible_check_mode
+        - webtech_source_changed or not webtech_uvicorn.stat.executable | default(false)
+      changed_when: webtech_source_changed or not webtech_uvicorn.stat.executable | default(false)
+
+    - name: Install the Webtech user systemd unit
+      ansible.builtin.copy:
+        src: "{{ webtech_source_dir }}/deploy/webtech.service"
+        dest: "{{ webtech_user_unit_dir }}/{{ webtech_service_name }}"
+        mode: "0644"
+      notify: Restart Webtech scanner
+
+    - name: Apply Webtech service changes
+      ansible.builtin.meta: flush_handlers
+
+    - name: Ensure the Webtech service is enabled and running
+      ansible.builtin.systemd_service:
+        name: "{{ webtech_service_name }}"
+        scope: user
+        enabled: true
+        state: started
+        daemon_reload: true
+      environment:
+        XDG_RUNTIME_DIR: "{{ webtech_user_runtime_dir }}"
+      when: not ansible_check_mode
+
+    - name: Wait for the deployed Webtech API
+      ansible.builtin.uri:
+        url: http://127.0.0.1:8088/healthz
+        return_content: true
+        status_code: 200
+      register: webtech_health_after_deploy
+      retries: 30
+      delay: 1
+      until:
+        - webtech_health_after_deploy.status == 200
+        - webtech_health_after_deploy.json.status == 'ok'
+        - not (webtech_health_after_deploy.json.active_scan | bool)
+      check_mode: false
+      changed_when: false
+      when: not ansible_check_mode
+
+  handlers:
+    - name: Restart Webtech scanner
+      ansible.builtin.systemd_service:
+        name: "{{ webtech_service_name }}"
+        scope: user
+        enabled: true
+        state: restarted
+        daemon_reload: true
+      environment:
+        XDG_RUNTIME_DIR: "{{ webtech_user_runtime_dir }}"
+      when: not ansible_check_mode

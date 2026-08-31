@@ -1,12 +1,14 @@
 import asyncio
 import hashlib
 import json
+import logging
 from datetime import UTC, datetime
 from typing import Any
 from uuid import uuid4
 
 from fastapi.testclient import TestClient
 
+import scan_coordinator
 from config import WebtechServiceSettings
 from models import (
     WEBTECH_DETECTOR_VERSION,
@@ -213,7 +215,109 @@ def test_scan_stores_each_domain_and_final_manifest() -> None:
         )
         assert repeated.json()["status"] == "completed"
         assert repeated.json()["scan_id"] == scan_id
-        assert scan_calls == 1
+    assert scan_calls == 1
+
+
+def test_scan_logs_lifecycle_progress_and_completion(caplog) -> None:
+    caplog.set_level(logging.INFO, logger="uvicorn.error")
+    store = InMemoryRustfsStore()
+    body = candidate_manifest()
+    store.objects[parse_s3_uri(MANIFEST_URI).key] = body
+
+    async def fake_scan(candidates, *, settings, progress_callback):
+        del settings
+        results = []
+        for candidate in candidates:
+            result = completed_result(candidate)
+            callback_result = progress_callback(result)
+            if callback_result is not None:
+                await callback_result
+            results.append(result)
+        return tuple(results)
+
+    app = create_app(
+        settings=service_settings(),
+        store=store,
+        scan_function=fake_scan,
+    )
+    headers = {"Authorization": f"Bearer {API_TOKEN}"}
+    with TestClient(app) as client:
+        submitted = client.post(
+            "/v1/scans",
+            json=scan_request(body),
+            headers=headers,
+        ).json()
+        completed = _wait_for_terminal(client, submitted["scan_id"], headers)
+
+    assert completed["status"] == "completed"
+    messages = [record.getMessage() for record in caplog.records]
+    assert any(
+        "Webtech scan accepted" in message and "total=3" in message
+        for message in messages
+    )
+    assert any(
+        "Webtech scan started" in message and "recovered=0" in message
+        for message in messages
+    )
+    assert any(
+        "Webtech scan progress" in message
+        and "completed=2/3" in message
+        and "batch=2" in message
+        for message in messages
+    )
+    assert any(
+        "Webtech scan completed" in message and "completed=3/3" in message
+        for message in messages
+    )
+
+
+def test_scan_logs_stalled_progress_warning(caplog, monkeypatch) -> None:
+    caplog.set_level(logging.INFO, logger="uvicorn.error")
+    monkeypatch.setattr(scan_coordinator, "SCAN_HEARTBEAT_SECONDS", 0.01)
+    monkeypatch.setattr(scan_coordinator, "SCAN_STALLED_AFTER_SECONDS", 0.02)
+    store = InMemoryRustfsStore()
+    body = candidate_manifest()
+    store.objects[parse_s3_uri(MANIFEST_URI).key] = body
+
+    async def slow_scan(candidates, *, settings, progress_callback):
+        del settings
+        await asyncio.sleep(0.05)
+        results = []
+        for candidate in candidates:
+            result = completed_result(candidate)
+            callback_result = progress_callback(result)
+            if callback_result is not None:
+                await callback_result
+            results.append(result)
+        return tuple(results)
+
+    app = create_app(
+        settings=service_settings(),
+        store=store,
+        scan_function=slow_scan,
+    )
+    headers = {"Authorization": f"Bearer {API_TOKEN}"}
+    with TestClient(app) as client:
+        submitted = client.post(
+            "/v1/scans",
+            json=scan_request(body),
+            headers=headers,
+        ).json()
+        health = client.get("/healthz").json()
+        assert health["active_scan"] is True
+        assert health["active_scan_id"] == submitted["scan_id"]
+        assert health["completed_count"] == 0
+        assert health["total_count"] == 3
+        assert health["progress_age_seconds"] >= 0
+        completed = _wait_for_terminal(client, submitted["scan_id"], headers)
+
+    assert completed["status"] == "completed"
+    assert any(
+        record.levelno == logging.WARNING
+        and "Webtech scan stalled" in record.getMessage()
+        and "completed=0/3" in record.getMessage()
+        for record in caplog.records
+    )
 
 
 def test_resubmit_recovers_stored_domains_after_a_failed_scan() -> None:
