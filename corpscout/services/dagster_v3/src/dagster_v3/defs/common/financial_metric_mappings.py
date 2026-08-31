@@ -55,6 +55,7 @@ FINANCIAL_METRIC_MAPPINGS: dict[str, dict[str, tuple[str, ...]]] = {
     },
     "personnel_expenses": {
         "bolagsverket": ("Personalkostnader",),
+        "esef": ("ifrs-full:EmployeeBenefitsExpense",),
     },
     "wages_and_salaries": {
         "bolagsverket": ("LonerAndraErsattningar",),

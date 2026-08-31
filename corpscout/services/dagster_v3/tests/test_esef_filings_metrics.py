@@ -114,7 +114,7 @@ class FakeClickHouseResource:
 
 
 def test_ifrs_metric_concepts_shape_and_order() -> None:
-    assert len(IFRS_METRIC_CONCEPTS) == 8
+    assert len(IFRS_METRIC_CONCEPTS) == 9
     assert list(IFRS_METRIC_CONCEPTS) == [
         "revenue",
         "operating_profit",
@@ -123,6 +123,7 @@ def test_ifrs_metric_concepts_shape_and_order() -> None:
         "equity",
         "liabilities",
         "cash",
+        "personnel_expenses",
         "employees",
     ]
     # First-concept-wins order preserved for the one metric with fallbacks.
@@ -152,9 +153,13 @@ def test_ifrs_metric_concepts_shape_and_order() -> None:
         "equity",
         "liabilities",
         "cash",
+        "personnel_expenses",
         "employees",
     ):
         assert len(IFRS_METRIC_CONCEPTS[metric_name]) == 1
+    assert IFRS_METRIC_CONCEPTS["personnel_expenses"] == (
+        "ifrs-full:EmployeeBenefitsExpense",
+    )
     assert MAPPING_VERSION == "esef-ifrs-v3"
 
 
@@ -337,6 +342,8 @@ def test_esef_financial_metrics_export_columns_match_migration_order() -> None:
         "liabilities_amount_usd",
         "cash_amount_original",
         "cash_amount_usd",
+        "personnel_expenses_amount_original",
+        "personnel_expenses_amount_usd",
         "employees",
         "mapped_fact_count",
         "source_fact_count",

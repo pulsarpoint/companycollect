@@ -3896,6 +3896,10 @@ def test_esef_personnel_expenses_migration_is_additive_and_reversible() -> None:
         "Nullable(Decimal128(2))"
     ) in up
     assert "CREATE OR REPLACE VIEW corpscout.se_financials_esef_current" in up
+    assert (
+        "argMaxIf(v.source_record_uid, v.version, "
+        "v.personnel_expenses_amount_usd IS NOT NULL),"
+    ) in up
     assert "DROP COLUMN IF EXISTS personnel_expenses_amount_original" in down
     assert "TRUNCATE" not in up
 

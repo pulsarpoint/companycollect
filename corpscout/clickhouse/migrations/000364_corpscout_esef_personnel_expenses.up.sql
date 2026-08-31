@@ -110,6 +110,7 @@ SELECT
         argMaxIf(v.source_record_uid, v.version, v.equity_amount_usd IS NOT NULL),
         argMaxIf(v.source_record_uid, v.version, v.liabilities_amount_usd IS NOT NULL),
         argMaxIf(v.source_record_uid, v.version, v.cash_and_bank_amount_usd IS NOT NULL),
+        argMaxIf(v.source_record_uid, v.version, v.personnel_expenses_amount_usd IS NOT NULL),
         argMaxIf(v.source_record_uid, v.version, v.employees IS NOT NULL),
         argMaxIf(v.source_record_uid, v.version, v.viewer_url != '')
     ])) AS source_record_uids,
