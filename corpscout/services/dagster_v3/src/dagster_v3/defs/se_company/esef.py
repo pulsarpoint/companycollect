@@ -40,7 +40,10 @@ SE_COMPANY_INFO_ESEF_COLUMNS = (
     "description_language",
     "description_confidence",
     "products_and_services_json",
+    "customer_markets_json",
+    "operating_geographies_json",
     "business_segments_json",
+    "material_group_relationships_json",
 )
 
 SE_COMPANY_INFO_ESEF_SQL = """WITH candidates AS (
@@ -57,7 +60,10 @@ SE_COMPANY_INFO_ESEF_SQL = """WITH candidates AS (
         toString(info.description_language) AS description_language,
         info.description_confidence AS description_confidence,
         info.products_and_services_json AS products_and_services_json,
-        info.business_segments_json AS business_segments_json
+        info.customer_markets_json AS customer_markets_json,
+        info.operating_geographies_json AS operating_geographies_json,
+        info.business_segments_json AS business_segments_json,
+        info.material_group_relationships_json AS material_group_relationships_json
     FROM corpscout.esef_document_company_information AS info
     WHERE info.country_iso2 = 'SE'
       AND match(info.company_id, '{SE_COMPANY_ID_PATTERN}')
@@ -70,7 +76,9 @@ SELECT
     source_document_id AS source_document_id, lei AS lei, entity_name AS entity_name, fiscal_year AS fiscal_year,
     company_description AS company_description, description_language AS description_language,
     description_confidence AS description_confidence, products_and_services_json AS products_and_services_json,
-    business_segments_json AS business_segments_json
+    customer_markets_json AS customer_markets_json, operating_geographies_json AS operating_geographies_json,
+    business_segments_json AS business_segments_json,
+    material_group_relationships_json AS material_group_relationships_json
 FROM candidates""".replace("{SE_COMPANY_ID_PATTERN}", SE_COMPANY_ID_PATTERN)
 
 
