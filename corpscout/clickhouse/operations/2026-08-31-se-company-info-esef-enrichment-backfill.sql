@@ -9,6 +9,13 @@
 -- order after migration 000365 (every column except the MATERIALIZED evidence_hash, which
 -- cannot be targeted by INSERT). Before running, verify the order has not drifted:
 --   DESCRIBE TABLE corpscout.se_company_info_esef
+--
+-- served uses FINAL because se_company_info_esef is ReplacingMergeTree. info deliberately does
+-- NOT use FINAL: corpscout.esef_document_company_information is a plain MergeTree, and applying
+-- FINAL to a non-Replacing/Collapsing engine fails with ILLEGAL_FINAL (code 181). Instead the
+-- deduped subquery below picks one row per (company_id, source_record_uid) with
+-- `ORDER BY resolved_at DESC LIMIT 1 BY ...`, which keeps the newest extraction and avoids a
+-- join fan-out when a document has more than one extraction row for the same key.
 INSERT INTO corpscout.se_company_info_esef
     (company_id, source_record_uid, observed_at, source_run_id,
      source_document_id, lei, entity_name, fiscal_year, company_description,
@@ -27,9 +34,24 @@ SELECT
     served.business_segments_json,
     info.material_group_relationships_json
 FROM corpscout.se_company_info_esef AS served FINAL
-INNER JOIN corpscout.esef_document_company_information AS info FINAL
+INNER JOIN (
+    SELECT
+        company_id,
+        source_record_uid,
+        customer_markets_json,
+        operating_geographies_json,
+        material_group_relationships_json
+    FROM corpscout.esef_document_company_information
+    ORDER BY resolved_at DESC
+    LIMIT 1 BY company_id, source_record_uid
+) AS info
     ON info.company_id = served.company_id
    AND info.source_record_uid = served.source_record_uid
 WHERE served.customer_markets_json = ''
   AND served.operating_geographies_json = ''
-  AND served.material_group_relationships_json = '';
+  AND served.material_group_relationships_json = ''
+  AND NOT (
+      info.customer_markets_json IN ('', '[]')
+      AND info.operating_geographies_json IN ('', '[]')
+      AND info.material_group_relationships_json IN ('', '[]')
+  );
