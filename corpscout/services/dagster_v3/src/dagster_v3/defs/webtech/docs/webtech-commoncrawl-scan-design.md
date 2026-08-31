@@ -27,26 +27,24 @@ runtime without embedding the secret in component YAML.
 
 ## Partition-aligned assets
 
-Four durable assets share 128 static partitions, `hash_000` through `hash_127`:
+Three durable assets share 128 static partitions, `hash_000` through `hash_127`:
 
 1. `commoncrawl_webtech_candidates_manifest` selects ordered candidates from
    `corpscout.commoncrawl_domain_graph_signals FINAL` and writes the input
    manifest to RustFS.
-2. `commoncrawl_webtech_scan_submission` submits that content-addressed input
-   and materializes immediately with the deterministic remote scan ID.
-3. `commoncrawl_webtech_remote_scan` stays `STARTED` while it polls the scanner
-   every two seconds with a zero-wait HTTP request. It writes each status sample
-   directly to the Dagster run log and materializes only after the scanner
-   completes and its RustFS final manifest is verified.
-4. `commoncrawl_webtech_results_clickhouse` validates the final manifest plus
+2. `commoncrawl_webtech_remote_scan` submits or attaches to the deterministic
+   remote scan, then stays `STARTED` while it polls every two seconds with a
+   zero-wait HTTP request. It writes each status sample directly to the Dagster
+   run log and materializes only after the scanner completes and its RustFS
+   final manifest is verified.
+3. `commoncrawl_webtech_results_clickhouse` validates the final manifest plus
    every referenced object checksum, then inserts the queryable result index.
 
 There is no separate status asset and no sensor. The native Dagster status for
 the active `commoncrawl_webtech_remote_scan` partition is `STARTED`, and its run
 log contains completed/total counts, outcomes, technologies, progress age,
-elapsed time, and throughput. `commoncrawl_webtech_scan_submission` means only
-that the asynchronous request was accepted; `commoncrawl_webtech_remote_scan`
-means the batch is genuinely complete and verified in RustFS.
+elapsed time, and throughput. `commoncrawl_webtech_remote_scan` means the batch
+is genuinely complete and verified in RustFS.
 
 The candidate universe is fixed in code to `cc_harmonic_rank` 1 through
 1,000,000. Partition ownership is stable and evenly distributed by
@@ -65,11 +63,11 @@ Common Crawl snapshot does not immediately rescan the same site. Setting
 `force_rescan=true` explicitly bypasses only this freshness predicate; it does
 not change the top-million boundary or hash ownership.
 
-The `commoncrawl_webtech_scan_job` selects all four assets. The scanner API and
+The `commoncrawl_webtech_scan_job` selects all three assets. The scanner API and
 Dagster concurrency pool enforce the one-active-scan limit, so operators launch
 partitions one at a time. `commoncrawl_webtech_finalize_job` can attach the same
-polling asset and ClickHouse indexer to a submission that already exists, which
-is useful after an interrupted Dagster run.
+polling asset and ClickHouse indexer to a candidate manifest that already exists,
+which is useful after an interrupted Dagster run.
 
 The polling loop does not hold an HTTP connection open. Every two seconds it
 makes one zero-wait status request, logs the returned snapshot in the active
@@ -119,16 +117,17 @@ distinguish active progress, stalled work, completed work, and an idle service.
 Dagster intentionally keeps the lightweight `commoncrawl_webtech_remote_scan`
 step active while browsers execute so the partition has native `STARTED` state
 and its status is visible in one run log. If that Dagster run is interrupted,
-rerunning `commoncrawl_webtech_finalize_job` for the same partition attaches to
-the durable submission. If the scanner service restarts and forgets in-memory
+rerunning `commoncrawl_webtech_finalize_job` for the same partition reads the
+durable candidate manifest and attaches to the deterministic scan. If the
+scanner service restarts and forgets in-memory
 state, the polling asset repeats the idempotent submit; the service reconstructs
 stored domains from RustFS and scans only missing candidates.
 
-Cross-run asset edges after submission are metadata-only `Nothing` dependencies.
-The finalizer reconstructs the submission and final-manifest references from
-partitioned Dagster materialization metadata and reads RustFS directly. It never
-loads a Python object from Dagster's local filesystem IO manager, so retrying a
-finalization run cannot fail because a submission pickle is absent.
+Cross-run asset edges are metadata-only `Nothing` dependencies. The remote scan
+reconstructs the candidate-manifest reference from partitioned Dagster
+materialization metadata, and the indexer reconstructs the final-manifest
+reference the same way. Neither loads a Python object from Dagster's local
+filesystem IO manager, so retrying cannot fail because a local pickle is absent.
 
 ## Durable object contract
 
@@ -202,7 +201,7 @@ uv run dg check defs
 Before launching all 128 production partitions, the first partition
 materialization must confirm:
 
-- all four assets materialize and the final/index counts agree;
+- all three assets materialize and the final/index counts agree;
 - the `commoncrawl_webtech_remote_scan` partition stays `STARTED` and writes a
   current status line to its Dagster run log every two seconds;
 - restart and cancellation leave resumable per-domain objects;
@@ -250,6 +249,7 @@ wrote its final manifest, but the Dagster supervisor was stopped during
 execution and killed the run worker at 5,640/7,915. The remote work continued
 correctly. The current design intentionally restores a lightweight active
 Dagster polling step to expose native `STARTED` state, but it never holds an HTTP
-connection open. If that worker is interrupted, the existing submission and
-per-domain RustFS objects remain durable and `commoncrawl_webtech_finalize_job`
-reattaches to the same scan.
+connection open. If that worker is interrupted, the existing candidate manifest
+and per-domain RustFS objects remain durable, and
+`commoncrawl_webtech_finalize_job` reconstructs the candidate reference and
+reattaches to the same deterministic scan.

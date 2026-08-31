@@ -40,8 +40,8 @@ WEBTECH_PARTITION_KEYS = tuple(
     for partition_index in range(WEBTECH_PARTITION_COUNT)
 )
 WEBTECH_REMOTE_POOL = "webtech_remote_scanner"
-WEBTECH_SUBMISSION_ASSET_KEY = dg.AssetKey(
-    "commoncrawl_webtech_scan_submission"
+WEBTECH_CANDIDATE_ASSET_KEY = dg.AssetKey(
+    "commoncrawl_webtech_candidates_manifest"
 )
 WEBTECH_REMOTE_SCAN_ASSET_KEY = dg.AssetKey("commoncrawl_webtech_remote_scan")
 WEBTECH_RESULT_ASSET_KEY = dg.AssetKey("commoncrawl_webtech_results_clickhouse")
@@ -134,7 +134,7 @@ def build_webtech_assets(
     """Build the four partition-aligned assets for the remote integration."""
 
     @dg.asset(
-        name="commoncrawl_webtech_candidates_manifest",
+        name=WEBTECH_CANDIDATE_ASSET_KEY.path[-1],
         group_name="webtech",
         kinds={"python", "json", "s3", "clickhouse", "commoncrawl"},
         tags={"source": "commoncrawl_harmonic_rank", "layer": "manifest"},
@@ -193,61 +193,8 @@ def build_webtech_assets(
         )
 
     @dg.asset(
-        name=WEBTECH_SUBMISSION_ASSET_KEY.path[-1],
-        group_name="webtech",
-        kinds={"python", "api"},
-        tags={"source": "webtech_remote_api", "layer": "submission"},
-        partitions_def=WEBTECH_PARTITIONS,
-        backfill_policy=dg.BackfillPolicy.multi_run(max_partitions_per_run=1),
-        pool=WEBTECH_REMOTE_POOL,
-        description=(
-            "Submits one candidate manifest to the remote CloakBrowser service "
-            "and exits immediately. The downstream remote-scan asset owns the "
-            "active polling loop."
-        ),
-    )
-    def scan_submission(
-        context: dg.AssetExecutionContext,
-        commoncrawl_webtech_candidates_manifest: CandidateManifestReference,
-        webtech_api: WebtechApiResource,
-    ) -> dg.Output[SubmittedScanReference]:
-        manifest_reference = commoncrawl_webtech_candidates_manifest
-        snapshot = webtech_api.submit(manifest_reference)
-        context.log.info(
-            "Remote Webtech scan submitted: scan_id=%s partition=%s status=%s "
-            "completed=%s/%s",
-            snapshot.scan_id,
-            snapshot.partition_key,
-            snapshot.status,
-            snapshot.completed_count,
-            snapshot.total_count,
-        )
-        return dg.Output(
-            SubmittedScanReference(
-                scan_id=snapshot.scan_id,
-                status=snapshot.status,
-                manifest=manifest_reference,
-            ),
-            metadata={
-                "scan_id": snapshot.scan_id,
-                "crawl_id": snapshot.crawl_id,
-                "partition_key": snapshot.partition_key,
-                "detector_version": snapshot.detector_version,
-                "status": snapshot.status,
-                "completed_count": snapshot.completed_count,
-                "total_count": snapshot.total_count,
-                "candidate_manifest_uri": manifest_reference.uri,
-                "candidate_manifest_sha256": manifest_reference.sha256,
-                "candidate_manifest_dagster_run_id": (
-                    manifest_reference.dagster_run_id
-                ),
-                "candidate_count": manifest_reference.candidate_count,
-            },
-        )
-
-    @dg.asset(
         name=WEBTECH_REMOTE_SCAN_ASSET_KEY.path[-1],
-        deps=[WEBTECH_SUBMISSION_ASSET_KEY],
+        deps=[WEBTECH_CANDIDATE_ASSET_KEY],
         group_name="webtech",
         kinds={"python", "browser", "api", "json", "s3"},
         tags={"source": "webtech_remote_api", "layer": "raw"},
@@ -255,9 +202,10 @@ def build_webtech_assets(
         backfill_policy=dg.BackfillPolicy.multi_run(max_partitions_per_run=1),
         pool=WEBTECH_REMOTE_POOL,
         description=(
-            "Polls one submitted scanner job every two seconds with short HTTP "
-            "requests, logs live progress in this Dagster step, and materializes "
-            "only after its durable RustFS final manifest is verified."
+            "Submits or attaches to one scanner job, then polls it every two "
+            "seconds with short HTTP requests, logs live progress in this "
+            "Dagster step, and materializes only after its durable RustFS final "
+            "manifest is verified."
         ),
     )
     def remote_scan(
@@ -265,14 +213,31 @@ def build_webtech_assets(
         webtech_api: WebtechApiResource,
         webtech_object_store: ObjectStoreResource,
     ) -> dg.MaterializeResult:
-        submission = _latest_submission(
+        manifest = _latest_candidate_manifest(
             context.instance,
             partition_key=context.partition_key,
         )
-        if submission is None:
+        if manifest is None:
             raise RuntimeError(
-                f"No Webtech submission exists for partition {context.partition_key}"
+                "No Webtech candidate manifest exists for partition "
+                f"{context.partition_key}"
             )
+        submitted_snapshot = webtech_api.submit(manifest)
+        submission = SubmittedScanReference(
+            scan_id=submitted_snapshot.scan_id,
+            status=submitted_snapshot.status,
+            manifest=manifest,
+        )
+        _validate_monitored_snapshot(submission, submitted_snapshot)
+        context.log.info(
+            "Remote Webtech scan submitted or attached: scan_id=%s "
+            "partition=%s status=%s completed=%s/%s",
+            submitted_snapshot.scan_id,
+            submitted_snapshot.partition_key,
+            submitted_snapshot.status,
+            submitted_snapshot.completed_count,
+            submitted_snapshot.total_count,
+        )
         snapshot = monitor_webtech_scan(
             context=context,
             submission=submission,
@@ -364,14 +329,14 @@ def build_webtech_assets(
             }
         )
 
-    return candidates_manifest, scan_submission, remote_scan, results_clickhouse
+    return candidates_manifest, remote_scan, results_clickhouse
 
 
 def build_webtech_jobs(
     assets: tuple[dg.AssetsDefinition, ...],
 ) -> tuple[dg.UnresolvedAssetJobDefinition, dg.UnresolvedAssetJobDefinition]:
     """Build full-scan and attach-to-existing-scan jobs."""
-    candidates_manifest, scan_submission, remote_scan, results_clickhouse = assets
+    candidates_manifest, remote_scan, results_clickhouse = assets
     scan_job = dg.define_asset_job(
         name="commoncrawl_webtech_scan_job",
         selection=dg.AssetSelection.assets(*assets),
@@ -388,7 +353,8 @@ def build_webtech_jobs(
             results_clickhouse,
         ),
         description=(
-            "Attach to an existing submitted scan, log it until completion, "
+            "Attach to the scan for an existing candidate manifest, log it "
+            "until completion, "
             "then verify RustFS and index results in ClickHouse."
         ),
     )
@@ -478,14 +444,14 @@ def monitor_webtech_scan(
         sleep(poll_interval_seconds)
 
 
-def _latest_submission(
+def _latest_candidate_manifest(
     instance: dg.DagsterInstance,
     *,
-    partition_key: str | None = None,
-) -> SubmittedScanReference | None:
+    partition_key: str,
+) -> CandidateManifestReference | None:
     metadata_record = _latest_materialization_metadata(
         instance,
-        asset_key=WEBTECH_SUBMISSION_ASSET_KEY,
+        asset_key=WEBTECH_CANDIDATE_ASSET_KEY,
         partition_key=partition_key,
     )
     if metadata_record is None:
@@ -495,23 +461,16 @@ def _latest_submission(
         crawl_id=_metadata_text(metadata, "crawl_id"),
         partition_key=_metadata_text(metadata, "partition_key"),
         detector_version=_metadata_text(metadata, "detector_version"),
-        dagster_run_id=_metadata_text(
-            metadata,
-            "candidate_manifest_dagster_run_id",
-        ),
-        uri=_metadata_text(metadata, "candidate_manifest_uri"),
-        sha256=_metadata_text(metadata, "candidate_manifest_sha256"),
+        dagster_run_id=_metadata_text(metadata, "dagster_run_id"),
+        uri=_metadata_text(metadata, "manifest_uri"),
+        sha256=_metadata_text(metadata, "manifest_sha256"),
         candidate_count=_metadata_int(metadata, "candidate_count"),
     )
     if manifest.partition_key != materialization_partition:
         raise RuntimeError(
-            "Webtech submission metadata does not match its asset partition"
+            "Webtech candidate metadata does not match its asset partition"
         )
-    return SubmittedScanReference(
-        scan_id=_metadata_text(metadata, "scan_id"),
-        status=_metadata_text(metadata, "status", default="running"),
-        manifest=manifest,
-    )
+    return manifest
 
 
 def _latest_final_reference(
@@ -573,7 +532,7 @@ def _latest_materialization_metadata(
         return None
     event = records[0].event_log_entry.dagster_event
     if event is None:
-        raise RuntimeError("Webtech submission materialization has no Dagster event")
+        raise RuntimeError("Webtech asset materialization has no Dagster event")
     materialization = event.event_specific_data.materialization
     metadata: dict[str, Any] = {
         key: value.value for key, value in materialization.metadata.items()
@@ -594,28 +553,28 @@ def _metadata_text(
 ) -> str:
     value = metadata.get(key, default)
     if not isinstance(value, str) or value == "":
-        raise RuntimeError(f"Webtech submission metadata {key!r} is missing")
+        raise RuntimeError(f"Webtech asset metadata {key!r} is missing")
     return value
 
 
 def _metadata_int(metadata: dict[str, Any], key: str) -> int:
     value = metadata.get(key)
     if not isinstance(value, int) or isinstance(value, bool) or value < 0:
-        raise RuntimeError(f"Webtech submission metadata {key!r} is invalid")
+        raise RuntimeError(f"Webtech asset metadata {key!r} is invalid")
     return value
 
 
 def _metadata_float(metadata: dict[str, Any], key: str) -> float:
     value = metadata.get(key)
     if not isinstance(value, int | float) or isinstance(value, bool) or value < 0:
-        raise RuntimeError(f"Webtech submission metadata {key!r} is invalid")
+        raise RuntimeError(f"Webtech asset metadata {key!r} is invalid")
     return float(value)
 
 
 def _metadata_int_mapping(metadata: dict[str, Any], key: str) -> dict[str, int]:
     value = metadata.get(key)
     if not isinstance(value, dict):
-        raise RuntimeError(f"Webtech submission metadata {key!r} is invalid")
+        raise RuntimeError(f"Webtech asset metadata {key!r} is invalid")
     result: dict[str, int] = {}
     for item_key, item_value in value.items():
         if (
@@ -624,7 +583,7 @@ def _metadata_int_mapping(metadata: dict[str, Any], key: str) -> dict[str, int]:
             or isinstance(item_value, bool)
             or item_value < 0
         ):
-            raise RuntimeError(f"Webtech submission metadata {key!r} is invalid")
+            raise RuntimeError(f"Webtech asset metadata {key!r} is invalid")
         result[item_key] = item_value
     return result
 

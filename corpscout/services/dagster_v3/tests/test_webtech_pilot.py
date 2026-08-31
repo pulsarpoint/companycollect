@@ -18,8 +18,8 @@ from dagster_v3.defs.webtech.assets import (
     WEBTECH_PARTITION_KEYS,
     WEBTECH_PARTITIONS,
     WebtechCandidateConfig,
+    _latest_candidate_manifest,
     _latest_final_reference,
-    _latest_submission,
     load_webtech_candidates,
     monitor_webtech_scan,
 )
@@ -29,9 +29,11 @@ from dagster_v3.defs.webtech.client import (
 )
 from dagster_v3.defs.webtech.models import (
     WEBTECH_DETECTOR_VERSION,
+    CandidateManifestReference,
     FinalScanReference,
     RemoteScanPollResponse,
     RemoteScanSnapshot,
+    SubmittedScanReference,
     WebtechCandidate,
 )
 from dagster_v3.defs.webtech.storage import (
@@ -106,7 +108,6 @@ def test_webtech_component_builds_polling_scan_definitions() -> None:
             asset_keys.update(key.to_user_string() for key in asset.keys)
     assert asset_keys == {
         "commoncrawl_webtech_candidates_manifest",
-        "commoncrawl_webtech_scan_submission",
         "commoncrawl_webtech_remote_scan",
         "commoncrawl_webtech_results_clickhouse",
     }
@@ -132,7 +133,7 @@ def test_webtech_component_builds_polling_scan_definitions() -> None:
         for input_definition in assets_by_key[
             "commoncrawl_webtech_remote_scan"
         ].node_def.input_defs
-    ] == [("commoncrawl_webtech_scan_submission", "Nothing")]
+    ] == [("commoncrawl_webtech_candidates_manifest", "Nothing")]
     assert [
         (input_definition.name, input_definition.dagster_type.key)
         for input_definition in assets_by_key[
@@ -168,9 +169,36 @@ def test_webtech_api_transport_failure_is_retryable(monkeypatch) -> None:
         resource.poll("scan-1", after_event=12)
 
 
+def test_candidate_reference_is_reconstructed_without_local_output() -> None:
+    instance = dg.DagsterInstance.ephemeral()
+    instance.report_runless_asset_event(
+        dg.AssetMaterialization(
+            asset_key="commoncrawl_webtech_candidates_manifest",
+            partition=PARTITION_KEY,
+            metadata={
+                "crawl_id": CRAWL_ID,
+                "partition_key": PARTITION_KEY,
+                "detector_version": WEBTECH_DETECTOR_VERSION,
+                "dagster_run_id": "candidate-run",
+                "manifest_uri": "s3://webtech/webtech/candidates/test.json",
+                "manifest_sha256": "ab" * 32,
+                "candidate_count": 1_000,
+            },
+        )
+    )
+
+    reference = _latest_candidate_manifest(
+        instance,
+        partition_key=PARTITION_KEY,
+    )
+
+    assert reference is not None
+    assert reference.dagster_run_id == "candidate-run"
+    assert reference.candidate_count == 1_000
+
+
 def test_webtech_remote_asset_polls_until_complete_with_short_requests() -> None:
     instance = dg.DagsterInstance.ephemeral()
-    _report_submission(instance, scan_id="scan-one")
     running = _remote_snapshot(
         "running",
         scan_id="scan-one",
@@ -187,8 +215,7 @@ def test_webtech_remote_asset_polls_until_complete_with_short_requests() -> None
     object_store = FakeObjectStore()
     _store_final_manifest(object_store, completed)
     sleeps: list[float] = []
-    submission = _latest_submission(instance, partition_key=PARTITION_KEY)
-    assert submission is not None
+    submission = _submission("scan-one")
 
     with dg.build_asset_context(
         instance=instance,
@@ -211,14 +238,12 @@ def test_webtech_remote_asset_polls_until_complete_with_short_requests() -> None
 
 def test_webtech_remote_asset_requires_the_s3_manifest_before_completion() -> None:
     instance = dg.DagsterInstance.ephemeral()
-    _report_submission(instance, scan_id="scan-completed")
     snapshot = _remote_snapshot(
         "completed",
         completed_count=1,
         total_count=1,
     )
-    submission = _latest_submission(instance, partition_key=PARTITION_KEY)
-    assert submission is not None
+    submission = _submission("scan-completed")
     with dg.build_asset_context(
         instance=instance,
         partition_key=PARTITION_KEY,
@@ -239,9 +264,7 @@ def test_webtech_remote_asset_requires_the_s3_manifest_before_completion() -> No
 
 def test_webtech_remote_asset_fails_when_remote_scan_fails() -> None:
     instance = dg.DagsterInstance.ephemeral()
-    _report_submission(instance, scan_id="scan-failed")
-    submission = _latest_submission(instance, partition_key=PARTITION_KEY)
-    assert submission is not None
+    submission = _submission("scan-failed")
     failed = _remote_snapshot(
         "failed",
         scan_id="scan-failed",
@@ -320,22 +343,19 @@ class FakeWebtechApi:
         return RemoteScanPollResponse(scan=snapshot, events=[])
 
 
-def _report_submission(instance: dg.DagsterInstance, *, scan_id: str) -> None:
-    instance.report_runless_asset_event(
-        dg.AssetMaterialization(
-            asset_key="commoncrawl_webtech_scan_submission",
-            partition=PARTITION_KEY,
-            metadata={
-                "scan_id": scan_id,
-                "crawl_id": CRAWL_ID,
-                "partition_key": PARTITION_KEY,
-                "detector_version": WEBTECH_DETECTOR_VERSION,
-                "candidate_manifest_uri": "s3://webtech/webtech/candidates/test.json",
-                "candidate_manifest_sha256": "ab" * 32,
-                "candidate_manifest_dagster_run_id": "manifest-run",
-                "candidate_count": 1_000,
-            },
-        )
+def _submission(scan_id: str) -> SubmittedScanReference:
+    return SubmittedScanReference(
+        scan_id=scan_id,
+        status="running",
+        manifest=CandidateManifestReference(
+            crawl_id=CRAWL_ID,
+            partition_key=PARTITION_KEY,
+            detector_version=WEBTECH_DETECTOR_VERSION,
+            dagster_run_id="manifest-run",
+            uri="s3://webtech/webtech/candidates/test.json",
+            sha256="ab" * 32,
+            candidate_count=1_000,
+        ),
     )
 
 
