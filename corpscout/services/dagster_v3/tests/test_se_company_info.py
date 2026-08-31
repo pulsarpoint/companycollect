@@ -278,7 +278,7 @@ def test_artifact_reads_are_derived_from_each_artifact_modules_column_list() -> 
     envelope = {"company_id", "source_record_uid", "observed_at", "source_run_id"}
     assert ARTIFACT_READS["scb"] == tuple(c for c in SE_COMPANY_INFO_SCB_COLUMNS if c not in envelope)
     assert ARTIFACT_READS["wikidata"] == tuple(c for c in SE_COMPANY_INFO_WIKIDATA_COLUMNS if c not in envelope)
-    # ESEF's two JSON blobs are the one payload this module deliberately does not read.
+    # ESEF's five JSON blobs are the payload this module deliberately does not read.
     assert ARTIFACT_READS["esef"] == tuple(
         c for c in SE_COMPANY_INFO_ESEF_COLUMNS if c not in envelope and not c.endswith("_json")
     )
