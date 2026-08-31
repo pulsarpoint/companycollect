@@ -137,14 +137,62 @@ def read_snapshot_manifest(
     provider: str,
     run_id: str,
 ) -> dict[str, Any]:
-    key = snapshot_manifest_key(provider=provider, run_id=run_id)
-    if not object_store.exists(key, bucket=bucket):
-        raise ValueError(
-            f"{provider} snapshot manifest {key} does not exist; materialize the "
-            "source snapshot asset in the same run"
+    current_run_key = snapshot_manifest_key(provider=provider, run_id=run_id)
+    if object_store.exists(current_run_key, bucket=bucket):
+        return _read_snapshot_manifest(
+            object_store=object_store,
+            bucket=bucket,
+            provider=provider,
+            key=current_run_key,
         )
+
+    manifest_keys = [
+        key
+        for key in object_store.list_keys(
+            f"manifests/{provider}/",
+            bucket=bucket,
+        )
+        if key.endswith("/manifest.json")
+    ]
+    if not manifest_keys:
+        raise ValueError(
+            f"{provider} has no successful snapshot manifest; materialize the "
+            "source snapshot asset first"
+        )
+
+    manifests = [
+        _read_snapshot_manifest(
+            object_store=object_store,
+            bucket=bucket,
+            provider=provider,
+            key=key,
+        )
+        for key in manifest_keys
+    ]
+    return max(
+        manifests,
+        key=lambda manifest: (
+            parse_datetime(manifest["retrieved_at"]),
+            manifest["source_run_id"],
+        ),
+    )
+
+
+def _read_snapshot_manifest(
+    *,
+    object_store: ObjectStoreResource,
+    bucket: str,
+    provider: str,
+    key: str,
+) -> dict[str, Any]:
     payload = json.loads(object_store.read_bytes(key, bucket=bucket).decode("utf-8"))
-    if not isinstance(payload, dict) or not isinstance(payload.get("boards"), list):
+    if (
+        not isinstance(payload, dict)
+        or payload.get("provider") != provider
+        or not isinstance(payload.get("source_run_id"), str)
+        or not isinstance(payload.get("retrieved_at"), str)
+        or not isinstance(payload.get("boards"), list)
+    ):
         raise ValueError(f"{provider} snapshot manifest {key} is malformed")
     return payload
 

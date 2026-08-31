@@ -1,9 +1,14 @@
+import json
 from datetime import UTC, datetime
 from typing import Any
 
 import pytest
 
-from dagster_v3.defs.common.ats_source import BoardPayload, sync_board_snapshots
+from dagster_v3.defs.common.ats_source import (
+    BoardPayload,
+    read_snapshot_manifest,
+    sync_board_snapshots,
+)
 from dagster_v3.defs.sweden_greenhouse.source import BOARDS as GREENHOUSE_BOARDS
 
 
@@ -16,6 +21,14 @@ class MemoryObjectStore:
 
     def exists(self, key: str, bucket: str) -> bool:
         return key in self.objects
+
+    def list_keys(self, prefix: str, bucket: str) -> list[str]:
+        assert bucket == "test-bucket"
+        return [key for key in self.objects if key.startswith(prefix)]
+
+    def read_bytes(self, key: str, bucket: str) -> bytes:
+        assert bucket == "test-bucket"
+        return self.objects[key]
 
     def write_bytes(self, key: str, body: bytes, bucket: str) -> None:
         self.objects[key] = body
@@ -53,6 +66,63 @@ def test_provider_snapshot_failure_never_commits_a_partial_manifest() -> None:
 
     assert any(key.startswith("raw/") for key in store.objects)
     assert all(not key.startswith("manifests/") for key in store.objects)
+
+
+def test_snapshot_manifest_prefers_the_current_run() -> None:
+    store = MemoryObjectStore()
+    store.objects.update(
+        {
+            "manifests/ashby/run_id=current/manifest.json": _manifest_bytes(
+                run_id="current", retrieved_at="2026-08-30T10:00:00+00:00"
+            ),
+            "manifests/ashby/run_id=newer/manifest.json": _manifest_bytes(
+                run_id="newer", retrieved_at="2026-08-31T10:00:00+00:00"
+            ),
+        }
+    )
+
+    manifest = read_snapshot_manifest(
+        object_store=store,  # type: ignore[arg-type]
+        bucket="test-bucket",
+        provider="ashby",
+        run_id="current",
+    )
+
+    assert manifest["source_run_id"] == "current"
+
+
+def test_snapshot_manifest_falls_back_to_the_latest_successful_run() -> None:
+    store = MemoryObjectStore()
+    store.objects.update(
+        {
+            "manifests/ashby/run_id=older/manifest.json": _manifest_bytes(
+                run_id="older", retrieved_at="2026-08-30T10:00:00+00:00"
+            ),
+            "manifests/ashby/run_id=newer/manifest.json": _manifest_bytes(
+                run_id="newer", retrieved_at="2026-08-31T10:00:00+00:00"
+            ),
+        }
+    )
+
+    manifest = read_snapshot_manifest(
+        object_store=store,  # type: ignore[arg-type]
+        bucket="test-bucket",
+        provider="ashby",
+        run_id="downstream-only",
+    )
+
+    assert manifest["source_run_id"] == "newer"
+
+
+def _manifest_bytes(*, run_id: str, retrieved_at: str) -> bytes:
+    return json.dumps(
+        {
+            "provider": "ashby",
+            "source_run_id": run_id,
+            "retrieved_at": retrieved_at,
+            "boards": [],
+        }
+    ).encode()
 
 
 def test_lever_fetches_every_page(monkeypatch: pytest.MonkeyPatch) -> None:
