@@ -553,7 +553,7 @@ DETECTION_MIGRATION = (
     Path(__file__).resolve().parents[3]
     / "clickhouse"
     / "migrations"
-    / "000359_corpscout_domain_signal_technologies_partitioned.up.sql"
+    / "000360_corpscout_domain_signal_technologies_partitioned.up.sql"
 ).read_text()
 
 
