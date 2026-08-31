@@ -653,13 +653,20 @@ def _latest_final_reference(
         raise RuntimeError(
             "Webtech remote scan metadata does not match its asset partition"
         )
+    total_count_key = "total_count"
+    if total_count_key not in metadata:
+        total_count_key = "completed_count"
     return FinalScanReference(
         scan_id=_metadata_text(metadata, "scan_id"),
         crawl_id=_metadata_text(metadata, "crawl_id"),
         partition_key=recorded_partition,
-        detector_version=_metadata_text(metadata, "detector_version"),
+        detector_version=_metadata_text(
+            metadata,
+            "detector_version",
+            default=WEBTECH_DETECTOR_VERSION,
+        ),
         uri=_metadata_text(metadata, "final_manifest_uri"),
-        total_count=_metadata_int(metadata, "total_count"),
+        total_count=_metadata_int(metadata, total_count_key),
         outcome_counts=_metadata_int_mapping(metadata, "outcome_counts"),
         technology_count=_metadata_int(metadata, "technology_count"),
         elapsed_seconds=_metadata_float(metadata, "elapsed_seconds"),

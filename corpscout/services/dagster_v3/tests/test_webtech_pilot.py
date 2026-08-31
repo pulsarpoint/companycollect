@@ -19,6 +19,7 @@ from dagster_v3.defs.webtech.assets import (
     WEBTECH_PARTITIONS,
     WEBTECH_STATUS_ASSET_KEY,
     WebtechCandidateConfig,
+    _latest_final_reference,
     evaluate_webtech_monitor,
     load_webtech_candidates,
 )
@@ -275,6 +276,35 @@ def test_webtech_monitor_stops_polling_after_the_scan_is_indexed() -> None:
         "No active Webtech scan; latest submission scan-indexed is indexed"
     )
     assert api.poll_calls == []
+
+
+def test_legacy_remote_scan_metadata_can_be_indexed_without_local_output() -> None:
+    instance = dg.DagsterInstance.ephemeral()
+    instance.report_runless_asset_event(
+        dg.AssetMaterialization(
+            asset_key="commoncrawl_webtech_remote_scan",
+            partition=PARTITION_KEY,
+            metadata={
+                "scan_id": "legacy-scan",
+                "crawl_id": CRAWL_ID,
+                "partition_key": PARTITION_KEY,
+                "completed_count": 1_000,
+                "outcome_counts": {"success": 1_000},
+                "technology_count": 3_000,
+                "elapsed_seconds": 120.0,
+                "domains_per_minute": 500.0,
+                "final_manifest_uri": (
+                    "s3://webtech/webtech/scans/legacy/final-manifest.json"
+                ),
+            },
+        )
+    )
+
+    reference = _latest_final_reference(instance, partition_key=PARTITION_KEY)
+
+    assert reference is not None
+    assert reference.detector_version == WEBTECH_DETECTOR_VERSION
+    assert reference.total_count == 1_000
 
 
 class FakeWebtechApi:
