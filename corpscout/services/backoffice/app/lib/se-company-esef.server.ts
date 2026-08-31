@@ -40,7 +40,7 @@ SELECT
   operating_geographies_json,
   business_segments_json,
   material_group_relationships_json
-FROM corpscout.esef_document_company_information FINAL
+FROM corpscout.esef_document_company_information
 WHERE country_iso2 = 'SE' AND company_id = {companyId:String}
 ORDER BY fiscal_year DESC, extracted_at DESC`;
 

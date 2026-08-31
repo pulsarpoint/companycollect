@@ -35,6 +35,9 @@ describe("SQL contracts", () => {
       "countIf(facts.fact_id != '') AS fact_count",
     );
     expect(ESEF_TAB_FILINGS_SQL).not.toContain("count(facts.fact_id) AS");
+    // esef_document_company_information is plain MergeTree, not ReplacingMergeTree,
+    // so it cannot use FINAL; ClickHouse rejects with ILLEGAL_FINAL (code 181)
+    expect(ESEF_TAB_INFORMATION_SQL).not.toContain("FINAL");
   });
 });
 
