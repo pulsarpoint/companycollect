@@ -368,10 +368,10 @@ EXPECTED_MIGRATIONS = (
     "000356_corpscout_webtech_error_stages",
     "000357_corpscout_technology_fingerprints",
     "000358_corpscout_domain_signal_technologies",
-    "000359_corpscout_sweden_ats_job_sources",
     "000360_corpscout_domain_signal_technologies_partitioned",
     "000361_corpscout_technology_catalog_publish_log",
     "000362_corpscout_drop_sweden_ats_job_sources",
+    "000363_corpscout_se_jobtech_links_jobs",
 )
 
 NOOP_MIGRATIONS = {"000276_noop"}
@@ -3879,6 +3879,46 @@ def test_sweden_ats_retirement_drops_and_can_recreate_every_source_table() -> No
             assert down_sql.count(f"CREATE TABLE IF NOT EXISTS {table}") == 1
 
     assert up_sql.count("DROP TABLE IF EXISTS corpscout.se_") == 32
+
+
+def test_jobtech_links_migration_owns_source_history_and_company_matches() -> None:
+    up_sql = _migration_sql("000363_corpscout_se_jobtech_links_jobs.up.sql")
+    down_sql = _migration_sql("000363_corpscout_se_jobtech_links_jobs.down.sql")
+    tables = (
+        "se_jobtech_links_snapshots",
+        "se_jobtech_links_job_ad_versions",
+        "se_jobtech_links_job_ad_observations",
+        "se_jobtech_links_job_ad_location_versions",
+        "se_jobtech_links_job_ad_enrichment_versions",
+        "se_jobtech_links_job_ad_active_intervals",
+        "se_jobtech_links_job_ad_current",
+        "se_jobtech_links_job_ad_company_matches",
+    )
+
+    for table in tables:
+        assert f"CREATE TABLE IF NOT EXISTS corpscout.{table}" in up_sql
+        assert f"DROP TABLE IF EXISTS corpscout.{table}" in down_sql
+
+    for identity_column in (
+        "source_job_ad_uid FixedString(64)",
+        "provider LowCardinality(String)",
+        "source_identifier String",
+    ):
+        assert identity_column in up_sql
+
+    assert "snapshot_uid FixedString(64)" in up_sql
+    assert "version_uid FixedString(64)" in up_sql
+    assert "observation_uid FixedString(64)" in up_sql
+    assert "PARTITION BY toYYYYMM(snapshot_date)" in up_sql
+    assert "active_to_basis LowCardinality(String)" in up_sql
+    assert "match_status LowCardinality(String)" in up_sql
+    assert "match_method LowCardinality(String)" in up_sql
+    assert "confidence Float32" in up_sql
+    assert "version_uid FixedString(64)" in up_sql
+    assert "sourceLinks" not in up_sql
+    assert "source_links" not in up_sql
+    assert "company_job_current" not in up_sql
+    assert "company_job_history" not in up_sql
 
 
 def _migration_sql(file_name: str) -> str:
