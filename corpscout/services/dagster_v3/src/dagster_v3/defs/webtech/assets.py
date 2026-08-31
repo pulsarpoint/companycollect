@@ -1,4 +1,6 @@
 import re
+import time
+from collections.abc import Callable
 from datetime import UTC, datetime
 from typing import Any
 
@@ -43,25 +45,8 @@ WEBTECH_SUBMISSION_ASSET_KEY = dg.AssetKey(
 )
 WEBTECH_REMOTE_SCAN_ASSET_KEY = dg.AssetKey("commoncrawl_webtech_remote_scan")
 WEBTECH_RESULT_ASSET_KEY = dg.AssetKey("commoncrawl_webtech_results_clickhouse")
-WEBTECH_STATUS_ASSET_KEY = dg.AssetKey("commoncrawl_webtech_scan_status")
-WEBTECH_MONITOR_INTERVAL_SECONDS = 30
+WEBTECH_MONITOR_INTERVAL_SECONDS = 2
 WEBTECH_PARTITIONS = dg.StaticPartitionsDefinition(WEBTECH_PARTITION_KEYS)
-
-
-def webtech_status_asset_spec() -> dg.AssetSpec:
-    """Describe the singleton observation-only remote scan status asset."""
-    return dg.AssetSpec(
-        key=WEBTECH_STATUS_ASSET_KEY,
-        deps=[WEBTECH_SUBMISSION_ASSET_KEY],
-        group_name="webtech",
-        kinds={"api", "s3"},
-        tags={"source": "webtech_remote_api", "layer": "status"},
-        description=(
-            "Singleton live view of the one active remote Webtech partition. "
-            "The monitor sensor records observations every 30 seconds; this "
-            "asset is never materialized as completed work."
-        ),
-    )
 
 
 class WebtechCandidateConfig(dg.Config):
@@ -217,8 +202,8 @@ def build_webtech_assets(
         pool=WEBTECH_REMOTE_POOL,
         description=(
             "Submits one candidate manifest to the remote CloakBrowser service "
-            "and exits immediately. A sensor observes progress without holding "
-            "a Dagster run open."
+            "and exits immediately. The downstream remote-scan asset owns the "
+            "active polling loop."
         ),
     )
     def scan_submission(
@@ -268,9 +253,11 @@ def build_webtech_assets(
         tags={"source": "webtech_remote_api", "layer": "raw"},
         partitions_def=WEBTECH_PARTITIONS,
         backfill_policy=dg.BackfillPolicy.multi_run(max_partitions_per_run=1),
+        pool=WEBTECH_REMOTE_POOL,
         description=(
-            "Finalizes a scanner job only after the monitor sensor reports that "
-            "its durable RustFS final manifest exists."
+            "Polls one submitted scanner job every two seconds with short HTTP "
+            "requests, logs live progress in this Dagster step, and materializes "
+            "only after its durable RustFS final manifest is verified."
         ),
     )
     def remote_scan(
@@ -286,26 +273,13 @@ def build_webtech_assets(
             raise RuntimeError(
                 f"No Webtech submission exists for partition {context.partition_key}"
             )
-        try:
-            snapshot = webtech_api.poll(
-                submission.scan_id,
-                after_event=0,
-                wait_seconds=0,
-            ).scan
-        except UnknownRemoteScanError:
-            snapshot = webtech_api.submit(submission.manifest)
-        if snapshot.status != "completed":
-            raise RuntimeError(
-                f"Remote Webtech scan {snapshot.scan_id} is {snapshot.status}; "
-                "the finalize job must only run after sensor completion"
-            )
-        reference = _final_reference(snapshot)
-        final_manifest = read_final_manifest(
-            object_store=webtech_object_store,
+        snapshot = monitor_webtech_scan(
+            context=context,
+            submission=submission,
+            webtech_api=webtech_api,
+            webtech_object_store=webtech_object_store,
             destination=destination,
-            reference=reference,
         )
-        _validate_s3_manifest(submission, reference, final_manifest)
         context.log.info(
             "Remote Webtech scan finalized: scan_id=%s partition=%s "
             "completed=%s/%s outcomes=%s technologies=%s "
@@ -396,207 +370,112 @@ def build_webtech_assets(
 def build_webtech_jobs(
     assets: tuple[dg.AssetsDefinition, ...],
 ) -> tuple[dg.UnresolvedAssetJobDefinition, dg.UnresolvedAssetJobDefinition]:
-    """Build short submission and finalization jobs for the remote scanner."""
+    """Build full-scan and attach-to-existing-scan jobs."""
     candidates_manifest, scan_submission, remote_scan, results_clickhouse = assets
-    submit_job = dg.define_asset_job(
+    scan_job = dg.define_asset_job(
         name="commoncrawl_webtech_scan_job",
-        selection=dg.AssetSelection.assets(candidates_manifest, scan_submission),
+        selection=dg.AssetSelection.assets(*assets),
         description=(
             "Build one top-million hash-partition manifest, submit it to the "
-            "remote scanner, and exit without waiting for browser execution."
+            "remote scanner, log its status with short polling requests, verify "
+            "RustFS, and index the results in ClickHouse."
         ),
     )
     finalize_job = dg.define_asset_job(
         name="commoncrawl_webtech_finalize_job",
-        selection=dg.AssetSelection.assets(remote_scan, results_clickhouse),
+        selection=dg.AssetSelection.assets(
+            remote_scan,
+            results_clickhouse,
+        ),
         description=(
-            "Finalize a completed remote scan and index its RustFS results in "
-            "ClickHouse. Launched by the Webtech monitor sensor."
+            "Attach to an existing submitted scan, log it until completion, "
+            "then verify RustFS and index results in ClickHouse."
         ),
     )
-    return submit_job, finalize_job
+    return scan_job, finalize_job
 
 
-def build_webtech_monitor_sensor(
-    finalize_job: dg.UnresolvedAssetJobDefinition,
-    destination: WebtechS3Destination,
-) -> dg.SensorDefinition:
-    """Poll the latest submitted scan without keeping a Dagster run active."""
-
-    @dg.sensor(
-        name="commoncrawl_webtech_scan_monitor",
-        job=finalize_job,
-        minimum_interval_seconds=WEBTECH_MONITOR_INTERVAL_SECONDS,
-        default_status=dg.DefaultSensorStatus.RUNNING,
-        required_resource_keys={"webtech_api", "webtech_object_store"},
-        description=(
-            "Polls the remote scanner every 30 seconds, records an asset "
-            "observation, and launches one short finalization run on completion."
-        ),
-    )
-    def scan_monitor(context: dg.SensorEvaluationContext) -> dg.SensorResult:
-        return evaluate_webtech_monitor(
-            context,
-            context.resources.webtech_api,
-            context.resources.webtech_object_store,
-            destination,
-        )
-
-    return scan_monitor
-
-
-def evaluate_webtech_monitor(
-    context: dg.SensorEvaluationContext,
+def monitor_webtech_scan(
+    context: dg.AssetExecutionContext,
+    submission: SubmittedScanReference,
     webtech_api: WebtechApiResource,
     webtech_object_store: ObjectStoreResource,
     destination: WebtechS3Destination,
-) -> dg.SensorResult:
-    """Evaluate one bounded remote scanner status poll."""
-    submission = _latest_submission(context.instance)
-    if submission is None:
-        return dg.SensorResult(
-            skip_reason="No Webtech scan submission has been materialized yet"
-        )
-    indexed_scan_id = _latest_indexed_scan_id(
-        context.instance,
-        partition_key=submission.manifest.partition_key,
-    )
-    if indexed_scan_id == submission.scan_id:
-        idle_cursor = f"{submission.scan_id}:indexed"
-        asset_events = []
-        if context.cursor != idle_cursor:
-            asset_events.append(
-                dg.AssetObservation(
-                    asset_key=WEBTECH_STATUS_ASSET_KEY,
-                    metadata={
-                        "status": "idle",
-                        "last_partition_key": submission.manifest.partition_key,
-                        "last_scan_id": submission.scan_id,
-                    },
-                )
+    poll_interval_seconds: int = WEBTECH_MONITOR_INTERVAL_SECONDS,
+    sleep: Callable[[float], None] = time.sleep,
+) -> RemoteScanSnapshot:
+    """Poll with short requests until one submitted remote scan is terminal."""
+    latest_event_sequence = 0
+    while True:
+        try:
+            snapshot = webtech_api.poll(
+                submission.scan_id,
+                after_event=latest_event_sequence,
+                wait_seconds=0,
+            ).scan
+        except UnknownRemoteScanError:
+            snapshot = webtech_api.submit(submission.manifest)
+            context.log.warning(
+                "Webtech scanner lost in-memory state; resubmitted scan_id=%s "
+                "partition=%s status=%s completed=%s/%s",
+                snapshot.scan_id,
+                snapshot.partition_key,
+                snapshot.status,
+                snapshot.completed_count,
+                snapshot.total_count,
             )
-        return dg.SensorResult(
-            skip_reason=(
-                "No active Webtech scan; latest submission "
-                f"{submission.scan_id} is indexed"
-            ),
-            asset_events=asset_events,
-            cursor=idle_cursor,
-        )
-    try:
-        snapshot = webtech_api.poll(
-            submission.scan_id,
-            after_event=0,
-            wait_seconds=0,
-        ).scan
-    except UnknownRemoteScanError:
-        snapshot = webtech_api.submit(submission.manifest)
-        context.log.warning(
-            "Webtech scanner lost in-memory state; resubmitted scan_id=%s "
-            "partition=%s status=%s completed=%s/%s",
+        except WebtechApiUnavailableError as error:
+            context.log.warning(
+                "Webtech scanner status unavailable; retrying in %ss: "
+                "scan_id=%s partition=%s error=%s",
+                poll_interval_seconds,
+                submission.scan_id,
+                submission.manifest.partition_key,
+                error,
+            )
+            sleep(poll_interval_seconds)
+            continue
+
+        _validate_monitored_snapshot(submission, snapshot)
+        context.log.info(
+            "Webtech scan status: scan_id=%s partition=%s status=%s "
+            "completed=%s/%s outcomes=%s technologies=%s "
+            "progress_age_seconds=%.1f elapsed_seconds=%.1f "
+            "rate_per_minute=%.2f",
             snapshot.scan_id,
             snapshot.partition_key,
             snapshot.status,
             snapshot.completed_count,
             snapshot.total_count,
+            snapshot.outcome_counts,
+            snapshot.technology_count,
+            snapshot.progress_age_seconds,
+            snapshot.elapsed_seconds,
+            snapshot.domains_per_minute,
         )
-    except WebtechApiUnavailableError as error:
-        context.log.warning(
-            "Webtech scanner status unavailable: scan_id=%s partition=%s "
-            "error=%s",
-            submission.scan_id,
-            submission.manifest.partition_key,
-            error,
-        )
-        return dg.SensorResult(
-            skip_reason=f"Webtech scanner unavailable: {error}",
-            cursor=context.cursor,
-        )
-
-    _validate_monitored_snapshot(submission, snapshot)
-    context.log.info(
-        "Webtech scan status: scan_id=%s partition=%s status=%s "
-        "completed=%s/%s outcomes=%s technologies=%s "
-        "progress_age_seconds=%.1f elapsed_seconds=%.1f "
-        "rate_per_minute=%.2f",
-        snapshot.scan_id,
-        snapshot.partition_key,
-        snapshot.status,
-        snapshot.completed_count,
-        snapshot.total_count,
-        snapshot.outcome_counts,
-        snapshot.technology_count,
-        snapshot.progress_age_seconds,
-        snapshot.elapsed_seconds,
-        snapshot.domains_per_minute,
-    )
-    s3_manifest_verified = False
-    if snapshot.status == "completed":
-        reference = _final_reference(snapshot)
-        final_manifest = read_final_manifest(
-            object_store=webtech_object_store,
-            destination=destination,
-            reference=reference,
-        )
-        _validate_s3_manifest(submission, reference, final_manifest)
-        s3_manifest_verified = True
-
-    observation = dg.AssetObservation(
-        asset_key=WEBTECH_STATUS_ASSET_KEY,
-        metadata={
-            "scan_id": snapshot.scan_id,
-            "partition_key": snapshot.partition_key,
-            "status": snapshot.status,
-            "completed_count": snapshot.completed_count,
-            "total_count": snapshot.total_count,
-            "outcome_counts": snapshot.outcome_counts,
-            "technology_count": snapshot.technology_count,
-            "progress_age_seconds": round(snapshot.progress_age_seconds, 3),
-            "elapsed_seconds": round(snapshot.elapsed_seconds, 3),
-            "domains_per_minute": round(snapshot.domains_per_minute, 2),
-            "latest_event_sequence": snapshot.latest_event_sequence,
-            "final_manifest_uri": snapshot.final_manifest_uri,
-            "s3_manifest_verified": s3_manifest_verified,
-        },
-    )
-    run_requests = []
-    if snapshot.status == "completed":
-        run_requests.append(
-            dg.RunRequest(
-                run_key=f"webtech-finalize-{snapshot.scan_id}",
-                partition_key=snapshot.partition_key,
-                tags={
-                    "webtech/scan_id": snapshot.scan_id,
-                    "webtech/partition_key": snapshot.partition_key,
-                },
+        latest_event_sequence = snapshot.latest_event_sequence
+        if snapshot.status == "completed":
+            reference = _final_reference(snapshot)
+            final_manifest = read_final_manifest(
+                object_store=webtech_object_store,
+                destination=destination,
+                reference=reference,
             )
-        )
-    elif snapshot.status in {"failed", "cancelled"}:
-        context.log.error(
-            "Webtech scan requires resubmission: scan_id=%s partition=%s "
-            "status=%s error=%s",
-            snapshot.scan_id,
-            snapshot.partition_key,
-            snapshot.status,
-            snapshot.error_message,
-        )
-    skip_reason = None
-    if not run_requests:
-        skip_reason = (
-            f"{snapshot.partition_key} {snapshot.status}: "
-            f"{snapshot.completed_count}/{snapshot.total_count} domains, "
-            f"{snapshot.domains_per_minute:.2f}/min, "
-            f"progress age {snapshot.progress_age_seconds:.1f}s"
-        )
-    return dg.SensorResult(
-        run_requests=run_requests,
-        skip_reason=skip_reason,
-        asset_events=[observation],
-        cursor=(
-            f"{snapshot.scan_id}:{snapshot.latest_event_sequence}:"
-            f"{snapshot.status}"
-        ),
-    )
+            _validate_s3_manifest(submission, reference, final_manifest)
+            context.log.info(
+                "Webtech scan complete and RustFS manifest verified: "
+                "scan_id=%s partition=%s uri=%s",
+                snapshot.scan_id,
+                snapshot.partition_key,
+                snapshot.final_manifest_uri,
+            )
+            return snapshot
+        if snapshot.status in {"failed", "cancelled"}:
+            raise RuntimeError(
+                f"Remote Webtech scan {snapshot.scan_id} ended with "
+                f"status={snapshot.status}: {snapshot.error_message}"
+            )
+        sleep(poll_interval_seconds)
 
 
 def _latest_submission(
@@ -672,22 +551,6 @@ def _latest_final_reference(
         elapsed_seconds=_metadata_float(metadata, "elapsed_seconds"),
         domains_per_minute=_metadata_float(metadata, "domains_per_minute"),
     )
-
-
-def _latest_indexed_scan_id(
-    instance: dg.DagsterInstance,
-    *,
-    partition_key: str,
-) -> str | None:
-    metadata_record = _latest_materialization_metadata(
-        instance,
-        asset_key=WEBTECH_RESULT_ASSET_KEY,
-        partition_key=partition_key,
-    )
-    if metadata_record is None:
-        return None
-    _, metadata = metadata_record
-    return _metadata_text(metadata, "scan_id")
 
 
 def _latest_materialization_metadata(

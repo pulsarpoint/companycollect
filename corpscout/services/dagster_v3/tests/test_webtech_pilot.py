@@ -17,11 +17,11 @@ from dagster_v3.defs.webtech.assets import (
     WEBTECH_PARTITION_COUNT,
     WEBTECH_PARTITION_KEYS,
     WEBTECH_PARTITIONS,
-    WEBTECH_STATUS_ASSET_KEY,
     WebtechCandidateConfig,
     _latest_final_reference,
-    evaluate_webtech_monitor,
+    _latest_submission,
     load_webtech_candidates,
+    monitor_webtech_scan,
 )
 from dagster_v3.defs.webtech.client import (
     WebtechApiResource,
@@ -91,7 +91,7 @@ class FakeObjectStore:
         return self.objects[(str(bucket), key)]
 
 
-def test_webtech_component_builds_short_lived_scan_monitoring_definitions() -> None:
+def test_webtech_component_builds_polling_scan_definitions() -> None:
     component = WebtechScannerComponent(
         api_url="http://scanner.test:8088",
         s3_path="s3://webtech/webtech",
@@ -109,11 +109,8 @@ def test_webtech_component_builds_short_lived_scan_monitoring_definitions() -> N
         "commoncrawl_webtech_scan_submission",
         "commoncrawl_webtech_remote_scan",
         "commoncrawl_webtech_results_clickhouse",
-        "commoncrawl_webtech_scan_status",
     }
-    assert {sensor.name for sensor in definitions.sensors or []} == {
-        "commoncrawl_webtech_scan_monitor"
-    }
+    assert not definitions.sensors
     assert {job.name for job in definitions.jobs or []} == {
         "commoncrawl_webtech_finalize_job",
         "commoncrawl_webtech_scan_job",
@@ -171,35 +168,48 @@ def test_webtech_api_transport_failure_is_retryable(monkeypatch) -> None:
         resource.poll("scan-1", after_event=12)
 
 
-def test_webtech_monitor_observes_running_scan_without_launching_run() -> None:
+def test_webtech_remote_asset_polls_until_complete_with_short_requests() -> None:
     instance = dg.DagsterInstance.ephemeral()
-    _report_submission(instance, scan_id="scan-running")
-    api = FakeWebtechApi(_remote_snapshot("running", completed_count=120))
+    _report_submission(instance, scan_id="scan-one")
+    running = _remote_snapshot(
+        "running",
+        scan_id="scan-one",
+        completed_count=0,
+        total_count=1,
+    )
+    completed = _remote_snapshot(
+        "completed",
+        scan_id="scan-one",
+        completed_count=1,
+        total_count=1,
+    )
+    api = FakeWebtechApi([running, completed])
     object_store = FakeObjectStore()
+    _store_final_manifest(object_store, completed)
+    sleeps: list[float] = []
+    submission = _latest_submission(instance, partition_key=PARTITION_KEY)
+    assert submission is not None
 
-    with dg.build_sensor_context(instance=instance) as context:
-        result = evaluate_webtech_monitor(
-            context,
-            api,
-            object_store,
-            WebtechS3Destination(bucket="webtech", prefix="webtech"),
+    with dg.build_asset_context(
+        instance=instance,
+        partition_key=PARTITION_KEY,
+    ) as context:
+        snapshot = monitor_webtech_scan(
+            context=context,
+            submission=submission,
+            webtech_api=api,
+            webtech_object_store=object_store,
+            destination=WebtechS3Destination(bucket="webtech", prefix="webtech"),
+            poll_interval_seconds=2,
+            sleep=sleeps.append,
         )
 
-    assert result.run_requests == []
-    assert len(result.asset_events) == 1
-    observation = result.asset_events[0]
-    assert observation.asset_key == WEBTECH_STATUS_ASSET_KEY
-    assert observation.partition is None
-    assert observation.metadata["partition_key"].value == PARTITION_KEY
-    assert observation.metadata["status"].value == "running"
-    assert observation.metadata["completed_count"].value == 120
-    assert result.skip_reason.skip_message == (
-        "hash_000 running: 120/1000 domains, 50.00/min, progress age 5.0s"
-    )
-    assert api.poll_calls == [("scan-running", 0, 0)]
+    assert snapshot == completed
+    assert api.poll_calls == [("scan-one", 0, 0), ("scan-one", 0, 0)]
+    assert sleeps == [2]
 
 
-def test_webtech_monitor_launches_one_short_finalize_run_on_completion() -> None:
+def test_webtech_remote_asset_requires_the_s3_manifest_before_completion() -> None:
     instance = dg.DagsterInstance.ephemeral()
     _report_submission(instance, scan_id="scan-completed")
     snapshot = _remote_snapshot(
@@ -207,75 +217,53 @@ def test_webtech_monitor_launches_one_short_finalize_run_on_completion() -> None
         completed_count=1,
         total_count=1,
     )
-    api = FakeWebtechApi(snapshot)
-    object_store = FakeObjectStore()
-    _store_final_manifest(object_store, snapshot)
-
-    with dg.build_sensor_context(instance=instance) as context:
-        result = evaluate_webtech_monitor(
-            context,
-            api,
-            object_store,
-            WebtechS3Destination(bucket="webtech", prefix="webtech"),
-        )
-
-    assert len(result.run_requests) == 1
-    request = result.run_requests[0]
-    assert request.partition_key == PARTITION_KEY
-    assert request.run_key == "webtech-finalize-scan-completed"
-    assert request.tags["webtech/scan_id"] == "scan-completed"
-    assert len(result.asset_events) == 1
-    assert result.asset_events[0].asset_key == WEBTECH_STATUS_ASSET_KEY
-    assert result.asset_events[0].metadata["s3_manifest_verified"].value is True
-
-
-def test_webtech_monitor_does_not_finalize_without_the_s3_manifest() -> None:
-    instance = dg.DagsterInstance.ephemeral()
-    _report_submission(instance, scan_id="scan-completed")
-    snapshot = _remote_snapshot(
-        "completed",
-        completed_count=1,
-        total_count=1,
-    )
-
-    with dg.build_sensor_context(instance=instance) as context:
+    submission = _latest_submission(instance, partition_key=PARTITION_KEY)
+    assert submission is not None
+    with dg.build_asset_context(
+        instance=instance,
+        partition_key=PARTITION_KEY,
+    ) as context:
         with pytest.raises(KeyError):
-            evaluate_webtech_monitor(
-                context,
-                FakeWebtechApi(snapshot),
-                FakeObjectStore(),
-                WebtechS3Destination(bucket="webtech", prefix="webtech"),
+            monitor_webtech_scan(
+                context=context,
+                submission=submission,
+                webtech_api=FakeWebtechApi(snapshot),
+                webtech_object_store=FakeObjectStore(),
+                destination=WebtechS3Destination(
+                    bucket="webtech",
+                    prefix="webtech",
+                ),
+                sleep=lambda _: None,
             )
 
 
-def test_webtech_monitor_stops_polling_after_the_scan_is_indexed() -> None:
+def test_webtech_remote_asset_fails_when_remote_scan_fails() -> None:
     instance = dg.DagsterInstance.ephemeral()
-    _report_submission(instance, scan_id="scan-indexed")
-    instance.report_runless_asset_event(
-        dg.AssetMaterialization(
-            asset_key="commoncrawl_webtech_results_clickhouse",
-            partition=PARTITION_KEY,
-            metadata={"scan_id": "scan-indexed"},
-        )
+    _report_submission(instance, scan_id="scan-failed")
+    submission = _latest_submission(instance, partition_key=PARTITION_KEY)
+    assert submission is not None
+    failed = _remote_snapshot(
+        "failed",
+        scan_id="scan-failed",
+        completed_count=10,
     )
-    api = FakeWebtechApi(_remote_snapshot("running", completed_count=120))
 
-    with dg.build_sensor_context(instance=instance) as context:
-        result = evaluate_webtech_monitor(
-            context,
-            api,
-            FakeObjectStore(),
-            WebtechS3Destination(bucket="webtech", prefix="webtech"),
-        )
-
-    assert result.run_requests == []
-    assert len(result.asset_events) == 1
-    assert result.asset_events[0].asset_key == WEBTECH_STATUS_ASSET_KEY
-    assert result.asset_events[0].metadata["status"].value == "idle"
-    assert result.skip_reason.skip_message == (
-        "No active Webtech scan; latest submission scan-indexed is indexed"
-    )
-    assert api.poll_calls == []
+    with dg.build_asset_context(
+        instance=instance,
+        partition_key=PARTITION_KEY,
+    ) as context:
+        with pytest.raises(RuntimeError, match="status=failed"):
+            monitor_webtech_scan(
+                context=context,
+                submission=submission,
+                webtech_api=FakeWebtechApi(failed),
+                webtech_object_store=FakeObjectStore(),
+                destination=WebtechS3Destination(
+                    bucket="webtech",
+                    prefix="webtech",
+                ),
+                sleep=lambda _: None,
+            )
 
 
 def test_legacy_remote_scan_metadata_can_be_indexed_without_local_output() -> None:
@@ -308,8 +296,14 @@ def test_legacy_remote_scan_metadata_can_be_indexed_without_local_output() -> No
 
 
 class FakeWebtechApi:
-    def __init__(self, snapshot: RemoteScanSnapshot) -> None:
-        self.snapshot = snapshot
+    def __init__(
+        self,
+        snapshots: RemoteScanSnapshot | list[RemoteScanSnapshot],
+    ) -> None:
+        if isinstance(snapshots, list):
+            self.snapshots = snapshots
+        else:
+            self.snapshots = [snapshots]
         self.poll_calls: list[tuple[str, int, int]] = []
 
     def poll(
@@ -320,7 +314,10 @@ class FakeWebtechApi:
         wait_seconds: int,
     ) -> RemoteScanPollResponse:
         self.poll_calls.append((scan_id, after_event, wait_seconds))
-        return RemoteScanPollResponse(scan=self.snapshot, events=[])
+        snapshot = self.snapshots[0]
+        if len(self.snapshots) > 1:
+            self.snapshots.pop(0)
+        return RemoteScanPollResponse(scan=snapshot, events=[])
 
 
 def _report_submission(instance: dg.DagsterInstance, *, scan_id: str) -> None:
@@ -345,11 +342,12 @@ def _report_submission(instance: dg.DagsterInstance, *, scan_id: str) -> None:
 def _remote_snapshot(
     status: str,
     *,
+    scan_id: str | None = None,
     completed_count: int,
     total_count: int = 1_000,
 ) -> RemoteScanSnapshot:
     return RemoteScanSnapshot(
-        scan_id=f"scan-{status}",
+        scan_id=scan_id or f"scan-{status}",
         status=status,
         crawl_id=CRAWL_ID,
         partition_key=PARTITION_KEY,
