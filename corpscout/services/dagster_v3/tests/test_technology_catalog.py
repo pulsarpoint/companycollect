@@ -14,6 +14,7 @@ from dagster_v3.defs.technology_catalog import detection, tables
 from dagster_v3.defs.technology_catalog.assets import (
     build_fingerprint_rows,
     build_rows,
+    custom_definitions_hash,
     custom_definitions_version,
     custom_source_dir,
 )
@@ -591,6 +592,45 @@ def test_missing_fingerprint_overrides_file_is_empty(tmp_path: Path):
     overrides, version = load_fingerprint_overrides(tmp_path)
     assert overrides == {}
     assert version == ""
+
+
+PUBLISH_LOG_MIGRATION = (
+    Path(__file__).resolve().parents[3]
+    / "clickhouse"
+    / "migrations"
+    / "000361_corpscout_technology_catalog_publish_log.up.sql"
+).read_text()
+
+
+def test_publish_log_migration_matches_column_contract():
+    assert (
+        "CREATE TABLE IF NOT EXISTS corpscout."
+        f"{tables.TECHNOLOGY_CATALOG_PUBLISH_LOG_TABLE}" in PUBLISH_LOG_MIGRATION
+    )
+    # Append-only: a MergeTree, never Replacing, so history is kept.
+    assert "ENGINE = MergeTree" in PUBLISH_LOG_MIGRATION
+    assert "ReplacingMergeTree" not in PUBLISH_LOG_MIGRATION
+    for column in tables.TECHNOLOGY_CATALOG_PUBLISH_LOG_COLUMNS:
+        assert f"    {column} " in PUBLISH_LOG_MIGRATION, f"missing {column}"
+    declared = [
+        line
+        for line in PUBLISH_LOG_MIGRATION.splitlines()
+        if line.startswith("    ") and not line.lstrip().startswith("--")
+    ]
+    assert len(declared) == len(tables.TECHNOLOGY_CATALOG_PUBLISH_LOG_COLUMNS)
+
+
+def test_publish_log_table_is_asserted_before_publish():
+    # The asset asserts every table it writes exists; the ledger must be one.
+    assert (
+        tables.TECHNOLOGY_CATALOG_PUBLISH_LOG_TABLE in tables.TECHNOLOGY_CATALOG_TABLES
+    )
+
+
+def test_definitions_hash_prefix_is_the_code_version():
+    full = custom_definitions_hash()
+    assert len(full) == 64
+    assert custom_definitions_version() == full[:12]
 
 
 def test_fingerprints_migration_creates_the_table():

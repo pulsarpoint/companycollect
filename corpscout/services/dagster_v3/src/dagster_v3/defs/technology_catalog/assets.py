@@ -85,8 +85,13 @@ def custom_source_dir() -> Path:
 _DEFINITION_FILES = ("technologies.json", "categories.json", "fingerprints.json")
 
 
-def custom_definitions_version() -> str:
-    """Stable short hash of the custom definition files, for code_version."""
+def custom_definitions_hash() -> str:
+    """Full sha256 of the custom definition files' content.
+
+    Recorded verbatim in the publish log; custom_definitions_version() takes
+    its 12-char prefix for the asset code_version, so a log row and a Dagster
+    code_version are directly relatable.
+    """
     hasher = hashlib.sha256()
     custom_dir = custom_source_dir()
     for name in _DEFINITION_FILES:
@@ -95,7 +100,12 @@ def custom_definitions_version() -> str:
         # changes the version rather than silently colliding.
         hasher.update(name.encode())
         hasher.update(path.read_bytes() if path.is_file() else b"\0")
-    return hasher.hexdigest()[:12]
+    return hasher.hexdigest()
+
+
+def custom_definitions_version() -> str:
+    """Stable short hash of the custom definition files, for code_version."""
+    return custom_definitions_hash()[:12]
 
 
 def build_rows(
@@ -256,6 +266,28 @@ def technology_catalog_clickhouse(
             tables.CUSTOM_SOURCE,
         )
     }
+
+    # Append one provenance row AFTER both tables are published, so the log
+    # only ever records completed publishes. definitions_hash is the full
+    # content hash of the custom files (its 12-char prefix is the asset
+    # code_version); a run whose hash differs from the previous row is a real
+    # change to our curated definitions.
+    definitions_hash = custom_definitions_hash()
+    _append_publish_log(
+        clickhouse,
+        (
+            updated_at,
+            context.run_id,
+            definitions_hash,
+            overlay_sha,
+            tables.EXTENSION_VERSION,
+            row_count,
+            fingerprint_count,
+            per_source[tables.CUSTOM_SOURCE],
+            len(override_fingerprints),
+        ),
+    )
+
     return dg.MaterializeResult(
         metadata={
             "rows": row_count,
@@ -267,8 +299,19 @@ def technology_catalog_clickhouse(
             "overlay_sha": overlay_sha,
             "custom_version": custom.source_version,
             "fingerprint_rows": fingerprint_count,
+            "definitions_hash": definitions_hash,
         }
     )
+
+
+def _append_publish_log(clickhouse: ClickhouseResource, row: tuple) -> None:
+    """Insert one row into the append-only publish ledger (migration 000361)."""
+    qualified = (
+        f"`{RESOLVED_DATABASE}`.`{tables.TECHNOLOGY_CATALOG_PUBLISH_LOG_TABLE}`"
+    )
+    column_list = ", ".join(tables.TECHNOLOGY_CATALOG_PUBLISH_LOG_COLUMNS)
+    with clickhouse.get_connection() as client:
+        client.execute(f"INSERT INTO {qualified} ({column_list}) VALUES", [row])
 
 
 def build_fingerprint_rows(

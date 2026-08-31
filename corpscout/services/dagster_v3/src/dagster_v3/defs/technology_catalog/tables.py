@@ -9,9 +9,25 @@ TECHNOLOGY_CATALOG_TABLE = "technology_catalog"
 
 TECHNOLOGY_FINGERPRINTS_TABLE = "technology_fingerprints"
 
+TECHNOLOGY_CATALOG_PUBLISH_LOG_TABLE = "technology_catalog_publish_log"
+
 TECHNOLOGY_CATALOG_TABLES = (
     TECHNOLOGY_CATALOG_TABLE,
     TECHNOLOGY_FINGERPRINTS_TABLE,
+    TECHNOLOGY_CATALOG_PUBLISH_LOG_TABLE,
+)
+
+# Column order is the contract with migration 000361 (append-only ledger).
+TECHNOLOGY_CATALOG_PUBLISH_LOG_COLUMNS = (
+    "published_at",
+    "source_run_id",
+    "definitions_hash",
+    "overlay_sha",
+    "extension_version",
+    "catalog_rows",
+    "fingerprint_rows",
+    "custom_technologies",
+    "override_fingerprints",
 )
 
 # Column order is the contract with migration 000350.

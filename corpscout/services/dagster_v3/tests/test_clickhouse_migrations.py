@@ -370,6 +370,7 @@ EXPECTED_MIGRATIONS = (
     "000358_corpscout_domain_signal_technologies",
     "000359_corpscout_sweden_ats_job_sources",
     "000360_corpscout_domain_signal_technologies_partitioned",
+    "000361_corpscout_technology_catalog_publish_log",
 )
 
 NOOP_MIGRATIONS = {"000276_noop"}
