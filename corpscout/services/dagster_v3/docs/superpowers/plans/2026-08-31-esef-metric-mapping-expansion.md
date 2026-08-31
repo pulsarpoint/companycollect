@@ -13,6 +13,7 @@
 - `ifrs-full:EmployeeBenefitsExpense` appears in **2,792 filings**; the `personnel_expenses` metric has no ESEF mapping at all.
 - `employees` maps for only 18/6,620 (`ifrs-full:AverageNumberOfEmployees` is essentially never tagged; the audit found no viable substitute headcount concept — candidates like `NoncurrentProvisionsForEmployeeBenefits` are monetary, not headcounts). **Decision: leave the employees mapping unchanged; document.**
 - Reference filing: Svenska Handelsbanken FY2023 (`NHBDILHZTYCNBV5UYZ31-2023-12-31-ESEF-SE-0`) — has `ProfitLossBeforeTax` and `EmployeeBenefitsExpense` (13,642,000,000 SEK), currently shows Operating result "—".
+- **Task 1 re-measurement (2026-08-31, execution time):** operating_profit non-null 5,651/6,620; employees 18/6,620; `ProfitLossBeforeTax` present in **921** of the 969 filings missing operating result (audit gate passed); `EmployeeBenefitsExpense` in 2,792 filings. The 919 above was the plan-time estimate; 921 is the executed figure used in code comments.
 
 ## Global Constraints
 
