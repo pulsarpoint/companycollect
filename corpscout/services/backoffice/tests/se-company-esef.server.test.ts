@@ -29,15 +29,24 @@ describe("SQL contracts", () => {
     expect(ESEF_TAB_CONTACTS_SQL).toContain("country_iso2 = 'SE'");
     expect(ESEF_TAB_PEOPLE_SQL).toContain("country_code = 'SE'");
     expect(ESEF_TAB_FILINGS_SQL).toContain("issuer_scheme = 'lei'");
-    // Filings with no parsed facts should have fact_count = 0, not 1 due to
-    // LEFT JOIN default-filling non-matched right-side columns; countIf guards against it
+    // esef_facts is joined via a per-company IN-subquery scoped to this
+    // company's LEI(s) (kills duplicate-identifier fan-out and keeps the
+    // facts scan bounded); uniqExact/uniqExactIf dedup cross-week
+    // reprocessed facts, and coalesce fills in 0 for filings with no facts
+    // now that the outer GROUP BY / countIf guard is gone.
+    expect(ESEF_TAB_FILINGS_SQL).toContain("uniqExact(fact_id) AS fact_count");
     expect(ESEF_TAB_FILINGS_SQL).toContain(
-      "countIf(facts.fact_id != '') AS fact_count",
+      "uniqExactIf(fact_id, value_kind = 'text') AS note_count",
     );
-    expect(ESEF_TAB_FILINGS_SQL).not.toContain("count(facts.fact_id) AS");
+    expect(ESEF_TAB_FILINGS_SQL).toContain("coalesce(fc.fact_count, 0)");
     // esef_document_company_information is plain MergeTree, not ReplacingMergeTree,
     // so it cannot use FINAL; ClickHouse rejects with ILLEGAL_FINAL (code 181)
     expect(ESEF_TAB_INFORMATION_SQL).not.toContain("FINAL");
+    // Re-extraction appends rows per (source_document_id, model, prompt);
+    // LIMIT BY keeps only the newest extraction per filing.
+    expect(ESEF_TAB_INFORMATION_SQL).toContain(
+      "LIMIT 1 BY source_document_id",
+    );
   });
 });
 

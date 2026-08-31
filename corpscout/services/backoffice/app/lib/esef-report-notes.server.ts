@@ -25,7 +25,8 @@ SELECT
 FROM corpscout.esef_disclosures
 WHERE disclosure_kind = 'tagged_fact'
   AND source_document_id = {documentId:String}
-ORDER BY anchor_visual_order, concept_qname`;
+ORDER BY anchor_visual_order, concept_qname
+LIMIT 1 BY disclosure_id`;
 
 interface EsefReportNoteRow {
   disclosure_id: string;

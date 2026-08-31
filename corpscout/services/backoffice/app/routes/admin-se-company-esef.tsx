@@ -89,8 +89,8 @@ export function SeCompanyEsefView({
         </CardContent>
       </Card>
 
-      {detail.information.map((info) => (
-        <Card key={`${info.fiscalYear}-${info.extractionStatus}`}>
+      {detail.information.map((info, idx) => (
+        <Card key={`${info.fiscalYear}-${idx}`}>
           <CardHeader>
             <CardTitle>
               Company information · {info.fiscalYear}{" "}

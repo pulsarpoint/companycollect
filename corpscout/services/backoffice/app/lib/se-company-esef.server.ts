@@ -9,23 +9,32 @@ SELECT
   f.entity_name AS entity_name,
   toString(f.period_end) AS period_end,
   toYear(f.period_end) AS fiscal_year,
-  countIf(facts.fact_id != '') AS fact_count,
-  countIf(facts.value_kind = 'text') AS note_count,
+  coalesce(fc.fact_count, 0) AS fact_count,
+  coalesce(fc.note_count, 0) AS note_count,
   f.error_count AS error_count,
   f.warning_count AS warning_count,
   f.viewer_url AS viewer_url,
   f.source_url AS source_url,
   f.package_url AS package_url
 FROM corpscout.esef_filings AS f FINAL
-INNER JOIN corpscout.company_identifier AS identifier
-  ON identifier.issuer_scheme = 'lei'
- AND identifier.issuer_id = upperUTF8(trimBoth(f.lei))
-LEFT JOIN corpscout.esef_facts AS facts
-  ON facts.fxo_id = f.fxo_id
-WHERE identifier.country_code = 'SE'
-  AND identifier.company_id = {companyId:String}
-GROUP BY f.fxo_id, f.entity_name, f.period_end, f.error_count,
-  f.warning_count, f.viewer_url, f.source_url, f.package_url
+LEFT JOIN (
+  SELECT
+    fxo_id,
+    uniqExact(fact_id) AS fact_count,
+    uniqExactIf(fact_id, value_kind = 'text') AS note_count
+  FROM corpscout.esef_facts
+  WHERE upperUTF8(trimBoth(lei)) IN (
+    SELECT issuer_id FROM corpscout.company_identifier
+    WHERE issuer_scheme = 'lei' AND country_code = 'SE'
+      AND company_id = {companyId:String}
+  )
+  GROUP BY fxo_id
+) AS fc ON fc.fxo_id = f.fxo_id
+WHERE upperUTF8(trimBoth(f.lei)) IN (
+  SELECT issuer_id FROM corpscout.company_identifier
+  WHERE issuer_scheme = 'lei' AND country_code = 'SE'
+    AND company_id = {companyId:String}
+)
 ORDER BY f.period_end DESC`;
 
 export const ESEF_TAB_INFORMATION_SQL = `
@@ -42,7 +51,8 @@ SELECT
   material_group_relationships_json
 FROM corpscout.esef_document_company_information
 WHERE country_iso2 = 'SE' AND company_id = {companyId:String}
-ORDER BY fiscal_year DESC, extracted_at DESC`;
+ORDER BY fiscal_year DESC, extracted_at DESC
+LIMIT 1 BY source_document_id`;
 
 export const ESEF_TAB_PEOPLE_SQL = `
 SELECT

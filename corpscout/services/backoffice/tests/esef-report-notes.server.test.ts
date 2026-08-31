@@ -20,6 +20,11 @@ describe("ESEF_REPORT_NOTES_SQL", () => {
       "source_document_id = {documentId:String}",
     );
     expect(ESEF_REPORT_NOTES_SQL).toContain("ORDER BY anchor_visual_order");
+    // Reprocessing a filing appends a second full row set with identical
+    // content-derived disclosure_ids (plain MergeTree, no dedup on insert);
+    // LIMIT BY collapses those duplicates so the notes page and React keys
+    // don't render/collide twice.
+    expect(ESEF_REPORT_NOTES_SQL).toContain("LIMIT 1 BY disclosure_id");
   });
 });
 
