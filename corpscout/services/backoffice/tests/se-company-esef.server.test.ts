@@ -29,6 +29,12 @@ describe("SQL contracts", () => {
     expect(ESEF_TAB_CONTACTS_SQL).toContain("country_iso2 = 'SE'");
     expect(ESEF_TAB_PEOPLE_SQL).toContain("country_code = 'SE'");
     expect(ESEF_TAB_FILINGS_SQL).toContain("issuer_scheme = 'lei'");
+    // Filings with no parsed facts should have fact_count = 0, not 1 due to
+    // LEFT JOIN default-filling non-matched right-side columns; countIf guards against it
+    expect(ESEF_TAB_FILINGS_SQL).toContain(
+      "countIf(facts.fact_id != '') AS fact_count",
+    );
+    expect(ESEF_TAB_FILINGS_SQL).not.toContain("count(facts.fact_id) AS");
   });
 });
 
