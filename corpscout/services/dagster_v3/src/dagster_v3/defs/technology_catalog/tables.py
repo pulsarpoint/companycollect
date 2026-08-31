@@ -59,7 +59,7 @@ MIN_TECHNOLOGY_FINGERPRINT_ROWS = 50
 
 DOMAIN_SIGNAL_TECHNOLOGIES_TABLE = "domain_signal_technologies"
 
-# Column order is the contract with migration 000358.
+# Column order is the contract with migration 000359.
 DOMAIN_SIGNAL_TECHNOLOGIES_COLUMNS = (
     "root_domain",
     "technology",
@@ -67,15 +67,18 @@ DOMAIN_SIGNAL_TECHNOLOGIES_COLUMNS = (
     "matched_pattern",
     "evidence",
     "record_name",
+    "first_seen",
+    "last_seen",
     "confidence",
     "source",
     "source_run_id",
     "detected_at",
 )
 
-# Google Workspace MX alone matches ~4M crawled domains; a result below this
-# floor means a broken detection pass, never a legitimate scan of the DNS set.
-MIN_DOMAIN_SIGNAL_TECHNOLOGY_ROWS = 100_000
+# Google Workspace MX alone matches ~19M crawled domains (~150k per hash_
+# bucket), so any legitimate bucket carries well over this floor; a shorter
+# result is a broken detection pass and must not REPLACE the bucket's slice.
+MIN_DOMAIN_SIGNAL_TECHNOLOGY_ROWS_PER_PARTITION = 10_000
 
 # Dedicated bucket for technology icons. This module creates it if absent and
 # only ever adds objects to it; no other bucket is touched.

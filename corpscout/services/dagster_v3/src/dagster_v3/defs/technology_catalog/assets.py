@@ -282,18 +282,30 @@ def _staged_replace(
     return row_count
 
 
+DETECTION_PARTITIONS = dg.StaticPartitionsDefinition(
+    detection.detection_partition_keys()
+)
+
+
 @dg.asset(
     name="domain_signal_technologies_clickhouse",
     deps=[dg.AssetKey("technology_catalog_clickhouse")],
     group_name=GROUP_NAME,
     kinds={"clickhouse", "sql"},
+    partitions_def=DETECTION_PARTITIONS,
+    backfill_policy=dg.BackfillPolicy.multi_run(max_partitions_per_run=1),
+    pool="domain_signal_detection",
     description=(
         "DNS-derived technology detections (corpscout.domain_signal_"
-        "technologies, migration 000358): the dns_* fingerprints published "
-        "this run, matched against apex records in commoncrawl_domain_dns_"
-        "records in one Vectorscan pass per signal type, plus the pattern-"
-        "free self-hosted-email rule. Evidence and matched pattern are kept "
-        "per row so serving pages can show why a technology was detected."
+        "technologies, migration 000359), 128 static hash partitions "
+        "(cityHash64(root_domain) %% 128 — refining the DNS record store's "
+        "%% 16 partition key). Each partition run extracts one bucket's "
+        "candidates, matches the dns_* fingerprints in one Vectorscan pass "
+        "per signal type plus the pattern-free self-hosted-email rule, and "
+        "atomically swaps ONLY its slice via REPLACE PARTITION — every unit "
+        "is minutes long and independently retryable. Evidence and matched "
+        "pattern are kept per row so serving pages can show why a "
+        "technology was detected."
     ),
 )
 def domain_signal_technologies_clickhouse(
@@ -305,12 +317,16 @@ def domain_signal_technologies_clickhouse(
         database=RESOLVED_DATABASE,
         tables=(tables.DOMAIN_SIGNAL_TECHNOLOGIES_TABLE,),
     )
+    bucket = detection.partition_bucket(context.partition_key)
     qualified = (
         f"`{RESOLVED_DATABASE}`.`{tables.DOMAIN_SIGNAL_TECHNOLOGIES_TABLE}`"
     )
     stage = (
         f"`{RESOLVED_DATABASE}`."
         f"`_tmp_{tables.DOMAIN_SIGNAL_TECHNOLOGIES_TABLE}_{uuid.uuid4().hex}`"
+    )
+    candidates = (
+        f"`{RESOLVED_DATABASE}`.`_tmp_dns_signal_candidates_{uuid.uuid4().hex}`"
     )
     detected_at = datetime.now(UTC).replace(tzinfo=None)
     scalars = {"source_run_id": context.run_id, "detected_at": detected_at}
@@ -332,30 +348,19 @@ ORDER BY signal_type, technology, pattern"""
                 technology,
                 pattern,
             )
-        candidates = (
-            f"`{RESOLVED_DATABASE}`.`_tmp_dns_signal_candidates_{uuid.uuid4().hex}`"
-        )
         try:
             client.execute(f"CREATE TABLE {stage} AS {qualified}")
-            # The record store feeds every signal one hash bucket at a time —
-            # each insert prunes to a single ~18 GiB partition, so no query
-            # runs long and progress is visible per bucket. The matches then
-            # read only the compact, signal-sorted temp table.
             client.execute(detection.candidates_table_ddl(candidates))
-            for bucket in range(detection.DNS_RECORDS_HASH_BUCKETS):
-                client.execute(
-                    detection.candidates_insert_sql(candidates, bucket),
-                    settings=settings,
-                )
-                context.log.info(
-                    "candidates bucket %d/%d done",
-                    bucket + 1,
-                    detection.DNS_RECORDS_HASH_BUCKETS,
-                )
+            client.execute(
+                detection.candidates_insert_sql(candidates, bucket),
+                settings=settings,
+            )
             candidate_count = int(
                 client.execute(f"SELECT count() FROM {candidates}")[0][0]
             )
-            context.log.info("candidates: %d rows", candidate_count)
+            context.log.info(
+                "bucket %d candidates: %d rows", bucket, candidate_count
+            )
             for signal in signals:
                 client.execute(
                     detection.detection_insert_sql(
@@ -380,12 +385,13 @@ ORDER BY signal_type, technology, pattern"""
                 f"SELECT signal_type, count() FROM {stage} GROUP BY signal_type"
             )
             rows = sum(count for _, count in per_signal)
-            if rows < tables.MIN_DOMAIN_SIGNAL_TECHNOLOGY_ROWS:
+            if rows < tables.MIN_DOMAIN_SIGNAL_TECHNOLOGY_ROWS_PER_PARTITION:
                 raise ValueError(
-                    f"domain_signal_technologies produced {rows} rows, below "
-                    f"the {tables.MIN_DOMAIN_SIGNAL_TECHNOLOGY_ROWS} floor"
+                    f"bucket {bucket} produced {rows} rows, below the "
+                    f"{tables.MIN_DOMAIN_SIGNAL_TECHNOLOGY_ROWS_PER_PARTITION} "
+                    "floor — refusing to replace the partition"
                 )
-            client.execute(f"EXCHANGE TABLES {stage} AND {qualified}")
+            client.execute(detection.replace_partition_sql(qualified, stage, bucket))
         finally:
             client.execute(f"DROP TABLE IF EXISTS {candidates}")
             client.execute(f"DROP TABLE IF EXISTS {stage}")
@@ -394,6 +400,7 @@ ORDER BY signal_type, technology, pattern"""
     return dg.MaterializeResult(
         metadata={
             "rows": rows,
+            "candidates": candidate_count,
             "skipped_patterns": len(skipped),
             **{signal_type: count for signal_type, count in per_signal},
         }
@@ -659,11 +666,20 @@ technology_catalog_job = dg.define_asset_job(
     name="technology_catalog_job",
     selection=dg.AssetSelection.assets(
         technology_catalog_clickhouse,
-        domain_signal_technologies_clickhouse,
         technology_adoption_clickhouse,
         technology_companies_clickhouse,
         technology_top_domains_clickhouse,
     ),
+)
+
+# Separate job: a partitioned asset cannot share a job with unpartitioned
+# ones. Materialize buckets via a UI backfill (one-partition-per-run, the
+# domain_signal_detection pool serializes them); the weekly rollups read
+# whatever slices are current.
+domain_signal_technologies_job = dg.define_asset_job(
+    name="domain_signal_technologies_job",
+    selection=dg.AssetSelection.assets(domain_signal_technologies_clickhouse),
+    partitions_def=DETECTION_PARTITIONS,
 )
 
 # Sunday 05:20 UTC — staggered minute unused by any other source. STOPPED by
@@ -684,7 +700,7 @@ defs = dg.Definitions(
         technology_companies_clickhouse,
         technology_top_domains_clickhouse,
     ],
-    jobs=[technology_catalog_job],
+    jobs=[technology_catalog_job, domain_signal_technologies_job],
     schedules=[technology_catalog_weekly],
     resources={
         "technology_catalog_object_store": ObjectStoreResource(

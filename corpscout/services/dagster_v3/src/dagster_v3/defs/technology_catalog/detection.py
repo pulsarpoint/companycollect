@@ -26,9 +26,26 @@ from dagster_v3.defs.technology_catalog import tables
 DNS_RECORDS_TABLE = "commoncrawl_domain_dns_records"
 
 # The DNS record store is PARTITION BY cityHash64(root_domain) % 16 (migration
-# 000161); extracting candidates one bucket at a time lets ClickHouse prune to
-# a single ~18 GiB partition per query instead of one monolithic 280 GiB scan.
+# 000161); every per-bucket query repeats that expression so ClickHouse prunes
+# to a single ~18 GiB partition instead of the whole 280 GiB table.
 DNS_RECORDS_HASH_BUCKETS = 16
+
+# The detection asset (and the domain_signal_technologies table, migration
+# 000359) is partitioned cityHash64(root_domain) % 128 — a refinement of the
+# record store's % 16 key: bucket N's rows live in record-store partition
+# N % 16. 128 mirrors the webtech scan's static partitioning.
+DETECTION_PARTITION_COUNT = 128
+
+
+def detection_partition_keys() -> list[str]:
+    return [f"hash_{bucket:03d}" for bucket in range(DETECTION_PARTITION_COUNT)]
+
+
+def partition_bucket(partition_key: str) -> int:
+    bucket = int(partition_key.removeprefix("hash_"))
+    if not 0 <= bucket < DETECTION_PARTITION_COUNT:
+        raise ValueError(f"partition key {partition_key!r} is out of range")
+    return bucket
 
 SELF_HOSTED_TECHNOLOGY = "Self-hosted email"
 SELF_HOSTED_SIGNAL = "self_hosted_email"
@@ -107,17 +124,20 @@ def candidates_table_ddl(candidates: str) -> str:
     root_domain String,
     record_name String,
     signal_type LowCardinality(String),
-    candidate String
+    candidate String,
+    first_seen DateTime64(3, 'UTC'),
+    last_seen DateTime64(3, 'UTC')
 )
 ENGINE = MergeTree
 ORDER BY (signal_type, root_domain)"""
 
 
 def candidates_insert_sql(candidates: str, bucket: int) -> str:
-    """One hash bucket's pass over the DNS record store into the temp table.
+    """One detection bucket's pass over the DNS record store into the temp table.
 
-    The WHERE clause repeats the table's partition-key expression verbatim so
-    ClickHouse prunes to that single partition.
+    The % 16 clause repeats the record store's partition-key expression
+    verbatim so ClickHouse prunes to that single partition; the % 128 clause
+    then keeps only this detection bucket's domains.
     """
     signal_case = " ".join(
         f"WHEN '{record_type}' THEN '{signal}'"
@@ -131,14 +151,18 @@ def candidates_insert_sql(candidates: str, bucket: int) -> str:
         f"'{record_type}'"
         for record_type, _ in sorted(_CANDIDATE_EXPRESSIONS.values())
     )
-    return f"""INSERT INTO {candidates} (root_domain, record_name, signal_type, candidate)
+    return f"""INSERT INTO {candidates}
+    (root_domain, record_name, signal_type, candidate, first_seen, last_seen)
 SELECT
     root_domain,
     name AS record_name,
     CASE record_type {signal_case} END AS signal_type,
-    CASE record_type {candidate_case} END AS candidate
+    CASE record_type {candidate_case} END AS candidate,
+    min(first_seen) AS first_seen,
+    max(last_seen) AS last_seen
 FROM `{RESOLVED_DATABASE}`.`{DNS_RECORDS_TABLE}`
-WHERE cityHash64(root_domain) % {DNS_RECORDS_HASH_BUCKETS} = {int(bucket)}
+WHERE cityHash64(root_domain) % {DNS_RECORDS_HASH_BUCKETS} = {int(bucket) % DNS_RECORDS_HASH_BUCKETS}
+  AND cityHash64(root_domain) % {DETECTION_PARTITION_COUNT} = {int(bucket)}
   AND record_type IN ({record_types})
   AND (
     name = root_domain
@@ -160,6 +184,8 @@ SELECT
     arrayElement(%(patterns)s, match_index) AS matched_pattern,
     candidate AS evidence,
     record_name,
+    first_seen,
+    last_seen,
     arrayElement(%(confidences)s, match_index) AS confidence,
     arrayElement(%(sources)s, match_index) AS source,
     %(source_run_id)s AS source_run_id,
@@ -169,7 +195,7 @@ FROM (
     -- signal_type, and ClickHouse resolves an outer WHERE against that
     -- alias instead of the table column (this silently broke both the
     -- per-signal scoping and the self-hosted rule on 2026-08-31).
-    SELECT root_domain, record_name, candidate
+    SELECT root_domain, record_name, candidate, first_seen, last_seen
     FROM {candidates}
     WHERE signal_type = '{signal_type}'
 )
@@ -192,15 +218,27 @@ SELECT
     '' AS matched_pattern,
     candidate AS evidence,
     record_name,
+    first_seen,
+    last_seen,
     100 AS confidence,
     '{RULE_SOURCE}' AS source,
     %(source_run_id)s AS source_run_id,
     %(detected_at)s AS detected_at
 FROM (
     -- Subquery for the same alias-shadowing reason as detection_insert_sql.
-    SELECT root_domain, record_name, candidate
+    SELECT root_domain, record_name, candidate, first_seen, last_seen
     FROM {candidates}
     WHERE signal_type = 'dns_mx'
 )
 WHERE candidate NOT IN ('~', 'localhost')
   AND (candidate = root_domain OR endsWith(candidate, concat('.', root_domain)))"""
+
+
+def replace_partition_sql(qualified: str, stage: str, bucket: int) -> str:
+    """Atomically swap ONE detection bucket's slice from the stage table.
+
+    Both tables share the % 128 partition key, and the stage was filled from
+    candidates of exactly this bucket in the same run, so the swap can never
+    touch another bucket's rows.
+    """
+    return f"ALTER TABLE {qualified} REPLACE PARTITION {int(bucket)} FROM {stage}"

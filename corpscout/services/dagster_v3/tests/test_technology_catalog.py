@@ -553,7 +553,7 @@ DETECTION_MIGRATION = (
     Path(__file__).resolve().parents[3]
     / "clickhouse"
     / "migrations"
-    / "000358_corpscout_domain_signal_technologies.up.sql"
+    / "000359_corpscout_domain_signal_technologies_partitioned.up.sql"
 ).read_text()
 
 
@@ -598,16 +598,22 @@ def test_vectorscan_safe_accepts_shipped_patterns():
 
 
 def test_candidates_insert_is_bucket_pruned_and_covers_every_signal():
-    sql = detection.candidates_insert_sql("`db`.`cand`", 3)
+    sql = detection.candidates_insert_sql("`db`.`cand`", 19)
     assert sql.count(f"`{'commoncrawl_domain_dns_records'}`") == 1
-    # Verbatim partition-key expression (migration 000161) so pruning engages.
-    assert "cityHash64(root_domain) % 16 = 3" in sql
+    # Verbatim record-store partition-key expression (migration 000161) so
+    # pruning engages, then the detection bucket's own ownership clause.
+    assert "cityHash64(root_domain) % 16 = 3" in sql  # 19 % 16
+    assert "cityHash64(root_domain) % 128 = 19" in sql
     for record_type in ("MX", "TXT", "NS", "SOA", "CNAME"):
         assert f"'{record_type}'" in sql
     assert "substringIndex(value, ' ', -1)" in sql  # MX priority prefix
     assert "trim(BOTH '\"' FROM value)" in sql  # TXT quotes
     assert "record_type = 'CNAME' AND name = concat('www.', root_domain)" in sql
     assert "GROUP BY root_domain, record_name, signal_type, candidate" in sql
+    # The seen-window is inherited from the matched records, making the
+    # detection table a timeline rather than a current-state snapshot.
+    assert "min(first_seen) AS first_seen" in sql
+    assert "max(last_seen) AS last_seen" in sql
 
 
 def test_bucket_count_matches_dns_records_partition_key():
@@ -663,10 +669,31 @@ def test_self_hosted_sql_scopes_to_own_domain():
     assert "'~', 'localhost'" in sql
 
 
+def test_partition_keys_and_bucket_mapping():
+    keys = detection.detection_partition_keys()
+    assert len(keys) == 128
+    assert keys[0] == "hash_000"
+    assert keys[127] == "hash_127"
+    assert detection.partition_bucket("hash_042") == 42
+    with pytest.raises(ValueError):
+        detection.partition_bucket("hash_128")
+
+
+def test_replace_partition_sql_targets_the_bucket():
+    sql = detection.replace_partition_sql("`db`.`t`", "`db`.`stage`", 42)
+    assert sql == "ALTER TABLE `db`.`t` REPLACE PARTITION 42 FROM `db`.`stage`"
+
+
 def test_detection_migration_creates_the_table():
     assert (
         "CREATE TABLE IF NOT EXISTS corpscout."
         f"{tables.DOMAIN_SIGNAL_TECHNOLOGIES_TABLE}" in DETECTION_MIGRATION
+    )
+    # The table's partition key must match the asset's bucket expression, or
+    # REPLACE PARTITION would swap the wrong slice.
+    assert (
+        f"PARTITION BY cityHash64(root_domain) % {detection.DETECTION_PARTITION_COUNT}"
+        in DETECTION_MIGRATION
     )
 
 
