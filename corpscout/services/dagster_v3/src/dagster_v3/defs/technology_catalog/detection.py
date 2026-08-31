@@ -164,9 +164,16 @@ SELECT
     arrayElement(%(sources)s, match_index) AS source,
     %(source_run_id)s AS source_run_id,
     %(detected_at)s AS detected_at
-FROM {candidates}
-ARRAY JOIN multiMatchAllIndices(candidate, %(match_patterns)s) AS match_index
-WHERE signal_type = '{signal_type}'"""
+FROM (
+    -- Filtered in a subquery: the outer SELECT aliases a column named
+    -- signal_type, and ClickHouse resolves an outer WHERE against that
+    -- alias instead of the table column (this silently broke both the
+    -- per-signal scoping and the self-hosted rule on 2026-08-31).
+    SELECT root_domain, record_name, candidate
+    FROM {candidates}
+    WHERE signal_type = '{signal_type}'
+)
+ARRAY JOIN multiMatchAllIndices(candidate, %(match_patterns)s) AS match_index"""
 
 
 def self_hosted_insert_sql(stage: str, candidates: str) -> str:
@@ -189,7 +196,11 @@ SELECT
     '{RULE_SOURCE}' AS source,
     %(source_run_id)s AS source_run_id,
     %(detected_at)s AS detected_at
-FROM {candidates}
-WHERE signal_type = 'dns_mx'
-  AND candidate NOT IN ('~', 'localhost')
+FROM (
+    -- Subquery for the same alias-shadowing reason as detection_insert_sql.
+    SELECT root_domain, record_name, candidate
+    FROM {candidates}
+    WHERE signal_type = 'dns_mx'
+)
+WHERE candidate NOT IN ('~', 'localhost')
   AND (candidate = root_domain OR endsWith(candidate, concat('.', root_domain)))"""

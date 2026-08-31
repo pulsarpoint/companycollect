@@ -628,10 +628,23 @@ def test_detection_insert_sql_uses_one_vectorscan_pass():
     assert "multiMatchAllIndices(candidate, %(match_patterns)s)" in sql
     assert "ARRAY JOIN" in sql
     assert "'dns_mx' AS signal_type" in sql
-    assert "FROM `db`.`cand`" in sql
-    assert "WHERE signal_type = 'dns_mx'" in sql
     for column in tables.DOMAIN_SIGNAL_TECHNOLOGIES_COLUMNS:
         assert column in sql
+
+
+def test_signal_filters_sit_in_subqueries_below_the_alias():
+    # The outer SELECT aliases a column literally named signal_type, and
+    # ClickHouse resolves an outer WHERE against that alias — the filter must
+    # therefore live in a subquery underneath it.
+    for sql in (
+        detection.detection_insert_sql("`db`.`stage`", "`db`.`cand`", "dns_mx"),
+        detection.self_hosted_insert_sql("`db`.`stage`", "`db`.`cand`"),
+    ):
+        inner = sql.split("FROM (", 1)[1]
+        assert "WHERE signal_type = 'dns_mx'" in inner
+        alias_pos = sql.index("AS signal_type")
+        assert sql.index("WHERE signal_type = 'dns_mx'") > alias_pos
+        assert "FROM `db`.`cand`" in inner
 
 
 def test_match_patterns_are_case_insensitive_but_stored_clean():
@@ -644,7 +657,6 @@ def test_match_patterns_are_case_insensitive_but_stored_clean():
 
 def test_self_hosted_sql_scopes_to_own_domain():
     sql = detection.self_hosted_insert_sql("`db`.`stage`", "`db`.`cand`")
-    assert "WHERE signal_type = 'dns_mx'" in sql
     assert f"'{detection.SELF_HOSTED_TECHNOLOGY}'" in sql
     assert "endsWith(candidate, concat('.', root_domain))" in sql
     assert "candidate = root_domain" in sql
