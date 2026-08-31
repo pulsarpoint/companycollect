@@ -24,8 +24,9 @@ const COMPANY = "5565200028";
 
 /**
  * The payload columns of each artifact table, straight from the DDL
- * (migration 000297, 000300's activity_description_en and 000306's two
- * legal-form labels) minus the envelope
+ * (migration 000297, 000300's activity_description_en, 000306's two
+ * legal-form labels and 000365's three ESEF enrichment columns) minus the
+ * envelope
  * (company_id, source_record_uid, observed_at, source_run_id) and the
  * MATERIALIZED evidence_hash. Hand-copied here on purpose: it is the
  * independent statement of the schema that both the display list and the
@@ -56,7 +57,10 @@ const DDL_PAYLOAD_COLUMNS: Record<ArtifactSource, string[]> = {
     "description_language",
     "description_confidence",
     "products_and_services_json",
+    "customer_markets_json",
+    "operating_geographies_json",
     "business_segments_json",
+    "material_group_relationships_json",
   ],
   wikidata: [
     "wikidata_id",
