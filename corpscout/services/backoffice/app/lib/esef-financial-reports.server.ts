@@ -181,6 +181,7 @@ LEFT ANY JOIN (
       '' AS translation_model,
       toUInt64(0) AS translation_version
     FROM corpscout.esef_document_concept_labels
+    WHERE source_document_id = {documentId:String}
 
     UNION ALL
 
@@ -224,6 +225,7 @@ LEFT ANY JOIN (
       FROM corpscout.esef_document_concept_labels
       WHERE label != ''
         AND (language = 'en' OR startsWith(language, 'en-'))
+        AND source_document_id = {documentId:String}
     ) AS official_english
       ON official_english.source_document_id = source.source_document_id
      AND official_english.concept_qname = source.concept_qname
@@ -232,6 +234,7 @@ LEFT ANY JOIN (
       AND source.label != ''
       AND source.language != 'en'
       AND NOT startsWith(source.language, 'en-')
+      AND source.source_document_id = {documentId:String}
   ) AS concept_text
   GROUP BY source_document_id, concept_qname
 ) AS labels

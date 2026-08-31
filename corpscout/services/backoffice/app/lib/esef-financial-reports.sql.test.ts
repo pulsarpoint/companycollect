@@ -136,4 +136,31 @@ describe("getEsefFinancialReport disclosure join", () => {
     expect(report!.facts[0].structuredDisclosure).toBeNull();
     expect(report!.facts[0].disclosureEvidence).toBeNull();
   });
+
+  it("scopes every concept-labels leg to the requested document", async () => {
+    chQuery
+      .mockResolvedValueOnce([SUMMARY_ROW])
+      .mockResolvedValueOnce([
+        { name: "esef_disclosures" },
+        { name: "esef_document_concept_labels" },
+      ])
+      .mockResolvedValueOnce([FACT_ROW]);
+
+    await getEsefFinancialReport(
+      "se",
+      "5020077862",
+      "NHBDILHZTYCNBV5UYZ31-2023-12-31-ESEF-SE-0",
+    );
+
+    const factsSql = String(chQuery.mock.calls[2][0]);
+    // Taxonomy leg, translation leg, and the official-english anti-join must
+    // all carry the document filter; three FROM/JOIN reads of the labels
+    // table => three document-scoped predicates.
+    const scoped = factsSql.match(
+      /source_document_id = \{documentId:String\}/g,
+    );
+    // 1 disclosure subquery (from the join-fix plan) + 3 label legs + 1 outer WHERE... the
+    // outer WHERE uses facts.fxo_id, not source_document_id, so expect exactly 4.
+    expect(scoped?.length).toBe(4);
+  });
 });
