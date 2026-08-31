@@ -121,6 +121,23 @@ def test_webtech_component_builds_short_lived_scan_monitoring_definitions() -> N
     assert WEBTECH_PARTITION_KEYS[0] == "hash_000"
     assert WEBTECH_PARTITION_KEYS[-1] == "hash_127"
 
+    assets_by_key = {
+        next(iter(asset.keys)).to_user_string(): asset
+        for asset in definitions.assets or []
+    }
+    assert [
+        (input_definition.name, input_definition.dagster_type.key)
+        for input_definition in assets_by_key[
+            "commoncrawl_webtech_remote_scan"
+        ].node_def.input_defs
+    ] == [("commoncrawl_webtech_scan_submission", "Nothing")]
+    assert [
+        (input_definition.name, input_definition.dagster_type.key)
+        for input_definition in assets_by_key[
+            "commoncrawl_webtech_results_clickhouse"
+        ].node_def.input_defs
+    ] == [("commoncrawl_webtech_remote_scan", "Nothing")]
+
 
 def test_webtech_api_resource_survives_dagster_process_reconstruction() -> None:
     resource = WebtechApiResource(
@@ -153,9 +170,15 @@ def test_webtech_monitor_observes_running_scan_without_launching_run() -> None:
     instance = dg.DagsterInstance.ephemeral()
     _report_submission(instance, scan_id="scan-running")
     api = FakeWebtechApi(_remote_snapshot("running", completed_count=120))
+    object_store = FakeObjectStore()
 
     with dg.build_sensor_context(instance=instance) as context:
-        result = evaluate_webtech_monitor(context, api)
+        result = evaluate_webtech_monitor(
+            context,
+            api,
+            object_store,
+            WebtechS3Destination(bucket="webtech", prefix="webtech"),
+        )
 
     assert result.run_requests == []
     assert len(result.asset_events) == 1
@@ -169,10 +192,22 @@ def test_webtech_monitor_observes_running_scan_without_launching_run() -> None:
 def test_webtech_monitor_launches_one_short_finalize_run_on_completion() -> None:
     instance = dg.DagsterInstance.ephemeral()
     _report_submission(instance, scan_id="scan-completed")
-    api = FakeWebtechApi(_remote_snapshot("completed", completed_count=1_000))
+    snapshot = _remote_snapshot(
+        "completed",
+        completed_count=1,
+        total_count=1,
+    )
+    api = FakeWebtechApi(snapshot)
+    object_store = FakeObjectStore()
+    _store_final_manifest(object_store, snapshot)
 
     with dg.build_sensor_context(instance=instance) as context:
-        result = evaluate_webtech_monitor(context, api)
+        result = evaluate_webtech_monitor(
+            context,
+            api,
+            object_store,
+            WebtechS3Destination(bucket="webtech", prefix="webtech"),
+        )
 
     assert len(result.run_requests) == 1
     request = result.run_requests[0]
@@ -180,6 +215,54 @@ def test_webtech_monitor_launches_one_short_finalize_run_on_completion() -> None
     assert request.run_key == "webtech-finalize-scan-completed"
     assert request.tags["webtech/scan_id"] == "scan-completed"
     assert len(result.asset_events) == 1
+    assert result.asset_events[0].metadata["s3_manifest_verified"].value is True
+
+
+def test_webtech_monitor_does_not_finalize_without_the_s3_manifest() -> None:
+    instance = dg.DagsterInstance.ephemeral()
+    _report_submission(instance, scan_id="scan-completed")
+    snapshot = _remote_snapshot(
+        "completed",
+        completed_count=1,
+        total_count=1,
+    )
+
+    with dg.build_sensor_context(instance=instance) as context:
+        with pytest.raises(KeyError):
+            evaluate_webtech_monitor(
+                context,
+                FakeWebtechApi(snapshot),
+                FakeObjectStore(),
+                WebtechS3Destination(bucket="webtech", prefix="webtech"),
+            )
+
+
+def test_webtech_monitor_stops_polling_after_the_scan_is_indexed() -> None:
+    instance = dg.DagsterInstance.ephemeral()
+    _report_submission(instance, scan_id="scan-indexed")
+    instance.report_runless_asset_event(
+        dg.AssetMaterialization(
+            asset_key="commoncrawl_webtech_results_clickhouse",
+            partition=PARTITION_KEY,
+            metadata={"scan_id": "scan-indexed"},
+        )
+    )
+    api = FakeWebtechApi(_remote_snapshot("running", completed_count=120))
+
+    with dg.build_sensor_context(instance=instance) as context:
+        result = evaluate_webtech_monitor(
+            context,
+            api,
+            FakeObjectStore(),
+            WebtechS3Destination(bucket="webtech", prefix="webtech"),
+        )
+
+    assert result.run_requests == []
+    assert result.asset_events == []
+    assert result.skip_reason.skip_message == (
+        "No active Webtech scan; latest submission scan-indexed is indexed"
+    )
+    assert api.poll_calls == []
 
 
 class FakeWebtechApi:
@@ -221,6 +304,7 @@ def _remote_snapshot(
     status: str,
     *,
     completed_count: int,
+    total_count: int = 1_000,
 ) -> RemoteScanSnapshot:
     return RemoteScanSnapshot(
         scan_id=f"scan-{status}",
@@ -231,7 +315,7 @@ def _remote_snapshot(
         candidate_manifest_uri="s3://webtech/webtech/candidates/test.json",
         result_prefix_uri="s3://webtech/webtech/scans/test/results",
         final_manifest_uri="s3://webtech/webtech/scans/test/final-manifest.json",
-        total_count=1_000,
+        total_count=total_count,
         completed_count=completed_count,
         outcome_counts={"success": completed_count},
         technology_count=completed_count * 3,
@@ -243,6 +327,44 @@ def _remote_snapshot(
         domains_per_minute=50,
         latest_event_sequence=completed_count // 20,
         error_message="",
+    )
+
+
+def _store_final_manifest(
+    object_store: FakeObjectStore,
+    snapshot: RemoteScanSnapshot,
+) -> None:
+    final_key = snapshot.final_manifest_uri.removeprefix("s3://webtech/")
+    result_key = "webtech/scans/test/results/root_domain=example.com/report.json"
+    object_store.objects[("webtech", final_key)] = _json_bytes(
+        {
+            "schema_version": 1,
+            "scan_id": snapshot.scan_id,
+            "crawl_id": snapshot.crawl_id,
+            "partition_key": snapshot.partition_key,
+            "detector_version": snapshot.detector_version,
+            "candidate_manifest_uri": snapshot.candidate_manifest_uri,
+            "candidate_manifest_sha256": "ab" * 32,
+            "started_at": SCANNED_AT.isoformat(),
+            "finished_at": SCANNED_AT.isoformat(),
+            "elapsed_seconds": snapshot.elapsed_seconds,
+            "outcome_counts": snapshot.outcome_counts,
+            "technology_count": snapshot.technology_count,
+            "scanner_settings": {"browser_count": 20},
+            "results": [
+                {
+                    "root_domain": "example.com",
+                    "harmonic_rank": 1,
+                    "outcome": "success",
+                    "timeout_stage": None,
+                    "technology_count": snapshot.technology_count,
+                    "duration_ms": 100,
+                    "object_key": result_key,
+                    "sha256": "cd" * 32,
+                    "size_bytes": 100,
+                }
+            ],
+        }
     )
 
 

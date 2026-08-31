@@ -65,8 +65,11 @@ The always-enabled `commoncrawl_webtech_scan_monitor` sensor performs one
 zero-wait status request every 30 seconds. Each tick writes one compact sensor
 log and one partitioned asset observation with status, completed/total,
 outcomes, technologies, progress age, elapsed time, and throughput. A completed
-scan produces one deduplicated `commoncrawl_webtech_finalize_job` request keyed
-by scan ID. The finalization and ClickHouse indexing run is short-lived.
+scan is accepted only after the sensor also reads and validates its RustFS final
+manifest. It then produces one deduplicated `commoncrawl_webtech_finalize_job`
+request keyed by scan ID. The finalization and ClickHouse indexing run is
+short-lived. Once that scan ID is indexed, the sensor stops polling it, so the UI
+has at most one active partition and none after completion.
 
 ## API and lifecycle
 
@@ -112,6 +115,12 @@ restarts, the sensor resumes its bounded ticks from the latest durable
 submission materialization. If the scanner service restarts and forgets the
 in-memory scan, the sensor repeats the idempotent submit; the service reconstructs
 stored domains from RustFS and scans only missing candidates.
+
+Cross-run asset edges after submission are metadata-only `Nothing` dependencies.
+The finalizer reconstructs the submission and final-manifest references from
+partitioned Dagster materialization metadata and reads RustFS directly. It never
+loads a Python object from Dagster's local filesystem IO manager, so retrying a
+finalization run cannot fail because a submission pickle is absent.
 
 ## Durable object contract
 

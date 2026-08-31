@@ -29,7 +29,7 @@ class WebtechScannerComponent(dg.Component, dg.Model, dg.Resolvable):
         return dg.Definitions(
             assets=list(assets),
             jobs=[submit_job, finalize_job],
-            sensors=[build_webtech_monitor_sensor(finalize_job)],
+            sensors=[build_webtech_monitor_sensor(finalize_job, destination)],
             resources={
                 "webtech_api": WebtechApiResource(
                     base_url=self.api_url,
