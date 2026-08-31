@@ -8,6 +8,7 @@ downstream LLM or company-profile integration is introduced.
 import json
 import shutil
 import stat
+import os
 import tempfile
 from collections.abc import Iterable, Mapping
 from dataclasses import dataclass, field, fields, is_dataclass, replace
@@ -736,6 +737,20 @@ def _contains_inline_xbrl_namespace(report_path: Path) -> bool:
     return False
 
 
+def _arelle_cache_directory() -> Path:
+    """A PERSISTENT taxonomy web-cache shared by every parse worker and run.
+
+    Without this, disablePersistentConfig=True gave each parse a throwaway
+    cache -- combined with one-document-per-process workers, every document
+    re-fetched and re-parsed the IFRS/ESEF taxonomy files cold (2026-08-31).
+    Override with ESEF_ARELLE_CACHE_DIR (the server points it at the
+    release-persistent data/ tree)."""
+    override = os.getenv("ESEF_ARELLE_CACHE_DIR")
+    base = Path(override) if override else Path.home() / ".cache" / "corpscout-arelle"
+    base.mkdir(parents=True, exist_ok=True)
+    return base
+
+
 def _parse_report_members(
     *,
     package_path: Path,
@@ -770,6 +785,7 @@ def _parse_report_members(
             validateDuplicateFacts="all" if run_validation else None,
             keepOpen=True,
             disablePersistentConfig=True,
+            cacheDirectory=str(_arelle_cache_directory()),
             internetConnectivity="online",
             internetRecheck="never",
             logFile="logToBuffer",

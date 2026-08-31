@@ -66,7 +66,10 @@ _DOCUMENT_RESULT_SCHEMA_VERSION = 3
 # the host responsive.
 _DEFAULT_DOCUMENT_PARSE_WORKERS = 2
 _MAX_DOCUMENT_PARSE_WORKERS = 8
-_DOCUMENT_PARSE_TASKS_PER_CHILD = 1
+# 16, up from 1 (2026-08-31): a fresh child per document paid Python + Arelle
+# import and package/plugin init per parse. Recycling every 16 documents
+# amortizes that while still bounding per-child memory growth.
+_DOCUMENT_PARSE_TASKS_PER_CHILD = 16
 _DOCUMENT_PUBLICATION_INSERT_BATCH_SIZE = 25_000
 
 
