@@ -588,6 +588,18 @@ def test_shipped_definitions_version_is_nonempty():
     assert len(custom_definitions_version()) == 12
 
 
+def test_detection_staleness_check_is_registered():
+    # Partitioned assets get no UNSYNCED badge, so an asset check stands in.
+    from dagster_v3.defs.technology_catalog.assets import defs
+
+    check_names = {
+        key.name
+        for check in defs.asset_checks
+        for key in check.check_keys
+    }
+    assert "detection_reflects_current_catalog" in check_names
+
+
 def test_missing_fingerprint_overrides_file_is_empty(tmp_path: Path):
     overrides, version = load_fingerprint_overrides(tmp_path)
     assert overrides == {}

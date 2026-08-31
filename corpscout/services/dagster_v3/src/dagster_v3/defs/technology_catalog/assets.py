@@ -383,9 +383,11 @@ DETECTION_PARTITIONS = dg.StaticPartitionsDefinition(
     partitions_def=DETECTION_PARTITIONS,
     backfill_policy=dg.BackfillPolicy.multi_run(max_partitions_per_run=1),
     pool="domain_signal_detection",
-    # Flags every partition UNSYNCED when the fingerprint definitions change
-    # (they drive what this pass detects); bump the suffix by hand when the
-    # detection SQL logic in detection.py changes materially.
+    # Recorded for lineage, but Dagster does NOT compute staleness for
+    # partitioned assets, so this never drives an UNSYNCED badge. The
+    # detection_reflects_current_catalog asset check is what surfaces "this
+    # detection is behind the catalog" in the UI instead. Bump the suffix when
+    # the detection SQL in detection.py changes materially.
     code_version=f"{custom_definitions_version()}-detect1",
     description=(
         "DNS-derived technology detections (corpscout.domain_signal_"
@@ -496,6 +498,67 @@ ORDER BY signal_type, technology, pattern"""
             "skipped_patterns": len(skipped),
             **{signal_type: count for signal_type, count in per_signal},
         }
+    )
+
+
+@dg.asset_check(
+    asset=domain_signal_technologies_clickhouse,
+    name="detection_reflects_current_catalog",
+    description=(
+        "WARN when the DNS detections are behind the technology catalog: "
+        "Dagster does not compute staleness for partitioned assets, so this "
+        "check stands in for the missing UNSYNCED badge. It compares each "
+        "partition's build time against the latest technology_catalog publish "
+        "(technology_catalog_publish_log) — a partition built before the "
+        "current catalog used older fingerprints and needs re-running."
+    ),
+)
+def detection_reflects_current_catalog(
+    clickhouse: ClickhouseResource,
+) -> dg.AssetCheckResult:
+    with clickhouse.get_connection() as client:
+        published = client.execute(
+            f"SELECT max(published_at) FROM `{RESOLVED_DATABASE}`."
+            f"`{tables.TECHNOLOGY_CATALOG_PUBLISH_LOG_TABLE}`"
+        )
+        latest_publish = published[0][0] if published else None
+        detection_state = client.execute(
+            f"SELECT uniqExact(_partition_id), min(detected_at), max(detected_at) "
+            f"FROM `{RESOLVED_DATABASE}`."
+            f"`{tables.DOMAIN_SIGNAL_TECHNOLOGIES_TABLE}`"
+        )
+        filled_partitions, oldest_build, newest_build = detection_state[0]
+        behind = 0
+        if latest_publish is not None:
+            behind = int(
+                client.execute(
+                    f"SELECT uniqExactIf(_partition_id, detected_at < %(cut)s) "
+                    f"FROM `{RESOLVED_DATABASE}`."
+                    f"`{tables.DOMAIN_SIGNAL_TECHNOLOGIES_TABLE}`",
+                    {"cut": latest_publish},
+                )[0][0]
+            )
+
+    total = detection.DETECTION_PARTITION_COUNT
+    missing = total - int(filled_partitions)
+    if latest_publish is None:
+        # Nothing to compare against yet: the catalog has never published.
+        return dg.AssetCheckResult(
+            passed=True,
+            metadata={"note": "no technology_catalog publish recorded yet"},
+        )
+    passed = behind == 0 and missing == 0
+    return dg.AssetCheckResult(
+        passed=passed,
+        severity=dg.AssetCheckSeverity.WARN,
+        metadata={
+            "partitions_behind_catalog": behind,
+            "partitions_never_built": missing,
+            "filled_partitions": int(filled_partitions),
+            "latest_catalog_publish": str(latest_publish),
+            "oldest_partition_build": str(oldest_build),
+            "newest_partition_build": str(newest_build),
+        },
     )
 
 
@@ -792,6 +855,7 @@ defs = dg.Definitions(
         technology_companies_clickhouse,
         technology_top_domains_clickhouse,
     ],
+    asset_checks=[detection_reflects_current_catalog],
     jobs=[technology_catalog_job, domain_signal_technologies_job],
     schedules=[technology_catalog_weekly],
     resources={
