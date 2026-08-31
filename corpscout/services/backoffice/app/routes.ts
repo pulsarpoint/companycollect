@@ -63,6 +63,10 @@ export default [
         "financials/esef/:documentId",
         "routes/company-esef-financial-report.tsx",
       ),
+      route(
+        "financials/esef/:documentId/notes",
+        "routes/company-esef-report-notes.tsx",
+      ),
       route("financials/:documentId", "routes/company-financial-report.tsx"),
     ]),
     route("company/:country/:id/facts/:year", "routes/company-facts.tsx"),

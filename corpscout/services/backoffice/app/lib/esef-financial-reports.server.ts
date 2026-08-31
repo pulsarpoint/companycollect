@@ -6,7 +6,7 @@ import type {
 } from "~/lib/esef-financial-reports";
 import { parsePersistedEsefDisclosure } from "~/lib/esef-disclosures";
 
-interface EsefReportSummaryRow {
+export interface EsefSummaryRow {
   lei: string;
   fxo_id: string;
   entity_name: string;
@@ -56,7 +56,7 @@ interface AvailableTableRow {
   name: string;
 }
 
-const REPORT_SUMMARY_QUERY = `
+export const REPORT_SUMMARY_QUERY = `
 SELECT
   f.lei AS lei,
   f.fxo_id AS fxo_id,
@@ -334,9 +334,12 @@ function parseConceptLabels(raw: string): EsefFinancialFact["conceptLabels"] {
   }
 }
 
-function reportSummary(
-  row: EsefReportSummaryRow,
-  factCount: number,
+/** Maps a summary row to the shared report-summary shape. `factCount` is the
+ * total tagged-fact count for callers that load the full fact list; callers
+ * that only need filing metadata (e.g. the report-notes reader) can omit it. */
+export function reportSummary(
+  row: EsefSummaryRow,
+  factCount = 0,
 ): EsefFinancialReportSummary {
   return {
     fxoId: row.fxo_id,
@@ -367,7 +370,7 @@ export async function getEsefFinancialReport(
     id: companyId,
     documentId,
   };
-  const summaries = await chQuery<EsefReportSummaryRow>(
+  const summaries = await chQuery<EsefSummaryRow>(
     REPORT_SUMMARY_QUERY,
     params,
   );
