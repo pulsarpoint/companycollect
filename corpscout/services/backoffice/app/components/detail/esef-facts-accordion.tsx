@@ -374,8 +374,8 @@ export function XbrlFactDetails({ fact }: { fact: XbrlFact }) {
                 </DetailField>
               </div>
               <div className="sm:col-span-2">
-                <DetailField label="Raw value SHA-256" mono>
-                  {fact.disclosureEvidence.rawValueSha256}
+                <DetailField label="Text SHA-256" mono>
+                  {fact.disclosureEvidence.textSha256}
                 </DetailField>
               </div>
             </>

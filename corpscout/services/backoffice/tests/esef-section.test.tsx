@@ -270,7 +270,7 @@ describe("ESEF source financials", () => {
       },
       disclosureEvidence: {
         sourceRecordUid: "a".repeat(64),
-        rawValueSha256: "b".repeat(64),
+        textSha256: "b".repeat(64),
         parserName: "lxml_html_disclosure",
         parserVersion: "1",
       },
