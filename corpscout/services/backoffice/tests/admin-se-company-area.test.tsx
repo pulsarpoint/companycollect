@@ -1459,11 +1459,12 @@ describe("the Sources strip every tab opens with", () => {
 });
 
 describe("tab labels", () => {
-  it("is exactly Info, Address, Financial, People, Domains, Technology, Contracts, Jobs, Listed, in that order", () => {
+  it("is exactly Info, Address, Financial, ESEF, People, Domains, Technology, Contracts, Jobs, Listed, in that order", () => {
     expect(SE_COMPANY_TABS.map((tab) => tab.label)).toEqual([
       "Info",
       "Address",
       "Financial",
+      "ESEF",
       "People",
       "Domains",
       "Technology",
@@ -1476,6 +1477,7 @@ describe("tab labels", () => {
       "info",
       "address",
       "financial",
+      "esef",
       "people",
       "domains",
       "technology",

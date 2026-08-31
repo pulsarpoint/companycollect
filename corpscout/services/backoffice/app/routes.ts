@@ -111,6 +111,7 @@ export default [
       route("info", "routes/admin-se-company-info.tsx"),
       route("address", "routes/admin-se-company-address.tsx"),
       route("financial", "routes/admin-se-company-financial.tsx"),
+      route("esef", "routes/admin-se-company-esef.tsx"),
       route("people", "routes/admin-se-company-people.tsx"),
       route("domains", "routes/admin-se-company-domains.tsx"),
       // The whole public technology area, inside the admin panel: the same
