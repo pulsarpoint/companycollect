@@ -372,6 +372,7 @@ EXPECTED_MIGRATIONS = (
     "000361_corpscout_technology_catalog_publish_log",
     "000362_corpscout_drop_sweden_ats_job_sources",
     "000363_corpscout_se_jobtech_links_jobs",
+    "000364_corpscout_esef_personnel_expenses",
 )
 
 NOOP_MIGRATIONS = {"000276_noop"}
@@ -3879,6 +3880,24 @@ def test_sweden_ats_retirement_drops_and_can_recreate_every_source_table() -> No
             assert down_sql.count(f"CREATE TABLE IF NOT EXISTS {table}") == 1
 
     assert up_sql.count("DROP TABLE IF EXISTS corpscout.se_") == 32
+
+
+def test_esef_personnel_expenses_migration_is_additive_and_reversible() -> None:
+    up = (MIGRATIONS_DIR / "000364_corpscout_esef_personnel_expenses.up.sql").read_text()
+    down = (
+        MIGRATIONS_DIR / "000364_corpscout_esef_personnel_expenses.down.sql"
+    ).read_text()
+    assert (
+        "ADD COLUMN IF NOT EXISTS personnel_expenses_amount_original "
+        "Nullable(Decimal128(2))"
+    ) in up
+    assert (
+        "ADD COLUMN IF NOT EXISTS personnel_expenses_amount_usd "
+        "Nullable(Decimal128(2))"
+    ) in up
+    assert "CREATE OR REPLACE VIEW corpscout.se_financials_esef_current" in up
+    assert "DROP COLUMN IF EXISTS personnel_expenses_amount_original" in down
+    assert "TRUNCATE" not in up
 
 
 def test_jobtech_links_migration_owns_source_history_and_company_matches() -> None:
