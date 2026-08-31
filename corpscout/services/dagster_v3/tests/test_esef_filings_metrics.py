@@ -302,6 +302,7 @@ def test_build_select_usd_conversion_is_null_safe() -> None:
         "equity_amount_original",
         "liabilities_amount_original",
         "cash_amount_original",
+        "personnel_expenses_amount_original",
     )
 
     for amount_column in amount_columns:
@@ -316,8 +317,12 @@ def test_build_select_usd_conversion_is_null_safe() -> None:
 def test_esef_financial_metrics_export_columns_match_migration_order() -> None:
     # tables.ESEF_FINANCIAL_METRICS_EXPORT_COLUMNS is independently verified
     # against migration 000149's actual column order in
-    # tests/test_esef_filings_client.py::test_export_columns_match_migration_000149_column_order.
-    # This is a plain, self-contained regression pin of that same order.
+    # tests/test_esef_filings_client.py::test_export_columns_match_migration_000149_column_order,
+    # except personnel_expenses_amount_original/_usd, which arrive later via
+    # migration 000364's ALTER TABLE (excluded from that 000149 comparison)
+    # and are pinned here plus by the 000364 content test
+    # (tests/test_clickhouse_migrations.py::test_esef_personnel_expenses_migration_is_additive_and_reversible).
+    # This is a plain, self-contained regression pin of the full column order.
     assert tables.ESEF_FINANCIAL_METRICS_EXPORT_COLUMNS == (
         "lei",
         "entity_name",
