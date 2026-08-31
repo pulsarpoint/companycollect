@@ -77,7 +77,11 @@ class EsefDocumentManifestConfig(dg.Config):
 
 class EsefDocumentArtifactConfig(dg.Config):
     refresh_existing: bool = False
-    validate_esef: bool = True
+    # False by default (owner 2026-08-31): the ESMA conformance checks are the
+    # dominant per-document cost and feed nothing we store or display -- fact
+    # extraction is unaffected. Opt back in per-run when a compliance verdict
+    # is actually wanted.
+    validate_esef: bool = False
     parse_workers: int = Field(
         default=_DEFAULT_DOCUMENT_PARSE_WORKERS,
         ge=1,
