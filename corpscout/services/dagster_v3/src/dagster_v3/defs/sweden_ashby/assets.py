@@ -19,10 +19,49 @@ from dagster_v3.defs.common.duckdb_resources import (
     read_only_duckdb_connection,
 )
 from dagster_v3.defs.common.resources import ObjectStoreResource
-from dagster_v3.defs.sweden_ashby import source, tables, transform
+from dagster_v3.defs.sweden_ashby import historical, source, tables, transform
 
 DUCKDB_PATH = Path("data") / tables.DUCKDB_FILE_NAME
 DUCKDB_POOL = "sweden_ashby_duckdb"
+HISTORICAL_PARTITIONS = dg.TimeWindowPartitionsDefinition(
+    start="2025",
+    fmt="%Y",
+    cron_schedule="0 0 1 1 *",
+    timezone="UTC",
+    end_offset=1,
+)
+HISTORICAL_BACKFILL_POLICY = dg.BackfillPolicy.multi_run(max_partitions_per_run=1)
+
+
+@dg.asset(
+    partitions_def=HISTORICAL_PARTITIONS,
+    backfill_policy=HISTORICAL_BACKFILL_POLICY,
+    group_name=tables.GROUP_NAME,
+    kinds={"python", "warc", "s3", "ashby", "commoncrawl"},
+    description=(
+        "Stores Common Crawl captures of reviewed Ashby job-detail pages for one year."
+    ),
+)
+def sweden_ashby_historical_jobs_s3(
+    context: dg.AssetExecutionContext, sweden_ashby_object_store: ObjectStoreResource
+) -> dg.MaterializeResult:
+    manifest = historical.sync_historical_jobs_year(
+        object_store=sweden_ashby_object_store,
+        bucket=tables.S3_BUCKET,
+        boards=source.BOARDS,
+        partition_year=context.partition_key,
+        run_id=context.run.run_id,
+        retrieved_at=datetime.now(UTC),
+    )
+    return dg.MaterializeResult(
+        metadata={
+            "partition_year": manifest["partition_year"],
+            "collection_count": manifest["collection_count"],
+            "capture_count": manifest["capture_count"],
+            "content_object_count": manifest["content_object_count"],
+            "manifest_key": manifest["manifest_key"],
+        }
+    )
 
 
 @dg.asset(
@@ -123,6 +162,10 @@ sweden_ashby_snapshot_job = dg.define_asset_job(
     "sweden_ashby_snapshot_job",
     selection=dg.AssetSelection.assets("sweden_ashby_snapshot_clickhouse").upstream(),
 )
+sweden_ashby_historical_backfill_job = dg.define_asset_job(
+    "sweden_ashby_historical_backfill_job",
+    selection=dg.AssetSelection.assets("sweden_ashby_historical_jobs_s3"),
+)
 sweden_ashby_daily_schedule = dg.ScheduleDefinition(
     name="sweden_ashby_daily_schedule",
     job=sweden_ashby_snapshot_job,
@@ -132,11 +175,12 @@ sweden_ashby_daily_schedule = dg.ScheduleDefinition(
 )
 defs = dg.Definitions(
     assets=[
+        sweden_ashby_historical_jobs_s3,
         sweden_ashby_snapshot_s3,
         sweden_ashby_snapshot_duckdb,
         sweden_ashby_snapshot_clickhouse,
     ],
-    jobs=[sweden_ashby_snapshot_job],
+    jobs=[sweden_ashby_historical_backfill_job, sweden_ashby_snapshot_job],
     schedules=[sweden_ashby_daily_schedule],
     resources={
         "sweden_ashby_object_store": ObjectStoreResource(bucket=tables.S3_BUCKET),
