@@ -445,6 +445,11 @@ ORDER BY signal_type, technology, pattern"""
         try:
             client.execute(f"CREATE TABLE {stage} AS {qualified}")
             client.execute(detection.candidates_table_ddl(candidates))
+            # These ClickHouse INSERT…SELECTs block for minutes; log the phase
+            # BEFORE each so the run shows what it is doing rather than sitting
+            # silent inside a single driver call (the candidate scan is the
+            # long pole — one full pass over this bucket's DNS partition).
+            context.log.info("bucket %d: extracting candidates…", bucket)
             client.execute(
                 detection.candidates_insert_sql(candidates, bucket),
                 settings=settings,
@@ -453,7 +458,11 @@ ORDER BY signal_type, technology, pattern"""
                 client.execute(f"SELECT count() FROM {candidates}")[0][0]
             )
             context.log.info(
-                "bucket %d candidates: %d rows", bucket, candidate_count
+                "bucket %d: %d candidates extracted, matching %d fingerprint "
+                "signals…",
+                bucket,
+                candidate_count,
+                len(signals),
             )
             for signal in signals:
                 client.execute(
@@ -475,6 +484,7 @@ ORDER BY signal_type, technology, pattern"""
                 scalars,
                 settings=settings,
             )
+            context.log.info("bucket %d: publishing partition…", bucket)
             per_signal = client.execute(
                 f"SELECT signal_type, count() FROM {stage} GROUP BY signal_type"
             )
