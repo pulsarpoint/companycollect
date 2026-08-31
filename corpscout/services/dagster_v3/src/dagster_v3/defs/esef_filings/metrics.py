@@ -107,7 +107,7 @@ from dagster_v3.defs.sweden_financial.clickhouse import (
     guard_against_clickhouse_table_shrink,
 )
 
-MAPPING_VERSION = "esef-ifrs-v2"
+MAPPING_VERSION = "esef-ifrs-v3"
 
 EXCHANGE_RATES_TABLE = "exchange_rates"
 QUALIFIED_EXCHANGE_RATES_TABLE = f"{tables.ESEF_DATABASE}.{EXCHANGE_RATES_TABLE}"

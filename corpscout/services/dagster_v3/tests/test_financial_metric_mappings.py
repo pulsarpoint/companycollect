@@ -42,3 +42,11 @@ def test_esef_revenue_fallback_includes_investment_property_rental_income() -> N
     assert all(
         "ProfitFromPropertyManagement" not in concept for concept in revenue_concepts
     )
+
+
+def test_esef_operating_result_falls_back_to_profit_before_tax() -> None:
+    concepts = FINANCIAL_METRIC_MAPPINGS["operating_result"]["esef"]
+    assert concepts == (
+        "ifrs-full:ProfitLossFromOperatingActivities",
+        "ifrs-full:ProfitLossBeforeTax",
+    )

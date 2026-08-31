@@ -19,7 +19,14 @@ FINANCIAL_METRIC_MAPPINGS: dict[str, dict[str, tuple[str, ...]]] = {
     },
     "operating_result": {
         "bolagsverket": ("Rorelseresultat",),
-        "esef": ("ifrs-full:ProfitLossFromOperatingActivities",),
+        "esef": (
+            "ifrs-full:ProfitLossFromOperatingActivities",
+            # Financial institutions (banks, insurers) have no operating-
+            # activities subtotal; their reported operating result is profit
+            # before tax. Audit 2026-08-31: present in 921 of the 969 parsed
+            # filings that the primary concept misses.
+            "ifrs-full:ProfitLossBeforeTax",
+        ),
     },
     "net_result": {
         "bolagsverket": ("AretsResultat",),

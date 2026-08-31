@@ -141,8 +141,12 @@ def test_ifrs_metric_concepts_shape_and_order() -> None:
     # revenue is not comparable with a retailer's turnover, and folding it in
     # would silently make cross-company ranking meaningless.
     assert "ifrs-full:RevenueFromInterest" not in IFRS_METRIC_CONCEPTS["revenue"]
+    # operating_profit has a fallback (Task 2), so it's special-cased below.
+    assert IFRS_METRIC_CONCEPTS["operating_profit"] == (
+        "ifrs-full:ProfitLossFromOperatingActivities",
+        "ifrs-full:ProfitLossBeforeTax",
+    )
     for metric_name in (
-        "operating_profit",
         "profit_loss",
         "total_assets",
         "equity",
@@ -151,7 +155,7 @@ def test_ifrs_metric_concepts_shape_and_order() -> None:
         "employees",
     ):
         assert len(IFRS_METRIC_CONCEPTS[metric_name]) == 1
-    assert MAPPING_VERSION == "esef-ifrs-v2"
+    assert MAPPING_VERSION == "esef-ifrs-v3"
 
 
 # --- build_esef_financial_metrics_select ------------------------------------
