@@ -114,7 +114,7 @@ class FakeClickHouseResource:
 
 
 def test_ifrs_metric_concepts_shape_and_order() -> None:
-    assert len(IFRS_METRIC_CONCEPTS) == 8
+    assert len(IFRS_METRIC_CONCEPTS) == 9
     assert list(IFRS_METRIC_CONCEPTS) == [
         "revenue",
         "operating_profit",
@@ -123,6 +123,7 @@ def test_ifrs_metric_concepts_shape_and_order() -> None:
         "equity",
         "liabilities",
         "cash",
+        "personnel_expenses",
         "employees",
     ]
     # First-concept-wins order preserved for the one metric with fallbacks.
@@ -141,17 +142,25 @@ def test_ifrs_metric_concepts_shape_and_order() -> None:
     # revenue is not comparable with a retailer's turnover, and folding it in
     # would silently make cross-company ranking meaningless.
     assert "ifrs-full:RevenueFromInterest" not in IFRS_METRIC_CONCEPTS["revenue"]
+    # operating_profit has a fallback (Task 2), so it's special-cased below.
+    assert IFRS_METRIC_CONCEPTS["operating_profit"] == (
+        "ifrs-full:ProfitLossFromOperatingActivities",
+        "ifrs-full:ProfitLossBeforeTax",
+    )
     for metric_name in (
-        "operating_profit",
         "profit_loss",
         "total_assets",
         "equity",
         "liabilities",
         "cash",
+        "personnel_expenses",
         "employees",
     ):
         assert len(IFRS_METRIC_CONCEPTS[metric_name]) == 1
-    assert MAPPING_VERSION == "esef-ifrs-v2"
+    assert IFRS_METRIC_CONCEPTS["personnel_expenses"] == (
+        "ifrs-full:EmployeeBenefitsExpense",
+    )
+    assert MAPPING_VERSION == "esef-ifrs-v3"
 
 
 # --- build_esef_financial_metrics_select ------------------------------------
@@ -293,6 +302,7 @@ def test_build_select_usd_conversion_is_null_safe() -> None:
         "equity_amount_original",
         "liabilities_amount_original",
         "cash_amount_original",
+        "personnel_expenses_amount_original",
     )
 
     for amount_column in amount_columns:
@@ -307,8 +317,12 @@ def test_build_select_usd_conversion_is_null_safe() -> None:
 def test_esef_financial_metrics_export_columns_match_migration_order() -> None:
     # tables.ESEF_FINANCIAL_METRICS_EXPORT_COLUMNS is independently verified
     # against migration 000149's actual column order in
-    # tests/test_esef_filings_client.py::test_export_columns_match_migration_000149_column_order.
-    # This is a plain, self-contained regression pin of that same order.
+    # tests/test_esef_filings_client.py::test_export_columns_match_migration_000149_column_order,
+    # except personnel_expenses_amount_original/_usd, which arrive later via
+    # migration 000364's ALTER TABLE (excluded from that 000149 comparison)
+    # and are pinned here plus by the 000364 content test
+    # (tests/test_clickhouse_migrations.py::test_esef_personnel_expenses_migration_is_additive_and_reversible).
+    # This is a plain, self-contained regression pin of the full column order.
     assert tables.ESEF_FINANCIAL_METRICS_EXPORT_COLUMNS == (
         "lei",
         "entity_name",
@@ -333,6 +347,8 @@ def test_esef_financial_metrics_export_columns_match_migration_order() -> None:
         "liabilities_amount_usd",
         "cash_amount_original",
         "cash_amount_usd",
+        "personnel_expenses_amount_original",
+        "personnel_expenses_amount_usd",
         "employees",
         "mapped_fact_count",
         "source_fact_count",

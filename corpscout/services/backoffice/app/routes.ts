@@ -63,6 +63,10 @@ export default [
         "financials/esef/:documentId",
         "routes/company-esef-financial-report.tsx",
       ),
+      route(
+        "financials/esef/:documentId/notes",
+        "routes/company-esef-report-notes.tsx",
+      ),
       route("financials/:documentId", "routes/company-financial-report.tsx"),
     ]),
     route("company/:country/:id/facts/:year", "routes/company-facts.tsx"),
@@ -111,6 +115,7 @@ export default [
       route("info", "routes/admin-se-company-info.tsx"),
       route("address", "routes/admin-se-company-address.tsx"),
       route("financial", "routes/admin-se-company-financial.tsx"),
+      route("esef", "routes/admin-se-company-esef.tsx"),
       route("people", "routes/admin-se-company-people.tsx"),
       route("domains", "routes/admin-se-company-domains.tsx"),
       // The whole public technology area, inside the admin panel: the same

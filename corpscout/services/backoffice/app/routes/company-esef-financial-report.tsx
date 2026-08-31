@@ -110,6 +110,13 @@ export default function CompanyEsefFinancialReport({
           </p>
         </div>
         <div className="flex flex-wrap gap-2">
+          <Button
+            variant="outline"
+            nativeButton={false}
+            render={<Link to="notes" />}
+          >
+            Report notes
+          </Button>
           {summary.sourceUrl ? (
             <Button
               variant="outline"

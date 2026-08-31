@@ -12,11 +12,11 @@
  * unlabelled (or labelled but unselected).
  *
  * The keys and their order mirror the DDL (migrations 000297, 000300's
- * `activity_description_en` and 000306's two legal-form labels) minus the
- * envelope every leg reads by name
+ * `activity_description_en`, 000306's two legal-form labels and 000365's
+ * three ESEF enrichment columns) minus the envelope every leg reads by name
  * (`company_id`, `source_record_uid`, `observed_at`, `source_run_id`) and the
  * MATERIALIZED `evidence_hash`. ESEF is the one source whose display order
- * differs from its DDL order (entity name leads, the two JSON blobs trail);
+ * differs from its DDL order (entity name leads, the five JSON blobs trail);
  * map-key order does not affect the query, only the page.
  */
 
@@ -104,6 +104,21 @@ export const ARTIFACT_PAYLOAD_FIELDS: Record<
       label: "Business segments",
       kind: "json-list",
     },
+    {
+      key: "customer_markets_json",
+      label: "Customer markets",
+      kind: "json-list",
+    },
+    {
+      key: "operating_geographies_json",
+      label: "Operating geographies",
+      kind: "json-list",
+    },
+    {
+      key: "material_group_relationships_json",
+      label: "Group relationships",
+      kind: "json-list",
+    },
   ],
 };
 
@@ -159,7 +174,14 @@ export interface JsonListItem {
   detail: string;
 }
 
-const ITEM_NAME_KEYS = ["name", "label", "title"] as const;
+const ITEM_NAME_KEYS = [
+  "name",
+  "label",
+  "title",
+  // material_group_relationships_json items key their display name here
+  // instead of `name` -- the extractor writes it as a related company.
+  "related_company_name",
+] as const;
 
 /**
  * The rest of a list item, in prose rather than JSON: the two keys the ESEF

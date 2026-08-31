@@ -122,7 +122,15 @@ const detail: SeCompanyInfoDetail = {
         // with a name plus its confidence/evidence.
         products_and_services_json:
           '[{"name":"Payment terminals","confidence":0.9,"evidence_ids":["E0010"]},{"name":"Card issuing"}]',
+        customer_markets_json:
+          '[{"name":"Corporate customers","confidence":0.9,"evidence_ids":["E0007"]}]',
+        operating_geographies_json:
+          '[{"name":"Nordics","confidence":0.85,"evidence_ids":["E0009"]}]',
         business_segments_json: "[]",
+        // The shape the group-relationships extractor actually writes: no
+        // `name` key, the display name lives under `related_company_name`.
+        material_group_relationships_json:
+          '[{"confidence":0.95,"evidence_ids":["E0008"],"jurisdiction":"Sweden","ownership_percentage":100.0,"related_company_name":"SEKETT AB","relationship_type":"subsidiary"}]',
       },
     },
   ],
@@ -426,6 +434,9 @@ describe("company info review page", () => {
       "Description confidence",
       "Products &amp; services",
       "Business segments",
+      "Customer markets",
+      "Operating geographies",
+      "Group relationships",
     ]) {
       expect(html).toContain(label);
     }
@@ -436,6 +447,16 @@ describe("company info review page", () => {
     expect(html).toContain("confidence 0.9 · E0010");
     expect(html).not.toContain("&quot;confidence&quot;");
     expect(html).toContain("<li>Card issuing</li>");
+    expect(html).toContain("<li>Corporate customers");
+    expect(html).toContain("<li>Nordics");
+    // Group-relationship items key their display name as
+    // `related_company_name` rather than `name` -- ITEM_NAME_KEYS must find
+    // it, and the rest of the object (minus that key) still shows as prose.
+    expect(html).toContain("<li>SEKETT AB");
+    expect(html).toContain("confidence 0.95 · E0008");
+    expect(html).toContain("jurisdiction: Sweden");
+    expect(html).toContain("ownership_percentage: 100");
+    expect(html).toContain("relationship_type: subsidiary");
   });
 
   it("badges only the sources whose record actually contributed to the published description", () => {

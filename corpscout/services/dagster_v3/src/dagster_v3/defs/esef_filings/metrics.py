@@ -107,7 +107,7 @@ from dagster_v3.defs.sweden_financial.clickhouse import (
     guard_against_clickhouse_table_shrink,
 )
 
-MAPPING_VERSION = "esef-ifrs-v2"
+MAPPING_VERSION = "esef-ifrs-v3"
 
 EXCHANGE_RATES_TABLE = "exchange_rates"
 QUALIFIED_EXCHANGE_RATES_TABLE = f"{tables.ESEF_DATABASE}.{EXCHANGE_RATES_TABLE}"
@@ -187,6 +187,7 @@ def build_esef_financial_metrics_select(source_run_id: str) -> str:
     equity_sql = _coalesce_candidates_sql("equity")
     liabilities_direct_sql = _coalesce_candidates_sql("liabilities")
     cash_sql = _coalesce_candidates_sql("cash")
+    personnel_expenses_sql = _coalesce_candidates_sql("personnel_expenses")
     employees_sql = _coalesce_candidates_sql("employees")
 
     return f"""
@@ -401,6 +402,7 @@ def build_esef_financial_metrics_select(source_run_id: str) -> str:
                     ) AS Nullable(Decimal(38, 2))
                 ) AS liabilities_amount_original,
                 cast({cash_sql} AS Nullable(Decimal(38, 2))) AS cash_amount_original,
+                cast({personnel_expenses_sql} AS Nullable(Decimal(38, 2))) AS personnel_expenses_amount_original,
                 if(
                     {employees_sql} IS NOT NULL AND {employees_sql} >= 0,
                     cast(round({employees_sql}) AS Nullable(Int64)),
@@ -442,6 +444,8 @@ def build_esef_financial_metrics_select(source_run_id: str) -> str:
             {_nullable_usd_amount_sql("liabilities_amount_original")} AS liabilities_amount_usd,
             cash_amount_original,
             {_nullable_usd_amount_sql("cash_amount_original")} AS cash_amount_usd,
+            personnel_expenses_amount_original,
+            {_nullable_usd_amount_sql("personnel_expenses_amount_original")} AS personnel_expenses_amount_usd,
             employees,
             mapped_fact_count,
             source_fact_count,

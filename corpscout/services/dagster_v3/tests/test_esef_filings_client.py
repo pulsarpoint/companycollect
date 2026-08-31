@@ -508,6 +508,14 @@ def test_export_columns_match_migration_000149_column_order() -> None:
         tables.ESEF_FINANCIAL_METRICS_TABLE: tables.ESEF_FINANCIAL_METRICS_EXPORT_COLUMNS,
     }
 
+    # personnel_expenses_amount_original/_usd were added to
+    # esef_financial_metrics by a later ALTER TABLE (migration 000364), so
+    # they don't appear in 000149's original CREATE TABLE column list.
+    financial_metrics_altered_columns = {
+        "personnel_expenses_amount_original",
+        "personnel_expenses_amount_usd",
+    }
+
     for table_name, export_columns in expected_by_table.items():
         migration_columns = _migration_table_columns(sql, table_name)
         # resolved_at is CH-defaulted (DEFAULT now64(3)) and deliberately excluded
@@ -516,6 +524,12 @@ def test_export_columns_match_migration_000149_column_order() -> None:
             f"{table_name}: expected trailing resolved_at column, got "
             f"{migration_columns}"
         )
+        if table_name == tables.ESEF_FINANCIAL_METRICS_TABLE:
+            export_columns = tuple(
+                column
+                for column in export_columns
+                if column not in financial_metrics_altered_columns
+            )
         assert tuple(migration_columns[:-1]) == export_columns, (
             f"{table_name}: export columns {export_columns} do not match "
             f"migration column order {migration_columns[:-1]}"

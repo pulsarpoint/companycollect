@@ -31,7 +31,7 @@ export interface XbrlFact {
   structuredDisclosure?: EsefDisclosureDocument | null;
   disclosureEvidence?: {
     sourceRecordUid: string;
-    rawValueSha256: string;
+    textSha256: string;
     parserName: string;
     parserVersion: string;
   } | null;

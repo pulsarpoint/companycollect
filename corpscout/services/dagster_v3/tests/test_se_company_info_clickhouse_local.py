@@ -93,6 +93,12 @@ MIGRATIONS = (
     # 000301: it lands on the final, which is empty until FINAL_ROW_SQL, not on the SCB
     # artifact whose live upgrade 000300 has to demonstrate against existing rows.
     "000304_corpscout_se_company_info_llm_enhanced.up.sql",
+    # 000365 ALTERs se_company_info_esef, adding customer_markets_json,
+    # operating_geographies_json, and material_group_relationships_json -- the export's
+    # INSERT_COLUMNS (esef.py) now names all three, so the staged table needs them too.
+    # 000364 (same ledger neighborhood) touches only esef_financial_metrics and a view,
+    # neither of which is in NEEDED_TABLES, so it is deliberately not added here.
+    "000365_corpscout_se_company_info_esef_enrichment.up.sql",
 )
 # Applied later in the script than the rest, on purpose: on the live host 000300 lands on
 # a se_company_info_scb that already holds 3.5M v1 rows, and "ALTER ... MODIFY COLUMN of a

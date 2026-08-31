@@ -145,6 +145,8 @@ ESEF_FINANCIAL_METRICS_EXPORT_COLUMNS = (
     "liabilities_amount_usd",
     "cash_amount_original",
     "cash_amount_usd",
+    "personnel_expenses_amount_original",
+    "personnel_expenses_amount_usd",
     "employees",
     "mapped_fact_count",
     "source_fact_count",

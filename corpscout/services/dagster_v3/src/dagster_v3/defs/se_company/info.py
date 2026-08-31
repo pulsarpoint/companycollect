@@ -123,10 +123,16 @@ FALLBACK_COMPLETION_TOKENS = 450
 # ignores -- so a renamed or dropped artifact column fails loudly here instead of
 # silently shifting values, and no column list is ever hand-copied.
 ARTIFACT_ENVELOPE = ("company_id", "source_record_uid", "observed_at", "source_run_id")
-# ESEF's two JSON blobs are the only payload no rule reads today; they are large
+# ESEF's five JSON blobs are the only payload no rule reads today; they are large
 # free text, so keeping them out of the per-company payload map is worth naming.
 UNREAD_ARTIFACT_COLUMNS: dict[str, tuple[str, ...]] = {
-    "esef": ("products_and_services_json", "business_segments_json"),
+    "esef": (
+        "products_and_services_json",
+        "customer_markets_json",
+        "operating_geographies_json",
+        "business_segments_json",
+        "material_group_relationships_json",
+    ),
 }
 # Non-String artifact columns are cast INSIDE the ifNull: ClickHouse 26.5 has no
 # common type for a Date/number and '', so ifNull(date_col, '') is NO_COMMON_TYPE.

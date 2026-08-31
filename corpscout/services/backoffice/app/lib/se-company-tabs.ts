@@ -11,6 +11,7 @@ export const SE_COMPANY_TABS = [
   { value: "info", label: "Info" },
   { value: "address", label: "Address" },
   { value: "financial", label: "Financial" },
+  { value: "esef", label: "ESEF" },
   { value: "people", label: "People" },
   { value: "domains", label: "Domains" },
   { value: "technology", label: "Technology" },

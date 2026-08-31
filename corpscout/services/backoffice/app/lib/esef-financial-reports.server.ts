@@ -6,7 +6,7 @@ import type {
 } from "~/lib/esef-financial-reports";
 import { parsePersistedEsefDisclosure } from "~/lib/esef-disclosures";
 
-interface EsefReportSummaryRow {
+export interface EsefSummaryRow {
   lei: string;
   fxo_id: string;
   entity_name: string;
@@ -47,7 +47,7 @@ interface EsefFactRow {
   disclosure_blocks_json: string;
   disclosure_plain_text: string;
   disclosure_source_record_uid: string;
-  disclosure_raw_value_sha256: string;
+  disclosure_text_sha256: string;
   disclosure_parser_name: string;
   disclosure_parser_version: string;
 }
@@ -56,7 +56,7 @@ interface AvailableTableRow {
   name: string;
 }
 
-const REPORT_SUMMARY_QUERY = `
+export const REPORT_SUMMARY_QUERY = `
 SELECT
   f.lei AS lei,
   f.fxo_id AS fxo_id,
@@ -89,7 +89,7 @@ const OPTIONAL_TABLES_QUERY = `
 SELECT name
 FROM system.tables
 WHERE database = 'corpscout'
-  AND name IN ('esef_fact_disclosures', 'esef_document_concept_labels')`;
+  AND name IN ('esef_disclosures', 'esef_document_concept_labels')`;
 
 function reportFactsQuery(
   withDisclosures: boolean,
@@ -100,22 +100,34 @@ function reportFactsQuery(
   coalesce(disclosures.blocks_json, '') AS disclosure_blocks_json,
   coalesce(disclosures.plain_text, '') AS disclosure_plain_text,
   coalesce(toString(disclosures.source_record_uid), '') AS disclosure_source_record_uid,
-  coalesce(toString(disclosures.raw_value_sha256), '') AS disclosure_raw_value_sha256,
+  coalesce(toString(disclosures.text_sha256), '') AS disclosure_text_sha256,
   coalesce(disclosures.parser_name, '') AS disclosure_parser_name,
-  coalesce(disclosures.parser_version, '') AS disclosure_parser_version`
+  coalesce(toString(disclosures.parser_version), '') AS disclosure_parser_version`
     : `
   '' AS disclosure_blocks_json,
   '' AS disclosure_plain_text,
   '' AS disclosure_source_record_uid,
-  '' AS disclosure_raw_value_sha256,
+  '' AS disclosure_text_sha256,
   '' AS disclosure_parser_name,
   '' AS disclosure_parser_version`;
   const disclosureJoin = withDisclosures
     ? `
-LEFT ANY JOIN corpscout.esef_fact_disclosures AS disclosures
+LEFT ANY JOIN (
+  SELECT
+    source_document_id,
+    source_fact_id,
+    blocks_json,
+    plain_text,
+    source_record_uid,
+    text_sha256,
+    parser_name,
+    parser_version
+  FROM corpscout.esef_disclosures
+  WHERE disclosure_kind = 'tagged_fact'
+    AND source_document_id = {documentId:String}
+) AS disclosures
   ON disclosures.source_document_id = facts.fxo_id
- AND disclosures.source_fact_id = facts.fact_id
- AND disclosures.raw_value_sha256 = lower(hex(SHA256(facts.raw_value)))`
+ AND disclosures.source_fact_id = facts.fact_id`
     : "";
   const conceptLabelColumn = withConceptLabels
     ? `coalesce(labels.concept_labels_json, '[]') AS concept_labels_json,
@@ -169,6 +181,7 @@ LEFT ANY JOIN (
       '' AS translation_model,
       toUInt64(0) AS translation_version
     FROM corpscout.esef_document_concept_labels
+    WHERE source_document_id = {documentId:String}
 
     UNION ALL
 
@@ -212,6 +225,7 @@ LEFT ANY JOIN (
       FROM corpscout.esef_document_concept_labels
       WHERE label != ''
         AND (language = 'en' OR startsWith(language, 'en-'))
+        AND source_document_id = {documentId:String}
     ) AS official_english
       ON official_english.source_document_id = source.source_document_id
      AND official_english.concept_qname = source.concept_qname
@@ -220,6 +234,7 @@ LEFT ANY JOIN (
       AND source.label != ''
       AND source.language != 'en'
       AND NOT startsWith(source.language, 'en-')
+      AND source.source_document_id = {documentId:String}
   ) AS concept_text
   GROUP BY source_document_id, concept_qname
 ) AS labels
@@ -319,9 +334,12 @@ function parseConceptLabels(raw: string): EsefFinancialFact["conceptLabels"] {
   }
 }
 
-function reportSummary(
-  row: EsefReportSummaryRow,
-  factCount: number,
+/** Maps a summary row to the shared report-summary shape. `factCount` is the
+ * total tagged-fact count for callers that load the full fact list; callers
+ * that only need filing metadata (e.g. the report-notes reader) can omit it. */
+export function reportSummary(
+  row: EsefSummaryRow,
+  factCount = 0,
 ): EsefFinancialReportSummary {
   return {
     fxoId: row.fxo_id,
@@ -352,7 +370,7 @@ export async function getEsefFinancialReport(
     id: companyId,
     documentId,
   };
-  const summaries = await chQuery<EsefReportSummaryRow>(
+  const summaries = await chQuery<EsefSummaryRow>(
     REPORT_SUMMARY_QUERY,
     params,
   );
@@ -364,7 +382,7 @@ export async function getEsefFinancialReport(
   );
   const rows = await chQuery<EsefFactRow>(
     reportFactsQuery(
-      optionalTables.has("esef_fact_disclosures"),
+      optionalTables.has("esef_disclosures"),
       optionalTables.has("esef_document_concept_labels"),
     ),
     {
@@ -403,7 +421,7 @@ export async function getEsefFinancialReport(
     disclosureEvidence: row.disclosure_source_record_uid
       ? {
           sourceRecordUid: row.disclosure_source_record_uid,
-          rawValueSha256: row.disclosure_raw_value_sha256,
+          textSha256: row.disclosure_text_sha256,
           parserName: row.disclosure_parser_name,
           parserVersion: row.disclosure_parser_version,
         }

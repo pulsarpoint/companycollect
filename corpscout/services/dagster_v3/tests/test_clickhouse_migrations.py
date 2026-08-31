@@ -372,6 +372,8 @@ EXPECTED_MIGRATIONS = (
     "000361_corpscout_technology_catalog_publish_log",
     "000362_corpscout_drop_sweden_ats_job_sources",
     "000363_corpscout_se_jobtech_links_jobs",
+    "000364_corpscout_esef_personnel_expenses",
+    "000365_corpscout_se_company_info_esef_enrichment",
 )
 
 NOOP_MIGRATIONS = {"000276_noop"}
@@ -3881,6 +3883,28 @@ def test_sweden_ats_retirement_drops_and_can_recreate_every_source_table() -> No
     assert up_sql.count("DROP TABLE IF EXISTS corpscout.se_") == 32
 
 
+def test_esef_personnel_expenses_migration_is_additive_and_reversible() -> None:
+    up = (MIGRATIONS_DIR / "000364_corpscout_esef_personnel_expenses.up.sql").read_text()
+    down = (
+        MIGRATIONS_DIR / "000364_corpscout_esef_personnel_expenses.down.sql"
+    ).read_text()
+    assert (
+        "ADD COLUMN IF NOT EXISTS personnel_expenses_amount_original "
+        "Nullable(Decimal128(2))"
+    ) in up
+    assert (
+        "ADD COLUMN IF NOT EXISTS personnel_expenses_amount_usd "
+        "Nullable(Decimal128(2))"
+    ) in up
+    assert "CREATE OR REPLACE VIEW corpscout.se_financials_esef_current" in up
+    assert (
+        "argMaxIf(v.source_record_uid, v.version, "
+        "v.personnel_expenses_amount_usd IS NOT NULL),"
+    ) in up
+    assert "DROP COLUMN IF EXISTS personnel_expenses_amount_original" in down
+    assert "TRUNCATE" not in up
+
+
 def test_jobtech_links_migration_owns_source_history_and_company_matches() -> None:
     up_sql = _migration_sql("000363_corpscout_se_jobtech_links_jobs.up.sql")
     down_sql = _migration_sql("000363_corpscout_se_jobtech_links_jobs.down.sql")
@@ -3919,6 +3943,24 @@ def test_jobtech_links_migration_owns_source_history_and_company_matches() -> No
     assert "source_links" not in up_sql
     assert "company_job_current" not in up_sql
     assert "company_job_history" not in up_sql
+
+
+def test_se_company_info_esef_enrichment_migration_is_additive() -> None:
+    up = (
+        MIGRATIONS_DIR / "000365_corpscout_se_company_info_esef_enrichment.up.sql"
+    ).read_text()
+    down = (
+        MIGRATIONS_DIR / "000365_corpscout_se_company_info_esef_enrichment.down.sql"
+    ).read_text()
+    for column in (
+        "customer_markets_json",
+        "operating_geographies_json",
+        "material_group_relationships_json",
+    ):
+        assert f"ADD COLUMN IF NOT EXISTS {column} String DEFAULT ''" in up
+        assert f"DROP COLUMN IF EXISTS {column}" in down
+    assert "MATERIALIZED" not in up  # evidence_hash untouched
+    assert "TRUNCATE" not in up
 
 
 def _migration_sql(file_name: str) -> str:
