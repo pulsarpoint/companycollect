@@ -18,6 +18,8 @@ from dagster_v3.defs.technology_catalog.assets import (
 )
 from dagster_v3.defs.technology_catalog.fingerprints import (
     extract_dns_fingerprints,
+    extract_override_fingerprints,
+    load_fingerprint_overrides,
     parse_pattern,
 )
 from dagster_v3.defs.technology_catalog.catalog import (
@@ -525,6 +527,45 @@ def test_build_fingerprint_rows_match_column_contract(tmp_path: Path):
     assert row["technology"] == "Shared Tech"
     assert row["signal_type"] == "dns_mx"
     assert row["source_run_id"] == "run-1"
+
+
+def test_override_fingerprints_attach_to_known_names_only():
+    overrides = {
+        "Known Tech": {"TXT": ["^token=\\;confidence:75"]},
+        "Renamed Upstream": {"TXT": ["^gone="]},
+    }
+    fingerprints, unknown = extract_override_fingerprints(
+        overrides, {"Known Tech"}, "abc123"
+    )
+    assert unknown == ["Renamed Upstream"]
+    assert len(fingerprints) == 1
+    fp = fingerprints[0]
+    assert fp.technology == "Known Tech"
+    assert fp.signal_type == "dns_txt"
+    assert fp.pattern == "^token="
+    assert fp.confidence == 75
+    assert fp.source == tables.CUSTOM_SOURCE
+    assert fp.source_version == "abc123"
+
+
+def test_shipped_fingerprint_overrides_load_and_compile():
+    overrides, version = load_fingerprint_overrides(custom_source_dir())
+    assert len(overrides) >= 20
+    assert len(version) == 40
+    fingerprints, unknown = extract_override_fingerprints(
+        overrides, set(overrides), version
+    )
+    assert not unknown
+    for fp in fingerprints:
+        assert fp.signal_type.startswith("dns_")
+        assert detection.vectorscan_safe(fp.pattern), fp.pattern
+        assert fp.confidence <= 100
+
+
+def test_missing_fingerprint_overrides_file_is_empty(tmp_path: Path):
+    overrides, version = load_fingerprint_overrides(tmp_path)
+    assert overrides == {}
+    assert version == ""
 
 
 def test_fingerprints_migration_creates_the_table():

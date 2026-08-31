@@ -1,0 +1,86 @@
+{
+  "Microsoft 365": {
+    "TXT": ["include:spf\\.protection\\.outlook\\.com\\;confidence:90", "^mscid=\\;confidence:75"]
+  },
+  "Google Workspace": {
+    "TXT": ["include:_spf\\.google\\.com\\;confidence:90", "^google-gws-recovery-domain-verification=\\;confidence:90"]
+  },
+  "GoDaddy": {
+    "TXT": ["include:[a-z0-9._-]*secureserver\\.net\\;confidence:90"]
+  },
+  "Hostinger": {
+    "TXT": ["include:_spf\\.mail\\.hostinger\\.com\\;confidence:90"]
+  },
+  "IONOS": {
+    "TXT": ["include:_spf-(?:eu|us)\\.ionos\\.com\\;confidence:90", "include:_spf\\.kundenserver\\.de\\;confidence:90"]
+  },
+  "OVHcloud": {
+    "TXT": ["include:mx\\.ovh\\.com\\;confidence:90"]
+  },
+  "Infomaniak": {
+    "TXT": ["include:spf\\.infomaniak\\.ch\\;confidence:90"]
+  },
+  "Amazon SES": {
+    "TXT": ["include:amazonses\\.com\\;confidence:90", "^amazonses:\\;confidence:75"]
+  },
+  "MailChimp": {
+    "TXT": ["include:servers\\.mcsv\\.net\\;confidence:90"]
+  },
+  "MailerLite": {
+    "TXT": ["include:_spf\\.mlsend\\.com\\;confidence:90", "^mailerlite-domain-verification=\\;confidence:75"]
+  },
+  "Brevo": {
+    "TXT": ["include:spf\\.sendinblue\\.com\\;confidence:90", "^brevo-code:\\;confidence:75", "^sendinblue-code:\\;confidence:75"]
+  },
+  "Zoho Mail": {
+    "TXT": ["include:zoho(?:mail)?\\.com\\;confidence:90", "^zoho-verification=\\;confidence:75"]
+  },
+  "Klaviyo": {
+    "TXT": ["^klaviyo-site-verification=\\;confidence:75"]
+  },
+  "Atlassian Jira": {
+    "TXT": ["^atlassian-(?:domain|sending-domain)-verification=\\;confidence:75"]
+  },
+  "OpenAI": {
+    "TXT": ["^openai-domain-verification=\\;confidence:75"]
+  },
+  "Apple iCloud Mail": {
+    "TXT": ["^apple-domain=\\;confidence:75"]
+  },
+  "Proton Mail": {
+    "TXT": ["^protonmail-verification=\\;confidence:75"]
+  },
+  "Stripe": {
+    "TXT": ["^stripe-verification=\\;confidence:75"]
+  },
+  "DocuSign": {
+    "TXT": ["^docusign=\\;confidence:75"]
+  },
+  "Canva": {
+    "TXT": ["^canva-(?:domain-verify|site-verification)=\\;confidence:75"]
+  },
+  "Firebase": {
+    "TXT": ["^firebase=\\;confidence:75"]
+  },
+  "Slack": {
+    "TXT": ["^slack-domain-verification=\\;confidence:75"]
+  },
+  "Miro": {
+    "TXT": ["^miro-verification=\\;confidence:75"]
+  },
+  "Smartsheet": {
+    "TXT": ["^smartsheet-site-validation=\\;confidence:75"]
+  },
+  "Autodesk": {
+    "TXT": ["^autodesk-domain-verification=\\;confidence:75"]
+  },
+  "Twilio": {
+    "TXT": ["^twilio-domain-verification=\\;confidence:75"]
+  },
+  "WP Engine": {
+    "TXT": ["^wpe-verification=\\;confidence:75"]
+  },
+  "ClickFunnels": {
+    "TXT": ["^clickfunnels-domain-verification=\\;confidence:75"]
+  }
+}

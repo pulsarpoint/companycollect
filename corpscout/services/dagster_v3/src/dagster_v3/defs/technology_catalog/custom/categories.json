@@ -1,3 +1,5 @@
 {
-  "900": {"name": "Email security", "priority": 1}
+  "900": {"name": "Email security", "priority": 1},
+  "901": {"name": "Collaboration", "priority": 1},
+  "902": {"name": "Business platforms", "priority": 1}
 }

@@ -10,10 +10,14 @@ those are parsed off into dedicated fields so the stored `pattern` is a
 clean regex a SQL pass can hand to match().
 """
 
+import hashlib
+import json
 from collections.abc import Mapping
+from pathlib import Path
 from dataclasses import dataclass
 from typing import Any
 
+from dagster_v3.defs.technology_catalog import tables
 from dagster_v3.defs.technology_catalog.catalog import CatalogLayer, winning_entries
 
 DNS_SIGNAL_PREFIX = "dns_"
@@ -52,6 +56,65 @@ def _patterns(value: Any) -> list[str]:
     if isinstance(value, str):
         return [value]
     return [str(item) for item in value]
+
+
+def load_fingerprint_overrides(
+    custom_dir: Path,
+) -> tuple[dict[str, Mapping[str, Any]], str]:
+    """Pattern-only additions from custom/fingerprints.json.
+
+    Unlike custom/technologies.json entries, these attach extra dns patterns
+    to technologies that ALREADY exist in the catalog (usually rich upstream
+    entries a custom entry must not shadow). Returns the name → dns-mapping
+    dict plus the file's content hash for source_version; a missing file is
+    an empty set.
+    """
+    path = custom_dir / "fingerprints.json"
+    if not path.is_file():
+        return {}, ""
+    overrides = json.loads(path.read_text(encoding="utf-8"))
+    for name, dns in overrides.items():
+        if not isinstance(dns, Mapping) or not dns:
+            raise ValueError(
+                f"fingerprint override {name!r} must map record types to "
+                "pattern lists"
+            )
+    return overrides, hashlib.sha256(path.read_bytes()).hexdigest()[:40]
+
+
+def extract_override_fingerprints(
+    overrides: Mapping[str, Mapping[str, Any]],
+    known_technologies: set[str],
+    source_version: str,
+) -> tuple[list[Fingerprint], list[str]]:
+    """Override fingerprints for names the merged catalog knows.
+
+    An unknown name (an upstream rename, or a typo) is returned in the second
+    element for the caller to log — it must not fail the whole publish.
+    """
+    fingerprints: list[Fingerprint] = []
+    unknown: list[str] = []
+    for name in sorted(overrides):
+        if name not in known_technologies:
+            unknown.append(name)
+            continue
+        for record_type in sorted(overrides[name], key=str.lower):
+            for raw in _patterns(overrides[name][record_type]):
+                pattern, confidence, version_template = parse_pattern(raw)
+                if not pattern:
+                    continue
+                fingerprints.append(
+                    Fingerprint(
+                        technology=name,
+                        signal_type=f"{DNS_SIGNAL_PREFIX}{record_type.lower()}",
+                        pattern=pattern,
+                        confidence=confidence,
+                        version_template=version_template,
+                        source=tables.CUSTOM_SOURCE,
+                        source_version=source_version,
+                    )
+                )
+    return fingerprints, unknown
 
 
 def extract_dns_fingerprints(*layers: CatalogLayer) -> list[Fingerprint]:

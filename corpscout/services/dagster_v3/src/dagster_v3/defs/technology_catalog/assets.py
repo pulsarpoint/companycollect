@@ -36,6 +36,8 @@ from dagster_v3.defs.technology_catalog import detection
 from dagster_v3.defs.technology_catalog.fingerprints import (
     Fingerprint,
     extract_dns_fingerprints,
+    extract_override_fingerprints,
+    load_fingerprint_overrides,
 )
 from dagster_v3.defs.technology_catalog.icons import (
     IconRef,
@@ -187,9 +189,26 @@ def technology_catalog_clickhouse(
     )
 
     # The executable side of the same merge: the winning entries' Wappalyzer
-    # dns blocks, published in the same run so both tables always carry one
-    # consistent source_version per layer.
+    # dns blocks plus the pattern-only overrides for existing catalog names,
+    # published in the same run so both tables always carry one consistent
+    # source_version per layer.
     fingerprints = extract_dns_fingerprints(extension, overlay, custom)
+    overrides, overrides_version = load_fingerprint_overrides(custom_dir)
+    known_names = (
+        set(extension.technologies)
+        | set(overlay.technologies)
+        | set(custom.technologies)
+    )
+    override_fingerprints, unknown_names = extract_override_fingerprints(
+        overrides, known_names, overrides_version
+    )
+    for name in unknown_names:
+        context.log.warning(
+            "fingerprints.json names %r which no catalog layer carries; "
+            "its patterns were skipped",
+            name,
+        )
+    fingerprints = fingerprints + override_fingerprints
     fingerprint_count = _staged_replace(
         clickhouse,
         table=tables.TECHNOLOGY_FINGERPRINTS_TABLE,

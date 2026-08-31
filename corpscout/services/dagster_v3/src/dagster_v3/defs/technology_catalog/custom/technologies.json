@@ -1,204 +1,485 @@
 {
   "Proofpoint Email Protection": {
-    "cats": [900],
+    "cats": [
+      900
+    ],
     "description": "Proofpoint Email Protection is a cloud secure email gateway filtering inbound and outbound mail for threats, spam and data loss.",
     "website": "https://www.proofpoint.com/us/products/email-protection",
     "saas": true,
     "dns": {
-      "MX": ["\\.pphosted\\.com$", "\\.ppe-hosted\\.com$"]
+      "MX": [
+        "\\.pphosted\\.com$",
+        "\\.ppe-hosted\\.com$"
+      ]
     }
   },
   "Mimecast": {
-    "cats": [900],
+    "cats": [
+      900
+    ],
     "description": "Mimecast is a cloud email security and archiving platform providing secure email gateway, continuity and threat protection services.",
     "website": "https://www.mimecast.com",
     "saas": true,
     "dns": {
-      "MX": ["\\.mimecast\\.com$", "\\.mimecast-offshore\\.com$"]
+      "MX": [
+        "\\.mimecast\\.com$",
+        "\\.mimecast-offshore\\.com$"
+      ]
     }
   },
   "Barracuda Email Security": {
-    "cats": [900],
+    "cats": [
+      900
+    ],
     "description": "Barracuda Email Security is a cloud email gateway filtering inbound and outbound mail for spam, phishing and malware.",
     "website": "https://www.barracuda.com/products/email-protection",
     "saas": true,
     "dns": {
-      "MX": ["\\.ess\\.barracudanetworks\\.com$"]
+      "MX": [
+        "\\.ess\\.barracudanetworks\\.com$"
+      ]
     }
   },
   "Hornetsecurity": {
-    "cats": [900],
+    "cats": [
+      900
+    ],
     "description": "Hornetsecurity is a cloud email security service providing spam and malware filtering, advanced threat protection and email continuity.",
     "website": "https://www.hornetsecurity.com",
     "saas": true,
     "dns": {
-      "MX": ["\\.hornetsecurity\\.com$", "\\.antispameurope\\.com$"]
+      "MX": [
+        "\\.hornetsecurity\\.com$",
+        "\\.antispameurope\\.com$"
+      ]
     }
   },
   "SpamExperts": {
-    "cats": [900],
+    "cats": [
+      900
+    ],
     "description": "SpamExperts (N-able Mail Assure) is a hosted email filtering service used by hosting providers and resellers for inbound spam and malware protection.",
     "website": "https://www.n-able.com/products/mail-assure",
     "saas": true,
     "dns": {
-      "MX": ["\\.secure-mailgate\\.com$", "\\.spamexperts\\.(?:com|net|eu)$", "\\.antispamcloud\\.com$"]
+      "MX": [
+        "\\.secure-mailgate\\.com$",
+        "\\.spamexperts\\.(?:com|net|eu)$",
+        "\\.antispamcloud\\.com$"
+      ],
+      "TXT": [
+        "include:spf\\.antispamcloud\\.com\\;confidence:90"
+      ]
     }
   },
   "Cloudflare Email Routing": {
-    "cats": [75],
+    "cats": [
+      75
+    ],
     "description": "Cloudflare Email Routing forwards email for custom domains to destination mailboxes through Cloudflare's mail exchangers.",
     "website": "https://www.cloudflare.com/developer-platform/products/email-routing/",
     "saas": true,
     "dns": {
-      "MX": ["\\.mx\\.cloudflare\\.net$"]
+      "MX": [
+        "\\.mx\\.cloudflare\\.net$"
+      ]
     }
   },
   "Loopia": {
-    "cats": [75, 88],
+    "cats": [
+      75,
+      88
+    ],
     "description": "Loopia is a Swedish web hosting and domain provider whose hosted email service handles mail for customer domains.",
     "website": "https://www.loopia.se",
     "saas": true,
     "dns": {
-      "MX": ["\\.loopia\\.se$"]
+      "MX": [
+        "\\.loopia\\.se$"
+      ]
     }
   },
   "Simply.com": {
-    "cats": [75, 88],
+    "cats": [
+      75,
+      88
+    ],
     "description": "Simply.com (formerly UnoEuro) is a Danish web hosting and domain provider whose hosted email service handles mail for customer domains.",
     "website": "https://www.simply.com",
     "saas": true,
     "dns": {
-      "MX": ["\\.simply\\.com$", "\\.unoeuro\\.com$"]
+      "MX": [
+        "\\.simply\\.com$",
+        "\\.unoeuro\\.com$"
+      ]
     }
   },
   "Cisco Secure Email": {
-    "cats": [900],
+    "cats": [
+      900
+    ],
     "description": "Cisco Secure Email (formerly IronPort / Cisco Email Security) is a cloud email gateway protecting inbound and outbound mail.",
     "website": "https://www.cisco.com/site/us/en/products/security/secure-email/index.html",
     "saas": true,
     "dns": {
-      "MX": ["\\.iphmx\\.com$"]
+      "MX": [
+        "\\.iphmx\\.com$"
+      ]
     }
   },
   "Halon": {
-    "cats": [75],
+    "cats": [
+      75
+    ],
     "description": "Halon is a programmable email infrastructure platform (MTA) used by hosting providers and email service operators.",
     "website": "https://halon.io",
     "dns": {
-      "MX": ["\\.halon\\.(?:se|io)$"]
+      "MX": [
+        "\\.halon\\.(?:se|io)$"
+      ]
     }
   },
   "Fastmail": {
-    "cats": [75, 30],
+    "cats": [
+      75,
+      30
+    ],
     "description": "Fastmail is a hosted email service for individuals and businesses on custom domains.",
     "website": "https://www.fastmail.com",
     "saas": true,
     "dns": {
-      "MX": ["\\.messagingengine\\.com$"]
+      "MX": [
+        "\\.messagingengine\\.com$"
+      ]
     }
   },
   "GleSYS": {
-    "cats": [75, 88],
+    "cats": [
+      75,
+      88
+    ],
     "description": "GleSYS is a Swedish cloud and hosting provider whose hosted email service handles mail for customer domains.",
     "website": "https://glesys.se",
     "saas": true,
     "dns": {
-      "MX": ["\\.glesys\\.se$"]
+      "MX": [
+        "\\.glesys\\.se$"
+      ]
     }
   },
   "Websupport": {
-    "cats": [75, 88],
+    "cats": [
+      75,
+      88
+    ],
     "description": "Websupport is a Nordic and Central European web hosting and domain provider whose hosted email service handles mail for customer domains.",
     "website": "https://websupport.se",
     "saas": true,
     "dns": {
-      "MX": ["\\.websupport\\.(?:se|sk|cz|hu)$"]
+      "MX": [
+        "\\.websupport\\.(?:se|sk|cz|hu)$"
+      ],
+      "TXT": [
+        "include:_spf\\.m1\\.websupport\\.(?:sk|se|cz|hu)\\;confidence:90"
+      ]
     }
   },
   "Oderland": {
-    "cats": [75, 88],
+    "cats": [
+      75,
+      88
+    ],
     "description": "Oderland is a Swedish web hosting provider whose hosted email service handles mail for customer domains.",
     "website": "https://www.oderland.se",
     "saas": true,
     "dns": {
-      "MX": ["\\.oderland\\.(?:com|se)$"]
+      "MX": [
+        "\\.oderland\\.(?:com|se)$"
+      ]
     }
   },
   "Telia Email": {
-    "cats": [75],
+    "cats": [
+      75
+    ],
     "description": "Telia's hosted email service handles mail for business customer domains through Telia mail exchangers.",
     "website": "https://www.telia.se",
     "saas": true,
     "dns": {
-      "MX": ["\\.telia\\.com$", "\\.telia\\.se$"]
+      "MX": [
+        "\\.telia\\.com$",
+        "\\.telia\\.se$"
+      ]
     }
   },
   "Svenska Domäner": {
-    "cats": [75, 88],
+    "cats": [
+      75,
+      88
+    ],
     "description": "Svenska Domäner is a Swedish domain and web hosting provider whose hosted email service handles mail for customer domains.",
     "website": "https://www.svenskadomaner.se",
     "saas": true,
     "dns": {
-      "MX": ["\\.svenskadomaner\\.se$"]
+      "MX": [
+        "\\.svenskadomaner\\.se$"
+      ]
     }
   },
   "Ilait": {
-    "cats": [75, 88],
+    "cats": [
+      75,
+      88
+    ],
     "description": "Ilait is a Swedish white-label cloud provider whose hosted email platform handles mail for domains of reseller customers.",
     "website": "https://www.ilait.com",
     "saas": true,
     "dns": {
-      "MX": ["\\.ilait\\.se$", "\\.ilait\\.com$"]
+      "MX": [
+        "\\.ilait\\.se$",
+        "\\.ilait\\.com$"
+      ]
     }
   },
   "Beebyte": {
-    "cats": [75, 88],
+    "cats": [
+      75,
+      88
+    ],
     "description": "Beebyte is a Swedish web hosting provider whose hosted email service handles mail for customer domains.",
     "website": "https://beebyte.se",
     "saas": true,
     "dns": {
-      "MX": ["\\.beebyte\\.se$"]
+      "MX": [
+        "\\.beebyte\\.se$"
+      ]
     }
   },
   "FS Data": {
-    "cats": [75, 88],
+    "cats": [
+      75,
+      88
+    ],
     "description": "FS Data is a Swedish web hosting provider whose hosted email service handles mail for customer domains.",
     "website": "https://www.fsdata.se",
     "saas": true,
     "dns": {
-      "MX": ["\\.fsdata\\.se$"]
+      "MX": [
+        "\\.fsdata\\.se$"
+      ]
     }
   },
   "StaySecure": {
-    "cats": [900],
+    "cats": [
+      900
+    ],
     "description": "StaySecure is a Swedish email security service filtering inbound mail for spam, phishing and malware.",
     "website": "https://staysecure.se",
     "saas": true,
     "dns": {
-      "MX": ["\\.staysecuregroup\\.(?:com|net)$"]
+      "MX": [
+        "\\.staysecuregroup\\.(?:com|net)$"
+      ]
     }
   },
   "Fortinet FortiMail Cloud": {
-    "cats": [900],
+    "cats": [
+      900
+    ],
     "description": "FortiMail Cloud is Fortinet's hosted secure email gateway filtering inbound and outbound mail for threats and spam.",
     "website": "https://www.fortinet.com/products/email-security",
     "saas": true,
     "dns": {
-      "MX": ["\\.mailanyone\\.net$"]
+      "MX": [
+        "\\.mailanyone\\.net$"
+      ]
     }
   },
   "ImprovMX": {
-    "cats": [75],
+    "cats": [
+      75
+    ],
     "description": "ImprovMX is an email forwarding service routing mail for custom domains to destination mailboxes.",
     "website": "https://improvmx.com",
     "saas": true,
     "dns": {
-      "MX": ["\\.improvmx\\.com$"]
+      "MX": [
+        "\\.improvmx\\.com$"
+      ]
     }
   },
   "Self-hosted email": {
-    "cats": [75],
+    "cats": [
+      75
+    ],
     "description": "Inbound mail is handled by mail exchangers under the organization's own domain rather than a hosted email provider.",
     "website": ""
+  },
+  "SendGrid": {
+    "cats": [
+      75,
+      32
+    ],
+    "description": "SendGrid (Twilio SendGrid) is a cloud platform for transactional and marketing email delivery.",
+    "website": "https://sendgrid.com",
+    "saas": true,
+    "dns": {
+      "MX": [
+        "\\.sendgrid\\.net$"
+      ],
+      "TXT": [
+        "include:sendgrid\\.net\\;confidence:90"
+      ]
+    }
+  },
+  "Elastic Email": {
+    "cats": [
+      75,
+      32
+    ],
+    "description": "Elastic Email is a cloud email delivery platform for transactional and marketing email.",
+    "website": "https://elasticemail.com",
+    "saas": true,
+    "dns": {
+      "TXT": [
+        "include:_spf\\.elasticemail\\.com\\;confidence:90"
+      ]
+    }
+  },
+  "MailChannels": {
+    "cats": [
+      75
+    ],
+    "description": "MailChannels is an email delivery and filtering service used by hosting providers to relay customer email.",
+    "website": "https://www.mailchannels.com",
+    "saas": true,
+    "dns": {
+      "MX": [
+        "\\.mailchannels\\.net$"
+      ],
+      "TXT": [
+        "include:relay\\.mailchannels\\.net\\;confidence:90"
+      ]
+    }
+  },
+  "Cisco Duo": {
+    "cats": [
+      69
+    ],
+    "description": "Cisco Duo provides multi-factor authentication and single sign-on for workforce identity security.",
+    "website": "https://duo.com",
+    "saas": true,
+    "dns": {
+      "TXT": [
+        "^duo_sso_verification=\\;confidence:75"
+      ]
+    }
+  },
+  "KnowBe4": {
+    "cats": [
+      16
+    ],
+    "description": "KnowBe4 is a security awareness training and simulated phishing platform.",
+    "website": "https://www.knowbe4.com",
+    "saas": true,
+    "dns": {
+      "TXT": [
+        "^knowbe4-site-verification=\\;confidence:75"
+      ]
+    }
+  },
+  "Sophos Central": {
+    "cats": [
+      16,
+      900
+    ],
+    "description": "Sophos Central is Sophos' cloud security platform, including email security for verified domains.",
+    "website": "https://www.sophos.com",
+    "saas": true,
+    "dns": {
+      "TXT": [
+        "^sophos-domain-verification=\\;confidence:75"
+      ]
+    }
+  },
+  "Trend Micro Email Security": {
+    "cats": [
+      900
+    ],
+    "description": "Trend Micro Email Security is a cloud gateway filtering inbound and outbound email for threats and spam.",
+    "website": "https://www.trendmicro.com/en_us/business/products/email-security.html",
+    "saas": true,
+    "dns": {
+      "TXT": [
+        "^tmes=\\;confidence:75"
+      ]
+    }
+  },
+  "Cisco Webex": {
+    "cats": [
+      901
+    ],
+    "description": "Cisco Webex is a collaboration suite for meetings, calling and messaging.",
+    "website": "https://www.webex.com",
+    "saas": true,
+    "dns": {
+      "TXT": [
+        "^cisco-ci-domain-verification=\\;confidence:75"
+      ]
+    }
+  },
+  "Meta Business Suite": {
+    "cats": [
+      902,
+      32
+    ],
+    "description": "Meta Business Suite manages a company's presence and advertising across Facebook and Instagram; domain verification proves ownership for ads and commerce.",
+    "website": "https://business.facebook.com",
+    "saas": true,
+    "dns": {
+      "TXT": [
+        "^facebook-domain-verification=\\;confidence:75"
+      ]
+    }
+  },
+  "Apple Business Manager": {
+    "cats": [
+      902
+    ],
+    "description": "Apple Business Manager is Apple's portal for managed Apple IDs, device enrollment and app distribution in organizations.",
+    "website": "https://business.apple.com",
+    "saas": true,
+    "dns": {
+      "TXT": [
+        "^apple-domain-verification=\\;confidence:75"
+      ]
+    }
+  },
+  "Microsoft Dynamics 365 Marketing": {
+    "cats": [
+      32,
+      53
+    ],
+    "description": "Dynamics 365 Customer Insights - Journeys (formerly Dynamics 365 Marketing) is Microsoft's marketing automation platform; d365mktkey records verify sending domains.",
+    "website": "https://www.microsoft.com/en-us/dynamics-365/products/customer-insights",
+    "saas": true,
+    "dns": {
+      "TXT": [
+        "^d365mktkey=\\;confidence:75"
+      ]
+    }
+  },
+  "Google Search Console": {
+    "cats": [
+      10
+    ],
+    "description": "Google Search Console verification shows the domain is registered and monitored in Google's webmaster tooling.",
+    "website": "https://search.google.com/search-console",
+    "saas": true,
+    "dns": {
+      "TXT": [
+        "^google-site-verification=\\;confidence:60"
+      ]
+    }
   }
 }
