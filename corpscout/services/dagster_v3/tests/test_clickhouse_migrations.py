@@ -371,6 +371,7 @@ EXPECTED_MIGRATIONS = (
     "000359_corpscout_sweden_ats_job_sources",
     "000360_corpscout_domain_signal_technologies_partitioned",
     "000361_corpscout_technology_catalog_publish_log",
+    "000362_corpscout_drop_sweden_ats_job_sources",
 )
 
 NOOP_MIGRATIONS = {"000276_noop"}
@@ -3850,6 +3851,34 @@ def test_ratsit_normalization_v2_migration_is_additive_and_nace_joinable() -> No
     assert (
         "DROP VIEW IF EXISTS corpscout.se_ratsit_establishments_with_nace" in down_sql
     )
+
+
+def test_sweden_ats_retirement_drops_and_can_recreate_every_source_table() -> None:
+    up_sql = _migration_sql(
+        "000362_corpscout_drop_sweden_ats_job_sources.up.sql"
+    )
+    down_sql = _migration_sql(
+        "000362_corpscout_drop_sweden_ats_job_sources.down.sql"
+    )
+    providers = ("greenhouse", "lever", "ashby", "smartrecruiters")
+    table_suffixes = (
+        "boards",
+        "board_company_links",
+        "board_snapshots",
+        "job_ad_versions",
+        "job_ad_events",
+        "job_ad_current",
+        "job_ad_location_versions",
+        "job_ad_compensation_versions",
+    )
+
+    for provider in providers:
+        for suffix in table_suffixes:
+            table = f"corpscout.se_{provider}_{suffix}"
+            assert up_sql.count(f"DROP TABLE IF EXISTS {table};") == 1
+            assert down_sql.count(f"CREATE TABLE IF NOT EXISTS {table}") == 1
+
+    assert up_sql.count("DROP TABLE IF EXISTS corpscout.se_") == 32
 
 
 def _migration_sql(file_name: str) -> str:
