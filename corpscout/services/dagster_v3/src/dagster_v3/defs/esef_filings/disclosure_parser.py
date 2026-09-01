@@ -410,7 +410,13 @@ def _positive_span(value: str | None) -> int:
 def _tag_name(element: etree._Element) -> str:
     if not isinstance(element.tag, str):
         return ""
-    return etree.QName(element).localname.lower()
+    try:
+        return etree.QName(element).localname.lower()
+    except ValueError:
+        # recover-mode parses of corrupted filings can emit elements whose tag
+        # is not a valid QName; treat them like any unknown tag instead of
+        # failing the whole partition
+        return element.tag.rpartition("}")[2].lower()
 
 
 def _normalized_text(value: str) -> str:

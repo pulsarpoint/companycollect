@@ -66,6 +66,16 @@ def test_disclosure_parser_preserves_readable_text_and_tables() -> None:
     }
 
 
+def test_disclosure_parser_survives_invalid_tag_names() -> None:
+    # Recover-mode parses of corrupted filings can emit elements whose tag is
+    # not a valid QName; one bad document must not fail the whole partition.
+    raw_value = "<div><p>before</p><n!!^('e7jz garbage>inside</n!!^('e7jz></div>"
+
+    disclosure = parse_esef_disclosure(raw_value)
+
+    assert "before" in disclosure.plain_text
+
+
 def test_disclosure_row_is_deterministic_and_source_preserving() -> None:
     source = {
         "source_document_id": "SAMPLE-2024-0",
