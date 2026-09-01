@@ -57,10 +57,10 @@ import {
   wikidataHref,
   type ArtifactPayloadEntry,
 } from "~/lib/se-company-info-payload";
-import { liveOverrideRefusal } from "~/lib/se-info-review-form";
-
 export type SeCompanyInfoReviewResult =
-  { ok: true; correctionId: string } | { ok: false; error: string } | null;
+  | { ok: true; valueIds: string[] }
+  | { ok: false; error: string }
+  | null;
 
 /** TODO(field-values Task 7): the shape of the deleted
  * `SeCompanyInfoCorrectionRow`, kept locally only so the Ledger card below
@@ -571,15 +571,12 @@ export function SeCompanyInfoReviewWorkspace({
   const hash = info.evidence_set_hash;
   // One click is one ledger row: block every submit while one is in flight.
   const busy = useNavigation().state !== "idle";
-  // While a live override stands, Dagster's kind-ranking always lets it win
-  // over any approve/reject, so offering those decisions here would be
-  // misleading -- disable them and point at the override instead. The two
-  // kinds always share one answer (the check doesn't look at which kind was
-  // asked), so one call covers both buttons below.
-  const overrideRefusal = liveOverrideRefusal(
-    "approve_suggestion",
-    corrections,
-  );
+  // TODO(field-values Task 7): the approve/reject buttons this disabled speak
+  // the deleted correction ledger, where a live override always beat them.
+  // Field values have no such rule -- the latest row wins, full stop -- so
+  // nothing is refused here any more; Task 7 replaces those buttons with
+  // "Use this suggestion" and this constant goes with them.
+  const overrideRefusal: string | null = null;
   const contributing = new Set(info.description_source_record_uids);
   const groups = groupArtifactsBySource(artifacts);
 
@@ -599,8 +596,10 @@ export function SeCompanyInfoReviewWorkspace({
           <CheckCircle2Icon />
           <AlertTitle>Saved</AlertTitle>
           <AlertDescription>
-            Correction {result.correctionId} is in the ledger. Queued for the
-            next Dagster review run; reload to see the result once it lands.
+            {result.valueIds.length === 1
+              ? "1 value row saved"
+              : `${result.valueIds.length} value rows saved`}{" "}
+            — published on the next rebuild.
           </AlertDescription>
         </Alert>
       ) : null}

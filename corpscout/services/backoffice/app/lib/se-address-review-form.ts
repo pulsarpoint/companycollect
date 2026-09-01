@@ -5,10 +5,13 @@
  * `middleware`/`headers` from a route module, so any other export of the route
  * that reaches into a `.server` module drags that module into the client bundle
  * and fails the production build. These helpers live here instead, and both the
- * route's `action` and the tab's own button-disabling import them. Mirrors
- * se-info-review-form.ts for this ledger's kinds (see se-address-corrections.ts),
- * with one difference the datatype forces: every non-undo payload names the
- * `address_key` it decides, because a company has several published addresses.
+ * route's `action` and the tab's own button-disabling import them. This is now
+ * the only correction-ledger form builder for a COMPANY tab -- company-info
+ * moved to the field-value store (`se-info-field-value-form.ts`) and its
+ * builder is gone -- so the kinds here are this ledger's alone (see
+ * se-address-corrections.ts), with one shape the datatype forces: every
+ * non-undo payload names the `address_key` it decides, because a company has
+ * several published addresses.
  */
 import {
   liveOverrideCorrectionId,

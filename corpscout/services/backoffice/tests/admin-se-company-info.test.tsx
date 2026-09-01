@@ -6,11 +6,11 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 // see tests/people.corrections.test.ts / tests/se-company-info.server.test.ts
 // for the same vi.hoisted + vi.mock("...server", ...) idiom, applied one
 // layer up here so `action`'s calls to loadSeCompanyInfoDetail /
-// appendSeCompanyInfoCorrection are directly assertable without a live
+// appendSeCompanyInfoFieldValues are directly assertable without a live
 // ClickHouse.
 const server = vi.hoisted(() => ({
   loadSeCompanyInfoDetail: vi.fn(),
-  appendSeCompanyInfoCorrection: vi.fn(),
+  appendSeCompanyInfoFieldValues: vi.fn(),
 }));
 vi.mock("~/lib/se-company-info.server", () => server);
 
@@ -20,7 +20,7 @@ import {
   SeCompanyInfoReviewWorkspace,
 } from "~/components/admin/se-company-info-review-workspace";
 import type { SeCompanyInfoDetail } from "~/lib/se-company-info.server";
-import { ZERO_EVIDENCE_HASH } from "~/lib/se-person-corrections";
+import { SeInfoFieldValueValidationError } from "~/lib/se-info-field-values";
 
 const COMPANY_ID = "5565200028";
 const EVIDENCE_HASH = "e".repeat(64);
@@ -576,9 +576,13 @@ describe("company info review page", () => {
   it("confirms a save and renders the not-published state", () => {
     const html = render(detail, {
       ok: true,
-      correctionId: "22222222-2222-4222-8222-222222222222",
+      valueIds: [
+        "22222222-2222-4222-8222-222222222222",
+        "33333333-3333-4333-8333-333333333333",
+      ],
     });
-    expect(html).toContain("Queued for the next Dagster review run");
+    expect(html).toContain("2 value rows saved");
+    expect(html).toContain("published on the next rebuild");
     expect(
       renderToStaticMarkup(
         <SeCompanyInfoNotPublished companyId="5565200028" />,
@@ -648,22 +652,13 @@ describe("company info review page", () => {
   });
 });
 
-// TODO(field-values Task 7): Task 5 stubbed this route's action -- it refuses
-// every post because the correction ledger it wrote to no longer exists. Task 6
-// gives it the field-value intents (use-source / use-suggestion / edit /
-// release) and Task 7 rewrites these three cases against them.
-describe.skip("admin-se-company-info action (P7 -- server-side refusal, mocked server module)", () => {
+describe("admin-se-company-info action (field-value intents, mocked server module)", () => {
   beforeEach(() => {
     server.loadSeCompanyInfoDetail.mockReset();
-    server.appendSeCompanyInfoCorrection.mockReset();
+    server.appendSeCompanyInfoFieldValues.mockReset();
+    server.loadSeCompanyInfoDetail.mockResolvedValue(detail);
+    server.appendSeCompanyInfoFieldValues.mockResolvedValue({ valueIds: [] });
   });
-
-  // TODO(field-values Task 7): the ledger rows this helper used to graft onto
-  // the detail have no home in SeCompanyInfoDetail any more, so it ignores its
-  // argument until Task 7 rewrites these cases against field values.
-  function detailWithCorrections(_corrections: unknown[]): SeCompanyInfoDetail {
-    return detail;
-  }
 
   function postAction(entries: Record<string, string>) {
     const form = new FormData();
@@ -678,92 +673,111 @@ describe.skip("admin-se-company-info action (P7 -- server-side refusal, mocked s
     } as unknown as Parameters<typeof action>[0]);
   }
 
-  it("refuses approve_suggestion while a live override stands, without writing", async () => {
-    server.loadSeCompanyInfoDetail.mockResolvedValue(
-      detailWithCorrections([
-        {
-          correction_id: OVERRIDE_CORRECTION_ID,
-          correction_kind: "override_field",
-          payload: '{"description":"x"}',
-          evidence_hash: EVIDENCE_HASH,
-          reason: "r",
-          decided_by: "backoffice",
-          supersedes_correction_id: null,
-          created_at: "2026-08-22 12:00:00.000",
-          is_current: 1,
-          is_stale: 0,
-          is_applied: 1,
-        },
-      ]),
+  it("writes one artifact's text and returns the ids", async () => {
+    server.appendSeCompanyInfoFieldValues.mockResolvedValue({
+      valueIds: ["66666666-6666-4666-8666-666666666666"],
+    });
+
+    const result = await postAction({
+      intent: "use-source",
+      field: "description",
+      value: "Alpha builds payment software.",
+      source: "scb",
+      source_ref: "scb:1",
+      source_at: "2026-08-01 00:00:00.000",
+    });
+
+    expect(result).toEqual({
+      ok: true,
+      valueIds: ["66666666-6666-4666-8666-666666666666"],
+    });
+    expect(server.loadSeCompanyInfoDetail).toHaveBeenCalledWith(COMPANY_ID);
+    expect(server.appendSeCompanyInfoFieldValues).toHaveBeenCalledTimes(1);
+    expect(server.appendSeCompanyInfoFieldValues).toHaveBeenCalledWith([
+      {
+        companyId: COMPANY_ID,
+        field: "description",
+        value: "Alpha builds payment software.",
+        source: "scb",
+        sourceRef: "scb:1",
+        sourceAt: "2026-08-01 00:00:00.000",
+      },
+    ]);
+  });
+
+  it("builds both languages from the suggestion the page is showing", async () => {
+    server.appendSeCompanyInfoFieldValues.mockResolvedValue({
+      valueIds: [
+        "66666666-6666-4666-8666-666666666666",
+        "77777777-7777-4777-8777-777777777777",
+      ],
+    });
+
+    const result = await postAction({
+      intent: "use-suggestion",
+      suggestion_id: SUGGESTION_ID,
+    });
+
+    expect(result).toEqual({
+      ok: true,
+      valueIds: [
+        "66666666-6666-4666-8666-666666666666",
+        "77777777-7777-4777-8777-777777777777",
+      ],
+    });
+    const [inputs] = server.appendSeCompanyInfoFieldValues.mock.calls[0] as [
+      Array<{ field: string }>,
+    ];
+    expect(inputs).toHaveLength(2);
+    expect(inputs.map((input) => input.field)).toEqual([
+      "description",
+      "description_sv",
+    ]);
+    expect(inputs[0]).toMatchObject({
+      companyId: COMPANY_ID,
+      source: "llm",
+      sourceRef: SUGGESTION_ID,
+      sourceAt: detail.suggestions[0].created_at,
+    });
+  });
+
+  it("refuses an edit that changed nothing, without writing", async () => {
+    const result = await postAction({
+      intent: "edit",
+      description: detail.info.description ?? "",
+      original_description: detail.info.description ?? "",
+      description_sv: detail.info.description_sv ?? "",
+      original_description_sv: detail.info.description_sv ?? "",
+      note: "",
+    });
+
+    expect(result).toEqual({ ok: false, error: "Nothing changed." });
+    expect(server.appendSeCompanyInfoFieldValues).not.toHaveBeenCalled();
+  });
+
+  it("hands the store's own refusal back to the reviewer", async () => {
+    server.appendSeCompanyInfoFieldValues.mockRejectedValue(
+      new SeInfoFieldValueValidationError("This company is not published."),
     );
 
     const result = await postAction({
-      correction_kind: "approve_suggestion",
-      suggestion_id: SUGGESTION_ID,
-      evidence_hash: EVIDENCE_HASH,
-      reason: "Matches SCB",
+      intent: "release",
+      field: "description",
     });
 
     expect(result).toEqual({
       ok: false,
-      error: `Undo the current override first (${OVERRIDE_CORRECTION_ID.slice(0, 8)}).`,
-    });
-    expect(server.appendSeCompanyInfoCorrection).not.toHaveBeenCalled();
-  });
-
-  it("calls appendSeCompanyInfoCorrection with the expected SeInfoCorrectionInput once no live override stands", async () => {
-    server.loadSeCompanyInfoDetail.mockResolvedValue(detailWithCorrections([]));
-    server.appendSeCompanyInfoCorrection.mockResolvedValue({
-      correctionId: "66666666-6666-4666-8666-666666666666",
-    });
-
-    const result = await postAction({
-      correction_kind: "approve_suggestion",
-      suggestion_id: SUGGESTION_ID,
-      evidence_hash: EVIDENCE_HASH,
-      reason: "Matches SCB",
-    });
-
-    expect(result).toEqual({
-      ok: true,
-      correctionId: "66666666-6666-4666-8666-666666666666",
-    });
-    expect(server.loadSeCompanyInfoDetail).toHaveBeenCalledWith(COMPANY_ID);
-    expect(server.appendSeCompanyInfoCorrection).toHaveBeenCalledWith({
-      companyId: COMPANY_ID,
-      kind: "approve_suggestion",
-      payload: { suggestion_id: SUGGESTION_ID },
-      evidenceHash: EVIDENCE_HASH,
-      reason: "Matches SCB",
-      supersedesCorrectionId: null,
+      error: "This company is not published.",
     });
   });
 
-  it("undo posts the zero evidence hash and the superseded id, skipping the live-override check entirely", async () => {
-    server.appendSeCompanyInfoCorrection.mockResolvedValue({
-      correctionId: "77777777-7777-4777-8777-777777777777",
-    });
+  it("rethrows anything that is not a validation refusal", async () => {
+    server.appendSeCompanyInfoFieldValues.mockRejectedValue(
+      new Error("ClickHouse is down"),
+    );
 
-    const result = await postAction({
-      correction_kind: "undo",
-      supersedes_correction_id: OVERRIDE_CORRECTION_ID,
-      reason: "Wrong call",
-    });
-
-    expect(result).toEqual({
-      ok: true,
-      correctionId: "77777777-7777-4777-8777-777777777777",
-    });
-    // Undo is neither approve_suggestion nor reject_suggestion, so the
-    // action never needs the current detail to decide.
-    expect(server.loadSeCompanyInfoDetail).not.toHaveBeenCalled();
-    expect(server.appendSeCompanyInfoCorrection).toHaveBeenCalledWith({
-      companyId: COMPANY_ID,
-      kind: "undo",
-      payload: {},
-      evidenceHash: ZERO_EVIDENCE_HASH,
-      reason: "Wrong call",
-      supersedesCorrectionId: OVERRIDE_CORRECTION_ID,
-    });
+    await expect(
+      postAction({ intent: "release", field: "description" }),
+    ).rejects.toThrow("ClickHouse is down");
   });
 });

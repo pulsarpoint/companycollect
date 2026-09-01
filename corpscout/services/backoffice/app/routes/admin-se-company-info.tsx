@@ -4,7 +4,12 @@ import {
   SeCompanyInfoNotPublished,
   SeCompanyInfoReviewWorkspace,
 } from "~/components/admin/se-company-info-review-workspace";
-import { loadSeCompanyInfoDetail } from "~/lib/se-company-info.server";
+import {
+  appendSeCompanyInfoFieldValues,
+  loadSeCompanyInfoDetail,
+} from "~/lib/se-company-info.server";
+import { SeInfoFieldValueValidationError } from "~/lib/se-info-field-values";
+import { buildFieldValueInputs } from "~/lib/se-info-field-value-form";
 
 // Only `loader`, `action`, `meta` and the component live here. Any other
 // export that touched `~/lib/*.server` would keep that module in the client
@@ -18,17 +23,40 @@ export async function loader({ params }: Route.LoaderArgs) {
   return data({ detail }, detail ? undefined : { status: 404 });
 }
 
-// TODO(field-values Task 6): Task 6 replaces this action -- it dispatches on `intent`
-// (use-source / use-suggestion / edit / release), builds the rows with
-// se-info-field-value-form.ts and writes them through
-// appendSeCompanyInfoFieldValues. Until then every post is refused -- the
-// correction ledger it used to write to no longer exists, and a silent
-// success would be worse than a refusal.
-export async function action(_: Route.ActionArgs) {
-  return {
-    ok: false as const,
-    error: "Info corrections are being replaced by field values.",
-  };
+/**
+ * One field-value decision, whatever intent the reviewer used to make it.
+ *
+ * The current detail is loaded first because a decision can name text the post
+ * itself does not carry: `use-suggestion` sends only a suggestion id, and the
+ * wording behind it must come from this company's own suggestions rather than
+ * from the form. The same load also answers the 404 the loader answers -- a
+ * post to a company Dagster has never published has nothing to decide.
+ */
+export async function action({ request, params }: Route.ActionArgs) {
+  const form = await request.formData();
+  const detail = await loadSeCompanyInfoDetail(params.companyId);
+  if (!detail) {
+    throw data({ detail: null }, { status: 404 });
+  }
+  const built = buildFieldValueInputs(form, {
+    companyId: params.companyId,
+    suggestions: detail.suggestions,
+  });
+  if (!built.ok) {
+    return { ok: false as const, error: built.error };
+  }
+  try {
+    const { valueIds } = await appendSeCompanyInfoFieldValues(built.inputs);
+    return { ok: true as const, valueIds };
+  } catch (error) {
+    // The store's refusals are the reviewer's to read (a company that is not
+    // published, an empty value, a field decided twice in one post); anything
+    // else is a real failure and must not be dressed up as a form error.
+    if (error instanceof SeInfoFieldValueValidationError) {
+      return { ok: false as const, error: error.message };
+    }
+    throw error;
+  }
 }
 
 export function meta({ loaderData }: Route.MetaArgs) {
