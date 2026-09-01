@@ -10,9 +10,11 @@
 - **Authentication**: none
 - **Raw object bucket**: `source-sweden-jobtech-links`
 
-JobTech Links aggregates job advertisements linked from Swedish job sites. The
-source is separate from Platsbanken: raw and normalized records must preserve
-their JobTech Links provenance and must not be deduplicated against Platsbanken.
+JobTech Links aggregates job advertisements linked from Swedish job sites. All
+published rows remain byte-for-byte in the S3 archive. The normalized JobTech
+Links dataset contains external publishers only because rows whose canonical
+provider is `arbetsformedlingen.se` belong to the separate Platsbanken pipeline.
+No deduplication is performed between the remaining external publishers.
 
 ## 2. Ingest mode — and why
 
@@ -58,15 +60,41 @@ set.
 
 ## 4. Transform
 
-No transformation is part of the initial asset. A later raw DuckDB asset will
-stream `output.json`, retain every source row and provenance field, and derive
-the tables owned by migration `000363_corpscout_se_jobtech_links_jobs`.
+Each partition family has a raw and normalized DuckDB asset after its S3 asset.
+The partition key determines an isolated file at:
+
+`data/sweden_jobtech_links/duckdb/partition_key=<key>/data.duckdb`
+
+The raw asset resolves the newest valid partition manifest and handles one S3
+archive at a time, so neither compressed nor extracted archives accumulate on
+temporary disk. DuckDB's native newline-delimited JSON reader records total,
+Platsbanken, external-row, and external-provider counts per dated snapshot. It
+persists only external-provider payloads in `job_ads_raw_external`; the original
+archive remains the complete replay boundary in S3.
+
+The normalized asset uses set-based DuckDB SQL to create:
+
+- `snapshots`, one audit row per dated source archive;
+- `job_ad_versions`, one row per stable publisher identity and serving-content
+  version;
+- `job_ad_observations`, one compact daily presence row per advertisement;
+- `job_ad_location_versions`, one row per versioned workplace location; and
+- `job_ad_enrichment_versions`, containing only JobTech's accepted binary
+  occupation, competency, trait, and geography enrichments.
+
+Publisher plus publisher-owned identifier defines the stable advertisement
+identity. Observation and ingestion timestamps are excluded from the content
+version hash, so an unchanged ad observed on consecutive dates reuses the same
+version. Active intervals and current-state resolution need observations across
+partitions and therefore belong in the later ClickHouse stage. Company matching
+remains a separate enrichment stage.
 
 ## 5. ClickHouse schema
 
-Migration `000363_corpscout_se_jobtech_links_jobs` owns the future snapshot,
-job version, observation, location, enrichment, active-interval, current-job,
-and exact company-match tables. This raw S3 asset does not write ClickHouse.
+Migration `000363_corpscout_se_jobtech_links_jobs` owns the snapshot, job
+version, observation, location, enrichment, active-interval, current-job, and
+exact company-match tables. The DuckDB assets implement the first five shapes
+but do not write ClickHouse yet.
 
 ## 6. Translation
 
@@ -85,6 +113,10 @@ available from 2026-09-01 onward. Stable run keys suppress duplicate
 sensor-launched runs. Historical and monthly partitions remain manual
 backfills.
 
+The sensor deliberately still targets the S3-only daily job. The three explicit
+`*_duckdb_job` definitions materialize S3, raw DuckDB, and normalized DuckDB for
+one year, month, or day while downstream behavior is validated manually.
+
 Materialize one explicit daily partition before enabling the sensor. After its
 archive/member metadata has been reconciled, the sensor can launch newly
 published daily partitions. Catalog-driven automation is used instead of a
@@ -98,13 +130,19 @@ midnight schedule because archive publication time can vary.
 - A standard Dagster time-window definition cannot change cadence within one
   asset. Three fixed assets encode the controlled year/month/day transition.
 - The same vacancy may occur in this source and Platsbanken. Cross-source
-  deduplication is explicitly out of scope.
+  deduplication is explicitly out of scope; only rows explicitly attributed to
+  `arbetsformedlingen.se` are excluded from JobTech Links normalization.
+- A sampled 2026 archive was dominated by `arbetsformedlingen.se`, so retaining
+  all raw JSON again in DuckDB would make yearly files unnecessarily large. S3
+  remains the full-fidelity raw boundary and the snapshot catalog retains the
+  excluded-row counts.
 
 ## 10. Verification
 
-- Unit contract: `tests/test_sweden_jobtech_links_source.py`
+- Source and asset-graph contract: `tests/test_sweden_jobtech_links_source.py`
+- Normalization contract: `tests/test_sweden_jobtech_links_normalize.py`
 - Definition validation: `uv run dg check defs`
-- Manual gate: materialize one explicit partition of
-  `sweden_jobtech_links_daily_snapshot_s3` while the sensor remains stopped.
-  Inspect its archive, metadata, and partition-manifest keys and compare byte
-  counts with Dagster metadata before enabling daily automation.
+- Manual gate: materialize one explicit daily DuckDB job while the sensor
+  remains stopped. Reconcile S3 archive counts with `snapshots`, confirm the
+  Platsbanken/external split, and inspect version/observation/location/enrichment
+  counts before switching daily automation to the downstream job.

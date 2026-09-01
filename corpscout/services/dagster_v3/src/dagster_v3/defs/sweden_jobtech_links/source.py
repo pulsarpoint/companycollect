@@ -1,4 +1,5 @@
 import json
+import shutil
 import tarfile
 import tempfile
 import time
@@ -285,6 +286,101 @@ def sync_snapshot_partition(
         manifest_key=manifest_key,
         snapshots=tuple(snapshots),
     )
+
+
+def latest_snapshot_manifest(
+    *,
+    object_store: ObjectStoreResource,
+    partition_kind: PartitionKind,
+    partition_key: str,
+) -> dict[str, object]:
+    """Return the newest complete, internally consistent manifest for a partition."""
+    prefix = f"{tables.MANIFEST_PREFIX}/{partition_kind}={partition_key}/"
+    manifest_keys = sorted(
+        (
+            key
+            for key in object_store.list_keys(prefix, bucket=tables.S3_BUCKET)
+            if key.endswith(".json")
+        ),
+        reverse=True,
+    )
+    for manifest_key in manifest_keys:
+        try:
+            manifest = json.loads(
+                object_store.read_bytes(manifest_key, bucket=tables.S3_BUCKET)
+            )
+            if (
+                manifest.get("partition_kind") != partition_kind
+                or manifest.get("partition_key") != partition_key
+            ):
+                continue
+            archives = manifest["archives"]
+            if (
+                not isinstance(archives, list)
+                or not archives
+                or len(archives) != int(manifest["archive_count"])
+            ):
+                continue
+            if not all(
+                object_store.exists(
+                    str(archive["archive_object_key"]), bucket=tables.S3_BUCKET
+                )
+                and object_store.exists(
+                    str(archive["metadata_object_key"]), bucket=tables.S3_BUCKET
+                )
+                for archive in archives
+            ):
+                continue
+        except json.JSONDecodeError, KeyError, TypeError, ValueError:
+            continue
+        return {**manifest, "manifest_key": manifest_key}
+    raise ValueError(
+        f"No valid JobTech Links {partition_kind} manifest for {partition_key} "
+        f"under s3://{tables.S3_BUCKET}/{prefix}; materialize its S3 snapshot "
+        "asset first"
+    )
+
+
+def extract_snapshot_jsonl_archive(
+    archive_path: Path,
+    target_path: Path,
+    *,
+    expected_member_path: str,
+) -> None:
+    """Stream the manifest-declared output.json member from a validated tarball."""
+    expected = PurePosixPath(expected_member_path)
+    if expected.is_absolute() or ".." in expected.parts:
+        raise ValueError(
+            f"Unsafe JobTech Links archive member path: {expected_member_path!r}"
+        )
+    try:
+        with tarfile.open(archive_path, mode="r:gz") as archive:
+            members = [
+                member
+                for member in archive.getmembers()
+                if member.isfile() and member.name == expected_member_path
+            ]
+            if len(members) != 1:
+                raise ValueError(
+                    f"Expected exactly one {expected_member_path!r} member in "
+                    f"{archive_path.name}, found {len(members)}"
+                )
+            member = members[0]
+            if member.size <= 0:
+                raise ValueError(
+                    f"JobTech Links archive member {member.name!r} is empty"
+                )
+            source = archive.extractfile(member)
+            if source is None:
+                raise ValueError(
+                    f"Could not read JobTech Links archive member {member.name!r}"
+                )
+            with source, target_path.open("wb") as target:
+                shutil.copyfileobj(source, target, length=DOWNLOAD_CHUNK_BYTES)
+    except (tarfile.TarError, OSError) as exc:
+        raise ValueError(
+            f"JobTech Links archive {archive_path.name} is not a valid tar.gz"
+        ) from exc
 
 
 def _completed_month_partition(

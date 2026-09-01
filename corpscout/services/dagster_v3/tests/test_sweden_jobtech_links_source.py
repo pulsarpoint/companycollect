@@ -25,6 +25,8 @@ from dagster_v3.defs.sweden_jobtech_links.partitions import (
 from dagster_v3.defs.sweden_jobtech_links.source import (
     SnapshotArchive,
     discover_snapshot_archives,
+    extract_snapshot_jsonl_archive,
+    latest_snapshot_manifest,
     sync_snapshot_partition,
 )
 
@@ -232,11 +234,52 @@ def test_snapshot_assets_use_three_fixed_partition_definitions() -> None:
         "sweden_jobtech_links_historical_snapshot_job",
         "sweden_jobtech_links_2026_month_snapshot_job",
         "sweden_jobtech_links_daily_snapshot_job",
+        "sweden_jobtech_links_historical_duckdb_job",
+        "sweden_jobtech_links_2026_month_duckdb_job",
+        "sweden_jobtech_links_daily_duckdb_job",
     }
     assert {sensor.name for sensor in defs.sensors} == {
         "sweden_jobtech_links_daily_catalog_sensor"
     }
     assert defs.sensors[0].default_status == dg.DefaultSensorStatus.STOPPED
+
+
+def test_each_snapshot_family_has_raw_and_normalized_duckdb_assets() -> None:
+    graph = defs.resolve_asset_graph()
+    families = (
+        (
+            "sweden_jobtech_links_historical_snapshot_s3",
+            "sweden_jobtech_links_historical_raw_duckdb",
+            "sweden_jobtech_links_historical_normalized_duckdb",
+            HISTORICAL_PARTITIONS,
+        ),
+        (
+            "sweden_jobtech_links_2026_month_snapshot_s3",
+            "sweden_jobtech_links_2026_month_raw_duckdb",
+            "sweden_jobtech_links_2026_month_normalized_duckdb",
+            MONTHLY_2026_PARTITIONS,
+        ),
+        (
+            "sweden_jobtech_links_daily_snapshot_s3",
+            "sweden_jobtech_links_daily_raw_duckdb",
+            "sweden_jobtech_links_daily_normalized_duckdb",
+            DAILY_PARTITIONS,
+        ),
+    )
+
+    for snapshot_name, raw_name, normalized_name, partitions_def in families:
+        snapshot = graph.get(AssetKey(snapshot_name))
+        raw = graph.get(AssetKey(raw_name))
+        normalized = graph.get(AssetKey(normalized_name))
+
+        assert raw.partitions_def is partitions_def
+        assert normalized.partitions_def is partitions_def
+        assert raw.parent_keys == {snapshot.key}
+        assert normalized.parent_keys == {raw.key}
+        assert raw.backfill_policy is not None
+        assert raw.backfill_policy.max_partitions_per_run == 1
+        assert normalized.backfill_policy is not None
+        assert normalized.backfill_policy.max_partitions_per_run == 1
 
 
 def test_catalog_sensor_launches_only_fixed_daily_partitions(
@@ -338,6 +381,31 @@ def test_sync_stores_only_the_daily_partition_archive_and_manifest() -> None:
     )
     assert store.upload_count == 1
     assert store.write_count == 2
+
+    replay_manifest = latest_snapshot_manifest(
+        object_store=store,  # type: ignore[arg-type]
+        partition_kind="day",
+        partition_key="2026-09-01",
+    )
+    assert replay_manifest["manifest_key"] == partition.manifest_key
+    assert replay_manifest["archives"] == manifest["archives"]
+
+
+def test_extract_snapshot_archive_streams_only_the_manifest_member(
+    tmp_path: Path,
+) -> None:
+    payload = b'{"id":"job-1"}\n{"id":"job-2"}\n'
+    archive_path = tmp_path / "snapshot.tar.gz"
+    target_path = tmp_path / "output.json"
+    archive_path.write_bytes(_archive(payload))
+
+    extract_snapshot_jsonl_archive(
+        archive_path,
+        target_path,
+        expected_member_path="jobtechdev/minio/arkiv/output.json",
+    )
+
+    assert target_path.read_bytes() == payload
 
 
 def test_sync_year_partition_selects_every_available_archive_in_that_year() -> None:

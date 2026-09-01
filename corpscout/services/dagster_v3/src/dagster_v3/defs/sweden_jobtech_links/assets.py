@@ -1,9 +1,25 @@
+import tempfile
 from datetime import UTC, datetime
+from email.utils import parsedate_to_datetime
+from pathlib import Path
 
 import dagster as dg
 
+from dagster_v3.defs.common.duckdb_runtime import apply_duckdb_runtime_settings
+from dagster_v3.defs.common.partition_duckdb import (
+    open_partition_duckdb,
+    require_partition_duckdb,
+)
 from dagster_v3.defs.common.resources import ObjectStoreResource
 from dagster_v3.defs.sweden_jobtech_links import tables
+from dagster_v3.defs.sweden_jobtech_links.normalize import (
+    LoadedSnapshot,
+    SnapshotProvenance,
+    append_snapshot_jsonl,
+    build_normalized_tables,
+    initialize_raw_tables,
+    replace_snapshot_catalog,
+)
 from dagster_v3.defs.sweden_jobtech_links.partitions import (
     DAILY_PARTITIONS,
     HISTORICAL_PARTITIONS,
@@ -12,11 +28,14 @@ from dagster_v3.defs.sweden_jobtech_links.partitions import (
     daily_partition_keys_from_catalog,
 )
 from dagster_v3.defs.sweden_jobtech_links.source import (
+    extract_snapshot_jsonl_archive,
     fetch_snapshot_catalog,
+    latest_snapshot_manifest,
     sync_snapshot_partition,
 )
 
 BACKFILL_POLICY = dg.BackfillPolicy.multi_run(max_partitions_per_run=1)
+DUCKDB_POOL = "sweden_jobtech_links_duckdb"
 
 
 class SnapshotPartitionConfig(dg.Config):
@@ -51,6 +70,142 @@ def _materialize_snapshot_partition(
             "total_raw_member_size_bytes": partition.total_raw_member_size_bytes,
             "manifest_key": partition.manifest_key,
             "source_url": tables.CATALOG_URL,
+        }
+    )
+
+
+def _parse_timestamp(value: object) -> datetime:
+    parsed = datetime.fromisoformat(str(value).strip().replace("Z", "+00:00"))
+    if parsed.tzinfo is None:
+        raise ValueError(f"Timestamp must include a UTC offset: {value}")
+    return parsed.astimezone(UTC)
+
+
+def _parse_optional_http_timestamp(value: object) -> datetime | None:
+    clean_value = str(value).strip()
+    if clean_value == "":
+        return None
+    parsed = parsedate_to_datetime(clean_value)
+    if parsed.tzinfo is None:
+        raise ValueError(f"Timestamp must include a UTC offset: {value}")
+    return parsed.astimezone(UTC)
+
+
+def _snapshot_provenance(
+    *, manifest: dict[str, object], archive: dict[str, object]
+) -> SnapshotProvenance:
+    return SnapshotProvenance(
+        snapshot_uid=str(archive["snapshot_uid"]),
+        snapshot_date=datetime.fromisoformat(str(archive["snapshot_date"])).date(),
+        catalog_url=str(manifest["catalog_url"]),
+        source_url=str(archive["source_url"]),
+        archive_object_key=str(archive["archive_object_key"]),
+        archive_sha256=str(archive["archive_sha256"]),
+        archive_etag=str(archive["source_etag"]),
+        archive_size_bytes=int(archive["archive_size_bytes"]),
+        raw_member_path=str(archive["raw_member_path"]),
+        raw_member_size_bytes=int(archive["raw_member_size_bytes"]),
+        source_last_modified_at=_parse_optional_http_timestamp(
+            archive["source_last_modified"]
+        ),
+        source_run_id=str(manifest["source_run_id"]),
+        retrieved_at=_parse_timestamp(manifest["retrieved_at"]),
+    )
+
+
+def _materialize_raw_duckdb(
+    *,
+    context: dg.AssetExecutionContext,
+    object_store: ObjectStoreResource,
+    partition_kind: PartitionKind,
+) -> dg.MaterializeResult:
+    partition_key = context.partition_key
+    manifest = latest_snapshot_manifest(
+        object_store=object_store,
+        partition_kind=partition_kind,
+        partition_key=partition_key,
+    )
+    archives = list(manifest["archives"])
+    partition_path = tables.partition_duckdb_path(partition_key)
+    loaded_snapshots: list[LoadedSnapshot] = []
+    with open_partition_duckdb(
+        source=tables.SOURCE_SLUG, partition=partition_key
+    ) as connection:
+        apply_duckdb_runtime_settings(
+            connection,
+            default_temp_directory=partition_path.parent / "duckdb_tmp",
+        )
+        initialize_raw_tables(connection)
+        for index, archive_value in enumerate(archives, start=1):
+            archive = dict(archive_value)
+            provenance = _snapshot_provenance(manifest=manifest, archive=archive)
+            with tempfile.TemporaryDirectory(
+                prefix="sweden_jobtech_links_duckdb_"
+            ) as temp:
+                temp_path = Path(temp)
+                archive_path = temp_path / f"snapshot-{index}.tar.gz"
+                jsonl_path = temp_path / f"snapshot-{index}.jsonl"
+                object_store.download_file(
+                    provenance.archive_object_key,
+                    archive_path,
+                    bucket=tables.S3_BUCKET,
+                )
+                extract_snapshot_jsonl_archive(
+                    archive_path,
+                    jsonl_path,
+                    expected_member_path=provenance.raw_member_path,
+                )
+                loaded_snapshots.append(
+                    append_snapshot_jsonl(
+                        connection=connection,
+                        jsonl_path=jsonl_path,
+                        provenance=provenance,
+                    )
+                )
+            context.log.info(
+                "JobTech Links partition %s: loaded %s/%s S3 archives into DuckDB",
+                partition_key,
+                index,
+                len(archives),
+            )
+        replace_snapshot_catalog(connection, loaded_snapshots)
+
+    return dg.MaterializeResult(
+        metadata={
+            "partition_kind": partition_kind,
+            "partition_key": partition_key,
+            "manifest_key": str(manifest["manifest_key"]),
+            "archive_count": len(loaded_snapshots),
+            "raw_rows": sum(item.raw_row_count for item in loaded_snapshots),
+            "platsbanken_rows": sum(
+                item.platsbanken_row_count for item in loaded_snapshots
+            ),
+            "external_rows": sum(item.external_row_count for item in loaded_snapshots),
+            "duckdb_path": str(partition_path),
+            "duckdb_raw_table": (f"{tables.DUCKDB_SCHEMA}.{tables.RAW_EXTERNAL_TABLE}"),
+        }
+    )
+
+
+def _materialize_normalized_duckdb(
+    *, context: dg.AssetExecutionContext, partition_kind: PartitionKind
+) -> dg.MaterializeResult:
+    partition_key = context.partition_key
+    partition_path = tables.partition_duckdb_path(partition_key)
+    with require_partition_duckdb(
+        source=tables.SOURCE_SLUG, partition=partition_key
+    ) as connection:
+        apply_duckdb_runtime_settings(
+            connection,
+            default_temp_directory=partition_path.parent / "duckdb_tmp",
+        )
+        counts = build_normalized_tables(connection=connection)
+    return dg.MaterializeResult(
+        metadata={
+            **counts,
+            "partition_kind": partition_kind,
+            "partition_key": partition_key,
+            "duckdb_path": str(partition_path),
         }
     )
 
@@ -124,6 +279,129 @@ def sweden_jobtech_links_daily_snapshot_s3(
     )
 
 
+@dg.asset(
+    deps=[dg.AssetKey("sweden_jobtech_links_historical_snapshot_s3")],
+    partitions_def=HISTORICAL_PARTITIONS,
+    backfill_policy=BACKFILL_POLICY,
+    group_name=tables.GROUP_NAME,
+    kinds={"python", "s3", "tar", "gzip", "jsonl", "duckdb"},
+    pool=DUCKDB_POOL,
+    description=(
+        "Loads one historical year from its S3 manifest into an isolated DuckDB "
+        "audit catalog and external-provider raw JSON table."
+    ),
+)
+def sweden_jobtech_links_historical_raw_duckdb(
+    context: dg.AssetExecutionContext,
+    sweden_jobtech_links_object_store: ObjectStoreResource,
+) -> dg.MaterializeResult:
+    return _materialize_raw_duckdb(
+        context=context,
+        object_store=sweden_jobtech_links_object_store,
+        partition_kind="year",
+    )
+
+
+@dg.asset(
+    deps=[dg.AssetKey("sweden_jobtech_links_historical_raw_duckdb")],
+    partitions_def=HISTORICAL_PARTITIONS,
+    backfill_policy=BACKFILL_POLICY,
+    group_name=tables.GROUP_NAME,
+    kinds={"python", "duckdb", "sql"},
+    pool=DUCKDB_POOL,
+    description=(
+        "Normalizes one historical year into external-provider versions, daily "
+        "observations, locations, and accepted JobTech enrichments."
+    ),
+)
+def sweden_jobtech_links_historical_normalized_duckdb(
+    context: dg.AssetExecutionContext,
+) -> dg.MaterializeResult:
+    return _materialize_normalized_duckdb(context=context, partition_kind="year")
+
+
+@dg.asset(
+    deps=[dg.AssetKey("sweden_jobtech_links_2026_month_snapshot_s3")],
+    partitions_def=MONTHLY_2026_PARTITIONS,
+    backfill_policy=BACKFILL_POLICY,
+    group_name=tables.GROUP_NAME,
+    kinds={"python", "s3", "tar", "gzip", "jsonl", "duckdb"},
+    pool=DUCKDB_POOL,
+    description=(
+        "Loads one fixed 2026 month from S3 into its partition-local DuckDB "
+        "audit catalog and external-provider raw JSON table."
+    ),
+)
+def sweden_jobtech_links_2026_month_raw_duckdb(
+    context: dg.AssetExecutionContext,
+    sweden_jobtech_links_object_store: ObjectStoreResource,
+) -> dg.MaterializeResult:
+    return _materialize_raw_duckdb(
+        context=context,
+        object_store=sweden_jobtech_links_object_store,
+        partition_kind="month",
+    )
+
+
+@dg.asset(
+    deps=[dg.AssetKey("sweden_jobtech_links_2026_month_raw_duckdb")],
+    partitions_def=MONTHLY_2026_PARTITIONS,
+    backfill_policy=BACKFILL_POLICY,
+    group_name=tables.GROUP_NAME,
+    kinds={"python", "duckdb", "sql"},
+    pool=DUCKDB_POOL,
+    description=(
+        "Normalizes one fixed 2026 month into external-provider versions, daily "
+        "observations, locations, and accepted JobTech enrichments."
+    ),
+)
+def sweden_jobtech_links_2026_month_normalized_duckdb(
+    context: dg.AssetExecutionContext,
+) -> dg.MaterializeResult:
+    return _materialize_normalized_duckdb(context=context, partition_kind="month")
+
+
+@dg.asset(
+    deps=[dg.AssetKey("sweden_jobtech_links_daily_snapshot_s3")],
+    partitions_def=DAILY_PARTITIONS,
+    backfill_policy=BACKFILL_POLICY,
+    group_name=tables.GROUP_NAME,
+    kinds={"python", "s3", "tar", "gzip", "jsonl", "duckdb"},
+    pool=DUCKDB_POOL,
+    description=(
+        "Loads one daily S3 archive into its partition-local DuckDB audit "
+        "catalog and external-provider raw JSON table."
+    ),
+)
+def sweden_jobtech_links_daily_raw_duckdb(
+    context: dg.AssetExecutionContext,
+    sweden_jobtech_links_object_store: ObjectStoreResource,
+) -> dg.MaterializeResult:
+    return _materialize_raw_duckdb(
+        context=context,
+        object_store=sweden_jobtech_links_object_store,
+        partition_kind="day",
+    )
+
+
+@dg.asset(
+    deps=[dg.AssetKey("sweden_jobtech_links_daily_raw_duckdb")],
+    partitions_def=DAILY_PARTITIONS,
+    backfill_policy=BACKFILL_POLICY,
+    group_name=tables.GROUP_NAME,
+    kinds={"python", "duckdb", "sql"},
+    pool=DUCKDB_POOL,
+    description=(
+        "Normalizes one daily partition into external-provider versions, its "
+        "presence observation, locations, and accepted JobTech enrichments."
+    ),
+)
+def sweden_jobtech_links_daily_normalized_duckdb(
+    context: dg.AssetExecutionContext,
+) -> dg.MaterializeResult:
+    return _materialize_normalized_duckdb(context=context, partition_kind="day")
+
+
 sweden_jobtech_links_historical_snapshot_job = dg.define_asset_job(
     "sweden_jobtech_links_historical_snapshot_job",
     selection=dg.AssetSelection.assets(sweden_jobtech_links_historical_snapshot_s3),
@@ -135,6 +413,30 @@ sweden_jobtech_links_2026_month_snapshot_job = dg.define_asset_job(
 sweden_jobtech_links_daily_snapshot_job = dg.define_asset_job(
     "sweden_jobtech_links_daily_snapshot_job",
     selection=dg.AssetSelection.assets(sweden_jobtech_links_daily_snapshot_s3),
+)
+sweden_jobtech_links_historical_duckdb_job = dg.define_asset_job(
+    "sweden_jobtech_links_historical_duckdb_job",
+    selection=dg.AssetSelection.assets(
+        sweden_jobtech_links_historical_snapshot_s3,
+        sweden_jobtech_links_historical_raw_duckdb,
+        sweden_jobtech_links_historical_normalized_duckdb,
+    ),
+)
+sweden_jobtech_links_2026_month_duckdb_job = dg.define_asset_job(
+    "sweden_jobtech_links_2026_month_duckdb_job",
+    selection=dg.AssetSelection.assets(
+        sweden_jobtech_links_2026_month_snapshot_s3,
+        sweden_jobtech_links_2026_month_raw_duckdb,
+        sweden_jobtech_links_2026_month_normalized_duckdb,
+    ),
+)
+sweden_jobtech_links_daily_duckdb_job = dg.define_asset_job(
+    "sweden_jobtech_links_daily_duckdb_job",
+    selection=dg.AssetSelection.assets(
+        sweden_jobtech_links_daily_snapshot_s3,
+        sweden_jobtech_links_daily_raw_duckdb,
+        sweden_jobtech_links_daily_normalized_duckdb,
+    ),
 )
 
 
@@ -172,13 +474,22 @@ def sweden_jobtech_links_daily_catalog_sensor(
 defs = dg.Definitions(
     assets=[
         sweden_jobtech_links_historical_snapshot_s3,
+        sweden_jobtech_links_historical_raw_duckdb,
+        sweden_jobtech_links_historical_normalized_duckdb,
         sweden_jobtech_links_2026_month_snapshot_s3,
+        sweden_jobtech_links_2026_month_raw_duckdb,
+        sweden_jobtech_links_2026_month_normalized_duckdb,
         sweden_jobtech_links_daily_snapshot_s3,
+        sweden_jobtech_links_daily_raw_duckdb,
+        sweden_jobtech_links_daily_normalized_duckdb,
     ],
     jobs=[
         sweden_jobtech_links_historical_snapshot_job,
         sweden_jobtech_links_2026_month_snapshot_job,
         sweden_jobtech_links_daily_snapshot_job,
+        sweden_jobtech_links_historical_duckdb_job,
+        sweden_jobtech_links_2026_month_duckdb_job,
+        sweden_jobtech_links_daily_duckdb_job,
     ],
     sensors=[sweden_jobtech_links_daily_catalog_sensor],
     resources={
