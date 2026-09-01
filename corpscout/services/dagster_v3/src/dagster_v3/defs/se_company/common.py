@@ -325,36 +325,44 @@ def reuse_or_call(
 # --- ledger sensor ---------------------------------------------------------------
 
 
-def build_ledger_cursor_sql(table: str) -> str:
+def build_ledger_cursor_sql(table: str, *, id_column: str = "correction_id") -> str:
     return f"""SELECT
     count(),
-    if(count() = 0, '', toString(argMax(correction_id, (created_at, correction_id)))),
+    if(count() = 0, '', toString(argMax({id_column}, (created_at, {id_column})))),
     if(count() = 0, '', toString(max(created_at)))
 FROM {DATABASE}.{table}"""
 
 
-def build_touched_companies_sql(table: str) -> str:
+def build_touched_companies_sql(table: str, *, id_column: str = "correction_id") -> str:
     return f"""SELECT DISTINCT company_id
 FROM {DATABASE}.{table}
-WHERE (created_at, correction_id) > (parseDateTime64BestEffort(%(since)s, 3, 'UTC'), toUUID(%(since_id)s))
+WHERE (created_at, {id_column}) > (parseDateTime64BestEffort(%(since)s, 3, 'UTC'), toUUID(%(since_id)s))
 ORDER BY company_id"""
 
 
-def ledger_cursor(clickhouse: ClickhouseResource, table: str) -> str:
+def ledger_cursor(
+    clickhouse: ClickhouseResource, table: str, *, id_column: str = "correction_id"
+) -> str:
     """``count:last_id:last_created_at``; advances for every appended ledger row."""
     with clickhouse.get_connection() as client:
-        rows = client.execute(build_ledger_cursor_sql(table))
+        rows = client.execute(build_ledger_cursor_sql(table, id_column=id_column))
     if not rows or int(rows[0][0]) == 0:
         return ""
     return f"{int(rows[0][0])}:{rows[0][1]}:{rows[0][2]}"
 
 
 def touched_company_ids_since(
-    clickhouse: ClickhouseResource, table: str, since: str, since_id: str
+    clickhouse: ClickhouseResource,
+    table: str,
+    since: str,
+    since_id: str,
+    *,
+    id_column: str = "correction_id",
 ) -> tuple[str, ...]:
     with clickhouse.get_connection() as client:
         rows = client.execute(
-            build_touched_companies_sql(table), {"since": since, "since_id": since_id}
+            build_touched_companies_sql(table, id_column=id_column),
+            {"since": since, "since_id": since_id},
         )
     return tuple(str(row[0]) for row in rows)
 
@@ -367,6 +375,7 @@ def ledger_sensor(
     asset_names: Sequence[str],
     default_status: dg.DefaultSensorStatus = dg.DefaultSensorStatus.STOPPED,
     extra_config: Mapping[str, Any] | None = None,
+    id_column: str = "correction_id",
 ) -> dg.SensorDefinition:
     """A sensor that wakes every asset in ``asset_names`` for every company
     touched by a new row in ``table`` since the last cursor.
@@ -381,6 +390,10 @@ def ledger_sensor(
     call -- has to be told so here: a sensor-launched run carries only the
     config this function writes, and anything left out falls back to the
     asset's own defaults, which for that asset means resolving nothing.
+
+    ``id_column`` names the ledger's row-identity column ordered alongside
+    ``created_at`` for the cursor and the tuple boundary -- ``correction_id``
+    for the address/info ledgers, ``value_id`` for the field-value ledger.
     """
     shared_config = dict(extra_config or {})
 
@@ -392,7 +405,7 @@ def ledger_sensor(
         required_resource_keys={"clickhouse"},
     )
     def _sensor(context: dg.SensorEvaluationContext) -> dg.SensorResult | dg.SkipReason:
-        cursor = ledger_cursor(context.resources.clickhouse, table)
+        cursor = ledger_cursor(context.resources.clickhouse, table, id_column=id_column)
         if cursor == "":
             return dg.SkipReason(f"No rows in {table}")
         if cursor == context.cursor:
@@ -402,7 +415,7 @@ def ledger_sensor(
         else:
             since_id, since = ZERO_UUID, EPOCH
         company_ids = touched_company_ids_since(
-            context.resources.clickhouse, table, since, since_id
+            context.resources.clickhouse, table, since, since_id, id_column=id_column
         )
         if not company_ids:
             return dg.SensorResult(run_requests=[], cursor=cursor)

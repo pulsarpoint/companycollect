@@ -227,6 +227,61 @@ def test_ledger_sensor_scopes_every_asset_and_uses_a_tuple_boundary() -> None:
     assert "(created_at, correction_id) > (parseDateTime64BestEffort(%(since)s, 3, 'UTC'), toUUID(%(since_id)s))" in build_touched_companies_sql("se_company_info_correction")
 
 
+def test_ledger_cursor_sql_builders_accept_a_custom_id_column() -> None:
+    """se_company_info_field_value's row-identity column is `value_id`, not
+    `correction_id` -- the SQL builders must swap it in everywhere the column
+    name is emitted, and stop emitting `correction_id` when a caller does."""
+    cursor_sql = build_ledger_cursor_sql("se_company_info_field_value", id_column="value_id")
+    assert "value_id" in cursor_sql and "correction_id" not in cursor_sql
+    assert "argMax(value_id, (created_at, value_id))" in cursor_sql
+
+    touched_sql = build_touched_companies_sql("se_company_info_field_value", id_column="value_id")
+    assert "value_id" in touched_sql and "correction_id" not in touched_sql
+    assert (
+        "(created_at, value_id) > (parseDateTime64BestEffort(%(since)s, 3, 'UTC'), toUUID(%(since_id)s))"
+        in touched_sql
+    )
+
+    # Default stays byte-for-byte the address/info ledger shape.
+    assert "correction_id" in build_ledger_cursor_sql("t")
+    assert "correction_id" in build_touched_companies_sql("t")
+
+
+def test_ledger_sensor_with_a_custom_id_column_uses_it_end_to_end() -> None:
+    """Mirrors test_ledger_sensor_scopes_every_asset_and_uses_a_tuple_boundary's SQL-shape
+    assertions, but drives an actual sensor tick through a fake ClickHouse client (the
+    FakeClient/FakeClickhouse pair used above for publish_with_stage), proving
+    id_column="value_id" reaches the queries the sensor issues at runtime -- not just
+    the SQL-builder functions checked in isolation."""
+    client = FakeClient(
+        answers=[
+            [(1, str(uuid.UUID(int=1)), "2026-08-22 09:00:00.000")],  # cursor query
+            [("5565200028",)],  # touched-companies query
+        ]
+    )
+    job = dg.define_asset_job(
+        "se_company_info_field_value_job",
+        selection=dg.AssetSelection.assets("se_company_info_clickhouse"),
+    )
+    sensor = ledger_sensor(
+        name="se_company_info_field_value_sensor",
+        table="se_company_info_field_value",
+        job=job,
+        asset_names=("se_company_info_clickhouse",),
+        id_column="value_id",
+    )
+    context = dg.build_sensor_context(cursor=None, resources={"clickhouse": FakeClickhouse(client)})
+
+    execution_data = sensor.evaluate_tick(context)
+
+    sql = [entry[0] for entry in client.executed]
+    assert any("value_id" in statement and "correction_id" not in statement for statement in sql)
+    assert execution_data.run_requests is not None and len(execution_data.run_requests) == 1
+    assert execution_data.run_requests[0].run_config == {
+        "ops": {"se_company_info_clickhouse": {"config": {"company_ids": ["5565200028"]}}}
+    }
+
+
 class _FakeLedgerClient:
     """In-memory ledger client answering `ledger_sensor`'s two queries
     (`build_ledger_cursor_sql` / `build_touched_companies_sql`). Mirrors
