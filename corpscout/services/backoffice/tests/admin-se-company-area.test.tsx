@@ -127,7 +127,7 @@ describe("se company tab paths", () => {
 });
 
 describe("company area header", () => {
-  it("names the company once, with its badges and both company-level links", () => {
+  it("names the company once, with its badges and the company-page link", () => {
     const html = render(
       <SeCompanyHeader shell={shell} tab="info" />,
       seCompanyTabPath(COMPANY_ID, "info"),
@@ -144,12 +144,9 @@ describe("company area header", () => {
     expect(html).not.toContain(">AB-ORGFO<");
     expect(html).toContain(">Company<");
     expect(html).toContain("registered 1915-04-06");
-    // Both links moved off the Info page in Task 18: they are about the
-    // company, not about its description.
+    // The link moved off the Info page in Task 18: it is about the company,
+    // not about its description.
     expect(html).toContain(`href="/company/se/${COMPANY_ID}"`);
-    expect(html).toContain(
-      `href="/admin/se/company-info/corrections?companyId=${COMPANY_ID}"`,
-    );
   });
 
   it("renders all nine tabs and marks exactly the active one", () => {

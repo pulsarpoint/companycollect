@@ -1,25 +1,18 @@
 /**
- * The two `/admin/se/companies*` list pages: every published SE company
- * (3.5M rows, read off the consolidated serving view
- * `corpscout.se_companies_serving` -- see SE_COMPANIES_SERVING_TABLE) and
- * the full `se_company_info_correction` ledger (which still reads
- * `se_company_info` itself: correction status is about the published row,
- * not the serving copy). Both mirror se-company-info.server.ts's
- * client/query style -- explicit column aliasing, hash/UUID columns wrapped
- * in toString() -- but add server-side paging and optional URL-driven
- * filters, so the WHERE clause is built dynamically (like
- * procurements.server.ts's buildSourceFilter) instead of being a fixed
- * string.
+ * The `/admin/se/companies` list page: every published SE company (3.5M
+ * rows, read off the consolidated serving view
+ * `corpscout.se_companies_serving` -- see SE_COMPANIES_SERVING_TABLE). It
+ * mirrors se-company-info.server.ts's client/query style -- explicit column
+ * aliasing, hash/UUID columns wrapped in toString() -- but adds server-side
+ * paging and optional URL-driven filters, so the WHERE clause is built
+ * dynamically (like procurements.server.ts's buildSourceFilter) instead of
+ * being a fixed string. The paging/sorting helpers and the option-cache TTL
+ * are shared with the address ledger's list (se-company-address-lists.server.ts).
  */
 import { chQuery } from "~/lib/clickhouse.server";
 import type { LegalFormLabels } from "~/lib/se-legal-form";
 import type { SortDir } from "~/lib/countries";
 import { clampPage, clampPageSize } from "~/lib/paging";
-import {
-  SE_INFO_CORRECTION_KINDS,
-  SE_INFO_CORRECTION_STATUSES,
-  type SeInfoCorrectionStatus,
-} from "~/lib/se-info-corrections";
 import {
   ANY_FILTER_VALUE,
   NONE_FILTER_VALUE,
@@ -28,9 +21,6 @@ import {
   type ProfileDatatypeKey,
   type ProfileSourceValue,
 } from "~/lib/se-company-info-filters";
-import { ZERO_EVIDENCE_HASH } from "~/lib/se-person-corrections";
-
-export type { SeInfoCorrectionStatus };
 
 function nonEmpty(value: string | undefined): string | null {
   const trimmed = value?.trim() ?? "";
@@ -540,6 +530,9 @@ export interface SeCompanyInfoFilterOptions {
   legalForms: LegalFormLabels[];
 }
 
+/** The option list a correction ledger's filter sheet takes. The info ledger
+ * that first read one is gone; the ADDRESS ledger's loader
+ * (se-company-address-lists.server.ts) fills this same shape. */
 export interface SeCompanyInfoCorrectionFilterOptions {
   decidedBy: string[];
 }
@@ -585,31 +578,21 @@ SELECT
   ) AS legal_form_labels
 FROM ${SE_COMPANIES_SERVING_TABLE} AS i`;
 
-/** The ledger's only data-driven discrete column: correction_kind and the
- * computed status are fixed enums the review page already defines. No FINAL --
- * se_company_info_correction is an append-only MergeTree, not Replacing. */
-export const CORRECTION_FILTER_OPTIONS_SQL = `SELECT
-  arraySort(groupUniqArray(c.decided_by)) AS decided_by
-FROM corpscout.se_company_info_correction AS c`;
-
 interface OptionsCacheEntry<T> {
   value: T;
   at: number;
 }
 
 let infoOptionsCache: OptionsCacheEntry<SeCompanyInfoFilterOptions> | null = null;
-let correctionOptionsCache: OptionsCacheEntry<SeCompanyInfoCorrectionFilterOptions> | null =
-  null;
 
 function isFresh(entry: OptionsCacheEntry<unknown> | null): boolean {
   return entry !== null && Date.now() - entry.at < FILTER_OPTIONS_TTL_MS;
 }
 
-/** Drops both cached option lists. Used by tests; also the one lever if a
- * reviewer ever needs the lists refreshed before the TTL expires. */
+/** Drops the cached option list. Used by tests; also the one lever if a
+ * reviewer ever needs the list refreshed before the TTL expires. */
 export function resetSeCompanyInfoFilterOptionsCache(): void {
   infoOptionsCache = null;
-  correctionOptionsCache = null;
 }
 
 export async function loadSeCompanyInfoFilterOptions(): Promise<SeCompanyInfoFilterOptions> {
@@ -635,219 +618,4 @@ export async function loadSeCompanyInfoFilterOptions(): Promise<SeCompanyInfoFil
   };
   infoOptionsCache = { value, at: Date.now() };
   return value;
-}
-
-export async function loadSeCompanyInfoCorrectionFilterOptions(): Promise<SeCompanyInfoCorrectionFilterOptions> {
-  if (isFresh(correctionOptionsCache)) return correctionOptionsCache!.value;
-  const [row] = await chQuery<{ decided_by: string[] }>(CORRECTION_FILTER_OPTIONS_SQL);
-  const value: SeCompanyInfoCorrectionFilterOptions = {
-    decidedBy: row?.decided_by ?? [],
-  };
-  correctionOptionsCache = { value, at: Date.now() };
-  return value;
-}
-
-/* -------------------------------------------------------------------- */
-/* Page 2: /admin/se/companies/corrections -- the correction ledger  */
-/* -------------------------------------------------------------------- */
-
-export interface SeCompanyInfoCorrectionListRow {
-  correction_id: string;
-  company_id: string;
-  created_at: string;
-  correction_kind: string;
-  payload: string;
-  reason: string;
-  decided_by: string;
-  supersedes_correction_id: string | null;
-  status: SeInfoCorrectionStatus;
-}
-
-export interface SeCompanyInfoCorrectionListFilters {
-  companyId?: string;
-  kind?: string;
-  status?: string;
-  decidedBy?: string;
-}
-
-export interface SeCompanyInfoCorrectionListQuery extends SeCompanyInfoCorrectionListFilters {
-  page: number;
-  pageSize: number;
-  sort?: string;
-  dir?: string;
-}
-
-export interface SeCompanyInfoCorrectionListPage {
-  rows: SeCompanyInfoCorrectionListRow[];
-  total: number;
-}
-
-/** A later undo's supersedes_correction_id names the id it cancels, across
- * every company -- not scoped to one company_id like se-company-info.server
- * ts's per-company `superseded` CTE, since this ledger lists every company. */
-export const UNDONE_CTE_SQL = `WITH undone AS (
-  SELECT supersedes_correction_id AS id
-  FROM corpscout.se_company_info_correction
-  WHERE supersedes_correction_id IS NOT NULL
-)`;
-
-/**
- * Status precedence mirrors Dagster's apply_info_ledger ranking: an undo
- * always wins regardless of anything else; then whether the *published* row
- * still names this correction_id (has() on correction_ids, an Array(UUID) --
- * a LEFT JOIN miss defaults it to [], so unlike evidence_set_hash it needs
- * no ifNull guard); then whether the evidence has moved since the row was
- * decided (guarded with ifNull -- a FixedString column turns Nullable on a
- * LEFT JOIN miss under join_use_nulls); else pending. Branch ORDER matters:
- * multiIf evaluates left to right and returns the first match, so undone
- * must precede applied must precede stale must precede the pending default.
- */
-export const CORRECTION_STATUS_EXPR = `multiIf(
-    c.correction_id IN (SELECT id FROM undone), 'undone',
-    has(p.correction_ids, c.correction_id) != 0, 'applied',
-    toString(c.evidence_hash) != {zeroHash:String}
-      AND toString(c.evidence_hash) != ifNull(toString(p.evidence_set_hash), ''), 'stale',
-    'pending'
-  )`;
-
-/**
- * The published row, scoped to only the companies actually present in the
- * ledger before FINAL collapses it -- an unscoped `LEFT JOIN
- * corpscout.se_company_info AS p FINAL` re-merges and reads the whole 3.5M
- * -row/334MB table to decorate a handful of ledger rows. Scoping the join's
- * own subquery to `company_id IN (SELECT company_id FROM
- * se_company_info_correction)` first (verified byte-identical output, ~2.5MB
- * read) keeps FINAL's merge work bounded to just those companies. Only the
- * three columns CORRECTION_STATUS_EXPR reads are projected.
- */
-export const SCOPED_PUBLISHED_JOIN_SQL = `LEFT JOIN (
-  SELECT company_id, correction_ids, evidence_set_hash
-  FROM corpscout.se_company_info FINAL
-  WHERE company_id IN (SELECT company_id FROM corpscout.se_company_info_correction)
-) AS p ON p.company_id = c.company_id`;
-
-export const CORRECTIONS_LIST_SELECT_SQL = `${UNDONE_CTE_SQL}
-SELECT
-  toString(c.correction_id) AS correction_id,
-  c.company_id AS company_id,
-  toString(c.created_at) AS created_at,
-  c.correction_kind AS correction_kind,
-  c.payload AS payload,
-  c.reason AS reason,
-  c.decided_by AS decided_by,
-  toString(c.supersedes_correction_id) AS supersedes_correction_id,
-  ${CORRECTION_STATUS_EXPR} AS status
-FROM corpscout.se_company_info_correction AS c
-${SCOPED_PUBLISHED_JOIN_SQL}`;
-
-export const CORRECTIONS_LIST_COUNT_SQL = `${UNDONE_CTE_SQL}
-SELECT toString(count()) AS total
-FROM corpscout.se_company_info_correction AS c
-${SCOPED_PUBLISHED_JOIN_SQL}`;
-
-/** The status filter reuses CORRECTION_STATUS_EXPR verbatim as a WHERE
- * predicate (not a reference to the SELECT alias) -- ClickHouse does not
- * guarantee a SELECT-list alias is visible to WHERE at the same query
- * level, so the same expression text is evaluated again rather than relied
- * on by name. zeroHash is always included: CORRECTION_STATUS_EXPR sits in
- * the SELECT list of every query built from CORRECTIONS_LIST_SELECT_SQL
- * regardless of which filters are set. `kind`/`status` are whitelisted
- * against the same enums the review page and its ledger use, so an
- * unrecognized value (including the filter form's "any" sentinel) is
- * silently treated as absent rather than filtering on literal garbage. */
-export function buildCorrectionsListFilter(
-  filters: SeCompanyInfoCorrectionListFilters,
-): { where: string[]; params: Record<string, unknown> } {
-  const where: string[] = [];
-  const params: Record<string, unknown> = { zeroHash: ZERO_EVIDENCE_HASH };
-
-  const companyId = nonEmpty(filters.companyId);
-  if (companyId) {
-    where.push("c.company_id = {companyId:String}");
-    params.companyId = companyId;
-  }
-  const kind = nonEmpty(filters.kind);
-  if (kind && (SE_INFO_CORRECTION_KINDS as readonly string[]).includes(kind)) {
-    where.push("c.correction_kind = {kind:String}");
-    params.kind = kind;
-  }
-  const status = nonEmpty(filters.status);
-  if (status && (SE_INFO_CORRECTION_STATUSES as readonly string[]).includes(status)) {
-    where.push(`(${CORRECTION_STATUS_EXPR}) = {status:String}`);
-    params.status = status;
-  }
-  // decided_by has no enum to whitelist against (it is whoever wrote the row:
-  // the backoffice today, another actor tomorrow), so its options come from
-  // the ledger itself and the chosen one travels as a named param.
-  const decidedBy = discreteValue(filters.decidedBy);
-  if (decidedBy !== null) {
-    where.push("c.decided_by = {decidedBy:String}");
-    params.decidedBy = decidedBy;
-  }
-  return { where, params };
-}
-
-/**
- * Every column of the ledger a header may sort by. `status` is computed, so it
- * sorts by CORRECTION_STATUS_EXPR itself rather than by the SELECT alias --
- * ClickHouse does not guarantee an alias is visible to ORDER BY at the same
- * query level any more than it does to WHERE.
- */
-export const CORRECTION_SORT_COLUMNS = {
-  created_at: "c.created_at",
-  company_id: "c.company_id",
-  correction_id: "c.correction_id",
-  correction_kind: "c.correction_kind",
-  payload: "c.payload",
-  reason: "c.reason",
-  decided_by: "c.decided_by",
-  status: `(${CORRECTION_STATUS_EXPR})`,
-} as const;
-
-export type SeCompanyInfoCorrectionSortKey = keyof typeof CORRECTION_SORT_COLUMNS;
-
-export const DEFAULT_CORRECTION_SORT: SeCompanyInfoCorrectionSortKey = "created_at";
-export const DEFAULT_CORRECTION_DIR: SortDir = "desc";
-
-export function resolveCorrectionsSort(
-  sort: string | undefined,
-  dir: string | undefined,
-): { sort: SeCompanyInfoCorrectionSortKey; dir: SortDir } {
-  return {
-    sort: resolveSortKey(CORRECTION_SORT_COLUMNS, sort, DEFAULT_CORRECTION_SORT),
-    dir: resolveDir(dir, DEFAULT_CORRECTION_DIR),
-  };
-}
-
-/** (created_at DESC, correction_id DESC) stays the tiebreak -- and, when
- * nothing else is chosen, IS the sort, unchanged from before sorting existed. */
-export function correctionsOrderBySql(
-  sort: SeCompanyInfoCorrectionSortKey,
-  dir: SortDir,
-): string {
-  return orderBySql({ expr: CORRECTION_SORT_COLUMNS[sort], dir }, [
-    { expr: CORRECTION_SORT_COLUMNS.created_at, dir: "desc" },
-    { expr: CORRECTION_SORT_COLUMNS.correction_id, dir: "desc" },
-  ]);
-}
-
-export async function listSeCompanyInfoCorrectionsPage(
-  query: SeCompanyInfoCorrectionListQuery,
-): Promise<SeCompanyInfoCorrectionListPage> {
-  const { where, params } = buildCorrectionsListFilter(query);
-  const filter = where.length > 0 ? `WHERE ${where.join(" AND ")}` : "";
-  const { limit, offset } = pageParams(query);
-  const sort = resolveCorrectionsSort(query.sort, query.dir);
-
-  const [rows, counted] = await Promise.all([
-    chQuery<SeCompanyInfoCorrectionListRow>(
-      `${CORRECTIONS_LIST_SELECT_SQL}
-${filter}
-${correctionsOrderBySql(sort.sort, sort.dir)}
-${PAGE_LIMIT_OFFSET_SQL}`,
-      { ...params, limit, offset },
-    ),
-    chQuery<{ total: string }>(`${CORRECTIONS_LIST_COUNT_SQL}\n${filter}`, params),
-  ]);
-  return { rows, total: Number(counted[0]?.total ?? 0) };
 }

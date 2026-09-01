@@ -369,18 +369,14 @@ describe("company info review page", () => {
   });
 
   // Task 18: Info is one tab of the company area, and the area's layout owns
-  // the company header -- the name, the status/legal-form badges and the two
-  // company-level links. This page rendering them again would be a second,
+  // the company header -- the name, the status/legal-form badges and the
+  // company-page link. This page rendering them again would be a second,
   // duplicate header on every load. The layout's own copy is asserted in
   // tests/admin-se-company-area.test.tsx.
   it("carries no company header of its own: that moved to the area layout", () => {
     const html = render();
     expect(html).not.toContain("Company page");
-    expect(html).not.toContain("Corrections ledger");
     expect(html).not.toContain('href="/company/se/5565200028"');
-    expect(html).not.toContain(
-      'href="/admin/se/company-info/corrections?companyId=5565200028"',
-    );
     // The company name still appears -- inside the SCB artifact payload, which
     // is evidence, not a header.
     expect(html).not.toContain("<h1");

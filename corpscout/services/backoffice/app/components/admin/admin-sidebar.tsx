@@ -64,7 +64,6 @@ const COUNTRY_NAVIGATION = [
       {
         // One entry for the whole tabbed list area (Info · Geocoding ·
         // Financial · People). exact:false so it stays active on every tab.
-        // Info corrections is reached as a secondary link from the Info tab.
         title: "Companies",
         to: "/admin/se/companies",
         icon: Building2Icon,

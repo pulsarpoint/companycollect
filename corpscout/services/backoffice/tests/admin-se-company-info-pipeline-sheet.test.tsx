@@ -99,7 +99,7 @@ const VIEW: PipelineView = {
     schedules: [
       { name: "se_company_info_schedule", status: "RUNNING", cronSchedule: "0 4 * * *" },
     ],
-    sensors: [{ name: "se_company_info_correction_sensor", status: "STOPPED" }],
+    sensors: [{ name: "se_company_info_field_value_sensor", status: "STOPPED" }],
   },
   dagsterError: "",
 };
@@ -459,9 +459,6 @@ describe("the standalone Pipeline page is retired", () => {
     );
     // The tabbed list it folded into is still there ...
     expect(html).toContain('href="/admin/se/companies"');
-    // ... Info corrections is no longer its own sidebar entry (it is a
-    // secondary link from the Info tab now) ...
-    expect(html).not.toContain('href="/admin/se/company-info/corrections"');
     // ... and the page the pipeline used to be is not in the sidebar.
     expect(html).not.toContain('href="/admin/se/companies/pipeline"');
     expect(html).not.toContain(">Pipeline<");

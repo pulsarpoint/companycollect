@@ -468,11 +468,11 @@ export function parseInfoFilters(url: URL): SeCompanyInfoTableFilters {
 }
 
 /**
- * Both correction ledgers (`se_company_info_correction` and
- * `se_company_address_correction`) carry the same four filters and differ only
- * in the kinds a reviewer may decide, so the enums are arguments rather than a
- * second copy of this function. They default to the info ledger's, which is the
- * only caller that omits them.
+ * A correction ledger's four filters, with the kind/status enums as arguments:
+ * the address ledger (`se_company_address_correction`) passes its own, and the
+ * defaults are the shared vocabulary in se-info-corrections.ts that the filter
+ * sheet's fields default to as well. The info corrections page that first
+ * relied on the defaults is retired; they stay so the two keep agreeing.
  */
 export function parseCorrectionFilters(
   url: URL,

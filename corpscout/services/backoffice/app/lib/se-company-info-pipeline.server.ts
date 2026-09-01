@@ -123,9 +123,10 @@ export function buildArtifactRunConfig(): Record<string, unknown> {
 
 /**
  * "Still owed a description": several sources offered one, no suggestion was ever
- * stored, and no reviewer decision has been applied. The `correction_ids` test is
- * what keeps a reviewed company out -- `reject_suggestion` leaves the row looking
- * exactly like a never-modelled one.
+ * stored, and no reviewer value has been applied. The `correction_ids` test is
+ * what keeps a reviewed company out -- a reviewer has decided this description,
+ * and re-running the model on it every week would only produce a suggestion the
+ * next publish overwrites again. info.py's PENDING_MODEL_SQL, verbatim.
  */
 const PENDING_MODEL = `${MULTI_SOURCE} AND published.suggestion_id IS NULL AND length(published.correction_ids) = 0`;
 
@@ -136,6 +137,10 @@ function newEvidence(source: string): string {
   return `artifacts.${source}_observed_at > ${PUBLISHED_AT}`;
 }
 
+/** A field value newer than the published resolution. The `ledger` CTE reads
+ * `se_company_info_field_value`; its `latest_correction_at` alias and this
+ * `ledger_pending` reason keep their names, exactly as info.py's do, because the
+ * sheet reads the reason back by name. */
 const LEDGER_PENDING = `ifNull(ledger.latest_correction_at, ${EPOCH}) > ${PUBLISHED_AT}`;
 const NEVER_PUBLISHED = "ifNull(published.company_id, '') = ''";
 
@@ -168,7 +173,7 @@ export const INFO_SELECTION_CTE_SQL = `WITH artifacts AS (
 ),
 ledger AS (
   SELECT company_id, max(created_at) AS latest_correction_at
-  FROM corpscout.se_company_info_correction
+  FROM corpscout.se_company_info_field_value
   GROUP BY company_id
 ),
 published AS (

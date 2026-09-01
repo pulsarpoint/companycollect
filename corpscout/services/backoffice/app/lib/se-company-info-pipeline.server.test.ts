@@ -35,7 +35,12 @@ describe("the selection query", () => {
     ]) {
       expect(sql).toContain(`FROM corpscout.${table} GROUP BY company_id`);
     }
-    expect(sql).toContain("FROM corpscout.se_company_info_correction");
+    // The ledger CTE reads the field-value table now; its alias and the
+    // ledger_pending reason keep their names, exactly as info.py's do, because
+    // the sheet reads that reason back by name. The dropped table must be gone.
+    expect(sql).toContain("FROM corpscout.se_company_info_field_value");
+    expect(sql).toContain("max(created_at) AS latest_correction_at");
+    expect(sql).not.toContain("se_company_info_correction");
 
     // Never published, and every LEFT JOIN miss read through ifNull: a bare
     // comparison is NULL under join_use_nulls = 1, which would silently count 0.
@@ -58,10 +63,10 @@ describe("the selection query", () => {
       );
     }
 
-    // "Still owed a description", keyed on the applied-correction list -- a
-    // reject_suggestion republishes the deterministic pick and leaves
-    // llm_enhanced down, so only correction_ids tells a reviewed company from a
-    // never-modelled one.
+    // "Still owed a description", keyed on the applied field-value list -- a
+    // company whose description a reviewer has decided carries its value ids
+    // on the published row, so only correction_ids tells a reviewed company
+    // from a never-modelled one.
     expect(sql).toContain(
       "(ifNull(published.description_source_count, 0) > 1 AND published.suggestion_id IS NULL AND length(published.correction_ids) = 0) AS pending_model",
     );

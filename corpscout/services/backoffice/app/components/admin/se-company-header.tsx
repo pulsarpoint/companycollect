@@ -67,12 +67,6 @@ export function SeCompanyHeader({
         >
           Company page
         </Link>
-        <Link
-          className="underline underline-offset-2"
-          to={`/admin/se/company-info/corrections?companyId=${encodeURIComponent(shell.company_id)}`}
-        >
-          Corrections ledger
-        </Link>
       </div>
 
       {shell.published ? null : (

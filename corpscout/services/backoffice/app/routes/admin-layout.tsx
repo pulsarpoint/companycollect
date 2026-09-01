@@ -64,8 +64,6 @@ function AdminBreadcrumbs() {
   const onLlmSettingsPage = pathname === "/admin/settings/llms";
   const onEsefPage = pathname === "/admin/esef";
   const onCompanyInfoPage = pathname.startsWith("/admin/se/company/");
-  const onCompanyInfoCorrectionsPage =
-    pathname === "/admin/se/company-info/corrections";
   const onCompaniesPage =
     pathname === "/admin/se/companies" ||
     pathname.startsWith("/admin/se/companies/");
@@ -134,34 +132,6 @@ function AdminBreadcrumbs() {
           <BreadcrumbSeparator className="hidden sm:block" />
           <BreadcrumbItem>
             <BreadcrumbPage>Address corrections</BreadcrumbPage>
-          </BreadcrumbItem>
-        </BreadcrumbList>
-      </Breadcrumb>
-    );
-  }
-
-  if (onCompanyInfoCorrectionsPage) {
-    return (
-      <Breadcrumb>
-        <BreadcrumbList>
-          <BreadcrumbItem className="hidden sm:block">
-            <BreadcrumbLink render={<Link to="/admin/se/people" />}>
-              Admin
-            </BreadcrumbLink>
-          </BreadcrumbItem>
-          <BreadcrumbSeparator className="hidden sm:block" />
-          <BreadcrumbItem className="hidden sm:block">
-            <BreadcrumbPage>Sweden</BreadcrumbPage>
-          </BreadcrumbItem>
-          <BreadcrumbSeparator className="hidden sm:block" />
-          <BreadcrumbItem>
-            <BreadcrumbLink render={<Link to="/admin/se/companies" />}>
-              Companies
-            </BreadcrumbLink>
-          </BreadcrumbItem>
-          <BreadcrumbSeparator />
-          <BreadcrumbItem>
-            <BreadcrumbPage>Info corrections</BreadcrumbPage>
           </BreadcrumbItem>
         </BreadcrumbList>
       </Breadcrumb>

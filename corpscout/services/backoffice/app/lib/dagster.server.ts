@@ -52,7 +52,7 @@ export const SE_COMPANY_INFO_ASSET = "se_company_info_clickhouse";
 /** The two instigators that drive THIS pipeline. The repository has 52 schedules
  * and 15 sensors; a page that renders all of them tells its reader nothing. */
 export const SE_COMPANY_INFO_SCHEDULE = "se_company_info_weekly";
-export const SE_COMPANY_INFO_SENSOR = "se_company_info_correction_sensor";
+export const SE_COMPANY_INFO_SENSOR = "se_company_info_field_value_sensor";
 
 /**
  * SE People Experiment Task 5: the three backoffice-triggered people jobs

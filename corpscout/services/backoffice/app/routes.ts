@@ -180,12 +180,6 @@ export default [
     // sheet. Its loader answers that sheet's fetcher and redirects anyone who
     // navigates to the URL back to the list.
     route("se/companies/pipeline", "routes/admin-se-companies-pipeline.ts"),
-    // The correction ledger is not a tab: it keeps its own URL and is reached
-    // as a secondary link from the Info tab.
-    route(
-      "se/company-info/corrections",
-      "routes/admin-se-company-info-corrections.tsx",
-    ),
     // Old bookmarks: the list and the geocoding view moved under se/companies.
     // Thin loader-only routes that 302 to the new URLs.
     route("se/company-info", "routes/admin-se-company-info-redirect.ts"),

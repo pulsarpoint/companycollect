@@ -411,7 +411,7 @@ describe("instigatorStates", () => {
               sensorState: { status: "RUNNING" },
             },
             {
-              name: "se_company_info_correction_sensor",
+              name: "se_company_info_field_value_sensor",
               sensorState: { status: "STOPPED" },
             },
           ],
@@ -437,7 +437,7 @@ describe("instigatorStates", () => {
         },
       ],
       sensors: [
-        { name: "se_company_info_correction_sensor", status: "STOPPED" },
+        { name: "se_company_info_field_value_sensor", status: "STOPPED" },
       ],
     });
     expect(calls[0].body.variables).toEqual({

@@ -4,41 +4,28 @@ const clickhouse = vi.hoisted(() => ({ query: vi.fn() }));
 vi.mock("~/lib/clickhouse.server", () => ({ chQuery: clickhouse.query }));
 
 import {
-  buildCorrectionsListFilter,
   buildInfoListFilter,
   DATATYPE_PRESENCE_EXPR,
-  CORRECTION_FILTER_OPTIONS_SQL,
-  CORRECTION_SORT_COLUMNS,
-  CORRECTION_STATUS_EXPR,
-  CORRECTIONS_LIST_COUNT_SQL,
-  CORRECTIONS_LIST_SELECT_SQL,
-  correctionsOrderBySql,
   FILTER_OPTIONS_TTL_MS,
   INFO_COUNTS_SQL,
   INFO_FILTER_OPTIONS_SQL,
   INFO_LIST_SELECT_SQL,
   INFO_SORT_COLUMNS,
   infoOrderBySql,
-  listSeCompanyInfoCorrectionsPage,
   listSeCompanyInfoPage,
-  loadSeCompanyInfoCorrectionFilterOptions,
   loadSeCompanyInfoCounts,
   loadSeCompanyInfoFilterOptions,
   PAGE_LIMIT_OFFSET_SQL,
   PROFILE_SOURCE_PREDICATES,
   PROFILE_SOURCES_EXPR,
   resetSeCompanyInfoFilterOptionsCache,
-  resolveCorrectionsSort,
   resolveInfoSort,
-  SCOPED_PUBLISHED_JOIN_SQL,
   SE_COMPANIES_SERVING_TABLE,
-  UNDONE_CTE_SQL,
 } from "~/lib/se-company-info-lists.server";
 import {
   PROFILE_DATATYPES,
   PROFILE_SOURCES,
 } from "~/lib/se-company-info-filters";
-import { ZERO_EVIDENCE_HASH } from "~/lib/se-person-corrections";
 
 describe("buildInfoListFilter", () => {
   it("adds no predicates when every filter is absent", () => {
@@ -423,153 +410,6 @@ describe("loadSeCompanyInfoCounts", () => {
   });
 });
 
-describe("buildCorrectionsListFilter", () => {
-  it("always carries the zero hash (the status expression needs it even unfiltered)", () => {
-    expect(buildCorrectionsListFilter({})).toEqual({
-      where: [],
-      params: { zeroHash: ZERO_EVIDENCE_HASH },
-    });
-  });
-
-  it("adds a predicate only for the filter that is set", () => {
-    expect(buildCorrectionsListFilter({ companyId: "5565200028" })).toEqual({
-      where: ["c.company_id = {companyId:String}"],
-      params: { zeroHash: ZERO_EVIDENCE_HASH, companyId: "5565200028" },
-    });
-    expect(buildCorrectionsListFilter({ kind: "override_field" })).toEqual({
-      where: ["c.correction_kind = {kind:String}"],
-      params: { zeroHash: ZERO_EVIDENCE_HASH, kind: "override_field" },
-    });
-    const statusFilter = buildCorrectionsListFilter({ status: "applied" });
-    expect(statusFilter.where).toEqual([`(${CORRECTION_STATUS_EXPR}) = {status:String}`]);
-    expect(statusFilter.params).toEqual({ zeroHash: ZERO_EVIDENCE_HASH, status: "applied" });
-    expect(buildCorrectionsListFilter({ decidedBy: "backoffice" })).toEqual({
-      where: ["c.decided_by = {decidedBy:String}"],
-      params: { zeroHash: ZERO_EVIDENCE_HASH, decidedBy: "backoffice" },
-    });
-    // decided_by is data-driven (its options come from the ledger itself), so
-    // the select's "any" sentinel is what marks it absent.
-    expect(buildCorrectionsListFilter({ decidedBy: "any" })).toEqual({
-      where: [],
-      params: { zeroHash: ZERO_EVIDENCE_HASH },
-    });
-  });
-
-  it("whitelists kind against SE_INFO_CORRECTION_KINDS, ignoring an unknown value (including 'any') instead of filtering on it", () => {
-    expect(buildCorrectionsListFilter({ kind: "bogus" })).toEqual({
-      where: [],
-      params: { zeroHash: ZERO_EVIDENCE_HASH },
-    });
-    expect(buildCorrectionsListFilter({ kind: "any" })).toEqual({
-      where: [],
-      params: { zeroHash: ZERO_EVIDENCE_HASH },
-    });
-  });
-
-  it("whitelists status against SE_INFO_CORRECTION_STATUSES, ignoring an unknown value (including 'any') instead of filtering on it", () => {
-    expect(buildCorrectionsListFilter({ status: "bogus" })).toEqual({
-      where: [],
-      params: { zeroHash: ZERO_EVIDENCE_HASH },
-    });
-    expect(buildCorrectionsListFilter({ status: "any" })).toEqual({
-      where: [],
-      params: { zeroHash: ZERO_EVIDENCE_HASH },
-    });
-  });
-});
-
-describe("se_company_info_correction list SQL shape", () => {
-  it("starts from the undone CTE, LEFT JOINs the published row scoped to ledger companies, and guards the evidence_set_hash miss with ifNull", () => {
-    for (const sql of [CORRECTIONS_LIST_SELECT_SQL, CORRECTIONS_LIST_COUNT_SQL]) {
-      expect(sql).toContain(UNDONE_CTE_SQL);
-      expect(sql).toContain("FROM corpscout.se_company_info_correction AS c");
-      expect(sql).toContain(SCOPED_PUBLISHED_JOIN_SQL);
-    }
-    // The join's own subquery must be scoped to companies that actually
-    // appear in the ledger -- an unscoped `LEFT JOIN se_company_info FINAL`
-    // re-merges and reads the whole 3.5M-row table to decorate a handful of
-    // ledger rows.
-    expect(SCOPED_PUBLISHED_JOIN_SQL).toContain(
-      "WHERE company_id IN (SELECT company_id FROM corpscout.se_company_info_correction)",
-    );
-    expect(SCOPED_PUBLISHED_JOIN_SQL).toContain("FROM corpscout.se_company_info FINAL");
-    // correction_ids is Array(UUID): a LEFT JOIN miss defaults it to [], so
-    // has() needs no ifNull -- only the FixedString evidence_set_hash does.
-    expect(CORRECTION_STATUS_EXPR).toContain("has(p.correction_ids, c.correction_id)");
-    expect(CORRECTION_STATUS_EXPR).toContain("ifNull(toString(p.evidence_set_hash), '')");
-    expect(CORRECTION_STATUS_EXPR).toContain("{zeroHash:String}");
-    expect(CORRECTION_STATUS_EXPR).not.toContain("ifNull(p.correction_ids");
-  });
-
-  it("evaluates multiIf branches in precedence order: undone, then applied, then stale, then the pending default", () => {
-    const undoneIdx = CORRECTION_STATUS_EXPR.indexOf("'undone'");
-    const appliedIdx = CORRECTION_STATUS_EXPR.indexOf("'applied'");
-    const staleIdx = CORRECTION_STATUS_EXPR.indexOf("'stale'");
-    const pendingIdx = CORRECTION_STATUS_EXPR.indexOf("'pending'");
-    for (const idx of [undoneIdx, appliedIdx, staleIdx, pendingIdx]) {
-      expect(idx).toBeGreaterThan(-1);
-    }
-    expect(undoneIdx).toBeLessThan(appliedIdx);
-    expect(appliedIdx).toBeLessThan(staleIdx);
-    expect(staleIdx).toBeLessThan(pendingIdx);
-  });
-});
-
-describe("listSeCompanyInfoCorrectionsPage", () => {
-  beforeEach(() => clickhouse.query.mockReset());
-
-  it("orders newest first and pages with named LIMIT/OFFSET params", async () => {
-    clickhouse.query.mockResolvedValueOnce([]).mockResolvedValueOnce([{ total: "12" }]);
-    const page = await listSeCompanyInfoCorrectionsPage({ page: 1, pageSize: 50 });
-
-    expect(page.total).toBe(12);
-    const [rowsSql, rowsParams] = clickhouse.query.mock.calls[0];
-    expect(rowsSql).toContain("ORDER BY c.created_at DESC, c.correction_id DESC");
-    expect(rowsSql).toContain(PAGE_LIMIT_OFFSET_SQL);
-    // The CTE's own WHERE (scoping it to rows that supersede something,
-    // indented inside the WITH clause) and the scoped join's own subquery
-    // WHERE are always present; it's the *outer*, unindented filter clause
-    // that must be absent when no list filter is set.
-    expect(rowsSql).not.toContain("\nWHERE ");
-    expect(rowsParams).toEqual({ zeroHash: ZERO_EVIDENCE_HASH, limit: 50, offset: 0 });
-
-    const [countSql, countParams] = clickhouse.query.mock.calls[1];
-    expect(countSql).not.toContain("\nWHERE ");
-    expect(countParams).toEqual({ zeroHash: ZERO_EVIDENCE_HASH });
-  });
-
-  it("threads companyId/kind/status filters into both queries identically", async () => {
-    clickhouse.query.mockResolvedValue([]);
-    await listSeCompanyInfoCorrectionsPage({
-      page: 1,
-      pageSize: 50,
-      companyId: "5565200028",
-      kind: "undo",
-    });
-
-    const [rowsSql, rowsParams] = clickhouse.query.mock.calls[0];
-    const [countSql, countParams] = clickhouse.query.mock.calls[1];
-    expect(rowsSql).toContain(
-      "WHERE c.company_id = {companyId:String} AND c.correction_kind = {kind:String}",
-    );
-    expect(countSql).toContain(
-      "WHERE c.company_id = {companyId:String} AND c.correction_kind = {kind:String}",
-    );
-    expect(rowsParams).toEqual({
-      zeroHash: ZERO_EVIDENCE_HASH,
-      companyId: "5565200028",
-      kind: "undo",
-      limit: 50,
-      offset: 0,
-    });
-    expect(countParams).toEqual({
-      zeroHash: ZERO_EVIDENCE_HASH,
-      companyId: "5565200028",
-      kind: "undo",
-    });
-  });
-});
-
 describe("server-side sorting", () => {
   it("whitelists every sort key against the list row type and falls back to the default, never 500s", () => {
     expect(resolveInfoSort("legal_name", "desc")).toEqual({ sort: "legal_name", dir: "desc" });
@@ -581,14 +421,6 @@ describe("server-side sorting", () => {
     expect(resolveInfoSort("legal_name", "sideways")).toEqual({
       sort: "legal_name",
       dir: "asc",
-    });
-    expect(resolveCorrectionsSort("decided_by", "asc")).toEqual({
-      sort: "decided_by",
-      dir: "asc",
-    });
-    expect(resolveCorrectionsSort("bogus", "bogus")).toEqual({
-      sort: "created_at",
-      dir: "desc",
     });
   });
 
@@ -617,17 +449,6 @@ describe("server-side sorting", () => {
     }
     // The default sort IS the tiebreak column, so it appears once.
     expect(infoOrderBySql("company_id", "asc")).toBe("ORDER BY i.company_id ASC");
-    expect(correctionsOrderBySql("company_id", "asc")).toBe(
-      "ORDER BY c.company_id ASC, c.created_at DESC, c.correction_id DESC",
-    );
-    // The unchanged default: newest first, correction_id breaking ties.
-    expect(correctionsOrderBySql("created_at", "desc")).toBe(
-      "ORDER BY c.created_at DESC, c.correction_id DESC",
-    );
-    // A computed column sorts by its expression, not by the SELECT alias.
-    expect(correctionsOrderBySql("status", "asc")).toBe(
-      `ORDER BY (${CORRECTION_STATUS_EXPR}) ASC, c.created_at DESC, c.correction_id DESC`,
-    );
   });
 
   it("threads the chosen sort into the paged row query", async () => {
@@ -636,18 +457,6 @@ describe("server-side sorting", () => {
     await listSeCompanyInfoPage({ page: 1, pageSize: 50, sort: "legal_form_code", dir: "desc" });
     expect(clickhouse.query.mock.calls[0][0]).toContain(
       "ORDER BY i.legal_form_code DESC, i.company_id ASC",
-    );
-
-    clickhouse.query.mockClear();
-    clickhouse.query.mockResolvedValue([]);
-    await listSeCompanyInfoCorrectionsPage({
-      page: 1,
-      pageSize: 50,
-      sort: "decided_by",
-      dir: "asc",
-    });
-    expect(clickhouse.query.mock.calls[0][0]).toContain(
-      "ORDER BY c.decided_by ASC, c.created_at DESC, c.correction_id DESC",
     );
   });
 
@@ -669,16 +478,6 @@ describe("server-side sorting", () => {
       "has_government_contracts",
       "has_job_ads",
       "profile_sources",
-    ]);
-    expect(Object.keys(CORRECTION_SORT_COLUMNS)).toEqual([
-      "created_at",
-      "company_id",
-      "correction_id",
-      "correction_kind",
-      "payload",
-      "reason",
-      "decided_by",
-      "status",
     ]);
   });
 });
@@ -767,28 +566,11 @@ describe("discrete filter options", () => {
     clock.mockRestore();
   });
 
-  it("reads the ledger's own decided_by values, cached the same way", async () => {
-    clickhouse.query.mockResolvedValue([{ decided_by: ["backoffice", "dagster"] }]);
-
-    expect(await loadSeCompanyInfoCorrectionFilterOptions()).toEqual({
-      decidedBy: ["backoffice", "dagster"],
-    });
-    await loadSeCompanyInfoCorrectionFilterOptions();
-    expect(clickhouse.query).toHaveBeenCalledTimes(1);
-    expect(clickhouse.query.mock.calls[0][0]).toBe(CORRECTION_FILTER_OPTIONS_SQL);
-    expect(CORRECTION_FILTER_OPTIONS_SQL).toContain(
-      "FROM corpscout.se_company_info_correction AS c",
-    );
-    expect(CORRECTION_FILTER_OPTIONS_SQL).toContain("groupUniqArray(c.decided_by)");
-  });
-
   it("returns empty option lists (never throws) when the table has no rows", async () => {
     clickhouse.query.mockResolvedValue([]);
     expect(await loadSeCompanyInfoFilterOptions()).toEqual({
       statuses: [],
       legalForms: [],
     });
-    resetSeCompanyInfoFilterOptionsCache();
-    expect(await loadSeCompanyInfoCorrectionFilterOptions()).toEqual({ decidedBy: [] });
   });
 });

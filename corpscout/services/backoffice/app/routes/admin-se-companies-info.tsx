@@ -1,5 +1,4 @@
 import { useState } from "react";
-import { Link } from "react-router";
 import type { Route } from "./+types/admin-se-companies-info";
 import { SeCompanyInfoTable } from "~/components/admin/se-company-info-table";
 import { NO_ROWS_SELECTED, type RowSelection } from "~/lib/row-selection";
@@ -69,31 +68,20 @@ export default function AdminSeCompanyInfoTable({ loaderData }: Route.ComponentP
   //                   id list the pipeline launches post as `company_ids`.
   const [selection, setSelection] = useState<RowSelection>(NO_ROWS_SELECTED);
   // The layout owns the page header now (title + tab bar), so this tab renders
-  // only its own body. The corrections ledger is not a tab -- it is a secondary
-  // link from here, its old sidebar entry having been folded into "Companies".
+  // only its own body.
   return (
-    <>
-      <div className="flex flex-wrap items-center gap-3 text-sm">
-        <Link
-          className="underline underline-offset-2"
-          to="/admin/se/company-info/corrections"
-        >
-          Info corrections
-        </Link>
-      </div>
-      <SeCompanyInfoTable
-        rows={listPage.rows}
-        total={total}
-        page={view.page}
-        pageSize={view.pageSize}
-        sort={sort.sort}
-        dir={sort.dir}
-        counts={counts}
-        options={options}
-        filters={filters}
-        selection={selection}
-        onSelectionChange={setSelection}
-      />
-    </>
+    <SeCompanyInfoTable
+      rows={listPage.rows}
+      total={total}
+      page={view.page}
+      pageSize={view.pageSize}
+      sort={sort.sort}
+      dir={sort.dir}
+      counts={counts}
+      options={options}
+      filters={filters}
+      selection={selection}
+      onSelectionChange={setSelection}
+    />
   );
 }
