@@ -2,20 +2,20 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 
 const clickhouse = vi.hoisted(() => ({ insert: vi.fn(), query: vi.fn() }));
 vi.mock("~/lib/clickhouse.server", () => ({
-  chInsertSeCompanyInfoCorrections: clickhouse.insert,
+  chInsertSeCompanyInfoFieldValues: clickhouse.insert,
   chQuery: clickhouse.query,
 }));
 
 import {
   ARTIFACT_ROWS_SQL,
-  appendSeCompanyInfoCorrection,
-  CORRECTIONS_SQL,
+  appendSeCompanyInfoFieldValues,
+  FIELD_VALUES_SQL,
   INFO_SQL,
   loadSeCompanyInfoDetail,
   NACE_LABEL_SQL,
   SUGGESTIONS_SQL,
 } from "~/lib/se-company-info.server";
-import { SeInfoCorrectionValidationError, ZERO_EVIDENCE_HASH } from "~/lib/se-info-corrections";
+import { SeInfoFieldValueValidationError } from "~/lib/se-info-field-values";
 import {
   ARTIFACT_PAYLOAD_FIELDS,
   type ArtifactSource,
@@ -137,9 +137,24 @@ describe("company info queries", () => {
     LIMIT 1
   )) AS is_newest`,
     );
-    expect(CORRECTIONS_SQL).toContain("supersedes_correction_id IS NOT NULL");
-    expect(CORRECTIONS_SQL).toContain("{zeroHash:String}");
-    expect(CORRECTIONS_SQL).toContain("has({appliedIds:Array(String)}, toString(c.correction_id))");
+    // The live row per field is the LATEST one, and the tie-break is on the
+    // uuid's TEXT -- Dagster's apply_field_values picks with
+    // `max((created_at, str(value_id)))`, so a ClickHouse argMax over the UUID
+    // itself would order the tie by the uuid's bytes and the two layers could
+    // disagree about which row is live.
+    expect(FIELD_VALUES_SQL).toContain(
+      "FROM corpscout.se_company_info_field_value AS v",
+    );
+    expect(FIELD_VALUES_SQL).toContain(
+      "argMax(value_id, (created_at, toString(value_id))) AS value_id",
+    );
+    expect(FIELD_VALUES_SQL).not.toContain("argMax(value_id, (created_at, value_id))");
+    expect(FIELD_VALUES_SQL).toContain("toUInt8(v.value_id = live.value_id) AS is_live");
+    expect(FIELD_VALUES_SQL).toContain("ORDER BY v.created_at DESC, v.value_id DESC");
+    // The store is the whole history for this company: no ledger vocabulary
+    // (kinds, evidence hashes, supersession) survives in it.
+    expect(FIELD_VALUES_SQL).not.toContain("evidence");
+    expect(FIELD_VALUES_SQL).not.toContain("supersedes");
   });
 
   it("projects every artifact leg with the same alias order, envelope first then payload_json", () => {
@@ -183,64 +198,111 @@ describe("company info queries", () => {
   });
 });
 
-describe("appendSeCompanyInfoCorrection", () => {
+describe("appendSeCompanyInfoFieldValues", () => {
   beforeEach(() => {
     clickhouse.insert.mockReset();
     clickhouse.query.mockReset();
   });
 
-  it("refuses when evidence moved", async () => {
-    clickhouse.query.mockResolvedValueOnce([{ evidence_set_hash: "b".repeat(64) }]);
-    await expect(
-      appendSeCompanyInfoCorrection({
-        companyId: COMPANY,
-        kind: "override_field",
-        payload: { description: "x" },
-        evidenceHash: "a".repeat(64),
-        reason: "r",
-      }),
-    ).rejects.toThrow(SeInfoCorrectionValidationError);
+  const scbValue = {
+    companyId: COMPANY,
+    field: "description",
+    value: "Alpha builds payment software.",
+    source: "scb",
+    sourceRef: "scb:1",
+    sourceAt: "2026-08-01 00:00:00.000",
+  };
+
+  it("refuses when the company is not published, without writing", async () => {
+    clickhouse.query.mockResolvedValueOnce([]);
+    await expect(appendSeCompanyInfoFieldValues([scbValue])).rejects.toThrow(
+      "This company is not published.",
+    );
     expect(clickhouse.insert).not.toHaveBeenCalled();
   });
 
-  it("appends one row with backoffice provenance", async () => {
-    clickhouse.query.mockResolvedValueOnce([{ evidence_set_hash: "a".repeat(64) }]);
-    clickhouse.insert.mockResolvedValue(undefined);
-    const { correctionId } = await appendSeCompanyInfoCorrection({
-      companyId: COMPANY,
-      kind: "override_field",
-      payload: { description: "x" },
-      evidenceHash: "a".repeat(64),
-      reason: "r",
-    });
-    const [rows] = clickhouse.insert.mock.calls[0];
-    expect(rows[0]).toMatchObject({
-      correction_id: correctionId,
-      company_id: COMPANY,
-      correction_kind: "override_field",
-      decided_by: "backoffice",
-    });
-    expect(rows[0].created_at).toMatch(/^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}\.\d{3}$/);
+  // Validation runs over the WHOLE batch before anything is read or written:
+  // one bad row must not leave the good half of an About-card decision behind
+  // in the store.
+  it("validates every input before touching ClickHouse", async () => {
+    await expect(
+      appendSeCompanyInfoFieldValues([
+        scbValue,
+        { ...scbValue, field: "legal_name" },
+      ]),
+    ).rejects.toThrow(SeInfoFieldValueValidationError);
+    expect(clickhouse.query).not.toHaveBeenCalled();
+    expect(clickhouse.insert).not.toHaveBeenCalled();
   });
 
-  it("undo skips the evidence re-read and inserts exactly one row", async () => {
+  it("appends every row in one insert, with backoffice provenance", async () => {
+    clickhouse.query.mockResolvedValueOnce([{ "1": 1 }]);
     clickhouse.insert.mockResolvedValue(undefined);
-    const { correctionId } = await appendSeCompanyInfoCorrection({
-      companyId: COMPANY,
-      kind: "undo",
-      evidenceHash: ZERO_EVIDENCE_HASH,
-      reason: "r",
-      supersedesCorrectionId: "11111111-1111-4111-8111-111111111111",
-    });
-    expect(clickhouse.query).not.toHaveBeenCalled();
+
+    const { valueIds } = await appendSeCompanyInfoFieldValues([
+      scbValue,
+      // A null value is the release instruction: it hands the Swedish text
+      // back to whatever the pipeline computes.
+      {
+        companyId: COMPANY,
+        field: "description_sv",
+        value: null,
+        source: "reviewer",
+        note: "SCB's Swedish copy was boilerplate",
+      },
+    ]);
+
+    expect(clickhouse.query).toHaveBeenCalledTimes(1);
+    const [publishedSql, publishedParams] = clickhouse.query.mock.calls[0];
+    expect(publishedSql).toContain("FROM corpscout.se_company_info FINAL");
+    expect(publishedParams).toEqual({ companyId: COMPANY });
     expect(clickhouse.insert).toHaveBeenCalledTimes(1);
     const [rows] = clickhouse.insert.mock.calls[0];
-    expect(rows[0]).toMatchObject({
-      correction_id: correctionId,
+    expect(valueIds).toHaveLength(2);
+    expect(rows[0]).toEqual({
+      value_id: valueIds[0],
       company_id: COMPANY,
-      correction_kind: "undo",
-      supersedes_correction_id: "11111111-1111-4111-8111-111111111111",
+      field: "description",
+      value: "Alpha builds payment software.",
+      source: "scb",
+      source_ref: "scb:1",
+      source_at: "2026-08-01 00:00:00.000",
+      decided_by: "backoffice",
+      note: "",
+      created_at: rows[0].created_at,
     });
+    expect(rows[1]).toMatchObject({
+      value_id: valueIds[1],
+      field: "description_sv",
+      value: null,
+      source: "reviewer",
+      // A reviewer's own wording comes from no record.
+      source_ref: "",
+      source_at: null,
+      decided_by: "backoffice",
+      note: "SCB's Swedish copy was boilerplate",
+    });
+    for (const row of rows) {
+      expect(row.created_at).toMatch(/^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}\.\d{3}$/);
+    }
+  });
+
+  it("refuses an empty batch", async () => {
+    await expect(appendSeCompanyInfoFieldValues([])).rejects.toThrow(
+      SeInfoFieldValueValidationError,
+    );
+    expect(clickhouse.query).not.toHaveBeenCalled();
+    expect(clickhouse.insert).not.toHaveBeenCalled();
+  });
+
+  it("refuses a batch that mixes companies, because one published check cannot cover both", async () => {
+    await expect(
+      appendSeCompanyInfoFieldValues([
+        scbValue,
+        { ...scbValue, companyId: "5560125220" },
+      ]),
+    ).rejects.toThrow("same company");
+    expect(clickhouse.query).not.toHaveBeenCalled();
   });
 
   it("loadSeCompanyInfoDetail threads ids into the detail queries and returns null when missing", async () => {
@@ -302,7 +364,7 @@ describe("appendSeCompanyInfoCorrection", () => {
     expect(detail?.naceLabel).toBe("Other monetary intermediation");
   });
 
-  it("loadSeCompanyInfoDetail threads the published suggestion id, evidence hash and applied ids", async () => {
+  it("loadSeCompanyInfoDetail threads the published suggestion id and reads the field-value history", async () => {
     clickhouse.query
       .mockResolvedValueOnce([
         {
@@ -323,11 +385,11 @@ describe("appendSeCompanyInfoCorrection", () => {
       companyId: COMPANY,
       publishedSuggestionId: "11111111-1111-4111-8111-111111111111",
     });
-    expect(clickhouse.query).toHaveBeenNthCalledWith(4, CORRECTIONS_SQL, {
+    // The field-value store needs nothing but the company: which row is live
+    // is decided inside the SQL, not by a hash or an applied-id list the
+    // published row carries.
+    expect(clickhouse.query).toHaveBeenNthCalledWith(4, FIELD_VALUES_SQL, {
       companyId: COMPANY,
-      zeroHash: "0".repeat(64),
-      evidenceSetHash: "a".repeat(64),
-      appliedIds: ["22222222-2222-4222-8222-222222222222"],
     });
   });
 

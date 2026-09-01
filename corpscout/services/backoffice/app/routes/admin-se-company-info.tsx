@@ -4,12 +4,7 @@ import {
   SeCompanyInfoNotPublished,
   SeCompanyInfoReviewWorkspace,
 } from "~/components/admin/se-company-info-review-workspace";
-import {
-  appendSeCompanyInfoCorrection,
-  loadSeCompanyInfoDetail,
-} from "~/lib/se-company-info.server";
-import { SeInfoCorrectionValidationError } from "~/lib/se-info-corrections";
-import { buildCorrectionInput, liveOverrideRefusal } from "~/lib/se-info-review-form";
+import { loadSeCompanyInfoDetail } from "~/lib/se-company-info.server";
 
 // Only `loader`, `action`, `meta` and the component live here. Any other
 // export that touched `~/lib/*.server` would keep that module in the client
@@ -23,36 +18,17 @@ export async function loader({ params }: Route.LoaderArgs) {
   return data({ detail }, detail ? undefined : { status: 404 });
 }
 
-export async function action({ request, params }: Route.ActionArgs) {
-  const built = buildCorrectionInput(await request.formData(), {
-    companyId: params.companyId,
-  });
-  if (!built.ok) {
-    return { ok: false as const, error: built.error };
-  }
-  // Approve/reject are refused while a live override exists: Dagster's
-  // kind-ranking always lets that override win, so the write would land in
-  // the ledger but never change what's published.
-  if (
-    built.input.kind === "approve_suggestion" ||
-    built.input.kind === "reject_suggestion"
-  ) {
-    const current = await loadSeCompanyInfoDetail(params.companyId);
-    const refusal = liveOverrideRefusal(
-      built.input.kind,
-      current?.corrections ?? [],
-    );
-    if (refusal) return { ok: false as const, error: refusal };
-  }
-  try {
-    const result = await appendSeCompanyInfoCorrection(built.input);
-    return { ok: true as const, correctionId: result.correctionId };
-  } catch (error) {
-    if (error instanceof SeInfoCorrectionValidationError) {
-      return { ok: false as const, error: error.message };
-    }
-    throw error;
-  }
+// Task 6 replaces this action: it dispatches on `intent`
+// (use-source / use-suggestion / edit / release), builds the rows with
+// se-info-field-value-form.ts and writes them through
+// appendSeCompanyInfoFieldValues. Until then every post is refused -- the
+// correction ledger it used to write to no longer exists, and a silent
+// success would be worse than a refusal.
+export async function action(_: Route.ActionArgs) {
+  return {
+    ok: false as const,
+    error: "Info corrections are being replaced by field values.",
+  };
 }
 
 export function meta({ loaderData }: Route.MetaArgs) {

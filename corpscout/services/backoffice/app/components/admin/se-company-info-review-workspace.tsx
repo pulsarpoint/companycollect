@@ -62,6 +62,23 @@ import { liveOverrideRefusal } from "~/lib/se-info-review-form";
 export type SeCompanyInfoReviewResult =
   { ok: true; correctionId: string } | { ok: false; error: string } | null;
 
+/** TODO(field-values Task 7): the shape of the deleted
+ * `SeCompanyInfoCorrectionRow`, kept locally only so the Ledger card below
+ * still compiles until Task 7 rewrites it as the Value history card. */
+interface LegacyCorrectionRow {
+  correction_id: string;
+  correction_kind: string;
+  payload: string;
+  evidence_hash: string;
+  reason: string;
+  decided_by: string;
+  supersedes_correction_id: string | null;
+  created_at: string;
+  is_current: number;
+  is_stale: number;
+  is_applied: number;
+}
+
 /**
  * Every non-undo correction form posts the kind it represents plus the
  * evidence hash the reviewer actually saw, so a concurrent rebuild is
@@ -543,7 +560,14 @@ export function SeCompanyInfoReviewWorkspace({
   detail: SeCompanyInfoDetail;
   result: SeCompanyInfoReviewResult;
 }) {
-  const { info, artifacts, suggestions, corrections } = detail;
+  const { info, artifacts, suggestions } = detail;
+  // TODO(field-values Task 7): the Ledger card and the live-override refusal
+  // below still speak the deleted company-info correction ledger. Task 7
+  // replaces them with a Value history card over `detail.fieldValues` (whose
+  // rows have a different shape entirely: field/value/source/is_live, no
+  // kinds and no supersession), so until then this page shows no history
+  // rather than a card built from rows that no longer exist.
+  const corrections: LegacyCorrectionRow[] = [];
   const hash = info.evidence_set_hash;
   // One click is one ledger row: block every submit while one is in flight.
   const busy = useNavigation().state !== "idle";

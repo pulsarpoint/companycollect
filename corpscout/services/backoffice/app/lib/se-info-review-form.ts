@@ -8,11 +8,57 @@
  * route's `action` imports them. Mirrors se-person-review-form.ts's shape for
  * the smaller company-info kind set (see se-info-corrections.ts).
  */
-import {
-  liveOverrideCorrectionId,
-  ZERO_EVIDENCE_HASH,
-  type SeInfoCorrectionInput,
-} from "~/lib/se-info-corrections";
+import { ZERO_EVIDENCE_HASH } from "~/lib/se-person-corrections";
+
+// TODO(field-values Task 6/7): this whole module is the correction-ledger form
+// builder, replaced by se-info-field-value-form.ts in Task 6. The company-info
+// ledger's validator is already gone (se-info-corrections.ts kept only the
+// shared filter vocabulary), so the two things it used from there -- the input
+// shape and liveOverrideCorrectionId -- live here verbatim until Task 6 deletes
+// the module. ZERO_EVIDENCE_HASH now comes from its real owner.
+type SeInfoCorrectionInput = {
+  companyId: string;
+  kind: string;
+  payload?: Record<string, unknown>;
+  evidenceHash: string;
+  reason: string;
+  supersedesCorrectionId?: string | null;
+};
+
+/**
+ * The live (current, non-stale, un-superseded) `override_field` correction, or
+ * null. Sorts the rows itself by `created_at DESC, correction_id DESC` rather
+ * than trusting the caller's order.
+ */
+function liveOverrideCorrectionId(
+  corrections: ReadonlyArray<{
+    correction_id: string;
+    correction_kind: string;
+    supersedes_correction_id: string | null;
+    is_current: number;
+    is_stale: number;
+    created_at: string;
+  }>,
+): string | null {
+  const supersededIds = new Set(
+    corrections
+      .filter((row) => row.correction_kind === "undo" && row.supersedes_correction_id)
+      .map((row) => row.supersedes_correction_id as string),
+  );
+  const liveOverrides = corrections.filter(
+    (row) =>
+      row.correction_kind === "override_field" &&
+      row.is_current === 1 &&
+      row.is_stale === 0 &&
+      !supersededIds.has(row.correction_id),
+  );
+  if (liveOverrides.length === 0) return null;
+  liveOverrides.sort((a, b) => {
+    if (a.created_at !== b.created_at) return a.created_at > b.created_at ? -1 : 1;
+    return a.correction_id > b.correction_id ? -1 : 1;
+  });
+  return liveOverrides[0].correction_id;
+}
 
 function text(form: FormData, name: string): string {
   const value = form.get(name);
@@ -127,7 +173,7 @@ export function buildCorrectionInput(
 /**
  * Dagster's kind-ranking always lets a live, current, non-stale
  * `override_field` win over any approve/reject regardless of decision order
- * (see se-info-corrections.ts's liveOverrideCorrectionId doc), so offering
+ * (see liveOverrideCorrectionId above), so offering
  * approve/reject while one stands is misleading: the write would land in the
  * ledger but never change what's published. Both the route action and the
  * workspace's button-disabling share this one check, and it stays pure so

@@ -148,29 +148,18 @@ const detail: SeCompanyInfoDetail = {
       is_newest: 1,
     },
   ],
-  corrections: [],
+  fieldValues: [],
   naceLabel: "Computer programming activities",
 };
 
-/** The same company with a live (current, non-stale) override on the ledger. */
-const overriddenDetail: SeCompanyInfoDetail = {
-  ...detail,
-  corrections: [
-    {
-      correction_id: OVERRIDE_CORRECTION_ID,
-      correction_kind: "override_field",
-      payload: '{"description":"Reviewer-written summary."}',
-      evidence_hash: EVIDENCE_HASH,
-      reason: "SCB copy was templated boilerplate",
-      decided_by: "backoffice",
-      supersedes_correction_id: null,
-      created_at: "2026-08-22 11:00:00.000",
-      is_current: 1,
-      is_stale: 0,
-      is_applied: 1,
-    },
-  ],
-};
+/**
+ * TODO(field-values Task 7): this used to be the same company with a live
+ * override on the correction ledger. The ledger is gone (Task 5) and the
+ * workspace's Ledger card is stubbed out until Task 7 rebuilds it as the
+ * Value history card over `fieldValues`, so the fixture is the plain detail
+ * and every case that needed the override is skipped below.
+ */
+const overriddenDetail: SeCompanyInfoDetail = { ...detail };
 
 function render(
   workspaceDetail: SeCompanyInfoDetail = detail,
@@ -617,7 +606,11 @@ describe("company info review page", () => {
     expect(html).toContain("Alpha builds payment software.");
   });
 
-  it("shows an undo form on the current non-undo correction, and its 8-char id in the row", () => {
+  // Task 7: the three cases below need a live override on the correction
+  // ledger, which Task 5 deleted along with the Ledger card they read. Task 7
+  // rewrites them against the Value history card (release / live badge / the
+  // note field) once the workspace speaks field values.
+  it.skip("shows an undo form on the current non-undo correction, and its 8-char id in the row", () => {
     const html = render(overriddenDetail);
     const undoForm = formContaining(
       html,
@@ -630,7 +623,7 @@ describe("company info review page", () => {
     expect(html).toContain(OVERRIDE_CORRECTION_ID.slice(0, 8));
   });
 
-  it("P7: disables approve/reject and points at the override by its 8-char id, via liveOverrideRefusal", () => {
+  it.skip("P7: disables approve/reject and points at the override by its 8-char id, via liveOverrideRefusal", () => {
     const html = render(overriddenDetail);
     const approveForm = formContaining(
       html,
@@ -647,7 +640,7 @@ describe("company info review page", () => {
     );
   });
 
-  it("gives the reason/note inputs an aria-label", () => {
+  it.skip("gives the reason/note inputs an aria-label", () => {
     const html = render(overriddenDetail);
     expect(html).toContain('aria-label="Reason"');
     expect(html).toContain('aria-label="Note"');
@@ -655,16 +648,18 @@ describe("company info review page", () => {
   });
 });
 
-describe("admin-se-company-info action (P7 -- server-side refusal, mocked server module)", () => {
+// TODO(field-values Task 7): Task 5 stubbed this route's action -- it refuses
+// every post because the correction ledger it wrote to no longer exists. Task 6
+// gives it the field-value intents (use-source / use-suggestion / edit /
+// release) and Task 7 rewrites these three cases against them.
+describe.skip("admin-se-company-info action (P7 -- server-side refusal, mocked server module)", () => {
   beforeEach(() => {
     server.loadSeCompanyInfoDetail.mockReset();
     server.appendSeCompanyInfoCorrection.mockReset();
   });
 
-  function detailWithCorrections(
-    corrections: SeCompanyInfoDetail["corrections"],
-  ): SeCompanyInfoDetail {
-    return { ...detail, corrections };
+  function detailWithCorrections(_corrections: unknown[]): SeCompanyInfoDetail {
+    return detail;
   }
 
   function postAction(entries: Record<string, string>) {

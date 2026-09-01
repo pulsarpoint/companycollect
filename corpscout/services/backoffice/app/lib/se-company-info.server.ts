@@ -1,21 +1,19 @@
 import { randomUUID } from "node:crypto";
 import {
-  chInsertSeCompanyInfoCorrections,
+  chInsertSeCompanyInfoFieldValues,
   chQuery,
 } from "~/lib/clickhouse.server";
 import {
-  SeInfoCorrectionValidationError,
-  validateSeInfoCorrection,
-  ZERO_EVIDENCE_HASH,
-  type SeInfoCorrectionInput,
-} from "~/lib/se-info-corrections";
+  SeInfoFieldValueValidationError,
+  validateSeInfoFieldValue,
+  type SeInfoFieldValueInput,
+} from "~/lib/se-info-field-values";
 import {
   ARTIFACT_PAYLOAD_FIELDS,
   type ArtifactSource,
 } from "~/lib/se-company-info-payload";
 
-export { ZERO_EVIDENCE_HASH };
-const CORRECTION_ACTOR = "backoffice";
+const DECIDED_BY = "backoffice";
 
 /** Every column of the published corpscout.se_company_info row. */
 export interface SeCompanyInfoRow {
@@ -95,25 +93,30 @@ export interface SeCompanyInfoSuggestionRow {
   is_newest: number;
 }
 
-export interface SeCompanyInfoCorrectionRow {
-  correction_id: string;
-  correction_kind: string;
-  payload: string;
-  evidence_hash: string;
-  reason: string;
+/**
+ * One row of the company's field-value history. `is_live` marks the row that
+ * decides the field right now -- the latest one written for it -- which is the
+ * only thing the store ranks by; a row whose `value` is NULL is a release back
+ * to the pipeline's computed default, and is as live as any other row.
+ */
+export interface SeCompanyInfoFieldValueRow {
+  value_id: string;
+  field: string;
+  value: string | null;
+  source: string;
+  source_ref: string;
+  source_at: string;
   decided_by: string;
-  supersedes_correction_id: string | null;
+  note: string;
   created_at: string;
-  is_current: number;
-  is_stale: number;
-  is_applied: number;
+  is_live: number;
 }
 
 export interface SeCompanyInfoDetail {
   info: SeCompanyInfoRow;
   artifacts: SeCompanyInfoArtifactRow[];
   suggestions: SeCompanyInfoSuggestionRow[];
-  corrections: SeCompanyInfoCorrectionRow[];
+  fieldValues: SeCompanyInfoFieldValueRow[];
   /** English NACE class name for info.primary_nace_code ('' when unknown). */
   naceLabel: string;
 }
@@ -209,7 +212,7 @@ function artifactLegSql(source: ArtifactSource): string {
  * outside it, over the union's own output columns. The `source_record_uid`
  * tiebreak matters in practice: bulk-loaded SCB rows routinely share one
  * `observed_at`. ESEF grows one row per filing, so (unlike
- * INFO_SQL/SUGGESTIONS_SQL/CORRECTIONS_SQL, which are bounded by construction)
+ * INFO_SQL/SUGGESTIONS_SQL/FIELD_VALUES_SQL, which are bounded by construction)
  * this one needs its own LIMIT.
  */
 export const ARTIFACT_ROWS_SQL = `SELECT * FROM (
@@ -251,36 +254,42 @@ ORDER BY s.created_at DESC
 LIMIT 50`;
 
 /**
- * is_stale marks a live (not superseded) correction whose evidence_hash no
- * longer matches the published row: != the zero hash (undo's own marker,
- * never stale) and != {evidenceSetHash:String} -- the page's own company,
- * so its own evidence_set_hash is always the right comparison (unlike the
- * person ledger, there is no separate subject to look up).
+ * The company's whole field-value history, newest first, with the live row per
+ * field flagged.
+ *
+ * The `live` subquery picks that row exactly the way Dagster's
+ * `apply_field_values` does -- the greatest `(created_at, str(value_id))` --
+ * so the badge this page shows and the value the next pipeline run publishes
+ * can never disagree. The uuid is compared as TEXT on purpose: ClickHouse
+ * would otherwise break a same-timestamp tie by the UUID's bytes while Python
+ * breaks it by the string, and the two layers would pick different rows.
+ *
+ * Nothing here depends on the published row: which value is live is decided
+ * by the store alone (no evidence hash, no applied-id list, no kinds), so the
+ * query takes only the company. Bounded like the other detail queries -- a
+ * reviewer decides a handful of values per company, so 200 rows is the whole
+ * story with room to spare.
  */
-export const CORRECTIONS_SQL = `WITH superseded AS (
-  SELECT supersedes_correction_id AS id
-  FROM corpscout.se_company_info_correction
-  WHERE company_id = {companyId:String} AND supersedes_correction_id IS NOT NULL
-)
-SELECT
-  toString(c.correction_id) AS correction_id,
-  c.correction_kind AS correction_kind,
-  c.payload AS payload,
-  toString(c.evidence_hash) AS evidence_hash,
-  c.reason AS reason,
-  c.decided_by AS decided_by,
-  toString(c.supersedes_correction_id) AS supersedes_correction_id,
-  toString(c.created_at) AS created_at,
-  toUInt8(c.correction_id NOT IN (SELECT id FROM superseded)) AS is_current,
-  toUInt8(
-    c.correction_id NOT IN (SELECT id FROM superseded)
-    AND toString(c.evidence_hash) != {zeroHash:String}
-    AND toString(c.evidence_hash) != {evidenceSetHash:String}
-  ) AS is_stale,
-  toUInt8(has({appliedIds:Array(String)}, toString(c.correction_id))) AS is_applied
-FROM corpscout.se_company_info_correction AS c
-WHERE c.company_id = {companyId:String}
-ORDER BY c.created_at DESC, c.correction_id DESC
+export const FIELD_VALUES_SQL = `SELECT
+  toString(v.value_id) AS value_id,
+  v.field AS field,
+  v.value AS value,
+  toString(v.source) AS source,
+  v.source_ref AS source_ref,
+  toString(v.source_at) AS source_at,
+  v.decided_by AS decided_by,
+  v.note AS note,
+  toString(v.created_at) AS created_at,
+  toUInt8(v.value_id = live.value_id) AS is_live
+FROM corpscout.se_company_info_field_value AS v
+LEFT JOIN (
+  SELECT field, argMax(value_id, (created_at, toString(value_id))) AS value_id
+  FROM corpscout.se_company_info_field_value
+  WHERE company_id = {companyId:String}
+  GROUP BY field
+) AS live ON live.field = v.field
+WHERE v.company_id = {companyId:String}
+ORDER BY v.created_at DESC, v.value_id DESC
 LIMIT 200`;
 
 /**
@@ -307,7 +316,7 @@ function parseArtifactPayload(raw: string): Record<string, string> {
 
 /**
  * Loads a company's published info row plus its artifact provenance, model
- * suggestions and correction ledger for the review page. Returns null when
+ * suggestions and field-value history for the review page. Returns null when
  * the company has no published row (nothing to review yet).
  */
 // Published rows carry dot-less codes ("6419") while the catalog's `code` is
@@ -335,19 +344,14 @@ export async function loadSeCompanyInfoDetail(
 ): Promise<SeCompanyInfoDetail | null> {
   const [info] = await chQuery<SeCompanyInfoRow>(INFO_SQL, { companyId });
   if (!info) return null;
-  const [artifactRows, suggestions, corrections, naceLabel] =
+  const [artifactRows, suggestions, fieldValues, naceLabel] =
     await Promise.all([
       chQuery<SeCompanyInfoArtifactQueryRow>(ARTIFACT_ROWS_SQL, { companyId }),
       chQuery<SeCompanyInfoSuggestionRow>(SUGGESTIONS_SQL, {
         companyId,
         publishedSuggestionId: info.suggestion_id,
       }),
-      chQuery<SeCompanyInfoCorrectionRow>(CORRECTIONS_SQL, {
-        companyId,
-        zeroHash: ZERO_EVIDENCE_HASH,
-        evidenceSetHash: info.evidence_set_hash,
-        appliedIds: info.correction_ids,
-      }),
+      chQuery<SeCompanyInfoFieldValueRow>(FIELD_VALUES_SQL, { companyId }),
       naceLabelFor(info.primary_nace_code ?? ""),
     ]);
   const artifacts: SeCompanyInfoArtifactRow[] = artifactRows.map((row) => ({
@@ -357,42 +361,62 @@ export async function loadSeCompanyInfoDetail(
     evidence_hash: row.evidence_hash,
     payload: parseArtifactPayload(row.payload_json),
   }));
-  return { info, artifacts, suggestions, corrections, naceLabel };
+  return { info, artifacts, suggestions, fieldValues, naceLabel };
 }
 
-function correctionTimestamp(): string {
+/** ClickHouse's DateTime64(3) text form, which is what the driver's
+ * JSONEachRow insert needs (an ISO string's `T`/`Z` are not that form). */
+function valueTimestamp(): string {
   return new Date().toISOString().replace("T", " ").replace("Z", "");
 }
 
-export async function appendSeCompanyInfoCorrection(
-  input: SeInfoCorrectionInput,
-): Promise<{ correctionId: string }> {
-  const draft = validateSeInfoCorrection(input);
-  if (draft.correction_kind !== "undo") {
-    const [current] = await chQuery<{ evidence_set_hash: string }>(
-      `SELECT toString(i.evidence_set_hash) AS evidence_set_hash
-       FROM corpscout.se_company_info AS i FINAL
-       WHERE i.company_id = {companyId:String}
-       LIMIT 1`,
-      { companyId: draft.company_id },
-    );
-    if (!current) {
-      throw new SeInfoCorrectionValidationError("This company is not published.");
-    }
-    if (current.evidence_set_hash !== draft.evidence_hash) {
-      throw new SeInfoCorrectionValidationError(
-        "The evidence changed while you were reviewing. Reload and decide again.",
-      );
-    }
+/** The company must already have a published row: a field value for a company
+ * Dagster has never published has nothing to decide, and the reviewer would
+ * never see it take effect. */
+const PUBLISHED_CHECK_SQL = `SELECT 1
+FROM corpscout.se_company_info FINAL
+WHERE company_id = {companyId:String}
+LIMIT 1`;
+
+/**
+ * Appends one decision -- which may be several rows, e.g. both languages of an
+ * About-card choice -- to the field-value store, and returns the ids written.
+ *
+ * The whole batch is validated before ClickHouse is touched at all, so a bad
+ * row cannot leave the good half of a decision behind. All rows must name the
+ * same company: the published check below is per company, and a mixed batch
+ * would leave part of it unchecked.
+ */
+export async function appendSeCompanyInfoFieldValues(
+  inputs: SeInfoFieldValueInput[],
+): Promise<{ valueIds: string[] }> {
+  const drafts = inputs.map(validateSeInfoFieldValue);
+  const [first] = drafts;
+  if (!first) {
+    throw new SeInfoFieldValueValidationError("Nothing to write.");
   }
-  const correctionId = randomUUID();
-  await chInsertSeCompanyInfoCorrections([
-    {
-      correction_id: correctionId,
-      ...draft,
-      decided_by: CORRECTION_ACTOR,
-      created_at: correctionTimestamp(),
-    },
-  ]);
-  return { correctionId };
+  if (drafts.some((draft) => draft.company_id !== first.company_id)) {
+    throw new SeInfoFieldValueValidationError(
+      "Every value in one write must belong to the same company.",
+    );
+  }
+  const [published] = await chQuery<Record<string, unknown>>(
+    PUBLISHED_CHECK_SQL,
+    { companyId: first.company_id },
+  );
+  if (!published) {
+    throw new SeInfoFieldValueValidationError("This company is not published.");
+  }
+  // One timestamp for the whole batch: the rows are one decision, and giving
+  // them the same created_at keeps the per-field tie-break (created_at, then
+  // the uuid's text) deciding between rows of DIFFERENT decisions only.
+  const createdAt = valueTimestamp();
+  const rows = drafts.map((draft) => ({
+    value_id: randomUUID(),
+    ...draft,
+    decided_by: DECIDED_BY,
+    created_at: createdAt,
+  }));
+  await chInsertSeCompanyInfoFieldValues(rows);
+  return { valueIds: rows.map((row) => row.value_id) };
 }

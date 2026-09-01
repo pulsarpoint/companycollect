@@ -1,14 +1,13 @@
 /**
- * Client-safe validator for the Sweden company-info correction ledger
- * (se_company_info_correction). Mirrors se-person-corrections.ts's shape
- * with a smaller kind set: the subject is the company's published row
- * itself, so there is no subject/target/draft bookkeeping here. Reuses
- * ZERO_EVIDENCE_HASH from se-person-corrections since both ledgers share
- * the same "undo carries no evidence" convention.
+ * The shared filter vocabulary of the SE correction ledgers, client-safe.
+ *
+ * The company-INFO ledger itself is gone: reviewer decisions on a company's
+ * description are values now, not corrections (see se-info-field-values.ts).
+ * What survives here is the vocabulary the ADDRESS ledger's list page and
+ * filter sheet still filter by -- kinds and statuses -- which the info list
+ * page named first and both pages import from one place rather than keeping
+ * two copies.
  */
-import { ZERO_EVIDENCE_HASH } from "~/lib/se-person-corrections";
-
-export { ZERO_EVIDENCE_HASH };
 
 export const SE_INFO_CORRECTION_KINDS = [
   "override_field",
@@ -21,11 +20,11 @@ export type SeInfoCorrectionKind = (typeof SE_INFO_CORRECTION_KINDS)[number];
 
 /**
  * A correction ledger row's status relative to the published row, as the
- * `/admin/se/company-info/corrections` list computes it in SQL
- * (`CORRECTION_STATUS_EXPR` in se-company-info-lists.server.ts). Declared
- * here (client-safe) rather than in that `.server` module so the list's
- * `<Select>` filter can import the value set directly instead of keeping a
- * second copy.
+ * corrections list computes it in SQL (`CORRECTION_STATUS_EXPR` in
+ * se-company-address-lists.server.ts / se-company-info-lists.server.ts).
+ * Declared here (client-safe) rather than in those `.server` modules so the
+ * list's `<Select>` filter can import the value set directly instead of
+ * keeping a second copy.
  */
 export const SE_INFO_CORRECTION_STATUSES = [
   "pending",
@@ -35,192 +34,3 @@ export const SE_INFO_CORRECTION_STATUSES = [
 ] as const;
 
 export type SeInfoCorrectionStatus = (typeof SE_INFO_CORRECTION_STATUSES)[number];
-
-export class SeInfoCorrectionValidationError extends Error {
-  constructor(message: string) {
-    super(message);
-    this.name = "SeInfoCorrectionValidationError";
-  }
-}
-
-export interface SeInfoCorrectionInput {
-  companyId: string;
-  kind: string;
-  payload?: Record<string, unknown>;
-  evidenceHash: string;
-  reason: string;
-  supersedesCorrectionId?: string | null;
-}
-
-export interface SeInfoCorrectionDraft {
-  company_id: string;
-  correction_kind: SeInfoCorrectionKind;
-  payload: string;
-  evidence_hash: string;
-  reason: string;
-  supersedes_correction_id: string | null;
-}
-
-// Legal entities carry a 10-digit organisationsnummer; sole traders (enskild
-// firma) carry a 12-digit personnummer-based id. Mirrors has_company in
-// migration 000299 -- both are published to se_company_info.
-const COMPANY_ID_PATTERN = /^([0-9]{10}|[0-9]{12})$/;
-const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
-const HASH_PATTERN = /^[0-9a-f]{64}$/;
-
-const ALLOWED_PAYLOAD_KEYS: Record<SeInfoCorrectionKind, readonly string[]> = {
-  // Both published languages may be decided at once (migration 000301): description
-  // is required, description_sv optional -- Dagster leaves the Swedish text as computed
-  // when the key is absent and applies it (null included) when it is present.
-  override_field: ["description", "description_sv"],
-  approve_suggestion: ["suggestion_id"],
-  reject_suggestion: ["suggestion_id", "note"],
-  undo: [],
-};
-
-function fail(message: string): never {
-  throw new SeInfoCorrectionValidationError(message);
-}
-
-function uuidOrFail(value: unknown, label: string): string {
-  const clean = typeof value === "string" ? value.trim().toLowerCase() : "";
-  if (!UUID_PATTERN.test(clean)) fail(`${label} must be a UUID.`);
-  return clean;
-}
-
-function isKind(value: string): value is SeInfoCorrectionKind {
-  return (SE_INFO_CORRECTION_KINDS as readonly string[]).includes(value);
-}
-
-export function validateSeInfoCorrection(
-  input: SeInfoCorrectionInput,
-): SeInfoCorrectionDraft {
-  const companyId = input.companyId.replace(/[^0-9]/g, "");
-  if (!COMPANY_ID_PATTERN.test(companyId) || companyId !== input.companyId.trim()) {
-    fail("Company must be a 10-digit or 12-digit Swedish company id.");
-  }
-  if (!isKind(input.kind)) fail("Unknown correction kind.");
-  const kind = input.kind;
-
-  const evidenceHash = input.evidenceHash.trim().toLowerCase();
-  if (!HASH_PATTERN.test(evidenceHash)) fail("The evidence hash is missing or malformed.");
-
-  const reason = input.reason.trim();
-  if (reason === "" || reason.length > 1000) fail("Reason is required (max 1000 characters).");
-
-  // Scope supersedes_correction_id to undo only.
-  if (kind !== "undo" && input.supersedesCorrectionId) {
-    fail("Only undo may supersede a correction.");
-  }
-
-  const payload = input.payload ?? {};
-  for (const key of Object.keys(payload)) {
-    if (!ALLOWED_PAYLOAD_KEYS[kind].includes(key)) {
-      fail(`Payload key "${key}" is not allowed for ${kind}.`);
-    }
-  }
-
-  const cleanPayload: Record<string, unknown> = {};
-  let supersedesCorrectionId: string | null = null;
-
-  switch (kind) {
-    case "override_field": {
-      // legal_name is SCB's; only the two description columns may be reviewer-overridden.
-      if (evidenceHash === ZERO_EVIDENCE_HASH) fail("The evidence hash is missing or malformed.");
-      if (!("description" in payload)) fail("Override needs a description.");
-      const description = payload.description;
-      if (description !== null && typeof description !== "string") {
-        fail("Override description must be a string or null.");
-      }
-      const trimmed = typeof description === "string" ? description.trim() : null;
-      if (trimmed === "") fail("Override description cannot be empty.");
-      cleanPayload.description = trimmed;
-      // Absent stays absent: Dagster reads a missing key as "leave the Swedish text as
-      // computed", which is a different instruction from an explicit null ("there is
-      // none"). Never default it to null here.
-      if ("description_sv" in payload) {
-        const swedish = payload.description_sv;
-        if (swedish !== null && typeof swedish !== "string") {
-          fail("Override Swedish description must be a string or null.");
-        }
-        const trimmedSwedish = typeof swedish === "string" ? swedish.trim() : null;
-        if (trimmedSwedish === "") fail("Override Swedish description cannot be empty.");
-        cleanPayload.description_sv = trimmedSwedish;
-      }
-      break;
-    }
-    case "approve_suggestion":
-    case "reject_suggestion": {
-      if (evidenceHash === ZERO_EVIDENCE_HASH) fail("The evidence hash is missing or malformed.");
-      cleanPayload.suggestion_id = uuidOrFail(payload.suggestion_id, "suggestion_id");
-      if (kind === "reject_suggestion" && typeof payload.note === "string" && payload.note.trim()) {
-        cleanPayload.note = payload.note.trim();
-      }
-      break;
-    }
-    case "undo": {
-      if (!input.supersedesCorrectionId) fail("Undo needs the correction it supersedes.");
-      supersedesCorrectionId = uuidOrFail(input.supersedesCorrectionId, "Superseded correction");
-      if (evidenceHash !== ZERO_EVIDENCE_HASH) fail("Undo must carry the zero evidence hash.");
-      break;
-    }
-  }
-
-  return {
-    company_id: companyId,
-    correction_kind: kind,
-    payload: JSON.stringify(cleanPayload),
-    evidence_hash: evidenceHash,
-    reason,
-    supersedes_correction_id: supersedesCorrectionId,
-  };
-}
-
-/**
- * Dagster's `apply_info_ledger` (info_rules.py) first drops any correction
- * whose evidence hash no longer matches -- stale ones never reach the
- * kind-ranking step at all. Only among what's left does INFO_KIND_ORDER rank
- * `override_field` after approve/reject regardless of `created_at`, so a
- * *current* (non-stale) live override always wins over any approve/reject
- * decided before or after it -- a reviewer who approves a suggestion after
- * overriding the description sees nothing happen. This mirrors both rules at
- * the review layer: while a current, live override exists, approve/reject is
- * a no-op server-side, so the UI should refuse to offer it and point at the
- * override instead. A stale override was already dropped by Dagster before
- * ranking, so it must not block approve/reject here either.
- *
- * A "live" override is one no later `undo` row supersedes (an undo row's
- * `supersedes_correction_id` names the correction it cancels). Unlike a
- * caller-trusted order, this sorts `corrections` itself by
- * `created_at DESC, correction_id DESC` before picking, so it doesn't matter
- * what order the array arrives in.
- */
-export function liveOverrideCorrectionId(
-  corrections: ReadonlyArray<{
-    correction_id: string;
-    correction_kind: string;
-    supersedes_correction_id: string | null;
-    is_current: number;
-    is_stale: number;
-    created_at: string;
-  }>,
-): string | null {
-  const supersededIds = new Set(
-    corrections
-      .filter((row) => row.correction_kind === "undo" && row.supersedes_correction_id)
-      .map((row) => row.supersedes_correction_id as string),
-  );
-  const liveOverrides = corrections.filter(
-    (row) =>
-      row.correction_kind === "override_field" &&
-      row.is_current === 1 &&
-      row.is_stale === 0 &&
-      !supersededIds.has(row.correction_id),
-  );
-  if (liveOverrides.length === 0) return null;
-  liveOverrides.sort((a, b) => {
-    if (a.created_at !== b.created_at) return a.created_at > b.created_at ? -1 : 1;
-    return a.correction_id > b.correction_id ? -1 : 1;
-  });
-  return liveOverrides[0].correction_id;
-}
