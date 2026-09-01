@@ -160,10 +160,20 @@ function useSuggestion(
  * something later replaces it: writing back an untouched description would pin
  * today's computed text for ever, hiding every later pipeline improvement.
  *
- * A ticked `clear_*` box writes NULL -- the release that hands the field back
- * to the pipeline -- and WINS over whatever the textarea holds, so a reviewer
- * who ticks the box without also emptying the text still gets the release they
- * asked for rather than a value they did not.
+ * A ticked `clear_*` box (the literal string `"yes"`, which is what the page's
+ * `<Checkbox name="clear_description" value="yes" />` posts) writes NULL -- the
+ * release that hands the field back to the pipeline -- and WINS over whatever
+ * the textarea holds, so a reviewer who ticks the box without also emptying the
+ * text still gets the release they asked for rather than a value they did not.
+ * The box is an instruction rather than a diff, so it needs no original.
+ *
+ * A field whose `original_*` is ABSENT is left alone entirely: there is nothing
+ * to diff against, and reading the missing original as "" would turn every
+ * rendered textarea into a change and pin today's computed text as a permanent
+ * reviewer value. A PRESENT-but-empty original is a real state (a company with
+ * no Swedish text yet), and typing into that textarea is the first value.
+ * The textarea itself is not guarded the same way: an absent one reads as
+ * emptied, which is refused below rather than written.
  *
  * An emptied textarea with the box unticked is a change like any other, so it
  * travels as an empty value and `validateSeInfoFieldValue` refuses the whole
@@ -173,12 +183,13 @@ function edit(form: FormData, companyId: string): SeInfoFieldValueRequest {
   const note = text(form, "note");
   const inputs: SeInfoFieldValueInput[] = [];
   for (const field of SE_INFO_FIELDS) {
-    const cleared = text(form, `clear_${field}`) === "yes";
-    const value = text(form, field).trim();
-    const original = text(form, `original_${field}`).trim();
-    if (cleared) {
+    if (text(form, `clear_${field}`) === "yes") {
       inputs.push({ companyId, field, value: null, source: "reviewer", note });
-    } else if (value !== original) {
+      continue;
+    }
+    if (!form.has(`original_${field}`)) continue;
+    const value = text(form, field).trim();
+    if (value !== text(form, `original_${field}`).trim()) {
       inputs.push({ companyId, field, value, source: "reviewer", note });
     }
   }

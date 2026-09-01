@@ -106,6 +106,13 @@ describe("validateSeInfoFieldValue", () => {
     expect(() =>
       validateSeInfoFieldValue({ ...base, source: "reviewer", value: "   " }),
     ).toThrow("Value cannot be empty.");
+    // Exactly what se-info-field-value-form's `edit` intent emits for a
+    // textarea the reviewer emptied without ticking its clear box: the empty
+    // string is a value, not a release, so the whole decision is refused here
+    // rather than pinning the published column to ''.
+    expect(() =>
+      validateSeInfoFieldValue({ ...base, source: "reviewer", value: "" }),
+    ).toThrow("Value cannot be empty.");
   });
 
   // FormData plumbing hands over "no value" as undefined as easily as null

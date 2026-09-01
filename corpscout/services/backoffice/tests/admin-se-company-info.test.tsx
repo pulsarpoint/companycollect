@@ -755,6 +755,37 @@ describe("admin-se-company-info action (field-value intents, mocked server modul
     expect(server.appendSeCompanyInfoFieldValues).not.toHaveBeenCalled();
   });
 
+  it("sends an emptied textarea to the store rather than swallowing it", async () => {
+    // Clearing a field is the clear box's job. An emptied textarea is a change
+    // like any other, so the action must not read it as "Nothing changed." --
+    // it reaches the store as an empty value, which the real validator refuses
+    // (pinned in tests/se-info-field-values.test.ts; the mock stands in for it
+    // here, so this case pins the handoff and the message, not the rule).
+    server.appendSeCompanyInfoFieldValues.mockRejectedValue(
+      new SeInfoFieldValueValidationError("Value cannot be empty."),
+    );
+
+    const result = await postAction({
+      intent: "edit",
+      description: "   ",
+      original_description: detail.info.description ?? "",
+      description_sv: detail.info.description_sv ?? "",
+      original_description_sv: detail.info.description_sv ?? "",
+      note: "",
+    });
+
+    expect(server.appendSeCompanyInfoFieldValues).toHaveBeenCalledWith([
+      {
+        companyId: COMPANY_ID,
+        field: "description",
+        value: "",
+        source: "reviewer",
+        note: "",
+      },
+    ]);
+    expect(result).toEqual({ ok: false, error: "Value cannot be empty." });
+  });
+
   it("hands the store's own refusal back to the reviewer", async () => {
     server.appendSeCompanyInfoFieldValues.mockRejectedValue(
       new SeInfoFieldValueValidationError("This company is not published."),

@@ -289,6 +289,128 @@ describe("buildFieldValueInputs -- edit", () => {
     });
   });
 
+  it("writes only the Swedish half when only it moved", () => {
+    expect(
+      build({
+        intent: "edit",
+        description: "Alpha builds payment software.",
+        original_description: "Alpha builds payment software.",
+        description_sv: "Alpha bygger betalningsprogramvara.",
+        original_description_sv: "Alpha bygger betalprogramvara.",
+        note: "",
+      }),
+    ).toEqual({
+      ok: true,
+      inputs: [
+        {
+          companyId: COMPANY_ID,
+          field: "description_sv",
+          value: "Alpha bygger betalningsprogramvara.",
+          source: "reviewer",
+          note: "",
+        },
+      ],
+    });
+  });
+
+  it("leaves a field alone when the post carries no original to diff it against", () => {
+    // A form that forgot the hidden original_* field would otherwise look like
+    // "the reviewer typed all of this", pinning today's computed text as a
+    // permanent reviewer value.
+    expect(
+      build({
+        intent: "edit",
+        description: "Alpha builds payment software.",
+        description_sv: "Alpha bygger betalprogramvara.",
+        note: "",
+      }),
+    ).toEqual({ ok: false, error: "Nothing changed." });
+    // The clear box still decides on its own -- it is an instruction, not a diff.
+    const cleared = build({
+      intent: "edit",
+      description: "Alpha builds payment software.",
+      clear_description: "yes",
+      note: "",
+    });
+    expect(cleared).toEqual({
+      ok: true,
+      inputs: [
+        {
+          companyId: COMPANY_ID,
+          field: "description",
+          value: null,
+          source: "reviewer",
+          note: "",
+        },
+      ],
+    });
+  });
+
+  it("reads a present-but-empty original as 'no text yet'", () => {
+    // The company with no Swedish description: the page renders the textarea
+    // with an empty original_*, so leaving it empty is unchanged and typing in
+    // it is the first value.
+    expect(
+      build({
+        intent: "edit",
+        description: "Alpha builds payment software.",
+        original_description: "Alpha builds payment software.",
+        description_sv: "",
+        original_description_sv: "",
+        note: "",
+      }),
+    ).toEqual({ ok: false, error: "Nothing changed." });
+    expect(
+      build({
+        intent: "edit",
+        description: "Alpha builds payment software.",
+        original_description: "Alpha builds payment software.",
+        description_sv: "Alpha bygger betalprogramvara.",
+        original_description_sv: "",
+        note: "",
+      }),
+    ).toEqual({
+      ok: true,
+      inputs: [
+        {
+          companyId: COMPANY_ID,
+          field: "description_sv",
+          value: "Alpha bygger betalprogramvara.",
+          source: "reviewer",
+          note: "",
+        },
+      ],
+    });
+  });
+
+  it("emits an empty value for a textarea emptied without ticking its box", () => {
+    // Deliberate: clearing a field is the clear box's job, so this travels as
+    // a value and validateSeInfoFieldValue refuses the whole decision with
+    // "Value cannot be empty." (pinned in tests/se-info-field-values.test.ts)
+    // rather than being silently dropped or turned into a release.
+    expect(
+      build({
+        intent: "edit",
+        description: "   ",
+        original_description: "Alpha builds payment software.",
+        description_sv: "Alpha bygger betalprogramvara.",
+        original_description_sv: "Alpha bygger betalprogramvara.",
+        note: "",
+      }),
+    ).toEqual({
+      ok: true,
+      inputs: [
+        {
+          companyId: COMPANY_ID,
+          field: "description",
+          value: "",
+          source: "reviewer",
+          note: "",
+        },
+      ],
+    });
+  });
+
   it("refuses an edit that changed nothing", () => {
     expect(
       build({
