@@ -240,3 +240,80 @@ export function parseJsonList(raw: string): JsonListItem[] | null {
 export function wikidataHref(id: string, url: string): string {
   return url !== "" ? url : `https://www.wikidata.org/wiki/${encodeURIComponent(id)}`;
 }
+
+/**
+ * One source's proposed company description, split for english-first display:
+ * english on top when the source provides it, the original language under it.
+ */
+export interface DescriptionProposal {
+  key: string;
+  source: string;
+  sourceLabel: string;
+  meta: string;
+  english: string;
+  original: string;
+  originalLanguage: string;
+}
+
+interface DescriptionArtifactRow {
+  source: string;
+  source_record_uid: string;
+  observed_at: string;
+  payload: Readonly<Record<string, string | undefined>>;
+}
+
+function observedDate(observedAt: string): string {
+  return observedAt.slice(0, 10);
+}
+
+export function descriptionProposals(
+  artifacts: readonly DescriptionArtifactRow[],
+): DescriptionProposal[] {
+  const proposals: DescriptionProposal[] = [];
+  const seen = new Set<string>();
+  for (const artifact of artifacts) {
+    const payload = artifact.payload;
+    let english = "";
+    let original = "";
+    let originalLanguage = "";
+    let meta = observedDate(artifact.observed_at);
+    if (artifact.source === "scb") {
+      english = payload.activity_description_en?.trim() ?? "";
+      original = payload.activity_description?.trim() ?? "";
+      originalLanguage = original === "" ? "" : "sv";
+    } else if (artifact.source === "esef") {
+      const description = payload.company_description?.trim() ?? "";
+      const language = payload.description_language?.trim() ?? "";
+      if (language === "en" || language.startsWith("en-")) {
+        english = description;
+      } else {
+        original = description;
+        originalLanguage = description === "" ? "" : language;
+      }
+      const fiscalYear = payload.fiscal_year?.trim() ?? "";
+      if (fiscalYear !== "") meta = `fiscal ${fiscalYear}`;
+    } else {
+      // Wikidata (and any future source) carries a single description with
+      // no language marker.
+      original = payload.company_description?.trim() ?? "";
+    }
+    if (english === "" && original === "") continue;
+    const fingerprint = `${english}\n${original}`;
+    if (seen.has(fingerprint)) continue;
+    seen.add(fingerprint);
+    proposals.push({
+      key: `${artifact.source}:${artifact.source_record_uid}`,
+      source: artifact.source,
+      sourceLabel: (ARTIFACT_SOURCES as readonly string[]).includes(
+        artifact.source,
+      )
+        ? artifactSourceLabel(artifact.source as ArtifactSource)
+        : artifact.source,
+      meta,
+      english,
+      original,
+      originalLanguage,
+    });
+  }
+  return proposals;
+}

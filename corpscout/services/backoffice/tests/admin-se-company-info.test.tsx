@@ -463,10 +463,13 @@ describe("company info review page", () => {
     const html = render();
     expect(html.match(/contributes to description/g)).toHaveLength(1);
     // scb:1 is the contributing uid on this fixture, so the badge sits inside
-    // the SCB group -- between its heading and the next source's.
+    // the SCB group -- between its heading and the next source's. Anchor
+    // inside the Sources section: the description carousel above it also
+    // names "SCB register".
+    const sourcesSection = html.indexOf("Every artifact row connected");
     const scbGroup = html.slice(
-      html.indexOf("SCB register"),
-      html.indexOf("Wikidata", html.indexOf("SCB register")),
+      html.indexOf("SCB register", sourcesSection),
+      html.indexOf("Wikidata", html.indexOf("SCB register", sourcesSection)),
     );
     expect(scbGroup).toContain("contributes to description");
   });

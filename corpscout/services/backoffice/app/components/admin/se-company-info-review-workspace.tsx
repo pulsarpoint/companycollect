@@ -14,6 +14,7 @@ import {
   EMPTY_VALUE,
   text,
 } from "~/components/admin/definition-list";
+import { CompanyDescriptionCarousel } from "~/components/admin/company-description-carousel";
 import { LegalForm } from "~/components/admin/legal-form";
 import { Badge } from "~/components/ui/badge";
 import { Button, buttonVariants } from "~/components/ui/button";
@@ -51,6 +52,7 @@ import {
   ARTIFACT_SOURCES,
   artifactPayloadEntries,
   artifactSourceLabel,
+  descriptionProposals,
   parseJsonList,
   wikidataHref,
   type ArtifactPayloadEntry,
@@ -501,6 +503,8 @@ export function SeCompanyInfoReviewWorkspace({
           <AlertDescription>{result.error}</AlertDescription>
         </Alert>
       ) : null}
+
+      <CompanyDescriptionCarousel proposals={descriptionProposals(artifacts)} />
 
       <PublishedCard info={info} />
 
