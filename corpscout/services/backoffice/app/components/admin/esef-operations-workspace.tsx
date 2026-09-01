@@ -76,6 +76,9 @@ export interface EsefProfileOption {
   model: string;
   baseUrl: string;
   isActive: boolean;
+  /** A shown-but-unlaunchable entry (e.g. local codex without its endpoint). */
+  disabled?: boolean;
+  disabledReason?: string;
 }
 
 export interface EsefRuntimeDefaults {
@@ -265,7 +268,9 @@ function enrichmentRunDetails(run: DagsterRun): {
 }
 
 function ProfileSelect({ profiles }: { profiles: EsefProfileOption[] }) {
-  const selected = profiles.find((profile) => profile.isActive) ?? profiles[0];
+  const launchable = profiles.filter((profile) => !profile.disabled);
+  const selected =
+    launchable.find((profile) => profile.isActive) ?? launchable[0];
   const items = profiles.map((profile) => ({
     label: `${profile.name} — ${profile.model}`,
     value: profile.profileId,
@@ -284,8 +289,15 @@ function ProfileSelect({ profiles }: { profiles: EsefProfileOption[] }) {
         <SelectContent>
           <SelectGroup>
             {profiles.map((profile) => (
-              <SelectItem key={profile.profileId} value={profile.profileId}>
+              <SelectItem
+                key={profile.profileId}
+                value={profile.profileId}
+                disabled={profile.disabled}
+              >
                 {profile.name} — {profile.model}
+                {profile.disabled && profile.disabledReason
+                  ? ` (${profile.disabledReason})`
+                  : ""}
               </SelectItem>
             ))}
           </SelectGroup>

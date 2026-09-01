@@ -7,9 +7,11 @@ import {
 import {
   activateLlmProfile,
   getLlmProfile,
+  isLocalCodexEnabled,
   listLlmProfiles,
   LlmSettingsValidationError,
   saveAndActivateLlmProfile,
+  setLocalCodexEnabled,
 } from "~/lib/llm-settings.server";
 
 function formValue(form: FormData, name: string): string {
@@ -25,6 +27,7 @@ export async function loader({ request }: Route.LoaderArgs) {
     editingProfile:
       editingProfileId === "" ? null : getLlmProfile(editingProfileId),
     saved: searchParams.get("saved") === "yes",
+    localCodexEnabled: isLocalCodexEnabled(),
   };
 }
 
@@ -35,6 +38,10 @@ export async function action({ request }: Route.ActionArgs) {
   try {
     if (intent === "activate") {
       activateLlmProfile(formValue(form, "profile_id"));
+      return redirect("/admin/settings/llms?saved=yes");
+    }
+    if (intent === "set_local_codex") {
+      setLocalCodexEnabled(formValue(form, "local_codex") === "on");
       return redirect("/admin/settings/llms?saved=yes");
     }
     if (intent === "save") {
@@ -90,6 +97,7 @@ export default function AdminLlmSettings({
       profiles={loaderData.profiles}
       editingProfile={loaderData.editingProfile}
       saved={loaderData.saved}
+      localCodexEnabled={loaderData.localCodexEnabled}
       submittedValues={actionData?.values ?? null}
       error={actionData?.error ?? ""}
     />

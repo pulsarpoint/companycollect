@@ -34,6 +34,12 @@ import {
   TableHeader,
   TableRow,
 } from "~/components/ui/table";
+import {
+  Tabs,
+  TabsContent,
+  TabsList,
+  TabsTrigger,
+} from "~/components/ui/tabs";
 import type { LlmProfile } from "~/lib/llm-settings.server";
 
 export interface LlmSettingsFormValues {
@@ -333,18 +339,68 @@ function LlmProfileForm({
   );
 }
 
+function LocalCodexCard({ enabled }: { enabled: boolean }) {
+  return (
+    <Card>
+      <CardHeader>
+        <CardTitle>Local codex agent</CardTitle>
+        <CardDescription>
+          When enabled, ESEF enrichment launches can pick the locally running
+          codex agent instead of a remote provider. No API key or model
+          parameters apply — the agent runs on this machine.
+        </CardDescription>
+      </CardHeader>
+      <Form method="post">
+        <CardContent>
+          <input type="hidden" name="intent" value="set_local_codex" />
+          <fieldset className="flex flex-col gap-2">
+            <legend className="text-sm font-medium">local_codex</legend>
+            <label className="flex items-center gap-2 text-sm">
+              <input
+                type="radio"
+                name="local_codex"
+                value="on"
+                defaultChecked={enabled}
+              />
+              Local codex enabled
+            </label>
+            <label className="flex items-center gap-2 text-sm">
+              <input
+                type="radio"
+                name="local_codex"
+                value="off"
+                defaultChecked={!enabled}
+              />
+              Local codex disabled
+            </label>
+          </fieldset>
+        </CardContent>
+        <CardFooter className="justify-end">
+          <Button type="submit" variant="secondary">
+            Save local setting
+          </Button>
+        </CardFooter>
+      </Form>
+    </Card>
+  );
+}
+
 export function LlmSettingsWorkspace({
   profiles,
   editingProfile,
   submittedValues = null,
   error = "",
   saved = false,
+  localCodexEnabled = false,
+  initialTab = "remote",
 }: {
   profiles: LlmProfile[];
   editingProfile: LlmProfile | null;
   submittedValues?: LlmSettingsFormValues | null;
   error?: string;
   saved?: boolean;
+  localCodexEnabled?: boolean;
+  initialTab?: "remote" | "local";
 }) {
   const activeProfile = profiles.find((profile) => profile.isActive) ?? null;
 
@@ -380,11 +436,22 @@ export function LlmSettingsWorkspace({
 
       <ActiveLlmCard profile={activeProfile} />
       <LlmProfilesCard profiles={profiles} />
-      <LlmProfileForm
-        editingProfile={editingProfile}
-        submittedValues={submittedValues}
-        error={error}
-      />
+      <Tabs defaultValue={initialTab}>
+        <TabsList>
+          <TabsTrigger value="remote">Remote</TabsTrigger>
+          <TabsTrigger value="local">Local</TabsTrigger>
+        </TabsList>
+        <TabsContent value="remote">
+          <LlmProfileForm
+            editingProfile={editingProfile}
+            submittedValues={submittedValues}
+            error={error}
+          />
+        </TabsContent>
+        <TabsContent value="local">
+          <LocalCodexCard enabled={localCodexEnabled} />
+        </TabsContent>
+      </Tabs>
     </div>
   );
 }

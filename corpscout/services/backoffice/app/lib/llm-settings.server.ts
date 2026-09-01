@@ -71,8 +71,59 @@ function connectSettingsDatabase(databasePath: string): DatabaseSync {
     CREATE UNIQUE INDEX IF NOT EXISTS llm_profile_single_active
       ON llm_profile(is_active)
       WHERE is_active = 1;
+    CREATE TABLE IF NOT EXISTS local_llm_setting (
+      setting_key TEXT PRIMARY KEY,
+      setting_value TEXT NOT NULL,
+      updated_at TEXT NOT NULL
+    );
   `);
   return database;
+}
+
+const LOCAL_CODEX_SETTING_KEY = "local_codex_enabled";
+
+/** Whether launches may offer the local codex agent as an LLM option. */
+export function isLocalCodexEnabled(
+  databasePath = SETTINGS_DATABASE_PATH,
+): boolean {
+  const database = connectSettingsDatabase(databasePath);
+  try {
+    const row = database
+      .prepare(
+        "SELECT setting_value FROM local_llm_setting WHERE setting_key = ?",
+      )
+      .get(LOCAL_CODEX_SETTING_KEY) as
+      | unknown
+      | { setting_value: string }
+      | undefined;
+    return (row as { setting_value: string } | undefined)?.setting_value === "1";
+  } finally {
+    database.close();
+  }
+}
+
+export function setLocalCodexEnabled(
+  enabled: boolean,
+  databasePath = SETTINGS_DATABASE_PATH,
+): void {
+  const database = connectSettingsDatabase(databasePath);
+  try {
+    database
+      .prepare(
+        `INSERT INTO local_llm_setting (setting_key, setting_value, updated_at)
+         VALUES (?, ?, ?)
+         ON CONFLICT (setting_key) DO UPDATE SET
+           setting_value = excluded.setting_value,
+           updated_at = excluded.updated_at`,
+      )
+      .run(
+        LOCAL_CODEX_SETTING_KEY,
+        enabled ? "1" : "0",
+        new Date().toISOString(),
+      );
+  } finally {
+    database.close();
+  }
 }
 
 function requiredValue(value: string, label: string, maximumLength: number): string {

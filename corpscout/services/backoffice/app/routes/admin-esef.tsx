@@ -21,7 +21,41 @@ import {
   EsefLaunchBlockedError,
   loadEsefOverview,
 } from "~/lib/esef-operations.server";
-import { listLlmProfiles, type LlmProfile } from "~/lib/llm-settings.server";
+import {
+  isLocalCodexEnabled,
+  listLlmProfiles,
+  type LlmProfile,
+} from "~/lib/llm-settings.server";
+
+// Synthetic picker entry for the locally running codex agent. It is not a
+// stored profile: availability comes from the settings toggle plus the
+// LOCAL_CODEX_BASE_URL environment variable, and no API key applies (the
+// worker still needs an env-var NAME, so a placeholder is sent).
+const LOCAL_CODEX_PROFILE_ID = "local_codex";
+const LOCAL_CODEX_MODEL = "codex";
+const LOCAL_CODEX_KEY_ENVIRONMENT_VARIABLE = "LOCAL_CODEX_API_KEY";
+
+function localCodexBaseUrl(): string {
+  return process.env.LOCAL_CODEX_BASE_URL?.trim() ?? "";
+}
+
+function localCodexOption(): EsefProfileOption | null {
+  if (!isLocalCodexEnabled()) return null;
+  const baseUrl = localCodexBaseUrl();
+  return {
+    profileId: LOCAL_CODEX_PROFILE_ID,
+    name: "Local codex",
+    provider: LOCAL_CODEX_PROFILE_ID,
+    model: LOCAL_CODEX_MODEL,
+    baseUrl,
+    isActive: false,
+    disabled: baseUrl === "",
+    disabledReason:
+      baseUrl === ""
+        ? "Set LOCAL_CODEX_BASE_URL on the backoffice to launch against the local codex agent."
+        : "",
+  };
+}
 
 const REFRESH_BEHAVIORS = new Set<EsefRefreshBehavior>([
   "reuse_existing",
@@ -94,6 +128,32 @@ function selectedProfile(
   profiles: LlmProfile[],
   profileId: string,
 ): LlmProfile {
+  if (profileId === LOCAL_CODEX_PROFILE_ID) {
+    if (!isLocalCodexEnabled()) {
+      throw new EsefActionValidationError(
+        "Local codex is not enabled in LLM settings.",
+      );
+    }
+    const baseUrl = localCodexBaseUrl();
+    if (baseUrl === "") {
+      throw new EsefActionValidationError(
+        "Set LOCAL_CODEX_BASE_URL on the backoffice before launching against the local codex agent.",
+      );
+    }
+    const now = new Date().toISOString();
+    return {
+      profileId: LOCAL_CODEX_PROFILE_ID,
+      name: "Local codex",
+      provider: LOCAL_CODEX_PROFILE_ID,
+      baseUrl,
+      model: LOCAL_CODEX_MODEL,
+      apiKeyEnvironmentVariable: LOCAL_CODEX_KEY_ENVIRONMENT_VARIABLE,
+      isActive: false,
+      apiKeyAvailable: true,
+      createdAt: now,
+      updatedAt: now,
+    };
+  }
   const profile = profiles.find(
     (candidate) => candidate.profileId === profileId,
   );
@@ -188,7 +248,7 @@ function describeSelection(input: {
 }
 
 function profileOptions(profiles: LlmProfile[]): EsefProfileOption[] {
-  return profiles.map((profile) => ({
+  const remote = profiles.map((profile) => ({
     profileId: profile.profileId,
     name: profile.name,
     provider: profile.provider,
@@ -196,6 +256,8 @@ function profileOptions(profiles: LlmProfile[]): EsefProfileOption[] {
     baseUrl: profile.baseUrl,
     isActive: profile.isActive,
   }));
+  const local = localCodexOption();
+  return local ? [...remote, local] : remote;
 }
 
 function refused(error: string): EsefLaunchActionResult {

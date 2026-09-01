@@ -4,6 +4,7 @@ const mocks = vi.hoisted(() => ({
   launch: vi.fn(),
   loadOverview: vi.fn(),
   loadCountries: vi.fn(),
+  localCodexEnabled: false,
   profiles: [
     {
       profileId: "profile-1",
@@ -39,6 +40,7 @@ vi.mock("~/lib/esef-countries.server", () => ({
 
 vi.mock("~/lib/llm-settings.server", () => ({
   listLlmProfiles: () => mocks.profiles,
+  isLocalCodexEnabled: () => mocks.localCodexEnabled,
 }));
 
 const { action, loader } = await import("~/routes/admin-esef");
@@ -91,6 +93,7 @@ beforeEach(() => {
     inventory: { assets: [], activeRuns: [] },
     enrichment: { recentEnrichmentRuns: [] },
   });
+  mocks.localCodexEnabled = false;
   vi.stubEnv("BACKOFFICE_OPERATOR", "operator@example.com");
   vi.stubEnv("DAGSTER_UI_URL", "https://dagster.example");
 });
@@ -140,6 +143,43 @@ describe("admin ESEF action", () => {
         concurrency: 4,
       },
     });
+  });
+
+  it("launches with the local codex agent when the toggle and endpoint are set", async () => {
+    mocks.localCodexEnabled = true;
+    vi.stubEnv("LOCAL_CODEX_BASE_URL", "http://graovic-mac:8787/v1");
+
+    const result = await post({ ...VALID_FIELDS, profile_id: "local_codex" });
+
+    expect(result.ok).toBe(true);
+    expect(mocks.launch).toHaveBeenCalledOnce();
+    expect(mocks.launch.mock.calls[0][0].llm).toMatchObject({
+      provider: "local_codex",
+      model: "codex",
+      baseUrl: "http://graovic-mac:8787/v1",
+      apiKeyEnvironmentVariable: "LOCAL_CODEX_API_KEY",
+    });
+  });
+
+  it("refuses a local codex launch when the toggle is off", async () => {
+    mocks.localCodexEnabled = false;
+    vi.stubEnv("LOCAL_CODEX_BASE_URL", "http://graovic-mac:8787/v1");
+
+    const result = await post({ ...VALID_FIELDS, profile_id: "local_codex" });
+
+    expect(result.ok).toBe(false);
+    expect(result.error).toContain("Local codex");
+    expect(mocks.launch).not.toHaveBeenCalled();
+  });
+
+  it("refuses a local codex launch when the agent endpoint is not configured", async () => {
+    mocks.localCodexEnabled = true;
+
+    const result = await post({ ...VALID_FIELDS, profile_id: "local_codex" });
+
+    expect(result.ok).toBe(false);
+    expect(result.error).toContain("LOCAL_CODEX_BASE_URL");
+    expect(mocks.launch).not.toHaveBeenCalled();
   });
 
   it("rejects invalid runtime values before calling Dagster", async () => {
@@ -230,5 +270,42 @@ describe("admin ESEF loader", () => {
     const result = await loader({} as Parameters<typeof loader>[0]);
 
     expect(result.runtimeDefaults).not.toHaveProperty("promptVersion");
+  });
+
+  it("offers Local codex as a picker entry when the toggle is on", async () => {
+    mocks.localCodexEnabled = true;
+    vi.stubEnv("LOCAL_CODEX_BASE_URL", "http://graovic-mac:8787/v1");
+
+    const result = await loader({} as Parameters<typeof loader>[0]);
+    const local = result.profiles.find(
+      (profile) => profile.profileId === "local_codex",
+    );
+
+    expect(local).toMatchObject({
+      name: "Local codex",
+      provider: "local_codex",
+      model: "codex",
+      disabled: false,
+    });
+  });
+
+  it("shows Local codex disabled while the agent endpoint is unset", async () => {
+    mocks.localCodexEnabled = true;
+
+    const result = await loader({} as Parameters<typeof loader>[0]);
+    const local = result.profiles.find(
+      (profile) => profile.profileId === "local_codex",
+    );
+
+    expect(local).toMatchObject({ disabled: true });
+    expect(local?.disabledReason).toContain("LOCAL_CODEX_BASE_URL");
+  });
+
+  it("omits Local codex when the toggle is off", async () => {
+    const result = await loader({} as Parameters<typeof loader>[0]);
+
+    expect(
+      result.profiles.find((profile) => profile.profileId === "local_codex"),
+    ).toBeUndefined();
   });
 });

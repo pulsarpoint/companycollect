@@ -5,9 +5,11 @@ import { DatabaseSync } from "node:sqlite";
 import { afterEach, describe, expect, it } from "vitest";
 import {
   activateLlmProfile,
+  isLocalCodexEnabled,
   listLlmProfiles,
   LlmSettingsValidationError,
   saveAndActivateLlmProfile,
+  setLocalCodexEnabled,
 } from "~/lib/llm-settings.server";
 
 const temporaryDirectories: string[] = [];
@@ -107,5 +109,36 @@ describe("LLM settings SQLite store", () => {
       ),
     ).toThrow(LlmSettingsValidationError);
     expect(listLlmProfiles(databasePath)).toEqual([]);
+  });
+});
+
+describe("local codex toggle", () => {
+  it("defaults to off and persists on/off round trips", () => {
+    const databasePath = temporarySettingsPath();
+
+    expect(isLocalCodexEnabled(databasePath)).toBe(false);
+    setLocalCodexEnabled(true, databasePath);
+    expect(isLocalCodexEnabled(databasePath)).toBe(true);
+    setLocalCodexEnabled(false, databasePath);
+    expect(isLocalCodexEnabled(databasePath)).toBe(false);
+  });
+
+  it("is independent of remote profile activation", () => {
+    const databasePath = temporarySettingsPath();
+
+    setLocalCodexEnabled(true, databasePath);
+    saveAndActivateLlmProfile(
+      {
+        name: "Remote",
+        provider: "deepseek",
+        baseUrl: "https://api.deepseek.com",
+        model: "deepseek-v4-flash",
+        apiKeyEnvironmentVariable: "TEST_BACKOFFICE_LLM_KEY",
+      },
+      databasePath,
+    );
+
+    expect(isLocalCodexEnabled(databasePath)).toBe(true);
+    expect(listLlmProfiles(databasePath)).toHaveLength(1);
   });
 });

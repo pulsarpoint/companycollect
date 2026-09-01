@@ -48,6 +48,37 @@ describe("admin LLM settings", () => {
     expect(html).toContain("API keys remain outside the settings database");
     expect(html).toContain("Key available");
     expect(html).not.toContain('type="password"');
+    // The parameters card is split into Remote / Local tabs.
+    expect(html).toContain("Remote");
+    expect(html).toContain("Local");
+  });
+
+  it("shows the local codex on/off radio on the Local tab", () => {
+    const router = createMemoryRouter(
+      [
+        {
+          path: "*",
+          element: (
+            <LlmSettingsWorkspace
+              profiles={[]}
+              editingProfile={null}
+              localCodexEnabled={true}
+              initialTab="local"
+            />
+          ),
+          action: () => null,
+        },
+      ],
+      { initialEntries: ["/admin/settings/llms"] },
+    );
+    const html = renderToStaticMarkup(<RouterProvider router={router} />);
+
+    expect(html).toContain("local_codex");
+    expect(html).toContain("Local codex enabled");
+    expect(html).toContain("Local codex disabled");
+    // The enabled radio reflects the stored toggle state.
+    expect(html).toMatch(/value="on"[^>]*checked|checked[^>]*value="on"/);
+    expect(html).toContain('name="intent" value="set_local_codex"');
   });
 
   it("adds a Settings navigation section with the LLM page active", () => {
