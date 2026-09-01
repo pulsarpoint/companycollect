@@ -13,7 +13,11 @@ finland_xbrl_data_snapshot_job = dg.define_asset_job(
 )
 finland_xbrl_xml_snapshot_job = dg.define_asset_job(
     "finland_xbrl_xml_snapshot_job",
-    selection=dg.AssetSelection.assets("data_snapshot_xml", "data_snapshot_xml_duckdb"),
+    selection=dg.AssetSelection.assets(
+        "data_snapshot_xml",
+        "data_snapshot_xml_duckdb",
+        "data_snapshot_xml_unified_duckdb",
+    ),
     partitions_def=XML_SNAPSHOT_PARTITIONS,
 )
 finland_xbrl_incremental_job = dg.define_asset_job(
@@ -24,6 +28,7 @@ finland_xbrl_incremental_job = dg.define_asset_job(
         "data_daily_duckdb_ch",
         "data_daily_xml",
         "data_daily_xml_duckdb",
+        "data_daily_xml_unified_duckdb",
         "fi_financial_statements_ch",
         "fi_xbrl_contexts_ch",
         "fi_xbrl_units_ch",
