@@ -376,7 +376,7 @@ EXPECTED_MIGRATIONS = (
     "000365_corpscout_se_company_info_esef_enrichment",
     "000366_corpscout_se_companies_serving_hourly_refresh",
     "000367_corpscout_se_jobtech_links_job_ads",
-    "000368_corpscout_se_company_info_field_value",
+    "000371_corpscout_se_company_info_field_value",
 )
 
 NOOP_MIGRATIONS = {"000276_noop"}
@@ -3989,8 +3989,8 @@ def test_se_company_info_field_value_replaces_the_correction_ledger() -> None:
     chain; the field's live value is just the latest row written for it. Prod check at
     spec time found 0 of 3.5M published rows applied a correction and the ledger held
     only 4 rows, so it drops in the same migration that adds the replacement table."""
-    up = _migration_sql("000368_corpscout_se_company_info_field_value.up.sql")
-    down = _migration_sql("000368_corpscout_se_company_info_field_value.down.sql")
+    up = _migration_sql("000371_corpscout_se_company_info_field_value.up.sql")
+    down = _migration_sql("000371_corpscout_se_company_info_field_value.down.sql")
 
     assert "CREATE TABLE IF NOT EXISTS corpscout.se_company_info_field_value" in up
     for constraint in ("CONSTRAINT has_company", "CONSTRAINT known_field", "CONSTRAINT known_source"):

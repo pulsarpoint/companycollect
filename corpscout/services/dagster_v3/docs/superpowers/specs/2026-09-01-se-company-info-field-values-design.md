@@ -56,7 +56,7 @@ GRANT INSERT ON corpscout.se_company_info_field_value TO corpscout_person_correc
 DROP TABLE IF EXISTS corpscout.se_company_info_correction;
 ```
 Down: drop the new table, revoke the grant, recreate the old ledger DDL (empty) from 000297+000299.
-Migration number = max(existing)+1 at execution (000368 as of writing); ledger entry + content test.
+Migration number = max(existing)+1 at execution (000371 at execution: main took 000368-000370 for Finland XBRL); ledger entry + content test.
 
 ## Dagster
 

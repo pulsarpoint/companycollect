@@ -109,8 +109,8 @@ def test_writer_grants_are_insert_only() -> None:
 
 
 def test_field_value_writer_grant_is_insert_only() -> None:
-    up = (MIGRATIONS_DIR / "000368_corpscout_se_company_info_field_value.up.sql").read_text()
-    down = (MIGRATIONS_DIR / "000368_corpscout_se_company_info_field_value.down.sql").read_text()
+    up = (MIGRATIONS_DIR / "000371_corpscout_se_company_info_field_value.up.sql").read_text()
+    down = (MIGRATIONS_DIR / "000371_corpscout_se_company_info_field_value.down.sql").read_text()
     assert "GRANT INSERT ON corpscout.se_company_info_field_value\nTO corpscout_person_correction_writer" in up
     assert "GRANT SELECT" not in up and "GRANT ALL" not in up
     assert "REVOKE INSERT ON corpscout.se_company_info_field_value\nFROM corpscout_person_correction_writer" in down

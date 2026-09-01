@@ -15,7 +15,7 @@ const base = {
 };
 
 describe("se-info field-value vocabulary", () => {
-  // The enums are the client-safe half of migration 000368's CHECK constraints
+  // The enums are the client-safe half of migration 000371's CHECK constraints
   // (known_field / known_source): a value this list does not carry is one
   // ClickHouse would reject at INSERT, so the two must stay in step.
   it("lists the two published fields and the five sources", () => {
@@ -157,7 +157,7 @@ describe("validateSeInfoFieldValue", () => {
   });
 
   // A reviewer's own wording comes from no record, so the column is '' by
-  // convention (migration 000368's comment) -- whatever the form posted.
+  // convention (migration 000371's comment) -- whatever the form posted.
   it("forces an empty source_ref for reviewer rows", () => {
     expect(
       validateSeInfoFieldValue({

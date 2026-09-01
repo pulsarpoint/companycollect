@@ -99,11 +99,11 @@ MIGRATIONS = (
     # 000364 (same ledger neighborhood) touches only esef_financial_metrics and a view,
     # neither of which is in NEEDED_TABLES, so it is deliberately not added here.
     "000365_corpscout_se_company_info_esef_enrichment.up.sql",
-    # 000368 creates se_company_info_field_value (and DROPs the old correction ledger,
+    # 000371 creates se_company_info_field_value (and DROPs the old correction ledger,
     # which this harness never creates -- a DROP TABLE is not a CREATE/ALTER TABLE and is
     # filtered out by _schema_statements). build_changed_companies_sql's `ledger` CTE
     # reads the new table, so it has to exist before the scan runs here.
-    "000368_corpscout_se_company_info_field_value.up.sql",
+    "000371_corpscout_se_company_info_field_value.up.sql",
 )
 # Applied later in the script than the rest, on purpose: on the live host 000300 lands on
 # a se_company_info_scb that already holds 3.5M v1 rows, and "ALTER ... MODIFY COLUMN of a

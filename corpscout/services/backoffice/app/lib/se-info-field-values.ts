@@ -1,6 +1,6 @@
 /**
  * Client-safe validator for the Sweden company-info field-value store
- * (`corpscout.se_company_info_field_value`, migration 000368).
+ * (`corpscout.se_company_info_field_value`, migration 000371).
  *
  * The store replaced the company-info correction ledger: there are no kinds,
  * no evidence hashes and no undo chain here, because a field's live value is
@@ -73,7 +73,7 @@ export interface SeInfoFieldValueDraft {
 
 // Legal entities carry a 10-digit organisationsnummer; sole traders (enskild
 // firma) carry a 12-digit personnummer-based id. Mirrors has_company in
-// migration 000368 -- both are published to se_company_info.
+// migration 000371 -- both are published to se_company_info.
 const COMPANY_ID_PATTERN = /^([0-9]{10}|[0-9]{12})$/;
 const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 const NOTE_MAX_LENGTH = 1000;
