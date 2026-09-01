@@ -5,6 +5,10 @@ Wants=network-online.target tailscaled.service
 After=network-online.target tailscaled.service
 # Dependency outages must not permanently exhaust the restart limit.
 StartLimitIntervalSec=0
+# A direct systemctl restart kills in-flight local run workers because they share
+# this unit's cgroup. Deployments temporarily override this only after the
+# GraphQL active-run preflight has passed.
+RefuseManualStop=yes
 
 [Service]
 Type=exec

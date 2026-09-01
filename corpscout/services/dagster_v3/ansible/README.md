@@ -163,7 +163,9 @@ operation.
 ```bash
 ssh dagster 'sudo systemctl status corpscout-dagster-dev --no-pager'
 ssh dagster 'sudo journalctl -u corpscout-dagster-dev -n 200 -f'
-ssh dagster 'sudo systemctl restart corpscout-dagster-dev'
+
+# Stop/restart is intentionally refused: rerun this Ansible deployment so its
+# active-run preflight can authorize a transient, validated service stop.
 ```
 
 The UI intentionally retains the current unauthenticated

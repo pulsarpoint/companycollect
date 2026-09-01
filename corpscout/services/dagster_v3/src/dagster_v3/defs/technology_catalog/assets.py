@@ -742,7 +742,7 @@ def technology_top_domains_clickhouse(
     with clickhouse.get_connection() as client:
         try:
             # The big merge below shares the server memory budget with
-            # se_companies_serving's 15-minute refresh (~12 GiB peaks); pausing
+            # se_companies_serving's hourly refresh (~12 GiB peaks); pausing
             # the refresh for the build's duration is the same guard the
             # serving swap migrations use. Readers are unaffected.
             client.execute("SYSTEM STOP VIEW corpscout.se_companies_serving")

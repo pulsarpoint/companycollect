@@ -1,3 +1,4 @@
+import json
 from collections.abc import Callable
 from datetime import datetime
 from pathlib import Path
@@ -19,6 +20,30 @@ _REQUIREMENT_PATHS = (
     ("nice_to_have", "education_level", "$.nice_to_have.education_level"),
     ("must_have", "driving_license", "$.driving_license"),
 )
+
+_REQUIREMENT_VALUE_STRUCTURE = {
+    "concept_id": "VARCHAR",
+    "label": "VARCHAR",
+    "legacy_ams_taxonomy_id": "VARCHAR",
+    "weight": "FLOAT",
+}
+_REQUIREMENTS_STRUCTURE = {
+    "must_have": {
+        "skills": [_REQUIREMENT_VALUE_STRUCTURE],
+        "languages": [_REQUIREMENT_VALUE_STRUCTURE],
+        "work_experiences": [_REQUIREMENT_VALUE_STRUCTURE],
+        "education": [_REQUIREMENT_VALUE_STRUCTURE],
+        "education_level": [_REQUIREMENT_VALUE_STRUCTURE],
+    },
+    "nice_to_have": {
+        "skills": [_REQUIREMENT_VALUE_STRUCTURE],
+        "languages": [_REQUIREMENT_VALUE_STRUCTURE],
+        "work_experiences": [_REQUIREMENT_VALUE_STRUCTURE],
+        "education": [_REQUIREMENT_VALUE_STRUCTURE],
+        "education_level": [_REQUIREMENT_VALUE_STRUCTURE],
+    },
+    "driving_license": [_REQUIREMENT_VALUE_STRUCTURE],
+}
 
 
 def replace_raw_jsonl_table(
@@ -558,75 +583,85 @@ def _events_sql(*, raw: str, versions: str, events: str) -> str:
 
 
 def _requirements_sql(*, raw: str, versions: str, requirements: str) -> str:
-    branches = "\nunion all\n".join(
+    requirement_lists = ",\n".join(
         f"""
+            list_transform(
+                parsed_requirements.{path.removeprefix("$.")},
+                item -> struct_pack(
+                    requirement_level := '{level}',
+                    requirement_type := '{requirement_type}',
+                    concept_id := coalesce(item.concept_id, ''),
+                    label_original := coalesce(item.label, ''),
+                    legacy_ams_taxonomy_id := coalesce(
+                        item.legacy_ams_taxonomy_id,
+                        ''
+                    ),
+                    weight := item.weight
+                )
+            )
+        """
+        for level, requirement_type, path in _REQUIREMENT_PATHS
+    )
+    requirements_structure = json.dumps(
+        _REQUIREMENTS_STRUCTURE,
+        separators=(",", ":"),
+    )
+    return f"""
+    create or replace table {requirements} as
+    with parsed as (
         select
             v.version_uid,
             v.source_job_ad_id,
-            '{level}' as requirement_level,
-            '{requirement_type}' as requirement_type,
-            item.value as requirement_value,
             v.source_url,
             v.source_object_key,
             v.source_run_id,
             v.source_line_number,
-            v.ingested_at
+            v.ingested_at,
+            from_json(r.raw_payload, '{requirements_structure}')
+                as parsed_requirements
         from {raw} as r
         inner join {versions} as v
             on v.source_run_id = r.source_run_id
            and v.source_object_key = r.source_object_key
            and v.source_line_number = r.source_line_number
-        cross join json_each(r.raw_payload, '{path}') as item
-        """
-        for level, requirement_type, path in _REQUIREMENT_PATHS
-    )
-    return f"""
-    create or replace table {requirements} as
-    with requirement_items as (
-        {branches}
-    ), normalized as (
+    ), requirement_items as (
         select
             version_uid,
             source_job_ad_id,
-            requirement_level,
-            requirement_type,
-            coalesce(json_extract_string(requirement_value, '$.concept_id'), '')
-                as concept_id,
-            coalesce(json_extract_string(requirement_value, '$.label'), '')
-                as label_original,
-            coalesce(
-                json_extract_string(requirement_value, '$.legacy_ams_taxonomy_id'),
-                ''
-            ) as legacy_ams_taxonomy_id,
-            try_cast(json_extract_string(requirement_value, '$.weight') as real)
-                as weight,
+            unnest(list_concat(
+{requirement_lists}
+            )) as requirement,
             source_url,
             source_object_key,
             source_run_id,
             source_line_number,
             ingested_at
-        from requirement_items
+        from parsed
     )
     select
         lower(sha256(concat_ws(
-            '|', version_uid, requirement_level, requirement_type, concept_id,
-            coalesce(cast(weight as varchar), '')
+            '|',
+            version_uid,
+            requirement.requirement_level,
+            requirement.requirement_type,
+            requirement.concept_id,
+            coalesce(cast(requirement.weight as varchar), '')
         ))) as requirement_uid,
         version_uid,
         source_job_ad_id,
-        requirement_level,
-        requirement_type,
-        concept_id,
-        label_original,
-        legacy_ams_taxonomy_id,
-        weight,
+        requirement.requirement_level as requirement_level,
+        requirement.requirement_type as requirement_type,
+        requirement.concept_id as concept_id,
+        requirement.label_original as label_original,
+        requirement.legacy_ams_taxonomy_id as legacy_ams_taxonomy_id,
+        requirement.weight as weight,
         source_url,
         source_object_key,
         source_run_id,
         source_line_number,
         ingested_at
-    from normalized
-    where concept_id != ''
+    from requirement_items
+    where requirement.concept_id != ''
     """
 
 

@@ -667,10 +667,46 @@
     - dagster_systemd_is_active or dagster_legacy_tmux_active
     - dagster_run_preflight.json.data.cancelingRuns.results | length > 0
 
-- name: Stop the existing Dagster systemd service for deployment
-  ansible.builtin.systemd_service:
-    name: "{{ dagster_service_name }}"
-    state: stopped
+- name: Stop Dagster after the active-run preflight
+  block:
+    - name: Create the transient Dagster systemd override directory
+      ansible.builtin.file:
+        path: "/run/systemd/system/{{ dagster_service_name }}.service.d"
+        state: directory
+        owner: root
+        group: root
+        mode: "0755"
+
+    - name: Temporarily allow the validated Dagster deployment stop
+      ansible.builtin.copy:
+        dest: >-
+          /run/systemd/system/{{ dagster_service_name }}.service.d/zz-ansible-validated-stop.conf
+        owner: root
+        group: root
+        mode: "0644"
+        content: |
+          # Transient override: the active-run preflight passed.
+          [Unit]
+          RefuseManualStop=no
+
+    - name: Reload the transient Dagster stop permission
+      ansible.builtin.systemd_service:
+        daemon_reload: true
+
+    - name: Stop the existing Dagster systemd service for deployment
+      ansible.builtin.systemd_service:
+        name: "{{ dagster_service_name }}"
+        state: stopped
+  always:
+    - name: Remove the transient Dagster stop permission
+      ansible.builtin.file:
+        path: >-
+          /run/systemd/system/{{ dagster_service_name }}.service.d/zz-ansible-validated-stop.conf
+        state: absent
+
+    - name: Reload the protected Dagster unit
+      ansible.builtin.systemd_service:
+        daemon_reload: true
   when:
     - not ansible_check_mode
     - dagster_deployment_required

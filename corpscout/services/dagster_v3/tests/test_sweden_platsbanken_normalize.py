@@ -6,6 +6,7 @@ import duckdb
 
 from dagster_v3.defs.sweden_platsbanken import tables
 from dagster_v3.defs.sweden_platsbanken.normalize import (
+    _requirements_sql,
     build_normalized_tables,
     replace_raw_jsonl_table,
 )
@@ -16,6 +17,113 @@ def _write_jsonl(path: Path, records: list[dict[str, object]]) -> None:
         "".join(json.dumps(record, ensure_ascii=False) + "\n" for record in records),
         encoding="utf-8",
     )
+
+
+def test_requirements_sql_parses_and_joins_each_payload_once() -> None:
+    sql = _requirements_sql(
+        raw="raw_records",
+        versions="job_versions",
+        requirements="job_requirements",
+    )
+
+    assert sql.count("raw_records") == 1
+    assert sql.count("job_versions") == 1
+    assert sql.count("from_json(") == 1
+    assert "json_each(" not in sql
+
+
+def test_all_requirement_paths_are_normalized(tmp_path: Path) -> None:
+    jsonl_path = tmp_path / "all-requirements.jsonl"
+    paths = (
+        ("must_have", "skills", "skill"),
+        ("must_have", "languages", "language"),
+        ("must_have", "work_experiences", "work_experience"),
+        ("must_have", "education", "education"),
+        ("must_have", "education_level", "education_level"),
+        ("nice_to_have", "skills", "skill"),
+        ("nice_to_have", "languages", "language"),
+        ("nice_to_have", "work_experiences", "work_experience"),
+        ("nice_to_have", "education", "education"),
+        ("nice_to_have", "education_level", "education_level"),
+    )
+    record: dict[str, object] = {
+        "id": "all-requirements",
+        "headline": "All requirements",
+        "timestamp": 1767168517718,
+        "must_have": {},
+        "nice_to_have": {},
+    }
+    expected = set()
+    for index, (level, field, requirement_type) in enumerate(paths, start=1):
+        concept_id = f"{level}-{requirement_type}"
+        requirement = {
+            "concept_id": concept_id,
+            "label": f"{concept_id} label",
+            "legacy_ams_taxonomy_id": f"legacy-{index}",
+            "weight": index,
+        }
+        requirement_group = record[level]
+        assert isinstance(requirement_group, dict)
+        requirement_group[field] = [requirement]
+        expected.add(
+            (
+                level,
+                requirement_type,
+                concept_id,
+                f"{concept_id} label",
+                f"legacy-{index}",
+                float(index),
+            )
+        )
+    record["driving_license"] = [
+        {
+            "concept_id": "driving-license",
+            "label": "Driving license",
+            "legacy_ams_taxonomy_id": "legacy-11",
+            "weight": 11,
+        }
+    ]
+    expected.add(
+        (
+            "must_have",
+            "driving_license",
+            "driving-license",
+            "Driving license",
+            "legacy-11",
+            11.0,
+        )
+    )
+    _write_jsonl(jsonl_path, [record])
+    connection = duckdb.connect(":memory:")
+    replace_raw_jsonl_table(
+        connection=connection,
+        jsonl_path=jsonl_path,
+        raw_table=tables.HISTORICAL_RAW_TABLE,
+        record_kind="archive_record",
+        source_run_id="historical-run",
+        source_object_key="historical/all.zip",
+        source_url="https://data.jobtechdev.se/all.zip",
+        retrieved_at=datetime(2026, 8, 23, tzinfo=UTC),
+    )
+
+    counts = build_normalized_tables(
+        connection=connection,
+        raw_table=tables.HISTORICAL_RAW_TABLE,
+        versions_table=tables.HISTORICAL_VERSIONS_TABLE,
+        events_table=tables.HISTORICAL_EVENTS_TABLE,
+        requirements_table=tables.HISTORICAL_REQUIREMENTS_TABLE,
+        contacts_table=tables.HISTORICAL_CONTACTS_TABLE,
+    )
+    requirements = connection.execute(
+        f"""
+        select requirement_level, requirement_type, concept_id,
+               label_original, legacy_ams_taxonomy_id, weight
+        from {tables.DUCKDB_SCHEMA}.{tables.HISTORICAL_REQUIREMENTS_TABLE}
+        """
+    ).fetchall()
+
+    assert counts["requirements"] == 11
+    assert set(requirements) == expected
 
 
 def test_historical_record_becomes_version_lifecycle_and_requirements(
@@ -358,6 +466,20 @@ def test_normalized_duckdb_columns_match_clickhouse_export_contract(
         """
     ).fetchall()
     assert contacts == [
-        (0, "Recruiter", "Hiring manager", "recruiter@example.se", "0101234567", "contact"),
-        (1, "Union Representative", "Union contact", "union@example.se", "0109876543", "union"),
+        (
+            0,
+            "Recruiter",
+            "Hiring manager",
+            "recruiter@example.se",
+            "0101234567",
+            "contact",
+        ),
+        (
+            1,
+            "Union Representative",
+            "Union contact",
+            "union@example.se",
+            "0109876543",
+            "union",
+        ),
     ]

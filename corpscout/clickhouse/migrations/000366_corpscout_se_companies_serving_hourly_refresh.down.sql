@@ -1,0 +1,4 @@
+CREATE DATABASE IF NOT EXISTS corpscout;
+
+ALTER TABLE corpscout.se_companies_serving
+    MODIFY REFRESH EVERY 15 MINUTE;

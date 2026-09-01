@@ -22,7 +22,7 @@ GROUP_NAME = "company_markets"
 # The identity joins behind these SELECTs (instrument_venues 15.0M x
 # instrument_issuer 9.1M x company_identifier) held their whole hash tables in
 # memory and hit the server's total-memory cap (Code 241, 2026-08-28) once
-# corpscout.se_companies_serving's 15-minute refresh started sharing the same
+# corpscout.se_companies_serving's hourly refresh started sharing the same
 # 27.31 GiB budget. grace_hash spills join buckets to disk and the external
 # group-by/sort thresholds do the same for aggregation, so the query is slower
 # but bounded -- max_memory_usage keeps it well under the shared cap even when

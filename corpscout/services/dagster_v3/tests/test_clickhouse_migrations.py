@@ -374,6 +374,7 @@ EXPECTED_MIGRATIONS = (
     "000363_corpscout_se_jobtech_links_jobs",
     "000364_corpscout_esef_personnel_expenses",
     "000365_corpscout_se_company_info_esef_enrichment",
+    "000366_corpscout_se_companies_serving_hourly_refresh",
 )
 
 NOOP_MIGRATIONS = {"000276_noop"}
@@ -3961,6 +3962,24 @@ def test_se_company_info_esef_enrichment_migration_is_additive() -> None:
         assert f"DROP COLUMN IF EXISTS {column}" in down
     assert "MATERIALIZED" not in up  # evidence_hash untouched
     assert "TRUNCATE" not in up
+
+
+def test_se_companies_serving_refresh_schedule_is_hourly_and_reversible() -> None:
+    up = _normalize_sql(
+        _migration_sql("000366_corpscout_se_companies_serving_hourly_refresh.up.sql")
+    )
+    down = _normalize_sql(
+        _migration_sql("000366_corpscout_se_companies_serving_hourly_refresh.down.sql")
+    )
+
+    assert (
+        "ALTER TABLE corpscout.se_companies_serving MODIFY REFRESH EVERY 1 HOUR "
+        "OFFSET 45 MINUTE" in up
+    )
+    assert (
+        "ALTER TABLE corpscout.se_companies_serving MODIFY REFRESH EVERY 15 MINUTE"
+        in down
+    )
 
 
 def _migration_sql(file_name: str) -> str:

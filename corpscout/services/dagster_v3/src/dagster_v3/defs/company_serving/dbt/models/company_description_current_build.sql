@@ -23,7 +23,7 @@ registry_descriptions AS (
         '' AS prompt_version,
         updated_from_raw_at AS extracted_at
     -- se_companies_serving (refreshable MV, migration 000338) absorbed the retired
-    -- se_companies_translated view's columns verbatim; refreshed every 15 minutes, which
+    -- se_companies_translated view's columns verbatim; refreshed every hour, which
     -- bounds this model's staleness the same way the serving pages accept.
     FROM {{ source('corpscout', 'se_companies_serving') }}
     WHERE ifNull(activity_description, '') != ''

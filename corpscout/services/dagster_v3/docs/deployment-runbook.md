@@ -154,9 +154,12 @@ Rules (see CLAUDE.md "ClickHouse migrations"):
 
 ## 7. Operations
 
-- **Service lifecycle**: `systemctl status|restart corpscout-dagster-dev`;
-  logs are available with `journalctl -u corpscout-dagster-dev`. The old
-  `dagster` tmux session is not part of the managed deployment.
+- **Service lifecycle**: `systemctl status corpscout-dagster-dev`; logs are
+  available with `journalctl -u corpscout-dagster-dev`. Direct stop/restart is
+  refused because local run workers share the service cgroup. Rerun the Ansible
+  deployment instead: it checks for active runs, installs a transient systemd
+  override, stops the service, and removes the override even when stopping
+  fails. The old `dagster` tmux session is not part of the managed deployment.
 
 - **Failure signal**: `run_failure_alert_sensor` posts every failed run;
   `stale_run_alert_sensor` reports started runs with no recent events. Both log
