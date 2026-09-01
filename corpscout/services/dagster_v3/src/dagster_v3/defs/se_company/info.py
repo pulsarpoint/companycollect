@@ -503,11 +503,10 @@ def _artifact_row_from_row(row: Sequence[Any]) -> ArtifactRow:
 def build_field_values_sql(table: str) -> str:
     """Every field-value row for the page's companies, oldest first.
 
-    The whole history is read, not just the live row per field: the live one is the
-    greatest ``(created_at, value_id)``, which ``apply_field_values`` picks in Python
-    from exactly this order -- the table's own ORDER BY -- so a page's rows arrive in
-    the same total order the table stores them in and two rows written in the same
-    millisecond can never swap places between runs.
+    The whole history is read, not just the live row per field: ``apply_field_values``
+    picks the live one itself, by an explicit max over ``(created_at, str(value_id))``,
+    so this ORDER BY decides nothing about the outcome -- it only makes the read itself
+    deterministic (a stable row order in logs and in a debugger, page after page).
     """
     return f"""SELECT
     value_id, company_id, field, value, source, source_ref, created_at
@@ -745,6 +744,12 @@ def _resolve_page(
                                      stored=item.stored)
         metrics["applied_correction_count"] += len(outcome.correction_ids)
         metrics["invalid_value_count"] += outcome.invalid_value_count
+        # Only a direct INSERT past the table's CHECK constraints can produce one, so a
+        # non-zero count is a canary rather than routine: name the company in the log,
+        # not just the total in the metadata.
+        if outcome.invalid_value_count and log is not None:
+            log("Invalid field values skipped: company=%s count=%s", item.company_id,
+                outcome.invalid_value_count)
         final_rows.append(_final_row(outcome, source_run_id=source_run_id, resolved_at=resolved_at))
 
     _publish_observations(clickhouse=clickhouse, rows=observation_rows, metrics=metrics)

@@ -273,6 +273,39 @@ def test_artifact_rows_sql_unions_the_three_artifacts_with_a_source_column() -> 
     assert "* EXCEPT" not in sql and " * " not in sql  # explicit read contract, never star
 
 
+def test_field_values_sql_and_row_mapper_round_trip() -> None:
+    """Positional order matters: `_field_value_from_row` reads the SELECT by index, so a
+    reordered column would silently swap values instead of raising -- pin the exact SELECT
+    clause here, the way test_se_company_common pins the ledger/observation ones.
+
+    The ORDER BY is the table's own key. It decides nothing about which value wins
+    (`apply_field_values` takes an explicit max), but it is what makes a page's read
+    deterministic, so it is pinned too."""
+    from dagster_v3.defs.se_company.info import _field_value_from_row, build_field_values_sql
+
+    sql = build_field_values_sql("se_company_info_field_value")
+    assert "FROM corpscout.se_company_info_field_value" in sql
+    assert "WHERE company_id IN %(company_ids)s" in sql
+    assert (
+        "SELECT\n"
+        "    value_id, company_id, field, value, source, source_ref, created_at"
+    ) in sql
+    assert "ORDER BY company_id, field, created_at, value_id" in sql
+
+    value_id, source_ref = uuid.uuid4(), uuid.uuid4()
+    row = _field_value_from_row(
+        (value_id, COMPANY, "description", "Reviewed text", "llm", str(source_ref), NOW))
+    assert row.value_id == value_id and row.company_id == COMPANY
+    assert row.field == "description" and row.value == "Reviewed text"
+    assert row.source == "llm" and row.source_ref == str(source_ref)
+    assert row.created_at == NOW
+    # `value` is the one Nullable column and NULL is a RELEASE, not the text "None":
+    # str()-ing it here would publish the string and silence every release.
+    released = _field_value_from_row(
+        (value_id, COMPANY, "description_sv", None, "reviewer", "", NOW))
+    assert released.value is None and released.source_ref == ""
+
+
 def test_artifact_reads_are_derived_from_each_artifact_modules_column_list() -> None:
     from dagster_v3.defs.se_company.esef import SE_COMPANY_INFO_ESEF_COLUMNS
     from dagster_v3.defs.se_company.info import ARTIFACT_READS, ARTIFACT_TABLES

@@ -293,8 +293,8 @@ class _FakeLedgerClient:
         self.rows: list[tuple[str, str, str]] = []  # (company_id, row_id, created_at)
         self.executed: list[tuple[str, object]] = []
 
-    def append(self, company_id: str, correction_id: str, created_at: str) -> None:
-        self.rows.append((company_id, correction_id, created_at))
+    def append(self, company_id: str, row_id: str, created_at: str) -> None:
+        self.rows.append((company_id, row_id, created_at))
 
     def execute(self, sql: str, params: dict[str, object] | None = None) -> list[tuple[object, ...]]:
         self.executed.append((sql, params))
