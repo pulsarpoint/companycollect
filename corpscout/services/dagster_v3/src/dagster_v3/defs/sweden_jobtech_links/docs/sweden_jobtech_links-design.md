@@ -16,27 +16,30 @@ their JobTech Links provenance and must not be deduplicated against Platsbanken.
 
 ## 2. Ingest mode — and why
 
-The raw source boundary uses one named dynamic partition set with deliberately
-mixed batch sizes:
+The raw source boundary uses three assets with fixed partition definitions:
 
-- `year:2021` through `year:2025` for the historical backfill;
-- `month:2026-01` through `month:2026-08` for the recent catch-up; and
-- one `day:YYYY-MM-DD` partition per available archive from 2026-09-01 onward.
+- `sweden_jobtech_links_historical_snapshot_s3` has static `2021` through
+  `2025` partitions for the historical backfill;
+- `sweden_jobtech_links_2026_month_snapshot_s3` has fixed monthly `2026-01`
+  through `2026-08` partitions for the recent catch-up; and
+- `sweden_jobtech_links_daily_snapshot_s3` has daily `YYYY-MM-DD` partitions
+  from 2026-09-01 onward.
 
 JobTech publishes daily archives, but running almost 1,900 historical Dagster
 partitions would add orchestration overhead without changing the raw evidence.
 The coarse historical partitions therefore batch source files while every
-archive still receives its own date-and-SHA-256 object key. Daily partitions
-begin at the operational cutover so retries and freshness remain precise.
+archive still receives its own date-and-SHA-256 object key. Separate fixed
+definitions avoid dynamic partition registration and keep the operational
+daily range independent from one-time backfill ranges.
 
 ## 3. Loading
 
-`sweden_jobtech_links_snapshot_s3` resolves its exact partition window against
-the live catalog and processes matching archives sequentially. Each archive is
-streamed to a temporary file with dlt HTTP retries plus a whole-file retry loop.
-The loader validates `Content-Length`, computes SHA-256 while downloading, and
-verifies that the tarball contains exactly one non-empty, safe `output.json`
-member before upload. Only one archive occupies temporary disk at a time.
+Each S3 asset resolves its exact fixed partition window against the live catalog
+and processes matching archives sequentially. Each archive is streamed to a
+temporary file with dlt HTTP retries plus a whole-file retry loop. The loader
+validates `Content-Length`, computes SHA-256 while downloading, and verifies
+that the tarball contains exactly one non-empty, safe `output.json` member
+before upload. Only one archive occupies temporary disk at a time.
 
 The archive is preserved byte-for-byte at:
 
@@ -45,9 +48,13 @@ The archive is preserved byte-for-byte at:
 An immutable `metadata.json` beside it records the source URL, archive headers,
 member path and size, hash, first retrieval time, and originating Dagster run.
 Each materialization also writes a run-specific partition manifest containing
-the exact archive catalog for downstream replay. By default, retries reuse
-complete stored archives without downloading them again; `refresh_existing`
-forces a source recheck while preserving any changed content under a new hash.
+the exact archive catalog for downstream replay. A month is marked complete
+only when materialized after its end boundary. Retrying a closed month with a
+complete manifest and all referenced S3 objects returns that manifest without
+an HTTP request or a new S3 write. Current-month retries still read the catalog,
+reuse already stored archives, and download newly published dates. Other
+partition retries reuse complete stored archives unless `refresh_existing` is
+set.
 
 ## 4. Transform
 
@@ -72,17 +79,16 @@ retain the source value and currency evidence.
 
 ## 8. Scheduling
 
-`sweden_jobtech_links_catalog_sensor` is registered stopped by default. Each
-evaluation reads the source catalog, adds any missing historical/monthly/daily
-dynamic partition keys, and launches runs only for new daily keys from
-2026-09-01 onward. Historical and monthly partitions are registered for manual
-backfill but are never launched automatically.
+`sweden_jobtech_links_daily_catalog_sensor` is registered stopped by default.
+Each evaluation reads the source catalog and launches fixed daily partitions
+available from 2026-09-01 onward. Stable run keys suppress duplicate
+sensor-launched runs. Historical and monthly partitions remain manual
+backfills.
 
-Register one explicit partition key through Dagster and materialize it before
-enabling the sensor. After its archive/member metadata has been reconciled, the
-sensor's first live tick can register all remaining catalog-backed keys and
-launch any missing daily partitions. Catalog-driven automation is used instead
-of a midnight schedule because archive publication time can vary.
+Materialize one explicit daily partition before enabling the sensor. After its
+archive/member metadata has been reconciled, the sensor can launch newly
+published daily partitions. Catalog-driven automation is used instead of a
+midnight schedule because archive publication time can vary.
 
 ## 9. Issues found during processing
 
@@ -90,7 +96,7 @@ of a midnight schedule because archive publication time can vary.
   exact `YYYY-MM-DD.tar.gz` filenames.
 - Archive dates are source snapshot dates, not job publication dates.
 - A standard Dagster time-window definition cannot change cadence within one
-  asset. Named dynamic keys encode the controlled year/month/day transition.
+  asset. Three fixed assets encode the controlled year/month/day transition.
 - The same vacancy may occur in this source and Platsbanken. Cross-source
   deduplication is explicitly out of scope.
 
@@ -98,7 +104,7 @@ of a midnight schedule because archive publication time can vary.
 
 - Unit contract: `tests/test_sweden_jobtech_links_source.py`
 - Definition validation: `uv run dg check defs`
-- Manual gate: register and materialize one explicit partition of
-  `sweden_jobtech_links_snapshot_s3` while the sensor remains stopped. Inspect
-  its archive, metadata, and partition-manifest keys and compare byte counts
-  with Dagster metadata before enabling daily automation.
+- Manual gate: materialize one explicit partition of
+  `sweden_jobtech_links_daily_snapshot_s3` while the sensor remains stopped.
+  Inspect its archive, metadata, and partition-manifest keys and compare byte
+  counts with Dagster metadata before enabling daily automation.

@@ -16,7 +16,10 @@ from dlt.sources.helpers import requests as dlt_requests
 
 from dagster_v3.defs.common.resources import ObjectStoreResource
 from dagster_v3.defs.sweden_jobtech_links import tables
-from dagster_v3.defs.sweden_jobtech_links.partitions import archive_window
+from dagster_v3.defs.sweden_jobtech_links.partitions import (
+    PartitionKind,
+    archive_window,
+)
 
 DEFAULT_TIMEOUT_SECONDS = 600
 DEFAULT_DOWNLOAD_ATTEMPTS = 4
@@ -56,6 +59,7 @@ class StoredSnapshotPartition:
     partition_key: str
     manifest_key: str
     snapshots: tuple[StoredSnapshot, ...]
+    skipped_existing: bool = False
 
     @property
     def selected_count(self) -> int:
@@ -161,6 +165,7 @@ def fetch_snapshot_catalog(
 def sync_snapshot_partition(
     *,
     object_store: ObjectStoreResource,
+    partition_kind: PartitionKind,
     partition_key: str,
     run_id: str,
     retrieved_at: datetime,
@@ -168,9 +173,23 @@ def sync_snapshot_partition(
     session: requests.Session | None = None,
     log: Callable[[str], None] | None = None,
 ) -> StoredSnapshotPartition:
-    """Preserve every available source archive in one mixed-granularity window."""
-    window = archive_window(partition_key)
+    """Preserve every available source archive in one fixed partition window."""
+    window = archive_window(partition_kind, partition_key)
     object_store.ensure_bucket(tables.S3_BUCKET)
+    if window.kind == "month" and retrieved_at.astimezone(UTC).date() >= (
+        window.end_exclusive
+    ):
+        completed_partition = _completed_month_partition(
+            object_store=object_store,
+            partition_key=partition_key,
+        )
+        if completed_partition is not None:
+            (log or (lambda _message: None))(
+                f"JobTech Links month {partition_key} already has a complete S3 "
+                f"manifest at {completed_partition.manifest_key}; skipping retry"
+            )
+            return completed_partition
+
     owns_session = session is None
     http_session = session or jobtech_links_http_session()
     logger = log or (lambda _message: None)
@@ -220,6 +239,7 @@ def sync_snapshot_partition(
             http_session.close()
 
     manifest_key = _partition_manifest_key(
+        partition_kind=partition_kind,
         partition_key=partition_key,
         run_id=run_id,
         retrieved_at=retrieved_at,
@@ -229,9 +249,13 @@ def sync_snapshot_partition(
         "source_run_id": run_id,
         "catalog_url": tables.CATALOG_URL,
         "retrieved_at": retrieved_at.astimezone(UTC).isoformat(),
+        "partition_kind": partition_kind,
         "partition_key": partition_key,
         "window_start": window.start.isoformat(),
         "window_end_exclusive": window.end_exclusive.isoformat(),
+        "window_complete": (
+            retrieved_at.astimezone(UTC).date() >= window.end_exclusive
+        ),
         "archive_count": len(snapshots),
         "archives": [
             {
@@ -261,6 +285,57 @@ def sync_snapshot_partition(
         manifest_key=manifest_key,
         snapshots=tuple(snapshots),
     )
+
+
+def _completed_month_partition(
+    *,
+    object_store: ObjectStoreResource,
+    partition_key: str,
+) -> StoredSnapshotPartition | None:
+    manifest_prefix = f"{tables.MANIFEST_PREFIX}/month={partition_key}/"
+    manifest_keys = reversed(
+        object_store.list_keys(manifest_prefix, bucket=tables.S3_BUCKET)
+    )
+    for manifest_key in manifest_keys:
+        if not manifest_key.endswith(".json"):
+            continue
+        try:
+            manifest = json.loads(
+                object_store.read_bytes(manifest_key, bucket=tables.S3_BUCKET)
+            )
+            if (
+                manifest.get("partition_kind") != "month"
+                or manifest.get("partition_key") != partition_key
+                or manifest.get("window_complete") is not True
+            ):
+                continue
+            snapshots = tuple(
+                _stored_snapshot_from_metadata(item, downloaded=False)
+                for item in manifest["archives"]
+            )
+            if not snapshots or len(snapshots) != int(manifest["archive_count"]):
+                continue
+            if not all(
+                object_store.exists(
+                    snapshot.archive_object_key,
+                    bucket=tables.S3_BUCKET,
+                )
+                and object_store.exists(
+                    snapshot.metadata_object_key,
+                    bucket=tables.S3_BUCKET,
+                )
+                for snapshot in snapshots
+            ):
+                continue
+        except json.JSONDecodeError, KeyError, TypeError, ValueError:
+            continue
+        return StoredSnapshotPartition(
+            partition_key=partition_key,
+            manifest_key=manifest_key,
+            snapshots=snapshots,
+            skipped_existing=True,
+        )
+    return None
 
 
 def _fetch_snapshot_catalog(session: requests.Session) -> tuple[SnapshotArchive, ...]:
@@ -467,11 +542,12 @@ def _validate_archive(archive_path: Path) -> tuple[str, int]:
 
 def _partition_manifest_key(
     *,
+    partition_kind: PartitionKind,
     partition_key: str,
     run_id: str,
     retrieved_at: datetime,
 ) -> str:
-    window = archive_window(partition_key)
+    window = archive_window(partition_kind, partition_key)
     timestamp = retrieved_at.astimezone(UTC).strftime("%Y-%m-%dT%H-%M-%S.%fZ")
     return (
         f"{tables.MANIFEST_PREFIX}/{window.kind}={window.value}/"
