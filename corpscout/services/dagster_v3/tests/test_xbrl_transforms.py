@@ -12,7 +12,7 @@ from dagster_v3.defs.xbrl_common.transforms import (
     [
         ("ixt:num-dot-decimal", "1,234,567.89", TransformResult("numeric", "1234567.89")),
         ("ixt:numdotdecimal", "1 234 567.89", TransformResult("numeric", "1234567.89")),
-        ("ixt:num-dot-decimal", "1 234.5", TransformResult("numeric", "1234.5")),
+        ("ixt:num-dot-decimal", "1 234.5", TransformResult("numeric", "1234.5")),
         ("ixt:num-comma-decimal", "1.234.567,89", TransformResult("numeric", "1234567.89")),
         ("ixt:numcommadecimal", "1 234,5", TransformResult("numeric", "1234.5")),
         ("ixt:num-unit-decimal", "1 234 kr 56", TransformResult("numeric", "1234.56")),
