@@ -35,6 +35,7 @@ finland_xbrl_incremental_job = dg.define_asset_job(
         "fi_xbrl_facts_ch",
         "fi_xbrl_taxonomy_codes_ch",
         "fi_financial_metrics_ch",
+        "fi_xbrl_unified_clickhouse",
     ),
     partitions_def=DAILY_PARTITIONS,
 )
@@ -47,6 +48,7 @@ finland_xbrl_publish_job = dg.define_asset_job(
         "fi_xbrl_facts_ch",
         "fi_xbrl_taxonomy_codes_ch",
         "fi_financial_metrics_ch",
+        "fi_xbrl_unified_clickhouse",
     ),
 )
 finland_xbrl_incremental_schedule = dg.build_schedule_from_partitioned_job(

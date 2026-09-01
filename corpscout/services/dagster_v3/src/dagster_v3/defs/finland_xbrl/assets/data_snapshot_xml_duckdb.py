@@ -273,6 +273,53 @@ def read_xml_parse_duckdb_rows(*, duckdb_paths: list[Path]) -> ParsedXmlDuckdbRo
     )
 
 
+def read_xml_unified_duckdb_rows(*, duckdb_paths: list[Path]) -> ParsedXmlDuckdbRows:
+    statement_documents: list[dict[str, Any]] = []
+    contexts: list[dict[str, Any]] = []
+    units: list[dict[str, Any]] = []
+    facts: list[dict[str, Any]] = []
+    for path in duckdb_paths:
+        if not path.exists():
+            raise FileNotFoundError(
+                f"Finland XBRL unified parsed DuckDB is missing: {path}"
+            )
+        statement_documents.extend(
+            _read_duckdb_table_rows(
+                path=path,
+                table_name="statement_documents",
+                columns=FINLAND_UNIFIED_CONTRACT.documents.columns,
+            )
+        )
+        contexts.extend(
+            _read_optional_duckdb_table_rows(
+                path=path,
+                table_name="contexts",
+                columns=FINLAND_UNIFIED_CONTRACT.contexts.columns,
+            )
+        )
+        units.extend(
+            _read_optional_duckdb_table_rows(
+                path=path,
+                table_name="units",
+                columns=FINLAND_UNIFIED_CONTRACT.units.columns,
+            )
+        )
+        facts.extend(
+            _read_duckdb_table_rows(
+                path=path,
+                table_name="facts",
+                columns=FINLAND_UNIFIED_CONTRACT.facts.columns,
+            )
+        )
+    return ParsedXmlDuckdbRows(
+        statement_documents=statement_documents,
+        contexts=contexts,
+        units=units,
+        facts=facts,
+        duckdb_path_count=len(duckdb_paths),
+    )
+
+
 def _read_duckdb_table_rows(
     *,
     path: Path,

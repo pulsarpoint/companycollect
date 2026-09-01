@@ -71,6 +71,7 @@ from dagster_v3.defs.finland_xbrl.assets.data_snapshot_xml_duckdb import (
     materialize_data_snapshot_xml_duckdb,
     read_xml_parse_duckdb_rows,
     read_xml_snapshot_manifest_rows,
+    read_xml_unified_duckdb_rows,
     run_finland_xbrl_parse,
     xml_daily_parse_duckdb_path,
     xml_daily_parse_temp_dir,
@@ -97,6 +98,9 @@ from dagster_v3.defs.finland_xbrl.assets.jobs import (
     finland_xbrl_incremental_schedule,
     finland_xbrl_publish_job,
     finland_xbrl_xml_snapshot_job,
+)
+from dagster_v3.defs.finland_xbrl.assets.unified_publish import (
+    fi_xbrl_unified_clickhouse,
 )
 from dagster_v3.defs.finland_xbrl.assets.data_snapshot_duckdb import (
     FINLAND_XBRL_FINANCIAL_DATA_SNAPSHOT_DUCKDB_PATH,
@@ -157,6 +161,7 @@ __all__ = [
     "fi_financial_metrics_ch",
     "fi_xbrl_parsed_clickhouse",
     "fi_xbrl_taxonomy_codes_ch",
+    "fi_xbrl_unified_clickhouse",
     "finland_xbrl_data_snapshot_job",
     "finland_xbrl_incremental_job",
     "finland_xbrl_incremental_schedule",
@@ -172,6 +177,7 @@ __all__ = [
     "materialize_data_snapshot_duckdb",
     "read_xml_snapshot_manifest_rows",
     "read_xml_parse_duckdb_rows",
+    "read_xml_unified_duckdb_rows",
     "run_finland_xbrl_parse",
     "tables",
     "write_financial_data_snapshot_csv",
@@ -207,6 +213,7 @@ defs = dg.Definitions(
         fi_xbrl_parsed_clickhouse,
         fi_xbrl_taxonomy_codes_ch,
         fi_financial_metrics_ch,
+        fi_xbrl_unified_clickhouse,
     ],
     jobs=[
         finland_xbrl_data_snapshot_job,
