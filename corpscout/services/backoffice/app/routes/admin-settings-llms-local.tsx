@@ -1,4 +1,4 @@
-import { Form, Link, redirect } from "react-router";
+import { Form, Link, redirect, useNavigation } from "react-router";
 import type { Route } from "./+types/admin-settings-llms-local";
 import { Alert, AlertDescription, AlertTitle } from "~/components/ui/alert";
 import { Badge } from "~/components/ui/badge";
@@ -201,6 +201,18 @@ export function LocalCodexWorkspaceView({
   history: { thread: CodexThreadSummary; messages: CodexMessage[] } | null;
   error: string;
 }) {
+  // A codex turn runs inside the submit; without feedback the operator
+  // double-sends and hits the per-conversation lock. Show the submitted
+  // message optimistically and hold the Send button until the turn lands.
+  const navigation = useNavigation();
+  const pendingIntent = navigation.formData?.get("intent");
+  const thinking =
+    navigation.state !== "idle" &&
+    (pendingIntent === "send" || pendingIntent === "new-thread");
+  const pendingInputValue = navigation.formData?.get("input");
+  const pendingInput =
+    thinking && typeof pendingInputValue === "string" ? pendingInputValue : "";
+
   return (
     <div className="flex flex-1 flex-col gap-6 p-4 md:p-6">
       <header className="flex flex-col gap-1">
@@ -255,6 +267,21 @@ export function LocalCodexWorkspaceView({
             </CardHeader>
             <CardContent className="flex flex-col gap-4">
               {history ? <MessageHistory messages={history.messages} /> : null}
+              {thinking ? (
+                <div className="flex flex-col gap-3">
+                  {pendingInput ? (
+                    <div className="ml-auto max-w-[85%] rounded-lg bg-primary/10 p-3 text-sm opacity-70">
+                      <Badge variant="outline" className="mb-1">
+                        user
+                      </Badge>
+                      <p className="whitespace-pre-wrap">{pendingInput}</p>
+                    </div>
+                  ) : null}
+                  <p className="mr-auto animate-pulse text-sm text-muted-foreground">
+                    Codex is thinking…
+                  </p>
+                </div>
+              ) : null}
               <Form method="post" className="flex flex-col gap-3">
                 <input
                   type="hidden"
@@ -284,7 +311,9 @@ export function LocalCodexWorkspaceView({
                       New conversation
                     </Button>
                   ) : null}
-                  <Button type="submit">Send</Button>
+                  <Button type="submit" disabled={thinking}>
+                    {thinking ? "Thinking…" : "Send"}
+                  </Button>
                 </div>
               </Form>
             </CardContent>

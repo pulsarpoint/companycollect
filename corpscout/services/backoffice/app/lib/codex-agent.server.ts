@@ -156,15 +156,42 @@ export async function runCodexTurn(
       ? codex.resumeThread(requestedThreadId, threadOptions())
       : codex.startThread(threadOptions());
 
+    // A turn without a deadline would hold this conversation's lock forever
+    // if the CLI hangs. Abort via the SDK's TurnOptions.signal, and race a
+    // timer as well in case the CLI ignores the abort.
+    const timeoutSeconds = Number(
+      process.env.BACKOFFICE_CODEX_TURN_TIMEOUT_SECONDS || 300,
+    );
+    const abort = new AbortController();
+    let timedOut = false;
+    const timer = setTimeout(() => {
+      timedOut = true;
+      abort.abort();
+    }, timeoutSeconds * 1_000);
+
     let turn: Awaited<ReturnType<Thread["run"]>>;
     try {
-      turn = await thread.run(input);
+      turn = await Promise.race([
+        thread.run(input, { signal: abort.signal }),
+        new Promise<never>((_resolve, reject) => {
+          abort.signal.addEventListener("abort", () =>
+            reject(new Error("codex turn aborted")),
+          );
+        }),
+      ]);
     } catch (error) {
+      if (timedOut) {
+        throw new CodexAgentError(
+          `The codex turn timed out after ${timeoutSeconds} seconds.`,
+        );
+      }
       throw new CodexAgentError(
         `The codex CLI could not complete the turn: ${
           error instanceof Error ? error.message : String(error)
         }. Is codex installed and signed in on this machine?`,
       );
+    } finally {
+      clearTimeout(timer);
     }
 
     const threadId = thread.id ?? requestedThreadId;

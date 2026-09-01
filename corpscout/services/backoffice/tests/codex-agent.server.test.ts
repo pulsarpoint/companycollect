@@ -8,6 +8,7 @@ const sdk = vi.hoisted(() => {
     nextThreadId: "thread-1",
     finalResponse: "agent says hi",
     runDelayMs: 0,
+    hangUntilAborted: false,
     resumedIds: [] as string[],
     startOptions: [] as unknown[],
     runs: [] as string[],
@@ -19,8 +20,15 @@ const sdk = vi.hoisted(() => {
     constructor(assignedId: string) {
       this.assignedId = assignedId;
     }
-    async run(input: string) {
+    async run(input: string, turnOptions?: { signal?: AbortSignal }) {
       state.runs.push(input);
+      if (state.hangUntilAborted) {
+        await new Promise((_resolve, reject) => {
+          turnOptions?.signal?.addEventListener("abort", () =>
+            reject(new Error("aborted")),
+          );
+        });
+      }
       if (state.runDelayMs > 0) {
         await new Promise((resolve) => setTimeout(resolve, state.runDelayMs));
       }
@@ -68,9 +76,11 @@ beforeEach(() => {
   sdk.state.nextThreadId = "thread-1";
   sdk.state.finalResponse = "agent says hi";
   sdk.state.runDelayMs = 0;
+  sdk.state.hangUntilAborted = false;
   sdk.state.resumedIds = [];
   sdk.state.startOptions = [];
   sdk.state.runs = [];
+  delete process.env.BACKOFFICE_CODEX_TURN_TIMEOUT_SECONDS;
 });
 
 afterEach(() => {
@@ -158,6 +168,25 @@ describe("runCodexTurn", () => {
       ),
     ).rejects.toThrow(/already running/i);
     await first;
+  });
+
+  it("aborts a hung run at the timeout and releases the lock", async () => {
+    const databasePath = temporaryDatabasePath();
+    process.env.BACKOFFICE_CODEX_TURN_TIMEOUT_SECONDS = "0.05";
+    sdk.state.hangUntilAborted = true;
+
+    await expect(
+      runCodexTurn({ page: "/p", input: "never ends" }, databasePath),
+    ).rejects.toThrow(/timed out/i);
+
+    // The lock is released: a follow-up turn runs normally.
+    sdk.state.hangUntilAborted = false;
+    delete process.env.BACKOFFICE_CODEX_TURN_TIMEOUT_SECONDS;
+    const result = await runCodexTurn(
+      { page: "/p", input: "works now" },
+      databasePath,
+    );
+    expect(result.threadId).toBe("thread-1");
   });
 
   it("truncates long first prompts into the thread title", async () => {
