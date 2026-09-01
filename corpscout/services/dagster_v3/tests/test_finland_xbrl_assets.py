@@ -340,12 +340,14 @@ def test_finland_xbrl_jobs_and_incremental_schedule_registered() -> None:
         "data_daily_duckdb_ch",
         "data_daily_xml",
         "data_daily_xml_duckdb",
+        "data_daily_xml_unified_duckdb",
         "fi_financial_statements_ch",
         "fi_xbrl_contexts_ch",
         "fi_xbrl_units_ch",
         "fi_xbrl_facts_ch",
         "fi_xbrl_taxonomy_codes_ch",
         "fi_financial_metrics_ch",
+        "fi_xbrl_unified_clickhouse",
     }
     assert type(repo.get_job("finland_xbrl_incremental_job").partitions_def).__name__ == (
         "DailyPartitionsDefinition"
@@ -369,7 +371,11 @@ def test_finland_xbrl_jobs_and_incremental_schedule_registered() -> None:
         key.path[-1]
         for key in repo.get_job("finland_xbrl_xml_snapshot_job").asset_layer.executable_asset_keys
     }
-    assert xml_snapshot == {"data_snapshot_xml", "data_snapshot_xml_duckdb"}
+    assert xml_snapshot == {
+        "data_snapshot_xml",
+        "data_snapshot_xml_duckdb",
+        "data_snapshot_xml_unified_duckdb",
+    }
     assert type(repo.get_job("finland_xbrl_xml_snapshot_job").partitions_def).__name__ == (
         "MonthlyPartitionsDefinition"
     )
@@ -385,6 +391,7 @@ def test_finland_xbrl_jobs_and_incremental_schedule_registered() -> None:
         "fi_xbrl_facts_ch",
         "fi_xbrl_taxonomy_codes_ch",
         "fi_financial_metrics_ch",
+        "fi_xbrl_unified_clickhouse",
     }
     assert repo.get_job("finland_xbrl_publish_job").partitions_def is None
 
