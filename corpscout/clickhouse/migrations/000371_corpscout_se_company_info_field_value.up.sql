@@ -29,9 +29,8 @@ ORDER BY (company_id, field, created_at, value_id);
 GRANT INSERT ON corpscout.se_company_info_field_value
 TO corpscout_person_correction_writer;
 
--- Gate (verified 2026-09-01: 0 published rows with correction_ids, 4 ledger rows):
--- re-verify `SELECT countIf(length(correction_ids) > 0) FROM corpscout.se_company_info FINAL` = 0
--- immediately before applying. ClickHouse Atomic-engine UNDROP window is ~480s -- if
--- this migration must be reverted immediately after apply, prefer UNDROP TABLE over
--- running the .down.sql (which only recreates an empty schema).
-DROP TABLE IF EXISTS corpscout.se_company_info_correction;
+-- The retired ledger (corpscout.se_company_info_correction) is NOT dropped here. A DROP
+-- that has to wait for a deploy never enters the sequential ledger (2026-08-25 ruling):
+-- a routine `migrate up` for unrelated work would apply it before the code that stops
+-- reading the old table is live. The retirement is a gated direct-SQL step at deploy
+-- (gate: 0 published rows with correction_ids), with its own migration written then.

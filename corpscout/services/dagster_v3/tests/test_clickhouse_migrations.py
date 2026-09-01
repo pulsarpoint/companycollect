@@ -4025,7 +4025,9 @@ def test_se_company_info_field_value_replaces_the_correction_ledger() -> None:
     """2026-09-01: the ledger modelled decisions as kinds ranked by time with an undo
     chain; the field's live value is just the latest row written for it. Prod check at
     spec time found 0 of 3.5M published rows applied a correction and the ledger held
-    only 4 rows, so it drops in the same migration that adds the replacement table."""
+    only 4 rows. The old table is retired by a gated direct-SQL step at deploy, never by
+    this ledger entry: a DROP that must wait for a deploy does not enter the sequential
+    ledger (2026-08-25 ruling), so this pins its absence."""
     up = _migration_sql("000371_corpscout_se_company_info_field_value.up.sql")
     down = _migration_sql("000371_corpscout_se_company_info_field_value.down.sql")
 
@@ -4034,11 +4036,10 @@ def test_se_company_info_field_value_replaces_the_correction_ledger() -> None:
         assert constraint in up
     assert "ORDER BY (company_id, field, created_at, value_id)" in up
     assert "GRANT INSERT ON corpscout.se_company_info_field_value" in up
-    assert "DROP TABLE IF EXISTS corpscout.se_company_info_correction" in up
+    assert "DROP TABLE IF EXISTS corpscout.se_company_info_correction" not in up
 
     assert "DROP TABLE IF EXISTS corpscout.se_company_info_field_value" in down
     assert "REVOKE INSERT" in down
-    assert "CREATE TABLE IF NOT EXISTS corpscout.se_company_info_correction" in down
 
 
 def _migration_sql(file_name: str) -> str:

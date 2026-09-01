@@ -21,7 +21,7 @@
 ### Task 1: migration — new table, grant, gated drop
 
 Files: create `corpscout/clickhouse/migrations/0003NN_corpscout_se_company_info_field_value.{up,down}.sql`; modify `tests/test_clickhouse_migrations.py` (EXPECTED_MIGRATIONS + content test), `tests/test_se_company_layout.py` (retarget the four old-table tests: 84 → new table columns + `ORDER BY (company_id, field, created_at, value_id)`; 98 → new GRANT/REVOKE; 108/145 keep as historical assertions on 000299/000304 text — they still hold), `tests/se_company_ddl.py` if it hard-codes the old table.
-- [ ] Ledger/content tests first (RED). Up = spec DDL + GRANT + gated `DROP TABLE IF EXISTS corpscout.se_company_info_correction` (comment carries the gate). Down = `DROP TABLE IF EXISTS corpscout.se_company_info_field_value`, `REVOKE INSERT ... FROM corpscout_person_correction_writer`, recreate the old ledger DDL (000297 shape with 000299's widened CHECK). GREEN; commit `feat(clickhouse): se_company_info_field_value replaces the info correction ledger`.
+- [ ] Ledger/content tests first (RED). Up = spec DDL + GRANT (no DROP: the old ledger's retirement is a deploy-time step, see Task 9 -- revised 2026-09-02). Down = `DROP TABLE IF EXISTS corpscout.se_company_info_field_value`, `REVOKE INSERT ... FROM corpscout_person_correction_writer`. GREEN; commit `feat(clickhouse): se_company_info_field_value replaces the info correction ledger`.
 
 ### Task 2: shared sensor `id_column` (additive)
 
@@ -72,9 +72,17 @@ Files: `app/components/admin/se-company-info-review-workspace.tsx`, `app/compone
 
 Files: delete `app/routes/admin-se-company-info-corrections.tsx`, `app/components/admin/se-company-info-corrections-table.tsx`, `tests/admin-se-company-info-corrections.test.tsx` (FIRST move its `SeCompanyInfoCorrectionsFilterFields` + `parseCorrectionFilters` describes into new `tests/se-company-correction-filters.test.tsx`); modify `app/routes.ts` (route line), `app/components/admin/se-company-header.tsx` (drop the "Corrections ledger" link), `app/routes/admin-se-companies-info.tsx` (drop "Info corrections" link), `app/routes/admin-layout.tsx` (breadcrumb branch), `app/lib/se-company-info-lists.server.ts` (delete the ledger half from `:651`, keep `resetSeCompanyInfoFilterOptionsCache`) + `tests/se-company-info-lists.server.test.ts` (delete ledger cases, trim the sort test), `app/lib/se-company-info-pipeline.server.ts` (ledger CTE → new table) + its test, `app/lib/dagster.server.ts` (`SE_COMPANY_INFO_SENSOR = "se_company_info_field_value_sensor"`) + `dagster.server.test.ts`, `tests/admin-se-company-area.test.tsx` (drop the link assertion), `tests/admin-se-company-info-pipeline-sheet.test.tsx` (sensor fixture name). Typecheck must be clean. Commit `refactor(backoffice): retire the info corrections page and ledger references`.
 
-### Task 9: deploy checkpoint (owner-gated; DROP is destructive)
+### Task 9: deploy checkpoint (owner-gated; the retirement DROP is destructive)
 
-- [ ] Re-verify the gate on prod (`countIf(length(correction_ids) > 0) = 0`), apply the migration, deploy dagster_v3 (pristine worktree recipe), start `se_company_info_field_value_sensor` in the UI, verify: a "Use this" from the backoffice lands a row, the sensor launches the scoped review job, the published description changes on the Info page.
+Window hazards (whole-branch review 2026-09-02): new backoffice before 000371 -> every Info page loader/action and the Pipeline sheet 500 (`FIELD_VALUES_SQL`, ledger CTE); new dagster before 000371 -> `assert_clickhouse_tables_exist` fails every info run; old code after the retirement DROP -> Info page / Pipeline sheet / info runs fail on the old table. Order:
+
+- [ ] 1. Merge. Stop `se_company_info_correction_sensor` and pause `se_company_info_weekly` if RUNNING.
+- [ ] 2. Apply 000371 (creates the new table only; ledger must be at 000370). Harmless to old code.
+- [ ] 3. Deploy dagster_v3 (pristine worktree recipe incl. dbt-state refresh); confirm `se_company_info_field_value_sensor` is listed.
+- [ ] 4. Restart the backoffice on the merged code; open one company's Info tab and the Pipeline sheet (executes `FIELD_VALUES_SQL` and the new ledger CTE).
+- [ ] 5. Start `se_company_info_field_value_sensor`; re-enable the weekly schedule if it was running.
+- [ ] 6. Smoke: Use-this on one company -> tick <= 60 s -> review-job run scoped to that id -> published row carries the value and `correction_ids=[value_id]`; Release -> next run restores the default with `correction_ids=[]`.
+- [ ] 7. Retirement (owner go): re-verify `SELECT countIf(length(correction_ids) > 0) FROM corpscout.se_company_info` = 0 and note the row count of `corpscout.se_company_info_correction` (4 on 2026-09-01); `DROP TABLE corpscout.se_company_info_correction` as direct SQL; write + apply the retirement migration (`DROP TABLE IF EXISTS`; down = 000297+000299 DDL empty) with the then-next-free number. UNDROP window ~480 s.
 
 ## Self-Review
 Spec coverage: table+drop (T1), sensor param (T2), rules (T3), wiring/scan/sensor (T4), store (T5), intents (T6), UI (T7), page removal + pipeline/constants (T8), deploy (T9). Names consistent with the spec throughout.

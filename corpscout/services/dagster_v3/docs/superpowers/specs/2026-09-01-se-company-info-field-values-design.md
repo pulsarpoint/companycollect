@@ -50,12 +50,17 @@ ORDER BY (company_id, field, created_at, value_id);
 
 GRANT INSERT ON corpscout.se_company_info_field_value TO corpscout_person_correction_writer;
 
--- Gate (verified 2026-09-01: 0 published rows with correction_ids, 4 ledger rows):
--- re-verify `SELECT countIf(length(correction_ids) > 0) FROM corpscout.se_company_info FINAL` = 0
--- immediately before applying. UNDROP window is ~480s.
-DROP TABLE IF EXISTS corpscout.se_company_info_correction;
 ```
-Down: drop the new table, revoke the grant, recreate the old ledger DDL (empty) from 000297+000299.
+Down: drop the new table, revoke the grant.
+
+The old ledger is NOT dropped by this migration (revised 2026-09-02 at whole-branch review, per the
+2026-08-25 ruling that a DROP which must wait for a deploy never enters the sequential ledger: a routine
+`migrate up` for unrelated work would apply it before the code that stops reading the table is live).
+Retirement is a deploy-time step after backoffice + dagster run the new code: re-verify the gate
+(`SELECT countIf(length(correction_ids) > 0) FROM corpscout.se_company_info` = 0; verified 2026-09-01 with
+4 ledger rows), `DROP TABLE corpscout.se_company_info_correction` as direct SQL, then write the
+retirement migration (`DROP TABLE IF EXISTS`, down recreates the 000297+000299 DDL empty) with the
+then-next-free number so other environments follow. UNDROP window is ~480s.
 Migration number = max(existing)+1 at execution (000371 at execution: main took 000368-000370 for Finland XBRL); ledger entry + content test.
 
 ## Dagster
