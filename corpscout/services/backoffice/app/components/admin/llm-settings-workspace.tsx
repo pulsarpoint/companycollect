@@ -359,7 +359,14 @@ function LocalCodexCard({ enabled }: { enabled: boolean }) {
             local_codex
           </label>
         </CardContent>
-        <CardFooter className="justify-end">
+        <CardFooter className="justify-between">
+          <Button
+            variant="outline"
+            nativeButton={false}
+            render={<Link to="/admin/settings/llms/local" />}
+          >
+            Open local codex workspace →
+          </Button>
           <Button type="submit" variant="secondary">
             Save local setting
           </Button>

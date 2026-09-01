@@ -106,6 +106,7 @@ export default [
     route("technologies/:slug", "routes/admin-technology-detail.tsx"),
     route("general/roles", "routes/admin-general-roles.tsx"),
     route("settings/llms", "routes/admin-settings-llms.tsx"),
+    route("settings/llms/local", "routes/admin-settings-llms-local.tsx"),
     route("se/people", "routes/admin-se-people.tsx"),
     route(
       "se/people/person/:companyId/:personId",
