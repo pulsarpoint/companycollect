@@ -277,7 +277,9 @@ def _resolve_reported(document: dict, facts: list[dict], profile: SourceProfile)
     for fact in facts:
         column = profile.reported_concepts.get(fact["concept_qname"])
         if column and not document.get(column):
-            document[column] = fact["raw_value"]
+            document[column] = (
+                fact["date_value"] or fact["text_value"] or fact["raw_value"]
+            )
 
 
 def _apply_comparative(document: dict, contexts: list[dict], facts: list[dict]) -> None:
@@ -454,7 +456,6 @@ def _inline_fact_rows(
             try:
                 result = apply_transform(fmt, raw_text)
                 transformed_kind, transformed_value = result.kind, result.value
-                row["raw_value"] = transformed_value
             except UnknownTransform:
                 warnings.append(f"unknown ixt transform {fmt!r} on {row['concept_qname']}")
                 transform_failed = True

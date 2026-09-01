@@ -179,6 +179,7 @@ def test_ixbrl_hidden_and_reported_and_schema_refs():
     period_end = next(f for f in filing.facts if f["concept_qname"] == "t_met:periodEnd")
     assert period_end["value_kind"] == "date"
     assert period_end["date_value"] == "2024-12-31"
+    assert period_end["raw_value"] == "31.12.2024"
 
 
 def test_ixbrl_continuation_and_exclude():
