@@ -219,6 +219,33 @@ export interface SeCompanyEsefDetail {
   relationships: EsefTabRelationship[];
 }
 
+function mapFilingRow(r: EsefTabFilingQueryRow): EsefTabFiling {
+  return {
+    fxoId: r.fxo_id,
+    entityName: r.entity_name,
+    periodEnd: r.period_end,
+    fiscalYear: Number(r.fiscal_year),
+    factCount: Number(r.fact_count),
+    noteCount: Number(r.note_count),
+    errorCount: Number(r.error_count),
+    warningCount: Number(r.warning_count),
+    viewerUrl: r.viewer_url,
+    sourceUrl: r.source_url,
+    packageUrl: r.package_url,
+  };
+}
+
+// Filings only -- the ESEF sub-tab bar needs the document list on every
+// subpage without paying for the full extraction detail.
+export async function loadSeCompanyEsefFilings(
+  companyId: string,
+): Promise<EsefTabFiling[]> {
+  const rows = await chQuery<EsefTabFilingQueryRow>(ESEF_TAB_FILINGS_SQL, {
+    companyId,
+  });
+  return rows.map(mapFilingRow);
+}
+
 export async function loadSeCompanyEsef(
   companyId: string,
 ): Promise<SeCompanyEsefDetail | null> {
@@ -236,19 +263,7 @@ export async function loadSeCompanyEsef(
   if (filings.length === 0 && information.length === 0) return null;
 
   return {
-    filings: filings.map((r) => ({
-      fxoId: r.fxo_id,
-      entityName: r.entity_name,
-      periodEnd: r.period_end,
-      fiscalYear: Number(r.fiscal_year),
-      factCount: Number(r.fact_count),
-      noteCount: Number(r.note_count),
-      errorCount: Number(r.error_count),
-      warningCount: Number(r.warning_count),
-      viewerUrl: r.viewer_url,
-      sourceUrl: r.source_url,
-      packageUrl: r.package_url,
-    })),
+    filings: filings.map(mapFilingRow),
     information: information.map((r) => ({
       fiscalYear: Number(r.fiscal_year),
       extractionStatus: r.extraction_status,

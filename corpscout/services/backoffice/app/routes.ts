@@ -115,7 +115,17 @@ export default [
       route("info", "routes/admin-se-company-info.tsx"),
       route("address", "routes/admin-se-company-address.tsx"),
       route("financial", "routes/admin-se-company-financial.tsx"),
-      route("esef", "routes/admin-se-company-esef.tsx"),
+      // ESEF is an area: Info (aggregated extraction) as index, then one
+      // sub-tab per filed document with facts, notes, and LLM subpages.
+      route("esef", "routes/admin-se-company-esef-layout.tsx", [
+        index("routes/admin-se-company-esef.tsx"),
+        route(":documentId", "routes/admin-se-company-esef-document.tsx"),
+        route(
+          ":documentId/notes",
+          "routes/admin-se-company-esef-notes.tsx",
+        ),
+        route(":documentId/llm", "routes/admin-se-company-esef-llm.tsx"),
+      ]),
       route("people", "routes/admin-se-company-people.tsx"),
       route("domains", "routes/admin-se-company-domains.tsx"),
       // The whole public technology area, inside the admin panel: the same

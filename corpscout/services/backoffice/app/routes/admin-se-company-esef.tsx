@@ -60,15 +60,21 @@ export function SeCompanyEsefView({
                   <span>{filing.factCount} facts</span>
                   <Link
                     className="underline"
-                    to={`/company/se/${companyId}/financials/esef/${filing.fxoId}`}
+                    to={`/admin/se/company/${companyId}/esef/${filing.fxoId}`}
                   >
                     Open facts
                   </Link>
                   <Link
                     className="underline"
-                    to={`/company/se/${companyId}/financials/esef/${filing.fxoId}/notes`}
+                    to={`/admin/se/company/${companyId}/esef/${filing.fxoId}/notes`}
                   >
                     Notes ({filing.noteCount})
+                  </Link>
+                  <Link
+                    className="underline"
+                    to={`/admin/se/company/${companyId}/esef/${filing.fxoId}/llm`}
+                  >
+                    LLM
                   </Link>
                 </>
               ) : (

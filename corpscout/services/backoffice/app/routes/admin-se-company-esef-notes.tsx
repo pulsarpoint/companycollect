@@ -1,11 +1,14 @@
-import type { Route } from "./+types/company-esef-report-notes";
+import type { Route } from "./+types/admin-se-company-esef-notes";
 import { EsefReportNotesView } from "~/components/detail/esef-report-notes-view";
 import { getEsefReportNotes } from "~/lib/esef-report-notes.server";
 
+// Only `loader`, `meta` and the component live here -- see
+// admin-se-company-layout.tsx for why.
+
 export async function loader({ params }: Route.LoaderArgs) {
   const reportNotes = await getEsefReportNotes(
-    params.country,
-    params.id,
+    "se",
+    params.companyId,
     params.documentId,
   );
   if (!reportNotes) {
@@ -22,14 +25,14 @@ export function meta({ loaderData, params }: Route.MetaArgs) {
   ];
 }
 
-export default function CompanyEsefReportNotes({
+export default function AdminSwedenCompanyEsefNotes({
   loaderData,
   params,
 }: Route.ComponentProps) {
   return (
     <EsefReportNotesView
       reportNotes={loaderData}
-      backHref={`/company/${params.country}/${params.id}/financials/esef/${params.documentId}`}
+      backHref={`/admin/se/company/${params.companyId}/esef/${params.documentId}`}
     />
   );
 }
