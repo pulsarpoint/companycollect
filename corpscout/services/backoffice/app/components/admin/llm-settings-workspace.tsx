@@ -34,6 +34,7 @@ import {
   TableHeader,
   TableRow,
 } from "~/components/ui/table";
+import { Switch } from "~/components/ui/switch";
 import {
   Tabs,
   TabsContent,
@@ -353,27 +354,10 @@ function LocalCodexCard({ enabled }: { enabled: boolean }) {
       <Form method="post">
         <CardContent>
           <input type="hidden" name="intent" value="set_local_codex" />
-          <fieldset className="flex flex-col gap-2">
-            <legend className="text-sm font-medium">local_codex</legend>
-            <label className="flex items-center gap-2 text-sm">
-              <input
-                type="radio"
-                name="local_codex"
-                value="on"
-                defaultChecked={enabled}
-              />
-              Local codex enabled
-            </label>
-            <label className="flex items-center gap-2 text-sm">
-              <input
-                type="radio"
-                name="local_codex"
-                value="off"
-                defaultChecked={!enabled}
-              />
-              Local codex disabled
-            </label>
-          </fieldset>
+          <label className="flex items-center gap-3 text-sm font-medium">
+            <Switch name="local_codex" defaultChecked={enabled} />
+            local_codex
+          </label>
         </CardContent>
         <CardFooter className="justify-end">
           <Button type="submit" variant="secondary">

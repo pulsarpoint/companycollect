@@ -74,11 +74,34 @@ describe("admin LLM settings", () => {
     const html = renderToStaticMarkup(<RouterProvider router={router} />);
 
     expect(html).toContain("local_codex");
-    expect(html).toContain("Local codex enabled");
-    expect(html).toContain("Local codex disabled");
-    // The enabled radio reflects the stored toggle state.
-    expect(html).toMatch(/value="on"[^>]*checked|checked[^>]*value="on"/);
+    // A single switch, reflecting the stored toggle state.
+    expect(html).toContain('data-slot="switch"');
+    expect(html).toContain("data-checked");
     expect(html).toContain('name="intent" value="set_local_codex"');
+  });
+
+  it("renders the local codex switch unchecked when the toggle is off", () => {
+    const router = createMemoryRouter(
+      [
+        {
+          path: "*",
+          element: (
+            <LlmSettingsWorkspace
+              profiles={[]}
+              editingProfile={null}
+              localCodexEnabled={false}
+              initialTab="local"
+            />
+          ),
+          action: () => null,
+        },
+      ],
+      { initialEntries: ["/admin/settings/llms"] },
+    );
+    const html = renderToStaticMarkup(<RouterProvider router={router} />);
+
+    expect(html).toContain('data-slot="switch"');
+    expect(html).toContain("data-unchecked");
   });
 
   it("adds a Settings navigation section with the LLM page active", () => {
