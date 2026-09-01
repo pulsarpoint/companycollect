@@ -43,6 +43,40 @@ export interface CodexMessage {
   createdAt: string;
 }
 
+/** Token usage for one turn (camelCased from the SDK's Usage). */
+export interface CodexUsage {
+  inputTokens: number;
+  cachedInputTokens: number;
+  cacheWriteInputTokens: number;
+  outputTokens: number;
+  reasoningOutputTokens: number;
+}
+
+const EMPTY_USAGE: CodexUsage = {
+  inputTokens: 0,
+  cachedInputTokens: 0,
+  cacheWriteInputTokens: 0,
+  outputTokens: 0,
+  reasoningOutputTokens: 0,
+};
+
+function mapUsage(usage: {
+  input_tokens?: number;
+  cached_input_tokens?: number;
+  cache_write_input_tokens?: number;
+  output_tokens?: number;
+  reasoning_output_tokens?: number;
+} | null): CodexUsage | null {
+  if (!usage) return null;
+  return {
+    inputTokens: usage.input_tokens ?? 0,
+    cachedInputTokens: usage.cached_input_tokens ?? 0,
+    cacheWriteInputTokens: usage.cache_write_input_tokens ?? 0,
+    outputTokens: usage.output_tokens ?? 0,
+    reasoningOutputTokens: usage.reasoning_output_tokens ?? 0,
+  };
+}
+
 interface StoredThread {
   thread_id: string;
   page: string;
@@ -80,9 +114,20 @@ function connectCodexDatabase(databasePath: string): DatabaseSync {
         ON DELETE CASCADE,
       role       TEXT NOT NULL CHECK (role IN ('user', 'agent')),
       content    TEXT NOT NULL,
-      created_at TEXT NOT NULL
+      created_at TEXT NOT NULL,
+      usage_json TEXT NOT NULL DEFAULT ''
     );
   `);
+  // CREATE TABLE IF NOT EXISTS does not alter an existing table: upgrade a
+  // pre-usage codex_message in place.
+  const messageColumns = database
+    .prepare("PRAGMA table_info(codex_message)")
+    .all() as unknown as Array<{ name: string }>;
+  if (!messageColumns.some((column) => column.name === "usage_json")) {
+    database.exec(
+      "ALTER TABLE codex_message ADD COLUMN usage_json TEXT NOT NULL DEFAULT ''",
+    );
+  }
   return database;
 }
 
@@ -132,7 +177,7 @@ function acquireTurnSlot(key: string): void {
 export async function runCodexTurn(
   request: { page: string; input: string; threadId?: string },
   databasePath = SETTINGS_DATABASE_PATH,
-): Promise<{ threadId: string; response: string }> {
+): Promise<{ threadId: string; response: string; usage: CodexUsage | null }> {
   const page = request.page.trim();
   const input = request.input.trim();
   if (page === "") throw new CodexAgentError("A page is required.");
@@ -219,16 +264,17 @@ export async function runCodexTurn(
           now,
         );
       const insertMessage = database.prepare(
-        `INSERT INTO codex_message (message_id, thread_id, role, content, created_at)
-         VALUES (?, ?, ?, ?, ?)`,
+        `INSERT INTO codex_message (message_id, thread_id, role, content, created_at, usage_json)
+         VALUES (?, ?, ?, ?, ?, ?)`,
       );
-      insertMessage.run(randomUUID(), threadId, "user", input, now);
+      insertMessage.run(randomUUID(), threadId, "user", input, now, "");
       insertMessage.run(
         randomUUID(),
         threadId,
         "agent",
         turn.finalResponse,
         now,
+        turn.usage ? JSON.stringify(turn.usage) : "",
       );
       database.exec("COMMIT");
     } catch (error) {
@@ -238,7 +284,11 @@ export async function runCodexTurn(
       database.close();
     }
 
-    return { threadId, response: turn.finalResponse };
+    return {
+      threadId,
+      response: turn.finalResponse,
+      usage: mapUsage(turn.usage),
+    };
   } finally {
     inFlight.delete(slotKey);
   }
@@ -266,7 +316,11 @@ export function listCodexThreads(
 export function getCodexThreadHistory(
   threadId: string,
   databasePath = SETTINGS_DATABASE_PATH,
-): { thread: CodexThreadSummary; messages: CodexMessage[] } | null {
+): {
+  thread: CodexThreadSummary;
+  messages: CodexMessage[];
+  usage: CodexUsage;
+} | null {
   const database = connectCodexDatabase(databasePath);
   try {
     const thread = database
@@ -279,8 +333,31 @@ export function getCodexThreadHistory(
          WHERE thread_id = ?
          ORDER BY created_at, rowid`,
       )
-      .all(threadId) as unknown as StoredMessage[];
-    return { thread: mapThread(thread), messages: messages.map(mapMessage) };
+      .all(threadId) as unknown as (StoredMessage & { usage_json: string })[];
+    const usage = messages.reduce<CodexUsage>((total, row) => {
+      if (row.usage_json === "") return total;
+      let parsed: ReturnType<typeof mapUsage>;
+      try {
+        parsed = mapUsage(JSON.parse(row.usage_json));
+      } catch {
+        return total;
+      }
+      if (!parsed) return total;
+      return {
+        inputTokens: total.inputTokens + parsed.inputTokens,
+        cachedInputTokens: total.cachedInputTokens + parsed.cachedInputTokens,
+        cacheWriteInputTokens:
+          total.cacheWriteInputTokens + parsed.cacheWriteInputTokens,
+        outputTokens: total.outputTokens + parsed.outputTokens,
+        reasoningOutputTokens:
+          total.reasoningOutputTokens + parsed.reasoningOutputTokens,
+      };
+    }, EMPTY_USAGE);
+    return {
+      thread: mapThread(thread),
+      messages: messages.map(mapMessage),
+      usage,
+    };
   } finally {
     database.close();
   }

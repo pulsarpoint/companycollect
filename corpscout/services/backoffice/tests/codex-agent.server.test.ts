@@ -9,6 +9,13 @@ const sdk = vi.hoisted(() => {
     finalResponse: "agent says hi",
     runDelayMs: 0,
     hangUntilAborted: false,
+    usage: {
+      input_tokens: 100,
+      cached_input_tokens: 20,
+      cache_write_input_tokens: 5,
+      output_tokens: 40,
+      reasoning_output_tokens: 10,
+    } as Record<string, number> | null,
     resumedIds: [] as string[],
     startOptions: [] as unknown[],
     runs: [] as string[],
@@ -33,7 +40,11 @@ const sdk = vi.hoisted(() => {
         await new Promise((resolve) => setTimeout(resolve, state.runDelayMs));
       }
       this.id = this.assignedId;
-      return { items: [], finalResponse: state.finalResponse, usage: null };
+      return {
+        items: [],
+        finalResponse: state.finalResponse,
+        usage: state.usage,
+      };
     }
   }
 
@@ -77,6 +88,13 @@ beforeEach(() => {
   sdk.state.finalResponse = "agent says hi";
   sdk.state.runDelayMs = 0;
   sdk.state.hangUntilAborted = false;
+  sdk.state.usage = {
+    input_tokens: 100,
+    cached_input_tokens: 20,
+    cache_write_input_tokens: 5,
+    output_tokens: 40,
+    reasoning_output_tokens: 10,
+  };
   sdk.state.resumedIds = [];
   sdk.state.startOptions = [];
   sdk.state.runs = [];
@@ -98,7 +116,17 @@ describe("runCodexTurn", () => {
       databasePath,
     );
 
-    expect(result).toEqual({ threadId: "thread-1", response: "agent says hi" });
+    expect(result).toEqual({
+      threadId: "thread-1",
+      response: "agent says hi",
+      usage: {
+        inputTokens: 100,
+        cachedInputTokens: 20,
+        cacheWriteInputTokens: 5,
+        outputTokens: 40,
+        reasoningOutputTokens: 10,
+      },
+    });
     expect(sdk.state.startOptions[0]).toMatchObject({
       sandboxMode: "read-only",
       skipGitRepoCheck: true,
@@ -197,6 +225,94 @@ describe("runCodexTurn", () => {
 
     const [thread] = listCodexThreads("/p", databasePath);
     expect(thread.title).toHaveLength(120);
+  });
+});
+
+describe("token usage", () => {
+  it("returns the turn's usage and aggregates it per thread", async () => {
+    const databasePath = temporaryDatabasePath();
+
+    const first = await runCodexTurn(
+      { page: "/p", input: "one" },
+      databasePath,
+    );
+    expect(first.usage).toEqual({
+      inputTokens: 100,
+      cachedInputTokens: 20,
+      cacheWriteInputTokens: 5,
+      outputTokens: 40,
+      reasoningOutputTokens: 10,
+    });
+
+    sdk.state.usage = {
+      input_tokens: 30,
+      cached_input_tokens: 0,
+      cache_write_input_tokens: 0,
+      output_tokens: 7,
+      reasoning_output_tokens: 1,
+    };
+    await runCodexTurn(
+      { page: "/p", input: "two", threadId: "thread-1" },
+      databasePath,
+    );
+
+    const history = getCodexThreadHistory("thread-1", databasePath);
+    expect(history?.usage).toEqual({
+      inputTokens: 130,
+      cachedInputTokens: 20,
+      cacheWriteInputTokens: 5,
+      outputTokens: 47,
+      reasoningOutputTokens: 11,
+    });
+  });
+
+  it("tolerates a turn without usage", async () => {
+    const databasePath = temporaryDatabasePath();
+    sdk.state.usage = null;
+
+    const result = await runCodexTurn(
+      { page: "/p", input: "one" },
+      databasePath,
+    );
+    expect(result.usage).toBeNull();
+
+    const history = getCodexThreadHistory("thread-1", databasePath);
+    expect(history?.usage).toEqual({
+      inputTokens: 0,
+      cachedInputTokens: 0,
+      cacheWriteInputTokens: 0,
+      outputTokens: 0,
+      reasoningOutputTokens: 0,
+    });
+  });
+
+  it("upgrades a pre-usage codex_message table in place", async () => {
+    const databasePath = temporaryDatabasePath();
+    // Simulate the pre-usage schema by creating the tables without the
+    // usage column, then run a turn against the same database file.
+    const { DatabaseSync } = await import("node:sqlite");
+    const { mkdirSync } = await import("node:fs");
+    const { dirname } = await import("node:path");
+    mkdirSync(dirname(databasePath), { recursive: true });
+    const database = new DatabaseSync(databasePath);
+    database.exec(`
+      CREATE TABLE codex_thread (
+        thread_id TEXT PRIMARY KEY, page TEXT NOT NULL, title TEXT NOT NULL,
+        created_at TEXT NOT NULL, updated_at TEXT NOT NULL
+      );
+      CREATE TABLE codex_message (
+        message_id TEXT PRIMARY KEY,
+        thread_id TEXT NOT NULL REFERENCES codex_thread(thread_id) ON DELETE CASCADE,
+        role TEXT NOT NULL, content TEXT NOT NULL, created_at TEXT NOT NULL
+      );
+    `);
+    database.close();
+
+    const result = await runCodexTurn(
+      { page: "/p", input: "one" },
+      databasePath,
+    );
+    expect(result.usage?.inputTokens).toBe(100);
   });
 });
 

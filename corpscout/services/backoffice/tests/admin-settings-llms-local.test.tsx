@@ -15,6 +15,13 @@ const THREADS = [
 
 const HISTORY = {
   thread: THREADS[0],
+  usage: {
+    inputTokens: 1234,
+    cachedInputTokens: 56,
+    cacheWriteInputTokens: 7,
+    outputTokens: 890,
+    reasoningOutputTokens: 12,
+  },
   messages: [
     {
       messageId: "m1",
@@ -68,6 +75,11 @@ describe("local codex workspace", () => {
     expect(html).toContain("New conversation");
     expect(html).toContain("hello codex");
     expect(html).toContain("hi there");
+    // Aggregate token usage sits on top of the conversation.
+    expect(html).toContain("in 1,234");
+    expect(html).toContain("cached 56");
+    expect(html).toContain("out 890");
+    expect(html).toContain("reasoning 12");
     expect(html).toContain("?thread=thread-1");
     expect(html).toContain('name="intent" value="send"');
     expect(html).toContain('name="intent" value="remove"');

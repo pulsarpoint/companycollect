@@ -21,6 +21,7 @@ import {
   runCodexTurn,
   type CodexMessage,
   type CodexThreadSummary,
+  type CodexUsage,
 } from "~/lib/codex-agent.server";
 import {
   isLocalCodexEnabled,
@@ -168,6 +169,23 @@ function ThreadList({
   );
 }
 
+function UsageBadges({ usage }: { usage: CodexUsage }) {
+  const format = (value: number) => value.toLocaleString("en-US");
+  return (
+    <div className="flex flex-wrap gap-1.5">
+      <Badge variant="outline">tokens</Badge>
+      <Badge variant="secondary">in {format(usage.inputTokens)}</Badge>
+      <Badge variant="secondary">cached {format(usage.cachedInputTokens)}</Badge>
+      <Badge variant="secondary">out {format(usage.outputTokens)}</Badge>
+      {usage.reasoningOutputTokens > 0 ? (
+        <Badge variant="secondary">
+          reasoning {format(usage.reasoningOutputTokens)}
+        </Badge>
+      ) : null}
+    </div>
+  );
+}
+
 function MessageHistory({ messages }: { messages: CodexMessage[] }) {
   return (
     <div className="flex flex-col gap-3">
@@ -198,7 +216,11 @@ export function LocalCodexWorkspaceView({
 }: {
   localCodexEnabled: boolean;
   threads: CodexThreadSummary[];
-  history: { thread: CodexThreadSummary; messages: CodexMessage[] } | null;
+  history: {
+    thread: CodexThreadSummary;
+    messages: CodexMessage[];
+    usage: CodexUsage;
+  } | null;
   error: string;
 }) {
   // A codex turn runs inside the submit; without feedback the operator
@@ -256,9 +278,12 @@ export function LocalCodexWorkspaceView({
                 {history ? history.thread.title : "New conversation"}
               </CardTitle>
               {history ? (
-                <CardDescription>
-                  Resumed thread {history.thread.threadId}
-                </CardDescription>
+                <>
+                  <CardDescription>
+                    Resumed thread {history.thread.threadId}
+                  </CardDescription>
+                  <UsageBadges usage={history.usage} />
+                </>
               ) : (
                 <CardDescription>
                   Sending a message starts a fresh codex thread.
