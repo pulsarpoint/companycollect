@@ -1,7 +1,7 @@
 """Deterministic merge rules for Swedish company information.
 
 Pure functions only — no ClickHouse, no model calls — so every rule is a table
-test. info.py wires these to the artifacts, the ledger and the LLM.
+test. info.py wires these to the artifacts, the field values and the LLM.
 """
 
 import hashlib
@@ -11,11 +11,13 @@ from dataclasses import dataclass, replace
 from datetime import date, datetime
 from typing import Any
 
-from dagster_v3.defs.se_company.common import LedgerRow, StoredObservation, effective_ledger
+from dagster_v3.defs.se_company.common import StoredObservation
 
-INFO_KIND_ORDER = {"approve_suggestion": 0, "reject_suggestion": 0, "override_field": 1}
 DESCRIPTION_PRIORITY = ("esef", "wikidata", "scb")
-ZERO_HASH = "0" * 64
+# corpscout.se_company_info_field_value's two CHECK constraints, mirrored here so a row
+# that somehow got past them (a direct INSERT) is dropped rather than published.
+INFO_VALUE_FIELDS = frozenset({"description", "description_sv"})
+INFO_VALUE_SOURCES = frozenset({"scb", "esef", "wikidata", "llm", "reviewer"})
 
 
 @dataclass(frozen=True)
@@ -34,7 +36,7 @@ class InfoOutcome:
     legal_form_code: str | None
     # What that code is CALLED, in both languages, from the curated corpscout.se_code_labels
     # dictionary the SCB artifact already joined -- copied like every other non-description
-    # field, never model-written and never overridable by a review correction. '' means the
+    # field, never model-written and never settable by a field value. '' means the
     # dictionary does not name this code (the artifact's join missed), which is a fact about
     # the curation, not about the company.
     legal_form_label_en: str
@@ -49,11 +51,12 @@ class InfoOutcome:
     description_sv: str | None
     description_language: str
     # Did the PUBLISHED text come out of the model? True for the model's merged summary
-    # and for an approved suggestion; false for anything copied from an input (the
-    # deterministic multi-source pick included), for a reviewer's own wording, after a
-    # rejection, and when there is no text at all. Where each candidate came from is
-    # recorded separately (description_sources / description_source_record_uids), and
-    # reviewer involvement in correction_ids -- this flag answers one question only.
+    # and for a field value whose source is `llm`; false for anything copied from an
+    # input (the deterministic multi-source pick included), for a reviewer's own
+    # wording, for a field value naming any other source, and when there is no text at
+    # all. Where each candidate came from is recorded separately (description_sources /
+    # description_source_record_uids), and reviewer involvement in correction_ids --
+    # this flag answers one question only.
     llm_enhanced: bool
     description_sources: tuple[str, ...]
     description_source_record_uids: tuple[str, ...]
@@ -67,11 +70,14 @@ class InfoOutcome:
     description_candidates: tuple[tuple[str, str, str], ...] = ()  # (source, source_record_uid, text)
     description_candidate_languages: tuple[str, ...] = ()  # parallel to description_candidates
     # The deterministic value of description_sv, kept beside it and never mutated by a
-    # correction -- reject_suggestion restores the pair from here, exactly as it restores
-    # the English text from description_candidates[0].
+    # field value -- info.py offers it to the reviewer as "what the pipeline computed",
+    # exactly as description_candidates[0] carries the English half.
     description_sv_candidate: str | None = None
+    # value_ids of the live field values this row applied. The name is the published
+    # column's, kept from the correction ledger it replaced.
     correction_ids: tuple[uuid.UUID, ...] = ()
-    stale_correction_ids: tuple[uuid.UUID, ...] = ()
+    # Field-value rows dropped for an unknown field or source.
+    invalid_value_count: int = 0
     suggestion_id: uuid.UUID | None = None
     model_provider: str = "deterministic"
     model_name: str = "se-company-info-rules"
@@ -127,7 +133,7 @@ def merge_company_info(company_id: str, rows: Sequence[ArtifactRow]) -> InfoOutc
     translator has rendered it): zero candidates publish nothing, exactly one
     is copied as-is, two or more always need the model
     (no agreement heuristic) -- the ESEF > Wikidata > SCB pick is only a
-    provisional value until the model (or a review correction) replaces it.
+    provisional value until the model (or a field value) replaces it.
 
     A company without a register row, or whose register row carries no legal
     name at all, is never published: this mirrors the final table's
@@ -224,149 +230,128 @@ def merge_company_info(company_id: str, rows: Sequence[ArtifactRow]) -> InfoOutc
     )
 
 
-def apply_info_ledger(
+@dataclass(frozen=True)
+class FieldValueRow:
+    """One row of ``corpscout.se_company_info_field_value``.
+
+    Append-only history: the live value for a ``(company_id, field)`` is simply the row
+    with the greatest ``(created_at, value_id)``, and a ``value`` of None releases the
+    field back to whatever the pipeline computed. ``source_ref`` is the artifact's
+    source_record_uid, the suggestion id for ``llm``, and '' for ``reviewer``.
+    """
+
+    value_id: uuid.UUID
+    company_id: str
+    field: str
+    value: str | None
+    source: str
+    source_ref: str
+    created_at: datetime
+
+
+def _live_field_values(rows: Sequence[FieldValueRow]) -> tuple[dict[str, FieldValueRow], int]:
+    """The newest valid row per field, plus how many rows were dropped as invalid.
+
+    ``value_id`` is compared as text so the tie-break is the same total order the
+    published table sorts by, and so two rows written in the same millisecond can never
+    swap places between runs.
+    """
+    live: dict[str, FieldValueRow] = {}
+    invalid = 0
+    for row in rows:
+        if row.field not in INFO_VALUE_FIELDS or row.source not in INFO_VALUE_SOURCES:
+            invalid += 1  # a direct INSERT past the table's CHECKs; never published
+            continue
+        current = live.get(row.field)
+        if current is None or (row.created_at, str(row.value_id)) > (current.created_at, str(current.value_id)):
+            live[row.field] = row
+    return live, invalid
+
+
+def _apply_description_value(
+    outcome: InfoOutcome, row: FieldValueRow, stored: Sequence[StoredObservation]
+) -> InfoOutcome:
+    """Publish one live ``description`` value, with the provenance its source implies."""
+    if row.source != "llm":
+        # A source's own text, or a reviewer's wording: copied, not model-written --
+        # whatever the row carried before (a model answer included) is replaced whole.
+        return replace(
+            outcome,
+            description=_text(row.value),
+            llm_enhanced=False,
+            suggestion_id=None,
+            needs_model=False,
+            model_provider="deterministic",
+            model_name=f"field-value:{row.source}",
+            prompt_version="",
+        )
+    try:
+        suggestion_id: uuid.UUID | None = uuid.UUID(row.source_ref)
+    except (ValueError, TypeError, AttributeError):
+        suggestion_id = None  # a malformed source_ref names no suggestion, and never raises
+    observation = next((row_ for row_ in stored if row_.suggestion_id == suggestion_id), None)
+    return replace(
+        outcome,
+        description=_text(row.value),
+        # The observation is what knows which language the model answered in; without
+        # one (aged out of the enrichment table) the computed language stands.
+        description_language=(
+            str(observation.suggestion.get("language") or outcome.description_language)
+            if observation is not None
+            else outcome.description_language
+        ),
+        # The text is the model's, whoever chose to publish it.
+        llm_enhanced=True,
+        suggestion_id=suggestion_id,
+        needs_model=False,
+        model_provider=observation.model_provider if observation is not None else "llm",
+        model_name=observation.model_name if observation is not None else "field-value:llm",
+        prompt_version=observation.prompt_version if observation is not None else "",
+    )
+
+
+def apply_field_values(
     outcome: InfoOutcome,
-    ledger: Sequence[LedgerRow],
+    rows: Sequence[FieldValueRow],
     *,
-    evidence_set_hash: str,
-    current_input_hash: str | None,
     stored: Sequence[StoredObservation],
 ) -> InfoOutcome:
-    """Apply live corrections, in step then time order, on top of ``outcome``.
+    """Apply the live field values on top of ``outcome``.
 
-    Never raises on a bad correction:
+    One rule, per field independently: the live row is the newest one written for that
+    field, and its value is published. A NULL value is a release -- the pipeline's own
+    computed value stands, untouched, and the release is not counted as applied. There
+    is no staleness, no kind ranking and no undo chain: undo is writing the previous
+    value again, or NULL.
 
-    - stale (its evidence has moved on, or an approve/reject that no longer
-      names a suggestion whose ``input_hash`` matches ``current_input_hash``)
-      -> its id is collected in ``stale_correction_ids``, not applied.
-    - malformed (an ``override_field`` payload naming ``legal_name`` --
-      legal name is SCB's -- an unknown field, or a non-string/non-null
-      description) -> silently skipped: neither applied nor counted as stale.
+    ``description`` also decides the row's provenance. An ``llm`` value republishes the
+    model's text, so ``llm_enhanced`` goes up and ``source_ref`` names the suggestion;
+    the model_provider/model_name/prompt_version come from that stored observation when
+    it is still around and from fixed ``field-value:llm`` placeholders when it is not.
+    Every other source is a copy: ``llm_enhanced`` down, no suggestion, and
+    ``deterministic`` / ``field-value:<source>`` provenance. Either way the field is
+    decided, so ``needs_model`` is cleared. ``description_sv`` is one string with no
+    provenance of its own, so it only ever sets that column.
 
-    An ``override_field`` payload is ``{"description"}`` or
-    ``{"description", "description_sv"}``: the English text is always required, the
-    Swedish one is optional and its ABSENCE means "leave the Swedish text as computed"
-    (deterministic or model-written), while a present ``None`` is a decision and is
-    applied. Anything else is malformed.
-
-    ``approve_suggestion`` publishes both of the stored suggestion's languages with
-    ``llm_enhanced = True`` (the text is the model's, whoever approved it) and
-    ``suggestion_id`` set -- unless
-    the stored suggestion has no non-empty ``description`` string, in which
-    case the correction is treated as stale (nothing sensible to approve). A
-    suggestion with no Swedish half (one recorded before the bilingual prompt)
-    leaves ``description_sv`` as computed, exactly as an absent
-    ``description_sv`` in an override payload does.
-    ``reject_suggestion`` discards it, falls back to the highest-priority
-    deterministic candidate (text and language alike) together with the
-    deterministic Swedish text, and clears ``suggestion_id`` and
-    ``llm_enhanced``. Both share an
-    ``INFO_KIND_ORDER`` rank, so between them "later" (by ``created_at``) wins.
-
-    Both ``reject_suggestion`` and ``override_field`` also reset
-    ``model_provider``/``model_name``/``prompt_version`` to fixed
-    deterministic values, so a rejected or manually-overridden description is
-    never mistaken for a still-live model result: ``model_provider =
-    "deterministic"`` and ``prompt_version = ""`` for both, with
-    ``model_name`` distinguishing *why* the row is deterministic
-    (``"rejected-suggestion"`` vs ``"override"``) rather than reusing
-    ``InfoOutcome``'s own class-default ``model_name``, which means "the
-    original merge never needed a model" -- a different fact.
+    Never raises: a row naming an unknown field or source (only reachable by a direct
+    INSERT past the table's CHECKs) is skipped, counted in ``invalid_value_count``, and
+    cannot shadow a valid row for the same field.
     """
-    stored_by_id = {row.suggestion_id: row for row in stored}
+    live, invalid = _live_field_values(rows)
     applied: list[uuid.UUID] = []
-    stale: list[uuid.UUID] = []
-    for correction in effective_ledger(ledger, INFO_KIND_ORDER):
-        if correction.evidence_hash not in (ZERO_HASH, evidence_set_hash):
-            stale.append(correction.correction_id)
-            continue
-        if correction.kind == "override_field":
-            if set(correction.payload) not in ({"description"}, {"description", "description_sv"}):
-                continue  # malformed: legal_name (SCB's only), an unknown field, or no description
-            values = [correction.payload["description"]]
-            if "description_sv" in correction.payload:
-                values.append(correction.payload["description_sv"])
-            if any(value is not None and not isinstance(value, str) for value in values):
-                continue  # malformed: each description must be str or null
-            outcome = replace(
-                outcome,
-                description=_text(values[0]),
-                # Absent -> whatever this outcome already carries; present (null included)
-                # -> the reviewer's decision.
-                description_sv=_text(values[1]) if len(values) > 1 else outcome.description_sv,
-                # The reviewer typed this text, so it is not the model's -- however the
-                # row got here (a model answer earlier in the same resolution included).
-                llm_enhanced=False,
-                suggestion_id=None,
-                needs_model=False,
-                model_provider="deterministic",
-                model_name="override",
-                prompt_version="",
-            )
-        elif correction.kind in ("approve_suggestion", "reject_suggestion"):
-            try:
-                suggestion_id = uuid.UUID(str(correction.payload.get("suggestion_id", "")))
-            except ValueError:
-                stale.append(correction.correction_id)
-                continue
-            suggestion = stored_by_id.get(suggestion_id)
-            if suggestion is None or current_input_hash is None or suggestion.input_hash != current_input_hash:
-                stale.append(correction.correction_id)
-                continue
-            if correction.kind == "approve_suggestion":
-                raw_description = suggestion.suggestion.get("description")
-                approved_text = raw_description.strip() if isinstance(raw_description, str) else ""
-                if not approved_text:
-                    # Nothing sensible to approve -- treat like any other
-                    # correction that no longer names something usable.
-                    stale.append(correction.correction_id)
-                    continue
-                # A suggestion recorded before the bilingual prompt has no Swedish half.
-                # Absent means "leave it as computed" -- the same rule override_field
-                # follows -- so the deterministic Swedish text stays rather than being
-                # blanked to NULL by an approval that never spoke about it.
-                approved_sv = _text(suggestion.suggestion.get("description_sv"))
-                outcome = replace(
-                    outcome,
-                    description=approved_text,
-                    description_sv=outcome.description_sv if approved_sv is None else approved_sv,
-                    description_language=str(suggestion.suggestion.get("language") or outcome.description_language),
-                    # Approved, but still the model's text.
-                    llm_enhanced=True,
-                    suggestion_id=suggestion_id,
-                    needs_model=False,
-                    model_provider=suggestion.model_provider,
-                    model_name=suggestion.model_name,
-                    prompt_version=suggestion.prompt_version,
-                )
-            else:
-                # Rejected: fall back to the highest-priority deterministic
-                # candidate, text and language alike (description_candidates
-                # / description_candidate_languages are never mutated by a
-                # prior correction, so this is always the original merge's
-                # pick, not whatever an intervening approve last set).
-                fallback = outcome.description_candidates[0] if outcome.description_candidates else None
-                fallback_language = (
-                    outcome.description_candidate_languages[0]
-                    if outcome.description_candidate_languages
-                    else outcome.description_language
-                )
-                outcome = replace(
-                    outcome,
-                    suggestion_id=None,
-                    needs_model=False,
-                    description=fallback[2] if fallback else outcome.description,
-                    description_sv=outcome.description_sv_candidate,
-                    # Back to a copied candidate, so the flag goes down with the text.
-                    llm_enhanced=False,
-                    description_language=fallback_language,
-                    model_provider="deterministic",
-                    model_name="rejected-suggestion",
-                    prompt_version="",
-                )
-        applied.append(correction.correction_id)
+
+    description = live.get("description")
+    if description is not None and description.value is not None:
+        outcome = _apply_description_value(outcome, description, stored)
+        applied.append(description.value_id)
+
+    description_sv = live.get("description_sv")
+    if description_sv is not None and description_sv.value is not None:
+        outcome = replace(outcome, description_sv=_text(description_sv.value))
+        applied.append(description_sv.value_id)
+
     return replace(
         outcome,
         correction_ids=tuple(sorted(applied, key=str)),
-        stale_correction_ids=tuple(sorted(stale, key=str)),
+        invalid_value_count=invalid,
     )

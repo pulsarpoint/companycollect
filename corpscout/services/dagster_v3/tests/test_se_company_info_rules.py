@@ -1,12 +1,11 @@
 import uuid
-from dataclasses import replace
 from datetime import UTC, datetime, timedelta
 
-from dagster_v3.defs.se_company.common import LedgerRow, StoredObservation
+from dagster_v3.defs.se_company.common import StoredObservation
 from dagster_v3.defs.se_company.info_rules import (
-    INFO_KIND_ORDER,
     ArtifactRow,
-    apply_info_ledger,
+    FieldValueRow,
+    apply_field_values,
     evidence_set_hash_for,
     merge_company_info,
 )
@@ -37,6 +36,11 @@ def _wikidata(description):
         "wikidata_id": "Q1", "wikidata_url": "https://www.wikidata.org/wiki/Q1", "name": "Alpha", "official_name": None,
         "company_description": description, "inception_date": None, "legal_form_label": None,
         "industry_wikidata_id": None, "industry_label": None, "headquarters_label": None, "employee_count": None})
+
+
+def _value(number, field, value, *, source="reviewer", source_ref="", at=NOW):
+    """One row of corpscout.se_company_info_field_value, ``number`` its value_id."""
+    return FieldValueRow(uuid.UUID(int=number), COMPANY, field, value, source, source_ref, at)
 
 
 def test_no_register_row_means_no_outcome() -> None:
@@ -129,65 +133,6 @@ def test_empty_legal_name_means_no_outcome() -> None:
     assert merge_company_info(COMPANY, [_scb(legal_name="   ", legal_name_raw=None)]) is None
 
 
-def test_override_and_stale_corrections() -> None:
-    outcome = merge_company_info(COMPANY, [_scb(description="x")])
-    hash_now = evidence_set_hash_for(outcome.evidence_hashes)
-    fresh = LedgerRow(uuid.UUID(int=1), COMPANY, "override_field", {"description": "Reviewed text"}, hash_now, None, NOW)
-    stale = LedgerRow(uuid.UUID(int=2), COMPANY, "override_field", {"description": "Old"}, "9" * 64, None, NOW + timedelta(seconds=1))
-    applied = apply_info_ledger(outcome, [fresh, stale], evidence_set_hash=hash_now, current_input_hash=None, stored=())
-    assert applied.description == "Reviewed text" and not applied.llm_enhanced
-    assert applied.correction_ids == (uuid.UUID(int=1),) and applied.stale_correction_ids == (uuid.UUID(int=2),)
-
-
-def test_approve_suggestion_requires_a_current_input_hash() -> None:
-    outcome = merge_company_info(COMPANY, [_scb(description="a"), _wikidata("b")])
-    hash_now = evidence_set_hash_for(outcome.evidence_hashes)
-    stored = StoredObservation(uuid.UUID(int=5), COMPANY, "h" * 64, {"description": "Merged text", "language": "en"}, "deepseek", "m", "v1", NOW)
-    approve = LedgerRow(uuid.UUID(int=3), COMPANY, "approve_suggestion", {"suggestion_id": str(uuid.UUID(int=5))}, hash_now, None, NOW)
-    applied = apply_info_ledger(outcome, [approve], evidence_set_hash=hash_now, current_input_hash="h" * 64, stored=[stored])
-    assert applied.description == "Merged text" and applied.suggestion_id == uuid.UUID(int=5) and not applied.needs_model
-    stale = apply_info_ledger(outcome, [approve], evidence_set_hash=hash_now, current_input_hash="z" * 64, stored=[stored])
-    assert stale.stale_correction_ids == (uuid.UUID(int=3),)
-
-
-def test_kind_order_ranks_approve_and_reject_together_below_override() -> None:
-    assert INFO_KIND_ORDER == {"approve_suggestion": 0, "reject_suggestion": 0, "override_field": 1}
-
-
-# R17a: the brief's combined "later approve beats earlier reject" test never actually
-# exercised approve-vs-reject ordering. approve_suggestion and reject_suggestion share
-# the same INFO_KIND_ORDER rank (0), so effective_ledger orders them by created_at --
-# these two tests apply the same suggestion both ways, fresh, and check which wins.
-
-
-def test_later_approve_beats_earlier_reject() -> None:
-    outcome = merge_company_info(COMPANY, [_scb(description="a"), _wikidata("b")])
-    hash_now = evidence_set_hash_for(outcome.evidence_hashes)
-    stored = StoredObservation(uuid.UUID(int=5), COMPANY, "h" * 64, {"description": "Merged text", "language": "en"}, "deepseek", "m", "v1", NOW)
-    suggestion_id = str(uuid.UUID(int=5))
-    reject = LedgerRow(uuid.UUID(int=6), COMPANY, "reject_suggestion", {"suggestion_id": suggestion_id}, hash_now, None, NOW)
-    approve = LedgerRow(uuid.UUID(int=7), COMPANY, "approve_suggestion", {"suggestion_id": suggestion_id}, hash_now, None, NOW + timedelta(seconds=1))
-    applied = apply_info_ledger(outcome, [reject, approve], evidence_set_hash=hash_now, current_input_hash="h" * 64, stored=[stored])
-    assert applied.description == "Merged text"
-    assert applied.llm_enhanced  # the approved text is the model's
-    assert applied.suggestion_id == uuid.UUID(int=5)
-    assert set(applied.correction_ids) == {uuid.UUID(int=6), uuid.UUID(int=7)}
-
-
-def test_later_reject_beats_earlier_approve() -> None:
-    outcome = merge_company_info(COMPANY, [_scb(description="a"), _wikidata("b")])
-    hash_now = evidence_set_hash_for(outcome.evidence_hashes)
-    stored = StoredObservation(uuid.UUID(int=5), COMPANY, "h" * 64, {"description": "Merged text", "language": "en"}, "deepseek", "m", "v1", NOW)
-    suggestion_id = str(uuid.UUID(int=5))
-    approve = LedgerRow(uuid.UUID(int=8), COMPANY, "approve_suggestion", {"suggestion_id": suggestion_id}, hash_now, None, NOW)
-    reject = LedgerRow(uuid.UUID(int=9), COMPANY, "reject_suggestion", {"suggestion_id": suggestion_id}, hash_now, None, NOW + timedelta(seconds=1))
-    applied = apply_info_ledger(outcome, [approve, reject], evidence_set_hash=hash_now, current_input_hash="h" * 64, stored=[stored])
-    assert applied.suggestion_id is None
-    assert applied.description == outcome.description  # deterministic pick kept, not the rejected LLM text
-    assert not applied.llm_enhanced
-    assert set(applied.correction_ids) == {uuid.UUID(int=8), uuid.UUID(int=9)}
-
-
 def test_evidence_set_hash_for_is_order_independent() -> None:
     # Must equal the final table's MATERIALIZED expression:
     # lower(hex(SHA256(arrayStringConcat(arraySort(arrayMap(x -> toString(x), evidence_hashes)), '\n')))).
@@ -195,93 +140,6 @@ def test_evidence_set_hash_for_is_order_independent() -> None:
     reverse = evidence_set_hash_for(["b" * 64, "a" * 64])
     assert forward == reverse
     assert len(forward) == 64 and forward == forward.lower()
-
-
-# apply_info_ledger must never raise on a malformed correction -- these are skipped
-# outright (neither applied nor counted as stale).
-
-
-def test_override_field_rejects_legal_name() -> None:
-    outcome = merge_company_info(COMPANY, [_scb(description="x")])
-    hash_now = evidence_set_hash_for(outcome.evidence_hashes)
-    correction = LedgerRow(uuid.UUID(int=10), COMPANY, "override_field", {"legal_name": "New Name AB"}, hash_now, None, NOW)
-    applied = apply_info_ledger(outcome, [correction], evidence_set_hash=hash_now, current_input_hash=None, stored=())
-    assert applied.legal_name == "Alpha AB"
-    assert applied.description == "x"
-    assert applied.correction_ids == () and applied.stale_correction_ids == ()
-
-
-def test_override_field_rejects_unknown_field() -> None:
-    outcome = merge_company_info(COMPANY, [_scb(description="x")])
-    hash_now = evidence_set_hash_for(outcome.evidence_hashes)
-    correction = LedgerRow(uuid.UUID(int=11), COMPANY, "override_field", {"status": "dissolved"}, hash_now, None, NOW)
-    applied = apply_info_ledger(outcome, [correction], evidence_set_hash=hash_now, current_input_hash=None, stored=())
-    assert applied.status == outcome.status
-    assert applied.correction_ids == () and applied.stale_correction_ids == ()
-
-
-def test_override_field_rejects_non_string_description() -> None:
-    outcome = merge_company_info(COMPANY, [_scb(description="x")])
-    hash_now = evidence_set_hash_for(outcome.evidence_hashes)
-    correction = LedgerRow(uuid.UUID(int=12), COMPANY, "override_field", {"description": 12345}, hash_now, None, NOW)
-    applied = apply_info_ledger(outcome, [correction], evidence_set_hash=hash_now, current_input_hash=None, stored=())
-    assert applied.description == "x"
-    assert applied.correction_ids == () and applied.stale_correction_ids == ()
-
-
-def test_override_field_can_clear_description_with_null() -> None:
-    outcome = merge_company_info(COMPANY, [_scb(description="x")])
-    hash_now = evidence_set_hash_for(outcome.evidence_hashes)
-    correction = LedgerRow(uuid.UUID(int=13), COMPANY, "override_field", {"description": None}, hash_now, None, NOW)
-    applied = apply_info_ledger(outcome, [correction], evidence_set_hash=hash_now, current_input_hash=None, stored=())
-    assert applied.description is None
-    assert not applied.llm_enhanced
-    assert applied.correction_ids == (uuid.UUID(int=13),)
-
-
-def test_approve_suggestion_with_no_description_is_stale() -> None:
-    outcome = merge_company_info(COMPANY, [_scb(description="a"), _wikidata("b")])
-    hash_now = evidence_set_hash_for(outcome.evidence_hashes)
-    stored = StoredObservation(uuid.UUID(int=14), COMPANY, "h" * 64, {"description": "   ", "language": "en"}, "deepseek", "m", "v1", NOW)
-    approve = LedgerRow(uuid.UUID(int=15), COMPANY, "approve_suggestion", {"suggestion_id": str(uuid.UUID(int=14))}, hash_now, None, NOW)
-    applied = apply_info_ledger(outcome, [approve], evidence_set_hash=hash_now, current_input_hash="h" * 64, stored=[stored])
-    assert applied.stale_correction_ids == (uuid.UUID(int=15),)
-    assert applied.correction_ids == ()
-    assert applied.description == outcome.description
-    assert applied.suggestion_id is None
-
-
-def test_reject_suggestion_resets_model_provenance_and_language() -> None:
-    outcome = merge_company_info(COMPANY, [_scb(description="a"), _wikidata("b")])
-    hash_now = evidence_set_hash_for(outcome.evidence_hashes)
-    # Simulate the final asset having already stamped this outcome with an
-    # LLM's provenance before the correction ledger is applied.
-    llm_touched = replace(outcome, model_provider="deepseek", model_name="deepseek-v3", prompt_version="v9")
-    stored = StoredObservation(uuid.UUID(int=16), COMPANY, "h" * 64, {"description": "Merged text", "language": "en"}, "deepseek", "deepseek-v3", "v9", NOW)
-    reject = LedgerRow(uuid.UUID(int=17), COMPANY, "reject_suggestion", {"suggestion_id": str(uuid.UUID(int=16))}, hash_now, None, NOW)
-    applied = apply_info_ledger(llm_touched, [reject], evidence_set_hash=hash_now, current_input_hash="h" * 64, stored=[stored])
-    assert applied.model_provider == "deterministic"
-    assert applied.model_name == "rejected-suggestion"
-    assert applied.prompt_version == ""
-    assert applied.suggestion_id is None
-    # Deterministic fallback pick (wikidata, since esef is absent), text and language alike.
-    assert applied.description == outcome.description_candidates[0][2] == "b"
-    assert applied.description_language == outcome.description_candidate_languages[0] == "en"
-
-
-def test_override_field_resets_model_provenance() -> None:
-    outcome = merge_company_info(COMPANY, [_scb(description="a"), _wikidata("b")])
-    hash_now = evidence_set_hash_for(outcome.evidence_hashes)
-    llm_touched = replace(
-        outcome, model_provider="deepseek", model_name="deepseek-v3", prompt_version="v9", suggestion_id=uuid.UUID(int=16)
-    )
-    correction = LedgerRow(uuid.UUID(int=18), COMPANY, "override_field", {"description": "Reviewed text"}, hash_now, None, NOW)
-    applied = apply_info_ledger(llm_touched, [correction], evidence_set_hash=hash_now, current_input_hash=None, stored=())
-    assert applied.model_provider == "deterministic"
-    assert applied.model_name == "override"
-    assert applied.prompt_version == ""
-    assert applied.suggestion_id is None
-    assert applied.description == "Reviewed text"
 
 
 # Task 14 (owner decision 2026-08-23): the final holds both languages natively.
@@ -326,112 +184,8 @@ def test_the_deterministic_multi_source_pick_keeps_scbs_swedish_text() -> None:
     ])
     assert outcome.needs_model and outcome.description_sources[0] == "esef"
     assert outcome.description_sv == "Konsultverksamhet inom IT."
-    # Kept unmutated beside it, so reject_suggestion can restore the pair.
+    # Kept unmutated beside it, so info.py can still show what the pipeline computed.
     assert outcome.description_sv_candidate == "Konsultverksamhet inom IT."
-
-
-def test_override_field_may_carry_both_languages() -> None:
-    outcome = merge_company_info(COMPANY, [_scb(description="Saeljer programvara.")])
-    hash_now = evidence_set_hash_for(outcome.evidence_hashes)
-    both = LedgerRow(uuid.UUID(int=20), COMPANY, "override_field",
-                     {"description": "Reviewed text", "description_sv": "Granskad text"}, hash_now, None, NOW)
-    applied = apply_info_ledger(outcome, [both], evidence_set_hash=hash_now, current_input_hash=None, stored=())
-    assert applied.description == "Reviewed text" and applied.description_sv == "Granskad text"
-    assert not applied.llm_enhanced and applied.correction_ids == (uuid.UUID(int=20),)
-
-
-def test_override_field_without_description_sv_leaves_the_swedish_text_as_computed() -> None:
-    """The key is optional: an override that names only `description` must not silently
-    blank the Swedish text a reviewer never touched."""
-    outcome = merge_company_info(COMPANY, [_scb(description="Saeljer programvara.")])
-    hash_now = evidence_set_hash_for(outcome.evidence_hashes)
-    english_only = LedgerRow(uuid.UUID(int=21), COMPANY, "override_field",
-                             {"description": "Reviewed text"}, hash_now, None, NOW)
-    applied = apply_info_ledger(outcome, [english_only], evidence_set_hash=hash_now,
-                                current_input_hash=None, stored=())
-    assert applied.description == "Reviewed text"
-    assert applied.description_sv == "Saeljer programvara."
-    assert applied.correction_ids == (uuid.UUID(int=21),)
-
-
-def test_override_field_can_clear_the_swedish_text_with_an_explicit_null() -> None:
-    """Present-and-null is a decision ("there is no good Swedish text"), and it is
-    applied -- unlike an absent key, which means "leave it alone"."""
-    outcome = merge_company_info(COMPANY, [_scb(description="Saeljer programvara.")])
-    hash_now = evidence_set_hash_for(outcome.evidence_hashes)
-    cleared = LedgerRow(uuid.UUID(int=22), COMPANY, "override_field",
-                        {"description": "Reviewed text", "description_sv": None}, hash_now, None, NOW)
-    applied = apply_info_ledger(outcome, [cleared], evidence_set_hash=hash_now,
-                                current_input_hash=None, stored=())
-    assert applied.description == "Reviewed text" and applied.description_sv is None
-    assert applied.correction_ids == (uuid.UUID(int=22),)
-
-
-def test_override_field_rejects_a_non_string_description_sv_and_a_swedish_only_payload() -> None:
-    outcome = merge_company_info(COMPANY, [_scb(description="Saeljer programvara.")])
-    hash_now = evidence_set_hash_for(outcome.evidence_hashes)
-    for index, payload in enumerate((
-        {"description": "Reviewed text", "description_sv": 123},   # not a string
-        {"description_sv": "Granskad text"},                        # description is required
-        {"description": "Reviewed text", "description_sv": "ok", "status": "dissolved"},  # unknown key
-    )):
-        correction = LedgerRow(uuid.UUID(int=30 + index), COMPANY, "override_field", payload, hash_now, None, NOW)
-        applied = apply_info_ledger(outcome, [correction], evidence_set_hash=hash_now,
-                                    current_input_hash=None, stored=())
-        assert applied.description == outcome.description, payload
-        assert applied.description_sv == outcome.description_sv, payload
-        assert applied.correction_ids == () and applied.stale_correction_ids == ()
-
-
-def test_approve_suggestion_publishes_both_of_the_models_languages() -> None:
-    outcome = merge_company_info(COMPANY, [_scb(description="Saeljer programvara."), _wikidata("fintech")])
-    hash_now = evidence_set_hash_for(outcome.evidence_hashes)
-    stored = StoredObservation(
-        uuid.UUID(int=40), COMPANY, "h" * 64,
-        {"description": "Merged text", "description_sv": "Sammanslagen text", "language": "en"},
-        "deepseek", "m", "v1", NOW)
-    approve = LedgerRow(uuid.UUID(int=41), COMPANY, "approve_suggestion",
-                        {"suggestion_id": str(uuid.UUID(int=40))}, hash_now, None, NOW)
-    applied = apply_info_ledger(outcome, [approve], evidence_set_hash=hash_now,
-                                current_input_hash="h" * 64, stored=[stored])
-    assert applied.description == "Merged text" and applied.description_sv == "Sammanslagen text"
-    assert applied.suggestion_id == uuid.UUID(int=40)
-
-
-def test_approving_a_pre_v3_suggestion_leaves_the_swedish_text_as_computed() -> None:
-    """An observation recorded before the bilingual prompt has no Swedish half. Absent
-    means "leave it as computed" -- the same rule override_field follows -- so the
-    deterministic Swedish text stays rather than being blanked to NULL."""
-    outcome = merge_company_info(COMPANY, [_scb(description="Saeljer programvara."), _wikidata("fintech")])
-    hash_now = evidence_set_hash_for(outcome.evidence_hashes)
-    stored = StoredObservation(uuid.UUID(int=44), COMPANY, "h" * 64,
-                               {"description": "Merged text", "language": "en"}, "deepseek", "m", "v2", NOW)
-    approve = LedgerRow(uuid.UUID(int=45), COMPANY, "approve_suggestion",
-                        {"suggestion_id": str(uuid.UUID(int=44))}, hash_now, None, NOW)
-    applied = apply_info_ledger(outcome, [approve], evidence_set_hash=hash_now,
-                                current_input_hash="h" * 64, stored=[stored])
-    assert applied.description == "Merged text"
-    assert applied.description_sv == "Saeljer programvara."
-    assert applied.correction_ids == (uuid.UUID(int=45),)
-
-
-def test_reject_suggestion_restores_the_deterministic_pair() -> None:
-    outcome = merge_company_info(COMPANY, [_scb(description="Saeljer programvara."), _wikidata("fintech")])
-    hash_now = evidence_set_hash_for(outcome.evidence_hashes)
-    # As the asset leaves it once the model has answered: both languages are the model's.
-    modelled = replace(outcome, description="Merged text", description_sv="Sammanslagen text",
-                       llm_enhanced=True, model_provider="deepseek", model_name="m", prompt_version="v1")
-    stored = StoredObservation(
-        uuid.UUID(int=42), COMPANY, "h" * 64,
-        {"description": "Merged text", "description_sv": "Sammanslagen text", "language": "en"},
-        "deepseek", "m", "v1", NOW)
-    reject = LedgerRow(uuid.UUID(int=43), COMPANY, "reject_suggestion",
-                       {"suggestion_id": str(uuid.UUID(int=42))}, hash_now, None, NOW)
-    applied = apply_info_ledger(modelled, [reject], evidence_set_hash=hash_now,
-                                current_input_hash="h" * 64, stored=[stored])
-    assert applied.description == "fintech"  # wikidata, the highest-priority candidate present
-    assert applied.description_sv == "Saeljer programvara."  # ... and SCB's Swedish original is back
-    assert applied.suggestion_id is None and applied.model_name == "rejected-suggestion"
 
 
 # Task 17 (owner decision 2026-08-23): description_source is gone. One boolean --
@@ -466,70 +220,10 @@ def test_a_company_with_no_description_is_not_llm_enhanced() -> None:
     assert outcome.description is None and not outcome.llm_enhanced
 
 
-def test_approving_a_suggestion_marks_the_row_llm_enhanced() -> None:
-    """A reviewer pressed Approve, but the text is still the model's -- so the flag goes
-    up, and the reviewer's involvement is recorded in correction_ids beside it."""
-    outcome = merge_company_info(COMPANY, [_scb(description="a"), _wikidata("b")])
-    hash_now = evidence_set_hash_for(outcome.evidence_hashes)
-    stored = StoredObservation(uuid.UUID(int=50), COMPANY, "h" * 64,
-                               {"description": "Merged text", "description_sv": "Sammanslagen text",
-                                "language": "en"}, "deepseek", "m", "v3", NOW)
-    approve = LedgerRow(uuid.UUID(int=51), COMPANY, "approve_suggestion",
-                        {"suggestion_id": str(uuid.UUID(int=50))}, hash_now, None, NOW)
-    applied = apply_info_ledger(outcome, [approve], evidence_set_hash=hash_now,
-                                current_input_hash="h" * 64, stored=[stored])
-    assert applied.llm_enhanced
-    assert applied.correction_ids == (uuid.UUID(int=51),) and applied.suggestion_id == uuid.UUID(int=50)
-
-
-def test_a_reviewer_override_is_not_llm_enhanced_even_on_top_of_a_model_answer() -> None:
-    """The reviewer typed the text, so it is not the model's however the row got here."""
-    outcome = merge_company_info(COMPANY, [_scb(description="a"), _wikidata("b")])
-    hash_now = evidence_set_hash_for(outcome.evidence_hashes)
-    modelled = replace(outcome, description="Merged text", llm_enhanced=True,
-                       model_provider="deepseek", model_name="m", prompt_version="v3")
-    override = LedgerRow(uuid.UUID(int=52), COMPANY, "override_field",
-                         {"description": "Reviewed text"}, hash_now, None, NOW)
-    applied = apply_info_ledger(modelled, [override], evidence_set_hash=hash_now,
-                                current_input_hash=None, stored=())
-    assert applied.description == "Reviewed text" and not applied.llm_enhanced
-
-
-def test_rejecting_a_suggestion_clears_the_llm_flag() -> None:
-    """The model's text is discarded and the deterministic pick republished, so the row
-    is back to being copied from an input."""
-    outcome = merge_company_info(COMPANY, [_scb(description="Saeljer programvara."), _wikidata("fintech")])
-    hash_now = evidence_set_hash_for(outcome.evidence_hashes)
-    modelled = replace(outcome, description="Merged text", description_sv="Sammanslagen text",
-                       llm_enhanced=True, model_provider="deepseek", model_name="m", prompt_version="v3")
-    stored = StoredObservation(uuid.UUID(int=53), COMPANY, "h" * 64,
-                               {"description": "Merged text", "description_sv": "Sammanslagen text",
-                                "language": "en"}, "deepseek", "m", "v3", NOW)
-    reject = LedgerRow(uuid.UUID(int=54), COMPANY, "reject_suggestion",
-                       {"suggestion_id": str(uuid.UUID(int=53))}, hash_now, None, NOW)
-    applied = apply_info_ledger(modelled, [reject], evidence_set_hash=hash_now,
-                                current_input_hash="h" * 64, stored=[stored])
-    assert applied.description == "fintech" and not applied.llm_enhanced
-
-
-def test_a_stale_correction_leaves_the_flag_alone() -> None:
-    """Staleness is not a decision: a correction that no longer applies changes nothing,
-    the flag included."""
-    outcome = merge_company_info(COMPANY, [_scb(description="a"), _wikidata("b")])
-    hash_now = evidence_set_hash_for(outcome.evidence_hashes)
-    modelled = replace(outcome, description="Merged text", llm_enhanced=True)
-    stale = LedgerRow(uuid.UUID(int=55), COMPANY, "override_field",
-                      {"description": "Old"}, "9" * 64, None, NOW)
-    applied = apply_info_ledger(modelled, [stale], evidence_set_hash=hash_now,
-                                current_input_hash=None, stored=())
-    assert applied.llm_enhanced and applied.description == "Merged text"
-    assert applied.stale_correction_ids == (uuid.UUID(int=55),)
-
-
 def test_the_legal_form_labels_are_copied_from_the_register() -> None:
     """Both labels are SCB's, copied like every other non-description field -- the model is
-    never asked what a legal form is called, and the reviewer never overrides it (an
-    override_field payload naming anything but the descriptions is malformed)."""
+    never asked what a legal form is called, and the reviewer never overrides it (a field
+    value naming anything but the two descriptions is skipped as invalid)."""
     outcome = merge_company_info(COMPANY, [_scb(description="Säljer programvara.")])
     assert outcome is not None
     assert outcome.legal_form_code == "AB-ORGFO"
@@ -549,3 +243,215 @@ def test_a_code_with_no_curated_label_publishes_empty_labels() -> None:
     assert outcome is not None
     assert outcome.legal_form_code == "ZZZ"
     assert (outcome.legal_form_label_en, outcome.legal_form_label_sv) == ("", "")
+
+
+# Field values (2026-09-01): the correction ledger is gone. A field's live value is
+# simply the latest row written for it -- the greatest (created_at, value_id) -- and a
+# NULL value releases the field back to whatever the pipeline computed. No kinds, no
+# evidence-hash staleness, no undo chain.
+
+
+def test_the_latest_row_wins_per_field() -> None:
+    outcome = merge_company_info(COMPANY, [_scb(description="x")])
+    rows = [
+        _value(2, "description", "Second", at=NOW + timedelta(seconds=1)),
+        _value(1, "description", "First", at=NOW),
+    ]
+    applied = apply_field_values(outcome, rows, stored=())
+    assert applied.description == "Second"
+    # Only the live row is applied -- the superseded one is history, not a decision.
+    assert applied.correction_ids == (uuid.UUID(int=2),)
+    assert applied.invalid_value_count == 0
+
+
+def test_the_value_id_breaks_a_created_at_tie() -> None:
+    """Two rows written in the same millisecond still order deterministically, so the
+    published row cannot flip between runs."""
+    outcome = merge_company_info(COMPANY, [_scb(description="x")])
+    rows = [_value(9, "description", "Higher id"), _value(3, "description", "Lower id")]
+    applied = apply_field_values(outcome, rows, stored=())
+    assert applied.description == "Higher id" and applied.correction_ids == (uuid.UUID(int=9),)
+    assert apply_field_values(outcome, list(reversed(rows)), stored=()).description == "Higher id"
+
+
+def test_a_null_value_releases_the_field_to_the_computed_default() -> None:
+    """Undo is a row, not a kind: write NULL and the pipeline's own text is published
+    again, with the outcome's provenance left exactly as computed."""
+    outcome = merge_company_info(COMPANY, [_scb(description="a"), _wikidata("b")])
+    rows = [
+        _value(1, "description", "Reviewed text", at=NOW),
+        _value(2, "description", None, at=NOW + timedelta(seconds=1)),
+    ]
+    applied = apply_field_values(outcome, rows, stored=())
+    assert applied.description == outcome.description == "b"
+    assert applied.description_sv == outcome.description_sv
+    assert not applied.llm_enhanced and applied.suggestion_id is None
+    assert applied.model_name == outcome.model_name and applied.prompt_version == outcome.prompt_version
+    # A released field is not an applied one, and the release hands the row back to the
+    # pipeline whole -- needs_model included.
+    assert applied.correction_ids == () and applied.needs_model
+
+
+def test_the_two_description_fields_are_independent() -> None:
+    """One field released while the other is set: the live row is found per field, so
+    releasing the English text cannot blank the Swedish one."""
+    outcome = merge_company_info(COMPANY, [_scb(description="Saeljer programvara.")])
+    rows = [
+        _value(1, "description_sv", "Granskad text"),
+        _value(2, "description", "English text", at=NOW),
+        _value(3, "description", None, at=NOW + timedelta(seconds=1)),
+    ]
+    applied = apply_field_values(outcome, rows, stored=())
+    assert applied.description == outcome.description == "Saeljer programvara."
+    assert applied.description_sv == "Granskad text"
+    assert applied.correction_ids == (uuid.UUID(int=1),)
+
+
+def test_a_swedish_field_value_changes_nothing_else() -> None:
+    """description_sv carries no provenance of its own -- it is one string, and the
+    English half's model flags are untouched by it."""
+    outcome = merge_company_info(COMPANY, [_scb(description="a"), _wikidata("b")])
+    applied = apply_field_values(outcome, [_value(1, "description_sv", "  Granskad text  ")], stored=())
+    assert applied.description_sv == "Granskad text"  # trimmed, like every other stored text
+    assert applied.description == outcome.description
+    assert applied.needs_model  # only a description decides the model is no longer needed
+    assert (applied.model_provider, applied.model_name) == (outcome.model_provider, outcome.model_name)
+
+
+def test_a_reviewer_value_is_deterministic_and_clears_a_model_answer() -> None:
+    outcome = merge_company_info(COMPANY, [_scb(description="a"), _wikidata("b")])
+    stored = StoredObservation(uuid.UUID(int=60), COMPANY, "h" * 64,
+                               {"description": "Merged text", "language": "en"}, "deepseek", "m", "v3", NOW)
+    from_model = _value(61, "description", "Merged text", source="llm",
+                        source_ref=str(uuid.UUID(int=60)), at=NOW)
+    assert apply_field_values(outcome, [from_model], stored=[stored]).llm_enhanced
+    reviewed = apply_field_values(
+        outcome,
+        [from_model, _value(62, "description", "Reviewed text", at=NOW + timedelta(seconds=1))],
+        stored=[stored],
+    )
+    assert reviewed.description == "Reviewed text" and not reviewed.llm_enhanced
+    assert reviewed.suggestion_id is None
+    assert (reviewed.model_provider, reviewed.model_name, reviewed.prompt_version) == (
+        "deterministic", "field-value:reviewer", "")
+
+
+def test_every_non_llm_source_publishes_deterministic_provenance() -> None:
+    """Picking a source's own text off the About card is a copy, not a model answer."""
+    outcome = merge_company_info(COMPANY, [_scb(description="a"), _wikidata("b")])
+    for number, source in enumerate(("scb", "esef", "wikidata", "reviewer"), start=70):
+        applied = apply_field_values(
+            outcome, [_value(number, "description", "Chosen text", source=source, source_ref="scb:1")], stored=()
+        )
+        assert applied.description == "Chosen text", source
+        assert not applied.llm_enhanced and applied.suggestion_id is None, source
+        assert applied.model_provider == "deterministic", source
+        assert applied.model_name == f"field-value:{source}", source
+        assert applied.prompt_version == "", source
+        assert applied.correction_ids == (uuid.UUID(int=number),), source
+
+
+def test_an_llm_value_copies_the_matching_observations_provenance() -> None:
+    """source_ref is the suggestion id, so the published row still names the model that
+    wrote the text -- and takes the observation's language with it."""
+    outcome = merge_company_info(COMPANY, [_scb(description="a"), _wikidata("b")])
+    stored = StoredObservation(
+        uuid.UUID(int=40), COMPANY, "h" * 64,
+        {"description": "Merged text", "description_sv": "Sammanslagen text", "language": "sv"},
+        "deepseek", "deepseek-v3", "v9", NOW)
+    applied = apply_field_values(
+        outcome,
+        [_value(41, "description", "Merged text", source="llm", source_ref=str(uuid.UUID(int=40)))],
+        stored=[stored],
+    )
+    assert applied.description == "Merged text" and applied.llm_enhanced
+    assert applied.suggestion_id == uuid.UUID(int=40)
+    assert (applied.model_provider, applied.model_name, applied.prompt_version) == (
+        "deepseek", "deepseek-v3", "v9")
+    assert applied.description_language == "sv"
+    assert not applied.needs_model and applied.correction_ids == (uuid.UUID(int=41),)
+
+
+def test_an_llm_value_whose_observation_has_no_language_keeps_the_computed_one() -> None:
+    outcome = merge_company_info(COMPANY, [_scb(description="a"), _wikidata("b")])
+    stored = StoredObservation(uuid.UUID(int=42), COMPANY, "h" * 64, {"description": "Merged text"},
+                               "deepseek", "deepseek-v3", "v9", NOW)
+    applied = apply_field_values(
+        outcome,
+        [_value(43, "description", "Merged text", source="llm", source_ref=str(uuid.UUID(int=42)))],
+        stored=[stored],
+    )
+    assert applied.description_language == outcome.description_language == "en"
+
+
+def test_an_llm_value_with_no_matching_observation_falls_back_to_field_value_provenance() -> None:
+    """The observation may have aged out of the enrichment table; the decision still
+    stands, flagged as the model's text with a provenance that says where it came from."""
+    outcome = merge_company_info(COMPANY, [_scb(description="a"), _wikidata("b")])
+    applied = apply_field_values(
+        outcome,
+        [_value(44, "description", "Merged text", source="llm", source_ref=str(uuid.UUID(int=99)))],
+        stored=(),
+    )
+    assert applied.description == "Merged text" and applied.llm_enhanced
+    assert applied.suggestion_id == uuid.UUID(int=99)
+    assert (applied.model_provider, applied.model_name, applied.prompt_version) == ("llm", "field-value:llm", "")
+    assert applied.description_language == outcome.description_language
+
+
+def test_an_llm_value_with_an_unparseable_source_ref_publishes_no_suggestion_id() -> None:
+    """A bad source_ref never raises -- the text is still the model's, it just names no
+    suggestion."""
+    outcome = merge_company_info(COMPANY, [_scb(description="a"), _wikidata("b")])
+    applied = apply_field_values(
+        outcome, [_value(45, "description", "Merged text", source="llm", source_ref="not-a-uuid")], stored=()
+    )
+    assert applied.description == "Merged text" and applied.llm_enhanced
+    assert applied.suggestion_id is None
+    assert (applied.model_provider, applied.model_name) == ("llm", "field-value:llm")
+    assert applied.correction_ids == (uuid.UUID(int=45),)
+
+
+def test_setting_a_description_clears_needs_model() -> None:
+    """A decided field is decided: the row is not queued for the model again."""
+    outcome = merge_company_info(COMPANY, [_scb(description="a"), _wikidata("b")])
+    assert outcome.needs_model
+    applied = apply_field_values(outcome, [_value(1, "description", "Reviewed text")], stored=())
+    assert applied.description == "Reviewed text" and not applied.needs_model
+
+
+def test_unknown_fields_and_sources_are_skipped_and_counted() -> None:
+    """Malformed rows can only reach here through a direct INSERT (the table's CHECKs and
+    the backoffice validator both refuse them), so they are dropped and counted -- never
+    raised on, and never allowed to shadow a valid row for the same field."""
+    outcome = merge_company_info(COMPANY, [_scb(description="x")])
+    rows = [
+        _value(1, "legal_name", "New Name AB", at=NOW + timedelta(seconds=9)),
+        _value(2, "status", "dissolved", at=NOW + timedelta(seconds=9)),
+        _value(3, "description", "From nowhere", source="mystery", at=NOW + timedelta(seconds=9)),
+        _value(4, "description", "Reviewed text", at=NOW),
+    ]
+    applied = apply_field_values(outcome, rows, stored=())
+    assert applied.invalid_value_count == 3
+    assert applied.legal_name == "Alpha AB" and applied.status == outcome.status
+    assert applied.description == "Reviewed text"
+    assert applied.correction_ids == (uuid.UUID(int=4),)
+
+
+def test_no_rows_leave_the_outcome_as_computed() -> None:
+    outcome = merge_company_info(COMPANY, [_scb(description="a"), _wikidata("b")])
+    applied = apply_field_values(outcome, [], stored=())
+    assert applied == outcome
+    assert applied.correction_ids == () and applied.invalid_value_count == 0
+
+
+def test_apply_field_values_does_not_mutate_the_outcome_it_is_given() -> None:
+    outcome = merge_company_info(COMPANY, [_scb(description="a"), _wikidata("b")])
+    applied = apply_field_values(
+        outcome,
+        [_value(1, "description", "Reviewed text"), _value(2, "description_sv", "Granskad text")],
+        stored=(),
+    )
+    assert outcome.description == "b" and outcome.description_sv == "a" and outcome.needs_model
+    assert applied.description == "Reviewed text" and applied.description_sv == "Granskad text"
+    assert applied.correction_ids == (uuid.UUID(int=1), uuid.UUID(int=2))
