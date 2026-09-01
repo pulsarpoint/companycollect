@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useState, type ReactNode } from "react";
 import { Badge } from "~/components/ui/badge";
 import { Button } from "~/components/ui/button";
 import {
@@ -19,19 +19,41 @@ type DescriptionLanguage = "en" | "original";
 
 /** The text a proposal shows for the chosen language, falling back to the
  * other side when the proposal only has one — the chip names what is
- * actually displayed. */
+ * actually displayed, and `side` says which of the proposal's two blocks it
+ * really is (the fallback means the chip alone cannot answer that). */
 export function displayedBlock(
   proposal: DescriptionProposal,
   language: DescriptionLanguage,
-): { text: string; chip: string } {
-  const english = { text: proposal.english, chip: "en" };
+): { text: string; chip: string; side: "english" | "original" } {
+  const english = { text: proposal.english, chip: "en", side: "english" as const };
   const original = {
     text: proposal.original,
     chip: proposal.originalLanguage === "" ? "original" : proposal.originalLanguage,
+    side: "original" as const,
   };
   const preferred = language === "en" ? english : original;
   const fallback = language === "en" ? original : english;
   return preferred.text !== "" ? preferred : fallback;
+}
+
+/** Which published column the block on screen belongs to. The original block
+ * is the swedish column only when it really is swedish; an original in any
+ * other language (or an unmarked one, as Wikidata's descriptions are) belongs
+ * to the same column english does. */
+function shownField(
+  proposal: DescriptionProposal,
+  side: "english" | "original",
+): "description" | "description_sv" {
+  return side === "original" && proposal.originalLanguage === "sv"
+    ? "description_sv"
+    : "description";
+}
+
+/** What an option's action slot is told: the proposal, and which field the
+ * text currently under the reviewer's eyes would decide. */
+export interface DescriptionShown {
+  field: "description" | "description_sv";
+  text: string;
 }
 
 /**
@@ -40,11 +62,21 @@ export function displayedBlock(
  * one language at a time with an en/original toggle at the top. Each
  * country's info page derives its own proposals; nothing here knows about
  * specific sources.
+ *
+ * `renderAction` is the slot a page hangs its own decision UI in (a "Use
+ * this" form, an inline editor): it is handed the proposal and the block
+ * actually on screen, so the page never has to re-derive which language — and
+ * therefore which field — the reviewer is looking at.
  */
 export function CompanyDescriptionCard({
   proposals,
+  renderAction,
 }: {
   proposals: DescriptionProposal[];
+  renderAction?: (
+    proposal: DescriptionProposal,
+    shown: DescriptionShown,
+  ) => ReactNode;
 }) {
   const [language, setLanguage] = useState<DescriptionLanguage>("en");
   if (proposals.length === 0) return null;
@@ -110,7 +142,11 @@ export function CompanyDescriptionCard({
           {proposals.map((proposal) => {
             const block = displayedBlock(proposal, language);
             return (
-              <TabsContent key={proposal.key} value={proposal.key}>
+              // keepMounted: an option's action slot can hold a form the
+              // reviewer half-filled (an inline editor); unmounting it on every
+              // tab switch would throw that away, and it keeps every option's
+              // form in the document rather than only the open one's.
+              <TabsContent keepMounted key={proposal.key} value={proposal.key}>
                 <CardContent className="flex flex-col gap-3">
                   <CardTitle className="flex items-center gap-2 text-sm font-normal text-muted-foreground">
                     <Badge>{proposal.sourceLabel}</Badge>
@@ -120,6 +156,10 @@ export function CompanyDescriptionCard({
                   <p className="max-w-[90ch] whitespace-pre-wrap text-sm leading-6">
                     {block.text}
                   </p>
+                  {renderAction?.(proposal, {
+                    field: shownField(proposal, block.side),
+                    text: block.text,
+                  })}
                 </CardContent>
               </TabsContent>
             );

@@ -25,7 +25,8 @@ import { SeInfoFieldValueValidationError } from "~/lib/se-info-field-values";
 const COMPANY_ID = "5565200028";
 const EVIDENCE_HASH = "e".repeat(64);
 const SUGGESTION_ID = "11111111-1111-4111-8111-111111111111";
-const OVERRIDE_CORRECTION_ID = "22222222-2222-4222-8222-222222222222";
+const LIVE_VALUE_ID = "22222222-2222-4222-8222-222222222222";
+const RELEASED_VALUE_ID = "33333333-3333-4333-8333-333333333333";
 
 // Rebuilt against Task 9's shipped types (is_newest/is_published on
 // suggestions, every SeCompanyInfoRow column) -- the task-10 brief's fixture
@@ -148,18 +149,37 @@ const detail: SeCompanyInfoDetail = {
       is_newest: 1,
     },
   ],
-  fieldValues: [],
+  // Two decisions on the English field, newest first: the register's text was
+  // taken after an earlier release handed the field back to the pipeline, so
+  // the history carries a live row AND a released one.
+  fieldValues: [
+    {
+      value_id: LIVE_VALUE_ID,
+      field: "description",
+      value: "Alpha builds payment software.",
+      source: "scb",
+      source_ref: "scb:1",
+      source_at: "2026-08-01 00:00:00.000",
+      decided_by: "backoffice",
+      note: "Copied from the register.",
+      created_at: "2026-08-23 09:00:00.000",
+      is_live: 1,
+    },
+    {
+      value_id: RELEASED_VALUE_ID,
+      field: "description",
+      value: null,
+      source: "reviewer",
+      source_ref: "",
+      source_at: null,
+      decided_by: "backoffice",
+      note: "",
+      created_at: "2026-08-22 10:00:00.000",
+      is_live: 0,
+    },
+  ],
   naceLabel: "Computer programming activities",
 };
-
-/**
- * TODO(field-values Task 7): this used to be the same company with a live
- * override on the correction ledger. The ledger is gone (Task 5) and the
- * workspace's Ledger card is stubbed out until Task 7 rebuilds it as the
- * Value history card over `fieldValues`, so the fixture is the plain detail
- * and every case that needed the override is skipped below.
- */
-const overriddenDetail: SeCompanyInfoDetail = { ...detail };
 
 function render(
   workspaceDetail: SeCompanyInfoDetail = detail,
@@ -194,43 +214,61 @@ function formContaining(html: string, needle: string): string {
 }
 
 describe("company info review page", () => {
-  it("shows the merged row, its sources, the published suggestion and every form with the evidence hash", () => {
+  it("shows the merged row, its sources and the published suggestion, and posts an intent on every form", () => {
     const html = render();
     expect(html).toContain("Alpha AB");
     expect(html).toContain("IT-konsulter.");
     expect(html).toContain("Swedish fintech company");
     expect(html).toContain("published");
-    for (const kind of [
-      "override_field",
-      "approve_suggestion",
-      "reject_suggestion",
-    ]) {
-      expect(html).toContain(`value="${kind}"`);
+    // Four intents, no correction ledger anywhere: the page decides values.
+    for (const intent of ["use-source", "use-suggestion", "edit", "release"]) {
+      expect(html).toContain(`name="intent" value="${intent}"`);
     }
-    // Scoped per-form, not page-wide: every non-undo form must carry this
-    // exact evidence hash, not just the page somewhere.
-    for (const needle of [
-      'name="correction_kind" value="override_field"',
-      'name="correction_kind" value="approve_suggestion"',
-      'name="correction_kind" value="reject_suggestion"',
-    ]) {
-      expect(formContaining(html, needle)).toContain(
-        `name="evidence_hash" value="${EVIDENCE_HASH}"`,
-      );
-    }
-    expect(html).toContain('name="original_description"');
+    expect(html).not.toContain("correction_kind");
+    // No form carries an evidence hash any more: the latest value wins, so
+    // there is no staleness for one to guard against.
+    expect(html).not.toContain('name="evidence_hash"');
   });
 
-  // Task 14: the published row holds both languages (migration 000301), so the page
-  // shows both and the override form edits both.
-  it("shows both published languages and gives the override form a field for each", () => {
+  // Each source option offers its text as a value: the field it decides is the
+  // one the language on screen belongs to, and the row it came from travels
+  // with it as source_ref/source_at so Dagster keeps the provenance.
+  it("offers Use this on every source option, posting the field the shown block decides", () => {
+    const html = render();
+
+    const scbForm = formContaining(html, 'name="source_ref" value="scb:1"');
+    expect(scbForm).toContain('name="intent" value="use-source"');
+    expect(scbForm).toContain('name="field" value="description"');
+    expect(scbForm).toContain('name="source" value="scb"');
+    expect(scbForm).toContain('name="value" value="IT consultancy."');
+    expect(scbForm).toContain(
+      'name="source_at" value="2026-08-01 00:00:00.000"',
+    );
+    expect(scbForm).toContain("Use this");
+
+    // Wikidata's description carries no language marker, so it decides the
+    // same field english does rather than the Swedish one.
+    const wikidataForm = formContaining(
+      html,
+      'name="source_ref" value="wikidata:Q1"',
+    );
+    expect(wikidataForm).toContain('name="source" value="wikidata"');
+    expect(wikidataForm).toContain('name="field" value="description"');
+    expect(wikidataForm).toContain('name="value" value="Swedish fintech company"');
+
+    // The published Final option is not a source: it is edited, not copied.
+    expect(html).not.toContain('name="source" value="final"');
+  });
+
+  // Task 14: the published row holds both languages (migration 000301), so the
+  // page shows both and the Final option's inline editor edits both.
+  it("puts an inline editor behind Edit on the Final option, diffed against both originals", () => {
     const html = render();
     expect(html).toContain("Alpha builds payment software.");
     expect(html).toContain("Alpha bygger betalprogramvara.");
-    const overrideForm = formContaining(
-      html,
-      'name="correction_kind" value="override_field"',
-    );
+    expect(html).toContain(">Edit<");
+
+    const editForm = formContaining(html, 'name="intent" value="edit"');
     for (const field of [
       'name="original_description"',
       'name="description"',
@@ -238,12 +276,23 @@ describe("company info review page", () => {
       'name="original_description_sv"',
       'name="description_sv"',
       'name="clear_description_sv"',
+      'name="note"',
     ]) {
-      expect(overrideForm).toContain(field);
+      expect(editForm).toContain(field);
     }
-    // The Swedish original the reviewer is diffed against, not the English one.
-    expect(overrideForm).toContain(
+    // The originals are what the edit is diffed against server-side; an absent
+    // one makes the builder skip the field entirely, so both are always posted.
+    expect(editForm).toContain(
+      'name="original_description" value="Alpha builds payment software."',
+    );
+    expect(editForm).toContain(
       'name="original_description_sv" value="Alpha bygger betalprogramvara."',
+    );
+    // Both clear boxes post the literal the builder reads.
+    expect(editForm.match(/value="yes"/g)).toHaveLength(2);
+    // ...and the reviewer is told that emptying a box is not how you clear one.
+    expect(editForm).toContain(
+      "To remove this text, tick Clear — an emptied box is refused.",
     );
   });
 
@@ -253,7 +302,7 @@ describe("company info review page", () => {
       info: { ...detail.info, description_sv: null },
     });
     expect(html).toContain("No Swedish description.");
-    // The empty override field still posts the original it was diffed against.
+    // The empty edit field still posts the original it was diffed against.
     expect(html).toContain('name="original_description_sv" value=""');
   });
 
@@ -284,13 +333,9 @@ describe("company info review page", () => {
     expect(html).toContain(">yes<");
     expect(html).toContain("Description sources");
     expect(html).toContain("wikidata, scb");
-    // Review state is represented by its correction ids in the same disclosure.
-    const reviewed = render({
-      ...detail,
-      info: { ...detail.info, correction_ids: [OVERRIDE_CORRECTION_ID] },
-    });
-    expect(reviewed).toContain("Correction ids");
-    expect(reviewed).toContain(OVERRIDE_CORRECTION_ID);
+    // Review state is no longer a row of ids in this disclosure: the Value
+    // history card below says which decisions this company has, in full.
+    expect(html).not.toContain("Correction ids");
   });
 
   it("says LLM no for a description that was copied from one input", () => {
@@ -355,20 +400,27 @@ describe("company info review page", () => {
     expect(card).toContain("62010");
   });
 
-  it("lays the page out as published version, then every source, then suggestions and corrections", () => {
+  it("lays the page out as description, facts, published version, sources, suggestions, value history", () => {
     const html = render();
+    let cursor = -1;
     for (const heading of [
+      "About the company",
+      "Company facts",
       "Published version",
       "Sources",
-      "SCB register",
-      "Wikidata",
-      "ESEF filing",
       "Model suggestions",
-      "Corrections",
-      "Override description",
-      "Ledger",
+      "Value history",
     ]) {
+      const at = html.indexOf(heading, cursor + 1);
+      expect(at, `${heading} in order`).toBeGreaterThan(cursor);
+      cursor = at;
+    }
+    for (const heading of ["SCB register", "Wikidata", "ESEF filing"]) {
       expect(html).toContain(heading);
+    }
+    // The correction-era section headings are gone with the ledger.
+    for (const gone of ["Override description", "Ledger", "No corrections yet"]) {
+      expect(html).not.toContain(gone);
     }
     // The published row's status remains available in its closed details.
     expect(html).toContain("Status");
@@ -598,57 +650,57 @@ describe("company info review page", () => {
     expect(html).toContain("The evidence changed while you were reviewing.");
   });
 
-  it("only offers approve/reject on the newest suggestion", () => {
+  // One button per suggestion, on every suggestion: a field value is a value,
+  // not an approval, so the model's older wording is as usable as its newest.
+  it("offers Use this suggestion on every suggestion, and no approve/reject anywhere", () => {
+    const html = render();
+    const useForm = formContaining(html, 'name="intent" value="use-suggestion"');
+    expect(useForm).toContain(`name="suggestion_id" value="${SUGGESTION_ID}"`);
+    expect(useForm).toContain("Use this suggestion");
+    expect(html).not.toContain("approve_suggestion");
+    expect(html).not.toContain("reject_suggestion");
+    expect(html).not.toContain("Approve");
+
     const supersededDetail: SeCompanyInfoDetail = {
       ...detail,
       suggestions: [{ ...detail.suggestions[0], is_newest: 0 }],
     };
-    const html = render(supersededDetail);
-    expect(html).toContain("superseded evidence");
-    expect(html).not.toContain('value="approve_suggestion"');
-    expect(html).not.toContain('value="reject_suggestion"');
-    expect(html).toContain("Alpha builds payment software.");
+    const superseded = render(supersededDetail);
+    expect(superseded).toContain("superseded evidence");
+    expect(superseded).toContain("Use this suggestion");
+    expect(superseded).toContain("Alpha builds payment software.");
   });
 
-  // Task 7: the three cases below need a live override on the correction
-  // ledger, which Task 5 deleted along with the Ledger card they read. Task 7
-  // rewrites them against the Value history card (release / live badge / the
-  // note field) once the workspace speaks field values.
-  it.skip("shows an undo form on the current non-undo correction, and its 8-char id in the row", () => {
-    const html = render(overriddenDetail);
-    const undoForm = formContaining(
+  it("shows the value history, its live row and its releases, with a Release button per field", () => {
+    const html = render();
+    const history = html.slice(html.indexOf("Value history"));
+    expect(history).toContain(
+      "Every value decided for this company, newest first.",
+    );
+    // The live row is badged, and it is the only one.
+    expect(history.match(/>live</g)).toHaveLength(1);
+    // A NULL value is a release, said in words rather than shown as a blank.
+    expect(history).toContain("released to pipeline");
+    expect(history).toContain("Alpha builds payment software.");
+    expect(history).toContain("scb:1");
+    expect(history).toContain("Copied from the register.");
+    expect(history).toContain("backoffice · 2026-08-23 09:00:00.000");
+
+    // One release form per field, whatever the history holds.
+    expect(html.match(/name="intent" value="release"/g)).toHaveLength(2);
+    const svRelease = formContaining(
       html,
-      'name="correction_kind" value="undo"',
+      'name="field" value="description_sv"',
     );
-    expect(undoForm).toContain(
-      `name="supersedes_correction_id" value="${OVERRIDE_CORRECTION_ID}"`,
-    );
-    expect(undoForm).not.toContain("evidence_hash");
-    expect(html).toContain(OVERRIDE_CORRECTION_ID.slice(0, 8));
+    expect(svRelease).toContain('name="intent" value="release"');
+    expect(svRelease).toContain("Release to pipeline");
   });
 
-  it.skip("P7: disables approve/reject and points at the override by its 8-char id, via liveOverrideRefusal", () => {
-    const html = render(overriddenDetail);
-    const approveForm = formContaining(
-      html,
-      'name="correction_kind" value="approve_suggestion"',
-    );
-    const rejectForm = formContaining(
-      html,
-      'name="correction_kind" value="reject_suggestion"',
-    );
-    expect(approveForm).toContain('disabled=""');
-    expect(rejectForm).toContain('disabled=""');
-    expect(html).toContain(
-      `Undo the current override first (${OVERRIDE_CORRECTION_ID.slice(0, 8)}).`,
-    );
-  });
-
-  it.skip("gives the reason/note inputs an aria-label", () => {
-    const html = render(overriddenDetail);
-    expect(html).toContain('aria-label="Reason"');
-    expect(html).toContain('aria-label="Note"');
-    expect(html).toContain('aria-label="Why undo"');
+  it("says so when nothing has been decided for a company yet", () => {
+    const html = render({ ...detail, fieldValues: [] });
+    expect(html).toContain("No values decided yet.");
+    // The release buttons stand whether or not anything was decided before.
+    expect(html.match(/name="intent" value="release"/g)).toHaveLength(2);
   });
 });
 

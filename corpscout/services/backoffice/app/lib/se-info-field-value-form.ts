@@ -26,7 +26,10 @@
  * nothing must not reach ClickHouse at all), and catching them purely means
  * they are unit-testable without a live database.
  */
-import { ARTIFACT_SOURCES } from "~/lib/se-company-info-payload";
+import {
+  ARTIFACT_SOURCES,
+  parseSuggestionText,
+} from "~/lib/se-company-info-payload";
 import {
   SE_INFO_FIELDS,
   type SeInfoField,
@@ -60,30 +63,22 @@ function isField(value: string): value is SeInfoField {
 }
 
 /**
- * Best-effort read of a suggestion's JSON body -- the same guard the review
- * workspace renders it with: each half only counts when it really is a string,
- * so an enrichment run that ever emits an object or a number for a description
- * is skipped rather than written into the store as `[object Object]`.
+ * The suggestion body, read through the SAME guard the review workspace
+ * renders it with (`parseSuggestionText`): each half only counts when it
+ * really is a string, so an enrichment run that ever emits an object or a
+ * number for a description is skipped rather than written into the store as
+ * `[object Object]` -- and what the reviewer read is exactly what the click
+ * stores. An unusable body (not JSON, not an object) has no halves at all.
  */
 function suggestionText(raw: string): {
   description: string;
   descriptionSv: string;
 } {
-  let parsed: unknown;
-  try {
-    parsed = JSON.parse(raw);
-  } catch {
-    return { description: "", descriptionSv: "" };
-  }
-  if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
-    return { description: "", descriptionSv: "" };
-  }
-  const body = parsed as Record<string, unknown>;
-  const half = (key: string) =>
-    typeof body[key] === "string" ? (body[key] as string).trim() : "";
-  // Both languages come from one model call (prompt v3); a suggestion recorded
-  // before that carries only the English half, and then only that half is used.
-  return { description: half("description"), descriptionSv: half("description_sv") };
+  const parsed = parseSuggestionText(raw);
+  return {
+    description: parsed?.description ?? "",
+    descriptionSv: parsed?.descriptionSv ?? "",
+  };
 }
 
 /** One artifact's text, copied verbatim into one field. */

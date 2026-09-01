@@ -57,12 +57,18 @@ describe("descriptionProposals", () => {
       english: "Banking business with deposits and lending.",
       original: "Bankverksamhet med inlåning och utlåning.",
       originalLanguage: "sv",
+      // Carried through so a page can write the proposal back as a decided
+      // value with the record and moment it came from.
+      sourceRecordUid: "scb-1",
+      observedAt: "2026-08-01T10:00:00.000Z",
     });
     expect(proposals[1]).toMatchObject({
       source: "esef",
       english: "Handelsbanken is a Swedish credit institution.",
       original: "",
       meta: "fiscal 2023",
+      sourceRecordUid: "esef-1",
+      observedAt: "2026-08-26T10:00:00.000Z",
     });
     expect(proposals[2]).toMatchObject({
       source: "esef",
@@ -144,6 +150,32 @@ describe("CompanyDescriptionCard", () => {
       text: "Swedish bank",
       chip: "original",
     });
+  });
+
+  it("renders the action slot under each option's text, naming the field shown", () => {
+    const html = renderToStaticMarkup(
+      <CompanyDescriptionCard
+        proposals={descriptionProposals(ARTIFACTS)}
+        renderAction={(proposal, shown) => (
+          <span
+            data-action={`${proposal.source}:${shown.field}:${shown.text.slice(0, 8)}`}
+          />
+        )}
+      />,
+    );
+
+    // Default language is english, so every option that has english text is
+    // offering `description`...
+    expect(html).toContain('data-action="scb:description:Banking "');
+    expect(html).toContain('data-action="esef:description:Handelsb"');
+    // ...the swedish-only ESEF filing falls back to its original block, which
+    // really is the swedish field...
+    expect(html).toContain('data-action="esef:description_sv:Handelsb"');
+    // ...and Wikidata's unmarked original is english's field, not swedish's.
+    expect(html).toContain('data-action="wikidata:description:Swedish "');
+    // The slot sits under the text it acts on.
+    expect(html.indexOf("Banking business with deposits and lending.")).
+      toBeLessThan(html.indexOf('data-action="scb:'));
   });
 
   it("renders nothing without proposals", () => {

@@ -244,6 +244,13 @@ export function wikidataHref(id: string, url: string): string {
 /**
  * One source's proposed company description, split for english-first display:
  * english on top when the source provides it, the original language under it.
+ *
+ * `sourceRecordUid` / `observedAt` are the artifact row this text was read
+ * from, carried through so a review page can write the proposal back as a
+ * decided field value with the record and moment it came from (the
+ * `source_ref` / `source_at` columns of the field-value store). A proposal a
+ * page synthesises rather than reads from an artifact (the published "final"
+ * text, say) has neither, and carries ''.
  */
 export interface DescriptionProposal {
   key: string;
@@ -253,6 +260,8 @@ export interface DescriptionProposal {
   english: string;
   original: string;
   originalLanguage: string;
+  sourceRecordUid: string;
+  observedAt: string;
 }
 
 interface DescriptionArtifactRow {
@@ -313,7 +322,51 @@ export function descriptionProposals(
       english,
       original,
       originalLanguage,
+      sourceRecordUid: artifact.source_record_uid,
+      observedAt: artifact.observed_at,
     });
   }
   return proposals;
+}
+
+/**
+ * Best-effort read of a model suggestion's JSON body -- the one guard both the
+ * review page (which renders it) and the field-value form builder (which
+ * writes it) go through, so what a reviewer sees and what a click stores can
+ * never come from two different readings of the same row.
+ *
+ * Every half is guarded with its own `typeof === "string"` check and trimmed:
+ * an enrichment run that ever emits an object or a number for a description
+ * must neither crash SSR by handing React a non-renderable child nor reach the
+ * store as `[object Object]`. Anything that is not a JSON object at all (an
+ * array, a bare string, malformed text) is null -- the raw body still renders
+ * beside it on the page.
+ */
+export function parseSuggestionText(raw: string): {
+  description?: string;
+  descriptionSv?: string;
+  language?: string;
+  rationale?: string;
+} | null {
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(raw);
+  } catch {
+    return null;
+  }
+  if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
+    return null;
+  }
+  const body = parsed as Record<string, unknown>;
+  const half = (key: string): string | undefined =>
+    typeof body[key] === "string" ? (body[key] as string).trim() : undefined;
+  return {
+    description: half("description"),
+    // Both languages come from one model call (prompt v3); a suggestion
+    // recorded before that carries only the English half, and then only that
+    // half is shown and used.
+    descriptionSv: half("description_sv"),
+    language: half("language"),
+    rationale: half("rationale"),
+  };
 }

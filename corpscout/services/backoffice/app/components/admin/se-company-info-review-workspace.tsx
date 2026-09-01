@@ -3,6 +3,7 @@ import {
   FileSearchIcon,
   TriangleAlertIcon,
 } from "lucide-react";
+import { useState } from "react";
 import { Form, useNavigation } from "react-router";
 import { Alert, AlertDescription, AlertTitle } from "~/components/ui/alert";
 import {
@@ -46,6 +47,7 @@ import { Textarea } from "~/components/ui/textarea";
 import type {
   SeCompanyInfoArtifactRow,
   SeCompanyInfoDetail,
+  SeCompanyInfoFieldValueRow,
   SeCompanyInfoRow,
 } from "~/lib/se-company-info.server";
 import {
@@ -54,84 +56,18 @@ import {
   artifactSourceLabel,
   descriptionProposals,
   parseJsonList,
+  parseSuggestionText,
   wikidataHref,
   type ArtifactPayloadEntry,
+  type DescriptionProposal,
 } from "~/lib/se-company-info-payload";
+import { SE_INFO_FIELDS } from "~/lib/se-info-field-values";
+import type { DescriptionShown } from "~/components/admin/company-description-card";
+
 export type SeCompanyInfoReviewResult =
   | { ok: true; valueIds: string[] }
   | { ok: false; error: string }
   | null;
-
-/** TODO(field-values Task 7): the shape of the deleted
- * `SeCompanyInfoCorrectionRow`, kept locally only so the Ledger card below
- * still compiles until Task 7 rewrites it as the Value history card. */
-interface LegacyCorrectionRow {
-  correction_id: string;
-  correction_kind: string;
-  payload: string;
-  evidence_hash: string;
-  reason: string;
-  decided_by: string;
-  supersedes_correction_id: string | null;
-  created_at: string;
-  is_current: number;
-  is_stale: number;
-  is_applied: number;
-}
-
-/**
- * Every non-undo correction form posts the kind it represents plus the
- * evidence hash the reviewer actually saw, so a concurrent rebuild is
- * rejected server-side rather than silently applied to different evidence.
- * Undo forms carry no evidence hash at all -- they supersede a decision, not
- * evidence, and the action always writes ZERO_EVIDENCE_HASH for them.
- */
-function HiddenCommon({
-  kind,
-  evidenceHash,
-}: {
-  kind: string;
-  evidenceHash: string;
-}) {
-  return (
-    <>
-      <input type="hidden" name="correction_kind" value={kind} />
-      <input type="hidden" name="evidence_hash" value={evidenceHash} />
-    </>
-  );
-}
-
-/**
- * Best-effort parse of a suggestion's JSON body for a friendlier display.
- * Each field is guarded with its own `typeof === "string"` check -- an
- * enrichment run that ever emits a non-string `description` (an object or
- * array, say) must not crash SSR by handing React a non-renderable child.
- */
-function parseSuggestion(raw: string): {
-  description?: string;
-  descriptionSv?: string;
-  language?: string;
-  rationale?: string;
-} | null {
-  try {
-    const parsed: unknown = JSON.parse(raw);
-    if (!parsed || typeof parsed !== "object") return null;
-    const obj = parsed as Record<string, unknown>;
-    return {
-      description:
-        typeof obj.description === "string" ? obj.description : undefined,
-      // Both languages come from one model call (prompt v3); a suggestion recorded
-      // before that carries only the English half and simply shows nothing here.
-      descriptionSv:
-        typeof obj.description_sv === "string" ? obj.description_sv : undefined,
-      language: typeof obj.language === "string" ? obj.language : undefined,
-      rationale: typeof obj.rationale === "string" ? obj.rationale : undefined,
-    };
-  } catch {
-    // Not JSON (or malformed) -- the raw text still renders below.
-    return null;
-  }
-}
 
 /** Shown when Dagster has not published this company into se_company_info. */
 export function SeCompanyInfoNotPublished({
@@ -302,8 +238,9 @@ function groupArtifactsBySource(
 function PublishedCard({ info }: { info: SeCompanyInfoRow }) {
   // Task 17: one flag, not a source label. "Where the text came from" is the
   // sources list beside it (every source that contributed a candidate); "who
-  // decided" is the correction ids further down. `llm_enhanced` answers only
-  // "did the model write this", which no other column on the row says.
+  // decided" is the Value history card further down, which says it in full.
+  // `llm_enhanced` answers only "did the model write this", which no other
+  // column on the row says.
   const llmEnhanced = Boolean(Number(info.llm_enhanced));
   const sources = info.description_sources.join(", ");
   const sourceLabels = companySourceLabels(info.description_sources);
@@ -437,7 +374,6 @@ function PublishedCard({ info }: { info: SeCompanyInfoRow }) {
                   ],
                   ["Source records", text(info.source_record_uids.join(", "))],
                   ["Evidence set hash", text(info.evidence_set_hash)],
-                  ["Correction ids", text(info.correction_ids.join(", "))],
                   [
                     "Model",
                     `${info.model_provider} · ${info.model_name} · prompt ${info.prompt_version}`,
@@ -553,6 +489,237 @@ function CompanyFactsCard({
   );
 }
 
+/**
+ * "Use this" under a source option: the text on screen, written as this
+ * company's value for the field that text belongs to.
+ *
+ * The record it came from travels with it (`source_ref` = the artifact's
+ * source_record_uid, `source_at` = its observed_at) because Dagster reads
+ * those back as the published row's provenance -- a value copied from SCB
+ * must stay attributable to the SCB row the reviewer actually read, not to
+ * "a reviewer typed this".
+ */
+function UseSourceForm({
+  proposal,
+  shown,
+  busy,
+}: {
+  proposal: DescriptionProposal;
+  shown: DescriptionShown;
+  busy: boolean;
+}) {
+  return (
+    <Form method="post" className="flex items-center gap-2">
+      <input type="hidden" name="intent" value="use-source" />
+      <input type="hidden" name="field" value={shown.field} />
+      <input type="hidden" name="value" value={shown.text} />
+      <input type="hidden" name="source" value={proposal.source} />
+      <input type="hidden" name="source_ref" value={proposal.sourceRecordUid} />
+      <input type="hidden" name="source_at" value={proposal.observedAt} />
+      <Button
+        size="sm"
+        type="submit"
+        disabled={busy}
+        aria-busy={busy}
+        aria-label={`Use the ${proposal.sourceLabel} text as the ${shown.field}`}
+      >
+        Use this
+      </Button>
+    </Form>
+  );
+}
+
+/** One language of the inline editor: the textarea, the original it will be
+ * diffed against, and the box that clears the field. */
+function EditField({
+  field,
+  label,
+  value,
+}: {
+  field: string;
+  label: string;
+  value: string;
+}) {
+  return (
+    <div className="flex flex-col gap-1.5">
+      {/* ALWAYS posted, even empty: the builder skips a field whose original is
+          absent, and reads a present-but-empty one as "no text yet". */}
+      <input type="hidden" name={`original_${field}`} value={value} />
+      <Textarea
+        name={field}
+        defaultValue={value}
+        aria-label={label}
+        placeholder={label}
+        rows={4}
+      />
+      <div className="flex flex-wrap items-center gap-2">
+        <label className="flex items-center gap-2 text-sm">
+          <Checkbox name={`clear_${field}`} value="yes" />
+          <span>Clear</span>
+        </label>
+        <span className="text-xs text-muted-foreground">
+          To remove this text, tick Clear — an emptied box is refused.
+        </span>
+      </div>
+    </div>
+  );
+}
+
+/**
+ * "Edit" under the published Final option, opening the reviewer's own wording
+ * in place. The form stays in the document while it is closed (hidden rather
+ * than unmounted) so a half-written edit survives a tab switch.
+ *
+ * Each language is diffed server-side against the `original_*` it was opened
+ * with: a value is permanent until something later replaces it, so writing an
+ * untouched description back would pin today's computed text for ever.
+ */
+function FinalDescriptionEditor({
+  info,
+  busy,
+}: {
+  info: SeCompanyInfoRow;
+  busy: boolean;
+}) {
+  const [editing, setEditing] = useState(false);
+  return (
+    <div className="flex flex-col gap-3">
+      <div>
+        <Button
+          type="button"
+          size="sm"
+          variant="outline"
+          aria-expanded={editing}
+          onClick={() => setEditing((open) => !open)}
+        >
+          Edit
+        </Button>
+      </div>
+      <div hidden={!editing}>
+        <Form method="post" className="flex max-w-2xl flex-col gap-3">
+          <input type="hidden" name="intent" value="edit" />
+          <EditField
+            field="description"
+            label="English description"
+            value={info.description ?? ""}
+          />
+          <EditField
+            field="description_sv"
+            label="Swedish description"
+            value={info.description_sv ?? ""}
+          />
+          <Input name="note" placeholder="Note (optional)" aria-label="Note" />
+          <div className="flex items-center gap-2">
+            <Button type="submit" size="sm" disabled={busy} aria-busy={busy}>
+              Save
+            </Button>
+            <Button
+              type="button"
+              size="sm"
+              variant="ghost"
+              onClick={() => setEditing(false)}
+            >
+              Cancel
+            </Button>
+          </div>
+        </Form>
+      </div>
+    </div>
+  );
+}
+
+/**
+ * Every value ever decided for this company, newest first, with the release
+ * buttons above them.
+ *
+ * There is no ranking to explain here and no staleness to warn about: the row
+ * marked live is simply the latest one written for its field, and that is what
+ * the next rebuild publishes. A row with no value is a RELEASE -- the field
+ * handed back to whatever the pipeline computes for it -- which is why it says
+ * so in words instead of showing an empty cell.
+ */
+function ValueHistoryCard({
+  rows,
+  busy,
+}: {
+  rows: SeCompanyInfoFieldValueRow[];
+  busy: boolean;
+}) {
+  return (
+    <section className="flex flex-col gap-4">
+      <SectionHeading
+        title="Value history"
+        description="Every value decided for this company, newest first. The live row per field is what the next rebuild publishes."
+      />
+      <Card>
+        <CardContent className="flex flex-col gap-3">
+          <div className="flex flex-wrap items-center gap-3">
+            {SE_INFO_FIELDS.map((field) => (
+              <Form
+                key={field}
+                method="post"
+                className="flex items-center gap-2"
+              >
+                <input type="hidden" name="intent" value="release" />
+                <input type="hidden" name="field" value={field} />
+                <Badge variant="outline">{field}</Badge>
+                <Button
+                  size="sm"
+                  variant="outline"
+                  type="submit"
+                  disabled={busy}
+                  aria-busy={busy}
+                  aria-label={`Release ${field} to the pipeline`}
+                >
+                  Release to pipeline
+                </Button>
+              </Form>
+            ))}
+          </div>
+          <Separator />
+          {rows.length === 0 ? (
+            <span className="text-sm text-muted-foreground">
+              No values decided yet.
+            </span>
+          ) : null}
+          {rows.map((row) => (
+            <div
+              key={row.value_id}
+              className="flex flex-wrap items-center gap-2 rounded-lg border p-2 text-sm"
+            >
+              <Badge variant="outline">{row.field}</Badge>
+              <Badge variant="secondary">{row.source}</Badge>
+              {row.is_live === 1 ? <Badge>live</Badge> : null}
+              {row.value === null ? (
+                <span className="text-muted-foreground italic">
+                  released to pipeline
+                </span>
+              ) : (
+                <span className="max-w-[70ch] whitespace-pre-wrap">
+                  {row.value}
+                </span>
+              )}
+              {row.source_ref === "" ? null : (
+                <code className="font-mono text-xs text-muted-foreground">
+                  {row.source_ref}
+                </code>
+              )}
+              {row.note === "" ? null : (
+                <span className="text-xs text-muted-foreground">
+                  {row.note}
+                </span>
+              )}
+              <span className="ml-auto text-xs text-muted-foreground">
+                {row.decided_by} · {row.created_at}
+              </span>
+            </div>
+          ))}
+        </CardContent>
+      </Card>
+    </section>
+  );
+}
+
 export function SeCompanyInfoReviewWorkspace({
   detail,
   result,
@@ -561,22 +728,9 @@ export function SeCompanyInfoReviewWorkspace({
   result: SeCompanyInfoReviewResult;
 }) {
   const { info, artifacts, suggestions } = detail;
-  // TODO(field-values Task 7): the Ledger card and the live-override refusal
-  // below still speak the deleted company-info correction ledger. Task 7
-  // replaces them with a Value history card over `detail.fieldValues` (whose
-  // rows have a different shape entirely: field/value/source/is_live, no
-  // kinds and no supersession), so until then this page shows no history
-  // rather than a card built from rows that no longer exist.
-  const corrections: LegacyCorrectionRow[] = [];
-  const hash = info.evidence_set_hash;
-  // One click is one ledger row: block every submit while one is in flight.
+  // One click is one decision: block every submit while one is in flight, so a
+  // double-click cannot write two rows whose order then decides the field.
   const busy = useNavigation().state !== "idle";
-  // TODO(field-values Task 7): the approve/reject buttons this disabled speak
-  // the deleted correction ledger, where a live override always beat them.
-  // Field values have no such rule -- the latest row wins, full stop -- so
-  // nothing is refused here any more; Task 7 replaces those buttons with
-  // "Use this suggestion" and this constant goes with them.
-  const overrideRefusal: string | null = null;
   const contributing = new Set(info.description_source_record_uids);
   const groups = groupArtifactsBySource(artifacts);
 
@@ -626,11 +780,24 @@ export function SeCompanyInfoReviewWorkspace({
                   english: info.description ?? "",
                   original: info.description_sv ?? "",
                   originalLanguage: info.description_sv ? "sv" : "",
+                  // Composed by the pipeline out of several artifacts, so it
+                  // names no single record and no single moment.
+                  sourceRecordUid: "",
+                  observedAt: "",
                 },
               ]
             : []),
           ...descriptionProposals(artifacts),
         ]}
+        // A source's text is copied as-is; the published text is the one a
+        // reviewer rewrites, so it gets the editor rather than a copy button.
+        renderAction={(proposal, shown) =>
+          proposal.source === "final" ? (
+            <FinalDescriptionEditor info={info} busy={busy} />
+          ) : (
+            <UseSourceForm proposal={proposal} shown={shown} busy={busy} />
+          )
+        }
       />
 
       <CompanyFactsCard info={info} naceLabel={detail.naceLabel} />
@@ -666,8 +833,9 @@ export function SeCompanyInfoReviewWorkspace({
         <CardHeader>
           <CardTitle>Model suggestions</CardTitle>
           <CardDescription>
-            Newest first. Approve or reject only apply to the newest suggestion;
-            older ones answered evidence this company no longer has.
+            Newest first. Using one writes its wording as this company's value,
+            in both languages when it has both. An older suggestion answered
+            evidence this company no longer has, and can still be used.
           </CardDescription>
         </CardHeader>
         <CardContent className="flex flex-col gap-3">
@@ -677,7 +845,7 @@ export function SeCompanyInfoReviewWorkspace({
             </span>
           ) : null}
           {suggestions.map((suggestion) => {
-            const parsed = parseSuggestion(suggestion.suggestion);
+            const parsed = parseSuggestionText(suggestion.suggestion);
             return (
               <div
                 key={suggestion.suggestion_id}
@@ -726,214 +894,39 @@ export function SeCompanyInfoReviewWorkspace({
                 <p className="mt-2 text-xs text-muted-foreground">
                   prompt {suggestion.prompt_version}
                 </p>
-                {/* Approving/rejecting a suggestion the pipeline no longer
-                    asks for is stale on arrival, so only the newest row gets
-                    decision forms. */}
-                {suggestion.is_newest ? (
-                  <div className="mt-2 flex flex-wrap items-center gap-2">
-                    {(["approve_suggestion", "reject_suggestion"] as const).map(
-                      (kind) => (
-                        <Form
-                          key={kind}
-                          method="post"
-                          className="flex items-center gap-2"
-                        >
-                          <HiddenCommon kind={kind} evidenceHash={hash} />
-                          <input
-                            type="hidden"
-                            name="suggestion_id"
-                            value={suggestion.suggestion_id}
-                          />
-                          <Input
-                            name="reason"
-                            placeholder="Reason"
-                            aria-label="Reason"
-                            required
-                            className="w-56"
-                          />
-                          {kind === "reject_suggestion" ? (
-                            <Input
-                              name="note"
-                              placeholder="Note (optional)"
-                              aria-label="Note"
-                              className="w-48"
-                            />
-                          ) : null}
-                          <Button
-                            size="sm"
-                            variant={
-                              kind === "approve_suggestion"
-                                ? "default"
-                                : "outline"
-                            }
-                            type="submit"
-                            disabled={busy || overrideRefusal !== null}
-                            aria-busy={busy}
-                          >
-                            {kind === "approve_suggestion"
-                              ? "Approve"
-                              : "Reject"}
-                          </Button>
-                        </Form>
-                      ),
-                    )}
-                    {overrideRefusal ? (
-                      <span className="text-xs text-muted-foreground">
-                        {overrideRefusal}
-                      </span>
-                    ) : null}
-                  </div>
-                ) : (
-                  <p className="mt-2 text-xs text-muted-foreground">
-                    Answered evidence this company no longer has. Nothing to
-                    decide until the model is asked again.
-                  </p>
-                )}
+                {/* Every suggestion, not just the newest: a field value is a
+                    value rather than an approval, so the model's older wording
+                    is as usable as its latest -- the "superseded evidence"
+                    badge above says which is which. */}
+                <div className="mt-2">
+                  <Form method="post" className="flex items-center gap-2">
+                    <input
+                      type="hidden"
+                      name="intent"
+                      value="use-suggestion"
+                    />
+                    <input
+                      type="hidden"
+                      name="suggestion_id"
+                      value={suggestion.suggestion_id}
+                    />
+                    <Button
+                      size="sm"
+                      type="submit"
+                      disabled={busy}
+                      aria-busy={busy}
+                    >
+                      Use this suggestion
+                    </Button>
+                  </Form>
+                </div>
               </div>
             );
           })}
         </CardContent>
       </Card>
 
-      <section className="flex flex-col gap-4">
-        <SectionHeading
-          title="Corrections"
-          description="Reviewer decisions for this company. Every one is appended to the ledger with a reason and applied by the next Dagster review run."
-        />
-
-        <Card>
-          <CardHeader>
-            <CardTitle>Override description</CardTitle>
-            <CardDescription>
-              Every decision is appended to the correction ledger with a reason;
-              nothing here rewrites the published row directly. Each language is
-              sent only when you change it — except the English text, which the
-              ledger always requires, so an override decides both. Leave a text
-              as-is and tick its box to clear that language entirely.
-            </CardDescription>
-          </CardHeader>
-          <CardContent>
-            <Form method="post" className="flex max-w-2xl flex-col gap-2">
-              <HiddenCommon kind="override_field" evidenceHash={hash} />
-              {/* Diffed server-side: an untouched description must not enter
-                  the payload, because Dagster replays the correction every
-                  run. */}
-              <input
-                type="hidden"
-                name="original_description"
-                value={info.description ?? ""}
-              />
-              <Textarea
-                name="description"
-                defaultValue={info.description ?? ""}
-                aria-label="English description"
-                placeholder="English description"
-                rows={4}
-              />
-              <label className="flex items-center gap-2 text-sm">
-                <Checkbox name="clear_description" value="yes" />
-                <span>Clear the description</span>
-              </label>
-              <input
-                type="hidden"
-                name="original_description_sv"
-                value={info.description_sv ?? ""}
-              />
-              <Textarea
-                name="description_sv"
-                defaultValue={info.description_sv ?? ""}
-                aria-label="Swedish description"
-                placeholder="Swedish description"
-                rows={4}
-              />
-              <label className="flex items-center gap-2 text-sm">
-                <Checkbox name="clear_description_sv" value="yes" />
-                <span>Clear the Swedish description</span>
-              </label>
-              <Input
-                name="reason"
-                placeholder="Reason"
-                aria-label="Reason"
-                required
-              />
-              <Button type="submit" disabled={busy} aria-busy={busy}>
-                Save override
-              </Button>
-            </Form>
-          </CardContent>
-        </Card>
-
-        <Card>
-          <CardHeader>
-            <CardTitle>Ledger</CardTitle>
-            <CardDescription>
-              Every correction ever recorded for this company, newest first.
-              Undo appends a superseding row instead of deleting one.
-            </CardDescription>
-          </CardHeader>
-          <CardContent className="flex flex-col gap-2">
-            {corrections.length === 0 ? (
-              <span className="text-sm text-muted-foreground">
-                No corrections yet.
-              </span>
-            ) : null}
-            {corrections.map((correction) => (
-              <div
-                key={correction.correction_id}
-                className="flex flex-wrap items-center gap-2 rounded-lg border p-2 text-sm"
-              >
-                <Badge variant={correction.is_current ? "default" : "outline"}>
-                  {correction.correction_kind}
-                </Badge>
-                <code className="font-mono text-xs text-muted-foreground">
-                  {correction.correction_id.slice(0, 8)}
-                </code>
-                {correction.is_stale ? (
-                  <Badge variant="destructive">evidence changed</Badge>
-                ) : null}
-                {correction.is_applied ? (
-                  <Badge variant="secondary">applied</Badge>
-                ) : null}
-                <span>{correction.reason}</span>
-                <span className="text-xs text-muted-foreground">
-                  {correction.decided_by} · {correction.created_at}
-                </span>
-                <code className="font-mono text-xs">{correction.payload}</code>
-                {correction.is_current &&
-                correction.correction_kind !== "undo" ? (
-                  <Form
-                    method="post"
-                    className="ml-auto flex items-center gap-2"
-                  >
-                    <input type="hidden" name="correction_kind" value="undo" />
-                    <input
-                      type="hidden"
-                      name="supersedes_correction_id"
-                      value={correction.correction_id}
-                    />
-                    <Input
-                      name="reason"
-                      placeholder="Why undo"
-                      aria-label="Why undo"
-                      required
-                      className="w-40"
-                    />
-                    <Button
-                      size="sm"
-                      variant="ghost"
-                      type="submit"
-                      disabled={busy}
-                      aria-busy={busy}
-                    >
-                      Undo
-                    </Button>
-                  </Form>
-                ) : null}
-              </div>
-            ))}
-          </CardContent>
-        </Card>
-      </section>
+      <ValueHistoryCard rows={detail.fieldValues} busy={busy} />
     </div>
   );
 }
