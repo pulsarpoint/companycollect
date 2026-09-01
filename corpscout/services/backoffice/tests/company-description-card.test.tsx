@@ -1,6 +1,9 @@
 import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it } from "vitest";
-import { CompanyDescriptionCard } from "~/components/admin/company-description-card";
+import {
+  CompanyDescriptionCard,
+  displayedBlock,
+} from "~/components/admin/company-description-card";
 import { descriptionProposals } from "~/lib/se-company-info-payload";
 
 const ARTIFACTS = [
@@ -104,14 +107,43 @@ describe("CompanyDescriptionCard", () => {
     expect(html).toContain("ESEF filing · fiscal 2023");
     expect(html).toContain("ESEF filing · fiscal 2024");
     expect(html).toContain("Wikidata");
-    // English sits above the original inside a proposal's content.
-    const english = html.indexOf(
-      "Banking business with deposits and lending.",
+  });
+
+  it("shows one language at a time, toggled at the top, with fallback", () => {
+    const html = renderToStaticMarkup(
+      <CompanyDescriptionCard proposals={descriptionProposals(ARTIFACTS)} />,
     );
-    const original = html.indexOf("Bankverksamhet med inlåning och utlåning.");
-    expect(english).toBeGreaterThan(-1);
-    expect(original).toBeGreaterThan(-1);
-    expect(english).toBeLessThan(original);
+
+    // The language toggle sits once at the top of the card.
+    expect(html).toContain('aria-label="Show english descriptions"');
+    expect(html).toContain('aria-label="Show original-language descriptions"');
+    // Default is english: the active SCB option shows only its english text.
+    expect(html).toContain("Banking business with deposits and lending.");
+    expect(html).not.toContain("Bankverksamhet med inlåning och utlåning.");
+  });
+
+  it("falls back to the language a proposal actually has, chip telling the truth", () => {
+    const [scb, esefEn, esefSv, wikidata] = descriptionProposals(ARTIFACTS);
+
+    expect(displayedBlock(scb, "en").chip).toBe("en");
+    expect(displayedBlock(scb, "original")).toMatchObject({
+      text: "Bankverksamhet med inlåning och utlåning.",
+      chip: "sv",
+    });
+    // English-only proposal keeps its english text under "original".
+    expect(displayedBlock(esefEn, "original")).toMatchObject({
+      text: "Handelsbanken is a Swedish credit institution.",
+      chip: "en",
+    });
+    // Original-only proposals keep their text under "en".
+    expect(displayedBlock(esefSv, "en")).toMatchObject({
+      text: "Handelsbanken är en svensk bank.",
+      chip: "sv",
+    });
+    expect(displayedBlock(wikidata, "en")).toMatchObject({
+      text: "Swedish bank",
+      chip: "original",
+    });
   });
 
   it("renders nothing without proposals", () => {
