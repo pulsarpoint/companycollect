@@ -14,7 +14,7 @@ import {
   EMPTY_VALUE,
   text,
 } from "~/components/admin/definition-list";
-import { CompanyDescriptionCarousel } from "~/components/admin/company-description-carousel";
+import { CompanyDescriptionCard } from "~/components/admin/company-description-card";
 import { LegalForm } from "~/components/admin/legal-form";
 import { Badge } from "~/components/ui/badge";
 import { Button, buttonVariants } from "~/components/ui/button";
@@ -504,7 +504,7 @@ export function SeCompanyInfoReviewWorkspace({
         </Alert>
       ) : null}
 
-      <CompanyDescriptionCarousel proposals={descriptionProposals(artifacts)} />
+      <CompanyDescriptionCard proposals={descriptionProposals(artifacts)} />
 
       <PublishedCard info={info} />
 

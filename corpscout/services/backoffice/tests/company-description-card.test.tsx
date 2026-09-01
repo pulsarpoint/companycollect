@@ -1,6 +1,6 @@
 import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it } from "vitest";
-import { CompanyDescriptionCarousel } from "~/components/admin/company-description-carousel";
+import { CompanyDescriptionCard } from "~/components/admin/company-description-card";
 import { descriptionProposals } from "~/lib/se-company-info-payload";
 
 const ARTIFACTS = [
@@ -91,14 +91,20 @@ describe("descriptionProposals", () => {
   });
 });
 
-describe("CompanyDescriptionCarousel", () => {
-  it("renders the first slide with english above the original", () => {
+describe("CompanyDescriptionCard", () => {
+  it("offers one menu option per proposal, disambiguated when a source repeats", () => {
     const html = renderToStaticMarkup(
-      <CompanyDescriptionCarousel proposals={descriptionProposals(ARTIFACTS)} />,
+      <CompanyDescriptionCard proposals={descriptionProposals(ARTIFACTS)} />,
     );
 
     expect(html).toContain("About the company");
-    expect(html).toContain("1 / 4");
+    // Menu options for every source of this company; the repeated ESEF
+    // source carries its meta so both years are selectable.
+    expect(html).toContain("SCB register");
+    expect(html).toContain("ESEF filing · fiscal 2023");
+    expect(html).toContain("ESEF filing · fiscal 2024");
+    expect(html).toContain("Wikidata");
+    // English sits above the original inside a proposal's content.
     const english = html.indexOf(
       "Banking business with deposits and lending.",
     );
@@ -106,13 +112,11 @@ describe("CompanyDescriptionCarousel", () => {
     expect(english).toBeGreaterThan(-1);
     expect(original).toBeGreaterThan(-1);
     expect(english).toBeLessThan(original);
-    // Only the first slide is visible in static markup.
-    expect(html).not.toContain("Swedish bank");
   });
 
   it("renders nothing without proposals", () => {
     const html = renderToStaticMarkup(
-      <CompanyDescriptionCarousel proposals={[]} />,
+      <CompanyDescriptionCard proposals={[]} />,
     );
     expect(html).toBe("");
   });
