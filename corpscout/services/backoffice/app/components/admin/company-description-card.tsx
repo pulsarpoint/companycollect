@@ -33,7 +33,11 @@ export function displayedBlock(
   };
   const preferred = language === "en" ? english : original;
   const fallback = language === "en" ? original : english;
-  return preferred.text !== "" ? preferred : fallback;
+  // Only fall back to text that exists: a proposal with nothing on either side
+  // (a published row with no description yet) keeps the language actually
+  // asked for, rather than reporting the other empty half's chip and side.
+  if (preferred.text === "" && fallback.text !== "") return fallback;
+  return preferred;
 }
 
 /** Which published column the block on screen belongs to. The original block
@@ -153,9 +157,18 @@ export function CompanyDescriptionCard({
                     {proposal.meta}
                     <Badge variant="outline">{block.chip}</Badge>
                   </CardTitle>
-                  <p className="max-w-[90ch] whitespace-pre-wrap text-sm leading-6">
-                    {block.text}
-                  </p>
+                  {/* An option with nothing to show is still worth opening:
+                      its action slot (an editor, say) is how a reviewer gives
+                      it text in the first place. */}
+                  {block.text === "" ? (
+                    <p className="text-sm text-muted-foreground italic">
+                      No description published.
+                    </p>
+                  ) : (
+                    <p className="max-w-[90ch] whitespace-pre-wrap text-sm leading-6">
+                      {block.text}
+                    </p>
+                  )}
                   {renderAction?.(proposal, {
                     field: shownField(proposal, block.side),
                     text: block.text,

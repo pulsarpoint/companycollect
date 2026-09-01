@@ -178,6 +178,39 @@ describe("CompanyDescriptionCard", () => {
       toBeLessThan(html.indexOf('data-action="scb:'));
   });
 
+  it("keeps an option with no text on either side, placeheld and still actionable", () => {
+    // A page can offer an option that has nothing to show yet (a published row
+    // with no description at all): the option must still open, so its action
+    // slot — an editor, say — stays reachable.
+    const empty = {
+      key: "final:llm",
+      source: "final",
+      sourceLabel: "Final (LLM)",
+      meta: "published",
+      english: "",
+      original: "",
+      originalLanguage: "",
+      sourceRecordUid: "",
+      observedAt: "",
+    };
+    const html = renderToStaticMarkup(
+      <CompanyDescriptionCard
+        proposals={[empty]}
+        renderAction={() => <span data-action="edit" />}
+      />,
+    );
+
+    expect(html).toContain("No description published.");
+    expect(html).toContain('data-action="edit"');
+    // Nothing to fall back to, so the language actually asked for is kept
+    // rather than flipped to the other empty side.
+    expect(displayedBlock(empty, "en")).toMatchObject({
+      text: "",
+      chip: "en",
+      side: "english",
+    });
+  });
+
   it("renders nothing without proposals", () => {
     const html = renderToStaticMarkup(
       <CompanyDescriptionCard proposals={[]} />,

@@ -503,11 +503,24 @@ function UseSourceForm({
   proposal,
   shown,
   busy,
+  repeats,
 }: {
   proposal: DescriptionProposal;
   shown: DescriptionShown;
   busy: boolean;
+  /** Does this source offer more than one option (ESEF, one filing per year)?
+   * Then the meta line is what tells them apart in the menu, so it has to tell
+   * their buttons apart too. */
+  repeats: boolean;
 }) {
+  // The column name is not a name a screen reader should read out, and every
+  // option's button says the same two words, so the accessible name carries
+  // the source, the option and the language the click would write.
+  const fieldName =
+    shown.field === "description_sv" ? "Swedish description" : "English description";
+  const sourceName = repeats
+    ? `${proposal.sourceLabel} (${proposal.meta})`
+    : proposal.sourceLabel;
   return (
     <Form method="post" className="flex items-center gap-2">
       <input type="hidden" name="intent" value="use-source" />
@@ -521,7 +534,7 @@ function UseSourceForm({
         type="submit"
         disabled={busy}
         aria-busy={busy}
-        aria-label={`Use the ${proposal.sourceLabel} text as the ${shown.field}`}
+        aria-label={`Use the ${sourceName} text as the ${fieldName}`}
       >
         Use this
       </Button>
@@ -733,6 +746,40 @@ export function SeCompanyInfoReviewWorkspace({
   const busy = useNavigation().state !== "idle";
   const contributing = new Set(info.description_source_record_uids);
   const groups = groupArtifactsBySource(artifacts);
+  const proposals = [
+    // The published row is the LLM's final composition (stored in
+    // corpscout.se_company_info); it leads the menu so reviewers see the
+    // outcome before the per-source raw material.
+    //
+    // Offered for EVERY published row, including one with no description at
+    // all: that company is precisely the one a reviewer opens this page to
+    // fix, and the option is where its editor lives. The card place-holds the
+    // empty text.
+    {
+      key: "final:llm",
+      source: "final",
+      sourceLabel: "Final (LLM)",
+      meta: "published",
+      english: info.description ?? "",
+      original: info.description_sv ?? "",
+      originalLanguage: info.description_sv ? "sv" : "",
+      // Composed by the pipeline out of several artifacts, so it names no
+      // single record and no single moment.
+      sourceRecordUid: "",
+      observedAt: "",
+    },
+    ...descriptionProposals(artifacts),
+  ];
+  // A source with several options (ESEF files once a year) needs its meta line
+  // in each button's accessible name, exactly as the menu needs it in each
+  // option's label.
+  const sourceCounts = new Map<string, number>();
+  for (const proposal of proposals) {
+    sourceCounts.set(
+      proposal.source,
+      (sourceCounts.get(proposal.source) ?? 0) + 1,
+    );
+  }
 
   return (
     // No header of its own: Task 18 moved the company identity, the links and
@@ -766,36 +813,19 @@ export function SeCompanyInfoReviewWorkspace({
       ) : null}
 
       <CompanyDescriptionCard
-        proposals={[
-          // The published row is the LLM's final composition (stored in
-          // corpscout.se_company_info); it leads the menu so reviewers see
-          // the outcome before the per-source raw material.
-          ...(info.description || info.description_sv
-            ? [
-                {
-                  key: "final:llm",
-                  source: "final",
-                  sourceLabel: "Final (LLM)",
-                  meta: "published",
-                  english: info.description ?? "",
-                  original: info.description_sv ?? "",
-                  originalLanguage: info.description_sv ? "sv" : "",
-                  // Composed by the pipeline out of several artifacts, so it
-                  // names no single record and no single moment.
-                  sourceRecordUid: "",
-                  observedAt: "",
-                },
-              ]
-            : []),
-          ...descriptionProposals(artifacts),
-        ]}
+        proposals={proposals}
         // A source's text is copied as-is; the published text is the one a
         // reviewer rewrites, so it gets the editor rather than a copy button.
         renderAction={(proposal, shown) =>
           proposal.source === "final" ? (
             <FinalDescriptionEditor info={info} busy={busy} />
           ) : (
-            <UseSourceForm proposal={proposal} shown={shown} busy={busy} />
+            <UseSourceForm
+              proposal={proposal}
+              shown={shown}
+              busy={busy}
+              repeats={(sourceCounts.get(proposal.source) ?? 0) > 1}
+            />
           )
         }
       />
@@ -913,8 +943,12 @@ export function SeCompanyInfoReviewWorkspace({
                     <Button
                       size="sm"
                       type="submit"
-                      disabled={busy}
+                      // A body the model left without a description is refused
+                      // server-side ("That suggestion has no description.");
+                      // saying so up front costs the reviewer no round trip.
+                      disabled={busy || !parsed?.description}
                       aria-busy={busy}
+                      aria-label={`Use suggestion ${suggestion.suggestion_id.slice(0, 8)}`}
                     >
                       Use this suggestion
                     </Button>

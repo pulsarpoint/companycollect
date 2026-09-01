@@ -296,6 +296,23 @@ describe("company info review page", () => {
     );
   });
 
+  // The company with nothing published is exactly the one a reviewer opens the
+  // page to fix, so the editor may not depend on there being text already: the
+  // Final option is offered for every published row, empty or not.
+  it("keeps the editor reachable on a company with no published description at all", () => {
+    const html = render({
+      ...detail,
+      info: { ...detail.info, description: null, description_sv: null },
+    });
+
+    expect(html).toContain("Final (LLM)");
+    expect(html).toContain("No description published.");
+    expect(html).toContain(">Edit<");
+    const editForm = formContaining(html, 'name="intent" value="edit"');
+    expect(editForm).toContain('name="original_description" value=""');
+    expect(editForm).toContain('name="original_description_sv" value=""');
+  });
+
   it("says so when a company has no Swedish text at all", () => {
     const html = render({
       ...detail,
@@ -669,6 +686,61 @@ describe("company info review page", () => {
     expect(superseded).toContain("superseded evidence");
     expect(superseded).toContain("Use this suggestion");
     expect(superseded).toContain("Alpha builds payment software.");
+  });
+
+  // Every button on this page is one of many identical-looking ones, so each
+  // needs an accessible name that says which text it writes where.
+  it("names each Use-this and Use-this-suggestion button by what it decides", () => {
+    const html = render();
+    expect(html).toContain(
+      'aria-label="Use the SCB register text as the English description"',
+    );
+    expect(html).toContain(
+      `aria-label="Use suggestion ${SUGGESTION_ID.slice(0, 8)}"`,
+    );
+
+    // A repeated source's options are told apart by the meta line the menu
+    // disambiguates them with, and the Swedish half is named as such.
+    const twoFilings = render({
+      ...detail,
+      artifacts: [
+        detail.artifacts[2],
+        {
+          ...detail.artifacts[2],
+          source_record_uid: "esef:doc-2",
+          payload: {
+            ...detail.artifacts[2].payload,
+            fiscal_year: "2024",
+            company_description: "Alpha levererar betalinfrastruktur.",
+            description_language: "sv",
+          },
+        },
+      ],
+    });
+    expect(twoFilings).toContain(
+      'aria-label="Use the ESEF filing (fiscal 2025) text as the English description"',
+    );
+    expect(twoFilings).toContain(
+      'aria-label="Use the ESEF filing (fiscal 2024) text as the Swedish description"',
+    );
+  });
+
+  it("does not offer a suggestion the model left without a description", () => {
+    // The server refuses this one ("That suggestion has no description."); the
+    // button says so first rather than spending a round trip on it.
+    const html = render({
+      ...detail,
+      suggestions: [
+        { ...detail.suggestions[0], suggestion: '{"language":"en"}' },
+      ],
+    });
+    expect(
+      formContaining(html, 'name="intent" value="use-suggestion"'),
+    ).toContain('disabled=""');
+    // ...and a usable one is not disabled.
+    expect(
+      formContaining(render(), 'name="intent" value="use-suggestion"'),
+    ).not.toContain('disabled=""');
   });
 
   it("shows the value history, its live row and its releases, with a Release button per field", () => {
