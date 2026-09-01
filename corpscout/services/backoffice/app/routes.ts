@@ -88,6 +88,14 @@ export default [
   // Not a page: streams technology-catalog icons from the object store. The
   // browser only ever sees this URL — bucket and credentials stay server-side.
   route("icons/tech/:slug", "routes/tech-icon.ts"),
+  // Codex-thread resource APIs (JSON; no admin chrome). The demo subpage uses
+  // the same service functions through its own actions.
+  route("admin/api/codex/threads", "routes/admin-api-codex-threads.ts"),
+  route("admin/api/codex/threads/:threadId", "routes/admin-api-codex-thread.ts"),
+  route(
+    "admin/api/codex/threads/:threadId/messages",
+    "routes/admin-api-codex-thread-messages.ts",
+  ),
   route("admin", "routes/admin-layout.tsx", [
     index("routes/admin-index.tsx"),
     route("esef", "routes/admin-esef.tsx"),
