@@ -104,6 +104,11 @@ from dagster_v3.defs.finland_xbrl.assets.parity import (
     build_finland_parity_results,
     fi_xbrl_parity,
 )
+from dagster_v3.defs.finland_xbrl.assets.taxonomy_dictionary import (
+    FI_TAXONOMY_PACKAGE_KEY,
+    fi_taxonomy_dictionary_clickhouse,
+    finland_taxonomy_package_s3,
+)
 from dagster_v3.defs.finland_xbrl.assets.unified_publish import (
     fi_xbrl_unified_clickhouse,
 )
@@ -126,6 +131,7 @@ __all__ = [
     "DEFAULT_XBRL_RETRY_INITIAL_DELAY_SECONDS",
     "DEFAULT_XBRL_RETRY_MAX_DELAY_SECONDS",
     "DATA_SNAPSHOT_CLICKHOUSE_TABLE",
+    "FI_TAXONOMY_PACKAGE_KEY",
     "FINLAND_EXPLAINED_RULES",
     "XBRL_BASE_URL",
     "XBRL_BUCKET",
@@ -166,6 +172,7 @@ __all__ = [
     "export_data_snapshot_duckdb_to_clickhouse",
     "fetch_xml_snapshot_report_rows",
     "fi_financial_metrics_ch",
+    "fi_taxonomy_dictionary_clickhouse",
     "fi_xbrl_parity",
     "fi_xbrl_parsed_clickhouse",
     "fi_xbrl_taxonomy_codes_ch",
@@ -175,6 +182,7 @@ __all__ = [
     "finland_xbrl_incremental_schedule",
     "finland_xbrl_publish_job",
     "finland_xbrl_xml_snapshot_job",
+    "finland_taxonomy_package_s3",
     "financial_data_daily_key",
     "list_xml_parse_duckdb_paths",
     "list_xml_unified_duckdb_paths",
@@ -223,6 +231,8 @@ defs = dg.Definitions(
         fi_financial_metrics_ch,
         fi_xbrl_unified_clickhouse,
         fi_xbrl_parity,
+        finland_taxonomy_package_s3,
+        fi_taxonomy_dictionary_clickhouse,
     ],
     jobs=[
         finland_xbrl_data_snapshot_job,
