@@ -63,8 +63,12 @@ _NON_SPECIFIC_PERSON_ROLES = frozenset(
 class EsefLlmEnrichmentConfig(dg.Config):
     model_config = ConfigDict(str_strip_whitespace=True)
 
-    provider: str = Field(default="deepseek", min_length=1, max_length=120)
-    model: str = Field(default="deepseek-v4-flash", min_length=1, max_length=200)
+    # Deliberately no defaults: a bare "Materialize" from the Dagster UI must
+    # fail run-config validation rather than silently spend on the default
+    # provider. Every launcher (UI launchpad, backoffice, GraphQL) has to name
+    # the provider and model explicitly.
+    provider: str = Field(min_length=1, max_length=120)
+    model: str = Field(min_length=1, max_length=200)
     base_url: str = Field(
         default="https://api.deepseek.com",
         min_length=1,

@@ -4,6 +4,7 @@ from hashlib import sha256
 from types import SimpleNamespace
 from typing import Any
 
+import pydantic
 import pytest
 from dagster import AssetKey
 
@@ -538,8 +539,23 @@ def test_esef_runtime_profile_uses_only_host_api_key(
         build_esef_llm_client(config)
 
 
+def test_esef_enrichment_config_requires_explicit_provider_and_model() -> None:
+    # No silent-default LLM: a bare UI "Materialize" must fail run-config
+    # validation instead of quietly running enrichment on deepseek.
+    with pytest.raises(pydantic.ValidationError) as exc_info:
+        EsefLlmEnrichmentConfig()
+    # dagster's Config feeds None for absent fields, so the error type is
+    # string_type rather than pydantic's plain "missing" — assert on the locs.
+    fields_with_errors = {error["loc"][0] for error in exc_info.value.errors()}
+    assert fields_with_errors == {"provider", "model"}
+
+
 def test_esef_runtime_rejects_prompt_version_not_deployed_here() -> None:
-    config = EsefLlmEnrichmentConfig(prompt_version="esef-company-enrichment-v99")
+    config = EsefLlmEnrichmentConfig(
+        provider="deepseek",
+        model="deepseek-v4-flash",
+        prompt_version="esef-company-enrichment-v99",
+    )
 
     with pytest.raises(ValueError, match="this deployment provides"):
         build_esef_llm_client(config)
