@@ -22,6 +22,15 @@ OBSERVATIONS_TABLE = "job_ad_observations"
 LOCATIONS_TABLE = "job_ad_location_versions"
 ENRICHMENTS_TABLE = "job_ad_enrichment_versions"
 
+CLICKHOUSE_DATABASE = "corpscout"
+CLICKHOUSE_SNAPSHOTS_TABLE = "se_jobtech_links_snapshots"
+CLICKHOUSE_VERSIONS_TABLE = "se_jobtech_links_job_ad_versions"
+CLICKHOUSE_OBSERVATIONS_TABLE = "se_jobtech_links_job_ad_observations"
+CLICKHOUSE_LOCATIONS_TABLE = "se_jobtech_links_job_ad_location_versions"
+CLICKHOUSE_ENRICHMENTS_TABLE = "se_jobtech_links_job_ad_enrichment_versions"
+CLICKHOUSE_INTERVALS_TABLE = "se_jobtech_links_job_ad_active_intervals"
+CLICKHOUSE_JOB_ADS_TABLE = "se_jobtech_links_job_ads"
+
 SNAPSHOT_COLUMNS = (
     "snapshot_uid",
     "snapshot_date",
@@ -123,6 +132,78 @@ ENRICHMENT_COLUMNS = (
     "version_at",
     "source_run_id",
     "ingested_at",
+)
+JOB_AD_COLUMNS = (
+    "source_job_ad_uid",
+    "version_uid",
+    "provider",
+    "source_identifier",
+    "jobtech_links_id",
+    "source_hashsum",
+    "version_at",
+    "interval_number",
+    "status",
+    "active_from",
+    "active_to",
+    "active_to_basis",
+    "is_end_estimated",
+    "source_first_seen_at",
+    "publication_at",
+    "display_publication_at",
+    "application_deadline",
+    "is_valid",
+    "canonical_url",
+    "headline_original",
+    "brief_description_original",
+    "detected_language",
+    "employer_name",
+    "employer_url",
+    "employer_logo_url",
+    "employment_types",
+    "workplace_type",
+    "number_of_vacancies",
+    "occupation_concept_id",
+    "occupation_label_original",
+    "ssyk_level4_code",
+    "snapshot_uid",
+    "snapshot_date",
+    "observed_at",
+    "source_run_id",
+    "resolved_against_snapshot_date",
+    "resolved_at",
+)
+
+CLICKHOUSE_APPEND_TABLES = (
+    (
+        SNAPSHOTS_TABLE,
+        CLICKHOUSE_SNAPSHOTS_TABLE,
+        SNAPSHOT_COLUMNS,
+        "snapshot_uid",
+    ),
+    (
+        VERSIONS_TABLE,
+        CLICKHOUSE_VERSIONS_TABLE,
+        VERSION_COLUMNS,
+        "version_uid",
+    ),
+    (
+        OBSERVATIONS_TABLE,
+        CLICKHOUSE_OBSERVATIONS_TABLE,
+        OBSERVATION_COLUMNS,
+        "observation_uid",
+    ),
+    (
+        LOCATIONS_TABLE,
+        CLICKHOUSE_LOCATIONS_TABLE,
+        LOCATION_COLUMNS,
+        "location_uid",
+    ),
+    (
+        ENRICHMENTS_TABLE,
+        CLICKHOUSE_ENRICHMENTS_TABLE,
+        ENRICHMENT_COLUMNS,
+        "enrichment_uid",
+    ),
 )
 
 

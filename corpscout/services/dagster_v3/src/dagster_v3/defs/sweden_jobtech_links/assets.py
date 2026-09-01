@@ -4,6 +4,7 @@ from email.utils import parsedate_to_datetime
 from pathlib import Path
 
 import dagster as dg
+from dagster_clickhouse import ClickhouseResource
 
 from dagster_v3.defs.common.duckdb_runtime import apply_duckdb_runtime_settings
 from dagster_v3.defs.common.partition_duckdb import (
@@ -12,6 +13,10 @@ from dagster_v3.defs.common.partition_duckdb import (
 )
 from dagster_v3.defs.common.resources import ObjectStoreResource
 from dagster_v3.defs.sweden_jobtech_links import tables
+from dagster_v3.defs.sweden_jobtech_links.clickhouse import (
+    append_normalized_partition_to_clickhouse,
+    replace_job_ads_from_observations,
+)
 from dagster_v3.defs.sweden_jobtech_links.normalize import (
     LoadedSnapshot,
     SnapshotProvenance,
@@ -36,6 +41,14 @@ from dagster_v3.defs.sweden_jobtech_links.source import (
 
 BACKFILL_POLICY = dg.BackfillPolicy.multi_run(max_partitions_per_run=1)
 DUCKDB_POOL = "sweden_jobtech_links_duckdb"
+CLICKHOUSE_TABLES = [
+    f"{tables.CLICKHOUSE_DATABASE}.{target_table}"
+    for _, target_table, _, _ in tables.CLICKHOUSE_APPEND_TABLES
+]
+CLICKHOUSE_SERVING_TABLES = [
+    f"{tables.CLICKHOUSE_DATABASE}.{tables.CLICKHOUSE_INTERVALS_TABLE}",
+    f"{tables.CLICKHOUSE_DATABASE}.{tables.CLICKHOUSE_JOB_ADS_TABLE}",
+]
 
 
 class SnapshotPartitionConfig(dg.Config):
@@ -210,6 +223,38 @@ def _materialize_normalized_duckdb(
     )
 
 
+def _materialize_clickhouse(
+    *,
+    context: dg.AssetExecutionContext,
+    clickhouse: ClickhouseResource,
+    partition_kind: PartitionKind,
+) -> dg.MaterializeResult:
+    partition_key = context.partition_key
+    partition_path = tables.partition_duckdb_path(partition_key)
+    with require_partition_duckdb(
+        source=tables.SOURCE_SLUG, partition=partition_key
+    ) as connection:
+        apply_duckdb_runtime_settings(
+            connection,
+            default_temp_directory=partition_path.parent / "duckdb_tmp",
+        )
+        counts = append_normalized_partition_to_clickhouse(
+            duckdb_connection=connection,
+            clickhouse=clickhouse,
+            log=context.log.info,
+        )
+    return dg.MaterializeResult(
+        metadata={
+            **counts,
+            "partition_kind": partition_kind,
+            "partition_key": partition_key,
+            "duckdb_path": str(partition_path),
+            "clickhouse_database": tables.CLICKHOUSE_DATABASE,
+            "clickhouse_tables": CLICKHOUSE_TABLES,
+        }
+    )
+
+
 @dg.asset(
     partitions_def=HISTORICAL_PARTITIONS,
     backfill_policy=BACKFILL_POLICY,
@@ -321,6 +366,30 @@ def sweden_jobtech_links_historical_normalized_duckdb(
 
 
 @dg.asset(
+    deps=[dg.AssetKey("sweden_jobtech_links_historical_normalized_duckdb")],
+    partitions_def=HISTORICAL_PARTITIONS,
+    backfill_policy=BACKFILL_POLICY,
+    group_name=tables.GROUP_NAME,
+    kinds={"python", "duckdb", "clickhouse"},
+    pool=DUCKDB_POOL,
+    metadata={"tables": CLICKHOUSE_TABLES},
+    description=(
+        "Idempotently appends one historical JobTech Links year from its "
+        "partition-local DuckDB file into migration-owned ClickHouse tables."
+    ),
+)
+def sweden_jobtech_links_historical_clickhouse(
+    context: dg.AssetExecutionContext,
+    clickhouse: ClickhouseResource,
+) -> dg.MaterializeResult:
+    return _materialize_clickhouse(
+        context=context,
+        clickhouse=clickhouse,
+        partition_kind="year",
+    )
+
+
+@dg.asset(
     deps=[dg.AssetKey("sweden_jobtech_links_2026_month_snapshot_s3")],
     partitions_def=MONTHLY_2026_PARTITIONS,
     backfill_policy=BACKFILL_POLICY,
@@ -359,6 +428,30 @@ def sweden_jobtech_links_2026_month_normalized_duckdb(
     context: dg.AssetExecutionContext,
 ) -> dg.MaterializeResult:
     return _materialize_normalized_duckdb(context=context, partition_kind="month")
+
+
+@dg.asset(
+    deps=[dg.AssetKey("sweden_jobtech_links_2026_month_normalized_duckdb")],
+    partitions_def=MONTHLY_2026_PARTITIONS,
+    backfill_policy=BACKFILL_POLICY,
+    group_name=tables.GROUP_NAME,
+    kinds={"python", "duckdb", "clickhouse"},
+    pool=DUCKDB_POOL,
+    metadata={"tables": CLICKHOUSE_TABLES},
+    description=(
+        "Idempotently appends one fixed 2026 month from partition-local DuckDB "
+        "into migration-owned JobTech Links ClickHouse tables."
+    ),
+)
+def sweden_jobtech_links_2026_month_clickhouse(
+    context: dg.AssetExecutionContext,
+    clickhouse: ClickhouseResource,
+) -> dg.MaterializeResult:
+    return _materialize_clickhouse(
+        context=context,
+        clickhouse=clickhouse,
+        partition_kind="month",
+    )
 
 
 @dg.asset(
@@ -402,6 +495,62 @@ def sweden_jobtech_links_daily_normalized_duckdb(
     return _materialize_normalized_duckdb(context=context, partition_kind="day")
 
 
+@dg.asset(
+    deps=[dg.AssetKey("sweden_jobtech_links_daily_normalized_duckdb")],
+    partitions_def=DAILY_PARTITIONS,
+    backfill_policy=BACKFILL_POLICY,
+    group_name=tables.GROUP_NAME,
+    kinds={"python", "duckdb", "clickhouse"},
+    pool=DUCKDB_POOL,
+    metadata={"tables": CLICKHOUSE_TABLES},
+    description=(
+        "Idempotently appends one daily partition from DuckDB into the "
+        "migration-owned JobTech Links ClickHouse tables."
+    ),
+)
+def sweden_jobtech_links_daily_clickhouse(
+    context: dg.AssetExecutionContext,
+    clickhouse: ClickhouseResource,
+) -> dg.MaterializeResult:
+    return _materialize_clickhouse(
+        context=context,
+        clickhouse=clickhouse,
+        partition_kind="day",
+    )
+
+
+@dg.asset(
+    deps=[
+        dg.AssetKey("sweden_jobtech_links_historical_clickhouse"),
+        dg.AssetKey("sweden_jobtech_links_2026_month_clickhouse"),
+        dg.AssetKey("sweden_jobtech_links_daily_clickhouse"),
+    ],
+    group_name=tables.GROUP_NAME,
+    kinds={"python", "sql", "clickhouse"},
+    metadata={"tables": CLICKHOUSE_SERVING_TABLES},
+    description=(
+        "Globally resolves snapshot observations into active intervals and "
+        "atomically publishes one JobTech Links row per job with an active or "
+        "expired status. Source deadlines remain evidence, not lifecycle events."
+    ),
+)
+def sweden_jobtech_links_job_ads_clickhouse(
+    context: dg.AssetExecutionContext,
+    clickhouse: ClickhouseResource,
+) -> dg.MaterializeResult:
+    counts = replace_job_ads_from_observations(
+        clickhouse=clickhouse,
+        log=context.log.info,
+    )
+    return dg.MaterializeResult(
+        metadata={
+            **counts,
+            "clickhouse_database": tables.CLICKHOUSE_DATABASE,
+            "clickhouse_tables": CLICKHOUSE_SERVING_TABLES,
+        }
+    )
+
+
 sweden_jobtech_links_historical_snapshot_job = dg.define_asset_job(
     "sweden_jobtech_links_historical_snapshot_job",
     selection=dg.AssetSelection.assets(sweden_jobtech_links_historical_snapshot_s3),
@@ -437,6 +586,37 @@ sweden_jobtech_links_daily_duckdb_job = dg.define_asset_job(
         sweden_jobtech_links_daily_raw_duckdb,
         sweden_jobtech_links_daily_normalized_duckdb,
     ),
+)
+sweden_jobtech_links_historical_clickhouse_job = dg.define_asset_job(
+    "sweden_jobtech_links_historical_clickhouse_job",
+    selection=dg.AssetSelection.assets(
+        sweden_jobtech_links_historical_snapshot_s3,
+        sweden_jobtech_links_historical_raw_duckdb,
+        sweden_jobtech_links_historical_normalized_duckdb,
+        sweden_jobtech_links_historical_clickhouse,
+    ),
+)
+sweden_jobtech_links_2026_month_clickhouse_job = dg.define_asset_job(
+    "sweden_jobtech_links_2026_month_clickhouse_job",
+    selection=dg.AssetSelection.assets(
+        sweden_jobtech_links_2026_month_snapshot_s3,
+        sweden_jobtech_links_2026_month_raw_duckdb,
+        sweden_jobtech_links_2026_month_normalized_duckdb,
+        sweden_jobtech_links_2026_month_clickhouse,
+    ),
+)
+sweden_jobtech_links_daily_clickhouse_job = dg.define_asset_job(
+    "sweden_jobtech_links_daily_clickhouse_job",
+    selection=dg.AssetSelection.assets(
+        sweden_jobtech_links_daily_snapshot_s3,
+        sweden_jobtech_links_daily_raw_duckdb,
+        sweden_jobtech_links_daily_normalized_duckdb,
+        sweden_jobtech_links_daily_clickhouse,
+    ),
+)
+sweden_jobtech_links_job_ads_job = dg.define_asset_job(
+    "sweden_jobtech_links_job_ads_job",
+    selection=dg.AssetSelection.assets(sweden_jobtech_links_job_ads_clickhouse),
 )
 
 
@@ -476,12 +656,16 @@ defs = dg.Definitions(
         sweden_jobtech_links_historical_snapshot_s3,
         sweden_jobtech_links_historical_raw_duckdb,
         sweden_jobtech_links_historical_normalized_duckdb,
+        sweden_jobtech_links_historical_clickhouse,
         sweden_jobtech_links_2026_month_snapshot_s3,
         sweden_jobtech_links_2026_month_raw_duckdb,
         sweden_jobtech_links_2026_month_normalized_duckdb,
+        sweden_jobtech_links_2026_month_clickhouse,
         sweden_jobtech_links_daily_snapshot_s3,
         sweden_jobtech_links_daily_raw_duckdb,
         sweden_jobtech_links_daily_normalized_duckdb,
+        sweden_jobtech_links_daily_clickhouse,
+        sweden_jobtech_links_job_ads_clickhouse,
     ],
     jobs=[
         sweden_jobtech_links_historical_snapshot_job,
@@ -490,6 +674,10 @@ defs = dg.Definitions(
         sweden_jobtech_links_historical_duckdb_job,
         sweden_jobtech_links_2026_month_duckdb_job,
         sweden_jobtech_links_daily_duckdb_job,
+        sweden_jobtech_links_historical_clickhouse_job,
+        sweden_jobtech_links_2026_month_clickhouse_job,
+        sweden_jobtech_links_daily_clickhouse_job,
+        sweden_jobtech_links_job_ads_job,
     ],
     sensors=[sweden_jobtech_links_daily_catalog_sensor],
     resources={

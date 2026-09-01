@@ -15,7 +15,7 @@ from dagster import (
 
 from dagster_v3.defs.sweden_jobtech_links import source, tables
 from dagster_v3.defs.sweden_jobtech_links import assets as assets_module
-from dagster_v3.defs.sweden_jobtech_links.assets import defs
+from dagster_v3.defs.sweden_jobtech_links.assets import defs as source_defs
 from dagster_v3.defs.sweden_jobtech_links.partitions import (
     DAILY_PARTITIONS,
     HISTORICAL_PARTITIONS,
@@ -28,6 +28,11 @@ from dagster_v3.defs.sweden_jobtech_links.source import (
     extract_snapshot_jsonl_archive,
     latest_snapshot_manifest,
     sync_snapshot_partition,
+)
+
+defs = dg.Definitions.merge(
+    source_defs,
+    dg.Definitions(resources={"clickhouse": dg.ResourceDefinition.mock_resource()}),
 )
 
 
@@ -237,6 +242,10 @@ def test_snapshot_assets_use_three_fixed_partition_definitions() -> None:
         "sweden_jobtech_links_historical_duckdb_job",
         "sweden_jobtech_links_2026_month_duckdb_job",
         "sweden_jobtech_links_daily_duckdb_job",
+        "sweden_jobtech_links_historical_clickhouse_job",
+        "sweden_jobtech_links_2026_month_clickhouse_job",
+        "sweden_jobtech_links_daily_clickhouse_job",
+        "sweden_jobtech_links_job_ads_job",
     }
     assert {sensor.name for sensor in defs.sensors} == {
         "sweden_jobtech_links_daily_catalog_sensor"
@@ -244,42 +253,68 @@ def test_snapshot_assets_use_three_fixed_partition_definitions() -> None:
     assert defs.sensors[0].default_status == dg.DefaultSensorStatus.STOPPED
 
 
-def test_each_snapshot_family_has_raw_and_normalized_duckdb_assets() -> None:
+def test_each_snapshot_family_has_s3_duckdb_and_clickhouse_assets() -> None:
     graph = defs.resolve_asset_graph()
     families = (
         (
             "sweden_jobtech_links_historical_snapshot_s3",
             "sweden_jobtech_links_historical_raw_duckdb",
             "sweden_jobtech_links_historical_normalized_duckdb",
+            "sweden_jobtech_links_historical_clickhouse",
             HISTORICAL_PARTITIONS,
         ),
         (
             "sweden_jobtech_links_2026_month_snapshot_s3",
             "sweden_jobtech_links_2026_month_raw_duckdb",
             "sweden_jobtech_links_2026_month_normalized_duckdb",
+            "sweden_jobtech_links_2026_month_clickhouse",
             MONTHLY_2026_PARTITIONS,
         ),
         (
             "sweden_jobtech_links_daily_snapshot_s3",
             "sweden_jobtech_links_daily_raw_duckdb",
             "sweden_jobtech_links_daily_normalized_duckdb",
+            "sweden_jobtech_links_daily_clickhouse",
             DAILY_PARTITIONS,
         ),
     )
 
-    for snapshot_name, raw_name, normalized_name, partitions_def in families:
+    for (
+        snapshot_name,
+        raw_name,
+        normalized_name,
+        clickhouse_name,
+        partitions_def,
+    ) in families:
         snapshot = graph.get(AssetKey(snapshot_name))
         raw = graph.get(AssetKey(raw_name))
         normalized = graph.get(AssetKey(normalized_name))
+        clickhouse = graph.get(AssetKey(clickhouse_name))
 
         assert raw.partitions_def is partitions_def
         assert normalized.partitions_def is partitions_def
+        assert clickhouse.partitions_def is partitions_def
         assert raw.parent_keys == {snapshot.key}
         assert normalized.parent_keys == {raw.key}
+        assert clickhouse.parent_keys == {normalized.key}
         assert raw.backfill_policy is not None
         assert raw.backfill_policy.max_partitions_per_run == 1
         assert normalized.backfill_policy is not None
         assert normalized.backfill_policy.max_partitions_per_run == 1
+        assert clickhouse.backfill_policy is not None
+        assert clickhouse.backfill_policy.max_partitions_per_run == 1
+
+
+def test_unified_job_ads_asset_depends_on_all_clickhouse_partition_families() -> None:
+    graph = defs.resolve_asset_graph()
+    job_ads = graph.get(AssetKey("sweden_jobtech_links_job_ads_clickhouse"))
+
+    assert job_ads.partitions_def is None
+    assert job_ads.parent_keys == {
+        AssetKey("sweden_jobtech_links_historical_clickhouse"),
+        AssetKey("sweden_jobtech_links_2026_month_clickhouse"),
+        AssetKey("sweden_jobtech_links_daily_clickhouse"),
+    }
 
 
 def test_catalog_sensor_launches_only_fixed_daily_partitions(

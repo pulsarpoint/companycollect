@@ -85,16 +85,45 @@ The normalized asset uses set-based DuckDB SQL to create:
 Publisher plus publisher-owned identifier defines the stable advertisement
 identity. Observation and ingestion timestamps are excluded from the content
 version hash, so an unchanged ad observed on consecutive dates reuses the same
-version. Active intervals and current-state resolution need observations across
-partitions and therefore belong in the later ClickHouse stage. Company matching
-remains a separate enrichment stage.
+version. Active intervals and lifecycle-status resolution need observations
+across partitions and therefore belong in a global ClickHouse stage. Company
+matching remains a separate enrichment stage.
+
+Each partition family also has a ClickHouse asset after normalization. It
+stages the five normalized DuckDB tables in temporary ClickHouse tables and
+anti-joins each target with `FINAL` on its deterministic row UID before
+inserting. Retrying a year, month, or day therefore inserts only missing rows.
+The exporter deliberately does not replace ClickHouse partitions: a job ad's
+`version_at` can predate the snapshot partition that observed it, so one Dagster
+partition does not own one complete ClickHouse month.
 
 ## 5. ClickHouse schema
 
-Migration `000363_corpscout_se_jobtech_links_jobs` owns the snapshot, job
-version, observation, location, enrichment, active-interval, current-job, and
-exact company-match tables. The DuckDB assets implement the first five shapes
-but do not write ClickHouse yet.
+Migration `000363_corpscout_se_jobtech_links_jobs` owns the append-only snapshot,
+job version, observation, location, enrichment, active-interval, and exact
+company-match tables. Migration `000367_corpscout_se_jobtech_links_job_ads`
+replaces the unused current-only shape with one unified serving table. The
+DuckDB assets implement the first five shapes and the partitioned ClickHouse
+assets append them to:
+
+- `se_jobtech_links_snapshots`;
+- `se_jobtech_links_job_ad_versions`;
+- `se_jobtech_links_job_ad_observations`;
+- `se_jobtech_links_job_ad_location_versions`; and
+- `se_jobtech_links_job_ad_enrichment_versions`.
+
+`sweden_jobtech_links_job_ads_clickhouse` is the unpartitioned global resolver.
+It selects one canonical archive per source date, groups consecutive presence
+observations into active intervals, and atomically replaces both
+`se_jobtech_links_job_ad_active_intervals` and
+`se_jobtech_links_job_ads`. The serving table contains every known external job
+once and exposes `active` or `expired`, `active_from`, and the estimated
+`active_to`. Status is based on presence in the latest successful snapshot;
+`application_deadline` remains a source field because it is not reliable proof
+of removal. The latest content version is selected for the row, while full
+version and observation history remains in the internal append-only tables.
+
+Company matching is intentionally separate.
 
 ## 6. Translation
 
@@ -114,8 +143,12 @@ sensor-launched runs. Historical and monthly partitions remain manual
 backfills.
 
 The sensor deliberately still targets the S3-only daily job. The three explicit
-`*_duckdb_job` definitions materialize S3, raw DuckDB, and normalized DuckDB for
-one year, month, or day while downstream behavior is validated manually.
+`*_duckdb_job` definitions stop after normalization. The three
+`*_clickhouse_job` definitions materialize the complete S3, raw DuckDB,
+normalized DuckDB, and ClickHouse chain for one year, month, or day while
+downstream behavior is validated manually. After the required partitions are
+loaded, `sweden_jobtech_links_job_ads_job` rebuilds the unified global serving
+table from all ClickHouse observations.
 
 Materialize one explicit daily partition before enabling the sensor. After its
 archive/member metadata has been reconciled, the sensor can launch newly
@@ -141,8 +174,10 @@ midnight schedule because archive publication time can vary.
 
 - Source and asset-graph contract: `tests/test_sweden_jobtech_links_source.py`
 - Normalization contract: `tests/test_sweden_jobtech_links_normalize.py`
+- ClickHouse append and migration contract:
+  `tests/test_sweden_jobtech_links_clickhouse.py`
 - Definition validation: `uv run dg check defs`
-- Manual gate: materialize one explicit daily DuckDB job while the sensor
+- Manual gate: materialize one explicit daily ClickHouse job while the sensor
   remains stopped. Reconcile S3 archive counts with `snapshots`, confirm the
   Platsbanken/external split, and inspect version/observation/location/enrichment
   counts before switching daily automation to the downstream job.
