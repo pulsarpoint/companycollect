@@ -305,7 +305,7 @@ def export_finland_unified_clickhouse(
     counts: dict[str, int] = {}
     with clickhouse.get_connection() as client:
         for table, columns, rows, converter in tables_spec:
-            counts[table] = _replace_clickhouse_table_with_rows(
+            counts[table] = replace_clickhouse_table_with_rows(
                 clickhouse_client=client,
                 table=table,
                 columns=columns,
@@ -315,7 +315,7 @@ def export_finland_unified_clickhouse(
     return counts
 
 
-def _replace_clickhouse_table_with_rows(
+def replace_clickhouse_table_with_rows(
     *,
     clickhouse_client: Any,
     table: str,

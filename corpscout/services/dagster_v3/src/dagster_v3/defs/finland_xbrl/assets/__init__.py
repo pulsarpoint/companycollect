@@ -99,6 +99,11 @@ from dagster_v3.defs.finland_xbrl.assets.jobs import (
     finland_xbrl_publish_job,
     finland_xbrl_xml_snapshot_job,
 )
+from dagster_v3.defs.finland_xbrl.assets.parity import (
+    FINLAND_EXPLAINED_RULES,
+    build_finland_parity_results,
+    fi_xbrl_parity,
+)
 from dagster_v3.defs.finland_xbrl.assets.unified_publish import (
     fi_xbrl_unified_clickhouse,
 )
@@ -121,6 +126,7 @@ __all__ = [
     "DEFAULT_XBRL_RETRY_INITIAL_DELAY_SECONDS",
     "DEFAULT_XBRL_RETRY_MAX_DELAY_SECONDS",
     "DATA_SNAPSHOT_CLICKHOUSE_TABLE",
+    "FINLAND_EXPLAINED_RULES",
     "XBRL_BASE_URL",
     "XBRL_BUCKET",
     "XBRL_TIMEOUT_SECONDS",
@@ -139,6 +145,7 @@ __all__ = [
     "FINLAND_XBRL_SNAPSHOT_CSV_DUCKDB_TABLE",
     "build_financial_data_snapshot_csv",
     "build_finland_financial_metrics_insert_sql",
+    "build_finland_parity_results",
     "build_financial_metric_rows",
     "build_financial_metric_usd_rows",
     "data_snapshot",
@@ -159,6 +166,7 @@ __all__ = [
     "export_data_snapshot_duckdb_to_clickhouse",
     "fetch_xml_snapshot_report_rows",
     "fi_financial_metrics_ch",
+    "fi_xbrl_parity",
     "fi_xbrl_parsed_clickhouse",
     "fi_xbrl_taxonomy_codes_ch",
     "fi_xbrl_unified_clickhouse",
@@ -214,6 +222,7 @@ defs = dg.Definitions(
         fi_xbrl_taxonomy_codes_ch,
         fi_financial_metrics_ch,
         fi_xbrl_unified_clickhouse,
+        fi_xbrl_parity,
     ],
     jobs=[
         finland_xbrl_data_snapshot_job,

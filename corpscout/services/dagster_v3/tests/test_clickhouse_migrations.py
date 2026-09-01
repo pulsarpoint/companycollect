@@ -376,6 +376,7 @@ EXPECTED_MIGRATIONS = (
     "000365_corpscout_se_company_info_esef_enrichment",
     "000366_corpscout_se_companies_serving_hourly_refresh",
     "000368_corpscout_fi_xbrl_unified_next_tables",
+    "000369_corpscout_fi_xbrl_parity_report",
 )
 
 NOOP_MIGRATIONS = {"000276_noop"}
