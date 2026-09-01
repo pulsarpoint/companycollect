@@ -363,6 +363,40 @@ def extract_filing(
     return filing
 
 
+_IX_FACT_TAGS = (
+    f"{{{IX_NS}}}nonFraction",
+    f"{{{IX_NS}}}nonNumeric",
+    f"{{{IX_NS}}}fraction",
+)
+
+
+def _text_excluding(element: etree._Element) -> str:
+    parts: list[str] = [element.text or ""]
+    for child in element:
+        if isinstance(child.tag, str) and child.tag == f"{{{IX_NS}}}exclude":
+            parts.append(child.tail or "")
+            continue
+        parts.append(_text_excluding(child))
+        parts.append(child.tail or "")
+    return "".join(parts)
+
+
+def _continued_text(
+    element: etree._Element, continuations: dict[str, etree._Element]
+) -> str:
+    parts = [_text_excluding(element)]
+    seen: set[str] = set()
+    next_id = element.get("continuedAt")
+    while next_id and next_id not in seen:
+        seen.add(next_id)
+        continuation = continuations.get(next_id)
+        if continuation is None:
+            break
+        parts.append(_text_excluding(continuation))
+        next_id = continuation.get("continuedAt")
+    return "".join(parts)
+
+
 def _inline_fact_rows(
     root: etree._Element,
     profile: SourceProfile,
@@ -371,6 +405,110 @@ def _inline_fact_rows(
     parsed_at: datetime,
     warnings: list[str],
 ) -> list[dict]:
-    # Implemented in Task 4. Present as a stub so the module imports; the
-    # plain-XBRL tests never reach it.
-    raise NotImplementedError("iXBRL support arrives in Task 4")
+    continuations = {
+        element.get("id", ""): element
+        for element in root.iter(f"{{{IX_NS}}}continuation")
+        if element.get("id")
+    }
+    rows: list[dict] = []
+    for element in root.iter(*_IX_FACT_TAGS):
+        name = element.get("name", "")
+        prefix, sep, local = name.partition(":")
+        namespace = (element.nsmap or {}).get(prefix if sep else None) or ""
+        row = _fact_row_base(
+            element=element,
+            namespace=namespace,
+            local=local if sep else name,
+            ordinal=len(rows) + 1,
+            contexts_by_id=contexts_by_id,
+            profile=profile,
+            units_by_id=units_by_id,
+            parsed_at=parsed_at,
+        )
+        tag_local = etree.QName(element).localname
+
+        if tag_local == "fraction":
+            numerator = element.findtext(f"{{{IX_NS}}}numerator") or ""
+            denominator = element.findtext(f"{{{IX_NS}}}denominator") or ""
+            raw_value = f"{numerator.strip()}/{denominator.strip()}"
+            warnings.append(f"ix:fraction stored as text: {row['concept_qname']}")
+            row.update(
+                {"raw_value": raw_value, "value_kind": "text", "text_value": raw_value}
+            )
+            rows.append(row)
+            continue
+
+        raw_text = _continued_text(element, continuations).strip()
+        row["raw_value"] = raw_text
+        fmt = element.get("format")
+
+        if row["is_nil"] or not raw_text:
+            row["value_kind"] = "empty"
+            rows.append(row)
+            continue
+
+        transformed_kind: str | None = None
+        transformed_value = raw_text
+        transform_failed = False
+        if fmt:
+            try:
+                result = apply_transform(fmt, raw_text)
+                transformed_kind, transformed_value = result.kind, result.value
+                row["raw_value"] = transformed_value
+            except UnknownTransform:
+                warnings.append(f"unknown ixt transform {fmt!r} on {row['concept_qname']}")
+                transform_failed = True
+            except ValueError as exc:
+                warnings.append(
+                    f"ixt transform {fmt!r} failed on {row['concept_qname']}: {exc}"
+                )
+                transform_failed = True
+
+        if transform_failed:
+            row.update({"value_kind": "text", "text_value": raw_text})
+            rows.append(row)
+            continue
+
+        if tag_local == "nonFraction":
+            numeric = (
+                _decimal_or_none(transformed_value)
+                if transformed_kind in (None, "numeric")
+                else None
+            )
+            if numeric is None and transformed_kind is None:
+                numeric = _decimal_or_none(raw_text)
+            if numeric is not None:
+                scale = element.get("scale")
+                if scale:
+                    try:
+                        numeric = numeric * (Decimal(10) ** int(scale))
+                    except (ValueError, InvalidOperation):
+                        warnings.append(
+                            f"invalid scale {scale!r} on {row['concept_qname']}"
+                        )
+                if element.get("sign") == "-":
+                    numeric = -numeric
+                row.update({"value_kind": "numeric", "numeric_value": str(numeric)})
+            else:
+                row.update({"value_kind": "text", "text_value": raw_text})
+        else:  # nonNumeric
+            if transformed_kind == "date":
+                row.update({"value_kind": "date", "date_value": transformed_value})
+            elif transformed_kind == "empty":
+                row["value_kind"] = "empty"
+            elif transformed_kind == "boolean":
+                row.update({"value_kind": "text", "text_value": transformed_value})
+            else:
+                kind, numeric_v, date_v, text_v = _classify_value(
+                    raw_value=transformed_value, is_nil=False, unit_id=""
+                )
+                row.update(
+                    {
+                        "value_kind": kind,
+                        "numeric_value": numeric_v,
+                        "date_value": date_v,
+                        "text_value": text_v,
+                    }
+                )
+        rows.append(row)
+    return rows

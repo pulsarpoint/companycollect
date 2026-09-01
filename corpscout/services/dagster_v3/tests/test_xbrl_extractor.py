@@ -109,3 +109,96 @@ def test_malformed_body_yields_empty_filing_with_warning():
     filing = extract_filing(b"this is not xml at all \x00", profile=PROFILE, parsed_at=PARSED_AT)
     assert filing.facts == []
     assert filing.warnings  # at least one warning explains the failure
+
+
+IXBRL = b"""<?xml version="1.0" encoding="UTF-8"?>
+<html xmlns="http://www.w3.org/1999/xhtml"
+      xmlns:ix="http://www.xbrl.org/2013/inlineXBRL"
+      xmlns:ixt="http://www.xbrl.org/inlineXBRL/transformation/2015-02-26"
+      xmlns:xbrli="http://www.xbrl.org/2003/instance"
+      xmlns:link="http://www.xbrl.org/2003/linkbase"
+      xmlns:xlink="http://www.w3.org/1999/xlink"
+      xmlns:iso4217="http://www.xbrl.org/2003/iso4217"
+      xmlns:met="http://example.org/met">
+<head><title>t</title></head>
+<body>
+<div style="display:none">
+  <ix:header>
+    <ix:hidden>
+      <ix:nonNumeric name="met:entityId" contextRef="cur">1234567-8</ix:nonNumeric>
+      <ix:nonNumeric name="met:periodEnd" contextRef="cur" format="ixt:date-day-month-year">31.12.2024</ix:nonNumeric>
+    </ix:hidden>
+    <ix:resources>
+      <xbrli:context id="cur">
+        <xbrli:entity><xbrli:identifier scheme="http://example.org/id">1234567-8</xbrli:identifier></xbrli:entity>
+        <xbrli:period><xbrli:startDate>2024-01-01</xbrli:startDate><xbrli:endDate>2024-12-31</xbrli:endDate></xbrli:period>
+      </xbrli:context>
+      <xbrli:context id="prior">
+        <xbrli:entity><xbrli:identifier scheme="http://example.org/id">1234567-8</xbrli:identifier></xbrli:entity>
+        <xbrli:period><xbrli:startDate>2023-01-01</xbrli:startDate><xbrli:endDate>2023-12-31</xbrli:endDate></xbrli:period>
+      </xbrli:context>
+      <xbrli:unit id="eur"><xbrli:measure>iso4217:EUR</xbrli:measure></xbrli:unit>
+    </ix:resources>
+    <ix:references>
+      <link:schemaRef xlink:type="simple" xlink:href="http://example.org/entry.xsd"/>
+    </ix:references>
+  </ix:header>
+</div>
+<p>Revenue was
+  <ix:nonFraction name="met:revenue" contextRef="cur" unitRef="eur"
+                  decimals="0" format="ixt:num-comma-decimal" scale="3">1.234,5</ix:nonFraction>
+ thousand euro.</p>
+<p>Loss:
+  <ix:nonFraction name="met:profit" contextRef="cur" unitRef="eur"
+                  decimals="0" sign="-" format="ixt:num-dot-decimal">2,500</ix:nonFraction></p>
+<p><ix:nonNumeric name="met:description" contextRef="cur" continuedAt="c1">Part one
+  <ix:exclude><span>IGNORED</span></ix:exclude></ix:nonNumeric></p>
+<p><ix:continuation id="c1"> and part two.</ix:continuation></p>
+<p><ix:nonFraction name="met:weird" contextRef="cur" unitRef="eur"
+                   format="ixt:num-tolkien">999</ix:nonFraction></p>
+</body>
+</html>
+"""
+
+
+def test_ixbrl_transform_scale_and_sign():
+    filing = extract_filing(IXBRL, profile=PROFILE, parsed_at=PARSED_AT)
+    revenue = next(f for f in filing.facts if f["concept_qname"] == "t_met:revenue")
+    assert revenue["value_kind"] == "numeric"
+    assert revenue["numeric_value"] == "1234500.0"
+    assert revenue["currency"] == "EUR"
+    profit = next(f for f in filing.facts if f["concept_qname"] == "t_met:profit")
+    assert profit["numeric_value"] == "-2500"
+
+
+def test_ixbrl_hidden_and_reported_and_schema_refs():
+    filing = extract_filing(IXBRL, profile=PROFILE, parsed_at=PARSED_AT)
+    assert filing.document["reported_entity_id"] == "1234567-8"
+    assert filing.document["reported_period_end"] == "2024-12-31"
+    assert filing.document["taxonomy_entrypoint"] == "http://example.org/entry.xsd"
+    period_end = next(f for f in filing.facts if f["concept_qname"] == "t_met:periodEnd")
+    assert period_end["value_kind"] == "date"
+    assert period_end["date_value"] == "2024-12-31"
+
+
+def test_ixbrl_continuation_and_exclude():
+    filing = extract_filing(IXBRL, profile=PROFILE, parsed_at=PARSED_AT)
+    description = next(f for f in filing.facts if f["concept_qname"] == "t_met:description")
+    assert "IGNORED" not in description["text_value"]
+    assert "Part one" in description["text_value"]
+    assert "and part two." in description["text_value"]
+
+
+def test_ixbrl_unknown_transform_degrades_to_text_with_warning():
+    filing = extract_filing(IXBRL, profile=PROFILE, parsed_at=PARSED_AT)
+    weird = next(f for f in filing.facts if f["concept_qname"] == "t_met:weird")
+    assert weird["value_kind"] == "text"
+    assert weird["text_value"] == "999"
+    assert any("num-tolkien" in w for w in filing.warnings)
+
+
+def test_ixbrl_contexts_parsed_from_resources():
+    filing = extract_filing(IXBRL, profile=PROFILE, parsed_at=PARSED_AT)
+    assert {c["context_id"] for c in filing.contexts} == {"cur", "prior"}
+    prior = next(c for c in filing.contexts if c["context_id"] == "prior")
+    assert prior["is_comparative"] is True
