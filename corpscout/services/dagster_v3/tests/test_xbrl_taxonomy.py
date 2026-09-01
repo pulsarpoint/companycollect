@@ -6,13 +6,19 @@ presentation/calculation parent resolution. Entry-point enumeration is
 tested against a minimal in-memory zip, not a real taxonomy package.
 """
 
+from contextlib import contextmanager
 from dataclasses import dataclass, field
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 import zipfile
 
 import pytest
 
+from dagster_v3.defs.finland_xbrl.assets.taxonomy_dictionary import (
+    replace_taxonomy_dictionary_tables,
+    taxonomy_row_converter,
+)
 from dagster_v3.defs.xbrl_common.extractor import SourceProfile
 from dagster_v3.defs.xbrl_common.tables import TAXONOMY_CONCEPT_COLUMNS, TAXONOMY_LABEL_COLUMNS
 from dagster_v3.defs.xbrl_common.taxonomy import (
@@ -363,3 +369,94 @@ def test_package_entrypoints_raises_when_no_entry_points_listed(tmp_path: Path) 
 
     with pytest.raises(ValueError, match="no entry points"):
         package_entrypoints(package_path)
+
+
+# --- Finland ClickHouse publish helper (assets/taxonomy_dictionary.py) -----
+#
+# `loaded_at` is a plain ISO string in the row dicts `concept_rows_from_model`
+# produces (see above), but migration 000370 declares
+# `loaded_at DateTime64(3, 'UTC')` and clickhouse-driver's DateTime64Column
+# only accepts int/datetime -- never str -- so the row *converter* (not the
+# builder) must turn it into a tz-aware datetime before insert.
+
+
+class _FakeClickHouseClient:
+    def __init__(self) -> None:
+        self.calls: list[tuple[str, object | None]] = []
+
+    def execute(self, sql: str, params: object | None = None) -> list[tuple]:
+        self.calls.append((sql, params))
+        return []
+
+
+class _FakeClickHouseResource:
+    def __init__(self, client: _FakeClickHouseClient) -> None:
+        self.client = client
+
+    @contextmanager
+    def get_connection(self):
+        yield self.client
+
+
+def test_taxonomy_row_converter_produces_datetime_not_str_for_loaded_at() -> None:
+    convert = taxonomy_row_converter(TAXONOMY_CONCEPT_COLUMNS)
+    row = {column: "" for column in TAXONOMY_CONCEPT_COLUMNS}
+    row.update(
+        {
+            "is_abstract": False,
+            "presentation_order": 0.0,
+            "calculation_weight": 0.0,
+            "loaded_at": "2026-08-31T00:00:00+00:00",
+        }
+    )
+
+    converted = convert(row)
+
+    loaded_at_value = converted[TAXONOMY_CONCEPT_COLUMNS.index("loaded_at")]
+    assert isinstance(loaded_at_value, datetime)
+    assert not isinstance(loaded_at_value, str)
+    assert loaded_at_value == datetime(2026, 8, 31, 0, 0, 0, tzinfo=UTC)
+
+
+def test_taxonomy_row_converter_localizes_naive_loaded_at_to_utc() -> None:
+    convert = taxonomy_row_converter(TAXONOMY_LABEL_COLUMNS)
+    row = {column: "" for column in TAXONOMY_LABEL_COLUMNS}
+    row["loaded_at"] = "2026-08-31T00:00:00"  # no offset
+
+    converted = convert(row)
+
+    loaded_at_value = converted[TAXONOMY_LABEL_COLUMNS.index("loaded_at")]
+    assert loaded_at_value == datetime(2026, 8, 31, 0, 0, 0, tzinfo=UTC)
+
+
+def test_replace_taxonomy_dictionary_tables_refuses_empty_label_rows() -> None:
+    client = _FakeClickHouseClient()
+    resource = _FakeClickHouseResource(client)
+
+    with pytest.raises(ValueError, match="zero label rows"):
+        replace_taxonomy_dictionary_tables(
+            clickhouse=resource,
+            concept_rows=[{"concept_qname": "ex:Revenue"}],
+            label_rows=[],
+            entrypoint="taxonomy/entry.xsd",
+        )
+
+    # The refusal must happen before touching ClickHouse at all, so a
+    # partial Arelle load (concepts ok, label linkbase missing) can never
+    # blank the populated corpscout.fi_taxonomy_labels table.
+    assert client.calls == []
+
+
+def test_replace_taxonomy_dictionary_tables_refuses_empty_concept_rows() -> None:
+    client = _FakeClickHouseClient()
+    resource = _FakeClickHouseResource(client)
+
+    with pytest.raises(ValueError, match="zero concept rows"):
+        replace_taxonomy_dictionary_tables(
+            clickhouse=resource,
+            concept_rows=[],
+            label_rows=[{"concept_qname": "ex:Revenue"}],
+            entrypoint="taxonomy/entry.xsd",
+        )
+
+    assert client.calls == []

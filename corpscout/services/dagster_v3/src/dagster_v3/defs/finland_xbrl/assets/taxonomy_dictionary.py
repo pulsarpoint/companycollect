@@ -9,6 +9,7 @@ version), unlike the daily/monthly Finland XBRL data chains.
 from datetime import UTC, datetime
 import tempfile
 from pathlib import Path
+from typing import Any
 
 import dagster as dg
 from dagster import AssetExecutionContext
@@ -48,6 +49,78 @@ def _taxonomy_download_client() -> DltRequestsClient:
         request_timeout=XBRL_TIMEOUT_SECONDS,
         session_attrs={"headers": {"User-Agent": TAXONOMY_DOWNLOAD_USER_AGENT}},
     )
+
+
+def _utc_datetime(value: datetime) -> datetime:
+    if value.tzinfo is None:
+        return value.replace(tzinfo=UTC)
+    return value.astimezone(UTC)
+
+
+def _required_loaded_at(value: Any) -> datetime:
+    """Mirrors unified_clickhouse.py's `_required_datetime` (private there,
+    so replicated here): clickhouse-driver's DateTime64Column only accepts
+    int/datetime, never str, so `concept_rows_from_model`'s string
+    `loaded_at` must be parsed before insert -- row dicts themselves keep the
+    ISO string form so the builder's signature and its tests stay untouched."""
+    if isinstance(value, datetime):
+        return _utc_datetime(value)
+    if value is None or value == "":
+        raise ValueError("loaded_at is required and cannot be empty")
+    return _utc_datetime(datetime.fromisoformat(str(value)))
+
+
+def taxonomy_row_converter(columns: tuple[str, ...]):
+    def convert(row: dict[str, Any]) -> tuple[Any, ...]:
+        return tuple(
+            _required_loaded_at(row[column]) if column == "loaded_at" else row[column]
+            for column in columns
+        )
+
+    return convert
+
+
+def replace_taxonomy_dictionary_tables(
+    *,
+    clickhouse: Any,
+    concept_rows: list[dict[str, Any]],
+    label_rows: list[dict[str, Any]],
+    entrypoint: str,
+) -> tuple[int, int]:
+    """Refuse-then-replace, extracted from the asset body so both refusals
+    are testable without an Arelle load or a real ClickHouse connection --
+    mirrors `unified_clickhouse.export_finland_unified_clickhouse`'s
+    refuse-before-touching-ClickHouse shape."""
+    if not concept_rows:
+        raise ValueError(
+            "Refusing to publish Finland taxonomy dictionary: concept_rows_from_model "
+            f"returned zero concept rows for entrypoint {entrypoint!r} "
+            "(would blank a populated table)"
+        )
+    if not label_rows:
+        raise ValueError(
+            "Refusing to publish Finland taxonomy dictionary: concept_rows_from_model "
+            f"returned zero label rows for entrypoint {entrypoint!r} (a partial Arelle "
+            "load -- concepts ok, label linkbase missing -- would blank a populated "
+            "corpscout.fi_taxonomy_labels table)"
+        )
+
+    with clickhouse.get_connection() as client:
+        concept_count = replace_clickhouse_table_with_rows(
+            clickhouse_client=client,
+            table=FI_TAXONOMY_CONCEPTS_TABLE,
+            columns=TAXONOMY_CONCEPT_COLUMNS,
+            rows=concept_rows,
+            converter=taxonomy_row_converter(TAXONOMY_CONCEPT_COLUMNS),
+        )
+        label_count = replace_clickhouse_table_with_rows(
+            clickhouse_client=client,
+            table=FI_TAXONOMY_LABELS_TABLE,
+            columns=TAXONOMY_LABEL_COLUMNS,
+            rows=label_rows,
+            converter=taxonomy_row_converter(TAXONOMY_LABEL_COLUMNS),
+        )
+    return concept_count, label_count
 
 
 @dg.asset(
@@ -158,28 +231,12 @@ def fi_taxonomy_dictionary_clickhouse(
         finally:
             model_xbrl.close()
 
-    if not concept_rows:
-        raise ValueError(
-            "Refusing to publish Finland taxonomy dictionary: concept_rows_from_model "
-            f"returned zero concept rows for entrypoint {entrypoint!r} "
-            "(would blank a populated table)"
-        )
-
-    with clickhouse.get_connection() as client:
-        concept_count = replace_clickhouse_table_with_rows(
-            clickhouse_client=client,
-            table=FI_TAXONOMY_CONCEPTS_TABLE,
-            columns=TAXONOMY_CONCEPT_COLUMNS,
-            rows=concept_rows,
-            converter=lambda row: tuple(row[column] for column in TAXONOMY_CONCEPT_COLUMNS),
-        )
-        label_count = replace_clickhouse_table_with_rows(
-            clickhouse_client=client,
-            table=FI_TAXONOMY_LABELS_TABLE,
-            columns=TAXONOMY_LABEL_COLUMNS,
-            rows=label_rows,
-            converter=lambda row: tuple(row[column] for column in TAXONOMY_LABEL_COLUMNS),
-        )
+    concept_count, label_count = replace_taxonomy_dictionary_tables(
+        clickhouse=clickhouse,
+        concept_rows=concept_rows,
+        label_rows=label_rows,
+        entrypoint=entrypoint,
+    )
 
     context.log.info(
         "Published Finland taxonomy dictionary %s (entrypoint=%s): "
