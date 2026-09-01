@@ -274,6 +274,32 @@ describe("appendSeCompanyInfoCorrection", () => {
     expect(clickhouse.query).toHaveBeenNthCalledWith(5, NACE_LABEL_SQL, {
       code: "62.01",
     });
+    // The published rows carry dot-less codes; the lookup matches
+    // normalized_code and the prefix strip handles the dotted description.
+    expect(NACE_LABEL_SQL).toContain("normalized_code");
+  });
+
+  it("loadSeCompanyInfoDetail strips the dotted code prefix for dot-less lookups", async () => {
+    clickhouse.query
+      .mockResolvedValueOnce([
+        {
+          company_id: COMPANY,
+          suggestion_id: null,
+          evidence_set_hash: "a".repeat(64),
+          correction_ids: [],
+          primary_nace_code: "6419",
+        },
+      ])
+      .mockResolvedValueOnce([])
+      .mockResolvedValueOnce([])
+      .mockResolvedValueOnce([])
+      .mockResolvedValueOnce([
+        { description_en: "64.19 Other monetary intermediation" },
+      ]);
+
+    const detail = await loadSeCompanyInfoDetail(COMPANY);
+
+    expect(detail?.naceLabel).toBe("Other monetary intermediation");
   });
 
   it("loadSeCompanyInfoDetail threads the published suggestion id, evidence hash and applied ids", async () => {

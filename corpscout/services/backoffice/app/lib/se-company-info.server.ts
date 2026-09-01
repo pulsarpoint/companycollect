@@ -310,10 +310,13 @@ function parseArtifactPayload(raw: string): Record<string, string> {
  * suggestions and correction ledger for the review page. Returns null when
  * the company has no published row (nothing to review yet).
  */
+// Published rows carry dot-less codes ("6419") while the catalog's `code` is
+// dotted ("64.19") -- normalized_code covers that form.
 export const NACE_LABEL_SQL = `SELECT description_en
 FROM corpscout.nace_categories
 WHERE classification_version = 'NACE_REV_2'
-  AND code = {code:String}
+  AND (code = {code:String}
+    OR normalized_code = replaceAll({code:String}, '.', ''))
 LIMIT 1`;
 
 async function naceLabelFor(code: string): Promise<string> {
@@ -323,10 +326,8 @@ async function naceLabelFor(code: string): Promise<string> {
   });
   const description = rows[0]?.description_en ?? "";
   // description_en repeats the code ("62.01 Computer programming activities");
-  // the strip shows the code separately, so drop the prefix.
-  return description.startsWith(`${code} `)
-    ? description.slice(code.length + 1)
-    : description;
+  // the strip shows the code separately, so drop that leading token.
+  return description.replace(/^[0-9][0-9.]*\s+/, "");
 }
 
 export async function loadSeCompanyInfoDetail(
