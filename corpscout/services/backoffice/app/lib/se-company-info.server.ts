@@ -114,6 +114,8 @@ export interface SeCompanyInfoDetail {
   artifacts: SeCompanyInfoArtifactRow[];
   suggestions: SeCompanyInfoSuggestionRow[];
   corrections: SeCompanyInfoCorrectionRow[];
+  /** English NACE class name for info.primary_nace_code ('' when unknown). */
+  naceLabel: string;
 }
 
 /**
@@ -308,24 +310,45 @@ function parseArtifactPayload(raw: string): Record<string, string> {
  * suggestions and correction ledger for the review page. Returns null when
  * the company has no published row (nothing to review yet).
  */
+export const NACE_LABEL_SQL = `SELECT description_en
+FROM corpscout.nace_categories
+WHERE classification_version = 'NACE_REV_2'
+  AND code = {code:String}
+LIMIT 1`;
+
+async function naceLabelFor(code: string): Promise<string> {
+  if (code === "") return "";
+  const rows = await chQuery<{ description_en: string }>(NACE_LABEL_SQL, {
+    code,
+  });
+  const description = rows[0]?.description_en ?? "";
+  // description_en repeats the code ("62.01 Computer programming activities");
+  // the strip shows the code separately, so drop the prefix.
+  return description.startsWith(`${code} `)
+    ? description.slice(code.length + 1)
+    : description;
+}
+
 export async function loadSeCompanyInfoDetail(
   companyId: string,
 ): Promise<SeCompanyInfoDetail | null> {
   const [info] = await chQuery<SeCompanyInfoRow>(INFO_SQL, { companyId });
   if (!info) return null;
-  const [artifactRows, suggestions, corrections] = await Promise.all([
-    chQuery<SeCompanyInfoArtifactQueryRow>(ARTIFACT_ROWS_SQL, { companyId }),
-    chQuery<SeCompanyInfoSuggestionRow>(SUGGESTIONS_SQL, {
-      companyId,
-      publishedSuggestionId: info.suggestion_id,
-    }),
-    chQuery<SeCompanyInfoCorrectionRow>(CORRECTIONS_SQL, {
-      companyId,
-      zeroHash: ZERO_EVIDENCE_HASH,
-      evidenceSetHash: info.evidence_set_hash,
-      appliedIds: info.correction_ids,
-    }),
-  ]);
+  const [artifactRows, suggestions, corrections, naceLabel] =
+    await Promise.all([
+      chQuery<SeCompanyInfoArtifactQueryRow>(ARTIFACT_ROWS_SQL, { companyId }),
+      chQuery<SeCompanyInfoSuggestionRow>(SUGGESTIONS_SQL, {
+        companyId,
+        publishedSuggestionId: info.suggestion_id,
+      }),
+      chQuery<SeCompanyInfoCorrectionRow>(CORRECTIONS_SQL, {
+        companyId,
+        zeroHash: ZERO_EVIDENCE_HASH,
+        evidenceSetHash: info.evidence_set_hash,
+        appliedIds: info.correction_ids,
+      }),
+      naceLabelFor(info.primary_nace_code ?? ""),
+    ]);
   const artifacts: SeCompanyInfoArtifactRow[] = artifactRows.map((row) => ({
     source: row.source,
     source_record_uid: row.source_record_uid,
@@ -333,7 +356,7 @@ export async function loadSeCompanyInfoDetail(
     evidence_hash: row.evidence_hash,
     payload: parseArtifactPayload(row.payload_json),
   }));
-  return { info, artifacts, suggestions, corrections };
+  return { info, artifacts, suggestions, corrections, naceLabel };
 }
 
 function correctionTimestamp(): string {

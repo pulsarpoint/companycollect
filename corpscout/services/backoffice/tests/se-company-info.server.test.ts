@@ -12,6 +12,7 @@ import {
   CORRECTIONS_SQL,
   INFO_SQL,
   loadSeCompanyInfoDetail,
+  NACE_LABEL_SQL,
   SUGGESTIONS_SQL,
 } from "~/lib/se-company-info.server";
 import { SeInfoCorrectionValidationError, ZERO_EVIDENCE_HASH } from "~/lib/se-info-corrections";
@@ -246,6 +247,33 @@ describe("appendSeCompanyInfoCorrection", () => {
     clickhouse.query.mockResolvedValueOnce([]);
     expect(await loadSeCompanyInfoDetail(COMPANY)).toBeNull();
     expect(clickhouse.query).toHaveBeenCalledTimes(1);
+  });
+
+  it("loadSeCompanyInfoDetail resolves the NACE label when the row carries a code", async () => {
+    clickhouse.query
+      .mockResolvedValueOnce([
+        {
+          company_id: COMPANY,
+          suggestion_id: "11111111-1111-4111-8111-111111111111",
+          evidence_set_hash: "a".repeat(64),
+          correction_ids: [],
+          primary_nace_code: "62.01",
+        },
+      ])
+      .mockResolvedValueOnce([])
+      .mockResolvedValueOnce([])
+      .mockResolvedValueOnce([])
+      .mockResolvedValueOnce([
+        { description_en: "62.01 Computer programming activities" },
+      ]);
+
+    const detail = await loadSeCompanyInfoDetail(COMPANY);
+
+    expect(detail?.naceLabel).toBe("Computer programming activities");
+    expect(clickhouse.query).toHaveBeenCalledTimes(5);
+    expect(clickhouse.query).toHaveBeenNthCalledWith(5, NACE_LABEL_SQL, {
+      code: "62.01",
+    });
   });
 
   it("loadSeCompanyInfoDetail threads the published suggestion id, evidence hash and applied ids", async () => {

@@ -149,6 +149,7 @@ const detail: SeCompanyInfoDetail = {
     },
   ],
   corrections: [],
+  naceLabel: "Computer programming activities",
 };
 
 /** The same company with a live (current, non-stale) override on the ledger. */
@@ -345,6 +346,16 @@ describe("company info review page", () => {
     // Its content is the published english + swedish pair.
     expect(html).toContain("Alpha builds payment software.");
     expect(html).toContain("Alpha bygger betalprogramvara.");
+  });
+
+  it("shows the status strip with incorporated and the named NACE under the description card", () => {
+    const html = render();
+    const menuStart = html.indexOf("About the company");
+    const strip = html.slice(menuStart, html.indexOf("Published version"));
+    expect(strip).toContain("Incorporated");
+    expect(strip).toContain("2001-02-03");
+    expect(strip).toContain("62.01");
+    expect(strip).toContain("Computer programming activities");
   });
 
   it("lays the page out as published version, then every source, then suggestions and corrections", () => {

@@ -526,6 +526,35 @@ export function SeCompanyInfoReviewWorkspace({
         ]}
       />
 
+      {/* Status strip: the company facts a reviewer wants next to the
+          description -- incorporation and the NACE class by number AND name
+          (label resolved from corpscout.nace_categories). */}
+      <dl className="flex flex-wrap items-center gap-x-8 gap-y-2 text-sm">
+        <div className="flex items-center gap-2">
+          <dt className="text-xs font-medium uppercase tracking-wide text-muted-foreground">
+            Incorporated
+          </dt>
+          <dd className="font-medium tabular-nums">
+            {info.incorporation_date ?? "—"}
+          </dd>
+        </div>
+        <div className="flex items-center gap-2">
+          <dt className="text-xs font-medium uppercase tracking-wide text-muted-foreground">
+            NACE
+          </dt>
+          <dd className="flex items-center gap-2 font-medium">
+            <span className="tabular-nums">
+              {info.primary_nace_code || "—"}
+            </span>
+            {detail.naceLabel !== "" ? (
+              <span className="font-normal text-muted-foreground">
+                {detail.naceLabel}
+              </span>
+            ) : null}
+          </dd>
+        </div>
+      </dl>
+
       <PublishedCard info={info} />
 
       <section className="flex flex-col gap-4">
