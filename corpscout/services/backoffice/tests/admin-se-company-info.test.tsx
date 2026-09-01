@@ -658,6 +658,9 @@ describe.skip("admin-se-company-info action (P7 -- server-side refusal, mocked s
     server.appendSeCompanyInfoCorrection.mockReset();
   });
 
+  // TODO(field-values Task 7): the ledger rows this helper used to graft onto
+  // the detail have no home in SeCompanyInfoDetail any more, so it ignores its
+  // argument until Task 7 rewrites these cases against field values.
   function detailWithCorrections(_corrections: unknown[]): SeCompanyInfoDetail {
     return detail;
   }

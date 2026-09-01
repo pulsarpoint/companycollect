@@ -18,7 +18,7 @@ export async function loader({ params }: Route.LoaderArgs) {
   return data({ detail }, detail ? undefined : { status: 404 });
 }
 
-// Task 6 replaces this action: it dispatches on `intent`
+// TODO(field-values Task 6): Task 6 replaces this action -- it dispatches on `intent`
 // (use-source / use-suggestion / edit / release), builds the rows with
 // se-info-field-value-form.ts and writes them through
 // appendSeCompanyInfoFieldValues. Until then every post is refused -- the

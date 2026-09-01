@@ -105,7 +105,10 @@ export interface SeCompanyInfoFieldValueRow {
   value: string | null;
   source: string;
   source_ref: string;
-  source_at: string;
+  /** Nullable in the table, and toString() over a NULL is still JS null -- a
+   * reviewer's own wording has no source moment, so this really does arrive
+   * null for the rows this app writes most. */
+  source_at: string | null;
   decided_by: string;
   note: string;
   created_at: string;
@@ -398,6 +401,15 @@ export async function appendSeCompanyInfoFieldValues(
   if (drafts.some((draft) => draft.company_id !== first.company_id)) {
     throw new SeInfoFieldValueValidationError(
       "Every value in one write must belong to the same company.",
+    );
+  }
+  // One field, one row: the whole batch shares a created_at (below), so two
+  // rows for the same field would tie there and the live one would fall to the
+  // uuid-text tie-break -- a coin flip between two things the reviewer meant
+  // in some order. Refuse instead of writing an arbitrary winner.
+  if (new Set(drafts.map((draft) => draft.field)).size !== drafts.length) {
+    throw new SeInfoFieldValueValidationError(
+      "Each field may appear only once per decision.",
     );
   }
   const [published] = await chQuery<Record<string, unknown>>(

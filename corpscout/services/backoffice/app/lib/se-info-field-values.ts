@@ -121,9 +121,12 @@ export function validateSeInfoFieldValue(
 
   // null is the release instruction ("hand this field back to the pipeline"),
   // which is a decision in its own right -- keep it null instead of coercing
-  // it to '' , which would pin the published column to an empty string.
+  // it to '' , which would pin the published column to an empty string. An
+  // absent value (undefined, which is what FormData plumbing hands over for a
+  // field that was not posted) means the same thing, so `== null` covers both
+  // rather than throwing on the property access.
   let value: string | null = null;
-  if (input.value !== null) {
+  if (input.value != null) {
     value = input.value.trim();
     if (value === "") fail("Value cannot be empty.");
   }

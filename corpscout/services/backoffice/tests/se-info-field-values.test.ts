@@ -108,6 +108,18 @@ describe("validateSeInfoFieldValue", () => {
     ).toThrow("Value cannot be empty.");
   });
 
+  // FormData plumbing hands over "no value" as undefined as easily as null
+  // (form.get() on an absent field), and both mean the same thing here: release.
+  it("treats an undefined value as a release, like null", () => {
+    expect(
+      validateSeInfoFieldValue({
+        ...base,
+        source: "reviewer",
+        value: undefined as unknown as string | null,
+      }).value,
+    ).toBeNull();
+  });
+
   it("requires a UUID source_ref for llm and a non-empty one for the artifact sources", () => {
     // llm's source_ref is the suggestion_id Dagster reads back as a UUID
     // (apply_field_values parses it), so a free-text ref would be dropped there.

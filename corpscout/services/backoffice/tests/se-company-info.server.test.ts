@@ -14,6 +14,7 @@ import {
   loadSeCompanyInfoDetail,
   NACE_LABEL_SQL,
   SUGGESTIONS_SQL,
+  type SeCompanyInfoFieldValueRow,
 } from "~/lib/se-company-info.server";
 import { SeInfoFieldValueValidationError } from "~/lib/se-info-field-values";
 import {
@@ -22,6 +23,26 @@ import {
 } from "~/lib/se-company-info-payload";
 
 const COMPANY = "5565200028";
+
+/**
+ * A reviewer's release row as FIELD_VALUES_SQL returns it. `source_at` is the
+ * one Nullable column the query wraps in toString(), and toString() over a
+ * NULL still yields JS null -- for exactly the rows
+ * appendSeCompanyInfoFieldValues writes when a reviewer decides the text
+ * themselves. Typed here so the row interface has to admit it.
+ */
+const RELEASED_VALUE_ROW: SeCompanyInfoFieldValueRow = {
+  value_id: "33333333-3333-4333-8333-333333333333",
+  field: "description_sv",
+  value: null,
+  source: "reviewer",
+  source_ref: "",
+  source_at: null,
+  decided_by: "backoffice",
+  note: "SCB's Swedish copy was boilerplate",
+  created_at: "2026-09-01 09:00:00.000",
+  is_live: 1,
+};
 
 /**
  * The payload columns of each artifact table, straight from the DDL
@@ -295,6 +316,20 @@ describe("appendSeCompanyInfoFieldValues", () => {
     expect(clickhouse.insert).not.toHaveBeenCalled();
   });
 
+  // Every row of a batch shares one created_at, so two rows for the SAME field
+  // would tie there and the winner would fall to the uuid text -- a coin flip,
+  // not a decision. The batch is refused instead.
+  it("refuses a batch that decides one field twice", async () => {
+    await expect(
+      appendSeCompanyInfoFieldValues([
+        scbValue,
+        { ...scbValue, value: "A different summary." },
+      ]),
+    ).rejects.toThrow("Each field may appear only once per decision.");
+    expect(clickhouse.query).not.toHaveBeenCalled();
+    expect(clickhouse.insert).not.toHaveBeenCalled();
+  });
+
   it("refuses a batch that mixes companies, because one published check cannot cover both", async () => {
     await expect(
       appendSeCompanyInfoFieldValues([
@@ -376,9 +411,13 @@ describe("appendSeCompanyInfoFieldValues", () => {
       ])
       .mockResolvedValueOnce([])
       .mockResolvedValueOnce([])
-      .mockResolvedValueOnce([]);
+      .mockResolvedValueOnce([RELEASED_VALUE_ROW]);
     const detail = await loadSeCompanyInfoDetail(COMPANY);
     expect(detail).not.toBeNull();
+    // The history is handed through as the query returned it, null source_at
+    // and all.
+    expect(detail?.fieldValues).toEqual([RELEASED_VALUE_ROW]);
+    expect(detail?.fieldValues[0].source_at).toBeNull();
     expect(clickhouse.query).toHaveBeenCalledTimes(4);
     expect(clickhouse.query).toHaveBeenNthCalledWith(2, ARTIFACT_ROWS_SQL, { companyId: COMPANY });
     expect(clickhouse.query).toHaveBeenNthCalledWith(3, SUGGESTIONS_SQL, {
