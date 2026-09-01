@@ -334,6 +334,19 @@ describe("company info review page", () => {
     expect(html).not.toContain("<h1");
   });
 
+  it("offers the published LLM description as the first About-the-company option", () => {
+    const html = render();
+    const menuStart = html.indexOf("About the company");
+    expect(menuStart).toBeGreaterThan(-1);
+    const finalOption = html.indexOf("Final (LLM)", menuStart);
+    expect(finalOption).toBeGreaterThan(-1);
+    // First option in the menu: it precedes every source option.
+    expect(finalOption).toBeLessThan(html.indexOf("SCB register", menuStart));
+    // Its content is the published english + swedish pair.
+    expect(html).toContain("Alpha builds payment software.");
+    expect(html).toContain("Alpha bygger betalprogramvara.");
+  });
+
   it("lays the page out as published version, then every source, then suggestions and corrections", () => {
     const html = render();
     for (const heading of [

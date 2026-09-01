@@ -504,7 +504,27 @@ export function SeCompanyInfoReviewWorkspace({
         </Alert>
       ) : null}
 
-      <CompanyDescriptionCard proposals={descriptionProposals(artifacts)} />
+      <CompanyDescriptionCard
+        proposals={[
+          // The published row is the LLM's final composition (stored in
+          // corpscout.se_company_info); it leads the menu so reviewers see
+          // the outcome before the per-source raw material.
+          ...(info.description || info.description_sv
+            ? [
+                {
+                  key: "final:llm",
+                  source: "final",
+                  sourceLabel: "Final (LLM)",
+                  meta: "published",
+                  english: info.description ?? "",
+                  original: info.description_sv ?? "",
+                  originalLanguage: info.description_sv ? "sv" : "",
+                },
+              ]
+            : []),
+          ...descriptionProposals(artifacts),
+        ]}
+      />
 
       <PublishedCard info={info} />
 
