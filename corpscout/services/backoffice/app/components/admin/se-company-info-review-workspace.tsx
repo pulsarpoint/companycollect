@@ -452,6 +452,90 @@ function SectionHeading({
   );
 }
 
+/** One labelled fact in the facts card; an absent value renders as an em dash. */
+function Fact({
+  label,
+  children,
+}: {
+  label: string;
+  children: React.ReactNode;
+}) {
+  return (
+    <div className="flex flex-col gap-1">
+      <dt className="text-xs font-medium uppercase tracking-wide text-muted-foreground">
+        {label}
+      </dt>
+      <dd className="text-sm font-medium">{children}</dd>
+    </div>
+  );
+}
+
+/**
+ * The company facts a reviewer wants right under the description: status,
+ * incorporation, legal form, and the industry classification by number AND
+ * name (NACE label resolved from corpscout.nace_categories; SNI is Sweden's
+ * 5-digit refinement of the same class and has no label catalog yet).
+ */
+function CompanyFactsCard({
+  info,
+  naceLabel,
+}: {
+  info: SeCompanyInfoRow;
+  naceLabel: string;
+}) {
+  const statusVariant = info.status === "active" ? "default" : "secondary";
+  return (
+    <Card>
+      <CardHeader>
+        <CardTitle>Company facts</CardTitle>
+        <CardDescription>
+          Registry status and classification behind the published record.
+        </CardDescription>
+      </CardHeader>
+      <CardContent>
+        <dl className="grid grid-cols-2 gap-x-6 gap-y-5 md:grid-cols-3 lg:grid-cols-6">
+          <Fact label="Status">
+            <Badge variant={statusVariant}>{info.status || EMPTY_VALUE}</Badge>
+          </Fact>
+          <Fact label="Incorporated">
+            <span className="tabular-nums">
+              {info.incorporation_date || EMPTY_VALUE}
+            </span>
+          </Fact>
+          <Fact label="Legal form">
+            {info.legal_form_label_en || info.legal_form_code || EMPTY_VALUE}
+          </Fact>
+          <Fact label="NACE">
+            <span className="flex flex-col gap-0.5">
+              <span className="tabular-nums">
+                {info.primary_nace_code || EMPTY_VALUE}
+              </span>
+              {naceLabel !== "" ? (
+                <span className="font-normal text-muted-foreground">
+                  {naceLabel}
+                </span>
+              ) : null}
+            </span>
+          </Fact>
+          <Fact label="SNI">
+            <span className="flex flex-col gap-0.5">
+              <span className="tabular-nums">
+                {info.primary_sni_code || EMPTY_VALUE}
+              </span>
+              <span className="font-normal text-xs text-muted-foreground">
+                Swedish 5-digit NACE refinement
+              </span>
+            </span>
+          </Fact>
+          <Fact label="LEI">
+            <span className="font-mono text-xs">{info.lei || EMPTY_VALUE}</span>
+          </Fact>
+        </dl>
+      </CardContent>
+    </Card>
+  );
+}
+
 export function SeCompanyInfoReviewWorkspace({
   detail,
   result,
@@ -526,34 +610,7 @@ export function SeCompanyInfoReviewWorkspace({
         ]}
       />
 
-      {/* Status strip: the company facts a reviewer wants next to the
-          description -- incorporation and the NACE class by number AND name
-          (label resolved from corpscout.nace_categories). */}
-      <dl className="flex flex-wrap items-center gap-x-8 gap-y-2 text-sm">
-        <div className="flex items-center gap-2">
-          <dt className="text-xs font-medium uppercase tracking-wide text-muted-foreground">
-            Incorporated
-          </dt>
-          <dd className="font-medium tabular-nums">
-            {info.incorporation_date ?? "—"}
-          </dd>
-        </div>
-        <div className="flex items-center gap-2">
-          <dt className="text-xs font-medium uppercase tracking-wide text-muted-foreground">
-            NACE
-          </dt>
-          <dd className="flex items-center gap-2 font-medium">
-            <span className="tabular-nums">
-              {info.primary_nace_code || "—"}
-            </span>
-            {detail.naceLabel !== "" ? (
-              <span className="font-normal text-muted-foreground">
-                {detail.naceLabel}
-              </span>
-            ) : null}
-          </dd>
-        </div>
-      </dl>
+      <CompanyFactsCard info={info} naceLabel={detail.naceLabel} />
 
       <PublishedCard info={info} />
 

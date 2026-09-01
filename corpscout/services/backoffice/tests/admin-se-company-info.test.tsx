@@ -348,14 +348,22 @@ describe("company info review page", () => {
     expect(html).toContain("Alpha bygger betalprogramvara.");
   });
 
-  it("shows the status strip with incorporated and the named NACE under the description card", () => {
+  it("shows a company-facts card under the description card", () => {
     const html = render();
     const menuStart = html.indexOf("About the company");
-    const strip = html.slice(menuStart, html.indexOf("Published version"));
-    expect(strip).toContain("Incorporated");
-    expect(strip).toContain("2001-02-03");
-    expect(strip).toContain("62.01");
-    expect(strip).toContain("Computer programming activities");
+    const card = html.slice(menuStart, html.indexOf("Published version"));
+    expect(card).toContain("Company facts");
+    expect(card).toContain("Status");
+    expect(card).toContain("active");
+    expect(card).toContain("Incorporated");
+    expect(card).toContain("2001-02-03");
+    expect(card).toContain("Legal form");
+    expect(card).toContain("Limited company (aktiebolag)");
+    expect(card).toContain("NACE");
+    expect(card).toContain("62.01");
+    expect(card).toContain("Computer programming activities");
+    expect(card).toContain("SNI");
+    expect(card).toContain("62010");
   });
 
   it("lays the page out as published version, then every source, then suggestions and corrections", () => {
