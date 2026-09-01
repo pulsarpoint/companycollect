@@ -82,12 +82,15 @@ def test_final_table_ends_with_provenance() -> None:
 
 
 def test_ledger_and_observation_tables_twin_the_person_ones() -> None:
-    ledger, observation = table_block("se_company_info_correction"), table_block("se_company_info_enrichment_observation")
-    for column in ("correction_id", "company_id", "correction_kind", "payload", "evidence_hash",
-                   "reason", "decided_by", "supersedes_correction_id", "created_at"):
+    """2026-09-01: se_company_info_field_value replaces se_company_info_correction --
+    append-only history where the live value per (company_id, field) is the row with the
+    greatest (created_at, value_id); no kinds, no ranking, no undo chain."""
+    ledger, observation = table_block("se_company_info_field_value"), table_block("se_company_info_enrichment_observation")
+    for column in ("value_id", "company_id", "field", "value", "source", "source_ref",
+                   "source_at", "decided_by", "note", "created_at"):
         assert f"    {column} " in ledger
     assert "subject_person_id" not in ledger
-    assert "ORDER BY (company_id, created_at, correction_id)" in ledger
+    assert "ORDER BY (company_id, field, created_at, value_id)" in ledger
     for column in ("suggestion_id", "company_id", "input_hash", "suggestion", "raw_response",
                    "model_provider", "model_name", "prompt_version", "prompt_tokens",
                    "completion_tokens", "source_run_id", "created_at"):
@@ -103,6 +106,14 @@ def test_writer_grants_are_insert_only() -> None:
     assert "GRANT SELECT" not in up and "GRANT ALL" not in up
     assert "REVOKE INSERT ON corpscout.se_company_info_correction" in down
     assert "REVOKE INSERT ON corpscout.se_company_info_enrichment_observation" in down
+
+
+def test_field_value_writer_grant_is_insert_only() -> None:
+    up = (MIGRATIONS_DIR / "000368_corpscout_se_company_info_field_value.up.sql").read_text()
+    down = (MIGRATIONS_DIR / "000368_corpscout_se_company_info_field_value.down.sql").read_text()
+    assert "GRANT INSERT ON corpscout.se_company_info_field_value\nTO corpscout_person_correction_writer" in up
+    assert "GRANT SELECT" not in up and "GRANT ALL" not in up
+    assert "REVOKE INSERT ON corpscout.se_company_info_field_value\nFROM corpscout_person_correction_writer" in down
 
 
 def test_sole_traders_are_admitted_by_000299_on_every_company_keyed_table() -> None:

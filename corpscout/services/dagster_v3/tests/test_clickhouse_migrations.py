@@ -376,6 +376,7 @@ EXPECTED_MIGRATIONS = (
     "000365_corpscout_se_company_info_esef_enrichment",
     "000366_corpscout_se_companies_serving_hourly_refresh",
     "000367_corpscout_se_jobtech_links_job_ads",
+    "000368_corpscout_se_company_info_field_value",
 )
 
 NOOP_MIGRATIONS = {"000276_noop"}
@@ -3981,6 +3982,26 @@ def test_se_companies_serving_refresh_schedule_is_hourly_and_reversible() -> Non
         "ALTER TABLE corpscout.se_companies_serving MODIFY REFRESH EVERY 15 MINUTE"
         in down
     )
+
+
+def test_se_company_info_field_value_replaces_the_correction_ledger() -> None:
+    """2026-09-01: the ledger modelled decisions as kinds ranked by time with an undo
+    chain; the field's live value is just the latest row written for it. Prod check at
+    spec time found 0 of 3.5M published rows applied a correction and the ledger held
+    only 4 rows, so it drops in the same migration that adds the replacement table."""
+    up = _migration_sql("000368_corpscout_se_company_info_field_value.up.sql")
+    down = _migration_sql("000368_corpscout_se_company_info_field_value.down.sql")
+
+    assert "CREATE TABLE IF NOT EXISTS corpscout.se_company_info_field_value" in up
+    for constraint in ("CONSTRAINT has_company", "CONSTRAINT known_field", "CONSTRAINT known_source"):
+        assert constraint in up
+    assert "ORDER BY (company_id, field, created_at, value_id)" in up
+    assert "GRANT INSERT ON corpscout.se_company_info_field_value" in up
+    assert "DROP TABLE IF EXISTS corpscout.se_company_info_correction" in up
+
+    assert "DROP TABLE IF EXISTS corpscout.se_company_info_field_value" in down
+    assert "REVOKE INSERT" in down
+    assert "CREATE TABLE IF NOT EXISTS corpscout.se_company_info_correction" in down
 
 
 def _migration_sql(file_name: str) -> str:
