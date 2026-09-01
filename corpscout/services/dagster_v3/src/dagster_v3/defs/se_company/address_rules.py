@@ -322,7 +322,7 @@ def apply_address_ledger(
       no trace.
     - malformed (no ``address_key``, an unknown field, a non-string/non-null value, an
       ``override_field`` that names no field at all) -> silently skipped: neither applied
-      nor counted as stale, exactly as ``apply_info_ledger`` treats a malformed payload.
+      nor counted as stale, the way ``apply_field_values`` skips a malformed info row.
 
     ``override_field`` rewrites the named text fields of one row; an explicit ``null``
     clears a field and an ABSENT key leaves it as computed. It never touches

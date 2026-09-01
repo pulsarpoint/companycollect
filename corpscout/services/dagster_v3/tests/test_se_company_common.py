@@ -290,7 +290,7 @@ class _FakeLedgerClient:
     """
 
     def __init__(self) -> None:
-        self.rows: list[tuple[str, str, str]] = []  # (company_id, correction_id, created_at)
+        self.rows: list[tuple[str, str, str]] = []  # (company_id, row_id, created_at)
         self.executed: list[tuple[str, object]] = []
 
     def append(self, company_id: str, correction_id: str, created_at: str) -> None:
@@ -298,7 +298,9 @@ class _FakeLedgerClient:
 
     def execute(self, sql: str, params: dict[str, object] | None = None) -> list[tuple[object, ...]]:
         self.executed.append((sql, params))
-        if "argMax(correction_id" in sql:
+        # Matched on `argMax(` alone, not on the column name: the same cursor query is
+        # issued with `value_id` by se_company_info_field_value_sensor.
+        if "argMax(" in sql:
             if not self.rows:
                 return [(0, "", "")]
             _, last_id, last_created_at = max(self.rows, key=lambda row: (row[2], row[1]))
@@ -308,8 +310,8 @@ class _FakeLedgerClient:
             since = (str(params["since"]), str(params["since_id"]))
             touched = sorted({
                 company_id
-                for company_id, correction_id, created_at in self.rows
-                if (created_at, correction_id) > since
+                for company_id, row_id, created_at in self.rows
+                if (created_at, row_id) > since
             })
             return [(company_id,) for company_id in touched]
         raise AssertionError(sql)

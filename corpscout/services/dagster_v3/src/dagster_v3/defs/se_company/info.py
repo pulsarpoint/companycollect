@@ -9,16 +9,18 @@ module only carries them across (the model is never asked what a legal form is c
 A description conflict (several sources
 offer one) is resolved by the model: one request per company listing every candidate,
 cached by input_hash in se_company_info_enrichment_observation; the model's text is
-published with llm_enhanced = true unless a ledger row says otherwise. Which sources
+published with llm_enhanced = true unless a field value says otherwise. Which sources
 offered a description is recorded separately (description_sources /
 description_source_record_uids) and is never about who wrote the published text.
 Languages: every row carries both, description (English) and description_sv (Swedish).
 Deterministically the Swedish one is SCB's own verksamhetsbeskrivning; when the model
 runs it writes both from the same facts in one call (000301, prompt version v3).
-Ledger: se_company_info_correction -- override_field / approve_suggestion /
-reject_suggestion / undo; stale by evidence_set_hash; corrections never abort a run.
-Trigger: se_company_info_weekly after the artifacts; se_company_info_correction_sensor
-(ledger rows -> scoped review job); manual runs from the backoffice Pipeline page,
+Field values: se_company_info_field_value -- append-only history whose live value per
+(company_id, field) is simply the newest row written for it; a NULL value releases the
+field back to the pipeline's computed default. No kinds, no staleness, no undo chain
+(undo = write the previous value again), and a field value never aborts a run.
+Trigger: se_company_info_weekly after the artifacts; se_company_info_field_value_sensor
+(new field values -> scoped review job); manual runs from the backoffice Pipeline page,
 scoped by company_ids.
 Gate: the asset writes nothing and calls no model unless the run config says
 ``execute: true`` -- a bare "Materialize" click in the Dagster UI is a preview that
@@ -50,10 +52,8 @@ from dagster_v3.defs.clickhouse.resolved import assert_clickhouse_tables_exist
 from dagster_v3.defs.se_company.common import (
     ObservationResult,
     StoredObservation,
-    build_ledger_sql,
     build_observations_sql,
     input_hash_for,
-    ledger_row_from_row,
     ledger_sensor,
     normalized_se_company_ids,
     observation_from_row,
@@ -64,9 +64,9 @@ from dagster_v3.defs.se_company.esef import SE_COMPANY_INFO_ESEF_COLUMNS
 from dagster_v3.defs.se_company.esef import TABLE as ESEF_TABLE
 from dagster_v3.defs.se_company.info_rules import (
     ArtifactRow,
+    FieldValueRow,
     InfoOutcome,
-    apply_info_ledger,
-    evidence_set_hash_for,
+    apply_field_values,
     merge_company_info,
 )
 from dagster_v3.defs.se_company.scb import SE_COMPANY_INFO_SCB_COLUMNS
@@ -78,7 +78,7 @@ DATABASE = "corpscout"
 GROUP_NAME = "se_company"
 DESCRIPTION_PROMPT_VERSION = "se-company-info-description-v3"
 SE_COMPANY_INFO = "se_company_info"
-SE_COMPANY_INFO_CORRECTION = "se_company_info_correction"
+SE_COMPANY_INFO_FIELD_VALUE = "se_company_info_field_value"
 SE_COMPANY_INFO_OBSERVATION = "se_company_info_enrichment_observation"
 # A LEFT JOIN miss reads as this instant, not as a bare NULL comparison.
 EPOCH_SQL = "toDateTime64('1970-01-01 00:00:00', 3, 'UTC')"
@@ -97,10 +97,10 @@ def _clickhouse_stamp(moment: datetime) -> str:
 # failed -- and no reviewer decision has been applied to it. Written once and used by
 # both branches of the change scan.
 #
-# The correction_ids test is what keeps a reviewed company out: `reject_suggestion`
-# clears suggestion_id and leaves llm_enhanced down, so the row is indistinguishable
-# from a never-modelled one by its description columns alone; its applied-correction
-# list is the honest signal. Array columns cannot be
+# The correction_ids test is what keeps a reviewed company out: a field value from any
+# source but `llm` clears suggestion_id and leaves llm_enhanced down, so the row is
+# indistinguishable from a never-modelled one by its description columns alone; its
+# applied field-value list is the honest signal. Array columns cannot be
 # Nullable, so a LEFT JOIN miss yields [] under either join_use_nulls setting and the
 # length test needs no ifNull (which would in fact be a type error here).
 MULTI_SOURCE_SQL = "ifNull(published.description_source_count, 0) > 1"
@@ -287,9 +287,9 @@ def _source_entry(source: str, text: str, swedish: str | None) -> dict[str, str]
     verksamhetsbeskrivning), and ``text`` already IS that text for a company the
     translator has not reached -- so ``text_sv`` is added only when it says something the
     entry does not already carry. It is read from ``description_sv_candidate``, which no
-    model result and no correction ever rewrites: the model-off run recomputes this exact
-    request to keep a reviewer's approval alive, so a payload field that changed after the
-    model answered would make every such decision read stale.
+    model result and no field value ever rewrites: the payload is what ``input_hash``
+    covers, so a field that changed after the model answered would miss the stored
+    suggestion and pay for the same answer again.
     """
     entry = {"source": source, "text": text}
     if source == "scb" and swedish and swedish != text:
@@ -346,22 +346,27 @@ def build_changed_companies_sql() -> str:
     a description.
 
     Reasons to resolve a company again: it has never been published, an artifact
-    carries an observation newer than the published resolution, the correction
-    ledger gained a row after it, or -- when this run has the model on
+    carries an observation newer than the published resolution, the field-value
+    table gained a row after it, or -- when this run has the model on
     (``include_pending``) -- it was published with several description sources and
     no suggestion, because the initial load ran with the model off or the model call
     failed. Without that last term nothing about such a company ever changes again,
     so only a manual ``pending_model_only`` run would ever retry it.
 
+    The ``ledger`` CTE, its ``latest_correction_at`` alias and the ``ledger_pending``
+    reason keep their names although the table behind them is now
+    se_company_info_field_value: the backoffice Pipeline page mirrors this SQL and
+    reads that reason back by name.
+
     "Still owed a description" excludes any company that already carries an applied
-    correction: a reviewer has decided this description, and re-running the model on it
-    every week would only produce a suggestion the ledger immediately overrides again.
-    Such a company still re-resolves on NEW evidence or a NEW ledger row -- those two
-    terms are untouched -- so a later correction or a fresh artifact version is picked
+    field value: a reviewer has decided this description, and re-running the model on it
+    every week would only produce a suggestion the next publish overwrites again.
+    Such a company still re-resolves on NEW evidence or a NEW field value -- those two
+    terms are untouched -- so a later decision or a fresh artifact version is picked
     up as usual.
 
-    A published-vs-live correction id set comparison would be wrong here: a stale or
-    malformed correction is never applied, so its id would never appear on the
+    A published-vs-live id set comparison would be wrong here: a released (NULL) or
+    malformed field value is never applied, so its id would never appear on the
     published row and the company would be re-selected on every run forever.
 
     ``max(observed_at)`` per artifact needs no FINAL -- ``observed_at`` IS the
@@ -440,7 +445,7 @@ def build_changed_companies_sql() -> str:
 ),
 ledger AS (
     SELECT company_id, max(created_at) AS latest_correction_at
-    FROM {DATABASE}.{SE_COMPANY_INFO_CORRECTION}
+    FROM {DATABASE}.{SE_COMPANY_INFO_FIELD_VALUE}
     WHERE (%(all_companies)s = 1 OR company_id IN %(company_ids)s)
     GROUP BY company_id
 ),
@@ -493,6 +498,31 @@ def _artifact_row_from_row(row: Sequence[Any]) -> ArtifactRow:
     info_rules treats '' as missing and casts fiscal_year/employee_count where it needs them."""
     return ArtifactRow(source=str(row[0]), source_record_uid=str(row[2]), evidence_hash=str(row[3]),
                        observed_at=row[4], values=json.loads(str(row[5])))
+
+
+def build_field_values_sql(table: str) -> str:
+    """Every field-value row for the page's companies, oldest first.
+
+    The whole history is read, not just the live row per field: the live one is the
+    greatest ``(created_at, value_id)``, which ``apply_field_values`` picks in Python
+    from exactly this order -- the table's own ORDER BY -- so a page's rows arrive in
+    the same total order the table stores them in and two rows written in the same
+    millisecond can never swap places between runs.
+    """
+    return f"""SELECT
+    value_id, company_id, field, value, source, source_ref, created_at
+FROM {DATABASE}.{table}
+WHERE company_id IN %(company_ids)s
+ORDER BY company_id, field, created_at, value_id"""
+
+
+def _field_value_from_row(row: Sequence[Any]) -> FieldValueRow:
+    """``value`` is the one Nullable column: NULL is a release, and must stay None
+    rather than becoming the string 'None'."""
+    return FieldValueRow(
+        value_id=uuid.UUID(str(row[0])), company_id=str(row[1]), field=str(row[2]),
+        value=None if row[3] is None else str(row[3]), source=str(row[4]),
+        source_ref=str(row[5]), created_at=row[6])
 
 
 def build_token_averages_sql() -> str:
@@ -589,9 +619,9 @@ def map_ordered(call: Callable[[T], R], items: Sequence[T], *, concurrency: int)
 @dataclass
 class _Prepared:
     """One company between the pure merge and the publish: what the model would be
-    asked (``request``/``input_hash``), and the observation list its own corrections
+    asked (``request``/``input_hash``), and the observation list its own field values
     read -- the live list, so a suggestion made for this company in this run is
-    visible to its own approve_suggestion row."""
+    visible to an llm field value naming it."""
 
     company_id: str
     outcome: InfoOutcome
@@ -631,10 +661,10 @@ def _resolve_page(
         rows_by_company: dict[str, list[ArtifactRow]] = defaultdict(list)
         for row in ch.execute(build_artifact_rows_sql(), params):
             rows_by_company[str(row[1])].append(_artifact_row_from_row(row))
-        ledger_by_company = defaultdict(list)
-        for row in ch.execute(build_ledger_sql(SE_COMPANY_INFO_CORRECTION), params):
-            item = ledger_row_from_row(row)
-            ledger_by_company[item.company_id].append(item)
+        values_by_company: dict[str, list[FieldValueRow]] = defaultdict(list)
+        for row in ch.execute(build_field_values_sql(SE_COMPANY_INFO_FIELD_VALUE), params):
+            value_row = _field_value_from_row(row)
+            values_by_company[value_row.company_id].append(value_row)
         stored_by_company = defaultdict(list)
         for row in ch.execute(build_observations_sql(SE_COMPANY_INFO_OBSERVATION), params):
             observation = observation_from_row(row)
@@ -655,18 +685,6 @@ def _resolve_page(
         if outcome.needs_model and model_on:
             request = build_description_request(outcome, profile)
             input_hash = input_hash_for(request, profile.prompt_version)
-        elif stored:
-            # Even on a run that never calls the model, the ledger validates an
-            # approve/reject against the hash of the request that produced the
-            # suggestion -- and that hash includes the model name. Recomputing it
-            # from the newest stored observation's model_name is pure Python (no
-            # API call, no host settings) and is what keeps a reviewer's decision
-            # alive on a model-off run: without it every approval reads stale and
-            # the reviewed text is silently dropped on the next publish.
-            newest = max(stored, key=lambda row: (row.created_at, str(row.suggestion_id)))
-            input_hash = input_hash_for(
-                build_description_request(outcome, profile.model_copy(update={"model": newest.model_name})),
-                profile.prompt_version)
         prepared.append(_Prepared(company_id, outcome, stored, request, input_hash))
 
     # Pass 2 -- the paid calls, up to profile.concurrency at once, consumed in company
@@ -677,7 +695,7 @@ def _resolve_page(
                 prompt_version=profile.prompt_version),
         calls, concurrency=profile.concurrency)
 
-    # Pass 3 -- durability and rules: persist each answer, apply the ledger, stage rows.
+    # Pass 3 -- durability and rules: persist each answer, apply the field values, stage rows.
     final_rows: list[tuple[Any, ...]] = []
     observation_rows: list[tuple[Any, ...]] = []
     for item in prepared:
@@ -688,10 +706,7 @@ def _resolve_page(
                 # The company publishes its deterministic pick with no suggestion_id,
                 # which is itself a reason to re-select it: the next model-on run (the
                 # weekly job included) retries it, and so does a pending_model_only pass.
-                # input_hash goes back to None: no live suggestion exists for this
-                # evidence, so an approve/reject correction must read stale.
                 metrics["model_failed_count"] += 1
-                input_hash = None
                 if log is not None:
                     log("se_company_info description model failed: company=%s error=%s",
                         item.company_id, answer)
@@ -703,8 +718,9 @@ def _resolve_page(
                         json.dumps(result.suggestion, ensure_ascii=False), result.raw_response, result.model_provider,
                         result.model_name, result.prompt_version, result.prompt_tokens, result.completion_tokens,
                         source_run_id, resolved_at))
-                    # Visible to this company's corrections in the same run: an
-                    # approve_suggestion naming this brand-new id must resolve.
+                    # Visible to this company's own field values in the same run: an
+                    # llm value whose source_ref names this brand-new suggestion must
+                    # find it and copy its provenance.
                     item.stored.append(StoredObservation(
                         suggestion_id=result.suggestion_id, company_id=item.company_id,
                         input_hash=str(input_hash), suggestion=result.suggestion,
@@ -712,9 +728,8 @@ def _resolve_page(
                         prompt_version=result.prompt_version, created_at=resolved_at))
                     if len(observation_rows) >= OBSERVATION_FLUSH_ROWS:
                         _publish_observations(clickhouse=clickhouse, rows=observation_rows, metrics=metrics)
-                # The model's provenance is set BEFORE the ledger runs, so a later
-                # reject/override resets it; description_candidates is never rebuilt
-                # (reject_suggestion falls back to its first entry).
+                # The model's provenance is set BEFORE the field values are applied,
+                # so a live value from any other source replaces it whole.
                 # Both languages come from the one answer. A reused stored
                 # suggestion always has both too: input_hash covers the profile's
                 # prompt_version, so a v2 answer can never be reused under v3 --
@@ -726,15 +741,10 @@ def _resolve_page(
                                   llm_enhanced=True, suggestion_id=result.suggestion_id,
                                   model_provider=result.model_provider, model_name=result.model_name,
                                   prompt_version=result.prompt_version)
-        outcome = apply_info_ledger(outcome, ledger_by_company.get(item.company_id, []),
-                                    evidence_set_hash=evidence_set_hash_for(outcome.evidence_hashes),
-                                    current_input_hash=input_hash,
-                                    stored=item.stored)
+        outcome = apply_field_values(outcome, values_by_company.get(item.company_id, []),
+                                     stored=item.stored)
         metrics["applied_correction_count"] += len(outcome.correction_ids)
-        metrics["stale_correction_count"] += len(outcome.stale_correction_ids)
-        if outcome.stale_correction_ids and log is not None:
-            log("Stale corrections skipped: company=%s ids=%s", item.company_id,
-                [str(i) for i in outcome.stale_correction_ids])
+        metrics["invalid_value_count"] += outcome.invalid_value_count
         final_rows.append(_final_row(outcome, source_run_id=source_run_id, resolved_at=resolved_at))
 
     _publish_observations(clickhouse=clickhouse, rows=observation_rows, metrics=metrics)
@@ -787,12 +797,12 @@ def materialize_se_company_info(
     resolve_all_cutoff = resolve_all_before.strip() or _clickhouse_stamp(resolved_at)
     scope = normalized_se_company_ids(company_ids)
     assert_clickhouse_tables_exist(clickhouse, database=DATABASE, tables=(
-        *ARTIFACT_TABLES.values(), SE_COMPANY_INFO, SE_COMPANY_INFO_CORRECTION, SE_COMPANY_INFO_OBSERVATION))
+        *ARTIFACT_TABLES.values(), SE_COMPANY_INFO, SE_COMPANY_INFO_FIELD_VALUE, SE_COMPANY_INFO_OBSERVATION))
     # Both scan queries embed %(company_ids)s three times and clickhouse-driver
     # substitutes them client-side, so the rendered statement grows by ~12 bytes per id
     # per copy: 5,000 ids render to ~212 KB and roughly 6,150 blow past ClickHouse's
     # default max_query_size of 262,144 ("Code: 62 Max query size exceeded"). An
-    # explicit scope -- a correction sensor can name thousands of companies -- is
+    # explicit scope -- the field-value sensor can name thousands of companies -- is
     # therefore split into chunks of at most company_batch_size ids, each paged on its
     # own, and company_batch_size itself is capped at 5,000 by the config.
     chunks = [tuple(scope[start : start + company_batch_size])
@@ -873,7 +883,7 @@ class SECompanyInfoConfig(dg.Config):
     # that a "Materialize" click in the Dagster UI -- which sends no config at all -- can
     # never resolve 3.5M companies with the model on (it did, on 2026-08-23, for two hours
     # and ~500 duplicated paid calls). Every real run says execute: true explicitly: the
-    # schedule, the correction sensor and the backoffice Pipeline page all do.
+    # schedule, the field-value sensor and the backoffice Pipeline page all do.
     execute: bool = False
     # The model to call, sent by the caller rather than read from host env. Absent, the
     # pinned defaults apply -- which are DEFAULT_LLM_PROFILE's values.
@@ -920,12 +930,12 @@ class SECompanyInfoConfig(dg.Config):
     kinds={"clickhouse", "python", "llm"},
     metadata={"table": f"{DATABASE}.{SE_COMPANY_INFO}"},
     description=("One merged information row per Swedish company with full provenance; conflicts go to "
-                 "the model, corrections win. Launch from the backoffice Pipeline page; a UI "
+                 "the model, a live field value wins. Launch from the backoffice Pipeline page; a UI "
                  "materialization without execute=true is a preview that writes nothing."),
 )
 def se_company_info_clickhouse(context: dg.AssetExecutionContext, config: SECompanyInfoConfig,
                                clickhouse: ClickhouseResource) -> dg.MaterializeResult:
-    """changed companies -> artifact rows -> rules -> LLM on conflicts -> ledger -> publish."""
+    """changed companies -> artifact rows -> rules -> LLM on conflicts -> field values -> publish."""
     profile = config.llm or LlmProfileConfig()
     # Built here, before materialize touches ClickHouse: a run configured for a provider
     # whose key this host does not carry must fail with that message, not half-way
@@ -951,10 +961,10 @@ se_company_info_review_job = dg.define_asset_job(
 # out execute AND the profile they call: an automated run must never depend on the
 # asset's field defaults, and must never be silently downgraded to a preview.
 AUTOMATED_RUN_CONFIG: dict[str, Any] = {"execute": True, "llm": DEFAULT_LLM_PROFILE}
-se_company_info_correction_sensor = ledger_sensor(
-    name="se_company_info_correction_sensor", table=SE_COMPANY_INFO_CORRECTION,
-    job=se_company_info_review_job, asset_names=("se_company_info_clickhouse",),
-    extra_config=AUTOMATED_RUN_CONFIG)
+se_company_info_field_value_sensor = ledger_sensor(
+    name="se_company_info_field_value_sensor", table=SE_COMPANY_INFO_FIELD_VALUE,
+    id_column="value_id", job=se_company_info_review_job,
+    asset_names=("se_company_info_clickhouse",), extra_config=AUTOMATED_RUN_CONFIG)
 # 06:50 Monday: the (minute, hour) slot must be unique across every schedule, and
 # 06:45 is already taken by a Saturday schedule.
 se_company_info_weekly = dg.ScheduleDefinition(
@@ -963,4 +973,4 @@ se_company_info_weekly = dg.ScheduleDefinition(
     run_config={"ops": {"se_company_info_clickhouse": {"config": dict(AUTOMATED_RUN_CONFIG)}}})
 
 defs = dg.Definitions(assets=[se_company_info_clickhouse], jobs=[se_company_info_job, se_company_info_review_job],
-                      sensors=[se_company_info_correction_sensor], schedules=[se_company_info_weekly])
+                      sensors=[se_company_info_field_value_sensor], schedules=[se_company_info_weekly])

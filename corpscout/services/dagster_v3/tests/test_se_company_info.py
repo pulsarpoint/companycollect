@@ -27,11 +27,7 @@ from dagster_v3.defs.se_company.info import (
     build_description_request,
     parse_description_suggestion,
 )
-from dagster_v3.defs.se_company.info_rules import (
-    ArtifactRow,
-    evidence_set_hash_for,
-    merge_company_info,
-)
+from dagster_v3.defs.se_company.info_rules import ArtifactRow, merge_company_info
 
 NOW = datetime(2026, 8, 22, 12, tzinfo=UTC)
 COMPANY = "5565200028"
@@ -53,7 +49,7 @@ EXISTING_TABLES = [
         "se_company_info_esef",
         "se_company_info_wikidata",
         "se_company_info",
-        "se_company_info_correction",
+        "se_company_info_field_value",
         "se_company_info_enrichment_observation",
     )
 ]
@@ -172,13 +168,21 @@ def test_changed_companies_sql_compares_artifact_versions_and_ledger_with_the_fi
         assert f"FROM corpscout.{table}" in sql
     assert "FROM corpscout.se_company_info AS final FINAL" in sql
     # A company is changed when it has never been published, when an artifact carries a
-    # newer observation than the published resolution, or when the ledger gained a row
-    # after it. Deliberately NOT a published-vs-live correction_ids comparison: a stale
-    # or malformed correction is never applied, so that predicate would re-select the
-    # same company on every run forever.
+    # newer observation than the published resolution, or when the field-value table
+    # gained a row after it. Deliberately NOT a published-vs-live correction_ids
+    # comparison: a released (NULL) or malformed field value is never applied, so that
+    # predicate would re-select the same company on every run forever.
     assert "ifNull(published.company_id, '') = ''" in sql
     assert f"artifacts.latest_observed_at > ifNull(published.resolved_at, {EPOCH_SQL})" in sql
     assert f"ifNull(ledger.latest_correction_at, {EPOCH_SQL}) > ifNull(published.resolved_at, {EPOCH_SQL})" in sql
+    # The correction ledger is gone: the CTE reads se_company_info_field_value now. Its
+    # `latest_correction_at` alias and the `ledger_pending` reason name are KEPT on
+    # purpose -- the backoffice Pipeline page mirrors this SQL and reads them back.
+    assert "FROM corpscout.se_company_info_field_value" in sql
+    assert "se_company_info_correction" not in sql
+    assert "SELECT company_id, max(created_at) AS latest_correction_at" in sql
+    assert (f"ifNull(ledger.latest_correction_at, {EPOCH_SQL}) > "
+            f"ifNull(published.resolved_at, {EPOCH_SQL}) AS ledger_pending") in sql
     # resolve_all re-resolves every in-scope company even though no evidence moved --
     # for a rules-only change (new merge logic, a new artifact column) that no
     # observed_at or ledger row reflects. It sits in the ordinary branch only, still
@@ -335,11 +339,11 @@ def test_an_untranslated_scb_company_sends_its_swedish_text_once() -> None:
 
 
 def test_the_request_is_the_same_before_and_after_the_model_has_answered() -> None:
-    """The model-on run hashes the request before calling, and a later model-off run
-    recomputes that hash from the same outcome to keep an approval alive. Every field the
-    payload reads must therefore be one no model result and no correction rewrites --
-    reading `description_sv` (which the model replaces) instead of the never-mutated
-    `description_sv_candidate` would make every reviewer decision read stale."""
+    """The request a company produces must not change once the model has answered it:
+    `input_hash` is the observation cache key, so every field the payload reads has to be
+    one no model result and no field value rewrites -- reading `description_sv` (which the
+    model replaces) instead of the never-mutated `description_sv_candidate` would miss the
+    stored suggestion on the next run and pay for the same answer again."""
     from dataclasses import replace
 
     outcome = _outcome()
@@ -716,27 +720,29 @@ def test_the_config_caps_the_batch_at_the_query_size_limit() -> None:
     ).resolve_all_before == "2026-08-23 18:30:00"
 
 
-def test_an_approval_survives_a_run_that_does_not_call_the_model() -> None:
-    """The ledger validates approve/reject against the hash of the request that produced
-    the suggestion, and that hash includes the model name. A model-off run therefore has
-    to recompute it from the newest stored observation -- otherwise every reviewer
-    decision reads stale and the approved text is dropped on the next publish."""
+def test_a_field_value_survives_a_run_that_does_not_call_the_model() -> None:
+    """A reviewer's decision is a row in se_company_info_field_value, and a model-off run
+    publishes it like any other: the value is read straight from the table, so nothing has
+    to be recomputed, re-hashed or re-validated to keep it alive. The `llm` source names a
+    stored suggestion, so the published row keeps the model's provenance while the text is
+    the field value's own."""
     from dagster_v3.defs.se_company.info import INSERT_COLUMNS, materialize_se_company_info
     from tests.test_se_company_common import FakeClickhouse, FakeClient
 
-    suggestion_id, correction_id = uuid.uuid4(), uuid.uuid4()
+    suggestion_id, value_id = uuid.uuid4(), uuid.uuid4()
     suggestion = {"description": "Alpha AB builds payment software in Sweden.",
                   "description_sv": "Alpha AB bygger betalprogramvara i Sverige.",
                   "language": "en", "rationale": "merged"}
-    # The hash the model-off run must arrive at: same request, the STORED model name.
-    stored_hash = input_hash_for(
-        build_description_request(_outcome(), _profile("stored-model")), DESCRIPTION_PROMPT_VERSION)
 
     client = FakeClient(answers=[
         EXISTING_TABLES, [_selected(COMPANY)], ARTIFACT_ROWS,
-        [(correction_id, COMPANY, "approve_suggestion", json.dumps({"suggestion_id": str(suggestion_id)}),
-          evidence_set_hash_for(("a" * 64, "c" * 64)), None, NOW)],
-        [(suggestion_id, COMPANY, stored_hash, json.dumps(suggestion),
+        # (value_id, company_id, field, value, source, source_ref, created_at)
+        [(value_id, COMPANY, "description", "Alpha AB builds payment software in Sweden.",
+          "llm", str(suggestion_id), NOW)],
+        # The stored observation's input_hash is never recomputed on a model-off run any
+        # more: source_ref is what names the suggestion, and the observation is read only
+        # for the provenance the published row then carries.
+        [(suggestion_id, COMPANY, "f" * 64, json.dumps(suggestion),
           "fake-provider", "stored-model", DESCRIPTION_PROMPT_VERSION, NOW)],
         [(1, 0)], [(0,)], [(1,)],
     ])
@@ -746,15 +752,18 @@ def test_an_approval_survives_a_run_that_does_not_call_the_model() -> None:
         llm_client=None, llm_profile=PROFILE, log=None,
         resolve_multi_source_with_llm=False)
 
-    assert metadata["stale_correction_count"] == 0 and metadata["applied_correction_count"] == 1
+    assert metadata["applied_correction_count"] == 1 and metadata["invalid_value_count"] == 0
+    assert "stale_correction_count" not in metadata  # no staleness to report any more
     assert metadata.get("llm_request_count", 0) == 0  # no model call was made to get there
     row = dict(zip(INSERT_COLUMNS, _final_rows(client)[0], strict=True))
     assert row["description"] == "Alpha AB builds payment software in Sweden."
-    assert row["description_sv"] == "Alpha AB bygger betalprogramvara i Sverige."
-    # Approved, but the text is still the model's -- and the reviewer's involvement is
-    # what correction_ids below records.
+    # Only `description` was decided, so the Swedish column is still the pipeline's own
+    # pick (SCB's verksamhetsbeskrivning), not the suggestion's half of the pair.
+    assert row["description_sv"] == SCB_SWEDISH
+    # The text is the model's, whoever chose to publish it -- and the applied value's id
+    # is what records that someone did.
     assert row["llm_enhanced"] is True and row["description_language"] == "en"
-    assert row["suggestion_id"] == suggestion_id and row["correction_ids"] == [correction_id]
+    assert row["suggestion_id"] == suggestion_id and row["correction_ids"] == [value_id]
     assert row["model_provider"] == "fake-provider" and row["model_name"] == "stored-model"
 
 
@@ -784,7 +793,7 @@ def test_definitions_wire_final_jobs_sensor_schedule_and_leaves() -> None:
                     "se_company_info_wikidata_clickhouse", "se_company_info_clickhouse"}
     assert {k.path[-1] for k in repository.get_job("se_company_info_review_job").asset_layer.executable_asset_keys} == {
         "se_company_info_clickhouse"}
-    sensor = repository.get_sensor_def("se_company_info_correction_sensor")
+    sensor = repository.get_sensor_def("se_company_info_field_value_sensor")
     assert sensor.job_name == "se_company_info_review_job"
     assert sensor.default_status == dg.DefaultSensorStatus.STOPPED
     schedule = repository.get_schedule_def("se_company_info_weekly")
@@ -1052,10 +1061,14 @@ def test_the_config_gates_the_run_and_pins_the_profile_the_automation_sends() ->
         "ops": {"se_company_info_clickhouse": {"config": {"execute": True, "llm": DEFAULT_LLM_PROFILE}}}}
 
 
-def test_the_correction_sensor_launches_a_real_run_not_a_preview(monkeypatch) -> None:
-    """A ledger row must actually re-resolve its company. Without execute in the sensor's
-    run config the review job would run the scan and write nothing -- the reviewer's
-    correction would sit unapplied forever, and nothing would look broken."""
+def test_the_field_value_sensor_launches_a_real_run_not_a_preview(monkeypatch) -> None:
+    """A new field value must actually re-resolve its company. Without execute in the
+    sensor's run config the review job would run the scan and write nothing -- the
+    reviewer's decision would sit unpublished forever, and nothing would look broken.
+
+    The cursor and the tuple boundary are keyed on `value_id`, the field-value table's own
+    row-identity column: `correction_id` does not exist there, so a sensor that kept the
+    default would fail against ClickHouse on its very first tick."""
     from contextlib import contextmanager
 
     import dagster as dg
@@ -1063,7 +1076,7 @@ def test_the_correction_sensor_launches_a_real_run_not_a_preview(monkeypatch) ->
 
     from dagster_v3.defs.se_company.info import (
         DEFAULT_LLM_PROFILE,
-        se_company_info_correction_sensor,
+        se_company_info_field_value_sensor,
     )
     from tests.test_se_company_common import _FakeLedgerClient
 
@@ -1077,9 +1090,13 @@ def test_the_correction_sensor_launches_a_real_run_not_a_preview(monkeypatch) ->
 
     monkeypatch.setattr(ClickhouseResource, "get_connection", fake_get_connection)
     context = dg.build_sensor_context(cursor=None, resources={"clickhouse": resource})
-    execution_data = se_company_info_correction_sensor.evaluate_tick(context)
+    execution_data = se_company_info_field_value_sensor.evaluate_tick(context)
 
     assert execution_data.run_requests is not None
     assert execution_data.run_requests[0].run_config == {
         "ops": {"se_company_info_clickhouse": {"config": {
             "execute": True, "llm": DEFAULT_LLM_PROFILE, "company_ids": [COMPANY]}}}}
+    statements = [sql for sql, _ in ledger.executed]
+    assert any("corpscout.se_company_info_field_value" in sql for sql in statements)
+    assert all("correction_id" not in sql for sql in statements)
+    assert any("argMax(value_id, (created_at, value_id))" in sql for sql in statements)
