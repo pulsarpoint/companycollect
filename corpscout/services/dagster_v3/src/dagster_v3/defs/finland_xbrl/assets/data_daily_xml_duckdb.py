@@ -14,8 +14,15 @@ from dagster_v3.defs.finland_xbrl.assets.data_snapshot_xml_duckdb import (
     materialize_data_snapshot_xml_duckdb,
     xml_daily_parse_duckdb_path,
     xml_daily_parse_temp_dir,
+    xml_daily_unified_duckdb_path,
+    xml_daily_unified_parse_temp_dir,
 )
 from dagster_v3.defs.finland_xbrl.parser import parse_statement_xml
+from dagster_v3.defs.finland_xbrl.unified_adapter import (
+    FINLAND_UNIFIED_CONTRACT,
+    parse_statement_xml_unified,
+)
+from dagster_v3.defs.xbrl_common.tables import XbrlRowContract
 
 
 def materialize_data_daily_xml_duckdb(
@@ -27,6 +34,7 @@ def materialize_data_daily_xml_duckdb(
     run_id: str,
     log_info: Callable[[str], None] | None = None,
     parser: StatementParser = parse_statement_xml,
+    row_contract: XbrlRowContract | None = None,
 ) -> dg.MaterializeResult:
     return materialize_data_snapshot_xml_duckdb(
         partition_key=partition_key,
@@ -38,6 +46,7 @@ def materialize_data_daily_xml_duckdb(
         run_id=run_id,
         log_info=log_info,
         parser=parser,
+        row_contract=row_contract,
     )
 
 
@@ -64,4 +73,33 @@ def data_daily_xml_duckdb(
         temp_dir=xml_daily_parse_temp_dir(context.partition_key),
         run_id=context.run.run_id,
         log_info=context.log.info,
+    )
+
+
+@dg.asset(
+    name="data_daily_xml_unified_duckdb",
+    group_name="finland_xbrl",
+    pool=FINLAND_XBRL_DUCKDB_POOL,
+    deps=[data_daily_xml],
+    partitions_def=DAILY_PARTITIONS,
+    backfill_policy=dg.BackfillPolicy.multi_run(max_partitions_per_run=1),
+    kinds={"python", "duckdb", "parquet", "xml"},
+    description=(
+        "Parses daily Finland XBRL XML files into a partition-scoped DuckDB "
+        "database using the unified XBRL row contract."
+    ),
+)
+def data_daily_xml_unified_duckdb(
+    context: dg.AssetExecutionContext,
+    object_store: ObjectStoreResource,
+) -> dg.MaterializeResult:
+    return materialize_data_daily_xml_duckdb(
+        partition_key=context.partition_key,
+        object_store=object_store,
+        duckdb_path=xml_daily_unified_duckdb_path(context.partition_key),
+        temp_dir=xml_daily_unified_parse_temp_dir(context.partition_key),
+        run_id=context.run.run_id,
+        log_info=context.log.info,
+        parser=parse_statement_xml_unified,
+        row_contract=FINLAND_UNIFIED_CONTRACT,
     )

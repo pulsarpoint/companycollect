@@ -24,6 +24,10 @@ from dagster_v3.defs.sweden_company import tables as sweden_company_tables
 from dagster_v3.defs.sweden_uhm_procurement import tables as sweden_uhm_tables
 from dagster_v3.defs.wikidata import tables as wikidata_tables
 from dagster_v3.defs.world_bank_macro import tables as world_bank_macro_tables
+from dagster_v3.defs.xbrl_common.tables import (
+    TAXONOMY_CONCEPT_COLUMNS,
+    TAXONOMY_LABEL_COLUMNS,
+)
 
 
 MIGRATIONS_DIR = Path(__file__).resolve().parents[3] / "clickhouse" / "migrations"
@@ -376,6 +380,9 @@ EXPECTED_MIGRATIONS = (
     "000365_corpscout_se_company_info_esef_enrichment",
     "000366_corpscout_se_companies_serving_hourly_refresh",
     "000367_corpscout_se_jobtech_links_job_ads",
+    "000368_corpscout_fi_xbrl_unified_next_tables",
+    "000369_corpscout_fi_xbrl_parity_report",
+    "000370_corpscout_fi_taxonomy_dictionary",
     "000371_corpscout_se_company_info_field_value",
 )
 
@@ -3982,6 +3989,36 @@ def test_se_companies_serving_refresh_schedule_is_hourly_and_reversible() -> Non
         "ALTER TABLE corpscout.se_companies_serving MODIFY REFRESH EVERY 15 MINUTE"
         in down
     )
+
+
+def test_fi_taxonomy_dictionary_migration_covers_columns_and_is_reversible() -> None:
+    """concept_rows_from_model/label rows are keyed dicts inserted by column
+    name (not positionally), so a strict column-order check isn't the hazard
+    here the way it is for br_company_relations's positional INSERT -- this
+    just pins that every TAXONOMY_CONCEPT_COLUMNS/TAXONOMY_LABEL_COLUMNS name
+    from xbrl_common/tables.py has a column in the migration, and that both
+    tables are reversible."""
+    up = _migration_sql("000370_corpscout_fi_taxonomy_dictionary.up.sql")
+    down = _migration_sql("000370_corpscout_fi_taxonomy_dictionary.down.sql")
+
+    assert "CREATE TABLE IF NOT EXISTS corpscout.fi_taxonomy_concepts" in up
+    for column in TAXONOMY_CONCEPT_COLUMNS:
+        assert f"    {column} " in up, column
+    assert (
+        "ORDER BY (taxonomy_version, concept_qname, presentation_role, "
+        "calculation_role)"
+    ) in up
+
+    assert "CREATE TABLE IF NOT EXISTS corpscout.fi_taxonomy_labels" in up
+    for column in TAXONOMY_LABEL_COLUMNS:
+        assert f"    {column} " in up, column
+    assert (
+        "ORDER BY (taxonomy_version, concept_qname, language, label_role)"
+    ) in up
+    assert "ENGINE = ReplacingMergeTree(loaded_at)" in up
+
+    assert "DROP TABLE IF EXISTS corpscout.fi_taxonomy_concepts" in down
+    assert "DROP TABLE IF EXISTS corpscout.fi_taxonomy_labels" in down
 
 
 def test_se_company_info_field_value_replaces_the_correction_ledger() -> None:

@@ -24,6 +24,11 @@ from dagster_v3.defs.finland_xbrl.assets.data_snapshot_xml import (
     xml_snapshot_success_key,
 )
 from dagster_v3.defs.finland_xbrl.parser import ParsedStatement, parse_statement_xml
+from dagster_v3.defs.finland_xbrl.unified_adapter import (
+    FINLAND_UNIFIED_CONTRACT,
+    parse_statement_xml_unified,
+)
+from dagster_v3.defs.xbrl_common.tables import TableContract, XbrlRowContract
 
 StatementParser = Callable[..., ParsedStatement]
 
@@ -168,6 +173,61 @@ def list_xml_parse_duckdb_paths(
     ]
 
 
+FINLAND_XBRL_XML_SNAPSHOT_UNIFIED_DUCKDB_PATH = Path(
+    "data/finland_xbrl/xml_snapshot_unified_duckdb"
+)
+FINLAND_XBRL_XML_SNAPSHOT_UNIFIED_PARSE_TEMP_PATH = Path(
+    "data/finland_xbrl/xml_snapshot_unified_parse_tmp"
+)
+FINLAND_XBRL_XML_DAILY_UNIFIED_DUCKDB_PATH = Path(
+    "data/finland_xbrl/xml_daily_unified_duckdb"
+)
+FINLAND_XBRL_XML_DAILY_UNIFIED_PARSE_TEMP_PATH = Path(
+    "data/finland_xbrl/xml_daily_unified_parse_tmp"
+)
+
+
+def xml_snapshot_unified_duckdb_path(partition_key: str) -> Path:
+    return (
+        FINLAND_XBRL_XML_SNAPSHOT_UNIFIED_DUCKDB_PATH
+        / f"partition_key={partition_key}"
+        / "data.duckdb"
+    )
+
+
+def xml_snapshot_unified_parse_temp_dir(partition_key: str) -> Path:
+    return (
+        FINLAND_XBRL_XML_SNAPSHOT_UNIFIED_PARSE_TEMP_PATH
+        / f"partition_key={partition_key}"
+    )
+
+
+def xml_daily_unified_duckdb_path(partition_key: str) -> Path:
+    return (
+        FINLAND_XBRL_XML_DAILY_UNIFIED_DUCKDB_PATH
+        / f"partition_key={partition_key}"
+        / "data.duckdb"
+    )
+
+
+def xml_daily_unified_parse_temp_dir(partition_key: str) -> Path:
+    return (
+        FINLAND_XBRL_XML_DAILY_UNIFIED_PARSE_TEMP_PATH
+        / f"partition_key={partition_key}"
+    )
+
+
+def list_xml_unified_duckdb_paths(
+    *,
+    snapshot_base_path: Path = FINLAND_XBRL_XML_SNAPSHOT_UNIFIED_DUCKDB_PATH,
+    daily_base_path: Path = FINLAND_XBRL_XML_DAILY_UNIFIED_DUCKDB_PATH,
+) -> list[Path]:
+    return [
+        *sorted(snapshot_base_path.glob("partition_key=*/data.duckdb")),
+        *sorted(daily_base_path.glob("partition_key=*/data.duckdb")),
+    ]
+
+
 def read_xml_parse_duckdb_rows(*, duckdb_paths: list[Path]) -> ParsedXmlDuckdbRows:
     statement_documents: list[dict[str, Any]] = []
     contexts: list[dict[str, Any]] = []
@@ -202,6 +262,53 @@ def read_xml_parse_duckdb_rows(*, duckdb_paths: list[Path]) -> ParsedXmlDuckdbRo
                 path=path,
                 table_name="facts",
                 columns=tables.FACTS_COLUMNS,
+            )
+        )
+    return ParsedXmlDuckdbRows(
+        statement_documents=statement_documents,
+        contexts=contexts,
+        units=units,
+        facts=facts,
+        duckdb_path_count=len(duckdb_paths),
+    )
+
+
+def read_xml_unified_duckdb_rows(*, duckdb_paths: list[Path]) -> ParsedXmlDuckdbRows:
+    statement_documents: list[dict[str, Any]] = []
+    contexts: list[dict[str, Any]] = []
+    units: list[dict[str, Any]] = []
+    facts: list[dict[str, Any]] = []
+    for path in duckdb_paths:
+        if not path.exists():
+            raise FileNotFoundError(
+                f"Finland XBRL unified parsed DuckDB is missing: {path}"
+            )
+        statement_documents.extend(
+            _read_duckdb_table_rows(
+                path=path,
+                table_name="statement_documents",
+                columns=FINLAND_UNIFIED_CONTRACT.documents.columns,
+            )
+        )
+        contexts.extend(
+            _read_optional_duckdb_table_rows(
+                path=path,
+                table_name="contexts",
+                columns=FINLAND_UNIFIED_CONTRACT.contexts.columns,
+            )
+        )
+        units.extend(
+            _read_optional_duckdb_table_rows(
+                path=path,
+                table_name="units",
+                columns=FINLAND_UNIFIED_CONTRACT.units.columns,
+            )
+        )
+        facts.extend(
+            _read_duckdb_table_rows(
+                path=path,
+                table_name="facts",
+                columns=FINLAND_UNIFIED_CONTRACT.facts.columns,
             )
         )
     return ParsedXmlDuckdbRows(
@@ -276,20 +383,8 @@ def read_xml_snapshot_manifest_rows(
     return rows
 
 
-def _statement_document_row(row: dict[str, Any]) -> dict[str, Any]:
-    return {column: row.get(column) for column in tables.STATEMENT_DOCUMENTS_COLUMNS}
-
-
-def _fact_row(row: dict[str, Any]) -> dict[str, Any]:
-    return {column: row.get(column) for column in tables.FACTS_COLUMNS}
-
-
-def _context_row(row: dict[str, Any]) -> dict[str, Any]:
-    return {column: row.get(column) for column in tables.CONTEXTS_COLUMNS}
-
-
-def _unit_row(row: dict[str, Any]) -> dict[str, Any]:
-    return {column: row.get(column) for column in tables.UNITS_COLUMNS}
+def _projected_row(row: dict[str, Any], *, columns: list[str]) -> dict[str, Any]:
+    return {column: row.get(column) for column in columns}
 
 
 def _write_partition_parquet(
@@ -348,7 +443,33 @@ def materialize_data_snapshot_xml_duckdb(
     run_id: str,
     log_info: Callable[[str], None] | None = None,
     parser: StatementParser = parse_statement_xml,
+    row_contract: XbrlRowContract | None = None,
 ) -> dg.MaterializeResult:
+    documents_contract = (
+        row_contract.documents
+        if row_contract
+        else TableContract(
+            columns=tables.STATEMENT_DOCUMENTS_COLUMNS,
+            schema=tables.STATEMENT_DOCUMENTS_POLARS_SCHEMA,
+        )
+    )
+    contexts_contract = (
+        row_contract.contexts
+        if row_contract
+        else TableContract(
+            columns=tables.CONTEXTS_COLUMNS, schema=tables.CONTEXTS_POLARS_SCHEMA
+        )
+    )
+    units_contract = (
+        row_contract.units
+        if row_contract
+        else TableContract(columns=tables.UNITS_COLUMNS, schema=tables.UNITS_POLARS_SCHEMA)
+    )
+    facts_contract = (
+        row_contract.facts
+        if row_contract
+        else TableContract(columns=tables.FACTS_COLUMNS, schema=tables.FACTS_POLARS_SCHEMA)
+    )
     prefix = xml_snapshot_partition_prefix(registered_date_start, registered_date_end)
     manifest_key = xml_snapshot_manifest_key(registered_date_start, registered_date_end)
     success_key = xml_snapshot_success_key(registered_date_start, registered_date_end)
@@ -418,19 +539,19 @@ def materialize_data_snapshot_xml_duckdb(
             continue
 
         statement_rows = [
-            _statement_document_row(statement)
+            _projected_row(statement, columns=documents_contract.columns)
             for statement in parsed.rows_by_table[tables.STATEMENT_DOCUMENTS_TABLE]
         ]
         fact_rows = [
-            _fact_row(fact)
+            _projected_row(fact, columns=facts_contract.columns)
             for fact in parsed.rows_by_table[tables.FACTS_TABLE]
         ]
         context_rows = [
-            _context_row(item)
+            _projected_row(item, columns=contexts_contract.columns)
             for item in parsed.rows_by_table.get(tables.CONTEXTS_TABLE, [])
         ]
         unit_rows = [
-            _unit_row(item)
+            _projected_row(item, columns=units_contract.columns)
             for item in parsed.rows_by_table.get(tables.UNITS_TABLE, [])
         ]
         if statement_rows:
@@ -438,32 +559,32 @@ def materialize_data_snapshot_xml_duckdb(
             _write_partition_parquet(
                 path=statement_dir / f"part-{index:06d}.parquet",
                 rows=statement_rows,
-                columns=tables.STATEMENT_DOCUMENTS_COLUMNS,
-                schema=tables.STATEMENT_DOCUMENTS_POLARS_SCHEMA,
+                columns=documents_contract.columns,
+                schema=documents_contract.schema,
             )
         if fact_rows:
             facts_parquet_count += 1
             _write_partition_parquet(
                 path=facts_dir / f"part-{index:06d}.parquet",
                 rows=fact_rows,
-                columns=tables.FACTS_COLUMNS,
-                schema=tables.FACTS_POLARS_SCHEMA,
+                columns=facts_contract.columns,
+                schema=facts_contract.schema,
             )
         if context_rows:
             contexts_parquet_count += 1
             _write_partition_parquet(
                 path=contexts_dir / f"part-{index:06d}.parquet",
                 rows=context_rows,
-                columns=tables.CONTEXTS_COLUMNS,
-                schema=tables.CONTEXTS_POLARS_SCHEMA,
+                columns=contexts_contract.columns,
+                schema=contexts_contract.schema,
             )
         if unit_rows:
             units_parquet_count += 1
             _write_partition_parquet(
                 path=units_dir / f"part-{index:06d}.parquet",
                 rows=unit_rows,
-                columns=tables.UNITS_COLUMNS,
-                schema=tables.UNITS_POLARS_SCHEMA,
+                columns=units_contract.columns,
+                schema=units_contract.schema,
             )
         documents_parsed += 1
         if log_info is not None and (
@@ -490,29 +611,29 @@ def materialize_data_snapshot_xml_duckdb(
             connection=connection,
             table_name="statement_documents",
             parquet_dir=statement_dir,
-            columns=tables.STATEMENT_DOCUMENTS_COLUMNS,
-            schema=tables.STATEMENT_DOCUMENTS_POLARS_SCHEMA,
+            columns=documents_contract.columns,
+            schema=documents_contract.schema,
         )
         contexts_count = _create_duckdb_table_from_parquet(
             connection=connection,
             table_name="contexts",
             parquet_dir=contexts_dir,
-            columns=tables.CONTEXTS_COLUMNS,
-            schema=tables.CONTEXTS_POLARS_SCHEMA,
+            columns=contexts_contract.columns,
+            schema=contexts_contract.schema,
         )
         units_count = _create_duckdb_table_from_parquet(
             connection=connection,
             table_name="units",
             parquet_dir=units_dir,
-            columns=tables.UNITS_COLUMNS,
-            schema=tables.UNITS_POLARS_SCHEMA,
+            columns=units_contract.columns,
+            schema=units_contract.schema,
         )
         facts_count = _create_duckdb_table_from_parquet(
             connection=connection,
             table_name="facts",
             parquet_dir=facts_dir,
-            columns=tables.FACTS_COLUMNS,
-            schema=tables.FACTS_POLARS_SCHEMA,
+            columns=facts_contract.columns,
+            schema=facts_contract.schema,
         )
 
     temporary_directory_removed = False
@@ -575,4 +696,39 @@ def data_snapshot_xml_duckdb(
         temp_dir=xml_snapshot_parse_temp_dir(context.partition_key),
         run_id=context.run.run_id,
         log_info=context.log.info,
+    )
+
+
+@dg.asset(
+    name="data_snapshot_xml_unified_duckdb",
+    group_name="finland_xbrl",
+    pool=FINLAND_XBRL_DUCKDB_POOL,
+    deps=[data_snapshot_xml],
+    partitions_def=XML_SNAPSHOT_PARTITIONS,
+    backfill_policy=dg.BackfillPolicy.multi_run(max_partitions_per_run=1),
+    kinds={"python", "duckdb", "parquet", "xml"},
+    description=(
+        "Parses monthly historical Finland XBRL XML snapshot files from S3 "
+        "into a partition-scoped DuckDB database using the unified XBRL row "
+        "contract."
+    ),
+)
+def data_snapshot_xml_unified_duckdb(
+    context: dg.AssetExecutionContext,
+    object_store: ObjectStoreResource,
+) -> dg.MaterializeResult:
+    window = context.partition_time_window
+    start = window.start.date().isoformat()
+    end = (window.end.date() - timedelta(days=1)).isoformat()
+    return materialize_data_snapshot_xml_duckdb(
+        partition_key=context.partition_key,
+        registered_date_start=start,
+        registered_date_end=end,
+        object_store=object_store,
+        duckdb_path=xml_snapshot_unified_duckdb_path(context.partition_key),
+        temp_dir=xml_snapshot_unified_parse_temp_dir(context.partition_key),
+        run_id=context.run.run_id,
+        log_info=context.log.info,
+        parser=parse_statement_xml_unified,
+        row_contract=FINLAND_UNIFIED_CONTRACT,
     )
