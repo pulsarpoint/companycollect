@@ -131,6 +131,14 @@ referenced Markdown files before starting Codex, groups them by page and
 character limits, and writes a consolidated report. It does not launch
 CloakBrowser or Crawl4AI.
 
+Every HTTP(S) link in the complete stored Markdown set is normalized and
+deduplicated into top-level `discovered_urls`; this deterministic discovery does
+not consume LLM tokens. A separate constrained LLM call then classifies the
+external-domain candidates and may select official global sites, country sites,
+parent companies, subsidiaries, or brands as `related_domains`. Model-selected
+domains are validated against the discovered candidates, so the LLM cannot add
+an unseen domain.
+
 ```bash
 uv run python -m ex3.main analyze company-markdown/crawl-manifest.json \
   --output company-batched-report.json \
@@ -160,7 +168,11 @@ The LLM output has no navigation fields. Every batch must return one result per
 supplied source URL; unknown and duplicate URLs are discarded, missing pages
 are recorded as extraction failures, and token totals are counted once per
 batch. Crawl failures live in the manifest and start with `crawl:`; LLM failures
-in the report start with `analysis batch`.
+in the report start with `analysis batch`. Each discovered URL retains its link
+type, labels, occurrence count, and source pages. The top-level
+`related_domain_analysis` records the classification status and token usage;
+each accepted `related_domains` entry includes the LLM relationship and reason
+plus deterministic URL provenance.
 
 ## Output
 

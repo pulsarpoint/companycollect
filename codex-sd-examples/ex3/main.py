@@ -231,6 +231,19 @@ def analyze_command(
 
     click.echo(f"Manifest: {report.manifest_path}")
     click.echo(f"Markdown pages submitted: {report.batch_stats.submitted_pages}")
+    click.echo(f"Discovered URLs: {len(report.discovered_urls)}")
+    if (
+        report.related_domain_analysis.attempted
+        and not report.related_domain_analysis.succeeded
+    ):
+        click.echo(
+            "Related-domain analysis failed: "
+            f"{report.related_domain_analysis.error or 'unknown error'}",
+            err=True,
+        )
+    click.echo(f"Related domains selected by LLM: {len(report.related_domains)}")
+    for related_domain in report.related_domains:
+        click.echo(f"  {related_domain.url}")
     click.echo(
         "Batches: "
         f"{report.batch_stats.total_batches} total, "

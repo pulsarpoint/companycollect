@@ -92,6 +92,49 @@ class BatchAnalysis(StrictModel):
     token_usage: AnalysisTokenUsage | None = None
 
 
+class DiscoveredUrl(StrictModel):
+    url: str
+    domain: str
+    link_type: Literal["internal", "external"]
+    labels: list[str]
+    source_urls: list[str]
+    occurrences: int = Field(ge=1)
+
+
+class DiscoveredDomainCandidate(StrictModel):
+    domain: str
+    homepage_url: str
+    discovered_urls: list[str]
+    labels: list[str]
+    occurrences: int = Field(ge=1)
+    source_page_count: int = Field(ge=1)
+
+
+class RelatedDomainDecision(StrictModel):
+    domain: str
+    relationship: Literal[
+        "official_global_site",
+        "official_country_site",
+        "parent_company",
+        "subsidiary_or_brand",
+        "other_official_site",
+    ]
+    reason: str
+
+
+class RelatedDomainSelection(StrictModel):
+    related_domains: list[RelatedDomainDecision] = Field(default_factory=list)
+
+
+class RelatedDomainAnalysis(StrictModel):
+    attempted: bool
+    candidate_domains: int = Field(ge=0)
+    succeeded: bool
+    error: str | None = None
+    warnings: list[str] = Field(default_factory=list)
+    token_usage: AnalysisTokenUsage | None = None
+
+
 class CrawlStats(StrictModel):
     configured_max_pages: int = Field(ge=1)
     configured_max_depth: int = Field(ge=0)
@@ -114,6 +157,22 @@ class BatchStats(StrictModel):
     submitted_pages: int = Field(ge=0)
     successfully_extracted_pages: int = Field(ge=0)
     failed_extraction_pages: int = Field(ge=0)
+
+
+class RelatedDomain(StrictModel):
+    domain: str
+    url: str
+    relationship: Literal[
+        "official_global_site",
+        "official_country_site",
+        "parent_company",
+        "subsidiary_or_brand",
+        "other_official_site",
+    ]
+    reason: str
+    labels: list[str]
+    source_urls: list[str]
+    occurrences: int = Field(ge=1)
 
 
 class CrawlManifest(StrictModel):
@@ -139,6 +198,9 @@ class ResearchReport(StrictModel):
     markdown_pages: list[MarkdownPage]
     analysis_stats: AggregateAnalysisStats
     batches: list[BatchAnalysis]
+    discovered_urls: list[DiscoveredUrl]
+    related_domain_analysis: RelatedDomainAnalysis
+    related_domains: list[RelatedDomain]
     useful_information: UsefulInformation
     pages: list[PageExtraction]
 
@@ -148,24 +210,39 @@ def batch_extraction_output_schema() -> JsonObject:
     return structured_output_schema(BatchExtraction)
 
 
+def related_domain_output_schema() -> JsonObject:
+    """Return the related-domain Structured Outputs schema."""
+    return structured_output_schema(RelatedDomainSelection)
+
+
 def set_source_url(extraction: PageExtraction, source_url: str) -> None:
     """Replace model-provided provenance with a validated input page URL."""
     extraction.source_url = source_url
     set_information_source_url(extraction.useful_information, source_url)
 
 
-def build_analysis_stats(batches: list[BatchAnalysis]) -> AggregateAnalysisStats:
-    """Aggregate usage once per batch rather than once per extracted page."""
-    return aggregate_analysis_metadata(
-        [
+def build_analysis_stats(
+    batches: list[BatchAnalysis],
+    related_domain_analysis: RelatedDomainAnalysis,
+) -> AggregateAnalysisStats:
+    """Aggregate usage once for every page batch and domain-classification call."""
+    metadata = [
+        PageAnalysisMetadata(
+            succeeded=batch.succeeded,
+            error=batch.error,
+            token_usage=batch.token_usage,
+        )
+        for batch in batches
+    ]
+    if related_domain_analysis.attempted:
+        metadata.append(
             PageAnalysisMetadata(
-                succeeded=batch.succeeded,
-                error=batch.error,
-                token_usage=batch.token_usage,
+                succeeded=related_domain_analysis.succeeded,
+                error=related_domain_analysis.error,
+                token_usage=related_domain_analysis.token_usage,
             )
-            for batch in batches
-        ]
-    )
+        )
+    return aggregate_analysis_metadata(metadata)
 
 
 def consolidate_extractions(pages: list[PageExtraction]) -> UsefulInformation:

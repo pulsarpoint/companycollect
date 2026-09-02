@@ -226,7 +226,7 @@ class TurnTimeoutCleanupTest(unittest.IsolatedAsyncioTestCase):
                 cast(AsyncCodex, codex),
                 cast(AsyncTurnHandle, turn),
                 timeout_seconds=0,
-                batch_number=2,
+                operation_name="analysis batch 2",
             )
 
         self.assertIsNone(result)

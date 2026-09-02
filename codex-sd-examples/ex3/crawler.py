@@ -7,7 +7,7 @@ from contextlib import aclosing
 from dataclasses import dataclass
 from pathlib import Path
 from types import AsyncGeneratorType
-from urllib.parse import urlsplit, urlunsplit
+from urllib.parse import urljoin, urlsplit, urlunsplit
 
 from cloakbrowser import launch_async
 from crawl4ai import AsyncWebCrawler, BrowserConfig, CrawlerRunConfig
@@ -25,22 +25,32 @@ from ex3.models import (
     BatchStats,
     CrawlManifest,
     CrawlStats,
+    DiscoveredDomainCandidate,
+    DiscoveredUrl,
     LanguageDiscovery,
     MarkdownPage,
     PageExtraction,
     PageExtractionMetadata,
+    RelatedDomain,
+    RelatedDomainAnalysis,
+    RelatedDomainSelection,
     ResearchReport,
     batch_extraction_output_schema,
     build_analysis_stats,
     consolidate_extractions,
+    related_domain_output_schema,
     set_source_url,
 )
-from ex3.prompty import create_prompt
+from ex3.prompty import create_prompt, create_related_domains_prompt
 
 LOGGER = logging.getLogger(__name__)
 LANGUAGE_CANDIDATE_LIMIT = 5
 TURN_INTERRUPT_TIMEOUT_SECONDS = 5
 TURN_COMPLETION_TIMEOUT_SECONDS = 10
+DOMAIN_URL_SAMPLE_LIMIT = 3
+DOMAIN_URL_SAMPLE_CHAR_LIMIT = 500
+DOMAIN_LABEL_SAMPLE_LIMIT = 10
+MARKDOWN_LINK_PATTERN = re.compile(r"\]\(([^\s<>\)]+)")
 
 
 @dataclass(frozen=True, slots=True)
@@ -133,6 +143,23 @@ async def run_analysis(settings: AnalysisSettings) -> ResearchReport:
 
     manifest = load_manifest(settings.manifest_path)
     markdown_pages = manifest.markdown_pages
+    discovered_urls = discover_urls(
+        markdown_pages,
+        searched_url=manifest.selected_base_url,
+    )
+    LOGGER.info(
+        "Discovered %d unique HTTP(S) URL(s) in stored Markdown",
+        len(discovered_urls),
+    )
+    related_domains, related_domain_analysis = await _analyze_related_domains(
+        discovered_urls,
+        searched_url=manifest.selected_base_url,
+        timeout_seconds=settings.analysis_timeout_seconds,
+    )
+    LOGGER.info(
+        "LLM selected %d related domain(s)",
+        len(related_domains),
+    )
     batches = create_batches(
         markdown_pages,
         max_page_chars=settings.max_page_chars,
@@ -175,8 +202,14 @@ async def run_analysis(settings: AnalysisSettings) -> ResearchReport:
         ),
         failed_pages=failed_pages,
         markdown_pages=markdown_pages,
-        analysis_stats=build_analysis_stats(batch_analyses),
+        analysis_stats=build_analysis_stats(
+            batch_analyses,
+            related_domain_analysis,
+        ),
         batches=batch_analyses,
+        discovered_urls=discovered_urls,
+        related_domain_analysis=related_domain_analysis,
+        related_domains=related_domains,
         useful_information=consolidate_extractions(pages),
         pages=pages,
     )
@@ -489,6 +522,294 @@ def create_batches(
     return batches
 
 
+def discover_urls(
+    pages: list[MarkdownPage],
+    *,
+    searched_url: str,
+) -> list[DiscoveredUrl]:
+    """Collect every unique HTTP(S) link from persisted Markdown."""
+    searched_hostname = urlsplit(normalize_start_url(searched_url)).hostname
+    if searched_hostname is None:
+        return []
+    searched_domain = _canonical_domain(searched_hostname)
+
+    discovered_by_url: dict[str, DiscoveredUrl] = {}
+    for page in pages:
+        markdown = Path(page.markdown_path).read_text(encoding="utf-8")
+        for match in MARKDOWN_LINK_PATTERN.finditer(markdown):
+            raw_url = match.group(1)
+            absolute_url = urljoin(page.source_url, raw_url)
+            if urlsplit(absolute_url).scheme.casefold() not in {"http", "https"}:
+                continue
+            try:
+                normalized_url = normalize_start_url(absolute_url)
+            except ValueError:
+                LOGGER.debug(
+                    "Ignoring invalid Markdown link on %s: %s",
+                    page.source_url,
+                    raw_url,
+                )
+                continue
+
+            parsed_url = urlsplit(normalized_url)
+            if parsed_url.hostname is None:
+                continue
+            domain = _canonical_domain(parsed_url.hostname)
+            label = _markdown_link_label(markdown, match.start())
+            discovered_url = discovered_by_url.get(normalized_url)
+            if discovered_url is None:
+                discovered_by_url[normalized_url] = DiscoveredUrl(
+                    url=normalized_url,
+                    domain=domain,
+                    link_type=(
+                        "internal"
+                        if _same_domain_tree(domain, searched_domain)
+                        else "external"
+                    ),
+                    labels=[label] if label else [],
+                    source_urls=[page.source_url],
+                    occurrences=1,
+                )
+                continue
+
+            discovered_url.occurrences += 1
+            if label and label.casefold() not in {
+                existing.casefold() for existing in discovered_url.labels
+            }:
+                discovered_url.labels.append(label)
+            if page.source_url not in discovered_url.source_urls:
+                discovered_url.source_urls.append(page.source_url)
+
+    return list(discovered_by_url.values())
+
+
+def _canonical_domain(hostname: str) -> str:
+    return hostname.rstrip(".").casefold().removeprefix("www.")
+
+
+def _markdown_link_label(markdown: str, destination_start: int) -> str:
+    line_start = markdown.rfind("\n", 0, destination_start) + 1
+    label_start = markdown.rfind("[", line_start, destination_start)
+    if label_start < 0:
+        return ""
+    label = markdown[label_start + 1 : destination_start]
+    if "](" in label:
+        return ""
+    return re.sub(r"\s+", " ", label).strip()[:200]
+
+
+def _same_domain_tree(candidate: str, searched: str) -> bool:
+    return (
+        candidate == searched
+        or candidate.endswith(f".{searched}")
+        or searched.endswith(f".{candidate}")
+    )
+
+
+def _external_domain_candidates(
+    discovered_urls: list[DiscoveredUrl],
+) -> list[DiscoveredDomainCandidate]:
+    urls_by_domain: dict[str, list[DiscoveredUrl]] = {}
+    for discovered_url in discovered_urls:
+        if discovered_url.link_type == "external":
+            urls_by_domain.setdefault(discovered_url.domain, []).append(discovered_url)
+
+    candidates: list[DiscoveredDomainCandidate] = []
+    for domain, domain_urls in urls_by_domain.items():
+        first_url = urlsplit(domain_urls[0].url)
+        candidates.append(
+            DiscoveredDomainCandidate(
+                domain=domain,
+                homepage_url=urlunsplit(
+                    (first_url.scheme, first_url.netloc, "/", "", "")
+                ),
+                discovered_urls=[
+                    discovered_url.url[:DOMAIN_URL_SAMPLE_CHAR_LIMIT]
+                    for discovered_url in domain_urls
+                ][:DOMAIN_URL_SAMPLE_LIMIT],
+                labels=_unique_labels(domain_urls)[:DOMAIN_LABEL_SAMPLE_LIMIT],
+                occurrences=sum(
+                    discovered_url.occurrences for discovered_url in domain_urls
+                ),
+                source_page_count=len(
+                    {
+                        source_url
+                        for discovered_url in domain_urls
+                        for source_url in discovered_url.source_urls
+                    }
+                ),
+            )
+        )
+    return candidates
+
+
+def _unique_labels(discovered_urls: list[DiscoveredUrl]) -> list[str]:
+    labels: list[str] = []
+    seen_labels: set[str] = set()
+    for discovered_url in discovered_urls:
+        for label in discovered_url.labels:
+            normalized_label = label.casefold()
+            if normalized_label in seen_labels:
+                continue
+            seen_labels.add(normalized_label)
+            labels.append(label)
+    return labels
+
+
+async def _analyze_related_domains(
+    discovered_urls: list[DiscoveredUrl],
+    *,
+    searched_url: str,
+    timeout_seconds: int,
+) -> tuple[list[RelatedDomain], RelatedDomainAnalysis]:
+    candidates = _external_domain_candidates(discovered_urls)
+    if not candidates:
+        return [], RelatedDomainAnalysis(
+            attempted=False,
+            candidate_domains=0,
+            succeeded=True,
+        )
+
+    try:
+        async with AsyncCodex() as codex:
+            thread = await codex.thread_start(
+                base_instructions=(
+                    "Classify only supplied candidate domains. Do not navigate or "
+                    "use tools. Return only data matching the schema."
+                ),
+                ephemeral=True,
+                sandbox=Sandbox.read_only,
+            )
+            turn = await thread.turn(
+                create_related_domains_prompt(
+                    searched_url,
+                    candidates=candidates,
+                ),
+                output_schema=related_domain_output_schema(),
+                sandbox=Sandbox.read_only,
+            )
+            result, timed_out = await _run_turn_with_timeout(
+                codex,
+                turn,
+                timeout_seconds=timeout_seconds,
+                operation_name="related-domain classification",
+            )
+    except Exception as error:
+        LOGGER.exception("Related-domain classification failed")
+        return [], RelatedDomainAnalysis(
+            attempted=True,
+            candidate_domains=len(candidates),
+            succeeded=False,
+            error=str(error),
+        )
+
+    if result is None:
+        return [], RelatedDomainAnalysis(
+            attempted=True,
+            candidate_domains=len(candidates),
+            succeeded=False,
+            error=f"analysis timed out after {timeout_seconds} seconds",
+        )
+
+    token_usage = print_usage(result, page_url="related-domain classification")
+    if timed_out:
+        return [], RelatedDomainAnalysis(
+            attempted=True,
+            candidate_domains=len(candidates),
+            succeeded=False,
+            error=f"analysis timed out after {timeout_seconds} seconds",
+            token_usage=token_usage,
+        )
+    if result.final_response is None:
+        error_message = (
+            result.error.message if result.error is not None else result.status
+        )
+        return [], RelatedDomainAnalysis(
+            attempted=True,
+            candidate_domains=len(candidates),
+            succeeded=False,
+            error=f"Codex returned no final response: {error_message}",
+            token_usage=token_usage,
+        )
+
+    try:
+        selection = RelatedDomainSelection.model_validate_json(result.final_response)
+    except ValidationError as error:
+        return [], RelatedDomainAnalysis(
+            attempted=True,
+            candidate_domains=len(candidates),
+            succeeded=False,
+            error=f"Codex returned invalid structured data: {error}",
+            token_usage=token_usage,
+        )
+
+    related_domains, warnings = _validate_related_domain_selection(
+        selection,
+        candidates=candidates,
+        discovered_urls=discovered_urls,
+    )
+    return related_domains, RelatedDomainAnalysis(
+        attempted=True,
+        candidate_domains=len(candidates),
+        succeeded=True,
+        warnings=warnings,
+        token_usage=token_usage,
+    )
+
+
+def _validate_related_domain_selection(
+    selection: RelatedDomainSelection,
+    *,
+    candidates: list[DiscoveredDomainCandidate],
+    discovered_urls: list[DiscoveredUrl],
+) -> tuple[list[RelatedDomain], list[str]]:
+    candidates_by_domain = {candidate.domain: candidate for candidate in candidates}
+    related_domains: list[RelatedDomain] = []
+    warnings: list[str] = []
+    selected_domains: set[str] = set()
+
+    for decision in selection.related_domains:
+        candidate = candidates_by_domain.get(decision.domain)
+        if candidate is None:
+            warnings.append(f"Ignored unknown related domain: {decision.domain}")
+            continue
+        if decision.domain in selected_domains:
+            warnings.append(f"Ignored duplicate related domain: {decision.domain}")
+            continue
+        selected_domains.add(decision.domain)
+        related_domains.append(
+            RelatedDomain(
+                domain=candidate.domain,
+                url=candidate.homepage_url,
+                relationship=decision.relationship,
+                reason=decision.reason,
+                labels=candidate.labels,
+                source_urls=_source_urls_for_domain(
+                    candidate.domain,
+                    discovered_urls=discovered_urls,
+                ),
+                occurrences=candidate.occurrences,
+            )
+        )
+
+    return related_domains, warnings
+
+
+def _source_urls_for_domain(
+    domain: str,
+    *,
+    discovered_urls: list[DiscoveredUrl],
+) -> list[str]:
+    source_urls: list[str] = []
+    for discovered_url in discovered_urls:
+        if discovered_url.domain != domain:
+            continue
+        for source_url in discovered_url.source_urls:
+            if source_url not in source_urls:
+                source_urls.append(source_url)
+    return source_urls
+
+
 async def _analyze_batches(
     batches: list[MarkdownBatch],
     *,
@@ -586,7 +907,7 @@ async def _analyze_batch(
             codex,
             turn,
             timeout_seconds=timeout_seconds,
-            batch_number=batch.number,
+            operation_name=f"analysis batch {batch.number}",
         )
 
     if result is None:
@@ -636,7 +957,7 @@ async def _run_turn_with_timeout(
     turn: AsyncTurnHandle,
     *,
     timeout_seconds: int,
-    batch_number: int,
+    operation_name: str,
 ) -> tuple[TurnResult | None, bool]:
     """Run a turn without cancelling its blocking notification worker."""
     turn_task = asyncio.create_task(turn.run())
@@ -645,8 +966,8 @@ async def _run_turn_with_timeout(
         return turn_task.result(), False
 
     LOGGER.warning(
-        "Analysis batch %d timed out after %d seconds; interrupting it",
-        batch_number,
+        "%s timed out after %d seconds; interrupting it",
+        operation_name,
         timeout_seconds,
     )
     interrupt_task = asyncio.create_task(turn.interrupt())
@@ -661,8 +982,8 @@ async def _run_turn_with_timeout(
             interrupt_succeeded = True
         except Exception:
             LOGGER.exception(
-                "Could not interrupt timed-out batch %d",
-                batch_number,
+                "Could not interrupt timed-out operation %s",
+                operation_name,
             )
 
     turn_completed: set[asyncio.Task[TurnResult]] = set()
@@ -674,8 +995,8 @@ async def _run_turn_with_timeout(
 
     if turn_task not in turn_completed or interrupt_task not in interrupted:
         LOGGER.warning(
-            "Closing the Codex client for timed-out batch %d to release its waiters",
-            batch_number,
+            "Closing the Codex client for timed-out operation %s to release its waiters",
+            operation_name,
         )
         await codex.close()
 
