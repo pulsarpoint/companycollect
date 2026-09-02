@@ -98,7 +98,7 @@ WITH
                tupleElement(latest, 2) AS source, tupleElement(latest, 3) AS source_ref,
                ifNull(tupleElement(latest, 4), tupleElement(latest, 5)) AS observed_at,
                tupleElement(latest, 6) AS decision_id
-        FROM decision WHERE tupleElement(latest, 1) IS NOT NULL
+        FROM decision WHERE tupleElement(latest, 1) IS NOT NULL AND trim(assumeNotNull(tupleElement(latest, 1))) != ''
     ),
     decided AS (
         SELECT c.company_id AS company_id, c.value AS value, c.value_json AS value_json,
@@ -121,7 +121,7 @@ SELECT
     {sql_string(policy.name)} AS policy_name, {sql_string(policy.version)} AS policy_version,
     ifNull(n.candidate_count, toUInt16(0)) AS candidate_count, a.agreeing_sources AS agreeing_sources,
     {sql_string(registry.version)} AS registry_version, {{source_run_id:String}} AS source_run_id,
-    {{resolved_at:DateTime64(3)}} AS resolved_at
+    {{resolved_at:DateTime64(3, 'UTC')}} AS resolved_at
 FROM decided AS d
 LEFT JOIN counted AS n ON n.company_id = d.company_id
 LEFT JOIN agreement AS a ON a.company_id = d.company_id AND a.compare_key = d.compare_key
@@ -133,7 +133,7 @@ SELECT
     {sql_string(policy.name)} AS policy_name, {sql_string(policy.version)} AS policy_version,
     ifNull(n.candidate_count, toUInt16(0)) AS candidate_count, a.agreeing_sources AS agreeing_sources,
     {sql_string(registry.version)} AS registry_version, {{source_run_id:String}} AS source_run_id,
-    {{resolved_at:DateTime64(3)}} AS resolved_at
+    {{resolved_at:DateTime64(3, 'UTC')}} AS resolved_at
 FROM winner AS w
 LEFT JOIN counted AS n ON n.company_id = w.company_id
 LEFT JOIN agreement AS a ON a.company_id = w.company_id AND a.compare_key = w.compare_key

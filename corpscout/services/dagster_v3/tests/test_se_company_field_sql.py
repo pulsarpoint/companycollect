@@ -63,7 +63,7 @@ WITH
                tupleElement(latest, 2) AS source, tupleElement(latest, 3) AS source_ref,
                ifNull(tupleElement(latest, 4), tupleElement(latest, 5)) AS observed_at,
                tupleElement(latest, 6) AS decision_id
-        FROM decision WHERE tupleElement(latest, 1) IS NOT NULL
+        FROM decision WHERE tupleElement(latest, 1) IS NOT NULL AND trim(assumeNotNull(tupleElement(latest, 1))) != ''
     ),
     decided AS (
         SELECT c.company_id AS company_id, c.value AS value, c.value_json AS value_json,
@@ -86,7 +86,7 @@ SELECT
     'source_precedence' AS policy_name, 'source_precedence-v1' AS policy_version,
     ifNull(n.candidate_count, toUInt16(0)) AS candidate_count, a.agreeing_sources AS agreeing_sources,
     'se-info-v1' AS registry_version, {source_run_id:String} AS source_run_id,
-    {resolved_at:DateTime64(3)} AS resolved_at
+    {resolved_at:DateTime64(3, 'UTC')} AS resolved_at
 FROM decided AS d
 LEFT JOIN counted AS n ON n.company_id = d.company_id
 LEFT JOIN agreement AS a ON a.company_id = d.company_id AND a.compare_key = d.compare_key
@@ -98,7 +98,7 @@ SELECT
     'source_precedence' AS policy_name, 'source_precedence-v1' AS policy_version,
     ifNull(n.candidate_count, toUInt16(0)) AS candidate_count, a.agreeing_sources AS agreeing_sources,
     'se-info-v1' AS registry_version, {source_run_id:String} AS source_run_id,
-    {resolved_at:DateTime64(3)} AS resolved_at
+    {resolved_at:DateTime64(3, 'UTC')} AS resolved_at
 FROM winner AS w
 LEFT JOIN counted AS n ON n.company_id = w.company_id
 LEFT JOIN agreement AS a ON a.company_id = w.company_id AND a.compare_key = w.compare_key
@@ -122,7 +122,7 @@ def test_every_field_renders_its_own_precedence_and_the_same_parameters() -> Non
         assert f"indexOf({array_literal(field.sources)}, c.source) AS rank" in sql
         assert f"WHERE has({array_literal(field.sources)}, c.source) AND (" in sql
         for parameter in ("{field:String}", "{company_ids:Array(String)}", "{source_run_id:String}",
-                          "{resolved_at:DateTime64(3)}"):
+                          "{resolved_at:DateTime64(3, 'UTC')}"):
             assert parameter in sql
         assert "%(" not in sql  # server-side parameters only, never driver-side ones
         assert "'se-info-v1' AS registry_version" in sql
@@ -186,7 +186,7 @@ NEEDED_TABLES = frozenset({
     "se_company_field_registry", "se_company_field_candidate", "se_company_field",
 })
 _TABLE_RE = re.compile(r"^(?:CREATE TABLE(?: IF NOT EXISTS)?|ALTER TABLE)\s+corpscout\.(\w+)", re.IGNORECASE)
-_PARAMETER_RE = re.compile(r"\{([a-z_]+):[A-Za-z0-9(), ]+\}")
+_PARAMETER_RE = re.compile(r"\{([a-z_]+):[A-Za-z0-9(),' ]+\}")
 
 
 def _schema_statements(migrations: tuple[str, ...]) -> list[str]:
@@ -227,7 +227,8 @@ BETA = "5560125220"     # release: an older decision then a NULL row; two scb re
 EPSILON = "5567654321"  # precedence over recency; an unlisted source; an llm description
 GAMMA = "5569999991"    # legal name from wikidata only: resolved, never published
 NOBODY = "5560000010"   # in the company set, no candidates, no decisions
-COMPANIES = (ALPHA, BETA, EPSILON, GAMMA, NOBODY)
+ZETA = "5560000028"     # a blank (whitespace) decision newer than a value decision: a release
+COMPANIES = (ALPHA, BETA, EPSILON, GAMMA, NOBODY, ZETA)
 RUN_ID = "fixture-run-1"
 T_RESOLVED = datetime(2026, 9, 2, 12, 0, tzinfo=UTC)
 T_RESOLVED_2 = datetime(2026, 9, 2, 12, 5, tzinfo=UTC)
@@ -237,6 +238,8 @@ D_BETA_OLD = "33333333-3333-3333-3333-333333333333"
 D_BETA_RELEASE = "44444444-4444-4444-4444-444444444444"
 SUGGESTION = "55555555-5555-5555-5555-555555555555"
 D_EPSILON_NAME = "66666666-6666-6666-6666-666666666666"
+D_ZETA_OLD = "77777777-7777-7777-7777-777777777777"
+D_ZETA_RELEASE = "88888888-8888-8888-8888-888888888888"
 
 FIXTURE = f"""
 INSERT INTO corpscout.se_company_field_candidate
@@ -268,7 +271,8 @@ VALUES
     ('{EPSILON}', 'description', 'llm', '{SUGGESTION}', 'Epsilon makes widgets.', '{{"language":"en"}}', '2026-08-10 00:00:00', '2026-08-20 00:00:00', 'v1', '{RUN_ID}'),
     ('{EPSILON}', 'description', 'scb', 'scb-e', 'Widget maker.', '{{"language":"en"}}', '2026-08-01 00:00:00', '2026-08-20 00:00:00', 'v1', '{RUN_ID}'),
     ('{GAMMA}', 'legal_name', 'wikidata', 'wikidata:Q9', 'Gamma', '', '2026-08-02 00:00:00', '2026-08-20 00:00:00', 'v1', '{RUN_ID}'),
-    ('{GAMMA}', 'status', 'ratsit', 'ratsit-g', 'active', '', '2026-08-02 00:00:00', '2026-08-20 00:00:00', 'v1', '{RUN_ID}');
+    ('{GAMMA}', 'status', 'ratsit', 'ratsit-g', 'active', '', '2026-08-02 00:00:00', '2026-08-20 00:00:00', 'v1', '{RUN_ID}'),
+    ('{ZETA}', 'legal_name', 'scb', 'scb-z', 'Zeta AB', '', '2026-08-01 00:00:00', '2026-08-20 00:00:00', 'v1', '{RUN_ID}');
 
 INSERT INTO corpscout.se_company_info_field_value
     (value_id, company_id, field, value, source, source_ref, source_at, decided_by, note, created_at)
@@ -276,7 +280,9 @@ VALUES
     ('{D_ALPHA_NAME}', '{ALPHA}', 'legal_name', 'Alpha Group AB', 'reviewer', '', NULL, 'backoffice', '', '2026-08-25 10:00:00'),
     ('{D_ALPHA_EMPLOYEES}', '{ALPHA}', 'employee_count', '1150', 'wikidata', 'wikidata:Q1', '2026-08-02 00:00:00', 'backoffice', '', '2026-08-25 10:00:00'),
     ('{D_BETA_OLD}', '{BETA}', 'legal_name', 'Beta Corp', 'reviewer', '', NULL, 'backoffice', '', '2026-08-10 10:00:00'),
-    ('{D_BETA_RELEASE}', '{BETA}', 'legal_name', NULL, 'reviewer', '', NULL, 'backoffice', '', '2026-08-11 10:00:00');
+    ('{D_BETA_RELEASE}', '{BETA}', 'legal_name', NULL, 'reviewer', '', NULL, 'backoffice', '', '2026-08-11 10:00:00'),
+    ('{D_ZETA_OLD}', '{ZETA}', 'legal_name', 'Zeta Corp', 'reviewer', '', NULL, 'backoffice', '', '2026-08-10 10:00:00'),
+    ('{D_ZETA_RELEASE}', '{ZETA}', 'legal_name', ' ', 'reviewer', '', NULL, 'backoffice', '', '2026-08-11 10:00:00');
 
 INSERT INTO corpscout.se_code_labels (code_type, code, label_en, label_sv, version)
 VALUES ('legal_form', 'AB-ORGFO', 'Limited company (aktiebolag)', 'Aktiebolag', toDateTime('2026-08-02 00:00:00'));
@@ -425,6 +431,16 @@ def test_a_released_decision_falls_back_to_the_winner(sections: dict[str, list[l
 
 
 @pytest.mark.integration
+def test_a_blank_decision_is_treated_as_a_release(sections: dict[str, list[list[str]]]) -> None:
+    """ZETA's newest decision row is a value that is present but blank (a single space). The
+    ``live`` gate must reject it as if it were a NULL release, not pass it through to violate
+    se_company_field's has_value CHECK -- the winner (the scb candidate) is used instead."""
+    row = _resolved(sections["resolved"])[(ZETA, "legal_name")]
+    assert (row["value"], row["source"], row["source_record_uid"]) == ("Zeta AB", "scb", "scb-z")
+    assert row["decision_id"] == ""
+
+
+@pytest.mark.integration
 def test_precedence_beats_recency_and_unlisted_sources_are_ignored(sections: dict[str, list[list[str]]]) -> None:
     row = _resolved(sections["resolved"])[(EPSILON, "legal_name")]
     # scb is rank 1 although bolagsverket observed a month later; ratsit is not in the tuple.
@@ -454,7 +470,7 @@ def test_agreement_is_counted_on_the_compare_key(sections: dict[str, list[list[s
 def test_no_row_when_nothing_and_every_row_carries_provenance(sections: dict[str, list[list[str]]]) -> None:
     resolved = _resolved(sections["resolved"])
     assert not [key for key in resolved if key[0] == NOBODY]
-    assert len(resolved) == 16  # ALPHA 12 fields + BETA 1 + EPSILON 2 + GAMMA 1
+    assert len(resolved) == 17  # ALPHA 12 fields + BETA 1 + EPSILON 2 + GAMMA 1 + ZETA 1
     for row in resolved.values():
         assert (row["policy_name"], row["policy_version"], row["registry_version"]) == (
             "source_precedence", "source_precedence-v1", "se-info-v1")
@@ -464,7 +480,7 @@ def test_no_row_when_nothing_and_every_row_carries_provenance(sections: dict[str
 @pytest.mark.integration
 def test_the_projection_builds_the_expected_wide_rows(sections: dict[str, list[list[str]]]) -> None:
     wide = _wide(sections["wide"])
-    assert set(wide) == {ALPHA, BETA, EPSILON}  # GAMMA: no scb/bolagsverket legal name; NOBODY: nothing
+    assert set(wide) == {ALPHA, BETA, EPSILON, ZETA}  # GAMMA: no scb/bolagsverket legal name; NOBODY: nothing
     assert wide[ALPHA] == {
         "company_id": ALPHA, "legal_name": "Alpha Group AB", "legal_form_code": "AB-ORGFO",
         "legal_form_label_en": "Limited company (aktiebolag)", "legal_form_label_sv": "Aktiebolag",
@@ -519,7 +535,7 @@ def test_a_decision_re_resolves_one_field_and_re_pivots_one_company(sections: di
         "backoffice-1", "2026-09-02 12:05:00.000")
     assert (resolved[(EPSILON, "description")]["source_run_id"], resolved[(EPSILON, "description")]["resolved_at"]) == (
         RUN_ID, "2026-09-02 12:00:00.000")
-    assert len(resolved) == 16  # one version per (company, field) under FINAL
+    assert len(resolved) == 17  # one version per (company, field) under FINAL
     wide = _wide(sections["wide_after_decision"])
     epsilon = wide[EPSILON]
     assert (epsilon["legal_name"], epsilon["correction_ids"]) == ("Epsilon Group AB", f"['{D_EPSILON_NAME}']")
