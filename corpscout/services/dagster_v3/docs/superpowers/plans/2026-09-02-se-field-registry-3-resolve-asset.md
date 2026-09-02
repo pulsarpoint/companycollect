@@ -1255,7 +1255,6 @@ and the check body against a scripted client. Executed against a real engine in
 test_se_company_field_resolve_clickhouse_local.py."""
 
 import dagster as dg
-import pytest
 
 from dagster_v3.defs.se_company.fields.parity import (
     CONDITION_NAMES,
