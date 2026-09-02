@@ -253,3 +253,49 @@ def test_scb_and_the_final_carry_both_legal_form_labels_from_000306() -> None:
     # only, so the two copied columns are plain data there.
     final_alter = up[up.index("ALTER TABLE corpscout.se_company_info\n") :]
     assert "MATERIALIZED" not in final_alter and "evidence_set_hash" not in final_alter
+
+
+def test_field_tables_from_000373_match_the_positional_column_tuples() -> None:
+    """2026-09-02 registry design: one long candidates table, one long resolved table, one
+    registry export table. The Python tuples are the positional insert lists (MATERIALIZED
+    evidence_hash omitted), pinned to the migration the way INSERT_COLUMNS is pinned."""
+    from dagster_v3.defs.se_company.fields.tables import (
+        SE_COMPANY_FIELD_CANDIDATE_COLUMNS,
+        SE_COMPANY_FIELD_COLUMNS,
+        SE_COMPANY_FIELD_REGISTRY_COLUMNS,
+    )
+
+    candidate = table_block("se_company_field_candidate")
+    assert [c for c in declared_columns("se_company_field_candidate") if c != "evidence_hash"] == list(
+        SE_COMPANY_FIELD_CANDIDATE_COLUMNS
+    )
+    assert "evidence_hash FixedString(64) MATERIALIZED lower(hex(SHA256(concat(" in candidate
+    assert "field, '\\n', source, '\\n', source_record_uid, '\\n', value, '\\n', value_json" in candidate
+    assert "ENGINE = ReplacingMergeTree(extracted_at)" in candidate
+    assert "ORDER BY (company_id, field, source, source_record_uid)" in candidate
+    assert "CONSTRAINT has_company CHECK match(company_id, '^([0-9]{10}|[0-9]{12})$')" in candidate
+    assert "CONSTRAINT has_value CHECK trim(value) != ''" in candidate
+
+    resolved = table_block("se_company_field")
+    assert declared_columns("se_company_field") == list(SE_COMPANY_FIELD_COLUMNS)
+    assert "decision_id Nullable(UUID)" in resolved
+    assert "ENGINE = ReplacingMergeTree(resolved_at)" in resolved and "ORDER BY (company_id, field)" in resolved
+    assert "CONSTRAINT has_company CHECK match(company_id, '^([0-9]{10}|[0-9]{12})$')" in resolved
+    assert "CONSTRAINT has_value CHECK trim(value) != ''" in resolved
+
+    registry = table_block("se_company_field_registry")
+    assert declared_columns("se_company_field_registry") == list(SE_COMPANY_FIELD_REGISTRY_COLUMNS)
+    assert "sources Array(String)" in registry and "resolve_sql String" in registry
+    assert "ENGINE = ReplacingMergeTree(version)" in registry and "ORDER BY (datatype, country, field)" in registry
+
+
+def test_field_table_writer_grants_are_insert_only() -> None:
+    up = (MIGRATIONS_DIR / "000373_corpscout_se_company_field_tables.up.sql").read_text()
+    down = (MIGRATIONS_DIR / "000373_corpscout_se_company_field_tables.down.sql").read_text()
+    for table in ("se_company_field_candidate", "se_company_field", "se_company_info"):
+        assert f"GRANT INSERT ON corpscout.{table}\nTO corpscout_person_correction_writer" in up
+        assert f"REVOKE INSERT ON corpscout.{table}\nFROM corpscout_person_correction_writer" in down
+    assert "GRANT SELECT" not in up and "GRANT ALL" not in up
+    # The registry table is read by both runners and written by Dagster alone.
+    assert "GRANT INSERT ON corpscout.se_company_field_registry" not in up
+    assert "DROP" not in _statements(up) and "TRUNCATE" not in _statements(up)

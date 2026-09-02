@@ -385,6 +385,7 @@ EXPECTED_MIGRATIONS = (
     "000370_corpscout_fi_taxonomy_dictionary",
     "000371_corpscout_se_company_info_field_value",
     "000372_corpscout_retire_se_company_info_correction",
+    "000373_corpscout_se_company_field_tables",
 )
 
 NOOP_MIGRATIONS = {"000276_noop"}
@@ -4067,6 +4068,29 @@ def test_the_correction_ledger_is_retired_by_000372_reversibly() -> None:
     assert (
         "GRANT INSERT ON corpscout.se_company_info_correction\nTO corpscout_person_correction_writer"
     ) in down
+
+
+def test_se_company_field_tables_are_created_by_000373() -> None:
+    """2026-09-02 field registry design (spec 4.3, 5.1, 8.1): the exported registry, the
+    long append-only candidates and the long resolved table. Additive only -- nothing is
+    removed -- and the writer role gains INSERT on the two long tables the backoffice
+    resolve writes plus the wide projection it re-pivots afterwards."""
+    up = _migration_sql("000373_corpscout_se_company_field_tables.up.sql")
+    down = _migration_sql("000373_corpscout_se_company_field_tables.down.sql")
+
+    for table in ("se_company_field_registry", "se_company_field_candidate", "se_company_field"):
+        assert f"CREATE TABLE IF NOT EXISTS corpscout.{table}\n" in up
+        assert f"DROP TABLE IF EXISTS corpscout.{table}" in down
+    assert "ENGINE = ReplacingMergeTree(version)\nORDER BY (datatype, country, field)" in up
+    assert "ENGINE = ReplacingMergeTree(extracted_at)\nORDER BY (company_id, field, source, source_record_uid)" in up
+    assert "ENGINE = ReplacingMergeTree(resolved_at)\nORDER BY (company_id, field)" in up
+    assert "sources Array(String)" in up and "ranks" not in up
+    assert "DROP TABLE" not in up and "TRUNCATE" not in up
+
+    for table in ("se_company_field_candidate", "se_company_field", "se_company_info"):
+        assert f"GRANT INSERT ON corpscout.{table}\nTO corpscout_person_correction_writer" in up
+        assert f"REVOKE INSERT ON corpscout.{table}\nFROM corpscout_person_correction_writer" in down
+    assert "GRANT SELECT" not in up and "GRANT ALL" not in up
 
 
 def test_every_migration_ends_with_a_statement_not_a_comment() -> None:
