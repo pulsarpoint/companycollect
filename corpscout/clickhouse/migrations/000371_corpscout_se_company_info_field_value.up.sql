@@ -26,11 +26,10 @@ CREATE TABLE IF NOT EXISTS corpscout.se_company_info_field_value
 ENGINE = MergeTree
 ORDER BY (company_id, field, created_at, value_id);
 
-GRANT INSERT ON corpscout.se_company_info_field_value
-TO corpscout_person_correction_writer;
-
 -- The retired ledger (corpscout.se_company_info_correction) is NOT dropped here. A DROP
 -- that has to wait for a deploy never enters the sequential ledger (2026-08-25 ruling):
 -- a routine `migrate up` for unrelated work would apply it before the code that stops
 -- reading the old table is live. The retirement is a gated direct-SQL step at deploy
 -- (gate: 0 published rows with correction_ids), with its own migration written then.
+GRANT INSERT ON corpscout.se_company_info_field_value
+TO corpscout_person_correction_writer;

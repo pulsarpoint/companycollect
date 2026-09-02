@@ -4048,3 +4048,14 @@ def _migration_sql(file_name: str) -> str:
 
 def _normalize_sql(sql: str) -> str:
     return " ".join(sql.replace(";", "").split())
+
+
+def test_every_migration_ends_with_a_statement_not_a_comment() -> None:
+    """golang-migrate's x-multi-statement splitter hands ClickHouse every `;`-separated
+    chunk, so a file whose last chunk is only comments fails with 'code: 62 Empty query'
+    AFTER its real statements ran, leaving the ledger dirty (000371 on 2026-09-02).
+    Trailing prose belongs above the final statement."""
+    for path in sorted(MIGRATIONS_DIR.glob("*.sql")):
+        lines = [line for line in path.read_text().splitlines() if line.strip()]
+        assert lines, path.name
+        assert lines[-1].rstrip().endswith(";"), f"{path.name} ends with: {lines[-1]!r}"
