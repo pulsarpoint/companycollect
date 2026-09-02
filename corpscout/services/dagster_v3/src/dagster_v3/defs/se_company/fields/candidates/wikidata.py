@@ -20,6 +20,7 @@ from dagster_v3.defs.se_company.fields.candidates.common import (
     clean_text_sql,
     compare_key_text_sql,
     define_candidate_asset,
+    json_nullable_string_sql,
     json_object_sql,
     json_string_sql,
 )
@@ -51,20 +52,18 @@ def _member(field: str, *, value: str, compare_key: str, extra: dict[str, str] |
 
 
 def build_candidates_sql() -> str:
-    # employee_count_json_sql (the shared helper) wraps as_of/period through toJSONString,
+    # employee_count_json_sql (the shared helper) wraps as_of/period through json_string_sql,
     # which on ClickHouse 26.5 returns SQL NULL -- not the JSON token "null" -- for a NULL
     # argument, collapsing the whole concat() into NULL. period here is always unknown (the
-    # artifact carries no period for this count), so it is a literal 'null' token, never
-    # routed through toJSONString; as_of is coalesced to '' first (both for a genuine gap in
-    # wikidata_companies and for a LEFT JOIN miss under join_use_nulls) and only then either
-    # rendered as a JSON string or replaced with the literal token, so it never hits
-    # toJSONString(NULL) either.
+    # artifact carries no period for this count), so it is the literal 'null' token, never
+    # routed through toJSONString; as_of goes through json_nullable_string_sql, which spells
+    # that token out itself, over a nullIf that maps both a genuine gap in wikidata_companies
+    # and a LEFT JOIN miss ('' under join_use_nulls = 0, NULL under 1) to NULL.
     employee_count_expr = "assumeNotNull(artifact.employee_count)"
-    employee_as_of_expr = "ifNull(entities.employee_as_of, '')"
     employee_json = json_object_sql({
         "compare_key": json_string_sql(f"toString({employee_count_expr})"),
         "count": f"toString({employee_count_expr})",
-        "as_of": f"if({employee_as_of_expr} = '', 'null', toJSONString({employee_as_of_expr}))",
+        "as_of": json_nullable_string_sql("nullIf(entities.employee_as_of, '')"),
         "period": "'null'",
     })
     website_json = json_object_sql({

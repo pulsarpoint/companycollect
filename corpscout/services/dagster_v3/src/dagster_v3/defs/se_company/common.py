@@ -89,10 +89,13 @@ def publish_with_stage(
     ``anti_join_columns`` against the target -- by default
     ``(company_id, source_record_uid, evidence_hash)``, the artifact tables' identity;
     the candidate table passes its own five-column identity -- so a version of a row
-    already published with the same evidence is never re-inserted. The stage is
-    created with ``CREATE TABLE stage AS target``, so the target's MATERIALIZED
-    ``evidence_hash`` is computed on the stage by ClickHouse itself -- it is never
-    re-expressed in Python.
+    already published with the same evidence is never re-inserted. The join's right
+    side reads only the staged companies' published rows, not the whole target:
+    every caller's ``anti_join_columns`` start with company_id, and a page of a few
+    thousand rows must not scan a table of millions. The stage is created with
+    ``CREATE TABLE stage AS target``, so the target's MATERIALIZED ``evidence_hash``
+    is computed on the stage by ClickHouse itself -- it is never re-expressed in
+    Python.
     """
     if (rows is None) == (select_sql is None):
         raise ValueError("publish_with_stage needs exactly one of rows or select_sql")
@@ -132,9 +135,13 @@ def publish_with_stage(
                 on_clause = " AND ".join(
                     f"existing.{column} = stage.{column}" for column in anti_join_columns
                 )
+                existing_sql = (
+                    f"(SELECT {', '.join(anti_join_columns)} FROM {qualified_target}"
+                    f" WHERE company_id IN (SELECT company_id FROM {qualified_stage}))"
+                )
                 anti_join_sql = (
                     f"FROM {qualified_stage} AS stage\n"
-                    f"LEFT ANTI JOIN {qualified_target} AS existing\n"
+                    f"LEFT ANTI JOIN {existing_sql} AS existing\n"
                     f"ON {on_clause}"
                 )
                 # Counted BEFORE the target insert, as its own query: a plain

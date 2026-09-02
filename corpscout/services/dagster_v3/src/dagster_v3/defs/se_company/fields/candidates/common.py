@@ -156,8 +156,14 @@ def clean_text_sql(expr: str) -> str:
 
 
 def json_string_sql(expr: str) -> str:
-    """A JSON string token (or null for a NULL Nullable(String))."""
+    """A JSON string token for a NON-NULL String expression (toJSONString(NULL) is SQL NULL
+    and would collapse concat()); use json_nullable_string_sql for Nullable inputs."""
     return f"toJSONString({expr})"
+
+
+def json_nullable_string_sql(expr: str) -> str:
+    """A JSON string token for a Nullable expression: the literal null token when it is NULL."""
+    return f"ifNull(toJSONString({expr}), 'null')"
 
 
 def json_object_sql(members: Mapping[str, str]) -> str:

@@ -370,10 +370,12 @@ def _candidates_for(module: ModuleType, company_id: str) -> str:
 def _publish_pass(source: str, module: ModuleType, extracted_at_sql: str) -> str:
     """Mirrors publish_candidates -> publish_with_stage(new_versions_only=True,
     anti_join_columns=CANDIDATE_ANTI_JOIN_COLUMNS): stage <- the extractor SELECT wrapped
-    into the insert list, then copy only rows whose five-column identity is not there."""
+    into the insert list, then copy only rows whose five-column identity is not there --
+    reading, as publish_with_stage does, only the staged companies' published rows."""
     columns = ", ".join(SE_COMPANY_FIELD_CANDIDATE_COLUMNS)
     stage = "corpscout._tmp_se_company_field_candidate"
     stage_columns = ", ".join(f"stage.{column}" for column in SE_COMPANY_FIELD_CANDIDATE_COLUMNS)
+    anti_join_columns = ", ".join(CANDIDATE_ANTI_JOIN_COLUMNS)
     on_clause = " AND ".join(f"existing.{column} = stage.{column}" for column in CANDIDATE_ANTI_JOIN_COLUMNS)
     projected = ", ".join(CANDIDATE_SELECT_COLUMNS)
     inner = _render(module.build_candidates_sql(), {"company_ids": (HB, SOLO)})
@@ -385,7 +387,8 @@ def _publish_pass(source: str, module: ModuleType, extracted_at_sql: str) -> str
         f"FROM (SELECT {projected} FROM ({inner}) AS c ({projected}));\n"
         f"INSERT INTO corpscout.se_company_field_candidate ({columns})\n"
         f"SELECT {stage_columns} FROM {stage} AS stage\n"
-        f"LEFT ANTI JOIN corpscout.se_company_field_candidate AS existing ON {on_clause};\n"
+        f"LEFT ANTI JOIN (SELECT {anti_join_columns} FROM corpscout.se_company_field_candidate\n"
+        f"    WHERE company_id IN (SELECT company_id FROM {stage})) AS existing ON {on_clause};\n"
         f"DROP TABLE {stage};\n"
     )
 

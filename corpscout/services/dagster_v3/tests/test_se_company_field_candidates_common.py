@@ -46,6 +46,9 @@ def test_json_object_sql_renders_sorted_members_from_json_token_expressions() ->
         "concat('{\"compare_key\":', toJSONString(ck), ',\"language\":', toJSONString('en'), '}')"
     )
     assert cc.json_string_sql("value") == "toJSONString(value)"
+    # toJSONString(NULL) is SQL NULL, which would collapse the whole concat(): a Nullable
+    # member spells the JSON null token out instead.
+    assert cc.json_nullable_string_sql("value") == "ifNull(toJSONString(value), 'null')"
     assert cc.compare_key_text_sql("value") == (
         "lowerUTF8(trim(replaceRegexpAll(normalizeUTF8NFKC(value), '[[:space:]]+', ' ')))"
     )
@@ -127,6 +130,11 @@ def test_publish_candidates_stages_rows_in_column_order_and_anti_joins_on_five_c
     validation = next(s for s, _ in client.executed if s.startswith("SELECT count(), countIf("))
     assert cc.CANDIDATE_INVALID_CONDITION in validation
     insert_sql = next(s for s, _ in client.executed if s.startswith("INSERT INTO `corpscout`.`se_company_field_candidate`"))
+    assert (
+        "LEFT ANTI JOIN (SELECT company_id, field, source, source_record_uid, evidence_hash "
+        "FROM `corpscout`.`se_company_field_candidate` WHERE company_id IN "
+        "(SELECT company_id FROM `corpscout`.`_tmp_se_company_field_candidate_"
+    ) in insert_sql
     assert "existing.field = stage.field AND existing.source = stage.source" in insert_sql
     assert cc.publish_candidates(FakeClickhouse(FakeClient(answers=[])), [], source_run_id="run-1", extracted_at=NOW) == 0
 

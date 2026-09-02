@@ -144,7 +144,12 @@ def test_publish_with_stage_new_versions_only_counts_the_anti_join_before_insert
     insert_sql = next(statement for statement in sql if statement.startswith("INSERT INTO `corpscout`.`se_company_info_scb`"))
     assert sql.index(count_sql) < sql.index(insert_sql)  # counted BEFORE the target insert
     for statement in (count_sql, insert_sql):
-        assert "LEFT ANTI JOIN `corpscout`.`se_company_info_scb` AS existing" in statement
+        # The right side is the staged companies' published rows, not the whole table.
+        assert (
+            "LEFT ANTI JOIN (SELECT company_id, source_record_uid, evidence_hash "
+            "FROM `corpscout`.`se_company_info_scb` WHERE company_id IN "
+            "(SELECT company_id FROM `corpscout`.`_tmp_se_company_info_scb_"
+        ) in statement
         assert (
             "ON existing.company_id = stage.company_id "
             "AND existing.source_record_uid = stage.source_record_uid "
@@ -464,6 +469,11 @@ def test_publish_with_stage_anti_join_columns_are_configurable() -> None:
     )
     assert counts == PublishCounts(staged=1, inserted=1, total=1)
     insert_sql = next(s for s, _ in client.executed if s.startswith("INSERT INTO `corpscout`.`se_company_field_candidate`"))
+    assert (
+        "LEFT ANTI JOIN (SELECT company_id, field, source, source_record_uid, evidence_hash "
+        "FROM `corpscout`.`se_company_field_candidate` WHERE company_id IN "
+        "(SELECT company_id FROM `corpscout`.`_tmp_se_company_field_candidate_"
+    ) in insert_sql
     assert (
         "ON existing.company_id = stage.company_id AND existing.field = stage.field "
         "AND existing.source = stage.source AND existing.source_record_uid = stage.source_record_uid "
