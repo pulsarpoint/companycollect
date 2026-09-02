@@ -59,8 +59,35 @@ CANDIDATE_INVALID_CONDITION = (
 IDS_PER_STATEMENT = 5_000
 SE_COMPANY_ID_MATCH = f"match(company_id, '{SE_COMPANY_ID_PATTERN}')"
 SINCE_SQL = "parseDateTime64BestEffort(%(since)s, 3, 'UTC')"
+WATERMARK_EPOCH_SQL = f"toDateTime64('{EPOCH}', 3, 'UTC')"
 # Text a register writes when it has nothing to say; never a candidate.
 PLACEHOLDER_VALUES = ("", "-", "--", ".", "n/a", "null", "none")
+
+
+def changed_companies_scope_sql(*, source: str, changes_sql: str) -> str:
+    """The scan every SQL extractor pages (parameters after_company_id, page_size, since):
+    companies whose newest source change stamp is newer than BOTH their own newest
+    extracted_at for this source and the ``since`` floor. Per company, so a run capped by
+    max_companies leaves the remainder selected for the next run. ``changes_sql`` is the
+    UNION ALL of (company_id, changed_at) members."""
+    return f"""SELECT changes.company_id AS company_id
+FROM (
+    SELECT company_id, max(changed_at) AS changed_at
+    FROM (
+{changes_sql}
+    )
+    GROUP BY company_id
+) AS changes
+LEFT JOIN (
+    SELECT company_id, max(extracted_at) AS extracted_at
+    FROM {DATABASE}.{CANDIDATE_TABLE}
+    WHERE source = '{source}'
+    GROUP BY company_id
+) AS watermark ON watermark.company_id = changes.company_id
+WHERE match(changes.company_id, '{SE_COMPANY_ID_PATTERN}') AND changes.company_id > %(after_company_id)s
+  AND changes.changed_at > greatest(ifNull(watermark.extracted_at, {WATERMARK_EPOCH_SQL}), {SINCE_SQL})
+ORDER BY company_id
+LIMIT %(page_size)s"""
 
 
 @dataclass(frozen=True)
@@ -221,7 +248,7 @@ latest_revenue AS (
     SELECT company_id, source_record_uid, observed_at, period_end, fiscal_year, currency,
         assumeNotNull(amount) AS amount, amount_usd
     FROM financials
-    WHERE amount IS NOT NULL
+    WHERE amount IS NOT NULL AND currency != ''
     ORDER BY observed_at DESC, fiscal_year DESC, source_record_uid DESC
     LIMIT 1 BY company_id
 )"""
@@ -282,21 +309,6 @@ def clickhouse_stamp(moment: datetime) -> str:
     return moment.strftime("%Y-%m-%d %H:%M:%S.%f")[:-3]
 
 
-def build_last_extracted_at_sql() -> str:
-    return f"SELECT max(extracted_at) FROM {DATABASE}.{CANDIDATE_TABLE} WHERE source = %(source)s"
-
-
-def last_extracted_at(clickhouse: ClickhouseResource, source: str) -> str:
-    """The default ``since``: the newest extracted_at this source wrote, EPOCH when none.
-    max() over no rows is the DateTime64 zero, which reads as EPOCH too."""
-    with clickhouse.get_connection() as client:
-        rows = client.execute(build_last_extracted_at_sql(), {"source": source})
-    stamp = rows[0][0] if rows else None
-    if stamp is None or stamp.year <= 1970:
-        return EPOCH
-    return clickhouse_stamp(stamp)
-
-
 @dataclass
 class PageWalk:
     selected: int = 0
@@ -354,11 +366,12 @@ def materialize_candidates(
     """Scan (or take the explicit scope), extract page by page, publish when ``execute``."""
     scope = normalized_se_company_ids(config.company_ids)
     assert_clickhouse_tables_exist(clickhouse, database=DATABASE, tables=(*extractor.source_tables, CANDIDATE_TABLE))
-    since = (config.since or "").strip()
-    if not since and not scope:
-        since = last_extracted_at(clickhouse, extractor.source)
+    since = (config.since or "").strip() or EPOCH
     candidates_sql = extractor.build_candidates_sql()
     metrics: dict[str, int] = defaultdict(int)
+    metrics["selected_company_count"] = 0
+    metrics["candidate_row_count"] = 0
+    metrics["inserted_count"] = 0
     per_field: dict[str, int] = defaultdict(int)
     walk = PageWalk()
     pages = iter_company_pages(
@@ -380,8 +393,8 @@ def materialize_candidates(
             log("se_company_field_candidates_%s page: companies=%s rows=%s inserted=%s",
                 extractor.source, len(page), len(rows), metrics["inserted_count"])
     if walk.stopped_at_cap and log is not None:
-        log("se_company_field_candidates_%s stopped at the max_companies cap (%s); the watermark only "
-            "advances past what this run inserted, so the next run continues", extractor.source, config.max_companies)
+        log("se_company_field_candidates_%s stopped at the max_companies cap (%s); the scan's per-company "
+            "watermark leaves the remainder selected for the next run", extractor.source, config.max_companies)
     return {
         **metrics, "rows_per_field": dict(sorted(per_field.items())), "preview": not config.execute,
         "stopped_at_cap": walk.stopped_at_cap, "since": since, "source": extractor.source,

@@ -2,7 +2,6 @@
 anti-join publish and the paging driver. Pure unit tests over the scripted FakeClient."""
 
 from datetime import UTC, datetime
-from functools import partial
 
 import dagster as dg
 import pytest
@@ -84,6 +83,24 @@ def test_financial_sql_helpers_render_the_documented_members() -> None:
     )
 
 
+def test_changed_companies_scope_sql_joins_the_per_company_watermark() -> None:
+    sql = cc.changed_companies_scope_sql(
+        source="scb", changes_sql="    SELECT company_id, observed_at AS changed_at FROM corpscout.se_company_info_scb")
+    assert (
+        "FROM corpscout.se_company_field_candidate\n"
+        "    WHERE source = 'scb'\n"
+        "    GROUP BY company_id\n"
+        ") AS watermark ON watermark.company_id = changes.company_id"
+    ) in sql
+    assert (
+        "changes.changed_at > greatest(ifNull(watermark.extracted_at, toDateTime64('1970-01-01 00:00:00.000', 3, 'UTC')), "
+        "parseDateTime64BestEffort(%(since)s, 3, 'UTC'))"
+    ) in sql
+    assert "changes.company_id > %(after_company_id)s" in sql
+    assert sql.endswith("ORDER BY company_id\nLIMIT %(page_size)s")
+    assert "%" not in sql.replace("%(after_company_id)s", "").replace("%(since)s", "").replace("%(page_size)s", "")
+
+
 def test_candidate_rows_from_result_binds_positionally_and_refuses_empty_values() -> None:
     rows = cc.candidate_rows_from_result(
         [(HB, "legal_name", "uid-1", OBSERVED, "Svenska Handelsbanken AB", '{"compare_key":"svenska handelsbanken ab"}')],
@@ -129,10 +146,9 @@ CANDIDATE_RESULT = [
 ]
 
 
-def test_materialize_candidates_preview_scans_from_the_watermark_and_writes_nothing() -> None:
+def test_materialize_candidates_preview_scans_from_epoch_and_writes_nothing() -> None:
     client = FakeClient(answers=[
         EXISTING_TABLES,
-        [(datetime(2026, 8, 20, 6, 0, 0, 123000, tzinfo=UTC),)],  # max(extracted_at) for the source
         [(HB,), (SOLO,)],                                         # the one (short) scope page
         CANDIDATE_RESULT,
     ])
@@ -141,21 +157,20 @@ def test_materialize_candidates_preview_scans_from_the_watermark_and_writes_noth
         clickhouse=FakeClickhouse(client), extractor=_extractor(), config=config,
         source_run_id="run-1", extracted_at=NOW)
     assert metadata["preview"] is True
-    assert metadata["since"] == "2026-08-20 06:00:00.123"
+    assert metadata["since"] == EPOCH
     assert metadata["selected_company_count"] == 2
     assert metadata["candidate_row_count"] == 3
     assert metadata["rows_per_field"] == {"legal_name": 2, "status": 1}
     assert metadata["stopped_at_cap"] is False
-    scope_sql, scope_params = client.executed[2]
-    assert scope_params == {"after_company_id": "", "page_size": 20_000, "since": "2026-08-20 06:00:00.123"}
-    assert client.executed[3][1] == {"company_ids": (HB, SOLO)}
+    scope_sql, scope_params = client.executed[1]
+    assert scope_params == {"after_company_id": "", "page_size": 20_000, "since": EPOCH}
+    assert client.executed[2][1] == {"company_ids": (HB, SOLO)}
     assert not any(sql.startswith(("CREATE", "INSERT")) for sql, _ in client.executed)
 
 
 def test_materialize_candidates_execute_publishes_each_page() -> None:
     client = FakeClient(answers=[
         EXISTING_TABLES,
-        [(datetime(1970, 1, 1, tzinfo=UTC),)],  # empty candidate table -> EPOCH
         [(HB,), (SOLO,)],
         CANDIDATE_RESULT,
         [(3, 0)], [(0,)], [(3,)], [(3,)],       # publish_with_stage: validation, existing, anti-join count, total
@@ -186,7 +201,7 @@ def test_materialize_candidates_explicit_scope_skips_the_scan_and_honours_the_ca
 
 def test_materialize_candidates_pages_the_scan_until_a_short_page() -> None:
     client = FakeClient(answers=[
-        EXISTING_TABLES, [(datetime(1970, 1, 1, tzinfo=UTC),)],
+        EXISTING_TABLES,
         [(HB,)], CANDIDATE_RESULT[:2],   # a full page of 1
         [(SOLO,)], CANDIDATE_RESULT[2:], # a second full page of 1
         [],                              # the empty page that ends the scan
