@@ -234,6 +234,7 @@ CLICKHOUSE_LEAVES: tuple[ClickhouseLeaf, ...] = (
     # resolve asset's weekly job lands, so row-count checks only; every one writes the same
     # append-only table.
     ClickhouseLeaf("se_company_field_candidates_scb", ("se_company_field_candidate",), None),
+    ClickhouseLeaf("se_company_field_candidates_bolagsverket", ("se_company_field_candidate",), None),
     # se_company_address — two per-source artifacts and the merged final, all refreshed by
     # se_company_address_weekly. The weekly schedule is now the freshness source, like the
     # info leaves above.

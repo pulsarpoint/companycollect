@@ -34,6 +34,7 @@ from dagster_v3.defs.se_company.fields.candidates.common import (
     CANDIDATE_ANTI_JOIN_COLUMNS,
     CANDIDATE_SELECT_COLUMNS,
 )
+from dagster_v3.defs.se_company.fields.candidates import bolagsverket as bolagsverket_candidates
 from dagster_v3.defs.se_company.fields.candidates import scb as scb_candidates
 from dagster_v3.defs.se_company.fields.tables import SE_COMPANY_FIELD_CANDIDATE_COLUMNS
 from tests.test_se_company_person_clickhouse_local import _clickhouse_local_command, _literal, _render
@@ -142,6 +143,7 @@ HB_DOMAIN_UID = "fp-hb-primary"
 # Every source task appends (source, module) here; _script iterates it.
 EXTRACTORS: list[tuple[str, ModuleType]] = []
 EXTRACTORS.append(("scb", scb_candidates))
+EXTRACTORS.append(("bolagsverket", bolagsverket_candidates))
 
 
 def _schema_statements() -> list[str]:
@@ -524,3 +526,32 @@ def test_both_financial_views_resolve_the_fixture(sections: dict[str, list[list[
     """The views are read as-is by the bolagsverket and esef extractors; two fiscal years for
     Bolagsverket, one ESEF filing linked through company_identifier."""
     assert _counts(sections["financial_views"]) == {"bolagsverket": 2, "esef": 1}
+
+
+HB_BV_ROWS = [
+    ["employee_count", HB_BV_FIN_UID, PERIOD_END_TEXT, "11950",
+     '{"as_of":"2024-12-31","compare_key":"11950","count":11950,"period":"2024"}'],
+    ["incorporation_date", HB_BV_REG_UID, T_REG_TEXT, "1971-04-01", _text("1971-04-01")],
+    ["latest_revenue", HB_BV_FIN_UID, PERIOD_END_TEXT, "SEK 47500000000 FY2024",
+     '{"amount":47500000000,"amount_usd":4400000000,"compare_key":"sek:47500000000:2024",'
+     '"currency":"SEK","fiscal_year":2024,"period_end":"2024-12-31"}'],
+    ["legal_form_code", HB_BV_REG_UID, T_REG_TEXT, "AB-ORGFO", _text("ab-orgfo")],
+    ["legal_name", HB_BV_REG_UID, T_REG_TEXT, "Svenska Handelsbanken AB", _text("svenska handelsbanken ab")],
+    ["status", HB_BV_REG_UID, T_REG_TEXT, "active", '{"compare_key":"active","conflict":false}'],
+]
+# No legal_name: the register wrote the placeholder '-'. status carries the conflict with SCB.
+SOLO_BV_ROWS = [
+    ["incorporation_date", SOLO_BV_REG_UID, T_REG_TEXT, "1998-06-15", _text("1998-06-15")],
+    ["legal_form_code", SOLO_BV_REG_UID, T_REG_TEXT, "AB-ORGFO", _text("ab-orgfo")],
+    ["status", SOLO_BV_REG_UID, T_REG_TEXT, "inactive", '{"compare_key":"inactive","conflict":true}'],
+]
+
+
+def test_bolagsverket_scope_and_rows(sections: dict[str, list[list[str]]]) -> None:
+    assert [row[0] for row in sections["bolagsverket_scope_all"]] == [HB, SOLO]
+    assert [row[0] for row in sections["bolagsverket_scope_since"]] == [HB]  # the metrics row is newer than SINCE
+    assert sections["bolagsverket_hb"] == HB_BV_ROWS
+    assert sections["bolagsverket_solo"] == SOLO_BV_ROWS
+    first = _counts(sections["counts_after_first_pass"])
+    assert first["bolagsverket"] == len(HB_BV_ROWS) + len(SOLO_BV_ROWS)
+    assert _counts(sections["counts_after_rerun"])["bolagsverket"] == first["bolagsverket"]
