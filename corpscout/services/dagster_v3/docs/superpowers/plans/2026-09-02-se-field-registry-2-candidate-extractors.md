@@ -1890,8 +1890,8 @@ HB_BV_ROWS = [
     ["employee_count", HB_BV_FIN_UID, PERIOD_END_TEXT, "11950",
      '{"as_of":"2024-12-31","compare_key":"11950","count":11950,"period":"2024"}'],
     ["incorporation_date", HB_BV_REG_UID, T_REG_TEXT, "1971-04-01", _text("1971-04-01")],
-    ["latest_revenue", HB_BV_FIN_UID, PERIOD_END_TEXT, "SEK 47500000000.00 FY2024",
-     '{"amount":47500000000.00,"amount_usd":4400000000.00,"compare_key":"sek:47500000000.00:2024",'
+    ["latest_revenue", HB_BV_FIN_UID, PERIOD_END_TEXT, "SEK 47500000000 FY2024",
+     '{"amount":47500000000,"amount_usd":4400000000,"compare_key":"sek:47500000000:2024",'
      '"currency":"SEK","fiscal_year":2024,"period_end":"2024-12-31"}'],
     ["legal_form_code", HB_BV_REG_UID, T_REG_TEXT, "AB-ORGFO", _text("ab-orgfo")],
     ["legal_name", HB_BV_REG_UID, T_REG_TEXT, "Svenska Handelsbanken AB", _text("svenska handelsbanken ab")],
@@ -2119,8 +2119,8 @@ HB_ESEF_ROWS = [
      _text("handelsbanken is a nordic bank.", language="en")],
     ["employee_count", HB_ESEF_FIN_UID, PERIOD_END_TEXT, "12000",
      '{"as_of":"2024-12-31","compare_key":"12000","count":12000,"period":"2024"}'],
-    ["latest_revenue", HB_ESEF_FIN_UID, PERIOD_END_TEXT, "SEK 48000000000.00 FY2024",
-     '{"amount":48000000000.00,"amount_usd":4500000000.00,"compare_key":"sek:48000000000.00:2024",'
+    ["latest_revenue", HB_ESEF_FIN_UID, PERIOD_END_TEXT, "SEK 48000000000 FY2024",
+     '{"amount":48000000000,"amount_usd":4500000000,"compare_key":"sek:48000000000:2024",'
      '"currency":"SEK","fiscal_year":2024,"period_end":"2024-12-31"}'],
 ]
 
@@ -2698,8 +2698,8 @@ HB_RATSIT_ROWS = [
     ["industry_label_en", HB_RATSIT_IND_UID, T_RATSIT_TEXT, "Other monetary intermediation", _text("other monetary intermediation")],
     # 48,000,000 TSEK -> 48,000,000,000.00 SEK; / 10 (EUR->SEK on 2024-12-31, not the older 11
     # nor the later 9) * 1.25 (EUR->USD) -> 6,000,000,000.00 USD, exact in float64.
-    ["latest_revenue", HB_RATSIT_FIN_UID, PERIOD_END_TEXT, "SEK 48000000000.00 FY2024",
-     '{"amount":48000000000.00,"amount_usd":6000000000.00,"compare_key":"sek:48000000000.00:2024",'
+    ["latest_revenue", HB_RATSIT_FIN_UID, PERIOD_END_TEXT, "SEK 48000000000 FY2024",
+     '{"amount":48000000000,"amount_usd":6000000000,"compare_key":"sek:48000000000:2024",'
      '"currency":"SEK","fiscal_year":2024,"period_end":"2024-12-31"}'],
     ["primary_nace_code", HB_RATSIT_IND_UID, T_RATSIT_TEXT, "6419", _text("6419")],
     ["primary_sni_code", HB_RATSIT_IND_UID, T_RATSIT_TEXT, "64190", _text("64190")],
