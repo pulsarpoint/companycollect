@@ -252,10 +252,11 @@ both runners. Shape:
 INSERT INTO corpscout.se_company_field (...)
 WITH
   decision AS (
-    SELECT company_id, argMax(value, (created_at, toString(value_id))) AS value,
-           argMax(source, (created_at, toString(value_id))) AS source,
-           argMax(source_ref, (created_at, toString(value_id))) AS source_ref,
-           argMax(value_id, (created_at, toString(value_id))) AS value_id
+    -- argMax over a tuple, never over the bare value: argMax(value, ...) skips rows whose
+    -- argument is NULL, so a release row would be ignored and the older value resurrected.
+    SELECT company_id,
+           argMax((value, source, source_ref, source_at, created_at, value_id),
+                  (created_at, toString(value_id))) AS live
     FROM corpscout.se_company_info_field_value
     WHERE field = {field:String} AND company_id IN {company_ids:Array(String)}
     GROUP BY company_id),
