@@ -9,10 +9,13 @@ se_company_field_candidate_sensor watches the candidate table so an extractor ru
 outside the weekly job (the LLM pass, a backoffice refresh) is followed by a resolve.
 ledger_sensor cannot serve it: that factory hard-codes ``created_at`` and a UUID id
 column, and the candidate table has ``extracted_at`` and no UUID. The cursor here is
-``count:max(extracted_at)``; the touched set is every company with a candidate newer
-than the cursored instant. Past MAX_SCOPED_COMPANY_IDS the run is launched UNSCOPED:
-the changed-company scan finds those companies through new_candidates, and a run config
-of millions of ids is not something to store in Postgres.
+``count:max(extracted_at)``; the touched set is every company with a candidate at or
+after the cursored instant: an extractor stamps ONE extracted_at for its whole run, so a
+tick landing mid-run must see the later pages; a boundary company resolved twice is
+acceptable, a company never resolved is not. Past MAX_SCOPED_COMPANY_IDS the run is
+launched UNSCOPED: the changed-company scan finds those companies through
+new_candidates, and a run config of millions of ids is not something to store in
+Postgres.
 """
 
 from collections.abc import Mapping, Sequence
@@ -47,7 +50,7 @@ FROM {DATABASE}.{table}"""
 def build_candidate_touched_sql(table: str) -> str:
     return f"""SELECT DISTINCT company_id
 FROM {DATABASE}.{table}
-WHERE extracted_at > parseDateTime64BestEffort(%(since)s, 3, 'UTC')
+WHERE extracted_at >= parseDateTime64BestEffort(%(since)s, 3, 'UTC')
 ORDER BY company_id
 LIMIT %(limit)s"""
 
@@ -89,8 +92,9 @@ def candidate_sensor(
                                   {"since": since, "limit": max_scoped_company_ids + 1})
         company_ids = [str(row[0]) for row in rows]
         if not company_ids:
-            # The table grew but nothing is newer than the boundary (clock skew): advance
-            # the cursor anyway, or this tick would re-evaluate the same boundary forever.
+            # Defensive: with the >= boundary the touched scan can only come back empty
+            # when the boundary rows were deleted. Advance the cursor anyway, or this
+            # tick would re-evaluate the same boundary forever.
             return dg.SensorResult(run_requests=[], cursor=cursor)
         scope = [] if len(company_ids) > max_scoped_company_ids else company_ids
         return dg.SensorResult(

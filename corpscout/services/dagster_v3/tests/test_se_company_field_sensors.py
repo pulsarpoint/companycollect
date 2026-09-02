@@ -80,7 +80,7 @@ class _FakeCandidateClient:
             return [(len(self.rows), max(extracted_at for _, extracted_at in self.rows))]
         if "SELECT DISTINCT company_id" in sql:
             assert params is not None
-            touched = sorted({company for company, extracted_at in self.rows if extracted_at > str(params["since"])})
+            touched = sorted({company for company, extracted_at in self.rows if extracted_at >= str(params["since"])})
             return [(company,) for company in touched[: int(params["limit"])]]
         raise AssertionError(sql)
 
@@ -92,7 +92,7 @@ def test_candidate_sensor_sql_shapes_and_declaration() -> None:
     assert build_candidate_touched_sql("se_company_field_candidate") == (
         "SELECT DISTINCT company_id\n"
         "FROM corpscout.se_company_field_candidate\n"
-        "WHERE extracted_at > parseDateTime64BestEffort(%(since)s, 3, 'UTC')\n"
+        "WHERE extracted_at >= parseDateTime64BestEffort(%(since)s, 3, 'UTC')\n"
         "ORDER BY company_id\n"
         "LIMIT %(limit)s")
     assert MAX_SCOPED_COMPANY_IDS == 20_000
@@ -130,12 +130,20 @@ def test_candidate_sensor_skips_on_an_empty_table_and_on_an_unchanged_cursor(mon
     assert len(client.executed) == 1  # the unchanged cursor never issues the touched scan
 
 
-def test_candidate_sensor_advances_without_a_run_when_nothing_is_newer_than_the_boundary(monkeypatch) -> None:
+def test_candidate_sensor_re_selects_the_boundary_company_after_a_mid_run_tick(monkeypatch) -> None:
+    """An extractor stamps ONE extracted_at for its whole run and reuses it for every
+    page, so a tick that lands mid-run cursors that instant while pages are still being
+    written. The boundary must therefore be inclusive: the later pages carry the SAME
+    extracted_at, and a strict > would advance the cursor without ever resolving them.
+    Re-resolving the boundary company is the price, and it is the cheap side."""
     client = _FakeCandidateClient()
-    client.append(COMPANY, T1)
-    client.append(OTHER, T0)  # clock skew: a row older than the cursored boundary
+    client.append(COMPANY, T1)  # page 2 of a run whose page 1 was cursored at T1
+    client.append(OTHER, T0)
     data = _tick(se_company_field_candidate_sensor, _patch(monkeypatch, client), f"1:{T1}")
-    assert data.cursor == f"2:{T1}" and data.run_requests == []
+    assert data.cursor == f"2:{T1}"
+    assert data.run_requests is not None and len(data.run_requests) == 1
+    assert data.run_requests[0].run_config == {
+        "ops": {RESOLVE_ASSET: {"config": {"execute": True, "company_ids": [COMPANY]}}}}
 
 
 def test_candidate_sensor_launches_an_unscoped_run_past_the_id_cap(monkeypatch) -> None:
