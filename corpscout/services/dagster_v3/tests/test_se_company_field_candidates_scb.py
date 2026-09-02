@@ -32,12 +32,19 @@ def test_candidates_read_the_artifact_and_the_primary_industry() -> None:
     assert "if(legal_name_clean != '', legal_name_clean, legal_name_raw_clean) AS legal_name" in sql
     assert "if(lowerUTF8(trim(ifNull(legal_form_code, ''))) IN ('', '-', '--', '.', 'n/a', 'null', 'none'), '', trim(ifNull(legal_form_code, ''))) AS legal_form_code" in sql
     assert "trim(toString(status)) AS status" in sql
-    assert "ifNull(toString(incorporation_date), '') AS incorporation_date" in sql
+    # Date32's floor is what a pre-1900 (or unparsed) date collapses to: unknown, never a candidate.
+    assert ("if(incorporation_date = toDate32('1900-01-01'), '', ifNull(toString(incorporation_date), ''))"
+            " AS incorporation_date") in sql
     assert "FROM corpscout.se_industries FINAL\n    WHERE is_primary = 1 AND company_id IN %(company_ids)s\n    GROUP BY company_id" in sql
     assert "WHERE level = 'class' AND is_current = 1" in sql
     assert "LEFT JOIN labels ON labels.classification_version = 'NACE_REV_2' AND labels.normalized_code = substring(trim(industry.sni_code), 1, 4)" in sql
     assert "replaceAll(trim(industry.nace_code), '.', '') AS nace_code" in sql  # published dot-less, as today
-    assert "'primary_nace_code', source_record_uid, observed_at, nace_code,\n    concat('{\"compare_key\":', toJSONString(nace_code), '}')" in sql
+    # The codes carry the edition that gives them meaning: NACE its revision, SNI its code set
+    # (the register records no SNI edition, so it is the bare scheme name). compare_key stays the digits.
+    assert ("'primary_nace_code', source_record_uid, observed_at, nace_code,\n    "
+            "concat('{\"compare_key\":', toJSONString(nace_code), ',\"revision\":', toJSONString('NACE_REV_2'), '}')") in sql
+    assert ("'primary_sni_code', source_record_uid, observed_at, sni_code,\n    "
+            "concat('{\"code_set\":', toJSONString('SNI'), ',\"compare_key\":', toJSONString(sni_code), '}')") in sql
     # English preferred, Swedish otherwise -- and the language says which.
     assert "if(description_en != '', description_en, description_sv) AS description" in sql
     assert "if(description_en != '', 'en', 'sv') AS language" in sql

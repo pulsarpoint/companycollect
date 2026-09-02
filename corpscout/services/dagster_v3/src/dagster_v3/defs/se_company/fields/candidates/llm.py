@@ -350,8 +350,10 @@ def materialize_llm_candidates(
 
 @dg.asset(
     name="se_company_field_candidates_llm",
-    deps=[dg.AssetKey("se_company_field_candidates_scb"), dg.AssetKey("se_company_field_candidates_esef"),
-          dg.AssetKey("se_company_field_candidates_wikidata")],
+    # Every extractor the payload reads: the description texts (esef/wikidata/scb) and the
+    # legal_name / primary_nace_code the registry may rank to bolagsverket or ratsit.
+    deps=[dg.AssetKey(f"se_company_field_candidates_{source}") for source in
+          ("bolagsverket", "esef", "ratsit", "scb", "wikidata")],
     group_name=GROUP_NAME,
     kinds={"clickhouse", "python", "llm"},
     metadata={"table": f"{DATABASE}.{CANDIDATE_TABLE}", "source": SOURCE},

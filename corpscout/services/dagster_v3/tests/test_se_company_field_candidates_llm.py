@@ -200,8 +200,10 @@ def test_asset_is_registered_downstream_of_the_text_extractors() -> None:
 
     asset = load_defs().get_repository_def().asset_graph.get(dg.AssetKey("se_company_field_candidates_llm"))
     assert asset.parent_keys == {
-        dg.AssetKey("se_company_field_candidates_scb"),
+        dg.AssetKey("se_company_field_candidates_bolagsverket"),
         dg.AssetKey("se_company_field_candidates_esef"),
+        dg.AssetKey("se_company_field_candidates_ratsit"),
+        dg.AssetKey("se_company_field_candidates_scb"),
         dg.AssetKey("se_company_field_candidates_wikidata"),
     }
     assert asset.group_name == "se_company_fields"

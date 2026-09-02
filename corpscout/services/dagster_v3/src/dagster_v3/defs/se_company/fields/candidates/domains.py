@@ -2,7 +2,9 @@
 the serving build maintains; company_serving_current publishes the SE partition).
 
 One row per company: a reviewer's confirmed_primary wins, otherwise the highest-confidence
-suggested_primary; rejected and inactive rows are never candidates. The uid is the row's
+suggestion nobody has reviewed yet; rejected and inactive rows are never candidates, and a
+reviewer's related-not-primary decision is respected -- a confirmed_related domain is not
+this company's website, however confident the suggestion behind it was. The uid is the row's
 evidence_fingerprint (a review decision or new evidence changes it), observed_at its
 last_seen_at.
 """
@@ -43,7 +45,7 @@ def build_candidates_sql() -> str:
     FROM {DATABASE}.{DOMAINS_TABLE} FINAL
     WHERE country_code = '{COUNTRY}' AND company_id IN %(company_ids)s AND is_active = 1
       AND trim(website_url) != '' AND trim(evidence_fingerprint) != ''
-      AND (review_status = 'confirmed_primary' OR (suggested_primary = 1 AND review_status != 'rejected'))
+      AND (review_status = 'confirmed_primary' OR (suggested_primary = 1 AND review_status = 'unreviewed'))
     ORDER BY (review_status = 'confirmed_primary') DESC, suggested_confidence DESC, root_domain ASC
     LIMIT 1 BY company_id
 )

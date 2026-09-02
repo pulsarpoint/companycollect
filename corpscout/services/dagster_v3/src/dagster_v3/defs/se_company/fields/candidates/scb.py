@@ -65,7 +65,7 @@ def build_candidates_sql() -> str:
         if(legal_name_clean != '', legal_name_clean, legal_name_raw_clean) AS legal_name,
         {clean_text_sql('legal_form_code')} AS legal_form_code,
         trim(toString(status)) AS status,
-        ifNull(toString(incorporation_date), '') AS incorporation_date,
+        if(incorporation_date = toDate32('1900-01-01'), '', ifNull(toString(incorporation_date), '')) AS incorporation_date,
         {clean_text_sql('activity_description')} AS description_sv,
         {clean_text_sql('activity_description_en')} AS description_en,
         if(description_en != '', description_en, description_sv) AS description,
@@ -108,9 +108,9 @@ UNION ALL
 UNION ALL
 {_member('description_sv', value='description_sv', compare_key=compare_key_text_sql('description_sv'), source='artifact', extra={'language': json_string_sql("'sv'")})}
 UNION ALL
-{_member('primary_sni_code', value='sni_code', compare_key='sni_code', source='industry_labelled')}
+{_member('primary_sni_code', value='sni_code', compare_key='sni_code', source='industry_labelled', extra={'code_set': json_string_sql("'SNI'")})}
 UNION ALL
-{_member('primary_nace_code', value='nace_code', compare_key='nace_code', source='industry_labelled')}
+{_member('primary_nace_code', value='nace_code', compare_key='nace_code', source='industry_labelled', extra={'revision': json_string_sql(f"'{NACE_VERSION}'")})}
 UNION ALL
 {_member('industry_label_en', value='label_en', compare_key=compare_key_text_sql('label_en'), source='industry_labelled')}"""
 

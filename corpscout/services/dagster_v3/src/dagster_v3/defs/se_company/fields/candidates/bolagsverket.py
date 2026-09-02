@@ -59,7 +59,7 @@ registry AS (
         {clean_text_sql('bv.legal_name')} AS legal_name,
         {clean_text_sql('toString(bv.legal_form_code)')} AS legal_form_code,
         trim(ifNull(toString(bv.derived_status), '')) AS status,
-        ifNull(toString(bv.incorporation_date), '') AS incorporation_date,
+        if(bv.incorporation_date = toDate('1970-01-01'), '', ifNull(toString(bv.incorporation_date), '')) AS incorporation_date,
         ifNull(scb.scb_status, '') AS scb_status
     FROM {DATABASE}.{REGISTRY_TABLE} AS bv
     LEFT JOIN scb ON scb.company_id = bv.company_id

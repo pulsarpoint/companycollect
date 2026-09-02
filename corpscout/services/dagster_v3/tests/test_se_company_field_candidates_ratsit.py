@@ -32,7 +32,18 @@ def test_candidates_pin_the_newest_report_and_convert_revenue() -> None:
     assert "if(codes.nace_mapping_status = 'mapped', ifNull(codes.nace_normalized_code, ''), '') AS nace_digits" in sql
     assert "LEFT JOIN labels ON labels.classification_version = industry.nace_revision AND labels.normalized_code = industry.nace_digits" in sql
     assert "industry.nace_digits AS nace_code" in sql  # nace_normalized_code is already dot-less
-    assert "toDecimal128(p.revenue_amount * multiIf(p.monetary_unit = 'TSEK', 1000, p.monetary_unit = 'MSEK', 1000000, 1), 2) AS amount" in sql
+    # Ratsit records both editions; they travel with the codes, compare_key stays the digits.
+    assert "toString(codes.source_industry_code_set) AS code_set" in sql
+    assert ("'primary_nace_code', source_record_uid, observed_at, nace_code,\n    "
+            "concat('{\"compare_key\":', toJSONString(nace_code), ',\"revision\":', toJSONString(nace_revision), '}')") in sql
+    assert ("'primary_sni_code', source_record_uid, observed_at, sni_code,\n    "
+            "concat('{\"code_set\":', toJSONString(code_set), ',\"compare_key\":', toJSONString(sni_code), '}')") in sql
+    # No unit heading matched -> no revenue at all: the default display unit is TSEK, so
+    # scaling an unknown unit as SEK would understate the amount a thousandfold.
+    assert ("if(p.monetary_unit IS NULL, NULL,\n"
+            "            toDecimal128(p.revenue_amount * multiIf(p.monetary_unit = 'TSEK', 1000, "
+            "p.monetary_unit = 'MSEK', 1000000, 1), 2)) AS amount") in sql
+    assert "WHERE periods.amount IS NOT NULL" in sql  # ... while the period still carries its employee count
     assert "ifNull(p.period_end, makeDate32(p.fiscal_year, 12, 31)) AS period_end" in sql
     assert "ASOF LEFT JOIN (SELECT rate_date, rate, k FROM fx WHERE quote_currency = 'SEK') AS sek ON periods.k = sek.k AND sek.rate_date <= periods.period_end" in sql
     assert "ASOF LEFT JOIN (SELECT rate_date, rate, k FROM fx WHERE quote_currency = 'USD') AS usd ON periods.k = usd.k AND usd.rate_date <= periods.period_end" in sql

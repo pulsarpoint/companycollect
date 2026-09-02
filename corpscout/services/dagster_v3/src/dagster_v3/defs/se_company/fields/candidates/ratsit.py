@@ -65,6 +65,7 @@ industry AS (
         concat('ratsit:', toString(codes.result_sha256), ':industry:', toString(codes.industry_index)) AS source_record_uid,
         report.observed_at AS observed_at,
         trim(ifNull(codes.source_industry_code, ifNull(codes.industry_code, ''))) AS sni_code,
+        toString(codes.source_industry_code_set) AS code_set,
         if(codes.nace_mapping_status = 'mapped', ifNull(codes.nace_normalized_code, ''), '') AS nace_digits,
         toString(codes.nace_revision) AS nace_revision
     FROM {DATABASE}.{INDUSTRY_TABLE} AS codes FINAL
@@ -79,7 +80,8 @@ labels AS (
 industry_labelled AS (
     SELECT industry.company_id AS company_id, industry.source_record_uid AS source_record_uid,
         industry.observed_at AS observed_at, industry.sni_code AS sni_code,
-        industry.nace_digits AS nace_code,
+        industry.code_set AS code_set, industry.nace_digits AS nace_code,
+        industry.nace_revision AS nace_revision,
         {clean_text_sql('labels.label_en')} AS label_en
     FROM industry
     LEFT JOIN labels ON labels.classification_version = industry.nace_revision AND labels.normalized_code = industry.nace_digits
@@ -89,7 +91,8 @@ periods AS (
         concat('ratsit:', toString(p.result_sha256), ':financial:', toString(p.financial_report_index), ':', toString(p.period_index)) AS source_record_uid,
         ifNull(p.period_end, makeDate32(p.fiscal_year, 12, 31)) AS period_end,
         p.fiscal_year AS fiscal_year,
-        toDecimal128(p.revenue_amount * multiIf(p.monetary_unit = 'TSEK', 1000, p.monetary_unit = 'MSEK', 1000000, 1), 2) AS amount,
+        if(p.monetary_unit IS NULL, NULL,
+            toDecimal128(p.revenue_amount * multiIf(p.monetary_unit = 'TSEK', 1000, p.monetary_unit = 'MSEK', 1000000, 1), 2)) AS amount,
         p.employee_count AS employee_count,
         1 AS k
     FROM {DATABASE}.{PERIODS_TABLE} AS p FINAL
@@ -125,11 +128,11 @@ latest_revenue AS (
     LIMIT 1 BY periods.company_id
 )
 SELECT company_id, 'primary_sni_code', source_record_uid, observed_at, sni_code,
-    {json_object_sql({'compare_key': json_string_sql('sni_code')})}
+    {json_object_sql({'code_set': json_string_sql('code_set'), 'compare_key': json_string_sql('sni_code')})}
 FROM industry_labelled WHERE sni_code != ''
 UNION ALL
 SELECT company_id, 'primary_nace_code', source_record_uid, observed_at, nace_code,
-    {json_object_sql({'compare_key': json_string_sql('nace_code')})}
+    {json_object_sql({'compare_key': json_string_sql('nace_code'), 'revision': json_string_sql('nace_revision')})}
 FROM industry_labelled WHERE nace_code != ''
 UNION ALL
 SELECT company_id, 'industry_label_en', source_record_uid, observed_at, label_en,

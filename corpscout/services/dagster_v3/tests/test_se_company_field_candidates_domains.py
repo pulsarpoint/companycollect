@@ -25,7 +25,8 @@ def test_candidates_prefer_the_confirmed_primary_then_the_best_suggestion() -> N
     sql = domains.build_candidates_sql()
     assert "FROM corpscout.company_domains FINAL" in sql
     assert "WHERE country_code = 'SE' AND company_id IN %(company_ids)s AND is_active = 1" in sql
-    assert "AND (review_status = 'confirmed_primary' OR (suggested_primary = 1 AND review_status != 'rejected'))" in sql
+    # confirmed_related is a reviewed decision that this domain is NOT the primary one.
+    assert "AND (review_status = 'confirmed_primary' OR (suggested_primary = 1 AND review_status = 'unreviewed'))" in sql
     assert "ORDER BY (review_status = 'confirmed_primary') DESC, suggested_confidence DESC, root_domain ASC\n    LIMIT 1 BY company_id" in sql
     assert "SELECT company_id, 'website', source_record_uid, observed_at, website_url" in sql
     assert "UNION ALL" not in sql

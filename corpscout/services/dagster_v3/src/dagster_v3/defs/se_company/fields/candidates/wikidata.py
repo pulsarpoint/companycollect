@@ -75,7 +75,7 @@ def build_candidates_sql() -> str:
     SELECT company_id, source_record_uid, observed_at, wikidata_id,
         {clean_text_sql('company_description')} AS description,
         {clean_text_sql('official_name')} AS legal_name,
-        ifNull(toString(inception_date), '') AS incorporation_date,
+        if(inception_date = toDate('1970-01-01'), '', ifNull(toString(inception_date), '')) AS incorporation_date,
         {clean_text_sql('industry_label')} AS industry_label,
         employee_count
     FROM {DATABASE}.{ARTIFACT_TABLE} FINAL

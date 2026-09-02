@@ -6,10 +6,11 @@ Substring tests cannot prove the SQL runs on ClickHouse 26.5; this file does.
 Two companies. HB (Handelsbanken's orgnr and LEI, fixture content) has rows in every source
 table: registry rows from both registers, an SCB artifact with its legal facts and Swedish and English text, an
 ESEF filing text and ESEF metrics, a Wikidata entity with a website, a Ratsit report with
-an industry and two financial periods, two domain candidates and two Bolagsverket financial
-years -- so every extractor produces its documented rows for it. SOLO has SCB text only
-(Swedish, untranslated), two registry rows whose statuses disagree, and a Bolagsverket legal
-name that is a placeholder -- the single-source company the LLM gate must skip.
+an industry and three financial periods (the newest carries no monetary unit), two domain
+candidates and two Bolagsverket financial years -- so every extractor produces its documented
+rows for it. SOLO has SCB text only (Swedish, untranslated), two registry rows whose statuses
+disagree, a Bolagsverket legal name that is a placeholder and a Bolagsverket incorporation
+date sitting on the Date floor -- the single-source company the LLM gate must skip.
 
 The script runs twice, under join_use_nulls 0 and 1: every LEFT JOIN miss in the
 extractors is read through ifNull, so both settings must answer identically.
@@ -128,6 +129,7 @@ T_EXTRACT_3, T_EXTRACT_3_TEXT = _stamp(datetime(2026, 9, 1, 12, 0, tzinfo=UTC))
 # artifacts and financials, after everything Wikidata carries.
 SINCE = "2026-08-01 12:00:00.000"
 PERIOD_END_TEXT = "2024-12-31 00:00:00.000"
+PERIOD_END_2025_TEXT = "2025-12-31 00:00:00.000"
 SETTLE = "SELECT sleep(0.05) FORMAT Null;\n"
 
 
@@ -144,6 +146,7 @@ HB_ESEF_FIN_UID = _record_uid("company-source-record-v1", "file", "esef_report_p
 HB_WD_UID = f"wikidata:{HB_QID}"
 HB_RATSIT_IND_UID = f"ratsit:{HB_RATSIT_SHA}:industry:0"
 HB_RATSIT_FIN_UID = f"ratsit:{HB_RATSIT_SHA}:financial:0:1"
+HB_RATSIT_FIN_2025_UID = f"ratsit:{HB_RATSIT_SHA}:financial:0:2"
 HB_DOMAIN_UID = "fp-hb-primary"
 
 # Every source task appends (source, module) here; _script iterates it.
@@ -189,7 +192,7 @@ VALUES
      'fixture', 'bv-hb', 'bv-hb-hash', {T_REG}, 1, '{ZERO_HASH}', '{ZERO_HASH}', {T_REG}),
     ('{SOLO}', 'scb', 'Beta AB', '42', 'active', '1998-06-15',
      'fixture', 'scb-solo', 'scb-solo-hash', {T_REG}, 1, '{ZERO_HASH}', '{ZERO_HASH}', {T_REG}),
-    ('{SOLO}', 'bolagsverket', '-', 'AB-ORGFO', 'inactive', '1998-06-15',
+    ('{SOLO}', 'bolagsverket', '-', 'AB-ORGFO', 'inactive', '1970-01-01',
      'fixture', 'bv-solo', 'bv-solo-hash', {T_REG}, 1, '{ZERO_HASH}', '{ZERO_HASH}', {T_REG});
 
 INSERT INTO corpscout.se_company_info_scb
@@ -288,7 +291,7 @@ VALUES
     ('{HB}', '{HB_RATSIT_SHA}', 'ratsit-normalizer-v2', 1, 'parser-v1', 'https://www.ratsit.se/{HB}',
      'https://www.ratsit.se/{HB}/Svenska_Handelsbanken_AB', 'ratsit-results',
      'sweden_ratsit/pilot/company_id={HB}/report.json', 'Svenska Handelsbanken AB', '{HB}', 1, 0,
-     0, 0, 1, 2, 0, {T_RATSIT});
+     0, 0, 1, 3, 0, {T_RATSIT});
 
 INSERT INTO corpscout.se_ratsit_company_industry_codes
     (company_id, result_sha256, normalizer_version, industry_index, industry_code, industry_description,
@@ -306,7 +309,9 @@ VALUES
     ('{HB}', '{HB_RATSIT_SHA}', 'ratsit-normalizer-v2', 0, 0, 'financial_and_employment', 'company',
      'TSEK', 2023, '2023-01-01', '2023-12-31', 12, 45000000, 11800, {T_RATSIT}),
     ('{HB}', '{HB_RATSIT_SHA}', 'ratsit-normalizer-v2', 0, 1, 'financial_and_employment', 'company',
-     'TSEK', 2024, '2024-01-01', '2024-12-31', 12, 48000000, 11900, {T_RATSIT});
+     'TSEK', 2024, '2024-01-01', '2024-12-31', 12, 48000000, 11900, {T_RATSIT}),
+    ('{HB}', '{HB_RATSIT_SHA}', 'ratsit-normalizer-v2', 0, 2, 'financial_and_employment', 'company',
+     NULL, 2025, '2025-01-01', '2025-12-31', 12, 50000000, 12000, {T_RATSIT});
 
 INSERT INTO corpscout.exchange_rates
     (rate_date, base_currency, quote_currency, rate, source, source_url, source_payload_hash, source_run_id,
@@ -483,8 +488,8 @@ HB_SCB_ROWS = [
     ["industry_label_en", HB_IND_UID, T_IND_TEXT, "Other monetary intermediation", _text("other monetary intermediation")],
     ["legal_form_code", "scb-art-hb", T_ART_TEXT, "AB-ORGFO", _text("ab-orgfo")],
     ["legal_name", "scb-art-hb", T_ART_TEXT, "Svenska Handelsbanken AB", _text("svenska handelsbanken ab")],
-    ["primary_nace_code", HB_IND_UID, T_IND_TEXT, "6419", _text("6419")],
-    ["primary_sni_code", HB_IND_UID, T_IND_TEXT, "64190", _text("64190")],
+    ["primary_nace_code", HB_IND_UID, T_IND_TEXT, "6419", _text("6419", revision="NACE_REV_2")],
+    ["primary_sni_code", HB_IND_UID, T_IND_TEXT, "64190", _text("64190", code_set="SNI")],
     ["status", "scb-art-hb", T_ART_TEXT, "active", _text("active")],
 ]
 SOLO_SCB_ROWS = [
@@ -577,8 +582,8 @@ HB_BV_ROWS = [
     ["status", HB_BV_REG_UID, T_REG_TEXT, "active", '{"compare_key":"active","conflict":false}'],
 ]
 # No legal_name: the register wrote the placeholder '-'. status carries the conflict with SCB.
+# No incorporation_date either: 1970-01-01 is the Date floor -- unknown, not a candidate.
 SOLO_BV_ROWS = [
-    ["incorporation_date", SOLO_BV_REG_UID, T_REG_TEXT, "1998-06-15", _text("1998-06-15")],
     ["legal_form_code", SOLO_BV_REG_UID, T_REG_TEXT, "AB-ORGFO", _text("ab-orgfo")],
     ["status", SOLO_BV_REG_UID, T_REG_TEXT, "inactive", '{"compare_key":"inactive","conflict":true}'],
 ]
@@ -639,16 +644,18 @@ def test_wikidata_scope_and_rows(sections: dict[str, list[list[str]]]) -> None:
 
 
 HB_RATSIT_ROWS = [
-    ["employee_count", HB_RATSIT_FIN_UID, PERIOD_END_TEXT, "11900",
-     '{"as_of":"2024-12-31","compare_key":"11900","count":11900,"period":"2024"}'],
+    # The newest period (FY2025) matched no unit heading, so the normalizer left monetary_unit
+    # NULL: its employee count is still the newest one, its revenue is no candidate at all.
+    ["employee_count", HB_RATSIT_FIN_2025_UID, PERIOD_END_2025_TEXT, "12000",
+     '{"as_of":"2025-12-31","compare_key":"12000","count":12000,"period":"2025"}'],
     ["industry_label_en", HB_RATSIT_IND_UID, T_RATSIT_TEXT, "Other monetary intermediation", _text("other monetary intermediation")],
     # 48,000,000 TSEK -> 48,000,000,000.00 SEK; / 10 (EUR->SEK on 2024-12-31, not the older 11
     # nor the later 9) * 1.25 (EUR->USD) -> 6,000,000,000.00 USD, exact in float64.
     ["latest_revenue", HB_RATSIT_FIN_UID, PERIOD_END_TEXT, "SEK 48000000000 FY2024",
      '{"amount":48000000000,"amount_usd":6000000000,"compare_key":"sek:48000000000:2024",'
      '"currency":"SEK","fiscal_year":2024,"period_end":"2024-12-31"}'],
-    ["primary_nace_code", HB_RATSIT_IND_UID, T_RATSIT_TEXT, "6419", _text("6419")],
-    ["primary_sni_code", HB_RATSIT_IND_UID, T_RATSIT_TEXT, "64190", _text("64190")],
+    ["primary_nace_code", HB_RATSIT_IND_UID, T_RATSIT_TEXT, "6419", _text("6419", revision="NACE_REV_2_1")],
+    ["primary_sni_code", HB_RATSIT_IND_UID, T_RATSIT_TEXT, "64190", _text("64190", code_set="SNI_2025")],
 ]
 
 
