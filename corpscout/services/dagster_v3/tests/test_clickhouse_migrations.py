@@ -387,6 +387,7 @@ EXPECTED_MIGRATIONS = (
     "000372_corpscout_retire_se_company_info_correction",
     "000373_corpscout_se_company_field_tables",
     "000374_corpscout_se_company_info_field_columns",
+    "000375_corpscout_se_company_info_field_value_registry_checks",
 )
 
 NOOP_MIGRATIONS = {"000276_noop"}
@@ -4114,6 +4115,33 @@ def test_se_company_info_gains_the_registry_scalars_in_000374() -> None:
     ):
         assert f"ADD COLUMN IF NOT EXISTS {clause}" in up
         assert f"DROP COLUMN IF EXISTS {clause.split(' ')[0]}" in down
+    assert "DROP TABLE" not in up and "TRUNCATE" not in up
+
+
+def test_field_value_checks_are_widened_to_the_registry_in_000375() -> None:
+    """Spec 4.3 / 6: the decisions table keeps its shape but its two CHECKs follow the
+    registry -- pinned here to registry.py so the lists cannot drift. Adding a field or
+    a source to the registry fails this test until a new migration widens the CHECK."""
+    from dagster_v3.defs.se_company.fields.registry import INFO_REGISTRY, KNOWN_SOURCES, field_names
+
+    up = _migration_sql("000375_corpscout_se_company_info_field_value_registry_checks.up.sql")
+    down = _migration_sql("000375_corpscout_se_company_info_field_value_registry_checks.down.sql")
+
+    def in_list(values: tuple[str, ...]) -> str:
+        return "(" + ", ".join(f"'{value}'" for value in values) + ")"
+
+    assert up.count("ALTER TABLE corpscout.se_company_info_field_value\n") == 2
+    assert (
+        "    DROP CONSTRAINT known_field,\n"
+        "    ADD CONSTRAINT known_field CHECK field IN " + in_list(field_names(INFO_REGISTRY)) + ";"
+    ) in up
+    assert (
+        "    DROP CONSTRAINT known_source,\n"
+        "    ADD CONSTRAINT known_source CHECK source IN " + in_list((*KNOWN_SOURCES, "reviewer")) + ";"
+    ) in up
+    # The down restores 000371's pilot lists verbatim.
+    assert "ADD CONSTRAINT known_field CHECK field IN ('description', 'description_sv');" in down
+    assert "ADD CONSTRAINT known_source CHECK source IN ('scb', 'esef', 'wikidata', 'llm', 'reviewer');" in down
     assert "DROP TABLE" not in up and "TRUNCATE" not in up
 
 
