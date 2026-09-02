@@ -118,8 +118,8 @@ def test_every_field_renders_its_own_precedence_and_the_same_parameters() -> Non
             assert parameter in sql
         assert "%(" not in sql  # server-side parameters only, never driver-side ones
         assert "'se-info-v1' AS registry_version" in sql
-    # The release path: the decision CTE aggregates a tuple, never the bare Nullable value.
-    assert "argMax(value," not in LEGAL_NAME_RESOLVE_SQL
+        # The release path: the decision CTE aggregates a tuple, never the bare Nullable value.
+        assert "argMax(value," not in sql
 
 
 def test_the_projection_inserts_every_wide_column_in_ddl_order() -> None:
