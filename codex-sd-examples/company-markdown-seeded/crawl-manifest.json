@@ -1,0 +1,466 @@
+{
+  "requested_start_url": "https://handelsbanken.se/",
+  "selected_base_url": "https://www.handelsbanken.se/en/",
+  "stopped_reason": "max_pages_reached",
+  "discovery_strategy": "best_first",
+  "url_seeding": {
+    "enabled": true,
+    "source": "sitemap",
+    "succeeded": true,
+    "error": null,
+    "inventory_urls": 1103,
+    "eligible_urls": 73,
+    "excluded_urls": 1018,
+    "head_checked_urls": 60,
+    "base_page_links": 12,
+    "harvested_links": 35,
+    "selection_waves": 2,
+    "selected": [
+      {
+        "url": "https://www.handelsbanken.se/en/",
+        "score": 68.0,
+        "reasons": [
+          "homepage",
+          "base locale"
+        ],
+        "exclusion": null,
+        "language": null,
+        "title": "Personal, thoughtful advice for a lifetime of banking. | Handelsbanken"
+      },
+      {
+        "url": "https://www.handelsbanken.se/en/personal/contact-and-support",
+        "score": 56.0,
+        "reasons": [
+          "base locale",
+          "linked from base page",
+          "contact",
+          "title mentions contact"
+        ],
+        "exclusion": null,
+        "language": null,
+        "title": "Contact and support | Handelsbanken"
+      },
+      {
+        "url": "https://www.handelsbanken.se/en/about-us/swedish-subsidiaries",
+        "score": 41.0,
+        "reasons": [
+          "base locale",
+          "about"
+        ],
+        "exclusion": null,
+        "language": null,
+        "title": "Swedish subsidiaries | Handelsbanken"
+      },
+      {
+        "url": "https://www.handelsbanken.se/en/personal/contact-and-support/inquiries-contact-form",
+        "score": 38.0,
+        "reasons": [
+          "base locale",
+          "contact"
+        ],
+        "exclusion": null,
+        "language": null,
+        "title": "Inquiries and views | Handelsbanken"
+      },
+      {
+        "url": "https://www.handelsbanken.se/en/personal/contact-and-support/visit-us-on-social-media",
+        "score": 33.0,
+        "reasons": [
+          "base locale",
+          "contact",
+          "press"
+        ],
+        "exclusion": null,
+        "language": null,
+        "title": "Handelsbanken on social media | Handelsbanken"
+      },
+      {
+        "url": "https://www.handelsbanken.se/en/personal/contact-and-support/chat",
+        "score": 28.0,
+        "reasons": [
+          "base locale",
+          "linked from base page",
+          "contact"
+        ],
+        "exclusion": null,
+        "language": null,
+        "title": "Chat with us | Handelsbanken"
+      },
+      {
+        "url": "https://www.handelsbanken.se/en/personal/contact-and-support/help-and-support",
+        "score": 28.0,
+        "reasons": [
+          "base locale",
+          "linked from base page",
+          "contact"
+        ],
+        "exclusion": null,
+        "language": null,
+        "title": "Help and support | Handelsbanken"
+      },
+      {
+        "url": "https://www.handelsbanken.se/en/personal/contact-and-support/security",
+        "score": 28.0,
+        "reasons": [
+          "base locale",
+          "linked from base page",
+          "contact"
+        ],
+        "exclusion": null,
+        "language": null,
+        "title": "Security | Handelsbanken"
+      },
+      {
+        "url": "https://www.handelsbanken.se/en/corporate/digital-services",
+        "score": 23.0,
+        "reasons": [
+          "base locale",
+          "offering"
+        ],
+        "exclusion": null,
+        "language": null,
+        "title": "Digital corporate services | Handelsbanken"
+      },
+      {
+        "url": "https://www.handelsbanken.se/en/personal/our-basic-offering",
+        "score": 23.0,
+        "reasons": [
+          "base locale",
+          "offering"
+        ],
+        "exclusion": null,
+        "language": null,
+        "title": "Our basic offering for day-to-day use | Handelsbanken"
+      },
+      {
+        "url": "https://www.handelsbanken.se/en/personal/becoming-a-customer",
+        "score": 21.0,
+        "reasons": [
+          "base locale",
+          "linked from base page"
+        ],
+        "exclusion": null,
+        "language": null,
+        "title": "Becoming a customer | Handelsbanken"
+      },
+      {
+        "url": "https://www.handelsbanken.se/en/personal/everyday-banking",
+        "score": 21.0,
+        "reasons": [
+          "base locale",
+          "linked from base page"
+        ],
+        "exclusion": null,
+        "language": null,
+        "title": "Everyday banking | Handelsbanken"
+      },
+      {
+        "url": "https://www.handelsbanken.se/en/about-us",
+        "score": 44.0,
+        "reasons": [
+          "base locale",
+          "about"
+        ],
+        "exclusion": null,
+        "language": null,
+        "title": "Handelsbanken"
+      },
+      {
+        "url": "https://www.handelsbanken.se/en/personal/mortgage-loan",
+        "score": 21.0,
+        "reasons": [
+          "base locale",
+          "linked from base page"
+        ],
+        "exclusion": null,
+        "language": null,
+        "title": "Mortgage loan | Handelsbanken"
+      },
+      {
+        "url": "https://www.handelsbanken.se/en/personal/everyday-banking/digital-services",
+        "score": 20.0,
+        "reasons": [
+          "base locale",
+          "offering"
+        ],
+        "exclusion": null,
+        "language": null,
+        "title": "Digital services | Handelsbanken"
+      },
+      {
+        "url": "https://www.handelsbanken.se/en/personal/savings/mutual-funds/fund-reports",
+        "score": 20.0,
+        "reasons": [
+          "base locale",
+          "press",
+          "deep path"
+        ],
+        "exclusion": null,
+        "language": null,
+        "title": "The funds' annual and semi-annual reports | Handelsbanken"
+      },
+      {
+        "url": "https://www.handelsbanken.se/en/about-us/swedish-subsidiaries/handelsbanken-fonder",
+        "score": 18.0,
+        "reasons": [
+          "base locale",
+          "about"
+        ],
+        "exclusion": null,
+        "language": null,
+        "title": "Handelsbanken Fonder AB − about the operations | Handelsbanken"
+      },
+      {
+        "url": "https://www.handelsbanken.se/en/corporate/contact-us-corporate/security",
+        "score": 18.0,
+        "reasons": [
+          "base locale",
+          "contact"
+        ],
+        "exclusion": null,
+        "language": null,
+        "title": "Security for corporates | Handelsbanken"
+      },
+      {
+        "url": "https://www.handelsbanken.se/en/personal/contact-and-support/complaints",
+        "score": 18.0,
+        "reasons": [
+          "base locale",
+          "contact"
+        ],
+        "exclusion": null,
+        "language": null,
+        "title": "Complaints | Handelsbanken"
+      },
+      {
+        "url": "https://www.handelsbanken.se/en/personal/savings/mutual-funds/mutual-fund-unit-prices",
+        "score": 17.0,
+        "reasons": [
+          "base locale",
+          "offering",
+          "deep path"
+        ],
+        "exclusion": null,
+        "language": null,
+        "title": "Mutual fund unit prices | Handelsbanken"
+      }
+    ],
+    "inventory_path": "/Users/graovic/pulsarpoint/ppoint/companycollect/codex-sd-examples/company-markdown-seeded/url-inventory.json"
+  },
+  "language_discovery": {
+    "requested_url": "https://handelsbanken.se/",
+    "probe_url": "https://handelsbanken.se/",
+    "probe_succeeded": true,
+    "probe_language": "sv",
+    "selected_base_url": "https://www.handelsbanken.se/en/",
+    "selected_language": "en",
+    "selection_method": "alternate_hreflang",
+    "candidates": [
+      {
+        "url": "https://www.handelsbanken.se/en/",
+        "detection_method": "alternate_hreflang",
+        "score": 0,
+        "verification_status": "confirmed",
+        "detected_language": "en",
+        "verification_error": null
+      }
+    ],
+    "error": null
+  },
+  "crawl_stats": {
+    "configured_max_pages": 20,
+    "configured_max_depth": 2,
+    "include_external": false,
+    "pages_returned": 20,
+    "successful_pages": 20,
+    "failed_pages": 0,
+    "stored_markdown_pages": 20,
+    "stored_markdown_chars": 108992,
+    "max_depth_reached": 0,
+    "selected_pages": 20,
+    "discovered_pages": 0
+  },
+  "failed_pages": [],
+  "markdown_pages": [
+    {
+      "source_url": "https://www.handelsbanken.se/en/",
+      "depth": 0,
+      "markdown_path": "/Users/graovic/pulsarpoint/ppoint/companycollect/codex-sd-examples/company-markdown-seeded/0001-www-handelsbanken-se-en-fa8d6ff3de.md",
+      "markdown_chars": 3633,
+      "language": "en",
+      "selection": "selected",
+      "score": 68.0
+    },
+    {
+      "source_url": "https://www.handelsbanken.se/en/personal/contact-and-support",
+      "depth": 0,
+      "markdown_path": "/Users/graovic/pulsarpoint/ppoint/companycollect/codex-sd-examples/company-markdown-seeded/0002-www-handelsbanken-se-en-personal-contact-and-support-65be6fc23a.md",
+      "markdown_chars": 5038,
+      "language": "en",
+      "selection": "selected",
+      "score": 56.0
+    },
+    {
+      "source_url": "https://www.handelsbanken.se/en/about-us/swedish-subsidiaries",
+      "depth": 0,
+      "markdown_path": "/Users/graovic/pulsarpoint/ppoint/companycollect/codex-sd-examples/company-markdown-seeded/0003-www-handelsbanken-se-en-about-us-swedish-subsidiaries-502717857a.md",
+      "markdown_chars": 3917,
+      "language": "en",
+      "selection": "selected",
+      "score": 41.0
+    },
+    {
+      "source_url": "https://www.handelsbanken.se/en/corporate/digital-services",
+      "depth": 0,
+      "markdown_path": "/Users/graovic/pulsarpoint/ppoint/companycollect/codex-sd-examples/company-markdown-seeded/0004-www-handelsbanken-se-en-corporate-digital-services-99902ca7e5.md",
+      "markdown_chars": 6446,
+      "language": "en",
+      "selection": "selected",
+      "score": 23.0
+    },
+    {
+      "source_url": "https://www.handelsbanken.se/en/personal/becoming-a-customer",
+      "depth": 0,
+      "markdown_path": "/Users/graovic/pulsarpoint/ppoint/companycollect/codex-sd-examples/company-markdown-seeded/0005-www-handelsbanken-se-en-personal-becoming-a-customer-5e12d9666c.md",
+      "markdown_chars": 7000,
+      "language": "en",
+      "selection": "selected",
+      "score": 21.0
+    },
+    {
+      "source_url": "https://www.handelsbanken.se/en/personal/contact-and-support/chat",
+      "depth": 0,
+      "markdown_path": "/Users/graovic/pulsarpoint/ppoint/companycollect/codex-sd-examples/company-markdown-seeded/0006-www-handelsbanken-se-en-personal-contact-and-support-chat-ac822a44bb.md",
+      "markdown_chars": 2971,
+      "language": "en",
+      "selection": "selected",
+      "score": 28.0
+    },
+    {
+      "source_url": "https://www.handelsbanken.se/en/personal/contact-and-support/help-and-support",
+      "depth": 0,
+      "markdown_path": "/Users/graovic/pulsarpoint/ppoint/companycollect/codex-sd-examples/company-markdown-seeded/0007-www-handelsbanken-se-en-personal-contact-and-support-help-and-support-daedf72eaf.md",
+      "markdown_chars": 5465,
+      "language": "en",
+      "selection": "selected",
+      "score": 28.0
+    },
+    {
+      "source_url": "https://www.handelsbanken.se/en/personal/contact-and-support/visit-us-on-social-media",
+      "depth": 0,
+      "markdown_path": "/Users/graovic/pulsarpoint/ppoint/companycollect/codex-sd-examples/company-markdown-seeded/0008-www-handelsbanken-se-en-personal-contact-and-support-visit-us-on-socia-0900720f71.md",
+      "markdown_chars": 3365,
+      "language": "en",
+      "selection": "selected",
+      "score": 33.0
+    },
+    {
+      "source_url": "https://www.handelsbanken.se/en/personal/contact-and-support/inquiries-contact-form",
+      "depth": 0,
+      "markdown_path": "/Users/graovic/pulsarpoint/ppoint/companycollect/codex-sd-examples/company-markdown-seeded/0009-www-handelsbanken-se-en-personal-contact-and-support-inquiries-contact-41e6759b91.md",
+      "markdown_chars": 3700,
+      "language": "en",
+      "selection": "selected",
+      "score": 38.0
+    },
+    {
+      "source_url": "https://www.handelsbanken.se/en/personal/contact-and-support/security",
+      "depth": 0,
+      "markdown_path": "/Users/graovic/pulsarpoint/ppoint/companycollect/codex-sd-examples/company-markdown-seeded/0010-www-handelsbanken-se-en-personal-contact-and-support-security-6dfdd76776.md",
+      "markdown_chars": 10776,
+      "language": "en",
+      "selection": "selected",
+      "score": 28.0
+    },
+    {
+      "source_url": "https://www.handelsbanken.se/en/personal/everyday-banking",
+      "depth": 0,
+      "markdown_path": "/Users/graovic/pulsarpoint/ppoint/companycollect/codex-sd-examples/company-markdown-seeded/0011-www-handelsbanken-se-en-personal-everyday-banking-86e266c33e.md",
+      "markdown_chars": 5722,
+      "language": "en",
+      "selection": "selected",
+      "score": 21.0
+    },
+    {
+      "source_url": "https://www.handelsbanken.se/en/personal/our-basic-offering",
+      "depth": 0,
+      "markdown_path": "/Users/graovic/pulsarpoint/ppoint/companycollect/codex-sd-examples/company-markdown-seeded/0012-www-handelsbanken-se-en-personal-our-basic-offering-2b800fd3e4.md",
+      "markdown_chars": 5753,
+      "language": "en",
+      "selection": "selected",
+      "score": 23.0
+    },
+    {
+      "source_url": "https://www.handelsbanken.se/en/about-us",
+      "depth": 0,
+      "markdown_path": "/Users/graovic/pulsarpoint/ppoint/companycollect/codex-sd-examples/company-markdown-seeded/0013-www-handelsbanken-se-en-about-us-6c1010eee4.md",
+      "markdown_chars": 5541,
+      "language": "en",
+      "selection": "selected",
+      "score": 44.0
+    },
+    {
+      "source_url": "https://www.handelsbanken.se/en/personal/contact-and-support/complaints",
+      "depth": 0,
+      "markdown_path": "/Users/graovic/pulsarpoint/ppoint/companycollect/codex-sd-examples/company-markdown-seeded/0014-www-handelsbanken-se-en-personal-contact-and-support-complaints-38bcd6fb2e.md",
+      "markdown_chars": 5977,
+      "language": "en",
+      "selection": "selected",
+      "score": 18.0
+    },
+    {
+      "source_url": "https://www.handelsbanken.se/en/personal/everyday-banking/digital-services",
+      "depth": 0,
+      "markdown_path": "/Users/graovic/pulsarpoint/ppoint/companycollect/codex-sd-examples/company-markdown-seeded/0015-www-handelsbanken-se-en-personal-everyday-banking-digital-services-ac29fc5e88.md",
+      "markdown_chars": 5914,
+      "language": "en",
+      "selection": "selected",
+      "score": 20.0
+    },
+    {
+      "source_url": "https://www.handelsbanken.se/en/about-us/swedish-subsidiaries/handelsbanken-fonder",
+      "depth": 0,
+      "markdown_path": "/Users/graovic/pulsarpoint/ppoint/companycollect/codex-sd-examples/company-markdown-seeded/0016-www-handelsbanken-se-en-about-us-swedish-subsidiaries-handelsbanken-fo-14f1684a37.md",
+      "markdown_chars": 4591,
+      "language": "en",
+      "selection": "selected",
+      "score": 18.0
+    },
+    {
+      "source_url": "https://www.handelsbanken.se/en/corporate/contact-us-corporate/security",
+      "depth": 0,
+      "markdown_path": "/Users/graovic/pulsarpoint/ppoint/companycollect/codex-sd-examples/company-markdown-seeded/0017-www-handelsbanken-se-en-corporate-contact-us-corporate-security-95430d0e65.md",
+      "markdown_chars": 8274,
+      "language": "en",
+      "selection": "selected",
+      "score": 18.0
+    },
+    {
+      "source_url": "https://www.handelsbanken.se/en/personal/mortgage-loan",
+      "depth": 0,
+      "markdown_path": "/Users/graovic/pulsarpoint/ppoint/companycollect/codex-sd-examples/company-markdown-seeded/0018-www-handelsbanken-se-en-personal-mortgage-loan-6ba111af8b.md",
+      "markdown_chars": 5881,
+      "language": "en",
+      "selection": "selected",
+      "score": 21.0
+    },
+    {
+      "source_url": "https://www.handelsbanken.se/en/personal/savings/mutual-funds/fund-reports",
+      "depth": 0,
+      "markdown_path": "/Users/graovic/pulsarpoint/ppoint/companycollect/codex-sd-examples/company-markdown-seeded/0019-www-handelsbanken-se-en-personal-savings-mutual-funds-fund-reports-fb4c172c1f.md",
+      "markdown_chars": 6559,
+      "language": "en",
+      "selection": "selected",
+      "score": 20.0
+    },
+    {
+      "source_url": "https://www.handelsbanken.se/en/personal/savings/mutual-funds/mutual-fund-unit-prices",
+      "depth": 0,
+      "markdown_path": "/Users/graovic/pulsarpoint/ppoint/companycollect/codex-sd-examples/company-markdown-seeded/0020-www-handelsbanken-se-en-personal-savings-mutual-funds-mutual-fund-unit-e0ef4af410.md",
+      "markdown_chars": 2469,
+      "language": "en",
+      "selection": "selected",
+      "score": 17.0
+    }
+  ]
+}

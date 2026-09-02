@@ -210,3 +210,12 @@ def _normalize_candidate_url(url: str, *, base_url: str) -> str | None:
             "",
         )
     )
+
+
+def detect_document_language(html: str) -> str | None:
+    """Return the ``<html lang>`` value declared by a page, if any."""
+    if not html:
+        return None
+    parser = _LanguageHintParser()
+    parser.feed(html)
+    return parser.document_language

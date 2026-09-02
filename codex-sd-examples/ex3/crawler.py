@@ -1,24 +1,35 @@
 import asyncio
 import hashlib
+import json
 import logging
+import math
 import re
 from collections.abc import AsyncGenerator, Callable
 from contextlib import aclosing
 from dataclasses import dataclass
 from pathlib import Path
 from types import AsyncGeneratorType
+from typing import Literal
 from urllib.parse import urljoin, urlsplit, urlunsplit
 
 from cloakbrowser import launch_async
 from crawl4ai import AsyncWebCrawler, BrowserConfig, CrawlerRunConfig
-from crawl4ai.deep_crawling import BFSDeepCrawlStrategy
+from crawl4ai.deep_crawling import (
+    BestFirstCrawlingStrategy,
+    BFSDeepCrawlStrategy,
+    FilterChain,
+)
 from crawl4ai.models import CrawlResult
 from openai_codex import AsyncCodex, AsyncTurnHandle, Sandbox, TurnResult
 from pydantic import BaseModel, ValidationError
 
 from ex1.aux import print_usage
 from ex1.models import AnalysisTokenUsage, FailedPage
-from ex3.language import inspect_language_page, is_english_language
+from ex3.language import (
+    detect_document_language,
+    inspect_language_page,
+    is_english_language,
+)
 from ex3.models import (
     BatchAnalysis,
     BatchExtraction,
@@ -27,6 +38,7 @@ from ex3.models import (
     CrawlStats,
     DiscoveredDomainCandidate,
     DiscoveredUrl,
+    DiscoveryStrategy,
     LanguageDiscovery,
     MarkdownPage,
     PageExtraction,
@@ -35,6 +47,9 @@ from ex3.models import (
     RelatedDomainAnalysis,
     RelatedDomainSelection,
     ResearchReport,
+    ScoredUrl,
+    SeedingSource,
+    UrlSeeding,
     batch_extraction_output_schema,
     build_analysis_stats,
     consolidate_extractions,
@@ -42,6 +57,15 @@ from ex3.models import (
     set_source_url,
 )
 from ex3.prompty import create_prompt, create_related_domains_prompt
+from ex3.seeding import (
+    HeadMetadata,
+    SelectionResult,
+    fetch_head_metadata,
+    seed_sitemap_urls,
+    select_pages,
+)
+from ex3.selection import SelectionFilter, SelectionScorer
+from ex3.urls import canonical_domain, normalize_start_url, same_domain_tree, url_key
 
 LOGGER = logging.getLogger(__name__)
 LANGUAGE_CANDIDATE_LIMIT = 5
@@ -51,6 +75,8 @@ DOMAIN_URL_SAMPLE_LIMIT = 3
 DOMAIN_URL_SAMPLE_CHAR_LIMIT = 500
 DOMAIN_LABEL_SAMPLE_LIMIT = 10
 MARKDOWN_LINK_PATTERN = re.compile(r"\]\(([^\s<>\)]+)")
+HEAD_FETCH_CONCURRENCY = 8
+INVENTORY_FILENAME = "url-inventory.json"
 
 
 @dataclass(frozen=True, slots=True)
@@ -66,6 +92,12 @@ class CrawlSettings:
     include_external: bool
     check_robots_txt: bool
     proxy: str | None
+    seed: bool = True
+    seed_source: SeedingSource = "sitemap"
+    seed_max_urls: int = 5_000
+    seed_share: float = 0.6
+    discovery_strategy: DiscoveryStrategy = "best_first"
+    accept_language: str = "en-US,en;q=0.9"
 
 
 @dataclass(frozen=True, slots=True)
@@ -75,6 +107,7 @@ class AnalysisSettings:
     max_batch_pages: int
     max_batch_chars: int
     analysis_timeout_seconds: int
+    skip_non_english: bool = True
 
 
 @dataclass(frozen=True, slots=True)
@@ -92,9 +125,9 @@ class BatchOutcome:
 
 
 async def run_crawl(settings: CrawlSettings) -> CrawlManifest:
-    """Discover an English base URL and persist a complete bounded BFS crawl."""
+    """Discover an English base URL, pick pages, and persist a bounded crawl."""
     requested_start_url = normalize_start_url(settings.start_url)
-    language_discovery, crawl_results = await _discover_and_crawl(
+    language_discovery, url_seeding, crawl_results = await _discover_and_crawl(
         settings,
         requested_start_url=requested_start_url,
     )
@@ -120,6 +153,8 @@ async def run_crawl(settings: CrawlSettings) -> CrawlManifest:
         requested_start_url=requested_start_url,
         selected_base_url=language_discovery.selected_base_url,
         stopped_reason=stopped_reason,
+        discovery_strategy=settings.discovery_strategy,
+        url_seeding=url_seeding,
         language_discovery=language_discovery,
         crawl_stats=crawl_stats,
         failed_pages=crawl_failures,
@@ -142,9 +177,17 @@ async def run_analysis(settings: AnalysisSettings) -> ResearchReport:
         raise ValueError("max_page_chars must not exceed max_batch_chars")
 
     manifest = load_manifest(settings.manifest_path)
-    markdown_pages = manifest.markdown_pages
+    markdown_pages, skipped_pages = _split_pages_by_language(
+        manifest.markdown_pages,
+        skip_non_english=settings.skip_non_english,
+    )
+    if skipped_pages:
+        LOGGER.info(
+            "Skipping %d stored page(s) declared in a non-English language",
+            len(skipped_pages),
+        )
     discovered_urls = discover_urls(
-        markdown_pages,
+        manifest.markdown_pages,
         searched_url=manifest.selected_base_url,
     )
     LOGGER.info(
@@ -185,9 +228,11 @@ async def run_analysis(settings: AnalysisSettings) -> ResearchReport:
     return ResearchReport(
         requested_start_url=manifest.requested_start_url,
         selected_base_url=manifest.selected_base_url,
+        crawl_strategy=_crawl_strategy_label(manifest),
         stopped_reason=manifest.stopped_reason,
         manifest_path=str(settings.manifest_path.resolve()),
         language_discovery=manifest.language_discovery,
+        url_seeding=manifest.url_seeding,
         crawl_stats=manifest.crawl_stats,
         batch_stats=BatchStats(
             configured_max_page_chars=settings.max_page_chars,
@@ -197,11 +242,13 @@ async def run_analysis(settings: AnalysisSettings) -> ResearchReport:
             successful_batches=sum(batch.succeeded for batch in batch_analyses),
             failed_batches=sum(not batch.succeeded for batch in batch_analyses),
             submitted_pages=len(markdown_pages),
+            skipped_non_english_pages=len(skipped_pages),
             successfully_extracted_pages=successful_extractions,
             failed_extraction_pages=len(pages) - successful_extractions,
         ),
         failed_pages=failed_pages,
-        markdown_pages=markdown_pages,
+        markdown_pages=manifest.markdown_pages,
+        skipped_pages=skipped_pages,
         analysis_stats=build_analysis_stats(
             batch_analyses,
             related_domain_analysis,
@@ -219,7 +266,7 @@ async def _discover_and_crawl(
     settings: CrawlSettings,
     *,
     requested_start_url: str,
-) -> tuple[LanguageDiscovery, list[CrawlResult]]:
+) -> tuple[LanguageDiscovery, UrlSeeding, list[CrawlResult]]:
     cloak_browser = await launch_async(
         headless=settings.headless,
         proxy=settings.proxy,
@@ -233,19 +280,35 @@ async def _discover_and_crawl(
         browser_config = BrowserConfig(
             browser_mode="cdp",
             cdp_url=f"http://127.0.0.1:{settings.cdp_port}",
+            headers={"Accept-Language": settings.accept_language},
         )
         async with AsyncWebCrawler(config=browser_config) as crawler:
-            language_discovery = await _discover_english_base(
+            language_discovery, base_result = await _discover_english_base(
                 crawler,
                 settings=settings,
                 requested_start_url=requested_start_url,
             )
-            crawl_results = await _stream_bfs(
+            base_url = language_discovery.selected_base_url
+            url_seeding, crawl_results = await _select_and_crawl(
                 crawler,
                 settings=settings,
-                base_url=language_discovery.selected_base_url,
+                base_url=base_url,
+                base_result=base_result,
+                markdown_dir=settings.markdown_dir,
             )
-            return language_discovery, crawl_results
+            crawled_urls = {result.url for result in crawl_results if result.success}
+            remaining = settings.max_pages - len(crawled_urls)
+            if remaining > 0:
+                crawl_results.extend(
+                    await _stream_discovery(
+                        crawler,
+                        settings=settings,
+                        base_url=base_url,
+                        max_new_pages=remaining,
+                        already_crawled=crawled_urls,
+                    )
+                )
+            return language_discovery, url_seeding, crawl_results
     finally:
         await cloak_browser.close()
         LOGGER.info("CloakBrowser and Playwright have been closed")
@@ -256,7 +319,8 @@ async def _discover_english_base(
     *,
     settings: CrawlSettings,
     requested_start_url: str,
-) -> LanguageDiscovery:
+) -> tuple[LanguageDiscovery, CrawlResult | None]:
+    """Select the English base URL and return the rendered base page, if any."""
     LOGGER.info("Looking for an English website version from %s", requested_start_url)
     probe = await _crawl_single_page(
         crawler,
@@ -269,27 +333,33 @@ async def _discover_english_base(
             if probe is None
             else probe.error_message or "Language probe crawl failed"
         )
-        return LanguageDiscovery(
-            requested_url=requested_start_url,
-            probe_url=requested_start_url,
-            probe_succeeded=False,
-            selected_base_url=requested_start_url,
-            selection_method="fallback_requested_url",
-            error=error_message,
+        return (
+            LanguageDiscovery(
+                requested_url=requested_start_url,
+                probe_url=requested_start_url,
+                probe_succeeded=False,
+                selected_base_url=requested_start_url,
+                selection_method="fallback_requested_url",
+                error=error_message,
+            ),
+            None,
         )
 
     probe_url = normalize_start_url(probe.url or requested_start_url)
     probe_language, candidates = inspect_language_page(probe_url, probe.html or "")
     if is_english_language(probe_language):
-        return LanguageDiscovery(
-            requested_url=requested_start_url,
-            probe_url=probe_url,
-            probe_succeeded=True,
-            probe_language=probe_language,
-            selected_base_url=probe_url,
-            selected_language=probe_language,
-            selection_method="already_english",
-            candidates=candidates,
+        return (
+            LanguageDiscovery(
+                requested_url=requested_start_url,
+                probe_url=probe_url,
+                probe_succeeded=True,
+                probe_language=probe_language,
+                selected_base_url=probe_url,
+                selected_language=probe_language,
+                selection_method="already_english",
+                candidates=candidates,
+            ),
+            probe,
         )
 
     for candidate in candidates[:LANGUAGE_CANDIDATE_LIMIT]:
@@ -329,28 +399,58 @@ async def _discover_english_base(
             candidate.detection_method,
             selected_url,
         )
-        return LanguageDiscovery(
+        return (
+            LanguageDiscovery(
+                requested_url=requested_start_url,
+                probe_url=probe_url,
+                probe_succeeded=True,
+                probe_language=probe_language,
+                selected_base_url=selected_url,
+                selected_language=candidate_language or "en",
+                selection_method=candidate.detection_method,
+                candidates=candidates,
+            ),
+            verification,
+        )
+
+    return (
+        LanguageDiscovery(
             requested_url=requested_start_url,
             probe_url=probe_url,
             probe_succeeded=True,
             probe_language=probe_language,
-            selected_base_url=selected_url,
-            selected_language=candidate_language or "en",
-            selection_method=candidate.detection_method,
+            selected_base_url=probe_url,
+            selected_language=probe_language,
+            selection_method="fallback_requested_url",
             candidates=candidates,
-        )
-
-    return LanguageDiscovery(
-        requested_url=requested_start_url,
-        probe_url=probe_url,
-        probe_succeeded=True,
-        probe_language=probe_language,
-        selected_base_url=probe_url,
-        selected_language=probe_language,
-        selection_method="fallback_requested_url",
-        candidates=candidates,
-        error="No verified English version was found; using the probed URL.",
+            error="No verified English version was found; using the probed URL.",
+        ),
+        probe,
     )
+
+
+def _internal_links(result: CrawlResult | None, *, base_url: str) -> list[str]:
+    """Return normalized same-site links from a rendered page."""
+    if result is None or not isinstance(result.links, dict):
+        return []
+    links: list[str] = []
+    seen: set[str] = set()
+    for link in result.links.get("internal", []):
+        href = link.get("href") if isinstance(link, dict) else None
+        if not isinstance(href, str) or not href.strip():
+            continue
+        absolute = urljoin(result.url or base_url, href.strip())
+        if urlsplit(absolute).scheme.casefold() not in {"http", "https"}:
+            continue
+        try:
+            normalized = normalize_start_url(absolute)
+        except ValueError:
+            continue
+        if url_key(normalized) in seen:
+            continue
+        seen.add(url_key(normalized))
+        links.append(normalized)
+    return links
 
 
 async def _crawl_single_page(
@@ -367,26 +467,223 @@ async def _crawl_single_page(
     return result_list[0] if result_list else None
 
 
-async def _stream_bfs(
+async def _select_and_crawl(
     crawler: AsyncWebCrawler,
     *,
     settings: CrawlSettings,
     base_url: str,
+    base_result: CrawlResult | None,
+    markdown_dir: Path,
+) -> tuple[UrlSeeding, list[CrawlResult]]:
+    """Pick pages from the URL inventory and render them in up to two waves.
+
+    Wave one takes ``seed_share`` of the page budget from the sitemap inventory
+    plus the base page's links. Its rendered pages contribute their own links,
+    the union is ranked again, and wave two fills the remaining budget. Link
+    discovery afterwards only covers what both waves left open.
+    """
+    if not settings.seed:
+        return (
+            UrlSeeding(enabled=False, source=settings.seed_source, succeeded=True),
+            [],
+        )
+
+    outcome = await seed_sitemap_urls(
+        base_url,
+        source=settings.seed_source,
+        max_urls=settings.seed_max_urls,
+        accept_language=settings.accept_language,
+        proxy=settings.proxy,
+    )
+    base_links = _internal_links(base_result, base_url=base_url)
+
+    async def fetch_heads(urls: list[str]) -> dict[str, HeadMetadata]:
+        return await fetch_head_metadata(
+            urls,
+            accept_language=settings.accept_language,
+            proxy=settings.proxy,
+            concurrency=HEAD_FETCH_CONCURRENCY,
+        )
+
+    first_limit = min(
+        settings.max_pages,
+        max(1, math.ceil(settings.max_pages * settings.seed_share)),
+    )
+    first_wave = await select_pages(
+        outcome.urls,
+        base_url=base_url,
+        limit=first_limit,
+        fetch_heads=fetch_heads,
+        base_page_links=base_links,
+    )
+    _log_selection("wave 1", first_wave)
+    results = await _crawl_seeded_pages(
+        crawler,
+        scored_urls={scored.url: scored.score for scored in first_wave.selected},
+        settings=settings,
+    )
+
+    selected = list(first_wave.selected)
+    final_wave = first_wave
+    waves = 1 if first_wave.selected else 0
+    head_checked = first_wave.head_checked_urls
+    harvested: list[str] = []
+    attempted = {scored.url for scored in first_wave.selected}
+    attempted.update(result.url for result in results)
+    remaining = settings.max_pages - sum(result.success for result in results)
+    if remaining > 0:
+        attempted_keys = {url_key(url) for url in attempted}
+        for result in results:
+            if not result.success:
+                continue
+            for link in _internal_links(result, base_url=base_url):
+                if url_key(link) not in attempted_keys:
+                    attempted_keys.add(url_key(link))
+                    harvested.append(link)
+        second_wave = await select_pages(
+            [*outcome.urls, *harvested],
+            base_url=base_url,
+            limit=remaining,
+            fetch_heads=fetch_heads,
+            base_page_links=base_links,
+            exclude_urls=attempted,
+        )
+        head_checked += second_wave.head_checked_urls
+        final_wave = second_wave
+        if second_wave.selected:
+            _log_selection("wave 2", second_wave)
+            waves += 1
+            results.extend(
+                await _crawl_seeded_pages(
+                    crawler,
+                    scored_urls={
+                        scored.url: scored.score for scored in second_wave.selected
+                    },
+                    settings=settings,
+                )
+            )
+            selected.extend(second_wave.selected)
+
+    inventory_urls = len(
+        {url_key(url) for url in (base_url, *outcome.urls, *base_links, *harvested)}
+    )
+    inventory_path = markdown_dir.resolve() / INVENTORY_FILENAME
+    _write_inventory(
+        selected=selected,
+        eligible=final_wave.eligible,
+        excluded=final_wave.excluded,
+        inventory_urls=inventory_urls,
+        path=inventory_path,
+    )
+    LOGGER.info(
+        "Page selection: %d inventory URL(s) incl. %d base-page link(s) and "
+        "%d harvested link(s); %d selected over %d wave(s)",
+        inventory_urls,
+        len(base_links),
+        len(harvested),
+        len(selected),
+        waves,
+    )
+    return (
+        UrlSeeding(
+            enabled=True,
+            source=settings.seed_source,
+            succeeded=outcome.error is None,
+            error=outcome.error,
+            inventory_urls=inventory_urls,
+            eligible_urls=len(final_wave.eligible),
+            excluded_urls=len(final_wave.excluded),
+            head_checked_urls=head_checked,
+            base_page_links=len(base_links),
+            harvested_links=len(harvested),
+            selection_waves=waves,
+            selected=selected,
+            inventory_path=str(inventory_path),
+        ),
+        results,
+    )
+
+
+def _log_selection(label: str, selection: SelectionResult) -> None:
+    LOGGER.info(
+        "Selection %s: %d eligible, %d excluded, %d head-checked, %d selected",
+        label,
+        len(selection.eligible),
+        len(selection.excluded),
+        selection.head_checked_urls,
+        len(selection.selected),
+    )
+    for scored in selection.selected:
+        LOGGER.debug(
+            "Selected %.1f %s (%s)",
+            scored.score,
+            scored.url,
+            ", ".join(scored.reasons),
+        )
+
+
+async def _crawl_seeded_pages(
+    crawler: AsyncWebCrawler,
+    *,
+    scored_urls: dict[str, float],
+    settings: CrawlSettings,
 ) -> list[CrawlResult]:
-    strategy = BFSDeepCrawlStrategy(
-        max_depth=settings.max_depth,
-        include_external=settings.include_external,
-        # Crawl4AI 0.9.3 checks its streaming limit before yielding the page
-        # that reaches it. Our result counter below enforces the exact hard cap.
-        max_pages=settings.max_pages + 1,
+    """Render the selected pages directly, tagging each result with its score."""
+    urls = list(scored_urls)
+    if not urls:
+        return []
+
+    LOGGER.info("Crawling %d selected page(s) from the URL inventory", len(urls))
+    stream = await crawler.arun_many(
+        urls=urls,
+        config=_base_run_config(settings, stream=True),
+    )
+    if not isinstance(stream, AsyncGeneratorType):
+        raise TypeError("Crawl4AI did not return an async generator for arun_many")
+
+    results: list[CrawlResult] = []
+    async with aclosing(stream):
+        async for result in stream:
+            score = scored_urls.get(result.url)
+            if score is None:
+                score = next(
+                    (
+                        value
+                        for url, value in scored_urls.items()
+                        if url_key(url) == url_key(result.url)
+                    ),
+                    None,
+                )
+            metadata = dict(result.metadata or {})
+            metadata.update({"depth": 0, "selection": "selected", "score": score})
+            result.metadata = metadata
+            results.append(result)
+    return results
+
+
+async def _stream_discovery(
+    crawler: AsyncWebCrawler,
+    *,
+    settings: CrawlSettings,
+    base_url: str,
+    max_new_pages: int,
+    already_crawled: set[str],
+) -> list[CrawlResult]:
+    """Fill the remaining page budget by following links from the base URL."""
+    strategy = _discovery_strategy(
+        settings,
+        base_url=base_url,
+        max_new_pages=max_new_pages,
+        already_crawled=already_crawled,
     )
     run_config = _base_run_config(settings, stream=True)
     run_config.deep_crawl_strategy = strategy
 
     LOGGER.info(
-        "Starting Crawl4AI BFS from %s: max_pages=%d, max_depth=%d",
+        "Starting Crawl4AI %s discovery from %s: up to %d new page(s), max_depth=%d",
+        settings.discovery_strategy,
         base_url,
-        settings.max_pages,
+        max_new_pages,
         settings.max_depth,
     )
     result_stream = await crawler.arun(  # ty: ignore[missing-argument]
@@ -394,12 +691,59 @@ async def _stream_bfs(
         config=run_config,
     )
     if not isinstance(result_stream, AsyncGeneratorType):
-        raise TypeError("Crawl4AI did not return an async generator for streaming BFS")
+        raise TypeError("Crawl4AI did not return an async generator for streaming")
     return await _collect_bfs_results(
         result_stream,
-        max_successful_pages=settings.max_pages,
+        max_successful_pages=max_new_pages,
         cancel=strategy.cancel,
+        already_crawled=already_crawled,
     )
+
+
+def _discovery_strategy(
+    settings: CrawlSettings,
+    *,
+    base_url: str,
+    max_new_pages: int,
+    already_crawled: set[str],
+) -> BestFirstCrawlingStrategy | BFSDeepCrawlStrategy:
+    # Crawl4AI counts the start page and checks its limit before yielding the
+    # page that reaches it; the result counter in _collect_bfs_results enforces
+    # the exact number of new pages, so give the strategy one page of headroom
+    # plus room for re-yielding an already crawled start page.
+    strategy_budget = max_new_pages + 2
+    if settings.discovery_strategy == "breadth_first":
+        return BFSDeepCrawlStrategy(
+            max_depth=settings.max_depth,
+            include_external=settings.include_external,
+            max_pages=strategy_budget,
+        )
+    return BestFirstCrawlingStrategy(
+        max_depth=settings.max_depth,
+        filter_chain=FilterChain(
+            [SelectionFilter(base_url=base_url, exclude_urls=already_crawled)]
+        ),
+        url_scorer=SelectionScorer(base_url=base_url),
+        include_external=settings.include_external,
+        max_pages=strategy_budget,
+    )
+
+
+def _write_inventory(
+    *,
+    selected: list[ScoredUrl],
+    eligible: list[ScoredUrl],
+    excluded: list[ScoredUrl],
+    inventory_urls: int,
+    path: Path,
+) -> None:
+    payload = {
+        "inventory_urls": inventory_urls,
+        "selected": [scored.model_dump(mode="json") for scored in selected],
+        "eligible": [scored.model_dump(mode="json") for scored in eligible],
+        "excluded": [scored.model_dump(mode="json") for scored in excluded],
+    }
+    _write_text_atomic(path, json.dumps(payload, indent=2, ensure_ascii=False))
 
 
 async def _collect_bfs_results(
@@ -407,15 +751,18 @@ async def _collect_bfs_results(
     *,
     max_successful_pages: int,
     cancel: Callable[[], None],
+    already_crawled: set[str] | frozenset[str] = frozenset(),
 ) -> list[CrawlResult]:
-    """Collect up to the requested number of successful Markdown candidates."""
+    """Collect up to the requested number of new successful Markdown candidates."""
     results: list[CrawlResult] = []
     successful_pages = 0
+    known_keys = {url_key(url) for url in already_crawled}
     async with aclosing(result_stream):
         async for result in result_stream:
             results.append(result)
-            if not result.success:
+            if not result.success or url_key(result.url) in known_keys:
                 continue
+            known_keys.add(url_key(result.url))
             successful_pages += 1
             if successful_pages >= max_successful_pages:
                 cancel()
@@ -454,9 +801,9 @@ def persist_markdown_pages(
                 )
             )
             continue
-        if url in seen_urls:
+        if url_key(url) in seen_urls:
             continue
-        seen_urls.add(url)
+        seen_urls.add(url_key(url))
 
         markdown = truncate_markdown(
             _markdown_text(crawl_result.markdown),
@@ -473,10 +820,37 @@ def persist_markdown_pages(
                 depth=depth,
                 markdown_path=str(markdown_path),
                 markdown_chars=len(markdown),
+                language=detect_document_language(crawl_result.html or ""),
+                selection=_crawl_selection(crawl_result),
+                score=_crawl_score(crawl_result),
             )
         )
 
     return markdown_pages, failed_pages
+
+
+def _split_pages_by_language(
+    pages: list[MarkdownPage],
+    *,
+    skip_non_english: bool,
+) -> tuple[list[MarkdownPage], list[MarkdownPage]]:
+    """Separate pages to extract from pages declared in another language."""
+    if not skip_non_english:
+        return list(pages), []
+    kept: list[MarkdownPage] = []
+    skipped: list[MarkdownPage] = []
+    for page in pages:
+        if page.language is not None and not is_english_language(page.language):
+            skipped.append(page)
+        else:
+            kept.append(page)
+    return kept, skipped
+
+
+def _crawl_strategy_label(manifest: CrawlManifest) -> str:
+    if manifest.url_seeding is not None and manifest.url_seeding.enabled:
+        return f"{manifest.url_seeding.source}+{manifest.discovery_strategy}"
+    return manifest.discovery_strategy
 
 
 def create_batches(
@@ -531,7 +905,7 @@ def discover_urls(
     searched_hostname = urlsplit(normalize_start_url(searched_url)).hostname
     if searched_hostname is None:
         return []
-    searched_domain = _canonical_domain(searched_hostname)
+    searched_domain = canonical_domain(searched_hostname)
 
     discovered_by_url: dict[str, DiscoveredUrl] = {}
     for page in pages:
@@ -554,7 +928,7 @@ def discover_urls(
             parsed_url = urlsplit(normalized_url)
             if parsed_url.hostname is None:
                 continue
-            domain = _canonical_domain(parsed_url.hostname)
+            domain = canonical_domain(parsed_url.hostname)
             label = _markdown_link_label(markdown, match.start())
             discovered_url = discovered_by_url.get(normalized_url)
             if discovered_url is None:
@@ -563,7 +937,7 @@ def discover_urls(
                     domain=domain,
                     link_type=(
                         "internal"
-                        if _same_domain_tree(domain, searched_domain)
+                        if same_domain_tree(domain, searched_domain)
                         else "external"
                     ),
                     labels=[label] if label else [],
@@ -583,10 +957,6 @@ def discover_urls(
     return list(discovered_by_url.values())
 
 
-def _canonical_domain(hostname: str) -> str:
-    return hostname.rstrip(".").casefold().removeprefix("www.")
-
-
 def _markdown_link_label(markdown: str, destination_start: int) -> str:
     line_start = markdown.rfind("\n", 0, destination_start) + 1
     label_start = markdown.rfind("[", line_start, destination_start)
@@ -596,14 +966,6 @@ def _markdown_link_label(markdown: str, destination_start: int) -> str:
     if "](" in label:
         return ""
     return re.sub(r"\s+", " ", label).strip()[:200]
-
-
-def _same_domain_tree(candidate: str, searched: str) -> bool:
-    return (
-        candidate == searched
-        or candidate.endswith(f".{searched}")
-        or searched.endswith(f".{candidate}")
-    )
 
 
 def _external_domain_candidates(
@@ -1104,33 +1466,6 @@ def save_model(model: BaseModel, path: Path) -> None:
     _write_text_atomic(path, model.model_dump_json(indent=2))
 
 
-def normalize_start_url(url: str) -> str:
-    """Normalize and validate an absolute HTTP(S) URL."""
-    try:
-        parsed = urlsplit(url.strip())
-        port = parsed.port
-    except ValueError as error:
-        raise ValueError(f"Start URL is not valid: {url}") from error
-
-    scheme = parsed.scheme.casefold()
-    hostname = parsed.hostname
-    if scheme not in {"http", "https"} or hostname is None:
-        raise ValueError(f"Start URL must be an absolute HTTP(S) URL: {url}")
-    if parsed.username is not None or parsed.password is not None:
-        raise ValueError("Start URL must not contain credentials")
-
-    normalized_hostname = hostname.casefold()
-    if ":" in normalized_hostname:
-        normalized_hostname = f"[{normalized_hostname}]"
-    default_port = (scheme == "http" and port == 80) or (
-        scheme == "https" and port == 443
-    )
-    netloc = normalized_hostname
-    if port is not None and not default_port:
-        netloc = f"{normalized_hostname}:{port}"
-    return urlunsplit((scheme, netloc, parsed.path or "/", parsed.query, ""))
-
-
 def truncate_markdown(markdown: str, *, max_chars: int) -> str:
     """Keep the beginning and footer of oversized pages."""
     if len(markdown) <= max_chars:
@@ -1151,6 +1486,7 @@ def _base_run_config(
 ) -> CrawlerRunConfig:
     return CrawlerRunConfig(
         stream=stream,
+        locale=_primary_locale(settings.accept_language),
         check_robots_txt=settings.check_robots_txt,
         page_timeout=60_000,
         semaphore_count=settings.crawl_concurrency,
@@ -1161,6 +1497,11 @@ def _base_run_config(
         preserve_https_for_internal_links=True,
         verbose=False,
     )
+
+
+def _primary_locale(accept_language: str) -> str | None:
+    first = accept_language.split(",", 1)[0].split(";", 1)[0].strip()
+    return first or None
 
 
 def _crawl_stats(
@@ -1182,6 +1523,8 @@ def _crawl_stats(
             (_crawl_depth(result) for result in crawl_results),
             default=0,
         ),
+        selected_pages=sum(page.selection == "selected" for page in markdown_pages),
+        discovered_pages=sum(page.selection == "discovery" for page in markdown_pages),
     )
 
 
@@ -1191,6 +1534,21 @@ def _crawl_depth(result: CrawlResult) -> int:
         return 0
     depth = metadata.get("depth")
     return depth if isinstance(depth, int) and depth >= 0 else 0
+
+
+def _crawl_selection(result: CrawlResult) -> Literal["selected", "discovery"]:
+    metadata = result.metadata
+    if isinstance(metadata, dict) and metadata.get("selection") == "selected":
+        return "selected"
+    return "discovery"
+
+
+def _crawl_score(result: CrawlResult) -> float | None:
+    metadata = result.metadata
+    if not isinstance(metadata, dict):
+        return None
+    score = metadata.get("score")
+    return float(score) if isinstance(score, (int, float)) else None
 
 
 def _markdown_text(value: object) -> str:

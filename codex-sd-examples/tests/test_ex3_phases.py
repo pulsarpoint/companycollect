@@ -1,3 +1,4 @@
+import json
 import tempfile
 import unittest
 from pathlib import Path
@@ -27,6 +28,8 @@ from ex3.models import (
     RelatedDomainAnalysis,
     RelatedDomainDecision,
     RelatedDomainSelection,
+    ScoredUrl,
+    UrlSeeding,
 )
 from ex3.prompty import create_related_domains_prompt
 
@@ -49,6 +52,26 @@ class ManifestLoadingTest(unittest.TestCase):
             manifest.markdown_pages[0].markdown_path,
             str(markdown_path.resolve()),
         )
+
+    def test_loads_manifests_written_before_page_selection_existed(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            directory = Path(temporary_directory)
+            (directory / "page.md").write_text("# Example", encoding="utf-8")
+            legacy = json.loads(_manifest(markdown_path="page.md").model_dump_json())
+            legacy.pop("url_seeding")
+            legacy.pop("discovery_strategy")
+            for page in legacy["markdown_pages"]:
+                for field in ("language", "selection", "score"):
+                    page.pop(field)
+            manifest_path = directory / "crawl-manifest.json"
+            manifest_path.write_text(json.dumps(legacy), encoding="utf-8")
+
+            manifest = load_manifest(manifest_path)
+
+        self.assertIsNone(manifest.url_seeding)
+        self.assertEqual(manifest.discovery_strategy, "breadth_first")
+        self.assertIsNone(manifest.markdown_pages[0].language)
+        self.assertEqual(manifest.markdown_pages[0].selection, "discovery")
 
     def test_rejects_manifest_when_markdown_is_missing(self) -> None:
         with tempfile.TemporaryDirectory() as temporary_directory:
@@ -124,6 +147,7 @@ class SeparateAnalysisPhaseTest(unittest.IsolatedAsyncioTestCase):
                         max_batch_pages=5,
                         max_batch_chars=60_000,
                         analysis_timeout_seconds=300,
+                        skip_non_english=True,
                     )
                 )
 
@@ -135,6 +159,80 @@ class SeparateAnalysisPhaseTest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(len(report.discovered_urls), 1)
         self.assertEqual(report.related_domains, [related_domain])
         self.assertEqual(report.analysis_stats.attempted_analyses, 2)
+
+    async def test_skips_non_english_pages_but_still_discovers_their_links(
+        self,
+    ) -> None:
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            directory = Path(temporary_directory)
+            (directory / "english.md").write_text("# Example", encoding="utf-8")
+            (directory / "swedish.md").write_text(
+                "# Kontor\n[Global](https://example.org)",
+                encoding="utf-8",
+            )
+            manifest_path = directory / "crawl-manifest.json"
+            manifest_path.write_text(
+                _manifest(
+                    markdown_path="english.md",
+                    extra_pages=[
+                        MarkdownPage(
+                            source_url="https://example.com/alingsas",
+                            depth=1,
+                            markdown_path="swedish.md",
+                            markdown_chars=9,
+                            language="sv",
+                        )
+                    ],
+                ).model_dump_json(indent=2),
+                encoding="utf-8",
+            )
+            captured_batches = []
+
+            async def fake_analyze_batches(batches, **kwargs):
+                captured_batches.extend(batches)
+                return [], [], []
+
+            with (
+                patch(
+                    "ex3.crawler._analyze_related_domains",
+                    new=AsyncMock(
+                        return_value=(
+                            [],
+                            RelatedDomainAnalysis(
+                                attempted=False,
+                                candidate_domains=0,
+                                succeeded=True,
+                            ),
+                        )
+                    ),
+                ),
+                patch("ex3.crawler._analyze_batches", new=fake_analyze_batches),
+            ):
+                report = await run_analysis(
+                    AnalysisSettings(
+                        manifest_path=manifest_path,
+                        max_page_chars=30_000,
+                        max_batch_pages=5,
+                        max_batch_chars=60_000,
+                        analysis_timeout_seconds=300,
+                        skip_non_english=True,
+                    )
+                )
+
+        submitted_urls = [
+            page.source_url for batch in captured_batches for page in batch.pages
+        ]
+        self.assertEqual(submitted_urls, ["https://example.com/"])
+        self.assertEqual(
+            [page.source_url for page in report.skipped_pages],
+            ["https://example.com/alingsas"],
+        )
+        self.assertEqual(report.batch_stats.submitted_pages, 1)
+        self.assertEqual(report.batch_stats.skipped_non_english_pages, 1)
+        self.assertEqual(
+            {discovered.url for discovered in report.discovered_urls},
+            {"https://example.org/"},
+        )
 
 
 class UrlDiscoveryTest(unittest.TestCase):
@@ -295,13 +393,41 @@ class PhaseCliTest(unittest.TestCase):
         self.assertIn("--max-page-chars", analysis_help.output)
         self.assertIn("--max-batch-pages", analysis_help.output)
         self.assertNotIn("--max-pages", analysis_help.output)
+        self.assertIn("--no-seed", crawl_help.output)
+        self.assertIn("--seed-source", crawl_help.output)
+        self.assertIn("--seed-share", crawl_help.output)
+        self.assertIn("--discovery", crawl_help.output)
+        self.assertIn("--accept-language", crawl_help.output)
+        self.assertIn("--keep-non-english", analysis_help.output)
 
 
-def _manifest(*, markdown_path: str) -> CrawlManifest:
+def _manifest(
+    *,
+    markdown_path: str,
+    extra_pages: list[MarkdownPage] | None = None,
+) -> CrawlManifest:
     return CrawlManifest(
         requested_start_url="https://example.com/",
         selected_base_url="https://example.com/",
         stopped_reason="max_pages_reached",
+        discovery_strategy="best_first",
+        url_seeding=UrlSeeding(
+            enabled=True,
+            source="sitemap",
+            succeeded=True,
+            inventory_urls=1,
+            eligible_urls=1,
+            excluded_urls=0,
+            head_checked_urls=1,
+            selected=[
+                ScoredUrl(
+                    url="https://example.com/",
+                    score=40.0,
+                    reasons=["homepage"],
+                    language="en",
+                )
+            ],
+        ),
         language_discovery=LanguageDiscovery(
             requested_url="https://example.com/",
             probe_url="https://example.com/",
@@ -329,7 +455,11 @@ def _manifest(*, markdown_path: str) -> CrawlManifest:
                 depth=0,
                 markdown_path=markdown_path,
                 markdown_chars=9,
-            )
+                language="en",
+                selection="selected",
+                score=40.0,
+            ),
+            *(extra_pages or []),
         ],
     )
 

@@ -6,8 +6,9 @@ The repository contains three approaches:
 - `ex2`: Crawl4AI manages the complete breadth-first crawl and the LLM only
   extracts structured facts from each returned page.
 - `ex3`: two independent phases connected by a durable crawl manifest. The
-  first command selects English and stores a bounded crawl as Markdown; the
-  second command can analyze those files repeatedly without crawling again.
+  first command selects English, picks the most informative pages from the
+  site's URL inventory, and stores a bounded crawl as Markdown; the second
+  command can analyze those files repeatedly without crawling again.
 
 ## Example 1: LLM-assisted frontier
 
@@ -111,9 +112,38 @@ configuration, runtime, and scaling characteristics.
 ### Phase 1: crawl once
 
 The crawl command probes the requested URL for an English document or English
-`hreflang`, language selector, locale path, or locale query parameter. It then
-runs a streaming Crawl4AI BFS, saves every successful page as Markdown, closes
-the browser, and writes the durable manifest.
+`hreflang`, language selector, locale path, or locale query parameter. The
+browser and every inventory request send `Accept-Language: en-US,en;q=0.9`
+(configurable with `--accept-language`) so sites that negotiate language serve
+English on their own.
+
+Pages are then chosen before they are rendered:
+
+1. **Inventory.** Crawl4AI's `AsyncUrlSeeder` reads the host's sitemap (or
+   Common Crawl with `--seed-source sitemap+cc`) into a URL inventory, capped
+   by `--seed-max-urls`.
+2. **Deterministic scoring.** `ex3/selection.py` scores every inventory URL
+   without LLM tokens. About, contact/imprint, management, careers, press and
+   offering slugs score up; privacy, cookies, terms, login, search, branch
+   locators, pagination and query strings score down. Other-locale prefixes
+   (`/sv/`, `de.` subdomains, `?lang=fi`), binary files and external domains
+   are excluded outright, and URLs under the selected base locale get a bonus.
+3. **Head check.** For a shortlist (three times the page budget) the seeder
+   fetches only the `<head>`: pages whose `<html lang>` is not English are
+   excluded, and titles or descriptions naming a scored category add a small
+   bonus.
+4. **Two selection waves.** The base URL and the links on the base page
+   always join the inventory, because sitemaps often omit the homepage and
+   section landing pages. Wave one renders `--seed-share` of the page budget
+   (60% by default). Links harvested from those rendered pages join the
+   inventory, everything is ranked again, and wave two fills the rest of the
+   budget. On handelsbanken.se this is what surfaces `/en/about-us`, which is
+   neither in the sitemap nor linked from the homepage.
+5. **Discovery.** If the budget is still not full (no sitemap, crawl
+   failures), Crawl4AI's `BestFirstCrawlingStrategy` follows links from the
+   base URL using the same scorer and filter, skipping already stored pages.
+   `--discovery breadth_first` restores the plain BFS for comparison runs, and
+   `--no-seed` skips the inventory entirely.
 
 ```bash
 uv run python -m ex3.main crawl https://example.com \
@@ -122,14 +152,21 @@ uv run python -m ex3.main crawl https://example.com \
   --max-depth 2
 ```
 
-No LLM extraction runs during this command.
+No LLM extraction runs during this command. Each stored page records its
+declared `<html lang>`, whether it came from the pre-crawl selection or link
+discovery, and its selection score. The full scored inventory (selected,
+eligible and excluded URLs with reasons) is written next to the manifest as
+`url-inventory.json`, and the manifest's `url_seeding` block summarizes the
+selection.
 
 ### Phase 2: analyze existing Markdown
 
 The analysis command accepts the manifest created above. It validates all
 referenced Markdown files before starting Codex, groups them by page and
 character limits, and writes a consolidated report. It does not launch
-CloakBrowser or Crawl4AI.
+CloakBrowser or Crawl4AI. Pages whose stored `<html lang>` is not English are
+skipped by default and listed under `skipped_pages`; pass `--keep-non-english`
+to extract them anyway. Link discovery below still reads every stored page.
 
 Every HTTP(S) link in the complete stored Markdown set is normalized and
 deduplicated into top-level `discovered_urls`; this deterministic discovery does
@@ -161,6 +198,8 @@ The default artifacts are:
 
 - `company-markdown/*.md`: page Markdown;
 - `company-markdown/crawl-manifest.json`: the pre-analysis crawl manifest;
+- `company-markdown/url-inventory.json`: every scored inventory URL with its
+  reasons and exclusion, for tuning the selector;
 - `company-batched-report.json`: consolidated extraction, page provenance,
   batch outcomes, and per-batch plus aggregate token usage.
 

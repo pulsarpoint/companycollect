@@ -56,11 +56,48 @@ class LanguageDiscovery(StrictModel):
     error: str | None = None
 
 
+class ScoredUrl(StrictModel):
+    """Deterministic pre-crawl assessment of one candidate page URL."""
+
+    url: str
+    score: float
+    reasons: list[str] = Field(default_factory=list)
+    exclusion: str | None = None
+    language: str | None = None
+    title: str | None = None
+
+
+type PageSelection = Literal["selected", "discovery"]
+type DiscoveryStrategy = Literal["best_first", "breadth_first"]
+type SeedingSource = Literal["sitemap", "sitemap+cc", "cc"]
+
+
+class UrlSeeding(StrictModel):
+    """Outcome of the pre-crawl URL inventory and deterministic page selection."""
+
+    enabled: bool
+    source: SeedingSource
+    succeeded: bool
+    error: str | None = None
+    inventory_urls: int = Field(default=0, ge=0)
+    eligible_urls: int = Field(default=0, ge=0)
+    excluded_urls: int = Field(default=0, ge=0)
+    head_checked_urls: int = Field(default=0, ge=0)
+    base_page_links: int = Field(default=0, ge=0)
+    harvested_links: int = Field(default=0, ge=0)
+    selection_waves: int = Field(default=0, ge=0)
+    selected: list[ScoredUrl] = Field(default_factory=list)
+    inventory_path: str | None = None
+
+
 class MarkdownPage(StrictModel):
     source_url: str
     depth: int = Field(ge=0)
     markdown_path: str
     markdown_chars: int = Field(ge=0)
+    language: str | None = None
+    selection: PageSelection = "discovery"
+    score: float | None = None
 
 
 class PageExtractionMetadata(StrictModel):
@@ -145,6 +182,8 @@ class CrawlStats(StrictModel):
     stored_markdown_pages: int = Field(ge=0)
     stored_markdown_chars: int = Field(ge=0)
     max_depth_reached: int = Field(ge=0)
+    selected_pages: int = Field(default=0, ge=0)
+    discovered_pages: int = Field(default=0, ge=0)
 
 
 class BatchStats(StrictModel):
@@ -155,6 +194,7 @@ class BatchStats(StrictModel):
     successful_batches: int = Field(ge=0)
     failed_batches: int = Field(ge=0)
     submitted_pages: int = Field(ge=0)
+    skipped_non_english_pages: int = Field(default=0, ge=0)
     successfully_extracted_pages: int = Field(ge=0)
     failed_extraction_pages: int = Field(ge=0)
 
@@ -179,6 +219,8 @@ class CrawlManifest(StrictModel):
     requested_start_url: str
     selected_base_url: str
     stopped_reason: Literal["crawl_completed", "max_pages_reached"]
+    discovery_strategy: DiscoveryStrategy = "breadth_first"
+    url_seeding: UrlSeeding | None = None
     language_discovery: LanguageDiscovery
     crawl_stats: CrawlStats
     failed_pages: list[FailedPage]
@@ -188,14 +230,16 @@ class CrawlManifest(StrictModel):
 class ResearchReport(StrictModel):
     requested_start_url: str
     selected_base_url: str
-    crawl_strategy: Literal["breadth_first"] = "breadth_first"
+    crawl_strategy: str = "breadth_first"
     stopped_reason: Literal["crawl_completed", "max_pages_reached"]
     manifest_path: str
     language_discovery: LanguageDiscovery
+    url_seeding: UrlSeeding | None = None
     crawl_stats: CrawlStats
     batch_stats: BatchStats
     failed_pages: list[FailedPage]
     markdown_pages: list[MarkdownPage]
+    skipped_pages: list[MarkdownPage] = Field(default_factory=list)
     analysis_stats: AggregateAnalysisStats
     batches: list[BatchAnalysis]
     discovered_urls: list[DiscoveredUrl]

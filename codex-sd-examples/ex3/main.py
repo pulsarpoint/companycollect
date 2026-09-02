@@ -1,6 +1,7 @@
 import asyncio
 import logging
 from pathlib import Path
+from typing import cast
 
 import click
 
@@ -11,6 +12,8 @@ from ex3.crawler import (
     run_crawl,
     save_report,
 )
+from ex3.language import is_english_language
+from ex3.models import DiscoveryStrategy, SeedingSource
 
 
 @click.group()
@@ -79,6 +82,53 @@ def cli() -> None:
     help="Optional HTTP or SOCKS proxy used by CloakBrowser.",
 )
 @click.option(
+    "--seed/--no-seed",
+    default=True,
+    show_default=True,
+    help=(
+        "Build a URL inventory (sitemap by default) and pick the highest-scoring "
+        "pages before crawling; link discovery only fills the remaining budget."
+    ),
+)
+@click.option(
+    "--seed-source",
+    type=click.Choice(["sitemap", "sitemap+cc", "cc"]),
+    default="sitemap",
+    show_default=True,
+    help="URL inventory source. Common Crawl (cc) adds slow external index queries.",
+)
+@click.option(
+    "--seed-max-urls",
+    type=click.IntRange(min=1),
+    default=5_000,
+    show_default=True,
+    help="Maximum inventory URLs read from the seeding source.",
+)
+@click.option(
+    "--seed-share",
+    type=click.FloatRange(min=0.0, max=1.0),
+    default=0.6,
+    show_default=True,
+    help=(
+        "Share of the page budget rendered from the inventory before links "
+        "harvested from those pages are ranked for the second wave."
+    ),
+)
+@click.option(
+    "--discovery",
+    "discovery_strategy",
+    type=click.Choice(["best_first", "breadth_first"]),
+    default="best_first",
+    show_default=True,
+    help="Link-following strategy used to fill the page budget after seeding.",
+)
+@click.option(
+    "--accept-language",
+    default="en-US,en;q=0.9",
+    show_default=True,
+    help="Accept-Language sent by the browser and the inventory fetches.",
+)
+@click.option(
     "--overwrite",
     is_flag=True,
     help="Replace an existing crawl manifest and matching Markdown files.",
@@ -96,10 +146,16 @@ def crawl_command(
     include_external: bool,
     check_robots_txt: bool,
     proxy: str | None,
+    seed: bool,
+    seed_source: str,
+    seed_max_urls: int,
+    seed_share: float,
+    discovery_strategy: str,
+    accept_language: str,
     overwrite: bool,
     verbose: bool,
 ) -> None:
-    """Discover English and BFS-crawl START_URL into a durable manifest."""
+    """Discover English, select pages, and crawl START_URL into a manifest."""
     _configure_logging(verbose=verbose)
     manifest_path = markdown_dir.resolve() / "crawl-manifest.json"
     if manifest_path.exists() and not overwrite:
@@ -119,6 +175,12 @@ def crawl_command(
         include_external=include_external,
         check_robots_txt=check_robots_txt,
         proxy=proxy,
+        seed=seed,
+        seed_source=cast(SeedingSource, seed_source),
+        seed_max_urls=seed_max_urls,
+        seed_share=seed_share,
+        discovery_strategy=cast(DiscoveryStrategy, discovery_strategy),
+        accept_language=accept_language,
     )
     try:
         manifest = asyncio.run(run_crawl(settings))
@@ -129,12 +191,34 @@ def crawl_command(
         raise click.ClickException(str(error)) from error
 
     click.echo(f"English base URL: {manifest.selected_base_url}")
+    seeding = manifest.url_seeding
+    if seeding is not None and seeding.enabled:
+        status = "ok" if seeding.succeeded else f"failed ({seeding.error})"
+        click.echo(
+            f"Seeding ({seeding.source}, {status}): "
+            f"{seeding.inventory_urls} inventory URLs, "
+            f"{seeding.eligible_urls} eligible, "
+            f"{seeding.excluded_urls} excluded, "
+            f"{seeding.head_checked_urls} head-checked, "
+            f"{seeding.base_page_links} base-page links, "
+            f"{seeding.harvested_links} harvested links, "
+            f"{len(seeding.selected)} selected in {seeding.selection_waves} wave(s)"
+        )
     click.echo(
         "Crawl: "
         f"{manifest.crawl_stats.pages_returned} returned, "
-        f"{manifest.crawl_stats.stored_markdown_pages} Markdown files stored, "
+        f"{manifest.crawl_stats.stored_markdown_pages} Markdown files stored "
+        f"({manifest.crawl_stats.selected_pages} pre-selected, "
+        f"{manifest.crawl_stats.discovered_pages} via {manifest.discovery_strategy}), "
         f"max depth {manifest.crawl_stats.max_depth_reached}"
     )
+    non_english = [
+        page
+        for page in manifest.markdown_pages
+        if page.language is not None and not is_english_language(page.language)
+    ]
+    if non_english:
+        click.echo(f"Pages declaring a non-English language: {len(non_english)}")
     click.echo(f"Manifest: {manifest_path}")
     click.echo(f'Next: uv run python -m ex3.main analyze "{manifest_path}"')
 
@@ -188,6 +272,13 @@ def crawl_command(
     help="Maximum seconds allowed for each multi-page extraction.",
 )
 @click.option(
+    "--skip-non-english/--keep-non-english",
+    "skip_non_english",
+    default=True,
+    show_default=True,
+    help="Exclude stored pages whose HTML declares a non-English language.",
+)
+@click.option(
     "--overwrite",
     is_flag=True,
     help="Replace an existing analysis report.",
@@ -200,6 +291,7 @@ def analyze_command(
     max_batch_pages: int,
     max_batch_chars: int,
     analysis_timeout_seconds: int,
+    skip_non_english: bool,
     overwrite: bool,
     verbose: bool,
 ) -> None:
@@ -216,6 +308,7 @@ def analyze_command(
         max_batch_pages=max_batch_pages,
         max_batch_chars=max_batch_chars,
         analysis_timeout_seconds=analysis_timeout_seconds,
+        skip_non_english=skip_non_english,
     )
     try:
         report = asyncio.run(run_analysis(settings))
@@ -231,6 +324,10 @@ def analyze_command(
 
     click.echo(f"Manifest: {report.manifest_path}")
     click.echo(f"Markdown pages submitted: {report.batch_stats.submitted_pages}")
+    if report.skipped_pages:
+        click.echo(
+            f"Non-English pages skipped: {report.batch_stats.skipped_non_english_pages}"
+        )
     click.echo(f"Discovered URLs: {len(report.discovered_urls)}")
     if (
         report.related_domain_analysis.attempted
