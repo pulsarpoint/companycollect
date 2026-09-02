@@ -19,9 +19,10 @@ Field values: se_company_info_field_value -- append-only history whose live valu
 (company_id, field) is simply the newest row written for it; a NULL value releases the
 field back to the pipeline's computed default. No kinds, no staleness, no undo chain
 (undo = write the previous value again), and a field value never aborts a run.
-Trigger: se_company_info_weekly after the artifacts; se_company_info_field_value_sensor
-(new field values -> scoped review job); manual runs from the backoffice Pipeline page,
-scoped by company_ids.
+Trigger: manual runs from the backoffice Pipeline page, scoped by company_ids. The
+field-value sensor and the weekly schedule launch the registry-driven
+se_company_field_resolved_clickhouse now (fields/sensors.py, fields/schedules.py);
+this asset is deleted by the cutover plan.
 Gate: the asset writes nothing and calls no model unless the run config says
 ``execute: true`` -- a bare "Materialize" click in the Dagster UI is a preview that
 runs the change scan and reports what a real run would do. The model profile
@@ -54,7 +55,6 @@ from dagster_v3.defs.se_company.common import (
     StoredObservation,
     build_observations_sql,
     input_hash_for,
-    ledger_sensor,
     normalized_se_company_ids,
     observation_from_row,
     publish_with_stage,
@@ -966,10 +966,6 @@ se_company_info_review_job = dg.define_asset_job(
 # out execute AND the profile they call: an automated run must never depend on the
 # asset's field defaults, and must never be silently downgraded to a preview.
 AUTOMATED_RUN_CONFIG: dict[str, Any] = {"execute": True, "llm": DEFAULT_LLM_PROFILE}
-se_company_info_field_value_sensor = ledger_sensor(
-    name="se_company_info_field_value_sensor", table=SE_COMPANY_INFO_FIELD_VALUE,
-    id_column="value_id", job=se_company_info_review_job,
-    asset_names=("se_company_info_clickhouse",), extra_config=AUTOMATED_RUN_CONFIG)
 # 06:50 Monday: the (minute, hour) slot must be unique across every schedule, and
 # 06:45 is already taken by a Saturday schedule.
 se_company_info_weekly = dg.ScheduleDefinition(
@@ -978,4 +974,4 @@ se_company_info_weekly = dg.ScheduleDefinition(
     run_config={"ops": {"se_company_info_clickhouse": {"config": dict(AUTOMATED_RUN_CONFIG)}}})
 
 defs = dg.Definitions(assets=[se_company_info_clickhouse], jobs=[se_company_info_job, se_company_info_review_job],
-                      sensors=[se_company_info_field_value_sensor], schedules=[se_company_info_weekly])
+                      schedules=[se_company_info_weekly])
