@@ -54,7 +54,8 @@ CANDIDATE_INVALID_CONDITION = (
     "OR trim(value) = '' OR NOT isValidJSON(value_json) OR JSONExtractString(value_json, 'compare_key') = ''"
 )
 # One explicit company_ids slice per statement: clickhouse-driver substitutes the id list
-# client-side and the SCB statement embeds it three times; 5,000 ids x 3 copies is ~212 KB
+# client-side, and a statement embeds it once per CTE that filters on it -- twice in the
+# SCB statement, three times in the Bolagsverket one. 5,000 ids x 3 copies is ~212 KB
 # against ClickHouse's 262,144-byte default max_query_size (info.py measured it).
 IDS_PER_STATEMENT = 5_000
 SE_COMPANY_ID_MATCH = f"match(company_id, '{SE_COMPANY_ID_PATTERN}')"
@@ -110,8 +111,8 @@ class CandidateExtractConfig(dg.Config):
     harmless, exactly as for se_company_info_clickhouse. ``company_ids`` bypasses the
     scan (the named companies are re-extracted whether or not they changed; the
     anti-join makes that free for unchanged evidence). ``since`` is an ISO timestamp
-    ("2026-08-01 12:00:00.000") overriding the default watermark, which is the newest
-    ``extracted_at`` this source ever wrote.
+    ("2026-08-01 12:00:00.000") floor combined via greatest() with the scan's per-company
+    watermark (the company's newest ``extracted_at`` for this source); EPOCH when unset.
     """
 
     execute: bool = False
@@ -207,10 +208,10 @@ def employee_count_json_sql(*, count: str, as_of: str, period: str) -> str:
 
 def latest_revenue_json_sql(*, amount: str, currency: str, amount_usd: str, fiscal_year: str, period_end: str) -> str:
     """amount: Decimal128(2); amount_usd: Nullable(Decimal128(2)); currency / period_end:
-    String; fiscal_year: integer. Amounts travel as JSON NUMBERS with two decimals
-    (toString of a Decimal128(2) renders 48000000000.00), amount_usd as null when unknown --
-    the projection reads them with toDecimal128OrNull(JSONExtractRaw(...)), which returns
-    NULL for a quoted number."""
+    String; fiscal_year: integer. Amounts travel as JSON NUMBERS, never quoted: toString of a
+    Decimal renders ClickHouse's own text with trailing zeros stripped (48000000000,
+    47500000000.1), and amount_usd is null when unknown -- the projection reads them with
+    toDecimal128OrNull(JSONExtractRaw(...)), which returns NULL for a quoted number."""
     return json_object_sql({
         "compare_key": json_string_sql(f"concat(lowerUTF8({currency}), ':', toString({amount}), ':', toString({fiscal_year}))"),
         "amount": f"toString({amount})",
@@ -222,7 +223,8 @@ def latest_revenue_json_sql(*, amount: str, currency: str, amount_usd: str, fisc
 
 
 def revenue_value_sql(*, amount: str, currency: str, fiscal_year: str) -> str:
-    """The display form: ``SEK 48000000000.00 FY2024``."""
+    """The display form: ``SEK 48000000000 FY2024`` -- the amount as ClickHouse renders a
+    Decimal, trailing zeros stripped (``SEK 47500000000.1 FY2024``)."""
     return f"concat({currency}, ' ', toString({amount}), ' FY', toString({fiscal_year}))"
 
 

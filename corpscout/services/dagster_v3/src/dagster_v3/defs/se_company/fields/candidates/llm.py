@@ -102,6 +102,11 @@ class LlmCandidateProfile(LlmProfileConfig):
 class LlmCandidateConfig(CandidateExtractConfig):
     llm: LlmCandidateProfile
     timeout_seconds: int = Field(default=120, ge=1, le=600)
+    # This asset has no IDS_PER_STATEMENT split: a whole page's ids go into the context and
+    # observation statements, substituted client-side. 20,000 of them overrun ClickHouse's
+    # 262,144-byte default max_query_size (~6,150 ids do), so the page is capped at 5,000 --
+    # the width info.py measured and caps at.
+    company_batch_size: int = Field(default=5_000, ge=1, le=5_000)
 
 
 @dataclass(frozen=True)
@@ -294,7 +299,7 @@ def materialize_llm_candidates(
         companies = companies_from_context(context_rows)
         metrics["selected_company_count"] += len(page)
         metrics["skipped_single_source_count"] += len(page) - len(companies)
-        prepared = []
+        prepared: list[_Prepared] = []
         for company_id in page:
             company = companies.get(company_id)
             if company is None:

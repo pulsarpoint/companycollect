@@ -9,7 +9,7 @@ periods. Ratsit has no record uid; the uid is built from the report hash and the
 Revenue is stored in the report's own unit (SEK / TSEK / MSEK) and Ratsit carries no USD
 twin, so this extractor rescales to SEK and converts to USD itself from corpscout.exchange_rates
 (ECB, EUR base): the latest SEK and USD rates on or before the period end, ASOF-joined. The
-float arithmetic is exact to the cent for any revenue below 1e13 SEK.
+USD twin is computed in float64 and rounded to the cent.
 """
 
 from functools import partial

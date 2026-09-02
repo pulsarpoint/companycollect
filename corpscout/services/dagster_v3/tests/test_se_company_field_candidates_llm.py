@@ -106,7 +106,7 @@ def test_config_requires_provider_and_model() -> None:
         llm.LlmCandidateConfig(llm={"provider": "deepseek"})
     config = llm.LlmCandidateConfig(llm={"provider": "deepseek", "model": "deepseek-v4-flash"})
     assert config.llm.prompt_version == "se-company-info-description-v3"
-    assert config.execute is False and config.company_batch_size == 20_000
+    assert config.execute is False and config.company_batch_size == 5_000
 
 
 def _stored_row(company: llm.LlmCompany, *, suggestion_id: uuid.UUID) -> tuple:
