@@ -2978,7 +2978,7 @@ up = f"""CREATE DATABASE IF NOT EXISTS corpscout;
 -- Serves the field registry's eight wide columns (industry_label_en, website, employee_count,
 -- employee_count_as_of, latest_revenue_amount, latest_revenue_currency, latest_revenue_amount_usd,
 -- latest_revenue_fiscal_year -- spec 2026-09-02 section 10) straight off se_company_info. Same
--- staged swap as 000347, SYSTEM STOP VIEW guard included; the _next view carries the CURRENT
+-- staged swap as 000347, SYSTEM STOP VIEW guard included, and the _next view carries the CURRENT
 -- cadence (000366: hourly, offset 45) rather than 000347's 15 minutes. Applied AFTER the
 -- registry resolve backfill (cutover step 5): the columns exist from the field-table migration
 -- but are empty until then.
