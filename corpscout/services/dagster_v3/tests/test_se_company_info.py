@@ -841,12 +841,17 @@ def test_definitions_wire_final_jobs_sensor_schedule_and_leaves() -> None:
     assert leaves["se_company_info_scb_clickhouse"].tables == ("se_company_info_scb",)
     assert leaves["se_company_info_esef_clickhouse"].tables == ("se_company_info_esef",)
     assert leaves["se_company_info_wikidata_clickhouse"].tables == ("se_company_info_wikidata",)
-    # Refreshed weekly by se_company_fields_job now: a missed week must still show as stale.
+    # The three artifacts are refreshed weekly by se_company_fields_job now: a missed week
+    # must still show as stale.
     from dagster_v3.defs.common.clickhouse_checks import WEEKLY
 
     assert all(leaves[key].max_age == WEEKLY for key in (
-        "se_company_info_clickhouse", "se_company_info_scb_clickhouse",
-        "se_company_info_esef_clickhouse", "se_company_info_wikidata_clickhouse"))
+        "se_company_info_scb_clickhouse", "se_company_info_esef_clickhouse",
+        "se_company_info_wikidata_clickhouse"))
+    # se_company_info_clickhouse is retiring: no job materializes it any more (its weekly
+    # schedule moved to se_company_fields_weekly), so a freshness check on it could only
+    # go permanently red. Row-count check only until the cutover deletes the asset.
+    assert leaves["se_company_info_clickhouse"].max_age is None
 
 
 def test_a_truncated_model_response_is_reported_as_truncation_not_as_bad_json() -> None:

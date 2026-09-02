@@ -229,7 +229,8 @@ CLICKHOUSE_LEAVES: tuple[ClickhouseLeaf, ...] = (
     ClickhouseLeaf(
         "se_company_info_wikidata_clickhouse", ("se_company_info_wikidata",), WEEKLY
     ),
-    ClickhouseLeaf("se_company_info_clickhouse", ("se_company_info",), WEEKLY),
+    # Retiring: its weekly schedule moved to se_company_fields_weekly (fields/schedules.py); row-count check only until the cutover deletes the asset.
+    ClickhouseLeaf("se_company_info_clickhouse", ("se_company_info",), None),
     # se_company_fields -- the candidate extractors (spec 2026-09-02). Unscheduled until the
     # resolve asset's weekly job lands, so row-count checks only; every one writes the same
     # append-only table.

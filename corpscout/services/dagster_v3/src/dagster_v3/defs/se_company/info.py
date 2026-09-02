@@ -962,9 +962,10 @@ se_company_info_job = dg.define_asset_job("se_company_info_job", selection=dg.As
     "se_company_info_clickhouse"))
 se_company_info_review_job = dg.define_asset_job(
     "se_company_info_review_job", selection=dg.AssetSelection.assets("se_company_info_clickhouse"))
-# What a real run of this asset carries -- execute AND the profile it may call. Sent by
-# the backoffice Pipeline page until the cutover deletes this asset; the automated
-# triggers launch the registry-driven resolve now (fields/).
+# What a real run of this asset carries -- execute AND the profile it may call. No
+# production trigger sends it any more (the automated triggers launch the registry-driven
+# resolve, fields/); kept as the pin tests/test_se_company_info.py reads until the
+# cutover deletes this asset.
 AUTOMATED_RUN_CONFIG: dict[str, Any] = {"execute": True, "llm": DEFAULT_LLM_PROFILE}
 
 defs = dg.Definitions(assets=[se_company_info_clickhouse], jobs=[se_company_info_job, se_company_info_review_job])

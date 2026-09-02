@@ -499,12 +499,13 @@ def se_company_field_resolved_clickhouse(context: dg.AssetExecutionContext, conf
     """changed companies -> per-field resolve statements -> wide projection -> counts."""
     # The table check binds its own %(name)s parameters client-side, so it runs on the
     # resource's ordinary connection, BEFORE the server-side client is opened.
-    # assert_clickhouse_tables_exist matches system.tables.name (bare), so the qualified
-    # constants are split back to their bare table name for this one call.
+    # assert_clickhouse_tables_exist matches system.tables.name (bare), so the four
+    # qualified constants are split back to their bare table name for this one call;
+    # SE_COMPANY_INFO_FIELD_VALUE (defined above) is already bare and is passed as is.
     assert_clickhouse_tables_exist(clickhouse, database=DATABASE, tables=(
         SE_COMPANY_FIELD_REGISTRY.split(".")[-1], SE_COMPANY_FIELD_CANDIDATE.split(".")[-1],
         SE_COMPANY_FIELD.split(".")[-1], SE_COMPANY_INFO.split(".")[-1],
-        SE_COMPANY_INFO_FIELD_VALUE.split(".")[-1]))
+        SE_COMPANY_INFO_FIELD_VALUE))
     with open_resolve_client(clickhouse) as client:
         summary = materialize_se_company_fields(context, client, config, registry=INFO_REGISTRY,
                                                 now=datetime.now(UTC))
