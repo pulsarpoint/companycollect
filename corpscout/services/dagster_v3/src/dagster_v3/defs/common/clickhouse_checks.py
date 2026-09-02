@@ -240,6 +240,11 @@ CLICKHOUSE_LEAVES: tuple[ClickhouseLeaf, ...] = (
     ClickhouseLeaf("se_company_field_candidates_ratsit", ("se_company_field_candidate",), None),
     ClickhouseLeaf("se_company_field_candidates_domains", ("se_company_field_candidate",), None),
     ClickhouseLeaf("se_company_field_candidates_llm", ("se_company_field_candidate",), None),
+    # se_company_fields -- the registry-driven resolve (se_company/fields/resolve.py)
+    # writes the long resolved table and re-pivots se_company_info. Unscheduled (row-count
+    # check only) until the cutover plan starts se_company_fields_weekly; it then becomes
+    # WEEKLY and the se_company_info_clickhouse leaf above goes with the old asset.
+    ClickhouseLeaf("se_company_field_resolved_clickhouse", ("se_company_field",), None),
     # se_company_address — two per-source artifacts and the merged final, all refreshed by
     # se_company_address_weekly. The weekly schedule is now the freshness source, like the
     # info leaves above.

@@ -834,16 +834,14 @@ def test_definitions_wire_final_jobs_sensor_schedule_and_leaves() -> None:
     # The field-value sensor keeps its name but launches the registry-driven resolve
     # (fields/sensors.py); tests/test_se_company_field_sensors.py owns it.
     assert repository.get_sensor_def("se_company_info_field_value_sensor").job_name == "se_company_field_resolve_job"
-    schedule = repository.get_schedule_def("se_company_info_weekly")
-    # 06:45 Monday would collide with the existing "45 6 * * 6" slot the cron contract guards.
-    assert schedule.cron_schedule == "50 6 * * 1"
-    assert schedule.default_status == dg.DefaultScheduleStatus.STOPPED
+    # The Monday 06:50 slot belongs to se_company_fields_weekly now (fields/schedules.py).
+    assert "se_company_info_weekly" not in {schedule.name for schedule in repository.schedule_defs}
     leaves = {leaf.asset_key: leaf for leaf in CLICKHOUSE_LEAVES}
     assert leaves["se_company_info_clickhouse"].tables == ("se_company_info",)
     assert leaves["se_company_info_scb_clickhouse"].tables == ("se_company_info_scb",)
     assert leaves["se_company_info_esef_clickhouse"].tables == ("se_company_info_esef",)
     assert leaves["se_company_info_wikidata_clickhouse"].tables == ("se_company_info_wikidata",)
-    # se_company_info_weekly is RUNNING (phase 7): a missed week must show as stale.
+    # Refreshed weekly by se_company_fields_job now: a missed week must still show as stale.
     from dagster_v3.defs.common.clickhouse_checks import WEEKLY
 
     assert all(leaves[key].max_age == WEEKLY for key in (
@@ -1073,9 +1071,9 @@ def test_the_model_step_keeps_at_most_concurrency_calls_in_flight() -> None:
 
 def test_the_config_gates_the_run_and_pins_the_profile_the_automation_sends() -> None:
     from dagster_v3.defs.se_company.info import (
+        AUTOMATED_RUN_CONFIG,
         DEFAULT_LLM_PROFILE,
         SECompanyInfoConfig,
-        se_company_info_weekly,
     )
 
     # Preview by default: an empty config (a UI "Materialize" click) resolves nothing.
@@ -1089,11 +1087,7 @@ def test_the_config_gates_the_run_and_pins_the_profile_the_automation_sends() ->
     for bad in (0, 9):
         with pytest.raises(ValueError):
             LlmProfileConfig(concurrency=bad)
-    # The automated triggers must both spell out execute AND the profile: a
-    # sensor/schedule run carries only the config its definition writes. Read off an
-    # evaluated tick, which is the config the daemon would actually submit.
-    context = dg.build_schedule_context(
-        scheduled_execution_time=datetime(2026, 8, 24, 6, 50, tzinfo=UTC))
-    run_requests = se_company_info_weekly.evaluate_tick(context).run_requests
-    assert run_requests is not None and run_requests[0].run_config == {
-        "ops": {"se_company_info_clickhouse": {"config": {"execute": True, "llm": DEFAULT_LLM_PROFILE}}}}
+    # What the backoffice Pipeline page sends for a real run of this asset until the
+    # cutover deletes it: execute AND the pinned profile. The automated triggers launch
+    # the registry-driven resolve now (tests/test_se_company_field_resolve.py).
+    assert AUTOMATED_RUN_CONFIG == {"execute": True, "llm": DEFAULT_LLM_PROFILE}

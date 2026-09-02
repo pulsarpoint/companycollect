@@ -962,16 +962,9 @@ se_company_info_job = dg.define_asset_job("se_company_info_job", selection=dg.As
     "se_company_info_clickhouse"))
 se_company_info_review_job = dg.define_asset_job(
     "se_company_info_review_job", selection=dg.AssetSelection.assets("se_company_info_clickhouse"))
-# The two automated triggers are the ones that must resolve for real, so both spell
-# out execute AND the profile they call: an automated run must never depend on the
-# asset's field defaults, and must never be silently downgraded to a preview.
+# What a real run of this asset carries -- execute AND the profile it may call. Sent by
+# the backoffice Pipeline page until the cutover deletes this asset; the automated
+# triggers launch the registry-driven resolve now (fields/).
 AUTOMATED_RUN_CONFIG: dict[str, Any] = {"execute": True, "llm": DEFAULT_LLM_PROFILE}
-# 06:50 Monday: the (minute, hour) slot must be unique across every schedule, and
-# 06:45 is already taken by a Saturday schedule.
-se_company_info_weekly = dg.ScheduleDefinition(
-    name="se_company_info_weekly", job=se_company_info_job, cron_schedule="50 6 * * 1",
-    execution_timezone="UTC", default_status=dg.DefaultScheduleStatus.STOPPED,
-    run_config={"ops": {"se_company_info_clickhouse": {"config": dict(AUTOMATED_RUN_CONFIG)}}})
 
-defs = dg.Definitions(assets=[se_company_info_clickhouse], jobs=[se_company_info_job, se_company_info_review_job],
-                      schedules=[se_company_info_weekly])
+defs = dg.Definitions(assets=[se_company_info_clickhouse], jobs=[se_company_info_job, se_company_info_review_job])

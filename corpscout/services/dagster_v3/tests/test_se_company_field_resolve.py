@@ -421,3 +421,75 @@ def test_the_asset_is_declared_with_its_deps_group_and_tables() -> None:
     assert spec.metadata["table"] == "corpscout.se_company_field"
     assert spec.metadata["wide_table"] == "corpscout.se_company_info"
     assert spec.kinds == {"clickhouse", "python"}
+
+
+# --- Definitions wiring ---------------------------------------------------------------
+
+
+def test_definitions_wire_the_resolve_asset_jobs_sensors_and_schedule() -> None:
+    from dagster_v3.definitions import defs as load_defs
+    from dagster_v3.defs.common.clickhouse_checks import CLICKHOUSE_LEAVES, ROW_COUNT_CHECK_NAME
+    from dagster_v3.defs.se_company.fields.jobs import WEEKLY_ASSETS
+    from dagster_v3.defs.se_company.fields.resolve import (
+        ARTIFACT_ASSETS,
+        CANDIDATE_ASSETS,
+        LLM_CANDIDATES_ASSET,
+        PARITY_CHECK_NAME,
+        REGISTRY_ASSET,
+    )
+    from dagster_v3.defs.se_company.fields.schedules import LLM_CANDIDATES_RUN_CONFIG, se_company_fields_weekly
+
+    repository = load_defs().get_repository_def()
+    asset = repository.asset_graph.get(dg.AssetKey(RESOLVE_ASSET))
+    assert asset.group_name == "se_company_fields"
+    assert asset.parent_keys == {dg.AssetKey(REGISTRY_ASSET), *(dg.AssetKey(name) for name in CANDIDATE_ASSETS)}
+
+    # The two jobs: the weekly chain and the resolve alone. Checks ride along, except
+    # the parity check, which only the cutover runs.
+    resolve_job = repository.get_job("se_company_field_resolve_job")
+    assert {key.path[-1] for key in resolve_job.asset_layer.executable_asset_keys} == {RESOLVE_ASSET}
+    weekly_job = repository.get_job("se_company_fields_job")
+    assert WEEKLY_ASSETS == (*ARTIFACT_ASSETS, REGISTRY_ASSET, *CANDIDATE_ASSETS, RESOLVE_ASSET)
+    assert len(WEEKLY_ASSETS) == 12 and LLM_CANDIDATES_ASSET in WEEKLY_ASSETS
+    assert {key.path[-1] for key in weekly_job.asset_layer.executable_asset_keys} == set(WEEKLY_ASSETS)
+    for job in (resolve_job, weekly_job):
+        nodes = {node.name for node in job.graph.node_defs}
+        assert f"{RESOLVE_ASSET}_{PARITY_CHECK_NAME}" not in nodes
+        assert f"{RESOLVE_ASSET}_{ROW_COUNT_CHECK_NAME}" in nodes
+
+    field_value = repository.get_sensor_def("se_company_info_field_value_sensor")
+    assert field_value.job_name == "se_company_field_resolve_job"
+    assert field_value.default_status == dg.DefaultSensorStatus.STOPPED
+    candidate = repository.get_sensor_def("se_company_field_candidate_sensor")
+    assert candidate.job_name == "se_company_field_resolve_job"
+    assert candidate.default_status == dg.DefaultSensorStatus.STOPPED
+
+    # The schedule took the Monday 06:50 slot se_company_info_weekly held.
+    schedule = repository.get_schedule_def("se_company_fields_weekly")
+    assert schedule.cron_schedule == "50 6 * * 1" and schedule.execution_timezone == "UTC"
+    assert schedule.default_status == dg.DefaultScheduleStatus.STOPPED
+    assert schedule.job_name == "se_company_fields_job"
+    assert "se_company_info_weekly" not in {s.name for s in repository.schedule_defs}
+    context = dg.build_schedule_context(scheduled_execution_time=datetime(2026, 9, 7, 6, 50, tzinfo=UTC))
+    run_requests = se_company_fields_weekly.evaluate_tick(context).run_requests
+    # Every gated asset in the chain is told execute: the resolve asset AND the seven
+    # extractors (plan 2's CandidateExtractConfig defaults to a preview too).
+    assert run_requests is not None and run_requests[0].run_config == {"ops": {
+        RESOLVE_ASSET: {"config": {"execute": True}},
+        **{name: {"config": {"execute": True}} for name in CANDIDATE_ASSETS if name != LLM_CANDIDATES_ASSET},
+        LLM_CANDIDATES_ASSET: {"config": LLM_CANDIDATES_RUN_CONFIG}}}
+    assert LLM_CANDIDATES_RUN_CONFIG["execute"] is True
+    assert LLM_CANDIDATES_RUN_CONFIG["llm"]["provider"] == "deepseek"
+    assert LLM_CANDIDATES_RUN_CONFIG["llm"]["model"] == "deepseek-v4-flash"
+    assert LLM_CANDIDATES_RUN_CONFIG["llm"]["prompt_version"] == "se-company-info-description-v3"
+    # The config the daemon would submit must be one the job accepts: raises
+    # DagsterInvalidConfigError, naming the key, when the LLM extractor's config class
+    # (plan 2) does not take LLM_CANDIDATES_RUN_CONFIG's shape.
+    dg.validate_run_config(weekly_job, run_requests[0].run_config)
+
+    # The old asset and its two jobs stay registered beside the new ones until the cutover.
+    assert repository.asset_graph.has(dg.AssetKey("se_company_info_clickhouse"))
+    assert {"se_company_info_job", "se_company_info_review_job"} <= {job.name for job in repository.get_all_jobs()}
+
+    leaf = next(leaf for leaf in CLICKHOUSE_LEAVES if leaf.asset_key == RESOLVE_ASSET)
+    assert leaf.tables == ("se_company_field",) and leaf.max_age is None
