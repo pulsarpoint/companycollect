@@ -1206,7 +1206,7 @@ def _candidates_for(module: ModuleType, company_id: str) -> str:
     inner = _render(module.build_candidates_sql(), {"company_ids": (company_id,)})
     return (
         "SELECT field, source_record_uid, toString(observed_at), value, value_json\n"
-        f"FROM ({inner})\nORDER BY field, source_record_uid"
+        f"FROM ({inner}) AS c ({', '.join(CANDIDATE_SELECT_COLUMNS)})\nORDER BY field, source_record_uid"
     )
 
 
@@ -1225,7 +1225,7 @@ def _publish_pass(source: str, module: ModuleType, extracted_at_sql: str) -> str
         f"INSERT INTO {stage} ({columns})\n"
         f"SELECT company_id, field, '{source}', source_record_uid, value, value_json, observed_at, "
         f"{extracted_at_sql}, '{module.EXTRACTOR_VERSION}', '{RUN_ID}'\n"
-        f"FROM (SELECT {projected} FROM ({inner}));\n"
+        f"FROM (SELECT {projected} FROM ({inner}) AS c ({projected}));\n"
         f"INSERT INTO corpscout.se_company_field_candidate ({columns})\n"
         f"SELECT {stage_columns} FROM {stage} AS stage\n"
         f"LEFT ANTI JOIN corpscout.se_company_field_candidate AS existing ON {on_clause};\n"
@@ -1378,12 +1378,12 @@ def test_candidates_read_the_artifact_and_the_primary_industry() -> None:
     assert "FROM corpscout.se_company_info_scb FINAL\n    WHERE company_id IN %(company_ids)s\n    ORDER BY observed_at DESC, source_record_uid DESC\n    LIMIT 1 BY company_id" in sql
     # The legal facts the old publisher copied verbatim: same columns, same fallback.
     assert "if(legal_name_clean != '', legal_name_clean, legal_name_raw_clean) AS legal_name" in sql
-    assert "trim(ifNull(legal_form_code, '')) AS legal_form_code" in sql
+    assert "if(lowerUTF8(trim(ifNull(legal_form_code, ''))) IN ('', '-', '--', '.', 'n/a', 'null', 'none'), '', trim(ifNull(legal_form_code, ''))) AS legal_form_code" in sql
     assert "trim(toString(status)) AS status" in sql
     assert "ifNull(toString(incorporation_date), '') AS incorporation_date" in sql
     assert "FROM corpscout.se_industries FINAL\n    WHERE is_primary = 1 AND company_id IN %(company_ids)s\n    GROUP BY company_id" in sql
     assert "WHERE level = 'class' AND is_current = 1" in sql
-    assert "LEFT JOIN labels ON labels.classification_version = 'NACE_REV_2' AND labels.normalized_code = substring(industry.sni_code, 1, 4)" in sql
+    assert "LEFT JOIN labels ON labels.classification_version = 'NACE_REV_2' AND labels.normalized_code = substring(trim(industry.sni_code), 1, 4)" in sql
     assert "replaceAll(trim(industry.nace_code), '.', '') AS nace_code" in sql  # published dot-less, as today
     assert "'primary_nace_code', source_record_uid, observed_at, nace_code,\n    concat('{\"compare_key\":', toJSONString(nace_code), '}')" in sql
     # English preferred, Swedish otherwise -- and the language says which.
@@ -1491,7 +1491,7 @@ def build_candidates_sql() -> str:
         {clean_text_sql('legal_name')} AS legal_name_clean,
         {clean_text_sql('legal_name_raw')} AS legal_name_raw_clean,
         if(legal_name_clean != '', legal_name_clean, legal_name_raw_clean) AS legal_name,
-        trim(ifNull(legal_form_code, '')) AS legal_form_code,
+        {clean_text_sql('legal_form_code')} AS legal_form_code,
         trim(toString(status)) AS status,
         ifNull(toString(incorporation_date), '') AS incorporation_date,
         {clean_text_sql('activity_description')} AS description_sv,
@@ -1522,7 +1522,7 @@ industry_labelled AS (
         {nace_digits_sql('trim(industry.nace_code)')} AS nace_code,
         {clean_text_sql('labels.label_en')} AS label_en
     FROM industry
-    LEFT JOIN labels ON labels.classification_version = '{NACE_VERSION}' AND labels.normalized_code = substring(industry.sni_code, 1, 4)
+    LEFT JOIN labels ON labels.classification_version = '{NACE_VERSION}' AND labels.normalized_code = substring(trim(industry.sni_code), 1, 4)
 )
 {_member('legal_name', value='legal_name', compare_key=compare_key_text_sql('legal_name'), source='artifact')}
 UNION ALL
@@ -1833,7 +1833,7 @@ def build_candidates_sql() -> str:
 registry AS (
     SELECT bv.company_id AS company_id, bv.source_record_uid AS source_record_uid, bv.observed_at AS observed_at,
         {clean_text_sql('bv.legal_name')} AS legal_name,
-        trim(ifNull(toString(bv.legal_form_code), '')) AS legal_form_code,
+        {clean_text_sql('toString(bv.legal_form_code)')} AS legal_form_code,
         trim(ifNull(toString(bv.derived_status), '')) AS status,
         ifNull(toString(bv.incorporation_date), '') AS incorporation_date,
         ifNull(scb.scb_status, '') AS scb_status
