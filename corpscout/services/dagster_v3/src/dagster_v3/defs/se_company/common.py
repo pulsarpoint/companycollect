@@ -13,6 +13,7 @@ import json
 import re
 import uuid
 from collections.abc import Callable, Mapping, Sequence
+from contextlib import nullcontext
 from dataclasses import dataclass
 from datetime import datetime
 from typing import Any
@@ -72,7 +73,7 @@ def _columns_sql(columns: Sequence[str], *, prefix: str = "") -> str:
 
 def publish_with_stage(
     *,
-    clickhouse: ClickhouseResource,
+    clickhouse: ClickhouseResource | None = None,
     target: str,
     insert_columns: Sequence[str],
     rows: Sequence[tuple[Any, ...]] | None = None,
@@ -82,27 +83,31 @@ def publish_with_stage(
     allow_shrink: bool = False,
     new_versions_only: bool = False,
     anti_join_columns: Sequence[str] = ("company_id", "source_record_uid", "evidence_hash"),
+    client: Any | None = None,
 ) -> PublishCounts:
     """Stage -> validate -> insert -> drop stage; shrink-guard the published table.
 
     When ``new_versions_only`` is True the final copy is a left-anti-join on
-    ``anti_join_columns`` against the target -- by default
-    ``(company_id, source_record_uid, evidence_hash)``, the artifact tables' identity;
-    the candidate table passes its own five-column identity -- so a version of a row
-    already published with the same evidence is never re-inserted. The join's right
-    side reads only the staged companies' published rows, not the whole target:
-    every caller's ``anti_join_columns`` start with company_id, and a page of a few
-    thousand rows must not scan a table of millions. The stage is created with
-    ``CREATE TABLE stage AS target``, so the target's MATERIALIZED ``evidence_hash``
-    is computed on the stage by ClickHouse itself -- it is never re-expressed in
-    Python.
+    ``(company_id, source_record_uid, evidence_hash)`` against the target, so
+    a version of a row already published with the same evidence is never
+    re-inserted. The stage is created with ``CREATE TABLE stage AS target``,
+    so the target's MATERIALIZED ``evidence_hash`` is computed on the stage
+    by ClickHouse itself -- it is never re-expressed in Python.
+
+    ``client`` is an already-open driver client to run every statement on,
+    for a caller that holds one connection across many publishes (the field
+    resolve asset, whose client binds server-side parameters); ``clickhouse``
+    opens and closes one here. Exactly one of the two.
     """
     if (rows is None) == (select_sql is None):
         raise ValueError("publish_with_stage needs exactly one of rows or select_sql")
+    if (clickhouse is None) == (client is None):
+        raise ValueError("publish_with_stage needs exactly one of clickhouse or client")
     qualified_target = qualified(target)
     qualified_stage = qualified(f"_tmp_{target}_{uuid.uuid4().hex}")
     columns = _columns_sql(insert_columns)
-    with clickhouse.get_connection() as client:
+    connection = nullcontext(client) if client is not None else clickhouse.get_connection()
+    with connection as client:
         stage_created = False
         primary_error: Exception | None = None
         try:
