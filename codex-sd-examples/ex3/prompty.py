@@ -42,6 +42,10 @@ EXTRACTION:
 7. Preserve names, contact values, identifiers, prices, and URLs exactly.
 8. Every evidence.source_url and page source_url must exactly equal the
    corresponding supplied source_url. Keep evidence short and direct.
+9. Pages may be written in any language. Extract facts from non-English pages
+   too. Write page_summary, descriptions, categories and labels in English,
+   but keep names, contact values, identifiers, prices, addresses and URLs
+   exactly as written on the page.
 
 Return only the JSON object required by the provided output schema.
 

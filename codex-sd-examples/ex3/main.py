@@ -274,9 +274,12 @@ def crawl_command(
 @click.option(
     "--skip-non-english/--keep-non-english",
     "skip_non_english",
-    default=True,
+    default=False,
     show_default=True,
-    help="Exclude stored pages whose HTML declares a non-English language.",
+    help=(
+        "Whether to exclude stored pages whose HTML declares a non-English "
+        "language. Kept by default: the LLM extracts and translates them."
+    ),
 )
 @click.option(
     "--overwrite",

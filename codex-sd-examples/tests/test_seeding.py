@@ -151,7 +151,7 @@ class SitemapSeedingTest(unittest.IsolatedAsyncioTestCase):
 
 
 class PageSelectionPlanTest(unittest.IsolatedAsyncioTestCase):
-    async def test_checks_heads_for_a_shortlist_and_drops_non_english_pages(
+    async def test_checks_heads_for_a_shortlist_and_ranks_non_english_pages_last(
         self,
     ) -> None:
         inventory = [
@@ -197,16 +197,19 @@ class PageSelectionPlanTest(unittest.IsolatedAsyncioTestCase):
             ],
         )
         self.assertEqual(len(checked), 1)
-        self.assertNotIn("https://www.example.se/sv/om-oss", checked[0])
         self.assertIn("https://www.example.se/alingsas", checked[0])
-        excluded_by_url = {scored.url: scored.exclusion for scored in result.excluded}
-        self.assertEqual(
-            excluded_by_url["https://www.example.se/alingsas"],
+        eligible_by_url = {scored.url: scored for scored in result.eligible}
+        self.assertIn(
             "document language 'sv'",
+            eligible_by_url["https://www.example.se/alingsas"].reasons,
+        )
+        self.assertIn(
+            "other locale 'sv'",
+            eligible_by_url["https://www.example.se/sv/om-oss"].reasons,
         )
         self.assertEqual(
-            excluded_by_url["https://www.example.se/sv/om-oss"],
-            "locale prefix 'sv'",
+            {scored.url: scored.exclusion for scored in result.excluded},
+            {"https://www.example.se/en/reports/annual.pdf": "file extension '.pdf'"},
         )
         self.assertEqual(result.inventory_urls, 8)
         self.assertEqual(result.base_page_links, 0)
@@ -221,7 +224,7 @@ class PageSelectionPlanTest(unittest.IsolatedAsyncioTestCase):
         result = await select_pages(
             ["https://www.example.se/en/personal/savings"],
             base_url=BASE_URL,
-            limit=3,
+            limit=2,
             fetch_heads=fetch_heads,
             base_page_links=[
                 "https://www.example.se/en/about-us",
@@ -231,11 +234,7 @@ class PageSelectionPlanTest(unittest.IsolatedAsyncioTestCase):
 
         self.assertEqual(
             [scored.url for scored in result.selected],
-            [
-                "https://www.example.se/en/",
-                "https://www.example.se/en/about-us",
-                "https://www.example.se/en/personal/savings",
-            ],
+            ["https://www.example.se/en/", "https://www.example.se/en/about-us"],
         )
         self.assertIn("linked from base page", result.selected[1].reasons)
         self.assertEqual(result.inventory_urls, 4)
@@ -264,6 +263,36 @@ class PageSelectionPlanTest(unittest.IsolatedAsyncioTestCase):
             ["https://www.example.se/en/contact"],
         )
         self.assertEqual(result.inventory_urls, 1)
+
+    async def test_prefers_the_site_language_over_other_languages(self) -> None:
+        async def fetch_heads(urls: list[str]) -> dict[str, HeadMetadata]:
+            return {
+                "https://www.example.se/sv/om-oss": HeadMetadata(
+                    language="sv",
+                    title="Om oss",
+                    description=None,
+                )
+            }
+
+        result = await select_pages(
+            ["https://www.example.se/fi/yritys", "https://www.example.se/sv/om-oss"],
+            base_url="https://www.example.se/sv/",
+            limit=5,
+            fetch_heads=fetch_heads,
+            preferred_languages=frozenset({"en", "sv"}),
+        )
+
+        self.assertEqual(
+            [scored.url for scored in result.selected],
+            [
+                "https://www.example.se/sv/",
+                "https://www.example.se/sv/om-oss",
+                "https://www.example.se/fi/yritys",
+            ],
+        )
+        self.assertNotIn("other locale 'sv'", result.selected[1].reasons)
+        self.assertEqual(result.selected[1].language, "sv")
+        self.assertIn("other locale 'fi'", result.selected[2].reasons)
 
     async def test_selects_only_the_base_url_for_an_empty_inventory(self) -> None:
         async def fetch_heads(urls: list[str]) -> dict[str, HeadMetadata]:

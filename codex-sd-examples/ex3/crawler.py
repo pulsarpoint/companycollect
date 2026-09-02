@@ -4,7 +4,7 @@ import json
 import logging
 import math
 import re
-from collections.abc import AsyncGenerator, Callable
+from collections.abc import AsyncGenerator, Callable, Collection
 from contextlib import aclosing
 from dataclasses import dataclass
 from pathlib import Path
@@ -64,7 +64,11 @@ from ex3.seeding import (
     seed_sitemap_urls,
     select_pages,
 )
-from ex3.selection import SelectionFilter, SelectionScorer
+from ex3.selection import (
+    DEFAULT_PREFERRED_LANGUAGES,
+    SelectionFilter,
+    SelectionScorer,
+)
 from ex3.urls import canonical_domain, normalize_start_url, same_domain_tree, url_key
 
 LOGGER = logging.getLogger(__name__)
@@ -107,7 +111,7 @@ class AnalysisSettings:
     max_batch_pages: int
     max_batch_chars: int
     analysis_timeout_seconds: int
-    skip_non_english: bool = True
+    skip_non_english: bool = False
 
 
 @dataclass(frozen=True, slots=True)
@@ -289,12 +293,16 @@ async def _discover_and_crawl(
                 requested_start_url=requested_start_url,
             )
             base_url = language_discovery.selected_base_url
+            preferred_languages = _preferred_languages(
+                language_discovery.selected_language
+            )
             url_seeding, crawl_results = await _select_and_crawl(
                 crawler,
                 settings=settings,
                 base_url=base_url,
                 base_result=base_result,
                 markdown_dir=settings.markdown_dir,
+                preferred_languages=preferred_languages,
             )
             crawled_urls = {result.url for result in crawl_results if result.success}
             remaining = settings.max_pages - len(crawled_urls)
@@ -306,6 +314,7 @@ async def _discover_and_crawl(
                         base_url=base_url,
                         max_new_pages=remaining,
                         already_crawled=crawled_urls,
+                        preferred_languages=preferred_languages,
                     )
                 )
             return language_discovery, url_seeding, crawl_results
@@ -474,6 +483,7 @@ async def _select_and_crawl(
     base_url: str,
     base_result: CrawlResult | None,
     markdown_dir: Path,
+    preferred_languages: Collection[str] = DEFAULT_PREFERRED_LANGUAGES,
 ) -> tuple[UrlSeeding, list[CrawlResult]]:
     """Pick pages from the URL inventory and render them in up to two waves.
 
@@ -515,6 +525,7 @@ async def _select_and_crawl(
         limit=first_limit,
         fetch_heads=fetch_heads,
         base_page_links=base_links,
+        preferred_languages=preferred_languages,
     )
     _log_selection("wave 1", first_wave)
     results = await _crawl_seeded_pages(
@@ -547,6 +558,7 @@ async def _select_and_crawl(
             fetch_heads=fetch_heads,
             base_page_links=base_links,
             exclude_urls=attempted,
+            preferred_languages=preferred_languages,
         )
         head_checked += second_wave.head_checked_urls
         final_wave = second_wave
@@ -602,6 +614,18 @@ async def _select_and_crawl(
         ),
         results,
     )
+
+
+def _preferred_languages(selected_language: str | None) -> frozenset[str]:
+    """English plus the selected site's own language, as primary subtags."""
+    preferred = {"en"}
+    if selected_language:
+        primary = (
+            selected_language.strip().replace("_", "-").casefold().split("-", 1)[0]
+        )
+        if primary:
+            preferred.add(primary)
+    return frozenset(preferred)
 
 
 def _log_selection(label: str, selection: SelectionResult) -> None:
@@ -668,6 +692,7 @@ async def _stream_discovery(
     base_url: str,
     max_new_pages: int,
     already_crawled: set[str],
+    preferred_languages: Collection[str] = DEFAULT_PREFERRED_LANGUAGES,
 ) -> list[CrawlResult]:
     """Fill the remaining page budget by following links from the base URL."""
     strategy = _discovery_strategy(
@@ -675,6 +700,7 @@ async def _stream_discovery(
         base_url=base_url,
         max_new_pages=max_new_pages,
         already_crawled=already_crawled,
+        preferred_languages=preferred_languages,
     )
     run_config = _base_run_config(settings, stream=True)
     run_config.deep_crawl_strategy = strategy
@@ -706,6 +732,7 @@ def _discovery_strategy(
     base_url: str,
     max_new_pages: int,
     already_crawled: set[str],
+    preferred_languages: Collection[str] = DEFAULT_PREFERRED_LANGUAGES,
 ) -> BestFirstCrawlingStrategy | BFSDeepCrawlStrategy:
     # Crawl4AI counts the start page and checks its limit before yielding the
     # page that reaches it; the result counter in _collect_bfs_results enforces
@@ -721,9 +748,18 @@ def _discovery_strategy(
     return BestFirstCrawlingStrategy(
         max_depth=settings.max_depth,
         filter_chain=FilterChain(
-            [SelectionFilter(base_url=base_url, exclude_urls=already_crawled)]
+            [
+                SelectionFilter(
+                    base_url=base_url,
+                    exclude_urls=already_crawled,
+                    preferred_languages=preferred_languages,
+                )
+            ]
         ),
-        url_scorer=SelectionScorer(base_url=base_url),
+        url_scorer=SelectionScorer(
+            base_url=base_url,
+            preferred_languages=preferred_languages,
+        ),
         include_external=settings.include_external,
         max_pages=strategy_budget,
     )

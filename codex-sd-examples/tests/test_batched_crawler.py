@@ -17,6 +17,7 @@ from ex3.crawler import (
     _collect_bfs_results,
     _crawl_seeded_pages,
     _internal_links,
+    _preferred_languages,
     _run_turn_with_timeout,
     _select_and_crawl,
     _validate_batch_output,
@@ -197,6 +198,14 @@ class BfsCollectionTest(unittest.IsolatedAsyncioTestCase):
             [result.url for result in results],
             ["https://example.com/", "https://example.com/2", "https://example.com/3"],
         )
+
+
+class PreferredLanguagesTest(unittest.TestCase):
+    def test_always_prefers_english_plus_the_selected_site_language(self) -> None:
+        self.assertEqual(_preferred_languages(None), frozenset({"en"}))
+        self.assertEqual(_preferred_languages("en-GB"), frozenset({"en"}))
+        self.assertEqual(_preferred_languages("sv-SE"), frozenset({"en", "sv"}))
+        self.assertEqual(_preferred_languages(" NB "), frozenset({"en", "nb"}))
 
 
 class BasePageLinkHarvestTest(unittest.TestCase):
@@ -459,6 +468,8 @@ class BatchPromptSchemaTest(unittest.TestCase):
         prompt = create_prompt(1, pages=[(page, "# About Example")])
 
         self.assertIn(page.source_url, prompt)
+        self.assertIn("any language", prompt)
+        self.assertIn("in English", prompt)
         self.assertIn("every supplied page has been persisted", prompt)
         self.assertIn("exactly one pages entry", prompt)
         self.assertIn("Do not browse", prompt)

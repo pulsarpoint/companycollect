@@ -15,7 +15,11 @@ import httpx
 from crawl4ai import AsyncUrlSeeder, SeedingConfig
 
 from ex3.models import ScoredUrl, SeedingSource
-from ex3.selection import apply_head_metadata, rank_urls
+from ex3.selection import (
+    DEFAULT_PREFERRED_LANGUAGES,
+    apply_head_metadata,
+    rank_urls,
+)
 from ex3.urls import normalize_start_url, url_key
 
 LOGGER = logging.getLogger(__name__)
@@ -146,6 +150,7 @@ async def select_pages(
     fetch_heads: HeadFetcher,
     base_page_links: Sequence[str] = (),
     exclude_urls: Collection[str] = (),
+    preferred_languages: Collection[str] = DEFAULT_PREFERRED_LANGUAGES,
 ) -> SelectionResult:
     """Rank the inventory, verify a shortlist's heads, and pick the top pages.
 
@@ -164,6 +169,7 @@ async def select_pages(
         candidates,
         base_url=base_url,
         linked_from_base=unique_links,
+        preferred_languages=preferred_languages,
     )
     inventory_urls = len(eligible) + len(excluded)
     if not eligible:
@@ -192,6 +198,7 @@ async def select_pages(
                 language=head.language,
                 title=head.title,
                 description=head.description,
+                preferred_languages=preferred_languages,
             )
         )
 

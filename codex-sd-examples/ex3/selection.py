@@ -16,6 +16,8 @@ from ex3.language import is_english_language
 from ex3.models import ScoredUrl
 from ex3.urls import canonical_domain, normalize_start_url, same_domain_tree, url_key
 
+DEFAULT_PREFERRED_LANGUAGES = frozenset({"en"})
+OTHER_LANGUAGE_PENALTY = 25.0
 HOMEPAGE_SCORE = 60.0
 BASE_LOCALE_BONUS = 8.0
 BASE_LINK_BONUS = 10.0
@@ -458,8 +460,15 @@ def assess_url(
     *,
     base_url: str,
     linked_from_base: Collection[str] = (),
+    preferred_languages: Collection[str] = DEFAULT_PREFERRED_LANGUAGES,
 ) -> ScoredUrl:
-    """Score one URL against the selected base URL without fetching it."""
+    """Score one URL against the selected base URL without fetching it.
+
+    English is best effort, not mandatory: a locale marker outside
+    ``preferred_languages`` (English plus the site's own language) costs
+    :data:`OTHER_LANGUAGE_PENALTY` but never excludes the page, so a Swedish
+    about-us page still wins when the site has no English equivalent.
+    """
     try:
         normalized = normalize_start_url(url)
     except ValueError:
@@ -475,11 +484,9 @@ def assess_url(
     base_segments = [segment for segment in base_parsed.path.split("/") if segment]
 
     exclusion = _exclusion_reason(
-        parsed_hostname=hostname,
         domain=domain,
         base_domain=base_domain,
         segments=segments,
-        query=parsed.query,
     )
     if exclusion is not None:
         return ScoredUrl(url=normalized, score=EXCLUDED_SCORE, exclusion=exclusion)
@@ -501,6 +508,16 @@ def assess_url(
     if any(url_key(link) == key for link in linked_from_base):
         score += BASE_LINK_BONUS
         reasons.append("linked from base page")
+
+    other_locale = _other_locale(
+        parsed_hostname=hostname,
+        segments=segments,
+        query=parsed.query,
+        preferred_languages=preferred_languages,
+    )
+    if other_locale is not None:
+        score -= OTHER_LANGUAGE_PENALTY
+        reasons.append(f"other locale {other_locale!r}")
 
     for category, (weight, keywords) in POSITIVE_CATEGORIES.items():
         factor = _category_factor(segments, keywords)
@@ -538,18 +555,35 @@ def apply_head_metadata(
     language: str | None,
     title: str | None,
     description: str | None,
+    preferred_languages: Collection[str] = DEFAULT_PREFERRED_LANGUAGES,
 ) -> ScoredUrl:
-    """Refine an assessment with fetched ``<head>`` metadata."""
+    """Refine an assessment with fetched ``<head>`` metadata.
+
+    A declared document language outside ``preferred_languages`` costs the
+    same penalty as a locale marker in the URL, applied at most once per page.
+    """
     normalized_language = (language or "").strip() or None
     updated = assessment.model_copy(
         update={"language": normalized_language, "title": title or None}
     )
     if updated.exclusion is not None:
         return updated
-    if normalized_language is not None and not is_english_language(normalized_language):
-        updated.exclusion = f"document language {normalized_language!r}"
-        updated.score = EXCLUDED_SCORE
-        return updated
+    already_penalized = any(
+        reason.startswith("other locale") for reason in updated.reasons
+    )
+    if (
+        normalized_language is not None
+        and not already_penalized
+        and not is_preferred_language(
+            normalized_language,
+            preferred_languages=preferred_languages,
+        )
+    ):
+        updated.score -= OTHER_LANGUAGE_PENALTY
+        updated.reasons = [
+            *updated.reasons,
+            f"document language {normalized_language!r}",
+        ]
 
     title_text = re.sub(r"\s+", " ", (title or "").casefold())
     bonus = 0.0
@@ -573,6 +607,7 @@ def rank_urls(
     *,
     base_url: str,
     linked_from_base: Collection[str] = (),
+    preferred_languages: Collection[str] = DEFAULT_PREFERRED_LANGUAGES,
 ) -> tuple[list[ScoredUrl], list[ScoredUrl]]:
     """Assess unique URLs and split them into ranked eligible and excluded lists."""
     linked_keys = {url_key(link) for link in linked_from_base}
@@ -582,6 +617,7 @@ def rank_urls(
             url,
             base_url=base_url,
             linked_from_base=linked_keys,
+            preferred_languages=preferred_languages,
         )
         assessments.setdefault(assessment.url, assessment)
 
@@ -599,52 +635,65 @@ def rank_urls(
 class SelectionScorer(URLScorer):
     """Crawl4AI scorer that ranks discovered links with :func:`assess_url`."""
 
-    def __init__(self, *, base_url: str) -> None:
+    def __init__(
+        self,
+        *,
+        base_url: str,
+        preferred_languages: Collection[str] = DEFAULT_PREFERRED_LANGUAGES,
+    ) -> None:
         super().__init__(weight=1.0)
         self._base_url = base_url
+        self._preferred_languages = frozenset(preferred_languages)
 
     def _calculate_score(self, url: str) -> float:
-        return assess_url(url, base_url=self._base_url).score
+        return assess_url(
+            url,
+            base_url=self._base_url,
+            preferred_languages=self._preferred_languages,
+        ).score
 
 
 class SelectionFilter(URLFilter):
     """Crawl4AI filter that drops excluded and already crawled URLs."""
 
-    def __init__(self, *, base_url: str, exclude_urls: Iterable[str] = ()) -> None:
+    def __init__(
+        self,
+        *,
+        base_url: str,
+        exclude_urls: Iterable[str] = (),
+        preferred_languages: Collection[str] = DEFAULT_PREFERRED_LANGUAGES,
+    ) -> None:
         super().__init__(name="ex3-selection")
         self._base_url = base_url
         self._excluded_keys = {url_key(url) for url in exclude_urls}
+        self._preferred_languages = frozenset(preferred_languages)
 
     def apply(self, url: str) -> bool:
         if url_key(url) in self._excluded_keys:
             self._update_stats(False)
             return False
-        passed = assess_url(url, base_url=self._base_url).exclusion is None
+        passed = (
+            assess_url(
+                url,
+                base_url=self._base_url,
+                preferred_languages=self._preferred_languages,
+            ).exclusion
+            is None
+        )
         self._update_stats(passed)
         return passed
 
 
 def _exclusion_reason(
     *,
-    parsed_hostname: str,
     domain: str,
     base_domain: str,
     segments: list[str],
-    query: str,
 ) -> str | None:
     if not same_domain_tree(domain, base_domain):
         return f"external domain {domain!r}"
 
-    host_labels = parsed_hostname.casefold().split(".")
-    if len(host_labels) >= 3:
-        subdomain_locale = _locale_segment(host_labels[0])
-        if subdomain_locale is not None and subdomain_locale != "en":
-            return f"locale subdomain {subdomain_locale!r}"
-
     if segments:
-        path_locale = _locale_segment(segments[0])
-        if path_locale is not None and path_locale != "en":
-            return f"locale prefix {path_locale!r}"
         last_segment = segments[-1].casefold()
         extension = (
             last_segment[last_segment.rfind(".") :] if "." in last_segment else ""
@@ -652,13 +701,45 @@ def _exclusion_reason(
         if extension in EXCLUDED_EXTENSIONS:
             return f"file extension {extension!r}"
 
+    return None
+
+
+def _other_locale(
+    *,
+    parsed_hostname: str,
+    segments: list[str],
+    query: str,
+    preferred_languages: Collection[str],
+) -> str | None:
+    """Return the first locale marker that is not a preferred language."""
+    host_labels = parsed_hostname.casefold().split(".")
+    if len(host_labels) >= 3:
+        subdomain_locale = _locale_segment(host_labels[0])
+        if subdomain_locale is not None and subdomain_locale not in preferred_languages:
+            return subdomain_locale
+    if segments:
+        path_locale = _locale_segment(segments[0])
+        if path_locale is not None and path_locale not in preferred_languages:
+            return path_locale
     for key, value in parse_qsl(query, keep_blank_values=True):
         if key.casefold() not in LOCALE_QUERY_KEYS:
             continue
         query_locale = _locale_segment(value.casefold())
-        if query_locale is not None and query_locale != "en":
-            return f"locale query {query_locale!r}"
+        if query_locale is not None and query_locale not in preferred_languages:
+            return query_locale
     return None
+
+
+def is_preferred_language(
+    language: str,
+    *,
+    preferred_languages: Collection[str],
+) -> bool:
+    """Report whether a declared language tag belongs to the preferred set."""
+    if is_english_language(language) and "en" in preferred_languages:
+        return True
+    primary = language.strip().replace("_", "-").casefold().split("-", 1)[0]
+    return primary in preferred_languages
 
 
 def _locale_segment(segment: str) -> str | None:

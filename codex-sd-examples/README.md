@@ -125,13 +125,17 @@ Pages are then chosen before they are rendered:
 2. **Deterministic scoring.** `ex3/selection.py` scores every inventory URL
    without LLM tokens. About, contact/imprint, management, careers, press and
    offering slugs score up; privacy, cookies, terms, login, search, branch
-   locators, pagination and query strings score down. Other-locale prefixes
-   (`/sv/`, `de.` subdomains, `?lang=fi`), binary files and external domains
-   are excluded outright, and URLs under the selected base locale get a bonus.
+   locators, pagination and query strings score down. English is best effort,
+   not mandatory: locale markers outside the preferred languages (`/sv/`,
+   `de.` subdomains, `?lang=fi`) cost a penalty but never exclude a page, so
+   a Swedish about-us page still wins when the site has no English version.
+   Preferred languages are English plus the site's own language when the
+   selected base is not English. Binary files and external domains are
+   excluded outright, and URLs under the selected base locale get a bonus.
 3. **Head check.** For a shortlist (three times the page budget) the seeder
-   fetches only the `<head>`: pages whose `<html lang>` is not English are
-   excluded, and titles or descriptions naming a scored category add a small
-   bonus.
+   fetches only the `<head>`. A declared `<html lang>` outside the preferred
+   languages costs the same penalty (once per page), and titles naming a
+   scored category add a small bonus.
 4. **Two selection waves.** The base URL and the links on the base page
    always join the inventory, because sitemaps often omit the homepage and
    section landing pages. Wave one renders `--seed-share` of the page budget
@@ -164,9 +168,12 @@ selection.
 The analysis command accepts the manifest created above. It validates all
 referenced Markdown files before starting Codex, groups them by page and
 character limits, and writes a consolidated report. It does not launch
-CloakBrowser or Crawl4AI. Pages whose stored `<html lang>` is not English are
-skipped by default and listed under `skipped_pages`; pass `--keep-non-english`
-to extract them anyway. Link discovery below still reads every stored page.
+CloakBrowser or Crawl4AI. Non-English pages are analyzed by default; the
+extraction prompt asks the model to translate summaries and descriptions into
+English while keeping names, values and identifiers verbatim. Pass
+`--skip-non-english` to leave pages whose stored `<html lang>` is not English
+out of extraction; they are then listed under `skipped_pages`, and link
+discovery below still reads them.
 
 Every HTTP(S) link in the complete stored Markdown set is normalized and
 deduplicated into top-level `discovered_urls`; this deterministic discovery does

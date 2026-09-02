@@ -399,6 +399,7 @@ class PhaseCliTest(unittest.TestCase):
         self.assertIn("--discovery", crawl_help.output)
         self.assertIn("--accept-language", crawl_help.output)
         self.assertIn("--keep-non-english", analysis_help.output)
+        self.assertIn("default: keep-non-english", analysis_help.output)
 
 
 def _manifest(
