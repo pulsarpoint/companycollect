@@ -23,6 +23,7 @@ import hashlib
 import json
 import re
 import subprocess
+import uuid
 from datetime import UTC, datetime
 from pathlib import Path
 from types import ModuleType
@@ -37,6 +38,7 @@ from dagster_v3.defs.se_company.fields.candidates.common import (
 from dagster_v3.defs.se_company.fields.candidates import bolagsverket as bolagsverket_candidates
 from dagster_v3.defs.se_company.fields.candidates import domains as domains_candidates
 from dagster_v3.defs.se_company.fields.candidates import esef as esef_candidates
+from dagster_v3.defs.se_company.fields.candidates import llm as llm_candidates
 from dagster_v3.defs.se_company.fields.candidates import ratsit as ratsit_candidates
 from dagster_v3.defs.se_company.fields.candidates import scb as scb_candidates
 from dagster_v3.defs.se_company.fields.candidates import wikidata as wikidata_candidates
@@ -429,6 +431,17 @@ VALUES
      '1971-04-01', 'Bankverksamhet.', 'Banking and financial services.', '64190', '64.19');
 """.strip()
 
+# A THIRD version of HB's SCB artifact, later still -- the text candidate the LLM gate's
+# "newer than every llm row" test needs after a stored llm row has silenced the company.
+CHANGED_SCB_ARTIFACT_AGAIN_SQL = f"""
+INSERT INTO corpscout.se_company_info_scb
+    (company_id, source_record_uid, observed_at, source_run_id, legal_name, legal_form_code, status,
+     incorporation_date, activity_description, activity_description_en, primary_sni_code, primary_nace_code)
+VALUES
+    ('{HB}', 'scb-art-hb', {_literal(datetime(2026, 8, 6, tzinfo=UTC))}, 'fixture-v3', 'Svenska Handelsbanken AB', 'AB-ORGFO', 'active',
+     '1971-04-01', 'Bankverksamhet.', 'Banking, financing and insurance.', '64190', '64.19');
+""".strip()
+
 
 def _late_sections() -> list[str]:
     """Sections appended after the rerun: the SCB change pass, then the LLM scan (Task 9)."""
@@ -439,6 +452,22 @@ def _late_sections() -> list[str]:
                 "SELECT field, value, toString(observed_at), toString(extracted_at) "
                 f"FROM corpscout.se_company_field_candidate FINAL WHERE company_id = '{HB}' "
                 "AND source = 'scb' AND field IN ('description', 'legal_name') ORDER BY field"),
+        # The LLM gate over the candidate table: HB has three text sources, SOLO one.
+        _marked("llm_scope_after_first_pass", _scope_for(llm_candidates, EPOCH)),
+        # A stored llm candidate newer than every text candidate silences HB ...
+        f"INSERT INTO corpscout.se_company_field_candidate "
+        f"(company_id, field, source, source_record_uid, value, value_json, observed_at, extracted_at, extractor_version, source_run_id) "
+        f"VALUES ('{HB}', 'description', 'llm', '{uuid.UUID(int=7)}', 'Handelsbanken is a Nordic bank offering banking operations.', "
+        f"'{{\"compare_key\":\"handelsbanken is a nordic bank offering banking operations.\",\"language\":\"en\"}}', "
+        f"{T_EXTRACT_3}, {T_EXTRACT_3}, 'llm-candidates-v1', '{RUN_ID}');",
+        _marked("llm_scope_after_llm_row", _scope_for(llm_candidates, EPOCH)),
+        # ... until a text candidate is extracted after it: a third artifact version, published at 13:00.
+        CHANGED_SCB_ARTIFACT_AGAIN_SQL, SETTLE,
+        _publish_pass("scb", scb_candidates, _literal(datetime(2026, 9, 1, 13, 0, tzinfo=UTC))),
+        _marked("llm_scope_after_newer_text", _scope_for(llm_candidates, EPOCH)),
+        _marked("llm_context", "SELECT field, source, value FROM ("
+                + _render(llm_candidates.build_context_sql(), {"company_ids": (HB,)})
+                + ") ORDER BY field, source"),
     ]
 
 
@@ -648,3 +677,18 @@ def test_domains_scope_and_rows(sections: dict[str, list[list[str]]]) -> None:
     first = _counts(sections["counts_after_first_pass"])
     assert first["domains"] == 1
     assert _counts(sections["counts_after_rerun"])["domains"] == 1
+
+
+def test_llm_gate_selects_multi_source_companies_with_text_newer_than_their_llm_row(
+    sections: dict[str, list[list[str]]],
+) -> None:
+    assert [row[0] for row in sections["llm_scope_after_first_pass"]] == [HB]   # SOLO: one text source
+    assert sections["llm_scope_after_llm_row"] == []                            # silenced by a newer llm row
+    assert [row[0] for row in sections["llm_scope_after_newer_text"]] == [HB]  # re-armed by newer SCB text
+    context = sections["llm_context"]
+    assert [row[:2] for row in context] == [
+        ["description", "esef"], ["description", "scb"], ["description", "wikidata"],
+        ["description_sv", "scb"], ["legal_name", "bolagsverket"], ["legal_name", "scb"],
+        ["legal_name", "wikidata"], ["primary_nace_code", "ratsit"], ["primary_nace_code", "scb"],
+    ]
+    assert next(row[2] for row in context if row[:2] == ["description", "scb"]) == "Banking, financing and insurance."
