@@ -36,6 +36,7 @@ from dagster_v3.defs.se_company.fields.candidates.common import (
 )
 from dagster_v3.defs.se_company.fields.candidates import bolagsverket as bolagsverket_candidates
 from dagster_v3.defs.se_company.fields.candidates import esef as esef_candidates
+from dagster_v3.defs.se_company.fields.candidates import ratsit as ratsit_candidates
 from dagster_v3.defs.se_company.fields.candidates import scb as scb_candidates
 from dagster_v3.defs.se_company.fields.candidates import wikidata as wikidata_candidates
 from dagster_v3.defs.se_company.fields.tables import SE_COMPANY_FIELD_CANDIDATE_COLUMNS
@@ -148,6 +149,7 @@ EXTRACTORS.append(("scb", scb_candidates))
 EXTRACTORS.append(("bolagsverket", bolagsverket_candidates))
 EXTRACTORS.append(("esef", esef_candidates))
 EXTRACTORS.append(("wikidata", wikidata_candidates))
+EXTRACTORS.append(("ratsit", ratsit_candidates))
 
 
 def _schema_statements() -> list[str]:
@@ -603,3 +605,27 @@ def test_wikidata_scope_and_rows(sections: dict[str, list[list[str]]]) -> None:
     first = _counts(sections["counts_after_first_pass"])
     assert first["wikidata"] == len(HB_WD_ROWS)
     assert _counts(sections["counts_after_rerun"])["wikidata"] == first["wikidata"]
+
+
+HB_RATSIT_ROWS = [
+    ["employee_count", HB_RATSIT_FIN_UID, PERIOD_END_TEXT, "11900",
+     '{"as_of":"2024-12-31","compare_key":"11900","count":11900,"period":"2024"}'],
+    ["industry_label_en", HB_RATSIT_IND_UID, T_RATSIT_TEXT, "Other monetary intermediation", _text("other monetary intermediation")],
+    # 48,000,000 TSEK -> 48,000,000,000.00 SEK; / 10 (EUR->SEK on 2024-12-31, not the older 11
+    # nor the later 9) * 1.25 (EUR->USD) -> 6,000,000,000.00 USD, exact in float64.
+    ["latest_revenue", HB_RATSIT_FIN_UID, PERIOD_END_TEXT, "SEK 48000000000 FY2024",
+     '{"amount":48000000000,"amount_usd":6000000000,"compare_key":"sek:48000000000:2024",'
+     '"currency":"SEK","fiscal_year":2024,"period_end":"2024-12-31"}'],
+    ["primary_nace_code", HB_RATSIT_IND_UID, T_RATSIT_TEXT, "6419", _text("6419")],
+    ["primary_sni_code", HB_RATSIT_IND_UID, T_RATSIT_TEXT, "64190", _text("64190")],
+]
+
+
+def test_ratsit_scope_and_rows(sections: dict[str, list[list[str]]]) -> None:
+    assert [row[0] for row in sections["ratsit_scope_all"]] == [HB]
+    assert [row[0] for row in sections["ratsit_scope_since"]] == [HB]
+    assert sections["ratsit_hb"] == HB_RATSIT_ROWS
+    assert sections["ratsit_solo"] == []
+    first = _counts(sections["counts_after_first_pass"])
+    assert first["ratsit"] == len(HB_RATSIT_ROWS)
+    assert _counts(sections["counts_after_rerun"])["ratsit"] == first["ratsit"]
