@@ -88,11 +88,16 @@ def publish_with_stage(
     """Stage -> validate -> insert -> drop stage; shrink-guard the published table.
 
     When ``new_versions_only`` is True the final copy is a left-anti-join on
-    ``(company_id, source_record_uid, evidence_hash)`` against the target, so
-    a version of a row already published with the same evidence is never
-    re-inserted. The stage is created with ``CREATE TABLE stage AS target``,
-    so the target's MATERIALIZED ``evidence_hash`` is computed on the stage
-    by ClickHouse itself -- it is never re-expressed in Python.
+    ``anti_join_columns`` against the target -- by default
+    ``(company_id, source_record_uid, evidence_hash)``, the artifact tables' identity;
+    the candidate table passes its own five-column identity -- so a version of a row
+    already published with the same evidence is never re-inserted. The join's right
+    side reads only the staged companies' published rows, not the whole target:
+    every caller's ``anti_join_columns`` start with company_id, and a page of a few
+    thousand rows must not scan a table of millions. The stage is created with
+    ``CREATE TABLE stage AS target``, so the target's MATERIALIZED ``evidence_hash``
+    is computed on the stage by ClickHouse itself -- it is never re-expressed in
+    Python.
 
     ``client`` is an already-open driver client to run every statement on,
     for a caller that holds one connection across many publishes (the field
