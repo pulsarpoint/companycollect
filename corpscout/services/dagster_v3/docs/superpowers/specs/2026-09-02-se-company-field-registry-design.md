@@ -91,10 +91,10 @@ them above the candidates list.
 
 | Group | Field | Type | Sources in precedence order (reviewer decisions always first) |
 | --- | --- | --- | --- |
-| identity | legal_name | text | bolagsverket, scb, wikidata |
-| identity | legal_form_code | code | bolagsverket, scb |
-| identity | status | code | bolagsverket, scb |
-| identity | incorporation_date | date | bolagsverket, scb, wikidata |
+| identity | legal_name | text | scb, bolagsverket, wikidata |
+| identity | legal_form_code | code | scb, bolagsverket |
+| identity | status | code | scb, bolagsverket |
+| identity | incorporation_date | date | scb, bolagsverket, wikidata |
 | activity | description | text | llm, esef, wikidata, scb |
 | activity | description_sv | text | llm, scb |
 | activity | primary_sni_code | code | scb, ratsit |
@@ -106,6 +106,11 @@ them above the candidates list.
 
 `latest_revenue_fiscal_year` and the employee as-of period are members of the JSON value, not
 separate fields; the wide projection extracts them into their own columns.
+
+Identity fields list `scb` first because the SCB artifact carries the register values the old
+publisher copied verbatim, so the cutover parity check (section 12) compares like with like.
+Putting Bolagsverket first afterwards is a one-line reorder followed by a re-resolve of those
+fields.
 
 With precedence alone, latest revenue from a rank-1 source wins even when a lower-ranked source
 has a newer fiscal year. The ranks above are the initial choice; a policy override exists if it
