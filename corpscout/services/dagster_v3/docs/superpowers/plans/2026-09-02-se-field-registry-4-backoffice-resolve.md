@@ -14,7 +14,7 @@
 
 - All paths below are relative to `corpscout/services/backoffice` unless they start with `corpscout/`. Run tests from that directory: `npx vitest run <file>`; `npm run typecheck` must be clean before every commit.
 - TypeScript strict; `~/` import alias; shadcn/base-ui components only (`~/components/ui/*`); loaders read, actions write; a route module exports only `loader`, `action`, `meta` and the component (anything else that touches a `.server` module breaks the client bundle).
-- ClickHouse 26.5 named-parameter syntax `{name:Type}` (`{field:String}`, `{company_ids:Array(String)}`, `{source_run_id:String}`, `{resolved_at:DateTime64(3)}`); user values are bound as `query_params`, never interpolated. Inserts of rows use JSONEachRow through the existing `chInsert*` helpers; `INSERT ... SELECT` statements run through the new `chCommand`.
+- ClickHouse 26.5 named-parameter syntax `{name:Type}` (`{field:String}`, `{company_ids:Array(String)}`, `{source_run_id:String}`, `{resolved_at:DateTime64(3, 'UTC')}`); user values are bound as `query_params`, never interpolated. Inserts of rows use JSONEachRow through the existing `chInsert*` helpers; `INSERT ... SELECT` statements run through the new `chCommand`.
 - DateTime64 text format everywhere a timestamp is bound or inserted: `YYYY-MM-DD HH:MM:SS.mmm` in UTC (the driver would render a JS `Date` as epoch seconds, which is NOT this form, so timestamps are formatted as strings before binding).
 - The read client sends `readonly=2` and cannot run `INSERT ... SELECT`; every write goes through `getWriteClient()` in `app/lib/clickhouse.server.ts` — the same account as the reads (owner decision 2026-08-23: one credential set), which holds the `corpscout_person_correction_writer` role with INSERT on `se_company_info_field_value`, `se_company_field`, `se_company_field_candidate` and `se_company_info` (granted by parts 1–3).
 - Table and column names exactly as the spec: `corpscout.se_company_field_registry` (columns `datatype, country, field, value_type, display_group, structured, python_only, sources, policy_name, policy_version, resolve_sql, registry_version, version`), `corpscout.se_company_field` (spec 8.1), `corpscout.se_company_field_candidate` (spec 5.1), `corpscout.se_company_info_field_value` (unchanged shape).
@@ -209,7 +209,7 @@ export function registryEntry(
     pythonOnly: false,
     policyName: "source_precedence",
     policyVersion: "source_precedence-v1",
-    resolveSql: `INSERT INTO corpscout.se_company_field /* ${over.field} */ SELECT {field:String}, {company_ids:Array(String)}, {source_run_id:String}, {resolved_at:DateTime64(3)}`,
+    resolveSql: `INSERT INTO corpscout.se_company_field /* ${over.field} */ SELECT {field:String}, {company_ids:Array(String)}, {source_run_id:String}, {resolved_at:DateTime64(3, 'UTC')}`,
     registryVersion: REGISTRY_VERSION,
     ...over,
   };
@@ -484,7 +484,7 @@ export interface FieldRegistryEntry {
   policyName: string;
   policyVersion: string;
   /** INSERT INTO corpscout.se_company_field ... SELECT, binding {field:String},
-   * {company_ids:Array(String)}, {source_run_id:String}, {resolved_at:DateTime64(3)}. */
+   * {company_ids:Array(String)}, {source_run_id:String}, {resolved_at:DateTime64(3, 'UTC')}. */
   resolveSql: string;
   registryVersion: string;
 }

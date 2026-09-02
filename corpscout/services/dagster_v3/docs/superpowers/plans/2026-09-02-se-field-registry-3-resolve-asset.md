@@ -15,7 +15,7 @@
 - Python 3.14 + uv. Every command runs from `corpscout/services/dagster_v3`: `uv run --frozen --no-sync pytest <file> -q -p no:warnings`. Any test that loads `dagster_v3.definitions` (and `uv run --frozen --no-sync dg check defs`) needs `WEBTECH_API_URL=http://localhost:1 WEBTECH_S3_PATH=s3://bucket/prefix` in the environment.
 - Dagster assets, jobs, sensors, schedules and checks are autoloaded from `src/dagster_v3/defs/` through each module's `defs = dg.Definitions(...)`; no `definitions.py` edit. No `from __future__ import annotations` in a module that defines a `@dg.asset` / `@dg.asset_check`.
 - ClickHouse 26.5. `FINAL` only on ReplacingMergeTree tables. Every `LEFT JOIN` miss is read through `ifNull` so the SQL answers identically under `join_use_nulls = 0` and `1`.
-- **Parameter binding.** The registry statements use server-side named parameters (`{field:String}`, `{company_ids:Array(String)}`, `{source_run_id:String}`, `{resolved_at:DateTime64(3)}`). clickhouse-driver forwards those over the native protocol only from a `Client` created with `settings={"server_side_params": True}` -- it is a client-level setting (popped at construction; `substitute_params` consults `client_settings`), there is no per-`execute()` toggle, and `param_*` entries in `execute(settings=...)` are NOT parameters (`Code: 456 Substitution not set`). So the resolve asset opens its own client from the resource's fields (`open_resolve_client`) and passes a params dict. Two driver quirks, verified 2026-09-02 against `clickhouse/clickhouse-server:26.5` with the pinned driver: (1) a Python `list` is double-quoted on the wire (`Code: 27`), and a pre-rendered `str` is double-escaped (`Code: 26`) -- the driver's `escape_param(for_server=True)` escapes str values twice and quotes non-str values' `str()` without escaping. Hence `ServerSideLiteral`: a non-str wrapper whose `__str__` returns the array literal escaped exactly once (works for elements with quotes, backslashes and newlines, empty arrays and 20,000-element arrays). (2) a `datetime` goes through `escape_datetime` (server-timezone conversion, seconds precision), so `resolved_at` is passed as its millisecond text `YYYY-MM-DD HH:MM:SS.mmm`. Plain `str` and `int` values pass through unchanged. `execute(sql)`, `execute(sql, None)` and `execute(sql, {})` all work on such a client, `%` inside a statement is left alone, and per-call `settings=` are still honoured. The backoffice side (clickhouse-js over HTTP) is unaffected.
+- **Parameter binding.** The registry statements use server-side named parameters (`{field:String}`, `{company_ids:Array(String)}`, `{source_run_id:String}`, `{resolved_at:DateTime64(3, 'UTC')}`). clickhouse-driver forwards those over the native protocol only from a `Client` created with `settings={"server_side_params": True}` -- it is a client-level setting (popped at construction; `substitute_params` consults `client_settings`), there is no per-`execute()` toggle, and `param_*` entries in `execute(settings=...)` are NOT parameters (`Code: 456 Substitution not set`). So the resolve asset opens its own client from the resource's fields (`open_resolve_client`) and passes a params dict. Two driver quirks, verified 2026-09-02 against `clickhouse/clickhouse-server:26.5` with the pinned driver: (1) a Python `list` is double-quoted on the wire (`Code: 27`), and a pre-rendered `str` is double-escaped (`Code: 26`) -- the driver's `escape_param(for_server=True)` escapes str values twice and quotes non-str values' `str()` without escaping. Hence `ServerSideLiteral`: a non-str wrapper whose `__str__` returns the array literal escaped exactly once (works for elements with quotes, backslashes and newlines, empty arrays and 20,000-element arrays). (2) a `datetime` goes through `escape_datetime` (server-timezone conversion, seconds precision), so `resolved_at` is passed as its millisecond text `YYYY-MM-DD HH:MM:SS.mmm`. Plain `str` and `int` values pass through unchanged. `execute(sql)`, `execute(sql, None)` and `execute(sql, {})` all work on such a client, `%` inside a statement is left alone, and per-call `settings=` are still honoured. The backoffice side (clickhouse-js over HTTP) is unaffected.
 - Heavy runs (`resolve_all`, the cutover rebuild, the parity check against 3.5M rows, the serving-view rebuild) execute on the prod Dagster / ClickHouse hosts, never locally; local runs are the FakeClient tests and the clickhouse-local harness.
 - `corpscout.se_company_info` keeps its name, engine (`ReplacingMergeTree(resolved_at) ORDER BY (company_id)`) and every column; plan 1's additive migration adds the eight new columns from spec 8.3.
 - Names are fixed by the spec and the coordinator: asset `se_company_field_resolved_clickhouse` (group `se_company_fields`); jobs `se_company_fields_job` (the weekly chain) and `se_company_field_resolve_job` (the resolve asset alone, used by the sensors and the backoffice launch); sensor `se_company_info_field_value_sensor` (name unchanged: the backoffice's `dagster.server.ts:55` names it); sensor `se_company_field_candidate_sensor`; schedule `se_company_fields_weekly` at `50 6 * * 1` UTC (the slot `se_company_info_weekly` leaves; `tests/test_schedule_cron_contracts.py` forbids sharing a `(minute, hour)` pair); check `se_company_field_parity_check`.
@@ -32,11 +32,11 @@
 
 | Name | Module | Used for |
 | --- | --- | --- |
-| `SE_COMPANY_FIELD_REGISTRY`, `SE_COMPANY_FIELD_CANDIDATE`, `SE_COMPANY_FIELD`, `SE_COMPANY_INFO` (bare table names, e.g. `"se_company_field"`) | `dagster_v3.defs.se_company.fields.tables` | every statement this plan renders |
+| `SE_COMPANY_FIELD_REGISTRY`, `SE_COMPANY_FIELD_CANDIDATE`, `SE_COMPANY_FIELD`, `SE_COMPANY_INFO` (qualified table names, e.g. `SE_COMPANY_FIELD == "corpscout.se_company_field"`) | `dagster_v3.defs.se_company.fields.tables` | every statement this plan renders |
 | `SE_COMPANY_FIELD_COLUMNS`, `SE_COMPANY_FIELD_CANDIDATE_COLUMNS` | `fields.tables` | harness read-backs |
 | `INFO_REGISTRY` (a `DatatypeRegistry` with `.datatype == "info"`, `.country == "SE"`, `.version == "se-info-v1"`, `.fields: tuple[FieldSpec, ...]`), `FieldSpec`, `DatatypeRegistry`, `field_names(registry) -> tuple[str, ...]` (registry order), `field_by_name(registry, name) -> FieldSpec` | `fields.registry` | field order, datatype/country, version guard |
 | `policy_for(field: FieldSpec) -> FieldPolicy` with `.name`, `.version` | `fields.policies` | harness seeds the registry rows |
-| `render_resolve_sql(registry, field: FieldSpec) -> str` (params `{field:String}`, `{company_ids:Array(String)}`, `{source_run_id:String}`, `{resolved_at:DateTime64(3)}`; an `INSERT INTO corpscout.se_company_field ...`), `render_projection_sql(registry) -> str` (param `{company_ids:Array(String)}`; an `INSERT INTO corpscout.se_company_info (<columns>) ...`) | `fields.sql` | harness seeds the registry rows; a header-shape test. The asset itself reads the statements from the registry table (plan 1's decision CTE fix -- `argMax((value, source, ...), ...)` -- therefore needs nothing here) |
+| `render_resolve_sql(registry, field: FieldSpec) -> str` (params `{field:String}`, `{company_ids:Array(String)}`, `{source_run_id:String}`, `{resolved_at:DateTime64(3, 'UTC')}`; an `INSERT INTO corpscout.se_company_field ...`), `render_projection_sql(registry) -> str` (param `{company_ids:Array(String)}`; an `INSERT INTO corpscout.se_company_info (<columns>) ...`) | `fields.sql` | harness seeds the registry rows; a header-shape test. The asset itself reads the statements from the registry table (plan 1's decision CTE fix -- `argMax((value, source, ...), ...)` -- therefore needs nothing here) |
 | `corpscout.se_company_field_registry` rows per spec 4.3, one row per field plus the `field = '*'` projection row; consumers read `argMax(..., version)` | migration (plan 1) | `load_registry_statements`, the scan's `versions` CTE |
 | `corpscout.se_company_field_candidate` (spec 5.1), `corpscout.se_company_field` (spec 8.1), `corpscout.se_company_info_field_value` (000371, CHECKs widened by plan 1), the eight new `se_company_info` columns | migrations (plan 1) | scan, resolve, projection, serving view |
 | assets `se_company_field_registry_clickhouse`, `se_company_field_candidates_{scb,bolagsverket,esef,wikidata,ratsit,domains,llm}` | plans 1 and 2 | deps and the weekly job |
@@ -391,7 +391,7 @@ def _registry_rows(version: str = INFO_REGISTRY.version, *, drop: str = "") -> l
     statements name their field in the SQL text so a test can read the order back."""
     rows = [(name, f"INSERT INTO corpscout.se_company_field SELECT '{name}' AS field, "
                    "arrayJoin({company_ids:Array(String)}) AS company_id, {field:String} AS f, "
-                   "{source_run_id:String} AS source_run_id, {resolved_at:DateTime64(3)} AS resolved_at",
+                   "{source_run_id:String} AS source_run_id, {resolved_at:DateTime64(3, 'UTC')} AS resolved_at",
              "source_precedence-v1", version)
             for name in field_names(INFO_REGISTRY) if name != drop]
     rows.append((PROJECTION_FIELD, PROJECTION_STATEMENT, "", version))
@@ -656,7 +656,7 @@ def build_registry_statements_sql(registry: DatatypeRegistry) -> str:
     argMax(resolve_sql, version) AS resolve_sql,
     argMax(policy_version, version) AS policy_version,
     argMax(registry_version, version) AS registry_version
-FROM {DATABASE}.{SE_COMPANY_FIELD_REGISTRY}
+FROM {SE_COMPANY_FIELD_REGISTRY}
 WHERE datatype = '{registry.datatype}' AND country = '{registry.country}'
 GROUP BY field
 ORDER BY field"""
@@ -733,14 +733,14 @@ def build_changed_companies_sql(registry: DatatypeRegistry) -> str:
     SELECT field,
         argMax(registry_version, version) AS registry_version,
         argMax(policy_version, version) AS policy_version
-    FROM {DATABASE}.{SE_COMPANY_FIELD_REGISTRY}
+    FROM {SE_COMPANY_FIELD_REGISTRY}
     WHERE datatype = '{registry.datatype}' AND country = '{registry.country}' AND field != '{PROJECTION_FIELD}'
     GROUP BY field
 ),
 candidates AS (
     SELECT company_id, max(extracted_at) AS latest_extracted_at,
         countIf(field = '{REGISTER_NAME_FIELD}' AND source IN ({register_sources})) > 0 AS has_register_name
-    FROM {DATABASE}.{SE_COMPANY_FIELD_CANDIDATE}
+    FROM {SE_COMPANY_FIELD_CANDIDATE}
     WHERE {SCOPE_SQL}
     GROUP BY company_id
 ),
@@ -752,14 +752,14 @@ ledger AS (
 ),
 published AS (
     SELECT final.company_id AS company_id, final.resolved_at AS resolved_at
-    FROM {DATABASE}.{SE_COMPANY_INFO} AS final FINAL
+    FROM {SE_COMPANY_INFO} AS final FINAL
     WHERE {FINAL_SCOPE_SQL}
 ),
 versions AS (
     SELECT resolved.company_id AS company_id,
         toUInt8(countIf(resolved.registry_version != current_registry.registry_version
                         OR resolved.policy_version != current_registry.policy_version) > 0) AS version_changed
-    FROM {DATABASE}.{SE_COMPANY_FIELD} AS resolved FINAL
+    FROM {SE_COMPANY_FIELD} AS resolved FINAL
     INNER JOIN current_registry ON current_registry.field = resolved.field
     WHERE {RESOLVED_SCOPE_SQL}
     GROUP BY resolved.company_id
@@ -788,7 +788,7 @@ def build_batch_stats_sql() -> str:
     a company is resolved once per run, so this run's rows are unique per (company,
     field) already."""
     return f"""SELECT field, source, toUInt8(decision_id IS NOT NULL) AS from_decision, count() AS rows
-FROM {DATABASE}.{SE_COMPANY_FIELD}
+FROM {SE_COMPANY_FIELD}
 WHERE source_run_id = {{source_run_id:String}} AND company_id IN {{company_ids:Array(String)}}
 GROUP BY field, source, from_decision
 ORDER BY field, source, from_decision"""
@@ -880,7 +880,7 @@ def test_a_batch_runs_every_field_statement_in_registry_order_then_the_projectio
     assert [re.search(r"SELECT '([a-z_]+)' AS field", sql).group(1) for sql, _ in inserts] == list(field_names(INFO_REGISTRY))
     for name, (sql, params) in zip(field_names(INFO_REGISTRY), inserts, strict=True):
         # The statement text reaches the server untouched; the values travel beside it.
-        assert "{company_ids:Array(String)}" in sql and "{resolved_at:DateTime64(3)}" in sql
+        assert "{company_ids:Array(String)}" in sql and "{resolved_at:DateTime64(3, 'UTC')}" in sql
         assert params == {"company_ids": IDS, "field": name, "source_run_id": "run", "resolved_at": RESOLVED_AT}
     # All fields, THEN the projection through the stage, THEN the counts.
     stage = next(i for i, sql in enumerate(statements) if sql.startswith("CREATE TABLE `corpscout`.`_tmp_se_company_info_"))
@@ -1108,8 +1108,8 @@ def _resolve_batch(client: Any, statements: RegistryStatements, companies: Seque
         client.execute(statements.resolve_sql[name], server_params(
             company_ids=companies, field=name, source_run_id=source_run_id, resolved_at=resolved_at))
     header = split_insert_header(statements.projection_sql)
-    if header.table != f"{DATABASE}.{SE_COMPANY_INFO}":
-        raise ValueError(f"The projection statement targets {header.table}, not {DATABASE}.{SE_COMPANY_INFO}")
+    if header.table != SE_COMPANY_INFO:
+        raise ValueError(f"The projection statement targets {header.table}, not {SE_COMPANY_INFO}")
     # new_versions_only stays off: the wide table is keyed by company_id and a new
     # version per resolution is the point -- ReplacingMergeTree(resolved_at) keeps the newest.
     counts = publish_with_stage(
@@ -1189,7 +1189,7 @@ def materialize_se_company_fields(context: Any, client: Any, config: SECompanyFi
     deps=[dg.AssetKey(REGISTRY_ASSET), *(dg.AssetKey(name) for name in CANDIDATE_ASSETS)],
     group_name=GROUP_NAME,
     kinds={"clickhouse", "python"},
-    metadata={"table": f"{DATABASE}.{SE_COMPANY_FIELD}", "wide_table": f"{DATABASE}.{SE_COMPANY_INFO}"},
+    metadata={"table": SE_COMPANY_FIELD, "wide_table": SE_COMPANY_INFO},
     description=("Resolves one value per company and registry field from the candidates and the reviewer "
                  "decisions with the exported resolve statements, then re-pivots se_company_info. A UI "
                  "materialization without execute=true is a preview that writes nothing."),
@@ -1199,13 +1199,16 @@ def se_company_field_resolved_clickhouse(context: dg.AssetExecutionContext, conf
     """changed companies -> per-field resolve statements -> wide projection -> counts."""
     # The table check binds its own %(name)s parameters client-side, so it runs on the
     # resource's ordinary connection, BEFORE the server-side client is opened.
+    # assert_clickhouse_tables_exist matches system.tables.name (bare), so the qualified
+    # constants are split back to their bare table name for this one call.
     assert_clickhouse_tables_exist(clickhouse, database=DATABASE, tables=(
-        SE_COMPANY_FIELD_REGISTRY, SE_COMPANY_FIELD_CANDIDATE, SE_COMPANY_FIELD, SE_COMPANY_INFO,
-        SE_COMPANY_INFO_FIELD_VALUE))
+        SE_COMPANY_FIELD_REGISTRY.split(".")[-1], SE_COMPANY_FIELD_CANDIDATE.split(".")[-1],
+        SE_COMPANY_FIELD.split(".")[-1], SE_COMPANY_INFO.split(".")[-1],
+        SE_COMPANY_INFO_FIELD_VALUE.split(".")[-1]))
     with open_resolve_client(clickhouse) as client:
         summary = materialize_se_company_fields(context, client, config, registry=INFO_REGISTRY,
                                                 now=datetime.now(UTC))
-    return dg.MaterializeResult(metadata={**summary.metadata(), "table": f"{DATABASE}.{SE_COMPANY_FIELD}"})
+    return dg.MaterializeResult(metadata={**summary.metadata(), "table": SE_COMPANY_FIELD})
 
 
 defs = dg.Definitions(assets=[se_company_field_resolved_clickhouse])
@@ -1481,7 +1484,7 @@ ENGINE = MergeTree ORDER BY company_id AS
 SELECT company_id, legal_name, legal_form_code, status, incorporation_date,
     description, description_sv, llm_enhanced, description_source_count, suggestion_id, correction_ids,
     primary_sni_code, primary_nace_code, resolved_at AS snapshot_resolved_at
-FROM {DATABASE}.{SE_COMPANY_INFO} FINAL"""
+FROM {SE_COMPANY_INFO} FINAL"""
 
 
 def build_parity_sql() -> str:
@@ -1499,7 +1502,7 @@ def build_parity_sql() -> str:
 rebuilt AS (
     SELECT company_id, legal_name, legal_form_code, status, incorporation_date, description, description_sv,
         primary_sni_code, primary_nace_code
-    FROM {DATABASE}.{SE_COMPANY_INFO} FINAL
+    FROM {SE_COMPANY_INFO} FINAL
 )
 SELECT count() AS companies_compared,
     countIf(NOT ({PRESENT})) AS missing_after_rebuild,
@@ -1512,7 +1515,7 @@ LEFT JOIN observation ON observation.suggestion_id = old.suggestion_id"""
 
 def build_rows_per_field_source_sql() -> str:
     return f"""SELECT field, source, count() AS rows
-FROM {DATABASE}.{SE_COMPANY_FIELD} FINAL
+FROM {SE_COMPANY_FIELD} FINAL
 GROUP BY field, source
 ORDER BY field, source"""
 
@@ -1880,15 +1883,18 @@ def candidate_sensor(
         required_resource_keys={"clickhouse"},
     )
     def _sensor(context: dg.SensorEvaluationContext) -> dg.SensorResult | dg.SkipReason:
+        # ``table`` (e.g. SE_COMPANY_FIELD_CANDIDATE) is database-qualified; the SQL
+        # builders below expect a bare name and prefix it with DATABASE themselves.
+        bare_table = table.split(".")[-1]
         with context.resources.clickhouse.get_connection() as client:
-            count, latest = client.execute(build_candidate_cursor_sql(table))[0]
+            count, latest = client.execute(build_candidate_cursor_sql(bare_table))[0]
             if int(count) == 0:
                 return dg.SkipReason(f"No rows in {table}")
             cursor = f"{int(count)}:{latest}"
             if cursor == context.cursor:
                 return dg.SkipReason(f"No new rows in {table}")
             since = context.cursor.split(":", 1)[1] if context.cursor else EPOCH
-            rows = client.execute(build_candidate_touched_sql(table),
+            rows = client.execute(build_candidate_touched_sql(bare_table),
                                   {"since": since, "limit": max_scoped_company_ids + 1})
         company_ids = [str(row[0]) for row in rows]
         if not company_ids:

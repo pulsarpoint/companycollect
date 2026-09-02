@@ -501,6 +501,11 @@ Expected: `376	0`. If any step above left `dirty = 1`: stop; do not run `clickho
 - Consumes: main at the commit that contains parts 1–4 and Task 1; `corpscout/services/dagster_v3/.env` (gitignored; `dg` needs it in the worktree); `corpscout/services/dagster_v3/ansible/light_sync.yml` with `inventory.ini` (host `dagster`, user `graovic`).
 - Produces: the prod code location `dagster_v3` serving both `se_company_info_clickhouse` (old) and the `se_company_fields` group (new); every SE info/fields instigator STOPPED.
 
+**Operational notes:**
+- `se_company_field_registry_clickhouse` must be materialized before any resolve run -- plan 3's `load_registry_statements` refuses on a registry version mismatch (Task 4 materializes it first, before the candidates assets or `se_company_field_resolved_clickhouse`).
+- Confirm the prod ClickHouse server/session timezone is UTC: `ssh companycollect "docker exec clickhouse-clickhouse-1 clickhouse-client -q \"SELECT timezone()\""` should answer `UTC`. `resolved_at` now binds as `{resolved_at:DateTime64(3, 'UTC')}` regardless of the session timezone, but this check documents the assumption the fix was written against.
+- The backoffice's resolve-after-decision `INSERT ... SELECT` (spec section 9) needs `SELECT` on seven source tables that the INSERT-only `corpscout_person_correction_writer` role (000373's grant set) does not carry -- it works today only because the backoffice connects to ClickHouse as the Dagster account (2026-08-23 owner decision), not as that writer role. The role alone cannot run the resolve.
+
 - [ ] **Step 1: Pin the names this plan assumes from parts 1–4**
 
 Run:
