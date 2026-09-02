@@ -236,6 +236,7 @@ CLICKHOUSE_LEAVES: tuple[ClickhouseLeaf, ...] = (
     ClickhouseLeaf("se_company_field_candidates_scb", ("se_company_field_candidate",), None),
     ClickhouseLeaf("se_company_field_candidates_bolagsverket", ("se_company_field_candidate",), None),
     ClickhouseLeaf("se_company_field_candidates_esef", ("se_company_field_candidate",), None),
+    ClickhouseLeaf("se_company_field_candidates_wikidata", ("se_company_field_candidate",), None),
     # se_company_address — two per-source artifacts and the merged final, all refreshed by
     # se_company_address_weekly. The weekly schedule is now the freshness source, like the
     # info leaves above.

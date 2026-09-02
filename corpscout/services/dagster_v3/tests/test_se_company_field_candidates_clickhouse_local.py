@@ -37,6 +37,7 @@ from dagster_v3.defs.se_company.fields.candidates.common import (
 from dagster_v3.defs.se_company.fields.candidates import bolagsverket as bolagsverket_candidates
 from dagster_v3.defs.se_company.fields.candidates import esef as esef_candidates
 from dagster_v3.defs.se_company.fields.candidates import scb as scb_candidates
+from dagster_v3.defs.se_company.fields.candidates import wikidata as wikidata_candidates
 from dagster_v3.defs.se_company.fields.tables import SE_COMPANY_FIELD_CANDIDATE_COLUMNS
 from tests.test_se_company_person_clickhouse_local import _clickhouse_local_command, _literal, _render
 
@@ -146,6 +147,7 @@ EXTRACTORS: list[tuple[str, ModuleType]] = []
 EXTRACTORS.append(("scb", scb_candidates))
 EXTRACTORS.append(("bolagsverket", bolagsverket_candidates))
 EXTRACTORS.append(("esef", esef_candidates))
+EXTRACTORS.append(("wikidata", wikidata_candidates))
 
 
 def _schema_statements() -> list[str]:
@@ -579,3 +581,25 @@ def test_esef_scope_and_rows(sections: dict[str, list[list[str]]]) -> None:
     first = _counts(sections["counts_after_first_pass"])
     assert first["esef"] == len(HB_ESEF_ROWS)
     assert _counts(sections["counts_after_rerun"])["esef"] == first["esef"]
+
+
+HB_WD_ROWS = [
+    ["description", HB_WD_UID, T_WD_TEXT, "Swedish bank", _text("swedish bank", language="en")],
+    ["employee_count", HB_WD_UID, T_WD_TEXT, "12500",
+     '{"as_of":"2024-12-31","compare_key":"12500","count":12500,"period":null}'],
+    ["incorporation_date", HB_WD_UID, T_WD_TEXT, "1971-04-01", _text("1971-04-01")],
+    ["industry_label_en", HB_WD_UID, T_WD_TEXT, "banking", _text("banking")],
+    ["legal_name", HB_WD_UID, T_WD_TEXT, "Svenska Handelsbanken AB", _text("svenska handelsbanken ab")],
+    ["website", HB_WD_UID, T_WEB_TEXT, "https://www.handelsbanken.se/",
+     '{"compare_key":"handelsbanken.se","root_domain":"handelsbanken.se"}'],
+]
+
+
+def test_wikidata_scope_and_rows(sections: dict[str, list[list[str]]]) -> None:
+    assert [row[0] for row in sections["wikidata_scope_all"]] == [HB]
+    assert sections["wikidata_scope_since"] == []  # every Wikidata stamp is older than SINCE
+    assert sections["wikidata_hb"] == HB_WD_ROWS
+    assert sections["wikidata_solo"] == []
+    first = _counts(sections["counts_after_first_pass"])
+    assert first["wikidata"] == len(HB_WD_ROWS)
+    assert _counts(sections["counts_after_rerun"])["wikidata"] == first["wikidata"]
