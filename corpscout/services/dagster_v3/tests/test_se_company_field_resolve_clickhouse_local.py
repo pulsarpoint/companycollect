@@ -36,7 +36,12 @@ from dagster_v3.defs.se_company.fields.parity import (
 )
 from dagster_v3.defs.se_company.fields.policies import policy_for
 from dagster_v3.defs.se_company.fields.registry import INFO_REGISTRY, field_by_name, field_names
-from dagster_v3.defs.se_company.fields.resolve import SELECTION_COLUMNS, build_changed_companies_sql
+from dagster_v3.defs.se_company.fields.resolve import (
+    SELECTION_COLUMNS,
+    build_batch_stats_sql,
+    build_changed_companies_sql,
+    build_registry_statements_sql,
+)
 from dagster_v3.defs.se_company.fields.sql import render_projection_sql, render_resolve_sql
 from dagster_v3.defs.se_company.info import INSERT_COLUMNS as OLD_INSERT_COLUMNS
 from tests.se_company_ddl import declared_columns
@@ -375,6 +380,8 @@ def _script(*, join_use_nulls: int) -> str:
     parts.append(_candidates_sql(BETA, BETA_CANDIDATES, T_EXTRACT))
     parts.append(_decision_sql(DECISION_ID, "description_sv", DECISION_SV, T_DECISION))
     parts.append(_registry_rows_sql())
+    # The loader's own SELECT over those rows: the statements the asset then executes.
+    parts.append(_marked("registry_statements", build_registry_statements_sql(INFO_REGISTRY)))
 
     # Nothing published: HB is selected for being new (and, by construction, for its
     # candidates and its decision being newer than the epoch); BETA never is.
@@ -386,6 +393,8 @@ def _script(*, join_use_nulls: int) -> str:
 
     # Pass 1: every field, then the projection -- the rebuild.
     parts.append(_resolve_pass(run_id=RUN_1, resolved_at=T_RESOLVE_1))
+    # The last statement of every batch, on the rows that batch just wrote.
+    parts.append(_marked_bound("batch_stats_1", build_batch_stats_sql(), source_run_id=RUN_1, company_ids=[HB]))
     parts.append(_marked("wide_row_1", WIDE_ROW_SQL))
     parts.append(_marked("resolved_rows_1", RESOLVED_ROWS_SQL))
     parts.append(_marked("parity_1", build_parity_sql()))
@@ -467,6 +476,16 @@ def _scan_rows(sections: dict[str, list[list[str]]], label: str) -> dict[str, tu
     return {row[0]: _flags(row) for row in sections[label]}
 
 
+def test_the_registry_statements_query_returns_one_row_per_field_plus_the_projection(sections) -> None:
+    """load_registry_statements' own SELECT, executed: it is what hands the asset every
+    other statement, and a text pin alone would not catch a column rename on
+    se_company_field_registry. ORDER BY field, so '*' sorts before every field name."""
+    rows = sections["registry_statements"]
+    assert [row[0] for row in rows] == sorted([*field_names(INFO_REGISTRY), "*"])
+    assert all(row[3] == INFO_REGISTRY.version for row in rows), rows
+    assert all(row[1].strip() for row in rows), rows  # every row carries a statement
+
+
 def test_the_scan_selects_only_companies_with_a_register_name_and_names_the_reason(sections) -> None:
     """Reasons in SELECTION_REASONS order: never_published, new_candidates, decision_pending,
     version_changed. They overlap for a never-published company (its epoch resolved_at is
@@ -507,6 +526,17 @@ def test_the_resolved_rows_carry_winner_decision_agreement_and_versions(sections
     for name, row in rows.items():
         assert row[6] == policy_for(field_by_name(INFO_REGISTRY, name)).version, name
         assert row[7] == INFO_REGISTRY.version and row[8] == RUN_1, name
+
+
+def test_the_batch_stats_count_the_rows_this_run_wrote_per_field_source_and_decision(sections) -> None:
+    """_resolve_batch's last statement, executed: a rename on se_company_field would
+    otherwise die here at the first real batch, after the field statements and the
+    projection had already committed. One row per field, the decision flag set only for
+    the reviewer's description_sv (UInt8 or Bool text, as in _flags)."""
+    stats = [(field, source, value in ("1", "true"), int(rows))
+             for field, source, value, rows in sections["batch_stats_1"]]
+    assert stats == sorted([*((field, source, False, 1) for field, source in WINNERS.items()),
+                            ("description_sv", "reviewer", True, 1)])
 
 
 def test_the_wide_row_equals_the_expected_handelsbanken_row(sections) -> None:
