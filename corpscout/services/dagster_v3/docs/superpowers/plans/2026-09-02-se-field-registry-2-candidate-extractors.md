@@ -19,7 +19,7 @@
 - Extractors write only `corpscout.se_company_field_candidate` (and the LLM one also `se_company_info_enrichment_observation`, exactly as today). **Nothing here writes `se_company_info`.** Nothing is ever deleted from the candidate table.
 - Spec 5.2 extractor rules, verbatim: `source_record_uid` is the source's own record uid; `observed_at` is the source observation time (artifact `observed_at`, financial `report_period_end`, domain `last_seen_at`, LLM `created_at`); empty, whitespace-only and placeholder values are never emitted; every asset is scoped by `company_ids` / `max_companies` and by default processes only companies whose source rows changed since the extractor's last run.
 - `primary_nace_code` is published dot-less (`6419`, never `64.19`) from every source, exactly as `se_company_info.primary_nace_code` is published today and as the backoffice label lookup (`nace_categories.normalized_code`, fixed 2026-09-01) expects; its `compare_key` is the same digits. `primary_sni_code` stays the five-digit string.
-- Every `value_json` carries `compare_key`; structured members per field (spec 4.2): `employee_count` -> `count`, `as_of`, `period`; `latest_revenue` -> `amount`, `currency`, `amount_usd`, `fiscal_year`, `period_end`; `description`/`description_sv` -> `language`; bolagsverket `status` -> `conflict`. Amounts are JSON **strings** with two decimals (`"48000000000.00"`), counts and fiscal years JSON integers, dates ISO strings, `conflict` a JSON boolean, absent members `null`; keys sorted. Plan 3's projection reads amounts with `toDecimal128OrNull(JSONExtractString(value_json, 'amount'), 2)`.
+- Every `value_json` carries `compare_key`; structured members per field (spec 4.2): `employee_count` -> `count`, `as_of`, `period`; `latest_revenue` -> `amount`, `currency`, `amount_usd`, `fiscal_year`, `period_end`; `description`/`description_sv` -> `language`; bolagsverket `status` -> `conflict`. `conflict` is a JSON boolean, absent members `null`; keys sorted.
 - `count`, `amount`, `amount_usd`, `fiscal_year` are JSON numbers (never quoted -- the projection uses `toDecimal128OrNull(JSONExtractRaw(...))` / `JSONExtract(..., 'Nullable(UInt64)')` which return NULL for quoted numbers); `compare_key`, `as_of` (ISO date), `currency`, `language`, `period`, `period_end` are JSON strings.
 - Commits: Conventional Commits, stage by explicit path (the tree carries unrelated WIP), and end every message with these two trailer lines:
   `Co-Authored-By: Claude Fable 5.1 <noreply@anthropic.com>`
@@ -236,7 +236,7 @@ def test_financial_sql_helpers_render_the_documented_members() -> None:
     )
     revenue_json = cc.latest_revenue_json_sql(
         amount="amount", currency="currency", amount_usd="amount_usd", fiscal_year="fiscal_year", period_end="period_end")
-    assert revenue_json.startswith("concat('{\"amount\":', toJSONString(toString(amount)), ',\"amount_usd\":', toJSONString(toString(amount_usd)), ',\"compare_key\":', ")
+    assert revenue_json.startswith("concat('{\"amount\":', toString(amount), ',\"amount_usd\":', ifNull(toString(amount_usd), 'null'), ',\"compare_key\":', ")
     assert "toJSONString(concat(lowerUTF8(currency), ':', toString(amount), ':', toString(fiscal_year)))" in revenue_json
     assert revenue_json.endswith(", ',\"fiscal_year\":', toString(fiscal_year), ',\"period_end\":', toJSONString(period_end), '}')")
     ctes = cc.financial_view_ctes_sql("se_financials_esef_current")
@@ -417,8 +417,9 @@ extract, preview or publish.
 
 value_json has two writers -- SQL for the six table extractors, Python for the LLM one -- so
 the conventions live here twice, side by side: compare_key_text / compare_key_text_sql,
-value_json_for / json_object_sql. Keys are sorted in both; amounts are two-decimal strings
-in both; absent members are null in both.
+value_json_for / json_object_sql. Keys are sorted in both; counts, amounts and fiscal years
+are JSON numbers in both (never quoted -- the projection reads them with JSONExtractRaw /
+typed JSONExtract, which return NULL for quoted numbers); absent members are null in both.
 """
 
 import json
@@ -580,11 +581,14 @@ def employee_count_json_sql(*, count: str, as_of: str, period: str) -> str:
 
 def latest_revenue_json_sql(*, amount: str, currency: str, amount_usd: str, fiscal_year: str, period_end: str) -> str:
     """amount: Decimal128(2); amount_usd: Nullable(Decimal128(2)); currency / period_end:
-    String; fiscal_year: integer. Amounts travel as two-decimal JSON strings, never floats."""
+    String; fiscal_year: integer. Amounts travel as JSON NUMBERS with two decimals
+    (toString of a Decimal128(2) renders 48000000000.00), amount_usd as null when unknown --
+    the projection reads them with toDecimal128OrNull(JSONExtractRaw(...)), which returns
+    NULL for a quoted number."""
     return json_object_sql({
         "compare_key": json_string_sql(f"concat(lowerUTF8({currency}), ':', toString({amount}), ':', toString({fiscal_year}))"),
-        "amount": json_string_sql(f"toString({amount})"),
-        "amount_usd": json_string_sql(f"toString({amount_usd})"),
+        "amount": f"toString({amount})",
+        "amount_usd": f"ifNull(toString({amount_usd}), 'null')",
         "currency": json_string_sql(currency),
         "fiscal_year": f"toString({fiscal_year})",
         "period_end": json_string_sql(period_end),
@@ -1897,7 +1901,7 @@ HB_BV_ROWS = [
      '{"as_of":"2024-12-31","compare_key":"11950","count":11950,"period":"2024"}'],
     ["incorporation_date", HB_BV_REG_UID, T_REG_TEXT, "1871-04-01", _text("1871-04-01")],
     ["latest_revenue", HB_BV_FIN_UID, PERIOD_END_TEXT, "SEK 47500000000.00 FY2024",
-     '{"amount":"47500000000.00","amount_usd":"4400000000.00","compare_key":"sek:47500000000.00:2024",'
+     '{"amount":47500000000.00,"amount_usd":4400000000.00,"compare_key":"sek:47500000000.00:2024",'
      '"currency":"SEK","fiscal_year":2024,"period_end":"2024-12-31"}'],
     ["legal_form_code", HB_BV_REG_UID, T_REG_TEXT, "AB-ORGFO", _text("ab-orgfo")],
     ["legal_name", HB_BV_REG_UID, T_REG_TEXT, "Svenska Handelsbanken AB", _text("svenska handelsbanken ab")],
@@ -2131,7 +2135,7 @@ HB_ESEF_ROWS = [
     ["employee_count", HB_ESEF_FIN_UID, PERIOD_END_TEXT, "12000",
      '{"as_of":"2024-12-31","compare_key":"12000","count":12000,"period":"2024"}'],
     ["latest_revenue", HB_ESEF_FIN_UID, PERIOD_END_TEXT, "SEK 48000000000.00 FY2024",
-     '{"amount":"48000000000.00","amount_usd":"4500000000.00","compare_key":"sek:48000000000.00:2024",'
+     '{"amount":48000000000.00,"amount_usd":4500000000.00,"compare_key":"sek:48000000000.00:2024",'
      '"currency":"SEK","fiscal_year":2024,"period_end":"2024-12-31"}'],
 ]
 
@@ -2232,7 +2236,7 @@ def test_asset_is_registered_with_the_artifact_and_the_entity_tables() -> None:
     asset = load_defs().get_repository_def().asset_graph.get(dg.AssetKey("se_company_field_candidates_wikidata"))
     assert asset.parent_keys == {
         dg.AssetKey("se_company_info_wikidata_clickhouse"),
-        dg.AssetKey("wikidata_companies"),
+        dg.AssetKey("wikidata_companies_clickhouse"),
         dg.AssetKey("wikidata_company_websites_clickhouse"),
     }
     assert asset.group_name == "se_company_fields"
@@ -2372,7 +2376,7 @@ EXTRACTOR = CandidateExtractor(
 
 se_company_field_candidates_wikidata = define_candidate_asset(
     EXTRACTOR,
-    deps=("se_company_info_wikidata_clickhouse", "wikidata_companies", "wikidata_company_websites_clickhouse"),
+    deps=("se_company_info_wikidata_clickhouse", "wikidata_companies_clickhouse", "wikidata_company_websites_clickhouse"),
     description=(
         "Wikidata field candidates for Swedish companies: description, official name, inception, "
         "industry label, employee count with its point in time, and the official website. "
@@ -2720,7 +2724,7 @@ HB_RATSIT_ROWS = [
     # 48,000,000 TSEK -> 48,000,000,000.00 SEK; / 10 (EUR->SEK on 2024-12-31, not the older 11
     # nor the later 9) * 1.25 (EUR->USD) -> 6,000,000,000.00 USD, exact in float64.
     ["latest_revenue", HB_RATSIT_FIN_UID, PERIOD_END_TEXT, "SEK 48000000000.00 FY2024",
-     '{"amount":"48000000000.00","amount_usd":"6000000000.00","compare_key":"sek:48000000000.00:2024",'
+     '{"amount":48000000000.00,"amount_usd":6000000000.00,"compare_key":"sek:48000000000.00:2024",'
      '"currency":"SEK","fiscal_year":2024,"period_end":"2024-12-31"}'],
     ["primary_nace_code", HB_RATSIT_IND_UID, T_RATSIT_TEXT, "6419", _text("6419")],
     ["primary_sni_code", HB_RATSIT_IND_UID, T_RATSIT_TEXT, "64190", _text("64190")],
@@ -3253,7 +3257,7 @@ from dagster_v3.defs.se_company.fields.candidates.common import (
     publish_candidates,
     value_json_for,
 )
-from dagster_v3.defs.se_company.fields.registry import field_by_name
+from dagster_v3.defs.se_company.fields.registry import INFO_REGISTRY, field_by_name
 from dagster_v3.defs.se_company.info import (
     OBSERVATION_COLUMNS,
     OBSERVATION_FLUSH_ROWS,
@@ -3338,7 +3342,7 @@ ORDER BY company_id, field, source"""
 
 
 def _ranked(cells: Mapping[tuple[str, str], tuple[str, str]], field: str) -> str:
-    for source in field_by_name(field).sources:
+    for source in field_by_name(INFO_REGISTRY, field).sources:
         hit = cells.get((field, source))
         if hit is not None:
             return hit[1]
