@@ -1031,9 +1031,9 @@ INSERT INTO corpscout.se_company_registry_current
      source_run_id, source_record_id, source_payload_hash, updated_from_raw_at, has_company,
      state_fingerprint, observation_fingerprint, observed_at)
 VALUES
-    ('{HB}', 'scb', 'Svenska Handelsbanken AB', '49', 'active', '1871-04-01',
+    ('{HB}', 'scb', 'Svenska Handelsbanken AB', '49', 'active', '1971-04-01',
      'fixture', 'scb-hb', 'scb-hb-hash', {T_REG}, 1, '{ZERO_HASH}', '{ZERO_HASH}', {T_REG}),
-    ('{HB}', 'bolagsverket', 'Svenska Handelsbanken AB', 'AB-ORGFO', 'active', '1871-04-01',
+    ('{HB}', 'bolagsverket', 'Svenska Handelsbanken AB', 'AB-ORGFO', 'active', '1971-04-01',
      'fixture', 'bv-hb', 'bv-hb-hash', {T_REG}, 1, '{ZERO_HASH}', '{ZERO_HASH}', {T_REG}),
     ('{SOLO}', 'scb', 'Beta AB', '42', 'active', '1998-06-15',
      'fixture', 'scb-solo', 'scb-solo-hash', {T_REG}, 1, '{ZERO_HASH}', '{ZERO_HASH}', {T_REG}),
@@ -1045,7 +1045,7 @@ INSERT INTO corpscout.se_company_info_scb
      incorporation_date, activity_description, activity_description_en, primary_sni_code, primary_nace_code)
 VALUES
     ('{HB}', 'scb-art-hb', {T_ART}, 'fixture', 'Svenska Handelsbanken AB', 'AB-ORGFO', 'active',
-     '1871-04-01', 'Bankverksamhet.', 'Banking operations.', '64190', '64.19'),
+     '1971-04-01', 'Bankverksamhet.', 'Banking operations.', '64190', '64.19'),
     ('{SOLO}', 'scb-art-solo', {T_REG}, 'fixture', 'Beta AB', 'AB-ORGFO', 'active',
      '1998-06-15', 'Handel med datorer.', '', '', '');
 
@@ -1108,7 +1108,7 @@ INSERT INTO corpscout.se_company_info_wikidata
      official_name, company_description, inception_date, industry_label, employee_count)
 VALUES
     ('{HB}', '{HB_WD_UID}', {T_WD}, 'fixture', '{HB_QID}', 'https://www.wikidata.org/wiki/{HB_QID}', 'Handelsbanken',
-     'Svenska Handelsbanken AB', 'Swedish bank', '1871-04-01', 'banking', 12500);
+     'Svenska Handelsbanken AB', 'Swedish bank', '1971-04-01', 'banking', 12500);
 
 INSERT INTO corpscout.wikidata_companies
     (wikidata_id, wikidata_url, name, name_normalized, employee_count, employee_count_point_in_time,
@@ -1586,7 +1586,7 @@ INSERT INTO corpscout.se_company_info_scb
      incorporation_date, activity_description, activity_description_en, primary_sni_code, primary_nace_code)
 VALUES
     ('{HB}', 'scb-art-hb', {T_ART2}, 'fixture-v2', 'Svenska Handelsbanken AB', 'AB-ORGFO', 'active',
-     '1871-04-01', 'Bankverksamhet.', 'Banking and financial services.', '64190', '64.19');
+     '1971-04-01', 'Bankverksamhet.', 'Banking and financial services.', '64190', '64.19');
 """.strip()
 
 
@@ -1611,7 +1611,7 @@ def _text(compare_key: str, **members: str) -> str:
 HB_SCB_ROWS = [
     ["description", "scb-art-hb", T_ART_TEXT, "Banking operations.", _text("banking operations.", language="en")],
     ["description_sv", "scb-art-hb", T_ART_TEXT, "Bankverksamhet.", _text("bankverksamhet.", language="sv")],
-    ["incorporation_date", "scb-art-hb", T_ART_TEXT, "1871-04-01", _text("1871-04-01")],
+    ["incorporation_date", "scb-art-hb", T_ART_TEXT, "1971-04-01", _text("1971-04-01")],
     ["industry_label_en", HB_IND_UID, T_IND_TEXT, "Other monetary intermediation", _text("other monetary intermediation")],
     ["legal_form_code", "scb-art-hb", T_ART_TEXT, "AB-ORGFO", _text("ab-orgfo")],
     ["legal_name", "scb-art-hb", T_ART_TEXT, "Svenska Handelsbanken AB", _text("svenska handelsbanken ab")],
@@ -1889,7 +1889,7 @@ In the harness: `from dagster_v3.defs.se_company.fields.candidates import bolags
 HB_BV_ROWS = [
     ["employee_count", HB_BV_FIN_UID, PERIOD_END_TEXT, "11950",
      '{"as_of":"2024-12-31","compare_key":"11950","count":11950,"period":"2024"}'],
-    ["incorporation_date", HB_BV_REG_UID, T_REG_TEXT, "1871-04-01", _text("1871-04-01")],
+    ["incorporation_date", HB_BV_REG_UID, T_REG_TEXT, "1971-04-01", _text("1971-04-01")],
     ["latest_revenue", HB_BV_FIN_UID, PERIOD_END_TEXT, "SEK 47500000000.00 FY2024",
      '{"amount":47500000000.00,"amount_usd":4400000000.00,"compare_key":"sek:47500000000.00:2024",'
      '"currency":"SEK","fiscal_year":2024,"period_end":"2024-12-31"}'],
@@ -2381,7 +2381,7 @@ HB_WD_ROWS = [
     ["description", HB_WD_UID, T_WD_TEXT, "Swedish bank", _text("swedish bank", language="en")],
     ["employee_count", HB_WD_UID, T_WD_TEXT, "12500",
      '{"as_of":"2024-12-31","compare_key":"12500","count":12500,"period":null}'],
-    ["incorporation_date", HB_WD_UID, T_WD_TEXT, "1871-04-01", _text("1871-04-01")],
+    ["incorporation_date", HB_WD_UID, T_WD_TEXT, "1971-04-01", _text("1971-04-01")],
     ["industry_label_en", HB_WD_UID, T_WD_TEXT, "banking", _text("banking")],
     ["legal_name", HB_WD_UID, T_WD_TEXT, "Svenska Handelsbanken AB", _text("svenska handelsbanken ab")],
     ["website", HB_WD_UID, T_WEB_TEXT, "https://www.handelsbanken.se/",
