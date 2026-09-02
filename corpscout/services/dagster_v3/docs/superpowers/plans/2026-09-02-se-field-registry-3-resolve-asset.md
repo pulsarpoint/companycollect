@@ -799,7 +799,7 @@ ORDER BY field, source, from_decision"""
 - [ ] **Step 4: Run the tests**
 
 Run: `uv run --frozen --no-sync pytest tests/test_se_company_field_resolve.py -q -p no:warnings`
-Expected: PASS (10 tests). If `test_the_projection_header_names_every_wide_column_in_ddl_order` fails, the failure names a plan-2 contract gap (the projection header must list the deployed columns minus `evidence_set_hash`): report it, do not edit `fields/sql.py`.
+Expected: PASS (9 tests). If `test_the_projection_header_names_every_wide_column_in_ddl_order` fails, the failure names a plan-2 contract gap (the projection header must list the deployed columns minus `evidence_set_hash`): report it, do not edit `fields/sql.py`.
 
 - [ ] **Step 5: Commit**
 
@@ -1112,8 +1112,9 @@ def _resolve_batch(client: Any, statements: RegistryStatements, companies: Seque
         raise ValueError(f"The projection statement targets {header.table}, not {SE_COMPANY_INFO}")
     # new_versions_only stays off: the wide table is keyed by company_id and a new
     # version per resolution is the point -- ReplacingMergeTree(resolved_at) keeps the newest.
+    # publish_with_stage qualifies the bare table name itself (every caller passes bare).
     counts = publish_with_stage(
-        client=client, target=SE_COMPANY_INFO, insert_columns=header.columns, select_sql=header.body,
+        client=client, target=SE_COMPANY_INFO.split(".")[-1], insert_columns=header.columns, select_sql=header.body,
         select_parameters=server_params(company_ids=companies), invalid_condition=WIDE_INVALID_CONDITION,
         new_versions_only=False)
     rows = client.execute(build_batch_stats_sql(), server_params(company_ids=companies, source_run_id=source_run_id))
@@ -1217,7 +1218,7 @@ defs = dg.Definitions(assets=[se_company_field_resolved_clickhouse])
 - [ ] **Step 4: Run the tests**
 
 Run: `uv run --frozen --no-sync pytest tests/test_se_company_field_resolve.py -q -p no:warnings`
-Expected: PASS (17 tests).
+Expected: PASS (16 tests).
 
 Then: `WEBTECH_API_URL=http://localhost:1 WEBTECH_S3_PATH=s3://bucket/prefix uv run --frozen --no-sync dg check defs`
 Expected: success -- the new asset loads beside `se_company_info_clickhouse`; no name collision (the old asset keeps its name).
@@ -1889,10 +1890,10 @@ def candidate_sensor(
         with context.resources.clickhouse.get_connection() as client:
             count, latest = client.execute(build_candidate_cursor_sql(bare_table))[0]
             if int(count) == 0:
-                return dg.SkipReason(f"No rows in {table}")
+                return dg.SkipReason(f"No rows in {bare_table}")
             cursor = f"{int(count)}:{latest}"
             if cursor == context.cursor:
-                return dg.SkipReason(f"No new rows in {table}")
+                return dg.SkipReason(f"No new rows in {bare_table}")
             since = context.cursor.split(":", 1)[1] if context.cursor else EPOCH
             rows = client.execute(build_candidate_touched_sql(bare_table),
                                   {"since": since, "limit": max_scoped_company_ids + 1})
@@ -1904,7 +1905,7 @@ def candidate_sensor(
         scope = [] if len(company_ids) > max_scoped_company_ids else company_ids
         return dg.SensorResult(
             run_requests=[dg.RunRequest(
-                run_key=f"{table}:{cursor}",
+                run_key=f"{bare_table}:{cursor}",
                 run_config={"ops": {asset: {"config": {**shared_config, "company_ids": scope}}
                                     for asset in asset_names}})],
             cursor=cursor)
@@ -2009,7 +2010,7 @@ Claude-Session: https://claude.ai/code/session_01RY2W9FTCX9YxUcXtSBaEJ5"
 
 **Interfaces:**
 - Consumes: `jobs.se_company_fields_job`, `resolve.{AUTOMATED_RUN_CONFIG, LLM_CANDIDATES_ASSET, RESOLVE_ASSET}`.
-- Produces: `schedules.LLM_CANDIDATES_RUN_CONFIG: dict[str, Any]`, `schedules.se_company_fields_weekly` (cron `50 6 * * 1`, `UTC`, STOPPED, run config `{"ops": {RESOLVE_ASSET: {"config": {"execute": True}}, LLM_CANDIDATES_ASSET: {"config": LLM_CANDIDATES_RUN_CONFIG}}}`); a `ClickhouseLeaf("se_company_field_resolved_clickhouse", ("se_company_field",), None)`.
+- Produces: `schedules.LLM_CANDIDATES_RUN_CONFIG: dict[str, Any]` (`{"execute": True, "llm": {...}}`), `schedules.se_company_fields_weekly` (cron `50 6 * * 1`, `UTC`, STOPPED, run config `{"ops": {RESOLVE_ASSET: {"config": {"execute": True}}, <each non-LLM candidate asset>: {"config": {"execute": True}}, LLM_CANDIDATES_ASSET: {"config": LLM_CANDIDATES_RUN_CONFIG}}}` -- plan 2's `CandidateExtractConfig.execute` defaults to a preview exactly like the resolve asset, so every extractor the weekly job runs must be told `execute`; the registry export and the three artifact assets have no gate); a `ClickhouseLeaf("se_company_field_resolved_clickhouse", ("se_company_field",), None)`.
 
 - [ ] **Step 1: Write the failing test**
 
@@ -2065,9 +2066,13 @@ def test_definitions_wire_the_resolve_asset_jobs_sensors_and_schedule() -> None:
     assert "se_company_info_weekly" not in {s.name for s in repository.schedule_defs}
     context = dg.build_schedule_context(scheduled_execution_time=datetime(2026, 9, 7, 6, 50, tzinfo=UTC))
     run_requests = se_company_fields_weekly.evaluate_tick(context).run_requests
+    # Every gated asset in the chain is told execute: the resolve asset AND the seven
+    # extractors (plan 2's CandidateExtractConfig defaults to a preview too).
     assert run_requests is not None and run_requests[0].run_config == {"ops": {
         RESOLVE_ASSET: {"config": {"execute": True}},
+        **{name: {"config": {"execute": True}} for name in CANDIDATE_ASSETS if name != LLM_CANDIDATES_ASSET},
         LLM_CANDIDATES_ASSET: {"config": LLM_CANDIDATES_RUN_CONFIG}}}
+    assert LLM_CANDIDATES_RUN_CONFIG["execute"] is True
     assert LLM_CANDIDATES_RUN_CONFIG["llm"]["provider"] == "deepseek"
     assert LLM_CANDIDATES_RUN_CONFIG["llm"]["model"] == "deepseek-v4-flash"
     assert LLM_CANDIDATES_RUN_CONFIG["llm"]["prompt_version"] == "se-company-info-description-v3"
@@ -2099,9 +2104,11 @@ unique across every schedule -- tests/test_schedule_cron_contracts.py). STOPPED 
 default like its predecessor; the cutover plan starts it on the prod instance once the
 rebuild is verified.
 
-The run config spells out what an automated run must never leave to defaults: the
-resolve asset's ``execute`` (a bare run is a preview), and the LLM extractor's model
-profile (spec 5.3: provider and model are required run config, no default).
+The run config spells out what an automated run must never leave to defaults: ``execute``
+for the resolve asset AND for every candidate extractor (a bare run of either is a
+preview -- plan 2's CandidateExtractConfig gates exactly like the resolve asset), and the
+LLM extractor's model profile (spec 5.3: provider and model are required run config, no
+default). The registry export and the three artifact assets have no gate.
 """
 
 from typing import Any
@@ -2111,6 +2118,7 @@ import dagster as dg
 from dagster_v3.defs.se_company.fields.jobs import se_company_fields_job
 from dagster_v3.defs.se_company.fields.resolve import (
     AUTOMATED_RUN_CONFIG,
+    CANDIDATE_ASSETS,
     LLM_CANDIDATES_ASSET,
     RESOLVE_ASSET,
 )
@@ -2119,7 +2127,9 @@ from dagster_v3.defs.se_company.fields.resolve import (
 # a default change can never silently change what the weekly run calls. The values are
 # info.DEFAULT_LLM_PROFILE's (which the cutover plan deletes with info.py); the key
 # names are the LLM extractor's config class -- the Definitions test validates them.
+# ``execute`` rides along: without it the extractor previews and writes nothing.
 LLM_CANDIDATES_RUN_CONFIG: dict[str, Any] = {
+    "execute": True,
     "llm": {
         "provider": "deepseek",
         "model": "deepseek-v4-flash",
@@ -2134,8 +2144,12 @@ LLM_CANDIDATES_RUN_CONFIG: dict[str, Any] = {
 se_company_fields_weekly = dg.ScheduleDefinition(
     name="se_company_fields_weekly", job=se_company_fields_job, cron_schedule="50 6 * * 1",
     execution_timezone="UTC", default_status=dg.DefaultScheduleStatus.STOPPED,
-    run_config={"ops": {RESOLVE_ASSET: {"config": dict(AUTOMATED_RUN_CONFIG)},
-                        LLM_CANDIDATES_ASSET: {"config": dict(LLM_CANDIDATES_RUN_CONFIG)}}})
+    run_config={"ops": {
+        RESOLVE_ASSET: {"config": dict(AUTOMATED_RUN_CONFIG)},
+        **{name: {"config": dict(AUTOMATED_RUN_CONFIG)}
+           for name in CANDIDATE_ASSETS if name != LLM_CANDIDATES_ASSET},
+        LLM_CANDIDATES_ASSET: {"config": dict(LLM_CANDIDATES_RUN_CONFIG)},
+    }})
 
 defs = dg.Definitions(schedules=[se_company_fields_weekly])
 ```
@@ -2171,7 +2185,7 @@ Replace the comment above `AUTOMATED_RUN_CONFIG` (`# The two automated triggers 
 
 - [ ] **Step 5: Register the leaf**
 
-In `src/dagster_v3/defs/common/clickhouse_checks.py`, after the line `ClickhouseLeaf("se_company_info_clickhouse", ("se_company_info",), WEEKLY),` add:
+In `src/dagster_v3/defs/common/clickhouse_checks.py`, after the seven `se_company_field_candidates_*` leaves plan 2 added below `ClickhouseLeaf("se_company_info_clickhouse", ("se_company_info",), WEEKLY),` (i.e. after the `se_company_field_candidates_llm` leaf) add:
 
 ```python
     # se_company_fields -- the registry-driven resolve (se_company/fields/resolve.py)
