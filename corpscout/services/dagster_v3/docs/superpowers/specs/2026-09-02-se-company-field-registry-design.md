@@ -152,7 +152,7 @@ CREATE TABLE corpscout.se_company_field_candidate (
     extractor_version LowCardinality(String),
     source_run_id String,
     evidence_hash FixedString(64) MATERIALIZED lower(hex(SHA256(concat(
-        field, '\n', source, '\n', source_record_uid, '\n', ifNull(value, ''), '\n', value_json)))),
+        field, '\n', source, '\n', source_record_uid, '\n', value, '\n', value_json)))),
     CONSTRAINT has_company CHECK match(company_id, '^([0-9]{10}|[0-9]{12})$'),
     CONSTRAINT has_value CHECK trim(value) != ''
 ) ENGINE = ReplacingMergeTree(extracted_at)
