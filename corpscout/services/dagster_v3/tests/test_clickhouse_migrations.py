@@ -384,6 +384,7 @@ EXPECTED_MIGRATIONS = (
     "000369_corpscout_fi_xbrl_parity_report",
     "000370_corpscout_fi_taxonomy_dictionary",
     "000371_corpscout_se_company_info_field_value",
+    "000372_corpscout_retire_se_company_info_correction",
 )
 
 NOOP_MIGRATIONS = {"000276_noop"}
@@ -4048,6 +4049,24 @@ def _migration_sql(file_name: str) -> str:
 
 def _normalize_sql(sql: str) -> str:
     return " ".join(sql.replace(";", "").split())
+
+
+def test_the_correction_ledger_is_retired_by_000372_reversibly() -> None:
+    """The DROP lives in its own entry written at the apply step (000371 only creates the
+    replacement), so the ledger records the retirement and the down restores the 000297
+    shape with 000299's widened check -- schema only, the 4 rows are gone."""
+    up = _migration_sql("000372_corpscout_retire_se_company_info_correction.up.sql")
+    down = _migration_sql("000372_corpscout_retire_se_company_info_correction.down.sql")
+
+    assert "DROP TABLE IF EXISTS corpscout.se_company_info_correction" in up
+    assert "se_company_info_field_value" not in up.split("DROP TABLE")[1]
+
+    assert "CREATE TABLE IF NOT EXISTS corpscout.se_company_info_correction" in down
+    assert "CONSTRAINT has_company CHECK match(company_id, '^([0-9]{10}|[0-9]{12})$')" in down
+    assert "ORDER BY (company_id, created_at, correction_id)" in down
+    assert (
+        "GRANT INSERT ON corpscout.se_company_info_correction\nTO corpscout_person_correction_writer"
+    ) in down
 
 
 def test_every_migration_ends_with_a_statement_not_a_comment() -> None:
