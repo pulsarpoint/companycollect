@@ -63,17 +63,13 @@ Package `dagster_v3.defs.se_company.fields` (new):
 
 ```python
 @dataclass(frozen=True)
-class SourceSpec:
-    name: str            # scb | bolagsverket | esef | wikidata | ratsit | domains | llm | reviewer
-    rank: int            # lower wins; unique within a field
-
-@dataclass(frozen=True)
 class FieldSpec:
     name: str            # snake_case, unique within the datatype
     value_type: str      # text | code | date | integer | decimal | url | json
     display_group: str   # identity | activity | scale
     structured: bool     # compare value_json instead of value
-    sources: tuple[SourceSpec, ...]
+    sources: tuple[str, ...]            # precedence order, first wins; no numbers, so inserting
+                                        # a new source anywhere is a one-line edit
     policy: str = "source_precedence"   # name in policies.POLICIES
     python_only: bool = False           # resolved by Dagster alone; backoffice shows "next run"
 
@@ -86,27 +82,27 @@ class DatatypeRegistry:
     version: str                  # bumped on any field, source, rank or policy binding change
 ```
 
-Import-time validation: unique field names, unique ranks per field, every source name in
-`KNOWN_SOURCES`, every policy name in `POLICIES`, `reviewer` present on every field with rank 0.
-`reviewer` is not a source asset; it stands for the decisions table and is listed so the
-backoffice renders it in the same rank column.
+Import-time validation: unique field names, no duplicate source within a field, every source
+name in `KNOWN_SOURCES`, every policy name in `POLICIES`, `reviewer` never listed. Reviewer
+decisions are not a source; they win by construction (section 7.4), and the backoffice renders
+them above the candidates list.
 
 ### 4.2 The `info` registry (version `se-info-v1`)
 
-| Group | Field | Type | Sources in rank order |
+| Group | Field | Type | Sources in precedence order (reviewer decisions always first) |
 | --- | --- | --- | --- |
-| identity | legal_name | text | reviewer, bolagsverket, scb, wikidata |
-| identity | legal_form_code | code | reviewer, bolagsverket, scb |
-| identity | status | code | reviewer, bolagsverket, scb |
-| identity | incorporation_date | date | reviewer, bolagsverket, scb, wikidata |
-| activity | description | text | reviewer, llm, esef, wikidata, scb |
-| activity | description_sv | text | reviewer, llm, scb |
-| activity | primary_sni_code | code | reviewer, scb, ratsit |
-| activity | primary_nace_code | code | reviewer, scb, ratsit |
-| activity | industry_label_en | text | reviewer, scb, ratsit, wikidata |
-| scale | website | url | reviewer, domains, wikidata |
-| scale | employee_count | json (count, as_of, period) | reviewer, esef, bolagsverket, ratsit, wikidata |
-| scale | latest_revenue | json (amount, currency, amount_usd, fiscal_year, period_end) | reviewer, esef, bolagsverket, ratsit |
+| identity | legal_name | text | bolagsverket, scb, wikidata |
+| identity | legal_form_code | code | bolagsverket, scb |
+| identity | status | code | bolagsverket, scb |
+| identity | incorporation_date | date | bolagsverket, scb, wikidata |
+| activity | description | text | llm, esef, wikidata, scb |
+| activity | description_sv | text | llm, scb |
+| activity | primary_sni_code | code | scb, ratsit |
+| activity | primary_nace_code | code | scb, ratsit |
+| activity | industry_label_en | text | scb, ratsit, wikidata |
+| scale | website | url | domains, wikidata |
+| scale | employee_count | json (count, as_of, period) | esef, bolagsverket, ratsit, wikidata |
+| scale | latest_revenue | json (amount, currency, amount_usd, fiscal_year, period_end) | esef, bolagsverket, ratsit |
 
 `latest_revenue_fiscal_year` and the employee as-of period are members of the JSON value, not
 separate fields; the wide projection extracts them into their own columns.
@@ -124,7 +120,7 @@ CREATE TABLE corpscout.se_company_field_registry (
     datatype LowCardinality(String), country LowCardinality(String),
     field String, value_type LowCardinality(String), display_group LowCardinality(String),
     structured Bool, python_only Bool,
-    sources Array(String), ranks Array(UInt8),
+    sources Array(String),              -- precedence order; position is the rank
     policy_name LowCardinality(String), policy_version String,
     resolve_sql String,                 -- generated statement for this field, see section 7
     registry_version String, version DateTime64(3, 'UTC')
@@ -231,9 +227,9 @@ class FieldPolicy(Protocol):
 ### 7.2 Default `source_precedence` (version `v1`)
 
 - filter: `c.value IS NOT NULL AND trim(c.value) != ''`
-- order: `rank ASC, c.observed_at DESC, c.source_record_uid DESC` where `rank` comes from
-  `arrayFirstIndex` over the registry row's `sources`/`ranks` (or `transform(...)` rendered
-  inline from the registry).
+- order: `rank ASC, c.observed_at DESC, c.source_record_uid DESC` where
+  `rank = indexOf({sources:Array(String)}, c.source)` and `sources` is the field's precedence
+  tuple rendered inline from the registry (a source absent from the tuple is not eligible).
 - compare key: `JSONExtractString(c.value_json, 'compare_key')` if present, else
   `lowerUTF8(trim(c.value))`.
 
