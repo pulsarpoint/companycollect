@@ -230,6 +230,16 @@ CLICKHOUSE_LEAVES: tuple[ClickhouseLeaf, ...] = (
         "se_company_info_wikidata_clickhouse", ("se_company_info_wikidata",), WEEKLY
     ),
     ClickhouseLeaf("se_company_info_clickhouse", ("se_company_info",), WEEKLY),
+    # se_company_fields -- the candidate extractors (spec 2026-09-02). Unscheduled until the
+    # resolve asset's weekly job lands, so row-count checks only; every one writes the same
+    # append-only table.
+    ClickhouseLeaf("se_company_field_candidates_scb", ("se_company_field_candidate",), None),
+    ClickhouseLeaf("se_company_field_candidates_bolagsverket", ("se_company_field_candidate",), None),
+    ClickhouseLeaf("se_company_field_candidates_esef", ("se_company_field_candidate",), None),
+    ClickhouseLeaf("se_company_field_candidates_wikidata", ("se_company_field_candidate",), None),
+    ClickhouseLeaf("se_company_field_candidates_ratsit", ("se_company_field_candidate",), None),
+    ClickhouseLeaf("se_company_field_candidates_domains", ("se_company_field_candidate",), None),
+    ClickhouseLeaf("se_company_field_candidates_llm", ("se_company_field_candidate",), None),
     # se_company_address — two per-source artifacts and the merged final, all refreshed by
     # se_company_address_weekly. The weekly schedule is now the freshness source, like the
     # info leaves above.

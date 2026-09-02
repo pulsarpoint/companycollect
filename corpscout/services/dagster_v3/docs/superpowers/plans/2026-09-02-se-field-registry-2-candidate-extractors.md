@@ -19,7 +19,7 @@
 - Extractors write only `corpscout.se_company_field_candidate` (and the LLM one also `se_company_info_enrichment_observation`, exactly as today). **Nothing here writes `se_company_info`.** Nothing is ever deleted from the candidate table.
 - Spec 5.2 extractor rules, verbatim: `source_record_uid` is the source's own record uid; `observed_at` is the source observation time (artifact `observed_at`, financial `report_period_end`, domain `last_seen_at`, LLM `created_at`); empty, whitespace-only and placeholder values are never emitted; every asset is scoped by `company_ids` / `max_companies` and by default processes only companies whose source rows changed since the extractor's last run.
 - `primary_nace_code` is published dot-less (`6419`, never `64.19`) from every source, exactly as `se_company_info.primary_nace_code` is published today and as the backoffice label lookup (`nace_categories.normalized_code`, fixed 2026-09-01) expects; its `compare_key` is the same digits. `primary_sni_code` stays the five-digit string.
-- Every `value_json` carries `compare_key`; structured members per field (spec 4.2): `employee_count` -> `count`, `as_of`, `period`; `latest_revenue` -> `amount`, `currency`, `amount_usd`, `fiscal_year`, `period_end`; `description`/`description_sv` -> `language`; bolagsverket `status` -> `conflict`. Amounts are JSON **strings** with two decimals (`"48000000000.00"`), counts and fiscal years JSON integers, dates ISO strings, `conflict` a JSON boolean, absent members `null`; keys sorted. Plan 3's projection reads amounts with `toDecimal128OrNull(JSONExtractString(value_json, 'amount'), 2)`.
+- Every `value_json` carries `compare_key`; structured members per field (spec 4.2): `employee_count` -> `count`, `as_of`, `period`; `latest_revenue` -> `amount`, `currency`, `amount_usd`, `fiscal_year`, `period_end`; `description`/`description_sv` -> `language`; bolagsverket `status` -> `conflict`. `conflict` is a JSON boolean, absent members `null`; keys sorted.
 - `count`, `amount`, `amount_usd`, `fiscal_year` are JSON numbers (never quoted -- the projection uses `toDecimal128OrNull(JSONExtractRaw(...))` / `JSONExtract(..., 'Nullable(UInt64)')` which return NULL for quoted numbers); `compare_key`, `as_of` (ISO date), `currency`, `language`, `period`, `period_end` are JSON strings.
 - Commits: Conventional Commits, stage by explicit path (the tree carries unrelated WIP), and end every message with these two trailer lines:
   `Co-Authored-By: Claude Fable 5.1 <noreply@anthropic.com>`
@@ -49,7 +49,7 @@ tests/test_se_company_field_candidates_<source>.py            create, one per so
 
 Shared conventions every source module follows (Task 1 defines them; the source tasks only use them):
 
-- `build_scope_sql() -> str`: parameters `after_company_id`, `page_size`, `since`. Returns company ids, ordered, `LIMIT page_size`, whose source rows have a change stamp newer than `since`.
+- `build_scope_sql() -> str`: parameters `after_company_id`, `page_size`, `since`. Built with Task 1's `changed_companies_scope_sql(source=SOURCE, changes_sql=...)` from the module's `(company_id, changed_at)` UNION members: returns company ids, ordered, `LIMIT page_size`, whose newest source change stamp is newer than both the company's own newest `extracted_at` for this source (the per-company watermark) and `since`.
 - `build_candidates_sql() -> str`: parameter `company_ids` (a tuple). Projects exactly `CANDIDATE_SELECT_COLUMNS = (company_id, field, source_record_uid, observed_at, value, value_json)`; one `UNION ALL` member per field; every member's `value` is a non-Nullable, non-empty String; `observed_at` is `DateTime64(3, 'UTC')`.
 - `rows_from_result(rows) -> list[CandidateRow]` = `partial(candidate_rows_from_result, source=SOURCE, extractor_version=EXTRACTOR_VERSION)`.
 - `EXTRACTOR = CandidateExtractor(...)`, the asset `se_company_field_candidates_<source> = define_candidate_asset(EXTRACTOR, deps=..., description=...)`, and `defs = dg.Definitions(assets=[...])` so the defs-folder autoload picks it up.
@@ -75,7 +75,7 @@ Shared conventions every source module follows (Task 1 defines them; the source 
   - SQL twins: `compare_key_text_sql(expr) -> str`, `clean_text_sql(expr) -> str`, `json_object_sql(members: Mapping[str, str]) -> str`, `json_string_sql(expr) -> str`, `nace_digits_sql(expr) -> str`, `nace_labels_cte_sql() -> str`, `employee_count_json_sql(*, count, as_of, period) -> str`, `latest_revenue_json_sql(*, amount, currency, amount_usd, fiscal_year, period_end) -> str`, `revenue_value_sql(*, amount, currency, fiscal_year) -> str`, `financial_view_ctes_sql(view: str) -> str`, `FINANCIAL_MEMBERS_SQL: str`.
   - `candidate_rows_from_result(rows, *, source: str, extractor_version: str) -> list[CandidateRow]`.
   - `publish_candidates(clickhouse: ClickhouseResource, rows: Sequence[CandidateRow], *, source_run_id: str, extracted_at: datetime) -> int` (rows inserted after the anti-join).
-  - `build_last_extracted_at_sql() -> str`, `last_extracted_at(clickhouse, source) -> str` (ClickHouse stamp text or `EPOCH`), `clickhouse_stamp(moment) -> str`.
+  - `WATERMARK_EPOCH_SQL`, `changed_companies_scope_sql(*, source: str, changes_sql: str) -> str` (the shared scan: per-company watermark from the candidate table LEFT JOINed to the source's `(company_id, changed_at)` UNION members, `since` as an explicit floor -- ruled in Task 1's fix round; no source-wide `last_extracted_at`), `clickhouse_stamp(moment) -> str`.
   - `@dataclass PageWalk(selected: int = 0, stopped_at_cap: bool = False)`; `iter_company_pages(clickhouse, *, walk, scope, scope_sql, scope_params, max_companies, company_batch_size) -> Iterator[list[str]]`.
   - `@dataclass(frozen=True) CandidateExtractor(source: str, extractor_version: str, source_tables: tuple[str, ...], build_scope_sql: Callable[[], str], build_candidates_sql: Callable[[], str])`.
   - `materialize_candidates(*, clickhouse, extractor, config, source_run_id, extracted_at, log=None) -> dict[str, object]`.
@@ -236,7 +236,7 @@ def test_financial_sql_helpers_render_the_documented_members() -> None:
     )
     revenue_json = cc.latest_revenue_json_sql(
         amount="amount", currency="currency", amount_usd="amount_usd", fiscal_year="fiscal_year", period_end="period_end")
-    assert revenue_json.startswith("concat('{\"amount\":', toJSONString(toString(amount)), ',\"amount_usd\":', toJSONString(toString(amount_usd)), ',\"compare_key\":', ")
+    assert revenue_json.startswith("concat('{\"amount\":', toString(amount), ',\"amount_usd\":', ifNull(toString(amount_usd), 'null'), ',\"compare_key\":', ")
     assert "toJSONString(concat(lowerUTF8(currency), ':', toString(amount), ':', toString(fiscal_year)))" in revenue_json
     assert revenue_json.endswith(", ',\"fiscal_year\":', toString(fiscal_year), ',\"period_end\":', toJSONString(period_end), '}')")
     ctes = cc.financial_view_ctes_sql("se_financials_esef_current")
@@ -417,8 +417,9 @@ extract, preview or publish.
 
 value_json has two writers -- SQL for the six table extractors, Python for the LLM one -- so
 the conventions live here twice, side by side: compare_key_text / compare_key_text_sql,
-value_json_for / json_object_sql. Keys are sorted in both; amounts are two-decimal strings
-in both; absent members are null in both.
+value_json_for / json_object_sql. Keys are sorted in both; counts, amounts and fiscal years
+are JSON numbers in both (never quoted -- the projection reads them with JSONExtractRaw /
+typed JSONExtract, which return NULL for quoted numbers); absent members are null in both.
 """
 
 import json
@@ -580,11 +581,14 @@ def employee_count_json_sql(*, count: str, as_of: str, period: str) -> str:
 
 def latest_revenue_json_sql(*, amount: str, currency: str, amount_usd: str, fiscal_year: str, period_end: str) -> str:
     """amount: Decimal128(2); amount_usd: Nullable(Decimal128(2)); currency / period_end:
-    String; fiscal_year: integer. Amounts travel as two-decimal JSON strings, never floats."""
+    String; fiscal_year: integer. Amounts travel as JSON NUMBERS with two decimals
+    (toString of a Decimal128(2) renders 48000000000.00), amount_usd as null when unknown --
+    the projection reads them with toDecimal128OrNull(JSONExtractRaw(...)), which returns
+    NULL for a quoted number."""
     return json_object_sql({
         "compare_key": json_string_sql(f"concat(lowerUTF8({currency}), ':', toString({amount}), ':', toString({fiscal_year}))"),
-        "amount": json_string_sql(f"toString({amount})"),
-        "amount_usd": json_string_sql(f"toString({amount_usd})"),
+        "amount": f"toString({amount})",
+        "amount_usd": f"ifNull(toString({amount_usd}), 'null')",
         "currency": json_string_sql(currency),
         "fiscal_year": f"toString({fiscal_year})",
         "period_end": json_string_sql(period_end),
@@ -1027,9 +1031,9 @@ INSERT INTO corpscout.se_company_registry_current
      source_run_id, source_record_id, source_payload_hash, updated_from_raw_at, has_company,
      state_fingerprint, observation_fingerprint, observed_at)
 VALUES
-    ('{HB}', 'scb', 'Svenska Handelsbanken AB', '49', 'active', '1871-04-01',
+    ('{HB}', 'scb', 'Svenska Handelsbanken AB', '49', 'active', '1971-04-01',
      'fixture', 'scb-hb', 'scb-hb-hash', {T_REG}, 1, '{ZERO_HASH}', '{ZERO_HASH}', {T_REG}),
-    ('{HB}', 'bolagsverket', 'Svenska Handelsbanken AB', 'AB-ORGFO', 'active', '1871-04-01',
+    ('{HB}', 'bolagsverket', 'Svenska Handelsbanken AB', 'AB-ORGFO', 'active', '1971-04-01',
      'fixture', 'bv-hb', 'bv-hb-hash', {T_REG}, 1, '{ZERO_HASH}', '{ZERO_HASH}', {T_REG}),
     ('{SOLO}', 'scb', 'Beta AB', '42', 'active', '1998-06-15',
      'fixture', 'scb-solo', 'scb-solo-hash', {T_REG}, 1, '{ZERO_HASH}', '{ZERO_HASH}', {T_REG}),
@@ -1041,7 +1045,7 @@ INSERT INTO corpscout.se_company_info_scb
      incorporation_date, activity_description, activity_description_en, primary_sni_code, primary_nace_code)
 VALUES
     ('{HB}', 'scb-art-hb', {T_ART}, 'fixture', 'Svenska Handelsbanken AB', 'AB-ORGFO', 'active',
-     '1871-04-01', 'Bankverksamhet.', 'Banking operations.', '64190', '64.19'),
+     '1971-04-01', 'Bankverksamhet.', 'Banking operations.', '64190', '64.19'),
     ('{SOLO}', 'scb-art-solo', {T_REG}, 'fixture', 'Beta AB', 'AB-ORGFO', 'active',
      '1998-06-15', 'Handel med datorer.', '', '', '');
 
@@ -1104,7 +1108,7 @@ INSERT INTO corpscout.se_company_info_wikidata
      official_name, company_description, inception_date, industry_label, employee_count)
 VALUES
     ('{HB}', '{HB_WD_UID}', {T_WD}, 'fixture', '{HB_QID}', 'https://www.wikidata.org/wiki/{HB_QID}', 'Handelsbanken',
-     'Svenska Handelsbanken AB', 'Swedish bank', '1871-04-01', 'banking', 12500);
+     'Svenska Handelsbanken AB', 'Swedish bank', '1971-04-01', 'banking', 12500);
 
 INSERT INTO corpscout.wikidata_companies
     (wikidata_id, wikidata_url, name, name_normalized, employee_count, employee_count_point_in_time,
@@ -1202,7 +1206,7 @@ def _candidates_for(module: ModuleType, company_id: str) -> str:
     inner = _render(module.build_candidates_sql(), {"company_ids": (company_id,)})
     return (
         "SELECT field, source_record_uid, toString(observed_at), value, value_json\n"
-        f"FROM ({inner})\nORDER BY field, source_record_uid"
+        f"FROM ({inner}) AS c ({', '.join(CANDIDATE_SELECT_COLUMNS)})\nORDER BY field, source_record_uid"
     )
 
 
@@ -1221,7 +1225,7 @@ def _publish_pass(source: str, module: ModuleType, extracted_at_sql: str) -> str
         f"INSERT INTO {stage} ({columns})\n"
         f"SELECT company_id, field, '{source}', source_record_uid, value, value_json, observed_at, "
         f"{extracted_at_sql}, '{module.EXTRACTOR_VERSION}', '{RUN_ID}'\n"
-        f"FROM (SELECT {projected} FROM ({inner}));\n"
+        f"FROM (SELECT {projected} FROM ({inner}) AS c ({projected}));\n"
         f"INSERT INTO corpscout.se_company_field_candidate ({columns})\n"
         f"SELECT {stage_columns} FROM {stage} AS stage\n"
         f"LEFT ANTI JOIN corpscout.se_company_field_candidate AS existing ON {on_clause};\n"
@@ -1332,7 +1336,7 @@ Claude-Session: https://claude.ai/code/session_01RY2W9FTCX9YxUcXtSBaEJ5"
 - Test: `tests/test_se_company_field_candidates_scb.py` (new)
 
 **Interfaces:**
-- Consumes: Task 1's `common` (`CandidateExtractor`, `define_candidate_asset`, SQL helpers, `SE_COMPANY_ID_MATCH`, `SINCE_SQL`); tables `se_company_info_scb` (000297 `legal_name`, `legal_name_raw`, `legal_form_code`, `status`, `incorporation_date`, `activity_description`; 000300 `activity_description_en`; 000306 labels -- ReplacingMergeTree, FINAL is legal), `se_industries` (000084 + 000244 `source_record_uid`), `nace_categories` (000001).
+- Consumes: Task 1's `common` (`CandidateExtractor`, `define_candidate_asset`, SQL helpers, `changed_companies_scope_sql`); tables `se_company_info_scb` (000297 `legal_name`, `legal_name_raw`, `legal_form_code`, `status`, `incorporation_date`, `activity_description`; 000300 `activity_description_en`; 000306 labels -- ReplacingMergeTree, FINAL is legal), `se_industries` (000084 + 000244 `source_record_uid`), `nace_categories` (000001).
 - Produces: `SOURCE = "scb"`, `EXTRACTOR_VERSION = "scb-candidates-v1"`, `NACE_VERSION = "NACE_REV_2"`, `build_scope_sql()`, `build_candidates_sql()`, `rows_from_result`, `EXTRACTOR`, asset `se_company_field_candidates_scb`, `defs`.
 
 Fields (spec 5.2, with the revised 4.2 ranking `scb` first for identity): legal_name (`legal_name`, else `legal_name_raw` -- what info_rules copies today), legal_form_code, status (verbatim, `unknown` included -- the cutover parity check compares against the old row), incorporation_date, description (English translation preferred, else the Swedish text with `language: "sv"`), description_sv -- **all six from the newest `se_company_info_scb` version**, uid = the artifact's `source_record_uid`, observed_at = the artifact's `observed_at`; primary_sni_code, primary_nace_code (`nace_rev2_class_code` with its dot stripped: `6419`), industry_label_en (NACE Rev. 2 class label by the SNI code's first four digits, code prefix stripped) from the newest primary `se_industries` row. `se_company_registry_current` is **not** read here (the bolagsverket extractor reads its own row and, for the conflict flag only, the scb row).
@@ -1360,8 +1364,11 @@ def test_scope_scans_the_artifact_and_the_industries_since_the_watermark() -> No
     assert "SELECT company_id, observed_at AS changed_at FROM corpscout.se_company_info_scb" in sql
     assert "SELECT company_id, updated_from_raw_at AS changed_at FROM corpscout.se_industries" in sql
     assert "se_company_registry_current" not in sql  # the SCB side of the registry is the artifact
-    assert "company_id > %(after_company_id)s AND changed_at > parseDateTime64BestEffort(%(since)s, 3, 'UTC')" in sql
-    assert sql.endswith("GROUP BY company_id\nORDER BY company_id\nLIMIT %(page_size)s")
+    assert "changes.company_id > %(after_company_id)s" in sql
+    # The shared scan (Task 1's changed_companies_scope_sql): per-company watermark, since floor.
+    assert "FROM corpscout.se_company_field_candidate\n    WHERE source = '" in sql
+    assert "changes.changed_at > greatest(ifNull(watermark.extracted_at, toDateTime64('1970-01-01 00:00:00.000', 3, 'UTC')), parseDateTime64BestEffort(%(since)s, 3, 'UTC'))" in sql
+    assert sql.endswith("ORDER BY company_id\nLIMIT %(page_size)s")
     assert "FINAL" not in sql  # max(observed_at) IS the version column; no FINAL needed
 
 
@@ -1371,12 +1378,12 @@ def test_candidates_read_the_artifact_and_the_primary_industry() -> None:
     assert "FROM corpscout.se_company_info_scb FINAL\n    WHERE company_id IN %(company_ids)s\n    ORDER BY observed_at DESC, source_record_uid DESC\n    LIMIT 1 BY company_id" in sql
     # The legal facts the old publisher copied verbatim: same columns, same fallback.
     assert "if(legal_name_clean != '', legal_name_clean, legal_name_raw_clean) AS legal_name" in sql
-    assert "trim(ifNull(legal_form_code, '')) AS legal_form_code" in sql
+    assert "if(lowerUTF8(trim(ifNull(legal_form_code, ''))) IN ('', '-', '--', '.', 'n/a', 'null', 'none'), '', trim(ifNull(legal_form_code, ''))) AS legal_form_code" in sql
     assert "trim(toString(status)) AS status" in sql
     assert "ifNull(toString(incorporation_date), '') AS incorporation_date" in sql
     assert "FROM corpscout.se_industries FINAL\n    WHERE is_primary = 1 AND company_id IN %(company_ids)s\n    GROUP BY company_id" in sql
     assert "WHERE level = 'class' AND is_current = 1" in sql
-    assert "LEFT JOIN labels ON labels.classification_version = 'NACE_REV_2' AND labels.normalized_code = substring(industry.sni_code, 1, 4)" in sql
+    assert "LEFT JOIN labels ON labels.classification_version = 'NACE_REV_2' AND labels.normalized_code = substring(trim(industry.sni_code), 1, 4)" in sql
     assert "replaceAll(trim(industry.nace_code), '.', '') AS nace_code" in sql  # published dot-less, as today
     assert "'primary_nace_code', source_record_uid, observed_at, nace_code,\n    concat('{\"compare_key\":', toJSONString(nace_code), '}')" in sql
     # English preferred, Swedish otherwise -- and the language says which.
@@ -1443,9 +1450,8 @@ import dagster as dg
 
 from dagster_v3.defs.se_company.common import DATABASE
 from dagster_v3.defs.se_company.fields.candidates.common import (
-    SE_COMPANY_ID_MATCH,
-    SINCE_SQL,
     CandidateExtractor,
+    changed_companies_scope_sql,
     candidate_rows_from_result,
     clean_text_sql,
     compare_key_text_sql,
@@ -1467,16 +1473,9 @@ NACE_VERSION = "NACE_REV_2"
 
 
 def build_scope_sql() -> str:
-    return f"""SELECT company_id
-FROM (
-    SELECT company_id, observed_at AS changed_at FROM {DATABASE}.{ARTIFACT_TABLE}
+    return changed_companies_scope_sql(source=SOURCE, changes_sql=f"""    SELECT company_id, observed_at AS changed_at FROM {DATABASE}.{ARTIFACT_TABLE}
     UNION ALL
-    SELECT company_id, updated_from_raw_at AS changed_at FROM {DATABASE}.{INDUSTRIES_TABLE}
-)
-WHERE {SE_COMPANY_ID_MATCH} AND company_id > %(after_company_id)s AND changed_at > {SINCE_SQL}
-GROUP BY company_id
-ORDER BY company_id
-LIMIT %(page_size)s"""
+    SELECT company_id, updated_from_raw_at AS changed_at FROM {DATABASE}.{INDUSTRIES_TABLE}""")
 
 
 def _member(field: str, *, value: str, compare_key: str, source: str, extra: dict[str, str] | None = None) -> str:
@@ -1492,7 +1491,7 @@ def build_candidates_sql() -> str:
         {clean_text_sql('legal_name')} AS legal_name_clean,
         {clean_text_sql('legal_name_raw')} AS legal_name_raw_clean,
         if(legal_name_clean != '', legal_name_clean, legal_name_raw_clean) AS legal_name,
-        trim(ifNull(legal_form_code, '')) AS legal_form_code,
+        {clean_text_sql('legal_form_code')} AS legal_form_code,
         trim(toString(status)) AS status,
         ifNull(toString(incorporation_date), '') AS incorporation_date,
         {clean_text_sql('activity_description')} AS description_sv,
@@ -1523,7 +1522,7 @@ industry_labelled AS (
         {nace_digits_sql('trim(industry.nace_code)')} AS nace_code,
         {clean_text_sql('labels.label_en')} AS label_en
     FROM industry
-    LEFT JOIN labels ON labels.classification_version = '{NACE_VERSION}' AND labels.normalized_code = substring(industry.sni_code, 1, 4)
+    LEFT JOIN labels ON labels.classification_version = '{NACE_VERSION}' AND labels.normalized_code = substring(trim(industry.sni_code), 1, 4)
 )
 {_member('legal_name', value='legal_name', compare_key=compare_key_text_sql('legal_name'), source='artifact')}
 UNION ALL
@@ -1587,7 +1586,7 @@ INSERT INTO corpscout.se_company_info_scb
      incorporation_date, activity_description, activity_description_en, primary_sni_code, primary_nace_code)
 VALUES
     ('{HB}', 'scb-art-hb', {T_ART2}, 'fixture-v2', 'Svenska Handelsbanken AB', 'AB-ORGFO', 'active',
-     '1871-04-01', 'Bankverksamhet.', 'Banking and financial services.', '64190', '64.19');
+     '1971-04-01', 'Bankverksamhet.', 'Banking and financial services.', '64190', '64.19');
 """.strip()
 
 
@@ -1612,7 +1611,7 @@ def _text(compare_key: str, **members: str) -> str:
 HB_SCB_ROWS = [
     ["description", "scb-art-hb", T_ART_TEXT, "Banking operations.", _text("banking operations.", language="en")],
     ["description_sv", "scb-art-hb", T_ART_TEXT, "Bankverksamhet.", _text("bankverksamhet.", language="sv")],
-    ["incorporation_date", "scb-art-hb", T_ART_TEXT, "1871-04-01", _text("1871-04-01")],
+    ["incorporation_date", "scb-art-hb", T_ART_TEXT, "1971-04-01", _text("1971-04-01")],
     ["industry_label_en", HB_IND_UID, T_IND_TEXT, "Other monetary intermediation", _text("other monetary intermediation")],
     ["legal_form_code", "scb-art-hb", T_ART_TEXT, "AB-ORGFO", _text("ab-orgfo")],
     ["legal_name", "scb-art-hb", T_ART_TEXT, "Svenska Handelsbanken AB", _text("svenska handelsbanken ab")],
@@ -1727,7 +1726,10 @@ def test_scope_scans_the_registry_row_and_the_metrics_table() -> None:
     assert "SELECT company_id, resolved_at AS changed_at FROM corpscout.se_bolagsverket_financial_metrics" in sql
     assert "se_financials_bolagsverket_current" not in sql  # the view has no change stamp; the table behind it does
     assert "FINAL" not in sql
-    assert sql.endswith("GROUP BY company_id\nORDER BY company_id\nLIMIT %(page_size)s")
+    # The shared scan (Task 1's changed_companies_scope_sql): per-company watermark, since floor.
+    assert "FROM corpscout.se_company_field_candidate\n    WHERE source = '" in sql
+    assert "changes.changed_at > greatest(ifNull(watermark.extracted_at, toDateTime64('1970-01-01 00:00:00.000', 3, 'UTC')), parseDateTime64BestEffort(%(since)s, 3, 'UTC'))" in sql
+    assert sql.endswith("ORDER BY company_id\nLIMIT %(page_size)s")
 
 
 def test_candidates_read_the_register_row_with_the_scb_status_beside_it() -> None:
@@ -1790,9 +1792,8 @@ import dagster as dg
 from dagster_v3.defs.se_company.common import DATABASE
 from dagster_v3.defs.se_company.fields.candidates.common import (
     FINANCIAL_MEMBERS_SQL,
-    SE_COMPANY_ID_MATCH,
-    SINCE_SQL,
     CandidateExtractor,
+    changed_companies_scope_sql,
     candidate_rows_from_result,
     clean_text_sql,
     compare_key_text_sql,
@@ -1810,17 +1811,10 @@ FINANCIALS_TABLE = "se_bolagsverket_financial_metrics"
 
 
 def build_scope_sql() -> str:
-    return f"""SELECT company_id
-FROM (
-    SELECT company_id, observed_at AS changed_at FROM {DATABASE}.{REGISTRY_TABLE}
+    return changed_companies_scope_sql(source=SOURCE, changes_sql=f"""    SELECT company_id, observed_at AS changed_at FROM {DATABASE}.{REGISTRY_TABLE}
     WHERE source = '{SOURCE}' AND has_company = 1
     UNION ALL
-    SELECT company_id, resolved_at AS changed_at FROM {DATABASE}.{FINANCIALS_TABLE}
-)
-WHERE {SE_COMPANY_ID_MATCH} AND company_id > %(after_company_id)s AND changed_at > {SINCE_SQL}
-GROUP BY company_id
-ORDER BY company_id
-LIMIT %(page_size)s"""
+    SELECT company_id, resolved_at AS changed_at FROM {DATABASE}.{FINANCIALS_TABLE}""")
 
 
 def _member(field: str, *, value: str, compare_key: str, extra: dict[str, str] | None = None) -> str:
@@ -1839,7 +1833,7 @@ def build_candidates_sql() -> str:
 registry AS (
     SELECT bv.company_id AS company_id, bv.source_record_uid AS source_record_uid, bv.observed_at AS observed_at,
         {clean_text_sql('bv.legal_name')} AS legal_name,
-        trim(ifNull(toString(bv.legal_form_code), '')) AS legal_form_code,
+        {clean_text_sql('toString(bv.legal_form_code)')} AS legal_form_code,
         trim(ifNull(toString(bv.derived_status), '')) AS status,
         ifNull(toString(bv.incorporation_date), '') AS incorporation_date,
         ifNull(scb.scb_status, '') AS scb_status
@@ -1895,9 +1889,9 @@ In the harness: `from dagster_v3.defs.se_company.fields.candidates import bolags
 HB_BV_ROWS = [
     ["employee_count", HB_BV_FIN_UID, PERIOD_END_TEXT, "11950",
      '{"as_of":"2024-12-31","compare_key":"11950","count":11950,"period":"2024"}'],
-    ["incorporation_date", HB_BV_REG_UID, T_REG_TEXT, "1871-04-01", _text("1871-04-01")],
-    ["latest_revenue", HB_BV_FIN_UID, PERIOD_END_TEXT, "SEK 47500000000.00 FY2024",
-     '{"amount":"47500000000.00","amount_usd":"4400000000.00","compare_key":"sek:47500000000.00:2024",'
+    ["incorporation_date", HB_BV_REG_UID, T_REG_TEXT, "1971-04-01", _text("1971-04-01")],
+    ["latest_revenue", HB_BV_FIN_UID, PERIOD_END_TEXT, "SEK 47500000000 FY2024",
+     '{"amount":47500000000,"amount_usd":4400000000,"compare_key":"sek:47500000000:2024",'
      '"currency":"SEK","fiscal_year":2024,"period_end":"2024-12-31"}'],
     ["legal_form_code", HB_BV_REG_UID, T_REG_TEXT, "AB-ORGFO", _text("ab-orgfo")],
     ["legal_name", HB_BV_REG_UID, T_REG_TEXT, "Svenska Handelsbanken AB", _text("svenska handelsbanken ab")],
@@ -1978,7 +1972,10 @@ def test_scope_scans_the_artifact_and_the_metrics_by_lei() -> None:
     assert "SELECT identifiers.company_id AS company_id, toDateTime64(metrics.resolved_at, 3, 'UTC') AS changed_at\n    FROM corpscout.esef_financial_metrics AS metrics" in sql
     assert "INNER JOIN corpscout.company_identifier AS identifiers\n        ON identifiers.issuer_scheme = 'lei' AND identifiers.issuer_id = upperUTF8(trimBoth(metrics.lei))" in sql
     assert "WHERE identifiers.country_code = 'SE' AND identifiers.is_current = 1" in sql
-    assert sql.endswith("GROUP BY company_id\nORDER BY company_id\nLIMIT %(page_size)s")
+    # The shared scan (Task 1's changed_companies_scope_sql): per-company watermark, since floor.
+    assert "FROM corpscout.se_company_field_candidate\n    WHERE source = '" in sql
+    assert "changes.changed_at > greatest(ifNull(watermark.extracted_at, toDateTime64('1970-01-01 00:00:00.000', 3, 'UTC')), parseDateTime64BestEffort(%(since)s, 3, 'UTC'))" in sql
+    assert sql.endswith("ORDER BY company_id\nLIMIT %(page_size)s")
 
 
 def test_candidates_take_the_newest_filing_text_and_the_view() -> None:
@@ -2037,9 +2034,8 @@ import dagster as dg
 from dagster_v3.defs.se_company.common import DATABASE
 from dagster_v3.defs.se_company.fields.candidates.common import (
     FINANCIAL_MEMBERS_SQL,
-    SE_COMPANY_ID_MATCH,
-    SINCE_SQL,
     CandidateExtractor,
+    changed_companies_scope_sql,
     candidate_rows_from_result,
     compare_key_text_sql,
     define_candidate_asset,
@@ -2057,20 +2053,13 @@ IDENTIFIERS_TABLE = "company_identifier"
 
 
 def build_scope_sql() -> str:
-    return f"""SELECT company_id
-FROM (
-    SELECT company_id, observed_at AS changed_at FROM {DATABASE}.{ARTIFACT_TABLE}
+    return changed_companies_scope_sql(source=SOURCE, changes_sql=f"""    SELECT company_id, observed_at AS changed_at FROM {DATABASE}.{ARTIFACT_TABLE}
     UNION ALL
     SELECT identifiers.company_id AS company_id, toDateTime64(metrics.resolved_at, 3, 'UTC') AS changed_at
     FROM {DATABASE}.{FINANCIALS_TABLE} AS metrics
     INNER JOIN {DATABASE}.{IDENTIFIERS_TABLE} AS identifiers
         ON identifiers.issuer_scheme = 'lei' AND identifiers.issuer_id = upperUTF8(trimBoth(metrics.lei))
-    WHERE identifiers.country_code = 'SE' AND identifiers.is_current = 1
-)
-WHERE {SE_COMPANY_ID_MATCH} AND company_id > %(after_company_id)s AND changed_at > {SINCE_SQL}
-GROUP BY company_id
-ORDER BY company_id
-LIMIT %(page_size)s"""
+    WHERE identifiers.country_code = 'SE' AND identifiers.is_current = 1""")
 
 
 def build_candidates_sql() -> str:
@@ -2130,8 +2119,8 @@ HB_ESEF_ROWS = [
      _text("handelsbanken is a nordic bank.", language="en")],
     ["employee_count", HB_ESEF_FIN_UID, PERIOD_END_TEXT, "12000",
      '{"as_of":"2024-12-31","compare_key":"12000","count":12000,"period":"2024"}'],
-    ["latest_revenue", HB_ESEF_FIN_UID, PERIOD_END_TEXT, "SEK 48000000000.00 FY2024",
-     '{"amount":"48000000000.00","amount_usd":"4500000000.00","compare_key":"sek:48000000000.00:2024",'
+    ["latest_revenue", HB_ESEF_FIN_UID, PERIOD_END_TEXT, "SEK 48000000000 FY2024",
+     '{"amount":48000000000,"amount_usd":4500000000,"compare_key":"sek:48000000000:2024",'
      '"currency":"SEK","fiscal_year":2024,"period_end":"2024-12-31"}'],
 ]
 
@@ -2204,7 +2193,10 @@ def test_scope_scans_the_artifact_and_both_entity_tables_through_it() -> None:
     assert "SELECT artifact.company_id AS company_id, websites.resolved_at AS changed_at\n    FROM corpscout.wikidata_company_websites AS websites" in sql
     assert "SELECT artifact.company_id AS company_id, entities.resolved_at AS changed_at\n    FROM corpscout.wikidata_companies AS entities" in sql
     assert sql.count("INNER JOIN (SELECT company_id, wikidata_id FROM corpscout.se_company_info_wikidata) AS artifact") == 2
-    assert sql.endswith("GROUP BY company_id\nORDER BY company_id\nLIMIT %(page_size)s")
+    # The shared scan (Task 1's changed_companies_scope_sql): per-company watermark, since floor.
+    assert "FROM corpscout.se_company_field_candidate\n    WHERE source = '" in sql
+    assert "changes.changed_at > greatest(ifNull(watermark.extracted_at, toDateTime64('1970-01-01 00:00:00.000', 3, 'UTC')), parseDateTime64BestEffort(%(since)s, 3, 'UTC'))" in sql
+    assert sql.endswith("ORDER BY company_id\nLIMIT %(page_size)s")
 
 
 def test_candidates_read_the_artifact_the_entity_and_one_website_per_entity() -> None:
@@ -2232,7 +2224,7 @@ def test_asset_is_registered_with_the_artifact_and_the_entity_tables() -> None:
     asset = load_defs().get_repository_def().asset_graph.get(dg.AssetKey("se_company_field_candidates_wikidata"))
     assert asset.parent_keys == {
         dg.AssetKey("se_company_info_wikidata_clickhouse"),
-        dg.AssetKey("wikidata_companies"),
+        dg.AssetKey("wikidata_companies_clickhouse"),
         dg.AssetKey("wikidata_company_websites_clickhouse"),
     }
     assert asset.group_name == "se_company_fields"
@@ -2265,9 +2257,8 @@ import dagster as dg
 
 from dagster_v3.defs.se_company.common import DATABASE
 from dagster_v3.defs.se_company.fields.candidates.common import (
-    SE_COMPANY_ID_MATCH,
-    SINCE_SQL,
     CandidateExtractor,
+    changed_companies_scope_sql,
     candidate_rows_from_result,
     clean_text_sql,
     compare_key_text_sql,
@@ -2286,9 +2277,7 @@ WEBSITES_TABLE = "wikidata_company_websites"
 
 def build_scope_sql() -> str:
     artifact = f"(SELECT company_id, wikidata_id FROM {DATABASE}.{ARTIFACT_TABLE}) AS artifact"
-    return f"""SELECT company_id
-FROM (
-    SELECT company_id, observed_at AS changed_at FROM {DATABASE}.{ARTIFACT_TABLE}
+    return changed_companies_scope_sql(source=SOURCE, changes_sql=f"""    SELECT company_id, observed_at AS changed_at FROM {DATABASE}.{ARTIFACT_TABLE}
     UNION ALL
     SELECT artifact.company_id AS company_id, websites.resolved_at AS changed_at
     FROM {DATABASE}.{WEBSITES_TABLE} AS websites
@@ -2296,12 +2285,7 @@ FROM (
     UNION ALL
     SELECT artifact.company_id AS company_id, entities.resolved_at AS changed_at
     FROM {DATABASE}.{ENTITIES_TABLE} AS entities
-    INNER JOIN {artifact} ON artifact.wikidata_id = entities.wikidata_id
-)
-WHERE {SE_COMPANY_ID_MATCH} AND company_id > %(after_company_id)s AND changed_at > {SINCE_SQL}
-GROUP BY company_id
-ORDER BY company_id
-LIMIT %(page_size)s"""
+    INNER JOIN {artifact} ON artifact.wikidata_id = entities.wikidata_id""")
 
 
 def _member(field: str, *, value: str, compare_key: str, extra: dict[str, str] | None = None) -> str:
@@ -2372,7 +2356,7 @@ EXTRACTOR = CandidateExtractor(
 
 se_company_field_candidates_wikidata = define_candidate_asset(
     EXTRACTOR,
-    deps=("se_company_info_wikidata_clickhouse", "wikidata_companies", "wikidata_company_websites_clickhouse"),
+    deps=("se_company_info_wikidata_clickhouse", "wikidata_companies_clickhouse", "wikidata_company_websites_clickhouse"),
     description=(
         "Wikidata field candidates for Swedish companies: description, official name, inception, "
         "industry label, employee count with its point in time, and the official website. "
@@ -2397,7 +2381,7 @@ HB_WD_ROWS = [
     ["description", HB_WD_UID, T_WD_TEXT, "Swedish bank", _text("swedish bank", language="en")],
     ["employee_count", HB_WD_UID, T_WD_TEXT, "12500",
      '{"as_of":"2024-12-31","compare_key":"12500","count":12500,"period":null}'],
-    ["incorporation_date", HB_WD_UID, T_WD_TEXT, "1871-04-01", _text("1871-04-01")],
+    ["incorporation_date", HB_WD_UID, T_WD_TEXT, "1971-04-01", _text("1971-04-01")],
     ["industry_label_en", HB_WD_UID, T_WD_TEXT, "banking", _text("banking")],
     ["legal_name", HB_WD_UID, T_WD_TEXT, "Svenska Handelsbanken AB", _text("svenska handelsbanken ab")],
     ["website", HB_WD_UID, T_WEB_TEXT, "https://www.handelsbanken.se/",
@@ -2472,7 +2456,10 @@ def test_scope_scans_the_completion_marker_only() -> None:
     assert (f"SELECT company_id, toDateTime64(normalized_at, 3, 'UTC') AS changed_at FROM corpscout.se_ratsit_company\n"
             f"    WHERE normalizer_version = '{RATSIT_NORMALIZER_VERSION}'") in sql
     assert "se_ratsit_financial_periods" not in sql  # children are complete once the company row exists
-    assert sql.endswith("GROUP BY company_id\nORDER BY company_id\nLIMIT %(page_size)s")
+    # The shared scan (Task 1's changed_companies_scope_sql): per-company watermark, since floor.
+    assert "FROM corpscout.se_company_field_candidate\n    WHERE source = '" in sql
+    assert "changes.changed_at > greatest(ifNull(watermark.extracted_at, toDateTime64('1970-01-01 00:00:00.000', 3, 'UTC')), parseDateTime64BestEffort(%(since)s, 3, 'UTC'))" in sql
+    assert sql.endswith("ORDER BY company_id\nLIMIT %(page_size)s")
 
 
 def test_candidates_pin_the_newest_report_and_convert_revenue() -> None:
@@ -2546,9 +2533,8 @@ import dagster as dg
 
 from dagster_v3.defs.se_company.common import DATABASE
 from dagster_v3.defs.se_company.fields.candidates.common import (
-    SE_COMPANY_ID_MATCH,
-    SINCE_SQL,
     CandidateExtractor,
+    changed_companies_scope_sql,
     candidate_rows_from_result,
     clean_text_sql,
     compare_key_text_sql,
@@ -2573,15 +2559,8 @@ CURRENCY = "SEK"
 
 
 def build_scope_sql() -> str:
-    return f"""SELECT company_id
-FROM (
-    SELECT company_id, toDateTime64(normalized_at, 3, 'UTC') AS changed_at FROM {DATABASE}.{COMPANY_TABLE}
-    WHERE normalizer_version = '{RATSIT_NORMALIZER_VERSION}'
-)
-WHERE {SE_COMPANY_ID_MATCH} AND company_id > %(after_company_id)s AND changed_at > {SINCE_SQL}
-GROUP BY company_id
-ORDER BY company_id
-LIMIT %(page_size)s"""
+    return changed_companies_scope_sql(source=SOURCE, changes_sql=f"""    SELECT company_id, toDateTime64(normalized_at, 3, 'UTC') AS changed_at FROM {DATABASE}.{COMPANY_TABLE}
+    WHERE normalizer_version = '{RATSIT_NORMALIZER_VERSION}'""")
 
 
 def build_candidates_sql() -> str:
@@ -2719,8 +2698,8 @@ HB_RATSIT_ROWS = [
     ["industry_label_en", HB_RATSIT_IND_UID, T_RATSIT_TEXT, "Other monetary intermediation", _text("other monetary intermediation")],
     # 48,000,000 TSEK -> 48,000,000,000.00 SEK; / 10 (EUR->SEK on 2024-12-31, not the older 11
     # nor the later 9) * 1.25 (EUR->USD) -> 6,000,000,000.00 USD, exact in float64.
-    ["latest_revenue", HB_RATSIT_FIN_UID, PERIOD_END_TEXT, "SEK 48000000000.00 FY2024",
-     '{"amount":"48000000000.00","amount_usd":"6000000000.00","compare_key":"sek:48000000000.00:2024",'
+    ["latest_revenue", HB_RATSIT_FIN_UID, PERIOD_END_TEXT, "SEK 48000000000 FY2024",
+     '{"amount":48000000000,"amount_usd":6000000000,"compare_key":"sek:48000000000:2024",'
      '"currency":"SEK","fiscal_year":2024,"period_end":"2024-12-31"}'],
     ["primary_nace_code", HB_RATSIT_IND_UID, T_RATSIT_TEXT, "6419", _text("6419")],
     ["primary_sni_code", HB_RATSIT_IND_UID, T_RATSIT_TEXT, "64190", _text("64190")],
@@ -2792,7 +2771,10 @@ def test_scope_scans_the_swedish_partition_by_resolved_at() -> None:
     sql = domains.build_scope_sql()
     assert "SELECT company_id, resolved_at AS changed_at FROM corpscout.company_domains WHERE country_code = 'SE'" in sql
     assert "FINAL" not in sql
-    assert sql.endswith("GROUP BY company_id\nORDER BY company_id\nLIMIT %(page_size)s")
+    # The shared scan (Task 1's changed_companies_scope_sql): per-company watermark, since floor.
+    assert "FROM corpscout.se_company_field_candidate\n    WHERE source = '" in sql
+    assert "changes.changed_at > greatest(ifNull(watermark.extracted_at, toDateTime64('1970-01-01 00:00:00.000', 3, 'UTC')), parseDateTime64BestEffort(%(since)s, 3, 'UTC'))" in sql
+    assert sql.endswith("ORDER BY company_id\nLIMIT %(page_size)s")
 
 
 def test_candidates_prefer_the_confirmed_primary_then_the_best_suggestion() -> None:
@@ -2845,9 +2827,8 @@ import dagster as dg
 
 from dagster_v3.defs.se_company.common import DATABASE
 from dagster_v3.defs.se_company.fields.candidates.common import (
-    SE_COMPANY_ID_MATCH,
-    SINCE_SQL,
     CandidateExtractor,
+    changed_companies_scope_sql,
     candidate_rows_from_result,
     define_candidate_asset,
     json_object_sql,
@@ -2861,14 +2842,7 @@ COUNTRY = "SE"
 
 
 def build_scope_sql() -> str:
-    return f"""SELECT company_id
-FROM (
-    SELECT company_id, resolved_at AS changed_at FROM {DATABASE}.{DOMAINS_TABLE} WHERE country_code = '{COUNTRY}'
-)
-WHERE {SE_COMPANY_ID_MATCH} AND company_id > %(after_company_id)s AND changed_at > {SINCE_SQL}
-GROUP BY company_id
-ORDER BY company_id
-LIMIT %(page_size)s"""
+    return changed_companies_scope_sql(source=SOURCE, changes_sql=f"""    SELECT company_id, resolved_at AS changed_at FROM {DATABASE}.{DOMAINS_TABLE} WHERE country_code = '{COUNTRY}'""")
 
 
 def build_candidates_sql() -> str:
@@ -3253,7 +3227,7 @@ from dagster_v3.defs.se_company.fields.candidates.common import (
     publish_candidates,
     value_json_for,
 )
-from dagster_v3.defs.se_company.fields.registry import field_by_name
+from dagster_v3.defs.se_company.fields.registry import INFO_REGISTRY, field_by_name
 from dagster_v3.defs.se_company.info import (
     OBSERVATION_COLUMNS,
     OBSERVATION_FLUSH_ROWS,
@@ -3338,7 +3312,7 @@ ORDER BY company_id, field, source"""
 
 
 def _ranked(cells: Mapping[tuple[str, str], tuple[str, str]], field: str) -> str:
-    for source in field_by_name(field).sources:
+    for source in field_by_name(INFO_REGISTRY, field).sources:
         hit = cells.get((field, source))
         if hit is not None:
             return hit[1]

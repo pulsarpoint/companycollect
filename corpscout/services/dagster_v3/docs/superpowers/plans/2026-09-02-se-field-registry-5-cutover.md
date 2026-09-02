@@ -679,6 +679,8 @@ Expected: swap used near 0, memory PSI `full avg10` well below 10, no D-state pr
 
 - [ ] **Step 3: Candidates — scb, bolagsverket, esef, wikidata, ratsit, domains (in this order, one at a time)**
 
+Before the unbounded scb run, time a capped one: launch `se_company_field_candidates_scb` with `execute: true, max_companies: 40000` (two pages of 20,000) and read the run duration. The full backfill is roughly 175 pages per source; the publish anti-join is scoped to the staged companies (plan 2 final fix wave) but each page still stages, validates and copies its rows, so a two-page timing is the only honest estimate for the six unbounded runs. The per-company watermark scan leaves the remaining companies selected, so the capped run loses nothing.
+
 Launchpad YAML, replacing `<source>` per run (no `company_ids` = every company; no `max_companies` = the config default, which parts 1–4 leave unbounded; no `since` = every company qualifies on an empty candidate table):
 ```yaml
 ops:
@@ -719,6 +721,8 @@ ops:
         concurrency: 2
 ```
 (The `llm` block is the pilot's `DEFAULT_LLM_PROFILE` with concurrency 2; the host reads `DEEPSEEK_API_KEY` for provider `deepseek`. If the Launchpad schema panel shows part 3's config keyed differently — e.g. `provider`/`model` at the top level in the ESEF style — use the panel's shape; a wrong shape is rejected as `RunConfigValidationInvalid` before any work starts.)
+Before the preview, check the two ways a payload can differ from what `info.py` hashed (a mismatch means the stored observation is missed and the description is paid for again): `ssh companycollect "docker exec clickhouse-clickhouse-1 clickhouse-client -q \"SELECT countIf(position(nace_rev2_class_code, '.') > 0) AS dotted, count() FROM corpscout.se_industries WHERE is_primary = 1\""` (expect `dotted = 0`; the candidates carry the dot-less code) and `... -q "SELECT countIf(lowerUTF8(trim(activity_description)) IN ('-', '--', '.', 'n/a', 'null', 'none')) FROM corpscout.se_company_info_scb FINAL"` (expect 0; placeholders are scrubbed from candidates but were not from the old payload). Then read the preview's `would_reuse_count` against `would_call_model_count`: with an unchanged prompt and dot-less codes nearly every multi-source company should reuse; a large `would_call_model_count` is a payload drift to investigate before spending.
+
 Read the preview's materialization metadata (`$S/mat.json` with `se_company_field_candidates_llm`): note the selected-company count and the estimated call count it reports. Then launch again with `execute: true` added under `config`. Expected: `SUCCESS`; rows with `source = 'llm'` ≈ the number of companies with two or more non-LLM description candidates (the pilot's multi-source set, low thousands), two rows per company (`description`, `description_sv`); paid calls ≈ the preview's estimate.
 
 - [ ] **Step 5: Record the candidate totals**
