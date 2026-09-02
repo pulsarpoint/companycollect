@@ -4,7 +4,6 @@ clickhouse-local harness further down (spec 7.4, 8.3)."""
 import re
 import subprocess
 from datetime import UTC, datetime
-from pathlib import Path
 from typing import Any
 
 import pytest
