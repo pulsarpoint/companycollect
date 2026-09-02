@@ -1,0 +1,3886 @@
+{
+  "start_url": "https://handelsbanken.se/",
+  "crawl_complete": false,
+  "stopped_reason": "max_pages_reached",
+  "visited_urls": [
+    "https://handelsbanken.se/",
+    "https://handelsbanken.se/sv/privat/kontakt-och-support/sakerhet-bedrageri",
+    "https://www.handelsbanken.se/sv/privat/kontakt-och-support",
+    "https://www.handelsbanken.se/sv/privat/kontakt-och-support/chatt",
+    "https://www.handelsbanken.se/sv/privat/kontakt-och-support/hjalp-och-support/aktivera-appen",
+    "https://www.handelsbanken.se/sv/privat/kontakt-och-support/hjalp-och-support/installation-kortlasare-med-sladd",
+    "https://www.handelsbanken.se/sv/privat/kontakt-och-support/hjalp-och-support/vanliga-fragor",
+    "https://www.handelsbanken.se/sv/privat/kontakt-och-support/sakerhet-bedrageri",
+    "https://www.handelsbanken.se/sv/hitta-bankkontor",
+    "https://handelsbanken.se/sv/privat/kontakt-och-support"
+  ],
+  "remaining_urls": [
+    "https://handelsbanken.se/sv/om-oss/vart-samhallsengagemang",
+    "https://handelsbanken.se/sv/om-oss/juridiska-dokument",
+    "https://handelsbanken.se/sv/privat/bolan",
+    "https://handelsbanken.se/sv/privat/kontakt-och-support/sakerhet-bedrageri/anmal-bedrageri",
+    "https://www.handelsbanken.se/sv/foretag/kontakta-oss-foretag",
+    "https://www.handelsbanken.se/sv/privat/kontakt-och-support/hjalp-och-support",
+    "https://www.handelsbanken.se/sv/privat/kontakt-och-support/hjalp-och-support/hjalp-bankid-pa-kort",
+    "https://www.handelsbanken.se/sv/privat/kontakt-och-support/hjalp-och-support/hjalp-med-mobilt-bankid",
+    "https://www.handelsbanken.se/sv/privat/kontakt-och-support/sakerhet-bedrageri/anmal-bedrageri",
+    "https://www.handelsbanken.se/akersberga",
+    "https://handelsbanken.se/sv/foretag/kontakta-oss-foretag",
+    "https://handelsbanken.se/sv/foretag/kontakta-oss-foretag/skydda-foretaget-mot-bedragerier",
+    "https://www.handelsbanken.se/sv/privat/kontakt-och-support/klagomal",
+    "https://www.handelsbanken.se/sv/privat/vardagstjanster/digitala-tjanster/inloggningssatt",
+    "https://www.handelsbanken.se/sv/foretag/konton-betalningar/foretagskort/business-debit",
+    "https://www.handelsbanken.se/sv/foretag/kontakta-oss-foretag/skydda-foretaget-mot-bedragerier",
+    "https://www.handelsbanken.se/alingsas",
+    "https://handelsbanken.se/sv/privat/kontakt-och-support/chatt",
+    "https://handelsbanken.se/sv/privat",
+    "https://www.handelsbanken.se/sv/privat/kontakt-och-support/synpunkter-formular",
+    "https://www.handelsbanken.se/sv/privat/kontakt-och-support/hjalp-och-support/systemkrav",
+    "https://www.handelsbanken.se/sv/foretag/konton-betalningar/foretagskort/business-card",
+    "https://www.handelsbanken.se/sv/privat/kontakt-och-support/sakerhet-bedrageri/vanliga-bedragerier",
+    "https://www.handelsbanken.se/almedal",
+    "https://handelsbanken.se/sv/privat/kontakt-och-support/klagomal",
+    "https://handelsbanken.se/sv/privat/kontakt-och-support/sakerhet-bedrageri/vanliga-bedragerier",
+    "https://www.handelsbanken.se/sv/om-oss/juridiska-dokument",
+    "https://www.handelsbanken.se/tron/public/info/contents/v1/document/32-150504",
+    "https://www.handelsbanken.se/sv/privat/vardagstjanster/banktjanster-for-barn-och-unga",
+    "https://www.handelsbanken.se/almhult",
+    "https://handelsbanken.se/sv/privat/kontakt-och-support/synpunkter-formular",
+    "https://www.handelsbanken.se/sv/privat",
+    "https://www.handelsbanken.se/tron/public/info/contents/v1/document/32-190550",
+    "https://www.handelsbanken.se/sv/privat/spara/sparkonton-och-rantor",
+    "https://www.handelsbanken.se/alvikstorg",
+    "https://handelsbanken.se/sv/privat/kontakt-och-support/hjalp-och-support/vanliga-fragor",
+    "https://www.handelsbanken.se/sjobo",
+    "https://handelsbanken.se/sv/ekonomi-i-livet/nyheter-och-analys/senaste-nyheterna/nyheter-och-omvarld/borantebuffert",
+    "https://handelsbanken.se/sv/ekonomi-i-livet/privatekonomi/boendeekonomi/for-hushall/nya-bolaneregler-paverkar-din-ekonomi",
+    "https://handelsbanken.se/sv/ekonomi-i-livet/privatekonomi/boendeekonomi/for-hushall/spara-eller-amortera",
+    "https://handelsbanken.se/sv/ekonomi-i-livet/privatekonomi/boendeekonomi/for-hushall/villaeffekten-energibidrag",
+    "https://handelsbanken.se/sv/ekonomi-i-livet/privatekonomi/pensionspeppen/pensionstips/storre-frihet-som-pensionar",
+    "https://handelsbanken.se/sv/ekonomi-i-livet/privatekonomi/vardagshjalp/sakerhet-i-vardagen/sa-vinner-du-over-bedragarna",
+    "https://handelsbanken.se/sv/om-oss/digital-tillganglighet",
+    "https://handelsbanken.se/sv/om-oss/juridiska-dokument/cookies",
+    "https://handelsbanken.se/sv/om-oss/juridiska-dokument/personuppgifter",
+    "https://handelsbanken.se/sv/privat/bolan/lanelofte",
+    "https://handelsbanken.se/sv/privat/bolan/laneloftesansokan",
+    "https://handelsbanken.se/sv/privat/pension",
+    "https://handelsbanken.se/sv/privat/spara",
+    "https://handelsbanken.se/sv/privat/spara/premium",
+    "https://handelsbanken.se/sv/privat/spara/private-banking",
+    "https://handelsbanken.se/sv/privat/vardagstjanster",
+    "https://www.handelsbanken.se/sv/privat/bli-kund",
+    "https://www.handelsbanken.se/sv/privat/vardagstjanster/bankkort-och-kreditkort/sparra-kort",
+    "https://www.handelsbanken.se/sv/privat/vardagstjanster/digitala-tjanster/mobilt-bankid",
+    "https://www.handelsbanken.se/sv/privat/vardagstjanster/digitala-tjanster/ny-mobil",
+    "https://handelsbanken.se/sv/ekonomi-i-livet/privatekonomi/livssituationer/seniorsmart/vad-ar-en-losenordshanterare",
+    "https://handelsbanken.se/sv/ekonomi-i-livet/privatekonomi/vardagshjalp/sakerhet-i-vardagen/bedragerier-riktade-mot-barn-och-unga",
+    "https://handelsbanken.se/sv/ekonomi-i-livet/privatekonomi/vardagshjalp/sakerhet-i-vardagen/se-upp-for-investeringsbedragerier",
+    "https://www.handelsbanken.se/sv/om-oss/digital-tillganglighet",
+    "https://www.handelsbanken.se/sv/om-oss/juridiska-dokument/cookies",
+    "https://www.handelsbanken.se/sv/om-oss/juridiska-dokument/personuppgifter",
+    "https://www.handelsbanken.se/tron/public/info/contents/v1/document/32-150507",
+    "https://www.handelsbanken.se/sv/ekonomi-i-livet/privatekonomi/livssituationer/om-nagon-avlider/betala-dodsboets-rakningar",
+    "https://www.handelsbanken.se/sv/ekonomi-i-livet/privatekonomi/livssituationer/om-nagon-avlider/dodsbo",
+    "https://www.handelsbanken.se/sv/ekonomi-i-livet/privatekonomi/livssituationer/om-nagon-avlider/vad-hander-med-dodsboets-banktjanster",
+    "https://www.handelsbanken.se/sv/ekonomi-i-livet/privatekonomi/vardagshjalp/vardagsjuridik/hur-fungerar-en-framtidsfullmakt",
+    "https://www.handelsbanken.se/sv/foretag/konton-betalningar/betala/loner/bryttider",
+    "https://www.handelsbanken.se/sv/foretag/konton-betalningar/konton/aktuella-rantor-foretag",
+    "https://www.handelsbanken.se/sv/privat/bli-kund/darfor-staller-vi-fragor",
+    "https://www.handelsbanken.se/sv/privat/bolan/bolanerantor",
+    "https://www.handelsbanken.se/sv/privat/vardagstjanster/bankkort-och-kreditkort/aktivera-kort",
+    "https://www.handelsbanken.se/sv/privat/vardagstjanster/bankkort-och-kreditkort/jamfor-reseforsakringar",
+    "https://www.handelsbanken.se/sv/privat/vardagstjanster/konton-och-betalningar/clearingnummer",
+    "https://www.handelsbanken.se/sv/ekonomi-i-livet/privatekonomi/livssituationer/seniorsmart/vad-ar-en-losenordshanterare",
+    "https://www.handelsbanken.se/sv/ekonomi-i-livet/privatekonomi/vardagshjalp/sakerhet-i-vardagen/bedragerier-riktade-mot-barn-och-unga",
+    "https://www.handelsbanken.se/sv/ekonomi-i-livet/privatekonomi/vardagshjalp/sakerhet-i-vardagen/sa-vinner-du-over-bedragarna",
+    "https://www.handelsbanken.se/sv/ekonomi-i-livet/privatekonomi/vardagshjalp/sakerhet-i-vardagen/se-upp-for-investeringsbedragerier",
+    "https://www.handelsbanken.se/alvsborg",
+    "https://www.handelsbanken.se/alvsbyn",
+    "https://www.handelsbanken.se/alvsjo",
+    "https://www.handelsbanken.se/amal",
+    "https://www.handelsbanken.se/ange",
+    "https://www.handelsbanken.se/angelholm",
+    "https://www.handelsbanken.se/arbetargatan",
+    "https://www.handelsbanken.se/arboga",
+    "https://www.handelsbanken.se/are",
+    "https://www.handelsbanken.se/arenastaden",
+    "https://www.handelsbanken.se/avenyn",
+    "https://www.handelsbanken.se/balsta",
+    "https://www.handelsbanken.se/bastad",
+    "https://www.handelsbanken.se/boden",
+    "https://www.handelsbanken.se/bollebygd",
+    "https://www.handelsbanken.se/bollnas",
+    "https://www.handelsbanken.se/borascity",
+    "https://www.handelsbanken.se/borlange",
+    "https://www.handelsbanken.se/brommaplan",
+    "https://www.handelsbanken.se/djursholm",
+    "https://www.handelsbanken.se/drottningparken",
+    "https://www.handelsbanken.se/edsbyn",
+    "https://www.handelsbanken.se/ekero",
+    "https://www.handelsbanken.se/ekersgatan",
+    "https://www.handelsbanken.se/enkoping",
+    "https://www.handelsbanken.se/eskilstuna",
+    "https://www.handelsbanken.se/eslov",
+    "https://www.handelsbanken.se/fagersta",
+    "https://www.handelsbanken.se/falkenberg",
+    "https://www.handelsbanken.se/falkoping",
+    "https://www.handelsbanken.se/falun",
+    "https://www.handelsbanken.se/farsta",
+    "https://www.handelsbanken.se/fosie",
+    "https://www.handelsbanken.se/fridhem",
+    "https://www.handelsbanken.se/frolunda",
+    "https://www.handelsbanken.se/gardet",
+    "https://www.handelsbanken.se/gavle",
+    "https://www.handelsbanken.se/gellivare",
+    "https://www.handelsbanken.se/gislaved",
+    "https://www.handelsbanken.se/globen",
+    "https://www.handelsbanken.se/goteborg_city",
+    "https://www.handelsbanken.se/gotland",
+    "https://www.handelsbanken.se/hagersten",
+    "https://www.handelsbanken.se/hallstavik",
+    "https://www.handelsbanken.se/halmstad",
+    "https://www.handelsbanken.se/hammarby_sjostad",
+    "https://www.handelsbanken.se/haninge",
+    "https://www.handelsbanken.se/harnosand",
+    "https://www.handelsbanken.se/hassleholm",
+    "https://www.handelsbanken.se/hedemora",
+    "https://www.handelsbanken.se/helsingborg",
+    "https://www.handelsbanken.se/hogalid",
+    "https://www.handelsbanken.se/hoganas",
+    "https://www.handelsbanken.se/hollviken",
+    "https://www.handelsbanken.se/hornsberg",
+    "https://www.handelsbanken.se/hovas",
+    "https://www.handelsbanken.se/huddinge",
+    "https://www.handelsbanken.se/hudiksvall",
+    "https://www.handelsbanken.se/humlegarden",
+    "https://www.handelsbanken.se/jarfalla",
+    "https://www.handelsbanken.se/jonkoping",
+    "https://www.handelsbanken.se/kalix",
+    "https://www.handelsbanken.se/kalmar",
+    "https://www.handelsbanken.se/karlaplan",
+    "https://www.handelsbanken.se/karlastaden",
+    "https://www.handelsbanken.se/karlshamn",
+    "https://www.handelsbanken.se/karlskoga",
+    "https://www.handelsbanken.se/karlskrona",
+    "https://www.handelsbanken.se/karlstad",
+    "https://www.handelsbanken.se/katrineholm",
+    "https://www.handelsbanken.se/kavlinge",
+    "https://www.handelsbanken.se/kiruna",
+    "https://www.handelsbanken.se/kista",
+    "https://www.handelsbanken.se/knivsta",
+    "https://www.handelsbanken.se/koping",
+    "https://www.handelsbanken.se/kopingsvagen",
+    "https://www.handelsbanken.se/kramfors",
+    "https://www.handelsbanken.se/kristianstad",
+    "https://www.handelsbanken.se/krokom",
+    "https://www.handelsbanken.se/kumla",
+    "https://www.handelsbanken.se/kungalv",
+    "https://www.handelsbanken.se/kungsangen",
+    "https://www.handelsbanken.se/kungsbacka",
+    "https://www.handelsbanken.se/kungsholmstorg",
+    "https://www.handelsbanken.se/kungstradgarden",
+    "https://www.handelsbanken.se/landskrona",
+    "https://www.handelsbanken.se/leksand",
+    "https://www.handelsbanken.se/lerum",
+    "https://www.handelsbanken.se/lidingo",
+    "https://www.handelsbanken.se/lidkoping",
+    "https://www.handelsbanken.se/lima",
+    "https://www.handelsbanken.se/limhamn",
+    "https://www.handelsbanken.se/lindesberg",
+    "https://www.handelsbanken.se/linkoping",
+    "https://www.handelsbanken.se/ljungby",
+    "https://www.handelsbanken.se/ljusdal",
+    "https://www.handelsbanken.se/lomma",
+    "https://www.handelsbanken.se/ludvika",
+    "https://www.handelsbanken.se/lulea_storgatan",
+    "https://www.handelsbanken.se/lund_city",
+    "https://www.handelsbanken.se/lund_ideon",
+    "https://www.handelsbanken.se/luthagen",
+    "https://www.handelsbanken.se/lycksele",
+    "https://www.handelsbanken.se/malmo_city",
+    "https://www.handelsbanken.se/malmo_oster",
+    "https://www.handelsbanken.se/malmo_stortorget",
+    "https://www.handelsbanken.se/mariestad",
+    "https://www.handelsbanken.se/marievik",
+    "https://www.handelsbanken.se/masthuggskajen",
+    "https://www.handelsbanken.se/mjolby",
+    "https://www.handelsbanken.se/molndal",
+    "https://www.handelsbanken.se/molnlycke",
+    "https://www.handelsbanken.se/mora",
+    "https://www.handelsbanken.se/morby",
+    "https://www.handelsbanken.se/motala",
+    "https://www.handelsbanken.se/nacka",
+    "https://www.handelsbanken.se/nassjo",
+    "https://www.handelsbanken.se/nordmaling",
+    "https://www.handelsbanken.se/norrkoping",
+    "https://www.handelsbanken.se/norrmalmstorg",
+    "https://www.handelsbanken.se/norrtalje",
+    "https://www.handelsbanken.se/norsjo",
+    "https://www.handelsbanken.se/nykoping",
+    "https://www.handelsbanken.se/nynashamn",
+    "https://www.handelsbanken.se/odenplan",
+    "https://www.handelsbanken.se/oland",
+    "https://www.handelsbanken.se/orebro_stortorget",
+    "https://www.handelsbanken.se/orgryte",
+    "https://www.handelsbanken.se/ornskoldsvik",
+    "https://www.handelsbanken.se/oskarshamn",
+    "https://www.handelsbanken.se/ostermalarstrand",
+    "https://www.handelsbanken.se/ostermalmsgatan",
+    "https://www.handelsbanken.se/ostermalmstorg",
+    "https://www.handelsbanken.se/ostersund",
+    "https://www.handelsbanken.se/osthammar",
+    "https://www.handelsbanken.se/pajala",
+    "https://www.handelsbanken.se/partille",
+    "https://www.handelsbanken.se/pitea",
+    "https://www.handelsbanken.se/rosendal",
+    "https://www.handelsbanken.se/sala",
+    "https://www.handelsbanken.se/saltsjo_boo",
+    "https://www.handelsbanken.se/sandviken",
+    "https://www.handelsbanken.se/sigtuna",
+    "https://www.handelsbanken.se/simrishamn",
+    "https://www.handelsbanken.se/sisjon",
+    "https://www.handelsbanken.se/skanor",
+    "https://www.handelsbanken.se/skanstull",
+    "https://www.handelsbanken.se/skelleftea",
+    "https://www.handelsbanken.se/skovde",
+    "https://www.handelsbanken.se/slussen",
+    "https://www.handelsbanken.se/soderhamn",
+    "https://www.handelsbanken.se/sodertalje",
+    "https://www.handelsbanken.se/solleftea",
+    "https://www.handelsbanken.se/sollentuna",
+    "https://www.handelsbanken.se/solna",
+    "https://www.handelsbanken.se/st_eriksplan",
+    "https://www.handelsbanken.se/staffanstorp",
+    "https://www.handelsbanken.se/stenungsund",
+    "https://www.handelsbanken.se/strandvagen",
+    "https://www.handelsbanken.se/strangnas",
+    "https://www.handelsbanken.se/stromsund",
+    "https://www.handelsbanken.se/stureplan",
+    "https://www.handelsbanken.se/sundbyberg",
+    "https://www.handelsbanken.se/sundsvall",
+    "https://www.handelsbanken.se/sunne",
+    "https://www.handelsbanken.se/sveg",
+    "https://www.handelsbanken.se/taby",
+    "https://www.handelsbanken.se/teg",
+    "https://www.handelsbanken.se/tierp",
+    "https://www.handelsbanken.se/torslanda",
+    "https://www.handelsbanken.se/tranas",
+    "https://www.handelsbanken.se/trelleborg",
+    "https://www.handelsbanken.se/trollhattan",
+    "https://www.handelsbanken.se/tullinge",
+    "https://www.handelsbanken.se/tyreso",
+    "https://www.handelsbanken.se/uddevalla",
+    "https://www.handelsbanken.se/ulricehamn",
+    "https://www.handelsbanken.se/umea_city",
+    "https://www.handelsbanken.se/upplands_vasby",
+    "https://www.handelsbanken.se/uppsala_bolanderna",
+    "https://www.handelsbanken.se/uppsala_city",
+    "https://www.handelsbanken.se/vallentuna",
+    "https://www.handelsbanken.se/vallingby",
+    "https://www.handelsbanken.se/vanadisplan",
+    "https://www.handelsbanken.se/vanersborg",
+    "https://www.handelsbanken.se/vannas",
+    "https://www.handelsbanken.se/vansbro",
+    "https://www.handelsbanken.se/vara",
+    "https://www.handelsbanken.se/varberg",
+    "https://www.handelsbanken.se/varmdo",
+    "https://www.handelsbanken.se/varnamo",
+    "https://www.handelsbanken.se/vasagatan",
+    "https://www.handelsbanken.se/vasteras_city",
+    "https://www.handelsbanken.se/vastervik",
+    "https://www.handelsbanken.se/vaxjo",
+    "https://www.handelsbanken.se/vetlanda",
+    "https://www.handelsbanken.se/vilhelmina",
+    "https://www.handelsbanken.se/vimmerby",
+    "https://www.handelsbanken.se/ystad",
+    "https://handelsbanken.se/sv/hitta-bankkontor"
+  ],
+  "failed_pages": [],
+  "analysis_stats": {
+    "attempted_analyses": 10,
+    "successful_analyses": 10,
+    "failed_analyses": 0,
+    "analyses_with_usage": 10,
+    "analyses_without_usage": 0,
+    "token_totals": {
+      "input_tokens": 264685,
+      "cached_input_tokens": 30208,
+      "cache_write_input_tokens": 0,
+      "output_tokens": 39880,
+      "reasoning_output_tokens": 21717,
+      "total_tokens": 304565
+    }
+  },
+  "useful_information": {
+    "contacts": [
+      {
+        "type": "phone",
+        "value": "0771-77 88 99",
+        "label": "Personlig service dygnet runt",
+        "evidence": {
+          "text": "Ring 0771-77 88 99 för personlig service.",
+          "source_url": "https://handelsbanken.se/"
+        }
+      },
+      {
+        "type": "phone",
+        "value": "+46 771 77 88 99",
+        "label": "Personlig service från utlandet",
+        "evidence": {
+          "text": "+46 771 77 88 99 från utlandet",
+          "source_url": "https://handelsbanken.se/"
+        }
+      },
+      {
+        "type": "phone",
+        "value": "020-41 12 12",
+        "label": "Spärra kort eller BankID i Sverige",
+        "evidence": {
+          "text": "Ring i Sverige 020-41 12 12",
+          "source_url": "https://handelsbanken.se/"
+        }
+      },
+      {
+        "type": "phone",
+        "value": "+46 8 411 21 22",
+        "label": "Spärra kort eller BankID från utlandet",
+        "evidence": {
+          "text": "Ring från utlandet +46 8 411 21 22",
+          "source_url": "https://handelsbanken.se/"
+        }
+      },
+      {
+        "type": "phone",
+        "value": "020‑41 12 12",
+        "label": "Spärra kort eller BankID",
+        "evidence": {
+          "text": "Spärra kort eller BankID: 020‑41 12 12.",
+          "source_url": "https://handelsbanken.se/sv/privat/kontakt-och-support/sakerhet-bedrageri"
+        }
+      },
+      {
+        "type": "phone",
+        "value": "08-701 10 00",
+        "label": "Växel",
+        "evidence": {
+          "text": "Växel: 08-701 10 00",
+          "source_url": "https://www.handelsbanken.se/sv/privat/kontakt-och-support"
+        }
+      },
+      {
+        "type": "email",
+        "value": "SHBAB@pdf.scancloud.se",
+        "label": "Mejladress för fakturering",
+        "evidence": {
+          "text": "Mejladress för fakturering: SHBAB@pdf.scancloud.se",
+          "source_url": "https://www.handelsbanken.se/sv/privat/kontakt-och-support"
+        }
+      },
+      {
+        "type": "address",
+        "value": "Kungsträdgårdsgatan 2\n106 70 Stockholm",
+        "label": "Huvudkontor",
+        "evidence": {
+          "text": "Huvudkontor: Kungsträdgårdsgatan 2, 106 70 Stockholm",
+          "source_url": "https://www.handelsbanken.se/sv/privat/kontakt-och-support"
+        }
+      },
+      {
+        "type": "address",
+        "value": "Svenska Handelsbanken AB\nFE 7628\n831 90 Östersund",
+        "label": "Faktureringsadress",
+        "evidence": {
+          "text": "Faktureringsadress: Svenska Handelsbanken AB, FE 7628, 831 90 Östersund",
+          "source_url": "https://www.handelsbanken.se/sv/privat/kontakt-och-support"
+        }
+      },
+      {
+        "type": "social",
+        "value": "https://www.linkedin.com/company/handelsbanken/jobs/",
+        "label": "LinkedIn",
+        "evidence": {
+          "text": "Handelsbanken Linkedin links to https://www.linkedin.com/company/handelsbanken/jobs/",
+          "source_url": "https://www.handelsbanken.se/sv/privat/kontakt-och-support"
+        }
+      },
+      {
+        "type": "social",
+        "value": "https://www.facebook.com/Handelsbanken/",
+        "label": "Facebook",
+        "evidence": {
+          "text": "Handelsbanken Facebook links to https://www.facebook.com/Handelsbanken/",
+          "source_url": "https://www.handelsbanken.se/sv/privat/kontakt-och-support"
+        }
+      },
+      {
+        "type": "social",
+        "value": "https://www.instagram.com/handelsbanken/",
+        "label": "Instagram",
+        "evidence": {
+          "text": "Handelsbanken Instagram links to https://www.instagram.com/handelsbanken/",
+          "source_url": "https://www.handelsbanken.se/sv/privat/kontakt-och-support"
+        }
+      },
+      {
+        "type": "social",
+        "value": "https://www.youtube.com/user/handelsbanken",
+        "label": "YouTube",
+        "evidence": {
+          "text": "Handelsbanken Youtube links to https://www.youtube.com/user/handelsbanken",
+          "source_url": "https://www.handelsbanken.se/sv/privat/kontakt-och-support"
+        }
+      },
+      {
+        "type": "address",
+        "value": "Storängstorget, Åkersberga Centrum\nÅkersberga",
+        "label": "Åkersberga",
+        "evidence": {
+          "text": "Åkersberga — Storängstorget, Åkersberga Centrum — Åkersberga",
+          "source_url": "https://www.handelsbanken.se/sv/hitta-bankkontor"
+        }
+      },
+      {
+        "type": "phone",
+        "value": "08 54410200",
+        "label": "Åkersberga",
+        "evidence": {
+          "text": "Åkersberga, Telefon 08 54410200",
+          "source_url": "https://www.handelsbanken.se/sv/hitta-bankkontor"
+        }
+      },
+      {
+        "type": "address",
+        "value": "Kungsgatan 24\nAlingsås",
+        "label": "Alingsås",
+        "evidence": {
+          "text": "Alingsås — Kungsgatan 24 — Alingsås",
+          "source_url": "https://www.handelsbanken.se/sv/hitta-bankkontor"
+        }
+      },
+      {
+        "type": "phone",
+        "value": "0322 667280",
+        "label": "Alingsås",
+        "evidence": {
+          "text": "Alingsås, Telefon 0322 667280",
+          "source_url": "https://www.handelsbanken.se/sv/hitta-bankkontor"
+        }
+      },
+      {
+        "type": "address",
+        "value": "Grafiska vägen 2B\nGöteborg",
+        "label": "Göteborg Almedal",
+        "evidence": {
+          "text": "Göteborg Almedal — Grafiska vägen 2B — Göteborg",
+          "source_url": "https://www.handelsbanken.se/sv/hitta-bankkontor"
+        }
+      },
+      {
+        "type": "phone",
+        "value": "031 7030700",
+        "label": "Göteborg Almedal",
+        "evidence": {
+          "text": "Göteborg Almedal, Telefon 031 7030700",
+          "source_url": "https://www.handelsbanken.se/sv/hitta-bankkontor"
+        }
+      },
+      {
+        "type": "address",
+        "value": "Norra Esplanaden 6\nÄlmhult",
+        "label": "Älmhult",
+        "evidence": {
+          "text": "Älmhult — Norra Esplanaden 6 — Älmhult",
+          "source_url": "https://www.handelsbanken.se/sv/hitta-bankkontor"
+        }
+      },
+      {
+        "type": "phone",
+        "value": "0476 56150",
+        "label": "Älmhult",
+        "evidence": {
+          "text": "Älmhult, Telefon 0476 56150",
+          "source_url": "https://www.handelsbanken.se/sv/hitta-bankkontor"
+        }
+      },
+      {
+        "type": "address",
+        "value": "Gustavslundsvägen 22\nBromma",
+        "label": "Alviks Torg",
+        "evidence": {
+          "text": "Alviks Torg — Gustavslundsvägen 22 — Bromma",
+          "source_url": "https://www.handelsbanken.se/sv/hitta-bankkontor"
+        }
+      },
+      {
+        "type": "phone",
+        "value": "08 56410160",
+        "label": "Alviks Torg",
+        "evidence": {
+          "text": "Alviks Torg, Telefon 08 56410160",
+          "source_url": "https://www.handelsbanken.se/sv/hitta-bankkontor"
+        }
+      },
+      {
+        "type": "social",
+        "value": "https://www.facebook.com/Handelsbanken",
+        "label": "Facebook-support",
+        "evidence": {
+          "text": "Fråga oss på Facebook — Till Handelsbanken på Facebook",
+          "source_url": "https://handelsbanken.se/sv/privat/kontakt-och-support"
+        }
+      }
+    ],
+    "company": {
+      "name": "Handelsbanken",
+      "legal_name": "Svenska Handelsbanken AB (publ)",
+      "description": "Handelsbanken har i över 150 år varit en del av samhällets utveckling – genom att finansiera, investera och skapa långsiktiga förutsättningar för människor och företag.",
+      "industries": [
+        "Banking",
+        "Financial services",
+        "Banktjänster"
+      ],
+      "locations": [
+        "Stockholm",
+        "Östersund",
+        "Alingsås",
+        "Bromma",
+        "Göteborg",
+        "Älmhult",
+        "Åkersberga",
+        "Kungsträdgårdsgatan 2\n106 70 Stockholm",
+        "FE 7628\n831 90 Östersund"
+      ],
+      "identifiers": [
+        "Organisationsnummer: 502007-7862",
+        "SWIFT-/BIC-adress: HANDSESS",
+        "LEI-nummer (legal entity identifier): NHBDILHZTYCNBV5UYZ31",
+        "GIIN-nummer: TT0D1B.00000.LE.752",
+        "GLN 7350043760137",
+        "PEPPOL ID: 0007:5020077862"
+      ],
+      "social_profiles": [
+        "https://www.linkedin.com/company/handelsbanken/jobs/",
+        "https://www.facebook.com/Handelsbanken/",
+        "https://www.instagram.com/handelsbanken/",
+        "https://www.youtube.com/user/handelsbanken"
+      ],
+      "evidence": [
+        {
+          "text": "© Svenska Handelsbanken AB (publ) — Handelsbanken",
+          "source_url": "https://handelsbanken.se/"
+        },
+        {
+          "text": "Handelsbanken har i över 150 år varit en del av samhällets utveckling – genom att finansiera, investera och skapa långsiktiga förutsättningar för människor och företag.",
+          "source_url": "https://handelsbanken.se/"
+        },
+        {
+          "text": "Handelsbanken Linkedin: https://www.linkedin.com/company/handelsbanken/jobs/",
+          "source_url": "https://handelsbanken.se/"
+        },
+        {
+          "text": "Handelsbanken Facebook: https://www.facebook.com/Handelsbanken/",
+          "source_url": "https://handelsbanken.se/"
+        },
+        {
+          "text": "Handelsbanken Instagram: https://www.instagram.com/handelsbanken/",
+          "source_url": "https://handelsbanken.se/"
+        },
+        {
+          "text": "Handelsbanken Youtube: https://www.youtube.com/user/handelsbanken",
+          "source_url": "https://handelsbanken.se/"
+        },
+        {
+          "text": "© Svenska Handelsbanken AB (publ) — Handelsbanken.",
+          "source_url": "https://handelsbanken.se/sv/privat/kontakt-och-support/sakerhet-bedrageri"
+        },
+        {
+          "text": "Vi hjälper dig med bankärenden och supportfrågor.",
+          "source_url": "https://handelsbanken.se/sv/privat/kontakt-och-support/sakerhet-bedrageri"
+        },
+        {
+          "text": "Vi arbetar kontinuerligt för att förebygga olika typer av bedrägerier.",
+          "source_url": "https://handelsbanken.se/sv/privat/kontakt-och-support/sakerhet-bedrageri"
+        },
+        {
+          "text": "Handelsbanken Linkedin: https://www.linkedin.com/company/handelsbanken/jobs/",
+          "source_url": "https://handelsbanken.se/sv/privat/kontakt-och-support/sakerhet-bedrageri"
+        },
+        {
+          "text": "Handelsbanken Facebook: https://www.facebook.com/Handelsbanken/",
+          "source_url": "https://handelsbanken.se/sv/privat/kontakt-och-support/sakerhet-bedrageri"
+        },
+        {
+          "text": "Handelsbanken Instagram: https://www.instagram.com/handelsbanken/",
+          "source_url": "https://handelsbanken.se/sv/privat/kontakt-och-support/sakerhet-bedrageri"
+        },
+        {
+          "text": "Handelsbanken Youtube: https://www.youtube.com/user/handelsbanken",
+          "source_url": "https://handelsbanken.se/sv/privat/kontakt-och-support/sakerhet-bedrageri"
+        },
+        {
+          "text": "© Svenska Handelsbanken AB (publ) — Handelsbanken",
+          "source_url": "https://www.handelsbanken.se/sv/privat/kontakt-och-support"
+        },
+        {
+          "text": "Här hittar du enkla sätt att få hjälp med dina bankärenden.",
+          "source_url": "https://www.handelsbanken.se/sv/privat/kontakt-och-support"
+        },
+        {
+          "text": "Organisationsnummer: 502007-7862; SWIFT-/BIC-adress: HANDSESS; LEI-nummer: NHBDILHZTYCNBV5UYZ31; GIIN-nummer: TT0D1B.00000.LE.752",
+          "source_url": "https://www.handelsbanken.se/sv/privat/kontakt-och-support"
+        },
+        {
+          "text": "Huvudkontor: Kungsträdgårdsgatan 2, 106 70 Stockholm",
+          "source_url": "https://www.handelsbanken.se/sv/privat/kontakt-och-support"
+        },
+        {
+          "text": "Faktureringsadress: Svenska Handelsbanken AB, FE 7628, 831 90 Östersund",
+          "source_url": "https://www.handelsbanken.se/sv/privat/kontakt-och-support"
+        },
+        {
+          "text": "© Svenska Handelsbanken AB (publ) — Handelsbanken.",
+          "source_url": "https://www.handelsbanken.se/sv/privat/kontakt-och-support/chatt"
+        },
+        {
+          "text": "Vi hjälper dig med bankärenden och supportfrågor.",
+          "source_url": "https://www.handelsbanken.se/sv/privat/kontakt-och-support/chatt"
+        },
+        {
+          "text": "Official Handelsbanken LinkedIn, Facebook, Instagram and Youtube links are listed.",
+          "source_url": "https://www.handelsbanken.se/sv/privat/kontakt-och-support/chatt"
+        },
+        {
+          "text": "© Svenska Handelsbanken AB (publ) — Handelsbanken.",
+          "source_url": "https://www.handelsbanken.se/sv/privat/kontakt-och-support/hjalp-och-support/aktivera-appen"
+        },
+        {
+          "text": "Vi hjälper dig med bankärenden och supportfrågor.",
+          "source_url": "https://www.handelsbanken.se/sv/privat/kontakt-och-support/hjalp-och-support/aktivera-appen"
+        },
+        {
+          "text": "Official Handelsbanken LinkedIn, Facebook, Instagram, and Youtube links are listed.",
+          "source_url": "https://www.handelsbanken.se/sv/privat/kontakt-och-support/hjalp-och-support/aktivera-appen"
+        },
+        {
+          "text": "© Svenska Handelsbanken AB (publ) Handelsbanken",
+          "source_url": "https://www.handelsbanken.se/sv/privat/kontakt-och-support/hjalp-och-support/installation-kortlasare-med-sladd"
+        },
+        {
+          "text": "Vi hjälper dig med bankärenden och supportfrågor.",
+          "source_url": "https://www.handelsbanken.se/sv/privat/kontakt-och-support/hjalp-och-support/installation-kortlasare-med-sladd"
+        },
+        {
+          "text": "Official Handelsbanken LinkedIn, Facebook, Instagram and Youtube links are listed.",
+          "source_url": "https://www.handelsbanken.se/sv/privat/kontakt-och-support/hjalp-och-support/installation-kortlasare-med-sladd"
+        },
+        {
+          "text": "© Svenska Handelsbanken AB (publ) — Handelsbanken.",
+          "source_url": "https://www.handelsbanken.se/sv/privat/kontakt-och-support/hjalp-och-support/vanliga-fragor"
+        },
+        {
+          "text": "Vi hjälper dig med bankärenden och supportfrågor.",
+          "source_url": "https://www.handelsbanken.se/sv/privat/kontakt-och-support/hjalp-och-support/vanliga-fragor"
+        },
+        {
+          "text": "© Svenska Handelsbanken AB (publ) — Handelsbanken",
+          "source_url": "https://www.handelsbanken.se/sv/privat/kontakt-och-support/sakerhet-bedrageri"
+        },
+        {
+          "text": "Vi hjälper dig med bankärenden och supportfrågor.",
+          "source_url": "https://www.handelsbanken.se/sv/privat/kontakt-och-support/sakerhet-bedrageri"
+        },
+        {
+          "text": "Vi arbetar kontinuerligt för att förebygga olika typer av bedrägerier.",
+          "source_url": "https://www.handelsbanken.se/sv/privat/kontakt-och-support/sakerhet-bedrageri"
+        },
+        {
+          "text": "Handelsbanken Linkedin: https://www.linkedin.com/company/handelsbanken/jobs/",
+          "source_url": "https://www.handelsbanken.se/sv/privat/kontakt-och-support/sakerhet-bedrageri"
+        },
+        {
+          "text": "Handelsbanken Facebook: https://www.facebook.com/Handelsbanken/",
+          "source_url": "https://www.handelsbanken.se/sv/privat/kontakt-och-support/sakerhet-bedrageri"
+        },
+        {
+          "text": "Handelsbanken Instagram: https://www.instagram.com/handelsbanken/",
+          "source_url": "https://www.handelsbanken.se/sv/privat/kontakt-och-support/sakerhet-bedrageri"
+        },
+        {
+          "text": "Handelsbanken Youtube: https://www.youtube.com/user/handelsbanken",
+          "source_url": "https://www.handelsbanken.se/sv/privat/kontakt-och-support/sakerhet-bedrageri"
+        },
+        {
+          "text": "På bankkontoren finns våra experter, redo att hjälpa dig fatta kloka ekonomiska beslut.",
+          "source_url": "https://www.handelsbanken.se/sv/hitta-bankkontor"
+        },
+        {
+          "text": "Vi har ett rikstäckande kontorsnät med fler än 1 800 rådgivare över hela landet.",
+          "source_url": "https://www.handelsbanken.se/sv/hitta-bankkontor"
+        },
+        {
+          "text": "205 kontor hittade.",
+          "source_url": "https://www.handelsbanken.se/sv/hitta-bankkontor"
+        },
+        {
+          "text": "© Svenska Handelsbanken AB (publ) — Handelsbanken",
+          "source_url": "https://www.handelsbanken.se/sv/hitta-bankkontor"
+        },
+        {
+          "text": "© Svenska Handelsbanken AB (publ) — Handelsbanken",
+          "source_url": "https://handelsbanken.se/sv/privat/kontakt-och-support"
+        },
+        {
+          "text": "Vi hjälper dig med bankärenden och supportfrågor.",
+          "source_url": "https://handelsbanken.se/sv/privat/kontakt-och-support"
+        },
+        {
+          "text": "Vi hjälper dig med till exempel bolån, placeringar eller sparande till pension.",
+          "source_url": "https://handelsbanken.se/sv/privat/kontakt-och-support"
+        },
+        {
+          "text": "Organisationsnummer: 502007-7862; SWIFT-/BIC-adress: HANDSESS",
+          "source_url": "https://handelsbanken.se/sv/privat/kontakt-och-support"
+        },
+        {
+          "text": "LEI-nummer: NHBDILHZTYCNBV5UYZ31; GIIN-nummer: TT0D1B.00000.LE.752",
+          "source_url": "https://handelsbanken.se/sv/privat/kontakt-och-support"
+        },
+        {
+          "text": "Handelsbanken Linkedin, Facebook, Instagram och Youtube",
+          "source_url": "https://handelsbanken.se/sv/privat/kontakt-och-support"
+        }
+      ]
+    },
+    "products": [
+      {
+        "name": "Bolån",
+        "category": null,
+        "description": "Räkna och ansök om bolån",
+        "price": null,
+        "currency": null,
+        "url": "/sv/privat/bolan",
+        "evidence": {
+          "text": "Bolån — Räkna och ansök om bolån",
+          "source_url": "https://handelsbanken.se/"
+        }
+      },
+      {
+        "name": "Spara",
+        "category": null,
+        "description": "Kom igång med ditt sparande",
+        "price": null,
+        "currency": null,
+        "url": "/sv/privat/spara",
+        "evidence": {
+          "text": "Spara — Kom igång med ditt sparande",
+          "source_url": "https://handelsbanken.se/"
+        }
+      },
+      {
+        "name": "Pension",
+        "category": null,
+        "description": "Spara för framtiden",
+        "price": null,
+        "currency": null,
+        "url": "/sv/privat/pension",
+        "evidence": {
+          "text": "Pension — Spara för framtiden",
+          "source_url": "https://handelsbanken.se/"
+        }
+      },
+      {
+        "name": "Din vardagsekonomi",
+        "category": null,
+        "description": "Konton, kort och betalsätt",
+        "price": null,
+        "currency": null,
+        "url": "/sv/privat/vardagstjanster",
+        "evidence": {
+          "text": "Din vardagsekonomi — Konton, kort och betalsätt",
+          "source_url": "https://handelsbanken.se/"
+        }
+      },
+      {
+        "name": "Handelsbanken Premium",
+        "category": null,
+        "description": "En personlig rådgivningstjänst",
+        "price": null,
+        "currency": null,
+        "url": "/sv/privat/spara/premium",
+        "evidence": {
+          "text": "Handelsbanken Premium — En personlig rådgivningstjänst",
+          "source_url": "https://handelsbanken.se/"
+        }
+      },
+      {
+        "name": "Private Banking",
+        "category": null,
+        "description": "Ditt personliga Private Banker-team",
+        "price": null,
+        "currency": null,
+        "url": "/sv/privat/spara/private-banking",
+        "evidence": {
+          "text": "Private Banking — Ditt personliga Private Banker-team",
+          "source_url": "https://handelsbanken.se/"
+        }
+      },
+      {
+        "name": "Rådgivning",
+        "category": "Advisory service",
+        "description": "Rådgivning genom Handelsbankens rikstäckande kontorsnät.",
+        "price": null,
+        "currency": null,
+        "url": "https://www.handelsbanken.se/sv/hitta-bankkontor",
+        "evidence": {
+          "text": "Vi har ett rikstäckande kontorsnät med fler än 1 800 rådgivare över hela landet.",
+          "source_url": "https://handelsbanken.se/sv/privat/kontakt-och-support/sakerhet-bedrageri"
+        }
+      },
+      {
+        "name": "Personlig service dygnet runt",
+        "category": "Banking and support service",
+        "description": "Hjälp med bankärenden och supportfrågor, öppet dygnet runt.",
+        "price": null,
+        "currency": null,
+        "url": "https://www.handelsbanken.se/sv/privat/kontakt-och-support",
+        "evidence": {
+          "text": "Vi hjälper dig med bankärenden och supportfrågor. Öppet dygnet runt.",
+          "source_url": "https://handelsbanken.se/sv/privat/kontakt-och-support/sakerhet-bedrageri"
+        }
+      },
+      {
+        "name": "Spärra kort eller BankID",
+        "category": "Security support",
+        "description": "Privata kort och Mobilt BankID kan spärras i internetbanken eller mobilappen; spärrning kan även göras per telefon.",
+        "price": null,
+        "currency": null,
+        "url": null,
+        "evidence": {
+          "text": "Enklast spärrar du privata kort och Mobilt BankID i internetbanken eller mobilappen. Du kan även ringa.",
+          "source_url": "https://handelsbanken.se/sv/privat/kontakt-och-support/sakerhet-bedrageri"
+        }
+      },
+      {
+        "name": "Rådgivning",
+        "category": "Financial advisory service",
+        "description": "Qualified branch advice covering matters such as mortgages, investments, and pension savings.",
+        "price": null,
+        "currency": null,
+        "url": null,
+        "evidence": {
+          "text": "Vi hjälper dig med till exempel bolån, placeringar eller sparande till pension.",
+          "source_url": "https://www.handelsbanken.se/sv/privat/kontakt-och-support"
+        }
+      },
+      {
+        "name": "Personlig service dygnet runt",
+        "category": "Customer support",
+        "description": "Round-the-clock help with banking matters and support questions by phone.",
+        "price": null,
+        "currency": null,
+        "url": null,
+        "evidence": {
+          "text": "Vi hjälper dig med bankärenden och supportfrågor. Öppet dygnet runt.",
+          "source_url": "https://www.handelsbanken.se/sv/privat/kontakt-och-support"
+        }
+      },
+      {
+        "name": "Chatta med oss",
+        "category": "Kundservice",
+        "description": "Chat for private customers is open daily from 8–22 for general questions about cards, accounts, payments, and digital services. Customers always chat with a person.",
+        "price": null,
+        "currency": null,
+        "url": "https://www.handelsbanken.se/sv/privat/kontakt-och-support/chatt",
+        "evidence": {
+          "text": "Chatten är öppen för privatkunder alla dagar 8-22. Du chattar alltid med en person.",
+          "source_url": "https://www.handelsbanken.se/sv/privat/kontakt-och-support/chatt"
+        }
+      },
+      {
+        "name": "appen för privatpersoner",
+        "category": "Mobile application",
+        "description": "The app can be activated to allow login with a personal code; activation is unnecessary when only using Mobilt BankID.",
+        "price": null,
+        "currency": null,
+        "url": "https://www.handelsbanken.se/sv/privat/kontakt-och-support/hjalp-och-support/aktivera-appen",
+        "evidence": {
+          "text": "För att kunna logga in i appen med en personlig kod behöver du först aktivera din app.",
+          "source_url": "https://www.handelsbanken.se/sv/privat/kontakt-och-support/hjalp-och-support/aktivera-appen"
+        }
+      },
+      {
+        "name": "BankID-programmet",
+        "category": "Programvara",
+        "description": "Program required when using an inloggningskort and wired card reader.",
+        "price": null,
+        "currency": null,
+        "url": "https://install.bankid.com/",
+        "evidence": {
+          "text": "För att använda inloggningskort och kortläsare med sladd behöver du installera BankID-programmet.",
+          "source_url": "https://www.handelsbanken.se/sv/privat/kontakt-och-support/hjalp-och-support/installation-kortlasare-med-sladd"
+        }
+      },
+      {
+        "name": "Drivrutin kortläsare – Windows 10 och 11",
+        "category": "Drivrutin",
+        "description": "Driver for a wired card reader on Windows 10 and 11.",
+        "price": null,
+        "currency": null,
+        "url": "/tron/public/info/contents/v1/document/32-150504",
+        "evidence": {
+          "text": "Drivrutin kortläsare – Windows 10 och 11",
+          "source_url": "https://www.handelsbanken.se/sv/privat/kontakt-och-support/hjalp-och-support/installation-kortlasare-med-sladd"
+        }
+      },
+      {
+        "name": "Drivrutin äldre kortläsare – macOS 10.15 och senare",
+        "category": "Drivrutin",
+        "description": "Driver for an older card reader on macOS 10.15 and later.",
+        "price": null,
+        "currency": null,
+        "url": "/tron/public/info/contents/v1/document/32-150507",
+        "evidence": {
+          "text": "Drivrutin äldre kortläsare – macOS 10.15 och senare",
+          "source_url": "https://www.handelsbanken.se/sv/privat/kontakt-och-support/hjalp-och-support/installation-kortlasare-med-sladd"
+        }
+      },
+      {
+        "name": "Drivrutin ny kortläsare – macOS 10.15 och senare",
+        "category": "Drivrutin",
+        "description": "Driver for a new card reader on macOS 10.15 and later.",
+        "price": null,
+        "currency": null,
+        "url": "/tron/public/info/contents/v1/document/32-190550",
+        "evidence": {
+          "text": "Drivrutin ny kortläsare – macOS 10.15 och senare",
+          "source_url": "https://www.handelsbanken.se/sv/privat/kontakt-och-support/hjalp-och-support/installation-kortlasare-med-sladd"
+        }
+      },
+      {
+        "name": "Mobilt BankID",
+        "category": "Digital tjänst",
+        "description": "Can be ordered for a new device through the Handelsbanken app, internet banking, or with help from a bank branch.",
+        "price": null,
+        "currency": null,
+        "url": "https://www.handelsbanken.se/sv/privat/kontakt-och-support/hjalp-och-support/hjalp-med-mobilt-bankid",
+        "evidence": {
+          "text": "Om det är första gången som du skaffar ett Mobilt BankID gör du det enklast i internetbanken.",
+          "source_url": "https://www.handelsbanken.se/sv/privat/kontakt-och-support/hjalp-och-support/vanliga-fragor"
+        }
+      },
+      {
+        "name": "Business Debit",
+        "category": "Företagskort",
+        "description": "Purchases and cash withdrawals are deducted directly from the connected business account.",
+        "price": null,
+        "currency": null,
+        "url": "https://www.handelsbanken.se/sv/foretag/konton-betalningar/foretagskort/business-debit",
+        "evidence": {
+          "text": "Alla köp och kontantuttag dras direkt från det företagskonto som kortet är kopplat till.",
+          "source_url": "https://www.handelsbanken.se/sv/privat/kontakt-och-support/hjalp-och-support/vanliga-fragor"
+        }
+      },
+      {
+        "name": "Business Card",
+        "category": "Företagskort / kreditkort",
+        "description": "A credit card whose approved credit amount determines the available spending capacity.",
+        "price": null,
+        "currency": null,
+        "url": "https://www.handelsbanken.se/sv/foretag/konton-betalningar/foretagskort/business-card",
+        "evidence": {
+          "text": "Business Card är ett kreditkort, vilket innebär att det så kallade kreditbeloppet du ansöker om styr hur mycket du har att handla för.",
+          "source_url": "https://www.handelsbanken.se/sv/privat/kontakt-och-support/hjalp-och-support/vanliga-fragor"
+        }
+      },
+      {
+        "name": "Allkonto Ung",
+        "category": "Konto för barn och unga",
+        "description": "A guardian can open this account through internet banking.",
+        "price": null,
+        "currency": null,
+        "url": "https://www.handelsbanken.se/sv/privat/vardagstjanster/banktjanster-for-barn-och-unga",
+        "evidence": {
+          "text": "Du som vårdnadshavare kan själv öppna ett Allkonto Ung.",
+          "source_url": "https://www.handelsbanken.se/sv/privat/kontakt-och-support/hjalp-och-support/vanliga-fragor"
+        }
+      },
+      {
+        "name": "Bankkort Start",
+        "category": "Bankkort för barn och unga",
+        "description": "Can be connected to Allkonto Ung through internet banking; it was previously called Maestro.",
+        "price": null,
+        "currency": null,
+        "url": "https://www.handelsbanken.se/sv/privat/vardagstjanster/banktjanster-for-barn-och-unga",
+        "evidence": {
+          "text": "Ansluta ett Bankkort Start (tidigare kallat Maestro) i internetbanken.",
+          "source_url": "https://www.handelsbanken.se/sv/privat/kontakt-och-support/hjalp-och-support/vanliga-fragor"
+        }
+      },
+      {
+        "name": "Bankkort Mastercard",
+        "category": "Bankkort",
+        "description": "Includes travel insurance with cancellation protection when used to pay for a trip.",
+        "price": null,
+        "currency": null,
+        "url": "https://www.handelsbanken.se/sv/privat/vardagstjanster/bankkort-och-kreditkort/jamfor-reseforsakringar",
+        "evidence": {
+          "text": "När du betalar din resa med ditt Bankkort Mastercard, Allkort eller Platinum ingår alltid en reseförsäkring med avbeställningsskydd.",
+          "source_url": "https://www.handelsbanken.se/sv/privat/kontakt-och-support/hjalp-och-support/vanliga-fragor"
+        }
+      },
+      {
+        "name": "Allkort",
+        "category": "Kort",
+        "description": "Includes travel insurance with cancellation protection when used to pay for a trip.",
+        "price": null,
+        "currency": null,
+        "url": "https://www.handelsbanken.se/sv/privat/vardagstjanster/bankkort-och-kreditkort/jamfor-reseforsakringar",
+        "evidence": {
+          "text": "När du betalar din resa med ditt Bankkort Mastercard, Allkort eller Platinum ingår alltid en reseförsäkring med avbeställningsskydd.",
+          "source_url": "https://www.handelsbanken.se/sv/privat/kontakt-och-support/hjalp-och-support/vanliga-fragor"
+        }
+      },
+      {
+        "name": "Platinum",
+        "category": "Kort",
+        "description": "Includes travel insurance with cancellation protection when used to pay for a trip.",
+        "price": null,
+        "currency": null,
+        "url": "https://www.handelsbanken.se/sv/privat/vardagstjanster/bankkort-och-kreditkort/jamfor-reseforsakringar",
+        "evidence": {
+          "text": "När du betalar din resa med ditt Bankkort Mastercard, Allkort eller Platinum ingår alltid en reseförsäkring med avbeställningsskydd.",
+          "source_url": "https://www.handelsbanken.se/sv/privat/kontakt-och-support/hjalp-och-support/vanliga-fragor"
+        }
+      },
+      {
+        "name": "Personlig service",
+        "category": "Support",
+        "description": "Assistance with banking matters and support questions, available around the clock.",
+        "price": null,
+        "currency": null,
+        "url": "https://www.handelsbanken.se/sv/privat/kontakt-och-support/hjalp-och-support/vanliga-fragor",
+        "evidence": {
+          "text": "Vi hjälper dig med bankärenden och supportfrågor. Öppet dygnet runt.",
+          "source_url": "https://www.handelsbanken.se/sv/privat/kontakt-och-support/hjalp-och-support/vanliga-fragor"
+        }
+      },
+      {
+        "name": "Säkerhet och bedrägeri",
+        "category": "Security service",
+        "description": "Information about preventing fraud and what to do after being affected.",
+        "price": null,
+        "currency": null,
+        "url": "https://www.handelsbanken.se/sv/privat/kontakt-och-support/sakerhet-bedrageri",
+        "evidence": {
+          "text": "Här hittar du information om hur du skyddar dig, samt vad du ska göra om du blivit utsatt.",
+          "source_url": "https://www.handelsbanken.se/sv/privat/kontakt-och-support/sakerhet-bedrageri"
+        }
+      },
+      {
+        "name": "Spärra kort eller BankID",
+        "category": "Security support",
+        "description": "Private cards and Mobilt BankID can be blocked through online banking, the mobile app, or by telephone.",
+        "price": null,
+        "currency": null,
+        "url": "https://www.handelsbanken.se/sv/privat/kontakt-och-support/sakerhet-bedrageri",
+        "evidence": {
+          "text": "Enklast spärrar du privata kort och Mobilt BankID i internetbanken eller mobilappen. Du kan även ringa.",
+          "source_url": "https://www.handelsbanken.se/sv/privat/kontakt-och-support/sakerhet-bedrageri"
+        }
+      },
+      {
+        "name": "Personlig service dygnet runt",
+        "category": "Customer support",
+        "description": "Hjälp med bankärenden och supportfrågor. Öppet dygnet runt.",
+        "price": null,
+        "currency": null,
+        "url": "https://handelsbanken.se/sv/privat/kontakt-och-support",
+        "evidence": {
+          "text": "Personlig service dygnet runt — Vi hjälper dig med bankärenden och supportfrågor.",
+          "source_url": "https://handelsbanken.se/sv/privat/kontakt-och-support"
+        }
+      }
+    ],
+    "jobs": [],
+    "other_facts": [
+      {
+        "name": "Recognition",
+        "value": "Global Finance ranking, som omfattar över 500 banker i hela världen, utsåg Handelsbanken till den säkraste affärsbanken i Europa.",
+        "evidence": {
+          "text": "Global Finance ranking utsåg Handelsbanken till den säkraste affärsbanken i Europa.",
+          "source_url": "https://handelsbanken.se/"
+        }
+      },
+      {
+        "name": "Advisory network",
+        "value": "Vi har ett rikstäckande kontorsnät med fler än 1 800 rådgivare över hela landet.",
+        "evidence": {
+          "text": "Rikstäckande kontorsnät med fler än 1 800 rådgivare över hela landet.",
+          "source_url": "https://handelsbanken.se/"
+        }
+      },
+      {
+        "name": "EFN Ekonomikanalen ownership",
+        "value": "EFN Ekonomikanalen drivs av en oberoende redaktion och ägs av Handelsbanken.",
+        "evidence": {
+          "text": "EFN Ekonomikanalen drivs av en oberoende redaktion och ägs av Handelsbanken.",
+          "source_url": "https://handelsbanken.se/"
+        }
+      },
+      {
+        "name": "Adviser network",
+        "value": "Fler än 1 800 rådgivare i ett rikstäckande kontorsnät.",
+        "evidence": {
+          "text": "Vi har ett rikstäckande kontorsnät med fler än 1 800 rådgivare över hela landet.",
+          "source_url": "https://handelsbanken.se/sv/privat/kontakt-och-support/sakerhet-bedrageri"
+        }
+      },
+      {
+        "name": "Transaction monitoring",
+        "value": "Transaktioner realtidsövervakas dygnet runt för att snabbt upptäcka och stoppa misstänkt aktivitet.",
+        "evidence": {
+          "text": "Vi realtidsövervakar transaktioner dygnet runt för att snabbt upptäcka och stoppa misstänkt aktivitet.",
+          "source_url": "https://handelsbanken.se/sv/privat/kontakt-och-support/sakerhet-bedrageri"
+        }
+      },
+      {
+        "name": "Branch advisory network",
+        "value": "Rikstäckande kontorsnät med fler än 1 800 rådgivare över hela landet.",
+        "evidence": {
+          "text": "Vi har ett rikstäckande kontorsnät med fler än 1 800 rådgivare över hela landet.",
+          "source_url": "https://www.handelsbanken.se/sv/privat/kontakt-och-support"
+        }
+      },
+      {
+        "name": "Chat opening hours",
+        "value": "Öppet alla dagar 8-22",
+        "evidence": {
+          "text": "Chatta med oss Öppet alla dagar 8-22",
+          "source_url": "https://www.handelsbanken.se/sv/privat/kontakt-och-support"
+        }
+      },
+      {
+        "name": "Advisory network",
+        "value": "A nationwide branch network with more than 1,800 advisors across the country.",
+        "evidence": {
+          "text": "Vi har ett rikstäckande kontorsnät med fler än 1 800 rådgivare över hela landet.",
+          "source_url": "https://www.handelsbanken.se/sv/privat/kontakt-och-support/hjalp-och-support/aktivera-appen"
+        }
+      },
+      {
+        "name": "Personal service availability",
+        "value": "Open 24 hours a day.",
+        "evidence": {
+          "text": "Personlig service dygnet runt. Öppet dygnet runt.",
+          "source_url": "https://www.handelsbanken.se/sv/privat/kontakt-och-support/hjalp-och-support/aktivera-appen"
+        }
+      },
+      {
+        "name": "Advisory network",
+        "value": "Rikstäckande kontorsnät med fler än 1 800 rådgivare över hela landet.",
+        "evidence": {
+          "text": "Vi har ett rikstäckande kontorsnät med fler än 1 800 rådgivare över hela landet.",
+          "source_url": "https://www.handelsbanken.se/sv/privat/kontakt-och-support/hjalp-och-support/installation-kortlasare-med-sladd"
+        }
+      },
+      {
+        "name": "Personal service availability",
+        "value": "Öppet dygnet runt.",
+        "evidence": {
+          "text": "Personlig service dygnet runt. Öppet dygnet runt.",
+          "source_url": "https://www.handelsbanken.se/sv/privat/kontakt-och-support/hjalp-och-support/installation-kortlasare-med-sladd"
+        }
+      },
+      {
+        "name": "Windows ARM compatibility",
+        "value": "Drivrutinen för Windows är inte utvecklad för datorer med ARM-processor.",
+        "evidence": {
+          "text": "Drivrutinen för Windows är inte utvecklad för datorer med ARM-processor.",
+          "source_url": "https://www.handelsbanken.se/sv/privat/kontakt-och-support/hjalp-och-support/installation-kortlasare-med-sladd"
+        }
+      },
+      {
+        "name": "Cash handling at branches",
+        "value": "Våra bankkontor är kontantfria.",
+        "evidence": {
+          "text": "Våra bankkontor är kontantfria.",
+          "source_url": "https://www.handelsbanken.se/sv/privat/kontakt-och-support/hjalp-och-support/vanliga-fragor"
+        }
+      },
+      {
+        "name": "Branch clearing numbers",
+        "value": "Varje bankkontor har ett eget clearingnummer som består av fyra siffror.",
+        "evidence": {
+          "text": "I Handelsbanken har varje bankkontor ett eget clearingnummer som består av fyra siffror.",
+          "source_url": "https://www.handelsbanken.se/sv/privat/kontakt-och-support/hjalp-och-support/vanliga-fragor"
+        }
+      },
+      {
+        "name": "Transaction monitoring",
+        "value": "Transactions are monitored in real time around the clock to detect and stop suspicious activity quickly.",
+        "evidence": {
+          "text": "Vi realtidsövervakar transaktioner dygnet runt för att snabbt upptäcka och stoppa misstänkt aktivitet.",
+          "source_url": "https://www.handelsbanken.se/sv/privat/kontakt-och-support/sakerhet-bedrageri"
+        }
+      },
+      {
+        "name": "Payment safeguards",
+        "value": "Delays have been introduced for foreign payments to new countries and larger Swish payments.",
+        "evidence": {
+          "text": "Vi har infört fördröjningar vid utlandsbetalningar till nya länder och större Swish-betalningar.",
+          "source_url": "https://www.handelsbanken.se/sv/privat/kontakt-och-support/sakerhet-bedrageri"
+        }
+      },
+      {
+        "name": "Transaction limits",
+        "value": "Limits have been lowered for various transaction types.",
+        "evidence": {
+          "text": "Vi har sänkt beloppsgränserna för olika typer av transaktioner.",
+          "source_url": "https://www.handelsbanken.se/sv/privat/kontakt-och-support/sakerhet-bedrageri"
+        }
+      },
+      {
+        "name": "High-risk card-purchase warnings",
+        "value": "Warnings are displayed for certain high-risk card purchases when approval is made with Mobilt BankID.",
+        "evidence": {
+          "text": "Vi visar varningar vid vissa typer av kortköp med hög risk när du godkänner med mobilt BankID.",
+          "source_url": "https://www.handelsbanken.se/sv/privat/kontakt-och-support/sakerhet-bedrageri"
+        }
+      },
+      {
+        "name": "Antal kontor hittade",
+        "value": "205",
+        "evidence": {
+          "text": "205 kontor hittade.",
+          "source_url": "https://www.handelsbanken.se/sv/hitta-bankkontor"
+        }
+      },
+      {
+        "name": "Rådgivare",
+        "value": "fler än 1 800",
+        "evidence": {
+          "text": "Vi har ett rikstäckande kontorsnät med fler än 1 800 rådgivare.",
+          "source_url": "https://www.handelsbanken.se/sv/hitta-bankkontor"
+        }
+      },
+      {
+        "name": "Åkersberga clearingnummer",
+        "value": "6195",
+        "evidence": {
+          "text": "Åkersberga — Clearingnummer 6195",
+          "source_url": "https://www.handelsbanken.se/sv/hitta-bankkontor"
+        }
+      },
+      {
+        "name": "Alingsås clearingnummer",
+        "value": "6832",
+        "evidence": {
+          "text": "Alingsås — Clearingnummer 6832",
+          "source_url": "https://www.handelsbanken.se/sv/hitta-bankkontor"
+        }
+      },
+      {
+        "name": "Göteborg Almedal clearingnummer",
+        "value": "6226",
+        "evidence": {
+          "text": "Göteborg Almedal — Clearingnummer 6226",
+          "source_url": "https://www.handelsbanken.se/sv/hitta-bankkontor"
+        }
+      },
+      {
+        "name": "Älmhult clearingnummer",
+        "value": "6767",
+        "evidence": {
+          "text": "Älmhult — Clearingnummer 6767",
+          "source_url": "https://www.handelsbanken.se/sv/hitta-bankkontor"
+        }
+      },
+      {
+        "name": "Alviks Torg clearingnummer",
+        "value": "6154",
+        "evidence": {
+          "text": "Alviks Torg — Clearingnummer 6154",
+          "source_url": "https://www.handelsbanken.se/sv/hitta-bankkontor"
+        }
+      },
+      {
+        "name": "Chat availability",
+        "value": "Öppet alla dagar 8-22",
+        "evidence": {
+          "text": "Chatta med oss Öppet alla dagar 8-22",
+          "source_url": "https://handelsbanken.se/sv/privat/kontakt-och-support"
+        }
+      },
+      {
+        "name": "WhatsApp usage",
+        "value": "Handelsbanken använder aldrig WhatsApp.",
+        "evidence": {
+          "text": "Handelsbanken använder aldrig WhatsApp.",
+          "source_url": "https://handelsbanken.se/sv/privat/kontakt-och-support"
+        }
+      }
+    ]
+  },
+  "pages": [
+    {
+      "source_url": "https://handelsbanken.se/",
+      "page_summary": "Handelsbanken’s Swedish homepage presents personal banking services, financial guidance, customer support, current articles, and information about the bank’s community engagement.",
+      "useful_information": {
+        "contacts": [
+          {
+            "type": "phone",
+            "value": "0771-77 88 99",
+            "label": "Personlig service dygnet runt",
+            "evidence": {
+              "text": "Ring 0771-77 88 99 för personlig service.",
+              "source_url": "https://handelsbanken.se/"
+            }
+          },
+          {
+            "type": "phone",
+            "value": "+46 771 77 88 99",
+            "label": "Personlig service från utlandet",
+            "evidence": {
+              "text": "+46 771 77 88 99 från utlandet",
+              "source_url": "https://handelsbanken.se/"
+            }
+          },
+          {
+            "type": "phone",
+            "value": "020-41 12 12",
+            "label": "Spärra kort eller BankID i Sverige",
+            "evidence": {
+              "text": "Ring i Sverige 020-41 12 12",
+              "source_url": "https://handelsbanken.se/"
+            }
+          },
+          {
+            "type": "phone",
+            "value": "+46 8 411 21 22",
+            "label": "Spärra kort eller BankID från utlandet",
+            "evidence": {
+              "text": "Ring från utlandet +46 8 411 21 22",
+              "source_url": "https://handelsbanken.se/"
+            }
+          }
+        ],
+        "company": {
+          "name": "Handelsbanken",
+          "legal_name": "Svenska Handelsbanken AB (publ)",
+          "description": "Handelsbanken har i över 150 år varit en del av samhällets utveckling – genom att finansiera, investera och skapa långsiktiga förutsättningar för människor och företag.",
+          "industries": [
+            "Banking"
+          ],
+          "locations": [],
+          "identifiers": [],
+          "social_profiles": [
+            "https://www.linkedin.com/company/handelsbanken/jobs/",
+            "https://www.facebook.com/Handelsbanken/",
+            "https://www.instagram.com/handelsbanken/",
+            "https://www.youtube.com/user/handelsbanken"
+          ],
+          "evidence": [
+            {
+              "text": "© Svenska Handelsbanken AB (publ) — Handelsbanken",
+              "source_url": "https://handelsbanken.se/"
+            },
+            {
+              "text": "Handelsbanken har i över 150 år varit en del av samhällets utveckling – genom att finansiera, investera och skapa långsiktiga förutsättningar för människor och företag.",
+              "source_url": "https://handelsbanken.se/"
+            },
+            {
+              "text": "Handelsbanken Linkedin: https://www.linkedin.com/company/handelsbanken/jobs/",
+              "source_url": "https://handelsbanken.se/"
+            },
+            {
+              "text": "Handelsbanken Facebook: https://www.facebook.com/Handelsbanken/",
+              "source_url": "https://handelsbanken.se/"
+            },
+            {
+              "text": "Handelsbanken Instagram: https://www.instagram.com/handelsbanken/",
+              "source_url": "https://handelsbanken.se/"
+            },
+            {
+              "text": "Handelsbanken Youtube: https://www.youtube.com/user/handelsbanken",
+              "source_url": "https://handelsbanken.se/"
+            }
+          ]
+        },
+        "products": [
+          {
+            "name": "Bolån",
+            "category": null,
+            "description": "Räkna och ansök om bolån",
+            "price": null,
+            "currency": null,
+            "url": "/sv/privat/bolan",
+            "evidence": {
+              "text": "Bolån — Räkna och ansök om bolån",
+              "source_url": "https://handelsbanken.se/"
+            }
+          },
+          {
+            "name": "Spara",
+            "category": null,
+            "description": "Kom igång med ditt sparande",
+            "price": null,
+            "currency": null,
+            "url": "/sv/privat/spara",
+            "evidence": {
+              "text": "Spara — Kom igång med ditt sparande",
+              "source_url": "https://handelsbanken.se/"
+            }
+          },
+          {
+            "name": "Pension",
+            "category": null,
+            "description": "Spara för framtiden",
+            "price": null,
+            "currency": null,
+            "url": "/sv/privat/pension",
+            "evidence": {
+              "text": "Pension — Spara för framtiden",
+              "source_url": "https://handelsbanken.se/"
+            }
+          },
+          {
+            "name": "Din vardagsekonomi",
+            "category": null,
+            "description": "Konton, kort och betalsätt",
+            "price": null,
+            "currency": null,
+            "url": "/sv/privat/vardagstjanster",
+            "evidence": {
+              "text": "Din vardagsekonomi — Konton, kort och betalsätt",
+              "source_url": "https://handelsbanken.se/"
+            }
+          },
+          {
+            "name": "Handelsbanken Premium",
+            "category": null,
+            "description": "En personlig rådgivningstjänst",
+            "price": null,
+            "currency": null,
+            "url": "/sv/privat/spara/premium",
+            "evidence": {
+              "text": "Handelsbanken Premium — En personlig rådgivningstjänst",
+              "source_url": "https://handelsbanken.se/"
+            }
+          },
+          {
+            "name": "Private Banking",
+            "category": null,
+            "description": "Ditt personliga Private Banker-team",
+            "price": null,
+            "currency": null,
+            "url": "/sv/privat/spara/private-banking",
+            "evidence": {
+              "text": "Private Banking — Ditt personliga Private Banker-team",
+              "source_url": "https://handelsbanken.se/"
+            }
+          }
+        ],
+        "jobs": [],
+        "other_facts": [
+          {
+            "name": "Recognition",
+            "value": "Global Finance ranking, som omfattar över 500 banker i hela världen, utsåg Handelsbanken till den säkraste affärsbanken i Europa.",
+            "evidence": {
+              "text": "Global Finance ranking utsåg Handelsbanken till den säkraste affärsbanken i Europa.",
+              "source_url": "https://handelsbanken.se/"
+            }
+          },
+          {
+            "name": "Advisory network",
+            "value": "Vi har ett rikstäckande kontorsnät med fler än 1 800 rådgivare över hela landet.",
+            "evidence": {
+              "text": "Rikstäckande kontorsnät med fler än 1 800 rådgivare över hela landet.",
+              "source_url": "https://handelsbanken.se/"
+            }
+          },
+          {
+            "name": "EFN Ekonomikanalen ownership",
+            "value": "EFN Ekonomikanalen drivs av en oberoende redaktion och ägs av Handelsbanken.",
+            "evidence": {
+              "text": "EFN Ekonomikanalen drivs av en oberoende redaktion och ägs av Handelsbanken.",
+              "source_url": "https://handelsbanken.se/"
+            }
+          }
+        ]
+      },
+      "next_links": [
+        {
+          "url": "https://www.handelsbanken.se/sv/hitta-bankkontor",
+          "link_type": "internal",
+          "category": "contact",
+          "priority": 1,
+          "reason": "Likely to provide bank-office locations and local contact information.",
+          "expected_information": [
+            "Bank office locations",
+            "Addresses",
+            "Local contact details"
+          ]
+        },
+        {
+          "url": "https://handelsbanken.se/sv/privat/kontakt-och-support",
+          "link_type": "internal",
+          "category": "contact",
+          "priority": 2,
+          "reason": "Dedicated contact and support page likely to contain additional customer-service channels and hours.",
+          "expected_information": [
+            "Phone numbers",
+            "Support channels",
+            "Opening hours"
+          ]
+        },
+        {
+          "url": "https://handelsbanken.se/sv/om-oss/vart-samhallsengagemang",
+          "link_type": "internal",
+          "category": "company",
+          "priority": 3,
+          "reason": "Company-focused page describing Handelsbanken’s activities and community engagement.",
+          "expected_information": [
+            "Company description",
+            "Community activities",
+            "Markets and initiatives"
+          ]
+        },
+        {
+          "url": "https://handelsbanken.se/sv/om-oss/juridiska-dokument",
+          "link_type": "internal",
+          "category": "company",
+          "priority": 4,
+          "reason": "Legal-document hub may provide formal company identity and regulatory information.",
+          "expected_information": [
+            "Legal company information",
+            "Regulatory documents",
+            "Corporate policies"
+          ]
+        },
+        {
+          "url": "https://handelsbanken.se/sv/privat/bolan",
+          "link_type": "internal",
+          "category": "product",
+          "priority": 5,
+          "reason": "Dedicated mortgage page likely to contain detailed product terms and application information.",
+          "expected_information": [
+            "Mortgage features",
+            "Eligibility",
+            "Terms",
+            "Application process"
+          ]
+        }
+      ],
+      "crawl_complete": false,
+      "analysis_metadata": {
+        "depth": 0,
+        "succeeded": true,
+        "error": null,
+        "token_usage": {
+          "last": {
+            "input_tokens": 24205,
+            "cached_input_tokens": 15104,
+            "cache_write_input_tokens": 0,
+            "output_tokens": 4555,
+            "reasoning_output_tokens": 2971,
+            "total_tokens": 28760
+          },
+          "thread_total": {
+            "input_tokens": 24205,
+            "cached_input_tokens": 15104,
+            "cache_write_input_tokens": 0,
+            "output_tokens": 4555,
+            "reasoning_output_tokens": 2971,
+            "total_tokens": 28760
+          },
+          "model_context_window": 258400,
+          "duration_ms": 128211
+        }
+      }
+    },
+    {
+      "source_url": "https://handelsbanken.se/sv/privat/kontakt-och-support/sakerhet-bedrageri",
+      "page_summary": "Handelsbanken page describing fraud prevention, reporting support, advisory services, around-the-clock personal service, and card or BankID blocking contacts.",
+      "useful_information": {
+        "contacts": [
+          {
+            "type": "phone",
+            "value": "0771-77 88 99",
+            "label": "Personlig service dygnet runt",
+            "evidence": {
+              "text": "Personlig service dygnet runt: 0771-77 88 99.",
+              "source_url": "https://handelsbanken.se/sv/privat/kontakt-och-support/sakerhet-bedrageri"
+            }
+          },
+          {
+            "type": "phone",
+            "value": "+46 771 77 88 99",
+            "label": "Personlig service från utlandet",
+            "evidence": {
+              "text": "+46 771 77 88 99 från utlandet.",
+              "source_url": "https://handelsbanken.se/sv/privat/kontakt-och-support/sakerhet-bedrageri"
+            }
+          },
+          {
+            "type": "phone",
+            "value": "020‑41 12 12",
+            "label": "Spärra kort eller BankID",
+            "evidence": {
+              "text": "Spärra kort eller BankID: 020‑41 12 12.",
+              "source_url": "https://handelsbanken.se/sv/privat/kontakt-och-support/sakerhet-bedrageri"
+            }
+          },
+          {
+            "type": "phone",
+            "value": "+46 8 411 21 22",
+            "label": "Spärra kort eller BankID från utlandet",
+            "evidence": {
+              "text": "+46 8 411 21 22 från utlandet.",
+              "source_url": "https://handelsbanken.se/sv/privat/kontakt-och-support/sakerhet-bedrageri"
+            }
+          }
+        ],
+        "company": {
+          "name": "Handelsbanken",
+          "legal_name": "Svenska Handelsbanken AB (publ)",
+          "description": "Hjälper kunder med bankärenden, supportfrågor och rådgivning samt arbetar kontinuerligt för att förebygga olika typer av bedrägerier.",
+          "industries": [
+            "Banking"
+          ],
+          "locations": [],
+          "identifiers": [],
+          "social_profiles": [
+            "https://www.linkedin.com/company/handelsbanken/jobs/",
+            "https://www.facebook.com/Handelsbanken/",
+            "https://www.instagram.com/handelsbanken/",
+            "https://www.youtube.com/user/handelsbanken"
+          ],
+          "evidence": [
+            {
+              "text": "© Svenska Handelsbanken AB (publ) — Handelsbanken.",
+              "source_url": "https://handelsbanken.se/sv/privat/kontakt-och-support/sakerhet-bedrageri"
+            },
+            {
+              "text": "Vi hjälper dig med bankärenden och supportfrågor.",
+              "source_url": "https://handelsbanken.se/sv/privat/kontakt-och-support/sakerhet-bedrageri"
+            },
+            {
+              "text": "Vi arbetar kontinuerligt för att förebygga olika typer av bedrägerier.",
+              "source_url": "https://handelsbanken.se/sv/privat/kontakt-och-support/sakerhet-bedrageri"
+            },
+            {
+              "text": "Handelsbanken Linkedin: https://www.linkedin.com/company/handelsbanken/jobs/",
+              "source_url": "https://handelsbanken.se/sv/privat/kontakt-och-support/sakerhet-bedrageri"
+            },
+            {
+              "text": "Handelsbanken Facebook: https://www.facebook.com/Handelsbanken/",
+              "source_url": "https://handelsbanken.se/sv/privat/kontakt-och-support/sakerhet-bedrageri"
+            },
+            {
+              "text": "Handelsbanken Instagram: https://www.instagram.com/handelsbanken/",
+              "source_url": "https://handelsbanken.se/sv/privat/kontakt-och-support/sakerhet-bedrageri"
+            },
+            {
+              "text": "Handelsbanken Youtube: https://www.youtube.com/user/handelsbanken",
+              "source_url": "https://handelsbanken.se/sv/privat/kontakt-och-support/sakerhet-bedrageri"
+            }
+          ]
+        },
+        "products": [
+          {
+            "name": "Rådgivning",
+            "category": "Advisory service",
+            "description": "Rådgivning genom Handelsbankens rikstäckande kontorsnät.",
+            "price": null,
+            "currency": null,
+            "url": "https://www.handelsbanken.se/sv/hitta-bankkontor",
+            "evidence": {
+              "text": "Vi har ett rikstäckande kontorsnät med fler än 1 800 rådgivare över hela landet.",
+              "source_url": "https://handelsbanken.se/sv/privat/kontakt-och-support/sakerhet-bedrageri"
+            }
+          },
+          {
+            "name": "Personlig service dygnet runt",
+            "category": "Banking and support service",
+            "description": "Hjälp med bankärenden och supportfrågor, öppet dygnet runt.",
+            "price": null,
+            "currency": null,
+            "url": "https://www.handelsbanken.se/sv/privat/kontakt-och-support",
+            "evidence": {
+              "text": "Vi hjälper dig med bankärenden och supportfrågor. Öppet dygnet runt.",
+              "source_url": "https://handelsbanken.se/sv/privat/kontakt-och-support/sakerhet-bedrageri"
+            }
+          },
+          {
+            "name": "Spärra kort eller BankID",
+            "category": "Security support",
+            "description": "Privata kort och Mobilt BankID kan spärras i internetbanken eller mobilappen; spärrning kan även göras per telefon.",
+            "price": null,
+            "currency": null,
+            "url": null,
+            "evidence": {
+              "text": "Enklast spärrar du privata kort och Mobilt BankID i internetbanken eller mobilappen. Du kan även ringa.",
+              "source_url": "https://handelsbanken.se/sv/privat/kontakt-och-support/sakerhet-bedrageri"
+            }
+          }
+        ],
+        "jobs": [],
+        "other_facts": [
+          {
+            "name": "Adviser network",
+            "value": "Fler än 1 800 rådgivare i ett rikstäckande kontorsnät.",
+            "evidence": {
+              "text": "Vi har ett rikstäckande kontorsnät med fler än 1 800 rådgivare över hela landet.",
+              "source_url": "https://handelsbanken.se/sv/privat/kontakt-och-support/sakerhet-bedrageri"
+            }
+          },
+          {
+            "name": "Transaction monitoring",
+            "value": "Transaktioner realtidsövervakas dygnet runt för att snabbt upptäcka och stoppa misstänkt aktivitet.",
+            "evidence": {
+              "text": "Vi realtidsövervakar transaktioner dygnet runt för att snabbt upptäcka och stoppa misstänkt aktivitet.",
+              "source_url": "https://handelsbanken.se/sv/privat/kontakt-och-support/sakerhet-bedrageri"
+            }
+          }
+        ]
+      },
+      "next_links": [
+        {
+          "url": "https://handelsbanken.se/sv/privat/kontakt-och-support/sakerhet-bedrageri/anmal-bedrageri",
+          "link_type": "internal",
+          "category": "contact",
+          "priority": 1,
+          "reason": "Direct fraud-reporting support page likely to provide actionable contact details and procedures.",
+          "expected_information": [
+            "fraud reporting contacts",
+            "reporting procedure",
+            "support availability"
+          ]
+        },
+        {
+          "url": "https://handelsbanken.se/sv/foretag/kontakta-oss-foretag/skydda-foretaget-mot-bedragerier",
+          "link_type": "internal",
+          "category": "contact",
+          "priority": 2,
+          "reason": "Business contact and fraud-protection page likely to describe company support services and contacts.",
+          "expected_information": [
+            "business support contacts",
+            "fraud-protection services",
+            "business security guidance"
+          ]
+        },
+        {
+          "url": "https://handelsbanken.se/sv/privat",
+          "link_type": "internal",
+          "category": "product",
+          "priority": 3,
+          "reason": "Private banking landing page is likely to expose the bank's principal customer products and services.",
+          "expected_information": [
+            "banking products",
+            "customer services",
+            "product navigation"
+          ]
+        },
+        {
+          "url": "https://handelsbanken.se/sv/privat/kontakt-och-support/sakerhet-bedrageri/vanliga-bedragerier",
+          "link_type": "internal",
+          "category": "product",
+          "priority": 4,
+          "reason": "Security-support page likely to provide more detail about Handelsbanken's fraud-prevention guidance.",
+          "expected_information": [
+            "fraud-prevention services",
+            "security guidance",
+            "support options"
+          ]
+        }
+      ],
+      "crawl_complete": false,
+      "analysis_metadata": {
+        "depth": 1,
+        "succeeded": true,
+        "error": null,
+        "token_usage": {
+          "last": {
+            "input_tokens": 21199,
+            "cached_input_tokens": 0,
+            "cache_write_input_tokens": 0,
+            "output_tokens": 4032,
+            "reasoning_output_tokens": 2333,
+            "total_tokens": 25231
+          },
+          "thread_total": {
+            "input_tokens": 21199,
+            "cached_input_tokens": 0,
+            "cache_write_input_tokens": 0,
+            "output_tokens": 4032,
+            "reasoning_output_tokens": 2333,
+            "total_tokens": 25231
+          },
+          "model_context_window": 258400,
+          "duration_ms": 112757
+        }
+      }
+    },
+    {
+      "source_url": "https://www.handelsbanken.se/sv/privat/kontakt-och-support",
+      "page_summary": "Handelsbanken contact and support page listing customer-service channels, branch advice, card and BankID blocking numbers, company addresses and identifiers, and official social profiles.",
+      "useful_information": {
+        "contacts": [
+          {
+            "type": "phone",
+            "value": "0771-77 88 99",
+            "label": "Personlig service dygnet runt",
+            "evidence": {
+              "text": "Personlig service Dygnet runt — Ring 0771-77 88 99",
+              "source_url": "https://www.handelsbanken.se/sv/privat/kontakt-och-support"
+            }
+          },
+          {
+            "type": "phone",
+            "value": "+46 771 77 88 99",
+            "label": "Personlig service från utlandet",
+            "evidence": {
+              "text": "+46 771 77 88 99 från utlandet",
+              "source_url": "https://www.handelsbanken.se/sv/privat/kontakt-och-support"
+            }
+          },
+          {
+            "type": "phone",
+            "value": "08-701 10 00",
+            "label": "Växel",
+            "evidence": {
+              "text": "Växel: 08-701 10 00",
+              "source_url": "https://www.handelsbanken.se/sv/privat/kontakt-och-support"
+            }
+          },
+          {
+            "type": "phone",
+            "value": "020‑41 12 12",
+            "label": "Spärra kort eller BankID",
+            "evidence": {
+              "text": "Spärra kort eller BankID — 020‑41 12 12",
+              "source_url": "https://www.handelsbanken.se/sv/privat/kontakt-och-support"
+            }
+          },
+          {
+            "type": "phone",
+            "value": "+46 8 411 21 22",
+            "label": "Spärra kort eller BankID från utlandet",
+            "evidence": {
+              "text": "+46 8 411 21 22 från utlandet",
+              "source_url": "https://www.handelsbanken.se/sv/privat/kontakt-och-support"
+            }
+          },
+          {
+            "type": "email",
+            "value": "SHBAB@pdf.scancloud.se",
+            "label": "Mejladress för fakturering",
+            "evidence": {
+              "text": "Mejladress för fakturering: SHBAB@pdf.scancloud.se",
+              "source_url": "https://www.handelsbanken.se/sv/privat/kontakt-och-support"
+            }
+          },
+          {
+            "type": "address",
+            "value": "Kungsträdgårdsgatan 2\n106 70 Stockholm",
+            "label": "Huvudkontor",
+            "evidence": {
+              "text": "Huvudkontor: Kungsträdgårdsgatan 2, 106 70 Stockholm",
+              "source_url": "https://www.handelsbanken.se/sv/privat/kontakt-och-support"
+            }
+          },
+          {
+            "type": "address",
+            "value": "Svenska Handelsbanken AB\nFE 7628\n831 90 Östersund",
+            "label": "Faktureringsadress",
+            "evidence": {
+              "text": "Faktureringsadress: Svenska Handelsbanken AB, FE 7628, 831 90 Östersund",
+              "source_url": "https://www.handelsbanken.se/sv/privat/kontakt-och-support"
+            }
+          },
+          {
+            "type": "social",
+            "value": "https://www.linkedin.com/company/handelsbanken/jobs/",
+            "label": "LinkedIn",
+            "evidence": {
+              "text": "Handelsbanken Linkedin links to https://www.linkedin.com/company/handelsbanken/jobs/",
+              "source_url": "https://www.handelsbanken.se/sv/privat/kontakt-och-support"
+            }
+          },
+          {
+            "type": "social",
+            "value": "https://www.facebook.com/Handelsbanken/",
+            "label": "Facebook",
+            "evidence": {
+              "text": "Handelsbanken Facebook links to https://www.facebook.com/Handelsbanken/",
+              "source_url": "https://www.handelsbanken.se/sv/privat/kontakt-och-support"
+            }
+          },
+          {
+            "type": "social",
+            "value": "https://www.instagram.com/handelsbanken/",
+            "label": "Instagram",
+            "evidence": {
+              "text": "Handelsbanken Instagram links to https://www.instagram.com/handelsbanken/",
+              "source_url": "https://www.handelsbanken.se/sv/privat/kontakt-och-support"
+            }
+          },
+          {
+            "type": "social",
+            "value": "https://www.youtube.com/user/handelsbanken",
+            "label": "YouTube",
+            "evidence": {
+              "text": "Handelsbanken Youtube links to https://www.youtube.com/user/handelsbanken",
+              "source_url": "https://www.handelsbanken.se/sv/privat/kontakt-och-support"
+            }
+          }
+        ],
+        "company": {
+          "name": "Handelsbanken",
+          "legal_name": "Svenska Handelsbanken AB (publ)",
+          "description": "A bank providing help with banking matters, round-the-clock support, personal financial advice, and branch services.",
+          "industries": [
+            "Banking",
+            "Financial services"
+          ],
+          "locations": [
+            "Stockholm",
+            "Östersund"
+          ],
+          "identifiers": [
+            "Organisationsnummer: 502007-7862",
+            "SWIFT-/BIC-adress: HANDSESS",
+            "LEI-nummer (legal entity identifier): NHBDILHZTYCNBV5UYZ31",
+            "GIIN-nummer: TT0D1B.00000.LE.752",
+            "GLN 7350043760137",
+            "PEPPOL ID: 0007:5020077862"
+          ],
+          "social_profiles": [
+            "https://www.linkedin.com/company/handelsbanken/jobs/",
+            "https://www.facebook.com/Handelsbanken/",
+            "https://www.instagram.com/handelsbanken/",
+            "https://www.youtube.com/user/handelsbanken"
+          ],
+          "evidence": [
+            {
+              "text": "© Svenska Handelsbanken AB (publ) — Handelsbanken",
+              "source_url": "https://www.handelsbanken.se/sv/privat/kontakt-och-support"
+            },
+            {
+              "text": "Här hittar du enkla sätt att få hjälp med dina bankärenden.",
+              "source_url": "https://www.handelsbanken.se/sv/privat/kontakt-och-support"
+            },
+            {
+              "text": "Organisationsnummer: 502007-7862; SWIFT-/BIC-adress: HANDSESS; LEI-nummer: NHBDILHZTYCNBV5UYZ31; GIIN-nummer: TT0D1B.00000.LE.752",
+              "source_url": "https://www.handelsbanken.se/sv/privat/kontakt-och-support"
+            },
+            {
+              "text": "Huvudkontor: Kungsträdgårdsgatan 2, 106 70 Stockholm",
+              "source_url": "https://www.handelsbanken.se/sv/privat/kontakt-och-support"
+            },
+            {
+              "text": "Faktureringsadress: Svenska Handelsbanken AB, FE 7628, 831 90 Östersund",
+              "source_url": "https://www.handelsbanken.se/sv/privat/kontakt-och-support"
+            }
+          ]
+        },
+        "products": [
+          {
+            "name": "Rådgivning",
+            "category": "Financial advisory service",
+            "description": "Qualified branch advice covering matters such as mortgages, investments, and pension savings.",
+            "price": null,
+            "currency": null,
+            "url": null,
+            "evidence": {
+              "text": "Vi hjälper dig med till exempel bolån, placeringar eller sparande till pension.",
+              "source_url": "https://www.handelsbanken.se/sv/privat/kontakt-och-support"
+            }
+          },
+          {
+            "name": "Personlig service dygnet runt",
+            "category": "Customer support",
+            "description": "Round-the-clock help with banking matters and support questions by phone.",
+            "price": null,
+            "currency": null,
+            "url": null,
+            "evidence": {
+              "text": "Vi hjälper dig med bankärenden och supportfrågor. Öppet dygnet runt.",
+              "source_url": "https://www.handelsbanken.se/sv/privat/kontakt-och-support"
+            }
+          }
+        ],
+        "jobs": [],
+        "other_facts": [
+          {
+            "name": "Branch advisory network",
+            "value": "Rikstäckande kontorsnät med fler än 1 800 rådgivare över hela landet.",
+            "evidence": {
+              "text": "Vi har ett rikstäckande kontorsnät med fler än 1 800 rådgivare över hela landet.",
+              "source_url": "https://www.handelsbanken.se/sv/privat/kontakt-och-support"
+            }
+          },
+          {
+            "name": "Chat opening hours",
+            "value": "Öppet alla dagar 8-22",
+            "evidence": {
+              "text": "Chatta med oss Öppet alla dagar 8-22",
+              "source_url": "https://www.handelsbanken.se/sv/privat/kontakt-och-support"
+            }
+          }
+        ]
+      },
+      "next_links": [
+        {
+          "url": "https://www.handelsbanken.se/sv/foretag/kontakta-oss-foretag",
+          "link_type": "internal",
+          "category": "contact",
+          "priority": 1,
+          "reason": "Dedicated company-contact page likely to provide business support and advisory contact details.",
+          "expected_information": [
+            "business contact channels",
+            "business support phone numbers",
+            "company advisory services"
+          ]
+        },
+        {
+          "url": "https://www.handelsbanken.se/sv/privat/kontakt-och-support/klagomal",
+          "link_type": "internal",
+          "category": "contact",
+          "priority": 2,
+          "reason": "Dedicated complaints page likely to contain complaint procedures and contact destinations.",
+          "expected_information": [
+            "complaint contact details",
+            "complaint submission process",
+            "postal or regulatory contacts"
+          ]
+        },
+        {
+          "url": "https://www.handelsbanken.se/sv/privat/kontakt-och-support/synpunkter-formular",
+          "link_type": "internal",
+          "category": "contact",
+          "priority": 3,
+          "reason": "Feedback form likely to provide an additional official customer-contact channel.",
+          "expected_information": [
+            "feedback form",
+            "customer contact method"
+          ]
+        },
+        {
+          "url": "https://www.handelsbanken.se/sv/om-oss/juridiska-dokument",
+          "link_type": "internal",
+          "category": "company",
+          "priority": 4,
+          "reason": "Central legal-document page may provide further legal and corporate information.",
+          "expected_information": [
+            "legal documents",
+            "company disclosures",
+            "terms and policies"
+          ]
+        },
+        {
+          "url": "https://www.handelsbanken.se/sv/privat",
+          "link_type": "internal",
+          "category": "product",
+          "priority": 5,
+          "reason": "Private-banking landing page is likely to describe the bank's consumer products and services.",
+          "expected_information": [
+            "banking products",
+            "consumer services",
+            "product categories"
+          ]
+        }
+      ],
+      "crawl_complete": false,
+      "analysis_metadata": {
+        "depth": 1,
+        "succeeded": true,
+        "error": null,
+        "token_usage": {
+          "last": {
+            "input_tokens": 21556,
+            "cached_input_tokens": 0,
+            "cache_write_input_tokens": 0,
+            "output_tokens": 4498,
+            "reasoning_output_tokens": 2450,
+            "total_tokens": 26054
+          },
+          "thread_total": {
+            "input_tokens": 21556,
+            "cached_input_tokens": 0,
+            "cache_write_input_tokens": 0,
+            "output_tokens": 4498,
+            "reasoning_output_tokens": 2450,
+            "total_tokens": 26054
+          },
+          "model_context_window": 258400,
+          "duration_ms": 125259
+        }
+      }
+    },
+    {
+      "source_url": "https://www.handelsbanken.se/sv/privat/kontakt-och-support/chatt",
+      "page_summary": "Handelsbanken contact and support page describing chat, advisory services, 24-hour personal service, and card or BankID blocking assistance.",
+      "useful_information": {
+        "contacts": [
+          {
+            "type": "phone",
+            "value": "0771-77 88 99",
+            "label": "Personlig service dygnet runt",
+            "evidence": {
+              "text": "Personlig service dygnet runt: 0771-77 88 99.",
+              "source_url": "https://www.handelsbanken.se/sv/privat/kontakt-och-support/chatt"
+            }
+          },
+          {
+            "type": "phone",
+            "value": "+46 771 77 88 99",
+            "label": "Personlig service dygnet runt från utlandet",
+            "evidence": {
+              "text": "+46 771 77 88 99 från utlandet.",
+              "source_url": "https://www.handelsbanken.se/sv/privat/kontakt-och-support/chatt"
+            }
+          },
+          {
+            "type": "phone",
+            "value": "020‑41 12 12",
+            "label": "Spärra kort eller BankID",
+            "evidence": {
+              "text": "Spärra kort eller BankID: 020‑41 12 12.",
+              "source_url": "https://www.handelsbanken.se/sv/privat/kontakt-och-support/chatt"
+            }
+          },
+          {
+            "type": "phone",
+            "value": "+46 8 411 21 22",
+            "label": "Spärra kort eller BankID från utlandet",
+            "evidence": {
+              "text": "+46 8 411 21 22 från utlandet.",
+              "source_url": "https://www.handelsbanken.se/sv/privat/kontakt-och-support/chatt"
+            }
+          }
+        ],
+        "company": {
+          "name": "Handelsbanken",
+          "legal_name": "Svenska Handelsbanken AB (publ)",
+          "description": "Provides private customers with banking assistance, support, advice, and help concerning cards, accounts, payments, and digital services.",
+          "industries": [
+            "Banking"
+          ],
+          "locations": [],
+          "identifiers": [],
+          "social_profiles": [
+            "https://www.linkedin.com/company/handelsbanken/jobs/",
+            "https://www.facebook.com/Handelsbanken/",
+            "https://www.instagram.com/handelsbanken/",
+            "https://www.youtube.com/user/handelsbanken"
+          ],
+          "evidence": [
+            {
+              "text": "© Svenska Handelsbanken AB (publ) — Handelsbanken.",
+              "source_url": "https://www.handelsbanken.se/sv/privat/kontakt-och-support/chatt"
+            },
+            {
+              "text": "Vi hjälper dig med bankärenden och supportfrågor.",
+              "source_url": "https://www.handelsbanken.se/sv/privat/kontakt-och-support/chatt"
+            },
+            {
+              "text": "Official Handelsbanken LinkedIn, Facebook, Instagram and Youtube links are listed.",
+              "source_url": "https://www.handelsbanken.se/sv/privat/kontakt-och-support/chatt"
+            }
+          ]
+        },
+        "products": [
+          {
+            "name": "Chatta med oss",
+            "category": "Kundservice",
+            "description": "Chat for private customers is open daily from 8–22 for general questions about cards, accounts, payments, and digital services. Customers always chat with a person.",
+            "price": null,
+            "currency": null,
+            "url": "https://www.handelsbanken.se/sv/privat/kontakt-och-support/chatt",
+            "evidence": {
+              "text": "Chatten är öppen för privatkunder alla dagar 8-22. Du chattar alltid med en person.",
+              "source_url": "https://www.handelsbanken.se/sv/privat/kontakt-och-support/chatt"
+            }
+          },
+          {
+            "name": "Rådgivning",
+            "category": "Rådgivning",
+            "description": "A nationwide branch network with more than 1,800 advisers throughout the country.",
+            "price": null,
+            "currency": null,
+            "url": "https://www.handelsbanken.se/sv/hitta-bankkontor",
+            "evidence": {
+              "text": "Vi har ett rikstäckande kontorsnät med fler än 1 800 rådgivare över hela landet.",
+              "source_url": "https://www.handelsbanken.se/sv/privat/kontakt-och-support/chatt"
+            }
+          },
+          {
+            "name": "Personlig service dygnet runt",
+            "category": "Kundservice",
+            "description": "Assistance with banking matters and support questions is available around the clock.",
+            "price": null,
+            "currency": null,
+            "url": null,
+            "evidence": {
+              "text": "Vi hjälper dig med bankärenden och supportfrågor. Öppet dygnet runt.",
+              "source_url": "https://www.handelsbanken.se/sv/privat/kontakt-och-support/chatt"
+            }
+          },
+          {
+            "name": "Spärra kort eller BankID",
+            "category": "Säkerhet",
+            "description": "Private cards and Mobilt BankID can be blocked through internet banking or the mobile app; business cards and BankID on cards require a phone call.",
+            "price": null,
+            "currency": null,
+            "url": null,
+            "evidence": {
+              "text": "Enklast spärrar du privata kort och Mobilt BankID i internetbanken eller mobilappen.",
+              "source_url": "https://www.handelsbanken.se/sv/privat/kontakt-och-support/chatt"
+            }
+          }
+        ],
+        "jobs": [],
+        "other_facts": []
+      },
+      "next_links": [],
+      "crawl_complete": true,
+      "analysis_metadata": {
+        "depth": 1,
+        "succeeded": true,
+        "error": null,
+        "token_usage": {
+          "last": {
+            "input_tokens": 19347,
+            "cached_input_tokens": 0,
+            "cache_write_input_tokens": 0,
+            "output_tokens": 2105,
+            "reasoning_output_tokens": 1034,
+            "total_tokens": 21452
+          },
+          "thread_total": {
+            "input_tokens": 19347,
+            "cached_input_tokens": 0,
+            "cache_write_input_tokens": 0,
+            "output_tokens": 2105,
+            "reasoning_output_tokens": 1034,
+            "total_tokens": 21452
+          },
+          "model_context_window": 258400,
+          "duration_ms": 67427
+        }
+      }
+    },
+    {
+      "source_url": "https://www.handelsbanken.se/sv/privat/kontakt-och-support/hjalp-och-support/aktivera-appen",
+      "page_summary": "Instructions for activating Handelsbanken's app for private individuals, plus support phone numbers, service information, and official social profiles.",
+      "useful_information": {
+        "contacts": [
+          {
+            "type": "phone",
+            "value": "0771-77 88 99",
+            "label": "Personlig service dygnet runt",
+            "evidence": {
+              "text": "Personlig service dygnet runt: 0771-77 88 99.",
+              "source_url": "https://www.handelsbanken.se/sv/privat/kontakt-och-support/hjalp-och-support/aktivera-appen"
+            }
+          },
+          {
+            "type": "phone",
+            "value": "+46 771 77 88 99",
+            "label": "Personlig service från utlandet",
+            "evidence": {
+              "text": "+46 771 77 88 99 från utlandet.",
+              "source_url": "https://www.handelsbanken.se/sv/privat/kontakt-och-support/hjalp-och-support/aktivera-appen"
+            }
+          },
+          {
+            "type": "phone",
+            "value": "020‑41 12 12",
+            "label": "Spärra kort eller BankID",
+            "evidence": {
+              "text": "Spärra kort eller BankID: 020‑41 12 12.",
+              "source_url": "https://www.handelsbanken.se/sv/privat/kontakt-och-support/hjalp-och-support/aktivera-appen"
+            }
+          },
+          {
+            "type": "phone",
+            "value": "+46 8 411 21 22",
+            "label": "Spärra kort eller BankID från utlandet",
+            "evidence": {
+              "text": "+46 8 411 21 22 från utlandet.",
+              "source_url": "https://www.handelsbanken.se/sv/privat/kontakt-och-support/hjalp-och-support/aktivera-appen"
+            }
+          }
+        ],
+        "company": {
+          "name": "Handelsbanken",
+          "legal_name": "Svenska Handelsbanken AB (publ)",
+          "description": "Helps customers with banking matters, support questions, and advice.",
+          "industries": [
+            "Banking"
+          ],
+          "locations": [],
+          "identifiers": [],
+          "social_profiles": [
+            "https://www.linkedin.com/company/handelsbanken/jobs/",
+            "https://www.facebook.com/Handelsbanken/",
+            "https://www.instagram.com/handelsbanken/",
+            "https://www.youtube.com/user/handelsbanken"
+          ],
+          "evidence": [
+            {
+              "text": "© Svenska Handelsbanken AB (publ) — Handelsbanken.",
+              "source_url": "https://www.handelsbanken.se/sv/privat/kontakt-och-support/hjalp-och-support/aktivera-appen"
+            },
+            {
+              "text": "Vi hjälper dig med bankärenden och supportfrågor.",
+              "source_url": "https://www.handelsbanken.se/sv/privat/kontakt-och-support/hjalp-och-support/aktivera-appen"
+            },
+            {
+              "text": "Official Handelsbanken LinkedIn, Facebook, Instagram, and Youtube links are listed.",
+              "source_url": "https://www.handelsbanken.se/sv/privat/kontakt-och-support/hjalp-och-support/aktivera-appen"
+            }
+          ]
+        },
+        "products": [
+          {
+            "name": "appen för privatpersoner",
+            "category": "Mobile application",
+            "description": "The app can be activated to allow login with a personal code; activation is unnecessary when only using Mobilt BankID.",
+            "price": null,
+            "currency": null,
+            "url": "https://www.handelsbanken.se/sv/privat/kontakt-och-support/hjalp-och-support/aktivera-appen",
+            "evidence": {
+              "text": "För att kunna logga in i appen med en personlig kod behöver du först aktivera din app.",
+              "source_url": "https://www.handelsbanken.se/sv/privat/kontakt-och-support/hjalp-och-support/aktivera-appen"
+            }
+          }
+        ],
+        "jobs": [],
+        "other_facts": [
+          {
+            "name": "Advisory network",
+            "value": "A nationwide branch network with more than 1,800 advisors across the country.",
+            "evidence": {
+              "text": "Vi har ett rikstäckande kontorsnät med fler än 1 800 rådgivare över hela landet.",
+              "source_url": "https://www.handelsbanken.se/sv/privat/kontakt-och-support/hjalp-och-support/aktivera-appen"
+            }
+          },
+          {
+            "name": "Personal service availability",
+            "value": "Open 24 hours a day.",
+            "evidence": {
+              "text": "Personlig service dygnet runt. Öppet dygnet runt.",
+              "source_url": "https://www.handelsbanken.se/sv/privat/kontakt-och-support/hjalp-och-support/aktivera-appen"
+            }
+          }
+        ]
+      },
+      "next_links": [
+        {
+          "url": "https://www.handelsbanken.se/sv/privat/kontakt-och-support/hjalp-och-support",
+          "link_type": "internal",
+          "category": "contact",
+          "priority": 1,
+          "reason": "The main help and support page is likely to contain additional support resources and contact options.",
+          "expected_information": [
+            "Support resources",
+            "Contact options",
+            "Frequently requested help topics"
+          ]
+        }
+      ],
+      "crawl_complete": false,
+      "analysis_metadata": {
+        "depth": 1,
+        "succeeded": true,
+        "error": null,
+        "token_usage": {
+          "last": {
+            "input_tokens": 19784,
+            "cached_input_tokens": 0,
+            "cache_write_input_tokens": 0,
+            "output_tokens": 2092,
+            "reasoning_output_tokens": 1034,
+            "total_tokens": 21876
+          },
+          "thread_total": {
+            "input_tokens": 19784,
+            "cached_input_tokens": 0,
+            "cache_write_input_tokens": 0,
+            "output_tokens": 2092,
+            "reasoning_output_tokens": 1034,
+            "total_tokens": 21876
+          },
+          "model_context_window": 258400,
+          "duration_ms": 61810
+        }
+      }
+    },
+    {
+      "source_url": "https://www.handelsbanken.se/sv/privat/kontakt-och-support/hjalp-och-support/installation-kortlasare-med-sladd",
+      "page_summary": "Handelsbanken support page with installation instructions and driver downloads for wired card readers, contact numbers, advisory information, and official social profiles.",
+      "useful_information": {
+        "contacts": [
+          {
+            "type": "phone",
+            "value": "0771-77 88 99",
+            "label": "Personlig service dygnet runt",
+            "evidence": {
+              "text": "Personlig service dygnet runt: 0771-77 88 99.",
+              "source_url": "https://www.handelsbanken.se/sv/privat/kontakt-och-support/hjalp-och-support/installation-kortlasare-med-sladd"
+            }
+          },
+          {
+            "type": "phone",
+            "value": "+46 771 77 88 99",
+            "label": "Personlig service från utlandet",
+            "evidence": {
+              "text": "+46 771 77 88 99 från utlandet.",
+              "source_url": "https://www.handelsbanken.se/sv/privat/kontakt-och-support/hjalp-och-support/installation-kortlasare-med-sladd"
+            }
+          },
+          {
+            "type": "phone",
+            "value": "020‑41 12 12",
+            "label": "Spärra kort eller BankID",
+            "evidence": {
+              "text": "Spärra kort eller BankID: 020‑41 12 12.",
+              "source_url": "https://www.handelsbanken.se/sv/privat/kontakt-och-support/hjalp-och-support/installation-kortlasare-med-sladd"
+            }
+          },
+          {
+            "type": "phone",
+            "value": "+46 8 411 21 22",
+            "label": "Spärra kort eller BankID från utlandet",
+            "evidence": {
+              "text": "+46 8 411 21 22 från utlandet.",
+              "source_url": "https://www.handelsbanken.se/sv/privat/kontakt-och-support/hjalp-och-support/installation-kortlasare-med-sladd"
+            }
+          }
+        ],
+        "company": {
+          "name": "Handelsbanken",
+          "legal_name": "Svenska Handelsbanken AB (publ)",
+          "description": "Erbjuder rådgivning samt hjälp med bankärenden och supportfrågor, med personlig service dygnet runt.",
+          "industries": [
+            "Banktjänster"
+          ],
+          "locations": [],
+          "identifiers": [],
+          "social_profiles": [
+            "https://www.linkedin.com/company/handelsbanken/jobs/",
+            "https://www.facebook.com/Handelsbanken/",
+            "https://www.instagram.com/handelsbanken/",
+            "https://www.youtube.com/user/handelsbanken"
+          ],
+          "evidence": [
+            {
+              "text": "© Svenska Handelsbanken AB (publ) Handelsbanken",
+              "source_url": "https://www.handelsbanken.se/sv/privat/kontakt-och-support/hjalp-och-support/installation-kortlasare-med-sladd"
+            },
+            {
+              "text": "Vi hjälper dig med bankärenden och supportfrågor.",
+              "source_url": "https://www.handelsbanken.se/sv/privat/kontakt-och-support/hjalp-och-support/installation-kortlasare-med-sladd"
+            },
+            {
+              "text": "Official Handelsbanken LinkedIn, Facebook, Instagram and Youtube links are listed.",
+              "source_url": "https://www.handelsbanken.se/sv/privat/kontakt-och-support/hjalp-och-support/installation-kortlasare-med-sladd"
+            }
+          ]
+        },
+        "products": [
+          {
+            "name": "BankID-programmet",
+            "category": "Programvara",
+            "description": "Program required when using an inloggningskort and wired card reader.",
+            "price": null,
+            "currency": null,
+            "url": "https://install.bankid.com/",
+            "evidence": {
+              "text": "För att använda inloggningskort och kortläsare med sladd behöver du installera BankID-programmet.",
+              "source_url": "https://www.handelsbanken.se/sv/privat/kontakt-och-support/hjalp-och-support/installation-kortlasare-med-sladd"
+            }
+          },
+          {
+            "name": "Drivrutin kortläsare – Windows 10 och 11",
+            "category": "Drivrutin",
+            "description": "Driver for a wired card reader on Windows 10 and 11.",
+            "price": null,
+            "currency": null,
+            "url": "/tron/public/info/contents/v1/document/32-150504",
+            "evidence": {
+              "text": "Drivrutin kortläsare – Windows 10 och 11",
+              "source_url": "https://www.handelsbanken.se/sv/privat/kontakt-och-support/hjalp-och-support/installation-kortlasare-med-sladd"
+            }
+          },
+          {
+            "name": "Drivrutin äldre kortläsare – macOS 10.15 och senare",
+            "category": "Drivrutin",
+            "description": "Driver for an older card reader on macOS 10.15 and later.",
+            "price": null,
+            "currency": null,
+            "url": "/tron/public/info/contents/v1/document/32-150507",
+            "evidence": {
+              "text": "Drivrutin äldre kortläsare – macOS 10.15 och senare",
+              "source_url": "https://www.handelsbanken.se/sv/privat/kontakt-och-support/hjalp-och-support/installation-kortlasare-med-sladd"
+            }
+          },
+          {
+            "name": "Drivrutin ny kortläsare – macOS 10.15 och senare",
+            "category": "Drivrutin",
+            "description": "Driver for a new card reader on macOS 10.15 and later.",
+            "price": null,
+            "currency": null,
+            "url": "/tron/public/info/contents/v1/document/32-190550",
+            "evidence": {
+              "text": "Drivrutin ny kortläsare – macOS 10.15 och senare",
+              "source_url": "https://www.handelsbanken.se/sv/privat/kontakt-och-support/hjalp-och-support/installation-kortlasare-med-sladd"
+            }
+          }
+        ],
+        "jobs": [],
+        "other_facts": [
+          {
+            "name": "Advisory network",
+            "value": "Rikstäckande kontorsnät med fler än 1 800 rådgivare över hela landet.",
+            "evidence": {
+              "text": "Vi har ett rikstäckande kontorsnät med fler än 1 800 rådgivare över hela landet.",
+              "source_url": "https://www.handelsbanken.se/sv/privat/kontakt-och-support/hjalp-och-support/installation-kortlasare-med-sladd"
+            }
+          },
+          {
+            "name": "Personal service availability",
+            "value": "Öppet dygnet runt.",
+            "evidence": {
+              "text": "Personlig service dygnet runt. Öppet dygnet runt.",
+              "source_url": "https://www.handelsbanken.se/sv/privat/kontakt-och-support/hjalp-och-support/installation-kortlasare-med-sladd"
+            }
+          },
+          {
+            "name": "Windows ARM compatibility",
+            "value": "Drivrutinen för Windows är inte utvecklad för datorer med ARM-processor.",
+            "evidence": {
+              "text": "Drivrutinen för Windows är inte utvecklad för datorer med ARM-processor.",
+              "source_url": "https://www.handelsbanken.se/sv/privat/kontakt-och-support/hjalp-och-support/installation-kortlasare-med-sladd"
+            }
+          }
+        ]
+      },
+      "next_links": [
+        {
+          "url": "https://www.handelsbanken.se/sv/privat/kontakt-och-support/hjalp-och-support/hjalp-bankid-pa-kort",
+          "link_type": "internal",
+          "category": "contact",
+          "priority": 1,
+          "reason": "Dedicated troubleshooting and support page for BankID on a card.",
+          "expected_information": [
+            "Support options",
+            "Troubleshooting instructions",
+            "Contact information"
+          ]
+        },
+        {
+          "url": "https://www.handelsbanken.se/sv/privat/vardagstjanster/digitala-tjanster/inloggningssatt",
+          "link_type": "internal",
+          "category": "product",
+          "priority": 2,
+          "reason": "Describes Handelsbanken's available login methods.",
+          "expected_information": [
+            "Digital login services",
+            "Authentication methods",
+            "Card-reader information"
+          ]
+        },
+        {
+          "url": "https://www.handelsbanken.se/sv/privat/kontakt-och-support/hjalp-och-support/systemkrav",
+          "link_type": "internal",
+          "category": "product",
+          "priority": 3,
+          "reason": "Likely details system requirements for BankID and wired card readers.",
+          "expected_information": [
+            "Supported operating systems",
+            "Browser requirements",
+            "Technical compatibility"
+          ]
+        },
+        {
+          "url": "https://www.handelsbanken.se/tron/public/info/contents/v1/document/32-150504",
+          "link_type": "internal",
+          "category": "product",
+          "priority": 4,
+          "reason": "Official Windows 10 and 11 card-reader driver resource.",
+          "expected_information": [
+            "Windows card-reader driver",
+            "Installation package",
+            "Compatibility details"
+          ]
+        },
+        {
+          "url": "https://www.handelsbanken.se/tron/public/info/contents/v1/document/32-190550",
+          "link_type": "internal",
+          "category": "product",
+          "priority": 5,
+          "reason": "Official driver resource for the new card reader on macOS.",
+          "expected_information": [
+            "macOS card-reader driver",
+            "Installation package",
+            "Compatibility details"
+          ]
+        }
+      ],
+      "crawl_complete": false,
+      "analysis_metadata": {
+        "depth": 1,
+        "succeeded": true,
+        "error": null,
+        "token_usage": {
+          "last": {
+            "input_tokens": 20628,
+            "cached_input_tokens": 0,
+            "cache_write_input_tokens": 0,
+            "output_tokens": 3384,
+            "reasoning_output_tokens": 1552,
+            "total_tokens": 24012
+          },
+          "thread_total": {
+            "input_tokens": 20628,
+            "cached_input_tokens": 0,
+            "cache_write_input_tokens": 0,
+            "output_tokens": 3384,
+            "reasoning_output_tokens": 1552,
+            "total_tokens": 24012
+          },
+          "model_context_window": 258400,
+          "duration_ms": 96119
+        }
+      }
+    },
+    {
+      "source_url": "https://www.handelsbanken.se/sv/privat/kontakt-och-support/hjalp-och-support/vanliga-fragor",
+      "page_summary": "Handelsbanken FAQ covering digital services, cards, interest rates, accounts, cash, estates, business services, advice, and round-the-clock support.",
+      "useful_information": {
+        "contacts": [
+          {
+            "type": "phone",
+            "value": "0771-77 88 99",
+            "label": "Personlig service dygnet runt",
+            "evidence": {
+              "text": "Personlig service dygnet runt: 0771-77 88 99.",
+              "source_url": "https://www.handelsbanken.se/sv/privat/kontakt-och-support/hjalp-och-support/vanliga-fragor"
+            }
+          },
+          {
+            "type": "phone",
+            "value": "+46 771 77 88 99",
+            "label": "Personlig service från utlandet",
+            "evidence": {
+              "text": "+46 771 77 88 99 från utlandet.",
+              "source_url": "https://www.handelsbanken.se/sv/privat/kontakt-och-support/hjalp-och-support/vanliga-fragor"
+            }
+          },
+          {
+            "type": "phone",
+            "value": "020-41 12 12",
+            "label": "Spärra kort eller BankID",
+            "evidence": {
+              "text": "Du kan också ringa oss dygnet runt för att spärra ditt kort på 020-41 12 12.",
+              "source_url": "https://www.handelsbanken.se/sv/privat/kontakt-och-support/hjalp-och-support/vanliga-fragor"
+            }
+          },
+          {
+            "type": "phone",
+            "value": "+46 8 411 21 22",
+            "label": "Spärra kort eller BankID från utlandet",
+            "evidence": {
+              "text": "+46 8 411 21 22 från utlandet.",
+              "source_url": "https://www.handelsbanken.se/sv/privat/kontakt-och-support/hjalp-och-support/vanliga-fragor"
+            }
+          },
+          {
+            "type": "social",
+            "value": "https://www.linkedin.com/company/handelsbanken/jobs/",
+            "label": "Handelsbanken Linkedin",
+            "evidence": {
+              "text": "Handelsbanken Linkedin.",
+              "source_url": "https://www.handelsbanken.se/sv/privat/kontakt-och-support/hjalp-och-support/vanliga-fragor"
+            }
+          },
+          {
+            "type": "social",
+            "value": "https://www.facebook.com/Handelsbanken/",
+            "label": "Handelsbanken Facebook",
+            "evidence": {
+              "text": "Handelsbanken Facebook.",
+              "source_url": "https://www.handelsbanken.se/sv/privat/kontakt-och-support/hjalp-och-support/vanliga-fragor"
+            }
+          },
+          {
+            "type": "social",
+            "value": "https://www.instagram.com/handelsbanken/",
+            "label": "Handelsbanken Instagram",
+            "evidence": {
+              "text": "Handelsbanken Instagram.",
+              "source_url": "https://www.handelsbanken.se/sv/privat/kontakt-och-support/hjalp-och-support/vanliga-fragor"
+            }
+          },
+          {
+            "type": "social",
+            "value": "https://www.youtube.com/user/handelsbanken",
+            "label": "Handelsbanken Youtube",
+            "evidence": {
+              "text": "Handelsbanken Youtube.",
+              "source_url": "https://www.handelsbanken.se/sv/privat/kontakt-och-support/hjalp-och-support/vanliga-fragor"
+            }
+          }
+        ],
+        "company": {
+          "name": "Handelsbanken",
+          "legal_name": "Svenska Handelsbanken AB (publ)",
+          "description": "A bank providing banking services, advice, and support to private and business customers.",
+          "industries": [
+            "Banking"
+          ],
+          "locations": [],
+          "identifiers": [],
+          "social_profiles": [
+            "https://www.linkedin.com/company/handelsbanken/jobs/",
+            "https://www.facebook.com/Handelsbanken/",
+            "https://www.instagram.com/handelsbanken/",
+            "https://www.youtube.com/user/handelsbanken"
+          ],
+          "evidence": [
+            {
+              "text": "© Svenska Handelsbanken AB (publ) — Handelsbanken.",
+              "source_url": "https://www.handelsbanken.se/sv/privat/kontakt-och-support/hjalp-och-support/vanliga-fragor"
+            },
+            {
+              "text": "Vi hjälper dig med bankärenden och supportfrågor.",
+              "source_url": "https://www.handelsbanken.se/sv/privat/kontakt-och-support/hjalp-och-support/vanliga-fragor"
+            }
+          ]
+        },
+        "products": [
+          {
+            "name": "Mobilt BankID",
+            "category": "Digital tjänst",
+            "description": "Can be ordered for a new device through the Handelsbanken app, internet banking, or with help from a bank branch.",
+            "price": null,
+            "currency": null,
+            "url": "https://www.handelsbanken.se/sv/privat/kontakt-och-support/hjalp-och-support/hjalp-med-mobilt-bankid",
+            "evidence": {
+              "text": "Om det är första gången som du skaffar ett Mobilt BankID gör du det enklast i internetbanken.",
+              "source_url": "https://www.handelsbanken.se/sv/privat/kontakt-och-support/hjalp-och-support/vanliga-fragor"
+            }
+          },
+          {
+            "name": "Business Debit",
+            "category": "Företagskort",
+            "description": "Purchases and cash withdrawals are deducted directly from the connected business account.",
+            "price": null,
+            "currency": null,
+            "url": "https://www.handelsbanken.se/sv/foretag/konton-betalningar/foretagskort/business-debit",
+            "evidence": {
+              "text": "Alla köp och kontantuttag dras direkt från det företagskonto som kortet är kopplat till.",
+              "source_url": "https://www.handelsbanken.se/sv/privat/kontakt-och-support/hjalp-och-support/vanliga-fragor"
+            }
+          },
+          {
+            "name": "Business Card",
+            "category": "Företagskort / kreditkort",
+            "description": "A credit card whose approved credit amount determines the available spending capacity.",
+            "price": null,
+            "currency": null,
+            "url": "https://www.handelsbanken.se/sv/foretag/konton-betalningar/foretagskort/business-card",
+            "evidence": {
+              "text": "Business Card är ett kreditkort, vilket innebär att det så kallade kreditbeloppet du ansöker om styr hur mycket du har att handla för.",
+              "source_url": "https://www.handelsbanken.se/sv/privat/kontakt-och-support/hjalp-och-support/vanliga-fragor"
+            }
+          },
+          {
+            "name": "Allkonto Ung",
+            "category": "Konto för barn och unga",
+            "description": "A guardian can open this account through internet banking.",
+            "price": null,
+            "currency": null,
+            "url": "https://www.handelsbanken.se/sv/privat/vardagstjanster/banktjanster-for-barn-och-unga",
+            "evidence": {
+              "text": "Du som vårdnadshavare kan själv öppna ett Allkonto Ung.",
+              "source_url": "https://www.handelsbanken.se/sv/privat/kontakt-och-support/hjalp-och-support/vanliga-fragor"
+            }
+          },
+          {
+            "name": "Bankkort Start",
+            "category": "Bankkort för barn och unga",
+            "description": "Can be connected to Allkonto Ung through internet banking; it was previously called Maestro.",
+            "price": null,
+            "currency": null,
+            "url": "https://www.handelsbanken.se/sv/privat/vardagstjanster/banktjanster-for-barn-och-unga",
+            "evidence": {
+              "text": "Ansluta ett Bankkort Start (tidigare kallat Maestro) i internetbanken.",
+              "source_url": "https://www.handelsbanken.se/sv/privat/kontakt-och-support/hjalp-och-support/vanliga-fragor"
+            }
+          },
+          {
+            "name": "Bankkort Mastercard",
+            "category": "Bankkort",
+            "description": "Includes travel insurance with cancellation protection when used to pay for a trip.",
+            "price": null,
+            "currency": null,
+            "url": "https://www.handelsbanken.se/sv/privat/vardagstjanster/bankkort-och-kreditkort/jamfor-reseforsakringar",
+            "evidence": {
+              "text": "När du betalar din resa med ditt Bankkort Mastercard, Allkort eller Platinum ingår alltid en reseförsäkring med avbeställningsskydd.",
+              "source_url": "https://www.handelsbanken.se/sv/privat/kontakt-och-support/hjalp-och-support/vanliga-fragor"
+            }
+          },
+          {
+            "name": "Allkort",
+            "category": "Kort",
+            "description": "Includes travel insurance with cancellation protection when used to pay for a trip.",
+            "price": null,
+            "currency": null,
+            "url": "https://www.handelsbanken.se/sv/privat/vardagstjanster/bankkort-och-kreditkort/jamfor-reseforsakringar",
+            "evidence": {
+              "text": "När du betalar din resa med ditt Bankkort Mastercard, Allkort eller Platinum ingår alltid en reseförsäkring med avbeställningsskydd.",
+              "source_url": "https://www.handelsbanken.se/sv/privat/kontakt-och-support/hjalp-och-support/vanliga-fragor"
+            }
+          },
+          {
+            "name": "Platinum",
+            "category": "Kort",
+            "description": "Includes travel insurance with cancellation protection when used to pay for a trip.",
+            "price": null,
+            "currency": null,
+            "url": "https://www.handelsbanken.se/sv/privat/vardagstjanster/bankkort-och-kreditkort/jamfor-reseforsakringar",
+            "evidence": {
+              "text": "När du betalar din resa med ditt Bankkort Mastercard, Allkort eller Platinum ingår alltid en reseförsäkring med avbeställningsskydd.",
+              "source_url": "https://www.handelsbanken.se/sv/privat/kontakt-och-support/hjalp-och-support/vanliga-fragor"
+            }
+          },
+          {
+            "name": "Personlig service",
+            "category": "Support",
+            "description": "Assistance with banking matters and support questions, available around the clock.",
+            "price": null,
+            "currency": null,
+            "url": "https://www.handelsbanken.se/sv/privat/kontakt-och-support/hjalp-och-support/vanliga-fragor",
+            "evidence": {
+              "text": "Vi hjälper dig med bankärenden och supportfrågor. Öppet dygnet runt.",
+              "source_url": "https://www.handelsbanken.se/sv/privat/kontakt-och-support/hjalp-och-support/vanliga-fragor"
+            }
+          }
+        ],
+        "jobs": [],
+        "other_facts": [
+          {
+            "name": "Advisory network",
+            "value": "Rikstäckande kontorsnät med fler än 1 800 rådgivare över hela landet.",
+            "evidence": {
+              "text": "Vi har ett rikstäckande kontorsnät med fler än 1 800 rådgivare över hela landet.",
+              "source_url": "https://www.handelsbanken.se/sv/privat/kontakt-och-support/hjalp-och-support/vanliga-fragor"
+            }
+          },
+          {
+            "name": "Cash handling at branches",
+            "value": "Våra bankkontor är kontantfria.",
+            "evidence": {
+              "text": "Våra bankkontor är kontantfria.",
+              "source_url": "https://www.handelsbanken.se/sv/privat/kontakt-och-support/hjalp-och-support/vanliga-fragor"
+            }
+          },
+          {
+            "name": "Branch clearing numbers",
+            "value": "Varje bankkontor har ett eget clearingnummer som består av fyra siffror.",
+            "evidence": {
+              "text": "I Handelsbanken har varje bankkontor ett eget clearingnummer som består av fyra siffror.",
+              "source_url": "https://www.handelsbanken.se/sv/privat/kontakt-och-support/hjalp-och-support/vanliga-fragor"
+            }
+          }
+        ]
+      },
+      "next_links": [
+        {
+          "url": "https://www.handelsbanken.se/sv/privat/kontakt-och-support/hjalp-och-support/hjalp-med-mobilt-bankid",
+          "link_type": "internal",
+          "category": "contact",
+          "priority": 1,
+          "reason": "A dedicated support page for obtaining and using Mobilt BankID.",
+          "expected_information": [
+            "Mobilt BankID support instructions",
+            "Eligibility requirements",
+            "Available support channels"
+          ]
+        },
+        {
+          "url": "https://www.handelsbanken.se/sv/foretag/konton-betalningar/foretagskort/business-debit",
+          "link_type": "internal",
+          "category": "product",
+          "priority": 2,
+          "reason": "Dedicated product page for the Business Debit corporate card.",
+          "expected_information": [
+            "Card features",
+            "Eligibility",
+            "Fees",
+            "Application details"
+          ]
+        },
+        {
+          "url": "https://www.handelsbanken.se/sv/foretag/konton-betalningar/foretagskort/business-card",
+          "link_type": "internal",
+          "category": "product",
+          "priority": 3,
+          "reason": "Dedicated product page for the Business Card corporate credit card.",
+          "expected_information": [
+            "Credit card features",
+            "Credit terms",
+            "Fees",
+            "Application details"
+          ]
+        },
+        {
+          "url": "https://www.handelsbanken.se/sv/privat/vardagstjanster/banktjanster-for-barn-och-unga",
+          "link_type": "internal",
+          "category": "product",
+          "priority": 4,
+          "reason": "Describes banking products for children and young people, including Allkonto Ung and Bankkort Start.",
+          "expected_information": [
+            "Youth account details",
+            "Youth card details",
+            "Eligibility",
+            "Available services"
+          ]
+        },
+        {
+          "url": "https://www.handelsbanken.se/sv/privat/spara/sparkonton-och-rantor",
+          "link_type": "internal",
+          "category": "product",
+          "priority": 5,
+          "reason": "Product page for private savings accounts and current savings rates.",
+          "expected_information": [
+            "Savings account products",
+            "Interest rates",
+            "Account terms"
+          ]
+        }
+      ],
+      "crawl_complete": false,
+      "analysis_metadata": {
+        "depth": 1,
+        "succeeded": true,
+        "error": null,
+        "token_usage": {
+          "last": {
+            "input_tokens": 25202,
+            "cached_input_tokens": 15104,
+            "cache_write_input_tokens": 0,
+            "output_tokens": 5202,
+            "reasoning_output_tokens": 2438,
+            "total_tokens": 30404
+          },
+          "thread_total": {
+            "input_tokens": 25202,
+            "cached_input_tokens": 15104,
+            "cache_write_input_tokens": 0,
+            "output_tokens": 5202,
+            "reasoning_output_tokens": 2438,
+            "total_tokens": 30404
+          },
+          "model_context_window": 258400,
+          "duration_ms": 144395
+        }
+      }
+    },
+    {
+      "source_url": "https://www.handelsbanken.se/sv/privat/kontakt-och-support/sakerhet-bedrageri",
+      "page_summary": "Handelsbanken's security and fraud page explains fraud prevention and reporting, describes the bank's security measures, and provides round-the-clock service and card or BankID blocking phone numbers.",
+      "useful_information": {
+        "contacts": [
+          {
+            "type": "phone",
+            "value": "0771-77 88 99",
+            "label": "Personlig service dygnet runt",
+            "evidence": {
+              "text": "Personlig service dygnet runt: 0771-77 88 99",
+              "source_url": "https://www.handelsbanken.se/sv/privat/kontakt-och-support/sakerhet-bedrageri"
+            }
+          },
+          {
+            "type": "phone",
+            "value": "+46 771 77 88 99",
+            "label": "Personlig service från utlandet",
+            "evidence": {
+              "text": "+46 771 77 88 99 från utlandet",
+              "source_url": "https://www.handelsbanken.se/sv/privat/kontakt-och-support/sakerhet-bedrageri"
+            }
+          },
+          {
+            "type": "phone",
+            "value": "020‑41 12 12",
+            "label": "Spärra kort eller BankID",
+            "evidence": {
+              "text": "Spärra kort eller BankID: 020‑41 12 12",
+              "source_url": "https://www.handelsbanken.se/sv/privat/kontakt-och-support/sakerhet-bedrageri"
+            }
+          },
+          {
+            "type": "phone",
+            "value": "+46 8 411 21 22",
+            "label": "Spärra kort eller BankID från utlandet",
+            "evidence": {
+              "text": "+46 8 411 21 22 från utlandet",
+              "source_url": "https://www.handelsbanken.se/sv/privat/kontakt-och-support/sakerhet-bedrageri"
+            }
+          }
+        ],
+        "company": {
+          "name": "Handelsbanken",
+          "legal_name": "Svenska Handelsbanken AB (publ)",
+          "description": "Provides banking, support and advisory services and works continuously to prevent fraud.",
+          "industries": [
+            "Banking"
+          ],
+          "locations": [],
+          "identifiers": [],
+          "social_profiles": [
+            "https://www.linkedin.com/company/handelsbanken/jobs/",
+            "https://www.facebook.com/Handelsbanken/",
+            "https://www.instagram.com/handelsbanken/",
+            "https://www.youtube.com/user/handelsbanken"
+          ],
+          "evidence": [
+            {
+              "text": "© Svenska Handelsbanken AB (publ) — Handelsbanken",
+              "source_url": "https://www.handelsbanken.se/sv/privat/kontakt-och-support/sakerhet-bedrageri"
+            },
+            {
+              "text": "Vi hjälper dig med bankärenden och supportfrågor.",
+              "source_url": "https://www.handelsbanken.se/sv/privat/kontakt-och-support/sakerhet-bedrageri"
+            },
+            {
+              "text": "Vi arbetar kontinuerligt för att förebygga olika typer av bedrägerier.",
+              "source_url": "https://www.handelsbanken.se/sv/privat/kontakt-och-support/sakerhet-bedrageri"
+            },
+            {
+              "text": "Handelsbanken Linkedin: https://www.linkedin.com/company/handelsbanken/jobs/",
+              "source_url": "https://www.handelsbanken.se/sv/privat/kontakt-och-support/sakerhet-bedrageri"
+            },
+            {
+              "text": "Handelsbanken Facebook: https://www.facebook.com/Handelsbanken/",
+              "source_url": "https://www.handelsbanken.se/sv/privat/kontakt-och-support/sakerhet-bedrageri"
+            },
+            {
+              "text": "Handelsbanken Instagram: https://www.instagram.com/handelsbanken/",
+              "source_url": "https://www.handelsbanken.se/sv/privat/kontakt-och-support/sakerhet-bedrageri"
+            },
+            {
+              "text": "Handelsbanken Youtube: https://www.youtube.com/user/handelsbanken",
+              "source_url": "https://www.handelsbanken.se/sv/privat/kontakt-och-support/sakerhet-bedrageri"
+            }
+          ]
+        },
+        "products": [
+          {
+            "name": "Rådgivning",
+            "category": "Service",
+            "description": "A nationwide office network with more than 1,800 advisors.",
+            "price": null,
+            "currency": null,
+            "url": "https://www.handelsbanken.se/sv/hitta-bankkontor",
+            "evidence": {
+              "text": "Vi har ett rikstäckande kontorsnät med fler än 1 800 rådgivare över hela landet.",
+              "source_url": "https://www.handelsbanken.se/sv/privat/kontakt-och-support/sakerhet-bedrageri"
+            }
+          },
+          {
+            "name": "Personlig service dygnet runt",
+            "category": "Support service",
+            "description": "Assistance with banking matters and support questions, available around the clock.",
+            "price": null,
+            "currency": null,
+            "url": "https://www.handelsbanken.se/sv/privat/kontakt-och-support",
+            "evidence": {
+              "text": "Vi hjälper dig med bankärenden och supportfrågor. Öppet dygnet runt.",
+              "source_url": "https://www.handelsbanken.se/sv/privat/kontakt-och-support/sakerhet-bedrageri"
+            }
+          },
+          {
+            "name": "Säkerhet och bedrägeri",
+            "category": "Security service",
+            "description": "Information about preventing fraud and what to do after being affected.",
+            "price": null,
+            "currency": null,
+            "url": "https://www.handelsbanken.se/sv/privat/kontakt-och-support/sakerhet-bedrageri",
+            "evidence": {
+              "text": "Här hittar du information om hur du skyddar dig, samt vad du ska göra om du blivit utsatt.",
+              "source_url": "https://www.handelsbanken.se/sv/privat/kontakt-och-support/sakerhet-bedrageri"
+            }
+          },
+          {
+            "name": "Spärra kort eller BankID",
+            "category": "Security support",
+            "description": "Private cards and Mobilt BankID can be blocked through online banking, the mobile app, or by telephone.",
+            "price": null,
+            "currency": null,
+            "url": "https://www.handelsbanken.se/sv/privat/kontakt-och-support/sakerhet-bedrageri",
+            "evidence": {
+              "text": "Enklast spärrar du privata kort och Mobilt BankID i internetbanken eller mobilappen. Du kan även ringa.",
+              "source_url": "https://www.handelsbanken.se/sv/privat/kontakt-och-support/sakerhet-bedrageri"
+            }
+          }
+        ],
+        "jobs": [],
+        "other_facts": [
+          {
+            "name": "Transaction monitoring",
+            "value": "Transactions are monitored in real time around the clock to detect and stop suspicious activity quickly.",
+            "evidence": {
+              "text": "Vi realtidsövervakar transaktioner dygnet runt för att snabbt upptäcka och stoppa misstänkt aktivitet.",
+              "source_url": "https://www.handelsbanken.se/sv/privat/kontakt-och-support/sakerhet-bedrageri"
+            }
+          },
+          {
+            "name": "Payment safeguards",
+            "value": "Delays have been introduced for foreign payments to new countries and larger Swish payments.",
+            "evidence": {
+              "text": "Vi har infört fördröjningar vid utlandsbetalningar till nya länder och större Swish-betalningar.",
+              "source_url": "https://www.handelsbanken.se/sv/privat/kontakt-och-support/sakerhet-bedrageri"
+            }
+          },
+          {
+            "name": "Transaction limits",
+            "value": "Limits have been lowered for various transaction types.",
+            "evidence": {
+              "text": "Vi har sänkt beloppsgränserna för olika typer av transaktioner.",
+              "source_url": "https://www.handelsbanken.se/sv/privat/kontakt-och-support/sakerhet-bedrageri"
+            }
+          },
+          {
+            "name": "High-risk card-purchase warnings",
+            "value": "Warnings are displayed for certain high-risk card purchases when approval is made with Mobilt BankID.",
+            "evidence": {
+              "text": "Vi visar varningar vid vissa typer av kortköp med hög risk när du godkänner med mobilt BankID.",
+              "source_url": "https://www.handelsbanken.se/sv/privat/kontakt-och-support/sakerhet-bedrageri"
+            }
+          }
+        ]
+      },
+      "next_links": [
+        {
+          "url": "https://www.handelsbanken.se/sv/privat/kontakt-och-support/sakerhet-bedrageri/anmal-bedrageri",
+          "link_type": "internal",
+          "category": "contact",
+          "priority": 1,
+          "reason": "Likely contains direct fraud-reporting instructions and relevant emergency contact information.",
+          "expected_information": [
+            "Fraud reporting instructions",
+            "Emergency contact details",
+            "Steps to secure affected accounts or payment instruments"
+          ]
+        },
+        {
+          "url": "https://www.handelsbanken.se/sv/foretag/kontakta-oss-foretag/skydda-foretaget-mot-bedragerier",
+          "link_type": "internal",
+          "category": "product",
+          "priority": 2,
+          "reason": "Likely describes fraud-prevention support and services available to business customers.",
+          "expected_information": [
+            "Business fraud-prevention services",
+            "Business security guidance",
+            "Business support contacts"
+          ]
+        },
+        {
+          "url": "https://www.handelsbanken.se/sv/privat/kontakt-och-support/sakerhet-bedrageri/vanliga-bedragerier",
+          "link_type": "internal",
+          "category": "product",
+          "priority": 3,
+          "reason": "Likely provides further details about Handelsbanken's fraud-prevention guidance for customers.",
+          "expected_information": [
+            "Common fraud types",
+            "Fraud-prevention guidance",
+            "Recommended customer security measures"
+          ]
+        }
+      ],
+      "crawl_complete": false,
+      "analysis_metadata": {
+        "depth": 1,
+        "succeeded": true,
+        "error": null,
+        "token_usage": {
+          "last": {
+            "input_tokens": 21416,
+            "cached_input_tokens": 0,
+            "cache_write_input_tokens": 0,
+            "output_tokens": 4345,
+            "reasoning_output_tokens": 2426,
+            "total_tokens": 25761
+          },
+          "thread_total": {
+            "input_tokens": 21416,
+            "cached_input_tokens": 0,
+            "cache_write_input_tokens": 0,
+            "output_tokens": 4345,
+            "reasoning_output_tokens": 2426,
+            "total_tokens": 25761
+          },
+          "model_context_window": 258400,
+          "duration_ms": 120962
+        }
+      }
+    },
+    {
+      "source_url": "https://www.handelsbanken.se/sv/hitta-bankkontor",
+      "page_summary": "Handelsbanken office locator listing 205 bank branches with addresses, phone numbers, clearing numbers, cash availability and opening hours. The page also provides nationwide advisory, customer-support and card/BankID blocking contacts.",
+      "useful_information": {
+        "contacts": [
+          {
+            "type": "phone",
+            "value": "0771-77 88 99",
+            "label": "Personlig service dygnet runt",
+            "evidence": {
+              "text": "Personlig service dygnet runt: 0771-77 88 99. Öppet dygnet runt.",
+              "source_url": "https://www.handelsbanken.se/sv/hitta-bankkontor"
+            }
+          },
+          {
+            "type": "phone",
+            "value": "+46 771 77 88 99",
+            "label": "Personlig service från utlandet",
+            "evidence": {
+              "text": "+46 771 77 88 99 från utlandet",
+              "source_url": "https://www.handelsbanken.se/sv/hitta-bankkontor"
+            }
+          },
+          {
+            "type": "phone",
+            "value": "020‑41 12 12",
+            "label": "Spärra kort eller BankID",
+            "evidence": {
+              "text": "Spärra kort eller BankID: 020‑41 12 12",
+              "source_url": "https://www.handelsbanken.se/sv/hitta-bankkontor"
+            }
+          },
+          {
+            "type": "phone",
+            "value": "+46 8 411 21 22",
+            "label": "Spärra kort eller BankID från utlandet",
+            "evidence": {
+              "text": "+46 8 411 21 22 från utlandet",
+              "source_url": "https://www.handelsbanken.se/sv/hitta-bankkontor"
+            }
+          },
+          {
+            "type": "address",
+            "value": "Storängstorget, Åkersberga Centrum\nÅkersberga",
+            "label": "Åkersberga",
+            "evidence": {
+              "text": "Åkersberga — Storängstorget, Åkersberga Centrum — Åkersberga",
+              "source_url": "https://www.handelsbanken.se/sv/hitta-bankkontor"
+            }
+          },
+          {
+            "type": "phone",
+            "value": "08 54410200",
+            "label": "Åkersberga",
+            "evidence": {
+              "text": "Åkersberga, Telefon 08 54410200",
+              "source_url": "https://www.handelsbanken.se/sv/hitta-bankkontor"
+            }
+          },
+          {
+            "type": "address",
+            "value": "Kungsgatan 24\nAlingsås",
+            "label": "Alingsås",
+            "evidence": {
+              "text": "Alingsås — Kungsgatan 24 — Alingsås",
+              "source_url": "https://www.handelsbanken.se/sv/hitta-bankkontor"
+            }
+          },
+          {
+            "type": "phone",
+            "value": "0322 667280",
+            "label": "Alingsås",
+            "evidence": {
+              "text": "Alingsås, Telefon 0322 667280",
+              "source_url": "https://www.handelsbanken.se/sv/hitta-bankkontor"
+            }
+          },
+          {
+            "type": "address",
+            "value": "Grafiska vägen 2B\nGöteborg",
+            "label": "Göteborg Almedal",
+            "evidence": {
+              "text": "Göteborg Almedal — Grafiska vägen 2B — Göteborg",
+              "source_url": "https://www.handelsbanken.se/sv/hitta-bankkontor"
+            }
+          },
+          {
+            "type": "phone",
+            "value": "031 7030700",
+            "label": "Göteborg Almedal",
+            "evidence": {
+              "text": "Göteborg Almedal, Telefon 031 7030700",
+              "source_url": "https://www.handelsbanken.se/sv/hitta-bankkontor"
+            }
+          },
+          {
+            "type": "address",
+            "value": "Norra Esplanaden 6\nÄlmhult",
+            "label": "Älmhult",
+            "evidence": {
+              "text": "Älmhult — Norra Esplanaden 6 — Älmhult",
+              "source_url": "https://www.handelsbanken.se/sv/hitta-bankkontor"
+            }
+          },
+          {
+            "type": "phone",
+            "value": "0476 56150",
+            "label": "Älmhult",
+            "evidence": {
+              "text": "Älmhult, Telefon 0476 56150",
+              "source_url": "https://www.handelsbanken.se/sv/hitta-bankkontor"
+            }
+          },
+          {
+            "type": "address",
+            "value": "Gustavslundsvägen 22\nBromma",
+            "label": "Alviks Torg",
+            "evidence": {
+              "text": "Alviks Torg — Gustavslundsvägen 22 — Bromma",
+              "source_url": "https://www.handelsbanken.se/sv/hitta-bankkontor"
+            }
+          },
+          {
+            "type": "phone",
+            "value": "08 56410160",
+            "label": "Alviks Torg",
+            "evidence": {
+              "text": "Alviks Torg, Telefon 08 56410160",
+              "source_url": "https://www.handelsbanken.se/sv/hitta-bankkontor"
+            }
+          }
+        ],
+        "company": {
+          "name": "Handelsbanken",
+          "legal_name": "Svenska Handelsbanken AB (publ)",
+          "description": "Handelsbanken has a nationwide branch network where experts and more than 1,800 advisers help customers make financial decisions.",
+          "industries": [
+            "Banking"
+          ],
+          "locations": [
+            "Alingsås",
+            "Bromma",
+            "Göteborg",
+            "Älmhult",
+            "Åkersberga"
+          ],
+          "identifiers": [],
+          "social_profiles": [
+            "https://www.linkedin.com/company/handelsbanken/jobs/",
+            "https://www.facebook.com/Handelsbanken/",
+            "https://www.instagram.com/handelsbanken/",
+            "https://www.youtube.com/user/handelsbanken"
+          ],
+          "evidence": [
+            {
+              "text": "På bankkontoren finns våra experter, redo att hjälpa dig fatta kloka ekonomiska beslut.",
+              "source_url": "https://www.handelsbanken.se/sv/hitta-bankkontor"
+            },
+            {
+              "text": "Vi har ett rikstäckande kontorsnät med fler än 1 800 rådgivare över hela landet.",
+              "source_url": "https://www.handelsbanken.se/sv/hitta-bankkontor"
+            },
+            {
+              "text": "205 kontor hittade.",
+              "source_url": "https://www.handelsbanken.se/sv/hitta-bankkontor"
+            },
+            {
+              "text": "© Svenska Handelsbanken AB (publ) — Handelsbanken",
+              "source_url": "https://www.handelsbanken.se/sv/hitta-bankkontor"
+            }
+          ]
+        },
+        "products": [
+          {
+            "name": "Rådgivning",
+            "category": "Service",
+            "description": "Advisory from a nationwide office network with more than 1,800 advisers.",
+            "price": null,
+            "currency": null,
+            "url": "https://www.handelsbanken.se/sv/hitta-bankkontor",
+            "evidence": {
+              "text": "Rådgivning: rikstäckande kontorsnät med fler än 1 800 rådgivare.",
+              "source_url": "https://www.handelsbanken.se/sv/hitta-bankkontor"
+            }
+          },
+          {
+            "name": "Personlig service dygnet runt",
+            "category": "Customer support",
+            "description": "Help with banking matters and support questions, available around the clock.",
+            "price": null,
+            "currency": null,
+            "url": "https://www.handelsbanken.se/sv/privat/kontakt-och-support",
+            "evidence": {
+              "text": "Vi hjälper dig med bankärenden och supportfrågor. Öppet dygnet runt.",
+              "source_url": "https://www.handelsbanken.se/sv/hitta-bankkontor"
+            }
+          },
+          {
+            "name": "Spärra kort eller BankID",
+            "category": "Security support",
+            "description": "Customers can block private cards and Mobile BankID online or by phone; company cards and card-based BankID require a phone call.",
+            "price": null,
+            "currency": null,
+            "url": null,
+            "evidence": {
+              "text": "Enklast spärrar du privata kort och Mobilt BankID i internetbanken eller mobilappen. Du kan även ringa.",
+              "source_url": "https://www.handelsbanken.se/sv/hitta-bankkontor"
+            }
+          }
+        ],
+        "jobs": [],
+        "other_facts": [
+          {
+            "name": "Antal kontor hittade",
+            "value": "205",
+            "evidence": {
+              "text": "205 kontor hittade.",
+              "source_url": "https://www.handelsbanken.se/sv/hitta-bankkontor"
+            }
+          },
+          {
+            "name": "Rådgivare",
+            "value": "fler än 1 800",
+            "evidence": {
+              "text": "Vi har ett rikstäckande kontorsnät med fler än 1 800 rådgivare.",
+              "source_url": "https://www.handelsbanken.se/sv/hitta-bankkontor"
+            }
+          },
+          {
+            "name": "Åkersberga clearingnummer",
+            "value": "6195",
+            "evidence": {
+              "text": "Åkersberga — Clearingnummer 6195",
+              "source_url": "https://www.handelsbanken.se/sv/hitta-bankkontor"
+            }
+          },
+          {
+            "name": "Alingsås clearingnummer",
+            "value": "6832",
+            "evidence": {
+              "text": "Alingsås — Clearingnummer 6832",
+              "source_url": "https://www.handelsbanken.se/sv/hitta-bankkontor"
+            }
+          },
+          {
+            "name": "Göteborg Almedal clearingnummer",
+            "value": "6226",
+            "evidence": {
+              "text": "Göteborg Almedal — Clearingnummer 6226",
+              "source_url": "https://www.handelsbanken.se/sv/hitta-bankkontor"
+            }
+          },
+          {
+            "name": "Älmhult clearingnummer",
+            "value": "6767",
+            "evidence": {
+              "text": "Älmhult — Clearingnummer 6767",
+              "source_url": "https://www.handelsbanken.se/sv/hitta-bankkontor"
+            }
+          },
+          {
+            "name": "Alviks Torg clearingnummer",
+            "value": "6154",
+            "evidence": {
+              "text": "Alviks Torg — Clearingnummer 6154",
+              "source_url": "https://www.handelsbanken.se/sv/hitta-bankkontor"
+            }
+          }
+        ]
+      },
+      "next_links": [
+        {
+          "url": "https://www.handelsbanken.se/akersberga",
+          "link_type": "internal",
+          "category": "contact",
+          "priority": 1,
+          "reason": "Dedicated Åkersberga office page likely contains detailed local contact and visitor information.",
+          "expected_information": [
+            "office address",
+            "phone number",
+            "opening hours",
+            "clearing number",
+            "local services"
+          ]
+        },
+        {
+          "url": "https://www.handelsbanken.se/alingsas",
+          "link_type": "internal",
+          "category": "contact",
+          "priority": 2,
+          "reason": "Dedicated Alingsås office page likely contains detailed local contact and visitor information.",
+          "expected_information": [
+            "office address",
+            "phone number",
+            "opening hours",
+            "clearing number",
+            "local services"
+          ]
+        },
+        {
+          "url": "https://www.handelsbanken.se/almedal",
+          "link_type": "internal",
+          "category": "contact",
+          "priority": 3,
+          "reason": "Dedicated Göteborg Almedal office page likely contains detailed local contact and visitor information.",
+          "expected_information": [
+            "office address",
+            "phone number",
+            "opening hours",
+            "clearing number",
+            "local services"
+          ]
+        },
+        {
+          "url": "https://www.handelsbanken.se/almhult",
+          "link_type": "internal",
+          "category": "contact",
+          "priority": 4,
+          "reason": "Dedicated Älmhult office page likely contains detailed local contact and visitor information.",
+          "expected_information": [
+            "office address",
+            "phone number",
+            "opening hours",
+            "clearing number",
+            "local services"
+          ]
+        },
+        {
+          "url": "https://www.handelsbanken.se/alvikstorg",
+          "link_type": "internal",
+          "category": "contact",
+          "priority": 5,
+          "reason": "Dedicated Alviks Torg office page likely contains detailed local contact and visitor information.",
+          "expected_information": [
+            "office address",
+            "phone number",
+            "opening hours",
+            "clearing number",
+            "local services"
+          ]
+        }
+      ],
+      "crawl_complete": false,
+      "analysis_metadata": {
+        "depth": 1,
+        "succeeded": true,
+        "error": null,
+        "token_usage": {
+          "last": {
+            "input_tokens": 69711,
+            "cached_input_tokens": 0,
+            "cache_write_input_tokens": 0,
+            "output_tokens": 5753,
+            "reasoning_output_tokens": 3491,
+            "total_tokens": 75464
+          },
+          "thread_total": {
+            "input_tokens": 69711,
+            "cached_input_tokens": 0,
+            "cache_write_input_tokens": 0,
+            "output_tokens": 5753,
+            "reasoning_output_tokens": 3491,
+            "total_tokens": 75464
+          },
+          "model_context_window": 258400,
+          "duration_ms": 159472
+        }
+      }
+    },
+    {
+      "source_url": "https://handelsbanken.se/sv/privat/kontakt-och-support",
+      "page_summary": "Handelsbanken contact and support page containing customer-service channels, headquarters and billing addresses, corporate identifiers, advisory services, and official social profiles.",
+      "useful_information": {
+        "contacts": [
+          {
+            "type": "phone",
+            "value": "0771-77 88 99",
+            "label": "Personlig service dygnet runt",
+            "evidence": {
+              "text": "Personlig service Dygnet runt — Ring 0771-77 88 99",
+              "source_url": "https://handelsbanken.se/sv/privat/kontakt-och-support"
+            }
+          },
+          {
+            "type": "phone",
+            "value": "+46 771 77 88 99",
+            "label": "Personlig service från utlandet",
+            "evidence": {
+              "text": "+46 771 77 88 99 från utlandet",
+              "source_url": "https://handelsbanken.se/sv/privat/kontakt-och-support"
+            }
+          },
+          {
+            "type": "phone",
+            "value": "08-701 10 00",
+            "label": "Växel",
+            "evidence": {
+              "text": "Växel: 08-701 10 00",
+              "source_url": "https://handelsbanken.se/sv/privat/kontakt-och-support"
+            }
+          },
+          {
+            "type": "phone",
+            "value": "020-41 12 12",
+            "label": "Spärra kort eller BankID i Sverige",
+            "evidence": {
+              "text": "Ring i Sverige 020-41 12 12",
+              "source_url": "https://handelsbanken.se/sv/privat/kontakt-och-support"
+            }
+          },
+          {
+            "type": "phone",
+            "value": "+46 8 411 21 22",
+            "label": "Spärra kort eller BankID från utlandet",
+            "evidence": {
+              "text": "Ring från utlandet +46 8 411 21 22",
+              "source_url": "https://handelsbanken.se/sv/privat/kontakt-och-support"
+            }
+          },
+          {
+            "type": "email",
+            "value": "SHBAB@pdf.scancloud.se",
+            "label": "Mejladress för fakturering",
+            "evidence": {
+              "text": "Mejladress för fakturering: SHBAB@pdf.scancloud.se",
+              "source_url": "https://handelsbanken.se/sv/privat/kontakt-och-support"
+            }
+          },
+          {
+            "type": "address",
+            "value": "Kungsträdgårdsgatan 2\n106 70 Stockholm",
+            "label": "Huvudkontor",
+            "evidence": {
+              "text": "Huvudkontor: Kungsträdgårdsgatan 2, 106 70 Stockholm",
+              "source_url": "https://handelsbanken.se/sv/privat/kontakt-och-support"
+            }
+          },
+          {
+            "type": "address",
+            "value": "Svenska Handelsbanken AB\nFE 7628\n831 90 Östersund",
+            "label": "Faktureringsadress",
+            "evidence": {
+              "text": "Faktureringsadress: Svenska Handelsbanken AB, FE 7628, 831 90 Östersund",
+              "source_url": "https://handelsbanken.se/sv/privat/kontakt-och-support"
+            }
+          },
+          {
+            "type": "social",
+            "value": "https://www.facebook.com/Handelsbanken",
+            "label": "Facebook-support",
+            "evidence": {
+              "text": "Fråga oss på Facebook — Till Handelsbanken på Facebook",
+              "source_url": "https://handelsbanken.se/sv/privat/kontakt-och-support"
+            }
+          }
+        ],
+        "company": {
+          "name": "Handelsbanken",
+          "legal_name": "Svenska Handelsbanken AB (publ)",
+          "description": "Bank offering banking support and personal financial advice, including mortgages, investments, and retirement savings.",
+          "industries": [
+            "Banking",
+            "Financial services"
+          ],
+          "locations": [
+            "Kungsträdgårdsgatan 2\n106 70 Stockholm",
+            "FE 7628\n831 90 Östersund"
+          ],
+          "identifiers": [
+            "Organisationsnummer: 502007-7862",
+            "SWIFT-/BIC-adress: HANDSESS",
+            "LEI-nummer (legal entity identifier): NHBDILHZTYCNBV5UYZ31",
+            "GIIN-nummer: TT0D1B.00000.LE.752",
+            "GLN 7350043760137",
+            "PEPPOL ID: 0007:5020077862"
+          ],
+          "social_profiles": [
+            "https://www.linkedin.com/company/handelsbanken/jobs/",
+            "https://www.facebook.com/Handelsbanken/",
+            "https://www.instagram.com/handelsbanken/",
+            "https://www.youtube.com/user/handelsbanken"
+          ],
+          "evidence": [
+            {
+              "text": "© Svenska Handelsbanken AB (publ) — Handelsbanken",
+              "source_url": "https://handelsbanken.se/sv/privat/kontakt-och-support"
+            },
+            {
+              "text": "Vi hjälper dig med bankärenden och supportfrågor.",
+              "source_url": "https://handelsbanken.se/sv/privat/kontakt-och-support"
+            },
+            {
+              "text": "Vi hjälper dig med till exempel bolån, placeringar eller sparande till pension.",
+              "source_url": "https://handelsbanken.se/sv/privat/kontakt-och-support"
+            },
+            {
+              "text": "Organisationsnummer: 502007-7862; SWIFT-/BIC-adress: HANDSESS",
+              "source_url": "https://handelsbanken.se/sv/privat/kontakt-och-support"
+            },
+            {
+              "text": "LEI-nummer: NHBDILHZTYCNBV5UYZ31; GIIN-nummer: TT0D1B.00000.LE.752",
+              "source_url": "https://handelsbanken.se/sv/privat/kontakt-och-support"
+            },
+            {
+              "text": "Handelsbanken Linkedin, Facebook, Instagram och Youtube",
+              "source_url": "https://handelsbanken.se/sv/privat/kontakt-och-support"
+            }
+          ]
+        },
+        "products": [
+          {
+            "name": "Personlig service dygnet runt",
+            "category": "Customer support",
+            "description": "Hjälp med bankärenden och supportfrågor. Öppet dygnet runt.",
+            "price": null,
+            "currency": null,
+            "url": "https://handelsbanken.se/sv/privat/kontakt-och-support",
+            "evidence": {
+              "text": "Personlig service dygnet runt — Vi hjälper dig med bankärenden och supportfrågor.",
+              "source_url": "https://handelsbanken.se/sv/privat/kontakt-och-support"
+            }
+          },
+          {
+            "name": "Rådgivning",
+            "category": "Financial advisory service",
+            "description": "Personlig rådgivning om bland annat bolån, placeringar och sparande till pension.",
+            "price": null,
+            "currency": null,
+            "url": "https://www.handelsbanken.se/sv/hitta-bankkontor",
+            "evidence": {
+              "text": "Vi hjälper dig med till exempel bolån, placeringar eller sparande till pension.",
+              "source_url": "https://handelsbanken.se/sv/privat/kontakt-och-support"
+            }
+          }
+        ],
+        "jobs": [],
+        "other_facts": [
+          {
+            "name": "Chat availability",
+            "value": "Öppet alla dagar 8-22",
+            "evidence": {
+              "text": "Chatta med oss Öppet alla dagar 8-22",
+              "source_url": "https://handelsbanken.se/sv/privat/kontakt-och-support"
+            }
+          },
+          {
+            "name": "Branch advisory network",
+            "value": "Rikstäckande kontorsnät med fler än 1 800 rådgivare över hela landet.",
+            "evidence": {
+              "text": "Vi har ett rikstäckande kontorsnät med fler än 1 800 rådgivare över hela landet.",
+              "source_url": "https://handelsbanken.se/sv/privat/kontakt-och-support"
+            }
+          },
+          {
+            "name": "WhatsApp usage",
+            "value": "Handelsbanken använder aldrig WhatsApp.",
+            "evidence": {
+              "text": "Handelsbanken använder aldrig WhatsApp.",
+              "source_url": "https://handelsbanken.se/sv/privat/kontakt-och-support"
+            }
+          }
+        ]
+      },
+      "next_links": [
+        {
+          "url": "https://handelsbanken.se/sv/foretag/kontakta-oss-foretag",
+          "link_type": "internal",
+          "category": "contact",
+          "priority": 1,
+          "reason": "Dedicated company-contact page likely to provide business customer contact channels.",
+          "expected_information": [
+            "Business contact details",
+            "Advisory channels",
+            "Support information"
+          ]
+        },
+        {
+          "url": "https://handelsbanken.se/sv/privat/kontakt-och-support/chatt",
+          "link_type": "internal",
+          "category": "contact",
+          "priority": 2,
+          "reason": "Direct chat destination for contacting customer support.",
+          "expected_information": [
+            "Chat contact channel",
+            "Availability",
+            "Support scope"
+          ]
+        },
+        {
+          "url": "https://handelsbanken.se/sv/privat/kontakt-och-support/klagomal",
+          "link_type": "internal",
+          "category": "contact",
+          "priority": 3,
+          "reason": "Complaint instructions may contain dedicated contact details and submission channels.",
+          "expected_information": [
+            "Complaint contacts",
+            "Postal or electronic submission details",
+            "Complaint process"
+          ]
+        },
+        {
+          "url": "https://handelsbanken.se/sv/privat/kontakt-och-support/synpunkter-formular",
+          "link_type": "internal",
+          "category": "contact",
+          "priority": 4,
+          "reason": "Feedback form provides another official contact channel.",
+          "expected_information": [
+            "Feedback contact form",
+            "Submission fields",
+            "Contact options"
+          ]
+        },
+        {
+          "url": "https://handelsbanken.se/sv/privat/kontakt-och-support/hjalp-och-support/vanliga-fragor",
+          "link_type": "internal",
+          "category": "other",
+          "priority": 5,
+          "reason": "Support FAQ may identify additional services and customer-support information.",
+          "expected_information": [
+            "Frequently asked questions",
+            "Support procedures",
+            "Service information"
+          ]
+        }
+      ],
+      "crawl_complete": false,
+      "analysis_metadata": {
+        "depth": 1,
+        "succeeded": true,
+        "error": null,
+        "token_usage": {
+          "last": {
+            "input_tokens": 21637,
+            "cached_input_tokens": 0,
+            "cache_write_input_tokens": 0,
+            "output_tokens": 3914,
+            "reasoning_output_tokens": 1988,
+            "total_tokens": 25551
+          },
+          "thread_total": {
+            "input_tokens": 21637,
+            "cached_input_tokens": 0,
+            "cache_write_input_tokens": 0,
+            "output_tokens": 3914,
+            "reasoning_output_tokens": 1988,
+            "total_tokens": 25551
+          },
+          "model_context_window": 258400,
+          "duration_ms": 109637
+        }
+      }
+    }
+  ]
+}

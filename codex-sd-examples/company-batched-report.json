@@ -1,0 +1,887 @@
+{
+  "requested_start_url": "https://handelsbanken.se/",
+  "selected_base_url": "https://www.handelsbanken.se/en/",
+  "crawl_strategy": "breadth_first",
+  "stopped_reason": "max_pages_reached",
+  "manifest_path": "/Users/graovic/pulsarpoint/ppoint/companycollect/codex-sd-examples/company-markdown/crawl-manifest.json",
+  "language_discovery": {
+    "requested_url": "https://handelsbanken.se/",
+    "probe_url": "https://handelsbanken.se/",
+    "probe_succeeded": true,
+    "probe_language": "sv",
+    "selected_base_url": "https://www.handelsbanken.se/en/",
+    "selected_language": "en",
+    "selection_method": "alternate_hreflang",
+    "candidates": [
+      {
+        "url": "https://www.handelsbanken.se/en/",
+        "detection_method": "alternate_hreflang",
+        "score": 0,
+        "verification_status": "confirmed",
+        "detected_language": "en",
+        "verification_error": null
+      }
+    ],
+    "error": null
+  },
+  "crawl_stats": {
+    "configured_max_pages": 20,
+    "configured_max_depth": 2,
+    "include_external": false,
+    "pages_returned": 20,
+    "successful_pages": 20,
+    "failed_pages": 0,
+    "stored_markdown_pages": 20,
+    "stored_markdown_chars": 247709,
+    "max_depth_reached": 2
+  },
+  "batch_stats": {
+    "configured_max_batch_pages": 20,
+    "configured_max_batch_chars": 200000,
+    "total_batches": 2,
+    "successful_batches": 0,
+    "failed_batches": 2,
+    "submitted_pages": 20,
+    "successfully_extracted_pages": 0,
+    "failed_extraction_pages": 20
+  },
+  "failed_pages": [
+    {
+      "url": "https://www.handelsbanken.se/en/",
+      "depth": 0,
+      "error": "analysis batch 1: analysis timed out after 300 seconds"
+    },
+    {
+      "url": "https://www.handelsbanken.se/en/about-us/legal-documents",
+      "depth": 1,
+      "error": "analysis batch 1: analysis timed out after 300 seconds"
+    },
+    {
+      "url": "https://www.handelsbanken.se/en/about-us/legal-documents/privacy-notice",
+      "depth": 1,
+      "error": "analysis batch 1: analysis timed out after 300 seconds"
+    },
+    {
+      "url": "https://www.handelsbanken.se/en/personal/becoming-a-customer",
+      "depth": 1,
+      "error": "analysis batch 1: analysis timed out after 300 seconds"
+    },
+    {
+      "url": "https://www.handelsbanken.se/en/about-us/legal-documents/cookies",
+      "depth": 1,
+      "error": "analysis batch 1: analysis timed out after 300 seconds"
+    },
+    {
+      "url": "https://www.handelsbanken.se/en/personal/contact-and-support",
+      "depth": 1,
+      "error": "analysis batch 1: analysis timed out after 300 seconds"
+    },
+    {
+      "url": "https://www.handelsbanken.se/en/personal/contact-and-support/chat",
+      "depth": 1,
+      "error": "analysis batch 1: analysis timed out after 300 seconds"
+    },
+    {
+      "url": "https://www.handelsbanken.se/en/personal/contact-and-support/help-and-support",
+      "depth": 1,
+      "error": "analysis batch 1: analysis timed out after 300 seconds"
+    },
+    {
+      "url": "https://www.handelsbanken.se/en/personal/contact-and-support/security",
+      "depth": 1,
+      "error": "analysis batch 1: analysis timed out after 300 seconds"
+    },
+    {
+      "url": "https://www.handelsbanken.se/en/personal/everyday-banking",
+      "depth": 1,
+      "error": "analysis batch 1: analysis timed out after 300 seconds"
+    },
+    {
+      "url": "https://www.handelsbanken.se/en/personal/mortgage-loan",
+      "depth": 1,
+      "error": "analysis batch 1: analysis timed out after 300 seconds"
+    },
+    {
+      "url": "https://www.handelsbanken.se/sv/om-oss/digital-tillganglighet",
+      "depth": 1,
+      "error": "analysis batch 1: analysis timed out after 300 seconds"
+    },
+    {
+      "url": "https://www.handelsbanken.se/en/find-branch",
+      "depth": 1,
+      "error": "analysis batch 1: analysis timed out after 300 seconds"
+    },
+    {
+      "url": "https://www.handelsbanken.se/alingsas",
+      "depth": 2,
+      "error": "analysis batch 1: analysis timed out after 300 seconds"
+    },
+    {
+      "url": "https://www.handelsbanken.se/boden",
+      "depth": 2,
+      "error": "analysis batch 1: analysis timed out after 300 seconds"
+    },
+    {
+      "url": "https://www.handelsbanken.se/arenastaden",
+      "depth": 2,
+      "error": "analysis batch 2: analysis timed out after 300 seconds"
+    },
+    {
+      "url": "https://www.handelsbanken.se/arboga",
+      "depth": 2,
+      "error": "analysis batch 2: analysis timed out after 300 seconds"
+    },
+    {
+      "url": "https://www.handelsbanken.se/alvikstorg",
+      "depth": 2,
+      "error": "analysis batch 2: analysis timed out after 300 seconds"
+    },
+    {
+      "url": "https://www.handelsbanken.se/en/about-us",
+      "depth": 2,
+      "error": "analysis batch 2: analysis timed out after 300 seconds"
+    },
+    {
+      "url": "https://www.handelsbanken.se/bollebygd",
+      "depth": 2,
+      "error": "analysis batch 2: analysis timed out after 300 seconds"
+    }
+  ],
+  "markdown_pages": [
+    {
+      "source_url": "https://www.handelsbanken.se/en/",
+      "depth": 0,
+      "markdown_path": "/Users/graovic/pulsarpoint/ppoint/companycollect/codex-sd-examples/company-markdown/0001-www-handelsbanken-se-en-fa8d6ff3de.md",
+      "markdown_chars": 3633
+    },
+    {
+      "source_url": "https://www.handelsbanken.se/en/about-us/legal-documents",
+      "depth": 1,
+      "markdown_path": "/Users/graovic/pulsarpoint/ppoint/companycollect/codex-sd-examples/company-markdown/0002-www-handelsbanken-se-en-about-us-legal-documents-f3a46ca829.md",
+      "markdown_chars": 6037
+    },
+    {
+      "source_url": "https://www.handelsbanken.se/en/about-us/legal-documents/privacy-notice",
+      "depth": 1,
+      "markdown_path": "/Users/graovic/pulsarpoint/ppoint/companycollect/codex-sd-examples/company-markdown/0003-www-handelsbanken-se-en-about-us-legal-documents-privacy-notice-fe6e4b2bac.md",
+      "markdown_chars": 30117
+    },
+    {
+      "source_url": "https://www.handelsbanken.se/en/personal/becoming-a-customer",
+      "depth": 1,
+      "markdown_path": "/Users/graovic/pulsarpoint/ppoint/companycollect/codex-sd-examples/company-markdown/0004-www-handelsbanken-se-en-personal-becoming-a-customer-5e12d9666c.md",
+      "markdown_chars": 7000
+    },
+    {
+      "source_url": "https://www.handelsbanken.se/en/about-us/legal-documents/cookies",
+      "depth": 1,
+      "markdown_path": "/Users/graovic/pulsarpoint/ppoint/companycollect/codex-sd-examples/company-markdown/0005-www-handelsbanken-se-en-about-us-legal-documents-cookies-58934ac854.md",
+      "markdown_chars": 14222
+    },
+    {
+      "source_url": "https://www.handelsbanken.se/en/personal/contact-and-support",
+      "depth": 1,
+      "markdown_path": "/Users/graovic/pulsarpoint/ppoint/companycollect/codex-sd-examples/company-markdown/0006-www-handelsbanken-se-en-personal-contact-and-support-65be6fc23a.md",
+      "markdown_chars": 5038
+    },
+    {
+      "source_url": "https://www.handelsbanken.se/en/personal/contact-and-support/chat",
+      "depth": 1,
+      "markdown_path": "/Users/graovic/pulsarpoint/ppoint/companycollect/codex-sd-examples/company-markdown/0007-www-handelsbanken-se-en-personal-contact-and-support-chat-ac822a44bb.md",
+      "markdown_chars": 2971
+    },
+    {
+      "source_url": "https://www.handelsbanken.se/en/personal/contact-and-support/help-and-support",
+      "depth": 1,
+      "markdown_path": "/Users/graovic/pulsarpoint/ppoint/companycollect/codex-sd-examples/company-markdown/0008-www-handelsbanken-se-en-personal-contact-and-support-help-and-support-daedf72eaf.md",
+      "markdown_chars": 5465
+    },
+    {
+      "source_url": "https://www.handelsbanken.se/en/personal/contact-and-support/security",
+      "depth": 1,
+      "markdown_path": "/Users/graovic/pulsarpoint/ppoint/companycollect/codex-sd-examples/company-markdown/0009-www-handelsbanken-se-en-personal-contact-and-support-security-6dfdd76776.md",
+      "markdown_chars": 10776
+    },
+    {
+      "source_url": "https://www.handelsbanken.se/en/personal/everyday-banking",
+      "depth": 1,
+      "markdown_path": "/Users/graovic/pulsarpoint/ppoint/companycollect/codex-sd-examples/company-markdown/0010-www-handelsbanken-se-en-personal-everyday-banking-86e266c33e.md",
+      "markdown_chars": 5722
+    },
+    {
+      "source_url": "https://www.handelsbanken.se/en/personal/mortgage-loan",
+      "depth": 1,
+      "markdown_path": "/Users/graovic/pulsarpoint/ppoint/companycollect/codex-sd-examples/company-markdown/0011-www-handelsbanken-se-en-personal-mortgage-loan-6ba111af8b.md",
+      "markdown_chars": 5880
+    },
+    {
+      "source_url": "https://www.handelsbanken.se/sv/om-oss/digital-tillganglighet",
+      "depth": 1,
+      "markdown_path": "/Users/graovic/pulsarpoint/ppoint/companycollect/codex-sd-examples/company-markdown/0012-www-handelsbanken-se-sv-om-oss-digital-tillganglighet-4f5142c476.md",
+      "markdown_chars": 5992
+    },
+    {
+      "source_url": "https://www.handelsbanken.se/en/find-branch",
+      "depth": 1,
+      "markdown_path": "/Users/graovic/pulsarpoint/ppoint/companycollect/codex-sd-examples/company-markdown/0013-www-handelsbanken-se-en-find-branch-136648c7b4.md",
+      "markdown_chars": 80056
+    },
+    {
+      "source_url": "https://www.handelsbanken.se/alingsas",
+      "depth": 2,
+      "markdown_path": "/Users/graovic/pulsarpoint/ppoint/companycollect/codex-sd-examples/company-markdown/0014-www-handelsbanken-se-alingsas-821121c651.md",
+      "markdown_chars": 2913
+    },
+    {
+      "source_url": "https://www.handelsbanken.se/boden",
+      "depth": 2,
+      "markdown_path": "/Users/graovic/pulsarpoint/ppoint/companycollect/codex-sd-examples/company-markdown/0015-www-handelsbanken-se-boden-59c4f52323.md",
+      "markdown_chars": 9813
+    },
+    {
+      "source_url": "https://www.handelsbanken.se/arenastaden",
+      "depth": 2,
+      "markdown_path": "/Users/graovic/pulsarpoint/ppoint/companycollect/codex-sd-examples/company-markdown/0016-www-handelsbanken-se-arenastaden-e9a0a84409.md",
+      "markdown_chars": 11722
+    },
+    {
+      "source_url": "https://www.handelsbanken.se/arboga",
+      "depth": 2,
+      "markdown_path": "/Users/graovic/pulsarpoint/ppoint/companycollect/codex-sd-examples/company-markdown/0017-www-handelsbanken-se-arboga-7c21def756.md",
+      "markdown_chars": 10583
+    },
+    {
+      "source_url": "https://www.handelsbanken.se/alvikstorg",
+      "depth": 2,
+      "markdown_path": "/Users/graovic/pulsarpoint/ppoint/companycollect/codex-sd-examples/company-markdown/0018-www-handelsbanken-se-alvikstorg-1cc0b97fa1.md",
+      "markdown_chars": 13186
+    },
+    {
+      "source_url": "https://www.handelsbanken.se/en/about-us",
+      "depth": 2,
+      "markdown_path": "/Users/graovic/pulsarpoint/ppoint/companycollect/codex-sd-examples/company-markdown/0019-www-handelsbanken-se-en-about-us-6c1010eee4.md",
+      "markdown_chars": 5562
+    },
+    {
+      "source_url": "https://www.handelsbanken.se/bollebygd",
+      "depth": 2,
+      "markdown_path": "/Users/graovic/pulsarpoint/ppoint/companycollect/codex-sd-examples/company-markdown/0020-www-handelsbanken-se-bollebygd-a6a02ebb52.md",
+      "markdown_chars": 11021
+    }
+  ],
+  "analysis_stats": {
+    "attempted_analyses": 2,
+    "successful_analyses": 0,
+    "failed_analyses": 2,
+    "analyses_with_usage": 0,
+    "analyses_without_usage": 2,
+    "token_totals": {
+      "input_tokens": 0,
+      "cached_input_tokens": 0,
+      "cache_write_input_tokens": 0,
+      "output_tokens": 0,
+      "reasoning_output_tokens": 0,
+      "total_tokens": 0
+    }
+  },
+  "batches": [
+    {
+      "batch_number": 1,
+      "page_urls": [
+        "https://www.handelsbanken.se/en/",
+        "https://www.handelsbanken.se/en/about-us/legal-documents",
+        "https://www.handelsbanken.se/en/about-us/legal-documents/privacy-notice",
+        "https://www.handelsbanken.se/en/personal/becoming-a-customer",
+        "https://www.handelsbanken.se/en/about-us/legal-documents/cookies",
+        "https://www.handelsbanken.se/en/personal/contact-and-support",
+        "https://www.handelsbanken.se/en/personal/contact-and-support/chat",
+        "https://www.handelsbanken.se/en/personal/contact-and-support/help-and-support",
+        "https://www.handelsbanken.se/en/personal/contact-and-support/security",
+        "https://www.handelsbanken.se/en/personal/everyday-banking",
+        "https://www.handelsbanken.se/en/personal/mortgage-loan",
+        "https://www.handelsbanken.se/sv/om-oss/digital-tillganglighet",
+        "https://www.handelsbanken.se/en/find-branch",
+        "https://www.handelsbanken.se/alingsas",
+        "https://www.handelsbanken.se/boden"
+      ],
+      "markdown_chars": 195635,
+      "succeeded": false,
+      "error": "analysis timed out after 300 seconds",
+      "warnings": [],
+      "token_usage": null
+    },
+    {
+      "batch_number": 2,
+      "page_urls": [
+        "https://www.handelsbanken.se/arenastaden",
+        "https://www.handelsbanken.se/arboga",
+        "https://www.handelsbanken.se/alvikstorg",
+        "https://www.handelsbanken.se/en/about-us",
+        "https://www.handelsbanken.se/bollebygd"
+      ],
+      "markdown_chars": 52074,
+      "succeeded": false,
+      "error": "analysis timed out after 300 seconds",
+      "warnings": [],
+      "token_usage": null
+    }
+  ],
+  "useful_information": {
+    "contacts": [],
+    "company": {
+      "name": null,
+      "legal_name": null,
+      "description": null,
+      "industries": [],
+      "locations": [],
+      "identifiers": [],
+      "social_profiles": [],
+      "evidence": []
+    },
+    "products": [],
+    "jobs": [],
+    "other_facts": []
+  },
+  "pages": [
+    {
+      "source_url": "https://www.handelsbanken.se/en/",
+      "page_summary": null,
+      "useful_information": {
+        "contacts": [],
+        "company": {
+          "name": null,
+          "legal_name": null,
+          "description": null,
+          "industries": [],
+          "locations": [],
+          "identifiers": [],
+          "social_profiles": [],
+          "evidence": []
+        },
+        "products": [],
+        "jobs": [],
+        "other_facts": []
+      },
+      "extraction_metadata": {
+        "depth": 0,
+        "markdown_path": "/Users/graovic/pulsarpoint/ppoint/companycollect/codex-sd-examples/company-markdown/0001-www-handelsbanken-se-en-fa8d6ff3de.md",
+        "batch_number": 1,
+        "succeeded": false,
+        "error": "analysis timed out after 300 seconds"
+      }
+    },
+    {
+      "source_url": "https://www.handelsbanken.se/en/about-us/legal-documents",
+      "page_summary": null,
+      "useful_information": {
+        "contacts": [],
+        "company": {
+          "name": null,
+          "legal_name": null,
+          "description": null,
+          "industries": [],
+          "locations": [],
+          "identifiers": [],
+          "social_profiles": [],
+          "evidence": []
+        },
+        "products": [],
+        "jobs": [],
+        "other_facts": []
+      },
+      "extraction_metadata": {
+        "depth": 1,
+        "markdown_path": "/Users/graovic/pulsarpoint/ppoint/companycollect/codex-sd-examples/company-markdown/0002-www-handelsbanken-se-en-about-us-legal-documents-f3a46ca829.md",
+        "batch_number": 1,
+        "succeeded": false,
+        "error": "analysis timed out after 300 seconds"
+      }
+    },
+    {
+      "source_url": "https://www.handelsbanken.se/en/about-us/legal-documents/privacy-notice",
+      "page_summary": null,
+      "useful_information": {
+        "contacts": [],
+        "company": {
+          "name": null,
+          "legal_name": null,
+          "description": null,
+          "industries": [],
+          "locations": [],
+          "identifiers": [],
+          "social_profiles": [],
+          "evidence": []
+        },
+        "products": [],
+        "jobs": [],
+        "other_facts": []
+      },
+      "extraction_metadata": {
+        "depth": 1,
+        "markdown_path": "/Users/graovic/pulsarpoint/ppoint/companycollect/codex-sd-examples/company-markdown/0003-www-handelsbanken-se-en-about-us-legal-documents-privacy-notice-fe6e4b2bac.md",
+        "batch_number": 1,
+        "succeeded": false,
+        "error": "analysis timed out after 300 seconds"
+      }
+    },
+    {
+      "source_url": "https://www.handelsbanken.se/en/personal/becoming-a-customer",
+      "page_summary": null,
+      "useful_information": {
+        "contacts": [],
+        "company": {
+          "name": null,
+          "legal_name": null,
+          "description": null,
+          "industries": [],
+          "locations": [],
+          "identifiers": [],
+          "social_profiles": [],
+          "evidence": []
+        },
+        "products": [],
+        "jobs": [],
+        "other_facts": []
+      },
+      "extraction_metadata": {
+        "depth": 1,
+        "markdown_path": "/Users/graovic/pulsarpoint/ppoint/companycollect/codex-sd-examples/company-markdown/0004-www-handelsbanken-se-en-personal-becoming-a-customer-5e12d9666c.md",
+        "batch_number": 1,
+        "succeeded": false,
+        "error": "analysis timed out after 300 seconds"
+      }
+    },
+    {
+      "source_url": "https://www.handelsbanken.se/en/about-us/legal-documents/cookies",
+      "page_summary": null,
+      "useful_information": {
+        "contacts": [],
+        "company": {
+          "name": null,
+          "legal_name": null,
+          "description": null,
+          "industries": [],
+          "locations": [],
+          "identifiers": [],
+          "social_profiles": [],
+          "evidence": []
+        },
+        "products": [],
+        "jobs": [],
+        "other_facts": []
+      },
+      "extraction_metadata": {
+        "depth": 1,
+        "markdown_path": "/Users/graovic/pulsarpoint/ppoint/companycollect/codex-sd-examples/company-markdown/0005-www-handelsbanken-se-en-about-us-legal-documents-cookies-58934ac854.md",
+        "batch_number": 1,
+        "succeeded": false,
+        "error": "analysis timed out after 300 seconds"
+      }
+    },
+    {
+      "source_url": "https://www.handelsbanken.se/en/personal/contact-and-support",
+      "page_summary": null,
+      "useful_information": {
+        "contacts": [],
+        "company": {
+          "name": null,
+          "legal_name": null,
+          "description": null,
+          "industries": [],
+          "locations": [],
+          "identifiers": [],
+          "social_profiles": [],
+          "evidence": []
+        },
+        "products": [],
+        "jobs": [],
+        "other_facts": []
+      },
+      "extraction_metadata": {
+        "depth": 1,
+        "markdown_path": "/Users/graovic/pulsarpoint/ppoint/companycollect/codex-sd-examples/company-markdown/0006-www-handelsbanken-se-en-personal-contact-and-support-65be6fc23a.md",
+        "batch_number": 1,
+        "succeeded": false,
+        "error": "analysis timed out after 300 seconds"
+      }
+    },
+    {
+      "source_url": "https://www.handelsbanken.se/en/personal/contact-and-support/chat",
+      "page_summary": null,
+      "useful_information": {
+        "contacts": [],
+        "company": {
+          "name": null,
+          "legal_name": null,
+          "description": null,
+          "industries": [],
+          "locations": [],
+          "identifiers": [],
+          "social_profiles": [],
+          "evidence": []
+        },
+        "products": [],
+        "jobs": [],
+        "other_facts": []
+      },
+      "extraction_metadata": {
+        "depth": 1,
+        "markdown_path": "/Users/graovic/pulsarpoint/ppoint/companycollect/codex-sd-examples/company-markdown/0007-www-handelsbanken-se-en-personal-contact-and-support-chat-ac822a44bb.md",
+        "batch_number": 1,
+        "succeeded": false,
+        "error": "analysis timed out after 300 seconds"
+      }
+    },
+    {
+      "source_url": "https://www.handelsbanken.se/en/personal/contact-and-support/help-and-support",
+      "page_summary": null,
+      "useful_information": {
+        "contacts": [],
+        "company": {
+          "name": null,
+          "legal_name": null,
+          "description": null,
+          "industries": [],
+          "locations": [],
+          "identifiers": [],
+          "social_profiles": [],
+          "evidence": []
+        },
+        "products": [],
+        "jobs": [],
+        "other_facts": []
+      },
+      "extraction_metadata": {
+        "depth": 1,
+        "markdown_path": "/Users/graovic/pulsarpoint/ppoint/companycollect/codex-sd-examples/company-markdown/0008-www-handelsbanken-se-en-personal-contact-and-support-help-and-support-daedf72eaf.md",
+        "batch_number": 1,
+        "succeeded": false,
+        "error": "analysis timed out after 300 seconds"
+      }
+    },
+    {
+      "source_url": "https://www.handelsbanken.se/en/personal/contact-and-support/security",
+      "page_summary": null,
+      "useful_information": {
+        "contacts": [],
+        "company": {
+          "name": null,
+          "legal_name": null,
+          "description": null,
+          "industries": [],
+          "locations": [],
+          "identifiers": [],
+          "social_profiles": [],
+          "evidence": []
+        },
+        "products": [],
+        "jobs": [],
+        "other_facts": []
+      },
+      "extraction_metadata": {
+        "depth": 1,
+        "markdown_path": "/Users/graovic/pulsarpoint/ppoint/companycollect/codex-sd-examples/company-markdown/0009-www-handelsbanken-se-en-personal-contact-and-support-security-6dfdd76776.md",
+        "batch_number": 1,
+        "succeeded": false,
+        "error": "analysis timed out after 300 seconds"
+      }
+    },
+    {
+      "source_url": "https://www.handelsbanken.se/en/personal/everyday-banking",
+      "page_summary": null,
+      "useful_information": {
+        "contacts": [],
+        "company": {
+          "name": null,
+          "legal_name": null,
+          "description": null,
+          "industries": [],
+          "locations": [],
+          "identifiers": [],
+          "social_profiles": [],
+          "evidence": []
+        },
+        "products": [],
+        "jobs": [],
+        "other_facts": []
+      },
+      "extraction_metadata": {
+        "depth": 1,
+        "markdown_path": "/Users/graovic/pulsarpoint/ppoint/companycollect/codex-sd-examples/company-markdown/0010-www-handelsbanken-se-en-personal-everyday-banking-86e266c33e.md",
+        "batch_number": 1,
+        "succeeded": false,
+        "error": "analysis timed out after 300 seconds"
+      }
+    },
+    {
+      "source_url": "https://www.handelsbanken.se/en/personal/mortgage-loan",
+      "page_summary": null,
+      "useful_information": {
+        "contacts": [],
+        "company": {
+          "name": null,
+          "legal_name": null,
+          "description": null,
+          "industries": [],
+          "locations": [],
+          "identifiers": [],
+          "social_profiles": [],
+          "evidence": []
+        },
+        "products": [],
+        "jobs": [],
+        "other_facts": []
+      },
+      "extraction_metadata": {
+        "depth": 1,
+        "markdown_path": "/Users/graovic/pulsarpoint/ppoint/companycollect/codex-sd-examples/company-markdown/0011-www-handelsbanken-se-en-personal-mortgage-loan-6ba111af8b.md",
+        "batch_number": 1,
+        "succeeded": false,
+        "error": "analysis timed out after 300 seconds"
+      }
+    },
+    {
+      "source_url": "https://www.handelsbanken.se/sv/om-oss/digital-tillganglighet",
+      "page_summary": null,
+      "useful_information": {
+        "contacts": [],
+        "company": {
+          "name": null,
+          "legal_name": null,
+          "description": null,
+          "industries": [],
+          "locations": [],
+          "identifiers": [],
+          "social_profiles": [],
+          "evidence": []
+        },
+        "products": [],
+        "jobs": [],
+        "other_facts": []
+      },
+      "extraction_metadata": {
+        "depth": 1,
+        "markdown_path": "/Users/graovic/pulsarpoint/ppoint/companycollect/codex-sd-examples/company-markdown/0012-www-handelsbanken-se-sv-om-oss-digital-tillganglighet-4f5142c476.md",
+        "batch_number": 1,
+        "succeeded": false,
+        "error": "analysis timed out after 300 seconds"
+      }
+    },
+    {
+      "source_url": "https://www.handelsbanken.se/en/find-branch",
+      "page_summary": null,
+      "useful_information": {
+        "contacts": [],
+        "company": {
+          "name": null,
+          "legal_name": null,
+          "description": null,
+          "industries": [],
+          "locations": [],
+          "identifiers": [],
+          "social_profiles": [],
+          "evidence": []
+        },
+        "products": [],
+        "jobs": [],
+        "other_facts": []
+      },
+      "extraction_metadata": {
+        "depth": 1,
+        "markdown_path": "/Users/graovic/pulsarpoint/ppoint/companycollect/codex-sd-examples/company-markdown/0013-www-handelsbanken-se-en-find-branch-136648c7b4.md",
+        "batch_number": 1,
+        "succeeded": false,
+        "error": "analysis timed out after 300 seconds"
+      }
+    },
+    {
+      "source_url": "https://www.handelsbanken.se/alingsas",
+      "page_summary": null,
+      "useful_information": {
+        "contacts": [],
+        "company": {
+          "name": null,
+          "legal_name": null,
+          "description": null,
+          "industries": [],
+          "locations": [],
+          "identifiers": [],
+          "social_profiles": [],
+          "evidence": []
+        },
+        "products": [],
+        "jobs": [],
+        "other_facts": []
+      },
+      "extraction_metadata": {
+        "depth": 2,
+        "markdown_path": "/Users/graovic/pulsarpoint/ppoint/companycollect/codex-sd-examples/company-markdown/0014-www-handelsbanken-se-alingsas-821121c651.md",
+        "batch_number": 1,
+        "succeeded": false,
+        "error": "analysis timed out after 300 seconds"
+      }
+    },
+    {
+      "source_url": "https://www.handelsbanken.se/boden",
+      "page_summary": null,
+      "useful_information": {
+        "contacts": [],
+        "company": {
+          "name": null,
+          "legal_name": null,
+          "description": null,
+          "industries": [],
+          "locations": [],
+          "identifiers": [],
+          "social_profiles": [],
+          "evidence": []
+        },
+        "products": [],
+        "jobs": [],
+        "other_facts": []
+      },
+      "extraction_metadata": {
+        "depth": 2,
+        "markdown_path": "/Users/graovic/pulsarpoint/ppoint/companycollect/codex-sd-examples/company-markdown/0015-www-handelsbanken-se-boden-59c4f52323.md",
+        "batch_number": 1,
+        "succeeded": false,
+        "error": "analysis timed out after 300 seconds"
+      }
+    },
+    {
+      "source_url": "https://www.handelsbanken.se/arenastaden",
+      "page_summary": null,
+      "useful_information": {
+        "contacts": [],
+        "company": {
+          "name": null,
+          "legal_name": null,
+          "description": null,
+          "industries": [],
+          "locations": [],
+          "identifiers": [],
+          "social_profiles": [],
+          "evidence": []
+        },
+        "products": [],
+        "jobs": [],
+        "other_facts": []
+      },
+      "extraction_metadata": {
+        "depth": 2,
+        "markdown_path": "/Users/graovic/pulsarpoint/ppoint/companycollect/codex-sd-examples/company-markdown/0016-www-handelsbanken-se-arenastaden-e9a0a84409.md",
+        "batch_number": 2,
+        "succeeded": false,
+        "error": "analysis timed out after 300 seconds"
+      }
+    },
+    {
+      "source_url": "https://www.handelsbanken.se/arboga",
+      "page_summary": null,
+      "useful_information": {
+        "contacts": [],
+        "company": {
+          "name": null,
+          "legal_name": null,
+          "description": null,
+          "industries": [],
+          "locations": [],
+          "identifiers": [],
+          "social_profiles": [],
+          "evidence": []
+        },
+        "products": [],
+        "jobs": [],
+        "other_facts": []
+      },
+      "extraction_metadata": {
+        "depth": 2,
+        "markdown_path": "/Users/graovic/pulsarpoint/ppoint/companycollect/codex-sd-examples/company-markdown/0017-www-handelsbanken-se-arboga-7c21def756.md",
+        "batch_number": 2,
+        "succeeded": false,
+        "error": "analysis timed out after 300 seconds"
+      }
+    },
+    {
+      "source_url": "https://www.handelsbanken.se/alvikstorg",
+      "page_summary": null,
+      "useful_information": {
+        "contacts": [],
+        "company": {
+          "name": null,
+          "legal_name": null,
+          "description": null,
+          "industries": [],
+          "locations": [],
+          "identifiers": [],
+          "social_profiles": [],
+          "evidence": []
+        },
+        "products": [],
+        "jobs": [],
+        "other_facts": []
+      },
+      "extraction_metadata": {
+        "depth": 2,
+        "markdown_path": "/Users/graovic/pulsarpoint/ppoint/companycollect/codex-sd-examples/company-markdown/0018-www-handelsbanken-se-alvikstorg-1cc0b97fa1.md",
+        "batch_number": 2,
+        "succeeded": false,
+        "error": "analysis timed out after 300 seconds"
+      }
+    },
+    {
+      "source_url": "https://www.handelsbanken.se/en/about-us",
+      "page_summary": null,
+      "useful_information": {
+        "contacts": [],
+        "company": {
+          "name": null,
+          "legal_name": null,
+          "description": null,
+          "industries": [],
+          "locations": [],
+          "identifiers": [],
+          "social_profiles": [],
+          "evidence": []
+        },
+        "products": [],
+        "jobs": [],
+        "other_facts": []
+      },
+      "extraction_metadata": {
+        "depth": 2,
+        "markdown_path": "/Users/graovic/pulsarpoint/ppoint/companycollect/codex-sd-examples/company-markdown/0019-www-handelsbanken-se-en-about-us-6c1010eee4.md",
+        "batch_number": 2,
+        "succeeded": false,
+        "error": "analysis timed out after 300 seconds"
+      }
+    },
+    {
+      "source_url": "https://www.handelsbanken.se/bollebygd",
+      "page_summary": null,
+      "useful_information": {
+        "contacts": [],
+        "company": {
+          "name": null,
+          "legal_name": null,
+          "description": null,
+          "industries": [],
+          "locations": [],
+          "identifiers": [],
+          "social_profiles": [],
+          "evidence": []
+        },
+        "products": [],
+        "jobs": [],
+        "other_facts": []
+      },
+      "extraction_metadata": {
+        "depth": 2,
+        "markdown_path": "/Users/graovic/pulsarpoint/ppoint/companycollect/codex-sd-examples/company-markdown/0020-www-handelsbanken-se-bollebygd-a6a02ebb52.md",
+        "batch_number": 2,
+        "succeeded": false,
+        "error": "analysis timed out after 300 seconds"
+      }
+    }
+  ]
+}
