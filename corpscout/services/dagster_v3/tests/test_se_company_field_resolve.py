@@ -426,7 +426,7 @@ def test_the_asset_is_declared_with_its_deps_group_and_tables() -> None:
 # --- Definitions wiring ---------------------------------------------------------------
 
 
-def test_definitions_wire_the_resolve_asset_jobs_sensors_and_schedule() -> None:
+def test_definitions_wire_the_resolve_asset_jobs_sensors_and_schedule(monkeypatch) -> None:
     from dagster_v3.definitions import defs as load_defs
     from dagster_v3.defs.common.clickhouse_checks import CLICKHOUSE_LEAVES, ROW_COUNT_CHECK_NAME
     from dagster_v3.defs.se_company.fields.jobs import WEEKLY_ASSETS
@@ -484,7 +484,12 @@ def test_definitions_wire_the_resolve_asset_jobs_sensors_and_schedule() -> None:
     assert LLM_CANDIDATES_RUN_CONFIG["llm"]["prompt_version"] == "se-company-info-description-v3"
     # The config the daemon would submit must be one the job accepts: raises
     # DagsterInvalidConfigError, naming the key, when the LLM extractor's config class
-    # (plan 2) does not take LLM_CANDIDATES_RUN_CONFIG's shape.
+    # (plan 2) does not take LLM_CANDIDATES_RUN_CONFIG's shape. validate_run_config also
+    # resolves the clickhouse resource's EnvVars (definitions.py), so they are stubbed --
+    # nothing connects; dg.Config itself does not reject unknown keys, so this call is
+    # the only strict check of the key names.
+    for name in ("CLICKHOUSE_HOST", "CLICKHOUSE_USER", "CLICKHOUSE_PASSWORD", "CLICKHOUSE_DATABASE"):
+        monkeypatch.setenv(name, "test")
     dg.validate_run_config(weekly_job, run_requests[0].run_config)
 
     # The old asset and its two jobs stay registered beside the new ones until the cutover.
