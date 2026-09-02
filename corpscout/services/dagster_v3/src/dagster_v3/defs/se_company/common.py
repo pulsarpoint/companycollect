@@ -81,15 +81,18 @@ def publish_with_stage(
     invalid_condition: str,
     allow_shrink: bool = False,
     new_versions_only: bool = False,
+    anti_join_columns: Sequence[str] = ("company_id", "source_record_uid", "evidence_hash"),
 ) -> PublishCounts:
     """Stage -> validate -> insert -> drop stage; shrink-guard the published table.
 
     When ``new_versions_only`` is True the final copy is a left-anti-join on
-    ``(company_id, source_record_uid, evidence_hash)`` against the target, so
-    a version of a row already published with the same evidence is never
-    re-inserted. The stage is created with ``CREATE TABLE stage AS target``,
-    so the target's MATERIALIZED ``evidence_hash`` is computed on the stage
-    by ClickHouse itself -- it is never re-expressed in Python.
+    ``anti_join_columns`` against the target -- by default
+    ``(company_id, source_record_uid, evidence_hash)``, the artifact tables' identity;
+    the candidate table passes its own five-column identity -- so a version of a row
+    already published with the same evidence is never re-inserted. The stage is
+    created with ``CREATE TABLE stage AS target``, so the target's MATERIALIZED
+    ``evidence_hash`` is computed on the stage by ClickHouse itself -- it is never
+    re-expressed in Python.
     """
     if (rows is None) == (select_sql is None):
         raise ValueError("publish_with_stage needs exactly one of rows or select_sql")
@@ -126,12 +129,13 @@ def publish_with_stage(
                 )
             existing = clickhouse_table_row_count(client, qualified_target)
             if new_versions_only:
+                on_clause = " AND ".join(
+                    f"existing.{column} = stage.{column}" for column in anti_join_columns
+                )
                 anti_join_sql = (
                     f"FROM {qualified_stage} AS stage\n"
                     f"LEFT ANTI JOIN {qualified_target} AS existing\n"
-                    "ON existing.company_id = stage.company_id "
-                    "AND existing.source_record_uid = stage.source_record_uid "
-                    "AND existing.evidence_hash = stage.evidence_hash"
+                    f"ON {on_clause}"
                 )
                 # Counted BEFORE the target insert, as its own query: a plain
                 # before/after row-count delta on a ReplacingMergeTree target is

@@ -447,3 +447,25 @@ def test_ledger_sensor_advances_cursor_without_a_run_request_when_nothing_is_tou
 
     assert execution_data.cursor == f"2:{_LEDGER_ID_A}:{_LEDGER_CREATED_AT_1}"
     assert execution_data.run_requests == []
+
+
+def test_publish_with_stage_anti_join_columns_are_configurable() -> None:
+    """The candidate table's identity is (company_id, field, source, source_record_uid, evidence_hash):
+    field and source are part of the ORDER BY, so the anti-join must name them -- the default
+    three-column key stays byte-identical for every existing artifact caller."""
+    client = FakeClient(answers=[[(1, 0)], [(0,)], [(1,)], [(1,)]])  # validation, existing, anti-join count, final count
+    counts = publish_with_stage(
+        clickhouse=FakeClickhouse(client), target="se_company_field_candidate",
+        insert_columns=("company_id", "field", "source", "source_record_uid"),
+        rows=[("5020077862", "legal_name", "scb", "u1")],
+        invalid_condition="trim(company_id) = ''",
+        new_versions_only=True,
+        anti_join_columns=("company_id", "field", "source", "source_record_uid", "evidence_hash"),
+    )
+    assert counts == PublishCounts(staged=1, inserted=1, total=1)
+    insert_sql = next(s for s, _ in client.executed if s.startswith("INSERT INTO `corpscout`.`se_company_field_candidate`"))
+    assert (
+        "ON existing.company_id = stage.company_id AND existing.field = stage.field "
+        "AND existing.source = stage.source AND existing.source_record_uid = stage.source_record_uid "
+        "AND existing.evidence_hash = stage.evidence_hash"
+    ) in insert_sql
