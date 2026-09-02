@@ -218,3 +218,206 @@ def test_the_config_defaults_to_a_preview_and_caps_the_batch() -> None:
         SECompanyFieldResolveConfig(company_batch_size=20_001)
     with pytest.raises(ValueError):
         SECompanyFieldResolveConfig(max_companies=0)
+
+
+# --- the batch loop -------------------------------------------------------------------
+
+from dagster_v3.defs.se_company.fields.resolve import (  # noqa: E402
+    RESOLVE_ASSET,
+    FieldStats,
+    materialize_se_company_fields,
+)
+
+IDS = ServerSideLiteral("['5020077862']")
+RESOLVED_AT = "2026-09-02 10:00:00.000"
+PUBLISH_ANSWERS = [[(1, 0)], [(0,)], [(1,)]]  # stage validation, existing count, final count
+
+
+def _context(run_id: str = "run") -> SimpleNamespace:
+    """What materialize_se_company_fields reads off the asset context."""
+    logged: list[tuple] = []
+    return SimpleNamespace(run_id=run_id, log=SimpleNamespace(info=lambda *args: logged.append(args)),
+                           logged=logged)
+
+
+def _selected(company_id: str, **flags: int) -> tuple:
+    unknown = set(flags) - set(SELECTION_REASONS)
+    assert not unknown, f"not scan reasons: {sorted(unknown)}"
+    return (company_id, *(int(flags.get(name, 0)) for name in SELECTION_REASONS))
+
+
+def _scans(client: FakeClient) -> list[tuple[str, dict]]:
+    return [(sql, params) for sql, params in client.executed if sql.startswith("WITH current_registry AS (")]
+
+
+def _resolve_inserts(client: FakeClient) -> list[tuple[str, dict]]:
+    return [(sql, params) for sql, params in client.executed
+            if sql.startswith("INSERT INTO corpscout.se_company_field ")]
+
+
+def test_a_batch_runs_every_field_statement_in_registry_order_then_the_projection_then_the_counts() -> None:
+    client = FakeClient(answers=[
+        _registry_rows(),
+        [_selected(HANDELSBANKEN, never_published=1, new_candidates=1)],
+        *PUBLISH_ANSWERS,
+        [("description_sv", "reviewer", 1, 1), ("legal_name", "bolagsverket", 0, 1)],  # batch stats
+    ])
+    summary = materialize_se_company_fields(
+        _context(), client, SECompanyFieldResolveConfig(execute=True, company_batch_size=2),
+        registry=INFO_REGISTRY, now=NOW)
+
+    statements = [sql for sql, _ in client.executed]
+    inserts = _resolve_inserts(client)
+    assert [re.search(r"SELECT '([a-z_]+)' AS field", sql).group(1) for sql, _ in inserts] == list(field_names(INFO_REGISTRY))
+    for name, (sql, params) in zip(field_names(INFO_REGISTRY), inserts, strict=True):
+        # The statement text reaches the server untouched; the values travel beside it.
+        assert "{company_ids:Array(String)}" in sql and "{resolved_at:DateTime64(3, 'UTC')}" in sql
+        assert params == {"company_ids": IDS, "field": name, "source_run_id": "run", "resolved_at": RESOLVED_AT}
+    # All fields, THEN the projection through the stage, THEN the counts.
+    stage = next(i for i, sql in enumerate(statements) if sql.startswith("CREATE TABLE `corpscout`.`_tmp_se_company_info_"))
+    assert stage > statements.index(inserts[-1][0])
+    stage_sql, stage_params = client.executed[stage + 1]
+    assert stage_sql.startswith("INSERT INTO `corpscout`.`_tmp_se_company_info_")
+    assert "(company_id,\n    legal_name,\n    source_record_uids)\n" in stage_sql
+    assert stage_sql.endswith("WHERE field = 'legal_name' AND company_id IN {company_ids:Array(String)}")
+    assert "INSERT INTO corpscout.se_company_info" not in stage_sql  # the header was split off
+    assert stage_params == {"company_ids": IDS}
+    assert "countIf(trim(legal_name) = '' OR empty(source_record_uids))" in statements[stage + 2]
+    assert any(sql.startswith("INSERT INTO `corpscout`.`se_company_info` (company_id,") for sql in statements)
+    drop = next(i for i, sql in enumerate(statements) if sql.startswith("DROP TABLE IF EXISTS"))
+    stats_sql, stats_params = client.executed[-1]
+    assert len(statements) - 1 > drop
+    assert stats_sql.startswith("SELECT field, source, toUInt8(decision_id IS NOT NULL) AS from_decision")
+    assert stats_params == {"company_ids": IDS, "source_run_id": "run"}
+    assert all(settings is None for settings in client.settings_calls)
+
+    assert summary.companies_selected == 1 and summary.companies_published == 1
+    assert summary.per_reason == {"never_published": 1, "new_candidates": 1, "decision_pending": 0, "version_changed": 0}
+    assert summary.per_field["legal_name"] == FieldStats(rows=1, from_decision=0, per_source={"bolagsverket": 1}, no_row=0)
+    assert summary.per_field["description_sv"] == FieldStats(rows=1, from_decision=1, per_source={"reviewer": 1}, no_row=0)
+    assert summary.per_field["website"] == FieldStats(rows=0, from_decision=0, per_source={}, no_row=1)
+    assert set(summary.per_field) == set(field_names(INFO_REGISTRY))
+    assert summary.preview is False and summary.stopped_at_cap is False
+    assert summary.registry_version == INFO_REGISTRY.version and summary.source_run_id == "run"
+
+
+def test_a_preview_scans_everything_and_writes_nothing() -> None:
+    client = FakeClient(answers=[
+        _registry_rows(),
+        [_selected(HANDELSBANKEN, never_published=1, new_candidates=1, decision_pending=1),
+         _selected(OTHER_COMPANY, version_changed=1)],
+        [],  # page 2: exhausted
+    ])
+    summary = materialize_se_company_fields(
+        _context(), client, SECompanyFieldResolveConfig(company_batch_size=2), registry=INFO_REGISTRY, now=NOW)
+
+    assert all(sql.lstrip().upper().startswith(("SELECT", "WITH")) for sql, _ in client.executed)
+    assert len(_scans(client)) == 2 and _resolve_inserts(client) == []
+    assert _scans(client)[0][1] == {"company_ids": ServerSideLiteral("[]"), "all_companies": 1, "resolve_all": 0,
+                                    "resolve_all_before": RESOLVED_AT, "after_company_id": "", "page_size": 2}
+    assert _scans(client)[1][1]["after_company_id"] == OTHER_COMPANY
+    assert summary.preview is True and summary.companies_selected == 2 and summary.companies_published == 0
+    assert summary.per_field == {}
+    assert summary.per_reason == {"never_published": 1, "new_candidates": 1, "decision_pending": 1, "version_changed": 1}
+    metadata = summary.metadata()
+    assert metadata["preview"] is True and metadata["companies_selected"] == 2
+    assert {reason: metadata[reason] for reason in SELECTION_REASONS} == summary.per_reason
+    assert metadata["company_scope"] == [] and metadata["registry_version"] == INFO_REGISTRY.version
+    assert isinstance(metadata["per_field"], dg.JsonMetadataValue)
+
+
+def test_the_scan_is_paged_by_keyset_and_stops_on_a_short_page_or_at_the_cap() -> None:
+    client = FakeClient(answers=[
+        _registry_rows(),
+        [_selected(OTHER_COMPANY), _selected(HANDELSBANKEN)],  # page 1: full
+        [_selected("5567890123")],                             # page 2: short -> stop
+    ])
+    summary = materialize_se_company_fields(
+        _context(), client, SECompanyFieldResolveConfig(company_batch_size=2), registry=INFO_REGISTRY, now=NOW)
+    scans = _scans(client)
+    assert len(scans) == 2 and summary.companies_selected == 3 and summary.stopped_at_cap is False
+    assert [params["after_company_id"] for _, params in scans] == ["", HANDELSBANKEN]
+    assert [params["page_size"] for _, params in scans] == [2, 2]
+
+    capped = FakeClient(answers=[_registry_rows(), [_selected(HANDELSBANKEN)]])
+    context = _context()
+    summary = materialize_se_company_fields(
+        context, capped, SECompanyFieldResolveConfig(company_batch_size=1, max_companies=1),
+        registry=INFO_REGISTRY, now=NOW)
+    assert summary.stopped_at_cap is True and len(_scans(capped)) == 1
+    assert any("max_companies cap" in str(entry[0]) for entry in context.logged)
+
+
+def test_resolve_all_binds_its_cutoff_and_an_explicit_scope_is_chunked() -> None:
+    def _first_scan_params(config: SECompanyFieldResolveConfig) -> dict:
+        client = FakeClient(answers=[_registry_rows(), []])
+        materialize_se_company_fields(_context(), client, config, registry=INFO_REGISTRY, now=NOW)
+        return _scans(client)[0][1]
+
+    # Always bound, resolve_all or not -- parseDateTime64BestEffort('') would be an error.
+    assert _first_scan_params(SECompanyFieldResolveConfig())["resolve_all"] == 0
+    assert _first_scan_params(SECompanyFieldResolveConfig())["resolve_all_before"] == RESOLVED_AT
+    on = _first_scan_params(SECompanyFieldResolveConfig(resolve_all=True))
+    assert on["resolve_all"] == 1 and on["resolve_all_before"] == RESOLVED_AT
+    explicit = _first_scan_params(SECompanyFieldResolveConfig(resolve_all=True, resolve_all_before="2026-08-23 18:30:00"))
+    assert explicit["resolve_all_before"] == "2026-08-23 18:30:00"
+
+    scope = [f"55600000{index:02d}" for index in range(7)]
+    chunked = FakeClient(answers=[_registry_rows(), [], [], []])  # one empty scan per chunk
+    summary = materialize_se_company_fields(
+        _context(), chunked, SECompanyFieldResolveConfig(company_ids=scope, company_batch_size=3),
+        registry=INFO_REGISTRY, now=NOW)
+    scans = _scans(chunked)
+    assert [params["company_ids"] for _, params in scans] == [
+        server_array(scope[0:3]), server_array(scope[3:6]), server_array(scope[6:7])]
+    assert all(params["all_companies"] == 0 and params["after_company_id"] == "" for _, params in scans)
+    assert summary.company_scope == tuple(scope)
+    # A twelve-digit sole-trader id is a valid scope.
+    materialize_se_company_fields(
+        _context(), FakeClient(answers=[_registry_rows(), []]),
+        SECompanyFieldResolveConfig(company_ids=[SOLE_TRADER]), registry=INFO_REGISTRY, now=NOW)
+
+
+def test_a_fields_subset_runs_only_those_statements_and_still_projects() -> None:
+    client = FakeClient(answers=[
+        _registry_rows(), [_selected(HANDELSBANKEN)], *PUBLISH_ANSWERS,
+        [("website", "domains", 0, 1)],
+    ])
+    summary = materialize_se_company_fields(
+        _context(), client,
+        SECompanyFieldResolveConfig(execute=True, fields=["website", "legal_name"], company_batch_size=2),
+        registry=INFO_REGISTRY, now=NOW)
+    names = [re.search(r"SELECT '([a-z_]+)' AS field", sql).group(1) for sql, _ in _resolve_inserts(client)]
+    assert names == [name for name in field_names(INFO_REGISTRY) if name in {"website", "legal_name"}]  # registry order
+    assert any(sql.startswith("CREATE TABLE `corpscout`.`_tmp_se_company_info_") for sql, _ in client.executed)
+    assert set(summary.per_field) == {"website", "legal_name"}
+    assert summary.per_field["legal_name"] == FieldStats(rows=0, from_decision=0, per_source={}, no_row=1)
+
+    with pytest.raises(ValueError, match=r"Not registry fields: \['bogus'\]"):
+        materialize_se_company_fields(
+            _context(), FakeClient(answers=[]), SECompanyFieldResolveConfig(fields=["bogus"]),
+            registry=INFO_REGISTRY, now=NOW)
+
+
+def test_a_stale_registry_export_stops_the_run_before_the_scan() -> None:
+    client = FakeClient(answers=[_registry_rows(version="se-info-v0")])
+    with pytest.raises(ValueError, match="materialize se_company_field_registry_clickhouse first"):
+        materialize_se_company_fields(
+            _context(), client, SECompanyFieldResolveConfig(execute=True), registry=INFO_REGISTRY, now=NOW)
+    assert _scans(client) == []
+
+
+def test_the_asset_is_declared_with_its_deps_group_and_tables() -> None:
+    from dagster_v3.defs.se_company.fields.resolve import (
+        CANDIDATE_ASSETS,
+        REGISTRY_ASSET,
+        se_company_field_resolved_clickhouse,
+    )
+
+    assert se_company_field_resolved_clickhouse.key == dg.AssetKey(RESOLVE_ASSET)
+    spec = se_company_field_resolved_clickhouse.specs_by_key[dg.AssetKey(RESOLVE_ASSET)]
+    assert spec.group_name == "se_company_fields"
+    assert {dep.asset_key for dep in spec.deps} == {dg.AssetKey(REGISTRY_ASSET), *(dg.AssetKey(n) for n in CANDIDATE_ASSETS)}
+    assert spec.metadata["table"] == "corpscout.se_company_field"
+    assert spec.metadata["wide_table"] == "corpscout.se_company_info"
+    assert spec.kinds == {"clickhouse", "python"}

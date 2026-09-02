@@ -337,3 +337,178 @@ FROM {SE_COMPANY_FIELD}
 WHERE source_run_id = {{source_run_id:String}} AND company_id IN {{company_ids:Array(String)}}
 GROUP BY field, source, from_decision
 ORDER BY field, source, from_decision"""
+
+
+@dataclass(frozen=True)
+class FieldStats:
+    rows: int
+    from_decision: int
+    per_source: dict[str, int]
+    no_row: int
+
+
+class _FieldCounters:
+    """Accumulates build_batch_stats_sql rows across batches."""
+
+    def __init__(self) -> None:
+        self.rows: dict[str, int] = defaultdict(int)
+        self.from_decision: dict[str, int] = defaultdict(int)
+        self.per_source: dict[str, dict[str, int]] = defaultdict(lambda: defaultdict(int))
+        self.companies = 0
+
+    def add(self, rows: Sequence[Sequence[Any]], *, companies: int) -> None:
+        self.companies += companies
+        for field_name, source, from_decision, count in rows:
+            self.rows[str(field_name)] += int(count)
+            self.per_source[str(field_name)][str(source)] += int(count)
+            if int(from_decision):
+                self.from_decision[str(field_name)] += int(count)
+
+    def stats(self, fields: Sequence[str]) -> dict[str, FieldStats]:
+        return {
+            name: FieldStats(rows=self.rows[name], from_decision=self.from_decision[name],
+                             per_source=dict(self.per_source[name]), no_row=self.companies - self.rows[name])
+            for name in fields
+        }
+
+
+@dataclass
+class ResolveSummary:
+    companies_selected: int = 0
+    companies_published: int = 0
+    per_field: dict[str, FieldStats] = dc_field(default_factory=dict)
+    per_reason: dict[str, int] = dc_field(default_factory=lambda: dict.fromkeys(SELECTION_REASONS, 0))
+    stopped_at_cap: bool = False
+    preview: bool = False
+    registry_version: str = ""
+    source_run_id: str = ""
+    company_scope: tuple[str, ...] = ()
+
+    def metadata(self) -> dict[str, Any]:
+        """The MaterializeResult metadata: flat counters plus the per-field breakdown."""
+        return {
+            "companies_selected": self.companies_selected,
+            "companies_published": self.companies_published,
+            **self.per_reason,
+            "stopped_at_cap": self.stopped_at_cap,
+            "preview": self.preview,
+            "registry_version": self.registry_version,
+            "source_run_id": self.source_run_id,
+            "company_scope": list(self.company_scope),
+            "per_field": dg.MetadataValue.json({name: asdict(stats) for name, stats in self.per_field.items()}),
+        }
+
+
+def _resolve_batch(client: Any, statements: RegistryStatements, companies: Sequence[str], fields: Sequence[str],
+                   counters: _FieldCounters, *, source_run_id: str, resolved_at: datetime) -> int:
+    """Every field's statement in registry order, then the projection through the stage,
+    then this run's rows counted. Returns the companies the projection published."""
+    for name in fields:
+        client.execute(statements.resolve_sql[name], server_params(
+            company_ids=companies, field=name, source_run_id=source_run_id, resolved_at=resolved_at))
+    header = split_insert_header(statements.projection_sql)
+    if header.table != SE_COMPANY_INFO:
+        raise ValueError(f"The projection statement targets {header.table}, not {SE_COMPANY_INFO}")
+    # new_versions_only stays off: the wide table is keyed by company_id and a new
+    # version per resolution is the point -- ReplacingMergeTree(resolved_at) keeps the newest.
+    # publish_with_stage qualifies the bare table name itself (every caller passes bare).
+    counts = publish_with_stage(
+        client=client, target=SE_COMPANY_INFO.split(".")[-1], insert_columns=header.columns, select_sql=header.body,
+        select_parameters=server_params(company_ids=companies), invalid_condition=WIDE_INVALID_CONDITION,
+        new_versions_only=False)
+    rows = client.execute(build_batch_stats_sql(), server_params(company_ids=companies, source_run_id=source_run_id))
+    counters.add(rows, companies=len(companies))
+    return counts.inserted
+
+
+def materialize_se_company_fields(context: Any, client: Any, config: SECompanyFieldResolveConfig, *,
+                                  registry: DatatypeRegistry, now: datetime) -> ResolveSummary:
+    """Resolve the selected companies -- or, with ``execute`` false, only say which.
+
+    ``context`` supplies ``run_id`` (the rows' source_run_id) and ``log.info``. ``client``
+    is the one server-side-params client for the whole run (open_resolve_client). A
+    preview runs the registry check and the scan exactly as a real run (every chunk,
+    every page) and nothing else.
+    """
+    scope = normalized_se_company_ids(config.company_ids)
+    unknown = sorted(set(config.fields) - set(field_names(registry)))
+    if unknown:
+        raise ValueError(f"Not registry fields: {unknown}")
+    selected_fields = [name for name in field_names(registry) if not config.fields or name in config.fields]
+    statements = load_registry_statements(client, registry)
+    # One cutoff for the whole run, always bound (the predicate parses it whether or not
+    # resolve_all is on); None -> the run's own instant, so nothing this run publishes
+    # can be selected again by a later page of the same run.
+    cutoff = (config.resolve_all_before or "").strip() or clickhouse_stamp(now)
+    summary = ResolveSummary(preview=not config.execute, registry_version=statements.registry_version,
+                             source_run_id=str(context.run_id), company_scope=scope)
+    chunks = [tuple(scope[start : start + config.company_batch_size])
+              for start in range(0, len(scope), config.company_batch_size)] or [()]
+    counters = _FieldCounters()
+    scan_sql = build_changed_companies_sql(registry)
+    for chunk in chunks:
+        if summary.stopped_at_cap:
+            break
+        after_company_id = ""
+        while True:
+            remaining = (config.max_companies - summary.companies_selected
+                         if config.max_companies is not None else config.company_batch_size)
+            if remaining <= 0:
+                # Only reachable after a FULL page: the cap stopped us, not exhaustion.
+                summary.stopped_at_cap = True
+                break
+            page_size = min(config.company_batch_size, remaining)
+            page = client.execute(scan_sql, server_params(
+                company_ids=chunk, all_companies=int(not chunk), resolve_all=int(config.resolve_all),
+                resolve_all_before=cutoff, after_company_id=after_company_id, page_size=page_size))
+            companies = [str(row[0]) for row in page]
+            if not companies:
+                break
+            after_company_id = companies[-1]
+            for row in page:
+                for offset, reason in enumerate(SELECTION_REASONS, start=1):
+                    if row[offset]:
+                        summary.per_reason[reason] += 1
+            summary.companies_selected += len(companies)
+            if config.execute:
+                published = _resolve_batch(client, statements, companies, selected_fields, counters,
+                                           source_run_id=str(context.run_id), resolved_at=now)
+                summary.companies_published += published
+                context.log.info("se_company_field batch: companies=%s published=%s", len(companies), published)
+            if len(companies) < page_size:
+                break  # a short page means the scan is exhausted
+    if summary.stopped_at_cap:
+        context.log.info("se_company_field stopped at the max_companies cap (%s): changed companies may "
+                         "remain, the next run resumes from the start of the scan", config.max_companies)
+    summary.per_field = counters.stats(selected_fields) if config.execute else {}
+    return summary
+
+
+@dg.asset(
+    name=RESOLVE_ASSET,
+    deps=[dg.AssetKey(REGISTRY_ASSET), *(dg.AssetKey(name) for name in CANDIDATE_ASSETS)],
+    group_name=GROUP_NAME,
+    kinds={"clickhouse", "python"},
+    metadata={"table": SE_COMPANY_FIELD, "wide_table": SE_COMPANY_INFO},
+    description=("Resolves one value per company and registry field from the candidates and the reviewer "
+                 "decisions with the exported resolve statements, then re-pivots se_company_info. A UI "
+                 "materialization without execute=true is a preview that writes nothing."),
+)
+def se_company_field_resolved_clickhouse(context: dg.AssetExecutionContext, config: SECompanyFieldResolveConfig,
+                                         clickhouse: ClickhouseResource) -> dg.MaterializeResult:
+    """changed companies -> per-field resolve statements -> wide projection -> counts."""
+    # The table check binds its own %(name)s parameters client-side, so it runs on the
+    # resource's ordinary connection, BEFORE the server-side client is opened.
+    # assert_clickhouse_tables_exist matches system.tables.name (bare), so the qualified
+    # constants are split back to their bare table name for this one call.
+    assert_clickhouse_tables_exist(clickhouse, database=DATABASE, tables=(
+        SE_COMPANY_FIELD_REGISTRY.split(".")[-1], SE_COMPANY_FIELD_CANDIDATE.split(".")[-1],
+        SE_COMPANY_FIELD.split(".")[-1], SE_COMPANY_INFO.split(".")[-1],
+        SE_COMPANY_INFO_FIELD_VALUE.split(".")[-1]))
+    with open_resolve_client(clickhouse) as client:
+        summary = materialize_se_company_fields(context, client, config, registry=INFO_REGISTRY,
+                                                now=datetime.now(UTC))
+    return dg.MaterializeResult(metadata={**summary.metadata(), "table": SE_COMPANY_FIELD})
+
+
+defs = dg.Definitions(assets=[se_company_field_resolved_clickhouse])
