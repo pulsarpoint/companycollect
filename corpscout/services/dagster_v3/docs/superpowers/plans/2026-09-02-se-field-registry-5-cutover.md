@@ -679,6 +679,8 @@ Expected: swap used near 0, memory PSI `full avg10` well below 10, no D-state pr
 
 - [ ] **Step 3: Candidates — scb, bolagsverket, esef, wikidata, ratsit, domains (in this order, one at a time)**
 
+Before the unbounded scb run, time a capped one: launch `se_company_field_candidates_scb` with `execute: true, max_companies: 40000` (two pages of 20,000) and read the run duration. The full backfill is roughly 175 pages per source; the publish anti-join is scoped to the staged companies (plan 2 final fix wave) but each page still stages, validates and copies its rows, so a two-page timing is the only honest estimate for the six unbounded runs. The per-company watermark scan leaves the remaining companies selected, so the capped run loses nothing.
+
 Launchpad YAML, replacing `<source>` per run (no `company_ids` = every company; no `max_companies` = the config default, which parts 1–4 leave unbounded; no `since` = every company qualifies on an empty candidate table):
 ```yaml
 ops:
