@@ -1320,7 +1320,7 @@ def test_parity_sql_compares_every_legal_fact_and_both_description_rules() -> No
     # ... a decided company matches the old row whatever wrote it ...
     assert ("(NOT (length(old.correction_ids) = 0) AND (ifNull(toString(rebuilt.description), '') != "
             "ifNull(toString(old.description), '') OR ifNull(toString(rebuilt.description_sv), '') != "
-            "ifNull(toString(old.description_sv), ''))) AS description_decided") in sql
+            "ifNull(toString(old.description_sv), '')))) AS description_decided") in sql  # inner OR group: one paren more
     # ... and a modelled one matches the stored observation, not the old row.
     assert ("(old.llm_enhanced AND length(old.correction_ids) = 0 AND "
             "ifNull(toString(observation.suggestion_id), '00000000-0000-0000-0000-000000000000') != "
