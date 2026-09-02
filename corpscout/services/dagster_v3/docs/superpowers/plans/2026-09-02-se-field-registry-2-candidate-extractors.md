@@ -49,7 +49,7 @@ tests/test_se_company_field_candidates_<source>.py            create, one per so
 
 Shared conventions every source module follows (Task 1 defines them; the source tasks only use them):
 
-- `build_scope_sql() -> str`: parameters `after_company_id`, `page_size`, `since`. Returns company ids, ordered, `LIMIT page_size`, whose source rows have a change stamp newer than `since`.
+- `build_scope_sql() -> str`: parameters `after_company_id`, `page_size`, `since`. Built with Task 1's `changed_companies_scope_sql(source=SOURCE, changes_sql=...)` from the module's `(company_id, changed_at)` UNION members: returns company ids, ordered, `LIMIT page_size`, whose newest source change stamp is newer than both the company's own newest `extracted_at` for this source (the per-company watermark) and `since`.
 - `build_candidates_sql() -> str`: parameter `company_ids` (a tuple). Projects exactly `CANDIDATE_SELECT_COLUMNS = (company_id, field, source_record_uid, observed_at, value, value_json)`; one `UNION ALL` member per field; every member's `value` is a non-Nullable, non-empty String; `observed_at` is `DateTime64(3, 'UTC')`.
 - `rows_from_result(rows) -> list[CandidateRow]` = `partial(candidate_rows_from_result, source=SOURCE, extractor_version=EXTRACTOR_VERSION)`.
 - `EXTRACTOR = CandidateExtractor(...)`, the asset `se_company_field_candidates_<source> = define_candidate_asset(EXTRACTOR, deps=..., description=...)`, and `defs = dg.Definitions(assets=[...])` so the defs-folder autoload picks it up.
@@ -75,7 +75,7 @@ Shared conventions every source module follows (Task 1 defines them; the source 
   - SQL twins: `compare_key_text_sql(expr) -> str`, `clean_text_sql(expr) -> str`, `json_object_sql(members: Mapping[str, str]) -> str`, `json_string_sql(expr) -> str`, `nace_digits_sql(expr) -> str`, `nace_labels_cte_sql() -> str`, `employee_count_json_sql(*, count, as_of, period) -> str`, `latest_revenue_json_sql(*, amount, currency, amount_usd, fiscal_year, period_end) -> str`, `revenue_value_sql(*, amount, currency, fiscal_year) -> str`, `financial_view_ctes_sql(view: str) -> str`, `FINANCIAL_MEMBERS_SQL: str`.
   - `candidate_rows_from_result(rows, *, source: str, extractor_version: str) -> list[CandidateRow]`.
   - `publish_candidates(clickhouse: ClickhouseResource, rows: Sequence[CandidateRow], *, source_run_id: str, extracted_at: datetime) -> int` (rows inserted after the anti-join).
-  - `build_last_extracted_at_sql() -> str`, `last_extracted_at(clickhouse, source) -> str` (ClickHouse stamp text or `EPOCH`), `clickhouse_stamp(moment) -> str`.
+  - `WATERMARK_EPOCH_SQL`, `changed_companies_scope_sql(*, source: str, changes_sql: str) -> str` (the shared scan: per-company watermark from the candidate table LEFT JOINed to the source's `(company_id, changed_at)` UNION members, `since` as an explicit floor -- ruled in Task 1's fix round; no source-wide `last_extracted_at`), `clickhouse_stamp(moment) -> str`.
   - `@dataclass PageWalk(selected: int = 0, stopped_at_cap: bool = False)`; `iter_company_pages(clickhouse, *, walk, scope, scope_sql, scope_params, max_companies, company_batch_size) -> Iterator[list[str]]`.
   - `@dataclass(frozen=True) CandidateExtractor(source: str, extractor_version: str, source_tables: tuple[str, ...], build_scope_sql: Callable[[], str], build_candidates_sql: Callable[[], str])`.
   - `materialize_candidates(*, clickhouse, extractor, config, source_run_id, extracted_at, log=None) -> dict[str, object]`.
@@ -1336,7 +1336,7 @@ Claude-Session: https://claude.ai/code/session_01RY2W9FTCX9YxUcXtSBaEJ5"
 - Test: `tests/test_se_company_field_candidates_scb.py` (new)
 
 **Interfaces:**
-- Consumes: Task 1's `common` (`CandidateExtractor`, `define_candidate_asset`, SQL helpers, `SE_COMPANY_ID_MATCH`, `SINCE_SQL`); tables `se_company_info_scb` (000297 `legal_name`, `legal_name_raw`, `legal_form_code`, `status`, `incorporation_date`, `activity_description`; 000300 `activity_description_en`; 000306 labels -- ReplacingMergeTree, FINAL is legal), `se_industries` (000084 + 000244 `source_record_uid`), `nace_categories` (000001).
+- Consumes: Task 1's `common` (`CandidateExtractor`, `define_candidate_asset`, SQL helpers, `changed_companies_scope_sql`); tables `se_company_info_scb` (000297 `legal_name`, `legal_name_raw`, `legal_form_code`, `status`, `incorporation_date`, `activity_description`; 000300 `activity_description_en`; 000306 labels -- ReplacingMergeTree, FINAL is legal), `se_industries` (000084 + 000244 `source_record_uid`), `nace_categories` (000001).
 - Produces: `SOURCE = "scb"`, `EXTRACTOR_VERSION = "scb-candidates-v1"`, `NACE_VERSION = "NACE_REV_2"`, `build_scope_sql()`, `build_candidates_sql()`, `rows_from_result`, `EXTRACTOR`, asset `se_company_field_candidates_scb`, `defs`.
 
 Fields (spec 5.2, with the revised 4.2 ranking `scb` first for identity): legal_name (`legal_name`, else `legal_name_raw` -- what info_rules copies today), legal_form_code, status (verbatim, `unknown` included -- the cutover parity check compares against the old row), incorporation_date, description (English translation preferred, else the Swedish text with `language: "sv"`), description_sv -- **all six from the newest `se_company_info_scb` version**, uid = the artifact's `source_record_uid`, observed_at = the artifact's `observed_at`; primary_sni_code, primary_nace_code (`nace_rev2_class_code` with its dot stripped: `6419`), industry_label_en (NACE Rev. 2 class label by the SNI code's first four digits, code prefix stripped) from the newest primary `se_industries` row. `se_company_registry_current` is **not** read here (the bolagsverket extractor reads its own row and, for the conflict flag only, the scb row).
@@ -1364,8 +1364,11 @@ def test_scope_scans_the_artifact_and_the_industries_since_the_watermark() -> No
     assert "SELECT company_id, observed_at AS changed_at FROM corpscout.se_company_info_scb" in sql
     assert "SELECT company_id, updated_from_raw_at AS changed_at FROM corpscout.se_industries" in sql
     assert "se_company_registry_current" not in sql  # the SCB side of the registry is the artifact
-    assert "company_id > %(after_company_id)s AND changed_at > parseDateTime64BestEffort(%(since)s, 3, 'UTC')" in sql
-    assert sql.endswith("GROUP BY company_id\nORDER BY company_id\nLIMIT %(page_size)s")
+    assert "changes.company_id > %(after_company_id)s" in sql
+    # The shared scan (Task 1's changed_companies_scope_sql): per-company watermark, since floor.
+    assert "FROM corpscout.se_company_field_candidate\n    WHERE source = '" in sql
+    assert "changes.changed_at > greatest(ifNull(watermark.extracted_at, toDateTime64('1970-01-01 00:00:00.000', 3, 'UTC')), parseDateTime64BestEffort(%(since)s, 3, 'UTC'))" in sql
+    assert sql.endswith("ORDER BY company_id\nLIMIT %(page_size)s")
     assert "FINAL" not in sql  # max(observed_at) IS the version column; no FINAL needed
 
 
@@ -1447,9 +1450,8 @@ import dagster as dg
 
 from dagster_v3.defs.se_company.common import DATABASE
 from dagster_v3.defs.se_company.fields.candidates.common import (
-    SE_COMPANY_ID_MATCH,
-    SINCE_SQL,
     CandidateExtractor,
+    changed_companies_scope_sql,
     candidate_rows_from_result,
     clean_text_sql,
     compare_key_text_sql,
@@ -1471,16 +1473,9 @@ NACE_VERSION = "NACE_REV_2"
 
 
 def build_scope_sql() -> str:
-    return f"""SELECT company_id
-FROM (
-    SELECT company_id, observed_at AS changed_at FROM {DATABASE}.{ARTIFACT_TABLE}
+    return changed_companies_scope_sql(source=SOURCE, changes_sql=f"""    SELECT company_id, observed_at AS changed_at FROM {DATABASE}.{ARTIFACT_TABLE}
     UNION ALL
-    SELECT company_id, updated_from_raw_at AS changed_at FROM {DATABASE}.{INDUSTRIES_TABLE}
-)
-WHERE {SE_COMPANY_ID_MATCH} AND company_id > %(after_company_id)s AND changed_at > {SINCE_SQL}
-GROUP BY company_id
-ORDER BY company_id
-LIMIT %(page_size)s"""
+    SELECT company_id, updated_from_raw_at AS changed_at FROM {DATABASE}.{INDUSTRIES_TABLE}""")
 
 
 def _member(field: str, *, value: str, compare_key: str, source: str, extra: dict[str, str] | None = None) -> str:
@@ -1731,7 +1726,10 @@ def test_scope_scans_the_registry_row_and_the_metrics_table() -> None:
     assert "SELECT company_id, resolved_at AS changed_at FROM corpscout.se_bolagsverket_financial_metrics" in sql
     assert "se_financials_bolagsverket_current" not in sql  # the view has no change stamp; the table behind it does
     assert "FINAL" not in sql
-    assert sql.endswith("GROUP BY company_id\nORDER BY company_id\nLIMIT %(page_size)s")
+    # The shared scan (Task 1's changed_companies_scope_sql): per-company watermark, since floor.
+    assert "FROM corpscout.se_company_field_candidate\n    WHERE source = '" in sql
+    assert "changes.changed_at > greatest(ifNull(watermark.extracted_at, toDateTime64('1970-01-01 00:00:00.000', 3, 'UTC')), parseDateTime64BestEffort(%(since)s, 3, 'UTC'))" in sql
+    assert sql.endswith("ORDER BY company_id\nLIMIT %(page_size)s")
 
 
 def test_candidates_read_the_register_row_with_the_scb_status_beside_it() -> None:
@@ -1794,9 +1792,8 @@ import dagster as dg
 from dagster_v3.defs.se_company.common import DATABASE
 from dagster_v3.defs.se_company.fields.candidates.common import (
     FINANCIAL_MEMBERS_SQL,
-    SE_COMPANY_ID_MATCH,
-    SINCE_SQL,
     CandidateExtractor,
+    changed_companies_scope_sql,
     candidate_rows_from_result,
     clean_text_sql,
     compare_key_text_sql,
@@ -1814,17 +1811,10 @@ FINANCIALS_TABLE = "se_bolagsverket_financial_metrics"
 
 
 def build_scope_sql() -> str:
-    return f"""SELECT company_id
-FROM (
-    SELECT company_id, observed_at AS changed_at FROM {DATABASE}.{REGISTRY_TABLE}
+    return changed_companies_scope_sql(source=SOURCE, changes_sql=f"""    SELECT company_id, observed_at AS changed_at FROM {DATABASE}.{REGISTRY_TABLE}
     WHERE source = '{SOURCE}' AND has_company = 1
     UNION ALL
-    SELECT company_id, resolved_at AS changed_at FROM {DATABASE}.{FINANCIALS_TABLE}
-)
-WHERE {SE_COMPANY_ID_MATCH} AND company_id > %(after_company_id)s AND changed_at > {SINCE_SQL}
-GROUP BY company_id
-ORDER BY company_id
-LIMIT %(page_size)s"""
+    SELECT company_id, resolved_at AS changed_at FROM {DATABASE}.{FINANCIALS_TABLE}""")
 
 
 def _member(field: str, *, value: str, compare_key: str, extra: dict[str, str] | None = None) -> str:
@@ -1982,7 +1972,10 @@ def test_scope_scans_the_artifact_and_the_metrics_by_lei() -> None:
     assert "SELECT identifiers.company_id AS company_id, toDateTime64(metrics.resolved_at, 3, 'UTC') AS changed_at\n    FROM corpscout.esef_financial_metrics AS metrics" in sql
     assert "INNER JOIN corpscout.company_identifier AS identifiers\n        ON identifiers.issuer_scheme = 'lei' AND identifiers.issuer_id = upperUTF8(trimBoth(metrics.lei))" in sql
     assert "WHERE identifiers.country_code = 'SE' AND identifiers.is_current = 1" in sql
-    assert sql.endswith("GROUP BY company_id\nORDER BY company_id\nLIMIT %(page_size)s")
+    # The shared scan (Task 1's changed_companies_scope_sql): per-company watermark, since floor.
+    assert "FROM corpscout.se_company_field_candidate\n    WHERE source = '" in sql
+    assert "changes.changed_at > greatest(ifNull(watermark.extracted_at, toDateTime64('1970-01-01 00:00:00.000', 3, 'UTC')), parseDateTime64BestEffort(%(since)s, 3, 'UTC'))" in sql
+    assert sql.endswith("ORDER BY company_id\nLIMIT %(page_size)s")
 
 
 def test_candidates_take_the_newest_filing_text_and_the_view() -> None:
@@ -2041,9 +2034,8 @@ import dagster as dg
 from dagster_v3.defs.se_company.common import DATABASE
 from dagster_v3.defs.se_company.fields.candidates.common import (
     FINANCIAL_MEMBERS_SQL,
-    SE_COMPANY_ID_MATCH,
-    SINCE_SQL,
     CandidateExtractor,
+    changed_companies_scope_sql,
     candidate_rows_from_result,
     compare_key_text_sql,
     define_candidate_asset,
@@ -2061,20 +2053,13 @@ IDENTIFIERS_TABLE = "company_identifier"
 
 
 def build_scope_sql() -> str:
-    return f"""SELECT company_id
-FROM (
-    SELECT company_id, observed_at AS changed_at FROM {DATABASE}.{ARTIFACT_TABLE}
+    return changed_companies_scope_sql(source=SOURCE, changes_sql=f"""    SELECT company_id, observed_at AS changed_at FROM {DATABASE}.{ARTIFACT_TABLE}
     UNION ALL
     SELECT identifiers.company_id AS company_id, toDateTime64(metrics.resolved_at, 3, 'UTC') AS changed_at
     FROM {DATABASE}.{FINANCIALS_TABLE} AS metrics
     INNER JOIN {DATABASE}.{IDENTIFIERS_TABLE} AS identifiers
         ON identifiers.issuer_scheme = 'lei' AND identifiers.issuer_id = upperUTF8(trimBoth(metrics.lei))
-    WHERE identifiers.country_code = 'SE' AND identifiers.is_current = 1
-)
-WHERE {SE_COMPANY_ID_MATCH} AND company_id > %(after_company_id)s AND changed_at > {SINCE_SQL}
-GROUP BY company_id
-ORDER BY company_id
-LIMIT %(page_size)s"""
+    WHERE identifiers.country_code = 'SE' AND identifiers.is_current = 1""")
 
 
 def build_candidates_sql() -> str:
@@ -2208,7 +2193,10 @@ def test_scope_scans_the_artifact_and_both_entity_tables_through_it() -> None:
     assert "SELECT artifact.company_id AS company_id, websites.resolved_at AS changed_at\n    FROM corpscout.wikidata_company_websites AS websites" in sql
     assert "SELECT artifact.company_id AS company_id, entities.resolved_at AS changed_at\n    FROM corpscout.wikidata_companies AS entities" in sql
     assert sql.count("INNER JOIN (SELECT company_id, wikidata_id FROM corpscout.se_company_info_wikidata) AS artifact") == 2
-    assert sql.endswith("GROUP BY company_id\nORDER BY company_id\nLIMIT %(page_size)s")
+    # The shared scan (Task 1's changed_companies_scope_sql): per-company watermark, since floor.
+    assert "FROM corpscout.se_company_field_candidate\n    WHERE source = '" in sql
+    assert "changes.changed_at > greatest(ifNull(watermark.extracted_at, toDateTime64('1970-01-01 00:00:00.000', 3, 'UTC')), parseDateTime64BestEffort(%(since)s, 3, 'UTC'))" in sql
+    assert sql.endswith("ORDER BY company_id\nLIMIT %(page_size)s")
 
 
 def test_candidates_read_the_artifact_the_entity_and_one_website_per_entity() -> None:
@@ -2269,9 +2257,8 @@ import dagster as dg
 
 from dagster_v3.defs.se_company.common import DATABASE
 from dagster_v3.defs.se_company.fields.candidates.common import (
-    SE_COMPANY_ID_MATCH,
-    SINCE_SQL,
     CandidateExtractor,
+    changed_companies_scope_sql,
     candidate_rows_from_result,
     clean_text_sql,
     compare_key_text_sql,
@@ -2290,9 +2277,7 @@ WEBSITES_TABLE = "wikidata_company_websites"
 
 def build_scope_sql() -> str:
     artifact = f"(SELECT company_id, wikidata_id FROM {DATABASE}.{ARTIFACT_TABLE}) AS artifact"
-    return f"""SELECT company_id
-FROM (
-    SELECT company_id, observed_at AS changed_at FROM {DATABASE}.{ARTIFACT_TABLE}
+    return changed_companies_scope_sql(source=SOURCE, changes_sql=f"""    SELECT company_id, observed_at AS changed_at FROM {DATABASE}.{ARTIFACT_TABLE}
     UNION ALL
     SELECT artifact.company_id AS company_id, websites.resolved_at AS changed_at
     FROM {DATABASE}.{WEBSITES_TABLE} AS websites
@@ -2300,12 +2285,7 @@ FROM (
     UNION ALL
     SELECT artifact.company_id AS company_id, entities.resolved_at AS changed_at
     FROM {DATABASE}.{ENTITIES_TABLE} AS entities
-    INNER JOIN {artifact} ON artifact.wikidata_id = entities.wikidata_id
-)
-WHERE {SE_COMPANY_ID_MATCH} AND company_id > %(after_company_id)s AND changed_at > {SINCE_SQL}
-GROUP BY company_id
-ORDER BY company_id
-LIMIT %(page_size)s"""
+    INNER JOIN {artifact} ON artifact.wikidata_id = entities.wikidata_id""")
 
 
 def _member(field: str, *, value: str, compare_key: str, extra: dict[str, str] | None = None) -> str:
@@ -2476,7 +2456,10 @@ def test_scope_scans_the_completion_marker_only() -> None:
     assert (f"SELECT company_id, toDateTime64(normalized_at, 3, 'UTC') AS changed_at FROM corpscout.se_ratsit_company\n"
             f"    WHERE normalizer_version = '{RATSIT_NORMALIZER_VERSION}'") in sql
     assert "se_ratsit_financial_periods" not in sql  # children are complete once the company row exists
-    assert sql.endswith("GROUP BY company_id\nORDER BY company_id\nLIMIT %(page_size)s")
+    # The shared scan (Task 1's changed_companies_scope_sql): per-company watermark, since floor.
+    assert "FROM corpscout.se_company_field_candidate\n    WHERE source = '" in sql
+    assert "changes.changed_at > greatest(ifNull(watermark.extracted_at, toDateTime64('1970-01-01 00:00:00.000', 3, 'UTC')), parseDateTime64BestEffort(%(since)s, 3, 'UTC'))" in sql
+    assert sql.endswith("ORDER BY company_id\nLIMIT %(page_size)s")
 
 
 def test_candidates_pin_the_newest_report_and_convert_revenue() -> None:
@@ -2550,9 +2533,8 @@ import dagster as dg
 
 from dagster_v3.defs.se_company.common import DATABASE
 from dagster_v3.defs.se_company.fields.candidates.common import (
-    SE_COMPANY_ID_MATCH,
-    SINCE_SQL,
     CandidateExtractor,
+    changed_companies_scope_sql,
     candidate_rows_from_result,
     clean_text_sql,
     compare_key_text_sql,
@@ -2577,15 +2559,8 @@ CURRENCY = "SEK"
 
 
 def build_scope_sql() -> str:
-    return f"""SELECT company_id
-FROM (
-    SELECT company_id, toDateTime64(normalized_at, 3, 'UTC') AS changed_at FROM {DATABASE}.{COMPANY_TABLE}
-    WHERE normalizer_version = '{RATSIT_NORMALIZER_VERSION}'
-)
-WHERE {SE_COMPANY_ID_MATCH} AND company_id > %(after_company_id)s AND changed_at > {SINCE_SQL}
-GROUP BY company_id
-ORDER BY company_id
-LIMIT %(page_size)s"""
+    return changed_companies_scope_sql(source=SOURCE, changes_sql=f"""    SELECT company_id, toDateTime64(normalized_at, 3, 'UTC') AS changed_at FROM {DATABASE}.{COMPANY_TABLE}
+    WHERE normalizer_version = '{RATSIT_NORMALIZER_VERSION}'""")
 
 
 def build_candidates_sql() -> str:
@@ -2796,7 +2771,10 @@ def test_scope_scans_the_swedish_partition_by_resolved_at() -> None:
     sql = domains.build_scope_sql()
     assert "SELECT company_id, resolved_at AS changed_at FROM corpscout.company_domains WHERE country_code = 'SE'" in sql
     assert "FINAL" not in sql
-    assert sql.endswith("GROUP BY company_id\nORDER BY company_id\nLIMIT %(page_size)s")
+    # The shared scan (Task 1's changed_companies_scope_sql): per-company watermark, since floor.
+    assert "FROM corpscout.se_company_field_candidate\n    WHERE source = '" in sql
+    assert "changes.changed_at > greatest(ifNull(watermark.extracted_at, toDateTime64('1970-01-01 00:00:00.000', 3, 'UTC')), parseDateTime64BestEffort(%(since)s, 3, 'UTC'))" in sql
+    assert sql.endswith("ORDER BY company_id\nLIMIT %(page_size)s")
 
 
 def test_candidates_prefer_the_confirmed_primary_then_the_best_suggestion() -> None:
@@ -2849,9 +2827,8 @@ import dagster as dg
 
 from dagster_v3.defs.se_company.common import DATABASE
 from dagster_v3.defs.se_company.fields.candidates.common import (
-    SE_COMPANY_ID_MATCH,
-    SINCE_SQL,
     CandidateExtractor,
+    changed_companies_scope_sql,
     candidate_rows_from_result,
     define_candidate_asset,
     json_object_sql,
@@ -2865,14 +2842,7 @@ COUNTRY = "SE"
 
 
 def build_scope_sql() -> str:
-    return f"""SELECT company_id
-FROM (
-    SELECT company_id, resolved_at AS changed_at FROM {DATABASE}.{DOMAINS_TABLE} WHERE country_code = '{COUNTRY}'
-)
-WHERE {SE_COMPANY_ID_MATCH} AND company_id > %(after_company_id)s AND changed_at > {SINCE_SQL}
-GROUP BY company_id
-ORDER BY company_id
-LIMIT %(page_size)s"""
+    return changed_companies_scope_sql(source=SOURCE, changes_sql=f"""    SELECT company_id, resolved_at AS changed_at FROM {DATABASE}.{DOMAINS_TABLE} WHERE country_code = '{COUNTRY}'""")
 
 
 def build_candidates_sql() -> str:
