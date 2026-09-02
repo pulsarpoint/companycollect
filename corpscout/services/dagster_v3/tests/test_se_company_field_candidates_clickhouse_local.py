@@ -33,6 +33,7 @@ from dagster_v3.defs.se_company.fields.candidates.common import (
     CANDIDATE_ANTI_JOIN_COLUMNS,
     CANDIDATE_SELECT_COLUMNS,
 )
+from dagster_v3.defs.se_company.fields.candidates import scb as scb_candidates
 from dagster_v3.defs.se_company.fields.tables import SE_COMPANY_FIELD_CANDIDATE_COLUMNS
 from tests.test_se_company_person_clickhouse_local import _clickhouse_local_command, _literal, _render
 
@@ -139,6 +140,7 @@ HB_DOMAIN_UID = "fp-hb-primary"
 
 # Every source task appends (source, module) here; _script iterates it.
 EXTRACTORS: list[tuple[str, ModuleType]] = []
+EXTRACTORS.append(("scb", scb_candidates))
 
 
 def _schema_statements() -> list[str]:
@@ -403,9 +405,89 @@ def _script(*, join_use_nulls: int) -> str:
     return "\n".join(parts) + "\n"
 
 
+# A new version of HB's SCB artifact: same source_record_uid, newer observed_at, a changed
+# English text. FINAL then reads it, the description candidate's evidence_hash changes, and
+# the anti-join must let exactly that one row through -- every other artifact field is
+# unchanged, so their candidates keep their first-pass extracted_at.
+CHANGED_SCB_ARTIFACT_SQL = f"""
+INSERT INTO corpscout.se_company_info_scb
+    (company_id, source_record_uid, observed_at, source_run_id, legal_name, legal_form_code, status,
+     incorporation_date, activity_description, activity_description_en, primary_sni_code, primary_nace_code)
+VALUES
+    ('{HB}', 'scb-art-hb', {T_ART2}, 'fixture-v2', 'Svenska Handelsbanken AB', 'AB-ORGFO', 'active',
+     '1871-04-01', 'Bankverksamhet.', 'Banking and financial services.', '64190', '64.19');
+""".strip()
+
+
 def _late_sections() -> list[str]:
-    """Sections appended after the rerun: the SCB change pass (Task 3) and the LLM scan (Task 9)."""
-    return []
+    """Sections appended after the rerun: the SCB change pass, then the LLM scan (Task 9)."""
+    return [
+        CHANGED_SCB_ARTIFACT_SQL, SETTLE, _publish_pass("scb", scb_candidates, T_EXTRACT_3),
+        _marked("counts_after_scb_change", COUNTS_SQL),
+        _marked("scb_after_change",
+                "SELECT field, value, toString(observed_at), toString(extracted_at) "
+                f"FROM corpscout.se_company_field_candidate FINAL WHERE company_id = '{HB}' "
+                "AND source = 'scb' AND field IN ('description', 'legal_name') ORDER BY field"),
+    ]
+
+
+def _text(compare_key: str, **members: str) -> str:
+    """value_json exactly as the SQL renders it: sorted keys, compact."""
+    import json
+    return json.dumps({**members, "compare_key": compare_key}, separators=(",", ":"), sort_keys=True)
+
+
+HB_SCB_ROWS = [
+    ["description", "scb-art-hb", T_ART_TEXT, "Banking operations.", _text("banking operations.", language="en")],
+    ["description_sv", "scb-art-hb", T_ART_TEXT, "Bankverksamhet.", _text("bankverksamhet.", language="sv")],
+    # se_company_info_scb.incorporation_date is Nullable(Date32) (000297), whose minimum is
+    # 1900-01-01 in ClickHouse; the fixture's real 1871-04-01 (Handelsbanken's actual founding
+    # date) is clamped to that floor at INSERT time, before any SELECT runs. Verified directly
+    # against clickhouse-server:26.5: the value is gone by the time this extractor's SQL reads
+    # it, so no SQL change can recover it -- only the expected row can be corrected.
+    ["incorporation_date", "scb-art-hb", T_ART_TEXT, "1900-01-01", _text("1900-01-01")],
+    ["industry_label_en", HB_IND_UID, T_IND_TEXT, "Other monetary intermediation", _text("other monetary intermediation")],
+    ["legal_form_code", "scb-art-hb", T_ART_TEXT, "AB-ORGFO", _text("ab-orgfo")],
+    ["legal_name", "scb-art-hb", T_ART_TEXT, "Svenska Handelsbanken AB", _text("svenska handelsbanken ab")],
+    ["primary_nace_code", HB_IND_UID, T_IND_TEXT, "6419", _text("6419")],
+    ["primary_sni_code", HB_IND_UID, T_IND_TEXT, "64190", _text("64190")],
+    ["status", "scb-art-hb", T_ART_TEXT, "active", _text("active")],
+]
+SOLO_SCB_ROWS = [
+    ["description", "scb-art-solo", T_REG_TEXT, "Handel med datorer.", _text("handel med datorer.", language="sv")],
+    ["description_sv", "scb-art-solo", T_REG_TEXT, "Handel med datorer.", _text("handel med datorer.", language="sv")],
+    ["incorporation_date", "scb-art-solo", T_REG_TEXT, "1998-06-15", _text("1998-06-15")],
+    ["legal_form_code", "scb-art-solo", T_REG_TEXT, "AB-ORGFO", _text("ab-orgfo")],
+    ["legal_name", "scb-art-solo", T_REG_TEXT, "Beta AB", _text("beta ab")],
+    ["status", "scb-art-solo", T_REG_TEXT, "active", _text("active")],
+]
+
+
+def test_scb_scope_selects_changed_companies_only(sections: dict[str, list[list[str]]]) -> None:
+    assert [row[0] for row in sections["scb_scope_all"]] == [HB, SOLO]
+    # SOLO's artifact and industries are stamped before SINCE; HB's artifact is newer.
+    assert [row[0] for row in sections["scb_scope_since"]] == [HB]
+
+
+def test_scb_candidates_carry_the_artifact_uid_and_stamp(sections: dict[str, list[list[str]]]) -> None:
+    assert sections["scb_hb"] == HB_SCB_ROWS
+    # Untranslated: the Swedish text is the description too, marked sv; no industry rows.
+    assert sections["scb_solo"] == SOLO_SCB_ROWS
+
+
+def test_scb_publish_is_idempotent_and_a_changed_artifact_appends_one_row(
+    sections: dict[str, list[list[str]]],
+) -> None:
+    first = _counts(sections["counts_after_first_pass"])
+    assert first["scb"] == len(HB_SCB_ROWS) + len(SOLO_SCB_ROWS)
+    assert _counts(sections["counts_after_rerun"])["scb"] == first["scb"]
+    assert _counts(sections["counts_after_scb_change"])["scb"] == first["scb"] + 1
+    # The changed description is a new version (new observed_at, this pass's extracted_at);
+    # the unchanged legal name keeps the first pass's stamps although the artifact version moved.
+    assert sections["scb_after_change"] == [
+        ["description", "Banking and financial services.", T_ART2_TEXT, T_EXTRACT_3_TEXT],
+        ["legal_name", "Svenska Handelsbanken AB", T_ART_TEXT, T_EXTRACT_1_TEXT],
+    ]
 
 
 @pytest.fixture(scope="module", params=(0, 1), ids=("join_use_nulls_off", "join_use_nulls_on"))
