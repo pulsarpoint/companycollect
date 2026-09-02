@@ -35,6 +35,7 @@ from dagster_v3.defs.se_company.fields.candidates.common import (
     CANDIDATE_SELECT_COLUMNS,
 )
 from dagster_v3.defs.se_company.fields.candidates import bolagsverket as bolagsverket_candidates
+from dagster_v3.defs.se_company.fields.candidates import domains as domains_candidates
 from dagster_v3.defs.se_company.fields.candidates import esef as esef_candidates
 from dagster_v3.defs.se_company.fields.candidates import ratsit as ratsit_candidates
 from dagster_v3.defs.se_company.fields.candidates import scb as scb_candidates
@@ -150,6 +151,7 @@ EXTRACTORS.append(("bolagsverket", bolagsverket_candidates))
 EXTRACTORS.append(("esef", esef_candidates))
 EXTRACTORS.append(("wikidata", wikidata_candidates))
 EXTRACTORS.append(("ratsit", ratsit_candidates))
+EXTRACTORS.append(("domains", domains_candidates))
 
 
 def _schema_statements() -> list[str]:
@@ -629,3 +631,20 @@ def test_ratsit_scope_and_rows(sections: dict[str, list[list[str]]]) -> None:
     first = _counts(sections["counts_after_first_pass"])
     assert first["ratsit"] == len(HB_RATSIT_ROWS)
     assert _counts(sections["counts_after_rerun"])["ratsit"] == first["ratsit"]
+
+
+HB_DOMAIN_ROWS = [
+    # confirmed_primary (0.9) beats the higher-confidence unreviewed suggestion (0.95).
+    ["website", HB_DOMAIN_UID, T_DOM_TEXT, "https://www.handelsbanken.se/",
+     '{"compare_key":"handelsbanken.se","review_status":"confirmed_primary","root_domain":"handelsbanken.se"}'],
+]
+
+
+def test_domains_scope_and_rows(sections: dict[str, list[list[str]]]) -> None:
+    assert [row[0] for row in sections["domains_scope_all"]] == [HB]
+    assert [row[0] for row in sections["domains_scope_since"]] == [HB]
+    assert sections["domains_hb"] == HB_DOMAIN_ROWS
+    assert sections["domains_solo"] == []
+    first = _counts(sections["counts_after_first_pass"])
+    assert first["domains"] == 1
+    assert _counts(sections["counts_after_rerun"])["domains"] == 1
