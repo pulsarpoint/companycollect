@@ -35,6 +35,7 @@ from dagster_v3.defs.se_company.fields.candidates.common import (
     CANDIDATE_SELECT_COLUMNS,
 )
 from dagster_v3.defs.se_company.fields.candidates import bolagsverket as bolagsverket_candidates
+from dagster_v3.defs.se_company.fields.candidates import esef as esef_candidates
 from dagster_v3.defs.se_company.fields.candidates import scb as scb_candidates
 from dagster_v3.defs.se_company.fields.tables import SE_COMPANY_FIELD_CANDIDATE_COLUMNS
 from tests.test_se_company_person_clickhouse_local import _clickhouse_local_command, _literal, _render
@@ -144,6 +145,7 @@ HB_DOMAIN_UID = "fp-hb-primary"
 EXTRACTORS: list[tuple[str, ModuleType]] = []
 EXTRACTORS.append(("scb", scb_candidates))
 EXTRACTORS.append(("bolagsverket", bolagsverket_candidates))
+EXTRACTORS.append(("esef", esef_candidates))
 
 
 def _schema_statements() -> list[str]:
@@ -555,3 +557,25 @@ def test_bolagsverket_scope_and_rows(sections: dict[str, list[list[str]]]) -> No
     first = _counts(sections["counts_after_first_pass"])
     assert first["bolagsverket"] == len(HB_BV_ROWS) + len(SOLO_BV_ROWS)
     assert _counts(sections["counts_after_rerun"])["bolagsverket"] == first["bolagsverket"]
+
+
+HB_ESEF_ROWS = [
+    ["description", "esef-art-hb-2024", T_ESEF_ART_TEXT, "Handelsbanken is a Nordic bank.",
+     _text("handelsbanken is a nordic bank.", language="en")],
+    ["employee_count", HB_ESEF_FIN_UID, PERIOD_END_TEXT, "12000",
+     '{"as_of":"2024-12-31","compare_key":"12000","count":12000,"period":"2024"}'],
+    ["latest_revenue", HB_ESEF_FIN_UID, PERIOD_END_TEXT, "SEK 48000000000 FY2024",
+     '{"amount":48000000000,"amount_usd":4500000000,"compare_key":"sek:48000000000:2024",'
+     '"currency":"SEK","fiscal_year":2024,"period_end":"2024-12-31"}'],
+]
+
+
+def test_esef_scope_and_rows(sections: dict[str, list[list[str]]]) -> None:
+    assert [row[0] for row in sections["esef_scope_all"]] == [HB]
+    # The artifact is from 2025 (older than SINCE) but the metrics row is newer: still selected.
+    assert [row[0] for row in sections["esef_scope_since"]] == [HB]
+    assert sections["esef_hb"] == HB_ESEF_ROWS
+    assert sections["esef_solo"] == []
+    first = _counts(sections["counts_after_first_pass"])
+    assert first["esef"] == len(HB_ESEF_ROWS)
+    assert _counts(sections["counts_after_rerun"])["esef"] == first["esef"]
