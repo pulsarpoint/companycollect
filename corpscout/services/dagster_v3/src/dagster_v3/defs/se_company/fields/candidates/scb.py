@@ -22,7 +22,6 @@ import dagster as dg
 
 from dagster_v3.defs.se_company.common import DATABASE
 from dagster_v3.defs.se_company.fields.candidates.common import (
-    CANDIDATE_SELECT_COLUMNS,
     CandidateExtractor,
     changed_companies_scope_sql,
     candidate_rows_from_result,
@@ -59,19 +58,12 @@ def _member(field: str, *, value: str, compare_key: str, source: str, extra: dic
 
 
 def build_candidates_sql() -> str:
-    # ClickHouse names a UNION ALL's result columns from its FIRST member alone; _member()
-    # projects CANDIDATE_SELECT_COLUMNS positionally with no AS field / AS value (the unit
-    # test pins that exact unaliased text). materialize_candidates reads the driver result
-    # positionally too, so the columns' names never mattered there -- but the clickhouse-local
-    # harness's SELECT field, value, ... wrappers (_candidates_for, _publish_pass) resolve
-    # them BY NAME. A derived-table column-alias list supplies those names without touching a
-    # single UNION member's projection, so every pinned substring inside `inner` stays intact.
-    inner = f"""WITH artifact AS (
+    return f"""WITH artifact AS (
     SELECT company_id, source_record_uid, observed_at,
         {clean_text_sql(f'{ARTIFACT_TABLE}.legal_name')} AS legal_name_clean,
         {clean_text_sql(f'{ARTIFACT_TABLE}.legal_name_raw')} AS legal_name_raw_clean,
         if(legal_name_clean != '', legal_name_clean, legal_name_raw_clean) AS legal_name,
-        trim(ifNull(legal_form_code, '')) AS legal_form_code,
+        {clean_text_sql('legal_form_code')} AS legal_form_code,
         trim(toString(status)) AS status,
         ifNull(toString(incorporation_date), '') AS incorporation_date,
         {clean_text_sql('activity_description')} AS description_sv,
@@ -102,7 +94,7 @@ industry_labelled AS (
         {nace_digits_sql('trim(industry.nace_code)')} AS nace_code,
         {clean_text_sql('labels.label_en')} AS label_en
     FROM industry
-    LEFT JOIN labels ON labels.classification_version = '{NACE_VERSION}' AND labels.normalized_code = substring(industry.sni_code, 1, 4)
+    LEFT JOIN labels ON labels.classification_version = '{NACE_VERSION}' AND labels.normalized_code = substring(trim(industry.sni_code), 1, 4)
 )
 {_member('legal_name', value='legal_name', compare_key=compare_key_text_sql('legal_name'), source='artifact')}
 UNION ALL
@@ -121,8 +113,6 @@ UNION ALL
 {_member('primary_nace_code', value='nace_code', compare_key='nace_code', source='industry_labelled')}
 UNION ALL
 {_member('industry_label_en', value='label_en', compare_key=compare_key_text_sql('label_en'), source='industry_labelled')}"""
-    columns = ", ".join(CANDIDATE_SELECT_COLUMNS)
-    return f"SELECT * FROM (\n{inner}\n) AS candidates ({columns})"
 
 
 rows_from_result = partial(candidate_rows_from_result, source=SOURCE, extractor_version=EXTRACTOR_VERSION)

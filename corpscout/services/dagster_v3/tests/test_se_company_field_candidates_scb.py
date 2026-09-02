@@ -30,12 +30,12 @@ def test_candidates_read_the_artifact_and_the_primary_industry() -> None:
     assert "FROM corpscout.se_company_info_scb FINAL\n    WHERE company_id IN %(company_ids)s\n    ORDER BY observed_at DESC, source_record_uid DESC\n    LIMIT 1 BY company_id" in sql
     # The legal facts the old publisher copied verbatim: same columns, same fallback.
     assert "if(legal_name_clean != '', legal_name_clean, legal_name_raw_clean) AS legal_name" in sql
-    assert "trim(ifNull(legal_form_code, '')) AS legal_form_code" in sql
+    assert "if(lowerUTF8(trim(ifNull(legal_form_code, ''))) IN ('', '-', '--', '.', 'n/a', 'null', 'none'), '', trim(ifNull(legal_form_code, ''))) AS legal_form_code" in sql
     assert "trim(toString(status)) AS status" in sql
     assert "ifNull(toString(incorporation_date), '') AS incorporation_date" in sql
     assert "FROM corpscout.se_industries FINAL\n    WHERE is_primary = 1 AND company_id IN %(company_ids)s\n    GROUP BY company_id" in sql
     assert "WHERE level = 'class' AND is_current = 1" in sql
-    assert "LEFT JOIN labels ON labels.classification_version = 'NACE_REV_2' AND labels.normalized_code = substring(industry.sni_code, 1, 4)" in sql
+    assert "LEFT JOIN labels ON labels.classification_version = 'NACE_REV_2' AND labels.normalized_code = substring(trim(industry.sni_code), 1, 4)" in sql
     assert "replaceAll(trim(industry.nace_code), '.', '') AS nace_code" in sql  # published dot-less, as today
     assert "'primary_nace_code', source_record_uid, observed_at, nace_code,\n    concat('{\"compare_key\":', toJSONString(nace_code), '}')" in sql
     # English preferred, Swedish otherwise -- and the language says which.
