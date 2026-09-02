@@ -1,4 +1,4 @@
-"""Migration 000347: is_publicly_traded keyed on the EODHD listings resolve, pinned to its builder.
+"""Migration 000377: the field-registry wide columns served, pinned to the builder.
 
 `corpscout.se_companies_serving` is the ONE wide per-company row every admin companies list
 page reads: the info-list columns, the presence and source flags, the address JSON + primary
@@ -12,7 +12,6 @@ companies_current.build_se_companies_serving_sql -- editing either half alone tu
 Same anti-vacuous shape as the pins for 000320/000325/000326.
 """
 
-import re
 from pathlib import Path
 
 from dagster_v3.defs.sweden_company.companies_current import (
@@ -20,7 +19,7 @@ from dagster_v3.defs.sweden_company.companies_current import (
 )
 
 MIGRATIONS_DIR = Path(__file__).resolve().parents[3] / "clickhouse" / "migrations"
-MIGRATION = "000347_corpscout_se_companies_serving_eodhd_listed"
+MIGRATION = "000377_corpscout_se_companies_serving_field_registry_columns"
 VIEW = "corpscout.se_companies_serving"
 NEXT = "corpscout.se_companies_serving_next"
 RETIRED = "corpscout.se_companies_serving_retired"
@@ -99,6 +98,13 @@ def test_the_pin_is_not_vacuous() -> None:
     assert "company_traded_symbols" in embedded
     assert "se_government_contracts" in embedded
     assert "company_job_history" in embedded
+    # The field-registry columns (spec 2026-09-02 section 10), straight off se_company_info.
+    for column in ("industry_label_en", "website", "employee_count", "employee_count_as_of",
+                   "latest_revenue_amount", "latest_revenue_currency", "latest_revenue_amount_usd",
+                   "latest_revenue_fiscal_year"):
+        assert f"\n  {column},\n" in embedded, column
+    assert "ifNull(i.website, '') AS website" in embedded
+    assert "toString(i.latest_revenue_currency) AS latest_revenue_currency" in embedded
     assert "LEFT JOIN aggregated" in embedded
     assert "LEFT JOIN primary_address" in embedded
     assert "INNER JOIN corpscout.se_company_info" not in embedded
@@ -119,7 +125,9 @@ def test_the_up_migration_is_a_staged_swap_waited_on_before_the_rename() -> None
 
     create = _create_view_statement(_sql("up"))
     assert _body(create).startswith(f"CREATE MATERIALIZED VIEW {NEXT}\n")
-    assert "REFRESH EVERY 15 MINUTE" in create
+    # 000366 moved the cadence to hourly; a _next built at 15 minutes would silently revert it.
+    assert "REFRESH EVERY 1 HOUR OFFSET 45 MINUTE" in create
+    assert "REFRESH EVERY 15 MINUTE" not in create
     assert "ENGINE = MergeTree" in create
     assert "ORDER BY company_id\nAS " in create
     assert "APPEND" not in create
@@ -141,8 +149,8 @@ def test_the_up_migration_drops_nothing() -> None:
     assert "DROP" not in _executable(up).upper()
 
 
-def test_the_down_migration_swaps_back_restarts_and_discards_the_eodhd_render() -> None:
+def test_the_down_migration_swaps_back_restarts_and_discards_the_registry_render() -> None:
     down = _executable(_sql("down"))
     assert f"{RETIRED} TO {VIEW}" in down
     assert f"SYSTEM START VIEW {VIEW}" in down
-    assert "DROP VIEW IF EXISTS corpscout.se_companies_serving_eodhd_discard" in down
+    assert "DROP VIEW IF EXISTS corpscout.se_companies_serving_registry_discard" in down
