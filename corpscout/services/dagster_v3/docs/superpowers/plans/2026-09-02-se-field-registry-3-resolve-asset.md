@@ -66,6 +66,7 @@
 9. **`se_company_info_weekly` and the field-value sensor leave `info.py`** in Tasks 5-6 (the old asset and its two jobs stay). The freshness leaf for the new asset is registered with `max_age=None` (row-count check only) until the cutover plan starts the schedule; the old leaf is left untouched (it dies with the old asset).
 10. **Serving view (spec 10).** The eight new columns are projected straight off `se_company_info` (`website` folded to `''` like every other string column; numeric/date NULLs kept). The rebuilt `_next` view carries the CURRENT cadence `REFRESH EVERY 1 HOUR OFFSET 45 MINUTE` (000366), not 000347's 15 minutes. The migration is applied AFTER the resolve backfill (cutover step 5): the columns exist from plan 1's migration but are empty until the rebuild, so an earlier apply is harmless yet wastes one full refresh.
 11. **Deploy note for the cutover plan:** the sensor keeps its name, so Dagster keeps its RUNNING state and cursor across the deploy; cutover step 1 must stop `se_company_info_field_value_sensor` BEFORE deploying this branch, or the first decision after the deploy launches the new asset against empty candidate tables.
+12. **Final-review amendments (2026-09-02, executed):** the candidate sensor's touched set is `extracted_at >= since` -- an extractor stamps ONE `extracted_at` for its whole run, so a tick landing mid-run must still see the later pages; a boundary company resolved twice is accepted (the "advances without a run" test became "re-selects the boundary company after a mid-run tick"). The `se_company_info_clickhouse` leaf loses its freshness window (`max_age=None`): its schedule moved and the asset is retiring, decision 9's "left untouched" no longer holds. The three artifact leaves keep `WEEKLY` and will WARN if the cutover window exceeds nine days -- an operational note for plan 5, not a code change. `info.AUTOMATED_RUN_CONFIG` is a test-only pin now (no production trigger sends it). The harness also executes `build_registry_statements_sql` and `build_batch_stats_sql`. Parked: `load_registry_statements` selects `policy_version` without reading it (the registry version is the single version authority).
 
 ## File structure
 
@@ -1697,7 +1698,7 @@ def test_candidate_sensor_sql_shapes_and_declaration() -> None:
     assert build_candidate_touched_sql("se_company_field_candidate") == (
         "SELECT DISTINCT company_id\n"
         "FROM corpscout.se_company_field_candidate\n"
-        "WHERE extracted_at > parseDateTime64BestEffort(%(since)s, 3, 'UTC')\n"
+        "WHERE extracted_at >= parseDateTime64BestEffort(%(since)s, 3, 'UTC')\n"
         "ORDER BY company_id\n"
         "LIMIT %(limit)s")
     assert MAX_SCOPED_COMPANY_IDS == 20_000
@@ -1856,7 +1857,7 @@ FROM {DATABASE}.{table}"""
 def build_candidate_touched_sql(table: str) -> str:
     return f"""SELECT DISTINCT company_id
 FROM {DATABASE}.{table}
-WHERE extracted_at > parseDateTime64BestEffort(%(since)s, 3, 'UTC')
+WHERE extracted_at >= parseDateTime64BestEffort(%(since)s, 3, 'UTC')
 ORDER BY company_id
 LIMIT %(limit)s"""
 
