@@ -386,6 +386,7 @@ EXPECTED_MIGRATIONS = (
     "000371_corpscout_se_company_info_field_value",
     "000372_corpscout_retire_se_company_info_correction",
     "000373_corpscout_se_company_field_tables",
+    "000374_corpscout_se_company_info_field_columns",
 )
 
 NOOP_MIGRATIONS = {"000276_noop"}
@@ -4091,6 +4092,29 @@ def test_se_company_field_tables_are_created_by_000373() -> None:
         assert f"GRANT INSERT ON corpscout.{table}\nTO corpscout_person_correction_writer" in up
         assert f"REVOKE INSERT ON corpscout.{table}\nFROM corpscout_person_correction_writer" in down
     assert "GRANT SELECT" not in up and "GRANT ALL" not in up
+
+
+def test_se_company_info_gains_the_registry_scalars_in_000374() -> None:
+    """Spec 8.3: the wide projection keeps every existing column and gains the scalars
+    the registry resolves beyond the pilot's set, positioned before wikidata_id so the
+    provenance tail stays last. One ALTER, each ADD positioned AFTER the one before it."""
+    up = _migration_sql("000374_corpscout_se_company_info_field_columns.up.sql")
+    down = _migration_sql("000374_corpscout_se_company_info_field_columns.down.sql")
+
+    assert up.count("ALTER TABLE corpscout.se_company_info\n") == 1
+    for clause in (
+        "industry_label_en String DEFAULT '' AFTER primary_sni_code",
+        "website Nullable(String) AFTER industry_label_en",
+        "employee_count Nullable(UInt64) AFTER website",
+        "employee_count_as_of Nullable(Date32) AFTER employee_count",
+        "latest_revenue_amount Nullable(Decimal128(2)) AFTER employee_count_as_of",
+        "latest_revenue_currency LowCardinality(String) DEFAULT '' AFTER latest_revenue_amount",
+        "latest_revenue_amount_usd Nullable(Decimal128(2)) AFTER latest_revenue_currency",
+        "latest_revenue_fiscal_year Nullable(UInt16) AFTER latest_revenue_amount_usd",
+    ):
+        assert f"ADD COLUMN IF NOT EXISTS {clause}" in up
+        assert f"DROP COLUMN IF EXISTS {clause.split(' ')[0]}" in down
+    assert "DROP TABLE" not in up and "TRUNCATE" not in up
 
 
 def test_every_migration_ends_with_a_statement_not_a_comment() -> None:

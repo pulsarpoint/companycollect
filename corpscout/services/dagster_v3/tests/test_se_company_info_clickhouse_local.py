@@ -104,6 +104,12 @@ MIGRATIONS = (
     # it). build_changed_companies_sql's `ledger` CTE reads the new table, so it has to
     # exist before the scan runs here.
     "000371_corpscout_se_company_info_field_value.up.sql",
+    # 000374 adds the registry-resolved scalars to se_company_info (industry label,
+    # website, head count, latest revenue). INSERT_COLUMNS does not name them -- the
+    # retiring publisher leaves them to their defaults -- but the `final_columns` section
+    # compares system.columns with declared_columns(), which replays every up migration,
+    # so the ALTER has to land here too.
+    "000374_corpscout_se_company_info_field_columns.up.sql",
 )
 # Applied later in the script than the rest, on purpose: on the live host 000300 lands on
 # a se_company_info_scb that already holds 3.5M v1 rows, and "ALTER ... MODIFY COLUMN of a

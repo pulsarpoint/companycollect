@@ -299,3 +299,30 @@ def test_field_table_writer_grants_are_insert_only() -> None:
     # The registry table is read by both runners and written by Dagster alone.
     assert "GRANT INSERT ON corpscout.se_company_field_registry" not in up
     assert "DROP" not in _statements(up) and "TRUNCATE" not in _statements(up)
+
+
+def test_the_projection_gains_the_registry_scalars_from_000374() -> None:
+    """Spec 8.3: eight new wide columns between primary_sni_code and wikidata_id. The
+    provenance tail is untouched, and SE_COMPANY_INFO_COLUMNS -- the list the registry
+    projection inserts by -- is the deployed column list minus the MATERIALIZED hash."""
+    from dagster_v3.defs.se_company.fields.tables import (
+        SE_COMPANY_INFO_COLUMNS,
+        SE_COMPANY_INFO_REGISTRY_COLUMNS,
+    )
+
+    up = (MIGRATIONS_DIR / "000374_corpscout_se_company_info_field_columns.up.sql").read_text()
+    down = (MIGRATIONS_DIR / "000374_corpscout_se_company_info_field_columns.down.sql").read_text()
+
+    columns = declared_columns("se_company_info")
+    at = columns.index("primary_sni_code") + 1
+    assert tuple(columns[at : at + 8]) == SE_COMPANY_INFO_REGISTRY_COLUMNS
+    assert columns[at + 8] == "wikidata_id"
+    assert tuple(columns[-len(FINAL_PROVENANCE):]) == FINAL_PROVENANCE
+    assert [c for c in columns if c != "evidence_set_hash"] == list(SE_COMPANY_INFO_COLUMNS)
+
+    assert up.count("ADD COLUMN IF NOT EXISTS") == 8 and down.count("DROP COLUMN IF EXISTS") == 8
+    # Only the projection moves: the artifacts, the decisions and the long tables keep theirs.
+    statements, down_statements = (_statements(text) for text in (up, down))
+    assert statements.count("ALTER TABLE corpscout.se_company_info\n") == 1
+    for other in ("se_company_info_scb", "se_company_info_field_value", "se_company_field"):
+        assert other not in statements and other not in down_statements

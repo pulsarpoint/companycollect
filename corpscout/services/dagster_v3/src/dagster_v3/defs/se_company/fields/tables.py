@@ -28,3 +28,23 @@ SE_COMPANY_FIELD_REGISTRY_COLUMNS = (
     "datatype", "country", "field", "value_type", "display_group", "structured", "python_only",
     "sources", "policy_name", "policy_version", "resolve_sql", "registry_version", "version",
 )
+
+# The eight columns 000374 adds to corpscout.se_company_info. Filled by the registry
+# projection only; the retiring publisher leaves them to their defaults.
+SE_COMPANY_INFO_REGISTRY_COLUMNS = (
+    "industry_label_en", "website", "employee_count", "employee_count_as_of",
+    "latest_revenue_amount", "latest_revenue_currency", "latest_revenue_amount_usd",
+    "latest_revenue_fiscal_year",
+)
+# corpscout.se_company_info in DDL order after 000374; evidence_set_hash is MATERIALIZED
+# and omitted. The projection statement (sql.py) inserts in exactly this order.
+SE_COMPANY_INFO_COLUMNS = (
+    "company_id", "legal_name", "legal_form_code", "legal_form_label_en", "legal_form_label_sv",
+    "status", "incorporation_date", "description", "description_sv", "description_language",
+    "llm_enhanced", "description_sources", "description_source_record_uids",
+    "description_source_count", "primary_nace_code", "primary_sni_code",
+    *SE_COMPANY_INFO_REGISTRY_COLUMNS,
+    "wikidata_id", "lei", "source_record_uids", "evidence_hashes", "correction_ids",
+    "suggestion_id", "model_provider", "model_name", "prompt_version", "source_run_id",
+    "resolved_at",
+)

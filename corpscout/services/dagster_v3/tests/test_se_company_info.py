@@ -801,11 +801,16 @@ def test_a_field_value_survives_a_run_that_does_not_call_the_model() -> None:
 
 
 def test_insert_columns_match_the_migration_in_order() -> None:
+    from dagster_v3.defs.se_company.fields.tables import SE_COMPANY_INFO_REGISTRY_COLUMNS
     from dagster_v3.defs.se_company.info import INSERT_COLUMNS
     from tests.se_company_ddl import declared_columns
 
+    # 000374's registry-resolved scalars are filled by the registry projection only; the
+    # retiring publisher inserts by this explicit list and leaves them to their defaults,
+    # so they are the one gap allowed between the two lists.
     assert list(INSERT_COLUMNS) == [
-        c for c in declared_columns("se_company_info") if c != "evidence_set_hash"
+        c for c in declared_columns("se_company_info")
+        if c != "evidence_set_hash" and c not in SE_COMPANY_INFO_REGISTRY_COLUMNS
     ]
 
 
