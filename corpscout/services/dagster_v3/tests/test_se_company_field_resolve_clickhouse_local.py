@@ -237,10 +237,18 @@ def _param_text(value: object) -> str:
     return str(value)
 
 
+def _param_literal(text: str) -> str:
+    """``text`` as the string literal of a ``SET param_<name>``, backslash-escaped exactly
+    ONCE: ClickHouse unescapes the literal and only then parses the result as the
+    parameter's declared type, so the array quotes _param_text wrote must survive that one
+    unescape (``_literal``'s doubled quotes on top of them would be a Code: 62)."""
+    return "'" + text.replace("\\", "\\\\").replace("'", "\\'") + "'"
+
+
 def _bound(sql: str, **values: object) -> str:
     """``sql`` preceded by one ``SET param_<name>`` per value: ClickHouse's own server-side
     binding, the path the backoffice's clickhouse-js query_params takes."""
-    sets = "".join(f"SET param_{name} = {_literal(_param_text(value))};\n" for name, value in values.items())
+    sets = "".join(f"SET param_{name} = {_param_literal(_param_text(value))};\n" for name, value in values.items())
     return sets + sql + ";\n"
 
 
@@ -519,6 +527,10 @@ def test_a_decision_on_the_description_replaces_the_model_text_and_its_provenanc
     row = dict(zip(WIDE_COLUMNS, values, strict=True))
     assert row["description"] == DECISION_EN_2 and row["description_sv"] == DECISION_SV
     assert row["llm_enhanced"] == "false" and row["suggestion_id"] == ""
+    assert row["description_language"] == ""  # a decided description carries no value_json (fields/sql.py reads JSONExtractString(value_json, 'language'))
+    # Not from the llm source, so the model columns are fields/sql.py's deterministic constants.
+    assert row["model_provider"] == "deterministic" and row["model_name"] == "se-company-info-rules"
+    assert row["prompt_version"] == "se-company-info-rules-v1"
     assert set(ast.literal_eval(row["correction_ids"])) == {str(DECISION_ID), str(DECISION_ID_2)}
     assert row["source_run_id"] == RUN_3 and row["resolved_at"] == "2026-09-04 10:00:00.000"
     # The re-extracted wikidata text is a candidate (counted), never the published one.
