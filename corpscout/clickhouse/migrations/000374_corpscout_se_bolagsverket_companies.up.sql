@@ -10,9 +10,11 @@ CREATE DATABASE IF NOT EXISTS corpscout;
 -- entity, which keeps its own tables and assets until its own slice.
 --
 -- No derived status: deriving one from avregistreringsdatum is the job of the bolagsverket
--- suggestion extractor. Column types are 000257's for every column that table also had.
--- The two dates are Date32 rather than 000257's Date because Date starts at 1970-01-01 and
--- Swedish registration dates predate it.
+-- suggestion extractor. Column types are 000257's for every column that table also had,
+-- except company_id_raw, which is String rather than Nullable(String): a row exists only
+-- when company_id was derived from a non-empty raw identifier, so the raw value is never
+-- NULL. The two dates are Date32 rather than 000257's Date because Date starts at
+-- 1970-01-01 and Swedish registration dates predate it.
 --
 -- This replaces the Bolagsverket half of se_company_registry_observations and
 -- se_company_registry_current, retired by migration 000375 at its apply step -- never here,
