@@ -245,7 +245,9 @@ CREATE DATABASE IF NOT EXISTS corpscout;
 -- the per-delivery change-type marker are not published: the S3 snapshots keep every file
 -- exactly as delivered, and scb_raw keeps every column in DuckDB.
 --
--- Column types are 000257's for every column that table also had. registration_date is
+-- Column types are 000257's for every column that table also had, except company_id_raw,
+-- which is String rather than Nullable(String): a row exists only when company_id was
+-- derived from a non-empty raw identifier, so the raw value is never NULL. registration_date is
 -- Date32 rather than 000257's Date because Date starts at 1970-01-01 and Swedish
 -- registration dates predate it. The design's own basic-info tables use Date32 too.
 --
