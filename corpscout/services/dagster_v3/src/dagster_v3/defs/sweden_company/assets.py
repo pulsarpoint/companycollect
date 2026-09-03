@@ -16,6 +16,7 @@ from dagster_v3.defs.sweden_company.clickhouse import (
     publish_sweden_company_clickhouse_addresses,
     publish_sweden_company_industry_history,
     publish_sweden_company_profile_history,
+    publish_sweden_company_source_table,
 )
 from dagster_v3.defs.sweden_company.normalized_duckdb import (
     replace_sweden_company_normalized_tables,
@@ -155,6 +156,41 @@ def sweden_company_companies_clickhouse(
         )
     return dg.MaterializeResult(
         metadata={"rows": rows, "table": tables.QUALIFIED_COMPANIES_TABLE}
+    )
+
+
+@dg.asset(
+    deps=["sweden_company_normalized_duckdb"],
+    group_name=GROUP_NAME,
+    kinds={"python", "duckdb", "clickhouse", "scb"},
+    pool=SWEDEN_COMPANY_DUCKDB_POOL,
+    metadata={"table": tables.QUALIFIED_SCB_COMPANIES_TABLE},
+    description=(
+        "Publishes the whole SCB register record per company to ClickHouse "
+        "corpscout.se_scb_companies, inserting only the companies whose SCB payload "
+        "hash changed."
+    ),
+)
+def sweden_company_scb_companies_clickhouse(
+    context: dg.AssetExecutionContext,
+    sweden_company_duckdb: DuckDBResource,
+    clickhouse: ClickhouseResource,
+) -> dg.MaterializeResult:
+    with read_only_duckdb_connection(sweden_company_duckdb) as connection:
+        result = publish_sweden_company_source_table(
+            duckdb_connection=connection,
+            clickhouse=clickhouse,
+            duckdb_table="scb_companies",
+            clickhouse_table=tables.SCB_COMPANIES_TABLE_CH,
+            columns=tables.SE_SCB_COMPANIES_EXPORT_COLUMNS,
+            log=context.log.info,
+        )
+    return dg.MaterializeResult(
+        metadata={
+            "table": tables.QUALIFIED_SCB_COMPANIES_TABLE,
+            "candidates": result.candidates,
+            "inserted": result.inserted,
+        }
     )
 
 
@@ -322,6 +358,7 @@ sweden_company_refresh_job = dg.define_asset_job(
     "sweden_company_refresh_job",
     selection=dg.AssetSelection.assets(
         "sweden_company_companies_clickhouse",
+        "sweden_company_scb_companies_clickhouse",
         "sweden_company_profile_history_clickhouse",
         "sweden_company_addresses_clickhouse",
         "sweden_company_industries_clickhouse",
@@ -344,6 +381,7 @@ defs = dg.Definitions(
         sweden_company_raw_duckdb,
         sweden_company_normalized_duckdb,
         sweden_company_companies_clickhouse,
+        sweden_company_scb_companies_clickhouse,
         sweden_company_profile_history_clickhouse,
         sweden_company_addresses_clickhouse,
         sweden_company_industries_clickhouse,

@@ -152,6 +152,129 @@ def publish_sweden_company_industry_history(
         )
 
 
+@dataclass(frozen=True, slots=True)
+class SwedenSourceTablePublishResult:
+    candidates: int
+    inserted: int
+
+
+def sweden_company_source_anti_join_sql(
+    *,
+    qualified_stage: str,
+    qualified_target: str,
+) -> str:
+    """The left-anti-join that keeps only the rows whose payload hash differs from the
+    company's CURRENT published row.
+
+    Exposed as a function so the clickhouse-local harness executes this exact text rather
+    than a paraphrase of it.
+    """
+    return (
+        f"FROM {qualified_stage} AS candidate\n"
+        "LEFT ANTI JOIN (\n"
+        "    SELECT company_id, argMax(source_payload_hash, observed_at) "
+        "AS source_payload_hash\n"
+        f"    FROM {qualified_target}\n"
+        "    GROUP BY company_id\n"
+        ") AS current\n"
+        "ON current.company_id = candidate.company_id\n"
+        "AND current.source_payload_hash = candidate.source_payload_hash"
+    )
+
+
+def publish_sweden_company_source_table(
+    *,
+    duckdb_connection: Any,
+    clickhouse: ClickhouseResource,
+    duckdb_table: str,
+    clickhouse_table: str,
+    columns: tuple[str, ...],
+    log: Callable[..., object] | None = None,
+) -> SwedenSourceTablePublishResult:
+    """Insert only the register rows whose source payload hash changed.
+
+    The target is ``ReplacingMergeTree(observed_at) ORDER BY company_id``: one row per
+    company survives a merge, so the anti-join key has to be the CURRENT row per company
+    and not every version ever written. ``se_company/common.publish_with_stage`` can
+    anti-join its target directly (``new_versions_only=True``) because those targets are
+    ordered by ``(company_id, source_record_uid)``, where every version is its own key.
+    Here a company that went A -> B -> A would have its third state suppressed by a
+    whole-table anti-join and the stale B row would stay current.
+
+    ``_publish_changed_snapshot`` is not reused either: it needs a physical ``*_current``
+    twin to diff against and swaps it by rename. The source layer deliberately has no twin
+    -- one table per source, and S3 is the archive (2026-09-03 basic-info design, 3.1).
+    """
+    assert_clickhouse_tables_exist(
+        clickhouse,
+        database=tables.SWEDEN_DATABASE,
+        tables=(clickhouse_table,),
+    )
+    qualified_target = f"{tables.SWEDEN_DATABASE}.{clickhouse_table}"
+    stage_table = f"_tmp_{clickhouse_table}_{uuid.uuid4().hex}"
+    qualified_stage = f"{tables.SWEDEN_DATABASE}.{stage_table}"
+    with clickhouse.get_connection() as client:
+        primary_error: BaseException | None = None
+        try:
+            client.execute(f"CREATE TABLE {qualified_stage} AS {qualified_target}")
+            candidates = export_duckdb_connection_table_to_clickhouse(
+                duckdb_connection=duckdb_connection,
+                clickhouse_client=client,
+                duckdb_schema=tables.DLT_DATASET_NAME,
+                duckdb_table=duckdb_table,
+                clickhouse_database=tables.SWEDEN_DATABASE,
+                clickhouse_table=stage_table,
+                columns=columns,
+                truncate=False,
+                log=log,
+            )
+            if candidates == 0:
+                raise ValueError(
+                    f"DuckDB table {tables.DLT_DATASET_NAME}.{duckdb_table} has 0 rows; "
+                    f"refusing to publish {qualified_target}."
+                )
+            anti_join = sweden_company_source_anti_join_sql(
+                qualified_stage=qualified_stage,
+                qualified_target=qualified_target,
+            )
+            inserted = int(
+                client.execute(f"SELECT count() AS new_versions {anti_join}")[0][0]
+            )
+            if inserted > 0:
+                column_list = ", ".join(columns)
+                selected = ", ".join(f"candidate.{column}" for column in columns)
+                client.execute(
+                    f"INSERT INTO {qualified_target} ({column_list})\n"
+                    f"SELECT {selected} {anti_join}"
+                )
+            if log is not None:
+                log(
+                    "Published Sweden register source table: table=%s candidates=%d "
+                    "inserted=%d",
+                    qualified_target,
+                    candidates,
+                    inserted,
+                )
+            return SwedenSourceTablePublishResult(
+                candidates=candidates,
+                inserted=inserted,
+            )
+        except BaseException as exc:
+            primary_error = exc
+            raise
+        finally:
+            try:
+                client.execute(f"DROP TABLE IF EXISTS {qualified_stage}")
+            except Exception as cleanup_error:
+                if primary_error is not None:
+                    primary_error.add_note(
+                        f"Failed to drop temporary table {qualified_stage}: "
+                        f"{cleanup_error}"
+                    )
+                else:
+                    raise
+
+
 def _publish_changed_snapshot(
     *,
     duckdb_connection: Any,

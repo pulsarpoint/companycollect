@@ -44,6 +44,7 @@ def test_registry_covers_the_known_scheduled_leaves() -> None:
         "slovakia_financials_metrics_clickhouse",
         "slovakia_rpo_clickhouse_companies",
         "sweden_company_companies_clickhouse",
+        "sweden_company_scb_companies_clickhouse",
         "sweden_address_geocode_store_clickhouse",
         "sweden_company_canonical_addresses_clickhouse",
         "sweden_shared_addresses_clickhouse",

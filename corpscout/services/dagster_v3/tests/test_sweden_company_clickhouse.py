@@ -11,6 +11,8 @@ from dagster_v3.defs.sweden_company.clickhouse import (
     export_sweden_company_clickhouse_industries,
     publish_sweden_company_industry_history,
     publish_sweden_company_profile_history,
+    publish_sweden_company_source_table,
+    sweden_company_source_anti_join_sql,
 )
 
 
@@ -33,6 +35,8 @@ class FakeClickHouseClient:
         if "AS first_observations" in sql:
             return [(1, 0)]
         if "AS snapshot_removals" in sql:
+            return [(1,)]
+        if "AS new_versions" in sql:
             return [(1,)]
         stripped_sql = sql.lstrip()
         if stripped_sql.startswith("CREATE TABLE") or stripped_sql.startswith(
@@ -205,6 +209,89 @@ def test_publish_sweden_company_industry_history_tracks_complete_sni_state(
             tables.COMPANY_INDUSTRY_CURRENT_TABLE_CH,
         )
     ]
+
+
+def test_publish_sweden_company_source_table_inserts_only_changed_payloads(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    """The SCB source table is ReplacingMergeTree(observed_at) ORDER BY company_id, so the
+    anti-join's right side must be the CURRENT row per company (argMax over observed_at),
+    not the whole table: a whole-table anti-join would suppress an A -> B -> A revert and
+    leave the stale B row current."""
+    client = FakeClickHouseClient()
+    resource = ClickhouseResource(host="localhost")
+
+    @contextmanager
+    def fake_get_connection(self: ClickhouseResource) -> Iterator[FakeClickHouseClient]:
+        yield client
+
+    monkeypatch.setattr(ClickhouseResource, "get_connection", fake_get_connection)
+
+    with _sweden_company_duckdb(tmp_path) as connection:
+        result = publish_sweden_company_source_table(
+            duckdb_connection=connection,
+            clickhouse=resource,
+            duckdb_table="scb_companies",
+            clickhouse_table=tables.SCB_COMPANIES_TABLE_CH,
+            columns=tables.SE_SCB_COMPANIES_EXPORT_COLUMNS,
+        )
+
+    assert result.candidates == 1
+    assert result.inserted == 1
+    assert client.table_checks == [(tables.SCB_COMPANIES_TABLE_CH,)]
+    assert (
+        f"CREATE TABLE corpscout._tmp_{tables.SCB_COMPANIES_TABLE_CH}_"
+        in client.statements[1]
+    )
+    # The fake records every INSERT statement; the target copy names the stage table in
+    # its FROM clause too, so match the staged data insert by its prefix. The batch loader
+    # (resolved.py's _insert_duckdb_rows_in_batches) backtick-quotes the qualified table.
+    staged_inserts = [
+        sql
+        for sql, _ in client.insert_calls
+        if sql.lstrip().startswith(
+            f"INSERT INTO `{tables.SWEDEN_DATABASE}`.`_tmp_{tables.SCB_COMPANIES_TABLE_CH}_"
+        )
+    ]
+    assert len(staged_inserts) == 1
+    target_inserts = [
+        statement
+        for statement in client.statements
+        if statement.lstrip().startswith(
+            f"INSERT INTO {tables.QUALIFIED_SCB_COMPANIES_TABLE} ("
+        )
+    ]
+    assert len(target_inserts) == 1
+    assert "LEFT ANTI JOIN" in target_inserts[0]
+    assert "argMax(source_payload_hash, observed_at)" in target_inserts[0]
+    assert ", ".join(tables.SE_SCB_COMPANIES_EXPORT_COLUMNS) in target_inserts[0]
+    # The stage table is always dropped.
+    assert any(
+        statement.lstrip().startswith("DROP TABLE IF EXISTS corpscout._tmp_")
+        for statement in client.statements
+    )
+
+
+def test_sweden_company_source_anti_join_reads_the_current_row_per_company() -> None:
+    sql = sweden_company_source_anti_join_sql(
+        qualified_stage="corpscout.stage",
+        qualified_target="corpscout.se_scb_companies",
+    )
+
+    assert "FROM corpscout.stage AS candidate" in sql
+    assert "LEFT ANTI JOIN (" in sql
+    assert (
+        "SELECT company_id, argMax(source_payload_hash, observed_at) "
+        "AS source_payload_hash" in sql
+    )
+    assert "FROM corpscout.se_scb_companies" in sql
+    assert "GROUP BY company_id" in sql
+    assert "ON current.company_id = candidate.company_id" in sql
+    assert "AND current.source_payload_hash = candidate.source_payload_hash" in sql
+    # FINAL is not used: it would read the whole table through the merge logic, and argMax
+    # states the intent (one current row per company) without depending on merge state.
+    assert "FINAL" not in sql
 
 
 @contextmanager
@@ -449,6 +536,45 @@ def _sweden_company_duckdb(tmp_path: Path) -> Iterator[duckdb.DuckDBPyConnection
                 'run-1', '5560000000', 'scb-hash-1',
                 '2026-07-03 12:00:00', 1, repeat('c', 64), repeat('c', 64),
                 '2026-07-03 12:00:00'
+            )
+            """
+        )
+        connection.execute(
+            f"""
+            create table {tables.DLT_DATASET_NAME}.scb_companies (
+                company_id varchar,
+                company_id_raw varchar,
+                legal_name varchar,
+                alternate_name varchar,
+                legal_form_code varchar,
+                source_status_code varchar,
+                source_secondary_status_code varchar,
+                registration_date date,
+                ng1_code varchar,
+                ng2_code varchar,
+                ng3_code varchar,
+                ng4_code varchar,
+                ng5_code varchar,
+                care_of varchar,
+                street_address varchar,
+                postal_code varchar,
+                post_town varchar,
+                marketing_block_code varchar,
+                source_run_id varchar,
+                source_record_id varchar,
+                source_payload_hash varchar,
+                observed_at timestamp
+            )
+            """
+        )
+        connection.execute(
+            f"""
+            insert into {tables.DLT_DATASET_NAME}.scb_companies
+            values (
+                '5560000000', '5560000000', 'ACME SCB', null, '49', '0', '1',
+                '2020-01-01', '62010', '70220', null, null, null,
+                'c/o ACME', 'Main Street 1', '11122', 'STOCKHOLM', '1',
+                'run-1', '5560000000', 'scb-hash-1', '2026-09-03 06:00:00'
             )
             """
         )
