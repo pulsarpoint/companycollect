@@ -5,10 +5,14 @@ The repository contains three approaches:
 - `ex1`: the application manages the crawl frontier and the LLM ranks links.
 - `ex2`: Crawl4AI manages the complete breadth-first crawl and the LLM only
   extracts structured facts from each returned page.
-- `ex3`: two independent phases connected by a durable crawl manifest. The
-  first command selects English, picks the most informative pages from the
-  site's URL inventory, and stores a bounded crawl as Markdown; the second
-  command can analyze those files repeatedly without crawling again.
+- `ex3`: crawl and analysis as independent commands connected by a durable
+  crawl manifest, plus a `research` command that chains them with bounded,
+  LLM-guided follow-up passes. The crawl command selects English, picks the
+  most informative pages from the site's URL inventory, and stores a bounded
+  crawl as Markdown; the analysis command can run against those files
+  repeatedly without crawling again; `research` runs both once, then asks the
+  LLM what is still missing and crawls and analyzes up to `--max-passes`
+  rounds to fill it in.
 
 ## Example 1: LLM-assisted frontier
 
@@ -122,32 +126,26 @@ Pages are then chosen before they are rendered:
 1. **Inventory.** Crawl4AI's `AsyncUrlSeeder` reads the host's sitemap (or
    Common Crawl with `--seed-source sitemap+cc`) into a URL inventory, capped
    by `--seed-max-urls`.
-2. **Deterministic scoring.** `ex3/selection.py` scores every inventory URL
-   without LLM tokens. About, contact/imprint, management, careers, press and
-   offering slugs score up; privacy, cookies, terms, login, search, branch
-   locators, pagination and query strings score down. English is best effort,
-   not mandatory: locale markers outside the preferred languages (`/sv/`,
-   `de.` subdomains, `?lang=fi`) cost a penalty but never exclude a page, so
-   a Swedish about-us page still wins when the site has no English version.
-   Preferred languages are English plus the site's own language when the
-   selected base is not English. Binary files and external domains are
-   excluded outright, and URLs under the selected base locale get a bonus.
-3. **Head check.** For a shortlist (three times the page budget) the seeder
-   fetches only the `<head>`. A declared `<html lang>` outside the preferred
-   languages costs the same penalty (once per page), and titles naming a
-   scored category add a small bonus.
-4. **Two selection waves.** The base URL and the links on the base page
-   always join the inventory, because sitemaps often omit the homepage and
-   section landing pages. Wave one renders `--seed-share` of the page budget
-   (60% by default). Links harvested from those rendered pages join the
-   inventory, everything is ranked again, and wave two fills the rest of the
-   budget. On handelsbanken.se this is what surfaces `/en/about-us`, which is
-   neither in the sitemap nor linked from the homepage.
-5. **Discovery.** If the budget is still not full (no sitemap, crawl
-   failures), Crawl4AI's `BestFirstCrawlingStrategy` follows links from the
-   base URL using the same scorer and filter, skipping already stored pages.
-   `--discovery breadth_first` restores the plain BFS for comparison runs, and
-   `--no-seed` skips the inventory entirely.
+2. **Candidates.** The scorer in `ex3/selection.py` removes external
+   domains, binary files and duplicates, orders the rest structurally
+   (homepage, depth, linked from the base page, vocabulary as tie-break) and
+   caps the list at `--llm-candidates` (200). The base URL and the base page's
+   links always join, because sitemaps often omit them. The `<head>` of each
+   candidate is fetched for title and declared language.
+3. **LLM selection.** One Codex call receives the candidates (path, title,
+   anchor text, language) and the information requirements from
+   `ex3/requirements.py`, and returns up to `--max-pages` URLs with a reason
+   and the fields each should fill. Picks are validated against the candidate
+   list. `--selector deterministic` uses the scorer instead, and the scorer is
+   the automatic fallback when the call fails.
+4. **No sitemap.** Crawl4AI's `BFSDeepCrawlStrategy` crawls from the base URL
+   within `--max-pages` and `--max-depth` (`--discovery best_first` for the
+   scored variant).
+5. **Remaining budget.** If a sitemap exists but the budget is still not full
+   after selection (crawl failures, a small inventory), the same discovery
+   crawl fills what selection left open; already selected pages are skipped.
+   `--no-seed` skips the inventory and LLM selection entirely, so discovery
+   alone fills the whole budget.
 
 ```bash
 uv run python -m ex3.main crawl https://example.com \
@@ -206,7 +204,10 @@ The default artifacts are:
 - `company-markdown/*.md`: page Markdown;
 - `company-markdown/crawl-manifest.json`: the pre-analysis crawl manifest;
 - `company-markdown/url-inventory.json`: every scored inventory URL with its
-  reasons and exclusion, for tuning the selector;
+  reasons and exclusion, for tuning the selector. Both selectors write the whole
+  ranked inventory there: eligible URLs, excluded ones with their reason, and
+  the selected pages. The LLM selector only saw the top `--llm-candidates` of
+  the eligible list, refined with `<head>` metadata;
 - `company-batched-report.json`: consolidated extraction, page provenance,
   batch outcomes, and per-batch plus aggregate token usage.
 
@@ -219,6 +220,43 @@ type, labels, occurrence count, and source pages. The top-level
 `related_domain_analysis` records the classification status and token usage;
 each accepted `related_domains` entry includes the LLM relationship and reason
 plus deterministic URL provenance.
+
+### Passes: let the LLM ask for more
+
+`research` runs everything end to end and adds a configurable second pass:
+
+```bash
+uv run python -m ex3.main research https://example.com \
+  --workdir company-research \
+  --max-pages 20 \
+  --pass-pages 10 \
+  --max-passes 2
+```
+
+1. `crawl` and `analyze` produce `report-pass-1.json`.
+2. `suggest` computes which requirements are still missing or weak
+   (`ex3/requirements.py`) and shows the LLM every discovered or listed URL
+   that was not processed; it returns up to `--pass-pages` URLs with the
+   fields each should fill, validated against the candidates
+   (`suggestions-pass-2.json`).
+3. `extend` crawls those pages into the same manifest, tagged with the pass
+   number and the reason.
+4. `analyze --previous-report report-pass-1.json` extracts only the new pages,
+   consolidates all rounds deterministically, then asks the LLM once to merge
+   the previous result and the new round into one profile. Evidence URLs
+   outside processed pages are dropped and counted in `merge_analysis`.
+
+`--max-passes 1` disables the extra pass; the loop also stops when nothing is
+missing or the LLM suggests nothing. A pass that fails is logged and the run
+keeps the last completed report. Each command can be run on its own with the
+artifacts above.
+
+Token accounting follows the passes. `analysis_stats` and each
+`passes[*].token_totals` cover one pass only: its extraction batches, the
+related-domain call, the page-selection call in pass one, the suggestion call
+of that pass (`analyze --suggestions suggestions-pass-N.json`, which `research`
+supplies automatically), and its merge call. `run_token_totals` sums every pass
+and is what the run cost end to end.
 
 ## Output
 

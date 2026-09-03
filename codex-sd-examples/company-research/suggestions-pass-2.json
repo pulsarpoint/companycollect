@@ -1,0 +1,15 @@
+{
+  "manifest_path": "/Users/graovic/pulsarpoint/ppoint/companycollect/codex-sd-examples/company-research/crawl-manifest.json",
+  "report_path": "/Users/graovic/pulsarpoint/ppoint/companycollect/codex-sd-examples/company-research/report-pass-1.json",
+  "pass_number": 2,
+  "gaps": [],
+  "candidate_count": 0,
+  "llm": {
+    "attempted": false,
+    "succeeded": true,
+    "error": null,
+    "warnings": [],
+    "token_usage": null
+  },
+  "suggestions": []
+}
