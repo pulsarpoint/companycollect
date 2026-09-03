@@ -1,0 +1,69 @@
+{
+  "domain": "handelsbanken.se",
+  "base_url": "https://www.handelsbanken.se/en/",
+  "must_have": {
+    "home": [
+      "https://www.handelsbanken.se/en/"
+    ],
+    "about": [
+      "https://www.handelsbanken.se/en/about-us/swedish-subsidiaries",
+      "https://www.handelsbanken.se/en/about-us/swedish-subsidiaries/handelsbanken-fonder",
+      "https://www.handelsbanken.se/en/about-us/swedish-subsidiaries/handelsbanken-fonder/fund-list-complete",
+      "https://www.handelsbanken.se/en/about-us/swedish-subsidiaries/handelsbanken-fonder/our-work",
+      "https://www.handelsbanken.se/en/about-us/legal-documents/deposit-guarantee"
+    ],
+    "contact": [
+      "https://www.handelsbanken.se/en/personal/contact-and-support",
+      "https://www.handelsbanken.se/en/personal/contact-and-support/inquiries-contact-form",
+      "https://www.handelsbanken.se/en/personal/contact-and-support/visit-us-on-social-media",
+      "https://www.handelsbanken.se/en/corporate/contact-us-corporate/security",
+      "https://www.handelsbanken.se/en/personal/contact-and-support/chat"
+    ],
+    "management": [],
+    "careers": [
+      "https://www.handelsbanken.se/sv/om-oss/jobba-hos-oss",
+      "https://www.handelsbanken.se/sv/om-oss/jobba-hos-oss/lediga-jobb",
+      "https://www.handelsbanken.se/sv/om-oss/jobba-hos-oss/handelsbanken-som-arbetsgivare",
+      "https://www.handelsbanken.se/sv/om-oss/jobba-hos-oss/mot-vara-medarbetare",
+      "https://www.handelsbanken.se/sv/om-oss/jobba-hos-oss/student"
+    ],
+    "products_services": [
+      "https://www.handelsbanken.se/en/corporate/digital-services",
+      "https://www.handelsbanken.se/en/personal/our-basic-offering",
+      "https://www.handelsbanken.se/en/personal/everyday-banking/digital-services",
+      "https://www.handelsbanken.se/en/personal/savings/mutual-funds/mutual-fund-unit-prices",
+      "https://www.handelsbanken.se/en/corporate/digital-services/online-banking"
+    ],
+    "group_structure": [
+      "https://www.handelsbanken.se/en/about-us/swedish-subsidiaries",
+      "https://www.handelsbanken.se/en/about-us/swedish-subsidiaries/handelsbanken-fonder",
+      "https://www.handelsbanken.se/en/about-us/swedish-subsidiaries/handelsbanken-fonder/fund-list-complete",
+      "https://www.handelsbanken.se/en/about-us/swedish-subsidiaries/handelsbanken-fonder/our-work",
+      "https://www.handelsbanken.se/en/about-us/legal-documents/privacy-notice"
+    ],
+    "legal_identity": [
+      "https://www.handelsbanken.se/en/about-us/legal-documents/lei",
+      "https://www.handelsbanken.se/sv/om-oss/juridiska-dokument/lei"
+    ]
+  },
+  "junk": [
+    "https://www.handelsbanken.se/en/about-us/legal-documents/deposit-guarantee",
+    "https://www.handelsbanken.se/en/about-us/legal-documents/emir",
+    "https://www.handelsbanken.se/en/about-us/legal-documents/execution-venues",
+    "https://www.handelsbanken.se/en/about-us/legal-documents/information-trading-in-securities",
+    "https://www.handelsbanken.se/en/about-us/legal-documents/lei",
+    "https://www.handelsbanken.se/en/about-us/legal-documents/nci-code",
+    "https://www.handelsbanken.se/en/about-us/legal-documents/regulations-insurancedistribution",
+    "https://www.handelsbanken.se/en/about-us/legal-documents/regulations-mifid",
+    "https://www.handelsbanken.se/en/about-us/legal-documents/regulations-psd2",
+    "https://www.handelsbanken.se/en/about-us/legal-documents/right-of-withdrawal",
+    "https://www.handelsbanken.se/en/about-us/legal-documents/cookies",
+    "https://www.handelsbanken.se/en/about-us/legal-documents/privacy-notice",
+    "https://www.handelsbanken.se/en/about-us/legal-documents/terms-and-conditions-corporate",
+    "https://www.handelsbanken.se/en/about-us/legal-documents/terms-and-conditions-personal",
+    "https://www.handelsbanken.se/en/find-branch",
+    "https://www.handelsbanken.se/en/personal/savings/crypto-currencies-virtual-assets",
+    "https://www.handelsbanken.se/en/personal/everyday-banking/debit-and-credit-cards/compare-travel-insurance-policies"
+  ],
+  "notes": "Draft generated from URL slugs and titles; correct by hand."
+}

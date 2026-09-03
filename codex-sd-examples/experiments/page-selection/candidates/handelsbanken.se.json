@@ -1,0 +1,2736 @@
+{
+  "domain": "handelsbanken.se",
+  "base_url": "https://www.handelsbanken.se/en/",
+  "preferred_languages": [
+    "en"
+  ],
+  "built_at": "2026-09-03T23:17:46+00:00",
+  "inventory_urls": 1099,
+  "eligible_urls": 1099,
+  "excluded_urls": 0,
+  "candidates": [
+    {
+      "url": "https://www.handelsbanken.se/en/",
+      "score": 68.0,
+      "reasons": [
+        "homepage",
+        "base locale"
+      ],
+      "title": "Personal, thoughtful advice for a lifetime of banking. | Handelsbanken",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.handelsbanken.se/en/personal/contact-and-support",
+      "score": 46.0,
+      "reasons": [
+        "base locale",
+        "contact",
+        "title mentions contact"
+      ],
+      "title": "Contact and support | Handelsbanken",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.handelsbanken.se/en/about-us/swedish-subsidiaries",
+      "score": 41.0,
+      "reasons": [
+        "base locale",
+        "about"
+      ],
+      "title": "Swedish subsidiaries | Handelsbanken",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.handelsbanken.se/en/personal/contact-and-support/inquiries-contact-form",
+      "score": 38.0,
+      "reasons": [
+        "base locale",
+        "contact"
+      ],
+      "title": "Inquiries and views | Handelsbanken",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.handelsbanken.se/en/personal/contact-and-support/visit-us-on-social-media",
+      "score": 33.0,
+      "reasons": [
+        "base locale",
+        "contact",
+        "press"
+      ],
+      "title": "Handelsbanken on social media | Handelsbanken",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.handelsbanken.se/en/corporate/digital-services",
+      "score": 23.0,
+      "reasons": [
+        "base locale",
+        "offering"
+      ],
+      "title": "Digital corporate services | Handelsbanken",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.handelsbanken.se/en/personal/our-basic-offering",
+      "score": 23.0,
+      "reasons": [
+        "base locale",
+        "offering"
+      ],
+      "title": "Our basic offering for day-to-day use | Handelsbanken",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.handelsbanken.se/en/personal/everyday-banking/digital-services",
+      "score": 20.0,
+      "reasons": [
+        "base locale",
+        "offering"
+      ],
+      "title": "Digital services | Handelsbanken",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.handelsbanken.se/en/personal/savings/mutual-funds/fund-reports",
+      "score": 20.0,
+      "reasons": [
+        "base locale",
+        "press",
+        "deep path"
+      ],
+      "title": "The funds' annual and semi-annual reports | Handelsbanken",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.handelsbanken.se/en/about-us/swedish-subsidiaries/handelsbanken-fonder",
+      "score": 18.0,
+      "reasons": [
+        "base locale",
+        "about"
+      ],
+      "title": "Handelsbanken Fonder AB − about the operations | Handelsbanken",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.handelsbanken.se/en/corporate/contact-us-corporate/security",
+      "score": 18.0,
+      "reasons": [
+        "base locale",
+        "contact"
+      ],
+      "title": "Security for corporates | Handelsbanken",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.handelsbanken.se/en/personal/contact-and-support/chat",
+      "score": 18.0,
+      "reasons": [
+        "base locale",
+        "contact"
+      ],
+      "title": "Chat with us | Handelsbanken",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.handelsbanken.se/en/personal/contact-and-support/complaints",
+      "score": 18.0,
+      "reasons": [
+        "base locale",
+        "contact"
+      ],
+      "title": "Complaints | Handelsbanken",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.handelsbanken.se/en/personal/contact-and-support/help-and-support",
+      "score": 18.0,
+      "reasons": [
+        "base locale",
+        "contact"
+      ],
+      "title": "Help and support | Handelsbanken",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.handelsbanken.se/en/personal/contact-and-support/security",
+      "score": 18.0,
+      "reasons": [
+        "base locale",
+        "contact"
+      ],
+      "title": "Security | Handelsbanken",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.handelsbanken.se/en/personal/savings/mutual-funds/mutual-fund-unit-prices",
+      "score": 17.0,
+      "reasons": [
+        "base locale",
+        "offering",
+        "deep path"
+      ],
+      "title": "Mutual fund unit prices | Handelsbanken",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.handelsbanken.se/en/about-us/swedish-subsidiaries/handelsbanken-fonder/fund-list-complete",
+      "score": 15.0,
+      "reasons": [
+        "base locale",
+        "about",
+        "deep path"
+      ],
+      "title": "Fund list all funds | Handelsbanken",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.handelsbanken.se/en/about-us/swedish-subsidiaries/handelsbanken-fonder/our-work",
+      "score": 15.0,
+      "reasons": [
+        "base locale",
+        "about",
+        "deep path"
+      ],
+      "title": "Follow our work | Handelsbanken",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.handelsbanken.se/en/personal/contact-and-support/help-and-support/activate-the-mobile-app",
+      "score": 15.0,
+      "reasons": [
+        "base locale",
+        "contact",
+        "deep path"
+      ],
+      "title": "Activate the mobile app | Handelsbanken",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.handelsbanken.se/en/personal/contact-and-support/help-and-support/card-reader-audio-version",
+      "score": 15.0,
+      "reasons": [
+        "base locale",
+        "contact",
+        "deep path"
+      ],
+      "title": "Card reader - audio version | Handelsbanken",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.handelsbanken.se/en/personal/contact-and-support/help-and-support/check-card-reader",
+      "score": 15.0,
+      "reasons": [
+        "base locale",
+        "contact",
+        "deep path"
+      ],
+      "title": "Check your card reader  | Handelsbanken",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.handelsbanken.se/en/personal/contact-and-support/help-and-support/choose-pin-for-your-log-in-card",
+      "score": 15.0,
+      "reasons": [
+        "base locale",
+        "contact",
+        "deep path"
+      ],
+      "title": "Choose PIN for your log-in card | Handelsbanken",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.handelsbanken.se/en/personal/contact-and-support/help-and-support/help-with-apps",
+      "score": 15.0,
+      "reasons": [
+        "base locale",
+        "contact",
+        "deep path"
+      ],
+      "title": "Help and support with our apps | Handelsbanken",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.handelsbanken.se/en/personal/contact-and-support/help-and-support/help-with-bankid-on-card",
+      "score": 15.0,
+      "reasons": [
+        "base locale",
+        "contact",
+        "deep path"
+      ],
+      "title": "Help with BankID and log-in problems | Handelsbanken",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.handelsbanken.se/en/personal/contact-and-support/help-and-support/help-with-mobile-bankid",
+      "score": 15.0,
+      "reasons": [
+        "base locale",
+        "contact",
+        "deep path"
+      ],
+      "title": "Help with Mobile BankID | Handelsbanken",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.handelsbanken.se/en/personal/contact-and-support/help-and-support/installation-card-reader-with-cable",
+      "score": 15.0,
+      "reasons": [
+        "base locale",
+        "contact",
+        "deep path"
+      ],
+      "title": "Installation for card reader with cable | Handelsbanken",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.handelsbanken.se/en/personal/contact-and-support/help-and-support/system-requirements",
+      "score": 15.0,
+      "reasons": [
+        "base locale",
+        "contact",
+        "deep path"
+      ],
+      "title": "System requirements | Handelsbanken",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.handelsbanken.se/en/personal/contact-and-support/security/current-frauds",
+      "score": 15.0,
+      "reasons": [
+        "base locale",
+        "contact",
+        "deep path"
+      ],
+      "title": "Current frauds | Handelsbanken",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.handelsbanken.se/en/corporate",
+      "score": 14.0,
+      "reasons": [
+        "base locale"
+      ],
+      "title": "Your personal corporate bank | Handelsbanken",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.handelsbanken.se/en/personal",
+      "score": 14.0,
+      "reasons": [
+        "base locale"
+      ],
+      "title": null,
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.handelsbanken.se/en/corporate/digital-services/online-banking",
+      "score": 12.0,
+      "reasons": [
+        "base locale",
+        "offering"
+      ],
+      "title": "Online Banking for corporates | Handelsbanken",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.handelsbanken.se/en/about-us/legal-documents/deposit-guarantee",
+      "score": 11.333333333333334,
+      "reasons": [
+        "base locale",
+        "about",
+        "legal"
+      ],
+      "title": "Deposit guarantee | Handelsbanken",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.handelsbanken.se/en/about-us/legal-documents/emir",
+      "score": 11.333333333333334,
+      "reasons": [
+        "base locale",
+        "about",
+        "legal"
+      ],
+      "title": "EMIR – EU’s Markets Infrastructure Regulation  | Handelsbanken",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.handelsbanken.se/en/about-us/legal-documents/execution-venues",
+      "score": 11.333333333333334,
+      "reasons": [
+        "base locale",
+        "about",
+        "legal"
+      ],
+      "title": "Execution venues | Handelsbanken",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.handelsbanken.se/en/about-us/legal-documents/information-trading-in-securities",
+      "score": 11.333333333333334,
+      "reasons": [
+        "base locale",
+        "about",
+        "legal"
+      ],
+      "title": "Useful and important information | Handelsbanken",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.handelsbanken.se/en/about-us/legal-documents/lei",
+      "score": 11.333333333333334,
+      "reasons": [
+        "base locale",
+        "about",
+        "legal"
+      ],
+      "title": "LEI | Handelsbanken",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.handelsbanken.se/en/about-us/legal-documents/nci-code",
+      "score": 11.333333333333334,
+      "reasons": [
+        "base locale",
+        "about",
+        "legal"
+      ],
+      "title": "NCI Code | Handelsbanken",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.handelsbanken.se/en/about-us/legal-documents/regulations-insurancedistribution",
+      "score": 11.333333333333334,
+      "reasons": [
+        "base locale",
+        "about",
+        "legal"
+      ],
+      "title": "Insurance distribution | Handelsbanken",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.handelsbanken.se/en/about-us/legal-documents/regulations-mifid",
+      "score": 11.333333333333334,
+      "reasons": [
+        "base locale",
+        "about",
+        "legal"
+      ],
+      "title": "MiFID | Handelsbanken",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.handelsbanken.se/en/about-us/legal-documents/regulations-psd2",
+      "score": 11.333333333333334,
+      "reasons": [
+        "base locale",
+        "about",
+        "legal"
+      ],
+      "title": "PSD2 | Handelsbanken",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.handelsbanken.se/en/about-us/legal-documents/right-of-withdrawal",
+      "score": 11.333333333333334,
+      "reasons": [
+        "base locale",
+        "about",
+        "legal"
+      ],
+      "title": "Right of withdrawal from financial services | Handelsbanken",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.handelsbanken.se/en/corporate/anti-money-laundering",
+      "score": 11.0,
+      "reasons": [
+        "base locale"
+      ],
+      "title": "Anti money laundering | Handelsbanken",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.handelsbanken.se/en/corporate/become-customer",
+      "score": 11.0,
+      "reasons": [
+        "base locale"
+      ],
+      "title": "Become a corporate customer | Handelsbanken",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.handelsbanken.se/en/corporate/financing",
+      "score": 11.0,
+      "reasons": [
+        "base locale"
+      ],
+      "title": "Corporate financing | Handelsbanken",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.handelsbanken.se/en/corporate/investments",
+      "score": 11.0,
+      "reasons": [
+        "base locale"
+      ],
+      "title": "Investments for your company | Handelsbanken",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.handelsbanken.se/en/corporate/our-corporate-packages",
+      "score": 11.0,
+      "reasons": [
+        "base locale"
+      ],
+      "title": "Corporate packages | Handelsbanken",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.handelsbanken.se/en/corporate/pensions-and-insurance",
+      "score": 11.0,
+      "reasons": [
+        "base locale"
+      ],
+      "title": "Pensions and insurance for your company | Handelsbanken",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.handelsbanken.se/en/corporate/you-and-the-bank",
+      "score": 11.0,
+      "reasons": [
+        "base locale"
+      ],
+      "title": null,
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.handelsbanken.se/en/personal/becoming-a-customer",
+      "score": 11.0,
+      "reasons": [
+        "base locale"
+      ],
+      "title": "Becoming a customer | Handelsbanken",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.handelsbanken.se/en/personal/everyday-banking",
+      "score": 11.0,
+      "reasons": [
+        "base locale"
+      ],
+      "title": "Everyday banking | Handelsbanken",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.handelsbanken.se/en/personal/mortgage-loan",
+      "score": 11.0,
+      "reasons": [
+        "base locale"
+      ],
+      "title": "Mortgage loan | Handelsbanken",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.handelsbanken.se/en/personal/savings-and-pensions",
+      "score": 11.0,
+      "reasons": [
+        "base locale"
+      ],
+      "title": "Savings and pensions | Handelsbanken",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.handelsbanken.se/en/personal/everyday-banking/digital-services/log-in-methods",
+      "score": 9.0,
+      "reasons": [
+        "base locale",
+        "offering",
+        "deep path"
+      ],
+      "title": "Log-in methods | Handelsbanken",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.handelsbanken.se/en/personal/everyday-banking/digital-services/mobile-bankid",
+      "score": 9.0,
+      "reasons": [
+        "base locale",
+        "offering",
+        "deep path"
+      ],
+      "title": "Mobile BankID | Handelsbanken",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.handelsbanken.se/en/personal/everyday-banking/digital-services/mobile-banking",
+      "score": 9.0,
+      "reasons": [
+        "base locale",
+        "offering",
+        "deep path"
+      ],
+      "title": "Mobile Banking | Handelsbanken",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.handelsbanken.se/en/personal/everyday-banking/digital-services/new-mobile",
+      "score": 9.0,
+      "reasons": [
+        "base locale",
+        "offering",
+        "deep path"
+      ],
+      "title": "Do you have a new mobile phone - Handelsbanken | Handelsbanken",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.handelsbanken.se/en/personal/everyday-banking/digital-services/online-banking",
+      "score": 9.0,
+      "reasons": [
+        "base locale",
+        "offering",
+        "deep path"
+      ],
+      "title": "Online Banking | Handelsbanken",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.handelsbanken.se/en/personal/everyday-banking/digital-services/our-card-readers",
+      "score": 9.0,
+      "reasons": [
+        "base locale",
+        "offering",
+        "deep path"
+      ],
+      "title": null,
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.handelsbanken.se/en/personal/everyday-banking/digital-services/swish",
+      "score": 9.0,
+      "reasons": [
+        "base locale",
+        "offering",
+        "deep path"
+      ],
+      "title": "Pay using Swish – get started today  | Handelsbanken",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.handelsbanken.se/en/corporate/you-and-the-bank/for-your-type-of-business",
+      "score": 8.0,
+      "reasons": [
+        "base locale"
+      ],
+      "title": null,
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.handelsbanken.se/en/personal/becoming-a-customer/switch-bank",
+      "score": 8.0,
+      "reasons": [
+        "base locale"
+      ],
+      "title": "Switch bank | Handelsbanken",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.handelsbanken.se/en/personal/becoming-a-customer/why-we-ask-questions",
+      "score": 8.0,
+      "reasons": [
+        "base locale"
+      ],
+      "title": "Anti-money laundering | Handelsbanken",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.handelsbanken.se/en/personal/everyday-banking/debit-and-credit-cards",
+      "score": 8.0,
+      "reasons": [
+        "base locale"
+      ],
+      "title": "Debit and credit cards | Handelsbanken",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.handelsbanken.se/en/personal/mortgage-loan/committed-loan-offers-and-mortgage-loans",
+      "score": 8.0,
+      "reasons": [
+        "base locale"
+      ],
+      "title": "Committed loan offers and mortgage loans | Handelsbanken",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.handelsbanken.se/en/personal/mortgage-loan/mortgage-loan-calculator",
+      "score": 8.0,
+      "reasons": [
+        "base locale"
+      ],
+      "title": "Mortgage loan calculator | Handelsbanken",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.handelsbanken.se/en/personal/savings/domiciled-outside-sweden",
+      "score": 8.0,
+      "reasons": [
+        "base locale"
+      ],
+      "title": "Do you live outside Sweden? | Handelsbanken",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.handelsbanken.se/en/personal/savings/mutual-funds",
+      "score": 8.0,
+      "reasons": [
+        "base locale"
+      ],
+      "title": "Mutual funds | Handelsbanken",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.handelsbanken.se/sv/om-oss",
+      "score": 8.0,
+      "reasons": [
+        "other locale 'sv'",
+        "about"
+      ],
+      "title": "Om oss | Handelsbanken",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.handelsbanken.se/en/personal/everyday-banking/debit-and-credit-cards/card-dispute",
+      "score": 5.0,
+      "reasons": [
+        "base locale",
+        "deep path"
+      ],
+      "title": "Card dispute | Handelsbanken",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.handelsbanken.se/en/personal/everyday-banking/debit-and-credit-cards/compare-cards",
+      "score": 5.0,
+      "reasons": [
+        "base locale",
+        "deep path"
+      ],
+      "title": "Compare cards  | Handelsbanken",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.handelsbanken.se/en/personal/everyday-banking/debit-and-credit-cards/currency-exchange-calculator",
+      "score": 5.0,
+      "reasons": [
+        "base locale",
+        "deep path"
+      ],
+      "title": "Currency conversion fee | Handelsbanken",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.handelsbanken.se/en/personal/everyday-banking/payments/cross-border-payments",
+      "score": 5.0,
+      "reasons": [
+        "base locale",
+        "deep path"
+      ],
+      "title": "Cross-border payments | Handelsbanken",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.handelsbanken.se/en/personal/savings/mutual-funds/investor-protection-for-mutual-fund-savers",
+      "score": 5.0,
+      "reasons": [
+        "base locale",
+        "deep path"
+      ],
+      "title": "Investor protection for mutual fund savers | Handelsbanken",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.handelsbanken.se/en/personal/savings/mutual-funds/your-rights-as-an-investor",
+      "score": 5.0,
+      "reasons": [
+        "base locale",
+        "deep path"
+      ],
+      "title": "Your rights as an investor | Handelsbanken",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.handelsbanken.se/sv/foretag/kontakta-oss-foretag",
+      "score": 5.0,
+      "reasons": [
+        "other locale 'sv'",
+        "contact"
+      ],
+      "title": "Personlig kundservice för företag | Handelsbanken",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.handelsbanken.se/sv/om-oss/jobba-hos-oss",
+      "score": 5.0,
+      "reasons": [
+        "other locale 'sv'",
+        "about",
+        "careers"
+      ],
+      "title": "Jobba hos oss | Handelsbanken",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.handelsbanken.se/sv/privat/kontakt-och-support",
+      "score": 5.0,
+      "reasons": [
+        "other locale 'sv'",
+        "contact"
+      ],
+      "title": "Kontakta oss på ett sätt som passar dig | Handelsbanken",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.handelsbanken.se/en/ekonomi-i-livet/privatekonomi/boendeekonomi/kopa-bostad/budgivning",
+      "score": 2.0,
+      "reasons": [
+        "base locale",
+        "deep path"
+      ],
+      "title": "Budgivning − strategi och att tänka på inför  | Handelsbanken",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.handelsbanken.se/sv/om-oss/jobba-hos-oss/lediga-jobb",
+      "score": 2.0,
+      "reasons": [
+        "other locale 'sv'",
+        "about",
+        "careers",
+        "deep path"
+      ],
+      "title": "Lediga jobb | Handelsbanken",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.handelsbanken.se/sv/privat/spara/private-banking/kontakta-private-banking",
+      "score": -1.0,
+      "reasons": [
+        "other locale 'sv'",
+        "contact",
+        "deep path"
+      ],
+      "title": "Kontakta Private Banking internationellt | Handelsbanken",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.handelsbanken.se/en/about-us/legal-documents/cookies",
+      "score": -2.0,
+      "reasons": [
+        "base locale",
+        "about",
+        "legal"
+      ],
+      "title": "Cookies on Handelsbanken.se | Handelsbanken",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.handelsbanken.se/en/about-us/legal-documents/privacy-notice",
+      "score": -2.0,
+      "reasons": [
+        "base locale",
+        "about",
+        "legal"
+      ],
+      "title": "Information on the processing of personal data in the Handelsbanken Group  | Handelsbanken",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.handelsbanken.se/en/about-us/legal-documents/terms-and-conditions-corporate",
+      "score": -2.0,
+      "reasons": [
+        "base locale",
+        "about",
+        "legal"
+      ],
+      "title": "Terms and conditions  – corporate payment services   | Handelsbanken",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.handelsbanken.se/en/about-us/legal-documents/terms-and-conditions-personal",
+      "score": -2.0,
+      "reasons": [
+        "base locale",
+        "about",
+        "legal"
+      ],
+      "title": "Terms and conditions – private customers | Handelsbanken",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.handelsbanken.se/en/find-branch",
+      "score": -6.0,
+      "reasons": [
+        "base locale",
+        "branch locator"
+      ],
+      "title": "Find branch | Handelsbanken",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.handelsbanken.se/sv/om-oss/jobba-hos-oss/handelsbanken-som-arbetsgivare",
+      "score": -11.333333333333334,
+      "reasons": [
+        "other locale 'sv'",
+        "about",
+        "careers",
+        "deep path"
+      ],
+      "title": "Handelsbanken som arbetsgivare | Handelsbanken",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.handelsbanken.se/sv/om-oss/jobba-hos-oss/mot-vara-medarbetare",
+      "score": -11.333333333333334,
+      "reasons": [
+        "other locale 'sv'",
+        "about",
+        "careers",
+        "deep path"
+      ],
+      "title": "Möt våra medarbetare | Handelsbanken",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.handelsbanken.se/sv/om-oss/jobba-hos-oss/student",
+      "score": -11.333333333333334,
+      "reasons": [
+        "other locale 'sv'",
+        "about",
+        "careers",
+        "deep path"
+      ],
+      "title": "Student | Handelsbanken",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.handelsbanken.se/sv/om-oss/jobba-hos-oss/tech-data-innovation",
+      "score": -11.333333333333334,
+      "reasons": [
+        "other locale 'sv'",
+        "about",
+        "careers",
+        "deep path"
+      ],
+      "title": "Jobba inom tech, data och innovation | Handelsbanken",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.handelsbanken.se/en/personal/savings/crypto-currencies-virtual-assets",
+      "score": -12.0,
+      "reasons": [
+        "base locale",
+        "utility"
+      ],
+      "title": "Crypto currencies virtual assets | Handelsbanken",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.handelsbanken.se/sv/om-oss/juridiska-dokument/prislistor-privat/prislista-spara/prislista-ovriga-finansiella-tjanster",
+      "score": -12.0,
+      "reasons": [
+        "other locale 'sv'",
+        "about",
+        "offering",
+        "deep path"
+      ],
+      "title": "Prislista övriga finansiella | Handelsbanken",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.handelsbanken.se/sv/foretag/digitala-tjanster",
+      "score": -13.0,
+      "reasons": [
+        "other locale 'sv'",
+        "offering"
+      ],
+      "title": "Digitala banktjänster för företag | Handelsbanken",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.handelsbanken.se/sv/om-oss/jobba-hos-oss/handelsbanken-som-arbetsgivare/formaner",
+      "score": -14.333333333333334,
+      "reasons": [
+        "other locale 'sv'",
+        "about",
+        "careers",
+        "deep path"
+      ],
+      "title": "Förmåner | Handelsbanken",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.handelsbanken.se/sv/om-oss/jobba-hos-oss/student/program-for-studenter",
+      "score": -14.333333333333334,
+      "reasons": [
+        "other locale 'sv'",
+        "about",
+        "careers",
+        "deep path"
+      ],
+      "title": "Program för studenter | Handelsbanken",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.handelsbanken.se/en/personal/everyday-banking/debit-and-credit-cards/compare-travel-insurance-policies",
+      "score": -15.0,
+      "reasons": [
+        "base locale",
+        "legal",
+        "deep path"
+      ],
+      "title": "Compare travel insurance policies that are included with our cards | Handelsbanken",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.handelsbanken.se/sv/om-oss/hallbarhet",
+      "score": -15.0,
+      "reasons": [
+        "other locale 'sv'",
+        "about"
+      ],
+      "title": "Hållbarhet i Handelsbanken | Handelsbanken",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.handelsbanken.se/sv/om-oss/juridiska-dokument",
+      "score": -15.0,
+      "reasons": [
+        "other locale 'sv'",
+        "about"
+      ],
+      "title": "Juridiska dokument  | Handelsbanken",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.handelsbanken.se/sv/om-oss/lander-oppna-for-utlandsbetalningar",
+      "score": -15.0,
+      "reasons": [
+        "other locale 'sv'",
+        "about"
+      ],
+      "title": "Länder tillgängliga för utlandsbetalningar | Handelsbanken",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.handelsbanken.se/sv/om-oss/svenska-dotterbolag",
+      "score": -15.0,
+      "reasons": [
+        "other locale 'sv'",
+        "about"
+      ],
+      "title": "Svenska dotterbolag | Handelsbanken",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.handelsbanken.se/sv/om-oss/visselblasning",
+      "score": -15.0,
+      "reasons": [
+        "other locale 'sv'",
+        "about"
+      ],
+      "title": "Visselblåsning | Handelsbanken",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.handelsbanken.se/sv/foretag/konton-betalningar/tjanster-som-forenklar",
+      "score": -16.0,
+      "reasons": [
+        "other locale 'sv'",
+        "offering",
+        "deep path"
+      ],
+      "title": "Tjänster som förenklar ekonomin | Handelsbanken",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.handelsbanken.se/sv/privat/spara/fonder/fonders-nyheter",
+      "score": -16.0,
+      "reasons": [
+        "other locale 'sv'",
+        "press",
+        "deep path"
+      ],
+      "title": "Nyheter om våra fonder  | Handelsbanken",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.handelsbanken.se/sv/privat/vardagstjanster/digitala-tjanster",
+      "score": -16.0,
+      "reasons": [
+        "other locale 'sv'",
+        "offering",
+        "deep path"
+      ],
+      "title": "Digitala banktjänster  | Handelsbanken",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.handelsbanken.se/sv/foretag/kontakta-oss-foretag/skydda-foretaget-mot-bedragerier",
+      "score": -18.0,
+      "reasons": [
+        "other locale 'sv'",
+        "contact",
+        "deep path"
+      ],
+      "title": "Så skyddar du företaget mot bedrägeri | Handelsbanken",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.handelsbanken.se/sv/om-oss/juridiska-dokument/angerratt",
+      "score": -18.0,
+      "reasons": [
+        "other locale 'sv'",
+        "about",
+        "deep path"
+      ],
+      "title": "Ångerrätt av finansiella tjänster | Handelsbanken",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.handelsbanken.se/sv/om-oss/juridiska-dokument/betaltjanstdirektivet-psd2",
+      "score": -18.0,
+      "reasons": [
+        "other locale 'sv'",
+        "about",
+        "deep path"
+      ],
+      "title": "Betaltjänstdirektivet PSD2 | Handelsbanken",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.handelsbanken.se/sv/om-oss/juridiska-dokument/emir",
+      "score": -18.0,
+      "reasons": [
+        "other locale 'sv'",
+        "about",
+        "deep path"
+      ],
+      "title": "Information om Europeiska regelverket EMIR  | Handelsbanken",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.handelsbanken.se/sv/om-oss/juridiska-dokument/incitament",
+      "score": -18.0,
+      "reasons": [
+        "other locale 'sv'",
+        "about",
+        "deep path"
+      ],
+      "title": "Incitament | Handelsbanken",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.handelsbanken.se/sv/om-oss/juridiska-dokument/information-handla-vardepapper",
+      "score": -18.0,
+      "reasons": [
+        "other locale 'sv'",
+        "about",
+        "deep path"
+      ],
+      "title": "Information för dig som handlar med värdepapper | Handelsbanken",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.handelsbanken.se/sv/om-oss/juridiska-dokument/informationsblad-placeringsprodukter",
+      "score": -18.0,
+      "reasons": [
+        "other locale 'sv'",
+        "about",
+        "deep path"
+      ],
+      "title": "Informationsblad  | Handelsbanken",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.handelsbanken.se/sv/om-oss/juridiska-dokument/innan-handel",
+      "score": -18.0,
+      "reasons": [
+        "other locale 'sv'",
+        "about",
+        "deep path"
+      ],
+      "title": "Innan du handlar med värdepapper – viktig information | Handelsbanken",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.handelsbanken.se/sv/om-oss/juridiska-dokument/insattningsgaranti",
+      "score": -18.0,
+      "reasons": [
+        "other locale 'sv'",
+        "about",
+        "deep path"
+      ],
+      "title": "Insättningsgaranti | Handelsbanken",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.handelsbanken.se/sv/om-oss/juridiska-dokument/integritet-och-datalagring-i-appen",
+      "score": -18.0,
+      "reasons": [
+        "other locale 'sv'",
+        "about",
+        "deep path"
+      ],
+      "title": "Integritet och datalagring i appen | Handelsbanken",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.handelsbanken.se/sv/om-oss/juridiska-dokument/lei",
+      "score": -18.0,
+      "reasons": [
+        "other locale 'sv'",
+        "about",
+        "deep path"
+      ],
+      "title": "LEI-nummer | Handelsbanken",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.handelsbanken.se/sv/om-oss/juridiska-dokument/marknadsmanipulation",
+      "score": -18.0,
+      "reasons": [
+        "other locale 'sv'",
+        "about",
+        "deep path"
+      ],
+      "title": "Marknadsmanipulation | Handelsbanken",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.handelsbanken.se/sv/om-oss/juridiska-dokument/nid",
+      "score": -18.0,
+      "reasons": [
+        "other locale 'sv'",
+        "about",
+        "deep path"
+      ],
+      "title": "NID-nummer – global identifieringskod för handel med värdepapper | Handelsbanken",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.handelsbanken.se/sv/om-oss/juridiska-dokument/personuppgifter",
+      "score": -18.0,
+      "reasons": [
+        "other locale 'sv'",
+        "about",
+        "deep path"
+      ],
+      "title": "Behandling av personuppgifter i koncernen Handelsbanken | Handelsbanken",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.handelsbanken.se/sv/om-oss/juridiska-dokument/prislistor-privat",
+      "score": -18.0,
+      "reasons": [
+        "other locale 'sv'",
+        "about",
+        "deep path"
+      ],
+      "title": "Prislistor | Handelsbanken",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.handelsbanken.se/sv/om-oss/juridiska-dokument/regelverk-forsakringsdistribution",
+      "score": -18.0,
+      "reasons": [
+        "other locale 'sv'",
+        "about",
+        "deep path"
+      ],
+      "title": "Försäkringsdistribution | Handelsbanken",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.handelsbanken.se/sv/om-oss/juridiska-dokument/regelverk-mifid",
+      "score": -18.0,
+      "reasons": [
+        "other locale 'sv'",
+        "about",
+        "deep path"
+      ],
+      "title": "MiFID | Handelsbanken",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.handelsbanken.se/sv/om-oss/juridiska-dokument/utforandeplatser",
+      "score": -18.0,
+      "reasons": [
+        "other locale 'sv'",
+        "about",
+        "deep path"
+      ],
+      "title": "Utförandeplatser | Handelsbanken",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.handelsbanken.se/sv/om-oss/juridiska-dokument/viktig-information-vid-handel",
+      "score": -18.0,
+      "reasons": [
+        "other locale 'sv'",
+        "about",
+        "deep path"
+      ],
+      "title": "Viktig information vid handel | Handelsbanken",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.handelsbanken.se/sv/om-oss/juridiska-dokument/villkor",
+      "score": -18.0,
+      "reasons": [
+        "other locale 'sv'",
+        "about",
+        "deep path"
+      ],
+      "title": "Villkor | Handelsbanken",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.handelsbanken.se/sv/om-oss/juridiska-dokument/villkor-foretag",
+      "score": -18.0,
+      "reasons": [
+        "other locale 'sv'",
+        "about",
+        "deep path"
+      ],
+      "title": "Villkor företag | Handelsbanken",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.handelsbanken.se/sv/om-oss/svenska-dotterbolag/handelsbanken-fonder",
+      "score": -18.0,
+      "reasons": [
+        "other locale 'sv'",
+        "about",
+        "deep path"
+      ],
+      "title": "Handelsbanken Fonder AB − om verksamheten | Handelsbanken",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.handelsbanken.se/sv/om-oss/svenska-dotterbolag/handelsbanken-liv",
+      "score": -18.0,
+      "reasons": [
+        "other locale 'sv'",
+        "about",
+        "deep path"
+      ],
+      "title": "Handelsbanken Liv | Handelsbanken",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.handelsbanken.se/sv/om-oss/svenska-dotterbolag/stadshypotek",
+      "score": -18.0,
+      "reasons": [
+        "other locale 'sv'",
+        "about",
+        "deep path"
+      ],
+      "title": "Stadshypotek | Handelsbanken",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.handelsbanken.se/sv/privat/kontakt-och-support/chatt",
+      "score": -18.0,
+      "reasons": [
+        "other locale 'sv'",
+        "contact",
+        "deep path"
+      ],
+      "title": "Chatt | Handelsbanken",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.handelsbanken.se/sv/privat/kontakt-och-support/hjalp-och-support",
+      "score": -18.0,
+      "reasons": [
+        "other locale 'sv'",
+        "contact",
+        "deep path"
+      ],
+      "title": "Hjälp och support för våra digitala tjänster | Handelsbanken",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.handelsbanken.se/sv/privat/kontakt-och-support/klagomal",
+      "score": -18.0,
+      "reasons": [
+        "other locale 'sv'",
+        "contact",
+        "deep path"
+      ],
+      "title": "Klagomål | Handelsbanken",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.handelsbanken.se/sv/privat/kontakt-och-support/om-var-radgivning",
+      "score": -18.0,
+      "reasons": [
+        "other locale 'sv'",
+        "contact",
+        "deep path"
+      ],
+      "title": "Ekonomisk rådgivning för privatpersoner  | Handelsbanken",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.handelsbanken.se/sv/privat/kontakt-och-support/sakerhet-bedrageri",
+      "score": -18.0,
+      "reasons": [
+        "other locale 'sv'",
+        "contact",
+        "deep path"
+      ],
+      "title": "Säkerhet och bedrägeri | Handelsbanken",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.handelsbanken.se/sv/privat/kontakt-och-support/synpunkter-formular",
+      "score": -18.0,
+      "reasons": [
+        "other locale 'sv'",
+        "contact",
+        "deep path"
+      ],
+      "title": "Synpunkter | Handelsbanken",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.handelsbanken.se/sv/privat/kontakt-och-support/traffa-oss-pa-sociala-medier",
+      "score": -18.0,
+      "reasons": [
+        "other locale 'sv'",
+        "contact",
+        "deep path"
+      ],
+      "title": "Handelsbanken på sociala medier | Handelsbanken",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.handelsbanken.se/sv/foretag/kund-hos-oss/for-din-bransch/tjanster",
+      "score": -19.0,
+      "reasons": [
+        "other locale 'sv'",
+        "offering",
+        "deep path"
+      ],
+      "title": "Tjänsteföretag  | Handelsbanken",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.handelsbanken.se/sv/privat/spara/aktier-och-andra-vardepapper/borshandlade-produkter",
+      "score": -19.0,
+      "reasons": [
+        "other locale 'sv'",
+        "offering",
+        "deep path"
+      ],
+      "title": "Börshandlade produkter − så fungerar det  | Handelsbanken",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.handelsbanken.se/sv/om-oss/juridiska-dokument/prislistor-privat/prislista-forsakringar",
+      "score": -21.0,
+      "reasons": [
+        "other locale 'sv'",
+        "about",
+        "deep path"
+      ],
+      "title": "Prislista trygghetsförsäkringar | Handelsbanken",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.handelsbanken.se/sv/om-oss/juridiska-dokument/prislistor-privat/prislista-konton-och-betaltjanster",
+      "score": -21.0,
+      "reasons": [
+        "other locale 'sv'",
+        "about",
+        "deep path"
+      ],
+      "title": "Prislista för privatpersoner konton och betaltjänster  | Handelsbanken",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.handelsbanken.se/sv/om-oss/juridiska-dokument/prislistor-privat/prislista-kreditkort",
+      "score": -21.0,
+      "reasons": [
+        "other locale 'sv'",
+        "about",
+        "deep path"
+      ],
+      "title": "Prislista för privatpersoner kort | Handelsbanken",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.handelsbanken.se/sv/om-oss/juridiska-dokument/prislistor-privat/prislista-lan",
+      "score": -21.0,
+      "reasons": [
+        "other locale 'sv'",
+        "about",
+        "deep path"
+      ],
+      "title": "Prislista för privatpersoner lån  | Handelsbanken",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.handelsbanken.se/sv/om-oss/juridiska-dokument/prislistor-privat/prislista-pension-och-kapitalforsakring",
+      "score": -21.0,
+      "reasons": [
+        "other locale 'sv'",
+        "about",
+        "deep path"
+      ],
+      "title": "Prislista pension och kapitalförsäkring | Handelsbanken",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.handelsbanken.se/sv/om-oss/juridiska-dokument/prislistor-privat/prislista-spara",
+      "score": -21.0,
+      "reasons": [
+        "other locale 'sv'",
+        "about",
+        "deep path"
+      ],
+      "title": "Prislista för våra sparprodukter  | Handelsbanken",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.handelsbanken.se/sv/om-oss/juridiska-dokument/villkor-privatpersoner/historiska-villkor",
+      "score": -21.0,
+      "reasons": [
+        "other locale 'sv'",
+        "about",
+        "deep path"
+      ],
+      "title": "Historiska villkor | Handelsbanken",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.handelsbanken.se/sv/om-oss/svenska-dotterbolag/handelsbanken-fonder/fonder-utmarkelser",
+      "score": -21.0,
+      "reasons": [
+        "other locale 'sv'",
+        "about",
+        "deep path"
+      ],
+      "title": "Handelsbanken Fonders utmärkelser | Handelsbanken",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.handelsbanken.se/sv/om-oss/svenska-dotterbolag/handelsbanken-fonder/fondlista-komplett",
+      "score": -21.0,
+      "reasons": [
+        "other locale 'sv'",
+        "about",
+        "deep path"
+      ],
+      "title": "Fondlista − Alla fonder | Handelsbanken",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.handelsbanken.se/sv/om-oss/svenska-dotterbolag/handelsbanken-fonder/hallbarhet-i-fonder",
+      "score": -21.0,
+      "reasons": [
+        "other locale 'sv'",
+        "about",
+        "deep path"
+      ],
+      "title": "Hållbarhet i Handelsbanken Fonder | Handelsbanken",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.handelsbanken.se/sv/om-oss/svenska-dotterbolag/handelsbanken-fonder/om-handelsbanken-fonder",
+      "score": -21.0,
+      "reasons": [
+        "other locale 'sv'",
+        "about",
+        "deep path"
+      ],
+      "title": "Om Handelsbanken Fonder | Handelsbanken",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.handelsbanken.se/sv/om-oss/svenska-dotterbolag/handelsbanken-fonder/paverkansarbete",
+      "score": -21.0,
+      "reasons": [
+        "other locale 'sv'",
+        "about",
+        "deep path"
+      ],
+      "title": "Påverkansarbete | Handelsbanken",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.handelsbanken.se/sv/om-oss/svenska-dotterbolag/handelsbanken-fonder/samarbeten-och-branschinitiativ",
+      "score": -21.0,
+      "reasons": [
+        "other locale 'sv'",
+        "about",
+        "deep path"
+      ],
+      "title": "Investerarnätverk och samarbeten | Handelsbanken",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.handelsbanken.se/sv/om-oss/svenska-dotterbolag/handelsbanken-fonder/valja-bort",
+      "score": -21.0,
+      "reasons": [
+        "other locale 'sv'",
+        "about",
+        "deep path"
+      ],
+      "title": "Fondbolaget väljer bort branscher  | Handelsbanken",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.handelsbanken.se/sv/om-oss/svenska-dotterbolag/handelsbanken-fonder/valja-in",
+      "score": -21.0,
+      "reasons": [
+        "other locale 'sv'",
+        "about",
+        "deep path"
+      ],
+      "title": "Välja in | Handelsbanken",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.handelsbanken.se/sv/om-oss/svenska-dotterbolag/handelsbanken-fonder/vara-hallbarhetsmal",
+      "score": -21.0,
+      "reasons": [
+        "other locale 'sv'",
+        "about",
+        "deep path"
+      ],
+      "title": "Våra hållbarhetsmål | Handelsbanken",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.handelsbanken.se/sv/om-oss/svenska-dotterbolag/handelsbanken-fonder/vart-arbete",
+      "score": -21.0,
+      "reasons": [
+        "other locale 'sv'",
+        "about",
+        "deep path"
+      ],
+      "title": "Följ vårt arbete | Handelsbanken",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.handelsbanken.se/sv/om-oss/svenska-dotterbolag/handelsbanken-liv/hallbarhet-i-livs-placeringar",
+      "score": -21.0,
+      "reasons": [
+        "other locale 'sv'",
+        "about",
+        "deep path"
+      ],
+      "title": "Hållbarhet i Handelsbanken Livs placeringar | Handelsbanken",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.handelsbanken.se/sv/om-oss/svenska-dotterbolag/handelsbanken-liv/integrering-av-hallbarhetsrisker",
+      "score": -21.0,
+      "reasons": [
+        "other locale 'sv'",
+        "about",
+        "deep path"
+      ],
+      "title": "Integrering av hållbarhetsrisker i investeringsbesluten | Handelsbanken",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.handelsbanken.se/sv/om-oss/svenska-dotterbolag/handelsbanken-liv/redogorelse-for-huvudsakliga",
+      "score": -21.0,
+      "reasons": [
+        "other locale 'sv'",
+        "about",
+        "deep path"
+      ],
+      "title": "Redogörelse för huvudsakliga negativa konsekvenser på hållbarhetsfaktorer | Handelsbanken",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.handelsbanken.se/sv/privat/kontakt-och-support/hjalp-och-support/aktivera-appen",
+      "score": -21.0,
+      "reasons": [
+        "other locale 'sv'",
+        "contact",
+        "deep path"
+      ],
+      "title": "Aktivera appen | Handelsbanken",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.handelsbanken.se/sv/privat/kontakt-och-support/hjalp-och-support/behorigheter-appen",
+      "score": -21.0,
+      "reasons": [
+        "other locale 'sv'",
+        "contact",
+        "deep path"
+      ],
+      "title": "Behörigheter som appen kräver | Handelsbanken",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.handelsbanken.se/sv/privat/kontakt-och-support/hjalp-och-support/hjalp-bankid-pa-kort",
+      "score": -21.0,
+      "reasons": [
+        "other locale 'sv'",
+        "contact",
+        "deep path"
+      ],
+      "title": "Hjälp & support för BankID på kort | Handelsbanken",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.handelsbanken.se/sv/privat/kontakt-och-support/hjalp-och-support/hjalp-med-apparna",
+      "score": -21.0,
+      "reasons": [
+        "other locale 'sv'",
+        "contact",
+        "deep path"
+      ],
+      "title": "Hjälp och support med våra appar | Handelsbanken",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.handelsbanken.se/sv/privat/kontakt-och-support/hjalp-och-support/hjalp-med-mobilt-bankid",
+      "score": -21.0,
+      "reasons": [
+        "other locale 'sv'",
+        "contact",
+        "deep path"
+      ],
+      "title": "Hjälp med Mobilt BankID | Handelsbanken",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.handelsbanken.se/sv/privat/kontakt-och-support/hjalp-och-support/installation-kortlasare-med-sladd",
+      "score": -21.0,
+      "reasons": [
+        "other locale 'sv'",
+        "contact",
+        "deep path"
+      ],
+      "title": "Installation för kortläsare med sladd | Handelsbanken",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.handelsbanken.se/sv/privat/kontakt-och-support/hjalp-och-support/kontrollera-kortlasare",
+      "score": -21.0,
+      "reasons": [
+        "other locale 'sv'",
+        "contact",
+        "deep path"
+      ],
+      "title": "Kontrollera kortläsaren | Handelsbanken",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.handelsbanken.se/sv/privat/kontakt-och-support/hjalp-och-support/kortlasare-instruktion",
+      "score": -21.0,
+      "reasons": [
+        "other locale 'sv'",
+        "contact",
+        "deep path"
+      ],
+      "title": "Så fungerar kortläsaren för internetbanken | Handelsbanken",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.handelsbanken.se/sv/privat/kontakt-och-support/hjalp-och-support/nyinloggning",
+      "score": -21.0,
+      "reasons": [
+        "other locale 'sv'",
+        "contact",
+        "deep path"
+      ],
+      "title": "Hjälp med nyinloggning | Handelsbanken",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.handelsbanken.se/sv/privat/kontakt-och-support/hjalp-och-support/sparra-bankid",
+      "score": -21.0,
+      "reasons": [
+        "other locale 'sv'",
+        "contact",
+        "deep path"
+      ],
+      "title": "Spärra BankID - Gör så här | Handelsbanken",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.handelsbanken.se/sv/privat/kontakt-och-support/hjalp-och-support/systemkrav",
+      "score": -21.0,
+      "reasons": [
+        "other locale 'sv'",
+        "contact",
+        "deep path"
+      ],
+      "title": "Systemkrav för Handelsbankens tjänster | Handelsbanken",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.handelsbanken.se/sv/privat/kontakt-och-support/hjalp-och-support/talande-kortlasare",
+      "score": -21.0,
+      "reasons": [
+        "other locale 'sv'",
+        "contact",
+        "deep path"
+      ],
+      "title": "Talande kortläsare - för nedsatt syn | Handelsbanken",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.handelsbanken.se/sv/privat/kontakt-och-support/hjalp-och-support/vanliga-fragor",
+      "score": -21.0,
+      "reasons": [
+        "other locale 'sv'",
+        "contact",
+        "deep path"
+      ],
+      "title": "Vanliga hjälp- och supportfrågor | Handelsbanken",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.handelsbanken.se/sv/privat/kontakt-och-support/klagomal/klagomal-formular",
+      "score": -21.0,
+      "reasons": [
+        "other locale 'sv'",
+        "contact",
+        "deep path"
+      ],
+      "title": "Klagomål formulär | Handelsbanken",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.handelsbanken.se/sv/privat/kontakt-och-support/klagomal/klagomal-handelsbanken-liv",
+      "score": -21.0,
+      "reasons": [
+        "other locale 'sv'",
+        "contact",
+        "deep path"
+      ],
+      "title": "Klagomål Handelsbanken Liv | Handelsbanken",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.handelsbanken.se/sv/privat/kontakt-och-support/om-var-radgivning/hallbarhetspreferenser-i-radgivningen",
+      "score": -21.0,
+      "reasons": [
+        "other locale 'sv'",
+        "contact",
+        "deep path"
+      ],
+      "title": "Hållbarhetspreferenser i rådgivning | Handelsbanken",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.handelsbanken.se/sv/privat/kontakt-och-support/om-var-radgivning/hallbarhetsrisker-i-radgivningen",
+      "score": -21.0,
+      "reasons": [
+        "other locale 'sv'",
+        "contact",
+        "deep path"
+      ],
+      "title": "Integrering av hållbarhetsrisker i rådgivningen – SFDR | Handelsbanken",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.handelsbanken.se/sv/privat/kontakt-och-support/om-var-radgivning/information-om-radgivning",
+      "score": -21.0,
+      "reasons": [
+        "other locale 'sv'",
+        "contact",
+        "deep path"
+      ],
+      "title": "Information om rådgivning | Handelsbanken",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.handelsbanken.se/sv/privat/kontakt-och-support/om-var-radgivning/negativa-konsekvenser-for-hallbarhetsfaktorer",
+      "score": -21.0,
+      "reasons": [
+        "other locale 'sv'",
+        "contact",
+        "deep path"
+      ],
+      "title": "Huvudsakliga negativa konsekvenser för hållbarhetsfaktorer (PAI) | Handelsbanken",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.handelsbanken.se/sv/privat/kontakt-och-support/sakerhet-bedrageri/anmal-bedrageri",
+      "score": -21.0,
+      "reasons": [
+        "other locale 'sv'",
+        "contact",
+        "deep path"
+      ],
+      "title": "Anmäl bedrägeri | Handelsbanken",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.handelsbanken.se/sv/privat/kontakt-och-support/sakerhet-bedrageri/svarlurad",
+      "score": -21.0,
+      "reasons": [
+        "other locale 'sv'",
+        "contact",
+        "deep path"
+      ],
+      "title": "Svårlurad − ett initiativ av Sveriges banker | Handelsbanken",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.handelsbanken.se/sv/privat/kontakt-och-support/sakerhet-bedrageri/vanliga-bedragerier",
+      "score": -21.0,
+      "reasons": [
+        "other locale 'sv'",
+        "contact",
+        "deep path"
+      ],
+      "title": "Vanliga bedrägerier och hur du skyddar dig | Handelsbanken",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.handelsbanken.se/sv/digital-signering-dokument",
+      "score": -22.0,
+      "reasons": [
+        "other locale 'sv'"
+      ],
+      "title": "Digital signering dokument | Handelsbanken",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.handelsbanken.se/sv/ditt-personliga-onlinemote",
+      "score": -22.0,
+      "reasons": [
+        "other locale 'sv'"
+      ],
+      "title": "Ditt personliga onlinemöte  | Handelsbanken",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.handelsbanken.se/sv/ekonomi-i-livet",
+      "score": -22.0,
+      "reasons": [
+        "other locale 'sv'"
+      ],
+      "title": "Ekonomi i livet – artiklar om ekonomi  | Handelsbanken",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.handelsbanken.se/sv/foretag",
+      "score": -22.0,
+      "reasons": [
+        "other locale 'sv'"
+      ],
+      "title": "En personlig bank för dig och ditt företag | Handelsbanken",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.handelsbanken.se/sv/pensionsstiftelse-och-pensionskassa",
+      "score": -22.0,
+      "reasons": [
+        "other locale 'sv'"
+      ],
+      "title": "Handelsbankens pensionsstiftelse och pensionskassa  | Handelsbanken",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.handelsbanken.se/sv/privat",
+      "score": -22.0,
+      "reasons": [
+        "other locale 'sv'"
+      ],
+      "title": "En personlig bank med tjänster för hela livet | Handelsbanken",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.handelsbanken.se/sv/foretag/digitala-tjanster/bankid-foretag",
+      "score": -24.0,
+      "reasons": [
+        "other locale 'sv'",
+        "offering",
+        "deep path"
+      ],
+      "title": "BankID för företagets tjänster | Handelsbanken",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.handelsbanken.se/sv/foretag/digitala-tjanster/business-card-appen",
+      "score": -24.0,
+      "reasons": [
+        "other locale 'sv'",
+        "offering",
+        "deep path"
+      ],
+      "title": "Appen för dig med Business Card | Handelsbanken",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.handelsbanken.se/sv/foretag/digitala-tjanster/foretagsappen",
+      "score": -24.0,
+      "reasons": [
+        "other locale 'sv'",
+        "offering",
+        "deep path"
+      ],
+      "title": "Företagsappen - Gör bankärenden på språng | Handelsbanken",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.handelsbanken.se/sv/foretag/digitala-tjanster/fullmakter",
+      "score": -24.0,
+      "reasons": [
+        "other locale 'sv'",
+        "offering",
+        "deep path"
+      ],
+      "title": "Fullmakt för företag – vad är det och hur fungerar det? | Handelsbanken",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.handelsbanken.se/sv/foretag/digitala-tjanster/inloggningssatt-foretag",
+      "score": -24.0,
+      "reasons": [
+        "other locale 'sv'",
+        "offering",
+        "deep path"
+      ],
+      "title": "Logga in på Handelsbanken som företag | Handelsbanken",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.handelsbanken.se/sv/foretag/digitala-tjanster/internetbanken",
+      "score": -24.0,
+      "reasons": [
+        "other locale 'sv'",
+        "offering",
+        "deep path"
+      ],
+      "title": "Internetbanken för företag | Handelsbanken",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.handelsbanken.se/sv/om-oss/juridiska-dokument/prislistor-privat/prislista-lan/avgifter-bolan",
+      "score": -24.0,
+      "reasons": [
+        "other locale 'sv'",
+        "about",
+        "deep path"
+      ],
+      "title": "Avgifter för bolån | Handelsbanken",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.handelsbanken.se/sv/om-oss/juridiska-dokument/prislistor-privat/prislista-lan/avgifter-och-ranta-for-privatlanet",
+      "score": -24.0,
+      "reasons": [
+        "other locale 'sv'",
+        "about",
+        "deep path"
+      ],
+      "title": "Avgifter och ränta för privatlån | Handelsbanken",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.handelsbanken.se/sv/om-oss/juridiska-dokument/prislistor-privat/prislista-pension/prislista-forsakringsskyddet",
+      "score": -24.0,
+      "reasons": [
+        "other locale 'sv'",
+        "about",
+        "deep path"
+      ],
+      "title": "Prislista Försäkringsskyddet | Handelsbanken",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.handelsbanken.se/sv/om-oss/juridiska-dokument/prislistor-privat/prislista-spara/prislista-analys-marknadsinfo",
+      "score": -24.0,
+      "reasons": [
+        "other locale 'sv'",
+        "about",
+        "deep path"
+      ],
+      "title": "Prislista analys och marknadsinformation | Handelsbanken",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.handelsbanken.se/sv/om-oss/juridiska-dokument/prislistor-privat/prislista-spara/prislista-handel-kontor",
+      "score": -24.0,
+      "reasons": [
+        "other locale 'sv'",
+        "about",
+        "deep path"
+      ],
+      "title": "Prislista - aktiehandel bankkontor  | Handelsbanken",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.handelsbanken.se/sv/om-oss/juridiska-dokument/prislistor-privat/prislista-spara/prislista-vardepappershandel",
+      "score": -24.0,
+      "reasons": [
+        "other locale 'sv'",
+        "about",
+        "deep path"
+      ],
+      "title": "Prislista för aktier och värdepapper  | Handelsbanken",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.handelsbanken.se/sv/om-oss/svenska-dotterbolag/handelsbanken-fonder/fondbolagets-verksamhet/aktiv-forvaltning",
+      "score": -24.0,
+      "reasons": [
+        "other locale 'sv'",
+        "about",
+        "deep path"
+      ],
+      "title": "Aktiv förvaltning | Handelsbanken",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.handelsbanken.se/sv/om-oss/svenska-dotterbolag/handelsbanken-fonder/fondbolagets-verksamhet/allokeringsforvaltning",
+      "score": -24.0,
+      "reasons": [
+        "other locale 'sv'",
+        "about",
+        "deep path"
+      ],
+      "title": "Allokeringsförvaltning | Handelsbanken",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.handelsbanken.se/sv/om-oss/svenska-dotterbolag/handelsbanken-fonder/fondbolagets-verksamhet/passiv-forvaltning",
+      "score": -24.0,
+      "reasons": [
+        "other locale 'sv'",
+        "about",
+        "deep path"
+      ],
+      "title": "Passiv förvaltning | Handelsbanken",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.handelsbanken.se/sv/om-oss/svenska-dotterbolag/handelsbanken-fonder/hallbarhet-i-fonder/agenda-2030",
+      "score": -24.0,
+      "reasons": [
+        "other locale 'sv'",
+        "about",
+        "deep path"
+      ],
+      "title": "Investera i Agenda 2030 | Handelsbanken",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    }
+  ]
+}

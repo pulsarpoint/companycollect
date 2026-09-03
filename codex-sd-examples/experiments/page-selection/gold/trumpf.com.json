@@ -1,0 +1,54 @@
+{
+  "domain": "trumpf.com",
+  "base_url": "https://www.trumpf.com/en_INT/",
+  "must_have": {
+    "home": [
+      "https://www.trumpf.com/en_INT/"
+    ],
+    "about": [
+      "https://www.trumpf.com/en_INT/newsroom/stories/service-engineers-on-a-smart-mission/",
+      "https://www.trumpf.com/en_INT/sustainability/corporate-governance/compliance/compliance-contact-form/",
+      "https://www.trumpf.com/en_INT/sustainability/corporate-governance/data-security/data-protection-contact-form/",
+      "https://www.trumpf.com/en_INT/company/additional-fields-of-activity/financial-services/bank-contact-form/",
+      "https://www.trumpf.com/en_INT/company/additional-fields-of-activity/financial-services/financing-calculator-contact-form/"
+    ],
+    "contact": [
+      "https://www.trumpf.com/en_INT/meta/product-contact/",
+      "https://www.trumpf.com/en_INT/sustainability/corporate-governance/compliance/compliance-contact-form/",
+      "https://www.trumpf.com/en_INT/sustainability/corporate-governance/data-security/data-protection-contact-form/",
+      "https://www.trumpf.com/en_INT/company/additional-fields-of-activity/financial-services/bank-contact-form/",
+      "https://www.trumpf.com/en_INT/company/additional-fields-of-activity/financial-services/financing-calculator-contact-form/"
+    ],
+    "management": [
+      "https://www.trumpf.com/en_INT/newsroom/contact-person/",
+      "https://www.trumpf.com/en_INT/newsroom/stories/management-team-learns-from-the-next-generation/",
+      "https://www.trumpf.com/en_INT/newsroom/stories/on-leadership-and-collaboration-in-digitalization/",
+      "https://www.trumpf.com/en_INT/careers/people-at-trumpf/",
+      "https://www.trumpf.com/en_INT/solutions/applications/plasma-technology/arc-management/"
+    ],
+    "careers": [
+      "https://www.trumpf.com/en_INT/careers/people-at-trumpf/",
+      "https://www.trumpf.com/en_INT/careers/",
+      "https://www.trumpf.com/en_INT/careers/people-at-trumpf/career-story-adrian-bippus/",
+      "https://www.trumpf.com/en_INT/careers/people-at-trumpf/career-story-alexander-stich/",
+      "https://www.trumpf.com/en_INT/careers/people-at-trumpf/career-story-amanda-reel/"
+    ],
+    "products_services": [
+      "https://www.trumpf.com/en_INT/meta/product-contact/",
+      "https://www.trumpf.com/en_INT/newsroom/stories/service-engineers-on-a-smart-mission/",
+      "https://www.trumpf.com/en_INT/company/additional-fields-of-activity/financial-services/bank-contact-form/",
+      "https://www.trumpf.com/en_INT/company/additional-fields-of-activity/financial-services/financing-calculator-contact-form/",
+      "https://www.trumpf.com/en_INT/company/additional-fields-of-activity/affiliated-companies-and-other-brands/trumpf-huettinger/your-contact-at-trumpf-huettinger/"
+    ],
+    "group_structure": [
+      "https://www.trumpf.com/en_INT/company/additional-fields-of-activity/affiliated-companies-and-other-brands/trumpf-huettinger/your-contact-at-trumpf-huettinger/",
+      "https://www.trumpf.com/en_INT/company/additional-fields-of-activity/affiliated-companies-and-other-brands/trumpf-photonics-inc/contact-form-trumpf-photonics-inc/",
+      "https://www.trumpf.com/en_INT/products/lasers/processing-optics/top-product-group/",
+      "https://www.trumpf.com/en_INT/newsroom/stories/going-high-in-down-under-how-the-freighter-group-is-transforming-a-forge-into-a-smart-factory/",
+      "https://www.trumpf.com/en_INT/company/additional-fields-of-activity/affiliated-companies-and-other-brands/"
+    ],
+    "legal_identity": []
+  },
+  "junk": [],
+  "notes": "Draft generated from URL slugs and titles; correct by hand."
+}
