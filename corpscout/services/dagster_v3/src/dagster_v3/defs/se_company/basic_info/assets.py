@@ -11,7 +11,12 @@ from pydantic import Field, field_validator
 
 from dagster_v3.defs.clickhouse.resolved import assert_clickhouse_tables_exist
 from dagster_v3.defs.se_company.basic_info import tables
-from dagster_v3.defs.se_company.basic_info.batch import BUCKET_COUNT, fold_bucket, fold_companies
+from dagster_v3.defs.se_company.basic_info.batch import (
+    BUCKET_COUNT,
+    PAGE_SIZE,
+    fold_bucket,
+    fold_companies,
+)
 from dagster_v3.defs.se_company.basic_info.precedence import precedence_rows
 from dagster_v3.defs.se_company.common import normalized_se_company_ids
 
@@ -38,11 +43,16 @@ class BasicInfoFoldConfig(dg.Config):
     # folded_at (or that have no main row). False re-folds the whole bucket, which still
     # writes only rows that differ.
     changed_only: bool = True
+    # Companies per page. A page holds every current suggestion row of its companies,
+    # descriptions included, so lower this if a run presses the host's memory; it is also
+    # the knob that tunes paging on prod without a redeploy.
+    page_size: int = Field(default=PAGE_SIZE, ge=1, le=50_000)
 
 
 class BasicInfoFoldCompaniesConfig(dg.Config):
     company_ids: list[str] = Field(min_length=1)
     changed_only: bool = False
+    page_size: int = Field(default=PAGE_SIZE, ge=1, le=50_000)
 
     @field_validator("company_ids")
     @classmethod
@@ -61,7 +71,8 @@ _FOLD_TABLES = (tables.SUGGESTION_TABLE, tables.MAIN_TABLE, tables.HISTORY_TABLE
     pool=FOLD_POOL,
     group_name=GROUP_NAME,
     kinds={"clickhouse", "python"},
-    metadata={"table": tables.QUALIFIED_MAIN_TABLE},
+    metadata={"table": tables.QUALIFIED_MAIN_TABLE,
+              "history_table": tables.QUALIFIED_HISTORY_TABLE},
     description=(
         "Folds every current suggestion row of the companies in one of 64 hash buckets "
         "into se_company_basic_info by the per-field precedence, writing only rows that "
@@ -77,11 +88,12 @@ def se_company_basic_info_fold(
     with clickhouse.get_connection() as client:
         counts = fold_bucket(
             client, bucket, changed_only=config.changed_only, source_run_id=context.run_id,
-            folded_at=datetime.now(UTC), log=context.log.info,
+            folded_at=datetime.now(UTC), page_size=config.page_size, log=context.log.info,
         )
     return dg.MaterializeResult(
         metadata={**counts.as_metadata(), "bucket": bucket, "changed_only": config.changed_only,
-                  "table": tables.QUALIFIED_MAIN_TABLE}
+                  "page_size": config.page_size, "table": tables.QUALIFIED_MAIN_TABLE,
+                  "history_table": tables.QUALIFIED_HISTORY_TABLE}
     )
 
 
@@ -90,7 +102,8 @@ def se_company_basic_info_fold(
     pool=FOLD_POOL,
     group_name=GROUP_NAME,
     kinds={"clickhouse", "python"},
-    metadata={"table": tables.QUALIFIED_MAIN_TABLE},
+    metadata={"table": tables.QUALIFIED_MAIN_TABLE,
+              "history_table": tables.QUALIFIED_HISTORY_TABLE},
     description=(
         "The targeted fold: the companies named in config.company_ids, whatever their "
         "bucket. The backoffice's Fold now button launches this asset for one company."
@@ -103,10 +116,12 @@ def se_company_basic_info_fold_companies(
     with clickhouse.get_connection() as client:
         counts = fold_companies(
             client, config.company_ids, changed_only=config.changed_only, source_run_id=context.run_id,
-            folded_at=datetime.now(UTC), log=context.log.info,
+            folded_at=datetime.now(UTC), page_size=config.page_size, log=context.log.info,
         )
     return dg.MaterializeResult(
-        metadata={**counts.as_metadata(), "changed_only": config.changed_only, "table": tables.QUALIFIED_MAIN_TABLE}
+        metadata={**counts.as_metadata(), "changed_only": config.changed_only,
+                  "page_size": config.page_size, "table": tables.QUALIFIED_MAIN_TABLE,
+                  "history_table": tables.QUALIFIED_HISTORY_TABLE}
     )
 
 

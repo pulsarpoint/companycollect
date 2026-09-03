@@ -16,7 +16,7 @@ from dagster_v3.defs.se_company.basic_info.assets import (
     basic_info_bucket_index,
     export_precedence,
 )
-from dagster_v3.defs.se_company.basic_info.batch import BUCKET_COUNT
+from dagster_v3.defs.se_company.basic_info.batch import BUCKET_COUNT, PAGE_SIZE
 from dagster_v3.defs.se_company.basic_info.precedence import precedence_rows
 
 
@@ -45,6 +45,17 @@ def test_configs_default_the_way_the_spec_says() -> None:
     assert targeted.changed_only is False
     with pytest.raises(ValueError):
         BasicInfoFoldCompaniesConfig(company_ids=[])
+    # page_size is the operator's paging knob (M1): it defaults to the batch layer's
+    # PAGE_SIZE on both configs and is bounded, so a run can be tuned without a redeploy
+    # but cannot be set to 0 or to a page the raised max_query_size no longer covers.
+    assert BasicInfoFoldConfig().page_size == PAGE_SIZE == 20_000
+    assert targeted.page_size == PAGE_SIZE
+    assert BasicInfoFoldConfig(page_size=5_000).page_size == 5_000
+    for bad in (0, 50_001):
+        with pytest.raises(ValueError):
+            BasicInfoFoldConfig(page_size=bad)
+        with pytest.raises(ValueError):
+            BasicInfoFoldCompaniesConfig(company_ids=["5560000000"], page_size=bad)
 
 
 def test_assets_are_registered_with_pool_partitions_and_backfill_policy() -> None:

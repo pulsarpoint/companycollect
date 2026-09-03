@@ -18,6 +18,17 @@ from dagster_v3.defs.se_company.common import normalized_se_company_ids
 BUCKET_COUNT = 64
 PAGE_SIZE = 20_000
 
+# clickhouse-driver substitutes %(company_ids)s client-side (clickhouse_driver/util/escape.py
+# renders the list into the query TEXT), so every id in a page lands in the statement the
+# server has to parse. A full PAGE_SIZE page renders current_suggestions_sql to 320,286
+# bytes with 12-digit ids (280,286 with 10-digit ones) -- past ClickHouse's 262,144-byte
+# default max_query_size, which rejects the query with Code: 62 "Max query size exceeded"
+# before reading anything. Raising the setting per query is the precedent this repo already
+# set for the same failure in se_company/address.py (SCAN_MAX_QUERY_SIZE); PAGE_SIZE stays
+# 20,000 and every SELECT that binds company_ids passes these settings to client.execute.
+# See tests/test_se_company_basic_info_batch.py for the measured render size.
+ID_BOUND_QUERY_SETTINGS = {"max_query_size": 1_048_576}  # 1 MiB: >3x the measured worst case
+
 _SUGGESTION_SELECT_COLUMNS = (
     "company_id",
     "source",
@@ -109,6 +120,11 @@ def suggestion_from_row(row: Sequence[Any]) -> Suggestion:
     return Suggestion(**dict(zip(_SUGGESTION_SELECT_COLUMNS, row)))
 
 
+# Comparison only: the row is read from _MAIN_COMPARE_COLUMNS, which excludes folded_at,
+# fold_version and source_run_id, so those two are filled with "" purely to satisfy the
+# dataclass. Never pass the result to as_tuple -- writing it would put an empty
+# fold_version and source_run_id into the main table. Only the row that fold_basic_info
+# produces is ever written.
 def main_row_from_row(row: Sequence[Any]) -> BasicInfoRow:
     values = dict(zip(_MAIN_COMPARE_COLUMNS, row))
     return BasicInfoRow(fold_version="", source_run_id="", **values)
@@ -120,8 +136,12 @@ def _pages(items: Sequence[str], size: int) -> list[list[str]]:
 
 def _changed_company_ids(client: Any, company_ids: list[str]) -> list[str]:
     params = {"company_ids": company_ids}
-    suggested = dict(client.execute(suggestion_watermarks_sql(), params))
-    folded = dict(client.execute(main_watermarks_sql(), params))
+    suggested = dict(
+        client.execute(suggestion_watermarks_sql(), params, settings=ID_BOUND_QUERY_SETTINGS)
+    )
+    folded = dict(
+        client.execute(main_watermarks_sql(), params, settings=ID_BOUND_QUERY_SETTINGS)
+    )
     return [
         company_id
         for company_id in company_ids
@@ -154,12 +174,16 @@ def fold_companies(
             continue
         params = {"company_ids": scope}
         by_company: dict[str, list[Suggestion]] = defaultdict(list)
-        for row in client.execute(current_suggestions_sql(), params):
+        for row in client.execute(
+            current_suggestions_sql(), params, settings=ID_BOUND_QUERY_SETTINGS
+        ):
             suggestion = suggestion_from_row(row)
             by_company[suggestion.company_id].append(suggestion)
         current = {
             row[0]: main_row_from_row(row)
-            for row in client.execute(current_main_rows_sql(), params)
+            for row in client.execute(
+                current_main_rows_sql(), params, settings=ID_BOUND_QUERY_SETTINGS
+            )
         }
         main_rows: list[tuple[Any, ...]] = []
         history_rows: list[tuple[Any, ...]] = []
@@ -213,6 +237,7 @@ def fold_bucket(
     changed_only: bool,
     source_run_id: str,
     folded_at: datetime,
+    page_size: int = PAGE_SIZE,
     log: Callable[..., object] | None = None,
 ) -> FoldCounts:
     """Fold every company whose id hashes into `bucket` (0..63)."""
@@ -227,5 +252,6 @@ def fold_bucket(
         changed_only=changed_only,
         source_run_id=source_run_id,
         folded_at=folded_at,
+        page_size=page_size,
         log=log,
     )
