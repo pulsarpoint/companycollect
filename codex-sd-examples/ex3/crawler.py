@@ -30,6 +30,7 @@ from ex3.language import (
 )
 from ex3.llm import run_structured_turn
 from ex3.llm_selection import select_pages_with_llm
+from ex3.merge import merge_information_with_llm
 from ex3.models import (
     BatchAnalysis,
     BatchExtraction,
@@ -41,8 +42,10 @@ from ex3.models import (
     DiscoveryStrategy,
     LanguageDiscovery,
     MarkdownPage,
+    MergeAnalysis,
     PageExtraction,
     PageExtractionMetadata,
+    PassSummary,
     RelatedDomain,
     RelatedDomainAnalysis,
     RelatedDomainSelection,
@@ -57,6 +60,7 @@ from ex3.models import (
     set_source_url,
 )
 from ex3.prompty import create_prompt, create_related_domains_prompt
+from ex3.requirements import compute_gaps
 from ex3.seeding import (
     HeadFetcher,
     HeadMetadata,
@@ -195,6 +199,26 @@ async def run_analysis(settings: AnalysisSettings) -> ResearchReport:
             "Skipping %d stored page(s) declared in a non-English language",
             len(skipped_pages),
         )
+
+    previous: ResearchReport | None = None
+    reused_pages: list[PageExtraction] = []
+    if settings.previous_report_path is not None:
+        previous = ResearchReport.model_validate_json(
+            settings.previous_report_path.read_text(encoding="utf-8")
+        )
+        reused_keys = {url_key(page.source_url) for page in previous.pages}
+        reused_pages = list(previous.pages)
+        markdown_pages = [
+            page
+            for page in markdown_pages
+            if url_key(page.source_url) not in reused_keys
+        ]
+        LOGGER.info(
+            "Reusing %d page(s) from the previous report; %d new page(s) to extract",
+            len(reused_pages),
+            len(markdown_pages),
+        )
+
     discovered_urls = discover_urls(
         manifest.markdown_pages,
         searched_url=manifest.selected_base_url,
@@ -234,6 +258,36 @@ async def run_analysis(settings: AnalysisSettings) -> ResearchReport:
         for page in pages
     )
 
+    all_pages = [*reused_pages, *pages]
+    processed_urls = [page.source_url for page in manifest.markdown_pages]
+    useful_information = consolidate_extractions(all_pages)
+    merge_analysis: MergeAnalysis | None = None
+    if previous is not None and pages and settings.merge_with_llm:
+        merged, merge_analysis = await merge_information_with_llm(
+            previous.useful_information,
+            consolidate_extractions(pages),
+            processed_urls=processed_urls,
+            timeout_seconds=settings.analysis_timeout_seconds,
+        )
+        if merged is not None:
+            useful_information = merged
+
+    pass_number = (
+        previous.passes[-1].pass_number + 1
+        if previous is not None and previous.passes
+        else 1
+    )
+    extra_calls = [merge_analysis] if merge_analysis is not None else []
+    current_pass = PassSummary(
+        pass_number=pass_number,
+        pages=len(all_pages),
+        new_pages=len(pages),
+        batches=len(batch_analyses),
+        token_totals=build_analysis_stats(
+            batch_analyses, related_domain_analysis, extra_calls
+        ).token_totals,
+    )
+
     return ResearchReport(
         requested_start_url=manifest.requested_start_url,
         selected_base_url=manifest.selected_base_url,
@@ -261,13 +315,22 @@ async def run_analysis(settings: AnalysisSettings) -> ResearchReport:
         analysis_stats=build_analysis_stats(
             batch_analyses,
             related_domain_analysis,
+            extra_calls,
         ),
         batches=batch_analyses,
         discovered_urls=discovered_urls,
         related_domain_analysis=related_domain_analysis,
         related_domains=related_domains,
-        useful_information=consolidate_extractions(pages),
-        pages=pages,
+        useful_information=useful_information,
+        pages=all_pages,
+        passes=[*(previous.passes if previous is not None else []), current_pass],
+        gaps=compute_gaps(useful_information),
+        merge_analysis=merge_analysis,
+        previous_report_path=(
+            str(settings.previous_report_path.resolve())
+            if settings.previous_report_path is not None
+            else None
+        ),
     )
 
 

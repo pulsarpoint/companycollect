@@ -6,6 +6,7 @@ from unittest.mock import AsyncMock, patch
 
 from click.testing import CliRunner
 
+from ex1.models import Contact, Evidence, Job, OtherFact, UsefulInformation
 from ex3.crawler import (
     AnalysisSettings,
     _external_domain_candidates,
@@ -14,9 +15,13 @@ from ex3.crawler import (
     load_manifest,
     run_analysis,
 )
+from ex3.llm import StructuredTurnOutcome
 from ex3.main import cli
+from ex3.merge import drop_unknown_evidence, merge_information_with_llm
 from ex3.models import (
+    AggregateAnalysisStats,
     BatchAnalysis,
+    BatchStats,
     CrawlManifest,
     CrawlStats,
     DiscoveredUrl,
@@ -30,8 +35,10 @@ from ex3.models import (
     RelatedDomainAnalysis,
     RelatedDomainDecision,
     RelatedDomainSelection,
+    ResearchReport,
     ScoredUrl,
     UrlSeeding,
+    consolidate_extractions,
 )
 from ex3.prompty import create_related_domains_prompt
 
@@ -276,6 +283,233 @@ class SeparateAnalysisPhaseTest(unittest.IsolatedAsyncioTestCase):
             {discovered.url for discovered in report.discovered_urls},
             {"https://example.org/"},
         )
+
+
+class IncrementalAnalysisTest(unittest.IsolatedAsyncioTestCase):
+    async def test_extracts_only_new_pages_and_merges_with_the_previous_report(
+        self,
+    ) -> None:
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            directory = Path(temporary_directory)
+            (directory / "home.md").write_text("# Home", encoding="utf-8")
+            (directory / "careers.md").write_text("# Careers", encoding="utf-8")
+            manifest = _manifest(
+                markdown_path="home.md",
+                extra_pages=[
+                    MarkdownPage(
+                        source_url="https://example.com/careers",
+                        depth=0,
+                        markdown_path="careers.md",
+                        markdown_chars=9,
+                        language="en",
+                        selection="suggested",
+                        pass_number=2,
+                        selection_reason="jobs gap",
+                    )
+                ],
+            )
+            manifest_path = directory / "crawl-manifest.json"
+            manifest_path.write_text(
+                manifest.model_dump_json(indent=2), encoding="utf-8"
+            )
+
+            previous_page = PageExtraction(
+                source_url="https://example.com/",
+                useful_information=UsefulInformation(
+                    contacts=[
+                        Contact(
+                            type="phone",
+                            value="+46 8 1",
+                            evidence=Evidence(
+                                text="t", source_url="https://example.com/"
+                            ),
+                        )
+                    ]
+                ),
+                extraction_metadata=PageExtractionMetadata(
+                    depth=0,
+                    markdown_path=str(directory / "home.md"),
+                    batch_number=1,
+                    succeeded=True,
+                ),
+            )
+            previous_report = _report(
+                manifest,
+                pages=[previous_page],
+                passes=[PassSummary(pass_number=1, pages=1, new_pages=1, batches=1)],
+            )
+            previous_path = directory / "report-pass-1.json"
+            previous_path.write_text(
+                previous_report.model_dump_json(indent=2), encoding="utf-8"
+            )
+
+            captured: list[str] = []
+
+            async def fake_analyze_batches(batches, **kwargs):
+                captured.extend(
+                    page.source_url for batch in batches for page in batch.pages
+                )
+                new_page = PageExtraction(
+                    source_url="https://example.com/careers",
+                    useful_information=UsefulInformation(
+                        jobs=[
+                            Job(
+                                title="Engineer",
+                                evidence=Evidence(
+                                    text="j",
+                                    source_url="https://example.com/careers",
+                                ),
+                            )
+                        ]
+                    ),
+                    extraction_metadata=PageExtractionMetadata(
+                        depth=0,
+                        markdown_path=str(directory / "careers.md"),
+                        batch_number=1,
+                        succeeded=True,
+                    ),
+                )
+                return (
+                    [new_page],
+                    [
+                        BatchAnalysis(
+                            batch_number=1,
+                            page_urls=[new_page.source_url],
+                            markdown_chars=9,
+                            succeeded=True,
+                        )
+                    ],
+                    [],
+                )
+
+            merged = UsefulInformation(
+                contacts=previous_page.useful_information.contacts,
+                jobs=[
+                    Job(
+                        title="Engineer",
+                        evidence=Evidence(
+                            text="j", source_url="https://example.com/careers"
+                        ),
+                    )
+                ],
+                other_facts=[
+                    OtherFact(
+                        name="Bad",
+                        value="x",
+                        evidence=Evidence(text="e", source_url="https://evil.example/"),
+                    )
+                ],
+            )
+
+            async def fake_turn(**kwargs):
+                return StructuredTurnOutcome(value=merged, token_usage=None, error=None)
+
+            with (
+                patch(
+                    "ex3.crawler._analyze_related_domains",
+                    new=AsyncMock(
+                        return_value=(
+                            [],
+                            RelatedDomainAnalysis(
+                                attempted=False,
+                                candidate_domains=0,
+                                succeeded=True,
+                            ),
+                        )
+                    ),
+                ),
+                patch("ex3.crawler._analyze_batches", new=fake_analyze_batches),
+                patch("ex3.merge.run_structured_turn", new=fake_turn),
+            ):
+                report = await run_analysis(
+                    AnalysisSettings(
+                        manifest_path=manifest_path,
+                        max_page_chars=30_000,
+                        max_batch_pages=5,
+                        max_batch_chars=60_000,
+                        analysis_timeout_seconds=300,
+                        previous_report_path=previous_path,
+                    )
+                )
+
+        self.assertEqual(captured, ["https://example.com/careers"])
+        self.assertEqual(
+            [page.source_url for page in report.pages],
+            ["https://example.com/", "https://example.com/careers"],
+        )
+        self.assertEqual(len(report.useful_information.jobs), 1)
+        self.assertEqual(len(report.useful_information.contacts), 1)
+        self.assertEqual(report.useful_information.other_facts, [])
+        assert report.merge_analysis is not None
+        self.assertTrue(report.merge_analysis.succeeded)
+        self.assertEqual(report.merge_analysis.dropped_items, 1)
+        self.assertEqual([summary.pass_number for summary in report.passes], [1, 2])
+        self.assertEqual(report.passes[1].new_pages, 1)
+        self.assertNotIn("jobs", {gap.field for gap in report.gaps})
+        self.assertEqual(report.previous_report_path, str(previous_path.resolve()))
+
+    async def test_falls_back_to_deterministic_consolidation_when_the_merge_fails(
+        self,
+    ) -> None:
+        previous = UsefulInformation(
+            contacts=[
+                Contact(
+                    type="email",
+                    value="a@b.se",
+                    evidence=Evidence(text="e", source_url="https://example.com/"),
+                )
+            ]
+        )
+        new_round = UsefulInformation(
+            jobs=[
+                Job(
+                    title="Dev",
+                    evidence=Evidence(text="j", source_url="https://example.com/jobs"),
+                )
+            ]
+        )
+
+        async def fake_turn(**kwargs):
+            return StructuredTurnOutcome(
+                value=None, token_usage=None, error="timed out"
+            )
+
+        with patch("ex3.merge.run_structured_turn", new=fake_turn):
+            merged, analysis = await merge_information_with_llm(
+                previous,
+                new_round,
+                processed_urls={"https://example.com/", "https://example.com/jobs"},
+                timeout_seconds=1,
+            )
+
+        self.assertIsNone(merged)
+        self.assertFalse(analysis.succeeded)
+        self.assertEqual(analysis.error, "timed out")
+
+    def test_drops_items_whose_evidence_points_outside_processed_pages(self) -> None:
+        information = UsefulInformation(
+            contacts=[
+                Contact(
+                    type="phone",
+                    value="1",
+                    evidence=Evidence(text="a", source_url="https://example.com/"),
+                ),
+                Contact(
+                    type="phone",
+                    value="2",
+                    evidence=Evidence(
+                        text="b", source_url="https://elsewhere.example/"
+                    ),
+                ),
+            ]
+        )
+
+        cleaned, dropped = drop_unknown_evidence(
+            information, processed_urls={"https://example.com/"}
+        )
+
+        self.assertEqual([contact.value for contact in cleaned.contacts], ["1"])
+        self.assertEqual(dropped, 1)
 
 
 class UrlDiscoveryTest(unittest.TestCase):
@@ -534,6 +768,45 @@ def _manifest(
             ),
             *(extra_pages or []),
         ],
+    )
+
+
+def _report(
+    manifest: CrawlManifest,
+    *,
+    pages: list[PageExtraction],
+    passes: list[PassSummary],
+) -> ResearchReport:
+    return ResearchReport(
+        requested_start_url=manifest.requested_start_url,
+        selected_base_url=manifest.selected_base_url,
+        stopped_reason=manifest.stopped_reason,
+        manifest_path="crawl-manifest.json",
+        language_discovery=manifest.language_discovery,
+        crawl_stats=manifest.crawl_stats,
+        batch_stats=BatchStats(
+            configured_max_page_chars=30_000,
+            configured_max_batch_pages=5,
+            configured_max_batch_chars=60_000,
+            total_batches=1,
+            successful_batches=1,
+            failed_batches=0,
+            submitted_pages=len(pages),
+            successfully_extracted_pages=len(pages),
+            failed_extraction_pages=0,
+        ),
+        failed_pages=[],
+        markdown_pages=manifest.markdown_pages,
+        analysis_stats=AggregateAnalysisStats(),
+        batches=[],
+        discovered_urls=[],
+        related_domain_analysis=RelatedDomainAnalysis(
+            attempted=False, candidate_domains=0, succeeded=True
+        ),
+        related_domains=[],
+        useful_information=consolidate_extractions(pages),
+        pages=pages,
+        passes=passes,
     )
 
 

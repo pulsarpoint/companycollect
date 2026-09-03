@@ -1,5 +1,6 @@
 import json
 
+from ex1.models import UsefulInformation
 from ex3.candidates import PageCandidate
 from ex3.models import DiscoveredDomainCandidate, MarkdownPage
 from ex3.requirements import Gap, requirements_text
@@ -199,6 +200,45 @@ RULES:
 3. Prefer English pages or pages in the website's own language, but choose a
    page in another language when it is the only source for a requirement.
 4. Return an empty list when no candidate is likely to help.
+
+Return only the JSON object required by the provided output schema.
+
+INPUT DATA:
+{json.dumps(input_data, ensure_ascii=False, indent=2)}
+""".strip()
+
+
+def create_merge_prompt(
+    *,
+    previous: UsefulInformation,
+    new_round: UsefulInformation,
+    processed_urls: list[str],
+) -> str:
+    """Ask the model to merge two extraction rounds into one company profile."""
+    input_data = {
+        "processed_urls": processed_urls,
+        "previous_round": previous.model_dump(mode="json"),
+        "new_round": new_round.model_dump(mode="json"),
+    }
+    return f"""
+Two extraction rounds over one company website must become one consolidated
+result with the same structure.
+
+REQUIREMENTS:
+{requirements_text()}
+
+RULES:
+1. Keep every distinct fact from both rounds. Merge duplicates that differ only
+   in wording, formatting, punctuation or language into one item, keeping the
+   most complete value.
+2. Prefer the more specific and more recent statement when facts conflict, and
+   keep the other as an other_facts entry only if it adds information.
+3. Write the company description as a coherent English paragraph built from
+   both rounds; translate non-English descriptions, but keep names, contact
+   values, identifiers, prices, addresses and URLs exactly as written.
+4. Every evidence.source_url must be one of processed_urls; never invent
+   evidence or URLs.
+5. Do not add facts that appear in neither round.
 
 Return only the JSON object required by the provided output schema.
 

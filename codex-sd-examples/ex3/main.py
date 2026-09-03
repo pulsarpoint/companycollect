@@ -316,6 +316,23 @@ def crawl_command(
     ),
 )
 @click.option(
+    "--previous-report",
+    "previous_report_path",
+    type=click.Path(path_type=Path, exists=True, dir_okay=False),
+    default=None,
+    help=(
+        "Report of the previous pass; only new manifest pages are extracted "
+        "and the rounds are merged."
+    ),
+)
+@click.option(
+    "--merge/--no-merge",
+    "merge_with_llm",
+    default=True,
+    show_default=True,
+    help="Merge rounds with one LLM call (deterministic consolidation otherwise).",
+)
+@click.option(
     "--overwrite",
     is_flag=True,
     help="Replace an existing analysis report.",
@@ -329,6 +346,8 @@ def analyze_command(
     max_batch_chars: int,
     analysis_timeout_seconds: int,
     skip_non_english: bool,
+    previous_report_path: Path | None,
+    merge_with_llm: bool,
     overwrite: bool,
     verbose: bool,
 ) -> None:
@@ -346,6 +365,8 @@ def analyze_command(
         max_batch_chars=max_batch_chars,
         analysis_timeout_seconds=analysis_timeout_seconds,
         skip_non_english=skip_non_english,
+        previous_report_path=previous_report_path,
+        merge_with_llm=merge_with_llm,
     )
     try:
         report = asyncio.run(run_analysis(settings))
@@ -360,6 +381,7 @@ def analyze_command(
         raise click.ClickException(str(error)) from error
 
     click.echo(f"Manifest: {report.manifest_path}")
+    click.echo(f"Passes: {len(report.passes)}")
     click.echo(f"Markdown pages submitted: {report.batch_stats.submitted_pages}")
     if report.skipped_pages:
         click.echo(
@@ -394,6 +416,17 @@ def analyze_command(
         f"{report.analysis_stats.token_totals.reasoning_output_tokens:,}, "
         f"total={report.analysis_stats.token_totals.total_tokens:,}"
     )
+    if report.merge_analysis is not None:
+        if report.merge_analysis.succeeded:
+            click.echo(
+                f"Merge: ok, dropped {report.merge_analysis.dropped_items} item(s)"
+            )
+        else:
+            click.echo(
+                f"Merge failed: {report.merge_analysis.error or 'unknown error'}",
+                err=True,
+            )
+    click.echo(f"Gaps: {', '.join(gap.field for gap in report.gaps) or 'none'}")
     click.echo(f"Report: {output_path}")
 
 

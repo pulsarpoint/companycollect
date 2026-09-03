@@ -1,3 +1,4 @@
+from collections.abc import Sequence
 from typing import Literal
 
 from openai_codex.models import JsonObject
@@ -348,8 +349,9 @@ def set_source_url(extraction: PageExtraction, source_url: str) -> None:
 def build_analysis_stats(
     batches: list[BatchAnalysis],
     related_domain_analysis: RelatedDomainAnalysis,
+    extra_calls: Sequence[LlmCallStatus] = (),
 ) -> AggregateAnalysisStats:
-    """Aggregate usage once for every page batch and domain-classification call."""
+    """Aggregate usage once for every page batch, domain-classification and extra call."""
     metadata = [
         PageAnalysisMetadata(
             succeeded=batch.succeeded,
@@ -366,6 +368,15 @@ def build_analysis_stats(
                 token_usage=related_domain_analysis.token_usage,
             )
         )
+    for call in extra_calls:
+        if call.attempted:
+            metadata.append(
+                PageAnalysisMetadata(
+                    succeeded=call.succeeded,
+                    error=call.error,
+                    token_usage=call.token_usage,
+                )
+            )
     return aggregate_analysis_metadata(metadata)
 
 
