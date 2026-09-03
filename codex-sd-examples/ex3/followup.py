@@ -8,6 +8,7 @@ from ex3.candidates import build_followup_candidates, load_inventory_eligible
 from ex3.crawler import _preferred_languages, load_manifest
 from ex3.llm import run_structured_turn
 from ex3.models import (
+    CrawlManifest,
     LlmCallStatus,
     PageSelectionResponse,
     PassSuggestions,
@@ -34,15 +35,18 @@ class SuggestSettings:
     timeout_seconds: int = 300
 
 
+def next_pass_number(manifest: CrawlManifest) -> int:
+    """Return the pass number for a follow-up crawl of ``manifest``."""
+    return max((page.pass_number for page in manifest.markdown_pages), default=1) + 1
+
+
 async def run_suggest(settings: SuggestSettings) -> PassSuggestions:
     """Compute gaps from a report and ask the model which pages could fill them."""
     manifest = load_manifest(settings.manifest_path)
     report = ResearchReport.model_validate_json(
         settings.report_path.read_text(encoding="utf-8")
     )
-    pass_number = (
-        max((page.pass_number for page in manifest.markdown_pages), default=1) + 1
-    )
+    pass_number = next_pass_number(manifest)
     processed_urls = [page.source_url for page in manifest.markdown_pages]
     gaps = compute_gaps(report.useful_information)
     base = PassSuggestions(

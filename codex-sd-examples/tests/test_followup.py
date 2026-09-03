@@ -1,11 +1,14 @@
 import tempfile
 import unittest
 from pathlib import Path
-from unittest.mock import patch
+from unittest.mock import AsyncMock, patch
+
+from click.testing import CliRunner
 
 from ex1.models import CompanyInformation, UsefulInformation
 from ex3.followup import SuggestSettings, run_suggest
 from ex3.llm import StructuredTurnOutcome
+from ex3.main import cli
 from ex3.models import (
     AggregateAnalysisStats,
     BatchStats,
@@ -13,9 +16,11 @@ from ex3.models import (
     CrawlStats,
     DiscoveredUrl,
     LanguageDiscovery,
+    LlmCallStatus,
     MarkdownPage,
     PageSelectionDecision,
     PageSelectionResponse,
+    PassSuggestions,
     RelatedDomainAnalysis,
     ResearchReport,
 )
@@ -95,6 +100,53 @@ class SuggestPassTest(unittest.IsolatedAsyncioTestCase):
 
         self.assertFalse(suggestions.llm.attempted)
         self.assertEqual(suggestions.suggestions, [])
+
+
+class SuggestCommandOverwriteTest(unittest.TestCase):
+    """The CLI must refuse to overwrite before paying for an LLM call."""
+
+    def test_refuses_to_overwrite_existing_suggestions_without_calling_the_llm(
+        self,
+    ) -> None:
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            directory = Path(temporary_directory)
+            manifest_path, report_path = _write_fixtures(directory)
+            (directory / "suggestions-pass-2.json").write_text("{}", encoding="utf-8")
+
+            mock_run_suggest = AsyncMock()
+            with patch("ex3.main.run_suggest", new=mock_run_suggest):
+                result = CliRunner().invoke(
+                    cli, ["suggest", str(manifest_path), str(report_path)]
+                )
+
+            self.assertNotEqual(result.exit_code, 0)
+            self.assertIn("Refusing to overwrite", result.output)
+            mock_run_suggest.assert_not_awaited()
+
+    def test_overwrite_flag_calls_the_llm_and_writes_the_file(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            directory = Path(temporary_directory)
+            manifest_path, report_path = _write_fixtures(directory)
+            target = directory / "suggestions-pass-2.json"
+            target.write_text("{}", encoding="utf-8")
+
+            suggestions = PassSuggestions(
+                manifest_path=str(manifest_path),
+                report_path=str(report_path),
+                pass_number=2,
+                gaps=[],
+                llm=LlmCallStatus(attempted=False, succeeded=True),
+            )
+            mock_run_suggest = AsyncMock(return_value=suggestions)
+            with patch("ex3.main.run_suggest", new=mock_run_suggest):
+                result = CliRunner().invoke(
+                    cli,
+                    ["suggest", str(manifest_path), str(report_path), "--overwrite"],
+                )
+
+            self.assertEqual(result.exit_code, 0)
+            mock_run_suggest.assert_awaited_once()
+            self.assertTrue(target.is_file())
 
 
 def _write_fixtures(directory: Path, *, complete: bool = False) -> tuple[Path, Path]:

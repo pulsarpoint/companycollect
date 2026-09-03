@@ -8,12 +8,13 @@ import click
 from ex3.crawler import (
     AnalysisSettings,
     CrawlSettings,
+    load_manifest,
     run_analysis,
     run_crawl,
     save_model,
     save_report,
 )
-from ex3.followup import SuggestSettings, run_suggest
+from ex3.followup import SuggestSettings, next_pass_number, run_suggest
 from ex3.language import is_english_language
 from ex3.models import DiscoveryStrategy, SeedingSource, Selector
 
@@ -445,6 +446,15 @@ def suggest_command(
     """Find gaps in REPORT_PATH and let the LLM propose unprocessed pages to crawl next."""
     _configure_logging(verbose=verbose)
     try:
+        manifest = load_manifest(manifest_path)
+    except Exception as error:
+        raise click.ClickException(str(error)) from error
+    target = output_path or manifest_path.resolve().parent / (
+        f"suggestions-pass-{next_pass_number(manifest)}.json"
+    )
+    if target.exists() and not overwrite:
+        raise click.ClickException(f"Refusing to overwrite {target}. Use --overwrite.")
+    try:
         suggestions = asyncio.run(
             run_suggest(
                 SuggestSettings(
@@ -458,11 +468,6 @@ def suggest_command(
         )
     except Exception as error:
         raise click.ClickException(str(error)) from error
-    target = output_path or manifest_path.resolve().parent / (
-        f"suggestions-pass-{suggestions.pass_number}.json"
-    )
-    if target.exists() and not overwrite:
-        raise click.ClickException(f"Refusing to overwrite {target}. Use --overwrite.")
     save_model(suggestions, target)
     click.echo(f"Gaps: {', '.join(gap.field for gap in suggestions.gaps) or 'none'}")
     click.echo(f"Candidates shown to LLM: {suggestions.candidate_count}")
