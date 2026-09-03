@@ -4,7 +4,7 @@ Pure: no I/O, no clock. The batch layer reads and writes; this module decides.
 """
 
 from dataclasses import dataclass, fields
-from datetime import date, datetime
+from datetime import UTC, date, datetime
 from typing import Any
 
 from dagster_v3.defs.se_company.basic_info import tables
@@ -72,7 +72,9 @@ class BasicInfoRow:
 
     def changed_fields_against(self, other: "BasicInfoRow | None") -> list[str]:
         """The folded fields whose value or source differ from `other` (every non-NULL
-        field when there is no other row). description_language rides with description."""
+        field when there is no other row). description_language rides with description.
+        `fold_version` is not compared: a logic change republishes only the companies
+        whose values or sources it changes."""
         changed: list[str] = []
         for field in tables.FOLDED_FIELDS:
             value, source = self._value_and_source(field)
@@ -88,15 +90,27 @@ class BasicInfoRow:
         return changed
 
 
+def _as_utc(value: datetime) -> datetime:
+    """Normalise `observed_at` to an aware UTC instant before comparing across rows."""
+    if value.tzinfo is None:
+        return value.replace(tzinfo=UTC)
+    return value.astimezone(UTC)
+
+
 def _winner(field: str, suggestions: list[Suggestion]) -> Suggestion | None:
+    """The highest-precedence, then newest, then smallest-uid suggestion that supplies
+    `field`. None and '' both mean no opinion -- a source never "says empty" (spec 3.2)."""
     candidates = []
     for suggestion in suggestions:
-        if getattr(suggestion, field) is None:
+        value = getattr(suggestion, field)
+        if value is None or value == "":
             continue
         precedence = precedence_for(field, suggestion.source)
         if precedence is None:
             continue
-        candidates.append((-precedence, -suggestion.observed_at.timestamp(), suggestion.source_record_uid, suggestion))
+        candidates.append(
+            (-precedence, -_as_utc(suggestion.observed_at).timestamp(), suggestion.source_record_uid, suggestion)
+        )
     if not candidates:
         return None
     candidates.sort(key=lambda item: item[:3])

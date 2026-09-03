@@ -1,5 +1,6 @@
 """Spec section 5: the fold as a pure function, one case per rule."""
 
+from dataclasses import fields, replace
 from datetime import UTC, date, datetime
 
 import pytest
@@ -7,6 +8,7 @@ import pytest
 from dagster_v3.defs.se_company.basic_info import tables
 from dagster_v3.defs.se_company.basic_info.fold import (
     FOLD_VERSION,
+    BasicInfoRow,
     Suggestion,
     fold_basic_info,
 )
@@ -89,8 +91,10 @@ def test_ties_go_to_the_newest_observation_then_the_smaller_uid() -> None:
     # Two rows of the same source cannot exist in the table, but the fold is a pure
     # function and the rule must hold for equal precedence across sources too: give
     # wikidata and ratsit the same number by construction of the test inputs.
-    older = suggestion("esef", uid="b", observed_at=T1, description="old")
-    newer = suggestion("esef", uid="a", observed_at=T2, description="new")
+    # uids deliberately go the *other* way from observed_at: a fold that ignores
+    # observed_at and sorts by uid alone would pick "a" (older) here and fail.
+    older = suggestion("esef", uid="a", observed_at=T1, description="old")
+    newer = suggestion("esef", uid="z", observed_at=T2, description="new")
     row = fold_basic_info(
         "5560000000", [suggestion("scb", legal_name="X AB"), older, newer], source_run_id="r"
     )
@@ -103,6 +107,22 @@ def test_ties_go_to_the_newest_observation_then_the_smaller_uid() -> None:
     )
     assert row is not None
     assert row.description == "a text"
+
+
+def test_naive_observed_at_is_ordered_as_utc() -> None:
+    # A naive observed_at is treated as UTC, not as local/epoch-relative time that could
+    # sort before or after an aware timestamp by accident.
+    naive_newer = suggestion(
+        "esef", uid="a", observed_at=datetime(2026, 9, 2, 0, 0), description="new"
+    )
+    aware_older = suggestion(
+        "esef", uid="b", observed_at=datetime(2026, 9, 1, 23, 0, tzinfo=UTC), description="old"
+    )
+    row = fold_basic_info(
+        "5560000000", [suggestion("scb", legal_name="X AB"), aware_older, naive_newer], source_run_id="r"
+    )
+    assert row is not None
+    assert row.description == "new"
 
 
 def test_no_row_without_a_register_legal_name() -> None:
@@ -131,7 +151,7 @@ def test_as_tuple_follows_main_columns_and_changed_fields_diff_values_and_source
     assert row is not None
     folded_at = datetime(2026, 9, 3, 12, tzinfo=UTC)
     values = row.as_tuple(folded_at)
-    assert len(values) == len(tables.MAIN_COLUMNS)
+    assert set(tables.MAIN_COLUMNS) == {f.name for f in fields(BasicInfoRow)} | {"folded_at"}
     assert values[tables.MAIN_COLUMNS.index("legal_name")] == "SCB AB"
     assert values[tables.MAIN_COLUMNS.index("status_source")] == "scb"
     assert values[tables.MAIN_COLUMNS.index("folded_at")] == folded_at
@@ -146,6 +166,37 @@ def test_as_tuple_follows_main_columns_and_changed_fields_diff_values_and_source
     # Same status value, different source: still a change.
     assert row.changed_fields_against(other) == ["status"]
     assert row.changed_fields_against(row) == []
+
+
+def test_description_language_only_change_still_marks_description_changed() -> None:
+    with_description = fold_basic_info(
+        "5560000000",
+        [suggestion("scb", legal_name="SCB AB", description="x", description_language="sv")],
+        source_run_id="r",
+    )
+    assert with_description is not None
+    only_language_differs = replace(with_description, description_language="en")
+    assert with_description.changed_fields_against(only_language_differs) == ["description"]
+
+
+def test_empty_string_is_not_a_supply() -> None:
+    # A source never "says empty": '' is treated the same as NULL, no opinion.
+    row = fold_basic_info(
+        "5560000000",
+        [
+            suggestion("scb", legal_name="X AB", status=""),
+            suggestion("bolagsverket", status="active"),
+        ],
+        source_run_id="r",
+    )
+    assert row is not None
+    assert (row.status, row.status_source) == ("active", "bolagsverket")
+
+    row = fold_basic_info(
+        "5560000000", [suggestion("scb", legal_name="X AB", status="")], source_run_id="r"
+    )
+    assert row is not None
+    assert (row.status, row.status_source) == ("", "")
 
 
 def test_company_id_mismatch_is_refused() -> None:
