@@ -61,11 +61,12 @@ import {
   type ArtifactPayloadEntry,
   type DescriptionProposal,
 } from "~/lib/se-company-info-payload";
+import type { DescriptionShown } from "~/components/admin/company-description-card";
+
 /** The fields this phase-A page lets a reviewer release: the two description
  * columns its editor renders. Phase B renders every registry field from the
  * export instead (spec 2026-09-02, section 11), and this list goes. */
 const RELEASABLE_FIELDS = ["description", "description_sv"] as const;
-import type { DescriptionShown } from "~/components/admin/company-description-card";
 
 export type SeCompanyInfoReviewResult =
   | { ok: true; valueIds: string[] }
