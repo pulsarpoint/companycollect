@@ -2028,8 +2028,8 @@ Replace line 8 (`      - name: se_company_registry_current`) with:
 In `stg_se_company_match_features.sql`, replace the whole `company_name_values AS (...)` block (lines 16-48) with a `register_names` CTE followed by the rewritten `company_name_values`:
 
 ```sql
--- The two register source tables of the 2026-09-03 SE basic-info design replace
--- se_company_registry_current. Each is ReplacingMergeTree(observed_at) ORDER BY
+-- The two register source tables of the 2026-09-03 SE basic-info design replace the
+-- retired registry projection. Each is ReplacingMergeTree(observed_at) ORDER BY
 -- company_id, so FINAL gives the one current row per company; the retired table had a
 -- has_company tombstone flag these do not need -- a row exists only while the source
 -- delivers the company. Bolagsverket has no alternate name, exactly as before.
