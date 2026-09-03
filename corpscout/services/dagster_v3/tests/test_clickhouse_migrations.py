@@ -385,6 +385,8 @@ EXPECTED_MIGRATIONS = (
     "000370_corpscout_fi_taxonomy_dictionary",
     "000371_corpscout_se_company_info_field_value",
     "000372_corpscout_retire_se_company_info_correction",
+    "000373_corpscout_se_scb_companies",
+    "000374_corpscout_se_bolagsverket_companies",
 )
 
 NOOP_MIGRATIONS = {"000276_noop"}
@@ -4078,3 +4080,55 @@ def test_every_migration_ends_with_a_statement_not_a_comment() -> None:
         lines = [line for line in path.read_text().splitlines() if line.strip()]
         assert lines, path.name
         assert lines[-1].rstrip().endswith(";"), f"{path.name} ends with: {lines[-1]!r}"
+
+
+def test_se_register_source_tables_are_created_by_000373_and_000374() -> None:
+    """2026-09-03 SE basic-info design, section 3.1: one table per register source, holding
+    that source's whole record in the source's own organisation, keyed on company_id alone
+    and replaced only when the source record changes. Neither up file drops anything --
+    se_company_registry_observations and se_company_registry_current are retired by 000375,
+    written at its apply step, because a DROP that has to wait for a deploy must not sit in
+    the sequential ledger (2026-08-25 ruling, and the 000371 -> 000372 precedent)."""
+    scb_up = _migration_sql("000373_corpscout_se_scb_companies.up.sql")
+    scb_down = _migration_sql("000373_corpscout_se_scb_companies.down.sql")
+    bolagsverket_up = _migration_sql("000374_corpscout_se_bolagsverket_companies.up.sql")
+    bolagsverket_down = _migration_sql(
+        "000374_corpscout_se_bolagsverket_companies.down.sql"
+    )
+
+    assert "CREATE TABLE IF NOT EXISTS corpscout.se_scb_companies\n" in scb_up
+    assert "DROP TABLE IF EXISTS corpscout.se_scb_companies" in scb_down
+    assert (
+        "CREATE TABLE IF NOT EXISTS corpscout.se_bolagsverket_companies\n"
+        in bolagsverket_up
+    )
+    assert (
+        "DROP TABLE IF EXISTS corpscout.se_bolagsverket_companies" in bolagsverket_down
+    )
+
+    for up, columns in (
+        (scb_up, sweden_company_tables.SE_SCB_COMPANIES_EXPORT_COLUMNS),
+        (
+            bolagsverket_up,
+            sweden_company_tables.SE_BOLAGSVERKET_COMPANIES_EXPORT_COLUMNS,
+        ),
+    ):
+        for column in columns:
+            assert f"\n    {column} " in up, column
+        assert "ENGINE = ReplacingMergeTree(observed_at)\nORDER BY company_id;" in up
+        assert (
+            "CONSTRAINT has_company CHECK match(company_id, "
+            "'^([0-9]{10}|[0-9]{12})$')"
+        ) in up
+        # No derived status and no merge: each table keeps its source's own codes.
+        assert "derived_status" not in up
+        # The DROPs of the retired registry pair belong to 000375 alone.
+        assert "DROP TABLE" not in up
+        assert "TRUNCATE TABLE" not in up.upper()
+
+    # The m* previous-value twins of the SCB delivery file are not published: the S3
+    # snapshots keep every file as delivered (section 3.1).
+    for twin in ("mNamn", "mFtgStat", "mJurForm", "mNg1", "mPostNr", "mRegDatKtid"):
+        assert twin not in scb_up
+    # ForAndrTyp is a per-delivery change-type marker, not a company attribute.
+    assert "ForAndrTyp" not in scb_up

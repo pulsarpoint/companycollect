@@ -39,6 +39,12 @@ QUALIFIED_COMPANY_INDUSTRY_OBSERVATIONS_TABLE = (
 QUALIFIED_COMPANY_INDUSTRY_CURRENT_TABLE = (
     f"{SWEDEN_DATABASE}.{COMPANY_INDUSTRY_CURRENT_TABLE_CH}"
 )
+SCB_COMPANIES_TABLE_CH = "se_scb_companies"
+BOLAGSVERKET_COMPANIES_TABLE_CH = "se_bolagsverket_companies"
+QUALIFIED_SCB_COMPANIES_TABLE = f"{SWEDEN_DATABASE}.{SCB_COMPANIES_TABLE_CH}"
+QUALIFIED_BOLAGSVERKET_COMPANIES_TABLE = (
+    f"{SWEDEN_DATABASE}.{BOLAGSVERKET_COMPANIES_TABLE_CH}"
+)
 
 SWEDEN_COMPANY_DUCKDB_PATH = Path("data/sweden_company_source.duckdb")
 
@@ -134,6 +140,55 @@ SE_COMPANIES_EXPORT_COLUMNS = (
     "bolagsverket_source_payload_hash",
     "scb_source_payload_hash",
     "updated_from_raw_at",
+)
+
+# The whole SCB register record per company, in the DDL order of migration 000373. Bound
+# positionally by the exporter, pinned against the migration by
+# tests/test_sweden_company_source_tables.py.
+SE_SCB_COMPANIES_EXPORT_COLUMNS = (
+    "company_id",
+    "company_id_raw",
+    "legal_name",
+    "alternate_name",
+    "legal_form_code",
+    "source_status_code",
+    "source_secondary_status_code",
+    "registration_date",
+    "ng1_code",
+    "ng2_code",
+    "ng3_code",
+    "ng4_code",
+    "ng5_code",
+    "care_of",
+    "street_address",
+    "postal_code",
+    "post_town",
+    "marketing_block_code",
+    "source_run_id",
+    "source_record_id",
+    "source_payload_hash",
+    "observed_at",
+)
+
+# The whole Bolagsverket register record per company, in the DDL order of migration 000374.
+SE_BOLAGSVERKET_COMPANIES_EXPORT_COLUMNS = (
+    "company_id",
+    "company_id_raw",
+    "name_protection_sequence",
+    "registration_country_code",
+    "legal_name",
+    "legal_name_raw",
+    "legal_form_code",
+    "registration_date",
+    "deregistration_date",
+    "deregistration_reason",
+    "proceedings_raw",
+    "activity_description",
+    "postal_address",
+    "source_run_id",
+    "source_record_id",
+    "source_payload_hash",
+    "observed_at",
 )
 
 SE_COMPANY_ADDRESS_BASE_COLUMNS = (
