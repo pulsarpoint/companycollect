@@ -13,6 +13,7 @@ class ResearchPipelineTest(unittest.IsolatedAsyncioTestCase):
         with tempfile.TemporaryDirectory() as temporary_directory:
             workdir = Path(temporary_directory)
             calls: list[str] = []
+            suggestion_paths: list[Path | None] = []
 
             async def fake_crawl(settings):
                 calls.append("crawl")
@@ -20,6 +21,7 @@ class ResearchPipelineTest(unittest.IsolatedAsyncioTestCase):
 
             async def fake_analysis(settings):
                 calls.append(f"analyze:{settings.previous_report_path is not None}")
+                suggestion_paths.append(settings.suggestions_path)
                 return _FakeReport()
 
             async def fake_suggest(settings):
@@ -65,6 +67,10 @@ class ResearchPipelineTest(unittest.IsolatedAsyncioTestCase):
                 ["crawl", "analyze:False", "suggest", "extend", "analyze:True"],
             )
             self.assertEqual(calls, ["crawl", "analyze:False"])
+            self.assertEqual(
+                suggestion_paths[:2],
+                [None, workdir.resolve() / "suggestions-pass-2.json"],
+            )
             self.assertTrue((workdir / "report-pass-1.json").exists())
             self.assertTrue((workdir / "suggestions-pass-2.json").exists())
             self.assertTrue((workdir / "report-pass-2.json").exists())

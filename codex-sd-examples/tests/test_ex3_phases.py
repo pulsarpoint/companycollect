@@ -27,6 +27,7 @@ from ex3.main import cli
 from ex3.merge import drop_unknown_evidence, merge_information_with_llm
 from ex3.models import (
     AggregateAnalysisStats,
+    AnalysisTokenUsage,
     BatchAnalysis,
     BatchStats,
     CrawlManifest,
@@ -37,6 +38,7 @@ from ex3.models import (
     MarkdownPage,
     PageExtraction,
     PageExtractionMetadata,
+    PassSuggestions,
     PassSummary,
     RelatedDomain,
     RelatedDomainAnalysis,
@@ -44,8 +46,10 @@ from ex3.models import (
     RelatedDomainSelection,
     ResearchReport,
     ScoredUrl,
+    TokenUsageBreakdown,
     UrlSeeding,
     consolidate_extractions,
+    sum_token_totals,
 )
 from ex3.prompty import create_related_domains_prompt
 
@@ -645,6 +649,204 @@ class IncrementalAnalysisTest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(dropped, 1)
 
 
+class TokenAccountingTest(unittest.IsolatedAsyncioTestCase):
+    async def test_pass_one_counts_the_page_selection_call(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            directory = Path(temporary_directory)
+            (directory / "home.md").write_text("# Home", encoding="utf-8")
+            manifest = _manifest(markdown_path="home.md")
+            assert manifest.url_seeding is not None
+            manifest.url_seeding.llm = LlmCallStatus(
+                attempted=True,
+                succeeded=True,
+                token_usage=_token_usage(1_500),
+            )
+            manifest_path = directory / "crawl-manifest.json"
+            manifest_path.write_text(
+                manifest.model_dump_json(indent=2), encoding="utf-8"
+            )
+
+            report = await _run_analysis(manifest_path)
+
+        self.assertEqual(report.analysis_stats.attempted_analyses, 2)
+        self.assertEqual(report.passes[0].token_totals.total_tokens, 1_500)
+        self.assertEqual(report.run_token_totals.total_tokens, 1_500)
+
+    async def test_extra_pass_counts_the_suggestion_call_and_sums_the_run(
+        self,
+    ) -> None:
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            directory = Path(temporary_directory)
+            (directory / "home.md").write_text("# Home", encoding="utf-8")
+            (directory / "careers.md").write_text("# Careers", encoding="utf-8")
+            manifest = _manifest(
+                markdown_path="home.md",
+                extra_pages=[
+                    MarkdownPage(
+                        source_url="https://example.com/careers",
+                        depth=0,
+                        markdown_path="careers.md",
+                        markdown_chars=9,
+                        selection="suggested",
+                        pass_number=2,
+                    )
+                ],
+            )
+            manifest_path = directory / "crawl-manifest.json"
+            manifest_path.write_text(
+                manifest.model_dump_json(indent=2), encoding="utf-8"
+            )
+            previous_path = directory / "report-pass-1.json"
+            previous_path.write_text(
+                _report(
+                    manifest,
+                    pages=[_extraction("https://example.com/", succeeded=True)],
+                    passes=[
+                        PassSummary(
+                            pass_number=1,
+                            pages=1,
+                            new_pages=1,
+                            batches=1,
+                            token_totals=TokenUsageBreakdown(
+                                input_tokens=100, total_tokens=900
+                            ),
+                        )
+                    ],
+                ).model_dump_json(indent=2),
+                encoding="utf-8",
+            )
+            suggestions_path = directory / "suggestions-pass-2.json"
+            suggestions_path.write_text(
+                PassSuggestions(
+                    manifest_path=str(manifest_path),
+                    report_path=str(previous_path),
+                    pass_number=2,
+                    llm=LlmCallStatus(
+                        attempted=True,
+                        succeeded=True,
+                        token_usage=_token_usage(700),
+                    ),
+                ).model_dump_json(indent=2),
+                encoding="utf-8",
+            )
+
+            report = await _run_analysis(
+                manifest_path,
+                previous_report_path=previous_path,
+                suggestions_path=suggestions_path,
+            )
+
+        self.assertEqual(report.suggestions_path, str(suggestions_path.resolve()))
+        self.assertEqual(report.passes[1].token_totals.total_tokens, 700)
+        self.assertEqual(report.run_token_totals.total_tokens, 1_600)
+        self.assertEqual(report.run_token_totals.input_tokens, 100)
+
+    def test_sum_token_totals_adds_every_field(self) -> None:
+        totals = sum_token_totals(
+            [
+                PassSummary(
+                    pass_number=1,
+                    pages=1,
+                    new_pages=1,
+                    batches=1,
+                    token_totals=TokenUsageBreakdown(
+                        input_tokens=1,
+                        cached_input_tokens=2,
+                        cache_write_input_tokens=3,
+                        output_tokens=4,
+                        reasoning_output_tokens=5,
+                        total_tokens=6,
+                    ),
+                ),
+                PassSummary(
+                    pass_number=2,
+                    pages=1,
+                    new_pages=1,
+                    batches=1,
+                    token_totals=TokenUsageBreakdown(
+                        input_tokens=10,
+                        cached_input_tokens=20,
+                        cache_write_input_tokens=30,
+                        output_tokens=40,
+                        reasoning_output_tokens=50,
+                        total_tokens=60,
+                    ),
+                ),
+            ]
+        )
+
+        self.assertEqual(
+            totals,
+            TokenUsageBreakdown(
+                input_tokens=11,
+                cached_input_tokens=22,
+                cache_write_input_tokens=33,
+                output_tokens=44,
+                reasoning_output_tokens=55,
+                total_tokens=66,
+            ),
+        )
+
+
+async def _run_analysis(
+    manifest_path: Path,
+    *,
+    previous_report_path: Path | None = None,
+    suggestions_path: Path | None = None,
+) -> ResearchReport:
+    async def fake_analyze_batches(batches, **kwargs):
+        return (
+            [
+                _extraction(page.source_url, succeeded=True)
+                for batch in batches
+                for page in batch.pages
+            ],
+            [
+                BatchAnalysis(
+                    batch_number=1,
+                    page_urls=[
+                        page.source_url for batch in batches for page in batch.pages
+                    ],
+                    markdown_chars=9,
+                    succeeded=True,
+                )
+            ],
+            [],
+        )
+
+    with (
+        patch(
+            "ex3.crawler._analyze_related_domains",
+            new=AsyncMock(
+                return_value=(
+                    [],
+                    RelatedDomainAnalysis(
+                        attempted=False, candidate_domains=0, succeeded=True
+                    ),
+                )
+            ),
+        ),
+        patch("ex3.crawler._analyze_batches", new=fake_analyze_batches),
+    ):
+        return await run_analysis(
+            AnalysisSettings(
+                manifest_path=manifest_path,
+                max_page_chars=30_000,
+                max_batch_pages=5,
+                max_batch_chars=60_000,
+                analysis_timeout_seconds=300,
+                previous_report_path=previous_report_path,
+                suggestions_path=suggestions_path,
+                merge_with_llm=False,
+            )
+        )
+
+
+def _token_usage(total: int) -> AnalysisTokenUsage:
+    breakdown = TokenUsageBreakdown(total_tokens=total)
+    return AnalysisTokenUsage(last=breakdown, thread_total=breakdown)
+
+
 class UrlDiscoveryTest(unittest.TestCase):
     def test_collects_all_urls_before_related_domain_classification(self) -> None:
         with tempfile.TemporaryDirectory() as temporary_directory:
@@ -838,6 +1040,7 @@ class PhaseCliTest(unittest.TestCase):
         self.assertIn("--keep-non-english", analysis_help.output)
         self.assertIn("default: keep-non-english", analysis_help.output)
         self.assertIn("--previous-report", analysis_help.output)
+        self.assertIn("--suggestions", analysis_help.output)
         self.assertIn("--no-merge", analysis_help.output)
         self.assertEqual(runner.invoke(cli, ["suggest", "--help"]).exit_code, 0)
         self.assertEqual(runner.invoke(cli, ["extend", "--help"]).exit_code, 0)

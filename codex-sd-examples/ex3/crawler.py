@@ -48,10 +48,12 @@ from ex3.models import (
     DiscoveredUrl,
     DiscoveryStrategy,
     LanguageDiscovery,
+    LlmCallStatus,
     MarkdownPage,
     MergeAnalysis,
     PageExtraction,
     PageExtractionMetadata,
+    PassSuggestions,
     PassSummary,
     RelatedDomain,
     RelatedDomainAnalysis,
@@ -65,6 +67,7 @@ from ex3.models import (
     build_analysis_stats,
     consolidate_extractions,
     set_source_url,
+    sum_token_totals,
 )
 from ex3.prompty import create_prompt, create_related_domains_prompt
 from ex3.requirements import compute_gaps
@@ -127,6 +130,7 @@ class AnalysisSettings:
     analysis_timeout_seconds: int
     skip_non_english: bool = False
     previous_report_path: Path | None = None
+    suggestions_path: Path | None = None
     merge_with_llm: bool = True
 
 
@@ -242,6 +246,12 @@ async def run_analysis(settings: AnalysisSettings) -> ResearchReport:
             len(markdown_pages),
         )
 
+    suggestions: PassSuggestions | None = None
+    if settings.suggestions_path is not None:
+        suggestions = PassSuggestions.model_validate_json(
+            settings.suggestions_path.read_text(encoding="utf-8")
+        )
+
     discovered_urls = discover_urls(
         manifest.markdown_pages,
         searched_url=manifest.selected_base_url,
@@ -302,16 +312,30 @@ async def run_analysis(settings: AnalysisSettings) -> ResearchReport:
         if previous is not None and previous.passes
         else 1
     )
-    extra_calls = [merge_analysis] if merge_analysis is not None else []
+    extra_calls: list[LlmCallStatus] = []
+    # The page-selection call paid for pass one only; later passes must not
+    # count it again.
+    if (
+        previous is None
+        and manifest.url_seeding is not None
+        and manifest.url_seeding.llm is not None
+    ):
+        extra_calls.append(manifest.url_seeding.llm)
+    if suggestions is not None:
+        extra_calls.append(suggestions.llm)
+    if merge_analysis is not None:
+        extra_calls.append(merge_analysis)
+    analysis_stats = build_analysis_stats(
+        batch_analyses, related_domain_analysis, extra_calls
+    )
     current_pass = PassSummary(
         pass_number=pass_number,
         pages=len(all_pages),
         new_pages=len(pages),
         batches=len(batch_analyses),
-        token_totals=build_analysis_stats(
-            batch_analyses, related_domain_analysis, extra_calls
-        ).token_totals,
+        token_totals=analysis_stats.token_totals,
     )
+    passes = [*(previous.passes if previous is not None else []), current_pass]
 
     return ResearchReport(
         requested_start_url=manifest.requested_start_url,
@@ -337,23 +361,25 @@ async def run_analysis(settings: AnalysisSettings) -> ResearchReport:
         failed_pages=failed_pages,
         markdown_pages=manifest.markdown_pages,
         skipped_pages=skipped_pages,
-        analysis_stats=build_analysis_stats(
-            batch_analyses,
-            related_domain_analysis,
-            extra_calls,
-        ),
+        analysis_stats=analysis_stats,
         batches=batch_analyses,
         discovered_urls=discovered_urls,
         related_domain_analysis=related_domain_analysis,
         related_domains=related_domains,
         useful_information=useful_information,
         pages=all_pages,
-        passes=[*(previous.passes if previous is not None else []), current_pass],
+        passes=passes,
+        run_token_totals=sum_token_totals(passes),
         gaps=compute_gaps(useful_information),
         merge_analysis=merge_analysis,
         previous_report_path=(
             str(settings.previous_report_path.resolve())
             if settings.previous_report_path is not None
+            else None
+        ),
+        suggestions_path=(
+            str(settings.suggestions_path.resolve())
+            if settings.suggestions_path is not None
             else None
         ),
     )

@@ -320,9 +320,11 @@ class ResearchReport(StrictModel):
     useful_information: UsefulInformation
     pages: list[PageExtraction]
     passes: list[PassSummary] = Field(default_factory=list)
+    run_token_totals: TokenUsageBreakdown = Field(default_factory=TokenUsageBreakdown)
     gaps: list[Gap] = Field(default_factory=list)
     merge_analysis: MergeAnalysis | None = None
     previous_report_path: str | None = None
+    suggestions_path: str | None = None
 
 
 def batch_extraction_output_schema() -> JsonObject:
@@ -378,6 +380,20 @@ def build_analysis_stats(
                 )
             )
     return aggregate_analysis_metadata(metadata)
+
+
+def sum_token_totals(passes: Sequence[PassSummary]) -> TokenUsageBreakdown:
+    """Add every pass's token totals field by field into one run total."""
+    total = TokenUsageBreakdown()
+    for summary in passes:
+        usage = summary.token_totals
+        total.input_tokens += usage.input_tokens
+        total.cached_input_tokens += usage.cached_input_tokens
+        total.cache_write_input_tokens += usage.cache_write_input_tokens
+        total.output_tokens += usage.output_tokens
+        total.reasoning_output_tokens += usage.reasoning_output_tokens
+        total.total_tokens += usage.total_tokens
+    return total
 
 
 def consolidate_extractions(pages: list[PageExtraction]) -> UsefulInformation:

@@ -415,6 +415,10 @@ def research_command(
             f"{pass_summary.new_pages} new, {pass_summary.batches} batches, "
             f"{pass_summary.token_totals.total_tokens:,} tokens"
         )
+    click.echo(
+        f"Run total: {report.run_token_totals.total_tokens:,} tokens over "
+        f"{len(report.passes)} pass(es)"
+    )
     click.echo(f"Gaps: {', '.join(gap.field for gap in report.gaps) or 'none'}")
     click.echo(f"Report: {workdir.resolve() / 'report.json'}")
 
@@ -488,6 +492,16 @@ def research_command(
     ),
 )
 @click.option(
+    "--suggestions",
+    "suggestions_path",
+    type=click.Path(path_type=Path, exists=True, dir_okay=False),
+    default=None,
+    help=(
+        "Suggestions of the pass being analyzed; its LLM call is counted in "
+        "this pass's token totals."
+    ),
+)
+@click.option(
     "--merge/--no-merge",
     "merge_with_llm",
     default=True,
@@ -509,6 +523,7 @@ def analyze_command(
     analysis_timeout_seconds: int,
     skip_non_english: bool,
     previous_report_path: Path | None,
+    suggestions_path: Path | None,
     merge_with_llm: bool,
     overwrite: bool,
     verbose: bool,
@@ -528,6 +543,7 @@ def analyze_command(
         analysis_timeout_seconds=analysis_timeout_seconds,
         skip_non_english=skip_non_english,
         previous_report_path=previous_report_path,
+        suggestions_path=suggestions_path,
         merge_with_llm=merge_with_llm,
     )
     try:
@@ -569,7 +585,7 @@ def analyze_command(
         f"{report.batch_stats.failed_batches} failed"
     )
     click.echo(
-        "Token totals: "
+        "Token totals (this pass): "
         f"input={report.analysis_stats.token_totals.input_tokens:,}, "
         f"cached={report.analysis_stats.token_totals.cached_input_tokens:,}, "
         f"cache-write={report.analysis_stats.token_totals.cache_write_input_tokens:,}, "
@@ -577,6 +593,10 @@ def analyze_command(
         "reasoning="
         f"{report.analysis_stats.token_totals.reasoning_output_tokens:,}, "
         f"total={report.analysis_stats.token_totals.total_tokens:,}"
+    )
+    click.echo(
+        f"Run total: {report.run_token_totals.total_tokens:,} tokens over "
+        f"{len(report.passes)} pass(es)"
     )
     if report.merge_analysis is not None:
         if report.merge_analysis.succeeded:

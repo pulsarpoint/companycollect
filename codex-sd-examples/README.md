@@ -244,8 +244,16 @@ uv run python -m ex3.main research https://example.com \
    outside processed pages are dropped and counted in `merge_analysis`.
 
 `--max-passes 1` disables the extra pass; the loop also stops when nothing is
-missing or the LLM suggests nothing. Each command can be run on its own with
-the artifacts above.
+missing or the LLM suggests nothing. A pass that fails is logged and the run
+keeps the last completed report. Each command can be run on its own with the
+artifacts above.
+
+Token accounting follows the passes. `analysis_stats` and each
+`passes[*].token_totals` cover one pass only: its extraction batches, the
+related-domain call, the page-selection call in pass one, the suggestion call
+of that pass (`analyze --suggestions suggestions-pass-N.json`, which `research`
+supplies automatically), and its merge call. `run_token_totals` sums every pass
+and is what the run cost end to end.
 
 ## Output
 

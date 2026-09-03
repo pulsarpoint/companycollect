@@ -44,7 +44,7 @@ async def run_research(settings: ResearchSettings) -> ResearchReport:
     await run_crawl(settings.crawl)
     report_path = workdir / "report-pass-1.json"
     report = await run_analysis(
-        _analysis_settings(settings, manifest_path, previous=None)
+        _analysis_settings(settings, manifest_path, previous=None, suggestions=None)
     )
     save_report(report, report_path)
 
@@ -78,7 +78,12 @@ async def run_research(settings: ResearchSettings) -> ResearchReport:
             )
             next_report_path = workdir / f"report-pass-{pass_number}.json"
             report = await run_analysis(
-                _analysis_settings(settings, manifest_path, previous=report_path)
+                _analysis_settings(
+                    settings,
+                    manifest_path,
+                    previous=report_path,
+                    suggestions=suggestions_path,
+                )
             )
             save_report(report, next_report_path)
             report_path = next_report_path
@@ -93,7 +98,11 @@ async def run_research(settings: ResearchSettings) -> ResearchReport:
 
 
 def _analysis_settings(
-    settings: ResearchSettings, manifest_path: Path, *, previous: Path | None
+    settings: ResearchSettings,
+    manifest_path: Path,
+    *,
+    previous: Path | None,
+    suggestions: Path | None,
 ) -> AnalysisSettings:
     return AnalysisSettings(
         manifest_path=manifest_path,
@@ -102,4 +111,5 @@ def _analysis_settings(
         max_batch_chars=settings.max_batch_chars,
         analysis_timeout_seconds=settings.analysis_timeout_seconds,
         previous_report_path=previous,
+        suggestions_path=suggestions,
     )
