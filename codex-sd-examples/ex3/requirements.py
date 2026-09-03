@@ -13,15 +13,25 @@ FOUNDED_PATTERN = re.compile(
     r"found|establish|since|grundad|gegründet|perustettu|stiftet", re.IGNORECASE
 )
 EMPLOYEE_PATTERN = re.compile(
-    r"employee|staff|headcount|anställda|medarbetare|mitarbeiter|ansatte|työntekij",
+    r"\bemploy(s|ees?|ed)?\b|staff|headcount|anställda|medarbetare|mitarbeiter"
+    r"|ansatte|työntekij",
     re.IGNORECASE,
 )
+# Role terms only: bare "management", "board" or "director" match unrelated
+# prose such as "Local account management", "Asset Management team", "dashboard".
 MANAGEMENT_PATTERN = re.compile(
-    r"\bceo\b|\bcfo\b|\bcto\b|chief|managing director|management|board|director|founder|\bvd\b|styrelse|ledning|geschäftsführ|vorstand",
+    r"\bceo\b|\bcfo\b|\bcto\b|\bcoo\b"
+    r"|\bchief executive|\bchief financial"
+    r"|\bmanaging director|\bexecutive management\b|\bgroup management\b"
+    r"|\bboard of directors\b|\bboard members?\b"
+    r"|\bchairman\b|\bchair of the board\b|\bfounders?\b"
+    r"|\bvd\b|\bverkställande direktör|\bstyrelse|\bkoncernledning"
+    r"|\bledningsgrupp|\bgeschäftsführ|\bvorstand",
     re.IGNORECASE,
 )
 GROUP_PATTERN = re.compile(
-    r"subsidiar|parent company|group|owner|brand|dotterbolag|koncern|moderbolag|tochter",
+    r"subsidiar|parent company|\bgroup\b|owner|\bbrands?\b"
+    r"|dotterbolag|koncern|moderbolag|tochter",
     re.IGNORECASE,
 )
 
@@ -53,7 +63,7 @@ TARGET_FIELDS: tuple[TargetField, ...] = (
     TargetField("social_profiles", "official social media profiles"),
     TargetField("group_structure", "parent company, subsidiaries and brands"),
 )
-TARGET_FIELD_KEYS = frozenset(field.key for field in TARGET_FIELDS)
+TARGET_FIELD_KEYS: frozenset[str] = frozenset(field.key for field in TARGET_FIELDS)
 
 
 class Gap(StrictModel):
@@ -72,9 +82,7 @@ def compute_gaps(information: UsefulInformation) -> list[Gap]:
     """Report target fields the consolidated result does not cover yet."""
     company = information.company
     contact_types = {contact.type for contact in information.contacts}
-    fact_text = " ".join(
-        f"{fact.name} {fact.value}" for fact in information.other_facts
-    )
+    fact_texts = [f"{fact.name} {fact.value}" for fact in information.other_facts]
     gaps: list[Gap] = []
 
     def missing(key: str, detail: str) -> None:
@@ -107,11 +115,17 @@ def compute_gaps(information: UsefulInformation) -> list[Gap]:
         )
     if not company.industries:
         missing("industries", "no industries")
-    if not (FOUNDED_PATTERN.search(fact_text) and YEAR_PATTERN.search(fact_text)):
+    if not any(
+        FOUNDED_PATTERN.search(text) and YEAR_PATTERN.search(text)
+        for text in fact_texts
+    ):
         missing("founded_year", "no founding year among the extracted facts")
-    if not (EMPLOYEE_PATTERN.search(fact_text) and NUMBER_PATTERN.search(fact_text)):
+    if not any(
+        EMPLOYEE_PATTERN.search(text) and NUMBER_PATTERN.search(text)
+        for text in fact_texts
+    ):
         missing("employee_count", "no employee count among the extracted facts")
-    if not MANAGEMENT_PATTERN.search(fact_text):
+    if not any(MANAGEMENT_PATTERN.search(text) for text in fact_texts):
         missing(
             "management", "no executives or board members among the extracted facts"
         )
@@ -121,7 +135,7 @@ def compute_gaps(information: UsefulInformation) -> list[Gap]:
         missing("products_services", "no products or services")
     if not company.social_profiles and "social" not in contact_types:
         missing("social_profiles", "no social media profiles")
-    if not GROUP_PATTERN.search(fact_text):
+    if not any(GROUP_PATTERN.search(text) for text in fact_texts):
         missing(
             "group_structure",
             "no parent, subsidiaries or brands among the extracted facts",

@@ -72,5 +72,66 @@ class GapComputationTest(unittest.TestCase):
             self.assertEqual(text.count(f"- {key}:"), 1)
 
 
+class GapPatternTest(unittest.TestCase):
+    def test_generic_words_do_not_close_the_management_gap(self) -> None:
+        for value in (
+            "Local account management",
+            "asset management, financing",
+            "Asset Management team",
+            "Career areas: compliance, law, audit",
+            "dashboard",
+        ):
+            with self.subTest(value=value):
+                self.assertIn("management", _open_gaps(("Fact", value)))
+
+    def test_role_terms_close_the_management_gap(self) -> None:
+        for value in (
+            "CEO Michael Green",
+            "Board of directors",
+            "Styrelsen best\u00e5r av",
+            "Verkst\u00e4llande direkt\u00f6r Anna",
+        ):
+            with self.subTest(value=value):
+                self.assertNotIn("management", _open_gaps(("Fact", value)))
+
+    def test_group_words_are_word_bounded(self) -> None:
+        self.assertIn("group_structure", _open_gaps(("Place", "Brandenburg")))
+        self.assertNotIn(
+            "group_structure", _open_gaps(("Owner", "wholly owned subsidiary"))
+        )
+        self.assertNotIn("group_structure", _open_gaps(("Name", "Handelsbanken Group")))
+
+    def test_founding_year_needs_both_signals_in_one_fact(self) -> None:
+        self.assertNotIn("founded_year", _open_gaps(("History", "Founded 1871")))
+        self.assertNotIn("founded_year", _open_gaps(("History", "Established in 1871")))
+        self.assertIn(
+            "founded_year",
+            _open_gaps(
+                ("History", "The bank was founded by merchants"),
+                ("Award", "Best bank 2019"),
+            ),
+        )
+
+    def test_employee_count_accepts_employs_and_needs_one_fact(self) -> None:
+        self.assertNotIn("employee_count", _open_gaps(("Size", "employs 500 people")))
+        self.assertNotIn(
+            "employee_count", _open_gaps(("Size", "Drygt 12 000 medarbetare"))
+        )
+        self.assertIn(
+            "employee_count",
+            _open_gaps(("Size", "Many employees"), ("Offices", "12 000 branches")),
+        )
+
+
+def _open_gaps(*facts: tuple[str, str]) -> set[str]:
+    information = UsefulInformation(
+        other_facts=[
+            OtherFact(name=name, value=value, evidence=EVIDENCE)
+            for name, value in facts
+        ]
+    )
+    return {gap.field for gap in compute_gaps(information)}
+
+
 if __name__ == "__main__":
     unittest.main()
