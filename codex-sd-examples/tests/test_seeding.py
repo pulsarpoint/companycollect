@@ -378,9 +378,10 @@ class LlmPageSelectionTest(unittest.IsolatedAsyncioTestCase):
             ["llm", "company profile", "fields: description, founded_year"],
         )
         self.assertTrue(status.succeeded)
-        self.assertEqual(len(status.warnings), 2)
+        self.assertEqual(len(status.warnings), 3)
         self.assertTrue(any("unknown" in warning for warning in status.warnings))
         self.assertTrue(any("duplicate" in warning for warning in status.warnings))
+        self.assertTrue(any("limit" in warning for warning in status.warnings))
 
     async def test_reports_failure_and_returns_no_picks(self) -> None:
         async def fake_turn(**kwargs):

@@ -55,8 +55,7 @@ async def select_pages_with_llm(
             warnings.append(f"Ignored duplicate page: {decision.url}")
             continue
         if len(picks) >= limit:
-            # Already have `limit` picks; drop the rest without a warning since
-            # the model was asked for "at most limit" candidates, not exactly.
+            warnings.append(f"Ignored pick beyond the limit: {decision.url}")
             continue
         seen.add(key)
         reasons = ["llm", decision.reason]
