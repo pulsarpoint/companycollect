@@ -66,6 +66,7 @@
 9. **`se_company_info_weekly` and the field-value sensor leave `info.py`** in Tasks 5-6 (the old asset and its two jobs stay). The freshness leaf for the new asset is registered with `max_age=None` (row-count check only) until the cutover plan starts the schedule; the old leaf is left untouched (it dies with the old asset).
 10. **Serving view (spec 10).** The eight new columns are projected straight off `se_company_info` (`website` folded to `''` like every other string column; numeric/date NULLs kept). The rebuilt `_next` view carries the CURRENT cadence `REFRESH EVERY 1 HOUR OFFSET 45 MINUTE` (000366), not 000347's 15 minutes. The migration is applied AFTER the resolve backfill (cutover step 5): the columns exist from plan 1's migration but are empty until the rebuild, so an earlier apply is harmless yet wastes one full refresh.
 11. **Deploy note for the cutover plan:** the sensor keeps its name, so Dagster keeps its RUNNING state and cursor across the deploy; cutover step 1 must stop `se_company_info_field_value_sensor` BEFORE deploying this branch, or the first decision after the deploy launches the new asset against empty candidate tables.
+12. **Final-review amendments (2026-09-02, executed):** the candidate sensor's touched set is `extracted_at >= since` -- an extractor stamps ONE `extracted_at` for its whole run, so a tick landing mid-run must still see the later pages; a boundary company resolved twice is accepted (the "advances without a run" test became "re-selects the boundary company after a mid-run tick"). The `se_company_info_clickhouse` leaf loses its freshness window (`max_age=None`): its schedule moved and the asset is retiring, decision 9's "left untouched" no longer holds. The three artifact leaves keep `WEEKLY` and will WARN if the cutover window exceeds nine days -- an operational note for plan 5, not a code change. `info.AUTOMATED_RUN_CONFIG` is a test-only pin now (no production trigger sends it). The harness also executes `build_registry_statements_sql` and `build_batch_stats_sql`. Parked: `load_registry_statements` selects `policy_version` without reading it (the registry version is the single version authority).
 
 ## File structure
 
@@ -799,7 +800,7 @@ ORDER BY field, source, from_decision"""
 - [ ] **Step 4: Run the tests**
 
 Run: `uv run --frozen --no-sync pytest tests/test_se_company_field_resolve.py -q -p no:warnings`
-Expected: PASS (10 tests). If `test_the_projection_header_names_every_wide_column_in_ddl_order` fails, the failure names a plan-2 contract gap (the projection header must list the deployed columns minus `evidence_set_hash`): report it, do not edit `fields/sql.py`.
+Expected: PASS (9 tests). If `test_the_projection_header_names_every_wide_column_in_ddl_order` fails, the failure names a plan-2 contract gap (the projection header must list the deployed columns minus `evidence_set_hash`): report it, do not edit `fields/sql.py`.
 
 - [ ] **Step 5: Commit**
 
@@ -1112,8 +1113,9 @@ def _resolve_batch(client: Any, statements: RegistryStatements, companies: Seque
         raise ValueError(f"The projection statement targets {header.table}, not {SE_COMPANY_INFO}")
     # new_versions_only stays off: the wide table is keyed by company_id and a new
     # version per resolution is the point -- ReplacingMergeTree(resolved_at) keeps the newest.
+    # publish_with_stage qualifies the bare table name itself (every caller passes bare).
     counts = publish_with_stage(
-        client=client, target=SE_COMPANY_INFO, insert_columns=header.columns, select_sql=header.body,
+        client=client, target=SE_COMPANY_INFO.split(".")[-1], insert_columns=header.columns, select_sql=header.body,
         select_parameters=server_params(company_ids=companies), invalid_condition=WIDE_INVALID_CONDITION,
         new_versions_only=False)
     rows = client.execute(build_batch_stats_sql(), server_params(company_ids=companies, source_run_id=source_run_id))
@@ -1217,7 +1219,7 @@ defs = dg.Definitions(assets=[se_company_field_resolved_clickhouse])
 - [ ] **Step 4: Run the tests**
 
 Run: `uv run --frozen --no-sync pytest tests/test_se_company_field_resolve.py -q -p no:warnings`
-Expected: PASS (17 tests).
+Expected: PASS (16 tests).
 
 Then: `WEBTECH_API_URL=http://localhost:1 WEBTECH_S3_PATH=s3://bucket/prefix uv run --frozen --no-sync dg check defs`
 Expected: success -- the new asset loads beside `se_company_info_clickhouse`; no name collision (the old asset keeps its name).
@@ -1254,7 +1256,6 @@ and the check body against a scripted client. Executed against a real engine in
 test_se_company_field_resolve_clickhouse_local.py."""
 
 import dagster as dg
-import pytest
 
 from dagster_v3.defs.se_company.fields.parity import (
     CONDITION_NAMES,
@@ -1319,7 +1320,7 @@ def test_parity_sql_compares_every_legal_fact_and_both_description_rules() -> No
     # ... a decided company matches the old row whatever wrote it ...
     assert ("(NOT (length(old.correction_ids) = 0) AND (ifNull(toString(rebuilt.description), '') != "
             "ifNull(toString(old.description), '') OR ifNull(toString(rebuilt.description_sv), '') != "
-            "ifNull(toString(old.description_sv), ''))) AS description_decided") in sql
+            "ifNull(toString(old.description_sv), '')))) AS description_decided") in sql  # inner OR group: one paren more
     # ... and a modelled one matches the stored observation, not the old row.
     assert ("(old.llm_enhanced AND length(old.correction_ids) = 0 AND "
             "ifNull(toString(observation.suggestion_id), '00000000-0000-0000-0000-000000000000') != "
@@ -1697,7 +1698,7 @@ def test_candidate_sensor_sql_shapes_and_declaration() -> None:
     assert build_candidate_touched_sql("se_company_field_candidate") == (
         "SELECT DISTINCT company_id\n"
         "FROM corpscout.se_company_field_candidate\n"
-        "WHERE extracted_at > parseDateTime64BestEffort(%(since)s, 3, 'UTC')\n"
+        "WHERE extracted_at >= parseDateTime64BestEffort(%(since)s, 3, 'UTC')\n"
         "ORDER BY company_id\n"
         "LIMIT %(limit)s")
     assert MAX_SCOPED_COMPANY_IDS == 20_000
@@ -1856,7 +1857,7 @@ FROM {DATABASE}.{table}"""
 def build_candidate_touched_sql(table: str) -> str:
     return f"""SELECT DISTINCT company_id
 FROM {DATABASE}.{table}
-WHERE extracted_at > parseDateTime64BestEffort(%(since)s, 3, 'UTC')
+WHERE extracted_at >= parseDateTime64BestEffort(%(since)s, 3, 'UTC')
 ORDER BY company_id
 LIMIT %(limit)s"""
 
@@ -1889,10 +1890,10 @@ def candidate_sensor(
         with context.resources.clickhouse.get_connection() as client:
             count, latest = client.execute(build_candidate_cursor_sql(bare_table))[0]
             if int(count) == 0:
-                return dg.SkipReason(f"No rows in {table}")
+                return dg.SkipReason(f"No rows in {bare_table}")
             cursor = f"{int(count)}:{latest}"
             if cursor == context.cursor:
-                return dg.SkipReason(f"No new rows in {table}")
+                return dg.SkipReason(f"No new rows in {bare_table}")
             since = context.cursor.split(":", 1)[1] if context.cursor else EPOCH
             rows = client.execute(build_candidate_touched_sql(bare_table),
                                   {"since": since, "limit": max_scoped_company_ids + 1})
@@ -1904,7 +1905,7 @@ def candidate_sensor(
         scope = [] if len(company_ids) > max_scoped_company_ids else company_ids
         return dg.SensorResult(
             run_requests=[dg.RunRequest(
-                run_key=f"{table}:{cursor}",
+                run_key=f"{bare_table}:{cursor}",
                 run_config={"ops": {asset: {"config": {**shared_config, "company_ids": scope}}
                                     for asset in asset_names}})],
             cursor=cursor)
@@ -2009,7 +2010,7 @@ Claude-Session: https://claude.ai/code/session_01RY2W9FTCX9YxUcXtSBaEJ5"
 
 **Interfaces:**
 - Consumes: `jobs.se_company_fields_job`, `resolve.{AUTOMATED_RUN_CONFIG, LLM_CANDIDATES_ASSET, RESOLVE_ASSET}`.
-- Produces: `schedules.LLM_CANDIDATES_RUN_CONFIG: dict[str, Any]`, `schedules.se_company_fields_weekly` (cron `50 6 * * 1`, `UTC`, STOPPED, run config `{"ops": {RESOLVE_ASSET: {"config": {"execute": True}}, LLM_CANDIDATES_ASSET: {"config": LLM_CANDIDATES_RUN_CONFIG}}}`); a `ClickhouseLeaf("se_company_field_resolved_clickhouse", ("se_company_field",), None)`.
+- Produces: `schedules.LLM_CANDIDATES_RUN_CONFIG: dict[str, Any]` (`{"execute": True, "llm": {...}}`), `schedules.se_company_fields_weekly` (cron `50 6 * * 1`, `UTC`, STOPPED, run config `{"ops": {RESOLVE_ASSET: {"config": {"execute": True}}, <each non-LLM candidate asset>: {"config": {"execute": True}}, LLM_CANDIDATES_ASSET: {"config": LLM_CANDIDATES_RUN_CONFIG}}}` -- plan 2's `CandidateExtractConfig.execute` defaults to a preview exactly like the resolve asset, so every extractor the weekly job runs must be told `execute`; the registry export and the three artifact assets have no gate); a `ClickhouseLeaf("se_company_field_resolved_clickhouse", ("se_company_field",), None)`.
 
 - [ ] **Step 1: Write the failing test**
 
@@ -2019,7 +2020,7 @@ Append to `tests/test_se_company_field_resolve.py`:
 # --- Definitions wiring ---------------------------------------------------------------
 
 
-def test_definitions_wire_the_resolve_asset_jobs_sensors_and_schedule() -> None:
+def test_definitions_wire_the_resolve_asset_jobs_sensors_and_schedule(monkeypatch) -> None:
     from dagster_v3.definitions import defs as load_defs
     from dagster_v3.defs.common.clickhouse_checks import CLICKHOUSE_LEAVES, ROW_COUNT_CHECK_NAME
     from dagster_v3.defs.se_company.fields.jobs import WEEKLY_ASSETS
@@ -2065,15 +2066,24 @@ def test_definitions_wire_the_resolve_asset_jobs_sensors_and_schedule() -> None:
     assert "se_company_info_weekly" not in {s.name for s in repository.schedule_defs}
     context = dg.build_schedule_context(scheduled_execution_time=datetime(2026, 9, 7, 6, 50, tzinfo=UTC))
     run_requests = se_company_fields_weekly.evaluate_tick(context).run_requests
+    # Every gated asset in the chain is told execute: the resolve asset AND the seven
+    # extractors (plan 2's CandidateExtractConfig defaults to a preview too).
     assert run_requests is not None and run_requests[0].run_config == {"ops": {
         RESOLVE_ASSET: {"config": {"execute": True}},
+        **{name: {"config": {"execute": True}} for name in CANDIDATE_ASSETS if name != LLM_CANDIDATES_ASSET},
         LLM_CANDIDATES_ASSET: {"config": LLM_CANDIDATES_RUN_CONFIG}}}
+    assert LLM_CANDIDATES_RUN_CONFIG["execute"] is True
     assert LLM_CANDIDATES_RUN_CONFIG["llm"]["provider"] == "deepseek"
     assert LLM_CANDIDATES_RUN_CONFIG["llm"]["model"] == "deepseek-v4-flash"
     assert LLM_CANDIDATES_RUN_CONFIG["llm"]["prompt_version"] == "se-company-info-description-v3"
     # The config the daemon would submit must be one the job accepts: raises
     # DagsterInvalidConfigError, naming the key, when the LLM extractor's config class
-    # (plan 2) does not take LLM_CANDIDATES_RUN_CONFIG's shape.
+    # (plan 2) does not take LLM_CANDIDATES_RUN_CONFIG's shape. validate_run_config also
+    # resolves the clickhouse resource's EnvVars (definitions.py), so they are stubbed --
+    # nothing connects; dg.Config itself does not reject unknown keys, so this call is
+    # the only strict check of the key names.
+    for name in ("CLICKHOUSE_HOST", "CLICKHOUSE_USER", "CLICKHOUSE_PASSWORD", "CLICKHOUSE_DATABASE"):
+        monkeypatch.setenv(name, "test")
     dg.validate_run_config(weekly_job, run_requests[0].run_config)
 
     # The old asset and its two jobs stay registered beside the new ones until the cutover.
@@ -2099,9 +2109,11 @@ unique across every schedule -- tests/test_schedule_cron_contracts.py). STOPPED 
 default like its predecessor; the cutover plan starts it on the prod instance once the
 rebuild is verified.
 
-The run config spells out what an automated run must never leave to defaults: the
-resolve asset's ``execute`` (a bare run is a preview), and the LLM extractor's model
-profile (spec 5.3: provider and model are required run config, no default).
+The run config spells out what an automated run must never leave to defaults: ``execute``
+for the resolve asset AND for every candidate extractor (a bare run of either is a
+preview -- plan 2's CandidateExtractConfig gates exactly like the resolve asset), and the
+LLM extractor's model profile (spec 5.3: provider and model are required run config, no
+default). The registry export and the three artifact assets have no gate.
 """
 
 from typing import Any
@@ -2111,6 +2123,7 @@ import dagster as dg
 from dagster_v3.defs.se_company.fields.jobs import se_company_fields_job
 from dagster_v3.defs.se_company.fields.resolve import (
     AUTOMATED_RUN_CONFIG,
+    CANDIDATE_ASSETS,
     LLM_CANDIDATES_ASSET,
     RESOLVE_ASSET,
 )
@@ -2119,7 +2132,9 @@ from dagster_v3.defs.se_company.fields.resolve import (
 # a default change can never silently change what the weekly run calls. The values are
 # info.DEFAULT_LLM_PROFILE's (which the cutover plan deletes with info.py); the key
 # names are the LLM extractor's config class -- the Definitions test validates them.
+# ``execute`` rides along: without it the extractor previews and writes nothing.
 LLM_CANDIDATES_RUN_CONFIG: dict[str, Any] = {
+    "execute": True,
     "llm": {
         "provider": "deepseek",
         "model": "deepseek-v4-flash",
@@ -2134,8 +2149,12 @@ LLM_CANDIDATES_RUN_CONFIG: dict[str, Any] = {
 se_company_fields_weekly = dg.ScheduleDefinition(
     name="se_company_fields_weekly", job=se_company_fields_job, cron_schedule="50 6 * * 1",
     execution_timezone="UTC", default_status=dg.DefaultScheduleStatus.STOPPED,
-    run_config={"ops": {RESOLVE_ASSET: {"config": dict(AUTOMATED_RUN_CONFIG)},
-                        LLM_CANDIDATES_ASSET: {"config": dict(LLM_CANDIDATES_RUN_CONFIG)}}})
+    run_config={"ops": {
+        RESOLVE_ASSET: {"config": dict(AUTOMATED_RUN_CONFIG)},
+        **{name: {"config": dict(AUTOMATED_RUN_CONFIG)}
+           for name in CANDIDATE_ASSETS if name != LLM_CANDIDATES_ASSET},
+        LLM_CANDIDATES_ASSET: {"config": dict(LLM_CANDIDATES_RUN_CONFIG)},
+    }})
 
 defs = dg.Definitions(schedules=[se_company_fields_weekly])
 ```
@@ -2171,7 +2190,7 @@ Replace the comment above `AUTOMATED_RUN_CONFIG` (`# The two automated triggers 
 
 - [ ] **Step 5: Register the leaf**
 
-In `src/dagster_v3/defs/common/clickhouse_checks.py`, after the line `ClickhouseLeaf("se_company_info_clickhouse", ("se_company_info",), WEEKLY),` add:
+In `src/dagster_v3/defs/common/clickhouse_checks.py`, after the seven `se_company_field_candidates_*` leaves plan 2 added below `ClickhouseLeaf("se_company_info_clickhouse", ("se_company_info",), WEEKLY),` (i.e. after the `se_company_field_candidates_llm` leaf) add:
 
 ```python
     # se_company_fields -- the registry-driven resolve (se_company/fields/resolve.py)
@@ -2759,6 +2778,8 @@ def test_the_parity_check_reports_per_column_mismatches(sections) -> None:
 Run (Docker must be running, or a `clickhouse`/`clickhouse-local` binary on PATH): `uv run --frozen --no-sync pytest tests/test_se_company_field_resolve_clickhouse_local.py -q -p no:warnings -x`
 Expected: PASS (14 tests: 7 per `join_use_nulls` setting). A `returncode != 0` assertion prints clickhouse-local's stderr with the failing statement: a `Substitution ... is not set` names a placeholder plan 2's statement uses that `_resolve_pass` does not bind (add it there); a `Cannot parse` on `param_company_ids` means the array text is wrong (compare with `_param_text`); a projection column error names a plan-2 contract gap -- report it, do not edit `fields/sql.py`. If `test_the_wide_row_equals_the_expected_handelsbanken_row` fails on a provenance value the spec leaves to plan 2 (`description_language` for a decided description, the `deterministic` model columns), the expected row is what changes, with a comment naming the plan-2 rule it now pins.
 
+Execution note (2026-09-02): the committed harness differs from the block above where plans 1 and 2 rule: `WINNERS` follow `INFO_REGISTRY` (scb before bolagsverket for the identity fields, so `legal_form_code` publishes `49` and `se_code_labels` seeds both code systems); the `latest_revenue` candidate carries plan 2's `revenue_value_sql` shape with JSON-number amounts; the SNI/NACE candidates carry `code_set`/`revision`; the TSV parser decodes ClickHouse's escapes; `wide_row_3` pins `description_language == ''` for a decided description (a decision carries no value_json); `_bound` escapes the param text once. Parked: `\N` decodes to `"N"` (unreachable while every nullable is read through ifNull) and the `;`-split migration replay (the ledger rules forbid `;` in comments).
+
 - [ ] **Step 3: Commit**
 
 ```bash
@@ -2958,7 +2979,7 @@ up = f"""CREATE DATABASE IF NOT EXISTS corpscout;
 -- Serves the field registry's eight wide columns (industry_label_en, website, employee_count,
 -- employee_count_as_of, latest_revenue_amount, latest_revenue_currency, latest_revenue_amount_usd,
 -- latest_revenue_fiscal_year -- spec 2026-09-02 section 10) straight off se_company_info. Same
--- staged swap as 000347, SYSTEM STOP VIEW guard included; the _next view carries the CURRENT
+-- staged swap as 000347, SYSTEM STOP VIEW guard included, and the _next view carries the CURRENT
 -- cadence (000366: hourly, offset 45) rather than 000347's 15 minutes. Applied AFTER the
 -- registry resolve backfill (cutover step 5): the columns exist from the field-table migration
 -- but are empty until then.

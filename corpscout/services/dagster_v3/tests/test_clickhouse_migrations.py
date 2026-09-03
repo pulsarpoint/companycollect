@@ -388,6 +388,7 @@ EXPECTED_MIGRATIONS = (
     "000373_corpscout_se_company_field_tables",
     "000374_corpscout_se_company_info_field_columns",
     "000375_corpscout_se_company_info_field_value_registry_checks",
+    "000377_corpscout_se_companies_serving_field_registry_columns",
 )
 
 NOOP_MIGRATIONS = {"000276_noop"}
@@ -4154,3 +4155,26 @@ def test_every_migration_ends_with_a_statement_not_a_comment() -> None:
         lines = [line for line in path.read_text().splitlines() if line.strip()]
         assert lines, path.name
         assert lines[-1].rstrip().endswith(";"), f"{path.name} ends with: {lines[-1]!r}"
+
+
+def test_se_companies_serving_serves_the_field_registry_columns_by_staged_swap() -> None:
+    """000347's recipe, verbatim: stop the live view, build _next under the CURRENT
+    cadence (000366's hourly), wait for its first refresh, one atomic RENAME. The
+    embedded SELECT is the builder's render (drift-pinned by test_se_companies_serving_mv.py)."""
+    up = _migration_sql("000377_corpscout_se_companies_serving_field_registry_columns.up.sql")
+    down = _migration_sql("000377_corpscout_se_companies_serving_field_registry_columns.down.sql")
+
+    assert "SYSTEM STOP VIEW corpscout.se_companies_serving;" in up
+    assert ("CREATE MATERIALIZED VIEW corpscout.se_companies_serving_next\n"
+            "REFRESH EVERY 1 HOUR OFFSET 45 MINUTE\nENGINE = MergeTree\nORDER BY company_id\nAS WITH") in up
+    for column in ("industry_label_en", "website", "employee_count", "employee_count_as_of",
+                   "latest_revenue_amount", "latest_revenue_currency", "latest_revenue_amount_usd",
+                   "latest_revenue_fiscal_year"):
+        assert f"\n  {column},\n" in up, column
+    assert "SYSTEM WAIT VIEW corpscout.se_companies_serving_next;" in up
+    assert "corpscout.se_companies_serving TO corpscout.se_companies_serving_retired" in up
+    assert "corpscout.se_companies_serving_next TO corpscout.se_companies_serving" in up
+    assert "DROP" not in "\n".join(line.split("--")[0] for line in up.splitlines()).upper()
+    assert "corpscout.se_companies_serving_retired TO corpscout.se_companies_serving" in down
+    assert "SYSTEM START VIEW corpscout.se_companies_serving;" in down
+    assert "DROP VIEW IF EXISTS corpscout.se_companies_serving_registry_discard;" in down

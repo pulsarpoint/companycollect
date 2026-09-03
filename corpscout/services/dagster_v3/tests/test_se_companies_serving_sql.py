@@ -33,6 +33,7 @@ The fixture is four companies, each a different shape of the primary-class rule:
 import json
 import subprocess
 from datetime import UTC, datetime
+from decimal import Decimal
 
 import pytest
 
@@ -54,6 +55,7 @@ PRECISE = "5560000022"
 NOSERVED = "5560000033"
 POSTAL_BOX = "5560000044"
 NOADDRESS = "5560000055"
+SCALED = "5560000066"
 
 # address_id -> the served-overlay row (precise or coarse). Absent ids have no served row.
 PRECISE_LAT, PRECISE_LON = 59.3300, 18.0600
@@ -89,6 +91,20 @@ INFO_COLUMNS = (
     "correction_ids, suggestion_id, model_provider, model_name, prompt_version, "
     "source_run_id, resolved_at"
 )
+
+SCALED_COLUMNS = INFO_COLUMNS + (
+    ", industry_label_en, website, employee_count, employee_count_as_of, latest_revenue_amount, "
+    "latest_revenue_currency, latest_revenue_amount_usd, latest_revenue_fiscal_year"
+)
+
+
+def _scaled_row() -> str:
+    """A company the field registry resolved: every new column populated."""
+    return _info_row(SCALED, "Scaled AB")[:-1] + (
+        ", 'Other monetary intermediation', 'https://www.scaled.se', 11000, '2024-12-31', "
+        "58000000000.00, 'SEK', 5500000000.00, 2024)"
+    )
+
 
 ADDRESS_COLUMNS = (
     "company_id, address_key, address_type, street_address, postal_code, city, "
@@ -204,6 +220,17 @@ def _script(*, join_use_nulls: int) -> str:
         "ALTER TABLE corpscout.se_company_info "
         "ADD COLUMN IF NOT EXISTS legal_form_label_en String DEFAULT '' AFTER legal_form_code, "
         "ADD COLUMN IF NOT EXISTS legal_form_label_sv String DEFAULT '' AFTER legal_form_label_en;",
+        # The field registry's eight wide columns (spec 2026-09-02 section 8.3), replayed the
+        # same way; every pre-existing row reads them as '' / NULL.
+        "ALTER TABLE corpscout.se_company_info "
+        "ADD COLUMN IF NOT EXISTS industry_label_en String DEFAULT '', "
+        "ADD COLUMN IF NOT EXISTS website Nullable(String), "
+        "ADD COLUMN IF NOT EXISTS employee_count Nullable(UInt64), "
+        "ADD COLUMN IF NOT EXISTS employee_count_as_of Nullable(Date32), "
+        "ADD COLUMN IF NOT EXISTS latest_revenue_amount Nullable(Decimal128(2)), "
+        "ADD COLUMN IF NOT EXISTS latest_revenue_currency LowCardinality(String) DEFAULT '', "
+        "ADD COLUMN IF NOT EXISTS latest_revenue_amount_usd Nullable(Decimal128(2)), "
+        "ADD COLUMN IF NOT EXISTS latest_revenue_fiscal_year Nullable(UInt16);",
         table_block("se_company_address"),
         _served_table_ddl() + ";",
         # Stubs for the presence-set reads: only the columns the serving SELECT's
@@ -251,6 +278,7 @@ def _script(*, join_use_nulls: int) -> str:
             )
         )
         + ";",
+        f"INSERT INTO corpscout.se_company_info ({SCALED_COLUMNS}) VALUES\n{_scaled_row()};",
         f"INSERT INTO corpscout.se_company_address ({ADDRESS_COLUMNS}) VALUES\n"
         + ",\n".join(ADDRESS_ROWS)
         + ";",
@@ -296,7 +324,7 @@ def _addresses(row: dict) -> dict[str, dict]:
 
 def test_one_row_per_company_including_the_addressless(rows: dict[str, dict]) -> None:
     # The widened base: a published company with NO current address still gets a row.
-    assert set(rows) == {COARSE, PRECISE, NOSERVED, POSTAL_BOX, NOADDRESS}
+    assert set(rows) == {COARSE, PRECISE, NOSERVED, POSTAL_BOX, NOADDRESS, SCALED}
 
 
 def test_an_addressless_company_serves_an_empty_address_summary(
@@ -483,3 +511,23 @@ def test_primary_class_falls_back_to_base_status_with_no_served_row(
     assert row["primary_geocode_class"] == "unmatched"
     assert row["primary_geocode_provider"] == ""
     assert row["primary_latitude"] is None
+
+
+def test_the_field_registry_columns_are_served(rows: dict[str, dict]) -> None:
+    """The eight columns come straight off se_company_info: strings folded to '' like every
+    other served string, numbers and dates NULL when unresolved. JSONEachRow quotes UInt64
+    (output_format_json_quote_64bit_integers) and prints Decimal as a number."""
+    row = rows[SCALED]
+    assert row["industry_label_en"] == "Other monetary intermediation"
+    assert row["website"] == "https://www.scaled.se"
+    assert int(row["employee_count"]) == 11000 and row["employee_count_as_of"] == "2024-12-31"
+    assert Decimal(str(row["latest_revenue_amount"])) == Decimal("58000000000.00")
+    assert row["latest_revenue_currency"] == "SEK"
+    assert Decimal(str(row["latest_revenue_amount_usd"])) == Decimal("5500000000.00")
+    assert row["latest_revenue_fiscal_year"] == 2024
+    unresolved = rows[COARSE]
+    assert unresolved["industry_label_en"] == "" and unresolved["website"] == ""
+    assert unresolved["latest_revenue_currency"] == ""
+    for column in ("employee_count", "employee_count_as_of", "latest_revenue_amount",
+                   "latest_revenue_amount_usd", "latest_revenue_fiscal_year"):
+        assert unresolved[column] is None, column

@@ -479,3 +479,37 @@ def test_publish_with_stage_anti_join_columns_are_configurable() -> None:
         "AND existing.source = stage.source AND existing.source_record_uid = stage.source_record_uid "
         "AND existing.evidence_hash = stage.evidence_hash"
     ) in insert_sql
+
+
+def test_publish_with_stage_runs_on_a_caller_supplied_client() -> None:
+    """The field-registry resolve asset holds one server-side-params client for a whole
+    run and passes it in: every statement must then go through THAT client -- no
+    connection of its own -- and the staged SELECT's parameters must reach the driver
+    untouched (the server binds `{company_ids:Array(String)}` from them)."""
+    client = FakeClient(answers=[[(2, 0)], [(10,)], [(12,)]])  # validation, existing, final
+    counts = publish_with_stage(
+        client=client, target="se_company_info",
+        insert_columns=("company_id", "legal_name"),
+        select_sql="SELECT company_id, legal_name FROM corpscout.x WHERE company_id IN {company_ids:Array(String)}",
+        select_parameters={"company_ids": "['5565200028']"},
+        invalid_condition="trim(legal_name) = ''",
+        new_versions_only=False,
+    )
+    assert counts == PublishCounts(staged=2, inserted=2, total=12)
+    sql = [entry[0] for entry in client.executed]
+    assert sql[0].startswith("CREATE TABLE `corpscout`.`_tmp_se_company_info_")
+    assert sql[1].startswith("INSERT INTO `corpscout`.`_tmp_se_company_info_")
+    assert sql[1].endswith("WHERE company_id IN {company_ids:Array(String)}")
+    assert client.executed[1][1] == {"company_ids": "['5565200028']"}
+    assert any(s.startswith("INSERT INTO `corpscout`.`se_company_info` (company_id,") for s in sql)
+    assert sql[-1].startswith("DROP TABLE IF EXISTS `corpscout`.`_tmp_se_company_info_")
+
+
+def test_publish_with_stage_needs_exactly_one_of_resource_or_client() -> None:
+    client = FakeClient(answers=[])
+    with pytest.raises(ValueError, match="exactly one of clickhouse or client"):
+        publish_with_stage(target="t", insert_columns=("a",), rows=[("x",)], invalid_condition="a = ''")
+    with pytest.raises(ValueError, match="exactly one of clickhouse or client"):
+        publish_with_stage(clickhouse=FakeClickhouse(client), client=client, target="t",
+                           insert_columns=("a",), rows=[("x",)], invalid_condition="a = ''")
+    assert client.executed == []

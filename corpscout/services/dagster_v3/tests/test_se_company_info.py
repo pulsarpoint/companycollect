@@ -831,24 +831,27 @@ def test_definitions_wire_final_jobs_sensor_schedule_and_leaves() -> None:
                     "se_company_info_wikidata_clickhouse", "se_company_info_clickhouse"}
     assert {k.path[-1] for k in repository.get_job("se_company_info_review_job").asset_layer.executable_asset_keys} == {
         "se_company_info_clickhouse"}
-    sensor = repository.get_sensor_def("se_company_info_field_value_sensor")
-    assert sensor.job_name == "se_company_info_review_job"
-    assert sensor.default_status == dg.DefaultSensorStatus.STOPPED
-    schedule = repository.get_schedule_def("se_company_info_weekly")
-    # 06:45 Monday would collide with the existing "45 6 * * 6" slot the cron contract guards.
-    assert schedule.cron_schedule == "50 6 * * 1"
-    assert schedule.default_status == dg.DefaultScheduleStatus.STOPPED
+    # The field-value sensor keeps its name but launches the registry-driven resolve
+    # (fields/sensors.py); tests/test_se_company_field_sensors.py owns it.
+    assert repository.get_sensor_def("se_company_info_field_value_sensor").job_name == "se_company_field_resolve_job"
+    # The Monday 06:50 slot belongs to se_company_fields_weekly now (fields/schedules.py).
+    assert "se_company_info_weekly" not in {schedule.name for schedule in repository.schedule_defs}
     leaves = {leaf.asset_key: leaf for leaf in CLICKHOUSE_LEAVES}
     assert leaves["se_company_info_clickhouse"].tables == ("se_company_info",)
     assert leaves["se_company_info_scb_clickhouse"].tables == ("se_company_info_scb",)
     assert leaves["se_company_info_esef_clickhouse"].tables == ("se_company_info_esef",)
     assert leaves["se_company_info_wikidata_clickhouse"].tables == ("se_company_info_wikidata",)
-    # se_company_info_weekly is RUNNING (phase 7): a missed week must show as stale.
+    # The three artifacts are refreshed weekly by se_company_fields_job now: a missed week
+    # must still show as stale.
     from dagster_v3.defs.common.clickhouse_checks import WEEKLY
 
     assert all(leaves[key].max_age == WEEKLY for key in (
-        "se_company_info_clickhouse", "se_company_info_scb_clickhouse",
-        "se_company_info_esef_clickhouse", "se_company_info_wikidata_clickhouse"))
+        "se_company_info_scb_clickhouse", "se_company_info_esef_clickhouse",
+        "se_company_info_wikidata_clickhouse"))
+    # se_company_info_clickhouse is retiring: no job materializes it any more (its weekly
+    # schedule moved to se_company_fields_weekly), so a freshness check on it could only
+    # go permanently red. Row-count check only until the cutover deletes the asset.
+    assert leaves["se_company_info_clickhouse"].max_age is None
 
 
 def test_a_truncated_model_response_is_reported_as_truncation_not_as_bad_json() -> None:
@@ -1073,9 +1076,9 @@ def test_the_model_step_keeps_at_most_concurrency_calls_in_flight() -> None:
 
 def test_the_config_gates_the_run_and_pins_the_profile_the_automation_sends() -> None:
     from dagster_v3.defs.se_company.info import (
+        AUTOMATED_RUN_CONFIG,
         DEFAULT_LLM_PROFILE,
         SECompanyInfoConfig,
-        se_company_info_weekly,
     )
 
     # Preview by default: an empty config (a UI "Materialize" click) resolves nothing.
@@ -1089,52 +1092,7 @@ def test_the_config_gates_the_run_and_pins_the_profile_the_automation_sends() ->
     for bad in (0, 9):
         with pytest.raises(ValueError):
             LlmProfileConfig(concurrency=bad)
-    # The automated triggers must both spell out execute AND the profile: a
-    # sensor/schedule run carries only the config its definition writes. Read off an
-    # evaluated tick, which is the config the daemon would actually submit.
-    context = dg.build_schedule_context(
-        scheduled_execution_time=datetime(2026, 8, 24, 6, 50, tzinfo=UTC))
-    run_requests = se_company_info_weekly.evaluate_tick(context).run_requests
-    assert run_requests is not None and run_requests[0].run_config == {
-        "ops": {"se_company_info_clickhouse": {"config": {"execute": True, "llm": DEFAULT_LLM_PROFILE}}}}
-
-
-def test_the_field_value_sensor_launches_a_real_run_not_a_preview(monkeypatch) -> None:
-    """A new field value must actually re-resolve its company. Without execute in the
-    sensor's run config the review job would run the scan and write nothing -- the
-    reviewer's decision would sit unpublished forever, and nothing would look broken.
-
-    The cursor and the tuple boundary are keyed on `value_id`, the field-value table's own
-    row-identity column: `correction_id` does not exist there, so a sensor that kept the
-    default would fail against ClickHouse on its very first tick."""
-    from contextlib import contextmanager
-
-    import dagster as dg
-    from dagster_clickhouse import ClickhouseResource
-
-    from dagster_v3.defs.se_company.info import (
-        DEFAULT_LLM_PROFILE,
-        se_company_info_field_value_sensor,
-    )
-    from tests.test_se_company_common import _FakeLedgerClient
-
-    ledger = _FakeLedgerClient()
-    ledger.append(COMPANY, str(uuid.UUID(int=7)), "2026-08-22 09:00:00.000")
-    resource = ClickhouseResource(host="localhost")
-
-    @contextmanager
-    def fake_get_connection(self):
-        yield ledger
-
-    monkeypatch.setattr(ClickhouseResource, "get_connection", fake_get_connection)
-    context = dg.build_sensor_context(cursor=None, resources={"clickhouse": resource})
-    execution_data = se_company_info_field_value_sensor.evaluate_tick(context)
-
-    assert execution_data.run_requests is not None
-    assert execution_data.run_requests[0].run_config == {
-        "ops": {"se_company_info_clickhouse": {"config": {
-            "execute": True, "llm": DEFAULT_LLM_PROFILE, "company_ids": [COMPANY]}}}}
-    statements = [sql for sql, _ in ledger.executed]
-    assert any("corpscout.se_company_info_field_value" in sql for sql in statements)
-    assert all("correction_id" not in sql for sql in statements)
-    assert any("argMax(value_id, (created_at, value_id))" in sql for sql in statements)
+    # What the backoffice Pipeline page sends for a real run of this asset until the
+    # cutover deletes it: execute AND the pinned profile. The automated triggers launch
+    # the registry-driven resolve now (tests/test_se_company_field_resolve.py).
+    assert AUTOMATED_RUN_CONFIG == {"execute": True, "llm": DEFAULT_LLM_PROFILE}
