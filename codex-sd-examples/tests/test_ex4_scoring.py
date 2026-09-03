@@ -1,12 +1,13 @@
 import tempfile
 import unittest
 from pathlib import Path
+from unittest.mock import Mock, patch
 
 from ex1.models import AnalysisTokenUsage, TokenUsageBreakdown
 from ex3.candidates import PageCandidate
 from ex3.crawler import save_model
 from ex3.models import LlmCallStatus
-from ex4.candidates import CandidateSet
+from ex4.candidates import CandidateSet, load_candidate_set
 from ex4.gold import GoldSet
 from ex4.paths import DataDir
 from ex4.runner import Pick, RunResult
@@ -169,6 +170,21 @@ class ScoreRunTest(unittest.TestCase):
             [(s.domain, s.prompt_name) for s in scores.results], [("a.se", "pa")]
         )
         self.assertEqual(scores.prompts[0].prompt_name, "pa")
+
+    def test_loads_each_candidate_set_once_per_domain(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            data = DataDir(Path(directory))
+            save_model(_candidates(), data.candidate_file("a.se"))
+            save_model(_gold(), data.gold_file("a.se"))
+            save_model(_result("pa", [BASE]), data.result_file("r1", "a.se", "pa", 1))
+            save_model(_result("pb", [BASE]), data.result_file("r1", "a.se", "pb", 1))
+
+            wrapper = Mock(side_effect=load_candidate_set)
+            with patch("ex4.scoring.load_candidate_set", wrapper):
+                scores = score_run("r1", data)
+
+        self.assertEqual(wrapper.call_count, 1)
+        self.assertEqual(len(scores.results), 2)
 
 
 if __name__ == "__main__":

@@ -169,9 +169,11 @@ def score_run(run_id: str, data: DataDir) -> RunScores:
         gold = gold_cache[result.domain]
         if gold is None:
             continue
-        candidate_set = candidate_cache.setdefault(
-            result.domain, load_candidate_set(data.candidate_file(result.domain))
-        )
+        if result.domain not in candidate_cache:
+            candidate_cache[result.domain] = load_candidate_set(
+                data.candidate_file(result.domain)
+            )
+        candidate_set = candidate_cache[result.domain]
         results.append(score_result(result, gold, candidate_set))
         picks_by_result[(result.domain, result.prompt_name, result.repeat)] = {
             p.url for p in result.picks
