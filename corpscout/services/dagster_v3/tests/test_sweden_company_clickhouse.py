@@ -3,6 +3,7 @@ from contextlib import contextmanager
 from pathlib import Path
 
 import duckdb
+import pytest
 from dagster_clickhouse import ClickhouseResource
 
 from dagster_v3.defs.sweden_company import tables
@@ -314,6 +315,56 @@ def test_publish_sweden_company_source_table_publishes_the_bolagsverket_record(
     assert "LEFT ANTI JOIN" in target_inserts[0]
     assert (
         ", ".join(tables.SE_BOLAGSVERKET_COMPANIES_EXPORT_COLUMNS) in target_inserts[0]
+    )
+
+
+def test_publish_sweden_company_source_table_refuses_an_empty_stage(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    """Minor-3 of the final review: the empty-input refusal is the one guard that stops a
+    bad load, and had no test. export_duckdb_connection_table_to_clickhouse enforces its
+    own non-empty rule only on the truncate=True path (defs/clickhouse/resolved.py); this
+    helper passes truncate=False, so the local `if candidates == 0: raise ValueError` in
+    publish_sweden_company_source_table is the only guard, and it is live, not dead."""
+    client = FakeClickHouseClient()
+    resource = ClickhouseResource(host="localhost")
+
+    @contextmanager
+    def fake_get_connection(self: ClickhouseResource) -> Iterator[FakeClickHouseClient]:
+        yield client
+
+    monkeypatch.setattr(ClickhouseResource, "get_connection", fake_get_connection)
+
+    with _sweden_company_duckdb_with_empty_scb_companies(tmp_path) as connection:
+        with pytest.raises(ValueError, match="has 0 rows"):
+            publish_sweden_company_source_table(
+                duckdb_connection=connection,
+                clickhouse=resource,
+                duckdb_table="scb_companies",
+                clickhouse_table=tables.SCB_COMPANIES_TABLE_CH,
+                columns=tables.SE_SCB_COMPANIES_EXPORT_COLUMNS,
+            )
+
+    assert client.insert_calls == []
+    assert not any(
+        statement.lstrip().startswith(
+            f"INSERT INTO {tables.QUALIFIED_SCB_COMPANIES_TABLE} ("
+        )
+        for statement in client.statements
+    )
+    # The stage table is created and then dropped in a `finally` that runs unconditionally
+    # -- i.e. the DROP still runs even though it is the empty-stage refusal, not a
+    # successful publish, that triggers it.
+    assert any(
+        statement.lstrip().startswith(
+            f"CREATE TABLE corpscout._tmp_{tables.SCB_COMPANIES_TABLE_CH}_"
+        )
+        for statement in client.statements
+    )
+    assert any(
+        statement.lstrip().startswith("DROP TABLE IF EXISTS corpscout._tmp_")
+        for statement in client.statements
     )
 
 
@@ -655,6 +706,46 @@ def _sweden_company_duckdb(tmp_path: Path) -> Iterator[duckdb.DuckDBPyConnection
                 'Box 1$c/o CFO$STOCKHOLM$11122$SE-LAND',
                 'run-1', '5560000000$ORGNR-IDORG', 'bolag-hash-1',
                 '2026-09-03 06:00:00'
+            )
+            """
+        )
+        yield connection
+
+
+@contextmanager
+def _sweden_company_duckdb_with_empty_scb_companies(
+    tmp_path: Path,
+) -> Iterator[duckdb.DuckDBPyConnection]:
+    """Mirrors _sweden_company_duckdb's scb_companies table shape, but leaves it empty --
+    for Minor-3: a bad load that produces zero rows must not silently publish nothing."""
+    database_path = tmp_path / "sweden_company_source_empty.duckdb"
+    with duckdb.connect(str(database_path)) as connection:
+        connection.execute(f"create schema {tables.DLT_DATASET_NAME}")
+        connection.execute(
+            f"""
+            create table {tables.DLT_DATASET_NAME}.scb_companies (
+                company_id varchar,
+                company_id_raw varchar,
+                legal_name varchar,
+                alternate_name varchar,
+                legal_form_code varchar,
+                source_status_code varchar,
+                source_secondary_status_code varchar,
+                registration_date date,
+                ng1_code varchar,
+                ng2_code varchar,
+                ng3_code varchar,
+                ng4_code varchar,
+                ng5_code varchar,
+                care_of varchar,
+                street_address varchar,
+                postal_code varchar,
+                post_town varchar,
+                marketing_block_code varchar,
+                source_run_id varchar,
+                source_record_id varchar,
+                source_payload_hash varchar,
+                observed_at timestamp
             )
             """
         )

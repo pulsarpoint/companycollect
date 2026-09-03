@@ -116,7 +116,7 @@ The table-specific ClickHouse assets publish the normalized DuckDB tables to Cli
 
 It asserts that migrations have already created the target tables. Company and
 industry facts are full-replaced through staging-table swaps because the source
-files are full snapshots. Addresses, source registry states, proceedings, and
+files are full snapshots. Addresses, proceedings, and
 complete SNI states use historical storage semantics: each snapshot is compared
 with its physical `*_current` table and only a changed state is appended to the
 observation table. Unchanged reruns append nothing. A disappearing record or

@@ -15,9 +15,11 @@ WITH companies AS (
 
 -- The two register source tables of the 2026-09-03 SE basic-info design replace the
 -- retired registry projection. Each is ReplacingMergeTree(observed_at) ORDER BY
--- company_id, so FINAL gives the one current row per company; the retired table had a
--- has_company tombstone flag these do not need -- a row exists only while the source
--- delivers the company. Bolagsverket has no alternate name, exactly as before.
+-- company_id, so FINAL gives the last row the source delivered for a company -- these
+-- tables are insert-only and never tombstone, so that row can be stale if the source has
+-- since stopped delivering the company. The INNER JOIN to companies above (from
+-- se_companies, a full-replacement table) is what bounds this model to live companies.
+-- Bolagsverket has no alternate name, exactly as before.
 register_names AS (
     SELECT
         company_id,
