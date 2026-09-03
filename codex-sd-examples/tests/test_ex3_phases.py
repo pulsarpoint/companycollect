@@ -312,6 +312,30 @@ class UrlDiscoveryTest(unittest.TestCase):
             "internal",
         )
 
+    def test_ignores_image_links(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            path = Path(temporary_directory) / "page.md"
+            path.write_text(
+                "![Logo](https://www.example.se/logo.png)\n[About](https://www.example.se/en/about)",
+                encoding="utf-8",
+            )
+            discovered = discover_urls(
+                [
+                    MarkdownPage(
+                        source_url="https://www.example.se/en/",
+                        depth=0,
+                        markdown_path=str(path),
+                        markdown_chars=10,
+                    )
+                ],
+                searched_url="https://www.example.se/en/",
+            )
+
+        self.assertEqual(
+            [item.url for item in discovered],
+            ["https://www.example.se/en/about"],
+        )
+
     def test_accepts_only_llm_domains_from_discovered_candidates(self) -> None:
         discovered_urls = [
             _discovered_url(

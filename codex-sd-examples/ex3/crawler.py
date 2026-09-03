@@ -959,7 +959,9 @@ def discover_urls(
             if parsed_url.hostname is None:
                 continue
             domain = canonical_domain(parsed_url.hostname)
-            label = _markdown_link_label(markdown, match.start())
+            label, is_image = _markdown_link_label(markdown, match.start())
+            if is_image:
+                continue
             discovered_url = discovered_by_url.get(normalized_url)
             if discovered_url is None:
                 discovered_by_url[normalized_url] = DiscoveredUrl(
@@ -987,15 +989,17 @@ def discover_urls(
     return list(discovered_by_url.values())
 
 
-def _markdown_link_label(markdown: str, destination_start: int) -> str:
+def _markdown_link_label(markdown: str, destination_start: int) -> tuple[str, bool]:
+    """Return the link label and whether the link is a Markdown image."""
     line_start = markdown.rfind("\n", 0, destination_start) + 1
     label_start = markdown.rfind("[", line_start, destination_start)
     if label_start < 0:
-        return ""
+        return "", False
+    is_image = label_start > 0 and markdown[label_start - 1] == "!"
     label = markdown[label_start + 1 : destination_start]
     if "](" in label:
-        return ""
-    return re.sub(r"\s+", " ", label).strip()[:200]
+        return "", is_image
+    return re.sub(r"\s+", " ", label).strip()[:200], is_image
 
 
 def _external_domain_candidates(
