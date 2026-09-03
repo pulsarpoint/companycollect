@@ -24,6 +24,7 @@ from ex3.crawler import (
     create_batches,
     persist_markdown_pages,
 )
+from ex3.extend import ExtendSettings, _extend_manifest, run_extend
 from ex3.language import (
     detect_document_language,
     inspect_language_page,
@@ -32,11 +33,17 @@ from ex3.language import (
 from ex3.llm import StructuredTurnOutcome, _run_turn_with_timeout
 from ex3.models import (
     BatchExtraction,
+    CrawlManifest,
+    CrawlStats,
+    LanguageDiscovery,
+    LlmCallStatus,
     MarkdownPage,
     PageExtraction,
     PageSelectionDecision,
     PageSelectionResponse,
+    PassSuggestions,
     Selector,
+    SuggestedPage,
     batch_extraction_output_schema,
 )
 from ex3.prompty import create_prompt
@@ -768,6 +775,179 @@ class _BlockedTurn:
     async def interrupt(self) -> None:
         await self._released.wait()
         self.interrupt_finished = True
+
+
+class ExtendManifestTest(unittest.IsolatedAsyncioTestCase):
+    async def test_appends_suggested_pages_with_pass_number_and_reason(self) -> None:
+        base_url = "https://www.example.se/en/"
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            directory = Path(temporary_directory)
+            (directory / "0001-home.md").write_text("# Home", encoding="utf-8")
+            manifest = CrawlManifest(
+                requested_start_url=base_url,
+                selected_base_url=base_url,
+                stopped_reason="crawl_completed",
+                language_discovery=LanguageDiscovery(
+                    requested_url=base_url,
+                    probe_url=base_url,
+                    probe_succeeded=True,
+                    probe_language="en",
+                    selected_base_url=base_url,
+                    selected_language="en",
+                    selection_method="already_english",
+                ),
+                crawl_stats=CrawlStats(
+                    configured_max_pages=1,
+                    configured_max_depth=1,
+                    include_external=False,
+                    pages_returned=1,
+                    successful_pages=1,
+                    failed_pages=0,
+                    stored_markdown_pages=1,
+                    stored_markdown_chars=6,
+                    max_depth_reached=0,
+                    selected_pages=1,
+                ),
+                failed_pages=[],
+                markdown_pages=[
+                    MarkdownPage(
+                        source_url=base_url,
+                        depth=0,
+                        markdown_path=str(directory / "0001-home.md"),
+                        markdown_chars=6,
+                        language="en",
+                        selection="selected",
+                    )
+                ],
+            )
+            suggestions = PassSuggestions(
+                manifest_path=str(directory / "crawl-manifest.json"),
+                report_path=str(directory / "report-pass-1.json"),
+                pass_number=2,
+                llm=LlmCallStatus(attempted=True, succeeded=True),
+                suggestions=[
+                    SuggestedPage(
+                        url="https://www.example.se/en/careers",
+                        reason="jobs gap",
+                        expected_fields=["jobs"],
+                    ),
+                    SuggestedPage(
+                        url=base_url, reason="already there", expected_fields=[]
+                    ),
+                ],
+            )
+            careers = CrawlResult(
+                url="https://www.example.se/en/careers",
+                html='<html lang="en"></html>',
+                success=True,
+                markdown={
+                    "raw_markdown": "# Careers",
+                    "markdown_with_citations": "",
+                    "references_markdown": "",
+                },
+            )
+            crawler = _FakeCrawler([careers])
+
+            updated = await _extend_manifest(
+                cast(AsyncWebCrawler, crawler),
+                manifest=manifest,
+                suggestions=suggestions,
+                settings=ExtendSettings(
+                    manifest_path=directory / "crawl-manifest.json",
+                    suggestions_path=directory / "suggestions-pass-2.json",
+                ),
+                manifest_path=directory / "crawl-manifest.json",
+            )
+            saved = CrawlManifest.model_validate_json(
+                (directory / "crawl-manifest.json").read_text(encoding="utf-8")
+            )
+
+        self.assertEqual(crawler.requested_urls, ["https://www.example.se/en/careers"])
+        self.assertEqual(len(updated.markdown_pages), 2)
+        new_page = updated.markdown_pages[1]
+        self.assertEqual(new_page.selection, "suggested")
+        self.assertEqual(new_page.pass_number, 2)
+        self.assertEqual(new_page.selection_reason, "jobs gap")
+        self.assertTrue(Path(new_page.markdown_path).name.startswith("0002-"))
+        self.assertEqual(updated.crawl_stats.stored_markdown_pages, 2)
+        self.assertEqual(updated.crawl_stats.suggested_pages, 1)
+        self.assertEqual(
+            saved.markdown_pages[1].source_url, "https://www.example.se/en/careers"
+        )
+
+
+class RunExtendSkipsBrowserWhenNothingNewTest(unittest.IsolatedAsyncioTestCase):
+    async def test_does_not_launch_a_browser_when_all_suggestions_are_known(
+        self,
+    ) -> None:
+        base_url = "https://www.example.se/en/"
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            directory = Path(temporary_directory)
+            markdown_path = directory / "0001-home.md"
+            markdown_path.write_text("# Home", encoding="utf-8")
+            manifest = CrawlManifest(
+                requested_start_url=base_url,
+                selected_base_url=base_url,
+                stopped_reason="crawl_completed",
+                language_discovery=LanguageDiscovery(
+                    requested_url=base_url,
+                    probe_url=base_url,
+                    probe_succeeded=True,
+                    probe_language="en",
+                    selected_base_url=base_url,
+                    selected_language="en",
+                    selection_method="already_english",
+                ),
+                crawl_stats=CrawlStats(
+                    configured_max_pages=1,
+                    configured_max_depth=1,
+                    include_external=False,
+                    pages_returned=1,
+                    successful_pages=1,
+                    failed_pages=0,
+                    stored_markdown_pages=1,
+                    stored_markdown_chars=6,
+                    max_depth_reached=0,
+                    selected_pages=1,
+                ),
+                failed_pages=[],
+                markdown_pages=[
+                    MarkdownPage(
+                        source_url=base_url,
+                        depth=0,
+                        markdown_path=str(markdown_path),
+                        markdown_chars=6,
+                        language="en",
+                        selection="selected",
+                    )
+                ],
+            )
+            manifest_path = directory / "crawl-manifest.json"
+            manifest_path.write_text(manifest.model_dump_json(), encoding="utf-8")
+            suggestions = PassSuggestions(
+                manifest_path=str(manifest_path),
+                report_path=str(directory / "report-pass-1.json"),
+                pass_number=2,
+                llm=LlmCallStatus(attempted=True, succeeded=True),
+                suggestions=[
+                    SuggestedPage(
+                        url=base_url, reason="already there", expected_fields=[]
+                    ),
+                ],
+            )
+            suggestions_path = directory / "suggestions-pass-2.json"
+            suggestions_path.write_text(suggestions.model_dump_json(), encoding="utf-8")
+
+            with patch("ex3.crawler.launch_async") as launch_browser:
+                updated = await run_extend(
+                    ExtendSettings(
+                        manifest_path=manifest_path,
+                        suggestions_path=suggestions_path,
+                    )
+                )
+
+        launch_browser.assert_not_called()
+        self.assertEqual(len(updated.markdown_pages), 1)
 
 
 if __name__ == "__main__":

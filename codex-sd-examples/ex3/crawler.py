@@ -3,8 +3,8 @@ import json
 import logging
 import math
 import re
-from collections.abc import AsyncGenerator, Callable, Collection, Mapping
-from contextlib import aclosing
+from collections.abc import AsyncGenerator, AsyncIterator, Callable, Collection, Mapping
+from contextlib import aclosing, asynccontextmanager
 from dataclasses import dataclass
 from pathlib import Path
 from types import AsyncGeneratorType
@@ -271,61 +271,72 @@ async def run_analysis(settings: AnalysisSettings) -> ResearchReport:
     )
 
 
+@asynccontextmanager
+async def _open_crawler(
+    *, headless: bool, proxy: str | None, cdp_port: int, accept_language: str
+) -> AsyncIterator[AsyncWebCrawler]:
+    """Launch CloakBrowser and attach a Crawl4AI crawler over CDP."""
+    cloak_browser = await launch_async(
+        headless=headless,
+        proxy=proxy,
+        args=[
+            f"--remote-debugging-port={cdp_port}",
+            "--remote-debugging-address=127.0.0.1",
+        ],
+    )
+    try:
+        browser_config = BrowserConfig(
+            browser_mode="cdp",
+            cdp_url=f"http://127.0.0.1:{cdp_port}",
+            headers={"Accept-Language": accept_language},
+        )
+        async with AsyncWebCrawler(config=browser_config) as crawler:
+            yield crawler
+    finally:
+        await cloak_browser.close()
+        LOGGER.info("CloakBrowser and Playwright have been closed")
+
+
 async def _discover_and_crawl(
     settings: CrawlSettings,
     *,
     requested_start_url: str,
 ) -> tuple[LanguageDiscovery, UrlSeeding, list[CrawlResult]]:
-    cloak_browser = await launch_async(
+    async with _open_crawler(
         headless=settings.headless,
         proxy=settings.proxy,
-        args=[
-            f"--remote-debugging-port={settings.cdp_port}",
-            "--remote-debugging-address=127.0.0.1",
-        ],
-    )
-
-    try:
-        browser_config = BrowserConfig(
-            browser_mode="cdp",
-            cdp_url=f"http://127.0.0.1:{settings.cdp_port}",
-            headers={"Accept-Language": settings.accept_language},
+        cdp_port=settings.cdp_port,
+        accept_language=settings.accept_language,
+    ) as crawler:
+        language_discovery, base_result = await _discover_english_base(
+            crawler,
+            settings=settings,
+            requested_start_url=requested_start_url,
         )
-        async with AsyncWebCrawler(config=browser_config) as crawler:
-            language_discovery, base_result = await _discover_english_base(
-                crawler,
-                settings=settings,
-                requested_start_url=requested_start_url,
-            )
-            base_url = language_discovery.selected_base_url
-            preferred_languages = _preferred_languages(
-                language_discovery.selected_language
-            )
-            url_seeding, crawl_results = await _select_and_crawl(
-                crawler,
-                settings=settings,
-                base_url=base_url,
-                base_result=base_result,
-                markdown_dir=settings.markdown_dir,
-                preferred_languages=preferred_languages,
-            )
-            crawled_urls = {result.url for result in crawl_results if result.success}
-            remaining = settings.max_pages - len(crawled_urls)
-            if remaining > 0:
-                crawl_results.extend(
-                    await _stream_discovery(
-                        crawler,
-                        settings=settings,
-                        base_url=base_url,
-                        max_new_pages=remaining,
-                        already_crawled=crawled_urls,
-                        preferred_languages=preferred_languages,
-                    )
+        base_url = language_discovery.selected_base_url
+        preferred_languages = _preferred_languages(language_discovery.selected_language)
+        url_seeding, crawl_results = await _select_and_crawl(
+            crawler,
+            settings=settings,
+            base_url=base_url,
+            base_result=base_result,
+            markdown_dir=settings.markdown_dir,
+            preferred_languages=preferred_languages,
+        )
+        crawled_urls = {result.url for result in crawl_results if result.success}
+        remaining = settings.max_pages - len(crawled_urls)
+        if remaining > 0:
+            crawl_results.extend(
+                await _stream_discovery(
+                    crawler,
+                    settings=settings,
+                    base_url=base_url,
+                    max_new_pages=remaining,
+                    already_crawled=crawled_urls,
+                    preferred_languages=preferred_languages,
                 )
-            return language_discovery, url_seeding, crawl_results
-    finally:
-        await cloak_browser.close()
-        LOGGER.info("CloakBrowser and Playwright have been closed")
+            )
+        return language_discovery, url_seeding, crawl_results
 
 
 async def _discover_english_base(
@@ -1004,6 +1015,7 @@ def persist_markdown_pages(
     *,
     markdown_dir: Path,
     max_markdown_chars: int,
+    start_index: int = 1,
 ) -> tuple[list[MarkdownPage], list[FailedPage]]:
     """Persist successful crawl results before any LLM analysis starts."""
     resolved_directory = markdown_dir.resolve()
@@ -1039,7 +1051,7 @@ def persist_markdown_pages(
             max_chars=max_markdown_chars,
         )
         markdown_path = resolved_directory / _markdown_filename(
-            len(markdown_pages) + 1,
+            start_index + len(markdown_pages),
             url,
         )
         _write_text_atomic(markdown_path, markdown)
@@ -1554,12 +1566,27 @@ def _base_run_config(
     *,
     stream: bool,
 ) -> CrawlerRunConfig:
+    return _run_config(
+        stream=stream,
+        accept_language=settings.accept_language,
+        check_robots_txt=settings.check_robots_txt,
+        crawl_concurrency=settings.crawl_concurrency,
+    )
+
+
+def _run_config(
+    *,
+    stream: bool,
+    accept_language: str,
+    check_robots_txt: bool,
+    crawl_concurrency: int,
+) -> CrawlerRunConfig:
     return CrawlerRunConfig(
         stream=stream,
-        locale=_primary_locale(settings.accept_language),
-        check_robots_txt=settings.check_robots_txt,
+        locale=_primary_locale(accept_language),
+        check_robots_txt=check_robots_txt,
         page_timeout=60_000,
-        semaphore_count=settings.crawl_concurrency,
+        semaphore_count=crawl_concurrency,
         remove_overlay_elements=True,
         remove_consent_popups=True,
         scan_full_page=True,

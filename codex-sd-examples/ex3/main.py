@@ -14,6 +14,7 @@ from ex3.crawler import (
     save_model,
     save_report,
 )
+from ex3.extend import ExtendSettings, run_extend
 from ex3.followup import SuggestSettings, next_pass_number, run_suggest
 from ex3.language import is_english_language
 from ex3.models import DiscoveryStrategy, SeedingSource, Selector
@@ -477,6 +478,79 @@ def suggest_command(
             f"  {item.url}  ({', '.join(item.expected_fields) or 'no fields'}) {item.reason}"
         )
     click.echo(f"Suggestions: {target}")
+
+
+@cli.command("extend")
+@click.argument(
+    "manifest_path", type=click.Path(path_type=Path, exists=True, dir_okay=False)
+)
+@click.option(
+    "--suggestions",
+    "suggestions_path",
+    type=click.Path(path_type=Path, exists=True, dir_okay=False),
+    required=True,
+    help="Suggestions JSON written by the suggest command.",
+)
+@click.option(
+    "--max-markdown-chars",
+    type=click.IntRange(min=1_000),
+    default=80_000,
+    show_default=True,
+)
+@click.option(
+    "--crawl-concurrency", type=click.IntRange(min=1), default=5, show_default=True
+)
+@click.option(
+    "--cdp-port",
+    type=click.IntRange(min=1, max=65_535),
+    default=9_245,
+    show_default=True,
+)
+@click.option("--headless/--headed", default=True, show_default=True)
+@click.option(
+    "--respect-robots/--ignore-robots",
+    "check_robots_txt",
+    default=True,
+    show_default=True,
+)
+@click.option("--proxy", envvar="COMPANY_CRAWLER_PROXY")
+@click.option("--accept-language", default="en-US,en;q=0.9", show_default=True)
+@click.option("--verbose", is_flag=True)
+def extend_command(
+    manifest_path: Path,
+    suggestions_path: Path,
+    max_markdown_chars: int,
+    crawl_concurrency: int,
+    cdp_port: int,
+    headless: bool,
+    check_robots_txt: bool,
+    proxy: str | None,
+    accept_language: str,
+    verbose: bool,
+) -> None:
+    """Crawl suggested pages and append them to MANIFEST_PATH."""
+    _configure_logging(verbose=verbose)
+    settings = ExtendSettings(
+        manifest_path=manifest_path,
+        suggestions_path=suggestions_path,
+        max_markdown_chars=max_markdown_chars,
+        crawl_concurrency=crawl_concurrency,
+        cdp_port=cdp_port,
+        headless=headless,
+        check_robots_txt=check_robots_txt,
+        proxy=proxy,
+        accept_language=accept_language,
+    )
+    try:
+        manifest = asyncio.run(run_extend(settings))
+    except KeyboardInterrupt as error:
+        raise SystemExit(130) from error
+    except Exception as error:
+        raise click.ClickException(str(error)) from error
+    click.echo(
+        f"Manifest now holds {len(manifest.markdown_pages)} page(s), "
+        f"{manifest.crawl_stats.suggested_pages} from suggestions"
+    )
 
 
 def _configure_logging(*, verbose: bool) -> None:
