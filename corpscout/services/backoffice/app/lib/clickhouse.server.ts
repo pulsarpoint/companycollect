@@ -141,6 +141,22 @@ export async function chInsertSeCompanyInfoFieldValues<T extends object>(
   });
 }
 
+/**
+ * Runs one write-side statement that carries no row data of its own -- the
+ * field registry's generated `INSERT INTO ... SELECT` resolve and projection
+ * statements -- on the writer client. Values are bound as ClickHouse named
+ * parameters (`{company_ids:Array(String)}`), never interpolated. The read
+ * client cannot run these: it sends readonly=2. The writer's async_insert
+ * settings do not apply to INSERT ... SELECT (ClickHouse only coalesces
+ * data-carrying inserts), so the statement has completed when this resolves.
+ */
+export async function chCommand(
+  sql: string,
+  params?: Record<string, unknown>,
+): Promise<void> {
+  await getWriteClient().command({ query: sql, query_params: params });
+}
+
 /** Append reviewer decisions to the Sweden company-address correction ledger;
  * Dagster's sensor picks them up. */
 export async function chInsertSeCompanyAddressCorrections<T extends object>(

@@ -3,6 +3,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 const clickhouse = vi.hoisted(() => ({
   createClient: vi.fn(),
   insert: vi.fn(),
+  command: vi.fn(),
 }));
 
 vi.mock("@clickhouse/client", () => ({
@@ -10,6 +11,7 @@ vi.mock("@clickhouse/client", () => ({
 }));
 
 import {
+  chCommand,
   chInsertCompanyDomains,
   chInsertSeCompanyAddressCorrections,
   chInsertSeCompanyInfoFieldValues,
@@ -21,6 +23,7 @@ describe("correction and domain ClickHouse writers", () => {
     vi.unstubAllEnvs();
     clickhouse.createClient.mockReset();
     clickhouse.insert.mockReset();
+    clickhouse.command.mockReset();
   });
 
   it("fails closed without ClickHouse credentials", async () => {
@@ -30,13 +33,16 @@ describe("correction and domain ClickHouse writers", () => {
     await expect(
       chInsertSeCompanyPersonCorrections([{ correction_id: "test" }]),
     ).rejects.toThrow("CLICKHOUSE_USER and CLICKHOUSE_PASSWORD");
+    await expect(chCommand("SELECT 1")).rejects.toThrow(
+      "CLICKHOUSE_USER and CLICKHOUSE_PASSWORD",
+    );
     expect(clickhouse.createClient).not.toHaveBeenCalled();
   });
 
   it("writes domain reviews only to the unified company domains table", async () => {
     vi.stubEnv("CLICKHOUSE_USER", "correction_writer");
     vi.stubEnv("CLICKHOUSE_PASSWORD", "writer-secret");
-    clickhouse.createClient.mockReturnValue({ insert: clickhouse.insert });
+    clickhouse.createClient.mockReturnValue({ insert: clickhouse.insert, command: clickhouse.command });
     clickhouse.insert.mockResolvedValue(undefined);
 
     const rows = [{ company_id: "5560593575", root_domain: "assaabloy.com" }];
@@ -70,7 +76,7 @@ describe("correction and domain ClickHouse writers", () => {
   it("writes Sweden company-person corrections with the writer client", async () => {
     vi.stubEnv("CLICKHOUSE_USER", "correction_writer");
     vi.stubEnv("CLICKHOUSE_PASSWORD", "writer-secret");
-    clickhouse.createClient.mockReturnValue({ insert: clickhouse.insert });
+    clickhouse.createClient.mockReturnValue({ insert: clickhouse.insert, command: clickhouse.command });
     clickhouse.insert.mockResolvedValue(undefined);
 
     await chInsertSeCompanyPersonCorrections([{ correction_id: "test" }]);
@@ -85,7 +91,7 @@ describe("correction and domain ClickHouse writers", () => {
   it("writes Sweden company-info field values with the writer client", async () => {
     vi.stubEnv("CLICKHOUSE_USER", "correction_writer");
     vi.stubEnv("CLICKHOUSE_PASSWORD", "writer-secret");
-    clickhouse.createClient.mockReturnValue({ insert: clickhouse.insert });
+    clickhouse.createClient.mockReturnValue({ insert: clickhouse.insert, command: clickhouse.command });
     clickhouse.insert.mockResolvedValue(undefined);
 
     await chInsertSeCompanyInfoFieldValues([{ value_id: "test" }]);
@@ -100,7 +106,7 @@ describe("correction and domain ClickHouse writers", () => {
   it("writes Sweden company-address corrections with the writer client", async () => {
     vi.stubEnv("CLICKHOUSE_USER", "correction_writer");
     vi.stubEnv("CLICKHOUSE_PASSWORD", "writer-secret");
-    clickhouse.createClient.mockReturnValue({ insert: clickhouse.insert });
+    clickhouse.createClient.mockReturnValue({ insert: clickhouse.insert, command: clickhouse.command });
     clickhouse.insert.mockResolvedValue(undefined);
 
     await chInsertSeCompanyAddressCorrections([{ correction_id: "test" }]);
@@ -117,11 +123,35 @@ describe("correction and domain ClickHouse writers", () => {
   it("no-ops on an empty address batch", async () => {
     vi.stubEnv("CLICKHOUSE_USER", "correction_writer");
     vi.stubEnv("CLICKHOUSE_PASSWORD", "writer-secret");
-    clickhouse.createClient.mockReturnValue({ insert: clickhouse.insert });
+    clickhouse.createClient.mockReturnValue({ insert: clickhouse.insert, command: clickhouse.command });
 
     await chInsertSeCompanyAddressCorrections([]);
 
     expect(clickhouse.insert).not.toHaveBeenCalled();
     expect(clickhouse.createClient).not.toHaveBeenCalled();
+  });
+
+  // The registry's generated statements are INSERT ... SELECT: no rows to
+  // hand to insert(), so they go through command(), on the SAME writer client
+  // (the read client sends readonly=2 and would refuse them). Values are
+  // bound as named parameters, never interpolated.
+  it("runs a parameterised statement through the writer client", async () => {
+    vi.stubEnv("CLICKHOUSE_USER", "correction_writer");
+    vi.stubEnv("CLICKHOUSE_PASSWORD", "writer-secret");
+    clickhouse.createClient.mockReturnValue({
+      insert: clickhouse.insert,
+      command: clickhouse.command,
+    });
+    clickhouse.command.mockResolvedValue({ query_id: "q1" });
+
+    await chCommand(
+      "INSERT INTO corpscout.se_company_field SELECT {field:String}",
+      { field: "description", company_ids: ["5565200028"] },
+    );
+
+    expect(clickhouse.command).toHaveBeenCalledWith({
+      query: "INSERT INTO corpscout.se_company_field SELECT {field:String}",
+      query_params: { field: "description", company_ids: ["5565200028"] },
+    });
   });
 });
