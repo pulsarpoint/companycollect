@@ -15,10 +15,10 @@ WITH companies AS (
 
 -- The two register source tables of the 2026-09-03 SE basic-info design replace the
 -- retired registry projection. Each is ReplacingMergeTree(observed_at) ORDER BY
--- company_id, so FINAL gives the last row the source delivered for a company -- these
--- tables are insert-only and never tombstone, so that row can be stale if the source has
--- since stopped delivering the company. The INNER JOIN to companies above (from
--- se_companies, a full-replacement table) is what bounds this model to live companies.
+-- company_id, so FINAL gives the last row written per company. The publisher appends a
+-- has_company = 0 tombstone row when a source stops delivering a company and inserts the
+-- company again when it returns, so has_company = 1 on the FINAL row is the delivered set,
+-- the same contract the retired table's has_company flag gave this model.
 -- Bolagsverket has no alternate name, exactly as before.
 register_names AS (
     SELECT
@@ -27,6 +27,7 @@ register_names AS (
         legal_name,
         alternate_name
     FROM {{ source('corpscout', 'se_scb_companies') }} FINAL
+    WHERE has_company = 1
 
     UNION ALL
 
@@ -36,6 +37,7 @@ register_names AS (
         legal_name,
         CAST(NULL AS Nullable(String)) AS alternate_name
     FROM {{ source('corpscout', 'se_bolagsverket_companies') }} FINAL
+    WHERE has_company = 1
 ),
 
 company_name_values AS (

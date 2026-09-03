@@ -104,6 +104,9 @@ def test_sweden_company_match_features_are_normalized_and_technology_independent
     assert "'bolagsverket' AS source" in model_sql
     assert "concat(registry.source, '.legal_name')" in model_sql
     assert "concat(registry.source, '.alternate_name')" in model_sql
+    # Only the rows the register still delivers: the publisher tombstones dropped
+    # companies with has_company = 0 (owner decision 2026-09-03).
+    assert model_sql.count("WHERE has_company = 1") == 2
 
     assert "normalized_address" in model_sql
     for feature_type in ("identifier", "name", "address", "industry"):

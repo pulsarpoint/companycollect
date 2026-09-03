@@ -148,7 +148,12 @@ The same split applies to company profiles and classifications:
   design: each register source now has one table of its own,
   `se_scb_companies` and `se_bolagsverket_companies`, both
   `ReplacingMergeTree(observed_at) ORDER BY company_id`, with no `_current`
-  twin and no history table — the S3 snapshots are the archive;
+  twin and no history table — the S3 snapshots are the archive. A company a
+  delivery drops gets an appended `has_company = 0` tombstone row and is
+  inserted again when it returns, so readers take `FINAL` rows
+  `WHERE has_company = 1`; each register date also carries a verbatim `*_raw`
+  string twin, because `Date32` starts at 1900-01-01 and the typed column is
+  NULL for the older dates Swedish registers carry;
 - `se_company_proceeding_observations` / `se_company_proceedings_current` use
   `(company_id, source, proceeding_identity)`;
 - `se_company_industry_observations` / `se_company_industry_current` use
