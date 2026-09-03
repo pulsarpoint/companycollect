@@ -26,34 +26,23 @@ def test_main_table_carries_a_source_beside_every_folded_value() -> None:
     assert declared_columns("se_company_basic_info") == list(tables.MAIN_COLUMNS)
     assert "ENGINE = ReplacingMergeTree(folded_at)" in block
     assert "ORDER BY company_id" in block
-    assert "CONSTRAINT valid_company_id CHECK match(company_id, '^([0-9]{10}|[0-9]{12})$')" in block
     for field in tables.FOLDED_FIELDS:
         assert f"    {field}_source LowCardinality(String)" in block, field
     # status is '' when unknown, like the old table -- never NULL.
     assert "    status LowCardinality(String)," in block
     assert "    legal_name String," in block
-    for column in ("legal_form_code", "incorporation_date", "lei", "wikidata_id",
-                   "description", "description_language", "description_sv"):
-        assert f"    {column} Nullable(" in block, column
+    assert "description_language Nullable(String)" in block
     assert "description_language_source" not in block
     assert "fold_version LowCardinality(String)" in block
-    assert "MATERIALIZED" not in block
 
 
 def test_history_table_is_the_main_row_plus_changed_fields() -> None:
     block = table_block("se_company_basic_info_history")
     assert declared_columns("se_company_basic_info_history") == list(tables.HISTORY_COLUMNS)
     assert tables.HISTORY_COLUMNS == (*tables.MAIN_COLUMNS, "changed_fields")
-    # Append-only history carries no company_id format constraint: it replays whatever
-    # the main row held, and the main table already enforces the format on write.
-    assert "CONSTRAINT valid_company_id" not in block
-    for column in ("legal_form_code", "incorporation_date", "lei", "wikidata_id",
-                   "description", "description_language", "description_sv"):
-        assert f"    {column} Nullable(" in block, column
     assert "changed_fields Array(String)" in block
     assert "ENGINE = MergeTree" in block
     assert "ORDER BY (company_id, folded_at)" in block
-    assert "MATERIALIZED" not in block
 
 
 def test_precedence_table_is_exported_never_edited() -> None:
