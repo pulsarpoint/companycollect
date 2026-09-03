@@ -3,7 +3,14 @@ import json
 import logging
 import math
 import re
-from collections.abc import AsyncGenerator, AsyncIterator, Callable, Collection, Mapping
+from collections.abc import (
+    AsyncGenerator,
+    AsyncIterator,
+    Callable,
+    Collection,
+    Mapping,
+    Sequence,
+)
 from contextlib import aclosing, asynccontextmanager
 from dataclasses import dataclass
 from pathlib import Path
@@ -202,19 +209,35 @@ async def run_analysis(settings: AnalysisSettings) -> ResearchReport:
 
     previous: ResearchReport | None = None
     reused_pages: list[PageExtraction] = []
+    carried_failures: list[FailedPage] = []
     if settings.previous_report_path is not None:
         previous = ResearchReport.model_validate_json(
             settings.previous_report_path.read_text(encoding="utf-8")
         )
-        reused_keys = {url_key(page.source_url) for page in previous.pages}
-        reused_pages = list(previous.pages)
+        manifest_keys = {url_key(page.source_url) for page in manifest.markdown_pages}
+        reused_pages = [
+            page
+            for page in previous.pages
+            if page.extraction_metadata is not None
+            and page.extraction_metadata.succeeded
+            and url_key(page.source_url) in manifest_keys
+        ]
+        reused_keys = {url_key(page.source_url) for page in reused_pages}
         markdown_pages = [
             page
             for page in markdown_pages
             if url_key(page.source_url) not in reused_keys
         ]
+        resubmitted_keys = {url_key(page.source_url) for page in markdown_pages}
+        carried_failures = [
+            failure
+            for failure in previous.failed_pages
+            if failure.error.startswith("analysis")
+            and url_key(failure.url) not in resubmitted_keys
+        ]
         LOGGER.info(
-            "Reusing %d page(s) from the previous report; %d new page(s) to extract",
+            "Reusing %d successful page(s) from the previous report; "
+            "%d page(s) to extract",
             len(reused_pages),
             len(markdown_pages),
         )
@@ -252,7 +275,9 @@ async def run_analysis(settings: AnalysisSettings) -> ResearchReport:
         max_page_chars=settings.max_page_chars,
         timeout_seconds=settings.analysis_timeout_seconds,
     )
-    failed_pages = [*manifest.failed_pages, *analysis_failures]
+    failed_pages = _dedupe_failures(
+        [*manifest.failed_pages, *carried_failures, *analysis_failures]
+    )
     successful_extractions = sum(
         page.extraction_metadata is not None and page.extraction_metadata.succeeded
         for page in pages
@@ -332,6 +357,14 @@ async def run_analysis(settings: AnalysisSettings) -> ResearchReport:
             else None
         ),
     )
+
+
+def _dedupe_failures(failures: Sequence[FailedPage]) -> list[FailedPage]:
+    """Keep the first failure per (url, error), so carried-over ones cannot repeat."""
+    unique: dict[tuple[str, str], FailedPage] = {}
+    for failure in failures:
+        unique.setdefault((failure.url, failure.error), failure)
+    return list(unique.values())
 
 
 @asynccontextmanager

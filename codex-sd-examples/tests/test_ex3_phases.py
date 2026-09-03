@@ -6,7 +6,14 @@ from unittest.mock import AsyncMock, patch
 
 from click.testing import CliRunner
 
-from ex1.models import Contact, Evidence, Job, OtherFact, UsefulInformation
+from ex1.models import (
+    Contact,
+    Evidence,
+    FailedPage,
+    Job,
+    OtherFact,
+    UsefulInformation,
+)
 from ex3.crawler import (
     AnalysisSettings,
     _external_domain_candidates,
@@ -448,6 +455,132 @@ class IncrementalAnalysisTest(unittest.IsolatedAsyncioTestCase):
         self.assertNotIn("jobs", {gap.field for gap in report.gaps})
         self.assertEqual(report.previous_report_path, str(previous_path.resolve()))
 
+    async def test_re_extracts_previously_failed_pages_and_keeps_open_failures(
+        self,
+    ) -> None:
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            directory = Path(temporary_directory)
+            for name in ("home.md", "about.md", "careers.md"):
+                (directory / name).write_text("# Page", encoding="utf-8")
+            manifest = _manifest(
+                markdown_path="home.md",
+                extra_pages=[
+                    MarkdownPage(
+                        source_url="https://example.com/about",
+                        depth=0,
+                        markdown_path="about.md",
+                        markdown_chars=6,
+                        language="en",
+                    ),
+                    MarkdownPage(
+                        source_url="https://example.com/careers",
+                        depth=0,
+                        markdown_path="careers.md",
+                        markdown_chars=6,
+                        language="en",
+                        selection="suggested",
+                        pass_number=2,
+                    ),
+                ],
+            )
+            manifest_path = directory / "crawl-manifest.json"
+            manifest_path.write_text(
+                manifest.model_dump_json(indent=2), encoding="utf-8"
+            )
+            previous_report = _report(
+                manifest,
+                pages=[
+                    _extraction("https://example.com/", succeeded=True),
+                    _extraction("https://example.com/about", succeeded=False),
+                    _extraction("https://example.com/removed", succeeded=True),
+                ],
+                passes=[PassSummary(pass_number=1, pages=3, new_pages=3, batches=2)],
+                failed_pages=[
+                    FailedPage(
+                        url="https://example.com/about",
+                        depth=0,
+                        error="analysis batch 1: timed out",
+                    ),
+                    FailedPage(
+                        url="https://example.com/gone",
+                        depth=0,
+                        error="analysis batch 2: timed out",
+                    ),
+                ],
+            )
+            previous_path = directory / "report-pass-1.json"
+            previous_path.write_text(
+                previous_report.model_dump_json(indent=2), encoding="utf-8"
+            )
+
+            captured: list[str] = []
+
+            async def fake_analyze_batches(batches, **kwargs):
+                captured.extend(
+                    page.source_url for batch in batches for page in batch.pages
+                )
+                return (
+                    [
+                        _extraction(url, succeeded=True)
+                        for url in (
+                            "https://example.com/about",
+                            "https://example.com/careers",
+                        )
+                    ],
+                    [
+                        BatchAnalysis(
+                            batch_number=1,
+                            page_urls=captured.copy(),
+                            markdown_chars=12,
+                            succeeded=True,
+                        )
+                    ],
+                    [],
+                )
+
+            with (
+                patch(
+                    "ex3.crawler._analyze_related_domains",
+                    new=AsyncMock(
+                        return_value=(
+                            [],
+                            RelatedDomainAnalysis(
+                                attempted=False, candidate_domains=0, succeeded=True
+                            ),
+                        )
+                    ),
+                ),
+                patch("ex3.crawler._analyze_batches", new=fake_analyze_batches),
+            ):
+                report = await run_analysis(
+                    AnalysisSettings(
+                        manifest_path=manifest_path,
+                        max_page_chars=30_000,
+                        max_batch_pages=5,
+                        max_batch_chars=60_000,
+                        analysis_timeout_seconds=300,
+                        previous_report_path=previous_path,
+                        merge_with_llm=False,
+                    )
+                )
+
+        self.assertEqual(
+            captured,
+            ["https://example.com/about", "https://example.com/careers"],
+        )
+        self.assertEqual(
+            [page.source_url for page in report.pages],
+            [
+                "https://example.com/",
+                "https://example.com/about",
+                "https://example.com/careers",
+            ],
+        )
+        self.assertEqual(
+            [failure.url for failure in report.failed_pages],
+            ["https://example.com/gone"],
+        )
+
     async def test_falls_back_to_deterministic_consolidation_when_the_merge_fails(
         self,
     ) -> None:
@@ -779,6 +912,7 @@ def _report(
     *,
     pages: list[PageExtraction],
     passes: list[PassSummary],
+    failed_pages: list[FailedPage] | None = None,
 ) -> ResearchReport:
     return ResearchReport(
         requested_start_url=manifest.requested_start_url,
@@ -798,7 +932,7 @@ def _report(
             successfully_extracted_pages=len(pages),
             failed_extraction_pages=0,
         ),
-        failed_pages=[],
+        failed_pages=failed_pages or [],
         markdown_pages=manifest.markdown_pages,
         analysis_stats=AggregateAnalysisStats(),
         batches=[],
@@ -810,6 +944,19 @@ def _report(
         useful_information=consolidate_extractions(pages),
         pages=pages,
         passes=passes,
+    )
+
+
+def _extraction(source_url: str, *, succeeded: bool) -> PageExtraction:
+    return PageExtraction(
+        source_url=source_url,
+        useful_information=UsefulInformation(),
+        extraction_metadata=PageExtractionMetadata(
+            depth=0,
+            markdown_path="page.md",
+            batch_number=1,
+            succeeded=succeeded,
+        ),
     )
 
 
