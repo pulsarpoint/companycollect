@@ -50,6 +50,7 @@ import type {
   SeCompanyInfoFieldValueRow,
   SeCompanyInfoRow,
 } from "~/lib/se-company-info.server";
+import type { SkippedField } from "~/lib/se-company-field-resolve.server";
 import {
   ARTIFACT_SOURCES,
   artifactPayloadEntries,
@@ -69,8 +70,15 @@ import type { DescriptionShown } from "~/components/admin/company-description-ca
 const RELEASABLE_FIELDS = ["description", "description_sv"] as const;
 
 export type SeCompanyInfoReviewResult =
-  | { ok: true; valueIds: string[] }
-  | { ok: false; error: string }
+  | {
+      ok: true;
+      valueIds: string[];
+      resolved: string[];
+      skipped: SkippedField[];
+    }
+  /** `valueIds` present = the rows were saved and only the synchronous
+   * resolve failed (SeCompanyFieldResolveError); absent = a refusal. */
+  | { ok: false; error: string; valueIds?: string[] }
   | null;
 
 /** Shown when Dagster has not published this company into se_company_info. */
@@ -737,6 +745,28 @@ function ValueHistoryCard({
   );
 }
 
+/**
+ * "Saved and resolved." when every decided field was resolved on the spot;
+ * "Saved. <field> applies on the next run." for the python_only fields the
+ * bulk resolver alone handles (spec 2026-09-02, section 9). The row count
+ * stays in the description so a two-language decision reads as two rows.
+ */
+function savedBanner(result: {
+  valueIds: string[];
+  skipped: SkippedField[];
+}): { title: string; detail: string } {
+  const detail =
+    result.valueIds.length === 1
+      ? "1 value row saved"
+      : `${result.valueIds.length} value rows saved`;
+  if (result.skipped.length === 0) {
+    return { title: "Saved and resolved.", detail };
+  }
+  const names = result.skipped.map((entry) => entry.field).join(", ");
+  const verb = result.skipped.length === 1 ? "applies" : "apply";
+  return { title: `Saved. ${names} ${verb} on the next run.`, detail };
+}
+
 export function SeCompanyInfoReviewWorkspace({
   detail,
   result,
@@ -748,6 +778,7 @@ export function SeCompanyInfoReviewWorkspace({
   // One click is one decision: block every submit while one is in flight, so a
   // double-click cannot write two rows whose order then decides the field.
   const busy = useNavigation().state !== "idle";
+  const banner = result?.ok ? savedBanner(result) : null;
   const contributing = new Set(info.description_source_record_uids);
   const groups = groupArtifactsBySource(artifacts);
   const proposals = [
@@ -796,22 +827,19 @@ export function SeCompanyInfoReviewWorkspace({
       <CompanySourceStrip
         sources={artifacts.map((artifact) => artifact.source)}
       />
-      {result?.ok ? (
+      {banner ? (
         <Alert>
           <CheckCircle2Icon />
-          <AlertTitle>Saved</AlertTitle>
-          <AlertDescription>
-            {result.valueIds.length === 1
-              ? "1 value row saved"
-              : `${result.valueIds.length} value rows saved`}{" "}
-            — published on the next rebuild.
-          </AlertDescription>
+          <AlertTitle>{banner.title}</AlertTitle>
+          <AlertDescription>{banner.detail}</AlertDescription>
         </Alert>
       ) : null}
       {result && !result.ok ? (
         <Alert variant="destructive">
           <TriangleAlertIcon />
-          <AlertTitle>Not saved</AlertTitle>
+          <AlertTitle>
+            {result.valueIds ? "Saved, not resolved" : "Not saved"}
+          </AlertTitle>
           <AlertDescription>{result.error}</AlertDescription>
         </Alert>
       ) : null}

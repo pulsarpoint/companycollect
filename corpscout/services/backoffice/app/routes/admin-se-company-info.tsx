@@ -13,6 +13,7 @@ import {
   fieldVocabulary,
   SeInfoFieldValueValidationError,
 } from "~/lib/se-info-field-values";
+import { SeCompanyFieldResolveError } from "~/lib/se-company-field-resolve.server";
 import { buildFieldValueInputs } from "~/lib/se-info-field-value-form";
 
 // Only `loader`, `action`, `meta` and the component live here. Any other
@@ -54,16 +55,24 @@ export async function action({ request, params }: Route.ActionArgs) {
     return { ok: false as const, error: built.error };
   }
   try {
-    const { valueIds } = await appendSeCompanyInfoFieldValues(built.inputs, {
-      registry,
-    });
-    return { ok: true as const, valueIds };
+    const { valueIds, resolved, skipped } =
+      await appendSeCompanyInfoFieldValues(built.inputs, { registry });
+    return { ok: true as const, valueIds, resolved, skipped };
   } catch (error) {
     // The store's refusals are the reviewer's to read (a company that is not
     // published, an empty value, a field decided twice in one post); anything
     // else is a real failure and must not be dressed up as a form error.
     if (error instanceof SeInfoFieldValueValidationError) {
       return { ok: false as const, error: error.message };
+    }
+    // The decision IS in the store; only the synchronous resolve failed. The
+    // ids mark it as saved so the page does not call it "Not saved".
+    if (error instanceof SeCompanyFieldResolveError) {
+      return {
+        ok: false as const,
+        error: error.message,
+        valueIds: error.valueIds,
+      };
     }
     throw error;
   }

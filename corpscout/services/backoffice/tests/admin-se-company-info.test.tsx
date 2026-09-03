@@ -24,6 +24,7 @@ import {
 } from "~/components/admin/se-company-info-review-workspace";
 import type { SeCompanyInfoDetail } from "~/lib/se-company-info.server";
 import { SeInfoFieldValueValidationError } from "~/lib/se-info-field-values";
+import { SeCompanyFieldResolveError } from "~/lib/se-company-field-resolve.server";
 import { REGISTRY_FIXTURE } from "./se-field-registry.fixture";
 
 const COMPANY_ID = "5565200028";
@@ -642,21 +643,69 @@ describe("company info review page", () => {
     expect(html).not.toContain("Language:");
   });
 
-  it("confirms a save and renders the not-published state", () => {
+  it("confirms a save that resolved, and renders the not-published state", () => {
     const html = render(detail, {
       ok: true,
       valueIds: [
         "22222222-2222-4222-8222-222222222222",
         "33333333-3333-4333-8333-333333333333",
       ],
+      resolved: ["description", "description_sv"],
+      skipped: [],
     });
+    expect(html).toContain("Saved and resolved.");
     expect(html).toContain("2 value rows saved");
-    expect(html).toContain("published on the next rebuild");
+    expect(html).not.toContain("on the next run.");
     expect(
       renderToStaticMarkup(
         <SeCompanyInfoNotPublished companyId="5565200028" />,
       ),
     ).toContain("not published");
+  });
+
+  // A python_only field is Dagster's alone (spec 9): the row is saved, the
+  // page says when it lands. One field says "applies", several say "apply".
+  it("names the fields that apply on the next run", () => {
+    const one = render(detail, {
+      ok: true,
+      valueIds: ["22222222-2222-4222-8222-222222222222"],
+      resolved: [],
+      skipped: [{ field: "website", reason: "python_only" }],
+    });
+    expect(one).toContain("Saved. website applies on the next run.");
+    expect(one).toContain("1 value row saved");
+    expect(one).not.toContain("Saved and resolved.");
+
+    const two = render(detail, {
+      ok: true,
+      valueIds: [
+        "22222222-2222-4222-8222-222222222222",
+        "33333333-3333-4333-8333-333333333333",
+      ],
+      resolved: [],
+      skipped: [
+        { field: "website", reason: "python_only" },
+        { field: "employee_count", reason: "python_only" },
+      ],
+    });
+    expect(two).toContain(
+      "Saved. website, employee_count apply on the next run.",
+    );
+  });
+
+  it("tells a saved-but-unresolved decision apart from a refused one", () => {
+    const unresolved = render(detail, {
+      ok: false,
+      error: "Saved, but not resolved: Memory limit. The decision is kept and applies on the next pipeline run.",
+      valueIds: ["22222222-2222-4222-8222-222222222222"],
+    });
+    expect(unresolved).toContain("Saved, not resolved");
+    expect(unresolved).toContain("The decision is kept");
+    expect(unresolved).not.toContain("Not saved");
+
+    const refused = render(detail, { ok: false, error: "Nothing changed." });
+    expect(refused).toContain("Not saved");
+    expect(refused).toContain("Nothing changed.");
   });
 
   it("renders a validation error", () => {
@@ -781,7 +830,11 @@ describe("admin-se-company-info action (field-value intents, mocked server modul
     server.loadSeCompanyInfoDetail.mockReset();
     server.appendSeCompanyInfoFieldValues.mockReset();
     server.loadSeCompanyInfoDetail.mockResolvedValue(detail);
-    server.appendSeCompanyInfoFieldValues.mockResolvedValue({ valueIds: [] });
+    server.appendSeCompanyInfoFieldValues.mockResolvedValue({
+      valueIds: [],
+      resolved: [],
+      skipped: [],
+    });
     registryModule.loadFieldRegistry.mockReset();
     registryModule.loadFieldRegistry.mockResolvedValue(REGISTRY_FIXTURE);
   });
@@ -802,6 +855,8 @@ describe("admin-se-company-info action (field-value intents, mocked server modul
   it("writes one artifact's text and returns the ids", async () => {
     server.appendSeCompanyInfoFieldValues.mockResolvedValue({
       valueIds: ["66666666-6666-4666-8666-666666666666"],
+      resolved: ["description"],
+      skipped: [],
     });
 
     const result = await postAction({
@@ -816,6 +871,8 @@ describe("admin-se-company-info action (field-value intents, mocked server modul
     expect(result).toEqual({
       ok: true,
       valueIds: ["66666666-6666-4666-8666-666666666666"],
+      resolved: ["description"],
+      skipped: [],
     });
     expect(server.loadSeCompanyInfoDetail).toHaveBeenCalledWith(COMPANY_ID);
     expect(server.appendSeCompanyInfoFieldValues).toHaveBeenCalledTimes(1);
@@ -837,6 +894,8 @@ describe("admin-se-company-info action (field-value intents, mocked server modul
         "66666666-6666-4666-8666-666666666666",
         "77777777-7777-4777-8777-777777777777",
       ],
+      resolved: ["description", "description_sv"],
+      skipped: [],
     });
 
     const result = await postAction({
@@ -850,6 +909,8 @@ describe("admin-se-company-info action (field-value intents, mocked server modul
         "66666666-6666-4666-8666-666666666666",
         "77777777-7777-4777-8777-777777777777",
       ],
+      resolved: ["description", "description_sv"],
+      skipped: [],
     });
     const [inputs] = server.appendSeCompanyInfoFieldValues.mock.calls[0] as [
       Array<{ field: string }>,
@@ -938,9 +999,29 @@ describe("admin-se-company-info action (field-value intents, mocked server modul
     ).rejects.toThrow("ClickHouse is down");
   });
 
+  it("reports a resolve failure as saved-but-not-resolved, with the ids", async () => {
+    server.appendSeCompanyInfoFieldValues.mockRejectedValue(
+      new SeCompanyFieldResolveError(
+        ["66666666-6666-4666-8666-666666666666"],
+        new Error("Code: 241. DB::Exception: Memory limit"),
+      ),
+    );
+
+    const result = await postAction({ intent: "release", field: "description" });
+
+    expect(result).toEqual({
+      ok: false,
+      error:
+        "Saved, but not resolved: Code: 241. DB::Exception: Memory limit. The decision is kept and applies on the next pipeline run.",
+      valueIds: ["66666666-6666-4666-8666-666666666666"],
+    });
+  });
+
   it("checks the posted field against the registry, not a built-in list", async () => {
     server.appendSeCompanyInfoFieldValues.mockResolvedValue({
       valueIds: ["66666666-6666-4666-8666-666666666666"],
+      resolved: ["legal_name"],
+      skipped: [],
     });
 
     const known = await postAction({

@@ -4,10 +4,19 @@ const clickhouse = vi.hoisted(() => ({ insert: vi.fn(), query: vi.fn() }));
 vi.mock("~/lib/clickhouse.server", () => ({
   chInsertSeCompanyInfoFieldValues: clickhouse.insert,
   chQuery: clickhouse.query,
+  chCommand: vi.fn(),
 }));
 
 const registryModule = vi.hoisted(() => ({ loadFieldRegistry: vi.fn() }));
 vi.mock("~/lib/se-company-field-registry.server", () => registryModule);
+
+const resolveModule = vi.hoisted(() => ({ resolveCompanyFields: vi.fn() }));
+vi.mock("~/lib/se-company-field-resolve.server", async (importOriginal) => ({
+  ...(await importOriginal<
+    typeof import("~/lib/se-company-field-resolve.server")
+  >()),
+  resolveCompanyFields: resolveModule.resolveCompanyFields,
+}));
 
 import {
   ARTIFACT_ROWS_SQL,
@@ -24,6 +33,7 @@ import {
   ARTIFACT_PAYLOAD_FIELDS,
   type ArtifactSource,
 } from "~/lib/se-company-info-payload";
+import { SeCompanyFieldResolveError } from "~/lib/se-company-field-resolve.server";
 import { REGISTRY_FIXTURE } from "./se-field-registry.fixture";
 
 const COMPANY = "5565200028";
@@ -229,6 +239,11 @@ describe("appendSeCompanyInfoFieldValues", () => {
     clickhouse.query.mockReset();
     registryModule.loadFieldRegistry.mockReset();
     registryModule.loadFieldRegistry.mockResolvedValue(REGISTRY_FIXTURE);
+    resolveModule.resolveCompanyFields.mockReset();
+    resolveModule.resolveCompanyFields.mockResolvedValue({
+      resolved: [],
+      skipped: [],
+    });
   });
 
   const scbValue = {
@@ -287,7 +302,7 @@ describe("appendSeCompanyInfoFieldValues", () => {
     clickhouse.query.mockResolvedValueOnce([{ "1": 1 }]);
     clickhouse.insert.mockResolvedValue(undefined);
 
-    const { valueIds } = await appendSeCompanyInfoFieldValues([
+    const { valueIds, resolved, skipped } = await appendSeCompanyInfoFieldValues([
       scbValue,
       // A null value is the release instruction: it hands the Swedish text
       // back to whatever the pipeline computes.
@@ -333,6 +348,85 @@ describe("appendSeCompanyInfoFieldValues", () => {
     for (const row of rows) {
       expect(row.created_at).toMatch(/^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}\.\d{3}$/);
     }
+    // One resolve call for the whole decision, in the order decided, against
+    // the registry the store validated with, at the same instant as created_at
+    // -- so resolved_at and created_at read alike on the two tables.
+    expect(resolveModule.resolveCompanyFields).toHaveBeenCalledTimes(1);
+    const [companyId, fields, opts] =
+      resolveModule.resolveCompanyFields.mock.calls[0];
+    expect(companyId).toBe(COMPANY);
+    expect(fields).toEqual(["description", "description_sv"]);
+    expect(opts.registry).toBe(REGISTRY_FIXTURE);
+    expect(opts.now.toISOString().replace("T", " ").replace("Z", "")).toBe(
+      rows[0].created_at,
+    );
+    expect(resolved).toEqual([]);
+    expect(skipped).toEqual([]);
+  });
+
+  it("returns what the resolver resolved and skipped", async () => {
+    clickhouse.query.mockResolvedValueOnce([{ "1": 1 }]);
+    clickhouse.insert.mockResolvedValue(undefined);
+    resolveModule.resolveCompanyFields.mockResolvedValue({
+      resolved: ["description"],
+      skipped: [{ field: "website", reason: "python_only" }],
+    });
+
+    const result = await appendSeCompanyInfoFieldValues(
+      [
+        scbValue,
+        {
+          companyId: COMPANY,
+          field: "website",
+          value: "https://alpha.example",
+          source: "reviewer",
+        },
+      ],
+      { registry: REGISTRY_FIXTURE },
+    );
+
+    expect(result.valueIds).toHaveLength(2);
+    expect(result.resolved).toEqual(["description"]);
+    expect(result.skipped).toEqual([{ field: "website", reason: "python_only" }]);
+  });
+
+  it("uses the caller's clock for created_at and resolved_at", async () => {
+    clickhouse.query.mockResolvedValueOnce([{ "1": 1 }]);
+    clickhouse.insert.mockResolvedValue(undefined);
+    const now = new Date("2026-09-02T10:15:30.123Z");
+
+    await appendSeCompanyInfoFieldValues([scbValue], {
+      registry: REGISTRY_FIXTURE,
+      now,
+    });
+
+    const [rows] = clickhouse.insert.mock.calls[0];
+    expect(rows[0].created_at).toBe("2026-09-02 10:15:30.123");
+    expect(resolveModule.resolveCompanyFields.mock.calls[0][2].now).toBe(now);
+  });
+
+  // The rows are already in the store when resolving fails; the sensor picks
+  // them up. The failure must say so and carry the ids -- not read as "the
+  // decision was refused", and not silently succeed.
+  it("keeps the decision and raises SeCompanyFieldResolveError when resolving fails after the insert", async () => {
+    clickhouse.query.mockResolvedValueOnce([{ "1": 1 }]);
+    clickhouse.insert.mockResolvedValue(undefined);
+    resolveModule.resolveCompanyFields.mockRejectedValue(
+      new Error("Code: 241. DB::Exception: Memory limit"),
+    );
+
+    const error: unknown = await appendSeCompanyInfoFieldValues([scbValue], {
+      registry: REGISTRY_FIXTURE,
+    }).catch((caught: unknown) => caught);
+
+    expect(error).toBeInstanceOf(SeCompanyFieldResolveError);
+    const resolveError = error as SeCompanyFieldResolveError;
+    expect(resolveError.message).toBe(
+      "Saved, but not resolved: Code: 241. DB::Exception: Memory limit. The decision is kept and applies on the next pipeline run.",
+    );
+    expect(clickhouse.insert).toHaveBeenCalledTimes(1);
+    const [rows] = clickhouse.insert.mock.calls[0];
+    expect(resolveError.valueIds).toEqual([rows[0].value_id]);
   });
 
   it("refuses an empty batch", async () => {
