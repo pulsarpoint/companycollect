@@ -14,6 +14,8 @@ from dagster_v3.defs.sweden_company.clickhouse import (
     publish_sweden_company_profile_history,
     publish_sweden_company_source_table,
     sweden_company_source_anti_join_sql,
+    sweden_company_source_removal_sql,
+    sweden_company_source_tombstone_insert_sql,
 )
 
 
@@ -22,6 +24,7 @@ class FakeClickHouseClient:
         self.statements: list[str] = []
         self.table_checks: list[tuple[str, ...]] = []
         self.insert_calls: list[tuple[str, list[tuple[object, ...]]]] = []
+        self.removals = 0
 
     def execute(
         self,
@@ -39,6 +42,8 @@ class FakeClickHouseClient:
             return [(1,)]
         if "AS new_versions" in sql:
             return [(1,)]
+        if "AS removals" in sql:
+            return [(self.removals,)]
         stripped_sql = sql.lstrip()
         if stripped_sql.startswith("CREATE TABLE") or stripped_sql.startswith(
             "EXCHANGE TABLES"
@@ -243,6 +248,15 @@ def test_publish_sweden_company_source_table_inserts_only_changed_payloads(
 
     assert result.candidates == 1
     assert result.inserted == 1
+    assert result.removed == 0
+    # Nothing was dropped from the delivery, so no tombstone row is written.
+    assert all(
+        not statement.startswith(
+            f"INSERT INTO {tables.QUALIFIED_SCB_COMPANIES_TABLE} "
+            "(company_id, company_id_raw, has_company"
+        )
+        for statement in client.statements
+    )
     assert client.table_checks == [(tables.SCB_COMPANIES_TABLE_CH,)]
     assert (
         f"CREATE TABLE corpscout._tmp_{tables.SCB_COMPANIES_TABLE_CH}_"
@@ -318,6 +332,68 @@ def test_publish_sweden_company_source_table_publishes_the_bolagsverket_record(
     )
 
 
+def test_publish_sweden_company_source_table_tombstones_companies_the_delivery_dropped(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    """Owner decision 2026-09-03: a company the register stops delivering must not stay
+    current. The publisher counts the companies whose CURRENT row is delivered and that the
+    stage no longer holds, and appends one tombstone row per company -- after the changed
+    rows went in and before the stage is dropped."""
+    client = FakeClickHouseClient()
+    client.removals = 1
+    resource = ClickhouseResource(host="localhost")
+
+    @contextmanager
+    def fake_get_connection(self: ClickhouseResource) -> Iterator[FakeClickHouseClient]:
+        yield client
+
+    monkeypatch.setattr(ClickhouseResource, "get_connection", fake_get_connection)
+
+    with _sweden_company_duckdb(tmp_path) as connection:
+        result = publish_sweden_company_source_table(
+            duckdb_connection=connection,
+            clickhouse=resource,
+            duckdb_table="scb_companies",
+            clickhouse_table=tables.SCB_COMPANIES_TABLE_CH,
+            columns=tables.SE_SCB_COMPANIES_EXPORT_COLUMNS,
+        )
+
+    assert result.removed == 1
+    removal_counts = [s for s in client.statements if "AS removals" in s]
+    assert len(removal_counts) == 1
+    assert "argMax(has_company, observed_at) AS has_company" in removal_counts[0]
+    assert "WHERE current.has_company = 1" in removal_counts[0]
+    tombstones = [
+        s
+        for s in client.statements
+        if s.startswith(
+            "INSERT INTO corpscout.se_scb_companies (company_id, company_id_raw, "
+            "has_company, source_run_id, source_record_id, source_payload_hash, "
+            "observed_at)"
+        )
+    ]
+    assert len(tombstones) == 1
+    assert "SELECT current.company_id, '', 0, " in tombstones[0]
+    assert "(SELECT any(source_run_id) FROM corpscout._tmp_se_scb_companies_" in (
+        tombstones[0]
+    )
+    assert "(SELECT any(observed_at) FROM corpscout._tmp_se_scb_companies_" in (
+        tombstones[0]
+    )
+    # The removal is computed after the changed rows went in, and before the stage drops.
+    order = [
+        next(i for i, s in enumerate(client.statements) if "AS new_versions" in s),
+        next(i for i, s in enumerate(client.statements) if "AS removals" in s),
+        next(
+            i
+            for i, s in enumerate(client.statements)
+            if s.startswith("DROP TABLE IF EXISTS corpscout._tmp_se_scb_companies_")
+        ),
+    ]
+    assert order == sorted(order)
+
+
 def test_publish_sweden_company_source_table_refuses_an_empty_stage(
     tmp_path: Path,
     monkeypatch,
@@ -353,6 +429,9 @@ def test_publish_sweden_company_source_table_refuses_an_empty_stage(
         )
         for statement in client.statements
     )
+    # The refusal comes before any removal is computed: this is what stops a failed load
+    # from tombstoning the whole register.
+    assert not any("AS removals" in statement for statement in client.statements)
     # The stage table is created and then dropped in a `finally` that runs unconditionally
     # -- i.e. the DROP still runs even though it is the empty-stage refusal, not a
     # successful publish, that triggers it.
@@ -387,6 +466,40 @@ def test_sweden_company_source_anti_join_reads_the_current_row_per_company() -> 
     # FINAL is not used: it would read the whole table through the merge logic, and argMax
     # states the intent (one current row per company) without depending on merge state.
     assert "FINAL" not in sql
+
+
+def test_sweden_company_source_removal_reads_the_current_row_per_company() -> None:
+    """The left side is the current row per company, exactly like the anti-join's right
+    side -- so a company already tombstoned is not tombstoned again, and the tombstone
+    carries the delivery's own run id and observed_at."""
+    removal = sweden_company_source_removal_sql(
+        qualified_stage="corpscout.stage",
+        qualified_target="corpscout.se_scb_companies",
+    )
+
+    assert "SELECT company_id, argMax(has_company, observed_at) AS has_company" in removal
+    assert "FROM corpscout.se_scb_companies" in removal
+    assert "GROUP BY company_id" in removal
+    assert "LEFT ANTI JOIN corpscout.stage AS candidate" in removal
+    assert "ON candidate.company_id = current.company_id" in removal
+    assert removal.endswith("WHERE current.has_company = 1")
+    assert "FINAL" not in removal
+
+    insert = sweden_company_source_tombstone_insert_sql(
+        qualified_stage="corpscout.stage",
+        qualified_target="corpscout.se_scb_companies",
+    )
+
+    assert insert.startswith(
+        "INSERT INTO corpscout.se_scb_companies (company_id, company_id_raw, "
+        "has_company, source_run_id, source_record_id, source_payload_hash, observed_at)"
+    )
+    # An empty record id and hash: a returning company always differs from its tombstone
+    # and is inserted again by the anti-join.
+    assert "SELECT current.company_id, '', 0, " in insert
+    assert "(SELECT any(source_run_id) FROM corpscout.stage), '', '', " in insert
+    assert "(SELECT any(observed_at) FROM corpscout.stage) " in insert
+    assert insert.endswith(removal)
 
 
 @contextmanager
@@ -645,6 +758,7 @@ def _sweden_company_duckdb(tmp_path: Path) -> Iterator[duckdb.DuckDBPyConnection
                 source_status_code varchar,
                 source_secondary_status_code varchar,
                 registration_date date,
+                registration_date_raw varchar,
                 ng1_code varchar,
                 ng2_code varchar,
                 ng3_code varchar,
@@ -667,7 +781,7 @@ def _sweden_company_duckdb(tmp_path: Path) -> Iterator[duckdb.DuckDBPyConnection
             insert into {tables.DLT_DATASET_NAME}.scb_companies
             values (
                 '5560000000', '5560000000', 'ACME SCB', null, '49', '0', '1',
-                '2020-01-01', '62010', '70220', null, null, null,
+                '2020-01-01', '20200101', '62010', '70220', null, null, null,
                 'c/o ACME', 'Main Street 1', '11122', 'STOCKHOLM', '1',
                 'run-1', '5560000000', 'scb-hash-1', '2026-09-03 06:00:00'
             )
@@ -684,7 +798,9 @@ def _sweden_company_duckdb(tmp_path: Path) -> Iterator[duckdb.DuckDBPyConnection
                 legal_name_raw varchar,
                 legal_form_code varchar,
                 registration_date date,
+                registration_date_raw varchar,
                 deregistration_date date,
+                deregistration_date_raw varchar,
                 deregistration_reason varchar,
                 proceedings_raw varchar,
                 activity_description varchar,
@@ -702,7 +818,7 @@ def _sweden_company_duckdb(tmp_path: Path) -> Iterator[duckdb.DuckDBPyConnection
             values (
                 '5560000000', '5560000000$ORGNR-IDORG', '1', 'SE-LAND',
                 'Acme AB', 'Acme AB$FORETAGSNAMN-ORGNAM$2020-01-01', 'AB-ORGFO',
-                '2020-01-01', null, null, null, 'Runs acme.se',
+                '2020-01-01', '2020-01-01', null, null, null, null, 'Runs acme.se',
                 'Box 1$c/o CFO$STOCKHOLM$11122$SE-LAND',
                 'run-1', '5560000000$ORGNR-IDORG', 'bolag-hash-1',
                 '2026-09-03 06:00:00'
@@ -732,6 +848,7 @@ def _sweden_company_duckdb_with_empty_scb_companies(
                 source_status_code varchar,
                 source_secondary_status_code varchar,
                 registration_date date,
+                registration_date_raw varchar,
                 ng1_code varchar,
                 ng2_code varchar,
                 ng3_code varchar,

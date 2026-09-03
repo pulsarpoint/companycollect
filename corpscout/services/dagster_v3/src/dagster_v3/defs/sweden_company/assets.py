@@ -190,6 +190,7 @@ def sweden_company_scb_companies_clickhouse(
             "table": tables.QUALIFIED_SCB_COMPANIES_TABLE,
             "candidates": result.candidates,
             "inserted": result.inserted,
+            "removed": result.removed,
         }
     )
 
@@ -225,6 +226,7 @@ def sweden_company_bolagsverket_companies_clickhouse(
             "table": tables.QUALIFIED_BOLAGSVERKET_COMPANIES_TABLE,
             "candidates": result.candidates,
             "inserted": result.inserted,
+            "removed": result.removed,
         }
     )
 

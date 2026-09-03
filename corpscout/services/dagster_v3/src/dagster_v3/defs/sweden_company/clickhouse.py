@@ -141,6 +141,18 @@ def publish_sweden_company_industry_history(
 class SwedenSourceTablePublishResult:
     candidates: int
     inserted: int
+    removed: int
+
+
+_SOURCE_TABLE_TOMBSTONE_COLUMNS = (
+    "company_id",
+    "company_id_raw",
+    "has_company",
+    "source_run_id",
+    "source_record_id",
+    "source_payload_hash",
+    "observed_at",
+)
 
 
 def sweden_company_source_anti_join_sql(
@@ -167,6 +179,51 @@ def sweden_company_source_anti_join_sql(
     )
 
 
+def sweden_company_source_removal_sql(
+    *,
+    qualified_stage: str,
+    qualified_target: str,
+) -> str:
+    """The companies whose CURRENT published row is delivered (has_company = 1) and that
+    the staged delivery no longer contains.
+
+    The left side is the current row per company, exactly like the anti-join's right
+    side, so a company already tombstoned is not tombstoned again. Exposed as a function
+    so the clickhouse-local harness executes this exact text.
+    """
+    return (
+        "FROM (\n"
+        "    SELECT company_id, argMax(has_company, observed_at) AS has_company\n"
+        f"    FROM {qualified_target}\n"
+        "    GROUP BY company_id\n"
+        ") AS current\n"
+        f"LEFT ANTI JOIN {qualified_stage} AS candidate\n"
+        "ON candidate.company_id = current.company_id\n"
+        "WHERE current.has_company = 1"
+    )
+
+
+def sweden_company_source_tombstone_insert_sql(
+    *,
+    qualified_stage: str,
+    qualified_target: str,
+) -> str:
+    """The tombstone row per removed company: has_company 0, every value NULL, an empty
+    record id and hash (so a returning company always differs from its tombstone and is
+    inserted again), stamped with the staged delivery's source_run_id and observed_at."""
+    column_list = ", ".join(_SOURCE_TABLE_TOMBSTONE_COLUMNS)
+    removal = sweden_company_source_removal_sql(
+        qualified_stage=qualified_stage,
+        qualified_target=qualified_target,
+    )
+    return (
+        f"INSERT INTO {qualified_target} ({column_list})\n"
+        "SELECT current.company_id, '', 0, "
+        f"(SELECT any(source_run_id) FROM {qualified_stage}), '', '', "
+        f"(SELECT any(observed_at) FROM {qualified_stage}) {removal}"
+    )
+
+
 def publish_sweden_company_source_table(
     *,
     duckdb_connection: Any,
@@ -189,6 +246,14 @@ def publish_sweden_company_source_table(
     ``_publish_changed_snapshot`` is not reused either: it needs a physical ``*_current``
     twin to diff against and swaps it by rename. The source layer deliberately has no twin
     -- one table per source, and S3 is the archive (2026-09-03 basic-info design, 3.1).
+
+    A company the delivery no longer contains gets a tombstone row (``has_company = 0``,
+    NULL values, empty record id and hash) stamped with this delivery's ``source_run_id``
+    and ``observed_at``, so ``FINAL ... WHERE has_company = 1`` is the delivered set and a
+    returning company is inserted again because its hash differs from the tombstone's
+    empty one. The empty-stage refusal above is what keeps a failed load from tombstoning
+    the whole register. A partial delivery is not detected: the next full delivery inserts
+    again whatever it removed.
     """
     assert_clickhouse_tables_exist(
         clickhouse,
@@ -232,17 +297,31 @@ def publish_sweden_company_source_table(
                     f"INSERT INTO {qualified_target} ({column_list})\n"
                     f"SELECT {selected} {anti_join}"
                 )
+            removal = sweden_company_source_removal_sql(
+                qualified_stage=qualified_stage,
+                qualified_target=qualified_target,
+            )
+            removed = int(client.execute(f"SELECT count() AS removals {removal}")[0][0])
+            if removed > 0:
+                client.execute(
+                    sweden_company_source_tombstone_insert_sql(
+                        qualified_stage=qualified_stage,
+                        qualified_target=qualified_target,
+                    )
+                )
             if log is not None:
                 log(
                     "Published Sweden register source table: table=%s candidates=%d "
-                    "inserted=%d",
+                    "inserted=%d removed=%d",
                     qualified_target,
                     candidates,
                     inserted,
+                    removed,
                 )
             return SwedenSourceTablePublishResult(
                 candidates=candidates,
                 inserted=inserted,
+                removed=removed,
             )
         except BaseException as exc:
             primary_error = exc
