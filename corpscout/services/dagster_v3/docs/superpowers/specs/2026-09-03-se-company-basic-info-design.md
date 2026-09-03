@@ -218,6 +218,13 @@ One plan each, executed in order with subagent-driven development:
    add a `max_removed_fraction` config to the export assets before the fold depends on
    `has_company`.
 1. Tables, precedence, fold function, the two fold assets, the precedence export.
+   Built 2026-09-03 (plan `2026-09-03-se-basic-info-1-tables-fold.md`): migrations
+   000376-000379, package `dagster_v3.defs.se_company.basic_info` (`tables`, `precedence`,
+   `fold`, `batch`, `assets`). Slice 2's extractors insert through
+   `tables.SUGGESTION_INSERT_COLUMNS` and write a row only when the source's current
+   record has a newer `observed_at` than the current suggestion row (`FINAL`) or none
+   exists; `observed_at` must be the source's own, monotonic per record, since ties break
+   on it. The fold assets exist but the suggestion table is empty until slice 2 runs.
 2. The six extractors, reading the source layer of section 3.1.
 3. The backoffice page, actions, Fold now, pipeline sheet.
 4. Cutover (owner-gated prod steps) and retirement of the old publisher, the field-registry code and the three `se_company_info_*` artifacts.
