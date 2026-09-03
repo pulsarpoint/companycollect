@@ -2,7 +2,7 @@
 
 Date: 2026-09-03. Status: approved in brainstorming, awaiting the owner's review of this file.
 
-Supersedes the field-registry design of 2026-09-02 (`2026-09-02-se-company-field-registry-design.md`). Nothing from that design or its five plans reached production; its code on local main is deleted by this design's cutover.
+Supersedes the field-registry design of 2026-09-02 (`2026-09-02-se-company-field-registry-design.md`). Nothing from that design or its five plans reached production; its 62 commits were reverted on this design's branch before slice 0 (commit `ea39cd40`), so the code base starts from the deployed state: the old `se_company_info` publisher, its sensor and weekly, the enum-validated admin page, migrations ending at 000372.
 
 ## 1. Why
 
@@ -157,7 +157,7 @@ Group `se_company_basic_info`, everything manual for now.
 - `se_company_basic_info_precedence_clickhouse`: exports the precedence table.
 - Job `se_company_basic_info_extract_job` (the six extractors, LLM with run config) with schedule `se_company_basic_info_weekly` defined STOPPED. No sensor.
 
-Deleted: the `se_company_fields` group and everything under `se_company/fields/`, `info.py`'s publisher with its jobs, weekly and field-value sensor, the parity snapshot of the cutover plan, and the migrations 000373 to 000377 files (unapplied on prod, ledger at 372). `info.py` keeps only the LLM helpers the extractor imports. The `sweden_company` asset that builds `se_companies` is deleted in the spine slice.
+Deleted at cutover: `info.py`'s publisher with its jobs, weekly and field-value sensor (the file keeps only the LLM helpers the extractor imports) and the three artifact assets. The field-registry code and its migrations were already reverted before slice 0. The `sweden_company` asset that builds `se_companies` is deleted in the spine slice.
 
 ## 7. Backoffice
 
@@ -171,13 +171,13 @@ Pipeline sheet: extract job, fold partitions, suggestions per source, pending fo
 
 ## 8. Cutover
 
-1. Apply the new migrations (four tables). Delete the unapplied field-registry migration files 000373 to 000377 and their ledger tests; the next number after 000372 is this design's first migration.
+1. Apply the new migrations (four tables). The field-registry migrations never existed on this branch (reverted before slice 0); slice 0 took 000373 to 000375, so the entity tables start at 000376.
 2. Run the six extractors by hand, one at a time, LLM last with a preview first.
 3. Fold all 64 partitions from the UI backfill.
 4. Migrate the existing reviewer decisions from `se_company_info_field_value` into reviewer suggestion rows (a one-off asset), then fold those companies.
 5. Parity: an asset check on the fold compares `se_company_basic_info` with the untouched `se_company_info` per company: legal facts equal; a copied description equal; an LLM description equal to the stored observation; a decided row equal to its old text; companies published before and not now counted. Go or no-go.
 6. Switch the serving view and the admin info page to the new tables, deploy, smoke one company through Use this, Fold now, Release.
-7. Retire: delete the old publisher and the field-registry code from Dagster; drop `se_company_info` and `se_company_info_field_value` by gated migrations once nothing reads them.
+7. Retire: delete the old publisher (`info.py`'s asset, scan, jobs, weekly and sensor, keeping the LLM helpers the extractor imports) and the three `se_company_info_*` artifact assets from Dagster; drop `se_company_info`, the artifacts and `se_company_info_field_value` by gated migrations once nothing reads them.
 
 Rollback before step 6 is doing nothing. After step 6 it is switching the view and page back; the old table is untouched until step 7.
 
