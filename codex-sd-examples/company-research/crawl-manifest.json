@@ -1,0 +1,543 @@
+{
+  "requested_start_url": "https://handelsbanken.se/",
+  "selected_base_url": "https://www.handelsbanken.se/en/",
+  "stopped_reason": "crawl_completed",
+  "discovery_strategy": "breadth_first",
+  "url_seeding": {
+    "enabled": true,
+    "source": "sitemap",
+    "succeeded": true,
+    "error": null,
+    "inventory_urls": 1100,
+    "eligible_urls": 1100,
+    "excluded_urls": 0,
+    "head_checked_urls": 200,
+    "base_page_links": 12,
+    "harvested_links": 0,
+    "selection_waves": 1,
+    "selected": [
+      {
+        "url": "https://www.handelsbanken.se/sv/om-oss",
+        "score": 8.0,
+        "reasons": [
+          "llm",
+          "Primary company overview and the strongest candidate for corporate history, scale, leadership, and business scope.",
+          "fields: company_name, legal_name, description, industries, founded_year, employee_count, management, group_structure"
+        ],
+        "exclusion": null,
+        "language": null,
+        "title": "Om oss | Handelsbanken"
+      },
+      {
+        "url": "https://www.handelsbanken.se/en/",
+        "score": 68.0,
+        "reasons": [
+          "llm",
+          "English homepage likely summarizes the Handelsbanken brand and its principal banking offerings.",
+          "fields: company_name, description, industries, products_services"
+        ],
+        "exclusion": null,
+        "language": null,
+        "title": "Personal, thoughtful advice for a lifetime of banking. | Handelsbanken"
+      },
+      {
+        "url": "https://www.handelsbanken.se/en/personal/contact-and-support",
+        "score": 56.0,
+        "reasons": [
+          "llm",
+          "Main English contact page likely provides official telephone, email, and postal contact details.",
+          "fields: headquarters_address, phone, email"
+        ],
+        "exclusion": null,
+        "language": null,
+        "title": "Contact and support | Handelsbanken"
+      },
+      {
+        "url": "https://www.handelsbanken.se/en/about-us/swedish-subsidiaries",
+        "score": 41.0,
+        "reasons": [
+          "llm",
+          "Dedicated overview of Swedish subsidiaries and their roles within the group.",
+          "fields: group_structure, legal_name, products_services, industries"
+        ],
+        "exclusion": null,
+        "language": null,
+        "title": "Swedish subsidiaries | Handelsbanken"
+      },
+      {
+        "url": "https://www.handelsbanken.se/en/corporate",
+        "score": 14.0,
+        "reasons": [
+          "llm",
+          "Corporate-banking overview likely describes major services, customer sectors, and business capabilities.",
+          "fields: description, industries, products_services"
+        ],
+        "exclusion": null,
+        "language": null,
+        "title": "Your personal corporate bank | Handelsbanken"
+      },
+      {
+        "url": "https://www.handelsbanken.se/en/personal",
+        "score": 14.0,
+        "reasons": [
+          "llm",
+          "Personal-banking landing page should summarize the bank's main consumer products and services.",
+          "fields: description, products_services"
+        ],
+        "exclusion": null,
+        "language": null,
+        "title": null
+      },
+      {
+        "url": "https://www.handelsbanken.se/en/about-us/legal-documents/lei",
+        "score": 11.333333333333334,
+        "reasons": [
+          "llm",
+          "Dedicated LEI page is the clearest candidate for an official entity identifier and associated legal name.",
+          "fields: identifiers, legal_name"
+        ],
+        "exclusion": null,
+        "language": null,
+        "title": "LEI | Handelsbanken"
+      },
+      {
+        "url": "https://www.handelsbanken.se/sv/om-oss/jobba-hos-oss",
+        "score": 5.0,
+        "reasons": [
+          "llm",
+          "Main careers page likely explains employment at the company and routes candidates to applications.",
+          "fields: jobs, employee_count, description"
+        ],
+        "exclusion": null,
+        "language": null,
+        "title": "Jobba hos oss | Handelsbanken"
+      },
+      {
+        "url": "https://www.handelsbanken.se/sv/om-oss/jobba-hos-oss/lediga-jobb",
+        "score": 2.0,
+        "reasons": [
+          "llm",
+          "Dedicated open-vacancies page should list current positions and application instructions.",
+          "fields: jobs"
+        ],
+        "exclusion": null,
+        "language": null,
+        "title": "Lediga jobb | Handelsbanken"
+      },
+      {
+        "url": "https://www.handelsbanken.se/sv/om-oss/jobba-hos-oss/handelsbanken-som-arbetsgivare",
+        "score": -11.333333333333334,
+        "reasons": [
+          "llm",
+          "Employer profile may provide workforce information and a description of the organization as an employer.",
+          "fields: employee_count, jobs, description"
+        ],
+        "exclusion": null,
+        "language": null,
+        "title": "Handelsbanken som arbetsgivare | Handelsbanken"
+      },
+      {
+        "url": "https://www.handelsbanken.se/en/personal/contact-and-support/visit-us-on-social-media",
+        "score": 33.0,
+        "reasons": [
+          "llm",
+          "Dedicated page for the company's official social media accounts.",
+          "fields: social_profiles"
+        ],
+        "exclusion": null,
+        "language": null,
+        "title": "Handelsbanken on social media | Handelsbanken"
+      },
+      {
+        "url": "https://www.handelsbanken.se/en/personal/contact-and-support/complaints",
+        "score": 18.0,
+        "reasons": [
+          "llm",
+          "Complaints information commonly includes formal company identity and official phone, email, and postal contacts.",
+          "fields: legal_name, headquarters_address, phone, email"
+        ],
+        "exclusion": null,
+        "language": null,
+        "title": "Complaints | Handelsbanken"
+      },
+      {
+        "url": "https://www.handelsbanken.se/en/about-us/legal-documents/privacy-notice",
+        "score": 8.0,
+        "reasons": [
+          "llm",
+          "Although a privacy page, it may be the only candidate containing the data controller's registered name, organisation number, address, and official contact details.",
+          "fields: legal_name, identifiers, headquarters_address, email"
+        ],
+        "exclusion": null,
+        "language": null,
+        "title": "Information on the processing of personal data in the Handelsbanken Group  | Handelsbanken"
+      },
+      {
+        "url": "https://www.handelsbanken.se/en/corporate/our-corporate-packages",
+        "score": 11.0,
+        "reasons": [
+          "llm",
+          "Focused corporate-package page may describe bundled services and any displayed fees or prices.",
+          "fields: products_services"
+        ],
+        "exclusion": null,
+        "language": null,
+        "title": "Corporate packages | Handelsbanken"
+      },
+      {
+        "url": "https://www.handelsbanken.se/en/personal/everyday-banking",
+        "score": 21.0,
+        "reasons": [
+          "llm",
+          "Overview of core accounts, payments, cards, and day-to-day banking services.",
+          "fields: products_services"
+        ],
+        "exclusion": null,
+        "language": null,
+        "title": "Everyday banking | Handelsbanken"
+      },
+      {
+        "url": "https://www.handelsbanken.se/en/personal/mortgage-loan",
+        "score": 21.0,
+        "reasons": [
+          "llm",
+          "Principal mortgage product page likely describes lending services and any displayed rates or charges.",
+          "fields: products_services"
+        ],
+        "exclusion": null,
+        "language": null,
+        "title": "Mortgage loan | Handelsbanken"
+      },
+      {
+        "url": "https://www.handelsbanken.se/en/personal/savings-and-pensions",
+        "score": 11.0,
+        "reasons": [
+          "llm",
+          "Broad overview of savings, investment, and pension products.",
+          "fields: products_services, industries"
+        ],
+        "exclusion": null,
+        "language": null,
+        "title": "Savings and pensions | Handelsbanken"
+      },
+      {
+        "url": "https://www.handelsbanken.se/en/about-us/swedish-subsidiaries/handelsbanken-fonder",
+        "score": 18.0,
+        "reasons": [
+          "llm",
+          "Subsidiary profile should provide its legal name, operations, products, and relationship to the group.",
+          "fields: group_structure, legal_name, description, industries, products_services, management"
+        ],
+        "exclusion": null,
+        "language": null,
+        "title": "Handelsbanken Fonder AB − about the operations | Handelsbanken"
+      },
+      {
+        "url": "https://www.handelsbanken.se/sv/om-oss/svenska-dotterbolag/handelsbanken-liv",
+        "score": -18.0,
+        "reasons": [
+          "llm",
+          "Only supplied profile for the Handelsbanken Liv subsidiary, useful for group structure and insurance operations.",
+          "fields: group_structure, legal_name, description, industries, products_services"
+        ],
+        "exclusion": null,
+        "language": null,
+        "title": "Handelsbanken Liv | Handelsbanken"
+      },
+      {
+        "url": "https://www.handelsbanken.se/sv/om-oss/juridiska-dokument/prislistor-privat",
+        "score": -18.0,
+        "reasons": [
+          "llm",
+          "Central private-customer price-list page is the strongest candidate for product fees and pricing.",
+          "fields: products_services"
+        ],
+        "exclusion": null,
+        "language": null,
+        "title": "Prislistor | Handelsbanken"
+      }
+    ],
+    "inventory_path": "/Users/graovic/pulsarpoint/ppoint/companycollect/codex-sd-examples/company-research/url-inventory.json",
+    "selector": "llm",
+    "selection_method": "llm",
+    "candidate_count": 200,
+    "llm": {
+      "attempted": true,
+      "succeeded": true,
+      "error": null,
+      "warnings": [],
+      "token_usage": {
+        "last": {
+          "input_tokens": 31255,
+          "cached_input_tokens": 0,
+          "cache_write_input_tokens": 0,
+          "output_tokens": 2251,
+          "reasoning_output_tokens": 1217,
+          "total_tokens": 33506
+        },
+        "thread_total": {
+          "input_tokens": 31255,
+          "cached_input_tokens": 0,
+          "cache_write_input_tokens": 0,
+          "output_tokens": 2251,
+          "reasoning_output_tokens": 1217,
+          "total_tokens": 33506
+        },
+        "model_context_window": 258400,
+        "duration_ms": 47889
+      }
+    }
+  },
+  "language_discovery": {
+    "requested_url": "https://handelsbanken.se/",
+    "probe_url": "https://handelsbanken.se/",
+    "probe_succeeded": true,
+    "probe_language": "sv",
+    "selected_base_url": "https://www.handelsbanken.se/en/",
+    "selected_language": "en",
+    "selection_method": "alternate_hreflang",
+    "candidates": [
+      {
+        "url": "https://www.handelsbanken.se/en/",
+        "detection_method": "alternate_hreflang",
+        "score": 0,
+        "verification_status": "confirmed",
+        "detected_language": "en",
+        "verification_error": null
+      }
+    ],
+    "error": null
+  },
+  "crawl_stats": {
+    "configured_max_pages": 20,
+    "configured_max_depth": 2,
+    "include_external": false,
+    "pages_returned": 22,
+    "successful_pages": 21,
+    "failed_pages": 1,
+    "stored_markdown_pages": 19,
+    "stored_markdown_chars": 129230,
+    "max_depth_reached": 1,
+    "selected_pages": 19,
+    "discovered_pages": 0,
+    "suggested_pages": 0
+  },
+  "failed_pages": [
+    {
+      "url": "https://www.handelsbanken.se/en/corporate/our-corporate-packages",
+      "depth": 0,
+      "error": "crawl: Unexpected error in _crawl_web at line 778 in _crawl_web (.venv/lib/python3.12/site-packages/crawl4ai/async_crawler_strategy.py):\nError: Failed on navigating ACS-GOTO:\nPage.goto: Target page, context or browser has been closed\n\nCode context:\n 773                                   tag=\"GOTO\",\n 774                                   params={\"url\": url},\n 775                               )\n 776                               response = None\n 777                           else:\n 778 →                             raise RuntimeError(f\"Failed on navigating ACS-GOTO:\\n{str(e)}\")\n 779   \n 780                       # ──────────────────────────────────────────────────────────────\n 781                       # Walk the redirect chain.  Playwright returns only the last\n 782                       # hop, so we trace the `request.redirected_from` links until the\n 783                       # first response that differs from the final one and surface its"
+    }
+  ],
+  "markdown_pages": [
+    {
+      "source_url": "https://www.handelsbanken.se/en/",
+      "depth": 0,
+      "markdown_path": "/Users/graovic/pulsarpoint/ppoint/companycollect/codex-sd-examples/company-research/0001-www-handelsbanken-se-en-fa8d6ff3de.md",
+      "markdown_chars": 3633,
+      "language": "en",
+      "selection": "selected",
+      "score": 68.0,
+      "pass_number": 1,
+      "selection_reason": "English homepage likely summarizes the Handelsbanken brand and its principal banking offerings."
+    },
+    {
+      "source_url": "https://www.handelsbanken.se/en/about-us/swedish-subsidiaries",
+      "depth": 0,
+      "markdown_path": "/Users/graovic/pulsarpoint/ppoint/companycollect/codex-sd-examples/company-research/0002-www-handelsbanken-se-en-about-us-swedish-subsidiaries-502717857a.md",
+      "markdown_chars": 3916,
+      "language": "en",
+      "selection": "selected",
+      "score": 41.0,
+      "pass_number": 1,
+      "selection_reason": "Dedicated overview of Swedish subsidiaries and their roles within the group."
+    },
+    {
+      "source_url": "https://www.handelsbanken.se/en/about-us/swedish-subsidiaries/handelsbanken-fonder",
+      "depth": 0,
+      "markdown_path": "/Users/graovic/pulsarpoint/ppoint/companycollect/codex-sd-examples/company-research/0003-www-handelsbanken-se-en-about-us-swedish-subsidiaries-handelsbanken-fo-14f1684a37.md",
+      "markdown_chars": 4590,
+      "language": "en",
+      "selection": "selected",
+      "score": 18.0,
+      "pass_number": 1,
+      "selection_reason": "Subsidiary profile should provide its legal name, operations, products, and relationship to the group."
+    },
+    {
+      "source_url": "https://www.handelsbanken.se/en/about-us/legal-documents/lei",
+      "depth": 0,
+      "markdown_path": "/Users/graovic/pulsarpoint/ppoint/companycollect/codex-sd-examples/company-research/0004-www-handelsbanken-se-en-about-us-legal-documents-lei-1010caa6dc.md",
+      "markdown_chars": 4969,
+      "language": "en",
+      "selection": "selected",
+      "score": 11.333333333333334,
+      "pass_number": 1,
+      "selection_reason": "Dedicated LEI page is the clearest candidate for an official entity identifier and associated legal name."
+    },
+    {
+      "source_url": "https://www.handelsbanken.se/en/about-us/legal-documents/privacy-notice",
+      "depth": 0,
+      "markdown_path": "/Users/graovic/pulsarpoint/ppoint/companycollect/codex-sd-examples/company-research/0005-www-handelsbanken-se-en-about-us-legal-documents-privacy-notice-fe6e4b2bac.md",
+      "markdown_chars": 30116,
+      "language": "en",
+      "selection": "selected",
+      "score": 8.0,
+      "pass_number": 1,
+      "selection_reason": "Although a privacy page, it may be the only candidate containing the data controller's registered name, organisation number, address, and official contact details."
+    },
+    {
+      "source_url": "https://www.handelsbanken.se/en/corporate",
+      "depth": 0,
+      "markdown_path": "/Users/graovic/pulsarpoint/ppoint/companycollect/codex-sd-examples/company-research/0006-www-handelsbanken-se-en-corporate-7020c50352.md",
+      "markdown_chars": 4268,
+      "language": "en",
+      "selection": "selected",
+      "score": 14.0,
+      "pass_number": 1,
+      "selection_reason": "Corporate-banking overview likely describes major services, customer sectors, and business capabilities."
+    },
+    {
+      "source_url": "https://www.handelsbanken.se/en/personal",
+      "depth": 0,
+      "markdown_path": "/Users/graovic/pulsarpoint/ppoint/companycollect/codex-sd-examples/company-research/0007-www-handelsbanken-se-en-personal-74c9d6854a.md",
+      "markdown_chars": 3633,
+      "language": "en",
+      "selection": "selected",
+      "score": 14.0,
+      "pass_number": 1,
+      "selection_reason": "Personal-banking landing page should summarize the bank's main consumer products and services."
+    },
+    {
+      "source_url": "https://www.handelsbanken.se/en/personal/contact-and-support",
+      "depth": 0,
+      "markdown_path": "/Users/graovic/pulsarpoint/ppoint/companycollect/codex-sd-examples/company-research/0008-www-handelsbanken-se-en-personal-contact-and-support-65be6fc23a.md",
+      "markdown_chars": 5038,
+      "language": "en",
+      "selection": "selected",
+      "score": 56.0,
+      "pass_number": 1,
+      "selection_reason": "Main English contact page likely provides official telephone, email, and postal contact details."
+    },
+    {
+      "source_url": "https://www.handelsbanken.se/en/personal/contact-and-support/visit-us-on-social-media",
+      "depth": 0,
+      "markdown_path": "/Users/graovic/pulsarpoint/ppoint/companycollect/codex-sd-examples/company-research/0009-www-handelsbanken-se-en-personal-contact-and-support-visit-us-on-socia-0900720f71.md",
+      "markdown_chars": 3365,
+      "language": "en",
+      "selection": "selected",
+      "score": 33.0,
+      "pass_number": 1,
+      "selection_reason": "Dedicated page for the company's official social media accounts."
+    },
+    {
+      "source_url": "https://www.handelsbanken.se/en/personal/contact-and-support/complaints",
+      "depth": 0,
+      "markdown_path": "/Users/graovic/pulsarpoint/ppoint/companycollect/codex-sd-examples/company-research/0010-www-handelsbanken-se-en-personal-contact-and-support-complaints-38bcd6fb2e.md",
+      "markdown_chars": 5978,
+      "language": "en",
+      "selection": "selected",
+      "score": 18.0,
+      "pass_number": 1,
+      "selection_reason": "Complaints information commonly includes formal company identity and official phone, email, and postal contacts."
+    },
+    {
+      "source_url": "https://www.handelsbanken.se/en/personal/everyday-banking",
+      "depth": 0,
+      "markdown_path": "/Users/graovic/pulsarpoint/ppoint/companycollect/codex-sd-examples/company-research/0011-www-handelsbanken-se-en-personal-everyday-banking-86e266c33e.md",
+      "markdown_chars": 5722,
+      "language": "en",
+      "selection": "selected",
+      "score": 21.0,
+      "pass_number": 1,
+      "selection_reason": "Overview of core accounts, payments, cards, and day-to-day banking services."
+    },
+    {
+      "source_url": "https://www.handelsbanken.se/en/personal/mortgage-loan",
+      "depth": 0,
+      "markdown_path": "/Users/graovic/pulsarpoint/ppoint/companycollect/codex-sd-examples/company-research/0012-www-handelsbanken-se-en-personal-mortgage-loan-6ba111af8b.md",
+      "markdown_chars": 5880,
+      "language": "en",
+      "selection": "selected",
+      "score": 21.0,
+      "pass_number": 1,
+      "selection_reason": "Principal mortgage product page likely describes lending services and any displayed rates or charges."
+    },
+    {
+      "source_url": "https://www.handelsbanken.se/en/personal/savings-and-pensions",
+      "depth": 0,
+      "markdown_path": "/Users/graovic/pulsarpoint/ppoint/companycollect/codex-sd-examples/company-research/0013-www-handelsbanken-se-en-personal-savings-and-pensions-dcd0ab1ba5.md",
+      "markdown_chars": 4128,
+      "language": "en",
+      "selection": "selected",
+      "score": 11.0,
+      "pass_number": 1,
+      "selection_reason": "Broad overview of savings, investment, and pension products."
+    },
+    {
+      "source_url": "https://www.handelsbanken.se/sv/om-oss/jobba-hos-oss",
+      "depth": 0,
+      "markdown_path": "/Users/graovic/pulsarpoint/ppoint/companycollect/codex-sd-examples/company-research/0014-www-handelsbanken-se-sv-om-oss-jobba-hos-oss-f2f0c7c82c.md",
+      "markdown_chars": 8747,
+      "language": "sv",
+      "selection": "selected",
+      "score": 5.0,
+      "pass_number": 1,
+      "selection_reason": "Main careers page likely explains employment at the company and routes candidates to applications."
+    },
+    {
+      "source_url": "https://www.handelsbanken.se/sv/om-oss",
+      "depth": 0,
+      "markdown_path": "/Users/graovic/pulsarpoint/ppoint/companycollect/codex-sd-examples/company-research/0015-www-handelsbanken-se-sv-om-oss-01b9a7db59.md",
+      "markdown_chars": 7157,
+      "language": "sv",
+      "selection": "selected",
+      "score": 8.0,
+      "pass_number": 1,
+      "selection_reason": "Primary company overview and the strongest candidate for corporate history, scale, leadership, and business scope."
+    },
+    {
+      "source_url": "https://www.handelsbanken.se/sv/om-oss/jobba-hos-oss/handelsbanken-som-arbetsgivare",
+      "depth": 0,
+      "markdown_path": "/Users/graovic/pulsarpoint/ppoint/companycollect/codex-sd-examples/company-research/0016-www-handelsbanken-se-sv-om-oss-jobba-hos-oss-handelsbanken-som-arbetsg-f6c1b7a0a1.md",
+      "markdown_chars": 5446,
+      "language": "sv",
+      "selection": "selected",
+      "score": -11.333333333333334,
+      "pass_number": 1,
+      "selection_reason": "Employer profile may provide workforce information and a description of the organization as an employer."
+    },
+    {
+      "source_url": "https://www.handelsbanken.se/sv/om-oss/jobba-hos-oss/lediga-jobb",
+      "depth": 0,
+      "markdown_path": "/Users/graovic/pulsarpoint/ppoint/companycollect/codex-sd-examples/company-research/0017-www-handelsbanken-se-sv-om-oss-jobba-hos-oss-lediga-jobb-4db2b4de77.md",
+      "markdown_chars": 11388,
+      "language": "sv",
+      "selection": "selected",
+      "score": 2.0,
+      "pass_number": 1,
+      "selection_reason": "Dedicated open-vacancies page should list current positions and application instructions."
+    },
+    {
+      "source_url": "https://www.handelsbanken.se/sv/om-oss/juridiska-dokument/prislistor-privat",
+      "depth": 0,
+      "markdown_path": "/Users/graovic/pulsarpoint/ppoint/companycollect/codex-sd-examples/company-research/0018-www-handelsbanken-se-sv-om-oss-juridiska-dokument-prislistor-privat-c35cd59066.md",
+      "markdown_chars": 4054,
+      "language": "sv",
+      "selection": "selected",
+      "score": -18.0,
+      "pass_number": 1,
+      "selection_reason": "Central private-customer price-list page is the strongest candidate for product fees and pricing."
+    },
+    {
+      "source_url": "https://www.handelsbanken.se/sv/om-oss/svenska-dotterbolag/handelsbanken-liv",
+      "depth": 0,
+      "markdown_path": "/Users/graovic/pulsarpoint/ppoint/companycollect/codex-sd-examples/company-research/0019-www-handelsbanken-se-sv-om-oss-svenska-dotterbolag-handelsbanken-liv-bdb0bdb98f.md",
+      "markdown_chars": 7202,
+      "language": "sv",
+      "selection": "selected",
+      "score": -18.0,
+      "pass_number": 1,
+      "selection_reason": "Only supplied profile for the Handelsbanken Liv subsidiary, useful for group structure and insurance operations."
+    }
+  ]
+}

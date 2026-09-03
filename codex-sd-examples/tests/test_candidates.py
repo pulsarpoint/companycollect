@@ -1,0 +1,241 @@
+import json
+import tempfile
+import unittest
+from pathlib import Path
+
+from ex3.candidates import (
+    build_followup_candidates,
+    build_selection_candidates,
+    candidate_shortlist,
+    load_inventory_eligible,
+)
+from ex3.models import DiscoveredUrl, ScoredUrl
+from ex3.seeding import HeadMetadata
+from ex3.urls import url_key
+
+BASE_URL = "https://www.example.se/en/"
+
+
+class SelectionCandidatesTest(unittest.TestCase):
+    def test_orders_by_score_attaches_heads_and_drops_excluded_urls(self) -> None:
+        candidates = _candidates(
+            inventory=[
+                "https://www.example.se/en/reports/annual.pdf",
+                "https://www.example.se/en/careers",
+                "https://www.example.se/en/about-us",
+                "https://www.example.com/en/about",
+            ],
+            base_page_links=["https://www.example.se/en/careers"],
+            heads={
+                "https://www.example.se/en/about-us": HeadMetadata(
+                    language="en", title="About us", description=None
+                )
+            },
+            limit=10,
+        )
+
+        urls = [candidate.url for candidate in candidates]
+        self.assertEqual(urls[0], "https://www.example.se/en/")
+        self.assertIn("https://www.example.se/en/about-us", urls)
+        self.assertIn("https://www.example.se/en/careers", urls)
+        self.assertNotIn("https://www.example.se/en/reports/annual.pdf", urls)
+        self.assertNotIn("https://www.example.com/en/about", urls)
+        about = next(c for c in candidates if c.url.endswith("about-us"))
+        careers = next(c for c in candidates if c.url.endswith("careers"))
+        self.assertEqual(about.title, "About us")
+        self.assertEqual(about.language, "en")
+        self.assertEqual(about.source, "inventory")
+        self.assertEqual(careers.source, "base_page")
+
+    def test_dedupes_the_shortlist_by_url_key_before_the_limit(self) -> None:
+        # "careers" (inventory) and "careers/" (base_page_links) share one
+        # url_key and tie in score; without pre-limit dedup both consume a
+        # shortlist slot and crowd out the genuinely distinct "about-us"
+        # entry from the top ``limit`` before it ever reaches candidates.
+        candidates = _candidates(
+            inventory=[
+                "https://www.example.se/en/careers",
+                "https://www.example.se/en/company/about-us",
+                "https://www.example.se/en/misc",
+            ],
+            base_page_links=["https://www.example.se/en/careers/"],
+            heads={},
+            limit=3,
+        )
+
+        result_keys = {url_key(candidate.url) for candidate in candidates}
+        self.assertEqual(
+            result_keys,
+            {
+                url_key(BASE_URL),
+                url_key("https://www.example.se/en/company/about-us"),
+                url_key("https://www.example.se/en/careers"),
+            },
+        )
+        self.assertEqual(len(candidates), 3)
+
+    def test_respects_the_limit(self) -> None:
+        candidates = _candidates(
+            inventory=[
+                f"https://www.example.se/en/page-{index}" for index in range(30)
+            ],
+            base_page_links=[],
+            heads={},
+            limit=5,
+        )
+
+        self.assertEqual(len(candidates), 5)
+
+    def test_attaches_anchor_text_to_base_page_candidates(self) -> None:
+        candidates = _candidates(
+            inventory=["https://www.example.se/en/about-us"],
+            base_page_links=["https://www.example.se/en/about-us"],
+            heads={},
+            base_page_labels={
+                url_key("https://www.example.se/en/about-us"): "About us"
+            },
+            limit=10,
+        )
+
+        about = next(item for item in candidates if item.url.endswith("about-us"))
+        self.assertEqual(about.source, "base_page")
+        self.assertEqual(about.labels, ["About us"])
+
+
+def _candidates(
+    *,
+    inventory: list[str],
+    base_page_links: list[str],
+    heads: dict[str, HeadMetadata],
+    limit: int,
+    base_page_labels: dict[str, str] | None = None,
+):
+    shortlist = candidate_shortlist(
+        inventory=inventory,
+        base_url=BASE_URL,
+        base_page_links=base_page_links,
+        preferred_languages=frozenset({"en"}),
+        limit=limit,
+    )
+    return build_selection_candidates(
+        shortlist,
+        heads=heads,
+        base_page_links=base_page_links,
+        base_page_labels=base_page_labels or {},
+        preferred_languages=frozenset({"en"}),
+        limit=limit,
+    )
+
+
+class FollowupCandidatesTest(unittest.TestCase):
+    def test_excludes_processed_pages_and_merges_inventory_leftovers(self) -> None:
+        discovered = [
+            DiscoveredUrl(
+                url="https://www.example.se/en/about-us",
+                domain="example.se",
+                link_type="internal",
+                labels=["About us"],
+                source_urls=["https://www.example.se/en/"],
+                occurrences=3,
+            ),
+            DiscoveredUrl(
+                url="https://www.example.se/en/careers/",
+                domain="example.se",
+                link_type="internal",
+                labels=["Careers"],
+                source_urls=["https://www.example.se/en/"],
+                occurrences=2,
+            ),
+            DiscoveredUrl(
+                url="https://www.linkedin.com/company/example",
+                domain="linkedin.com",
+                link_type="external",
+                labels=["LinkedIn"],
+                source_urls=["https://www.example.se/en/"],
+                occurrences=1,
+            ),
+        ]
+        inventory_eligible = [
+            ScoredUrl(
+                url="https://www.example.se/en/management",
+                score=44.0,
+                reasons=["people"],
+            ),
+            ScoredUrl(
+                url="https://www.example.se/en/careers", score=34.0, reasons=["careers"]
+            ),
+        ]
+
+        candidates = build_followup_candidates(
+            discovered_urls=discovered,
+            inventory_eligible=inventory_eligible,
+            processed_urls={
+                "https://www.example.se/en/",
+                "https://www.example.se/en/about-us",
+            },
+            base_url=BASE_URL,
+            preferred_languages=frozenset({"en"}),
+            limit=10,
+        )
+
+        urls = [candidate.url for candidate in candidates]
+        self.assertEqual(
+            set(urls),
+            {
+                "https://www.example.se/en/careers/",
+                "https://www.example.se/en/management",
+            },
+        )
+        careers = next(c for c in candidates if c.url.endswith("careers/"))
+        self.assertEqual(careers.labels, ["Careers"])
+        self.assertEqual(careers.occurrences, 2)
+        self.assertEqual(careers.source, "discovered")
+
+
+class InventoryLoadingTest(unittest.TestCase):
+    def test_loads_eligible_urls_and_tolerates_a_missing_file(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "url-inventory.json"
+            path.write_text(
+                json.dumps(
+                    {
+                        "inventory_urls": 1,
+                        "selected": [],
+                        "eligible": [
+                            {
+                                "url": "https://www.example.se/en/x",
+                                "score": 1.0,
+                                "reasons": [],
+                            }
+                        ],
+                        "excluded": [],
+                    }
+                ),
+                encoding="utf-8",
+            )
+
+            loaded = load_inventory_eligible(path)
+            missing = load_inventory_eligible(Path(directory) / "nope.json")
+
+        self.assertEqual(
+            [scored.url for scored in loaded], ["https://www.example.se/en/x"]
+        )
+        self.assertEqual(missing, [])
+        self.assertEqual(load_inventory_eligible(None), [])
+
+    def test_tolerates_malformed_eligible_shapes(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            not_a_list_path = Path(directory) / "eligible-not-a-list.json"
+            not_a_list_path.write_text(json.dumps({"eligible": 5}), encoding="utf-8")
+            not_a_dict_path = Path(directory) / "payload-not-a-dict.json"
+            not_a_dict_path.write_text(json.dumps([1, 2, 3]), encoding="utf-8")
+
+            eligible_not_a_list = load_inventory_eligible(not_a_list_path)
+            payload_not_a_dict = load_inventory_eligible(not_a_dict_path)
+
+        self.assertEqual(eligible_not_a_list, [])
+        self.assertEqual(payload_not_a_dict, [])
+
+
+if __name__ == "__main__":
+    unittest.main()

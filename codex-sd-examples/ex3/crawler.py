@@ -1,11 +1,17 @@
-import asyncio
 import hashlib
 import json
 import logging
 import math
 import re
-from collections.abc import AsyncGenerator, Callable, Collection
-from contextlib import aclosing
+from collections.abc import (
+    AsyncGenerator,
+    AsyncIterator,
+    Callable,
+    Collection,
+    Mapping,
+    Sequence,
+)
+from contextlib import aclosing, asynccontextmanager
 from dataclasses import dataclass
 from pathlib import Path
 from types import AsyncGeneratorType
@@ -20,16 +26,21 @@ from crawl4ai.deep_crawling import (
     FilterChain,
 )
 from crawl4ai.models import CrawlResult
-from openai_codex import AsyncCodex, AsyncTurnHandle, Sandbox, TurnResult
 from pydantic import BaseModel, ValidationError
 
-from ex1.aux import print_usage
 from ex1.models import AnalysisTokenUsage, FailedPage
+from ex3.candidates import (
+    build_selection_candidates,
+    dedupe_by_url_key,
+)
 from ex3.language import (
     detect_document_language,
     inspect_language_page,
     is_english_language,
 )
+from ex3.llm import run_structured_turn
+from ex3.llm_selection import select_pages_with_llm
+from ex3.merge import merge_information_with_llm
 from ex3.models import (
     BatchAnalysis,
     BatchExtraction,
@@ -40,25 +51,33 @@ from ex3.models import (
     DiscoveredUrl,
     DiscoveryStrategy,
     LanguageDiscovery,
+    LlmCallStatus,
     MarkdownPage,
+    MergeAnalysis,
     PageExtraction,
     PageExtractionMetadata,
+    PassSuggestions,
+    PassSummary,
     RelatedDomain,
     RelatedDomainAnalysis,
     RelatedDomainSelection,
     ResearchReport,
     ScoredUrl,
     SeedingSource,
+    SelectionMethod,
+    Selector,
     UrlSeeding,
-    batch_extraction_output_schema,
     build_analysis_stats,
     consolidate_extractions,
-    related_domain_output_schema,
     set_source_url,
+    sum_token_totals,
 )
 from ex3.prompty import create_prompt, create_related_domains_prompt
+from ex3.requirements import compute_gaps
 from ex3.seeding import (
+    HeadFetcher,
     HeadMetadata,
+    SeedingOutcome,
     SelectionResult,
     fetch_head_metadata,
     seed_sitemap_urls,
@@ -68,19 +87,19 @@ from ex3.selection import (
     DEFAULT_PREFERRED_LANGUAGES,
     SelectionFilter,
     SelectionScorer,
+    rank_urls,
 )
 from ex3.urls import canonical_domain, normalize_start_url, same_domain_tree, url_key
 
 LOGGER = logging.getLogger(__name__)
 LANGUAGE_CANDIDATE_LIMIT = 5
-TURN_INTERRUPT_TIMEOUT_SECONDS = 5
-TURN_COMPLETION_TIMEOUT_SECONDS = 10
 DOMAIN_URL_SAMPLE_LIMIT = 3
 DOMAIN_URL_SAMPLE_CHAR_LIMIT = 500
 DOMAIN_LABEL_SAMPLE_LIMIT = 10
 MARKDOWN_LINK_PATTERN = re.compile(r"\]\(([^\s<>\)]+)")
 HEAD_FETCH_CONCURRENCY = 8
 INVENTORY_FILENAME = "url-inventory.json"
+LINK_TEXT_CHAR_LIMIT = 200
 
 
 @dataclass(frozen=True, slots=True)
@@ -100,8 +119,11 @@ class CrawlSettings:
     seed_source: SeedingSource = "sitemap"
     seed_max_urls: int = 5_000
     seed_share: float = 0.6
-    discovery_strategy: DiscoveryStrategy = "best_first"
+    discovery_strategy: DiscoveryStrategy = "breadth_first"
     accept_language: str = "en-US,en;q=0.9"
+    selector: Selector = "llm"
+    llm_candidates: int = 200
+    llm_timeout_seconds: int = 300
 
 
 @dataclass(frozen=True, slots=True)
@@ -112,6 +134,9 @@ class AnalysisSettings:
     max_batch_chars: int
     analysis_timeout_seconds: int
     skip_non_english: bool = False
+    previous_report_path: Path | None = None
+    suggestions_path: Path | None = None
+    merge_with_llm: bool = True
 
 
 @dataclass(frozen=True, slots=True)
@@ -190,6 +215,48 @@ async def run_analysis(settings: AnalysisSettings) -> ResearchReport:
             "Skipping %d stored page(s) declared in a non-English language",
             len(skipped_pages),
         )
+
+    previous: ResearchReport | None = None
+    reused_pages: list[PageExtraction] = []
+    carried_failures: list[FailedPage] = []
+    if settings.previous_report_path is not None:
+        previous = ResearchReport.model_validate_json(
+            settings.previous_report_path.read_text(encoding="utf-8")
+        )
+        manifest_keys = {url_key(page.source_url) for page in manifest.markdown_pages}
+        reused_pages = [
+            page
+            for page in previous.pages
+            if page.extraction_metadata is not None
+            and page.extraction_metadata.succeeded
+            and url_key(page.source_url) in manifest_keys
+        ]
+        reused_keys = {url_key(page.source_url) for page in reused_pages}
+        markdown_pages = [
+            page
+            for page in markdown_pages
+            if url_key(page.source_url) not in reused_keys
+        ]
+        resubmitted_keys = {url_key(page.source_url) for page in markdown_pages}
+        carried_failures = [
+            failure
+            for failure in previous.failed_pages
+            if failure.error.startswith("analysis")
+            and url_key(failure.url) not in resubmitted_keys
+        ]
+        LOGGER.info(
+            "Reusing %d successful page(s) from the previous report; "
+            "%d page(s) to extract",
+            len(reused_pages),
+            len(markdown_pages),
+        )
+
+    suggestions: PassSuggestions | None = None
+    if settings.suggestions_path is not None:
+        suggestions = PassSuggestions.model_validate_json(
+            settings.suggestions_path.read_text(encoding="utf-8")
+        )
+
     discovered_urls = discover_urls(
         manifest.markdown_pages,
         searched_url=manifest.selected_base_url,
@@ -223,11 +290,57 @@ async def run_analysis(settings: AnalysisSettings) -> ResearchReport:
         max_page_chars=settings.max_page_chars,
         timeout_seconds=settings.analysis_timeout_seconds,
     )
-    failed_pages = [*manifest.failed_pages, *analysis_failures]
+    failed_pages = _dedupe_failures(
+        [*manifest.failed_pages, *carried_failures, *analysis_failures]
+    )
     successful_extractions = sum(
         page.extraction_metadata is not None and page.extraction_metadata.succeeded
         for page in pages
     )
+
+    all_pages = [*reused_pages, *pages]
+    processed_urls = [page.source_url for page in manifest.markdown_pages]
+    useful_information = consolidate_extractions(all_pages)
+    merge_analysis: MergeAnalysis | None = None
+    if previous is not None and pages and settings.merge_with_llm:
+        merged, merge_analysis = await merge_information_with_llm(
+            previous.useful_information,
+            consolidate_extractions(pages),
+            processed_urls=processed_urls,
+            timeout_seconds=settings.analysis_timeout_seconds,
+        )
+        if merged is not None:
+            useful_information = merged
+
+    pass_number = (
+        previous.passes[-1].pass_number + 1
+        if previous is not None and previous.passes
+        else 1
+    )
+    extra_calls: list[LlmCallStatus] = []
+    # The page-selection call paid for pass one only; later passes must not
+    # count it again.
+    if (
+        previous is None
+        and manifest.url_seeding is not None
+        and manifest.url_seeding.llm is not None
+    ):
+        extra_calls.append(manifest.url_seeding.llm)
+    if suggestions is not None:
+        extra_calls.append(suggestions.llm)
+    if merge_analysis is not None:
+        extra_calls.append(merge_analysis)
+    analysis_stats = build_analysis_stats(
+        batch_analyses, related_domain_analysis, extra_calls
+    )
+    current_pass = PassSummary(
+        pass_number=pass_number,
+        pages=len(all_pages),
+        new_pages=len(pages),
+        batches=len(batch_analyses),
+        token_totals=analysis_stats.token_totals,
+    )
+    passes = [*(previous.passes if previous is not None else []), current_pass]
 
     return ResearchReport(
         requested_start_url=manifest.requested_start_url,
@@ -253,17 +366,62 @@ async def run_analysis(settings: AnalysisSettings) -> ResearchReport:
         failed_pages=failed_pages,
         markdown_pages=manifest.markdown_pages,
         skipped_pages=skipped_pages,
-        analysis_stats=build_analysis_stats(
-            batch_analyses,
-            related_domain_analysis,
-        ),
+        analysis_stats=analysis_stats,
         batches=batch_analyses,
         discovered_urls=discovered_urls,
         related_domain_analysis=related_domain_analysis,
         related_domains=related_domains,
-        useful_information=consolidate_extractions(pages),
-        pages=pages,
+        useful_information=useful_information,
+        pages=all_pages,
+        passes=passes,
+        run_token_totals=sum_token_totals(passes),
+        gaps=compute_gaps(useful_information),
+        merge_analysis=merge_analysis,
+        previous_report_path=(
+            str(settings.previous_report_path.resolve())
+            if settings.previous_report_path is not None
+            else None
+        ),
+        suggestions_path=(
+            str(settings.suggestions_path.resolve())
+            if settings.suggestions_path is not None
+            else None
+        ),
     )
+
+
+def _dedupe_failures(failures: Sequence[FailedPage]) -> list[FailedPage]:
+    """Keep the first failure per (url, error), so carried-over ones cannot repeat."""
+    unique: dict[tuple[str, str], FailedPage] = {}
+    for failure in failures:
+        unique.setdefault((failure.url, failure.error), failure)
+    return list(unique.values())
+
+
+@asynccontextmanager
+async def _open_crawler(
+    *, headless: bool, proxy: str | None, cdp_port: int, accept_language: str
+) -> AsyncIterator[AsyncWebCrawler]:
+    """Launch CloakBrowser and attach a Crawl4AI crawler over CDP."""
+    cloak_browser = await launch_async(
+        headless=headless,
+        proxy=proxy,
+        args=[
+            f"--remote-debugging-port={cdp_port}",
+            "--remote-debugging-address=127.0.0.1",
+        ],
+    )
+    try:
+        browser_config = BrowserConfig(
+            browser_mode="cdp",
+            cdp_url=f"http://127.0.0.1:{cdp_port}",
+            headers={"Accept-Language": accept_language},
+        )
+        async with AsyncWebCrawler(config=browser_config) as crawler:
+            yield crawler
+    finally:
+        await cloak_browser.close()
+        LOGGER.info("CloakBrowser and Playwright have been closed")
 
 
 async def _discover_and_crawl(
@@ -271,56 +429,41 @@ async def _discover_and_crawl(
     *,
     requested_start_url: str,
 ) -> tuple[LanguageDiscovery, UrlSeeding, list[CrawlResult]]:
-    cloak_browser = await launch_async(
+    async with _open_crawler(
         headless=settings.headless,
         proxy=settings.proxy,
-        args=[
-            f"--remote-debugging-port={settings.cdp_port}",
-            "--remote-debugging-address=127.0.0.1",
-        ],
-    )
-
-    try:
-        browser_config = BrowserConfig(
-            browser_mode="cdp",
-            cdp_url=f"http://127.0.0.1:{settings.cdp_port}",
-            headers={"Accept-Language": settings.accept_language},
+        cdp_port=settings.cdp_port,
+        accept_language=settings.accept_language,
+    ) as crawler:
+        language_discovery, base_result = await _discover_english_base(
+            crawler,
+            settings=settings,
+            requested_start_url=requested_start_url,
         )
-        async with AsyncWebCrawler(config=browser_config) as crawler:
-            language_discovery, base_result = await _discover_english_base(
-                crawler,
-                settings=settings,
-                requested_start_url=requested_start_url,
-            )
-            base_url = language_discovery.selected_base_url
-            preferred_languages = _preferred_languages(
-                language_discovery.selected_language
-            )
-            url_seeding, crawl_results = await _select_and_crawl(
-                crawler,
-                settings=settings,
-                base_url=base_url,
-                base_result=base_result,
-                markdown_dir=settings.markdown_dir,
-                preferred_languages=preferred_languages,
-            )
-            crawled_urls = {result.url for result in crawl_results if result.success}
-            remaining = settings.max_pages - len(crawled_urls)
-            if remaining > 0:
-                crawl_results.extend(
-                    await _stream_discovery(
-                        crawler,
-                        settings=settings,
-                        base_url=base_url,
-                        max_new_pages=remaining,
-                        already_crawled=crawled_urls,
-                        preferred_languages=preferred_languages,
-                    )
+        base_url = language_discovery.selected_base_url
+        preferred_languages = _preferred_languages(language_discovery.selected_language)
+        url_seeding, crawl_results = await _select_and_crawl(
+            crawler,
+            settings=settings,
+            base_url=base_url,
+            base_result=base_result,
+            markdown_dir=settings.markdown_dir,
+            preferred_languages=preferred_languages,
+        )
+        crawled_urls = {result.url for result in crawl_results if result.success}
+        remaining = settings.max_pages - len(crawled_urls)
+        if remaining > 0:
+            crawl_results.extend(
+                await _stream_discovery(
+                    crawler,
+                    settings=settings,
+                    base_url=base_url,
+                    max_new_pages=remaining,
+                    already_crawled=crawled_urls,
+                    preferred_languages=preferred_languages,
                 )
-            return language_discovery, url_seeding, crawl_results
-    finally:
-        await cloak_browser.close()
-        LOGGER.info("CloakBrowser and Playwright have been closed")
+            )
+        return language_discovery, url_seeding, crawl_results
 
 
 async def _discover_english_base(
@@ -438,11 +581,13 @@ async def _discover_english_base(
     )
 
 
-def _internal_links(result: CrawlResult | None, *, base_url: str) -> list[str]:
-    """Return normalized same-site links from a rendered page."""
+def _internal_links(
+    result: CrawlResult | None, *, base_url: str
+) -> list[tuple[str, str]]:
+    """Return normalized same-site links and their anchor text, first one wins."""
     if result is None or not isinstance(result.links, dict):
         return []
-    links: list[str] = []
+    links: list[tuple[str, str]] = []
     seen: set[str] = set()
     for link in result.links.get("internal", []):
         href = link.get("href") if isinstance(link, dict) else None
@@ -458,8 +603,15 @@ def _internal_links(result: CrawlResult | None, *, base_url: str) -> list[str]:
         if url_key(normalized) in seen:
             continue
         seen.add(url_key(normalized))
-        links.append(normalized)
+        text = link.get("text") if isinstance(link, dict) else None
+        label = text.strip()[:LINK_TEXT_CHAR_LIMIT] if isinstance(text, str) else ""
+        links.append((normalized, label))
     return links
+
+
+def _internal_link_urls(result: CrawlResult | None, *, base_url: str) -> list[str]:
+    """Return only the URLs of :func:`_internal_links`."""
+    return [url for url, _ in _internal_links(result, base_url=base_url)]
 
 
 async def _crawl_single_page(
@@ -485,12 +637,12 @@ async def _select_and_crawl(
     markdown_dir: Path,
     preferred_languages: Collection[str] = DEFAULT_PREFERRED_LANGUAGES,
 ) -> tuple[UrlSeeding, list[CrawlResult]]:
-    """Pick pages from the URL inventory and render them in up to two waves.
+    """Pick pages from the sitemap inventory and render them.
 
-    Wave one takes ``seed_share`` of the page budget from the sitemap inventory
-    plus the base page's links. Its rendered pages contribute their own links,
-    the union is ranked again, and wave two fills the remaining budget. Link
-    discovery afterwards only covers what both waves left open.
+    With ``selector == "llm"`` the model chooses from a capped, head-checked
+    candidate list; the deterministic two-wave selection is the fallback and
+    the explicit alternative. Without a sitemap nothing is selected here and
+    the caller's discovery crawl (BFS by default) uses the whole budget.
     """
     if not settings.seed:
         return (
@@ -505,7 +657,23 @@ async def _select_and_crawl(
         accept_language=settings.accept_language,
         proxy=settings.proxy,
     )
-    base_links = _internal_links(base_result, base_url=base_url)
+    if not outcome.urls:
+        LOGGER.info("No sitemap inventory for %s; discovery crawl will run", base_url)
+        return (
+            UrlSeeding(
+                enabled=True,
+                source=settings.seed_source,
+                succeeded=outcome.error is None,
+                error=outcome.error,
+                selector=settings.selector,
+                selection_method="none",
+            ),
+            [],
+        )
+
+    base_page_links = _internal_links(base_result, base_url=base_url)
+    base_links = [url for url, _ in base_page_links]
+    base_page_labels = {url_key(url): text for url, text in base_page_links if text}
 
     async def fetch_heads(urls: list[str]) -> dict[str, HeadMetadata]:
         return await fetch_head_metadata(
@@ -515,12 +683,54 @@ async def _select_and_crawl(
             concurrency=HEAD_FETCH_CONCURRENCY,
         )
 
+    if settings.selector == "llm":
+        return await _select_with_llm_and_crawl(
+            crawler,
+            settings=settings,
+            base_url=base_url,
+            inventory=outcome,
+            base_links=base_links,
+            base_page_labels=base_page_labels,
+            fetch_heads=fetch_heads,
+            markdown_dir=markdown_dir,
+            preferred_languages=preferred_languages,
+        )
+    return await _select_deterministically_and_crawl(
+        crawler,
+        settings=settings,
+        base_url=base_url,
+        inventory=outcome,
+        base_links=base_links,
+        fetch_heads=fetch_heads,
+        markdown_dir=markdown_dir,
+        preferred_languages=preferred_languages,
+    )
+
+
+async def _select_deterministically_and_crawl(
+    crawler: AsyncWebCrawler,
+    *,
+    settings: CrawlSettings,
+    base_url: str,
+    inventory: SeedingOutcome,
+    base_links: list[str],
+    fetch_heads: HeadFetcher,
+    markdown_dir: Path,
+    preferred_languages: Collection[str],
+) -> tuple[UrlSeeding, list[CrawlResult]]:
+    """Pick pages from the URL inventory and render them in up to two waves.
+
+    Wave one takes ``seed_share`` of the page budget from the sitemap inventory
+    plus the base page's links. Its rendered pages contribute their own links,
+    the union is ranked again, and wave two fills the remaining budget. Link
+    discovery afterwards only covers what both waves left open.
+    """
     first_limit = min(
         settings.max_pages,
         max(1, math.ceil(settings.max_pages * settings.seed_share)),
     )
     first_wave = await select_pages(
-        outcome.urls,
+        inventory.urls,
         base_url=base_url,
         limit=first_limit,
         fetch_heads=fetch_heads,
@@ -547,12 +757,12 @@ async def _select_and_crawl(
         for result in results:
             if not result.success:
                 continue
-            for link in _internal_links(result, base_url=base_url):
+            for link in _internal_link_urls(result, base_url=base_url):
                 if url_key(link) not in attempted_keys:
                     attempted_keys.add(url_key(link))
                     harvested.append(link)
         second_wave = await select_pages(
-            [*outcome.urls, *harvested],
+            [*inventory.urls, *harvested],
             base_url=base_url,
             limit=remaining,
             fetch_heads=fetch_heads,
@@ -577,7 +787,7 @@ async def _select_and_crawl(
             selected.extend(second_wave.selected)
 
     inventory_urls = len(
-        {url_key(url) for url in (base_url, *outcome.urls, *base_links, *harvested)}
+        {url_key(url) for url in (base_url, *inventory.urls, *base_links, *harvested)}
     )
     inventory_path = markdown_dir.resolve() / INVENTORY_FILENAME
     _write_inventory(
@@ -600,8 +810,8 @@ async def _select_and_crawl(
         UrlSeeding(
             enabled=True,
             source=settings.seed_source,
-            succeeded=outcome.error is None,
-            error=outcome.error,
+            succeeded=inventory.error is None,
+            error=inventory.error,
             inventory_urls=inventory_urls,
             eligible_urls=len(final_wave.eligible),
             excluded_urls=len(final_wave.excluded),
@@ -611,9 +821,134 @@ async def _select_and_crawl(
             selection_waves=waves,
             selected=selected,
             inventory_path=str(inventory_path),
+            selector=settings.selector,
+            selection_method="deterministic",
         ),
         results,
     )
+
+
+async def _select_with_llm_and_crawl(
+    crawler: AsyncWebCrawler,
+    *,
+    settings: CrawlSettings,
+    base_url: str,
+    inventory: SeedingOutcome,
+    base_links: list[str],
+    base_page_labels: Mapping[str, str],
+    fetch_heads: HeadFetcher,
+    markdown_dir: Path,
+    preferred_languages: Collection[str],
+) -> tuple[UrlSeeding, list[CrawlResult]]:
+    """Pick pages with one LLM call over a capped, head-checked candidate list.
+
+    Every pick is validated against the candidate list; unknown, duplicate and
+    beyond-limit picks are dropped. On LLM failure this falls back to the
+    deterministic single-wave selection and keeps the failed ``llm`` status.
+    """
+    unique_links = list(dict.fromkeys(base_links))
+    eligible, excluded = rank_urls(
+        [base_url, *inventory.urls, *unique_links],
+        base_url=base_url,
+        linked_from_base=unique_links,
+        preferred_languages=preferred_languages,
+    )
+    shortlist = dedupe_by_url_key(eligible)[: settings.llm_candidates]
+    heads = await fetch_heads([scored.url for scored in shortlist])
+    candidates = build_selection_candidates(
+        shortlist,
+        heads=heads,
+        base_page_links=base_links,
+        base_page_labels=base_page_labels,
+        preferred_languages=preferred_languages,
+        limit=settings.llm_candidates,
+    )
+    picks, llm_status = await select_pages_with_llm(
+        candidates,
+        base_url=base_url,
+        limit=settings.max_pages,
+        timeout_seconds=settings.llm_timeout_seconds,
+    )
+    selection_method: SelectionMethod = "llm"
+    if not picks:
+        if llm_status.succeeded:
+            LOGGER.warning(
+                "LLM page selection returned no valid picks (%s); "
+                "using deterministic selection",
+                "; ".join(llm_status.warnings) or "no pages returned",
+            )
+        else:
+            LOGGER.warning(
+                "LLM page selection failed (%s); using deterministic selection",
+                llm_status.error,
+            )
+        fallback = await select_pages(
+            inventory.urls,
+            base_url=base_url,
+            limit=settings.max_pages,
+            fetch_heads=fetch_heads,
+            base_page_links=base_links,
+            preferred_languages=preferred_languages,
+        )
+        picks = fallback.selected
+        selection_method = "deterministic"
+
+    results = await _crawl_seeded_pages(
+        crawler,
+        scored_urls={scored.url: scored.score for scored in picks},
+        settings=settings,
+        reasons={scored.url: _selection_reason(scored) for scored in picks},
+    )
+    inventory_urls = len(
+        {url_key(url) for url in (base_url, *inventory.urls, *base_links)}
+    )
+    inventory_path = markdown_dir.resolve() / INVENTORY_FILENAME
+    refined_by_key = {
+        url_key(candidate.url): ScoredUrl(
+            url=candidate.url,
+            score=candidate.score,
+            reasons=candidate.reasons,
+            language=candidate.language,
+            title=candidate.title,
+        )
+        for candidate in candidates
+    }
+    _write_inventory(
+        selected=picks,
+        eligible=[
+            refined_by_key.get(url_key(scored.url), scored) for scored in eligible
+        ],
+        excluded=excluded,
+        inventory_urls=inventory_urls,
+        path=inventory_path,
+    )
+    return (
+        UrlSeeding(
+            enabled=True,
+            source=settings.seed_source,
+            succeeded=inventory.error is None,
+            error=inventory.error,
+            inventory_urls=inventory_urls,
+            eligible_urls=len(eligible),
+            excluded_urls=len(excluded),
+            head_checked_urls=len(shortlist),
+            base_page_links=len(base_links),
+            selection_waves=1,
+            selected=picks,
+            inventory_path=str(inventory_path),
+            selector="llm",
+            selection_method=selection_method,
+            candidate_count=len(candidates),
+            llm=llm_status,
+        ),
+        results,
+    )
+
+
+def _selection_reason(scored: ScoredUrl) -> str | None:
+    if scored.reasons[:1] == ["llm"] and len(scored.reasons) > 1:
+        return scored.reasons[1]
+    return None
 
 
 def _preferred_languages(selected_language: str | None) -> frozenset[str]:
@@ -651,6 +986,8 @@ async def _crawl_seeded_pages(
     *,
     scored_urls: dict[str, float],
     settings: CrawlSettings,
+    reasons: Mapping[str, str | None] | None = None,
+    pass_number: int = 1,
 ) -> list[CrawlResult]:
     """Render the selected pages directly, tagging each result with its score."""
     urls = list(scored_urls)
@@ -678,8 +1015,26 @@ async def _crawl_seeded_pages(
                     ),
                     None,
                 )
+            reason = reasons.get(result.url) if reasons is not None else None
+            if reason is None and reasons is not None:
+                reason = next(
+                    (
+                        value
+                        for url, value in reasons.items()
+                        if url_key(url) == url_key(result.url)
+                    ),
+                    None,
+                )
             metadata = dict(result.metadata or {})
-            metadata.update({"depth": 0, "selection": "selected", "score": score})
+            metadata.update(
+                {
+                    "depth": 0,
+                    "selection": "selected",
+                    "score": score,
+                    "selection_reason": reason,
+                    "pass_number": pass_number,
+                }
+            )
             result.metadata = metadata
             results.append(result)
     return results
@@ -811,6 +1166,7 @@ def persist_markdown_pages(
     *,
     markdown_dir: Path,
     max_markdown_chars: int,
+    start_index: int = 1,
 ) -> tuple[list[MarkdownPage], list[FailedPage]]:
     """Persist successful crawl results before any LLM analysis starts."""
     resolved_directory = markdown_dir.resolve()
@@ -846,7 +1202,7 @@ def persist_markdown_pages(
             max_chars=max_markdown_chars,
         )
         markdown_path = resolved_directory / _markdown_filename(
-            len(markdown_pages) + 1,
+            start_index + len(markdown_pages),
             url,
         )
         _write_text_atomic(markdown_path, markdown)
@@ -859,6 +1215,8 @@ def persist_markdown_pages(
                 language=detect_document_language(crawl_result.html or ""),
                 selection=_crawl_selection(crawl_result),
                 score=_crawl_score(crawl_result),
+                pass_number=_metadata_int(crawl_result, "pass_number", default=1),
+                selection_reason=_metadata_str(crawl_result, "selection_reason"),
             )
         )
 
@@ -965,7 +1323,9 @@ def discover_urls(
             if parsed_url.hostname is None:
                 continue
             domain = canonical_domain(parsed_url.hostname)
-            label = _markdown_link_label(markdown, match.start())
+            label, is_image = _markdown_link_label(markdown, match.start())
+            if is_image:
+                continue
             discovered_url = discovered_by_url.get(normalized_url)
             if discovered_url is None:
                 discovered_by_url[normalized_url] = DiscoveredUrl(
@@ -993,15 +1353,17 @@ def discover_urls(
     return list(discovered_by_url.values())
 
 
-def _markdown_link_label(markdown: str, destination_start: int) -> str:
+def _markdown_link_label(markdown: str, destination_start: int) -> tuple[str, bool]:
+    """Return the link label and whether the link is a Markdown image."""
     line_start = markdown.rfind("\n", 0, destination_start) + 1
     label_start = markdown.rfind("[", line_start, destination_start)
     if label_start < 0:
-        return ""
+        return "", False
+    is_image = label_start > 0 and markdown[label_start - 1] == "!"
     label = markdown[label_start + 1 : destination_start]
     if "](" in label:
-        return ""
-    return re.sub(r"\s+", " ", label).strip()[:200]
+        return "", is_image
+    return re.sub(r"\s+", " ", label).strip()[:200], is_image
 
 
 def _external_domain_candidates(
@@ -1068,78 +1430,26 @@ async def _analyze_related_domains(
             succeeded=True,
         )
 
-    try:
-        async with AsyncCodex() as codex:
-            thread = await codex.thread_start(
-                base_instructions=(
-                    "Classify only supplied candidate domains. Do not navigate or "
-                    "use tools. Return only data matching the schema."
-                ),
-                ephemeral=True,
-                sandbox=Sandbox.read_only,
-            )
-            turn = await thread.turn(
-                create_related_domains_prompt(
-                    searched_url,
-                    candidates=candidates,
-                ),
-                output_schema=related_domain_output_schema(),
-                sandbox=Sandbox.read_only,
-            )
-            result, timed_out = await _run_turn_with_timeout(
-                codex,
-                turn,
-                timeout_seconds=timeout_seconds,
-                operation_name="related-domain classification",
-            )
-    except Exception as error:
-        LOGGER.exception("Related-domain classification failed")
+    outcome = await run_structured_turn(
+        prompt=create_related_domains_prompt(searched_url, candidates=candidates),
+        base_instructions=(
+            "Classify only supplied candidate domains. Do not navigate or "
+            "use tools. Return only data matching the schema."
+        ),
+        output_model=RelatedDomainSelection,
+        timeout_seconds=timeout_seconds,
+        operation_name="related-domain classification",
+    )
+    if outcome.value is None:
         return [], RelatedDomainAnalysis(
             attempted=True,
             candidate_domains=len(candidates),
             succeeded=False,
-            error=str(error),
+            error=outcome.error,
+            token_usage=outcome.token_usage,
         )
-
-    if result is None:
-        return [], RelatedDomainAnalysis(
-            attempted=True,
-            candidate_domains=len(candidates),
-            succeeded=False,
-            error=f"analysis timed out after {timeout_seconds} seconds",
-        )
-
-    token_usage = print_usage(result, page_url="related-domain classification")
-    if timed_out:
-        return [], RelatedDomainAnalysis(
-            attempted=True,
-            candidate_domains=len(candidates),
-            succeeded=False,
-            error=f"analysis timed out after {timeout_seconds} seconds",
-            token_usage=token_usage,
-        )
-    if result.final_response is None:
-        error_message = (
-            result.error.message if result.error is not None else result.status
-        )
-        return [], RelatedDomainAnalysis(
-            attempted=True,
-            candidate_domains=len(candidates),
-            succeeded=False,
-            error=f"Codex returned no final response: {error_message}",
-            token_usage=token_usage,
-        )
-
-    try:
-        selection = RelatedDomainSelection.model_validate_json(result.final_response)
-    except ValidationError as error:
-        return [], RelatedDomainAnalysis(
-            attempted=True,
-            candidate_domains=len(candidates),
-            succeeded=False,
-            error=f"Codex returned invalid structured data: {error}",
-            token_usage=token_usage,
-        )
+    selection = outcome.value
+    token_usage = outcome.token_usage
 
     related_domains, warnings = _validate_related_domain_selection(
         selection,
@@ -1234,12 +1544,6 @@ async def _analyze_batches(
                 max_page_chars=max_page_chars,
                 timeout_seconds=timeout_seconds,
             )
-        except TimeoutError:
-            outcome = BatchOutcome(
-                extraction=BatchExtraction(),
-                token_usage=None,
-                error=f"analysis timed out after {timeout_seconds} seconds",
-            )
         except Exception as error:
             LOGGER.exception("LLM batch %d failed", batch.number)
             outcome = BatchOutcome(
@@ -1285,128 +1589,21 @@ async def _analyze_batch(
         )
         for page in batch.pages
     ]
-    # A separate client per batch keeps a failed or force-closed Codex process from
-    # affecting later batches. It also gives each batch a firm lifecycle boundary.
-    async with AsyncCodex() as codex:
-        thread = await codex.thread_start(
-            base_instructions=(
-                "Extract page-separated structured facts only from supplied Markdown. "
-                "Do not navigate or use tools. Return only data matching the schema."
-            ),
-            ephemeral=True,
-            sandbox=Sandbox.read_only,
-        )
-        turn = await thread.turn(
-            create_prompt(batch.number, pages=prompt_pages),
-            output_schema=batch_extraction_output_schema(),
-            sandbox=Sandbox.read_only,
-        )
-        result, timed_out = await _run_turn_with_timeout(
-            codex,
-            turn,
-            timeout_seconds=timeout_seconds,
-            operation_name=f"analysis batch {batch.number}",
-        )
-
-    if result is None:
-        return BatchOutcome(
-            extraction=BatchExtraction(),
-            token_usage=None,
-            error=f"analysis timed out after {timeout_seconds} seconds",
-        )
-
-    token_usage = print_usage(
-        result,
-        page_url=f"batch {batch.number} ({len(batch.pages)} pages)",
+    outcome = await run_structured_turn(
+        prompt=create_prompt(batch.number, pages=prompt_pages),
+        base_instructions=(
+            "Extract page-separated structured facts only from supplied Markdown. "
+            "Do not navigate or use tools. Return only data matching the schema."
+        ),
+        output_model=BatchExtraction,
+        timeout_seconds=timeout_seconds,
+        operation_name=f"analysis batch {batch.number} ({len(batch.pages)} pages)",
     )
-    if timed_out:
-        return BatchOutcome(
-            extraction=BatchExtraction(),
-            token_usage=token_usage,
-            error=f"analysis timed out after {timeout_seconds} seconds",
-        )
-    if result.final_response is None:
-        error_message = (
-            result.error.message if result.error is not None else result.status
-        )
-        return BatchOutcome(
-            extraction=BatchExtraction(),
-            token_usage=token_usage,
-            error=f"Codex returned no final response: {error_message}",
-        )
-
-    try:
-        extraction = BatchExtraction.model_validate_json(result.final_response)
-    except ValidationError as error:
-        return BatchOutcome(
-            extraction=BatchExtraction(),
-            token_usage=token_usage,
-            error=f"Codex returned invalid structured data: {error}",
-        )
     return BatchOutcome(
-        extraction=extraction,
-        token_usage=token_usage,
-        error=None,
+        extraction=outcome.value or BatchExtraction(),
+        token_usage=outcome.token_usage,
+        error=outcome.error,
     )
-
-
-async def _run_turn_with_timeout(
-    codex: AsyncCodex,
-    turn: AsyncTurnHandle,
-    *,
-    timeout_seconds: int,
-    operation_name: str,
-) -> tuple[TurnResult | None, bool]:
-    """Run a turn without cancelling its blocking notification worker."""
-    turn_task = asyncio.create_task(turn.run())
-    completed, _ = await asyncio.wait({turn_task}, timeout=timeout_seconds)
-    if turn_task in completed:
-        return turn_task.result(), False
-
-    LOGGER.warning(
-        "%s timed out after %d seconds; interrupting it",
-        operation_name,
-        timeout_seconds,
-    )
-    interrupt_task = asyncio.create_task(turn.interrupt())
-    interrupted, _ = await asyncio.wait(
-        {interrupt_task},
-        timeout=TURN_INTERRUPT_TIMEOUT_SECONDS,
-    )
-    interrupt_succeeded = False
-    if interrupt_task in interrupted:
-        try:
-            interrupt_task.result()
-            interrupt_succeeded = True
-        except Exception:
-            LOGGER.exception(
-                "Could not interrupt timed-out operation %s",
-                operation_name,
-            )
-
-    turn_completed: set[asyncio.Task[TurnResult]] = set()
-    if interrupt_succeeded:
-        turn_completed, _ = await asyncio.wait(
-            {turn_task},
-            timeout=TURN_COMPLETION_TIMEOUT_SECONDS,
-        )
-
-    if turn_task not in turn_completed or interrupt_task not in interrupted:
-        LOGGER.warning(
-            "Closing the Codex client for timed-out operation %s to release its waiters",
-            operation_name,
-        )
-        await codex.close()
-
-    # Closing the client sends a transport error to every still-registered waiter.
-    # Drain both tasks before returning so asyncio has no executor work left at exit.
-    turn_outcome, _ = await asyncio.gather(
-        turn_task,
-        interrupt_task,
-        return_exceptions=True,
-    )
-    result = turn_outcome if isinstance(turn_outcome, TurnResult) else None
-    return result, True
 
 
 def _validate_batch_output(
@@ -1520,12 +1717,27 @@ def _base_run_config(
     *,
     stream: bool,
 ) -> CrawlerRunConfig:
+    return _run_config(
+        stream=stream,
+        accept_language=settings.accept_language,
+        check_robots_txt=settings.check_robots_txt,
+        crawl_concurrency=settings.crawl_concurrency,
+    )
+
+
+def _run_config(
+    *,
+    stream: bool,
+    accept_language: str,
+    check_robots_txt: bool,
+    crawl_concurrency: int,
+) -> CrawlerRunConfig:
     return CrawlerRunConfig(
         stream=stream,
-        locale=_primary_locale(settings.accept_language),
-        check_robots_txt=settings.check_robots_txt,
+        locale=_primary_locale(accept_language),
+        check_robots_txt=check_robots_txt,
         page_timeout=60_000,
-        semaphore_count=settings.crawl_concurrency,
+        semaphore_count=crawl_concurrency,
         remove_overlay_elements=True,
         remove_consent_popups=True,
         scan_full_page=True,
@@ -1561,6 +1773,7 @@ def _crawl_stats(
         ),
         selected_pages=sum(page.selection == "selected" for page in markdown_pages),
         discovered_pages=sum(page.selection == "discovery" for page in markdown_pages),
+        suggested_pages=sum(page.selection == "suggested" for page in markdown_pages),
     )
 
 
@@ -1572,10 +1785,14 @@ def _crawl_depth(result: CrawlResult) -> int:
     return depth if isinstance(depth, int) and depth >= 0 else 0
 
 
-def _crawl_selection(result: CrawlResult) -> Literal["selected", "discovery"]:
+def _crawl_selection(
+    result: CrawlResult,
+) -> Literal["selected", "discovery", "suggested"]:
     metadata = result.metadata
-    if isinstance(metadata, dict) and metadata.get("selection") == "selected":
-        return "selected"
+    if isinstance(metadata, dict):
+        selection = metadata.get("selection")
+        if selection in ("selected", "discovery", "suggested"):
+            return selection
     return "discovery"
 
 
@@ -1585,6 +1802,22 @@ def _crawl_score(result: CrawlResult) -> float | None:
         return None
     score = metadata.get("score")
     return float(score) if isinstance(score, (int, float)) else None
+
+
+def _metadata_int(result: CrawlResult, key: str, *, default: int) -> int:
+    metadata = result.metadata
+    if not isinstance(metadata, dict):
+        return default
+    value = metadata.get(key)
+    return value if isinstance(value, int) else default
+
+
+def _metadata_str(result: CrawlResult, key: str) -> str | None:
+    metadata = result.metadata
+    if not isinstance(metadata, dict):
+        return None
+    value = metadata.get(key)
+    return value if isinstance(value, str) else None
 
 
 def _markdown_text(value: object) -> str:

@@ -2,6 +2,11 @@ import unittest
 from typing import Any, ClassVar, Self
 from unittest.mock import patch
 
+from ex3.candidates import PageCandidate
+from ex3.llm import StructuredTurnOutcome
+from ex3.llm_selection import select_pages_with_llm
+from ex3.models import PageSelectionDecision, PageSelectionResponse
+from ex3.prompty import create_page_selection_prompt
 from ex3.seeding import (
     HeadMetadata,
     fetch_head_metadata,
@@ -307,6 +312,109 @@ class PageSelectionPlanTest(unittest.IsolatedAsyncioTestCase):
 
         self.assertEqual([scored.url for scored in result.selected], [BASE_URL])
         self.assertEqual(result.head_checked_urls, 1)
+
+
+def _candidate(
+    url: str, *, score: float = 10.0, title: str | None = None
+) -> PageCandidate:
+    return PageCandidate(url=url, score=score, title=title, source="inventory")
+
+
+class LlmPageSelectionTest(unittest.IsolatedAsyncioTestCase):
+    async def test_keeps_only_known_unique_picks_within_the_limit(self) -> None:
+        candidates = [
+            _candidate("https://www.example.se/en/", score=68.0, title="Home"),
+            _candidate(
+                "https://www.example.se/en/about-us", score=44.0, title="About us"
+            ),
+            _candidate("https://www.example.se/en/careers", score=34.0),
+        ]
+        response = PageSelectionResponse(
+            pages=[
+                PageSelectionDecision(
+                    url="https://www.example.se/en/about-us",
+                    reason="company profile",
+                    expected_fields=["description", "founded_year"],
+                ),
+                PageSelectionDecision(
+                    url="https://www.example.se/en/about-us/",
+                    reason="duplicate",
+                    expected_fields=[],
+                ),
+                PageSelectionDecision(
+                    url="https://www.example.se/en/invented",
+                    reason="made up",
+                    expected_fields=[],
+                ),
+                PageSelectionDecision(
+                    url="https://www.example.se/en/careers",
+                    reason="jobs",
+                    expected_fields=["jobs"],
+                ),
+                PageSelectionDecision(
+                    url="https://www.example.se/en/",
+                    reason="homepage",
+                    expected_fields=["company_name"],
+                ),
+            ]
+        )
+
+        async def fake_turn(**kwargs):
+            self.assertIn("about-us", kwargs["prompt"])
+            return StructuredTurnOutcome(value=response, token_usage=None, error=None)
+
+        with patch("ex3.llm_selection.run_structured_turn", new=fake_turn):
+            picks, status = await select_pages_with_llm(
+                candidates, base_url=BASE_URL, limit=2, timeout_seconds=30
+            )
+
+        self.assertEqual(
+            [pick.url for pick in picks],
+            ["https://www.example.se/en/about-us", "https://www.example.se/en/careers"],
+        )
+        self.assertEqual(picks[0].title, "About us")
+        self.assertEqual(
+            picks[0].reasons,
+            ["llm", "company profile", "fields: description, founded_year"],
+        )
+        self.assertTrue(status.succeeded)
+        self.assertEqual(len(status.warnings), 3)
+        self.assertTrue(any("unknown" in warning for warning in status.warnings))
+        self.assertTrue(any("duplicate" in warning for warning in status.warnings))
+        self.assertTrue(any("limit" in warning for warning in status.warnings))
+
+    async def test_reports_failure_and_returns_no_picks(self) -> None:
+        async def fake_turn(**kwargs):
+            return StructuredTurnOutcome(
+                value=None, token_usage=None, error="timed out"
+            )
+
+        with patch("ex3.llm_selection.run_structured_turn", new=fake_turn):
+            picks, status = await select_pages_with_llm(
+                [_candidate("https://www.example.se/en/")],
+                base_url=BASE_URL,
+                limit=5,
+                timeout_seconds=1,
+            )
+
+        self.assertEqual(picks, [])
+        self.assertFalse(status.succeeded)
+        self.assertEqual(status.error, "timed out")
+
+    def test_prompt_lists_requirements_language_policy_and_candidates(self) -> None:
+        prompt = create_page_selection_prompt(
+            BASE_URL,
+            candidates=[
+                _candidate("https://www.example.se/en/about-us", title="About us")
+            ],
+            limit=20,
+        )
+
+        self.assertIn("- identifiers:", prompt)
+        self.assertIn("at most 20", prompt)
+        self.assertIn("only source", prompt)
+        self.assertIn("https://www.example.se/en/about-us", prompt)
+        self.assertIn("Never invent", prompt)
 
 
 if __name__ == "__main__":
