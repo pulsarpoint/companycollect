@@ -1,34 +1,23 @@
-  1. [About us](/en/about-us) / 
-  2. Swedish subsidiaries
+  1. [Personal](/en/personal)
+  2. [Contact and support](/en/personal/contact-and-support)
+  3. Handelsbanken on social media
 
 
-#  Swedish subsidiaries
-Here you will find information about some of our subsidiaries:
-  * Handelsbanken Liv
-  * Handelsbanken Fonder
-  * Stadshypotek
-  * Handelsbanken Finans
-  * EFN Ekonomikanalen
+# Handelsbanken on social media
+You can find us on Facebook, X, LinkedIn and more
+![Woman on phone call with ear headphones](/tron/public/info/contents/v1/image/35-177284?variantId=1200)
+## Visit us when you want to
+Did you know that you can find us on some of the most popular social media platforms? Do you have questions, wish to give us praise or have suggestions on how we can improve? We will answer to your posts and questions week days between 08:00 and 22:00. You must never post personal information like account numbers or your civic registration number. You can also find available positions on our LinkedIn.
+### Visit us at
+  * [ Facebook](https://www.facebook.com/Handelsbanken/ "Facebook")
+  * [ X](https://x.com/handelsbanken "X")
+  * [ Youtube](https://www.youtube.com/user/handelsbanken)
 
 
-![Colleagues in a meeting room.](/tron/public/info/contents/v1/image/35-278028?variantId=900)
-##  Subsidiaries In Sweden
-  * ###  Handelsbanken Liv
-Handelsbanken Liv is Handelsbanken's life insurance company and is a wholly owned subsidiary.
-  * ###  Handelsbanken Fonder
-Handelsbanken Fonder AB is a fund company and a wholly owned subsidiary of Handelsbanken.
-  * ###  Stadshypotek
-Stadshypotek AB is Handelsbanken's mortgage institute. The company dates back to 1865. Since 1997, Stadshypotek has been a wholly-owned subsidiary of Handelsbanken.
-  * ###  Handelsbanken Finans
-Handelsbanken Finans is a wholly owned subsidiary of Handelsbanken. Handelsbanken Finans is in charge of a settlement portfolio consisting of structured leasing products.
-  * ###  EFN Ekonomikanalen
-EFN Ekonomikanalen AB, a wholly owned subsidiary of Svenska Handelsbanken AB, produces content on personal finance, the stock market and economic developments. EFN is a registered trademark, and its editorial content is published and distributed by EFN AB.
+Find and apply for open positions at Handelsbanken
+  * [ LinkedIn](https://www.linkedin.com/company/handelsbanken/jobs/)
 
 
-##  Looking for more information?
-Visit our Group website for more detailed information about Handelsbanken's subsidiaries.
-[Subsidiaries](https://www.handelsbanken.com/en/about-the-group/organisation/subsidiaries)
-![Colleagues discuss cooperation.](/tron/public/info/contents/v1/image/35-274987?variantId=900)
 ##  We are here for you Advice, help and support
 ### Advisory services
 We have an extensive branch network across the country with more than 1,800 advisors.
@@ -39,7 +28,7 @@ We have an extensive branch network across the country with more than 1,800 advi
 We will help you with banking business and support matters. Please have your Mobile BankID or personal code ready when you call. Open 24/7.
 [0771‑77 88 99](tel:0771778899)
 [+46 771 77 88 99](tel:+46771778899) from abroad
-[ Chat with us](https://www.handelsbanken.se/en/personal/contact-and-support/chat "Chatt - vy - EN")
+[Chat with us](https://www.handelsbanken.se/en/personal/contact-and-support/chat "Chatt - vy - EN")
 [Help and support](https://www.handelsbanken.se/en/personal/contact-and-support/help-and-support "Startsida support - vy - EN")
 ### Blocking a card or BankID
 Block your private card and Mobile BankID directly in Online Banking or in the mobile app. You can also call us. 
