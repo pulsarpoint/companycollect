@@ -258,6 +258,31 @@ of that pass (`analyze --suggestions suggestions-pass-N.json`, which `research`
 supplies automatically), and its merge call. `run_token_totals` sums every pass
 and is what the run cost end to end.
 
+## Example 4: page-selection prompt lab
+
+`ex4` compares page-selection prompts in isolation: no crawling, no
+extraction. It reads each test site's sitemap, builds the same candidate list
+the `ex3` selector sends to the model (URL, title, language, anchor text; capped
+at 200), runs every prompt file under `experiments/page-selection/prompts/`
+through Codex, and scores the picks against a hand-corrected gold set of
+must-have pages per site.
+
+```bash
+uv run python -m ex4.main sites verify
+uv run python -m ex4.main candidates build
+uv run python -m ex4.main gold draft            # then edit experiments/page-selection/gold/*.json
+uv run python -m ex4.main run --dry-run         # how many Codex calls
+uv run python -m ex4.main run --run-id 20260903-1
+uv run python -m ex4.main score --run-id 20260903-1
+uv run python -m ex4.main report --run-id 20260903-1
+```
+
+Results are cached per prompt text, candidate list and limit under
+`experiments/page-selection/runs/<run-id>/`; re-running a run id only calls
+Codex for missing or failed cells (`--retry-failed`). Scores rank prompts by
+mean gold coverage, then junk rate, then tokens; `--repeats 2` adds a
+run-to-run stability column.
+
 ## Output
 
 The consolidated `useful_information` object contains:

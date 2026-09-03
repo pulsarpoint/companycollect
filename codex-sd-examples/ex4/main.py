@@ -11,8 +11,9 @@ from ex3.crawler import save_model
 from ex4.candidates import build_site_candidates, load_candidate_set
 from ex4.gold import GOLD_FIELDS, draft_gold
 from ex4.paths import DataDir
+from ex4.report import render_report
 from ex4.runner import RunSettings, execute_run, plan_calls
-from ex4.scoring import score_run
+from ex4.scoring import RunScores, score_run
 from ex4.sites import load_sites, save_sites, select_sites, verify_site
 
 DEFAULT_DATA_DIR = Path("experiments/page-selection")
@@ -248,6 +249,26 @@ def score_command(data: DataDir, run_id: str) -> None:
             f"{summary.prompt_name:26} coverage={summary.mean_coverage:.2f} (min {summary.min_coverage:.2f}) junk={summary.mean_junk_rate:.2f} tokens={summary.mean_total_tokens:,.0f} failures={summary.failures}"
         )
     click.echo(f"Scores: {data.scores_file(run_id)}")
+
+
+@cli.command("report")
+@click.option("--run-id", required=True)
+@click.pass_obj
+def report_command(data: DataDir, run_id: str) -> None:
+    """Write results/<run-id>.md from the scores file (runs score first if needed)."""
+    scores_path = data.scores_file(run_id)
+    scores = (
+        RunScores.model_validate_json(scores_path.read_text(encoding="utf-8"))
+        if scores_path.is_file()
+        else score_run(run_id, data)
+    )
+    if not scores_path.is_file():
+        save_model(scores, scores_path)
+    report_path = data.report_file(run_id)
+    report_path.parent.mkdir(parents=True, exist_ok=True)
+    report_path.write_text(render_report(scores), encoding="utf-8")
+    click.echo(render_report(scores))
+    click.echo(f"Report: {report_path}")
 
 
 if __name__ == "__main__":
