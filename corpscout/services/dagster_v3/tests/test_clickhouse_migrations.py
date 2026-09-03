@@ -385,10 +385,6 @@ EXPECTED_MIGRATIONS = (
     "000370_corpscout_fi_taxonomy_dictionary",
     "000371_corpscout_se_company_info_field_value",
     "000372_corpscout_retire_se_company_info_correction",
-    "000373_corpscout_se_company_field_tables",
-    "000374_corpscout_se_company_info_field_columns",
-    "000375_corpscout_se_company_info_field_value_registry_checks",
-    "000377_corpscout_se_companies_serving_field_registry_columns",
 )
 
 NOOP_MIGRATIONS = {"000276_noop"}
@@ -4073,79 +4069,6 @@ def test_the_correction_ledger_is_retired_by_000372_reversibly() -> None:
     ) in down
 
 
-def test_se_company_field_tables_are_created_by_000373() -> None:
-    """2026-09-02 field registry design (spec 4.3, 5.1, 8.1): the exported registry, the
-    long append-only candidates and the long resolved table. Additive only -- nothing is
-    removed -- and the writer role gains INSERT on the two long tables the backoffice
-    resolve writes plus the wide projection it re-pivots afterwards."""
-    up = _migration_sql("000373_corpscout_se_company_field_tables.up.sql")
-    down = _migration_sql("000373_corpscout_se_company_field_tables.down.sql")
-
-    for table in ("se_company_field_registry", "se_company_field_candidate", "se_company_field"):
-        assert f"CREATE TABLE IF NOT EXISTS corpscout.{table}\n" in up
-        assert f"DROP TABLE IF EXISTS corpscout.{table}" in down
-    assert "ENGINE = ReplacingMergeTree(version)\nORDER BY (datatype, country, field)" in up
-    assert "ENGINE = ReplacingMergeTree(extracted_at)\nORDER BY (company_id, field, source, source_record_uid)" in up
-    assert "ENGINE = ReplacingMergeTree(resolved_at)\nORDER BY (company_id, field)" in up
-    assert "sources Array(String)" in up and "ranks" not in up
-    assert "DROP TABLE" not in up and "TRUNCATE" not in up
-
-    for table in ("se_company_field_candidate", "se_company_field", "se_company_info"):
-        assert f"GRANT INSERT ON corpscout.{table}\nTO corpscout_person_correction_writer" in up
-        assert f"REVOKE INSERT ON corpscout.{table}\nFROM corpscout_person_correction_writer" in down
-    assert "GRANT SELECT" not in up and "GRANT ALL" not in up
-
-
-def test_se_company_info_gains_the_registry_scalars_in_000374() -> None:
-    """Spec 8.3: the wide projection keeps every existing column and gains the scalars
-    the registry resolves beyond the pilot's set, positioned before wikidata_id so the
-    provenance tail stays last. One ALTER, each ADD positioned AFTER the one before it."""
-    up = _migration_sql("000374_corpscout_se_company_info_field_columns.up.sql")
-    down = _migration_sql("000374_corpscout_se_company_info_field_columns.down.sql")
-
-    assert up.count("ALTER TABLE corpscout.se_company_info\n") == 1
-    for clause in (
-        "industry_label_en String DEFAULT '' AFTER primary_sni_code",
-        "website Nullable(String) AFTER industry_label_en",
-        "employee_count Nullable(UInt64) AFTER website",
-        "employee_count_as_of Nullable(Date32) AFTER employee_count",
-        "latest_revenue_amount Nullable(Decimal128(2)) AFTER employee_count_as_of",
-        "latest_revenue_currency LowCardinality(String) DEFAULT '' AFTER latest_revenue_amount",
-        "latest_revenue_amount_usd Nullable(Decimal128(2)) AFTER latest_revenue_currency",
-        "latest_revenue_fiscal_year Nullable(UInt16) AFTER latest_revenue_amount_usd",
-    ):
-        assert f"ADD COLUMN IF NOT EXISTS {clause}" in up
-        assert f"DROP COLUMN IF EXISTS {clause.split(' ')[0]}" in down
-    assert "DROP TABLE" not in up and "TRUNCATE" not in up
-
-
-def test_field_value_checks_are_widened_to_the_registry_in_000375() -> None:
-    """Spec 4.3 / 6: the decisions table keeps its shape but its two CHECKs follow the
-    registry -- pinned here to registry.py so the lists cannot drift. Adding a field or
-    a source to the registry fails this test until a new migration widens the CHECK."""
-    from dagster_v3.defs.se_company.fields.registry import INFO_REGISTRY, KNOWN_SOURCES, field_names
-
-    up = _migration_sql("000375_corpscout_se_company_info_field_value_registry_checks.up.sql")
-    down = _migration_sql("000375_corpscout_se_company_info_field_value_registry_checks.down.sql")
-
-    def in_list(values: tuple[str, ...]) -> str:
-        return "(" + ", ".join(f"'{value}'" for value in values) + ")"
-
-    assert up.count("ALTER TABLE corpscout.se_company_info_field_value\n") == 2
-    assert (
-        "    DROP CONSTRAINT known_field,\n"
-        "    ADD CONSTRAINT known_field CHECK field IN " + in_list(field_names(INFO_REGISTRY)) + ";"
-    ) in up
-    assert (
-        "    DROP CONSTRAINT known_source,\n"
-        "    ADD CONSTRAINT known_source CHECK source IN " + in_list((*KNOWN_SOURCES, "reviewer")) + ";"
-    ) in up
-    # The down restores 000371's pilot lists verbatim.
-    assert "ADD CONSTRAINT known_field CHECK field IN ('description', 'description_sv');" in down
-    assert "ADD CONSTRAINT known_source CHECK source IN ('scb', 'esef', 'wikidata', 'llm', 'reviewer');" in down
-    assert "DROP TABLE" not in up and "TRUNCATE" not in up
-
-
 def test_every_migration_ends_with_a_statement_not_a_comment() -> None:
     """golang-migrate's x-multi-statement splitter hands ClickHouse every `;`-separated
     chunk, so a file whose last chunk is only comments fails with 'code: 62 Empty query'
@@ -4155,26 +4078,3 @@ def test_every_migration_ends_with_a_statement_not_a_comment() -> None:
         lines = [line for line in path.read_text().splitlines() if line.strip()]
         assert lines, path.name
         assert lines[-1].rstrip().endswith(";"), f"{path.name} ends with: {lines[-1]!r}"
-
-
-def test_se_companies_serving_serves_the_field_registry_columns_by_staged_swap() -> None:
-    """000347's recipe, verbatim: stop the live view, build _next under the CURRENT
-    cadence (000366's hourly), wait for its first refresh, one atomic RENAME. The
-    embedded SELECT is the builder's render (drift-pinned by test_se_companies_serving_mv.py)."""
-    up = _migration_sql("000377_corpscout_se_companies_serving_field_registry_columns.up.sql")
-    down = _migration_sql("000377_corpscout_se_companies_serving_field_registry_columns.down.sql")
-
-    assert "SYSTEM STOP VIEW corpscout.se_companies_serving;" in up
-    assert ("CREATE MATERIALIZED VIEW corpscout.se_companies_serving_next\n"
-            "REFRESH EVERY 1 HOUR OFFSET 45 MINUTE\nENGINE = MergeTree\nORDER BY company_id\nAS WITH") in up
-    for column in ("industry_label_en", "website", "employee_count", "employee_count_as_of",
-                   "latest_revenue_amount", "latest_revenue_currency", "latest_revenue_amount_usd",
-                   "latest_revenue_fiscal_year"):
-        assert f"\n  {column},\n" in up, column
-    assert "SYSTEM WAIT VIEW corpscout.se_companies_serving_next;" in up
-    assert "corpscout.se_companies_serving TO corpscout.se_companies_serving_retired" in up
-    assert "corpscout.se_companies_serving_next TO corpscout.se_companies_serving" in up
-    assert "DROP" not in "\n".join(line.split("--")[0] for line in up.splitlines()).upper()
-    assert "corpscout.se_companies_serving_retired TO corpscout.se_companies_serving" in down
-    assert "SYSTEM START VIEW corpscout.se_companies_serving;" in down
-    assert "DROP VIEW IF EXISTS corpscout.se_companies_serving_registry_discard;" in down

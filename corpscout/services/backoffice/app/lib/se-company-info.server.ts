@@ -4,22 +4,10 @@ import {
   chQuery,
 } from "~/lib/clickhouse.server";
 import {
-  fieldVocabulary,
   SeInfoFieldValueValidationError,
   validateSeInfoFieldValue,
   type SeInfoFieldValueInput,
 } from "~/lib/se-info-field-values";
-import {
-  loadFieldRegistry,
-  type FieldRegistry,
-} from "~/lib/se-company-field-registry.server";
-import {
-  formatClickHouseDateTime64,
-  resolveCompanyFields,
-  SeCompanyFieldResolveError,
-  type ResolveCompanyFieldsResult,
-  type SkippedField,
-} from "~/lib/se-company-field-resolve.server";
 import {
   ARTIFACT_PAYLOAD_FIELDS,
   type ArtifactSource,
@@ -379,6 +367,12 @@ export async function loadSeCompanyInfoDetail(
   return { info, artifacts, suggestions, fieldValues, naceLabel };
 }
 
+/** ClickHouse's DateTime64(3) text form, which is what the driver's
+ * JSONEachRow insert needs (an ISO string's `T`/`Z` are not that form). */
+function valueTimestamp(): string {
+  return new Date().toISOString().replace("T", " ").replace("Z", "");
+}
+
 /** The company must already have a published row: a field value for a company
  * Dagster has never published has nothing to decide, and the reviewer would
  * never see it take effect. */
@@ -389,32 +383,17 @@ LIMIT 1`;
 
 /**
  * Appends one decision -- which may be several rows, e.g. both languages of an
- * About-card choice -- to the field-value store, resolves the decided fields
- * for this company with the registry's SQL and re-pivots its wide row (spec
- * 2026-09-02, section 9), and returns the ids written plus what the resolver
- * did. The loader's next read of se_company_info FINAL shows the outcome.
+ * About-card choice -- to the field-value store, and returns the ids written.
  *
  * The whole batch is validated before ClickHouse is touched at all, so a bad
  * row cannot leave the good half of a decision behind. All rows must name the
  * same company: the published check below is per company, and a mixed batch
  * would leave part of it unchecked.
- *
- * A resolve failure AFTER the insert is raised as SeCompanyFieldResolveError,
- * never swallowed and never confused with a refusal: the rows are in the
- * store, and se_company_info_field_value_sensor re-resolves the company.
  */
 export async function appendSeCompanyInfoFieldValues(
   inputs: SeInfoFieldValueInput[],
-  opts: { registry?: FieldRegistry; now?: Date } = {},
-): Promise<{ valueIds: string[]; resolved: string[]; skipped: SkippedField[] }> {
-  // The registry export says which fields and sources exist (spec 11); the
-  // action loads it once per post and hands it in, so a post validates and
-  // resolves against ONE registry version even if an export lands mid-way.
-  const registry = opts.registry ?? (await loadFieldRegistry());
-  const vocabulary = fieldVocabulary(registry);
-  const drafts = inputs.map((input) =>
-    validateSeInfoFieldValue(input, vocabulary),
-  );
+): Promise<{ valueIds: string[] }> {
+  const drafts = inputs.map(validateSeInfoFieldValue);
   const [first] = drafts;
   if (!first) {
     throw new SeInfoFieldValueValidationError("Nothing to write.");
@@ -440,13 +419,10 @@ export async function appendSeCompanyInfoFieldValues(
   if (!published) {
     throw new SeInfoFieldValueValidationError("This company is not published.");
   }
-  // One instant for the whole batch AND for the resolve: the rows are one
-  // decision, and giving them the same created_at keeps the per-field
-  // tie-break (created_at, then the uuid's text) deciding between rows of
-  // DIFFERENT decisions only; stamping resolved_at with the same instant makes
-  // the two tables read alike for this decision.
-  const now = opts.now ?? new Date();
-  const createdAt = formatClickHouseDateTime64(now);
+  // One timestamp for the whole batch: the rows are one decision, and giving
+  // them the same created_at keeps the per-field tie-break (created_at, then
+  // the uuid's text) deciding between rows of DIFFERENT decisions only.
+  const createdAt = valueTimestamp();
   const rows = drafts.map((draft) => ({
     value_id: randomUUID(),
     ...draft,
@@ -454,17 +430,5 @@ export async function appendSeCompanyInfoFieldValues(
     created_at: createdAt,
   }));
   await chInsertSeCompanyInfoFieldValues(rows);
-  const valueIds = rows.map((row) => row.value_id);
-
-  let outcome: ResolveCompanyFieldsResult;
-  try {
-    outcome = await resolveCompanyFields(
-      first.company_id,
-      drafts.map((draft) => draft.field),
-      { registry, now },
-    );
-  } catch (error) {
-    throw new SeCompanyFieldResolveError(valueIds, error);
-  }
-  return { valueIds, resolved: outcome.resolved, skipped: outcome.skipped };
+  return { valueIds: rows.map((row) => row.value_id) };
 }

@@ -227,11 +227,6 @@ def build_se_companies_serving_sql() -> str:
     PROFILE_SOURCE_PREDICATES (se-company-info-lists.server.ts, owner ruling 2026-08-25:
     has_financial is extracted metrics OR filed reports; the SCB flag is omitted -- it is 1
     for every row by construction, the reader hard-codes its letter).
-
-    The field-registry columns (industry label, website, employee count and its as-of date,
-    latest revenue with currency, USD twin and fiscal year -- spec 2026-09-02 section 10) are
-    served straight off se_company_info: strings folded to '' like every other served string,
-    numbers and dates NULL until the registry resolve has run for the company.
     """
     address_map = _address_map_expression()
     return f"""WITH company_addresses AS (
@@ -303,14 +298,6 @@ SELECT
   is_publicly_traded,
   has_government_contracts,
   has_job_ads,
-  industry_label_en,
-  website,
-  employee_count,
-  employee_count_as_of,
-  latest_revenue_amount,
-  latest_revenue_currency,
-  latest_revenue_amount_usd,
-  latest_revenue_fiscal_year,
   addresses,
   address_count,
   primary_street_address,
@@ -348,14 +335,6 @@ FROM (
     toUInt8(i.company_id IN ({PUBLICLY_TRADED_SET})) AS is_publicly_traded,
     toUInt8(i.company_id IN ({GOVERNMENT_CONTRACTS_SET})) AS has_government_contracts,
     toUInt8(i.company_id IN ({JOB_ADS_SET})) AS has_job_ads,
-    i.industry_label_en AS industry_label_en,
-    ifNull(i.website, '') AS website,
-    i.employee_count AS employee_count,
-    i.employee_count_as_of AS employee_count_as_of,
-    i.latest_revenue_amount AS latest_revenue_amount,
-    toString(i.latest_revenue_currency) AS latest_revenue_currency,
-    i.latest_revenue_amount_usd AS latest_revenue_amount_usd,
-    i.latest_revenue_fiscal_year AS latest_revenue_fiscal_year,
     toUInt8(has(i.description_sources, 'esef')) AS desc_esef,
     toUInt8(i.lei IS NOT NULL) AS has_lei,
     toUInt8(i.wikidata_id IS NOT NULL) AS has_wikidata,

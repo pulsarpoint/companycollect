@@ -7,57 +7,35 @@
  * simply the row written last for it (greatest `(created_at, value_id)`), and
  * an undo is just the previous value written again -- or NULL, which releases
  * the field back to the value the pipeline computes. So this validator only
- * has to answer "is this one row insertable?".
- *
- * WHICH fields and sources exist is not this module's to say: the field
- * registry (dagster_v3 code, exported to corpscout.se_company_field_registry,
- * spec 2026-09-02 section 4) declares them, and the table's CHECK constraints
- * are widened to the same lists by migration. The caller hands the registry's
- * vocabulary in (`fieldVocabulary(await loadFieldRegistry())`), so this file
- * stays importable by the client bundle. The per-source `source_ref` rule
- * mirrors what Dagster reads back out of the column.
+ * has to answer "is this one row insertable?": the enums mirror the table's
+ * CHECK constraints, and the per-source `source_ref` rule mirrors what
+ * Dagster's `apply_field_values` reads back out of the column.
  *
  * The ADDRESS and PERSON ledgers are unrelated and still correction-shaped;
  * their validators (`se-address-corrections.ts`, `se-person-corrections.ts`)
  * are untouched by this module.
  */
 
-/** A reviewer's own wording. Not a registry source (decisions win by
- * construction, spec 4.1), but a valid `source` of a decision row (spec 6). */
-export const REVIEWER_SOURCE = "reviewer";
+/** The two columns of the published row a reviewer may decide (`known_field`). */
+export const SE_INFO_FIELDS = ["description", "description_sv"] as const;
 
-/** What the validator checks a row against: the registry's field names, the
- * union of every field's sources plus `reviewer`, and the subset of the fields
- * the registry marks structured (a decision on one is refused, see below). */
-export interface SeInfoFieldVocabulary {
-  fields: string[];
-  sources: string[];
-  structured: string[];
-}
+export type SeInfoField = (typeof SE_INFO_FIELDS)[number];
 
-/** Derives the vocabulary from a registry export (`FieldRegistry` from
- * se-company-field-registry.server.ts, typed structurally so this module
- * never imports a `.server` module). Sources keep first-seen order. */
-export function fieldVocabulary(registry: {
-  fields: ReadonlyArray<{
-    field: string;
-    sources: ReadonlyArray<string>;
-    structured?: boolean;
-  }>;
-}): SeInfoFieldVocabulary {
-  const sources = new Set<string>();
-  for (const entry of registry.fields) {
-    for (const source of entry.sources) sources.add(source);
-  }
-  sources.add(REVIEWER_SOURCE);
-  return {
-    fields: registry.fields.map((entry) => entry.field),
-    sources: [...sources],
-    structured: registry.fields
-      .filter((entry) => entry.structured === true)
-      .map((entry) => entry.field),
-  };
-}
+/**
+ * Where a written value came from (`known_source`): the three artifact legs a
+ * reviewer can copy text from, the model's suggestion, and the reviewer's own
+ * wording. Dagster reads the source back as provenance -- `llm` publishes as
+ * llm_enhanced with the suggestion id, everything else as deterministic.
+ */
+export const SE_INFO_VALUE_SOURCES = [
+  "scb",
+  "esef",
+  "wikidata",
+  "llm",
+  "reviewer",
+] as const;
+
+export type SeInfoValueSource = (typeof SE_INFO_VALUE_SOURCES)[number];
 
 export class SeInfoFieldValueValidationError extends Error {
   constructor(message: string) {
@@ -85,9 +63,9 @@ export interface SeInfoFieldValueInput {
  * server fills (`value_id`, `decided_by`, `created_at`). */
 export interface SeInfoFieldValueDraft {
   company_id: string;
-  field: string;
+  field: SeInfoField;
   value: string | null;
-  source: string;
+  source: SeInfoValueSource;
   source_ref: string;
   source_at: string | null;
   note: string;
@@ -104,6 +82,14 @@ function fail(message: string): never {
   throw new SeInfoFieldValueValidationError(message);
 }
 
+function isField(value: string): value is SeInfoField {
+  return (SE_INFO_FIELDS as readonly string[]).includes(value);
+}
+
+function isSource(value: string): value is SeInfoValueSource {
+  return (SE_INFO_VALUE_SOURCES as readonly string[]).includes(value);
+}
+
 /**
  * `source_ref` is validated per source because each source means something
  * different by it: `llm` names the suggestion by id and Dagster parses it as a
@@ -112,8 +98,8 @@ function fail(message: string): never {
  * at all -- so its ref is forced to '' whatever the form posted, rather than
  * carrying a stray value into the column.
  */
-function sourceRefFor(source: string, raw: string): string {
-  if (source === REVIEWER_SOURCE) return "";
+function sourceRefFor(source: SeInfoValueSource, raw: string): string {
+  if (source === "reviewer") return "";
   const clean = raw.trim();
   if (source === "llm") {
     if (!UUID_PATTERN.test(clean)) fail("source_ref must be a UUID.");
@@ -125,23 +111,13 @@ function sourceRefFor(source: string, raw: string): string {
 
 export function validateSeInfoFieldValue(
   input: SeInfoFieldValueInput,
-  registry: SeInfoFieldVocabulary,
 ): SeInfoFieldValueDraft {
   const companyId = input.companyId.trim();
   if (!COMPANY_ID_PATTERN.test(companyId)) {
     fail("Company must be a 10-digit or 12-digit Swedish company id.");
   }
-  if (!registry.fields.includes(input.field)) fail("Unknown field.");
-  // A structured field's value lives in `value_json` (an amount, a currency, a
-  // fiscal year), and a decision row carries text alone: the resolve would
-  // store '' for the JSON and the wide row's JSONExtract would yield NULLs --
-  // a value the long table shows and the published row cannot express. Phase B
-  // gives these fields a JSON-aware editor; until then a text decision on one
-  // is a mistake wherever it was built.
-  if (registry.structured.includes(input.field)) {
-    fail("Structured fields cannot be decided as text yet.");
-  }
-  if (!registry.sources.includes(input.source)) fail("Unknown source.");
+  if (!isField(input.field)) fail("Unknown field.");
+  if (!isSource(input.source)) fail("Unknown source.");
 
   // null is the release instruction ("hand this field back to the pipeline"),
   // which is a decision in its own right -- keep it null instead of coercing

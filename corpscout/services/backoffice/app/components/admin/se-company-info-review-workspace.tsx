@@ -50,7 +50,6 @@ import type {
   SeCompanyInfoFieldValueRow,
   SeCompanyInfoRow,
 } from "~/lib/se-company-info.server";
-import type { SkippedField } from "~/lib/se-company-field-resolve.server";
 import {
   ARTIFACT_SOURCES,
   artifactPayloadEntries,
@@ -62,23 +61,12 @@ import {
   type ArtifactPayloadEntry,
   type DescriptionProposal,
 } from "~/lib/se-company-info-payload";
+import { SE_INFO_FIELDS } from "~/lib/se-info-field-values";
 import type { DescriptionShown } from "~/components/admin/company-description-card";
 
-/** The fields this phase-A page lets a reviewer release: the two description
- * columns its editor renders. Phase B renders every registry field from the
- * export instead (spec 2026-09-02, section 11), and this list goes. */
-const RELEASABLE_FIELDS = ["description", "description_sv"] as const;
-
 export type SeCompanyInfoReviewResult =
-  | {
-      ok: true;
-      valueIds: string[];
-      resolved: string[];
-      skipped: SkippedField[];
-    }
-  /** `valueIds` present = the rows were saved and only the synchronous
-   * resolve failed (SeCompanyFieldResolveError); absent = a refusal. */
-  | { ok: false; error: string; valueIds?: string[] }
+  | { ok: true; valueIds: string[] }
+  | { ok: false; error: string }
   | null;
 
 /** Shown when Dagster has not published this company into se_company_info. */
@@ -679,7 +667,7 @@ function ValueHistoryCard({
       <Card>
         <CardContent className="flex flex-col gap-3">
           <div className="flex flex-wrap items-center gap-3">
-            {RELEASABLE_FIELDS.map((field) => (
+            {SE_INFO_FIELDS.map((field) => (
               <Form
                 key={field}
                 method="post"
@@ -745,58 +733,6 @@ function ValueHistoryCard({
   );
 }
 
-/**
- * "Saved and resolved." when every decided field was resolved on the spot;
- * otherwise "Saved." plus one sentence per reason a field was not, because the
- * three reasons promise different things and must not read alike:
- *
- * - `python_only` the bulk resolver alone handles it (spec 2026-09-02, s. 9),
- *   so it really does land on the next run;
- * - `no_row`      the statement ran and wrote nothing (a release with no
- *   candidate left, a company with no register name), so the field kept what
- *   it had -- there is no later run that changes that;
- * - `unknown_field` the registry does not declare it, so nothing will ever
- *   apply it.
- *
- * The row count stays in the description so a two-language decision reads as
- * two rows.
- */
-function savedBanner(result: {
-  valueIds: string[];
-  skipped: SkippedField[];
-}): { title: string; detail: string } {
-  const detail =
-    result.valueIds.length === 1
-      ? "1 value row saved"
-      : `${result.valueIds.length} value rows saved`;
-  if (result.skipped.length === 0) {
-    return { title: "Saved and resolved.", detail };
-  }
-  const names = (reason: SkippedField["reason"]) =>
-    result.skipped
-      .filter((entry) => entry.reason === reason)
-      .map((entry) => entry.field);
-  const sentences: string[] = [];
-  const pythonOnly = names("python_only");
-  if (pythonOnly.length > 0) {
-    const verb = pythonOnly.length === 1 ? "applies" : "apply";
-    sentences.push(`${pythonOnly.join(", ")} ${verb} on the next run.`);
-  }
-  const noRow = names("no_row");
-  if (noRow.length > 0) {
-    const possessive = noRow.length === 1 ? "its" : "their";
-    sentences.push(
-      `${noRow.join(", ")} kept ${possessive} previous value: nothing to resolve.`,
-    );
-  }
-  const unknown = names("unknown_field");
-  if (unknown.length > 0) {
-    const verb = unknown.length === 1 ? "is" : "are";
-    sentences.push(`${unknown.join(", ")} ${verb} not a registry field.`);
-  }
-  return { title: `Saved. ${sentences.join(" ")}`, detail };
-}
-
 export function SeCompanyInfoReviewWorkspace({
   detail,
   result,
@@ -808,7 +744,6 @@ export function SeCompanyInfoReviewWorkspace({
   // One click is one decision: block every submit while one is in flight, so a
   // double-click cannot write two rows whose order then decides the field.
   const busy = useNavigation().state !== "idle";
-  const banner = result?.ok ? savedBanner(result) : null;
   const contributing = new Set(info.description_source_record_uids);
   const groups = groupArtifactsBySource(artifacts);
   const proposals = [
@@ -857,19 +792,22 @@ export function SeCompanyInfoReviewWorkspace({
       <CompanySourceStrip
         sources={artifacts.map((artifact) => artifact.source)}
       />
-      {banner ? (
+      {result?.ok ? (
         <Alert>
           <CheckCircle2Icon />
-          <AlertTitle>{banner.title}</AlertTitle>
-          <AlertDescription>{banner.detail}</AlertDescription>
+          <AlertTitle>Saved</AlertTitle>
+          <AlertDescription>
+            {result.valueIds.length === 1
+              ? "1 value row saved"
+              : `${result.valueIds.length} value rows saved`}{" "}
+            — published on the next rebuild.
+          </AlertDescription>
         </Alert>
       ) : null}
       {result && !result.ok ? (
         <Alert variant="destructive">
           <TriangleAlertIcon />
-          <AlertTitle>
-            {result.valueIds ? "Saved, not resolved" : "Not saved"}
-          </AlertTitle>
+          <AlertTitle>Not saved</AlertTitle>
           <AlertDescription>{result.error}</AlertDescription>
         </Alert>
       ) : null}

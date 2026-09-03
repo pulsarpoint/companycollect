@@ -144,12 +144,7 @@ def test_publish_with_stage_new_versions_only_counts_the_anti_join_before_insert
     insert_sql = next(statement for statement in sql if statement.startswith("INSERT INTO `corpscout`.`se_company_info_scb`"))
     assert sql.index(count_sql) < sql.index(insert_sql)  # counted BEFORE the target insert
     for statement in (count_sql, insert_sql):
-        # The right side is the staged companies' published rows, not the whole table.
-        assert (
-            "LEFT ANTI JOIN (SELECT company_id, source_record_uid, evidence_hash "
-            "FROM `corpscout`.`se_company_info_scb` WHERE company_id IN "
-            "(SELECT company_id FROM `corpscout`.`_tmp_se_company_info_scb_"
-        ) in statement
+        assert "LEFT ANTI JOIN `corpscout`.`se_company_info_scb` AS existing" in statement
         assert (
             "ON existing.company_id = stage.company_id "
             "AND existing.source_record_uid = stage.source_record_uid "
@@ -452,64 +447,3 @@ def test_ledger_sensor_advances_cursor_without_a_run_request_when_nothing_is_tou
 
     assert execution_data.cursor == f"2:{_LEDGER_ID_A}:{_LEDGER_CREATED_AT_1}"
     assert execution_data.run_requests == []
-
-
-def test_publish_with_stage_anti_join_columns_are_configurable() -> None:
-    """The candidate table's identity is (company_id, field, source, source_record_uid, evidence_hash):
-    field and source are part of the ORDER BY, so the anti-join must name them -- the default
-    three-column key stays byte-identical for every existing artifact caller."""
-    client = FakeClient(answers=[[(1, 0)], [(0,)], [(1,)], [(1,)]])  # validation, existing, anti-join count, final count
-    counts = publish_with_stage(
-        clickhouse=FakeClickhouse(client), target="se_company_field_candidate",
-        insert_columns=("company_id", "field", "source", "source_record_uid"),
-        rows=[("5020077862", "legal_name", "scb", "u1")],
-        invalid_condition="trim(company_id) = ''",
-        new_versions_only=True,
-        anti_join_columns=("company_id", "field", "source", "source_record_uid", "evidence_hash"),
-    )
-    assert counts == PublishCounts(staged=1, inserted=1, total=1)
-    insert_sql = next(s for s, _ in client.executed if s.startswith("INSERT INTO `corpscout`.`se_company_field_candidate`"))
-    assert (
-        "LEFT ANTI JOIN (SELECT company_id, field, source, source_record_uid, evidence_hash "
-        "FROM `corpscout`.`se_company_field_candidate` WHERE company_id IN "
-        "(SELECT company_id FROM `corpscout`.`_tmp_se_company_field_candidate_"
-    ) in insert_sql
-    assert (
-        "ON existing.company_id = stage.company_id AND existing.field = stage.field "
-        "AND existing.source = stage.source AND existing.source_record_uid = stage.source_record_uid "
-        "AND existing.evidence_hash = stage.evidence_hash"
-    ) in insert_sql
-
-
-def test_publish_with_stage_runs_on_a_caller_supplied_client() -> None:
-    """The field-registry resolve asset holds one server-side-params client for a whole
-    run and passes it in: every statement must then go through THAT client -- no
-    connection of its own -- and the staged SELECT's parameters must reach the driver
-    untouched (the server binds `{company_ids:Array(String)}` from them)."""
-    client = FakeClient(answers=[[(2, 0)], [(10,)], [(12,)]])  # validation, existing, final
-    counts = publish_with_stage(
-        client=client, target="se_company_info",
-        insert_columns=("company_id", "legal_name"),
-        select_sql="SELECT company_id, legal_name FROM corpscout.x WHERE company_id IN {company_ids:Array(String)}",
-        select_parameters={"company_ids": "['5565200028']"},
-        invalid_condition="trim(legal_name) = ''",
-        new_versions_only=False,
-    )
-    assert counts == PublishCounts(staged=2, inserted=2, total=12)
-    sql = [entry[0] for entry in client.executed]
-    assert sql[0].startswith("CREATE TABLE `corpscout`.`_tmp_se_company_info_")
-    assert sql[1].startswith("INSERT INTO `corpscout`.`_tmp_se_company_info_")
-    assert sql[1].endswith("WHERE company_id IN {company_ids:Array(String)}")
-    assert client.executed[1][1] == {"company_ids": "['5565200028']"}
-    assert any(s.startswith("INSERT INTO `corpscout`.`se_company_info` (company_id,") for s in sql)
-    assert sql[-1].startswith("DROP TABLE IF EXISTS `corpscout`.`_tmp_se_company_info_")
-
-
-def test_publish_with_stage_needs_exactly_one_of_resource_or_client() -> None:
-    client = FakeClient(answers=[])
-    with pytest.raises(ValueError, match="exactly one of clickhouse or client"):
-        publish_with_stage(target="t", insert_columns=("a",), rows=[("x",)], invalid_condition="a = ''")
-    with pytest.raises(ValueError, match="exactly one of clickhouse or client"):
-        publish_with_stage(clickhouse=FakeClickhouse(client), client=client, target="t",
-                           insert_columns=("a",), rows=[("x",)], invalid_condition="a = ''")
-    assert client.executed == []

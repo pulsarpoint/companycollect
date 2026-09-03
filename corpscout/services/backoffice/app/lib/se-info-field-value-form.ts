@@ -31,7 +31,8 @@ import {
   parseSuggestionText,
 } from "~/lib/se-company-info-payload";
 import {
-  REVIEWER_SOURCE,
+  SE_INFO_FIELDS,
+  type SeInfoField,
   type SeInfoFieldValueInput,
 } from "~/lib/se-info-field-values";
 import type { SeCompanyInfoSuggestionRow } from "~/lib/se-company-info.server";
@@ -41,14 +42,11 @@ export type SeInfoFieldValueRequest =
   | { ok: false; error: string };
 
 /** What the page knows that the form alone cannot carry: whose company this is,
- * which suggestions are actually on it (a suggestion id names text the
- * reviewer never typed, so it is read from the row rather than the post), and
- * which fields the registry declares (`fieldVocabulary(registry).fields`), so
- * a posted field is checked against the same list the store validates with. */
+ * and which suggestions are actually on it (a suggestion id names text the
+ * reviewer never typed, so it is read from the row rather than the post). */
 export interface SeInfoFieldValueContext {
   companyId: string;
   suggestions: SeCompanyInfoSuggestionRow[];
-  fields: string[];
 }
 
 function text(form: FormData, name: string): string {
@@ -58,6 +56,10 @@ function text(form: FormData, name: string): string {
 
 function refuse(error: string): SeInfoFieldValueRequest {
   return { ok: false, error };
+}
+
+function isField(value: string): value is SeInfoField {
+  return (SE_INFO_FIELDS as readonly string[]).includes(value);
 }
 
 /**
@@ -82,10 +84,10 @@ function suggestionText(raw: string): {
 /** One artifact's text, copied verbatim into one field. */
 function useSource(
   form: FormData,
-  context: SeInfoFieldValueContext,
+  companyId: string,
 ): SeInfoFieldValueRequest {
   const field = text(form, "field");
-  if (!context.fields.includes(field)) return refuse("Unknown field.");
+  if (!isField(field)) return refuse("Unknown field.");
   const source = text(form, "source");
   // Only the three artifact legs: `llm` and `reviewer` are decided by the other
   // intents, and Dagster reads the source back as provenance, so admitting one
@@ -102,7 +104,7 @@ function useSource(
     ok: true,
     inputs: [
       {
-        companyId: context.companyId,
+        companyId,
         field,
         value,
         source,
@@ -172,21 +174,18 @@ function useSuggestion(
  * travels as an empty value and `validateSeInfoFieldValue` refuses the whole
  * decision with "Value cannot be empty." -- clearing a field is the box's job.
  */
-function edit(
-  form: FormData,
-  context: SeInfoFieldValueContext,
-): SeInfoFieldValueRequest {
+function edit(form: FormData, companyId: string): SeInfoFieldValueRequest {
   const note = text(form, "note");
   const inputs: SeInfoFieldValueInput[] = [];
-  for (const field of context.fields) {
+  for (const field of SE_INFO_FIELDS) {
     if (text(form, `clear_${field}`) === "yes") {
-      inputs.push({ companyId: context.companyId, field, value: null, source: REVIEWER_SOURCE, note });
+      inputs.push({ companyId, field, value: null, source: "reviewer", note });
       continue;
     }
     if (!form.has(`original_${field}`)) continue;
     const value = text(form, field).trim();
     if (value !== text(form, `original_${field}`).trim()) {
-      inputs.push({ companyId: context.companyId, field, value, source: REVIEWER_SOURCE, note });
+      inputs.push({ companyId, field, value, source: "reviewer", note });
     }
   }
   if (inputs.length === 0) return refuse("Nothing changed.");
@@ -194,17 +193,12 @@ function edit(
 }
 
 /** One field, handed back to whatever the pipeline computes for it. */
-function release(
-  form: FormData,
-  context: SeInfoFieldValueContext,
-): SeInfoFieldValueRequest {
+function release(form: FormData, companyId: string): SeInfoFieldValueRequest {
   const field = text(form, "field");
-  if (!context.fields.includes(field)) return refuse("Unknown field.");
+  if (!isField(field)) return refuse("Unknown field.");
   return {
     ok: true,
-    inputs: [
-      { companyId: context.companyId, field, value: null, source: REVIEWER_SOURCE },
-    ],
+    inputs: [{ companyId, field, value: null, source: "reviewer" }],
   };
 }
 
@@ -220,13 +214,13 @@ export function buildFieldValueInputs(
 ): SeInfoFieldValueRequest {
   switch (text(form, "intent")) {
     case "use-source":
-      return useSource(form, context);
+      return useSource(form, context.companyId);
     case "use-suggestion":
       return useSuggestion(form, context);
     case "edit":
-      return edit(form, context);
+      return edit(form, context.companyId);
     case "release":
-      return release(form, context);
+      return release(form, context.companyId);
     default:
       return refuse("Unknown info action.");
   }

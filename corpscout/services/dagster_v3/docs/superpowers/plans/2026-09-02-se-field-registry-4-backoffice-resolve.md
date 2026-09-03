@@ -14,7 +14,7 @@
 
 - All paths below are relative to `corpscout/services/backoffice` unless they start with `corpscout/`. Run tests from that directory: `npx vitest run <file>`; `npm run typecheck` must be clean before every commit.
 - TypeScript strict; `~/` import alias; shadcn/base-ui components only (`~/components/ui/*`); loaders read, actions write; a route module exports only `loader`, `action`, `meta` and the component (anything else that touches a `.server` module breaks the client bundle).
-- ClickHouse 26.5 named-parameter syntax `{name:Type}` (`{field:String}`, `{company_ids:Array(String)}`, `{source_run_id:String}`, `{resolved_at:DateTime64(3, 'UTC')}`); user values are bound as `query_params`, never interpolated. Inserts of rows use JSONEachRow through the existing `chInsert*` helpers; `INSERT ... SELECT` statements run through the new `chCommand`.
+- ClickHouse 26.5 named-parameter syntax `{name:Type}` (`{field:String}`, `{company_ids:Array(String)}`, `{source_run_id:String}`, `{resolved_at:DateTime64(3)}`); user values are bound as `query_params`, never interpolated. Inserts of rows use JSONEachRow through the existing `chInsert*` helpers; `INSERT ... SELECT` statements run through the new `chCommand`.
 - DateTime64 text format everywhere a timestamp is bound or inserted: `YYYY-MM-DD HH:MM:SS.mmm` in UTC (the driver would render a JS `Date` as epoch seconds, which is NOT this form, so timestamps are formatted as strings before binding).
 - The read client sends `readonly=2` and cannot run `INSERT ... SELECT`; every write goes through `getWriteClient()` in `app/lib/clickhouse.server.ts` — the same account as the reads (owner decision 2026-08-23: one credential set), which holds the `corpscout_person_correction_writer` role with INSERT on `se_company_info_field_value`, `se_company_field`, `se_company_field_candidate` and `se_company_info` (granted by parts 1–3).
 - Table and column names exactly as the spec: `corpscout.se_company_field_registry` (columns `datatype, country, field, value_type, display_group, structured, python_only, sources, policy_name, policy_version, resolve_sql, registry_version, version`), `corpscout.se_company_field` (spec 8.1), `corpscout.se_company_field_candidate` (spec 5.1), `corpscout.se_company_info_field_value` (unchanged shape).
@@ -209,7 +209,7 @@ export function registryEntry(
     pythonOnly: false,
     policyName: "source_precedence",
     policyVersion: "source_precedence-v1",
-    resolveSql: `INSERT INTO corpscout.se_company_field /* ${over.field} */ SELECT {field:String}, {company_ids:Array(String)}, {source_run_id:String}, {resolved_at:DateTime64(3, 'UTC')}`,
+    resolveSql: `INSERT INTO corpscout.se_company_field /* ${over.field} */ SELECT {field:String}, {company_ids:Array(String)}, {source_run_id:String}, {resolved_at:DateTime64(3)}`,
     registryVersion: REGISTRY_VERSION,
     ...over,
   };
@@ -484,7 +484,7 @@ export interface FieldRegistryEntry {
   policyName: string;
   policyVersion: string;
   /** INSERT INTO corpscout.se_company_field ... SELECT, binding {field:String},
-   * {company_ids:Array(String)}, {source_run_id:String}, {resolved_at:DateTime64(3, 'UTC')}. */
+   * {company_ids:Array(String)}, {source_run_id:String}, {resolved_at:DateTime64(3)}. */
   resolveSql: string;
   registryVersion: string;
 }
@@ -1461,7 +1461,7 @@ export async function action({ request, params }: Route.ActionArgs) {
 
 - [ ] **Step 10: Give the workspace its own release-button list**
 
-In `app/components/admin/se-company-info-review-workspace.tsx`, delete line 64 (`import { SE_INFO_FIELDS } from "~/lib/se-info-field-values";`) and add, BELOW the last import statement of the file (a constant must not sit between imports):
+In `app/components/admin/se-company-info-review-workspace.tsx`, replace line 64 (`import { SE_INFO_FIELDS } from "~/lib/se-info-field-values";`) with:
 
 ```ts
 /** The fields this phase-A page lets a reviewer release: the two description
@@ -2027,8 +2027,6 @@ Claude-Session: https://claude.ai/code/session_01RY2W9FTCX9YxUcXtSBaEJ5"
 
 Preconditions the executor must confirm before running (spec 12 cutover steps 1–3 for the target instance): migrations for `se_company_field_registry`, `se_company_field_candidate`, `se_company_field`, the widened CHECKs on `se_company_info_field_value` and the writer grants are applied; `se_company_field_registry_clickhouse` has been materialized. Without them the registry read fails with the "materialize" message.
 
-Execution ruling (2026-09-03): at execution time nothing from parts 1–3 was on production and no scratch ClickHouse existed, so Steps 4 and 5 (the live runs) are DEFERRED to the cutover plan, right after its migrations and the registry export; this task ships the test file, the two scripts, the exclusion check (Step 3) and the typecheck. Part 3's clickhouse-local harness already executes the same statement text under ClickHouse's own `SET param_*` binding, which is what clickhouse-js `query_params` sends.
-
 What the test leaves behind (append-only tables, nothing cleaned; the writer role holds INSERT only): per run of the production branch, 3 rows in `se_company_field_candidate` (`extractor_version = 'backoffice-live-test'`, `source_run_id = 'backoffice-live:<uuid>'`), 2 rows in `se_company_info_field_value` (a release and a reviewer value, `note = 'backoffice live test'`) and new versions of the `legal_name` / `description` rows in `se_company_field`; **nothing in `se_company_info`**. The scratch branch adds the same plus one wide row (`legal_name = 'BACKOFFICE LIVE TEST AB'`) on the scratch host. The id is outside every real registry (the guard refuses to run if an SCB artifact exists for it) and every row is recognisable by the legal name, the note and the `backoffice-live` run-id prefix.
 
 Why each branch writes a release row first: the tables are append-only, so a reviewer value from an earlier run would still be the live decision and the "winner before the decision" assertion would fail on the second run. A release (`value = NULL`, spec 6 / 7.4: "use the winner") written first makes every run start from the winner, and exercises the release path as a bonus.
@@ -2420,14 +2418,6 @@ Claude-Session: https://claude.ai/code/session_01RY2W9FTCX9YxUcXtSBaEJ5"
 ```
 
 ---
-
-## Final-review amendments (2026-09-03, executed)
-
-- `resolveCompanyFields` reports what the run WROTE: after the field statements it reads back the fields of the company stamped with this `source_run_id` (`RESOLVED_FIELDS_SQL`, `se_company_field FINAL`); an attempted field with no row is `skipped` with reason `no_row` (an `INSERT ... SELECT` that selects nothing -- a release with no candidate, a company without a register name -- leaves the previous row standing). `SkippedField.reason` is `"python_only" | "unknown_field" | "no_row"` and the banner renders by reason (`applies on the next run` / `kept its previous value: nothing to resolve` / `is not a registry field`).
-- The action returns `{ ok: false, error }` when `loadFieldRegistry()` fails (the message names the fix); a 500 would hide it. The registry is loaded after the detail, not in `Promise.all`.
-- `validateSeInfoFieldValue` refuses a decision on a `structured` field (`"Structured fields cannot be decided as text yet."`) until phase B; `SeInfoFieldVocabulary` gains `structured: string[]`.
-- The form builder uses `REVIEWER_SOURCE`; the live test binds `DateTime64(3, 'UTC')` for every timestamp parameter.
-- Parked: same-millisecond ties between two reviewers converge on the sensor; migration 000373 grants INSERT but not SELECT on the new tables to the writer role (the backoffice account is `default` today) -- the cutover plan verifies the grants for the account actually in use. Cross-plan: a RELEASE on a field with no candidate cannot clear the previous resolved row (plan 1's statement inserts nothing and `has_value` forbids an empty tombstone) -- recorded for the cutover/admin plans.
 
 ## Self-review
 
