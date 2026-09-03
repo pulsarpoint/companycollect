@@ -26,18 +26,24 @@
  * construction, spec 4.1), but a valid `source` of a decision row (spec 6). */
 export const REVIEWER_SOURCE = "reviewer";
 
-/** What the validator checks a row against: the registry's field names, and
- * the union of every field's sources plus `reviewer`. */
+/** What the validator checks a row against: the registry's field names, the
+ * union of every field's sources plus `reviewer`, and the subset of the fields
+ * the registry marks structured (a decision on one is refused, see below). */
 export interface SeInfoFieldVocabulary {
   fields: string[];
   sources: string[];
+  structured: string[];
 }
 
 /** Derives the vocabulary from a registry export (`FieldRegistry` from
  * se-company-field-registry.server.ts, typed structurally so this module
  * never imports a `.server` module). Sources keep first-seen order. */
 export function fieldVocabulary(registry: {
-  fields: ReadonlyArray<{ field: string; sources: ReadonlyArray<string> }>;
+  fields: ReadonlyArray<{
+    field: string;
+    sources: ReadonlyArray<string>;
+    structured?: boolean;
+  }>;
 }): SeInfoFieldVocabulary {
   const sources = new Set<string>();
   for (const entry of registry.fields) {
@@ -47,6 +53,9 @@ export function fieldVocabulary(registry: {
   return {
     fields: registry.fields.map((entry) => entry.field),
     sources: [...sources],
+    structured: registry.fields
+      .filter((entry) => entry.structured === true)
+      .map((entry) => entry.field),
   };
 }
 
@@ -123,6 +132,15 @@ export function validateSeInfoFieldValue(
     fail("Company must be a 10-digit or 12-digit Swedish company id.");
   }
   if (!registry.fields.includes(input.field)) fail("Unknown field.");
+  // A structured field's value lives in `value_json` (an amount, a currency, a
+  // fiscal year), and a decision row carries text alone: the resolve would
+  // store '' for the JSON and the wide row's JSONExtract would yield NULLs --
+  // a value the long table shows and the published row cannot express. Phase B
+  // gives these fields a JSON-aware editor; until then a text decision on one
+  // is a mistake wherever it was built.
+  if (registry.structured.includes(input.field)) {
+    fail("Structured fields cannot be decided as text yet.");
+  }
   if (!registry.sources.includes(input.source)) fail("Unknown source.");
 
   // null is the release instruction ("hand this field back to the pipeline"),

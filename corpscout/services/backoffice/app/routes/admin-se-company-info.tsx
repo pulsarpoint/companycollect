@@ -8,7 +8,10 @@ import {
   appendSeCompanyInfoFieldValues,
   loadSeCompanyInfoDetail,
 } from "~/lib/se-company-info.server";
-import { loadFieldRegistry } from "~/lib/se-company-field-registry.server";
+import {
+  loadFieldRegistry,
+  type FieldRegistry,
+} from "~/lib/se-company-field-registry.server";
 import {
   fieldVocabulary,
   SeInfoFieldValueValidationError,
@@ -36,15 +39,28 @@ export async function loader({ params }: Route.LoaderArgs) {
  * wording behind it must come from this company's own suggestions rather than
  * from the form. The same load also answers the 404 the loader answers -- a
  * post to a company Dagster has never published has nothing to decide.
+ *
+ * The registry is a NEW dependency of deciding anything (before this branch a
+ * decision needed none), so its failure is reported as a form error rather
+ * than thrown: the message names the fix ("materialize
+ * se_company_field_registry_clickhouse first"), and the error boundary's 500
+ * page would hide exactly that -- during the cutover window, when it is the
+ * one thing a reviewer needs to read.
  */
 export async function action({ request, params }: Route.ActionArgs) {
   const form = await request.formData();
-  const [detail, registry] = await Promise.all([
-    loadSeCompanyInfoDetail(params.companyId),
-    loadFieldRegistry(),
-  ]);
+  const detail = await loadSeCompanyInfoDetail(params.companyId);
   if (!detail) {
     throw data({ detail: null }, { status: 404 });
+  }
+  let registry: FieldRegistry;
+  try {
+    registry = await loadFieldRegistry();
+  } catch (error) {
+    return {
+      ok: false as const,
+      error: error instanceof Error ? error.message : String(error),
+    };
   }
   const built = buildFieldValueInputs(form, {
     companyId: params.companyId,

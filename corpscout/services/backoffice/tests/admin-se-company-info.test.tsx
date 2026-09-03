@@ -1051,6 +1051,23 @@ describe("admin-se-company-info action (field-value intents, mocked server modul
     });
   });
 
+  // The registry became a dependency of deciding anything on this branch; its
+  // own message names the fix, and a 500 page would hide it -- during the
+  // cutover window, which is exactly when it fails.
+  it("reports a registry outage as a form error, without writing", async () => {
+    const message =
+      "corpscout.se_company_field_registry holds no info/SE rows; materialize se_company_field_registry_clickhouse first.";
+    registryModule.loadFieldRegistry.mockRejectedValue(new Error(message));
+
+    const result = await postAction({
+      intent: "release",
+      field: "description",
+    });
+
+    expect(result).toEqual({ ok: false, error: message });
+    expect(server.appendSeCompanyInfoFieldValues).not.toHaveBeenCalled();
+  });
+
   it("checks the posted field against the registry, not a built-in list", async () => {
     server.appendSeCompanyInfoFieldValues.mockResolvedValue({
       valueIds: ["66666666-6666-4666-8666-666666666666"],

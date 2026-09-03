@@ -48,6 +48,11 @@ describe("fieldVocabulary", () => {
         .sources,
     ).toEqual(["reviewer"]);
   });
+
+  it("lists the fields the registry marks structured", () => {
+    // The fixture marks none: today's twelve info fields are all text.
+    expect(VOCABULARY.structured).toEqual([]);
+  });
 });
 
 describe("validateSeInfoFieldValue", () => {
@@ -103,6 +108,29 @@ describe("validateSeInfoFieldValue", () => {
     expect(() => validate({ ...base, field: "not_a_field", value: "x" })).toThrow(
       "Unknown field.",
     );
+  });
+
+  // A structured field's value is JSON (amount / currency / fiscal year) and a
+  // decision row carries text alone, so a text decision on one would publish a
+  // long-table value the wide row's JSONExtract cannot express. Refused until
+  // phase B gives those fields their own editor.
+  it("refuses a decision on a structured field", () => {
+    const structured = fieldVocabulary({
+      fields: [{ field: "employee_count", sources: ["scb"], structured: true }],
+    });
+    expect(structured.structured).toEqual(["employee_count"]);
+    expect(() =>
+      validateSeInfoFieldValue(
+        {
+          companyId: "5565200028",
+          field: "employee_count",
+          value: "42",
+          source: "scb",
+          sourceRef: "scb:5565200028",
+        },
+        structured,
+      ),
+    ).toThrow("Structured fields cannot be decided as text yet.");
   });
 
   it("accepts only the known sources", () => {

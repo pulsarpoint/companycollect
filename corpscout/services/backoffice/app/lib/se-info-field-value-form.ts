@@ -30,7 +30,10 @@ import {
   ARTIFACT_SOURCES,
   parseSuggestionText,
 } from "~/lib/se-company-info-payload";
-import type { SeInfoFieldValueInput } from "~/lib/se-info-field-values";
+import {
+  REVIEWER_SOURCE,
+  type SeInfoFieldValueInput,
+} from "~/lib/se-info-field-values";
 import type { SeCompanyInfoSuggestionRow } from "~/lib/se-company-info.server";
 
 export type SeInfoFieldValueRequest =
@@ -177,13 +180,13 @@ function edit(
   const inputs: SeInfoFieldValueInput[] = [];
   for (const field of context.fields) {
     if (text(form, `clear_${field}`) === "yes") {
-      inputs.push({ companyId: context.companyId, field, value: null, source: "reviewer", note });
+      inputs.push({ companyId: context.companyId, field, value: null, source: REVIEWER_SOURCE, note });
       continue;
     }
     if (!form.has(`original_${field}`)) continue;
     const value = text(form, field).trim();
     if (value !== text(form, `original_${field}`).trim()) {
-      inputs.push({ companyId: context.companyId, field, value, source: "reviewer", note });
+      inputs.push({ companyId: context.companyId, field, value, source: REVIEWER_SOURCE, note });
     }
   }
   if (inputs.length === 0) return refuse("Nothing changed.");
@@ -200,7 +203,7 @@ function release(
   return {
     ok: true,
     inputs: [
-      { companyId: context.companyId, field, value: null, source: "reviewer" },
+      { companyId: context.companyId, field, value: null, source: REVIEWER_SOURCE },
     ],
   };
 }
