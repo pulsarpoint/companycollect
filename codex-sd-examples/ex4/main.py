@@ -6,8 +6,10 @@ from pathlib import Path
 
 import click
 
+from ex3.crawler import save_model
+from ex4.candidates import build_site_candidates
 from ex4.paths import DataDir
-from ex4.sites import load_sites, save_sites, verify_site
+from ex4.sites import load_sites, save_sites, select_sites, verify_site
 
 DEFAULT_DATA_DIR = Path("experiments/page-selection")
 
@@ -62,6 +64,61 @@ def sites_verify(data: DataDir, seed_max_urls: int, accept_language: str) -> Non
             else f"FAILED: {site.error}"
         )
         click.echo(f"{site.domain:24} {status}")
+
+
+@cli.group("candidates")
+def candidates_group() -> None:
+    """Build the candidate lists the prompts will see."""
+
+
+@candidates_group.command("build")
+@click.option("--limit", type=click.IntRange(min=10), default=200, show_default=True)
+@click.option(
+    "--sites",
+    "domains",
+    default=None,
+    help="Comma-separated domains (default: all verified sites).",
+)
+@click.option(
+    "--seed-max-urls", type=click.IntRange(min=1), default=5_000, show_default=True
+)
+@click.option("--accept-language", default="en-US,en;q=0.9", show_default=True)
+@click.option("--overwrite", is_flag=True)
+@click.pass_obj
+def candidates_build(
+    data: DataDir,
+    limit: int,
+    domains: str | None,
+    seed_max_urls: int,
+    accept_language: str,
+    overwrite: bool,
+) -> None:
+    """Write candidates/<domain>.json for each site (skips existing files unless --overwrite)."""
+    sites = select_sites(
+        load_sites(data.sites_file), domains.split(",") if domains else None
+    )
+
+    async def build_all() -> list[str]:
+        written: list[str] = []
+        for site in sites:
+            target = data.candidate_file(site.domain)
+            if target.exists() and not overwrite:
+                click.echo(f"{site.domain:24} exists, skipped")
+                continue
+            candidate_set = await build_site_candidates(
+                site,
+                limit=limit,
+                accept_language=accept_language,
+                seed_max_urls=seed_max_urls,
+            )
+            save_model(candidate_set, target)
+            written.append(site.domain)
+            click.echo(
+                f"{site.domain:24} {len(candidate_set.candidates)} candidates -> {target}"
+            )
+        return written
+
+    asyncio.run(build_all())
 
 
 if __name__ == "__main__":
