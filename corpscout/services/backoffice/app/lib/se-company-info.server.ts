@@ -4,10 +4,15 @@ import {
   chQuery,
 } from "~/lib/clickhouse.server";
 import {
+  fieldVocabulary,
   SeInfoFieldValueValidationError,
   validateSeInfoFieldValue,
   type SeInfoFieldValueInput,
 } from "~/lib/se-info-field-values";
+import {
+  loadFieldRegistry,
+  type FieldRegistry,
+} from "~/lib/se-company-field-registry.server";
 import {
   ARTIFACT_PAYLOAD_FIELDS,
   type ArtifactSource,
@@ -392,8 +397,16 @@ LIMIT 1`;
  */
 export async function appendSeCompanyInfoFieldValues(
   inputs: SeInfoFieldValueInput[],
+  opts: { registry?: FieldRegistry } = {},
 ): Promise<{ valueIds: string[] }> {
-  const drafts = inputs.map(validateSeInfoFieldValue);
+  // The registry export says which fields and sources exist (spec 11); the
+  // action loads it once per post and hands it in, so a post validates and
+  // resolves against ONE registry version even if an export lands mid-way.
+  const registry = opts.registry ?? (await loadFieldRegistry());
+  const vocabulary = fieldVocabulary(registry);
+  const drafts = inputs.map((input) =>
+    validateSeInfoFieldValue(input, vocabulary),
+  );
   const [first] = drafts;
   if (!first) {
     throw new SeInfoFieldValueValidationError("Nothing to write.");

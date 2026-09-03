@@ -8,7 +8,11 @@ import {
   appendSeCompanyInfoFieldValues,
   loadSeCompanyInfoDetail,
 } from "~/lib/se-company-info.server";
-import { SeInfoFieldValueValidationError } from "~/lib/se-info-field-values";
+import { loadFieldRegistry } from "~/lib/se-company-field-registry.server";
+import {
+  fieldVocabulary,
+  SeInfoFieldValueValidationError,
+} from "~/lib/se-info-field-values";
 import { buildFieldValueInputs } from "~/lib/se-info-field-value-form";
 
 // Only `loader`, `action`, `meta` and the component live here. Any other
@@ -34,19 +38,25 @@ export async function loader({ params }: Route.LoaderArgs) {
  */
 export async function action({ request, params }: Route.ActionArgs) {
   const form = await request.formData();
-  const detail = await loadSeCompanyInfoDetail(params.companyId);
+  const [detail, registry] = await Promise.all([
+    loadSeCompanyInfoDetail(params.companyId),
+    loadFieldRegistry(),
+  ]);
   if (!detail) {
     throw data({ detail: null }, { status: 404 });
   }
   const built = buildFieldValueInputs(form, {
     companyId: params.companyId,
     suggestions: detail.suggestions,
+    fields: fieldVocabulary(registry).fields,
   });
   if (!built.ok) {
     return { ok: false as const, error: built.error };
   }
   try {
-    const { valueIds } = await appendSeCompanyInfoFieldValues(built.inputs);
+    const { valueIds } = await appendSeCompanyInfoFieldValues(built.inputs, {
+      registry,
+    });
     return { ok: true as const, valueIds };
   } catch (error) {
     // The store's refusals are the reviewer's to read (a company that is not

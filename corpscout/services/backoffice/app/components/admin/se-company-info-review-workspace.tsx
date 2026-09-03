@@ -61,7 +61,10 @@ import {
   type ArtifactPayloadEntry,
   type DescriptionProposal,
 } from "~/lib/se-company-info-payload";
-import { SE_INFO_FIELDS } from "~/lib/se-info-field-values";
+/** The fields this phase-A page lets a reviewer release: the two description
+ * columns its editor renders. Phase B renders every registry field from the
+ * export instead (spec 2026-09-02, section 11), and this list goes. */
+const RELEASABLE_FIELDS = ["description", "description_sv"] as const;
 import type { DescriptionShown } from "~/components/admin/company-description-card";
 
 export type SeCompanyInfoReviewResult =
@@ -667,7 +670,7 @@ function ValueHistoryCard({
       <Card>
         <CardContent className="flex flex-col gap-3">
           <div className="flex flex-wrap items-center gap-3">
-            {SE_INFO_FIELDS.map((field) => (
+            {RELEASABLE_FIELDS.map((field) => (
               <Form
                 key={field}
                 method="post"

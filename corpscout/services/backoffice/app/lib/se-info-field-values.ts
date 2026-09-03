@@ -7,35 +7,48 @@
  * simply the row written last for it (greatest `(created_at, value_id)`), and
  * an undo is just the previous value written again -- or NULL, which releases
  * the field back to the value the pipeline computes. So this validator only
- * has to answer "is this one row insertable?": the enums mirror the table's
- * CHECK constraints, and the per-source `source_ref` rule mirrors what
- * Dagster's `apply_field_values` reads back out of the column.
+ * has to answer "is this one row insertable?".
+ *
+ * WHICH fields and sources exist is not this module's to say: the field
+ * registry (dagster_v3 code, exported to corpscout.se_company_field_registry,
+ * spec 2026-09-02 section 4) declares them, and the table's CHECK constraints
+ * are widened to the same lists by migration. The caller hands the registry's
+ * vocabulary in (`fieldVocabulary(await loadFieldRegistry())`), so this file
+ * stays importable by the client bundle. The per-source `source_ref` rule
+ * mirrors what Dagster reads back out of the column.
  *
  * The ADDRESS and PERSON ledgers are unrelated and still correction-shaped;
  * their validators (`se-address-corrections.ts`, `se-person-corrections.ts`)
  * are untouched by this module.
  */
 
-/** The two columns of the published row a reviewer may decide (`known_field`). */
-export const SE_INFO_FIELDS = ["description", "description_sv"] as const;
+/** A reviewer's own wording. Not a registry source (decisions win by
+ * construction, spec 4.1), but a valid `source` of a decision row (spec 6). */
+export const REVIEWER_SOURCE = "reviewer";
 
-export type SeInfoField = (typeof SE_INFO_FIELDS)[number];
+/** What the validator checks a row against: the registry's field names, and
+ * the union of every field's sources plus `reviewer`. */
+export interface SeInfoFieldVocabulary {
+  fields: string[];
+  sources: string[];
+}
 
-/**
- * Where a written value came from (`known_source`): the three artifact legs a
- * reviewer can copy text from, the model's suggestion, and the reviewer's own
- * wording. Dagster reads the source back as provenance -- `llm` publishes as
- * llm_enhanced with the suggestion id, everything else as deterministic.
- */
-export const SE_INFO_VALUE_SOURCES = [
-  "scb",
-  "esef",
-  "wikidata",
-  "llm",
-  "reviewer",
-] as const;
-
-export type SeInfoValueSource = (typeof SE_INFO_VALUE_SOURCES)[number];
+/** Derives the vocabulary from a registry export (`FieldRegistry` from
+ * se-company-field-registry.server.ts, typed structurally so this module
+ * never imports a `.server` module). Sources keep first-seen order. */
+export function fieldVocabulary(registry: {
+  fields: ReadonlyArray<{ field: string; sources: ReadonlyArray<string> }>;
+}): SeInfoFieldVocabulary {
+  const sources = new Set<string>();
+  for (const entry of registry.fields) {
+    for (const source of entry.sources) sources.add(source);
+  }
+  sources.add(REVIEWER_SOURCE);
+  return {
+    fields: registry.fields.map((entry) => entry.field),
+    sources: [...sources],
+  };
+}
 
 export class SeInfoFieldValueValidationError extends Error {
   constructor(message: string) {
@@ -63,9 +76,9 @@ export interface SeInfoFieldValueInput {
  * server fills (`value_id`, `decided_by`, `created_at`). */
 export interface SeInfoFieldValueDraft {
   company_id: string;
-  field: SeInfoField;
+  field: string;
   value: string | null;
-  source: SeInfoValueSource;
+  source: string;
   source_ref: string;
   source_at: string | null;
   note: string;
@@ -82,14 +95,6 @@ function fail(message: string): never {
   throw new SeInfoFieldValueValidationError(message);
 }
 
-function isField(value: string): value is SeInfoField {
-  return (SE_INFO_FIELDS as readonly string[]).includes(value);
-}
-
-function isSource(value: string): value is SeInfoValueSource {
-  return (SE_INFO_VALUE_SOURCES as readonly string[]).includes(value);
-}
-
 /**
  * `source_ref` is validated per source because each source means something
  * different by it: `llm` names the suggestion by id and Dagster parses it as a
@@ -98,8 +103,8 @@ function isSource(value: string): value is SeInfoValueSource {
  * at all -- so its ref is forced to '' whatever the form posted, rather than
  * carrying a stray value into the column.
  */
-function sourceRefFor(source: SeInfoValueSource, raw: string): string {
-  if (source === "reviewer") return "";
+function sourceRefFor(source: string, raw: string): string {
+  if (source === REVIEWER_SOURCE) return "";
   const clean = raw.trim();
   if (source === "llm") {
     if (!UUID_PATTERN.test(clean)) fail("source_ref must be a UUID.");
@@ -111,13 +116,14 @@ function sourceRefFor(source: SeInfoValueSource, raw: string): string {
 
 export function validateSeInfoFieldValue(
   input: SeInfoFieldValueInput,
+  registry: SeInfoFieldVocabulary,
 ): SeInfoFieldValueDraft {
   const companyId = input.companyId.trim();
   if (!COMPANY_ID_PATTERN.test(companyId)) {
     fail("Company must be a 10-digit or 12-digit Swedish company id.");
   }
-  if (!isField(input.field)) fail("Unknown field.");
-  if (!isSource(input.source)) fail("Unknown source.");
+  if (!registry.fields.includes(input.field)) fail("Unknown field.");
+  if (!registry.sources.includes(input.source)) fail("Unknown source.");
 
   // null is the release instruction ("hand this field back to the pipeline"),
   // which is a decision in its own right -- keep it null instead of coercing

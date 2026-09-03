@@ -6,6 +6,9 @@ vi.mock("~/lib/clickhouse.server", () => ({
   chQuery: clickhouse.query,
 }));
 
+const registryModule = vi.hoisted(() => ({ loadFieldRegistry: vi.fn() }));
+vi.mock("~/lib/se-company-field-registry.server", () => registryModule);
+
 import {
   ARTIFACT_ROWS_SQL,
   appendSeCompanyInfoFieldValues,
@@ -21,6 +24,7 @@ import {
   ARTIFACT_PAYLOAD_FIELDS,
   type ArtifactSource,
 } from "~/lib/se-company-info-payload";
+import { REGISTRY_FIXTURE } from "./se-field-registry.fixture";
 
 const COMPANY = "5565200028";
 
@@ -223,6 +227,8 @@ describe("appendSeCompanyInfoFieldValues", () => {
   beforeEach(() => {
     clickhouse.insert.mockReset();
     clickhouse.query.mockReset();
+    registryModule.loadFieldRegistry.mockReset();
+    registryModule.loadFieldRegistry.mockResolvedValue(REGISTRY_FIXTURE);
   });
 
   const scbValue = {
@@ -249,10 +255,31 @@ describe("appendSeCompanyInfoFieldValues", () => {
     await expect(
       appendSeCompanyInfoFieldValues([
         scbValue,
-        { ...scbValue, field: "legal_name" },
+        { ...scbValue, field: "not_a_field" },
       ]),
     ).rejects.toThrow(SeInfoFieldValueValidationError);
     expect(clickhouse.query).not.toHaveBeenCalled();
+    expect(clickhouse.insert).not.toHaveBeenCalled();
+  });
+
+  it("validates against the registry it is handed, without loading one", async () => {
+    clickhouse.query.mockResolvedValueOnce([{ "1": 1 }]);
+    clickhouse.insert.mockResolvedValue(undefined);
+
+    await appendSeCompanyInfoFieldValues(
+      [{ ...scbValue, field: "legal_name", value: "Alpha AB" }],
+      { registry: REGISTRY_FIXTURE },
+    );
+
+    expect(registryModule.loadFieldRegistry).not.toHaveBeenCalled();
+    expect(clickhouse.insert).toHaveBeenCalledTimes(1);
+  });
+
+  it("loads the registry when none is handed in, and refuses a source it does not list", async () => {
+    await expect(
+      appendSeCompanyInfoFieldValues([{ ...scbValue, source: "ratsit" }]),
+    ).rejects.toThrow("Unknown source.");
+    expect(registryModule.loadFieldRegistry).toHaveBeenCalledTimes(1);
     expect(clickhouse.insert).not.toHaveBeenCalled();
   });
 

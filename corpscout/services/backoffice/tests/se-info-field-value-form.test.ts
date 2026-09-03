@@ -30,10 +30,20 @@ const suggestion = (
   ...over,
 });
 
+/** The phase-A page decides only the two description columns; the registry
+ * lists more, and the builder must accept whatever list it is handed. */
+const PHASE_A_FIELDS = ["description", "description_sv"];
+
 const build = (
   entries: Record<string, string>,
   suggestions: SeCompanyInfoSuggestionRow[] = [],
-) => buildFieldValueInputs(form(entries), { companyId: COMPANY_ID, suggestions });
+  fields: string[] = PHASE_A_FIELDS,
+) =>
+  buildFieldValueInputs(form(entries), {
+    companyId: COMPANY_ID,
+    suggestions,
+    fields,
+  });
 
 describe("buildFieldValueInputs -- use-source", () => {
   it("copies one artifact's text into one field, carrying its record and moment", () => {
@@ -132,6 +142,34 @@ describe("buildFieldValueInputs -- use-source", () => {
         source_ref: " ",
       }),
     ).toEqual({ ok: false, error: "source_ref is required." });
+  });
+
+  it("accepts any field the registry hands it", () => {
+    expect(
+      build(
+        {
+          intent: "use-source",
+          field: "legal_name",
+          value: "Alpha AB",
+          source: "scb",
+          source_ref: "scb:1",
+        },
+        [],
+        [...PHASE_A_FIELDS, "legal_name"],
+      ),
+    ).toEqual({
+      ok: true,
+      inputs: [
+        {
+          companyId: COMPANY_ID,
+          field: "legal_name",
+          value: "Alpha AB",
+          source: "scb",
+          sourceRef: "scb:1",
+          sourceAt: null,
+        },
+      ],
+    });
   });
 });
 

@@ -14,6 +14,9 @@ const server = vi.hoisted(() => ({
 }));
 vi.mock("~/lib/se-company-info.server", () => server);
 
+const registryModule = vi.hoisted(() => ({ loadFieldRegistry: vi.fn() }));
+vi.mock("~/lib/se-company-field-registry.server", () => registryModule);
+
 import { action } from "~/routes/admin-se-company-info";
 import {
   SeCompanyInfoNotPublished,
@@ -21,6 +24,7 @@ import {
 } from "~/components/admin/se-company-info-review-workspace";
 import type { SeCompanyInfoDetail } from "~/lib/se-company-info.server";
 import { SeInfoFieldValueValidationError } from "~/lib/se-info-field-values";
+import { REGISTRY_FIXTURE } from "./se-field-registry.fixture";
 
 const COMPANY_ID = "5565200028";
 const EVIDENCE_HASH = "e".repeat(64);
@@ -778,6 +782,8 @@ describe("admin-se-company-info action (field-value intents, mocked server modul
     server.appendSeCompanyInfoFieldValues.mockReset();
     server.loadSeCompanyInfoDetail.mockResolvedValue(detail);
     server.appendSeCompanyInfoFieldValues.mockResolvedValue({ valueIds: [] });
+    registryModule.loadFieldRegistry.mockReset();
+    registryModule.loadFieldRegistry.mockResolvedValue(REGISTRY_FIXTURE);
   });
 
   function postAction(entries: Record<string, string>) {
@@ -822,7 +828,7 @@ describe("admin-se-company-info action (field-value intents, mocked server modul
         sourceRef: "scb:1",
         sourceAt: "2026-08-01 00:00:00.000",
       },
-    ]);
+    ], { registry: REGISTRY_FIXTURE });
   });
 
   it("builds both languages from the suggestion the page is showing", async () => {
@@ -902,7 +908,7 @@ describe("admin-se-company-info action (field-value intents, mocked server modul
         source: "reviewer",
         note: "",
       },
-    ]);
+    ], { registry: REGISTRY_FIXTURE });
     expect(result).toEqual({ ok: false, error: "Value cannot be empty." });
   });
 
@@ -930,5 +936,27 @@ describe("admin-se-company-info action (field-value intents, mocked server modul
     await expect(
       postAction({ intent: "release", field: "description" }),
     ).rejects.toThrow("ClickHouse is down");
+  });
+
+  it("checks the posted field against the registry, not a built-in list", async () => {
+    server.appendSeCompanyInfoFieldValues.mockResolvedValue({
+      valueIds: ["66666666-6666-4666-8666-666666666666"],
+    });
+
+    const known = await postAction({
+      intent: "use-source",
+      field: "legal_name",
+      value: "Alpha AB",
+      source: "scb",
+      source_ref: "scb:1",
+    });
+    expect(known).toMatchObject({ ok: true });
+
+    const unknown = await postAction({
+      intent: "release",
+      field: "not_a_field",
+    });
+    expect(unknown).toEqual({ ok: false, error: "Unknown field." });
+    expect(registryModule.loadFieldRegistry).toHaveBeenCalledTimes(2);
   });
 });
