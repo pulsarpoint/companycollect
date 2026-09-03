@@ -7,6 +7,11 @@ The current host-mode development deployment is managed by
 [`ansible/`](ansible/README.md). It rsyncs the local source tree to `dagster` while
 preserving remote runtime state and supervises `dg dev` with systemd.
 
+Source-specific architecture is documented beside each source package. For the
+Wikidata company pipeline, including exchange and national-registry discovery,
+snapshot orchestration, ClickHouse tables, and the current Wikipedia boundary, see
+[`src/dagster_v3/defs/wikidata/docs/wikidata-design.md`](src/dagster_v3/defs/wikidata/docs/wikidata-design.md).
+
 ---
 
 # Translation
