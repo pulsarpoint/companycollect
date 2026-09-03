@@ -147,6 +147,7 @@ def fold_companies(
     ids = list(normalized_se_company_ids(company_ids))
     considered = folded = changed = unchanged = unpublished = 0
     for page in _pages(ids, page_size):
+        page_unchanged, page_unpublished = unchanged, unpublished
         scope = _changed_company_ids(client, page) if changed_only else page
         considered += len(scope)
         if not scope:
@@ -179,8 +180,12 @@ def fold_companies(
             main_rows.append(values)
             history_rows.append((*values, changed_fields))
         if main_rows:
-            client.execute(main_insert_sql(), main_rows)
+            # History first: the two statements are not one transaction, so a failure
+            # between them costs a duplicate history row on the retry (a distinct
+            # folded_at, visible in the timeline) rather than a published main row whose
+            # first-publish history is never written because the retry sees no change.
             client.execute(history_insert_sql(), history_rows)
+            client.execute(main_insert_sql(), main_rows)
         if log is not None:
             log(
                 "Folded basic info page: companies=%d considered=%d changed=%d "
@@ -188,8 +193,8 @@ def fold_companies(
                 len(page),
                 len(scope),
                 len(main_rows),
-                unchanged,
-                unpublished,
+                unchanged - page_unchanged,
+                unpublished - page_unpublished,
             )
     return FoldCounts(
         companies=len(ids),

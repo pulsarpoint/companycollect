@@ -2,6 +2,8 @@
 
 from datetime import UTC, datetime
 
+import pytest
+
 from dagster_v3.defs.se_company.basic_info import tables
 from dagster_v3.defs.se_company.basic_info.batch import (
     FoldCounts,
@@ -102,8 +104,8 @@ def test_first_publish_writes_main_and_history_with_every_non_null_field() -> No
         client, ["5560000000"], changed_only=False, source_run_id="run-1", folded_at=FOLDED_AT
     )
     assert counts == FoldCounts(companies=1, considered=1, folded=1, changed=1, unchanged=0, unpublished=0)
-    (main_sql, main_rows), (history_sql, history_rows) = client.inserts
-    assert main_sql == main_insert_sql() and history_sql == history_insert_sql()
+    (history_sql, history_rows), (main_sql, main_rows) = client.inserts
+    assert history_sql == history_insert_sql() and main_sql == main_insert_sql()
     assert len(main_rows) == 1 and len(history_rows) == 1
     row = dict(zip(tables.MAIN_COLUMNS, main_rows[0]))
     assert row["legal_name"] == "SCB AB" and row["legal_name_source"] == "scb"
@@ -135,7 +137,7 @@ def test_a_changed_source_alone_is_a_change_and_names_the_field() -> None:
     )
     counts = fold_companies(client, ["5560000000"], changed_only=False, source_run_id="r", folded_at=FOLDED_AT)
     assert counts.changed == 1
-    history = dict(zip(tables.HISTORY_COLUMNS, client.inserts[1][1][0]))
+    history = dict(zip(tables.HISTORY_COLUMNS, client.inserts[0][1][0]))
     assert history["changed_fields"] == ["status"]
     assert history["status_source"] == "bolagsverket"
 
@@ -190,10 +192,27 @@ def test_fold_bucket_reads_the_partition_ids_then_folds_them() -> None:
     assert client.statements[0][1] == {"bucket": 7}
 
 
+def test_fold_bucket_refuses_an_out_of_range_bucket() -> None:
+    client = FakeClient(suggestions=[])
+    for bucket in (64, -1):
+        with pytest.raises(ValueError, match="bucket"):
+            fold_bucket(client, bucket, changed_only=False, source_run_id="r", folded_at=FOLDED_AT)
+    assert client.statements == []
+
+
+def test_fold_counts_as_metadata_names_every_counter() -> None:
+    assert FoldCounts(1, 2, 3, 4, 5, 6).as_metadata() == {
+        "companies": 1,
+        "considered": 2,
+        "folded": 3,
+        "changed": 4,
+        "unchanged": 5,
+        "unpublished": 6,
+    }
+
+
 def test_invalid_company_ids_are_refused_before_any_query() -> None:
     client = FakeClient(suggestions=[])
-    import pytest
-
     with pytest.raises(ValueError, match="company id"):
         fold_companies(client, ["not-an-id"], changed_only=False, source_run_id="r", folded_at=FOLDED_AT)
     assert client.statements == []
