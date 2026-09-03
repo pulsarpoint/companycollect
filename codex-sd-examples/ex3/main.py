@@ -13,7 +13,7 @@ from ex3.crawler import (
     save_report,
 )
 from ex3.language import is_english_language
-from ex3.models import DiscoveryStrategy, SeedingSource
+from ex3.models import DiscoveryStrategy, SeedingSource, Selector
 
 
 @click.group()
@@ -118,15 +118,37 @@ def cli() -> None:
     "--discovery",
     "discovery_strategy",
     type=click.Choice(["best_first", "breadth_first"]),
-    default="best_first",
+    default="breadth_first",
     show_default=True,
-    help="Link-following strategy used to fill the page budget after seeding.",
+    help="Link-following strategy when no sitemap exists or budget remains.",
 )
 @click.option(
     "--accept-language",
     default="en-US,en;q=0.9",
     show_default=True,
     help="Accept-Language sent by the browser and the inventory fetches.",
+)
+@click.option(
+    "--selector",
+    type=click.Choice(["llm", "deterministic"]),
+    default="llm",
+    show_default=True,
+    help="Who picks pages from the sitemap inventory: one Codex call or the scorer.",
+)
+@click.option(
+    "--llm-candidates",
+    type=click.IntRange(min=10),
+    default=200,
+    show_default=True,
+    help="Maximum head-checked candidate URLs shown to the LLM selector.",
+)
+@click.option(
+    "--llm-timeout",
+    "llm_timeout_seconds",
+    type=click.IntRange(min=1),
+    default=300,
+    show_default=True,
+    help="Maximum seconds for the LLM selection call.",
 )
 @click.option(
     "--overwrite",
@@ -152,6 +174,9 @@ def crawl_command(
     seed_share: float,
     discovery_strategy: str,
     accept_language: str,
+    selector: str,
+    llm_candidates: int,
+    llm_timeout_seconds: int,
     overwrite: bool,
     verbose: bool,
 ) -> None:
@@ -181,6 +206,9 @@ def crawl_command(
         seed_share=seed_share,
         discovery_strategy=cast(DiscoveryStrategy, discovery_strategy),
         accept_language=accept_language,
+        selector=cast(Selector, selector),
+        llm_candidates=llm_candidates,
+        llm_timeout_seconds=llm_timeout_seconds,
     )
     try:
         manifest = asyncio.run(run_crawl(settings))
@@ -195,7 +223,7 @@ def crawl_command(
     if seeding is not None and seeding.enabled:
         status = "ok" if seeding.succeeded else f"failed ({seeding.error})"
         click.echo(
-            f"Seeding ({seeding.source}, {status}): "
+            f"Seeding ({seeding.source}, {status}, {seeding.selection_method}): "
             f"{seeding.inventory_urls} inventory URLs, "
             f"{seeding.eligible_urls} eligible, "
             f"{seeding.excluded_urls} excluded, "
@@ -204,6 +232,8 @@ def crawl_command(
             f"{seeding.harvested_links} harvested links, "
             f"{len(seeding.selected)} selected in {seeding.selection_waves} wave(s)"
         )
+        if seeding.llm is not None and not seeding.llm.succeeded:
+            click.echo(f"LLM page selection failed: {seeding.llm.error}", err=True)
     click.echo(
         "Crawl: "
         f"{manifest.crawl_stats.pages_returned} returned, "

@@ -34,6 +34,9 @@ from ex3.models import (
     BatchExtraction,
     MarkdownPage,
     PageExtraction,
+    PageSelectionDecision,
+    PageSelectionResponse,
+    Selector,
     batch_extraction_output_schema,
 )
 from ex3.prompty import create_prompt
@@ -273,7 +276,9 @@ class TwoWaveSelectionTest(unittest.IsolatedAsyncioTestCase):
         ):
             seeding, results = await _select_and_crawl(
                 cast(AsyncWebCrawler, crawler),
-                settings=_crawl_settings(max_pages=3, seed_share=0.6),
+                settings=_crawl_settings(
+                    max_pages=3, seed_share=0.6, selector="deterministic"
+                ),
                 base_url=base_url,
                 base_result=base_result,
                 markdown_dir=Path(tempfile.mkdtemp()),
@@ -342,6 +347,132 @@ class SeededCrawlTest(unittest.IsolatedAsyncioTestCase):
 
         self.assertEqual(results, [])
         self.assertEqual(crawler.requested_urls, [])
+
+
+class LlmSelectorCrawlTest(unittest.IsolatedAsyncioTestCase):
+    async def test_crawls_the_llm_picks_and_records_the_selection(self) -> None:
+        base_url = "https://www.example.se/en/"
+        crawler = _FakeCrawler(
+            [
+                _crawl_result(base_url, success=True),
+                _crawl_result("https://www.example.se/en/careers", success=True),
+            ]
+        )
+
+        async def fake_seed(*args, **kwargs) -> SeedingOutcome:
+            return SeedingOutcome(
+                urls=[
+                    "https://www.example.se/en/careers",
+                    "https://www.example.se/en/privacy",
+                ]
+            )
+
+        async def fake_heads(urls, **kwargs) -> dict[str, HeadMetadata]:
+            return {}
+
+        async def fake_turn(**kwargs):
+            return StructuredTurnOutcome(
+                value=PageSelectionResponse(
+                    pages=[
+                        PageSelectionDecision(
+                            url=base_url,
+                            reason="homepage",
+                            expected_fields=["company_name"],
+                        ),
+                        PageSelectionDecision(
+                            url="https://www.example.se/en/careers",
+                            reason="jobs",
+                            expected_fields=["jobs"],
+                        ),
+                    ]
+                ),
+                token_usage=None,
+                error=None,
+            )
+
+        with (
+            patch("ex3.crawler.seed_sitemap_urls", new=fake_seed),
+            patch("ex3.crawler.fetch_head_metadata", new=fake_heads),
+            patch("ex3.llm_selection.run_structured_turn", new=fake_turn),
+        ):
+            seeding, results = await _select_and_crawl(
+                cast(AsyncWebCrawler, crawler),
+                settings=_crawl_settings(max_pages=2, selector="llm"),
+                base_url=base_url,
+                base_result=None,
+                markdown_dir=Path(tempfile.mkdtemp()),
+            )
+
+        self.assertEqual(
+            crawler.requested_urls, [base_url, "https://www.example.se/en/careers"]
+        )
+        self.assertEqual(seeding.selector, "llm")
+        self.assertEqual(seeding.selection_method, "llm")
+        self.assertEqual(seeding.candidate_count, 3)
+        self.assertTrue(seeding.llm is not None and seeding.llm.succeeded)
+        careers = next(result for result in results if result.url.endswith("careers"))
+        metadata = careers.metadata
+        if metadata is None:
+            self.fail("Selected result is missing metadata")
+        self.assertEqual(metadata["selection"], "selected")
+        self.assertEqual(metadata["selection_reason"], "jobs")
+
+    async def test_falls_back_to_deterministic_selection_when_the_llm_fails(
+        self,
+    ) -> None:
+        base_url = "https://www.example.se/en/"
+        crawler = _FakeCrawler([_crawl_result(base_url, success=True)])
+
+        async def fake_seed(*args, **kwargs) -> SeedingOutcome:
+            return SeedingOutcome(urls=["https://www.example.se/en/about-us"])
+
+        async def fake_heads(urls, **kwargs) -> dict[str, HeadMetadata]:
+            return {}
+
+        async def fake_turn(**kwargs):
+            return StructuredTurnOutcome(value=None, token_usage=None, error="boom")
+
+        with (
+            patch("ex3.crawler.seed_sitemap_urls", new=fake_seed),
+            patch("ex3.crawler.fetch_head_metadata", new=fake_heads),
+            patch("ex3.llm_selection.run_structured_turn", new=fake_turn),
+        ):
+            seeding, _ = await _select_and_crawl(
+                cast(AsyncWebCrawler, crawler),
+                settings=_crawl_settings(max_pages=1, selector="llm"),
+                base_url=base_url,
+                base_result=None,
+                markdown_dir=Path(tempfile.mkdtemp()),
+            )
+
+        self.assertEqual(crawler.requested_urls, [base_url])
+        self.assertEqual(seeding.selection_method, "deterministic")
+        llm_status = seeding.llm
+        if llm_status is None:
+            self.fail("Expected an llm status recorded on the fallback")
+        self.assertFalse(llm_status.succeeded)
+        self.assertEqual(llm_status.error, "boom")
+
+    async def test_returns_nothing_without_a_sitemap_so_discovery_takes_over(
+        self,
+    ) -> None:
+        crawler = _FakeCrawler([])
+
+        async def fake_seed(*args, **kwargs) -> SeedingOutcome:
+            return SeedingOutcome(urls=[])
+
+        with patch("ex3.crawler.seed_sitemap_urls", new=fake_seed):
+            seeding, results = await _select_and_crawl(
+                cast(AsyncWebCrawler, crawler),
+                settings=_crawl_settings(max_pages=5, selector="llm"),
+                base_url="https://www.example.se/en/",
+                base_result=None,
+                markdown_dir=Path(tempfile.mkdtemp()),
+            )
+
+        self.assertEqual(results, [])
+        self.assertEqual(crawler.requested_urls, [])
+        self.assertEqual(seeding.selection_method, "none")
 
 
 class MarkdownBatchTest(unittest.TestCase):
@@ -580,7 +711,12 @@ class _FakeCrawler:
         return stream()
 
 
-def _crawl_settings(*, max_pages: int = 5, seed_share: float = 0.6) -> CrawlSettings:
+def _crawl_settings(
+    *,
+    max_pages: int = 5,
+    seed_share: float = 0.6,
+    selector: str = "deterministic",
+) -> CrawlSettings:
     return CrawlSettings(
         start_url="https://example.com/",
         markdown_dir=Path("/tmp/unused"),
@@ -599,6 +735,7 @@ def _crawl_settings(*, max_pages: int = 5, seed_share: float = 0.6) -> CrawlSett
         seed_share=seed_share,
         discovery_strategy="best_first",
         accept_language="en-US,en;q=0.9",
+        selector=cast(Selector, selector),
     )
 
 

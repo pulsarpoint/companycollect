@@ -465,6 +465,9 @@ class PhaseCliTest(unittest.TestCase):
         self.assertIn("--seed-share", crawl_help.output)
         self.assertIn("--discovery", crawl_help.output)
         self.assertIn("--accept-language", crawl_help.output)
+        self.assertIn("--selector", crawl_help.output)
+        self.assertIn("--llm-candidates", crawl_help.output)
+        self.assertIn("default: breadth_first", crawl_help.output)
         self.assertIn("--keep-non-english", analysis_help.output)
         self.assertIn("default: keep-non-english", analysis_help.output)
 

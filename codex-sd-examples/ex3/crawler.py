@@ -3,7 +3,7 @@ import json
 import logging
 import math
 import re
-from collections.abc import AsyncGenerator, Callable, Collection
+from collections.abc import AsyncGenerator, Callable, Collection, Mapping
 from contextlib import aclosing
 from dataclasses import dataclass
 from pathlib import Path
@@ -22,12 +22,14 @@ from crawl4ai.models import CrawlResult
 from pydantic import BaseModel, ValidationError
 
 from ex1.models import AnalysisTokenUsage, FailedPage
+from ex3.candidates import build_selection_candidates, candidate_shortlist
 from ex3.language import (
     detect_document_language,
     inspect_language_page,
     is_english_language,
 )
 from ex3.llm import run_structured_turn
+from ex3.llm_selection import select_pages_with_llm
 from ex3.models import (
     BatchAnalysis,
     BatchExtraction,
@@ -47,6 +49,7 @@ from ex3.models import (
     ResearchReport,
     ScoredUrl,
     SeedingSource,
+    SelectionMethod,
     Selector,
     UrlSeeding,
     build_analysis_stats,
@@ -55,7 +58,9 @@ from ex3.models import (
 )
 from ex3.prompty import create_prompt, create_related_domains_prompt
 from ex3.seeding import (
+    HeadFetcher,
     HeadMetadata,
+    SeedingOutcome,
     SelectionResult,
     fetch_head_metadata,
     seed_sitemap_urls,
@@ -485,12 +490,12 @@ async def _select_and_crawl(
     markdown_dir: Path,
     preferred_languages: Collection[str] = DEFAULT_PREFERRED_LANGUAGES,
 ) -> tuple[UrlSeeding, list[CrawlResult]]:
-    """Pick pages from the URL inventory and render them in up to two waves.
+    """Pick pages from the sitemap inventory and render them.
 
-    Wave one takes ``seed_share`` of the page budget from the sitemap inventory
-    plus the base page's links. Its rendered pages contribute their own links,
-    the union is ranked again, and wave two fills the remaining budget. Link
-    discovery afterwards only covers what both waves left open.
+    With ``selector == "llm"`` the model chooses from a capped, head-checked
+    candidate list; the deterministic two-wave selection is the fallback and
+    the explicit alternative. Without a sitemap nothing is selected here and
+    the caller's discovery crawl (BFS by default) uses the whole budget.
     """
     if not settings.seed:
         return (
@@ -505,6 +510,20 @@ async def _select_and_crawl(
         accept_language=settings.accept_language,
         proxy=settings.proxy,
     )
+    if not outcome.urls:
+        LOGGER.info("No sitemap inventory for %s; discovery crawl will run", base_url)
+        return (
+            UrlSeeding(
+                enabled=True,
+                source=settings.seed_source,
+                succeeded=outcome.error is None,
+                error=outcome.error,
+                selector=settings.selector,
+                selection_method="none",
+            ),
+            [],
+        )
+
     base_links = _internal_links(base_result, base_url=base_url)
 
     async def fetch_heads(urls: list[str]) -> dict[str, HeadMetadata]:
@@ -515,12 +534,53 @@ async def _select_and_crawl(
             concurrency=HEAD_FETCH_CONCURRENCY,
         )
 
+    if settings.selector == "llm":
+        return await _select_with_llm_and_crawl(
+            crawler,
+            settings=settings,
+            base_url=base_url,
+            inventory=outcome,
+            base_links=base_links,
+            fetch_heads=fetch_heads,
+            markdown_dir=markdown_dir,
+            preferred_languages=preferred_languages,
+        )
+    return await _select_deterministically_and_crawl(
+        crawler,
+        settings=settings,
+        base_url=base_url,
+        inventory=outcome,
+        base_links=base_links,
+        fetch_heads=fetch_heads,
+        markdown_dir=markdown_dir,
+        preferred_languages=preferred_languages,
+    )
+
+
+async def _select_deterministically_and_crawl(
+    crawler: AsyncWebCrawler,
+    *,
+    settings: CrawlSettings,
+    base_url: str,
+    inventory: SeedingOutcome,
+    base_links: list[str],
+    fetch_heads: HeadFetcher,
+    markdown_dir: Path,
+    preferred_languages: Collection[str],
+) -> tuple[UrlSeeding, list[CrawlResult]]:
+    """Pick pages from the URL inventory and render them in up to two waves.
+
+    Wave one takes ``seed_share`` of the page budget from the sitemap inventory
+    plus the base page's links. Its rendered pages contribute their own links,
+    the union is ranked again, and wave two fills the remaining budget. Link
+    discovery afterwards only covers what both waves left open.
+    """
     first_limit = min(
         settings.max_pages,
         max(1, math.ceil(settings.max_pages * settings.seed_share)),
     )
     first_wave = await select_pages(
-        outcome.urls,
+        inventory.urls,
         base_url=base_url,
         limit=first_limit,
         fetch_heads=fetch_heads,
@@ -552,7 +612,7 @@ async def _select_and_crawl(
                     attempted_keys.add(url_key(link))
                     harvested.append(link)
         second_wave = await select_pages(
-            [*outcome.urls, *harvested],
+            [*inventory.urls, *harvested],
             base_url=base_url,
             limit=remaining,
             fetch_heads=fetch_heads,
@@ -577,7 +637,7 @@ async def _select_and_crawl(
             selected.extend(second_wave.selected)
 
     inventory_urls = len(
-        {url_key(url) for url in (base_url, *outcome.urls, *base_links, *harvested)}
+        {url_key(url) for url in (base_url, *inventory.urls, *base_links, *harvested)}
     )
     inventory_path = markdown_dir.resolve() / INVENTORY_FILENAME
     _write_inventory(
@@ -600,8 +660,8 @@ async def _select_and_crawl(
         UrlSeeding(
             enabled=True,
             source=settings.seed_source,
-            succeeded=outcome.error is None,
-            error=outcome.error,
+            succeeded=inventory.error is None,
+            error=inventory.error,
             inventory_urls=inventory_urls,
             eligible_urls=len(final_wave.eligible),
             excluded_urls=len(final_wave.excluded),
@@ -611,9 +671,122 @@ async def _select_and_crawl(
             selection_waves=waves,
             selected=selected,
             inventory_path=str(inventory_path),
+            selector=settings.selector,
+            selection_method="deterministic",
         ),
         results,
     )
+
+
+async def _select_with_llm_and_crawl(
+    crawler: AsyncWebCrawler,
+    *,
+    settings: CrawlSettings,
+    base_url: str,
+    inventory: SeedingOutcome,
+    base_links: list[str],
+    fetch_heads: HeadFetcher,
+    markdown_dir: Path,
+    preferred_languages: Collection[str],
+) -> tuple[UrlSeeding, list[CrawlResult]]:
+    """Pick pages with one LLM call over a capped, head-checked candidate list.
+
+    Every pick is validated against the candidate list; unknown, duplicate and
+    beyond-limit picks are dropped. On LLM failure this falls back to the
+    deterministic single-wave selection and keeps the failed ``llm`` status.
+    """
+    shortlist = candidate_shortlist(
+        inventory=inventory.urls,
+        base_url=base_url,
+        base_page_links=base_links,
+        preferred_languages=preferred_languages,
+        limit=settings.llm_candidates,
+    )
+    heads = await fetch_heads([scored.url for scored in shortlist])
+    candidates = build_selection_candidates(
+        inventory=inventory.urls,
+        base_url=base_url,
+        base_page_links=base_links,
+        heads=heads,
+        preferred_languages=preferred_languages,
+        limit=settings.llm_candidates,
+    )
+    picks, llm_status = await select_pages_with_llm(
+        candidates,
+        base_url=base_url,
+        limit=settings.max_pages,
+        timeout_seconds=settings.llm_timeout_seconds,
+    )
+    selection_method: SelectionMethod = "llm"
+    if not picks:
+        LOGGER.warning(
+            "LLM page selection failed (%s); using deterministic selection",
+            llm_status.error,
+        )
+        fallback = await select_pages(
+            inventory.urls,
+            base_url=base_url,
+            limit=settings.max_pages,
+            fetch_heads=fetch_heads,
+            base_page_links=base_links,
+            preferred_languages=preferred_languages,
+        )
+        picks = fallback.selected
+        selection_method = "deterministic"
+
+    results = await _crawl_seeded_pages(
+        crawler,
+        scored_urls={scored.url: scored.score for scored in picks},
+        settings=settings,
+        reasons={scored.url: _selection_reason(scored) for scored in picks},
+    )
+    inventory_urls = len(
+        {url_key(url) for url in (base_url, *inventory.urls, *base_links)}
+    )
+    inventory_path = markdown_dir.resolve() / INVENTORY_FILENAME
+    _write_inventory(
+        selected=picks,
+        eligible=[
+            ScoredUrl(
+                url=candidate.url,
+                score=candidate.score,
+                reasons=candidate.reasons,
+                language=candidate.language,
+                title=candidate.title,
+            )
+            for candidate in candidates
+        ],
+        excluded=[],
+        inventory_urls=inventory_urls,
+        path=inventory_path,
+    )
+    return (
+        UrlSeeding(
+            enabled=True,
+            source=settings.seed_source,
+            succeeded=inventory.error is None,
+            error=inventory.error,
+            inventory_urls=inventory_urls,
+            eligible_urls=len(candidates),
+            excluded_urls=0,
+            head_checked_urls=len(shortlist),
+            base_page_links=len(base_links),
+            selection_waves=1,
+            selected=picks,
+            inventory_path=str(inventory_path),
+            selector="llm",
+            selection_method=selection_method,
+            candidate_count=len(candidates),
+            llm=llm_status,
+        ),
+        results,
+    )
+
+
+def _selection_reason(scored: ScoredUrl) -> str | None:
+    if scored.reasons[:1] == ["llm"] and len(scored.reasons) > 1:
+        return scored.reasons[1]
+    return None
 
 
 def _preferred_languages(selected_language: str | None) -> frozenset[str]:
@@ -651,6 +824,8 @@ async def _crawl_seeded_pages(
     *,
     scored_urls: dict[str, float],
     settings: CrawlSettings,
+    reasons: Mapping[str, str | None] | None = None,
+    pass_number: int = 1,
 ) -> list[CrawlResult]:
     """Render the selected pages directly, tagging each result with its score."""
     urls = list(scored_urls)
@@ -678,8 +853,26 @@ async def _crawl_seeded_pages(
                     ),
                     None,
                 )
+            reason = reasons.get(result.url) if reasons is not None else None
+            if reason is None and reasons is not None:
+                reason = next(
+                    (
+                        value
+                        for url, value in reasons.items()
+                        if url_key(url) == url_key(result.url)
+                    ),
+                    None,
+                )
             metadata = dict(result.metadata or {})
-            metadata.update({"depth": 0, "selection": "selected", "score": score})
+            metadata.update(
+                {
+                    "depth": 0,
+                    "selection": "selected",
+                    "score": score,
+                    "selection_reason": reason,
+                    "pass_number": pass_number,
+                }
+            )
             result.metadata = metadata
             results.append(result)
     return results
@@ -859,6 +1052,8 @@ def persist_markdown_pages(
                 language=detect_document_language(crawl_result.html or ""),
                 selection=_crawl_selection(crawl_result),
                 score=_crawl_score(crawl_result),
+                pass_number=_metadata_int(crawl_result, "pass_number", default=1),
+                selection_reason=_metadata_str(crawl_result, "selection_reason"),
             )
         )
 
@@ -1400,6 +1595,7 @@ def _crawl_stats(
         ),
         selected_pages=sum(page.selection == "selected" for page in markdown_pages),
         discovered_pages=sum(page.selection == "discovery" for page in markdown_pages),
+        suggested_pages=sum(page.selection == "suggested" for page in markdown_pages),
     )
 
 
@@ -1428,6 +1624,22 @@ def _crawl_score(result: CrawlResult) -> float | None:
         return None
     score = metadata.get("score")
     return float(score) if isinstance(score, (int, float)) else None
+
+
+def _metadata_int(result: CrawlResult, key: str, *, default: int) -> int:
+    metadata = result.metadata
+    if not isinstance(metadata, dict):
+        return default
+    value = metadata.get(key)
+    return value if isinstance(value, int) else default
+
+
+def _metadata_str(result: CrawlResult, key: str) -> str | None:
+    metadata = result.metadata
+    if not isinstance(metadata, dict):
+        return None
+    value = metadata.get(key)
+    return value if isinstance(value, str) else None
 
 
 def _markdown_text(value: object) -> str:
