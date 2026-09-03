@@ -1,4 +1,3 @@
-import asyncio
 import hashlib
 import json
 import logging
@@ -20,16 +19,15 @@ from crawl4ai.deep_crawling import (
     FilterChain,
 )
 from crawl4ai.models import CrawlResult
-from openai_codex import AsyncCodex, AsyncTurnHandle, Sandbox, TurnResult
 from pydantic import BaseModel, ValidationError
 
-from ex1.aux import print_usage
 from ex1.models import AnalysisTokenUsage, FailedPage
 from ex3.language import (
     detect_document_language,
     inspect_language_page,
     is_english_language,
 )
+from ex3.llm import run_structured_turn
 from ex3.models import (
     BatchAnalysis,
     BatchExtraction,
@@ -50,10 +48,8 @@ from ex3.models import (
     ScoredUrl,
     SeedingSource,
     UrlSeeding,
-    batch_extraction_output_schema,
     build_analysis_stats,
     consolidate_extractions,
-    related_domain_output_schema,
     set_source_url,
 )
 from ex3.prompty import create_prompt, create_related_domains_prompt
@@ -73,8 +69,6 @@ from ex3.urls import canonical_domain, normalize_start_url, same_domain_tree, ur
 
 LOGGER = logging.getLogger(__name__)
 LANGUAGE_CANDIDATE_LIMIT = 5
-TURN_INTERRUPT_TIMEOUT_SECONDS = 5
-TURN_COMPLETION_TIMEOUT_SECONDS = 10
 DOMAIN_URL_SAMPLE_LIMIT = 3
 DOMAIN_URL_SAMPLE_CHAR_LIMIT = 500
 DOMAIN_LABEL_SAMPLE_LIMIT = 10
@@ -1068,78 +1062,26 @@ async def _analyze_related_domains(
             succeeded=True,
         )
 
-    try:
-        async with AsyncCodex() as codex:
-            thread = await codex.thread_start(
-                base_instructions=(
-                    "Classify only supplied candidate domains. Do not navigate or "
-                    "use tools. Return only data matching the schema."
-                ),
-                ephemeral=True,
-                sandbox=Sandbox.read_only,
-            )
-            turn = await thread.turn(
-                create_related_domains_prompt(
-                    searched_url,
-                    candidates=candidates,
-                ),
-                output_schema=related_domain_output_schema(),
-                sandbox=Sandbox.read_only,
-            )
-            result, timed_out = await _run_turn_with_timeout(
-                codex,
-                turn,
-                timeout_seconds=timeout_seconds,
-                operation_name="related-domain classification",
-            )
-    except Exception as error:
-        LOGGER.exception("Related-domain classification failed")
+    outcome = await run_structured_turn(
+        prompt=create_related_domains_prompt(searched_url, candidates=candidates),
+        base_instructions=(
+            "Classify only supplied candidate domains. Do not navigate or "
+            "use tools. Return only data matching the schema."
+        ),
+        output_model=RelatedDomainSelection,
+        timeout_seconds=timeout_seconds,
+        operation_name="related-domain classification",
+    )
+    if outcome.value is None:
         return [], RelatedDomainAnalysis(
             attempted=True,
             candidate_domains=len(candidates),
             succeeded=False,
-            error=str(error),
+            error=outcome.error,
+            token_usage=outcome.token_usage,
         )
-
-    if result is None:
-        return [], RelatedDomainAnalysis(
-            attempted=True,
-            candidate_domains=len(candidates),
-            succeeded=False,
-            error=f"analysis timed out after {timeout_seconds} seconds",
-        )
-
-    token_usage = print_usage(result, page_url="related-domain classification")
-    if timed_out:
-        return [], RelatedDomainAnalysis(
-            attempted=True,
-            candidate_domains=len(candidates),
-            succeeded=False,
-            error=f"analysis timed out after {timeout_seconds} seconds",
-            token_usage=token_usage,
-        )
-    if result.final_response is None:
-        error_message = (
-            result.error.message if result.error is not None else result.status
-        )
-        return [], RelatedDomainAnalysis(
-            attempted=True,
-            candidate_domains=len(candidates),
-            succeeded=False,
-            error=f"Codex returned no final response: {error_message}",
-            token_usage=token_usage,
-        )
-
-    try:
-        selection = RelatedDomainSelection.model_validate_json(result.final_response)
-    except ValidationError as error:
-        return [], RelatedDomainAnalysis(
-            attempted=True,
-            candidate_domains=len(candidates),
-            succeeded=False,
-            error=f"Codex returned invalid structured data: {error}",
-            token_usage=token_usage,
-        )
+    selection = outcome.value
+    token_usage = outcome.token_usage
 
     related_domains, warnings = _validate_related_domain_selection(
         selection,
@@ -1228,25 +1170,11 @@ async def _analyze_batches(
             len(batch.pages),
             batch.markdown_chars,
         )
-        try:
-            outcome = await _analyze_batch(
-                batch=batch,
-                max_page_chars=max_page_chars,
-                timeout_seconds=timeout_seconds,
-            )
-        except TimeoutError:
-            outcome = BatchOutcome(
-                extraction=BatchExtraction(),
-                token_usage=None,
-                error=f"analysis timed out after {timeout_seconds} seconds",
-            )
-        except Exception as error:
-            LOGGER.exception("LLM batch %d failed", batch.number)
-            outcome = BatchOutcome(
-                extraction=BatchExtraction(),
-                token_usage=None,
-                error=str(error),
-            )
+        outcome = await _analyze_batch(
+            batch=batch,
+            max_page_chars=max_page_chars,
+            timeout_seconds=timeout_seconds,
+        )
 
         validated, warnings, page_failures = _validate_batch_output(
             batch,
@@ -1285,128 +1213,21 @@ async def _analyze_batch(
         )
         for page in batch.pages
     ]
-    # A separate client per batch keeps a failed or force-closed Codex process from
-    # affecting later batches. It also gives each batch a firm lifecycle boundary.
-    async with AsyncCodex() as codex:
-        thread = await codex.thread_start(
-            base_instructions=(
-                "Extract page-separated structured facts only from supplied Markdown. "
-                "Do not navigate or use tools. Return only data matching the schema."
-            ),
-            ephemeral=True,
-            sandbox=Sandbox.read_only,
-        )
-        turn = await thread.turn(
-            create_prompt(batch.number, pages=prompt_pages),
-            output_schema=batch_extraction_output_schema(),
-            sandbox=Sandbox.read_only,
-        )
-        result, timed_out = await _run_turn_with_timeout(
-            codex,
-            turn,
-            timeout_seconds=timeout_seconds,
-            operation_name=f"analysis batch {batch.number}",
-        )
-
-    if result is None:
-        return BatchOutcome(
-            extraction=BatchExtraction(),
-            token_usage=None,
-            error=f"analysis timed out after {timeout_seconds} seconds",
-        )
-
-    token_usage = print_usage(
-        result,
-        page_url=f"batch {batch.number} ({len(batch.pages)} pages)",
+    outcome = await run_structured_turn(
+        prompt=create_prompt(batch.number, pages=prompt_pages),
+        base_instructions=(
+            "Extract page-separated structured facts only from supplied Markdown. "
+            "Do not navigate or use tools. Return only data matching the schema."
+        ),
+        output_model=BatchExtraction,
+        timeout_seconds=timeout_seconds,
+        operation_name=f"analysis batch {batch.number} ({len(batch.pages)} pages)",
     )
-    if timed_out:
-        return BatchOutcome(
-            extraction=BatchExtraction(),
-            token_usage=token_usage,
-            error=f"analysis timed out after {timeout_seconds} seconds",
-        )
-    if result.final_response is None:
-        error_message = (
-            result.error.message if result.error is not None else result.status
-        )
-        return BatchOutcome(
-            extraction=BatchExtraction(),
-            token_usage=token_usage,
-            error=f"Codex returned no final response: {error_message}",
-        )
-
-    try:
-        extraction = BatchExtraction.model_validate_json(result.final_response)
-    except ValidationError as error:
-        return BatchOutcome(
-            extraction=BatchExtraction(),
-            token_usage=token_usage,
-            error=f"Codex returned invalid structured data: {error}",
-        )
     return BatchOutcome(
-        extraction=extraction,
-        token_usage=token_usage,
-        error=None,
+        extraction=outcome.value or BatchExtraction(),
+        token_usage=outcome.token_usage,
+        error=outcome.error,
     )
-
-
-async def _run_turn_with_timeout(
-    codex: AsyncCodex,
-    turn: AsyncTurnHandle,
-    *,
-    timeout_seconds: int,
-    operation_name: str,
-) -> tuple[TurnResult | None, bool]:
-    """Run a turn without cancelling its blocking notification worker."""
-    turn_task = asyncio.create_task(turn.run())
-    completed, _ = await asyncio.wait({turn_task}, timeout=timeout_seconds)
-    if turn_task in completed:
-        return turn_task.result(), False
-
-    LOGGER.warning(
-        "%s timed out after %d seconds; interrupting it",
-        operation_name,
-        timeout_seconds,
-    )
-    interrupt_task = asyncio.create_task(turn.interrupt())
-    interrupted, _ = await asyncio.wait(
-        {interrupt_task},
-        timeout=TURN_INTERRUPT_TIMEOUT_SECONDS,
-    )
-    interrupt_succeeded = False
-    if interrupt_task in interrupted:
-        try:
-            interrupt_task.result()
-            interrupt_succeeded = True
-        except Exception:
-            LOGGER.exception(
-                "Could not interrupt timed-out operation %s",
-                operation_name,
-            )
-
-    turn_completed: set[asyncio.Task[TurnResult]] = set()
-    if interrupt_succeeded:
-        turn_completed, _ = await asyncio.wait(
-            {turn_task},
-            timeout=TURN_COMPLETION_TIMEOUT_SECONDS,
-        )
-
-    if turn_task not in turn_completed or interrupt_task not in interrupted:
-        LOGGER.warning(
-            "Closing the Codex client for timed-out operation %s to release its waiters",
-            operation_name,
-        )
-        await codex.close()
-
-    # Closing the client sends a transport error to every still-registered waiter.
-    # Drain both tasks before returning so asyncio has no executor work left at exit.
-    turn_outcome, _ = await asyncio.gather(
-        turn_task,
-        interrupt_task,
-        return_exceptions=True,
-    )
-    result = turn_outcome if isinstance(turn_outcome, TurnResult) else None
-    return result, True
 
 
 def _validate_batch_output(

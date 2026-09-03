@@ -18,7 +18,6 @@ from ex3.crawler import (
     _crawl_seeded_pages,
     _internal_links,
     _preferred_languages,
-    _run_turn_with_timeout,
     _select_and_crawl,
     _validate_batch_output,
     create_batches,
@@ -29,6 +28,7 @@ from ex3.language import (
     inspect_language_page,
     is_english_language,
 )
+from ex3.llm import _run_turn_with_timeout
 from ex3.models import (
     BatchExtraction,
     MarkdownPage,
@@ -438,8 +438,8 @@ class TurnTimeoutCleanupTest(unittest.IsolatedAsyncioTestCase):
         turn = _BlockedTurn(released)
 
         with (
-            patch("ex3.crawler.TURN_INTERRUPT_TIMEOUT_SECONDS", 0),
-            patch("ex3.crawler.TURN_COMPLETION_TIMEOUT_SECONDS", 0),
+            patch("ex3.llm.TURN_INTERRUPT_TIMEOUT_SECONDS", 0),
+            patch("ex3.llm.TURN_COMPLETION_TIMEOUT_SECONDS", 0),
         ):
             result, timed_out = await _run_turn_with_timeout(
                 cast(AsyncCodex, codex),
