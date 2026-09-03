@@ -387,6 +387,7 @@ EXPECTED_MIGRATIONS = (
     "000372_corpscout_retire_se_company_info_correction",
     "000373_corpscout_se_scb_companies",
     "000374_corpscout_se_bolagsverket_companies",
+    "000375_corpscout_retire_se_company_registry",
 )
 
 NOOP_MIGRATIONS = {"000276_noop"}
@@ -4134,3 +4135,37 @@ def test_se_register_source_tables_are_created_by_000373_and_000374() -> None:
         assert twin not in scb_up
     # ForAndrTyp is a per-delivery change-type marker, not a company attribute.
     assert "ForAndrTyp" not in scb_up
+
+
+def test_the_se_registry_pair_is_retired_by_000375_and_by_nothing_else() -> None:
+    """The DROP lives in its own entry, written at the apply step: 000373 and 000374 only
+    create the replacements. The down file restores 000257's shape -- schema only, since
+    the per-source tables and the S3 snapshots are the archive."""
+    up = _migration_sql("000375_corpscout_retire_se_company_registry.up.sql")
+    down = _migration_sql("000375_corpscout_retire_se_company_registry.down.sql")
+
+    assert "DROP TABLE IF EXISTS corpscout.se_company_registry_observations" in up
+    assert "DROP TABLE IF EXISTS corpscout.se_company_registry_current" in up
+    assert up.count("DROP TABLE") == 2
+    # Narrow: the proceeding and industry pairs 000257 also created stay, until their own
+    # entities' slices retire them.
+    assert "se_company_proceeding" not in up
+    assert "se_company_industry" not in up
+    assert "se_scb_companies" not in up.split("DROP TABLE")[1]
+    assert "se_bolagsverket_companies" not in up.split("DROP TABLE")[1]
+
+    # The two creating migrations of this slice drop nothing at all.
+    for name in (
+        "000373_corpscout_se_scb_companies",
+        "000374_corpscout_se_bolagsverket_companies",
+    ):
+        assert "DROP TABLE" not in _migration_sql(f"{name}.up.sql"), name
+
+    for table in (
+        "se_company_registry_observations",
+        "se_company_registry_current",
+    ):
+        assert f"CREATE TABLE IF NOT EXISTS corpscout.{table}\n" in down
+    assert "ENGINE = ReplacingMergeTree(observed_at)" in down
+    assert "ORDER BY (company_id, source, observed_at, observation_fingerprint)" in down
+    assert "ORDER BY (company_id, source)" in down
