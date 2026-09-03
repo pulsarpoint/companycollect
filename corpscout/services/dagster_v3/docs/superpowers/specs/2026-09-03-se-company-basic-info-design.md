@@ -225,6 +225,14 @@ One plan each, executed in order with subagent-driven development:
    record has a newer `observed_at` than the current suggestion row (`FINAL`) or none
    exists; `observed_at` must be the source's own, monotonic per record, since ties break
    on it. The fold assets exist but the suggestion table is empty until slice 2 runs.
+   Known limitation, owner decision needed before slice 2: `changed_only` selects on
+   `max(suggested_at) > max(folded_at)`, and `folded_at` advances only when a row is
+   written, so a company whose re-suggestion folds unchanged (or stays unpublished) is
+   re-selected on every later run; the recommended fix is a small fold-watermark table
+   (`company_id`, `considered_at`) written for every considered company and used in the
+   selection. Memory per page is bounded only by `page_size` (default 20,000 companies, up
+   to seven suggestion rows each, descriptions included); lower `page_size` in the asset
+   config if a run presses the host.
 2. The six extractors, reading the source layer of section 3.1.
 3. The backoffice page, actions, Fold now, pipeline sheet.
 4. Cutover (owner-gated prod steps) and retirement of the old publisher, the field-registry code and the three `se_company_info_*` artifacts.

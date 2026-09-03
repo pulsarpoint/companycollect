@@ -21,7 +21,13 @@ BASIC_INFO_PRECEDENCE: dict[str, dict[str, int]] = {
     "description_sv": {"reviewer": 10000, "llm": 2000, "scb": 400, "ratsit": 300},
 }
 
-assert tuple(BASIC_INFO_PRECEDENCE) == tables.FOLDED_FIELDS
+# Not an assert: this runs at import time under load_from_defs_folder, and `python -O`
+# would strip it. A raise names the offending tuples in the code location's error.
+if tuple(BASIC_INFO_PRECEDENCE) != tables.FOLDED_FIELDS:
+    raise ValueError(
+        f"BASIC_INFO_PRECEDENCE keys {tuple(BASIC_INFO_PRECEDENCE)} "
+        f"must equal FOLDED_FIELDS {tables.FOLDED_FIELDS}"
+    )
 
 
 def precedence_for(field: str, source: str) -> int | None:

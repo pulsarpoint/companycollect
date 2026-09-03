@@ -27,4 +27,8 @@ writes nothing when the folded values did not change.
 Operating the fold: materialize one `bucket_NN` partition or launch a backfill of all 64
 from the UI; `changed_only` (default true) skips companies folded after their newest
 suggestion. `se_company_basic_info_fold_companies` takes `company_ids` and re-folds them
-whatever their bucket. Nothing is scheduled.
+whatever their bucket. Nothing is scheduled. Known limitation, awaiting an owner decision
+before slice 2: `folded_at` only advances when a row is written, so a company whose
+re-suggestion folds unchanged — or that stays unpublished — is re-selected by `changed_only`
+on every later run rather than converging; `page_size` (default 20,000) is the knob to lower
+if a run's per-page memory presses the host.
