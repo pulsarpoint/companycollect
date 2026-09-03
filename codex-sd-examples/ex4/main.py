@@ -12,6 +12,7 @@ from ex4.candidates import build_site_candidates, load_candidate_set
 from ex4.gold import GOLD_FIELDS, draft_gold
 from ex4.paths import DataDir
 from ex4.runner import RunSettings, execute_run, plan_calls
+from ex4.scoring import score_run
 from ex4.sites import load_sites, save_sites, select_sites, verify_site
 
 DEFAULT_DATA_DIR = Path("experiments/page-selection")
@@ -233,6 +234,20 @@ def run_command(
             f"{executed} executed, {failed} failed"
         )
     click.echo(f"Results: {data.run_dir(settings.run_id)}")
+
+
+@cli.command("score")
+@click.option("--run-id", required=True)
+@click.pass_obj
+def score_command(data: DataDir, run_id: str) -> None:
+    """Score a run against the gold files; never calls Codex."""
+    scores = score_run(run_id, data)
+    save_model(scores, data.scores_file(run_id))
+    for summary in scores.prompts:
+        click.echo(
+            f"{summary.prompt_name:26} coverage={summary.mean_coverage:.2f} (min {summary.min_coverage:.2f}) junk={summary.mean_junk_rate:.2f} tokens={summary.mean_total_tokens:,.0f} failures={summary.failures}"
+        )
+    click.echo(f"Scores: {data.scores_file(run_id)}")
 
 
 if __name__ == "__main__":
