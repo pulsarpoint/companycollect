@@ -2124,6 +2124,448 @@ EOF
 
 ---
 
+### Task 6b: Owner decisions after the final review: tombstones and raw date twins
+
+Two decisions the owner took on 2026-09-03 after the whole-branch review, both applied BEFORE migrations 000373/000374 reach production (they are unapplied, so the DDL is free to change):
+
+1. **Removals.** The source tables were insert-only with no tombstone, so a company a register stops delivering kept its last row and `FINAL` returned it as current. Now the publisher appends a tombstone row when a company is absent from the staged delivery, and inserts the company again when it returns. Readers take `FINAL` rows `WHERE has_company = 1`.
+2. **Dates before 1900.** Date32 starts at 1900-01-01, and the DuckDB builders already NULL any date outside its range (631 Bolagsverket companies on prod, oldest 1826-01-01). Each such date column gets a verbatim `*_raw` twin holding the source string, so the value is never lost.
+
+**Files:**
+- Modify: `corpscout/clickhouse/migrations/000373_corpscout_se_scb_companies.up.sql`
+- Modify: `corpscout/clickhouse/migrations/000374_corpscout_se_bolagsverket_companies.up.sql`
+- Modify: `src/dagster_v3/defs/sweden_company/tables.py` (`SE_SCB_COMPANIES_EXPORT_COLUMNS`, `SE_BOLAGSVERKET_COMPANIES_EXPORT_COLUMNS`)
+- Modify: `src/dagster_v3/defs/sweden_company/normalized_duckdb.py` (`_replace_scb_companies_table`, `_replace_bolagsverket_companies_table`)
+- Modify: `src/dagster_v3/defs/sweden_company/clickhouse.py` (`SwedenSourceTablePublishResult`, `publish_sweden_company_source_table`, two new SQL functions)
+- Modify: `src/dagster_v3/defs/sweden_company/assets.py` (the two export assets' metadata, around lines 191-192 and 226-227)
+- Modify: `src/dagster_v3/defs/company_domain_suggestions/dbt/models/staging/stg_se_company_match_features.sql` (lines 16-39)
+- Modify: `src/dagster_v3/defs/sweden_company/docs/sweden_company-design.md` (one or two sentences where the two source tables are described)
+- Test: `tests/test_sweden_company_source_tables.py`, `tests/test_clickhouse_migrations.py` (the 000373/000374 test near line 4110), `tests/test_sweden_company_normalized_duckdb.py`, `tests/test_sweden_company_clickhouse.py`, `tests/test_sweden_company_source_tables_clickhouse_local.py`, `tests/test_company_domain_suggestions_dbt.py`
+
+**Interfaces:**
+- Consumes: everything Tasks 1-6 built (unchanged names).
+- Produces: `has_company UInt8 DEFAULT 1` on both tables (NOT in the export tuples: the staged insert leaves it at its default); `registration_date_raw Nullable(String)` on both tables and `deregistration_date_raw Nullable(String)` on Bolagsverket (IN the export tuples, right after their typed twin); `SwedenSourceTablePublishResult(candidates, inserted, removed)`; `sweden_company_source_removal_sql(*, qualified_stage, qualified_target)` and `sweden_company_source_tombstone_insert_sql(*, qualified_stage, qualified_target)` in `clickhouse.py`.
+
+**Global rules that bind every step:** migration files keep `CREATE DATABASE IF NOT EXISTS corpscout;` as the first line and a statement as the last line, and contain NO semicolon inside any comment (use a sentence break). Commit by explicit path only. Every commit message ends with these two lines, contiguous, no blank line between them:
+```
+Co-Authored-By: Claude Fable 5.1 <noreply@anthropic.com>
+Claude-Session: https://claude.ai/code/session_01RY2W9FTCX9YxUcXtSBaEJ5
+```
+
+---
+
+- [ ] **Step 1: Failing contract tests for the DDL and the export tuples**
+
+In `tests/test_sweden_company_source_tables.py`:
+
+- `test_se_scb_companies_declares_the_whole_scb_record_in_export_order`: change the first assertion to
+  ```python
+  assert declared_columns("se_scb_companies") == [
+      *tables.SE_SCB_COMPANIES_EXPORT_COLUMNS,
+      "has_company",
+  ]
+  ```
+  and add, after the `registration_date Nullable(Date32)` assertion:
+  ```python
+  # The source string beside the typed date: Date32 starts at 1900-01-01 and the typed
+  # column is NULL for older dates, the twin keeps them (owner decision 2026-09-03).
+  assert "registration_date_raw Nullable(String)" in block
+  assert "has_company UInt8 DEFAULT 1" in block
+  ```
+- `test_se_bolagsverket_companies_declares_the_whole_bolagsverket_record`: same change to the first assertion (with `SE_BOLAGSVERKET_COMPANIES_EXPORT_COLUMNS`), and add:
+  ```python
+  assert "registration_date_raw Nullable(String)" in block
+  assert "deregistration_date_raw Nullable(String)" in block
+  assert "has_company UInt8 DEFAULT 1" in block
+  ```
+- Append a new test:
+  ```python
+  def test_the_export_tuples_place_each_raw_date_twin_after_its_typed_date() -> None:
+      scb = tables.SE_SCB_COMPANIES_EXPORT_COLUMNS
+      assert scb.index("registration_date_raw") == scb.index("registration_date") + 1
+      bolagsverket = tables.SE_BOLAGSVERKET_COMPANIES_EXPORT_COLUMNS
+      assert (
+          bolagsverket.index("registration_date_raw")
+          == bolagsverket.index("registration_date") + 1
+      )
+      assert (
+          bolagsverket.index("deregistration_date_raw")
+          == bolagsverket.index("deregistration_date") + 1
+      )
+      # has_company is the publisher's flag, never a DuckDB column: it stays out of the
+      # export tuples so the staged insert leaves it at DEFAULT 1.
+      for columns in (scb, bolagsverket):
+          assert "has_company" not in columns
+  ```
+
+In `tests/test_clickhouse_migrations.py`, inside the 000373/000374 test's `for up, columns in (...)` loop (near line 4110), add after the CONSTRAINT assertion:
+```python
+        # The publisher's tombstone flag: DEFAULT 1 so the staged insert never sets it.
+        assert "\n    has_company UInt8 DEFAULT 1,\n" in up
+```
+
+Run: `cd corpscout/services/dagster_v3 && uv run --frozen --no-sync pytest tests/test_sweden_company_source_tables.py tests/test_clickhouse_migrations.py -q -p no:warnings`
+Expected: FAIL on the new assertions.
+
+- [ ] **Step 2: DDL**
+
+`000373_corpscout_se_scb_companies.up.sql`:
+- after `    registration_date Nullable(Date32),` insert `    registration_date_raw Nullable(String),`
+- after `    observed_at DateTime64(3, 'UTC'),` insert `    has_company UInt8 DEFAULT 1,`
+- extend the comment: replace the sentence `registration_date is NULL when the source value lies outside Date32's own range, before 1900-01-01, never a fabricated 1970-01-01.` with:
+  ```
+  -- registration_date is NULL when the source value lies outside Date32's own range, before
+  -- 1900-01-01, never a fabricated 1970-01-01. registration_date_raw keeps RegDatKtid exactly
+  -- as delivered, so such a date is still readable.
+  --
+  -- has_company is 1 on every row the source delivered and 0 on a tombstone row the publisher
+  -- appends when SCB stops delivering a company (values NULL, empty record id and hash, the
+  -- run's source_run_id and observed_at). A company that returns is inserted again with
+  -- has_company 1, so readers take FINAL rows WHERE has_company = 1.
+  ```
+
+`000374_corpscout_se_bolagsverket_companies.up.sql`:
+- after `    registration_date Nullable(Date32),` insert `    registration_date_raw Nullable(String),`
+- after `    deregistration_date Nullable(Date32),` insert `    deregistration_date_raw Nullable(String),`
+- after `    observed_at DateTime64(3, 'UTC'),` insert `    has_company UInt8 DEFAULT 1,`
+- extend the comment: replace `Either date is NULL when the source value lies outside Date32's own range, before 1900-01-01, never a fabricated 1970-01-01.` with:
+  ```
+  -- Either date is NULL when the source value lies outside Date32's own range, before
+  -- 1900-01-01, never a fabricated 1970-01-01 -- 631 registration dates on the 2026-09-03
+  -- register are older, the oldest 1826-01-01. registration_date_raw and
+  -- deregistration_date_raw keep registreringsdatum and avregistreringsdatum exactly as
+  -- delivered, so those dates are still readable.
+  --
+  -- has_company is 1 on every row the source delivered and 0 on a tombstone row the publisher
+  -- appends when Bolagsverket stops delivering a company (values NULL, empty record id and
+  -- hash, the run's source_run_id and observed_at). A company that returns is inserted again
+  -- with has_company 1, so readers take FINAL rows WHERE has_company = 1.
+  ```
+The `.down.sql` files (a DROP each) are unchanged.
+
+`tables.py`: insert `"registration_date_raw",` right after `"registration_date",` in `SE_SCB_COMPANIES_EXPORT_COLUMNS`; in `SE_BOLAGSVERKET_COMPANIES_EXPORT_COLUMNS` insert `"registration_date_raw",` right after `"registration_date",` and `"deregistration_date_raw",` right after `"deregistration_date",`.
+
+Run the Step 1 command. Expected: PASS.
+
+- [ ] **Step 3: The DuckDB builders produce the twins**
+
+In `tests/test_sweden_company_normalized_duckdb.py`, extend the existing 1878-date case (the one asserting `registration_date` is NULL for the pre-1900 Bolagsverket fixture) to also assert `registration_date_raw` equals that fixture's `registreringsdatum` string verbatim, and that a 20th-century company's `registration_date_raw` equals its own source string. Add one SCB assertion in the SCB builder test: `registration_date_raw` equals the fixture's `RegDatKtid` string (e.g. `'19620304'`). If a test compares the DuckDB table's column list to the export tuple, it now passes unchanged once the builders emit the twins.
+
+Run: `uv run --frozen --no-sync pytest tests/test_sweden_company_normalized_duckdb.py -q -p no:warnings`
+Expected: FAIL (columns missing).
+
+In `normalized_duckdb.py`:
+- `_replace_scb_companies_table`: after `{_date32_bounded_sql("registration_date_parsed")} as registration_date,` add `nullif(trim(RegDatKtid), '') as registration_date_raw,`
+- `_replace_bolagsverket_companies_table`: after `{_date32_bounded_sql("registration_date_parsed")} as registration_date,` add `nullif(trim(registreringsdatum), '') as registration_date_raw,`; after `{_date32_bounded_sql("deregistration_date_parsed")} as deregistration_date,` add `nullif(trim(avregistreringsdatum), '') as deregistration_date_raw,`
+
+Run the same command. Expected: PASS.
+
+- [ ] **Step 4: Commit 1**
+
+```bash
+git add corpscout/clickhouse/migrations/000373_corpscout_se_scb_companies.up.sql \
+        corpscout/clickhouse/migrations/000374_corpscout_se_bolagsverket_companies.up.sql \
+        corpscout/services/dagster_v3/src/dagster_v3/defs/sweden_company/tables.py \
+        corpscout/services/dagster_v3/src/dagster_v3/defs/sweden_company/normalized_duckdb.py \
+        corpscout/services/dagster_v3/tests/test_sweden_company_source_tables.py \
+        corpscout/services/dagster_v3/tests/test_clickhouse_migrations.py \
+        corpscout/services/dagster_v3/tests/test_sweden_company_normalized_duckdb.py
+```
+Message subject: `feat(dagster): keep raw date twins and a has_company flag on the SE source tables`. Body: two sentences on the owner decisions (Date32 cannot hold 631 Bolagsverket registration dates, the twin keeps them; has_company is the tombstone flag the next commit's publisher writes). Then the two trailer lines.
+
+- [ ] **Step 5: Failing publisher unit tests**
+
+In `tests/test_sweden_company_clickhouse.py`:
+
+- `FakeClickHouseClient.__init__` gains `self.removals = 0`; `execute` gains, next to the `AS new_versions` branch:
+  ```python
+        if "AS removals" in sql:
+            return [(self.removals,)]
+  ```
+- Import `sweden_company_source_removal_sql` and `sweden_company_source_tombstone_insert_sql` beside `sweden_company_source_anti_join_sql`.
+- New test, modelled on `test_publish_sweden_company_source_table_inserts_only_changed_payloads` (same DuckDB fixture, same call):
+  ```python
+  def test_publish_sweden_company_source_table_tombstones_companies_the_delivery_dropped(
+      tmp_path: Path,
+  ) -> None:
+      client = FakeClickHouseClient()
+      client.removals = 1
+      resource = _FakeClickhouseResource(client)  # whatever the sibling test uses to wrap the fake
+      with _sweden_company_duckdb(tmp_path) as connection:
+          result = publish_sweden_company_source_table(
+              duckdb_connection=connection,
+              clickhouse=resource,
+              duckdb_table="scb_companies",
+              clickhouse_table=tables.SCB_COMPANIES_TABLE_CH,
+              columns=tables.SE_SCB_COMPANIES_EXPORT_COLUMNS,
+          )
+
+      assert result.removed == 1
+      removal_counts = [s for s in client.statements if "AS removals" in s]
+      assert len(removal_counts) == 1
+      assert "argMax(has_company, observed_at) AS has_company" in removal_counts[0]
+      assert "WHERE current.has_company = 1" in removal_counts[0]
+      tombstones = [
+          s for s in client.statements
+          if s.startswith(
+              "INSERT INTO corpscout.se_scb_companies (company_id, company_id_raw, "
+              "has_company, source_run_id, source_record_id, source_payload_hash, "
+              "observed_at)"
+          )
+      ]
+      assert len(tombstones) == 1
+      assert "SELECT current.company_id, '', 0, " in tombstones[0]
+      assert "(SELECT any(source_run_id) FROM corpscout._tmp_se_scb_companies_" in tombstones[0]
+      assert "(SELECT any(observed_at) FROM corpscout._tmp_se_scb_companies_" in tombstones[0]
+      # The removal is computed after the changed rows went in, and before the stage drops.
+      order = [
+          next(i for i, s in enumerate(client.statements) if "AS new_versions" in s),
+          next(i for i, s in enumerate(client.statements) if "AS removals" in s),
+          next(i for i, s in enumerate(client.statements) if s.startswith("DROP TABLE IF EXISTS corpscout._tmp_se_scb_companies_")),
+      ]
+      assert order == sorted(order)
+  ```
+  Use the exact fixture/wrapper names the sibling test uses (read it first); the assertions above are the contract.
+- In `test_publish_sweden_company_source_table_inserts_only_changed_payloads` add `assert result.removed == 0` and `assert not any("AS removals" in s and "has_company" not in s for s in client.statements)` is NOT needed -- instead add: `assert all(not s.startswith("INSERT INTO corpscout.se_scb_companies (company_id, company_id_raw, has_company") for s in client.statements)` (no tombstone insert when removals are 0).
+- In `test_publish_sweden_company_source_table_refuses_an_empty_stage` add: `assert not any("AS removals" in s for s in client.statements)` -- the refusal comes before any removal is computed, which is what stops a failed load from tombstoning the whole register.
+
+Run: `uv run --frozen --no-sync pytest tests/test_sweden_company_clickhouse.py -q -p no:warnings`
+Expected: FAIL (import error / attribute `removed`).
+
+- [ ] **Step 6: The publisher**
+
+In `clickhouse.py`:
+
+```python
+@dataclass(frozen=True, slots=True)
+class SwedenSourceTablePublishResult:
+    candidates: int
+    inserted: int
+    removed: int
+
+
+_SOURCE_TABLE_TOMBSTONE_COLUMNS = (
+    "company_id",
+    "company_id_raw",
+    "has_company",
+    "source_run_id",
+    "source_record_id",
+    "source_payload_hash",
+    "observed_at",
+)
+
+
+def sweden_company_source_removal_sql(
+    *,
+    qualified_stage: str,
+    qualified_target: str,
+) -> str:
+    """The companies whose CURRENT published row is delivered (has_company = 1) and that
+    the staged delivery no longer contains.
+
+    The left side is the current row per company, exactly like the anti-join's right
+    side, so a company already tombstoned is not tombstoned again. Exposed as a function
+    so the clickhouse-local harness executes this exact text.
+    """
+    return (
+        "FROM (\n"
+        "    SELECT company_id, argMax(has_company, observed_at) AS has_company\n"
+        f"    FROM {qualified_target}\n"
+        "    GROUP BY company_id\n"
+        ") AS current\n"
+        f"LEFT ANTI JOIN {qualified_stage} AS candidate\n"
+        "ON candidate.company_id = current.company_id\n"
+        "WHERE current.has_company = 1"
+    )
+
+
+def sweden_company_source_tombstone_insert_sql(
+    *,
+    qualified_stage: str,
+    qualified_target: str,
+) -> str:
+    """The tombstone row per removed company: has_company 0, every value NULL, an empty
+    record id and hash (so a returning company always differs from its tombstone and is
+    inserted again), stamped with the staged delivery's source_run_id and observed_at."""
+    column_list = ", ".join(_SOURCE_TABLE_TOMBSTONE_COLUMNS)
+    removal = sweden_company_source_removal_sql(
+        qualified_stage=qualified_stage,
+        qualified_target=qualified_target,
+    )
+    return (
+        f"INSERT INTO {qualified_target} ({column_list})\n"
+        "SELECT current.company_id, '', 0, "
+        f"(SELECT any(source_run_id) FROM {qualified_stage}), '', '', "
+        f"(SELECT any(observed_at) FROM {qualified_stage}) {removal}"
+    )
+```
+
+In `publish_sweden_company_source_table`, after the `if inserted > 0:` block and before the log call:
+```python
+            removal = sweden_company_source_removal_sql(
+                qualified_stage=qualified_stage,
+                qualified_target=qualified_target,
+            )
+            removed = int(client.execute(f"SELECT count() AS removals {removal}")[0][0])
+            if removed > 0:
+                client.execute(
+                    sweden_company_source_tombstone_insert_sql(
+                        qualified_stage=qualified_stage,
+                        qualified_target=qualified_target,
+                    )
+                )
+```
+Extend the log line with ` removed=%d` and the argument, and return `removed=removed`. Add this paragraph to the function docstring:
+```
+    A company the delivery no longer contains gets a tombstone row (``has_company = 0``,
+    NULL values, empty record id and hash) stamped with this delivery's ``source_run_id``
+    and ``observed_at``, so ``FINAL ... WHERE has_company = 1`` is the delivered set and a
+    returning company is inserted again because its hash differs from the tombstone's
+    empty one. The empty-stage refusal above is what keeps a failed load from tombstoning
+    the whole register. A partial delivery is not detected: the next full delivery inserts
+    again whatever it removed.
+```
+
+In `assets.py`, both export assets' metadata dicts gain `"removed": result.removed,` right after `"inserted"`.
+
+Run the Step 5 command. Expected: PASS. Then `uv run --frozen --no-sync ruff check src/dagster_v3/defs/sweden_company tests/test_sweden_company_clickhouse.py`.
+
+- [ ] **Step 7: The harness proves the tombstone cycle on a real ClickHouse**
+
+In `tests/test_sweden_company_source_tables_clickhouse_local.py`:
+
+- Import the two new SQL functions.
+- Fix the VALUES rows for the new columns (positional, in export order): in `_scb_row` add `'19620304', ` right after `toDate32('1962-03-04'), `; in `_bolagsverket_row` add `'1955-01-01', ` right after `toDate32('1955-01-01'), ` and `'1968-12-31', ` right after `toDate32('1968-12-31'), `; in `_bolagsverket_row_with_registration_date` add the matching raw string after each typed date (read that helper and keep its meaning; for the pre-1900 case the raw string is the pre-1900 date, e.g. `'1878-05-24'`, while the typed value is NULL through `_date32_bound`).
+- Add a company-parameterised SCB row helper:
+  ```python
+  def _scb_company_row(company_id: str, payload_hash: str, observed_at: str) -> str:
+      return (
+          f"('{company_id}', '{company_id}', "
+          f"'Company {company_id}', NULL, '49', '1', '1', toDate32('1962-03-04'), '19620304', "
+          "'62010', NULL, NULL, NULL, NULL, "
+          "NULL, 'Main Street 1', '11122', 'STOCKHOLM', '1', "
+          f"'run-1', '{company_id}', '{payload_hash}', "
+          f"toDateTime64('{observed_at}', 3, 'UTC'))"
+      )
+  ```
+- Make `_publish` and `_publish_bolagsverket` mirror the whole publisher: after the anti-join INSERT statement append
+  ```python
+        f"SELECT count() AS removals {removal}",
+        sweden_company_source_tombstone_insert_sql(qualified_stage=<stage>, qualified_target=<target>),
+  ```
+  where `removal = sweden_company_source_removal_sql(qualified_stage=<stage>, qualified_target=<target>)` with the same stage/target names each helper already uses. Every publish now prints TWO numbers (new_versions, removals). Update the existing tests' expected output lists accordingly: `test_the_anti_join_reinserts_a_reverted_payload_and_skips_an_unchanged_one` expects `["1", "0", "1", "0", "1", "0", "0", "0"]` for its four publishes (one company, never removed) -- read the test, keep its row/count assertions, and shift their indexes; do the same for the two date tests.
+- New test:
+  ```python
+  def test_a_company_the_delivery_drops_is_tombstoned_and_returns_with_a_fresh_row() -> None:
+      """The removal is computed against the CURRENT row per company: a dropped company
+      gets exactly one tombstone however many deliveries it stays absent from, and comes
+      back as a delivered row because its hash differs from the tombstone's empty one."""
+      both = (
+          _scb_company_row("5560000000", "h-a", "2026-01-01 00:00:00")
+          + ", "
+          + _scb_company_row("5561111111", "h-b", "2026-01-01 00:00:00")
+      )
+      script = _schema_statements()
+      script += _publish(both)
+      script += _publish(_scb_company_row("5560000000", "h-a", "2026-01-08 00:00:00"))
+      script += _publish(_scb_company_row("5560000000", "h-a", "2026-01-15 00:00:00"))
+      script += _publish(
+          _scb_company_row("5560000000", "h-a", "2026-01-22 00:00:00")
+          + ", "
+          + _scb_company_row("5561111111", "h-b", "2026-01-22 00:00:00")
+      )
+      script += [
+          "SELECT company_id, has_company, source_payload_hash, toString(observed_at) "
+          f"FROM {tables.QUALIFIED_SCB_COMPANIES_TABLE} FINAL ORDER BY company_id",
+          f"SELECT count() FROM {tables.QUALIFIED_SCB_COMPANIES_TABLE} "
+          "WHERE company_id = '5561111111'",
+          f"SELECT count() FROM {tables.QUALIFIED_SCB_COMPANIES_TABLE} FINAL "
+          "WHERE has_company = 1",
+          "SELECT company_id_raw, legal_name, registration_date, source_record_id "
+          f"FROM {tables.QUALIFIED_SCB_COMPANIES_TABLE} "
+          "WHERE company_id = '5561111111' AND has_company = 0",
+      ]
+      lines = _run(script)
+      # (new_versions, removals) per publish: both new / B dropped / B still gone,
+      # no second tombstone / B back with its old payload, inserted again.
+      assert lines[:8] == ["2", "0", "0", "1", "0", "0", "1", "0"]
+      assert lines[8] == "5560000000\t1\th-a\t2026-01-01 00:00:00.000"
+      assert lines[9] == "5561111111\t1\th-b\t2026-01-22 00:00:00.000"
+      assert lines[10] == "3"
+      assert lines[11] == "2"
+      assert lines[12] == "\t\\N\t\\N\t"
+  ```
+  The tombstone row's `observed_at` is the second delivery's (2026-01-08); add an assertion for it if the row is easy to select (`WHERE has_company = 0` → `toString(observed_at)` = `2026-01-08 00:00:00.000`).
+
+Run: `uv run --frozen --no-sync pytest tests/test_sweden_company_source_tables_clickhouse_local.py -q -p no:warnings -m integration`
+Expected: 4 passed (Docker is available; a skip is a failure of this step).
+
+- [ ] **Step 8: Commit 2**
+
+```bash
+git add corpscout/services/dagster_v3/src/dagster_v3/defs/sweden_company/clickhouse.py \
+        corpscout/services/dagster_v3/src/dagster_v3/defs/sweden_company/assets.py \
+        corpscout/services/dagster_v3/tests/test_sweden_company_clickhouse.py \
+        corpscout/services/dagster_v3/tests/test_sweden_company_source_tables_clickhouse_local.py
+```
+Subject: `feat(dagster): tombstone companies the SE register deliveries drop`. Body: three sentences (what the tombstone row is, why the hash is empty, that the empty-stage refusal guards it). Trailers.
+
+- [ ] **Step 9: The dbt model reads only delivered companies**
+
+`tests/test_company_domain_suggestions_dbt.py`, in `test_sweden_company_match_features_are_normalized_and_technology_independent`, add:
+```python
+    # Only the rows the register still delivers: the publisher tombstones dropped
+    # companies with has_company = 0 (owner decision 2026-09-03).
+    assert model_sql.count("WHERE has_company = 1") == 2
+```
+Run: `WEBTECH_API_URL=http://localhost:1 WEBTECH_S3_PATH=s3://bucket/prefix uv run --frozen --no-sync pytest tests/test_company_domain_suggestions_dbt.py -q -p no:warnings` -- expected FAIL.
+
+In `stg_se_company_match_features.sql` replace lines 16-39 (the comment and the `register_names` CTE) with:
+```sql
+-- The two register source tables of the 2026-09-03 SE basic-info design replace the
+-- retired registry projection. Each is ReplacingMergeTree(observed_at) ORDER BY
+-- company_id, so FINAL gives the last row written per company. The publisher appends a
+-- has_company = 0 tombstone row when a source stops delivering a company and inserts the
+-- company again when it returns, so has_company = 1 on the FINAL row is the delivered set,
+-- the same contract the retired table's has_company flag gave this model.
+-- Bolagsverket has no alternate name, exactly as before.
+register_names AS (
+    SELECT
+        company_id,
+        'scb' AS source,
+        legal_name,
+        alternate_name
+    FROM {{ source('corpscout', 'se_scb_companies') }} FINAL
+    WHERE has_company = 1
+
+    UNION ALL
+
+    SELECT
+        company_id,
+        'bolagsverket' AS source,
+        legal_name,
+        CAST(NULL AS Nullable(String)) AS alternate_name
+    FROM {{ source('corpscout', 'se_bolagsverket_companies') }} FINAL
+    WHERE has_company = 1
+),
+```
+Run the same command -- expected PASS (including the `dbt parse` test). Then `uv run --frozen --no-sync dg utils refresh-defs-state` and `WEBTECH_API_URL=http://localhost:1 WEBTECH_S3_PATH=s3://bucket/prefix uv run --frozen --no-sync dg check defs` (exit 0).
+
+`sweden_company-design.md`: where the two source tables are described, add one sentence on the tombstone contract (`has_company`, FINAL + WHERE has_company = 1) and one on the raw date twins. Keep it to two sentences.
+
+- [ ] **Step 10: Commit 3 and the whole check**
+
+```bash
+git add corpscout/services/dagster_v3/src/dagster_v3/defs/company_domain_suggestions/dbt/models/staging/stg_se_company_match_features.sql \
+        corpscout/services/dagster_v3/tests/test_company_domain_suggestions_dbt.py \
+        corpscout/services/dagster_v3/src/dagster_v3/defs/sweden_company/docs/sweden_company-design.md
+```
+Subject: `refactor(dagster): read only delivered companies from the SE source tables`. Trailers.
+
+Then run everything this task touches: `WEBTECH_API_URL=http://localhost:1 WEBTECH_S3_PATH=s3://bucket/prefix uv run --frozen --no-sync pytest tests/test_sweden_company_source_tables.py tests/test_clickhouse_migrations.py tests/test_sweden_company_normalized_duckdb.py tests/test_sweden_company_clickhouse.py tests/test_sweden_company_assets.py tests/test_sweden_company_profile_history.py tests/test_company_domain_suggestions_dbt.py tests/test_sweden_company_code_quality.py -q -p no:warnings` and `uv run --frozen --no-sync ruff check src/dagster_v3/defs/sweden_company tests/test_sweden_company_source_tables.py tests/test_sweden_company_clickhouse.py tests/test_sweden_company_source_tables_clickhouse_local.py tests/test_sweden_company_normalized_duckdb.py tests/test_company_domain_suggestions_dbt.py`. Expected: all pass, ruff clean.
+
+---
+
 ### Task 7: Production cutover and the gated retirement migration 000375
 
 This task runs against the production ClickHouse and the production Dagster host. It is owner-gated: do not start it until Tasks 1-6 are merged and the whole suite is green.
@@ -2195,7 +2637,7 @@ Launch from the Dagster UI, never `dagster job backfill` (a CLI launch tags runs
 - `sweden_company_scb_companies_clickhouse`
 - `sweden_company_bolagsverket_companies_clickhouse`
 
-Expected: all three succeed. The two export assets report `candidates` equal to their source's distinct company count and `inserted` equal to `candidates` (first publish, nothing to anti-join against).
+Expected: all three succeed. The two export assets report `candidates` equal to their source's distinct company count, `inserted` equal to `candidates` (first publish, nothing to anti-join against) and `removed` equal to 0 (nothing was published before, so nothing can be missing).
 
 - [ ] **Step 6: Verify the row counts against the retiring table (gate 1 of 3)**
 
@@ -2518,7 +2960,11 @@ In `docs/superpowers/specs/2026-09-03-se-company-basic-info-design.md`, under se
    `corpscout.se_scb_companies` and `se_basic_info_suggestions_bolagsverket` reads
    `corpscout.se_bolagsverket_companies`, both one row per company, both
    `ReplacingMergeTree(observed_at) ORDER BY company_id` — read them with `FINAL` or
-   `argMax(..., observed_at)`. Neither carries a `source_record_uid`: the extractor
+   `argMax(..., observed_at)`, and only rows `WHERE has_company = 1`: the publisher
+   appends a `has_company = 0` tombstone when a source stops delivering a company and
+   inserts the company again when it returns. A date Date32 cannot hold (before 1900)
+   is NULL in the typed column and verbatim in its `*_raw` twin (`registration_date_raw`,
+   `deregistration_date_raw`). Neither carries a `source_record_uid`: the extractor
    computes the suggestion's `source_record_uid` itself, from `source_record_id` and
    `source_payload_hash`, the way migration 000257's DEFAULT expression did
    (`lower(hex(SHA256(concat('company-source-record-v1\nstructured\n', <'sweden_scb'|'sweden_bolagsverket'>, '\nregistry_company\n', source_record_id, '\n', lowerUTF8(source_payload_hash)))))`).
