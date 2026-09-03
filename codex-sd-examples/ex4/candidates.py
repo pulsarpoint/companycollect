@@ -11,7 +11,7 @@ from ex3.candidates import PageCandidate, build_selection_candidates, dedupe_by_
 from ex3.crawler import _preferred_languages
 from ex3.seeding import fetch_head_metadata, seed_sitemap_urls
 from ex3.selection import rank_urls
-from ex3.urls import normalize_start_url
+from ex3.urls import normalize_start_url, url_key
 from ex4.sites import Site
 
 LOGGER = logging.getLogger(__name__)
@@ -45,6 +45,7 @@ async def build_site_candidates(
     eligible, excluded = rank_urls(
         [base_url, *outcome.urls], base_url=base_url, preferred_languages=preferred
     )
+    inventory_urls = len({url_key(url) for url in (base_url, *outcome.urls)})
     shortlist = dedupe_by_url_key(eligible)[:limit]
     heads = await fetch_head_metadata(
         [scored.url for scored in shortlist],
@@ -62,7 +63,7 @@ async def build_site_candidates(
     LOGGER.info(
         "%s: %d inventory, %d eligible, %d excluded, %d candidates",
         site.domain,
-        len(outcome.urls) + 1,
+        inventory_urls,
         len(eligible),
         len(excluded),
         len(candidates),
@@ -72,7 +73,7 @@ async def build_site_candidates(
         base_url=base_url,
         preferred_languages=sorted(preferred),
         built_at=datetime.now(UTC).isoformat(timespec="seconds"),
-        inventory_urls=len(outcome.urls) + 1,
+        inventory_urls=inventory_urls,
         eligible_urls=len(eligible),
         excluded_urls=len(excluded),
         candidates=candidates,
