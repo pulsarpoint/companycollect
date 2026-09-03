@@ -47,6 +47,7 @@ from ex3.models import (
     ResearchReport,
     ScoredUrl,
     SeedingSource,
+    Selector,
     UrlSeeding,
     build_analysis_stats,
     consolidate_extractions,
@@ -94,8 +95,11 @@ class CrawlSettings:
     seed_source: SeedingSource = "sitemap"
     seed_max_urls: int = 5_000
     seed_share: float = 0.6
-    discovery_strategy: DiscoveryStrategy = "best_first"
+    discovery_strategy: DiscoveryStrategy = "breadth_first"
     accept_language: str = "en-US,en;q=0.9"
+    selector: Selector = "llm"
+    llm_candidates: int = 200
+    llm_timeout_seconds: int = 300
 
 
 @dataclass(frozen=True, slots=True)
@@ -106,6 +110,8 @@ class AnalysisSettings:
     max_batch_chars: int
     analysis_timeout_seconds: int
     skip_non_english: bool = False
+    previous_report_path: Path | None = None
+    merge_with_llm: bool = True
 
 
 @dataclass(frozen=True, slots=True)
@@ -1405,10 +1411,14 @@ def _crawl_depth(result: CrawlResult) -> int:
     return depth if isinstance(depth, int) and depth >= 0 else 0
 
 
-def _crawl_selection(result: CrawlResult) -> Literal["selected", "discovery"]:
+def _crawl_selection(
+    result: CrawlResult,
+) -> Literal["selected", "discovery", "suggested"]:
     metadata = result.metadata
-    if isinstance(metadata, dict) and metadata.get("selection") == "selected":
-        return "selected"
+    if isinstance(metadata, dict):
+        selection = metadata.get("selection")
+        if selection in ("selected", "discovery", "suggested"):
+            return selection
     return "discovery"
 
 

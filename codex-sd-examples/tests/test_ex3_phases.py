@@ -21,9 +21,11 @@ from ex3.models import (
     CrawlStats,
     DiscoveredUrl,
     LanguageDiscovery,
+    LlmCallStatus,
     MarkdownPage,
     PageExtraction,
     PageExtractionMetadata,
+    PassSummary,
     RelatedDomain,
     RelatedDomainAnalysis,
     RelatedDomainDecision,
@@ -83,6 +85,47 @@ class ManifestLoadingTest(unittest.TestCase):
 
             with self.assertRaisesRegex(FileNotFoundError, "missing.md"):
                 load_manifest(manifest_path)
+
+    def test_new_selection_fields_have_defaults_and_round_trip(self) -> None:
+        page = MarkdownPage(
+            source_url="https://example.com/jobs",
+            depth=0,
+            markdown_path="jobs.md",
+            markdown_chars=3,
+            selection="suggested",
+            selection_reason="jobs gap",
+            pass_number=2,
+        )
+        seeding = UrlSeeding(
+            enabled=True,
+            source="sitemap",
+            succeeded=True,
+            selector="llm",
+            selection_method="llm",
+            candidate_count=120,
+            llm=LlmCallStatus(attempted=True, succeeded=True),
+        )
+
+        restored = MarkdownPage.model_validate_json(page.model_dump_json())
+        legacy = MarkdownPage.model_validate(
+            {
+                "source_url": "https://example.com/",
+                "depth": 0,
+                "markdown_path": "a.md",
+                "markdown_chars": 1,
+            }
+        )
+
+        self.assertEqual(restored, page)
+        self.assertEqual(legacy.pass_number, 1)
+        self.assertIsNone(legacy.selection_reason)
+        self.assertEqual(seeding.selection_method, "llm")
+        self.assertEqual(
+            PassSummary(
+                pass_number=1, pages=1, new_pages=1, batches=1
+            ).token_totals.total_tokens,
+            0,
+        )
 
 
 class SeparateAnalysisPhaseTest(unittest.IsolatedAsyncioTestCase):
