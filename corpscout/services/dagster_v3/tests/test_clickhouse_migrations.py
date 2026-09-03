@@ -392,6 +392,17 @@ EXPECTED_MIGRATIONS = (
 
 NOOP_MIGRATIONS = {"000276_noop"}
 
+# Entries whose objects left the ledger on 2026-09-03. Development-phase policy: an unused
+# table is dropped by hand on the server and its DDL leaves the file, which stays for
+# history. Nothing is left for these four to declare, so the "creates something" and
+# "undoes something" assertions cannot apply -- the database statement is all that remains.
+EMPTIED_MIGRATIONS = {
+    "000052_corpscout_lei_wikidata_companies_view",
+    "000111_corpscout_dns_axfr_observations",
+    "000121_corpscout_commoncrawl_domain_hostname_axfr_sync",
+    "000218_corpscout_no_contract_awards",
+}
+
 EXPECTED_ACCESS_MIGRATIONS = (
     "000241_corpscout_person_correction_writer_role",
     "000296_corpscout_se_company_person_correction_writer_grants",
@@ -494,33 +505,6 @@ FINLAND_YTJ_TABLE_COLUMNS = {
         "registration_date",
         "end_date",
         "is_current",
-        "source_system",
-        "source_run_id",
-        "source_record_id",
-        "source_payload_hash",
-        "resolved_at",
-    ),
-    "fi_tax_registrations": (
-        "business_id",
-        "tax_registration_type",
-        "register_code",
-        "entry_type_code",
-        "registration_date",
-        "end_date",
-        "is_current",
-        "source_system",
-        "source_run_id",
-        "source_record_id",
-        "source_payload_hash",
-        "resolved_at",
-    ),
-    "fi_company_situations": (
-        "business_id",
-        "situation_type_code",
-        "registration_date",
-        "end_date",
-        "is_current",
-        "source_code",
         "source_system",
         "source_run_id",
         "source_record_id",
@@ -756,6 +740,10 @@ def test_clickhouse_migrations_create_databases_and_tables() -> None:
             assert sql.strip() == "SELECT 1;"
             continue
 
+        if migration_file in EMPTIED_MIGRATIONS:
+            assert _statement_lines(sql) == ["CREATE DATABASE IF NOT EXISTS corpscout;"]
+            continue
+
         assert "CREATE DATABASE IF NOT EXISTS" in sql
         # Every migration creates, alters, or drops objects — never a no-op.
         # DROP-only up migrations (e.g. removing orphaned tables) are allowed.
@@ -797,6 +785,10 @@ def test_clickhouse_migrations_have_down_files() -> None:
 
         if migration_file in NOOP_MIGRATIONS:
             assert sql.strip() == "SELECT 1;"
+            continue
+
+        if migration_file in EMPTIED_MIGRATIONS:
+            assert _statement_lines(sql) == ["CREATE DATABASE IF NOT EXISTS corpscout;"]
             continue
 
         # Down migrations undo the up migration: DROP-up → CREATE-down and vice versa.
@@ -2367,35 +2359,6 @@ def test_brazil_fin_cvm_dfp_capital_composition_allows_signed_treasury_shares() 
     assert "    total_shares_treasury Int64," in sql
 
 
-def test_lei_wikidata_company_view_joins_gleif_and_wikidata_lei_identifiers() -> None:
-    sql = _migration_sql("000052_corpscout_lei_wikidata_companies_view.up.sql")
-    down_sql = _migration_sql("000052_corpscout_lei_wikidata_companies_view.down.sql")
-
-    assert "CREATE VIEW IF NOT EXISTS corpscout.lei_wikidata_companies" in sql
-    assert "FROM corpscout.gleif_lei_records AS lei" in sql
-    assert "INNER JOIN corpscout.wikidata_company_identifiers AS ids" in sql
-    assert "ids.identifier_type = 'lei'" in sql
-    assert "ids.wikidata_property_id = 'P1278'" in sql
-    assert "ids.identifier_value = lei.lei" in sql
-    assert "LEFT JOIN corpscout.wikidata_companies AS company" in sql
-    assert "company.wikidata_id = ids.wikidata_id" in sql
-    for column_alias in (
-        "gleif_legal_name",
-        "gleif_entity_status",
-        "gleif_primary_country_iso2",
-        "wikidata_id",
-        "wikidata_name",
-        "wikidata_official_name",
-        "wikidata_company_description",
-        "wikidata_legal_form_label",
-        "wikidata_industry_label",
-        "wikidata_has_current_listing",
-    ):
-        assert f" AS {column_alias}" in sql
-
-    assert "DROP VIEW IF EXISTS corpscout.lei_wikidata_companies" in down_sql
-
-
 def test_brazil_comp_rfb_registry_migration_covers_exported_columns() -> None:
     sql = _migration_sql("000054_corpscout_br_rfb_registry.up.sql")
     down_sql = _migration_sql("000054_corpscout_br_rfb_registry.down.sql")
@@ -3171,9 +3134,6 @@ def test_company_source_record_migration_covers_shared_contracts() -> None:
     assert "CREATE TABLE IF NOT EXISTS corpscout.esef_document_business_items" in sql
     assert (
         "CREATE TABLE IF NOT EXISTS corpscout.esef_document_group_relationships" in sql
-    )
-    assert (
-        "CREATE TABLE IF NOT EXISTS corpscout.wikidata_company_source_snapshots" in sql
     )
     assert "company-source-record-v1\\nfile\\nesef_report_package" in sql
     assert "bolagsverket_source_record_uid" in sql
@@ -4052,6 +4012,15 @@ def _migration_sql(file_name: str) -> str:
 
 def _normalize_sql(sql: str) -> str:
     return " ".join(sql.replace(";", "").split())
+
+
+def _statement_lines(sql: str) -> list[str]:
+    """The lines of a migration that are statements rather than prose."""
+    return [
+        line
+        for line in sql.splitlines()
+        if line.strip() and not line.lstrip().startswith("--")
+    ]
 
 
 def test_the_correction_ledger_is_retired_by_000372_reversibly() -> None:
