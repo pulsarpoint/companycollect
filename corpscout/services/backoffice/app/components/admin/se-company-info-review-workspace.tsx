@@ -747,9 +747,19 @@ function ValueHistoryCard({
 
 /**
  * "Saved and resolved." when every decided field was resolved on the spot;
- * "Saved. <field> applies on the next run." for the python_only fields the
- * bulk resolver alone handles (spec 2026-09-02, section 9). The row count
- * stays in the description so a two-language decision reads as two rows.
+ * otherwise "Saved." plus one sentence per reason a field was not, because the
+ * three reasons promise different things and must not read alike:
+ *
+ * - `python_only` the bulk resolver alone handles it (spec 2026-09-02, s. 9),
+ *   so it really does land on the next run;
+ * - `no_row`      the statement ran and wrote nothing (a release with no
+ *   candidate left, a company with no register name), so the field kept what
+ *   it had -- there is no later run that changes that;
+ * - `unknown_field` the registry does not declare it, so nothing will ever
+ *   apply it.
+ *
+ * The row count stays in the description so a two-language decision reads as
+ * two rows.
  */
 function savedBanner(result: {
   valueIds: string[];
@@ -762,9 +772,29 @@ function savedBanner(result: {
   if (result.skipped.length === 0) {
     return { title: "Saved and resolved.", detail };
   }
-  const names = result.skipped.map((entry) => entry.field).join(", ");
-  const verb = result.skipped.length === 1 ? "applies" : "apply";
-  return { title: `Saved. ${names} ${verb} on the next run.`, detail };
+  const names = (reason: SkippedField["reason"]) =>
+    result.skipped
+      .filter((entry) => entry.reason === reason)
+      .map((entry) => entry.field);
+  const sentences: string[] = [];
+  const pythonOnly = names("python_only");
+  if (pythonOnly.length > 0) {
+    const verb = pythonOnly.length === 1 ? "applies" : "apply";
+    sentences.push(`${pythonOnly.join(", ")} ${verb} on the next run.`);
+  }
+  const noRow = names("no_row");
+  if (noRow.length > 0) {
+    const possessive = noRow.length === 1 ? "its" : "their";
+    sentences.push(
+      `${noRow.join(", ")} kept ${possessive} previous value: nothing to resolve.`,
+    );
+  }
+  const unknown = names("unknown_field");
+  if (unknown.length > 0) {
+    const verb = unknown.length === 1 ? "is" : "are";
+    sentences.push(`${unknown.join(", ")} ${verb} not a registry field.`);
+  }
+  return { title: `Saved. ${sentences.join(" ")}`, detail };
 }
 
 export function SeCompanyInfoReviewWorkspace({

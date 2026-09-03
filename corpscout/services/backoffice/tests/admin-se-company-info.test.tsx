@@ -693,6 +693,40 @@ describe("company info review page", () => {
     );
   });
 
+  // A statement that wrote nothing (a release with no candidate left) is NOT
+  // "applies on the next run": no run changes it, the field kept its value.
+  it("says a field that resolved to no row kept what it had", () => {
+    const html = render(detail, {
+      ok: true,
+      valueIds: ["22222222-2222-4222-8222-222222222222"],
+      resolved: [],
+      skipped: [{ field: "description", reason: "no_row" }],
+    });
+    expect(html).toContain(
+      "Saved. description kept its previous value: nothing to resolve.",
+    );
+    expect(html).not.toContain("Saved and resolved.");
+    expect(html).not.toContain("on the next run.");
+  });
+
+  it("keeps one sentence per reason when a decision hits several", () => {
+    const html = render(detail, {
+      ok: true,
+      valueIds: [
+        "22222222-2222-4222-8222-222222222222",
+        "33333333-3333-4333-8333-333333333333",
+      ],
+      resolved: [],
+      skipped: [
+        { field: "website", reason: "python_only" },
+        { field: "description", reason: "no_row" },
+      ],
+    });
+    expect(html).toContain(
+      "Saved. website applies on the next run. description kept its previous value: nothing to resolve.",
+    );
+  });
+
   it("tells a saved-but-unresolved decision apart from a refused one", () => {
     const unresolved = render(detail, {
       ok: false,
