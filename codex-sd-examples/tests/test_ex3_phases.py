@@ -51,7 +51,7 @@ from ex3.models import (
     consolidate_extractions,
     sum_token_totals,
 )
-from ex3.prompty import create_related_domains_prompt
+from ex3.prompty import create_merge_prompt, create_related_domains_prompt
 
 
 class ManifestLoadingTest(unittest.TestCase):
@@ -622,6 +622,16 @@ class IncrementalAnalysisTest(unittest.IsolatedAsyncioTestCase):
         self.assertIsNone(merged)
         self.assertFalse(analysis.succeeded)
         self.assertEqual(analysis.error, "timed out")
+
+    def test_merge_prompt_marks_both_rounds_as_untrusted(self) -> None:
+        prompt = create_merge_prompt(
+            previous=UsefulInformation(),
+            new_round=UsefulInformation(),
+            processed_urls=["https://example.com/"],
+        )
+
+        self.assertIn("SECURITY", prompt)
+        self.assertIn("untrusted", prompt)
 
     def test_drops_items_whose_evidence_points_outside_processed_pages(self) -> None:
         information = UsefulInformation(

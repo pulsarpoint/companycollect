@@ -5,6 +5,7 @@ from contextlib import aclosing
 from dataclasses import dataclass
 from pathlib import Path
 from types import AsyncGeneratorType
+from urllib.parse import urlsplit
 
 from crawl4ai import AsyncWebCrawler
 from crawl4ai.models import CrawlResult
@@ -16,8 +17,8 @@ from ex3.crawler import (
     persist_markdown_pages,
     save_model,
 )
-from ex3.models import CrawlManifest, PassSuggestions
-from ex3.urls import url_key
+from ex3.models import CrawlManifest, PassSuggestions, SuggestedPage
+from ex3.urls import canonical_domain, same_domain_tree, url_key
 
 LOGGER = logging.getLogger(__name__)
 
@@ -42,8 +43,7 @@ async def run_extend(settings: ExtendSettings) -> CrawlManifest:
         settings.suggestions_path.read_text(encoding="utf-8")
     )
     manifest_path = settings.manifest_path.resolve()
-    known = {url_key(page.source_url) for page in manifest.markdown_pages}
-    if not any(url_key(item.url) not in known for item in suggestions.suggestions):
+    if not _pages_to_crawl(manifest, suggestions):
         LOGGER.info("No new suggested pages to crawl")
         return manifest
 
@@ -62,6 +62,28 @@ async def run_extend(settings: ExtendSettings) -> CrawlManifest:
         )
 
 
+def _pages_to_crawl(
+    manifest: CrawlManifest, suggestions: PassSuggestions
+) -> list[SuggestedPage]:
+    """Return the suggestions that are new and stay inside the crawled site."""
+    known = {url_key(page.source_url) for page in manifest.markdown_pages}
+    searched = canonical_domain(urlsplit(manifest.selected_base_url).hostname or "")
+    todo: list[SuggestedPage] = []
+    for item in suggestions.suggestions:
+        if url_key(item.url) in known:
+            continue
+        domain = canonical_domain(urlsplit(item.url).hostname or "")
+        if not domain or not same_domain_tree(domain, searched):
+            LOGGER.warning(
+                "Skipping suggested page outside %s: %s",
+                searched,
+                item.url,
+            )
+            continue
+        todo.append(item)
+    return todo
+
+
 async def _extend_manifest(
     crawler: AsyncWebCrawler,
     *,
@@ -70,8 +92,7 @@ async def _extend_manifest(
     settings: ExtendSettings,
     manifest_path: Path,
 ) -> CrawlManifest:
-    known = {url_key(page.source_url) for page in manifest.markdown_pages}
-    todo = [item for item in suggestions.suggestions if url_key(item.url) not in known]
+    todo = _pages_to_crawl(manifest, suggestions)
     if not todo:
         LOGGER.info("No new suggested pages to crawl")
         return manifest

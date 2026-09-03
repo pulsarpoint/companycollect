@@ -919,6 +919,11 @@ class ExtendManifestTest(unittest.IsolatedAsyncioTestCase):
                     SuggestedPage(
                         url=base_url, reason="already there", expected_fields=[]
                     ),
+                    SuggestedPage(
+                        url="https://evil.example/x",
+                        reason="off-site",
+                        expected_fields=["management"],
+                    ),
                 ],
             )
             careers = CrawlResult(
@@ -1017,6 +1022,11 @@ class RunExtendSkipsBrowserWhenNothingNewTest(unittest.IsolatedAsyncioTestCase):
                 suggestions=[
                     SuggestedPage(
                         url=base_url, reason="already there", expected_fields=[]
+                    ),
+                    SuggestedPage(
+                        url="https://evil.example/x",
+                        reason="off-site",
+                        expected_fields=["management"],
                     ),
                 ],
             )
