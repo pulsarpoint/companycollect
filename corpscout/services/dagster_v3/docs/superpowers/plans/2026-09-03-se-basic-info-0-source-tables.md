@@ -976,10 +976,14 @@ def test_publish_sweden_company_source_table_inserts_only_changed_payloads(
         in client.statements[1]
     )
     # Staged first, then copied with the anti-join -- never straight into the target.
+    # The fake records every INSERT statement; the target copy names the stage table in
+    # its FROM clause too, so match the staged data insert by its prefix.
     staged_inserts = [
         sql
         for sql, _ in client.insert_calls
-        if f"_tmp_{tables.SCB_COMPANIES_TABLE_CH}_" in sql
+        if sql.lstrip().startswith(
+            f"INSERT INTO `{tables.SWEDEN_DATABASE}`.`_tmp_{tables.SCB_COMPANIES_TABLE_CH}_"
+        )
     ]
     assert len(staged_inserts) == 1
     target_inserts = [
