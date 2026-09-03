@@ -1,5 +1,5 @@
-DROP TABLE IF EXISTS corpscout.fi_company_situations;
-DROP TABLE IF EXISTS corpscout.fi_tax_registrations;
+-- fi_tax_registrations and fi_company_situations removed on 2026-09-03: unused, dropped by hand (development-phase ledger policy).
+
 DROP TABLE IF EXISTS corpscout.fi_registered_entries;
 DROP TABLE IF EXISTS corpscout.fi_legal_forms;
 DROP TABLE IF EXISTS corpscout.fi_addresses;

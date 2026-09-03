@@ -1,5 +1,7 @@
 CREATE DATABASE IF NOT EXISTS corpscout;
 
+-- fi_tax_registrations and fi_company_situations removed on 2026-09-03: unused, dropped by hand (development-phase ledger policy).
+
 ALTER TABLE corpscout.fi_companies
     ADD COLUMN IF NOT EXISTS business_id_registration_date Nullable(Date) AFTER business_id,
     ADD COLUMN IF NOT EXISTS eu_id Nullable(String) AFTER business_id_registration_date,
@@ -101,38 +103,3 @@ CREATE TABLE IF NOT EXISTS corpscout.fi_registered_entries
 )
 ENGINE = ReplacingMergeTree(resolved_at)
 ORDER BY (business_id, register_code, entry_type_code);
-
-CREATE TABLE IF NOT EXISTS corpscout.fi_tax_registrations
-(
-    business_id String,
-    tax_registration_type LowCardinality(String),
-    register_code LowCardinality(String),
-    entry_type_code LowCardinality(String),
-    registration_date Nullable(Date),
-    end_date Nullable(Date),
-    is_current UInt8,
-    source_system LowCardinality(String),
-    source_run_id String,
-    source_record_id String,
-    source_payload_hash FixedString(64),
-    resolved_at DateTime64(3, 'UTC')
-)
-ENGINE = ReplacingMergeTree(resolved_at)
-ORDER BY (business_id, tax_registration_type);
-
-CREATE TABLE IF NOT EXISTS corpscout.fi_company_situations
-(
-    business_id String,
-    situation_type_code LowCardinality(String),
-    registration_date Nullable(Date),
-    end_date Nullable(Date),
-    is_current UInt8,
-    source_code Nullable(String),
-    source_system LowCardinality(String),
-    source_run_id String,
-    source_record_id String,
-    source_payload_hash FixedString(64),
-    resolved_at DateTime64(3, 'UTC')
-)
-ENGINE = ReplacingMergeTree(resolved_at)
-ORDER BY (business_id, situation_type_code);

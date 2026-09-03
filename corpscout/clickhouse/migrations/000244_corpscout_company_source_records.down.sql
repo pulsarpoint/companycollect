@@ -1,3 +1,5 @@
+-- wikidata_company_source_snapshots removed on 2026-09-03: unused, dropped by hand (development-phase ledger policy).
+
 ALTER TABLE corpscout.wikidata_persons
     DROP COLUMN IF EXISTS source_record_uid;
 
@@ -28,7 +30,6 @@ ALTER TABLE corpscout.esef_source_documents
 DROP TABLE IF EXISTS corpscout.esef_document_group_relationships;
 DROP TABLE IF EXISTS corpscout.esef_document_business_items;
 DROP TABLE IF EXISTS corpscout.esef_document_people;
-DROP TABLE IF EXISTS corpscout.wikidata_company_source_snapshots;
 DROP TABLE IF EXISTS corpscout.company_description_observations;
 DROP TABLE IF EXISTS corpscout.company_source_record_links;
 DROP TABLE IF EXISTS corpscout.company_source_record_origins;

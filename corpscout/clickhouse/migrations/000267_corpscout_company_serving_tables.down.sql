@@ -1,4 +1,5 @@
-DROP TABLE IF EXISTS corpscout.company_domain_observations;
+-- company_domain_observations removed on 2026-09-03: unused, dropped by hand (development-phase ledger policy).
+
 DROP TABLE IF EXISTS corpscout.company_management_observations;
 DROP TABLE IF EXISTS corpscout.company_wikidata_observations;
 DROP TABLE IF EXISTS corpscout.company_gleif_relationship_observations;

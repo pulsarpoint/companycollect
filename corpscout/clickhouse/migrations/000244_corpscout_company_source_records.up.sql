@@ -1,5 +1,7 @@
 CREATE DATABASE IF NOT EXISTS corpscout;
 
+-- wikidata_company_source_snapshots removed on 2026-09-03: unused, dropped by hand (development-phase ledger policy).
+
 CREATE TABLE IF NOT EXISTS corpscout.company_source_records
 (
     source_record_uid FixedString(64),
@@ -171,17 +173,6 @@ ORDER BY (
     source_record_uid,
     candidate_uid
 );
-
-CREATE TABLE IF NOT EXISTS corpscout.wikidata_company_source_snapshots
-(
-    source_record_uid FixedString(64),
-    wikidata_id String,
-    source_payload_hash FixedString(64),
-    source_run_id String,
-    retrieved_at DateTime64(3, 'UTC')
-)
-ENGINE = ReplacingMergeTree(retrieved_at)
-ORDER BY (wikidata_id, source_record_uid);
 
 ALTER TABLE corpscout.esef_source_documents
     ADD COLUMN IF NOT EXISTS source_record_uid String DEFAULT lower(hex(SHA256(concat(

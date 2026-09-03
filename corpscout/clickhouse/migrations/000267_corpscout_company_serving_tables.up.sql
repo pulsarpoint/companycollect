@@ -1,5 +1,7 @@
 CREATE DATABASE IF NOT EXISTS corpscout;
 
+-- company_domain_observations removed on 2026-09-03: unused, dropped by hand (development-phase ledger policy).
+
 -- Application-serving snapshots. Source tables remain source-oriented. Every
 -- table below is ordered by the company key used by /company/:country/:id.
 -- Current partitions are replaced atomically by the company_serving publisher,
@@ -493,35 +495,6 @@ ORDER BY (
     country_code,
     company_id,
     management_id,
-    observed_at,
-    observation_fingerprint
-);
-
-CREATE TABLE IF NOT EXISTS corpscout.company_domain_observations
-(
-    country_code LowCardinality(String),
-    company_id String,
-    root_domain String,
-    website_url String,
-    website_host String,
-    is_primary UInt8,
-    match_method LowCardinality(String),
-    confidence Float32,
-    first_seen_at DateTime64(3, 'UTC'),
-    last_seen_at DateTime64(3, 'UTC'),
-    resolved_at DateTime64(3, 'UTC'),
-    state_fingerprint FixedString(64),
-    observation_fingerprint FixedString(64),
-    has_observation UInt8,
-    source_run_id String,
-    observed_at DateTime64(3, 'UTC')
-)
-ENGINE = ReplacingMergeTree(observed_at)
-PARTITION BY (country_code, toYear(observed_at))
-ORDER BY (
-    country_code,
-    company_id,
-    root_domain,
     observed_at,
     observation_fingerprint
 );
