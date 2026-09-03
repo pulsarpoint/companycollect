@@ -315,6 +315,11 @@ def test_a_company_the_delivery_drops_is_tombstoned_and_returns_with_a_fresh_row
     script = _schema_statements()
     script += _publish(both)
     script += _publish(_scb_company_row("5560000000", "h-a", "2026-01-08 00:00:00"))
+    # The reader contract while B's tombstone is the current row, not after B returns.
+    script += [
+        f"SELECT count() FROM {tables.QUALIFIED_SCB_COMPANIES_TABLE} FINAL "
+        "WHERE has_company = 1"
+    ]
     script += _publish(_scb_company_row("5560000000", "h-a", "2026-01-15 00:00:00"))
     script += _publish(
         _scb_company_row("5560000000", "h-a", "2026-01-22 00:00:00")
@@ -335,15 +340,18 @@ def test_a_company_the_delivery_drops_is_tombstoned_and_returns_with_a_fresh_row
         f"FROM {tables.QUALIFIED_SCB_COMPANIES_TABLE} WHERE has_company = 0",
     ]
     lines = _run(script)
-    # (new_versions, removals) per publish: both new / B dropped / B still gone,
-    # no second tombstone / B back with its old payload, inserted again.
-    assert lines[:8] == ["2", "0", "0", "1", "0", "0", "1", "0"]
-    assert lines[8] == "5560000000\t1\th-a\t2026-01-01 00:00:00.000"
-    assert lines[9] == "5561111111\t1\th-b\t2026-01-22 00:00:00.000"
-    assert lines[10] == "3"
-    assert lines[11] == "2"
+    # (new_versions, removals) per publish: both new / B dropped.
+    assert lines[:4] == ["2", "0", "0", "1"]
+    # The delivered set while the tombstone is live: A alone, B read as removed.
+    assert lines[4] == "1"
+    # B still gone, no second tombstone / B back with its old payload, inserted again.
+    assert lines[5:9] == ["0", "0", "1", "0"]
+    assert lines[9] == "5560000000\t1\th-a\t2026-01-01 00:00:00.000"
+    assert lines[10] == "5561111111\t1\th-b\t2026-01-22 00:00:00.000"
+    assert lines[11] == "3"
+    assert lines[12] == "2"
     # The tombstone carries no values at all: empty record id and hash, NULL everywhere
     # else, so a returning company never matches it on source_payload_hash.
-    assert lines[12] == "\t\\N\t\\N\t"
+    assert lines[13] == "\t\\N\t\\N\t"
     # It is stamped with the delivery that dropped the company, not the first one.
-    assert lines[13] == "2026-01-08 00:00:00.000"
+    assert lines[14] == "2026-01-08 00:00:00.000"
