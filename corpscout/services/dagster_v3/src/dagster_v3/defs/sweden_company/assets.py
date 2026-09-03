@@ -120,6 +120,8 @@ def sweden_company_normalized_duckdb(
             "company_count": counts["companies"],
             "address_count": counts["company_addresses"],
             "registry_state_count": counts["company_registry_states"],
+            "scb_company_row_count": counts["scb_companies"],
+            "bolagsverket_company_row_count": counts["bolagsverket_companies"],
             "proceeding_count": counts["company_proceedings"],
             "industry_state_count": counts["company_industry_states"],
             "industry_code_count": counts["company_industry_codes"],

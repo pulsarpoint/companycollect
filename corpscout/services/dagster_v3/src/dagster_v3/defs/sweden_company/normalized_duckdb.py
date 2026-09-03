@@ -60,6 +60,10 @@ def replace_sweden_company_normalized_tables(
         _replace_company_registry_states_table(
             connection=connection, loaded_at=loaded_at
         )
+        _replace_scb_companies_table(connection=connection, loaded_at=loaded_at)
+        _replace_bolagsverket_companies_table(
+            connection=connection, loaded_at=loaded_at
+        )
         _replace_company_proceedings_table(connection=connection, loaded_at=loaded_at)
         _replace_companies_table(connection=connection, loaded_at=loaded_at)
         _replace_company_addresses_table(connection=connection, loaded_at=loaded_at)
@@ -75,6 +79,10 @@ def replace_sweden_company_normalized_tables(
             "company_addresses": _table_count(connection, "company_addresses"),
             "company_registry_states": _table_count(
                 connection, "company_registry_states"
+            ),
+            "scb_companies": _table_count(connection, "scb_companies"),
+            "bolagsverket_companies": _table_count(
+                connection, "bolagsverket_companies"
             ),
             "company_proceedings": _table_count(connection, "company_proceedings"),
             "company_industry_states": _table_count(
@@ -230,6 +238,115 @@ def _replace_company_registry_states_table(
         from states
         """,
         [loaded_at, loaded_at],
+    )
+
+
+def _replace_scb_companies_table(*, connection: Any, loaded_at: datetime) -> None:
+    """The whole SCB register record per company, in SCB's own organisation.
+
+    Built from scb_raw rather than filtered out of company_registry_states: that table
+    carries neither the five SNI columns nor the four address columns, and it carries a
+    derived_status the source layer must not have (2026-09-03 basic-info design, 3.1).
+    """
+    scb_identity = sweden_identity_sql("PeOrgNr")
+    connection.execute(
+        f"""
+        create or replace table sweden_company.scb_companies as
+        with scb_source as (
+            select
+                *,
+                {scb_identity} as company_id,
+                row_number() over (
+                    partition by {scb_identity}
+                    order by source_record_id, source_line_number, source_payload_hash
+                ) as company_rank
+            from sweden_company.scb_raw
+            where {scb_identity} != ''
+        )
+        select
+            company_id,
+            coalesce(PeOrgNr, '') as company_id_raw,
+            nullif(trim(Namn), '') as legal_name,
+            nullif(trim(Foretagsnamn), '') as alternate_name,
+            nullif(trim(JurForm), '') as legal_form_code,
+            nullif(trim(FtgStat), '') as source_status_code,
+            nullif(trim(JEStat), '') as source_secondary_status_code,
+            try_strptime(nullif(trim(RegDatKtid), ''), '%Y%m%d')::date
+                as registration_date,
+            nullif(trim(Ng1), '') as ng1_code,
+            nullif(trim(Ng2), '') as ng2_code,
+            nullif(trim(Ng3), '') as ng3_code,
+            nullif(trim(Ng4), '') as ng4_code,
+            nullif(trim(Ng5), '') as ng5_code,
+            nullif(trim(COAdress), '') as care_of,
+            nullif(trim(Gatuadress), '') as street_address,
+            nullif(trim(PostNr), '') as postal_code,
+            nullif(trim(PostOrt), '') as post_town,
+            nullif(trim(Reklamsparrtyp), '') as marketing_block_code,
+            source_run_id,
+            source_record_id,
+            source_payload_hash,
+            ? as observed_at
+        from scb_source
+        where company_rank = 1
+        """,
+        [loaded_at],
+    )
+
+
+def _replace_bolagsverket_companies_table(
+    *, connection: Any, loaded_at: datetime
+) -> None:
+    """The whole Bolagsverket register record per company, in Bolagsverket's own
+    organisation.
+
+    Built from bolagsverket_raw rather than filtered out of company_registry_states: that
+    table does not carry the packed postadress, and it carries a derived_status the source
+    layer must not have (2026-09-03 basic-info design, 3.1).
+    """
+    bolagsverket_identity = sweden_identity_sql("organisationsidentitet")
+    connection.execute(
+        f"""
+        create or replace table sweden_company.bolagsverket_companies as
+        with bolagsverket_source as (
+            select
+                *,
+                {bolagsverket_identity} as company_id,
+                row_number() over (
+                    partition by {bolagsverket_identity}
+                    order by source_record_id, source_line_number, source_payload_hash
+                ) as company_rank
+            from sweden_company.bolagsverket_raw
+            where {bolagsverket_identity} != ''
+        )
+        select
+            company_id,
+            coalesce(organisationsidentitet, '') as company_id_raw,
+            nullif(trim(namnskyddslopnummer), '') as name_protection_sequence,
+            nullif(trim(registreringsland), '') as registration_country_code,
+            nullif(trim(split_part(organisationsnamn, '$', 1)), '') as legal_name,
+            organisationsnamn as legal_name_raw,
+            nullif(trim(organisationsform), '') as legal_form_code,
+            try_strptime(
+                nullif(trim(registreringsdatum), ''), '%Y-%m-%d'
+            )::date as registration_date,
+            try_strptime(
+                nullif(trim(avregistreringsdatum), ''), '%Y-%m-%d'
+            )::date as deregistration_date,
+            nullif(trim(avregistreringsorsak), '') as deregistration_reason,
+            nullif(
+                trim(pagandeAvvecklingsEllerOmstruktureringsforfarande), ''
+            ) as proceedings_raw,
+            nullif(trim(verksamhetsbeskrivning), '') as activity_description,
+            postadress as postal_address,
+            source_run_id,
+            source_record_id,
+            source_payload_hash,
+            ? as observed_at
+        from bolagsverket_source
+        where company_rank = 1
+        """,
+        [loaded_at],
     )
 
 

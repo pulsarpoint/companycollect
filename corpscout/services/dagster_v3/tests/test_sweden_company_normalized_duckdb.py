@@ -112,6 +112,11 @@ def test_replace_sweden_company_normalized_tables_creates_company_address_and_in
         "companies": 6,  # old 3
         "company_addresses": 8,  # old 4
         "company_registry_states": 8,
+        # One row per company per source, the source's whole record (spec 3.1). They add up
+        # to company_registry_states because the same identity + rank-1 dedup builds all
+        # three.
+        "scb_companies": 4,
+        "bolagsverket_companies": 4,
         "company_proceedings": 0,
         "company_industry_states": 4,
         "company_industry_codes": 6,  # old 4
@@ -829,6 +834,193 @@ def test_replace_sweden_company_normalized_tables_fails_when_required_raw_column
                 connection=connection,
                 loaded_at=datetime(2026, 7, 3, 12, 0, tzinfo=UTC),
             )
+
+
+def test_normalized_snapshot_builds_the_two_register_source_tables(
+    tmp_path: Path,
+) -> None:
+    """2026-09-03 SE basic-info design, section 3.1: one table per register source, holding
+    that source's whole record. company_registry_states cannot simply be filtered into
+    these -- it carries neither SCB's Ng1..Ng5 and address columns nor Bolagsverket's packed
+    postal address, and it carries a derived_status these tables must not have."""
+    database_path = tmp_path / "sweden_company_source.duckdb"
+    loaded_at = datetime(2026, 9, 3, 6, 0, tzinfo=UTC)
+
+    with duckdb.connect(str(database_path)) as connection:
+        _create_raw_tables(connection)
+
+        replace_sweden_company_normalized_tables(
+            connection=connection,
+            loaded_at=loaded_at,
+        )
+
+        scb = connection.execute(
+            f"""
+            select
+                company_id,
+                company_id_raw,
+                legal_name,
+                alternate_name,
+                legal_form_code,
+                source_status_code,
+                source_secondary_status_code,
+                registration_date::varchar,
+                ng1_code,
+                ng2_code,
+                ng3_code,
+                ng4_code,
+                ng5_code,
+                care_of,
+                street_address,
+                postal_code,
+                post_town,
+                marketing_block_code,
+                source_run_id,
+                source_record_id,
+                source_payload_hash,
+                observed_at
+            from {tables.DLT_DATASET_NAME}.scb_companies
+            where company_id = '5560000000'
+            """
+        ).fetchone()
+        bolagsverket = connection.execute(
+            f"""
+            select
+                company_id,
+                company_id_raw,
+                name_protection_sequence,
+                registration_country_code,
+                legal_name,
+                legal_name_raw,
+                legal_form_code,
+                registration_date::varchar,
+                deregistration_date::varchar,
+                deregistration_reason,
+                proceedings_raw,
+                activity_description,
+                postal_address,
+                source_run_id,
+                source_record_id,
+                source_payload_hash,
+                observed_at
+            from {tables.DLT_DATASET_NAME}.bolagsverket_companies
+            where company_id = '5560000000'
+            """
+        ).fetchall()
+        closed = connection.execute(
+            f"""
+            select
+                deregistration_date::varchar,
+                deregistration_reason,
+                legal_name
+            from {tables.DLT_DATASET_NAME}.bolagsverket_companies
+            where company_id = '5561111111'
+            """
+        ).fetchone()
+        collision = connection.execute(
+            f"""
+            select
+                company_id_raw,
+                legal_name,
+                registration_date::varchar,
+                postal_address
+            from {tables.DLT_DATASET_NAME}.bolagsverket_companies
+            where company_id = '5565258888'
+            """
+        ).fetchall()
+
+    assert scb == (
+        "5560000000",
+        "5560000000",
+        "ACME SCB",
+        None,
+        "49",
+        "0",
+        "1",
+        "2020-01-01",
+        "62010",
+        "70220",
+        None,
+        None,
+        None,
+        "c/o ACME",
+        "Main Street 1",
+        "11122",
+        "STOCKHOLM",
+        "1",
+        "run-1",
+        "5560000000",
+        "scb-hash-1",
+        loaded_at,
+    )
+    assert bolagsverket == [
+        (
+            "5560000000",
+            "5560000000$ORGNR-IDORG",
+            "1",
+            "SE-LAND",
+            "Acme AB",
+            "Acme AB$FORETAGSNAMN-ORGNAM$2020-01-01",
+            "AB-ORGFO",
+            "2020-01-01",
+            None,
+            None,
+            None,
+            "Runs acme.se",
+            "Box 1$c/o CFO$STOCKHOLM$11122$SE-LAND",
+            "run-1",
+            "5560000000$ORGNR-IDORG",
+            "bolag-hash-1",
+            loaded_at,
+        )
+    ]
+    # A deregistered company keeps the source's own date and reason -- no derived status.
+    assert closed == ("2025-02-03", "OVERK-AVORG", "Closed AB")
+    # One row per company: the '16'-prefixed duplicate collapses onto the 10-digit identity
+    # and the winner is the smaller source_record_id, exactly as company_registry_states
+    # ranks its candidates.
+    assert collision == [
+        (
+            "165565258888",
+            "Bv8888 AB",
+            "2017-07-01",
+            "Bv8888 Street 5$$SIBLINGTOWN$55555$SE-LAND",
+        )
+    ]
+
+
+def test_the_register_source_duckdb_tables_match_the_export_column_tuples(
+    tmp_path: Path,
+) -> None:
+    """The exporter binds tables.SE_*_EXPORT_COLUMNS positionally against the migration's
+    column order, so the DuckDB tables must offer exactly those names in exactly that
+    order."""
+    database_path = tmp_path / "sweden_company_source.duckdb"
+
+    with duckdb.connect(str(database_path)) as connection:
+        _create_raw_tables(connection)
+        replace_sweden_company_normalized_tables(
+            connection=connection,
+            loaded_at=datetime(2026, 9, 3, 6, 0, tzinfo=UTC),
+        )
+
+        for duckdb_table, columns in (
+            ("scb_companies", tables.SE_SCB_COMPANIES_EXPORT_COLUMNS),
+            ("bolagsverket_companies", tables.SE_BOLAGSVERKET_COMPANIES_EXPORT_COLUMNS),
+        ):
+            names = [
+                str(row[0])
+                for row in connection.execute(
+                    """
+                    select column_name
+                    from information_schema.columns
+                    where table_schema = ? and table_name = ?
+                    order by ordinal_position
+                    """,
+                    [tables.DLT_DATASET_NAME, duckdb_table],
+                ).fetchall()
+            ]
+            assert names == list(columns), duckdb_table
 
 
 def _create_raw_tables(connection: duckdb.DuckDBPyConnection) -> None:
