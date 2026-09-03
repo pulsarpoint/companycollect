@@ -704,8 +704,11 @@ class PhaseCliTest(unittest.TestCase):
         self.assertIn("default: breadth_first", crawl_help.output)
         self.assertIn("--keep-non-english", analysis_help.output)
         self.assertIn("default: keep-non-english", analysis_help.output)
+        self.assertIn("--previous-report", analysis_help.output)
+        self.assertIn("--no-merge", analysis_help.output)
         self.assertEqual(runner.invoke(cli, ["suggest", "--help"]).exit_code, 0)
         self.assertEqual(runner.invoke(cli, ["extend", "--help"]).exit_code, 0)
+        self.assertIn("--max-passes", runner.invoke(cli, ["research", "--help"]).output)
 
 
 def _manifest(

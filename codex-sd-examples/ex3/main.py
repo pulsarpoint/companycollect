@@ -1,5 +1,7 @@
 import asyncio
+import functools
 import logging
+from collections.abc import Callable
 from pathlib import Path
 from typing import cast
 
@@ -18,11 +20,147 @@ from ex3.extend import ExtendSettings, run_extend
 from ex3.followup import SuggestSettings, next_pass_number, run_suggest
 from ex3.language import is_english_language
 from ex3.models import DiscoveryStrategy, SeedingSource, Selector
+from ex3.pipeline import ResearchSettings, run_research
 
 
 @click.group()
 def cli() -> None:
     """Crawl company sites once, then analyze stored Markdown independently."""
+
+
+# Shared with `research`, which crawls with the same knobs into a working
+# directory instead of a bare Markdown directory. Listed in the order they
+# should appear in `--help`; applied in reverse so click's decorator
+# stacking (innermost applied first) reproduces that order.
+_CRAWL_OPTIONS = [
+    click.option(
+        "--max-pages",
+        type=click.IntRange(min=1),
+        default=20,
+        show_default=True,
+        help="Target and hard limit for successfully stored Markdown pages.",
+    ),
+    click.option(
+        "--max-depth",
+        type=click.IntRange(min=0),
+        default=2,
+        show_default=True,
+        help="Link levels beyond the selected English base page.",
+    ),
+    click.option(
+        "--max-markdown-chars",
+        type=click.IntRange(min=1_000),
+        default=80_000,
+        show_default=True,
+        help="Maximum characters persisted from each page.",
+    ),
+    click.option(
+        "--crawl-concurrency",
+        type=click.IntRange(min=1),
+        default=5,
+        show_default=True,
+        help="Maximum concurrent Crawl4AI page crawls.",
+    ),
+    click.option(
+        "--cdp-port",
+        type=click.IntRange(min=1, max=65_535),
+        default=9_245,
+        show_default=True,
+    ),
+    click.option("--headless/--headed", default=True, show_default=True),
+    click.option(
+        "--include-external",
+        is_flag=True,
+        help="Allow BFS to follow external links after selecting the base URL.",
+    ),
+    click.option(
+        "--respect-robots/--ignore-robots",
+        "check_robots_txt",
+        default=True,
+        show_default=True,
+    ),
+    click.option(
+        "--proxy",
+        envvar="COMPANY_CRAWLER_PROXY",
+        help="Optional HTTP or SOCKS proxy used by CloakBrowser.",
+    ),
+    click.option(
+        "--seed/--no-seed",
+        default=True,
+        show_default=True,
+        help=(
+            "Build a URL inventory (sitemap by default) and pick the highest-scoring "
+            "pages before crawling; link discovery only fills the remaining budget."
+        ),
+    ),
+    click.option(
+        "--seed-source",
+        type=click.Choice(["sitemap", "sitemap+cc", "cc"]),
+        default="sitemap",
+        show_default=True,
+        help="URL inventory source. Common Crawl (cc) adds slow external index queries.",
+    ),
+    click.option(
+        "--seed-max-urls",
+        type=click.IntRange(min=1),
+        default=5_000,
+        show_default=True,
+        help="Maximum inventory URLs read from the seeding source.",
+    ),
+    click.option(
+        "--seed-share",
+        type=click.FloatRange(min=0.0, max=1.0),
+        default=0.6,
+        show_default=True,
+        help=(
+            "Share of the page budget rendered from the inventory before links "
+            "harvested from those pages are ranked for the second wave."
+        ),
+    ),
+    click.option(
+        "--discovery",
+        "discovery_strategy",
+        type=click.Choice(["best_first", "breadth_first"]),
+        default="breadth_first",
+        show_default=True,
+        help="Link-following strategy when no sitemap exists or budget remains.",
+    ),
+    click.option(
+        "--accept-language",
+        default="en-US,en;q=0.9",
+        show_default=True,
+        help="Accept-Language sent by the browser and the inventory fetches.",
+    ),
+    click.option(
+        "--selector",
+        type=click.Choice(["llm", "deterministic"]),
+        default="llm",
+        show_default=True,
+        help="Who picks pages from the sitemap inventory: one Codex call or the scorer.",
+    ),
+    click.option(
+        "--llm-candidates",
+        type=click.IntRange(min=10),
+        default=200,
+        show_default=True,
+        help="Maximum head-checked candidate URLs shown to the LLM selector.",
+    ),
+    click.option(
+        "--llm-timeout",
+        "llm_timeout_seconds",
+        type=click.IntRange(min=1),
+        default=300,
+        show_default=True,
+        help="Maximum seconds for the LLM selection call.",
+    ),
+]
+
+
+def _crawl_options(command: Callable) -> Callable:
+    """Apply the options shared by `crawl` and `research`, in `--help` order."""
+    return functools.reduce(
+        lambda decorated, option: option(decorated), reversed(_CRAWL_OPTIONS), command
+    )
 
 
 @cli.command("crawl")
@@ -34,126 +172,7 @@ def cli() -> None:
     show_default=True,
     help="Directory for page Markdown and the crawl manifest.",
 )
-@click.option(
-    "--max-pages",
-    type=click.IntRange(min=1),
-    default=20,
-    show_default=True,
-    help="Target and hard limit for successfully stored Markdown pages.",
-)
-@click.option(
-    "--max-depth",
-    type=click.IntRange(min=0),
-    default=2,
-    show_default=True,
-    help="Link levels beyond the selected English base page.",
-)
-@click.option(
-    "--max-markdown-chars",
-    type=click.IntRange(min=1_000),
-    default=80_000,
-    show_default=True,
-    help="Maximum characters persisted from each page.",
-)
-@click.option(
-    "--crawl-concurrency",
-    type=click.IntRange(min=1),
-    default=5,
-    show_default=True,
-    help="Maximum concurrent Crawl4AI page crawls.",
-)
-@click.option(
-    "--cdp-port",
-    type=click.IntRange(min=1, max=65_535),
-    default=9_245,
-    show_default=True,
-)
-@click.option("--headless/--headed", default=True, show_default=True)
-@click.option(
-    "--include-external",
-    is_flag=True,
-    help="Allow BFS to follow external links after selecting the base URL.",
-)
-@click.option(
-    "--respect-robots/--ignore-robots",
-    "check_robots_txt",
-    default=True,
-    show_default=True,
-)
-@click.option(
-    "--proxy",
-    envvar="COMPANY_CRAWLER_PROXY",
-    help="Optional HTTP or SOCKS proxy used by CloakBrowser.",
-)
-@click.option(
-    "--seed/--no-seed",
-    default=True,
-    show_default=True,
-    help=(
-        "Build a URL inventory (sitemap by default) and pick the highest-scoring "
-        "pages before crawling; link discovery only fills the remaining budget."
-    ),
-)
-@click.option(
-    "--seed-source",
-    type=click.Choice(["sitemap", "sitemap+cc", "cc"]),
-    default="sitemap",
-    show_default=True,
-    help="URL inventory source. Common Crawl (cc) adds slow external index queries.",
-)
-@click.option(
-    "--seed-max-urls",
-    type=click.IntRange(min=1),
-    default=5_000,
-    show_default=True,
-    help="Maximum inventory URLs read from the seeding source.",
-)
-@click.option(
-    "--seed-share",
-    type=click.FloatRange(min=0.0, max=1.0),
-    default=0.6,
-    show_default=True,
-    help=(
-        "Share of the page budget rendered from the inventory before links "
-        "harvested from those pages are ranked for the second wave."
-    ),
-)
-@click.option(
-    "--discovery",
-    "discovery_strategy",
-    type=click.Choice(["best_first", "breadth_first"]),
-    default="breadth_first",
-    show_default=True,
-    help="Link-following strategy when no sitemap exists or budget remains.",
-)
-@click.option(
-    "--accept-language",
-    default="en-US,en;q=0.9",
-    show_default=True,
-    help="Accept-Language sent by the browser and the inventory fetches.",
-)
-@click.option(
-    "--selector",
-    type=click.Choice(["llm", "deterministic"]),
-    default="llm",
-    show_default=True,
-    help="Who picks pages from the sitemap inventory: one Codex call or the scorer.",
-)
-@click.option(
-    "--llm-candidates",
-    type=click.IntRange(min=10),
-    default=200,
-    show_default=True,
-    help="Maximum head-checked candidate URLs shown to the LLM selector.",
-)
-@click.option(
-    "--llm-timeout",
-    "llm_timeout_seconds",
-    type=click.IntRange(min=1),
-    default=300,
-    show_default=True,
-    help="Maximum seconds for the LLM selection call.",
-)
+@_crawl_options
 @click.option(
     "--overwrite",
     is_flag=True,
@@ -255,6 +274,149 @@ def crawl_command(
         click.echo(f"Pages declaring a non-English language: {len(non_english)}")
     click.echo(f"Manifest: {manifest_path}")
     click.echo(f'Next: uv run python -m ex3.main analyze "{manifest_path}"')
+
+
+@cli.command("research")
+@click.argument("start_url")
+@click.option(
+    "--workdir",
+    type=click.Path(path_type=Path, file_okay=False),
+    default=Path("company-research"),
+    show_default=True,
+    help="Directory for the manifest, Markdown, inventory, suggestions and reports.",
+)
+@_crawl_options
+@click.option(
+    "--max-passes",
+    type=click.IntRange(min=1),
+    default=2,
+    show_default=True,
+    help="Total passes. 1 disables the suggestion-driven second pass.",
+)
+@click.option(
+    "--pass-pages",
+    type=click.IntRange(min=1),
+    default=10,
+    show_default=True,
+    help="Maximum pages the LLM may suggest for each extra pass.",
+)
+@click.option(
+    "--max-page-chars",
+    type=click.IntRange(min=1_000),
+    default=30_000,
+    show_default=True,
+)
+@click.option(
+    "--max-batch-pages", type=click.IntRange(min=1), default=5, show_default=True
+)
+@click.option(
+    "--max-batch-chars",
+    type=click.IntRange(min=1_000),
+    default=60_000,
+    show_default=True,
+)
+@click.option(
+    "--analysis-timeout",
+    "analysis_timeout_seconds",
+    type=click.IntRange(min=1),
+    default=300,
+    show_default=True,
+)
+@click.option(
+    "--overwrite",
+    is_flag=True,
+    help="Replace an existing manifest in the work directory.",
+)
+@click.option("--verbose", is_flag=True)
+def research_command(
+    start_url: str,
+    workdir: Path,
+    max_pages: int,
+    max_depth: int,
+    max_markdown_chars: int,
+    crawl_concurrency: int,
+    cdp_port: int,
+    headless: bool,
+    include_external: bool,
+    check_robots_txt: bool,
+    proxy: str | None,
+    seed: bool,
+    seed_source: str,
+    seed_max_urls: int,
+    seed_share: float,
+    discovery_strategy: str,
+    accept_language: str,
+    selector: str,
+    llm_candidates: int,
+    llm_timeout_seconds: int,
+    max_passes: int,
+    pass_pages: int,
+    max_page_chars: int,
+    max_batch_pages: int,
+    max_batch_chars: int,
+    analysis_timeout_seconds: int,
+    overwrite: bool,
+    verbose: bool,
+) -> None:
+    """Run crawl, analysis and bounded LLM-guided passes end to end from START_URL."""
+    _configure_logging(verbose=verbose)
+    manifest_path = workdir.resolve() / "crawl-manifest.json"
+    if manifest_path.exists() and not overwrite:
+        raise click.ClickException(
+            f"Refusing to overwrite {manifest_path}. Use --overwrite."
+        )
+
+    crawl_settings = CrawlSettings(
+        start_url=start_url,
+        markdown_dir=workdir,
+        max_pages=max_pages,
+        max_depth=max_depth,
+        max_markdown_chars=max_markdown_chars,
+        crawl_concurrency=crawl_concurrency,
+        cdp_port=cdp_port,
+        headless=headless,
+        include_external=include_external,
+        check_robots_txt=check_robots_txt,
+        proxy=proxy,
+        seed=seed,
+        seed_source=cast(SeedingSource, seed_source),
+        seed_max_urls=seed_max_urls,
+        seed_share=seed_share,
+        discovery_strategy=cast(DiscoveryStrategy, discovery_strategy),
+        accept_language=accept_language,
+        selector=cast(Selector, selector),
+        llm_candidates=llm_candidates,
+        llm_timeout_seconds=llm_timeout_seconds,
+    )
+    settings = ResearchSettings(
+        start_url=start_url,
+        workdir=workdir,
+        crawl=crawl_settings,
+        max_pages=max_pages,
+        max_depth=max_depth,
+        pass_pages=pass_pages,
+        max_passes=max_passes,
+        analysis_timeout_seconds=analysis_timeout_seconds,
+        max_page_chars=max_page_chars,
+        max_batch_pages=max_batch_pages,
+        max_batch_chars=max_batch_chars,
+    )
+    try:
+        report = asyncio.run(run_research(settings))
+    except KeyboardInterrupt as error:
+        click.echo("Research interrupted.", err=True)
+        raise SystemExit(130) from error
+    except Exception as error:
+        raise click.ClickException(str(error)) from error
+
+    for pass_summary in report.passes:
+        click.echo(
+            f"pass {pass_summary.pass_number}: {pass_summary.pages} pages, "
+            f"{pass_summary.new_pages} new, {pass_summary.batches} batches, "
+            f"{pass_summary.token_totals.total_tokens:,} tokens"
+        )
+    click.echo(f"Gaps: {', '.join(gap.field for gap in report.gaps) or 'none'}")
+    click.echo(f"Report: {workdir.resolve() / 'report.json'}")
 
 
 @cli.command("analyze")

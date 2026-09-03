@@ -5,10 +5,14 @@ The repository contains three approaches:
 - `ex1`: the application manages the crawl frontier and the LLM ranks links.
 - `ex2`: Crawl4AI manages the complete breadth-first crawl and the LLM only
   extracts structured facts from each returned page.
-- `ex3`: two independent phases connected by a durable crawl manifest. The
-  first command selects English, picks the most informative pages from the
-  site's URL inventory, and stores a bounded crawl as Markdown; the second
-  command can analyze those files repeatedly without crawling again.
+- `ex3`: crawl and analysis as independent commands connected by a durable
+  crawl manifest, plus a `research` command that chains them with bounded,
+  LLM-guided follow-up passes. The crawl command selects English, picks the
+  most informative pages from the site's URL inventory, and stores a bounded
+  crawl as Markdown; the analysis command can run against those files
+  repeatedly without crawling again; `research` runs both once, then asks the
+  LLM what is still missing and crawls and analyzes up to `--max-passes`
+  rounds to fill it in.
 
 ## Example 1: LLM-assisted frontier
 
@@ -213,6 +217,35 @@ type, labels, occurrence count, and source pages. The top-level
 `related_domain_analysis` records the classification status and token usage;
 each accepted `related_domains` entry includes the LLM relationship and reason
 plus deterministic URL provenance.
+
+### Passes: let the LLM ask for more
+
+`research` runs everything end to end and adds a configurable second pass:
+
+```bash
+uv run python -m ex3.main research https://example.com \
+  --workdir company-research \
+  --max-pages 20 \
+  --pass-pages 10 \
+  --max-passes 2
+```
+
+1. `crawl` and `analyze` produce `report-pass-1.json`.
+2. `suggest` computes which requirements are still missing or weak
+   (`ex3/requirements.py`) and shows the LLM every discovered or listed URL
+   that was not processed; it returns up to `--pass-pages` URLs with the
+   fields each should fill, validated against the candidates
+   (`suggestions-pass-2.json`).
+3. `extend` crawls those pages into the same manifest, tagged with the pass
+   number and the reason.
+4. `analyze --previous-report report-pass-1.json` extracts only the new pages,
+   consolidates all rounds deterministically, then asks the LLM once to merge
+   the previous result and the new round into one profile. Evidence URLs
+   outside processed pages are dropped and counted in `merge_analysis`.
+
+`--max-passes 1` disables the extra pass; the loop also stops when nothing is
+missing or the LLM suggests nothing. Each command can be run on its own with
+the artifacts above.
 
 ## Output
 
