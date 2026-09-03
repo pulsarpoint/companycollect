@@ -14,7 +14,7 @@
 
 - Migration files: first line `CREATE DATABASE IF NOT EXISTS corpscout;`, last line a statement, NO semicolon inside any comment, `ORDER BY` keys non-nullable, one table per migration, numbers 000376–000379 (slice 0 took 000373–000375; verify with `ls corpscout/clickhouse/migrations | tail -2` → `000375_corpscout_retire_se_company_registry.{down,up}.sql` before creating files). Every new migration name goes into `EXPECTED_MIGRATIONS` in `tests/test_clickhouse_migrations.py` right after the 000375 entry.
 - Names (spec section 11): tables `se_company_basic_info_suggestion`, `se_company_basic_info`, `se_company_basic_info_history`, `se_company_basic_info_precedence`; assets `se_company_basic_info_fold`, `se_company_basic_info_fold_companies`, `se_company_basic_info_precedence_clickhouse`; module `dagster_v3.defs.se_company.basic_info`; sources `scb`, `bolagsverket`, `wikidata`, `esef`, `ratsit`, `llm`, `reviewer`; Dagster group `se_company_basic_info`.
-- Suggestion semantics (spec 3.2): NULL in a value column = "no opinion", never "says empty"; one current row per company and source = `ReplacingMergeTree(suggested_at) ORDER BY (company_id, source)`, read with `FINAL`; `content_hash` is MATERIALIZED over the nine value columns, NULL-safe (NULL and `''` hash differently).
+- Suggestion semantics (spec 3.2): NULL in a value column = "no opinion", never "says empty"; one current row per company and source = `ReplacingMergeTree(suggested_at) ORDER BY (company_id, source)`, read with `FINAL`; NO content hash (owner decision 2026-09-03): an extractor writes a new suggestion row when the source's current record has a newer `observed_at` than the current suggestion row, or none exists.
 - Fold rules (spec 5): per field the highest precedence wins, ties to the newest `observed_at`, then the smaller `source_record_uid`; `description_language` follows the `description` winner; no row unless SCB or Bolagsverket supplies `legal_name`; `status` is `''` and every `_source` is `''` when a field has no winner; the batch writes only rows that differ from the current main row and one history row per changed company (`changed_fields` = every non-NULL field on the first publish); pages of 20,000 companies.
 - Dagster (spec 6): 64 static partitions on `modulo(cityHash64(company_id), 64)`, `BackfillPolicy.multi_run(max_partitions_per_run=1)`, one pool `se_company_basic_info_fold` on both fold assets, `changed_only` default true on the partitioned fold, `company_ids` required on the targeted fold, no sensor, no schedule in this slice.
 - No `from __future__ import annotations` in modules that define assets (Dagster context-type validation).
@@ -80,21 +80,16 @@ from tests.se_company_ddl import declared_columns, table_block
 
 def test_suggestion_table_is_one_current_row_per_company_and_source() -> None:
     block = table_block("se_company_basic_info_suggestion")
-    assert declared_columns("se_company_basic_info_suggestion") == [
-        *tables.SUGGESTION_INSERT_COLUMNS[:16],
-        "content_hash",
-        *tables.SUGGESTION_INSERT_COLUMNS[16:],
-    ]
+    assert declared_columns("se_company_basic_info_suggestion") == list(tables.SUGGESTION_INSERT_COLUMNS)
     assert "ENGINE = ReplacingMergeTree(suggested_at)" in block
     assert "ORDER BY (company_id, source)" in block
     assert "CONSTRAINT valid_company_id CHECK match(company_id, '^([0-9]{10}|[0-9]{12})$')" in block
-    # NULL means no opinion: every value column is Nullable, and the hash tells NULL
-    # from '' because a NULL contributes '~' and a value contributes '=' plus the value.
+    # NULL means no opinion: every value column is Nullable. There is no content hash
+    # (owner decision 2026-09-03): the source's observed_at is the change signal.
     for column in tables.VALUE_COLUMNS:
         assert f"    {column} Nullable(" in block, column
-    assert "content_hash FixedString(64) MATERIALIZED lower(hex(SHA256(" in block
-    for column in tables.VALUE_COLUMNS:
-        assert f"if({column} IS NULL, '~', concat('=', " in block, column
+    assert "content_hash" not in block
+    assert "MATERIALIZED" not in block
     assert "decided_by Nullable(String)" in block
     assert "note Nullable(String)" in block
 
@@ -168,11 +163,9 @@ CREATE DATABASE IF NOT EXISTS corpscout;
 -- basic-info entity (2026-09-03 SE basic-info design, section 3.2). Sources are scb,
 -- bolagsverket, wikidata, esef, ratsit, llm and reviewer. NULL in a value column means
 -- the source has no opinion, never that the source says empty. An extractor inserts a
--- new version only when content_hash differs from the current row, so an unchanged
--- refresh writes nothing. decided_by and note are set on reviewer rows only.
--- content_hash covers the nine value columns and tells NULL ('~') from a value ('=' and
--- the value), joined by the unit separator, so a released field hashes differently from
--- an empty one.
+-- new version only when the source's current record carries a newer observed_at than
+-- the current suggestion row, so an unchanged refresh writes nothing and there is no
+-- content hash to maintain. decided_by and note are set on reviewer rows only.
 CREATE TABLE IF NOT EXISTS corpscout.se_company_basic_info_suggestion
 (
     company_id String,
@@ -191,17 +184,6 @@ CREATE TABLE IF NOT EXISTS corpscout.se_company_basic_info_suggestion
     decided_by Nullable(String),
     note Nullable(String),
     suggested_at DateTime64(3, 'UTC'),
-    content_hash FixedString(64) MATERIALIZED lower(hex(SHA256(concat(
-        if(legal_name IS NULL, '~', concat('=', legal_name)), '\x1F',
-        if(legal_form_code IS NULL, '~', concat('=', legal_form_code)), '\x1F',
-        if(status IS NULL, '~', concat('=', status)), '\x1F',
-        if(incorporation_date IS NULL, '~', concat('=', toString(incorporation_date))), '\x1F',
-        if(lei IS NULL, '~', concat('=', lei)), '\x1F',
-        if(wikidata_id IS NULL, '~', concat('=', wikidata_id)), '\x1F',
-        if(description IS NULL, '~', concat('=', description)), '\x1F',
-        if(description_language IS NULL, '~', concat('=', description_language)), '\x1F',
-        if(description_sv IS NULL, '~', concat('=', description_sv))
-    )))),
     source_run_id String,
     extractor_version LowCardinality(String),
 
@@ -357,8 +339,7 @@ QUALIFIED_MAIN_TABLE = f"{DATABASE}.{MAIN_TABLE}"
 QUALIFIED_HISTORY_TABLE = f"{DATABASE}.{HISTORY_TABLE}"
 QUALIFIED_PRECEDENCE_TABLE = f"{DATABASE}.{PRECEDENCE_TABLE}"
 
-# The nine value columns a suggestion row carries, in DDL order. content_hash covers
-# exactly these.
+# The nine value columns a suggestion row carries, in DDL order.
 VALUE_COLUMNS: tuple[str, ...] = (
     "legal_name",
     "legal_form_code",
@@ -375,8 +356,7 @@ VALUE_COLUMNS: tuple[str, ...] = (
 # description_language, which follows the description winner (spec 4 and 5).
 FOLDED_FIELDS: tuple[str, ...] = tuple(c for c in VALUE_COLUMNS if c != "description_language")
 
-# What an extractor (or the backoffice) inserts. content_hash is MATERIALIZED and never
-# listed: ClickHouse computes it on insert.
+# What an extractor (or the backoffice) inserts: every column of the table, in DDL order.
 SUGGESTION_INSERT_COLUMNS: tuple[str, ...] = (
     "company_id",
     "source",
@@ -424,7 +404,7 @@ PRECEDENCE_COLUMNS: tuple[str, ...] = ("field", "source", "precedence", "exporte
 - [ ] **Step 5: Run the tests to verify they pass**
 
 Run: `cd corpscout/services/dagster_v3 && uv run --frozen --no-sync pytest tests/test_se_company_basic_info_tables.py tests/test_clickhouse_migrations.py -q -p no:warnings`
-Expected: PASS. If `declared_columns` does not list `content_hash` (it is a MATERIALIZED column with an expression spanning lines), read `tests/se_company_ddl.py::declared_columns` and, if its regex needs the column on one line, adjust the first assertion of `test_suggestion_table_...` to compare against `[c for c in declared if c != "content_hash"]` and pin `content_hash` by text instead — report which you did.
+Expected: PASS.
 
 Then: `uv run --frozen --no-sync ruff check src/dagster_v3/defs/se_company/basic_info tests/test_se_company_basic_info_tables.py`
 
@@ -1360,7 +1340,7 @@ Claude-Session: https://claude.ai/code/session_01RY2W9FTCX9YxUcXtSBaEJ5"
 **Interfaces:**
 - Consumes: the four migration files, `batch.*_sql()` texts, `tables.*`. Uses `tests.test_se_company_person_clickhouse_local._clickhouse_local_command` (Docker or a local binary; skips only when neither exists — on this machine Docker is available and the test must run).
 
-The harness runs SQL only (clickhouse-local has no Python client): it applies the real DDL, inserts suggestion rows, and executes the exact SQL texts the batch layer sends, under both `join_use_nulls` settings, comparing to hand-written output. The Python fold itself is covered by Task 3; the batch loop by Task 4; here the claims are about ClickHouse: FINAL gives the current row per (company, source), `content_hash` tells NULL from `''`, and the watermark queries and inserts work on the real schema.
+The harness runs SQL only (clickhouse-local has no Python client): it applies the real DDL, inserts suggestion rows, and executes the exact SQL texts the batch layer sends, under both `join_use_nulls` settings, comparing to hand-written output. The Python fold itself is covered by Task 3; the batch loop by Task 4; here the claims are about ClickHouse: FINAL gives the current row per (company, source), a NULL and an empty value read back distinguishably, and the watermark queries and inserts work on the real schema.
 
 - [ ] **Step 1: Write the harness**
 
@@ -1370,9 +1350,7 @@ The harness runs SQL only (clickhouse-local has no Python client): it applies th
 Claims a fake client cannot settle:
 1. The real DDL applies, and FINAL on the suggestion table returns the newest version per
    (company_id, source) -- a re-suggestion replaces, a second source adds.
-2. content_hash tells NULL (no opinion) from '' (says empty), so a release hashes
-   differently from an empty value and an extractor's hash anti-join sees the change.
-3. The watermark queries and the main/history INSERTs accept the exact texts and row
+2. The watermark queries and the main/history INSERTs accept the exact texts and row
    shapes batch.py sends, under join_use_nulls 0 and 1.
 """
 
@@ -1477,21 +1455,16 @@ def test_final_returns_the_current_row_per_company_and_source(join_use_nulls: in
     assert lines[5:7] == ["5560000000", "5561111111"]
 
 
-def test_content_hash_tells_null_from_empty_and_is_stable() -> None:
+def test_null_and_empty_are_different_opinions_on_read() -> None:
+    """The fold treats NULL as no opinion and '' as a stated empty value; the table must
+    return them distinguishably (a NULL status reads back as \\N, an empty one as '')."""
     script = _schema_statements() + [
         _suggestion("5560000000", "reviewer", "2026-09-01 00:00:00", legal_name="X AB", status=None),
         _suggestion("5560000000", "scb", "2026-09-01 00:00:00", legal_name="X AB", status=""),
-        _suggestion("5561111111", "scb", "2026-09-05 00:00:00", legal_name="X AB", status=None),
-        f"SELECT company_id, source, content_hash FROM {tables.QUALIFIED_SUGGESTION_TABLE} ORDER BY company_id, source",
+        f"SELECT source, status FROM {tables.QUALIFIED_SUGGESTION_TABLE} FINAL ORDER BY source",
     ]
     lines = _run(script, join_use_nulls=0)
-    reviewer_hash = lines[0].split("\t")[2]
-    scb_empty_hash = lines[1].split("\t")[2]
-    other_company_same_values_hash = lines[2].split("\t")[2]
-    assert len(reviewer_hash) == 64 and reviewer_hash == reviewer_hash.lower()
-    assert reviewer_hash != scb_empty_hash  # NULL status vs '' status
-    # The hash covers only the nine value columns: same values elsewhere -> same hash.
-    assert reviewer_hash == other_company_same_values_hash
+    assert lines == ["reviewer\t\\N", "scb\t"]
 
 
 @pytest.mark.parametrize("join_use_nulls", [0, 1], ids=["join_use_nulls_off", "join_use_nulls_on"])
@@ -1516,7 +1489,7 @@ def test_main_and_history_inserts_accept_the_batch_row_shape(join_use_nulls: int
 - [ ] **Step 2: Run the harness**
 
 Run: `cd corpscout/services/dagster_v3 && uv run --frozen --no-sync pytest tests/test_se_company_basic_info_clickhouse_local.py -q -p no:warnings -m integration -v`
-Expected: 5 passed on Docker (a skip is a failure of this step on this machine). If clickhouse-local rejects the `'\x1F'` escape in the MATERIALIZED expression, replace it in 000376 with `char(31)` (both files: the DDL and the Task 1 test's `if(... IS NULL, '~', concat('=', ` pins do not mention the separator) and report it. If `INSERT ... VALUES` with an `Array(String)` literal needs a different bracket style, fix the test's literal, not the SQL text.
+Expected: 5 passed on Docker (a skip is a failure of this step on this machine). If `INSERT ... VALUES` with an `Array(String)` literal needs a different bracket style, fix the test's literal, not the SQL text.
 
 - [ ] **Step 3: ruff and commit**
 
@@ -1817,8 +1790,9 @@ The basic-info entity of the 2026-09-03 SE basic-info design
 
 Suggestion rows come from the slice-2 extractors (`se_basic_info_suggestions_<source>`) and,
 for the `reviewer` source, from the backoffice (slice 3). NULL in a value column is "no
-opinion". `content_hash` is materialized by ClickHouse over the nine value columns and
-tells NULL from `''`.
+opinion". There is no content hash: an extractor writes a new row when the source's
+current record has a newer `observed_at` than the current suggestion row, and the fold
+writes nothing when the folded values did not change.
 
 Operating the fold: materialize one `bucket_NN` partition or launch a backfill of all 64
 from the UI; `changed_only` (default true) skips companies folded after their newest
@@ -1845,10 +1819,10 @@ Under section 10's entry `1. Tables, precedence, fold function, the two fold ass
    Built <YYYY-MM-DD> (plan `2026-09-03-se-basic-info-1-tables-fold.md`): migrations
    000376-000379, package `dagster_v3.defs.se_company.basic_info` (`tables`, `precedence`,
    `fold`, `batch`, `assets`). Slice 2's extractors insert through
-   `tables.SUGGESTION_INSERT_COLUMNS` (never `content_hash`, ClickHouse materializes it) and
-   dedupe on `content_hash` against `FINAL` rows; they must set `observed_at` to the source
-   observation time, since ties break on it. The fold assets exist but the suggestion table
-   is empty until slice 2 runs.
+   `tables.SUGGESTION_INSERT_COLUMNS` and write a row only when the source's current
+   record has a newer `observed_at` than the current suggestion row (`FINAL`) or none
+   exists; `observed_at` must be the source's own, monotonic per record, since ties break
+   on it. The fold assets exist but the suggestion table is empty until slice 2 runs.
 ```
 
 - [ ] **Step 4: Commit**
@@ -1879,7 +1853,7 @@ Run by the coordinator after the branch is merged to main, each step confirmed w
 
 ## Self-review
 
-**Spec coverage.** 3.2 suggestion table → Task 1 (DDL, NULL semantics, content_hash NULL-safe, CHECK). 3.3 main table → Task 1 (per-field `_source`, `status ''`, `folded_at` version, `fold_version`). 3.4 history → Task 1 (`changed_fields`, MergeTree ORDER BY (company_id, folded_at)); written only on change → Task 4. 3.5 precedence table → Task 1; exported from code → Task 6. Section 4 dictionary with the spec's numbers, absence = cannot supply, `description_language` unmapped → Task 2. Section 5 rules 1–4 → Task 3 (winner, ties, publish rule, fold_version + run id); batch steps 1–4 and pages of 20,000 → Task 4 (`FINAL` per company and source, watermark selection, diff on values and sources, history per changed company). Section 6 fold assets (64 partitions on `cityHash64 % 64`, `multi_run(1)`, one pool, `changed_only` default true, `company_ids` required, precedence export, no sensor, no schedule) → Task 6; the extractors and the job are slice 2 by the spec. Section 9 pure-function tests → Task 3; fake client batch tests → Task 4; clickhouse-local both `join_use_nulls` → Task 5; extractor SQL and backoffice → later slices. Section 11 names → used verbatim throughout.
+**Spec coverage.** 3.2 suggestion table → Task 1 (DDL, NULL semantics, no content hash — the source `observed_at` is the change signal, CHECK). 3.3 main table → Task 1 (per-field `_source`, `status ''`, `folded_at` version, `fold_version`). 3.4 history → Task 1 (`changed_fields`, MergeTree ORDER BY (company_id, folded_at)); written only on change → Task 4. 3.5 precedence table → Task 1; exported from code → Task 6. Section 4 dictionary with the spec's numbers, absence = cannot supply, `description_language` unmapped → Task 2. Section 5 rules 1–4 → Task 3 (winner, ties, publish rule, fold_version + run id); batch steps 1–4 and pages of 20,000 → Task 4 (`FINAL` per company and source, watermark selection, diff on values and sources, history per changed company). Section 6 fold assets (64 partitions on `cityHash64 % 64`, `multi_run(1)`, one pool, `changed_only` default true, `company_ids` required, precedence export, no sensor, no schedule) → Task 6; the extractors and the job are slice 2 by the spec. Section 9 pure-function tests → Task 3; fake client batch tests → Task 4; clickhouse-local both `join_use_nulls` → Task 5; extractor SQL and backoffice → later slices. Section 11 names → used verbatim throughout.
 
 **Deliberately not in this slice:** the `max_removed_fraction` guard parked in the slice-0 handoff belongs to the source-table publisher, not the fold; reviewer-row semantics beyond the table shape (slice 3); the extract job and weekly schedule (slice 2).
 

@@ -61,7 +61,6 @@ description_language  Nullable(String)         -- language of `description`
 description_sv        Nullable(String)
 decided_by            Nullable(String)         -- reviewer rows only
 note                  Nullable(String)         -- reviewer rows only
-content_hash          FixedString(64) MATERIALIZED sha256 over the nine value columns, NULL-safe
 suggested_at          DateTime64(3, 'UTC')     -- version
 source_run_id         String
 extractor_version     LowCardinality(String)
@@ -69,7 +68,7 @@ ENGINE = ReplacingMergeTree(suggested_at) ORDER BY (company_id, source)
 CHECK match(company_id, '^([0-9]{10}|[0-9]{12})$')
 ```
 
-NULL in a value column means "this source has no opinion", never "this source says empty". An extractor inserts a row only when its `content_hash` differs from the current row for that company and source, so an unchanged daily refresh writes nothing. A source with several records per company (ESEF filings) contributes its newest record. A reviewer decision is a new version of the reviewer row; a release sets that one field back to NULL in a new version.
+NULL in a value column means "this source has no opinion", never "this source says empty". An extractor inserts a row only when the source's current record carries a newer `observed_at` than the current suggestion row for that company and source (or no suggestion row exists), so an unchanged daily refresh writes nothing; a source change outside the basic-info fields writes an identical suggestion row, which the fold then finds unchanged (owner decision 2026-09-03: no content hash, the source timestamp is the change signal, and each extractor must use a timestamp that is monotonic per source record). A source with several records per company (ESEF filings) contributes its newest record. A reviewer decision is a new version of the reviewer row; a release sets that one field back to NULL in a new version.
 
 ### 3.3 `se_company_basic_info`
 
