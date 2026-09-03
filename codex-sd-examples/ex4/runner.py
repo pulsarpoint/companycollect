@@ -139,7 +139,13 @@ def plan_calls(settings: RunSettings) -> list[CallPlan]:
     for domain, candidate_set in candidate_sets.items():
         hash_value = candidates_hash(candidate_set)
         for template in templates:
-            key = cache_key(template.text, hash_value, settings.limit)
+            rendered = render_prompt(
+                template,
+                base_url=candidate_set.base_url,
+                limit=settings.limit,
+                candidate_set=candidate_set,
+            )
+            key = cache_key(rendered, hash_value, settings.limit)
             for repeat in range(1, settings.repeats + 1):
                 path = settings.data.result_file(
                     settings.run_id, domain, template.name, repeat

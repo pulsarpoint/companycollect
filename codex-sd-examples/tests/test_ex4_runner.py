@@ -6,8 +6,9 @@ from unittest.mock import patch
 from ex3.candidates import PageCandidate
 from ex3.crawler import save_model
 from ex3.models import LlmCallStatus, ScoredUrl
-from ex4.candidates import CandidateSet
+from ex4.candidates import CandidateSet, load_candidate_set
 from ex4.paths import DataDir
+from ex4.prompts import load_prompts, render_prompt
 from ex4.runner import (
     RunResult,
     RunSettings,
@@ -122,8 +123,15 @@ class RunnerTest(unittest.IsolatedAsyncioTestCase):
                 result.picks[0].expected_fields, ["description", "founded_year"]
             )
             self.assertEqual(result.picks[0].reason, "about page")
+            template = load_prompts(data.prompts, ["pa"])[0]
+            rendered = render_prompt(
+                template,
+                base_url="https://www.a.se/",
+                limit=5,
+                candidate_set=load_candidate_set(data.candidate_file("a.se")),
+            )
             self.assertEqual(
-                result.cache_key, cache_key(PROMPT, result.candidates_hash, 5)
+                result.cache_key, cache_key(rendered, result.candidates_hash, 5)
             )
             failed_result = RunResult.model_validate_json(
                 data.result_file("r1", "b.se", "pb", 1).read_text(encoding="utf-8")
