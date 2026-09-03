@@ -9,8 +9,6 @@ COMPANIES_TABLE_CH = "se_companies"
 COMPANY_ADDRESSES_TABLE_CH = "se_company_addresses"
 COMPANY_ADDRESSES_CURRENT_TABLE_CH = "se_company_addresses_current"
 INDUSTRIES_TABLE_CH = "se_industries"
-COMPANY_REGISTRY_OBSERVATIONS_TABLE_CH = "se_company_registry_observations"
-COMPANY_REGISTRY_CURRENT_TABLE_CH = "se_company_registry_current"
 COMPANY_PROCEEDING_OBSERVATIONS_TABLE_CH = "se_company_proceeding_observations"
 COMPANY_PROCEEDINGS_CURRENT_TABLE_CH = "se_company_proceedings_current"
 COMPANY_INDUSTRY_OBSERVATIONS_TABLE_CH = "se_company_industry_observations"
@@ -21,12 +19,6 @@ QUALIFIED_COMPANY_ADDRESSES_CURRENT_TABLE = (
     f"{SWEDEN_DATABASE}.{COMPANY_ADDRESSES_CURRENT_TABLE_CH}"
 )
 QUALIFIED_INDUSTRIES_TABLE = f"{SWEDEN_DATABASE}.{INDUSTRIES_TABLE_CH}"
-QUALIFIED_COMPANY_REGISTRY_OBSERVATIONS_TABLE = (
-    f"{SWEDEN_DATABASE}.{COMPANY_REGISTRY_OBSERVATIONS_TABLE_CH}"
-)
-QUALIFIED_COMPANY_REGISTRY_CURRENT_TABLE = (
-    f"{SWEDEN_DATABASE}.{COMPANY_REGISTRY_CURRENT_TABLE_CH}"
-)
 QUALIFIED_COMPANY_PROCEEDING_OBSERVATIONS_TABLE = (
     f"{SWEDEN_DATABASE}.{COMPANY_PROCEEDING_OBSERVATIONS_TABLE_CH}"
 )
@@ -211,35 +203,6 @@ SE_COMPANY_ADDRESS_OBSERVATION_COLUMNS = (
     *SE_COMPANY_ADDRESS_BASE_COLUMNS,
     "has_address",
     "address_fingerprint",
-    "observation_fingerprint",
-    "observed_at",
-)
-
-SE_COMPANY_REGISTRY_OBSERVATION_COLUMNS = (
-    "company_id",
-    "source",
-    "company_id_raw",
-    "legal_name",
-    "legal_name_raw",
-    "alternate_name",
-    "legal_form_code",
-    "source_status_code",
-    "source_secondary_status_code",
-    "derived_status",
-    "status_reason",
-    "incorporation_date",
-    "dissolution_date",
-    "activity_description",
-    "name_protection_sequence",
-    "registration_country_code",
-    "marketing_block_code",
-    "proceedings_raw",
-    "source_run_id",
-    "source_record_id",
-    "source_payload_hash",
-    "updated_from_raw_at",
-    "has_company",
-    "state_fingerprint",
     "observation_fingerprint",
     "observed_at",
 )

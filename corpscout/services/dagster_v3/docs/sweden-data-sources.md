@@ -57,10 +57,16 @@ What it provides:
 - **`se_industries`** — SCB `Ng1`..`Ng5` 5-digit SNI codes with derived 4-digit
   `nace_rev2_class_code` (the 5th digit is Sweden-specific detail, so we do not
   call the 5-digit value NACE).
-- **`se_company_registry_observations`** — append-only source-specific legal
-  and profile states, including raw SCB `FtgStat` / `JEStat`, legal form,
-  names, explicit dates, marketing block, and Bolagsverket activity/status
-  fields. `se_company_registry_current` is the fast current projection.
+- **`se_scb_companies`** — one row per company with the whole SCB register
+  record in SCB's own organisation: raw `FtgStat` / `JEStat`, legal form, both
+  name fields, registration date, the five SNI codes, the address columns and
+  the marketing block. No derived status: interpreting SCB's codes belongs to
+  the basic-info suggestion extractors.
+- **`se_bolagsverket_companies`** — one row per company with the whole
+  Bolagsverket register record: identity, name-protection sequence,
+  registration country, both name forms, legal form, registration and
+  deregistration dates with the deregistration reason, the pending-proceedings
+  field, activity description and the packed postal address.
 - **`se_company_proceeding_observations`** — typed Bolagsverket liquidation,
   bankruptcy, and restructuring procedures with raw values retained;
   `se_company_proceedings_current` contains the currently reported set.

@@ -137,10 +137,13 @@ def test_export_sweden_company_clickhouse_industries_replaces_industries(
     )
 
 
-def test_publish_sweden_company_profile_history_tracks_changes_and_removals(
+def test_publish_sweden_company_profile_history_publishes_proceedings_only(
     tmp_path: Path,
     monkeypatch,
 ) -> None:
+    """The registry half retired with the 2026-09-03 basic-info design: the two register
+    sources each have their own source table now. Proceedings keep the observation +
+    _current shape until the proceedings entity's own slice."""
     client = FakeClickHouseClient()
     resource = ClickhouseResource(host="localhost")
 
@@ -156,16 +159,13 @@ def test_publish_sweden_company_profile_history_tracks_changes_and_removals(
             clickhouse=resource,
         )
 
-    assert result.registry.candidates == 1
-    assert result.registry.observations_inserted == 2
-    assert result.registry.first_observations == 1
-    assert result.registry.removals == 1
-    assert result.proceedings.candidates == 1
-    assert result.proceedings.observations_inserted == 2
+    assert result.candidates == 1
+    assert result.observations_inserted == 2
+    assert result.first_observations == 1
+    assert result.changes == 0
+    assert result.removals == 1
     assert client.table_checks == [
         (
-            tables.COMPANY_REGISTRY_OBSERVATIONS_TABLE_CH,
-            tables.COMPANY_REGISTRY_CURRENT_TABLE_CH,
             tables.COMPANY_PROCEEDING_OBSERVATIONS_TABLE_CH,
             tables.COMPANY_PROCEEDINGS_CURRENT_TABLE_CH,
         )
@@ -175,8 +175,11 @@ def test_publish_sweden_company_profile_history_tracks_changes_and_removals(
         for statement in client.statements
         if statement.lstrip().startswith("INSERT INTO") and "toUInt8(0)" in statement
     ]
-    assert len(removal_inserts) == 2
-    assert all("candidate.has_observation = 0" in sql for sql in removal_inserts)
+    assert len(removal_inserts) == 1
+    assert "candidate.has_observation = 0" in removal_inserts[0]
+    assert not [
+        statement for statement in client.statements if "registry" in statement
+    ]
 
 
 def test_publish_sweden_company_industry_history_tracks_complete_sni_state(

@@ -96,6 +96,8 @@ It creates:
 | `companies` | one row per normalized organization identifier, with Bolagsverket preferred over SCB for legal identity |
 | `company_addresses` | one current candidate per company/source, including explicit empty-address observations |
 | `company_registry_states` | one source-specific legal/profile state per company and source, with raw SCB status codes and Bolagsverket legal fields |
+| `scb_companies` | one row per company with the whole SCB register record, in SCB's own organisation (source layer of the 2026-09-03 basic-info design) |
+| `bolagsverket_companies` | one row per company with the whole Bolagsverket register record, in Bolagsverket's own organisation |
 | `company_proceedings` | one typed currently reported Bolagsverket liquidation, bankruptcy, or restructuring procedure, with its raw value retained |
 | `company_industry_states` | one complete SCB `Ng1`..`Ng5` classification state per company |
 | `company_industry_codes` | one row per valid non-empty SCB `Ng1`..`Ng5` SNI code |
@@ -125,7 +127,9 @@ physical current snapshot so normal reads never aggregate the complete history.
 | asset | DuckDB table | ClickHouse table | purpose |
 |---|---|---|
 | `sweden_company_companies_clickhouse` | `sweden_company.companies` | `corpscout.se_companies` | one row per normalized organization identifier |
-| `sweden_company_profile_history_clickhouse` | `sweden_company.company_registry_states`, `company_proceedings` | `corpscout.se_company_registry_observations`, `se_company_proceeding_observations` | append-only legal/profile and proceeding history |
+| `sweden_company_scb_companies_clickhouse` | `sweden_company.scb_companies` | `corpscout.se_scb_companies` | the whole SCB record per company, replaced only when its payload hash changes |
+| `sweden_company_bolagsverket_companies_clickhouse` | `sweden_company.bolagsverket_companies` | `corpscout.se_bolagsverket_companies` | the whole Bolagsverket record per company, replaced only when its payload hash changes |
+| `sweden_company_profile_history_clickhouse` | `sweden_company.company_proceedings` | `corpscout.se_company_proceeding_observations` | append-only proceeding history |
 | `sweden_company_addresses_clickhouse` | `sweden_company.company_addresses` | `corpscout.se_company_addresses` | append-only source-specific address observations |
 | `sweden_company_industries_clickhouse` | `sweden_company.company_industry_codes` | `corpscout.se_industries` | SCB SNI activity codes with derived 4-digit NACE Rev. 2 class code |
 | `sweden_company_industry_history_clickhouse` | `sweden_company.company_industry_states` | `corpscout.se_company_industry_observations` | append-only complete SCB SNI states |
@@ -139,8 +143,12 @@ physical snapshot.
 
 The same split applies to company profiles and classifications:
 
-- `se_company_registry_observations` / `se_company_registry_current` use the
-  `(company_id, source)` grain;
+- the register profile pair (`se_company_registry_observations` /
+  `se_company_registry_current`) retired with the 2026-09-03 SE basic-info
+  design: each register source now has one table of its own,
+  `se_scb_companies` and `se_bolagsverket_companies`, both
+  `ReplacingMergeTree(observed_at) ORDER BY company_id`, with no `_current`
+  twin and no history table — the S3 snapshots are the archive;
 - `se_company_proceeding_observations` / `se_company_proceedings_current` use
   `(company_id, source, proceeding_identity)`;
 - `se_company_industry_observations` / `se_company_industry_current` use

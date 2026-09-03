@@ -68,44 +68,30 @@ class SnapshotPublishResult:
     removals: int
 
 
-@dataclass(frozen=True, slots=True)
-class SwedenProfilePublishResult:
-    registry: SnapshotPublishResult
-    proceedings: SnapshotPublishResult
-
-
 def publish_sweden_company_profile_history(
     *,
     duckdb_connection: Any,
     clickhouse: ClickhouseResource,
     log: Callable[..., object] | None = None,
-) -> SwedenProfilePublishResult:
-    """Publish source registry states and typed proceedings when they change."""
+) -> SnapshotPublishResult:
+    """Publish typed Bolagsverket proceedings when they change.
+
+    The source registry states this used to publish beside them
+    (se_company_registry_observations / se_company_registry_current) retired with the
+    2026-09-03 SE basic-info design: each register source now has its own source table,
+    se_scb_companies and se_bolagsverket_companies. Proceedings keep the observation +
+    physical-current shape until the proceedings entity's own slice.
+    """
     assert_clickhouse_tables_exist(
         clickhouse,
         database=tables.SWEDEN_DATABASE,
         tables=(
-            tables.COMPANY_REGISTRY_OBSERVATIONS_TABLE_CH,
-            tables.COMPANY_REGISTRY_CURRENT_TABLE_CH,
             tables.COMPANY_PROCEEDING_OBSERVATIONS_TABLE_CH,
             tables.COMPANY_PROCEEDINGS_CURRENT_TABLE_CH,
         ),
     )
     with clickhouse.get_connection() as client:
-        registry = _publish_changed_snapshot(
-            duckdb_connection=duckdb_connection,
-            clickhouse_client=client,
-            duckdb_table="company_registry_states",
-            history_table=tables.QUALIFIED_COMPANY_REGISTRY_OBSERVATIONS_TABLE,
-            current_table=tables.QUALIFIED_COMPANY_REGISTRY_CURRENT_TABLE,
-            current_table_name=tables.COMPANY_REGISTRY_CURRENT_TABLE_CH,
-            columns=tables.SE_COMPANY_REGISTRY_OBSERVATION_COLUMNS,
-            key_columns=("company_id", "source"),
-            state_fingerprint_column="state_fingerprint",
-            presence_column="has_company",
-            log=log,
-        )
-        proceedings = _publish_changed_snapshot(
+        return _publish_changed_snapshot(
             duckdb_connection=duckdb_connection,
             clickhouse_client=client,
             duckdb_table="company_proceedings",
@@ -118,7 +104,6 @@ def publish_sweden_company_profile_history(
             presence_column="has_proceeding",
             log=log,
         )
-    return SwedenProfilePublishResult(registry=registry, proceedings=proceedings)
 
 
 def publish_sweden_company_industry_history(

@@ -232,12 +232,13 @@ def sweden_company_bolagsverket_companies_clickhouse(
 @dg.asset(
     deps=["sweden_company_normalized_duckdb"],
     group_name=GROUP_NAME,
-    kinds={"python", "duckdb", "clickhouse", "bolagsverket", "scb"},
+    kinds={"python", "duckdb", "clickhouse", "bolagsverket"},
     pool=SWEDEN_COMPANY_DUCKDB_POOL,
-    metadata={"table": tables.QUALIFIED_COMPANY_REGISTRY_OBSERVATIONS_TABLE},
+    metadata={"table": tables.QUALIFIED_COMPANY_PROCEEDING_OBSERVATIONS_TABLE},
     description=(
-        "Appends changed source-specific Sweden registry states and typed "
-        "Bolagsverket proceeding observations to ClickHouse."
+        "Appends changed typed Bolagsverket proceeding observations to ClickHouse. The "
+        "source registry states it also published retired with the 2026-09-03 basic-info "
+        "design's source layer (se_scb_companies, se_bolagsverket_companies)."
     ),
 )
 def sweden_company_profile_history_clickhouse(
@@ -253,22 +254,14 @@ def sweden_company_profile_history_clickhouse(
         )
     return dg.MaterializeResult(
         metadata={
-            "registry_table": tables.QUALIFIED_COMPANY_REGISTRY_OBSERVATIONS_TABLE,
-            "registry_candidates": result.registry.candidates,
-            "registry_observations_inserted": (result.registry.observations_inserted),
-            "registry_first_observations": result.registry.first_observations,
-            "registry_changes": result.registry.changes,
-            "registry_removals": result.registry.removals,
             "proceeding_table": (
                 tables.QUALIFIED_COMPANY_PROCEEDING_OBSERVATIONS_TABLE
             ),
-            "proceeding_candidates": result.proceedings.candidates,
-            "proceeding_observations_inserted": (
-                result.proceedings.observations_inserted
-            ),
-            "proceeding_first_observations": (result.proceedings.first_observations),
-            "proceeding_changes": result.proceedings.changes,
-            "proceeding_removals": result.proceedings.removals,
+            "proceeding_candidates": result.candidates,
+            "proceeding_observations_inserted": result.observations_inserted,
+            "proceeding_first_observations": result.first_observations,
+            "proceeding_changes": result.changes,
+            "proceeding_removals": result.removals,
         }
     )
 
