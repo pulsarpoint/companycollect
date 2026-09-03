@@ -59,14 +59,18 @@ const CLICKHOUSE_HOST = new URL(
 ).hostname;
 
 /** One candidate row, inserted through the same command runner the resolve
- * uses. evidence_hash is MATERIALIZED, so it is not listed. */
+ * uses. evidence_hash is MATERIALIZED, so it is not listed. The timestamp
+ * parameters name their zone because the columns declare one: the bound text
+ * is UTC (formatClickHouseDateTime64), and a zone-less DateTime64 would parse
+ * it in the SERVER's timezone instead -- the registry's own generated
+ * statements bind DateTime64(3, 'UTC') for the same reason. */
 const CANDIDATE_INSERT_SQL = `INSERT INTO corpscout.se_company_field_candidate
   (company_id, field, source, source_record_uid, value, value_json,
    observed_at, extracted_at, extractor_version, source_run_id)
 SELECT
   {company_id:String}, {field:String}, {source:String}, {source_record_uid:String},
   {value:String}, {value_json:String},
-  {observed_at:DateTime64(3)}, {extracted_at:DateTime64(3)},
+  {observed_at:DateTime64(3, 'UTC')}, {extracted_at:DateTime64(3, 'UTC')},
   'backoffice-live-test', {source_run_id:String}`;
 
 const RESOLVED_ROWS_SQL = `SELECT
@@ -102,7 +106,7 @@ WHERE company_id = {companyId:String}`;
 const WIDE_ROWS_SINCE_SQL = `SELECT toUInt32(count()) AS n
 FROM corpscout.se_company_info FINAL
 WHERE company_id = {companyId:String}
-  AND resolved_at >= {since:DateTime64(3)}`;
+  AND resolved_at >= {since:DateTime64(3, 'UTC')}`;
 
 interface ResolvedRow {
   field: string;
