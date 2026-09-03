@@ -27,9 +27,19 @@ Out of scope, later entities on the same shape: addresses, industries, people, f
 
 All in database `corpscout`, ClickHouse 26.5, created by golang-migrate migrations (first line `CREATE DATABASE IF NOT EXISTS corpscout;`, no `;` inside comments, last line a statement).
 
-### 3.1 Source layer (unchanged)
+### 3.1 Source layer (slice 0)
 
-`se_company_registry_observations` / `se_company_registry_current` (Bolagsverket and SCB rows, kept apart by `source`), `se_company_info_scb`, `se_company_info_esef`, `se_company_info_wikidata`, `se_ratsit_company`, `se_company_info_enrichment_observation` (LLM answers keyed by `suggestion_id` and `input_hash`). Splitting the registry table into `se_bolagsverket_companies` and `se_scb_companies` is a possible later cleanup, not a requirement: it already keeps the sources apart by row.
+Principle, decided by the owner: a source table holds what that source provides, in the source's own organisation, named per source; nothing merges sources; the entity's suggestion extractors pull from them. Wikidata (`wikidata_companies`), ESEF (`esef_document_company_information`) and Ratsit (`se_ratsit_company`) already satisfy this and are read as they are. LLM answers stay in `se_company_info_enrichment_observation`.
+
+The two register sources get their own tables, both new, both written by the existing register loads straight from the normalised DuckDB layer (`company_registry_states` split by source, without the derived status):
+
+- `se_scb_companies`: one row per company, the whole SCB register record: the SCB identifier, company name, legal-form code, the two SCB status codes, registration date, the five SNI code columns, the address columns, the marketing-block flag. English column names where the name is a plain rename, SCB's own codes untouched, no derived status. The `m*` previous-value twins are dropped: the S3 snapshots keep every file as delivered.
+- `se_bolagsverket_companies`: one row per company, the whole Bolagsverket record: identity, name-protection sequence, registration country, name, legal form, deregistration date and reason, the pending-proceedings field, registration date, activity description, postal address.
+- Both `ReplacingMergeTree(observed_at) ORDER BY company_id`, replaced only when the source record changes, with `source_run_id`, `source_record_id`, `source_payload_hash` as provenance. No history table: S3 is the archive, as for every other source.
+
+Where source codes become entity values (SCB status codes to `status`, Bolagsverket's legal-form text to a code, dates parsed) is the suggestion extractor of that source, one per source, not a merge asset.
+
+Deleted in this design: `se_company_registry_observations` and `se_company_registry_current` (slice 0, after the domain-suggestions dbt model reads the union of the two new tables), `se_companies` and its builder (slice 5, after every reader moved to the main table), the derived artifacts `se_company_info_scb`, `se_company_info_esef`, `se_company_info_wikidata` (slice 4, with the old publisher). Addresses, industries and proceedings keep their tables and assets untouched until their entity's turn, although the SCB row now carries address and SNI columns too.
 
 ### 3.2 `se_company_basic_info_suggestion`
 
@@ -140,6 +150,7 @@ Pages of 20,000 companies keep memory bounded; the 3.5M backfill is 64 partition
 
 Group `se_company_basic_info`, everything manual for now.
 
+- Slice 0, in the `sweden_company` module: `sweden_company_scb_companies_clickhouse` and `sweden_company_bolagsverket_companies_clickhouse` export the two source tables from the normalised DuckDB layer on the register job's existing cadence; the `sweden_company_profile_history_clickhouse` asset stops writing the registry observation tables (it keeps writing proceedings until that entity's turn).
 - `se_basic_info_suggestions_<source>` for scb, bolagsverket, wikidata, esef, ratsit, llm: plan 2's extractors reshaped to write one wide suggestion row per company. Per-company watermark scan, staged publish with a hash anti-join, config `execute` (preview by default), `company_ids`, `max_companies`, `since`. The LLM extractor keeps its observation cache, its preview counts (`would_reuse_count`, `would_call_model_count`) and its required model profile.
 - `se_company_basic_info_fold`: 64 static partitions on `cityHash64(company_id) % 64`, `BackfillPolicy.multi_run(max_partitions_per_run=1)`, one pool; config `changed_only` default true.
 - `se_company_basic_info_fold_companies`: unpartitioned, config `company_ids` required; the targeted fold, later the sensor's job.
@@ -183,13 +194,14 @@ Rollback before step 6 is doing nothing. After step 6 it is switching the view a
 
 One plan each, executed in order with subagent-driven development:
 
+0. Source tables: `se_scb_companies` and `se_bolagsverket_companies` with their export assets, the domain-suggestions dbt model moved to their union, the registry observation tables retired (gated drop migrations after the new tables are filled on prod).
 1. Tables, precedence, fold function, the two fold assets, the precedence export.
-2. The six extractors.
+2. The six extractors, reading the source layer of section 3.1.
 3. The backoffice page, actions, Fold now, pipeline sheet.
-4. Cutover (owner-gated prod steps) and retirement.
+4. Cutover (owner-gated prod steps) and retirement of the old publisher, the field-registry code and the three `se_company_info_*` artifacts.
 5. The spine switch: every `se_companies` reader to `se_company_basic_info`, then the `se_companies` builder and table go.
 6. The sensor, as its own later spec.
 
 ## 11. Names
 
-Tables `se_company_basic_info_suggestion`, `se_company_basic_info`, `se_company_basic_info_history`, `se_company_basic_info_precedence`. Assets `se_basic_info_suggestions_<source>`, `se_company_basic_info_fold`, `se_company_basic_info_fold_companies`, `se_company_basic_info_precedence_clickhouse`. Job `se_company_basic_info_extract_job`, schedule `se_company_basic_info_weekly`. Module `dagster_v3.defs.se_company.basic_info`. Sources `scb`, `bolagsverket`, `wikidata`, `esef`, `ratsit`, `llm`, `reviewer`.
+Source tables `se_scb_companies`, `se_bolagsverket_companies` (assets `sweden_company_scb_companies_clickhouse`, `sweden_company_bolagsverket_companies_clickhouse`). Entity tables `se_company_basic_info_suggestion`, `se_company_basic_info`, `se_company_basic_info_history`, `se_company_basic_info_precedence`. Assets `se_basic_info_suggestions_<source>`, `se_company_basic_info_fold`, `se_company_basic_info_fold_companies`, `se_company_basic_info_precedence_clickhouse`. Job `se_company_basic_info_extract_job`, schedule `se_company_basic_info_weekly`. Module `dagster_v3.defs.se_company.basic_info`. Sources `scb`, `bolagsverket`, `wikidata`, `esef`, `ratsit`, `llm`, `reviewer`.
