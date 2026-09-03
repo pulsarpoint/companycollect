@@ -470,6 +470,7 @@ class PhaseCliTest(unittest.TestCase):
         self.assertIn("default: breadth_first", crawl_help.output)
         self.assertIn("--keep-non-english", analysis_help.output)
         self.assertIn("default: keep-non-english", analysis_help.output)
+        self.assertEqual(runner.invoke(cli, ["suggest", "--help"]).exit_code, 0)
 
 
 def _manifest(

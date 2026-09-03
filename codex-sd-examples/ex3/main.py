@@ -10,8 +10,10 @@ from ex3.crawler import (
     CrawlSettings,
     run_analysis,
     run_crawl,
+    save_model,
     save_report,
 )
+from ex3.followup import SuggestSettings, run_suggest
 from ex3.language import is_english_language
 from ex3.models import DiscoveryStrategy, SeedingSource, Selector
 
@@ -391,6 +393,85 @@ def analyze_command(
         f"total={report.analysis_stats.token_totals.total_tokens:,}"
     )
     click.echo(f"Report: {output_path}")
+
+
+@cli.command("suggest")
+@click.argument(
+    "manifest_path", type=click.Path(path_type=Path, exists=True, dir_okay=False)
+)
+@click.argument(
+    "report_path", type=click.Path(path_type=Path, exists=True, dir_okay=False)
+)
+@click.option(
+    "--output",
+    "output_path",
+    type=click.Path(path_type=Path, dir_okay=False),
+    default=None,
+    help="Suggestions JSON. Defaults to suggestions-pass-N.json next to the manifest.",
+)
+@click.option(
+    "--max-suggestions",
+    type=click.IntRange(min=1),
+    default=10,
+    show_default=True,
+    help="Maximum pages the LLM may propose for the next pass.",
+)
+@click.option(
+    "--candidate-limit",
+    type=click.IntRange(min=10),
+    default=200,
+    show_default=True,
+    help="Maximum unprocessed candidate URLs shown to the LLM.",
+)
+@click.option(
+    "--analysis-timeout",
+    "timeout_seconds",
+    type=click.IntRange(min=1),
+    default=300,
+    show_default=True,
+)
+@click.option("--overwrite", is_flag=True)
+@click.option("--verbose", is_flag=True)
+def suggest_command(
+    manifest_path: Path,
+    report_path: Path,
+    output_path: Path | None,
+    max_suggestions: int,
+    candidate_limit: int,
+    timeout_seconds: int,
+    overwrite: bool,
+    verbose: bool,
+) -> None:
+    """Find gaps in REPORT_PATH and let the LLM propose unprocessed pages to crawl next."""
+    _configure_logging(verbose=verbose)
+    try:
+        suggestions = asyncio.run(
+            run_suggest(
+                SuggestSettings(
+                    manifest_path=manifest_path,
+                    report_path=report_path,
+                    max_suggestions=max_suggestions,
+                    candidate_limit=candidate_limit,
+                    timeout_seconds=timeout_seconds,
+                )
+            )
+        )
+    except Exception as error:
+        raise click.ClickException(str(error)) from error
+    target = output_path or manifest_path.resolve().parent / (
+        f"suggestions-pass-{suggestions.pass_number}.json"
+    )
+    if target.exists() and not overwrite:
+        raise click.ClickException(f"Refusing to overwrite {target}. Use --overwrite.")
+    save_model(suggestions, target)
+    click.echo(f"Gaps: {', '.join(gap.field for gap in suggestions.gaps) or 'none'}")
+    click.echo(f"Candidates shown to LLM: {suggestions.candidate_count}")
+    click.echo(f"Suggested pages: {len(suggestions.suggestions)}")
+    for item in suggestions.suggestions:
+        click.echo(
+            f"  {item.url}  ({', '.join(item.expected_fields) or 'no fields'}) {item.reason}"
+        )
+    click.echo(f"Suggestions: {target}")
 
 
 def _configure_logging(*, verbose: bool) -> None:
