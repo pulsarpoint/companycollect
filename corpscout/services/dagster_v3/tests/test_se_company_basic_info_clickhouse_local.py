@@ -62,7 +62,7 @@ def _bind(sql: str, **params: object) -> str:
     rendered = sql
     for name, value in params.items():
         if isinstance(value, list):
-            literal = "(" + ", ".join(f"'{v}'" for v in value) + ")"
+            literal = "[" + ", ".join(f"'{v}'" for v in value) + "]"
         elif isinstance(value, str):
             literal = f"'{value}'"
         else:
@@ -85,6 +85,15 @@ def _suggestion(company_id: str, source: str, suggested_at: str, *, legal_name: 
 
 @pytest.mark.parametrize("join_use_nulls", [0, 1], ids=["join_use_nulls_off", "join_use_nulls_on"])
 def test_final_returns_the_current_row_per_company_and_source(join_use_nulls: int) -> None:
+    bucket_lines = _run(
+        [
+            "SELECT modulo(cityHash64('5560000000'), 64)",
+            "SELECT modulo(cityHash64('5561111111'), 64)",
+        ],
+        join_use_nulls=join_use_nulls,
+    )
+    bucket_5560000000 = int(bucket_lines[0])
+    bucket_5561111111 = int(bucket_lines[1])
     script = _schema_statements() + [
         _suggestion("5560000000", "scb", "2026-09-01 00:00:00", legal_name="Old AB", status="active"),
         _suggestion("5560000000", "scb", "2026-09-02 00:00:00", legal_name="New AB", status="active"),
@@ -92,9 +101,7 @@ def test_final_returns_the_current_row_per_company_and_source(join_use_nulls: in
         _suggestion("5561111111", "bolagsverket", "2026-09-01 00:00:00", legal_name="B AB", status=None),
         _bind(current_suggestions_sql(), company_ids=["5560000000", "5561111111"]),
         _bind(suggestion_watermarks_sql(), company_ids=["5560000000", "5561111111"]) + " ORDER BY company_id",
-        _bind(bucket_company_ids_sql(), bucket=0).replace(
-            "WHERE modulo(cityHash64(company_id), 64) = 0", "WHERE 1 = 1"
-        ),
+        _bind(bucket_company_ids_sql(), bucket=bucket_5560000000),
     ]
     lines = _run(script, join_use_nulls=join_use_nulls)
     # current_suggestions_sql: three rows, the scb row is the 2026-09-02 version.
@@ -104,8 +111,15 @@ def test_final_returns_the_current_row_per_company_and_source(join_use_nulls: in
     # watermarks: the newest suggested_at per company.
     assert lines[3] == "5560000000\t2026-09-02 00:00:00.000"
     assert lines[4] == "5561111111\t2026-09-01 00:00:00.000"
-    # the bucket query (with its filter widened to every company) lists both ids.
-    assert lines[5:7] == ["5560000000", "5561111111"]
+    # the bucket query, run with its real predicate (bucket of 5560000000, unmodified),
+    # always lists 5560000000 and lists 5561111111 too only when the two ids hash into
+    # the same bucket.
+    expected_ids = (
+        ["5560000000", "5561111111"]
+        if bucket_5561111111 == bucket_5560000000
+        else ["5560000000"]
+    )
+    assert lines[5:] == expected_ids
 
 
 def test_null_and_empty_are_different_opinions_on_read() -> None:
