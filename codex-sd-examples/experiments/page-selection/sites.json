@@ -1,0 +1,12 @@
+{
+  "sites": [
+    {"domain": "handelsbanken.se", "start_url": "https://www.handelsbanken.se/en/", "country": "SE", "size": "large", "note": "ex3 baseline"},
+    {"domain": "tobii.com", "start_url": "https://www.tobii.com/", "country": "SE", "size": "mid", "note": "tech, English-first"},
+    {"domain": "pricer.com", "start_url": "https://www.pricer.com/", "country": "SE", "size": "mid", "note": "industrial"},
+    {"domain": "polarbrod.se", "start_url": "https://www.polarbrod.se/", "country": "SE", "size": "small", "note": "Swedish-first; fallbacks lofbergs.se, kavli.se"},
+    {"domain": "kongsberg.com", "start_url": "https://www.kongsberg.com/", "country": "NO", "size": "large", "note": "industrial group"},
+    {"domain": "novozymes.com", "start_url": "https://www.novozymes.com/en", "country": "DK", "size": "large", "note": "biotech"},
+    {"domain": "vaisala.com", "start_url": "https://www.vaisala.com/en", "country": "FI", "size": "mid", "note": "instruments"},
+    {"domain": "trumpf.com", "start_url": "https://www.trumpf.com/en_INT/", "country": "DE", "size": "large", "note": "Mittelstand, German-first"}
+  ]
+}
