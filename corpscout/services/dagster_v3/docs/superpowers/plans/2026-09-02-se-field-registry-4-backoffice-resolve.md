@@ -1461,7 +1461,7 @@ export async function action({ request, params }: Route.ActionArgs) {
 
 - [ ] **Step 10: Give the workspace its own release-button list**
 
-In `app/components/admin/se-company-info-review-workspace.tsx`, replace line 64 (`import { SE_INFO_FIELDS } from "~/lib/se-info-field-values";`) with:
+In `app/components/admin/se-company-info-review-workspace.tsx`, delete line 64 (`import { SE_INFO_FIELDS } from "~/lib/se-info-field-values";`) and add, BELOW the last import statement of the file (a constant must not sit between imports):
 
 ```ts
 /** The fields this phase-A page lets a reviewer release: the two description
