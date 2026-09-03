@@ -1791,7 +1791,9 @@ def test_the_sweden_module_no_longer_names_the_retired_registry_tables() -> None
     """The register sources are published by se_scb_companies / se_bolagsverket_companies.
     Leaving the old constants behind would invite a reader to believe something still
     writes them."""
-    assert [name for name in dir(tables) if "REGISTRY" in name] == []
+    # COMPANY_REGISTRY is the stem every retired constant shared; the unrelated
+    # WIKIDATA_REGISTRY_SEED_SPEC stays.
+    assert [name for name in dir(tables) if "COMPANY_REGISTRY" in name] == []
     assert tables.SCB_COMPANIES_TABLE_CH == "se_scb_companies"
     assert tables.BOLAGSVERKET_COMPANIES_TABLE_CH == "se_bolagsverket_companies"
 ```
