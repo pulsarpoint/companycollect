@@ -20,10 +20,17 @@ async def select_pages_with_llm(
     base_url: str,
     limit: int,
     timeout_seconds: int,
+    prompt: str | None = None,
 ) -> tuple[list[ScoredUrl], LlmCallStatus]:
-    """Let the model pick up to ``limit`` candidates; validate every pick."""
+    """Let the model pick up to ``limit`` candidates; validate every pick.
+
+    ``prompt`` replaces the production prompt verbatim (used by the ex4 lab);
+    validation of the picks is identical either way.
+    """
     outcome = await run_structured_turn(
-        prompt=create_page_selection_prompt(
+        prompt=prompt
+        if prompt is not None
+        else create_page_selection_prompt(
             base_url, candidates=list(candidates), limit=limit
         ),
         base_instructions=SELECTION_INSTRUCTIONS,
