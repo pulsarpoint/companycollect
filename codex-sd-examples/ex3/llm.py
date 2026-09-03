@@ -61,14 +61,14 @@ async def run_structured_turn[T: BaseModel](
         return StructuredTurnOutcome(
             value=None,
             token_usage=None,
-            error=f"analysis timed out after {timeout_seconds} seconds",
+            error=f"{operation_name} timed out after {timeout_seconds} seconds",
         )
     token_usage = print_usage(result, page_url=operation_name)
     if timed_out:
         return StructuredTurnOutcome(
             value=None,
             token_usage=token_usage,
-            error=f"analysis timed out after {timeout_seconds} seconds",
+            error=f"{operation_name} timed out after {timeout_seconds} seconds",
         )
     if result.final_response is None:
         error_message = (

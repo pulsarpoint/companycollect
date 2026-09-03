@@ -871,10 +871,17 @@ async def _select_with_llm_and_crawl(
     )
     selection_method: SelectionMethod = "llm"
     if not picks:
-        LOGGER.warning(
-            "LLM page selection failed (%s); using deterministic selection",
-            llm_status.error,
-        )
+        if llm_status.succeeded:
+            LOGGER.warning(
+                "LLM page selection returned no valid picks (%s); "
+                "using deterministic selection",
+                "; ".join(llm_status.warnings) or "no pages returned",
+            )
+        else:
+            LOGGER.warning(
+                "LLM page selection failed (%s); using deterministic selection",
+                llm_status.error,
+            )
         fallback = await select_pages(
             inventory.urls,
             base_url=base_url,

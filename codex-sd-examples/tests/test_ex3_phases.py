@@ -585,6 +585,197 @@ class IncrementalAnalysisTest(unittest.IsolatedAsyncioTestCase):
             ["https://example.com/gone"],
         )
 
+    async def test_no_merge_consolidates_deterministically_without_an_llm_call(
+        self,
+    ) -> None:
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            directory = Path(temporary_directory)
+            (directory / "home.md").write_text("# Home", encoding="utf-8")
+            (directory / "careers.md").write_text("# Careers", encoding="utf-8")
+            manifest = _manifest(
+                markdown_path="home.md",
+                extra_pages=[
+                    MarkdownPage(
+                        source_url="https://example.com/careers",
+                        depth=0,
+                        markdown_path="careers.md",
+                        markdown_chars=9,
+                        selection="suggested",
+                        pass_number=2,
+                    )
+                ],
+            )
+            manifest_path = directory / "crawl-manifest.json"
+            manifest_path.write_text(
+                manifest.model_dump_json(indent=2), encoding="utf-8"
+            )
+            previous_page = PageExtraction(
+                source_url="https://example.com/",
+                useful_information=UsefulInformation(
+                    contacts=[
+                        Contact(
+                            type="phone",
+                            value="+46 8 1",
+                            evidence=Evidence(
+                                text="t", source_url="https://example.com/"
+                            ),
+                        )
+                    ]
+                ),
+                extraction_metadata=PageExtractionMetadata(
+                    depth=0,
+                    markdown_path="home.md",
+                    batch_number=1,
+                    succeeded=True,
+                ),
+            )
+            previous_path = directory / "report-pass-1.json"
+            previous_path.write_text(
+                _report(
+                    manifest,
+                    pages=[previous_page],
+                    passes=[
+                        PassSummary(pass_number=1, pages=1, new_pages=1, batches=1)
+                    ],
+                ).model_dump_json(indent=2),
+                encoding="utf-8",
+            )
+            merge_calls: list[object] = []
+
+            async def fake_turn(**kwargs):
+                merge_calls.append(kwargs)
+                raise AssertionError("the merge LLM must not be called")
+
+            async def fake_analyze_batches(batches, **kwargs):
+                page = PageExtraction(
+                    source_url="https://example.com/careers",
+                    useful_information=UsefulInformation(
+                        jobs=[
+                            Job(
+                                title="Engineer",
+                                evidence=Evidence(
+                                    text="j", source_url="https://example.com/careers"
+                                ),
+                            )
+                        ]
+                    ),
+                    extraction_metadata=PageExtractionMetadata(
+                        depth=0,
+                        markdown_path="careers.md",
+                        batch_number=1,
+                        succeeded=True,
+                    ),
+                )
+                return (
+                    [page],
+                    [
+                        BatchAnalysis(
+                            batch_number=1,
+                            page_urls=[page.source_url],
+                            markdown_chars=9,
+                            succeeded=True,
+                        )
+                    ],
+                    [],
+                )
+
+            with (
+                patch(
+                    "ex3.crawler._analyze_related_domains",
+                    new=AsyncMock(
+                        return_value=(
+                            [],
+                            RelatedDomainAnalysis(
+                                attempted=False, candidate_domains=0, succeeded=True
+                            ),
+                        )
+                    ),
+                ),
+                patch("ex3.crawler._analyze_batches", new=fake_analyze_batches),
+                patch("ex3.merge.run_structured_turn", new=fake_turn),
+            ):
+                report = await run_analysis(
+                    AnalysisSettings(
+                        manifest_path=manifest_path,
+                        max_page_chars=30_000,
+                        max_batch_pages=5,
+                        max_batch_chars=60_000,
+                        analysis_timeout_seconds=300,
+                        previous_report_path=previous_path,
+                        merge_with_llm=False,
+                    )
+                )
+
+        self.assertEqual(merge_calls, [])
+        self.assertIsNone(report.merge_analysis)
+        self.assertEqual(len(report.useful_information.contacts), 1)
+        self.assertEqual(len(report.useful_information.jobs), 1)
+
+    async def test_a_pass_without_new_pages_skips_batches_and_the_merge(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            directory = Path(temporary_directory)
+            (directory / "home.md").write_text("# Home", encoding="utf-8")
+            manifest = _manifest(markdown_path="home.md")
+            manifest_path = directory / "crawl-manifest.json"
+            manifest_path.write_text(
+                manifest.model_dump_json(indent=2), encoding="utf-8"
+            )
+            previous_path = directory / "report-pass-1.json"
+            previous_path.write_text(
+                _report(
+                    manifest,
+                    pages=[_extraction("https://example.com/", succeeded=True)],
+                    passes=[
+                        PassSummary(pass_number=1, pages=1, new_pages=1, batches=1)
+                    ],
+                ).model_dump_json(indent=2),
+                encoding="utf-8",
+            )
+            batch_calls: list[object] = []
+            merge_calls: list[object] = []
+
+            async def fake_analyze_batches(batches, **kwargs):
+                batch_calls.append(batches)
+                return [], [], []
+
+            async def fake_turn(**kwargs):
+                merge_calls.append(kwargs)
+                raise AssertionError("the merge LLM must not be called")
+
+            with (
+                patch(
+                    "ex3.crawler._analyze_related_domains",
+                    new=AsyncMock(
+                        return_value=(
+                            [],
+                            RelatedDomainAnalysis(
+                                attempted=False, candidate_domains=0, succeeded=True
+                            ),
+                        )
+                    ),
+                ),
+                patch("ex3.crawler._analyze_batches", new=fake_analyze_batches),
+                patch("ex3.merge.run_structured_turn", new=fake_turn),
+            ):
+                report = await run_analysis(
+                    AnalysisSettings(
+                        manifest_path=manifest_path,
+                        max_page_chars=30_000,
+                        max_batch_pages=5,
+                        max_batch_chars=60_000,
+                        analysis_timeout_seconds=300,
+                        previous_report_path=previous_path,
+                    )
+                )
+
+        self.assertEqual(batch_calls, [[]])
+        self.assertEqual(merge_calls, [])
+        self.assertIsNone(report.merge_analysis)
+        self.assertEqual([summary.pass_number for summary in report.passes], [1, 2])
+        self.assertEqual(report.passes[1].new_pages, 0)
+        self.assertEqual(report.passes[1].batches, 0)
+        self.assertEqual(len(report.pages), 1)
+
     async def test_falls_back_to_deterministic_consolidation_when_the_merge_fails(
         self,
     ) -> None:

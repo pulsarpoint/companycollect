@@ -543,6 +543,60 @@ class LlmSelectorCrawlTest(unittest.IsolatedAsyncioTestCase):
         self.assertFalse(llm_status.succeeded)
         self.assertEqual(llm_status.error, "boom")
 
+    async def test_falls_back_when_the_llm_succeeds_with_only_invalid_picks(
+        self,
+    ) -> None:
+        base_url = "https://www.example.se/en/"
+        crawler = _FakeCrawler([_crawl_result(base_url, success=True)])
+
+        async def fake_seed(*args, **kwargs) -> SeedingOutcome:
+            return SeedingOutcome(urls=["https://www.example.se/en/about-us"])
+
+        async def fake_heads(urls, **kwargs) -> dict[str, HeadMetadata]:
+            return {}
+
+        async def fake_turn(**kwargs):
+            return StructuredTurnOutcome(
+                value=PageSelectionResponse(
+                    pages=[
+                        PageSelectionDecision(
+                            url="https://www.other.example/invented",
+                            reason="made up",
+                            expected_fields=[],
+                        )
+                    ]
+                ),
+                token_usage=None,
+                error=None,
+            )
+
+        with (
+            patch("ex3.crawler.seed_sitemap_urls", new=fake_seed),
+            patch("ex3.crawler.fetch_head_metadata", new=fake_heads),
+            patch("ex3.llm_selection.run_structured_turn", new=fake_turn),
+            self.assertLogs("ex3.crawler", level="WARNING") as logs,
+        ):
+            seeding, _ = await _select_and_crawl(
+                cast(AsyncWebCrawler, crawler),
+                settings=_crawl_settings(max_pages=1, selector="llm"),
+                base_url=base_url,
+                base_result=None,
+                markdown_dir=Path(tempfile.mkdtemp()),
+            )
+
+        self.assertEqual(seeding.selection_method, "deterministic")
+        llm_status = seeding.llm
+        if llm_status is None:
+            self.fail("Expected an llm status recorded on the fallback")
+        self.assertTrue(llm_status.succeeded)
+        self.assertEqual(
+            llm_status.warnings,
+            ["Ignored unknown page: https://www.other.example/invented"],
+        )
+        self.assertIn(
+            "LLM page selection returned no valid picks", "\n".join(logs.output)
+        )
+
     async def test_returns_nothing_without_a_sitemap_so_discovery_takes_over(
         self,
     ) -> None:

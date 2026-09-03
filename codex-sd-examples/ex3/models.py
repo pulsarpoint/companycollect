@@ -332,16 +332,6 @@ def batch_extraction_output_schema() -> JsonObject:
     return structured_output_schema(BatchExtraction)
 
 
-def related_domain_output_schema() -> JsonObject:
-    """Return the related-domain Structured Outputs schema."""
-    return structured_output_schema(RelatedDomainSelection)
-
-
-def page_selection_output_schema() -> JsonObject:
-    """Return the page-selection Structured Outputs schema."""
-    return structured_output_schema(PageSelectionResponse)
-
-
 def set_source_url(extraction: PageExtraction, source_url: str) -> None:
     """Replace model-provided provenance with a validated input page URL."""
     extraction.source_url = source_url

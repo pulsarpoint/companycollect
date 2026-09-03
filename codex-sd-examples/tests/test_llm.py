@@ -68,6 +68,23 @@ class _FakeCodex:
         self.closed = True
 
 
+class _FakeBreakdown:
+    def __init__(self, total: int) -> None:
+        self.input_tokens = total
+        self.cached_input_tokens = 0
+        self.cache_write_input_tokens = 0
+        self.output_tokens = 0
+        self.reasoning_output_tokens = 0
+        self.total_tokens = total
+
+
+class _FakeUsage:
+    def __init__(self, total: int) -> None:
+        self.last = _FakeBreakdown(total)
+        self.total = _FakeBreakdown(total)
+        self.model_context_window = 200_000
+
+
 class StructuredTurnTest(unittest.IsolatedAsyncioTestCase):
     def setUp(self) -> None:
         _FakeCodex.result = _FakeResult('{"names": ["Ada"]}')
@@ -92,6 +109,49 @@ class StructuredTurnTest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(
             _FakeCodex.calls[0]["thread_start"]["base_instructions"], "Only data."
         )
+
+    async def test_reports_a_timed_out_turn_with_its_usage(self) -> None:
+        result = _FakeResult('{"names": []}')
+        result.usage = _FakeUsage(1_234)
+
+        async def fake_run(codex, turn, **kwargs):
+            return result, True
+
+        with (
+            patch("ex3.llm.AsyncCodex", _FakeCodex),
+            patch("ex3.llm._run_turn_with_timeout", new=fake_run),
+        ):
+            outcome = await run_structured_turn(
+                prompt="x",
+                base_instructions="y",
+                output_model=_Answer,
+                timeout_seconds=30,
+                operation_name="page selection",
+            )
+
+        self.assertIsNone(outcome.value)
+        self.assertEqual(outcome.error, "page selection timed out after 30 seconds")
+        assert outcome.token_usage is not None
+        self.assertEqual(outcome.token_usage.last.total_tokens, 1_234)
+
+    async def test_reports_a_turn_that_never_returned_a_result(self) -> None:
+        async def fake_run(codex, turn, **kwargs):
+            return None, True
+
+        with (
+            patch("ex3.llm.AsyncCodex", _FakeCodex),
+            patch("ex3.llm._run_turn_with_timeout", new=fake_run),
+        ):
+            outcome = await run_structured_turn(
+                prompt="x",
+                base_instructions="y",
+                output_model=_Answer,
+                timeout_seconds=7,
+                operation_name="round merge",
+            )
+
+        self.assertEqual(outcome.error, "round merge timed out after 7 seconds")
+        self.assertIsNone(outcome.token_usage)
 
     async def test_reports_invalid_structured_output_as_an_error(self) -> None:
         _FakeCodex.result = _FakeResult('{"unexpected": 1}')

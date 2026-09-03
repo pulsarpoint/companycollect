@@ -1,6 +1,5 @@
 """LLM choice of pages from a deterministic candidate list."""
 
-import logging
 from collections.abc import Sequence
 
 from ex3.candidates import PageCandidate
@@ -9,7 +8,6 @@ from ex3.models import LlmCallStatus, PageSelectionResponse, ScoredUrl
 from ex3.prompty import create_page_selection_prompt
 from ex3.urls import url_key
 
-LOGGER = logging.getLogger(__name__)
 SELECTION_INSTRUCTIONS = (
     "Choose pages only from the supplied candidates. Do not navigate or use "
     "tools. Return only data matching the schema."
