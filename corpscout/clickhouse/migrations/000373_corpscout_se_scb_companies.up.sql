@@ -14,7 +14,13 @@ CREATE DATABASE IF NOT EXISTS corpscout;
 -- is Date32 rather than 000257's Date because Date starts at 1970-01-01 and Swedish
 -- registration dates predate it. The design's own basic-info tables use Date32 too.
 -- registration_date is NULL when the source value lies outside Date32's own range, before
--- 1900-01-01, never a fabricated 1970-01-01.
+-- 1900-01-01, never a fabricated 1970-01-01. registration_date_raw keeps RegDatKtid exactly
+-- as delivered, so such a date is still readable.
+--
+-- has_company is 1 on every row the source delivered and 0 on a tombstone row the publisher
+-- appends when SCB stops delivering a company (values NULL, empty record id and hash, the
+-- run's source_run_id and observed_at). A company that returns is inserted again with
+-- has_company 1, so readers take FINAL rows WHERE has_company = 1.
 --
 -- This replaces the SCB half of se_company_registry_observations and
 -- se_company_registry_current. Those two are NOT dropped here: a DROP that has to wait for
@@ -31,6 +37,7 @@ CREATE TABLE IF NOT EXISTS corpscout.se_scb_companies
     source_status_code LowCardinality(Nullable(String)),
     source_secondary_status_code LowCardinality(Nullable(String)),
     registration_date Nullable(Date32),
+    registration_date_raw Nullable(String),
     ng1_code LowCardinality(Nullable(String)),
     ng2_code LowCardinality(Nullable(String)),
     ng3_code LowCardinality(Nullable(String)),
@@ -45,6 +52,7 @@ CREATE TABLE IF NOT EXISTS corpscout.se_scb_companies
     source_record_id String,
     source_payload_hash String,
     observed_at DateTime64(3, 'UTC'),
+    has_company UInt8 DEFAULT 1,
 
     CONSTRAINT has_company CHECK match(company_id, '^([0-9]{10}|[0-9]{12})$')
 )

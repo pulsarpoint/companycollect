@@ -4120,6 +4120,8 @@ def test_se_register_source_tables_are_created_by_000373_and_000374() -> None:
             "CONSTRAINT has_company CHECK match(company_id, "
             "'^([0-9]{10}|[0-9]{12})$')"
         ) in up
+        # The publisher's tombstone flag: DEFAULT 1 so the staged insert never sets it.
+        assert "\n    has_company UInt8 DEFAULT 1,\n" in up
         # No derived status and no merge: each table keeps its source's own codes.
         assert "derived_status" not in up
         # The DROPs of the retired registry pair belong to 000375 alone.

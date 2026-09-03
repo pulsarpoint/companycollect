@@ -865,6 +865,7 @@ def test_normalized_snapshot_builds_the_two_register_source_tables(
                 source_status_code,
                 source_secondary_status_code,
                 registration_date::varchar,
+                registration_date_raw,
                 ng1_code,
                 ng2_code,
                 ng3_code,
@@ -938,6 +939,9 @@ def test_normalized_snapshot_builds_the_two_register_source_tables(
         "0",
         "1",
         "2020-01-01",
+        # RegDatKtid exactly as SCB delivers it, beside the typed date (owner decision
+        # 2026-09-03): Date32 cannot hold a pre-1900 registration date, the twin can.
+        "20200101",
         "62010",
         "70220",
         None,
@@ -1106,15 +1110,17 @@ def test_bolagsverket_registration_date_outside_date32_range_is_nulled(
 
         rows = connection.execute(
             f"""
-            select company_id, registration_date::varchar
+            select company_id, registration_date::varchar, registration_date_raw
             from {tables.DLT_DATASET_NAME}.bolagsverket_companies
             order by company_id
             """
         ).fetchall()
 
+    # The typed column is NULL for the pre-1900 date, and registreringsdatum survives
+    # verbatim in the raw twin -- a 20th-century company carries its own source string too.
     assert rows == [
-        ("5551110000", None),
-        ("5552220000", "1955-06-15"),
+        ("5551110000", None, "1878-05-24"),
+        ("5552220000", "1955-06-15", "1955-06-15"),
     ]
 
 

@@ -285,6 +285,7 @@ def _replace_scb_companies_table(*, connection: Any, loaded_at: datetime) -> Non
             nullif(trim(FtgStat), '') as source_status_code,
             nullif(trim(JEStat), '') as source_secondary_status_code,
             {_date32_bounded_sql("registration_date_parsed")} as registration_date,
+            nullif(trim(RegDatKtid), '') as registration_date_raw,
             nullif(trim(Ng1), '') as ng1_code,
             nullif(trim(Ng2), '') as ng2_code,
             nullif(trim(Ng3), '') as ng3_code,
@@ -346,7 +347,9 @@ def _replace_bolagsverket_companies_table(
             organisationsnamn as legal_name_raw,
             nullif(trim(organisationsform), '') as legal_form_code,
             {_date32_bounded_sql("registration_date_parsed")} as registration_date,
+            nullif(trim(registreringsdatum), '') as registration_date_raw,
             {_date32_bounded_sql("deregistration_date_parsed")} as deregistration_date,
+            nullif(trim(avregistreringsdatum), '') as deregistration_date_raw,
             nullif(trim(avregistreringsorsak), '') as deregistration_reason,
             nullif(
                 trim(pagandeAvvecklingsEllerOmstruktureringsforfarande), ''

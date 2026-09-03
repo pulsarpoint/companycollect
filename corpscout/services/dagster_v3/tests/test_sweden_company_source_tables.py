@@ -10,9 +10,10 @@ from tests.se_company_ddl import declared_columns, table_block
 
 
 def test_se_scb_companies_declares_the_whole_scb_record_in_export_order() -> None:
-    assert declared_columns("se_scb_companies") == list(
-        tables.SE_SCB_COMPANIES_EXPORT_COLUMNS
-    )
+    assert declared_columns("se_scb_companies") == [
+        *tables.SE_SCB_COMPANIES_EXPORT_COLUMNS,
+        "has_company",
+    ]
     block = table_block("se_scb_companies")
 
     assert block.count("CREATE TABLE") == 1 and block.endswith(";")
@@ -25,15 +26,20 @@ def test_se_scb_companies_declares_the_whole_scb_record_in_export_order() -> Non
     assert "derived_status" not in block
     # Date32, not 000257's Date: Date starts at 1970-01-01 and registration dates do not.
     assert "registration_date Nullable(Date32)" in block
+    # The source string beside the typed date: Date32 starts at 1900-01-01 and the typed
+    # column is NULL for older dates, the twin keeps them (owner decision 2026-09-03).
+    assert "registration_date_raw Nullable(String)" in block
+    assert "has_company UInt8 DEFAULT 1" in block
     # The address and SNI columns company_registry_states never carried.
     for column in ("ng1_code", "ng5_code", "care_of", "street_address", "post_town"):
         assert f"    {column} " in block, column
 
 
 def test_se_bolagsverket_companies_declares_the_whole_bolagsverket_record() -> None:
-    assert declared_columns("se_bolagsverket_companies") == list(
-        tables.SE_BOLAGSVERKET_COMPANIES_EXPORT_COLUMNS
-    )
+    assert declared_columns("se_bolagsverket_companies") == [
+        *tables.SE_BOLAGSVERKET_COMPANIES_EXPORT_COLUMNS,
+        "has_company",
+    ]
     block = table_block("se_bolagsverket_companies")
 
     assert block.count("CREATE TABLE") == 1 and block.endswith(";")
@@ -41,6 +47,11 @@ def test_se_bolagsverket_companies_declares_the_whole_bolagsverket_record() -> N
     assert "ORDER BY company_id" in block
     assert "registration_date Nullable(Date32)" in block
     assert "deregistration_date Nullable(Date32)" in block
+    # The source strings beside the typed dates: Date32 starts at 1900-01-01 and the typed
+    # columns are NULL for older dates, the twins keep them (owner decision 2026-09-03).
+    assert "registration_date_raw Nullable(String)" in block
+    assert "deregistration_date_raw Nullable(String)" in block
+    assert "has_company UInt8 DEFAULT 1" in block
     # The packed postal address exactly as Bolagsverket delivers it: parsing belongs to the
     # address entity, which keeps its own tables until its own slice.
     assert "postal_address Nullable(String)" in block
@@ -62,3 +73,21 @@ def test_neither_source_table_carries_provenance_it_does_not_need() -> None:
         assert "has_observation" not in block, table
         assert "observation_fingerprint" not in block, table
         assert "state_fingerprint" not in block, table
+
+
+def test_the_export_tuples_place_each_raw_date_twin_after_its_typed_date() -> None:
+    scb = tables.SE_SCB_COMPANIES_EXPORT_COLUMNS
+    assert scb.index("registration_date_raw") == scb.index("registration_date") + 1
+    bolagsverket = tables.SE_BOLAGSVERKET_COMPANIES_EXPORT_COLUMNS
+    assert (
+        bolagsverket.index("registration_date_raw")
+        == bolagsverket.index("registration_date") + 1
+    )
+    assert (
+        bolagsverket.index("deregistration_date_raw")
+        == bolagsverket.index("deregistration_date") + 1
+    )
+    # has_company is the publisher's flag, never a DuckDB column: it stays out of the
+    # export tuples so the staged insert leaves it at DEFAULT 1.
+    for columns in (scb, bolagsverket):
+        assert "has_company" not in columns

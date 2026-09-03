@@ -16,7 +16,14 @@ CREATE DATABASE IF NOT EXISTS corpscout;
 -- NULL. The two dates are Date32 rather than 000257's Date because Date starts at
 -- 1970-01-01 and Swedish registration dates predate it. Either date is NULL when the
 -- source value lies outside Date32's own range, before 1900-01-01, never a fabricated
--- 1970-01-01.
+-- 1970-01-01 -- 631 registration dates on the 2026-09-03 register are older, the oldest
+-- 1826-01-01. registration_date_raw and deregistration_date_raw keep registreringsdatum and
+-- avregistreringsdatum exactly as delivered, so those dates are still readable.
+--
+-- has_company is 1 on every row the source delivered and 0 on a tombstone row the publisher
+-- appends when Bolagsverket stops delivering a company (values NULL, empty record id and
+-- hash, the run's source_run_id and observed_at). A company that returns is inserted again
+-- with has_company 1, so readers take FINAL rows WHERE has_company = 1.
 --
 -- This replaces the Bolagsverket half of se_company_registry_observations and
 -- se_company_registry_current, retired by migration 000375 at its apply step -- never here,
@@ -31,7 +38,9 @@ CREATE TABLE IF NOT EXISTS corpscout.se_bolagsverket_companies
     legal_name_raw Nullable(String),
     legal_form_code LowCardinality(Nullable(String)),
     registration_date Nullable(Date32),
+    registration_date_raw Nullable(String),
     deregistration_date Nullable(Date32),
+    deregistration_date_raw Nullable(String),
     deregistration_reason LowCardinality(Nullable(String)),
     proceedings_raw Nullable(String),
     activity_description Nullable(String),
@@ -40,6 +49,7 @@ CREATE TABLE IF NOT EXISTS corpscout.se_bolagsverket_companies
     source_record_id String,
     source_payload_hash String,
     observed_at DateTime64(3, 'UTC'),
+    has_company UInt8 DEFAULT 1,
 
     CONSTRAINT has_company CHECK match(company_id, '^([0-9]{10}|[0-9]{12})$')
 )
