@@ -217,13 +217,21 @@ def run_command(
     )
     try:
         plans = plan_calls(settings)
-        executed, cached, failed = asyncio.run(execute_run(settings))
+        executed, _, failed = asyncio.run(execute_run(settings))
     except Exception as error:
         raise click.ClickException(str(error)) from error
-    click.echo(
-        f"Run {settings.run_id}: {len(plans)} planned, {cached} cached, {executed} executed, {failed} failed"
-        + (" (dry run, nothing called)" if dry_run else "")
-    )
+    cached = sum(p.cached for p in plans)
+    if dry_run:
+        to_execute = len(plans) - cached
+        click.echo(
+            f"Run {settings.run_id}: {len(plans)} planned, {cached} cached, "
+            f"{to_execute} would be executed (dry run, nothing called)"
+        )
+    else:
+        click.echo(
+            f"Run {settings.run_id}: {len(plans)} planned, {cached} cached, "
+            f"{executed} executed, {failed} failed"
+        )
     click.echo(f"Results: {data.run_dir(settings.run_id)}")
 
 

@@ -1,12 +1,16 @@
+import asyncio
 import tempfile
 import unittest
 from pathlib import Path
 from unittest.mock import patch
 
+from click.testing import CliRunner
+
 from ex3.candidates import PageCandidate
 from ex3.crawler import save_model
 from ex3.models import LlmCallStatus, ScoredUrl
 from ex4.candidates import CandidateSet, load_candidate_set
+from ex4.main import cli
 from ex4.paths import DataDir
 from ex4.prompts import load_prompts, render_prompt
 from ex4.runner import (
@@ -197,6 +201,113 @@ class RunnerTest(unittest.IsolatedAsyncioTestCase):
         )
         self.assertEqual(cache_key("p", "c", 20), cache_key("p", "c", 20))
         self.assertNotEqual(cache_key("p", "c", 20), cache_key("p", "c", 21))
+
+    async def test_a_broken_save_is_recorded_as_a_failure_without_aborting_the_run(
+        self,
+    ) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            data = _lab(Path(directory))
+
+            async def fake_select(
+                candidates,
+                *,
+                base_url,
+                limit,
+                timeout_seconds,
+                prompt: str | None = None,
+            ):
+                assert prompt is not None
+                if base_url == "https://www.b.se/" and "B" in prompt:
+                    return [], LlmCallStatus(
+                        attempted=True, succeeded=False, error="timed out"
+                    )
+                return [
+                    ScoredUrl(url=candidates[1].url, score=40.0, reasons=["llm", "ok"])
+                ], LlmCallStatus(attempted=True, succeeded=True)
+
+            broken_path = data.result_file("r2", "a.se", "pb", 1)
+
+            def failing_save_model(model, path: Path) -> None:
+                if path == broken_path:
+                    raise OSError("disk full")
+                save_model(model, path)
+
+            settings = RunSettings(run_id="r2", data=data, limit=5, concurrency=2)
+            with (
+                patch("ex4.runner.select_pages_with_llm", new=fake_select),
+                patch("ex4.runner.save_model", new=failing_save_model),
+            ):
+                result = await execute_run(settings)
+
+            # b.se/pb fails via the fake status; a.se/pb fails only because the
+            # save itself raised. Neither exception escapes execute_run.
+            self.assertEqual(result, (4, 0, 2))
+            self.assertFalse(broken_path.exists())
+            self.assertTrue(data.result_file("r2", "a.se", "pa", 1).exists())
+            self.assertTrue(data.result_file("r2", "b.se", "pa", 1).exists())
+            self.assertTrue(data.result_file("r2", "b.se", "pb", 1).exists())
+            failed_result = RunResult.model_validate_json(
+                data.result_file("r2", "b.se", "pb", 1).read_text(encoding="utf-8")
+            )
+            self.assertEqual(failed_result.llm.error, "timed out")
+
+
+class RunCliTest(unittest.TestCase):
+    def test_dry_run_reports_the_cache_split_from_plan_calls(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            data = _lab(Path(directory))
+
+            async def fake_select(
+                candidates,
+                *,
+                base_url,
+                limit,
+                timeout_seconds,
+                prompt: str | None = None,
+            ):
+                assert prompt is not None
+                return [], LlmCallStatus(attempted=True, succeeded=True)
+
+            # Seed exactly one cached result: a.se/pa/1.
+            with patch("ex4.runner.select_pages_with_llm", new=fake_select):
+                asyncio.run(
+                    execute_run(
+                        RunSettings(
+                            run_id="r1",
+                            data=data,
+                            prompt_names=("pa",),
+                            domains=("a.se",),
+                            limit=5,
+                        )
+                    )
+                )
+
+            called: list[str] = []
+
+            async def must_not_be_called(*args, **kwargs):
+                called.append("called")
+                raise AssertionError("dry run must not call the model")
+
+            with patch("ex4.runner.select_pages_with_llm", new=must_not_be_called):
+                result = CliRunner().invoke(
+                    cli,
+                    [
+                        "--data-dir",
+                        str(directory),
+                        "run",
+                        "--run-id",
+                        "r1",
+                        "--limit",
+                        "5",
+                        "--dry-run",
+                    ],
+                )
+
+            self.assertEqual(result.exit_code, 0, result.output)
+            self.assertIn("4 planned", result.output)
+            self.assertIn("1 cached", result.output)
+            self.assertIn("3 would be executed", result.output)
+            self.assertEqual(called, [])
 
 
 if __name__ == "__main__":

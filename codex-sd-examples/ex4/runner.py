@@ -221,20 +221,29 @@ async def execute_run(settings: RunSettings) -> tuple[int, int, int]:
                     [],
                     LlmCallStatus(attempted=True, succeeded=False, error=str(error)),
                 )
-        result = RunResult(
-            domain=plan.domain,
-            prompt_name=plan.prompt_name,
-            repeat=plan.repeat,
-            prompt_hash=prompt_hash(template.text),
-            candidates_hash=candidates_hash(candidate_set),
-            cache_key=plan.cache_key,
-            limit=settings.limit,
-            picks=picks_from_scored(scored),
-            llm=status,
-            latency_ms=int((time.monotonic() - clock) * 1000),
-            started_at=started,
-        )
-        save_model(result, plan.path)
+        try:
+            result = RunResult(
+                domain=plan.domain,
+                prompt_name=plan.prompt_name,
+                repeat=plan.repeat,
+                prompt_hash=prompt_hash(template.text),
+                candidates_hash=candidates_hash(candidate_set),
+                cache_key=plan.cache_key,
+                limit=settings.limit,
+                picks=picks_from_scored(scored),
+                llm=status,
+                latency_ms=int((time.monotonic() - clock) * 1000),
+                started_at=started,
+            )
+            save_model(result, plan.path)
+        except Exception:
+            LOGGER.exception(
+                "%s/%s#%d: failed to record the result",
+                plan.domain,
+                plan.prompt_name,
+                plan.repeat,
+            )
+            return True
         LOGGER.info(
             "%s/%s#%d: %d pick(s)%s",
             plan.domain,
@@ -245,5 +254,20 @@ async def execute_run(settings: RunSettings) -> tuple[int, int, int]:
         )
         return status.error is not None
 
-    outcomes = await asyncio.gather(*(one(plan) for plan in todo))
-    return len(todo), cached, sum(outcomes)
+    outcomes = await asyncio.gather(
+        *(one(plan) for plan in todo), return_exceptions=True
+    )
+    failed = 0
+    for plan, outcome in zip(todo, outcomes, strict=True):
+        if isinstance(outcome, BaseException):
+            LOGGER.error(
+                "%s/%s#%d: unhandled exception escaped the call",
+                plan.domain,
+                plan.prompt_name,
+                plan.repeat,
+                exc_info=outcome,
+            )
+            failed += 1
+        elif outcome:
+            failed += 1
+    return len(todo), cached, failed
