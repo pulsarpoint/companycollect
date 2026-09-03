@@ -2645,12 +2645,12 @@ Expected: all three succeed. The two export assets report `candidates` equal to 
 SELECT
     (SELECT uniqExact(company_id) FROM corpscout.se_company_registry_current
      WHERE source = 'scb' AND has_company = 1)          AS registry_scb,
-    (SELECT uniqExact(company_id) FROM corpscout.se_scb_companies)
-                                                        AS new_scb,
+    (SELECT uniqExact(company_id) FROM corpscout.se_scb_companies FINAL
+     WHERE has_company = 1)                             AS new_scb,
     (SELECT uniqExact(company_id) FROM corpscout.se_company_registry_current
      WHERE source = 'bolagsverket' AND has_company = 1)  AS registry_bolagsverket,
-    (SELECT uniqExact(company_id) FROM corpscout.se_bolagsverket_companies)
-                                                        AS new_bolagsverket;
+    (SELECT uniqExact(company_id) FROM corpscout.se_bolagsverket_companies FINAL
+     WHERE has_company = 1)                             AS new_bolagsverket;
 ```
 Gate: `new_scb = registry_scb` and `new_bolagsverket = registry_bolagsverket`. Record the four numbers — they go into 000375's comment. If they differ, stop: the DuckDB builders and `company_registry_states` use the same identity normalisation and the same rank-1 dedup, so a difference means one of them changed and must be explained before anything is dropped.
 
@@ -2663,14 +2663,14 @@ SELECT
         WHERE source = 'scb' AND has_company = 1 AND ifNull(legal_name, '') != ''
         EXCEPT
         SELECT company_id, legal_name FROM corpscout.se_scb_companies FINAL
-        WHERE ifNull(legal_name, '') != ''
+        WHERE has_company = 1 AND ifNull(legal_name, '') != ''
     )) AS scb_legal_name_lost,
     (SELECT count() FROM (
         SELECT company_id, alternate_name FROM corpscout.se_company_registry_current
         WHERE source = 'scb' AND has_company = 1 AND ifNull(alternate_name, '') != ''
         EXCEPT
         SELECT company_id, alternate_name FROM corpscout.se_scb_companies FINAL
-        WHERE ifNull(alternate_name, '') != ''
+        WHERE has_company = 1 AND ifNull(alternate_name, '') != ''
     )) AS scb_alternate_name_lost,
     (SELECT count() FROM (
         SELECT company_id, legal_name FROM corpscout.se_company_registry_current
@@ -2678,7 +2678,7 @@ SELECT
           AND ifNull(legal_name, '') != ''
         EXCEPT
         SELECT company_id, legal_name FROM corpscout.se_bolagsverket_companies FINAL
-        WHERE ifNull(legal_name, '') != ''
+        WHERE has_company = 1 AND ifNull(legal_name, '') != ''
     )) AS bolagsverket_legal_name_lost;
 ```
 Gate: all three are 0. These are exactly the three feature streams `stg_se_company_match_features` builds, so a zero here means the dbt model's output cannot shrink.
@@ -2700,10 +2700,12 @@ ssh dagster "cd /opt/companycollect/corpscout/dagster_v3 && sudo -n .venv/bin/py
 ```
 ```sql
 SELECT countIf(registration_date IS NULL) AS null_dates,
-       countIf(registration_date = toDate32('1970-01-01')) AS epoch_dates
+       countIf(registration_date = toDate32('1970-01-01')) AS epoch_dates,
+       countIf(registration_date IS NULL AND registration_date_raw IS NOT NULL) AS raw_only,
+       min(registration_date_raw) AS oldest_raw
 FROM corpscout.se_bolagsverket_companies;
 ```
-Gate: both pairs are equal. A ClickHouse `epoch_dates` above DuckDB's means the driver fabricated dates — stop before dropping anything.
+Gate: the DuckDB and ClickHouse `null_dates` and `epoch_dates` pairs are equal. A ClickHouse `epoch_dates` above DuckDB's means the driver fabricated dates — stop before dropping anything. `raw_only` is the count of dates only the twin holds (631 on the 2026-09-03 register, expected to match `select count(*) from sweden_company.bolagsverket_companies where registration_date is null and registration_date_raw is not null` on the DuckDB file) and `oldest_raw` is the oldest string (`1826-01-01` on that register); a `raw_only` of 0 means the twin was not filled — stop.
 
 - [ ] **Step 9: Rebuild the domain-suggestions model (gate 3 of 3)**
 
