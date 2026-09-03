@@ -1,0 +1,195 @@
+# SE company basic info: entity, suggestions, fold, history
+
+Date: 2026-09-03. Status: approved in brainstorming, awaiting the owner's review of this file.
+
+Supersedes the field-registry design of 2026-09-02 (`2026-09-02-se-company-field-registry-design.md`). Nothing from that design or its five plans reached production; its code on local main is deleted by this design's cutover.
+
+## 1. Why
+
+The field registry stored every company attribute as one long row per company, field and source, folded by generated SQL into a wide row. It covered scalar info well and nothing else: addresses, industries and people each kept their own half-model (per-source tables plus a correction ledger, or observations plus a `_current` table), with no shared shape and no history. The owner's review on 2026-09-03: the abstraction did not match how the domain is thought about.
+
+The replacement is one shape for every company entity, applied here to basic info first:
+
+- **source tables**, one per source, in the source's own shape (they exist);
+- **one suggestions table** per entity, in the entity's shape, one current row per company and source, the reviewer being a source like any other;
+- **one main table** per entity, written by a per-company fold function in Python, with per-field provenance;
+- **one history table** per entity, appended only when the folded row changes.
+
+Decisions taken in brainstorming: one entity at a time, basic info first; the fold is Python in Dagster, batched, triggered by hand for now (no sensor); descriptions belong to basic info and the LLM is a source with its own precedence; precedence is a number per field and source; suggestions keep one current row per company and source; the main row carries a `<column>_source` beside every value; basic info carries identity, legal facts and descriptions only.
+
+## 2. Scope
+
+In scope: the three tables, the precedence export, the six extractors, the fold assets, the admin info page and its three reviewer actions, the pipeline sheet, the cutover with parity, the retirement of the old publisher and of the field-registry code, and the later switch of every `se_companies` reader to the new main table.
+
+Out of scope, later entities on the same shape: addresses, industries, people, financials, domains (website), jobs, listings, proceedings. Also out of scope: the suggestions sensor (postponed until the manual fold has proven itself), public country views, other countries.
+
+## 3. Tables
+
+All in database `corpscout`, ClickHouse 26.5, created by golang-migrate migrations (first line `CREATE DATABASE IF NOT EXISTS corpscout;`, no `;` inside comments, last line a statement).
+
+### 3.1 Source layer (unchanged)
+
+`se_company_registry_observations` / `se_company_registry_current` (Bolagsverket and SCB rows, kept apart by `source`), `se_company_info_scb`, `se_company_info_esef`, `se_company_info_wikidata`, `se_ratsit_company`, `se_company_info_enrichment_observation` (LLM answers keyed by `suggestion_id` and `input_hash`). Splitting the registry table into `se_bolagsverket_companies` and `se_scb_companies` is a possible later cleanup, not a requirement: it already keeps the sources apart by row.
+
+### 3.2 `se_company_basic_info_suggestion`
+
+One current row per company and source.
+
+```
+company_id            String
+source                LowCardinality(String)   -- scb, bolagsverket, wikidata, esef, ratsit, llm, reviewer
+source_record_uid     String                   -- the source row this came from; the observation id for llm; '' for reviewer
+observed_at           DateTime64(3, 'UTC')     -- when the source observed it; the decision instant for reviewer
+legal_name            Nullable(String)
+legal_form_code       Nullable(String)
+status                Nullable(String)
+incorporation_date    Nullable(Date32)
+lei                   Nullable(String)
+wikidata_id           Nullable(String)
+description           Nullable(String)
+description_language  Nullable(String)         -- language of `description`
+description_sv        Nullable(String)
+decided_by            Nullable(String)         -- reviewer rows only
+note                  Nullable(String)         -- reviewer rows only
+content_hash          FixedString(64) MATERIALIZED sha256 over the nine value columns, NULL-safe
+suggested_at          DateTime64(3, 'UTC')     -- version
+source_run_id         String
+extractor_version     LowCardinality(String)
+ENGINE = ReplacingMergeTree(suggested_at) ORDER BY (company_id, source)
+CHECK match(company_id, '^([0-9]{10}|[0-9]{12})$')
+```
+
+NULL in a value column means "this source has no opinion", never "this source says empty". An extractor inserts a row only when its `content_hash` differs from the current row for that company and source, so an unchanged daily refresh writes nothing. A source with several records per company (ESEF filings) contributes its newest record. A reviewer decision is a new version of the reviewer row; a release sets that one field back to NULL in a new version.
+
+### 3.3 `se_company_basic_info`
+
+One row per published company.
+
+```
+company_id                  String
+legal_name                  String              legal_name_source           LowCardinality(String)
+legal_form_code             Nullable(String)    legal_form_code_source      LowCardinality(String)
+status                      LowCardinality(String)  status_source           LowCardinality(String)
+incorporation_date          Nullable(Date32)    incorporation_date_source   LowCardinality(String)
+lei                         Nullable(String)    lei_source                  LowCardinality(String)
+wikidata_id                 Nullable(String)    wikidata_id_source          LowCardinality(String)
+description                 Nullable(String)    description_source          LowCardinality(String)
+description_language        Nullable(String)
+description_sv              Nullable(String)    description_sv_source       LowCardinality(String)
+folded_at                   DateTime64(3, 'UTC')  -- version
+fold_version                LowCardinality(String)
+source_run_id               String
+ENGINE = ReplacingMergeTree(folded_at) ORDER BY company_id
+```
+
+A `_source` column is `''` when the field has no value; `status` itself is `''` then (the column is not nullable, as on the old table), every other value column is NULL. Publish rule: a company gets a row only when SCB or Bolagsverket supplies its legal name; otherwise the fold writes nothing and any earlier row stands. The legal-form labels (`legal_form_label_en`/`_sv`) are not stored; the serving view joins `se_code_labels` as today.
+
+### 3.4 `se_company_basic_info_history`
+
+Append-only, one row per change of the main row.
+
+```
+company_id, every column of se_company_basic_info, changed_fields Array(String)
+ENGINE = MergeTree ORDER BY (company_id, folded_at)
+```
+
+Written by the fold when the folded row differs from the current main row, including the first publish (`changed_fields` = every non-NULL field).
+
+### 3.5 `se_company_basic_info_precedence`
+
+The precedence table as exported from code: `field, source, precedence UInt32, exported_at` (ReplacingMergeTree(exported_at) ORDER BY (field, source)). Read by the backoffice for display and validation. Never edited in ClickHouse.
+
+## 4. Precedence
+
+In Python, `dagster_v3.defs.se_company.basic_info.precedence`:
+
+```python
+BASIC_INFO_PRECEDENCE: dict[str, dict[str, int]] = {
+    "legal_name":         {"reviewer": 10000, "scb": 1000, "bolagsverket": 900, "ratsit": 300, "wikidata": 200},
+    "legal_form_code":    {"reviewer": 10000, "scb": 1000, "bolagsverket": 900},
+    "status":             {"reviewer": 10000, "scb": 1000, "bolagsverket": 900, "ratsit": 300},
+    "incorporation_date": {"reviewer": 10000, "scb": 1000, "bolagsverket": 900, "wikidata": 200},
+    "lei":                {"reviewer": 10000, "esef": 1000},
+    "wikidata_id":        {"reviewer": 10000, "wikidata": 1000},
+    "description":        {"reviewer": 10000, "llm": 2000, "esef": 800, "wikidata": 600, "scb": 400, "ratsit": 300},
+    "description_sv":     {"reviewer": 10000, "llm": 2000, "scb": 400, "ratsit": 300},
+}
+```
+
+The numbers are the owner's to adjust in review; gaps leave room for new sources. A source absent from a field's map cannot supply that field. `description_language` is not in the map: it follows the winning `description` row.
+
+## 5. The fold
+
+`fold_basic_info(company_id, suggestions) -> BasicInfoRow | None`, a pure function:
+
+1. Per field: among the suggestion rows whose value is not NULL and whose source has a precedence for the field, the highest precedence wins; ties go to the newest `observed_at`, then the smaller `source_record_uid`.
+2. `description_language` is copied from the row that won `description`.
+3. If no SCB or Bolagsverket row supplies `legal_name`, return None.
+4. The row carries `fold_version` (a module constant, bumped when the logic changes) and the run id.
+
+Batch layer, `fold_companies(client, company_ids, *, changed_only)`:
+
+1. Read the current suggestion rows for the set (`argMax` per company and source over `suggested_at`), grouped by company.
+2. With `changed_only`, keep the companies whose newest `suggested_at` is later than their main row's `folded_at`, or that have no main row.
+3. Fold in memory, read the current main rows for the set, compare values and sources.
+4. Insert only the rows that differ; append one history row per changed company. Unchanged companies write nothing.
+
+Pages of 20,000 companies keep memory bounded; the 3.5M backfill is 64 partition runs of a few minutes each.
+
+## 6. Dagster
+
+Group `se_company_basic_info`, everything manual for now.
+
+- `se_basic_info_suggestions_<source>` for scb, bolagsverket, wikidata, esef, ratsit, llm: plan 2's extractors reshaped to write one wide suggestion row per company. Per-company watermark scan, staged publish with a hash anti-join, config `execute` (preview by default), `company_ids`, `max_companies`, `since`. The LLM extractor keeps its observation cache, its preview counts (`would_reuse_count`, `would_call_model_count`) and its required model profile.
+- `se_company_basic_info_fold`: 64 static partitions on `cityHash64(company_id) % 64`, `BackfillPolicy.multi_run(max_partitions_per_run=1)`, one pool; config `changed_only` default true.
+- `se_company_basic_info_fold_companies`: unpartitioned, config `company_ids` required; the targeted fold, later the sensor's job.
+- `se_company_basic_info_precedence_clickhouse`: exports the precedence table.
+- Job `se_company_basic_info_extract_job` (the six extractors, LLM with run config) with schedule `se_company_basic_info_weekly` defined STOPPED. No sensor.
+
+Deleted: the `se_company_fields` group and everything under `se_company/fields/`, `info.py`'s publisher with its jobs, weekly and field-value sensor, the parity snapshot of the cutover plan, and the migrations 000373 to 000377 files (unapplied on prod, ledger at 372). `info.py` keeps only the LLM helpers the extractor imports. The `sweden_company` asset that builds `se_companies` is deleted in the spine slice.
+
+## 7. Backoffice
+
+Admin info page reads: the main row with its sources, every current suggestion row (reviewer first), the history as a timeline, and the precedence table for "why this value".
+
+Reviewer actions: Use this, Edit, Release. Each reads the current reviewer row, changes one field, inserts a new version with `decided_by = 'backoffice'` and `note`. Release sets the field to NULL. The validator takes fields and sources from the exported precedence table (plus `reviewer`).
+
+After a decision the page shows the reviewer row and a "fold pending" marker when the reviewer row is newer than `folded_at`. A Fold now button launches `se_company_basic_info_fold_companies` for the company through the existing Dagster launch helper; the page reloads when the run finishes.
+
+Pipeline sheet: extract job, fold partitions, suggestions per source, pending folds, LLM preview counts. Every reader of `se_companies` moves to `se_company_basic_info` in the spine slice.
+
+## 8. Cutover
+
+1. Apply the new migrations (four tables). Delete the unapplied field-registry migration files 000373 to 000377 and their ledger tests; the next number after 000372 is this design's first migration.
+2. Run the six extractors by hand, one at a time, LLM last with a preview first.
+3. Fold all 64 partitions from the UI backfill.
+4. Migrate the existing reviewer decisions from `se_company_info_field_value` into reviewer suggestion rows (a one-off asset), then fold those companies.
+5. Parity: an asset check on the fold compares `se_company_basic_info` with the untouched `se_company_info` per company: legal facts equal; a copied description equal; an LLM description equal to the stored observation; a decided row equal to its old text; companies published before and not now counted. Go or no-go.
+6. Switch the serving view and the admin info page to the new tables, deploy, smoke one company through Use this, Fold now, Release.
+7. Retire: delete the old publisher and the field-registry code from Dagster; drop `se_company_info` and `se_company_info_field_value` by gated migrations once nothing reads them.
+
+Rollback before step 6 is doing nothing. After step 6 it is switching the view and page back; the old table is untouched until step 7.
+
+## 9. Testing
+
+- The fold is table-driven pure-function tests: one case per field for precedence, ties, NULL-as-no-opinion, the publish rule, `description_language`, `fold_version`.
+- The batch layer against the scripted fake client: changed-only selection, diff-only writes, history rows and `changed_fields`.
+- One clickhouse-local harness (both `join_use_nulls`) runs extract, fold and history end to end with a hand-written expected main row.
+- Extractor SQL pinned as text and executed in the harness; the LLM extractor's preview counts pinned.
+- Backoffice: the page, the three actions, the validator and Fold now under vitest with one shared fixture; a live test under `VITEST_LIVE=1` after cutover step 1.
+- The parity check executed once on prod at cutover step 5.
+
+## 10. Slices
+
+One plan each, executed in order with subagent-driven development:
+
+1. Tables, precedence, fold function, the two fold assets, the precedence export.
+2. The six extractors.
+3. The backoffice page, actions, Fold now, pipeline sheet.
+4. Cutover (owner-gated prod steps) and retirement.
+5. The spine switch: every `se_companies` reader to `se_company_basic_info`, then the `se_companies` builder and table go.
+6. The sensor, as its own later spec.
+
+## 11. Names
+
+Tables `se_company_basic_info_suggestion`, `se_company_basic_info`, `se_company_basic_info_history`, `se_company_basic_info_precedence`. Assets `se_basic_info_suggestions_<source>`, `se_company_basic_info_fold`, `se_company_basic_info_fold_companies`, `se_company_basic_info_precedence_clickhouse`. Job `se_company_basic_info_extract_job`, schedule `se_company_basic_info_weekly`. Module `dagster_v3.defs.se_company.basic_info`. Sources `scb`, `bolagsverket`, `wikidata`, `esef`, `ratsit`, `llm`, `reviewer`.
