@@ -44,7 +44,10 @@ def candidate_shortlist(
         linked_from_base=unique_links,
         preferred_languages=preferred_languages,
     )
-    return eligible[:limit]
+    deduped: dict[str, ScoredUrl] = {}
+    for scored in eligible:
+        deduped.setdefault(url_key(scored.url), scored)
+    return list(deduped.values())[:limit]
 
 
 def build_selection_candidates(
@@ -151,8 +154,19 @@ def load_inventory_eligible(path: Path | None) -> list[ScoredUrl]:
         return []
     try:
         payload = json.loads(path.read_text(encoding="utf-8"))
-        return [ScoredUrl.model_validate(item) for item in payload.get("eligible", [])]
-    except (json.JSONDecodeError, ValidationError, AttributeError, OSError) as error:
+    except (json.JSONDecodeError, OSError) as error:
+        LOGGER.warning("Ignoring unreadable inventory %s: %s", path, error)
+        return []
+    if not isinstance(payload, dict):
+        LOGGER.warning("Ignoring inventory %s: expected a JSON object", path)
+        return []
+    entries = payload.get("eligible")
+    if not isinstance(entries, list):
+        LOGGER.warning("Ignoring inventory %s: 'eligible' is not a list", path)
+        return []
+    try:
+        return [ScoredUrl.model_validate(item) for item in entries]
+    except ValidationError as error:
         LOGGER.warning("Ignoring unreadable inventory %s: %s", path, error)
         return []
 

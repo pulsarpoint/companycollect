@@ -10,6 +10,7 @@ from ex3.candidates import (
 )
 from ex3.models import DiscoveredUrl, ScoredUrl
 from ex3.seeding import HeadMetadata
+from ex3.urls import url_key
 
 BASE_URL = "https://www.example.se/en/"
 
@@ -46,6 +47,35 @@ class SelectionCandidatesTest(unittest.TestCase):
         self.assertEqual(about.language, "en")
         self.assertEqual(about.source, "inventory")
         self.assertEqual(careers.source, "base_page")
+
+    def test_dedupes_the_shortlist_by_url_key_before_the_limit(self) -> None:
+        # "careers" (inventory) and "careers/" (base_page_links) share one
+        # url_key and tie in score; without pre-limit dedup both consume a
+        # shortlist slot and crowd out the genuinely distinct "about-us"
+        # entry from the top ``limit`` before it ever reaches candidates.
+        candidates = build_selection_candidates(
+            inventory=[
+                "https://www.example.se/en/careers",
+                "https://www.example.se/en/company/about-us",
+                "https://www.example.se/en/misc",
+            ],
+            base_url=BASE_URL,
+            base_page_links=["https://www.example.se/en/careers/"],
+            heads={},
+            preferred_languages=frozenset({"en"}),
+            limit=3,
+        )
+
+        result_keys = {url_key(candidate.url) for candidate in candidates}
+        self.assertEqual(
+            result_keys,
+            {
+                url_key(BASE_URL),
+                url_key("https://www.example.se/en/company/about-us"),
+                url_key("https://www.example.se/en/careers"),
+            },
+        )
+        self.assertEqual(len(candidates), 3)
 
     def test_respects_the_limit(self) -> None:
         candidates = build_selection_candidates(
@@ -157,6 +187,19 @@ class InventoryLoadingTest(unittest.TestCase):
         )
         self.assertEqual(missing, [])
         self.assertEqual(load_inventory_eligible(None), [])
+
+    def test_tolerates_malformed_eligible_shapes(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            not_a_list_path = Path(directory) / "eligible-not-a-list.json"
+            not_a_list_path.write_text(json.dumps({"eligible": 5}), encoding="utf-8")
+            not_a_dict_path = Path(directory) / "payload-not-a-dict.json"
+            not_a_dict_path.write_text(json.dumps([1, 2, 3]), encoding="utf-8")
+
+            eligible_not_a_list = load_inventory_eligible(not_a_list_path)
+            payload_not_a_dict = load_inventory_eligible(not_a_dict_path)
+
+        self.assertEqual(eligible_not_a_list, [])
+        self.assertEqual(payload_not_a_dict, [])
 
 
 if __name__ == "__main__":
