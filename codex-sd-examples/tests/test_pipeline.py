@@ -70,6 +70,43 @@ class ResearchPipelineTest(unittest.IsolatedAsyncioTestCase):
             self.assertTrue((workdir / "report-pass-2.json").exists())
             self.assertTrue((workdir / "report.json").exists())
 
+    async def test_keeps_the_last_completed_report_when_a_pass_fails(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            workdir = Path(temporary_directory)
+            reports: list[_FakeReport] = []
+
+            async def fake_crawl(settings):
+                (workdir / "crawl-manifest.json").write_text("{}", encoding="utf-8")
+
+            async def fake_analysis(settings):
+                report = _FakeReport()
+                reports.append(report)
+                return report
+
+            async def fake_suggest(settings):
+                raise RuntimeError("codex unavailable")
+
+            with (
+                patch("ex3.pipeline.run_crawl", new=fake_crawl),
+                patch("ex3.pipeline.run_analysis", new=fake_analysis),
+                patch("ex3.pipeline.run_suggest", new=fake_suggest),
+                patch(
+                    "ex3.pipeline.save_report",
+                    new=lambda report, path: path.write_text(
+                        path.name, encoding="utf-8"
+                    ),
+                ),
+            ):
+                report = await run_research(_settings(workdir, max_passes=3))
+
+            self.assertEqual(len(reports), 1)
+            self.assertIs(report, reports[0])
+            self.assertFalse((workdir / "report-pass-2.json").exists())
+            self.assertEqual(
+                (workdir / "report.json").read_text(encoding="utf-8"),
+                "report-pass-1.json",
+            )
+
 
 class _FakeReport:
     pass

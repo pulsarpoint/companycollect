@@ -49,38 +49,44 @@ async def run_research(settings: ResearchSettings) -> ResearchReport:
     save_report(report, report_path)
 
     for pass_number in range(2, settings.max_passes + 1):
-        suggestions = await run_suggest(
-            SuggestSettings(
-                manifest_path=manifest_path,
-                report_path=report_path,
-                max_suggestions=settings.pass_pages,
-                timeout_seconds=settings.analysis_timeout_seconds,
+        try:
+            suggestions = await run_suggest(
+                SuggestSettings(
+                    manifest_path=manifest_path,
+                    report_path=report_path,
+                    max_suggestions=settings.pass_pages,
+                    timeout_seconds=settings.analysis_timeout_seconds,
+                )
             )
-        )
-        suggestions_path = workdir / f"suggestions-pass-{pass_number}.json"
-        save_model(suggestions, suggestions_path)
-        if not suggestions.suggestions:
-            LOGGER.info("Pass %d: no suggestions; stopping", pass_number)
+            suggestions_path = workdir / f"suggestions-pass-{pass_number}.json"
+            save_model(suggestions, suggestions_path)
+            if not suggestions.suggestions:
+                LOGGER.info("Pass %d: no suggestions; stopping", pass_number)
+                break
+            await run_extend(
+                ExtendSettings(
+                    manifest_path=manifest_path,
+                    suggestions_path=suggestions_path,
+                    max_markdown_chars=settings.crawl.max_markdown_chars,
+                    crawl_concurrency=settings.crawl.crawl_concurrency,
+                    cdp_port=settings.crawl.cdp_port,
+                    headless=settings.crawl.headless,
+                    check_robots_txt=settings.crawl.check_robots_txt,
+                    proxy=settings.crawl.proxy,
+                    accept_language=settings.crawl.accept_language,
+                )
+            )
+            next_report_path = workdir / f"report-pass-{pass_number}.json"
+            report = await run_analysis(
+                _analysis_settings(settings, manifest_path, previous=report_path)
+            )
+            save_report(report, next_report_path)
+            report_path = next_report_path
+        except Exception:
+            LOGGER.exception(
+                "Pass %d failed; keeping the last completed report", pass_number
+            )
             break
-        await run_extend(
-            ExtendSettings(
-                manifest_path=manifest_path,
-                suggestions_path=suggestions_path,
-                max_markdown_chars=settings.crawl.max_markdown_chars,
-                crawl_concurrency=settings.crawl.crawl_concurrency,
-                cdp_port=settings.crawl.cdp_port,
-                headless=settings.crawl.headless,
-                check_robots_txt=settings.crawl.check_robots_txt,
-                proxy=settings.crawl.proxy,
-                accept_language=settings.crawl.accept_language,
-            )
-        )
-        next_report_path = workdir / f"report-pass-{pass_number}.json"
-        report = await run_analysis(
-            _analysis_settings(settings, manifest_path, previous=report_path)
-        )
-        save_report(report, next_report_path)
-        report_path = next_report_path
 
     shutil.copyfile(report_path, workdir / "report.json")
     return report
