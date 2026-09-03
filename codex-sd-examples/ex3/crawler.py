@@ -1170,11 +1170,19 @@ async def _analyze_batches(
             len(batch.pages),
             batch.markdown_chars,
         )
-        outcome = await _analyze_batch(
-            batch=batch,
-            max_page_chars=max_page_chars,
-            timeout_seconds=timeout_seconds,
-        )
+        try:
+            outcome = await _analyze_batch(
+                batch=batch,
+                max_page_chars=max_page_chars,
+                timeout_seconds=timeout_seconds,
+            )
+        except Exception as error:
+            LOGGER.exception("LLM batch %d failed", batch.number)
+            outcome = BatchOutcome(
+                extraction=BatchExtraction(),
+                token_usage=None,
+                error=str(error),
+            )
 
         validated, warnings, page_failures = _validate_batch_output(
             batch,

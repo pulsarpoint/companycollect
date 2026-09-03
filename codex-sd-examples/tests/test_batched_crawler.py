@@ -3,7 +3,7 @@ import tempfile
 import unittest
 from pathlib import Path
 from typing import cast
-from unittest.mock import patch
+from unittest.mock import AsyncMock, patch
 
 from crawl4ai import AsyncWebCrawler
 from crawl4ai.models import CrawlResult
@@ -14,6 +14,7 @@ from ex3.crawler import (
     BatchOutcome,
     CrawlSettings,
     MarkdownBatch,
+    _analyze_batches,
     _collect_bfs_results,
     _crawl_seeded_pages,
     _internal_links,
@@ -28,7 +29,7 @@ from ex3.language import (
     inspect_language_page,
     is_english_language,
 )
-from ex3.llm import _run_turn_with_timeout
+from ex3.llm import StructuredTurnOutcome, _run_turn_with_timeout
 from ex3.models import (
     BatchExtraction,
     MarkdownPage,
@@ -454,6 +455,54 @@ class TurnTimeoutCleanupTest(unittest.IsolatedAsyncioTestCase):
         self.assertTrue(turn.run_finished)
         self.assertTrue(turn.interrupt_finished)
         self.assertFalse(turn.run_cancelled)
+
+
+class BatchErrorBoundaryTest(unittest.IsolatedAsyncioTestCase):
+    async def test_a_missing_markdown_file_fails_only_its_own_batch(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            good_path = Path(temporary_directory) / "good.md"
+            good_path.write_text("# Example", encoding="utf-8")
+
+            missing_page = MarkdownPage(
+                source_url="https://example.com/missing",
+                depth=1,
+                markdown_path=str(Path(temporary_directory) / "missing.md"),
+                markdown_chars=9,
+            )
+            good_page = MarkdownPage(
+                source_url="https://example.com/good",
+                depth=1,
+                markdown_path=str(good_path),
+                markdown_chars=9,
+            )
+            batch1 = MarkdownBatch(number=1, pages=(missing_page,), markdown_chars=9)
+            batch2 = MarkdownBatch(number=2, pages=(good_page,), markdown_chars=9)
+
+            fake_turn = AsyncMock(
+                return_value=StructuredTurnOutcome(
+                    value=BatchExtraction(
+                        pages=[PageExtraction(source_url=good_page.source_url)]
+                    ),
+                    token_usage=None,
+                    error=None,
+                )
+            )
+            with patch("ex3.crawler.run_structured_turn", fake_turn):
+                pages, analyses, failed_pages = await _analyze_batches(
+                    [batch1, batch2],
+                    max_page_chars=1_000,
+                    timeout_seconds=10,
+                )
+
+        self.assertEqual(len(analyses), 2)
+        self.assertFalse(analyses[0].succeeded)
+        self.assertIn("No such file", analyses[0].error or "")
+        self.assertTrue(analyses[1].succeeded)
+        self.assertEqual(len(failed_pages), 1)
+        self.assertEqual(failed_pages[0].url, missing_page.source_url)
+        self.assertTrue(failed_pages[0].error.startswith("analysis batch 1:"))
+        fake_turn.assert_awaited_once()
+        self.assertEqual(len(pages), 2)
 
 
 class BatchPromptSchemaTest(unittest.TestCase):
