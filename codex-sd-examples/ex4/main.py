@@ -7,7 +7,8 @@ from pathlib import Path
 import click
 
 from ex3.crawler import save_model
-from ex4.candidates import build_site_candidates
+from ex4.candidates import build_site_candidates, load_candidate_set
+from ex4.gold import GOLD_FIELDS, draft_gold
 from ex4.paths import DataDir
 from ex4.sites import load_sites, save_sites, select_sites, verify_site
 
@@ -119,6 +120,35 @@ def candidates_build(
         return written
 
     asyncio.run(build_all())
+
+
+@cli.group("gold")
+def gold_group() -> None:
+    """Gold sets of must-have pages per site."""
+
+
+@gold_group.command("draft")
+@click.option("--sites", "domains", default=None)
+@click.option("--per-field", type=click.IntRange(min=1), default=5, show_default=True)
+@click.option("--overwrite", is_flag=True)
+@click.pass_obj
+def gold_draft(
+    data: DataDir, domains: str | None, per_field: int, overwrite: bool
+) -> None:
+    """Write gold/<domain>.json drafts from the candidate files for you to correct."""
+    for site in select_sites(
+        load_sites(data.sites_file), domains.split(",") if domains else None
+    ):
+        target = data.gold_file(site.domain)
+        if target.exists() and not overwrite:
+            click.echo(f"{site.domain:24} exists, skipped")
+            continue
+        gold = draft_gold(
+            load_candidate_set(data.candidate_file(site.domain)), per_field=per_field
+        )
+        save_model(gold, target)
+        counts = ", ".join(f"{f}={len(gold.must_have[f])}" for f in GOLD_FIELDS)
+        click.echo(f"{site.domain:24} {counts}; junk={len(gold.junk)} -> {target}")
 
 
 if __name__ == "__main__":
