@@ -91,6 +91,39 @@ def _publish(stage_rows: str) -> list[str]:
     ]
 
 
+def _bolagsverket_row(payload_hash: str, observed_at: str) -> str:
+    """One se_bolagsverket_companies row with both dates before 1970."""
+    return (
+        "('5561111111', '5561111111$ORGNR-IDORG', '1', 'SE-LAND', "
+        "'Closed AB', 'Closed AB$FORETAGSNAMN-ORGNAM$1955-01-01', 'AB-ORGFO', "
+        "toDate32('1955-01-01'), toDate32('1968-12-31'), 'OVERK-AVORG', "
+        "NULL, 'Closed activity', 'Closed Street 2$$GOTEBORG$41111$SE-LAND', "
+        f"'run-1', '5561111111$ORGNR-IDORG', '{payload_hash}', "
+        f"toDateTime64('{observed_at}', 3, 'UTC'))"
+    )
+
+
+def _publish_bolagsverket(stage_rows: str) -> list[str]:
+    columns = ", ".join(tables.SE_BOLAGSVERKET_COMPANIES_EXPORT_COLUMNS)
+    anti_join = sweden_company_source_anti_join_sql(
+        qualified_stage="corpscout.stage_bolagsverket",
+        qualified_target=tables.QUALIFIED_BOLAGSVERKET_COMPANIES_TABLE,
+    )
+    selected = ", ".join(
+        f"candidate.{column}"
+        for column in tables.SE_BOLAGSVERKET_COMPANIES_EXPORT_COLUMNS
+    )
+    return [
+        "DROP TABLE IF EXISTS corpscout.stage_bolagsverket",
+        "CREATE TABLE corpscout.stage_bolagsverket AS "
+        f"{tables.QUALIFIED_BOLAGSVERKET_COMPANIES_TABLE}",
+        f"INSERT INTO corpscout.stage_bolagsverket ({columns}) VALUES {stage_rows}",
+        f"SELECT count() AS new_versions {anti_join}",
+        f"INSERT INTO {tables.QUALIFIED_BOLAGSVERKET_COMPANIES_TABLE} ({columns})\n"
+        f"SELECT {selected} {anti_join}",
+    ]
+
+
 def test_the_anti_join_reinserts_a_reverted_payload_and_skips_an_unchanged_one() -> None:
     output = _run(
         [
@@ -117,6 +150,7 @@ def test_a_pre_1970_registration_date_survives_the_round_trip() -> None:
         [
             *_schema_statements(),
             *_publish(_scb_row("hash-a", "Acme AB", "2026-09-01 06:00:00")),
+            *_publish_bolagsverket(_bolagsverket_row("bv-hash-a", "2026-09-01 06:00:00")),
             "SELECT toString(registration_date) "
             f"FROM {tables.QUALIFIED_SCB_COMPANIES_TABLE} FINAL",
             "SELECT toString(registration_date), toString(deregistration_date) "
@@ -124,7 +158,7 @@ def test_a_pre_1970_registration_date_survives_the_round_trip() -> None:
         ]
     )
 
-    assert output[0] == "1"  # the anti-join count
-    assert output[1] == "1962-03-04"
-    # The Bolagsverket table exists and is empty -- its own publish is Task 4's.
-    assert output[2:] == []
+    assert output[0] == "1"  # the SCB anti-join count
+    assert output[1] == "1"  # the Bolagsverket anti-join count
+    assert output[2] == "1962-03-04"
+    assert output[3] == "1955-01-01\t1968-12-31"

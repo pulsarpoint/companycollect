@@ -23,6 +23,7 @@ def test_sweden_company_refresh_job_and_schedule_registered() -> None:
         "sweden_company_normalized_duckdb",
         "sweden_company_companies_clickhouse",
         "sweden_company_scb_companies_clickhouse",
+        "sweden_company_bolagsverket_companies_clickhouse",
         "sweden_company_profile_history_clickhouse",
         "sweden_company_addresses_clickhouse",
         "sweden_company_industries_clickhouse",
@@ -40,6 +41,7 @@ def test_sweden_company_refresh_job_and_schedule_registered() -> None:
     for asset_key in (
         "sweden_company_companies_clickhouse",
         "sweden_company_scb_companies_clickhouse",
+        "sweden_company_bolagsverket_companies_clickhouse",
         "sweden_company_addresses_clickhouse",
         "sweden_company_industries_clickhouse",
     ):

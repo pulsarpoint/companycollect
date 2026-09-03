@@ -273,6 +273,47 @@ def test_publish_sweden_company_source_table_inserts_only_changed_payloads(
     )
 
 
+def test_publish_sweden_company_source_table_publishes_the_bolagsverket_record(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    """The same helper drives both register sources -- only the DuckDB table, the ClickHouse
+    table and the column tuple differ, so a second wrapper would be pure forwarding."""
+    client = FakeClickHouseClient()
+    resource = ClickhouseResource(host="localhost")
+
+    @contextmanager
+    def fake_get_connection(self: ClickhouseResource) -> Iterator[FakeClickHouseClient]:
+        yield client
+
+    monkeypatch.setattr(ClickhouseResource, "get_connection", fake_get_connection)
+
+    with _sweden_company_duckdb(tmp_path) as connection:
+        result = publish_sweden_company_source_table(
+            duckdb_connection=connection,
+            clickhouse=resource,
+            duckdb_table="bolagsverket_companies",
+            clickhouse_table=tables.BOLAGSVERKET_COMPANIES_TABLE_CH,
+            columns=tables.SE_BOLAGSVERKET_COMPANIES_EXPORT_COLUMNS,
+        )
+
+    assert result.candidates == 1
+    assert result.inserted == 1
+    assert client.table_checks == [(tables.BOLAGSVERKET_COMPANIES_TABLE_CH,)]
+    target_inserts = [
+        statement
+        for statement in client.statements
+        if statement.lstrip().startswith(
+            f"INSERT INTO {tables.QUALIFIED_BOLAGSVERKET_COMPANIES_TABLE} ("
+        )
+    ]
+    assert len(target_inserts) == 1
+    assert "LEFT ANTI JOIN" in target_inserts[0]
+    assert (
+        ", ".join(tables.SE_BOLAGSVERKET_COMPANIES_EXPORT_COLUMNS) in target_inserts[0]
+    )
+
+
 def test_sweden_company_source_anti_join_reads_the_current_row_per_company() -> None:
     sql = sweden_company_source_anti_join_sql(
         qualified_stage="corpscout.stage",
@@ -575,6 +616,42 @@ def _sweden_company_duckdb(tmp_path: Path) -> Iterator[duckdb.DuckDBPyConnection
                 '2020-01-01', '62010', '70220', null, null, null,
                 'c/o ACME', 'Main Street 1', '11122', 'STOCKHOLM', '1',
                 'run-1', '5560000000', 'scb-hash-1', '2026-09-03 06:00:00'
+            )
+            """
+        )
+        connection.execute(
+            f"""
+            create table {tables.DLT_DATASET_NAME}.bolagsverket_companies (
+                company_id varchar,
+                company_id_raw varchar,
+                name_protection_sequence varchar,
+                registration_country_code varchar,
+                legal_name varchar,
+                legal_name_raw varchar,
+                legal_form_code varchar,
+                registration_date date,
+                deregistration_date date,
+                deregistration_reason varchar,
+                proceedings_raw varchar,
+                activity_description varchar,
+                postal_address varchar,
+                source_run_id varchar,
+                source_record_id varchar,
+                source_payload_hash varchar,
+                observed_at timestamp
+            )
+            """
+        )
+        connection.execute(
+            f"""
+            insert into {tables.DLT_DATASET_NAME}.bolagsverket_companies
+            values (
+                '5560000000', '5560000000$ORGNR-IDORG', '1', 'SE-LAND',
+                'Acme AB', 'Acme AB$FORETAGSNAMN-ORGNAM$2020-01-01', 'AB-ORGFO',
+                '2020-01-01', null, null, null, 'Runs acme.se',
+                'Box 1$c/o CFO$STOCKHOLM$11122$SE-LAND',
+                'run-1', '5560000000$ORGNR-IDORG', 'bolag-hash-1',
+                '2026-09-03 06:00:00'
             )
             """
         )
