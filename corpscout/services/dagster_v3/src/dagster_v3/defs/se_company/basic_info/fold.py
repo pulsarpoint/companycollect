@@ -127,7 +127,7 @@ def fold_basic_info(
             raise ValueError(
                 f"suggestion company_id {suggestion.company_id!r} is not {company_id!r}"
             )
-    if not any(s.source in REGISTER_SOURCES and s.legal_name is not None for s in suggestions):
+    if not any(s.source in REGISTER_SOURCES and s.legal_name not in (None, "") for s in suggestions):
         return None
 
     values: dict[str, Any] = {"company_id": company_id}

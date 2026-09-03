@@ -131,6 +131,9 @@ def test_no_row_without_a_register_legal_name() -> None:
     assert fold_basic_info("5560000000", [], source_run_id="r") is None
     # A register row with a NULL legal_name is not a supply either.
     assert fold_basic_info("5560000000", [suggestion("scb", status="active")], source_run_id="r") is None
+    # Nor is an empty-string legal_name -- _winner would skip it as no opinion, so the
+    # supply check must reject it before ever reaching _winner.
+    assert fold_basic_info("5560000000", [suggestion("scb", legal_name="")], source_run_id="r") is None
 
 
 def test_description_language_follows_the_description_winner_only() -> None:
