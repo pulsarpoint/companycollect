@@ -14,7 +14,9 @@ CREATE DATABASE IF NOT EXISTS corpscout;
 -- except company_id_raw, which is String rather than Nullable(String): a row exists only
 -- when company_id was derived from a non-empty raw identifier, so the raw value is never
 -- NULL. The two dates are Date32 rather than 000257's Date because Date starts at
--- 1970-01-01 and Swedish registration dates predate it.
+-- 1970-01-01 and Swedish registration dates predate it. Either date is NULL when the
+-- source value lies outside Date32's own range, before 1900-01-01, never a fabricated
+-- 1970-01-01.
 --
 -- This replaces the Bolagsverket half of se_company_registry_observations and
 -- se_company_registry_current, retired by migration 000375 at its apply step -- never here,

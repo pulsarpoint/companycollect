@@ -13,6 +13,8 @@ CREATE DATABASE IF NOT EXISTS corpscout;
 -- derived from a non-empty raw identifier, so the raw value is never NULL. registration_date
 -- is Date32 rather than 000257's Date because Date starts at 1970-01-01 and Swedish
 -- registration dates predate it. The design's own basic-info tables use Date32 too.
+-- registration_date is NULL when the source value lies outside Date32's own range, before
+-- 1900-01-01, never a fabricated 1970-01-01.
 --
 -- This replaces the SCB half of se_company_registry_observations and
 -- se_company_registry_current. Those two are NOT dropped here: a DROP that has to wait for

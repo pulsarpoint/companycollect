@@ -48,6 +48,17 @@ SCB_REQUIRED_COLUMNS = (
 )
 
 
+def _date32_bounded_sql(expr: str) -> str:
+    """Bound a parsed DATE expression to the range ClickHouse's Date32 can hold.
+
+    The native driver silently maps a Date32 value outside [1900-01-01, 2299-12-31] to
+    1970-01-01 rather than raising or storing NULL, so a genuine pre-1900 register date
+    (Sweden's registers carry them) must be nulled out here, at the producer, instead of
+    reaching ClickHouse and being mistaken for a real 1970-01-01.
+    """
+    return f"case when ({expr}) between date '1900-01-01' and date '2299-12-31' then ({expr}) end"
+
+
 def replace_sweden_company_normalized_tables(
     *,
     connection: Any,
@@ -256,6 +267,8 @@ def _replace_scb_companies_table(*, connection: Any, loaded_at: datetime) -> Non
             select
                 *,
                 {scb_identity} as company_id,
+                try_strptime(nullif(trim(RegDatKtid), ''), '%Y%m%d')::date
+                    as registration_date_parsed,
                 row_number() over (
                     partition by {scb_identity}
                     order by source_record_id, source_line_number, source_payload_hash
@@ -271,8 +284,7 @@ def _replace_scb_companies_table(*, connection: Any, loaded_at: datetime) -> Non
             nullif(trim(JurForm), '') as legal_form_code,
             nullif(trim(FtgStat), '') as source_status_code,
             nullif(trim(JEStat), '') as source_secondary_status_code,
-            try_strptime(nullif(trim(RegDatKtid), ''), '%Y%m%d')::date
-                as registration_date,
+            {_date32_bounded_sql("registration_date_parsed")} as registration_date,
             nullif(trim(Ng1), '') as ng1_code,
             nullif(trim(Ng2), '') as ng2_code,
             nullif(trim(Ng3), '') as ng3_code,
@@ -312,6 +324,12 @@ def _replace_bolagsverket_companies_table(
             select
                 *,
                 {bolagsverket_identity} as company_id,
+                try_strptime(
+                    nullif(trim(registreringsdatum), ''), '%Y-%m-%d'
+                )::date as registration_date_parsed,
+                try_strptime(
+                    nullif(trim(avregistreringsdatum), ''), '%Y-%m-%d'
+                )::date as deregistration_date_parsed,
                 row_number() over (
                     partition by {bolagsverket_identity}
                     order by source_record_id, source_line_number, source_payload_hash
@@ -327,18 +345,14 @@ def _replace_bolagsverket_companies_table(
             nullif(trim(split_part(organisationsnamn, '$', 1)), '') as legal_name,
             organisationsnamn as legal_name_raw,
             nullif(trim(organisationsform), '') as legal_form_code,
-            try_strptime(
-                nullif(trim(registreringsdatum), ''), '%Y-%m-%d'
-            )::date as registration_date,
-            try_strptime(
-                nullif(trim(avregistreringsdatum), ''), '%Y-%m-%d'
-            )::date as deregistration_date,
+            {_date32_bounded_sql("registration_date_parsed")} as registration_date,
+            {_date32_bounded_sql("deregistration_date_parsed")} as deregistration_date,
             nullif(trim(avregistreringsorsak), '') as deregistration_reason,
             nullif(
                 trim(pagandeAvvecklingsEllerOmstruktureringsforfarande), ''
             ) as proceedings_raw,
             nullif(trim(verksamhetsbeskrivning), '') as activity_description,
-            postadress as postal_address,
+            nullif(trim(postadress), '') as postal_address,
             source_run_id,
             source_record_id,
             source_payload_hash,

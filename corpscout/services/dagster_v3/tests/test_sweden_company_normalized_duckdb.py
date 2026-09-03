@@ -989,6 +989,135 @@ def test_normalized_snapshot_builds_the_two_register_source_tables(
     ]
 
 
+def test_bolagsverket_registration_date_outside_date32_range_is_nulled(
+    tmp_path: Path,
+) -> None:
+    """Final review Important-1: ClickHouse's native driver silently flattens an
+    out-of-range Date32 value to 1970-01-01 instead of NULL. A pre-1900
+    registreringsdatum must therefore come through as NULL from the producer, while a
+    genuine 20th-century date must survive untouched."""
+    database_path = tmp_path / "sweden_company_source.duckdb"
+    loaded_at = datetime(2026, 9, 3, 6, 0, tzinfo=UTC)
+
+    with duckdb.connect(str(database_path)) as connection:
+        connection.execute(f"create schema {tables.DLT_DATASET_NAME}")
+        connection.execute(
+            f"""
+            create table {tables.DLT_DATASET_NAME}.bolagsverket_raw (
+                source_run_id varchar,
+                source_line_number bigint,
+                source_record_id varchar,
+                source_payload_hash varchar,
+                source_s3_key varchar,
+                raw_record varchar,
+                organisationsidentitet varchar,
+                namnskyddslopnummer varchar,
+                registreringsland varchar,
+                organisationsnamn varchar,
+                organisationsform varchar,
+                avregistreringsdatum varchar,
+                avregistreringsorsak varchar,
+                pagandeAvvecklingsEllerOmstruktureringsforfarande varchar,
+                registreringsdatum varchar,
+                verksamhetsbeskrivning varchar,
+                postadress varchar
+            )
+            """
+        )
+        connection.execute(
+            f"""
+            insert into {tables.DLT_DATASET_NAME}.bolagsverket_raw
+            values
+            (
+                'run-1',
+                1,
+                '5551110000$ORGNR-IDORG',
+                'bolag-hash-ancient',
+                'bolag-key',
+                '{{}}',
+                '5551110000$ORGNR-IDORG',
+                '1',
+                'SE-LAND',
+                'Ancient AB$FORETAGSNAMN-ORGNAM$1878-05-24',
+                'AB-ORGFO',
+                '',
+                '',
+                '',
+                '1878-05-24',
+                'Ancient activity',
+                'Ancient Street 1$$OLDTOWN$11111$SE-LAND'
+            ),
+            (
+                'run-1',
+                2,
+                '5552220000$ORGNR-IDORG',
+                'bolag-hash-century',
+                'bolag-key',
+                '{{}}',
+                '5552220000$ORGNR-IDORG',
+                '1',
+                'SE-LAND',
+                'Century AB$FORETAGSNAMN-ORGNAM$1955-06-15',
+                'AB-ORGFO',
+                '',
+                '',
+                '',
+                '1955-06-15',
+                'Century activity',
+                'Century Street 1$$OLDTOWN$22222$SE-LAND'
+            )
+            """
+        )
+        connection.execute(
+            f"""
+            create table {tables.DLT_DATASET_NAME}.scb_raw (
+                source_run_id varchar,
+                source_line_number bigint,
+                source_record_id varchar,
+                source_payload_hash varchar,
+                source_s3_key varchar,
+                raw_record varchar,
+                ForAndrTyp varchar,
+                COAdress varchar,
+                Foretagsnamn varchar,
+                FtgStat varchar,
+                Gatuadress varchar,
+                JEStat varchar,
+                JurForm varchar,
+                Namn varchar,
+                Ng1 varchar,
+                Ng2 varchar,
+                Ng3 varchar,
+                Ng4 varchar,
+                Ng5 varchar,
+                PeOrgNr varchar,
+                PostNr varchar,
+                PostOrt varchar,
+                RegDatKtid varchar,
+                Reklamsparrtyp varchar
+            )
+            """
+        )
+
+        replace_sweden_company_normalized_tables(
+            connection=connection,
+            loaded_at=loaded_at,
+        )
+
+        rows = connection.execute(
+            f"""
+            select company_id, registration_date::varchar
+            from {tables.DLT_DATASET_NAME}.bolagsverket_companies
+            order by company_id
+            """
+        ).fetchall()
+
+    assert rows == [
+        ("5551110000", None),
+        ("5552220000", "1955-06-15"),
+    ]
+
+
 def test_the_register_source_duckdb_tables_match_the_export_column_tuples(
     tmp_path: Path,
 ) -> None:
