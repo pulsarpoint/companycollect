@@ -2249,7 +2249,19 @@ SELECT
     countIf(registration_date < toDate32('1970-01-01')) AS before_1970
 FROM corpscout.se_bolagsverket_companies;
 ```
-Expected: `min` is a real 19th- or early-20th-century date and `before_1970` is greater than 0. If `min` is `1970-01-01` and `before_1970` is 0, the column was clamped — stop and investigate the type before dropping anything.
+Expected: `min` is a real early-20th-century date (1900-01-01 or later, see below) and `before_1970` is greater than 0. If `min` is `1970-01-01` and `before_1970` is 0, the column was clamped — stop and investigate the type before dropping anything.
+
+Then confirm no date was fabricated by the driver. `Date32` cannot hold dates before 1900-01-01, and the native driver writes such a value as `1970-01-01` (not NULL, not an error), which is why the DuckDB builders NULL any date outside Date32's range (final-review finding I1). Compare the DuckDB file the export read with the published table:
+
+```bash
+ssh dagster "cd /opt/companycollect/corpscout/dagster_v3 && sudo -n .venv/bin/python -c \"import duckdb; c = duckdb.connect('data/sweden_company_source.duckdb', read_only=True); print(c.sql(\\\"select count(*) filter (where registration_date is null) as null_dates, count(*) filter (where registration_date = date '1970-01-01') as epoch_dates from sweden_company.bolagsverket_companies\\\").fetchall())\""
+```
+```sql
+SELECT countIf(registration_date IS NULL) AS null_dates,
+       countIf(registration_date = toDate32('1970-01-01')) AS epoch_dates
+FROM corpscout.se_bolagsverket_companies;
+```
+Gate: both pairs are equal. A ClickHouse `epoch_dates` above DuckDB's means the driver fabricated dates — stop before dropping anything.
 
 - [ ] **Step 9: Rebuild the domain-suggestions model (gate 3 of 3)**
 
