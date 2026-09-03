@@ -1,7 +1,9 @@
 """The fold assets and the precedence export (spec section 6). Everything manual: no
 schedule, no sensor, until the fold has proven itself on production."""
 
+import re
 from datetime import UTC, datetime
+from typing import Any
 
 import dagster as dg
 from dagster_clickhouse import ClickhouseResource
@@ -22,10 +24,10 @@ BASIC_INFO_FOLD_PARTITIONS = dg.StaticPartitionsDefinition(
 
 
 def basic_info_bucket_index(partition_key: str) -> int:
-    prefix, separator, suffix = partition_key.partition("_")
-    if prefix != "bucket" or separator == "" or not suffix.isdigit():
+    match = re.fullmatch(r"bucket_(\d{2})", partition_key)
+    if match is None:
         raise ValueError(f"invalid basic-info fold partition key: {partition_key!r}")
-    bucket = int(suffix)
+    bucket = int(match.group(1))
     if not 0 <= bucket < BUCKET_COUNT:
         raise ValueError(f"basic-info fold bucket out of range: {bucket}")
     return bucket
@@ -108,6 +110,37 @@ def se_company_basic_info_fold_companies(
     )
 
 
+def _precedence_export_timestamp(exported_at: datetime) -> str:
+    """``exported_at`` as a UTC ``%Y-%m-%d %H:%M:%S.mmm`` string, for binding into
+    ``toDateTime64(..., 3, 'UTC')`` -- a bare tz-aware datetime parameter would let the
+    stale-pairs comparison depend on the ClickHouse server's default timezone and drop
+    sub-second precision."""
+    return exported_at.strftime("%Y-%m-%d %H:%M:%S.") + f"{exported_at.microsecond // 1000:03d}"
+
+
+def export_precedence(client: Any, exported_at: datetime) -> tuple[int, int]:
+    """Insert every (field, source, precedence) pair from ``precedence_rows()`` and count
+    pairs already in the table that were exported before this run but that the current
+    dictionary no longer names. Returns ``(pairs inserted, stale pairs remaining)``.
+
+    Factored out of the asset body so it can be exercised directly against a fake
+    ClickHouse client in tests, without needing a Dagster asset execution context.
+    """
+    rows = [(field, source, precedence, exported_at) for field, source, precedence in precedence_rows()]
+    client.execute(
+        f"INSERT INTO {tables.QUALIFIED_PRECEDENCE_TABLE} ({', '.join(tables.PRECEDENCE_COLUMNS)}) VALUES",
+        rows,
+    )
+    stale = int(
+        client.execute(
+            f"SELECT count() FROM {tables.QUALIFIED_PRECEDENCE_TABLE} FINAL "
+            "WHERE exported_at < toDateTime64(%(exported_at)s, 3, 'UTC')",
+            {"exported_at": _precedence_export_timestamp(exported_at)},
+        )[0][0]
+    )
+    return len(rows), stale
+
+
 @dg.asset(
     name="se_company_basic_info_precedence_clickhouse",
     group_name=GROUP_NAME,
@@ -124,23 +157,13 @@ def se_company_basic_info_precedence_clickhouse(
 ) -> dg.MaterializeResult:
     assert_clickhouse_tables_exist(clickhouse, database=tables.DATABASE, tables=(tables.PRECEDENCE_TABLE,))
     exported_at = datetime.now(UTC)
-    rows = [(field, source, precedence, exported_at) for field, source, precedence in precedence_rows()]
     with clickhouse.get_connection() as client:
-        client.execute(
-            f"INSERT INTO {tables.QUALIFIED_PRECEDENCE_TABLE} ({', '.join(tables.PRECEDENCE_COLUMNS)}) VALUES",
-            rows,
-        )
-        stale = int(
-            client.execute(
-                f"SELECT count() FROM {tables.QUALIFIED_PRECEDENCE_TABLE} FINAL WHERE exported_at < %(exported_at)s",
-                {"exported_at": exported_at},
-            )[0][0]
-        )
+        pairs, stale = export_precedence(client, exported_at)
     if stale:
         context.log.warning(
             "%d precedence pairs exist in ClickHouse that the dictionary no longer names; "
             "they stay until removed by hand", stale,
         )
     return dg.MaterializeResult(
-        metadata={"pairs": len(rows), "stale_pairs": stale, "table": tables.QUALIFIED_PRECEDENCE_TABLE}
+        metadata={"pairs": pairs, "stale_pairs": stale, "table": tables.QUALIFIED_PRECEDENCE_TABLE}
     )
