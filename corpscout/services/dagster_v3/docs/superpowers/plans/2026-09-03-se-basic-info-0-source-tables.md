@@ -242,12 +242,12 @@ CREATE DATABASE IF NOT EXISTS corpscout;
 -- plain rename, SCB's own status codes untouched, no derived status and no merge with
 -- Bolagsverket -- turning FtgStat into an entity status is the job of the scb suggestion
 -- extractor, not of a source table. The m* previous-value twins of the delivery file and
--- the per-delivery ForAndrTyp marker are not published: the S3 snapshots keep every file
+-- the per-delivery change-type marker are not published: the S3 snapshots keep every file
 -- exactly as delivered, and scb_raw keeps every column in DuckDB.
 --
 -- Column types are 000257's for every column that table also had. registration_date is
 -- Date32 rather than 000257's Date because Date starts at 1970-01-01 and Swedish
--- registration dates predate it; the design's own basic-info tables use Date32 too.
+-- registration dates predate it. The design's own basic-info tables use Date32 too.
 --
 -- This replaces the SCB half of se_company_registry_observations and
 -- se_company_registry_current. Those two are NOT dropped here: a DROP that has to wait for
