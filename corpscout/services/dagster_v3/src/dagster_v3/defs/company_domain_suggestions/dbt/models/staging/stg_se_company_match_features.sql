@@ -13,6 +13,29 @@ WITH companies AS (
     WHERE match(company_id, '^[0-9]{10}$')
 ),
 
+-- The two register source tables of the 2026-09-03 SE basic-info design replace the
+-- retired registry projection. Each is ReplacingMergeTree(observed_at) ORDER BY
+-- company_id, so FINAL gives the one current row per company; the retired table had a
+-- has_company tombstone flag these do not need -- a row exists only while the source
+-- delivers the company. Bolagsverket has no alternate name, exactly as before.
+register_names AS (
+    SELECT
+        company_id,
+        'scb' AS source,
+        legal_name,
+        alternate_name
+    FROM {{ source('corpscout', 'se_scb_companies') }} FINAL
+
+    UNION ALL
+
+    SELECT
+        company_id,
+        'bolagsverket' AS source,
+        legal_name,
+        CAST(NULL AS Nullable(String)) AS alternate_name
+    FROM {{ source('corpscout', 'se_bolagsverket_companies') }} FINAL
+),
+
 company_name_values AS (
     SELECT
         companies.company_id,
@@ -29,10 +52,9 @@ company_name_values AS (
         companies.company_name,
         ifNull(registry.legal_name, '') AS raw_value,
         concat(registry.source, '.legal_name') AS source_field
-    FROM {{ source('corpscout', 'se_company_registry_current') }} AS registry
+    FROM register_names AS registry
     INNER JOIN companies USING (company_id)
-    WHERE registry.has_company = 1
-      AND ifNull(registry.legal_name, '') != ''
+    WHERE ifNull(registry.legal_name, '') != ''
 
     UNION ALL
 
@@ -41,10 +63,9 @@ company_name_values AS (
         companies.company_name,
         ifNull(registry.alternate_name, '') AS raw_value,
         concat(registry.source, '.alternate_name') AS source_field
-    FROM {{ source('corpscout', 'se_company_registry_current') }} AS registry
+    FROM register_names AS registry
     INNER JOIN companies USING (company_id)
-    WHERE registry.has_company = 1
-      AND ifNull(registry.alternate_name, '') != ''
+    WHERE ifNull(registry.alternate_name, '') != ''
 ),
 
 name_features AS (

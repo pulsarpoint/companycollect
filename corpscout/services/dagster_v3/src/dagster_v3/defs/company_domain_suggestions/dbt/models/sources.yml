@@ -5,7 +5,8 @@ sources:
     schema: corpscout
     tables:
       - name: se_companies
-      - name: se_company_registry_current
+      - name: se_scb_companies
+      - name: se_bolagsverket_companies
       - name: se_company_addresses_current
       - name: se_industries
       - name: gleif_lei_records

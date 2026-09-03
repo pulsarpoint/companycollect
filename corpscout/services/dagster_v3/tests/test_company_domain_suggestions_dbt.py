@@ -89,12 +89,21 @@ def test_sweden_company_match_features_are_normalized_and_technology_independent
 
     for source in (
         "se_companies",
-        "se_company_registry_current",
+        "se_scb_companies",
+        "se_bolagsverket_companies",
         "se_company_addresses_current",
         "se_industries",
         "gleif_lei_records",
     ):
         assert f"source('corpscout', '{source}')" in model_sql
+
+    # The retired registry projection is gone, and the two source_field values it produced
+    # are still produced -- by a literal per union branch instead of by a `source` column.
+    assert "se_company_registry_current" not in model_sql
+    assert "'scb' AS source" in model_sql
+    assert "'bolagsverket' AS source" in model_sql
+    assert "concat(registry.source, '.legal_name')" in model_sql
+    assert "concat(registry.source, '.alternate_name')" in model_sql
 
     assert "normalized_address" in model_sql
     for feature_type in ("identifier", "name", "address", "industry"):
