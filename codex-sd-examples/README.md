@@ -204,7 +204,10 @@ The default artifacts are:
 - `company-markdown/*.md`: page Markdown;
 - `company-markdown/crawl-manifest.json`: the pre-analysis crawl manifest;
 - `company-markdown/url-inventory.json`: every scored inventory URL with its
-  reasons and exclusion, for tuning the selector;
+  reasons and exclusion, for tuning the selector. Both selectors write the whole
+  ranked inventory there: eligible URLs, excluded ones with their reason, and
+  the selected pages. The LLM selector only saw the top `--llm-candidates` of
+  the eligible list, refined with `<head>` metadata;
 - `company-batched-report.json`: consolidated extraction, page provenance,
   batch outcomes, and per-batch plus aggregate token usage.
 

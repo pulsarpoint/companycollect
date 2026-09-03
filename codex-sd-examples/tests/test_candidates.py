@@ -6,6 +6,7 @@ from pathlib import Path
 from ex3.candidates import (
     build_followup_candidates,
     build_selection_candidates,
+    candidate_shortlist,
     load_inventory_eligible,
 )
 from ex3.models import DiscoveredUrl, ScoredUrl
@@ -17,21 +18,19 @@ BASE_URL = "https://www.example.se/en/"
 
 class SelectionCandidatesTest(unittest.TestCase):
     def test_orders_by_score_attaches_heads_and_drops_excluded_urls(self) -> None:
-        candidates = build_selection_candidates(
+        candidates = _candidates(
             inventory=[
                 "https://www.example.se/en/reports/annual.pdf",
                 "https://www.example.se/en/careers",
                 "https://www.example.se/en/about-us",
                 "https://www.example.com/en/about",
             ],
-            base_url=BASE_URL,
             base_page_links=["https://www.example.se/en/careers"],
             heads={
                 "https://www.example.se/en/about-us": HeadMetadata(
                     language="en", title="About us", description=None
                 )
             },
-            preferred_languages=frozenset({"en"}),
             limit=10,
         )
 
@@ -53,16 +52,14 @@ class SelectionCandidatesTest(unittest.TestCase):
         # url_key and tie in score; without pre-limit dedup both consume a
         # shortlist slot and crowd out the genuinely distinct "about-us"
         # entry from the top ``limit`` before it ever reaches candidates.
-        candidates = build_selection_candidates(
+        candidates = _candidates(
             inventory=[
                 "https://www.example.se/en/careers",
                 "https://www.example.se/en/company/about-us",
                 "https://www.example.se/en/misc",
             ],
-            base_url=BASE_URL,
             base_page_links=["https://www.example.se/en/careers/"],
             heads={},
-            preferred_languages=frozenset({"en"}),
             limit=3,
         )
 
@@ -78,18 +75,56 @@ class SelectionCandidatesTest(unittest.TestCase):
         self.assertEqual(len(candidates), 3)
 
     def test_respects_the_limit(self) -> None:
-        candidates = build_selection_candidates(
+        candidates = _candidates(
             inventory=[
                 f"https://www.example.se/en/page-{index}" for index in range(30)
             ],
-            base_url=BASE_URL,
             base_page_links=[],
             heads={},
-            preferred_languages=frozenset({"en"}),
             limit=5,
         )
 
         self.assertEqual(len(candidates), 5)
+
+    def test_attaches_anchor_text_to_base_page_candidates(self) -> None:
+        candidates = _candidates(
+            inventory=["https://www.example.se/en/about-us"],
+            base_page_links=["https://www.example.se/en/about-us"],
+            heads={},
+            base_page_labels={
+                url_key("https://www.example.se/en/about-us"): "About us"
+            },
+            limit=10,
+        )
+
+        about = next(item for item in candidates if item.url.endswith("about-us"))
+        self.assertEqual(about.source, "base_page")
+        self.assertEqual(about.labels, ["About us"])
+
+
+def _candidates(
+    *,
+    inventory: list[str],
+    base_page_links: list[str],
+    heads: dict[str, HeadMetadata],
+    limit: int,
+    base_page_labels: dict[str, str] | None = None,
+):
+    shortlist = candidate_shortlist(
+        inventory=inventory,
+        base_url=BASE_URL,
+        base_page_links=base_page_links,
+        preferred_languages=frozenset({"en"}),
+        limit=limit,
+    )
+    return build_selection_candidates(
+        shortlist,
+        heads=heads,
+        base_page_links=base_page_links,
+        base_page_labels=base_page_labels or {},
+        preferred_languages=frozenset({"en"}),
+        limit=limit,
+    )
 
 
 class FollowupCandidatesTest(unittest.TestCase):

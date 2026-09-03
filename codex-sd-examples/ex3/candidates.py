@@ -2,7 +2,7 @@
 
 import json
 import logging
-from collections.abc import Collection, Mapping, Sequence
+from collections.abc import Collection, Iterable, Mapping, Sequence
 from pathlib import Path
 from typing import Literal
 
@@ -44,31 +44,30 @@ def candidate_shortlist(
         linked_from_base=unique_links,
         preferred_languages=preferred_languages,
     )
+    return dedupe_by_url_key(eligible)[:limit]
+
+
+def dedupe_by_url_key(scored_urls: Iterable[ScoredUrl]) -> list[ScoredUrl]:
+    """Keep the first assessment per ``url_key``, preserving the ranked order."""
     deduped: dict[str, ScoredUrl] = {}
-    for scored in eligible:
+    for scored in scored_urls:
         deduped.setdefault(url_key(scored.url), scored)
-    return list(deduped.values())[:limit]
+    return list(deduped.values())
 
 
 def build_selection_candidates(
+    shortlist: Sequence[ScoredUrl],
     *,
-    inventory: Sequence[str],
-    base_url: str,
-    base_page_links: Sequence[str],
     heads: Mapping[str, HeadMetadata],
+    base_page_links: Sequence[str],
+    base_page_labels: Mapping[str, str] = {},
     preferred_languages: Collection[str],
     limit: int,
 ) -> list[PageCandidate]:
-    """Pass-one candidates: capped shortlist with head metadata attached."""
+    """Describe an already ranked shortlist with head metadata and anchor text."""
     link_keys = {url_key(link) for link in base_page_links}
     candidates: list[PageCandidate] = []
-    for scored in candidate_shortlist(
-        inventory=inventory,
-        base_url=base_url,
-        base_page_links=base_page_links,
-        preferred_languages=preferred_languages,
-        limit=limit,
-    ):
+    for scored in shortlist:
         head = heads.get(scored.url)
         refined = (
             apply_head_metadata(
@@ -81,6 +80,8 @@ def build_selection_candidates(
             if head is not None
             else scored
         )
+        key = url_key(refined.url)
+        label = base_page_labels.get(key)
         candidates.append(
             PageCandidate(
                 url=refined.url,
@@ -88,9 +89,8 @@ def build_selection_candidates(
                 reasons=refined.reasons,
                 title=refined.title,
                 language=refined.language,
-                source="base_page"
-                if url_key(refined.url) in link_keys
-                else "inventory",
+                labels=[label] if label else [],
+                source="base_page" if key in link_keys else "inventory",
             )
         )
     return _ordered(candidates)[:limit]

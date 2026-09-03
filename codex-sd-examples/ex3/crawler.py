@@ -29,7 +29,10 @@ from crawl4ai.models import CrawlResult
 from pydantic import BaseModel, ValidationError
 
 from ex1.models import AnalysisTokenUsage, FailedPage
-from ex3.candidates import build_selection_candidates, candidate_shortlist
+from ex3.candidates import (
+    build_selection_candidates,
+    dedupe_by_url_key,
+)
 from ex3.language import (
     detect_document_language,
     inspect_language_page,
@@ -84,6 +87,7 @@ from ex3.selection import (
     DEFAULT_PREFERRED_LANGUAGES,
     SelectionFilter,
     SelectionScorer,
+    rank_urls,
 )
 from ex3.urls import canonical_domain, normalize_start_url, same_domain_tree, url_key
 
@@ -95,6 +99,7 @@ DOMAIN_LABEL_SAMPLE_LIMIT = 10
 MARKDOWN_LINK_PATTERN = re.compile(r"\]\(([^\s<>\)]+)")
 HEAD_FETCH_CONCURRENCY = 8
 INVENTORY_FILENAME = "url-inventory.json"
+LINK_TEXT_CHAR_LIMIT = 200
 
 
 @dataclass(frozen=True, slots=True)
@@ -576,11 +581,13 @@ async def _discover_english_base(
     )
 
 
-def _internal_links(result: CrawlResult | None, *, base_url: str) -> list[str]:
-    """Return normalized same-site links from a rendered page."""
+def _internal_links(
+    result: CrawlResult | None, *, base_url: str
+) -> list[tuple[str, str]]:
+    """Return normalized same-site links and their anchor text, first one wins."""
     if result is None or not isinstance(result.links, dict):
         return []
-    links: list[str] = []
+    links: list[tuple[str, str]] = []
     seen: set[str] = set()
     for link in result.links.get("internal", []):
         href = link.get("href") if isinstance(link, dict) else None
@@ -596,8 +603,15 @@ def _internal_links(result: CrawlResult | None, *, base_url: str) -> list[str]:
         if url_key(normalized) in seen:
             continue
         seen.add(url_key(normalized))
-        links.append(normalized)
+        text = link.get("text") if isinstance(link, dict) else None
+        label = text.strip()[:LINK_TEXT_CHAR_LIMIT] if isinstance(text, str) else ""
+        links.append((normalized, label))
     return links
+
+
+def _internal_link_urls(result: CrawlResult | None, *, base_url: str) -> list[str]:
+    """Return only the URLs of :func:`_internal_links`."""
+    return [url for url, _ in _internal_links(result, base_url=base_url)]
 
 
 async def _crawl_single_page(
@@ -657,7 +671,9 @@ async def _select_and_crawl(
             [],
         )
 
-    base_links = _internal_links(base_result, base_url=base_url)
+    base_page_links = _internal_links(base_result, base_url=base_url)
+    base_links = [url for url, _ in base_page_links]
+    base_page_labels = {url_key(url): text for url, text in base_page_links if text}
 
     async def fetch_heads(urls: list[str]) -> dict[str, HeadMetadata]:
         return await fetch_head_metadata(
@@ -674,6 +690,7 @@ async def _select_and_crawl(
             base_url=base_url,
             inventory=outcome,
             base_links=base_links,
+            base_page_labels=base_page_labels,
             fetch_heads=fetch_heads,
             markdown_dir=markdown_dir,
             preferred_languages=preferred_languages,
@@ -740,7 +757,7 @@ async def _select_deterministically_and_crawl(
         for result in results:
             if not result.success:
                 continue
-            for link in _internal_links(result, base_url=base_url):
+            for link in _internal_link_urls(result, base_url=base_url):
                 if url_key(link) not in attempted_keys:
                     attempted_keys.add(url_key(link))
                     harvested.append(link)
@@ -818,6 +835,7 @@ async def _select_with_llm_and_crawl(
     base_url: str,
     inventory: SeedingOutcome,
     base_links: list[str],
+    base_page_labels: Mapping[str, str],
     fetch_heads: HeadFetcher,
     markdown_dir: Path,
     preferred_languages: Collection[str],
@@ -828,19 +846,20 @@ async def _select_with_llm_and_crawl(
     beyond-limit picks are dropped. On LLM failure this falls back to the
     deterministic single-wave selection and keeps the failed ``llm`` status.
     """
-    shortlist = candidate_shortlist(
-        inventory=inventory.urls,
+    unique_links = list(dict.fromkeys(base_links))
+    eligible, excluded = rank_urls(
+        [base_url, *inventory.urls, *unique_links],
         base_url=base_url,
-        base_page_links=base_links,
+        linked_from_base=unique_links,
         preferred_languages=preferred_languages,
-        limit=settings.llm_candidates,
     )
+    shortlist = dedupe_by_url_key(eligible)[: settings.llm_candidates]
     heads = await fetch_heads([scored.url for scored in shortlist])
     candidates = build_selection_candidates(
-        inventory=inventory.urls,
-        base_url=base_url,
-        base_page_links=base_links,
+        shortlist,
         heads=heads,
+        base_page_links=base_links,
+        base_page_labels=base_page_labels,
         preferred_languages=preferred_languages,
         limit=settings.llm_candidates,
     )
@@ -877,19 +896,22 @@ async def _select_with_llm_and_crawl(
         {url_key(url) for url in (base_url, *inventory.urls, *base_links)}
     )
     inventory_path = markdown_dir.resolve() / INVENTORY_FILENAME
+    refined_by_key = {
+        url_key(candidate.url): ScoredUrl(
+            url=candidate.url,
+            score=candidate.score,
+            reasons=candidate.reasons,
+            language=candidate.language,
+            title=candidate.title,
+        )
+        for candidate in candidates
+    }
     _write_inventory(
         selected=picks,
         eligible=[
-            ScoredUrl(
-                url=candidate.url,
-                score=candidate.score,
-                reasons=candidate.reasons,
-                language=candidate.language,
-                title=candidate.title,
-            )
-            for candidate in candidates
+            refined_by_key.get(url_key(scored.url), scored) for scored in eligible
         ],
-        excluded=[],
+        excluded=excluded,
         inventory_urls=inventory_urls,
         path=inventory_path,
     )
@@ -900,8 +922,8 @@ async def _select_with_llm_and_crawl(
             succeeded=inventory.error is None,
             error=inventory.error,
             inventory_urls=inventory_urls,
-            eligible_urls=len(candidates),
-            excluded_urls=0,
+            eligible_urls=len(eligible),
+            excluded_urls=len(excluded),
             head_checked_urls=len(shortlist),
             base_page_links=len(base_links),
             selection_waves=1,

@@ -1,4 +1,5 @@
 import asyncio
+import json
 import tempfile
 import unittest
 from pathlib import Path
@@ -17,6 +18,7 @@ from ex3.crawler import (
     _analyze_batches,
     _collect_bfs_results,
     _crawl_seeded_pages,
+    _internal_link_urls,
     _internal_links,
     _preferred_languages,
     _select_and_crawl,
@@ -227,8 +229,8 @@ class BasePageLinkHarvestTest(unittest.TestCase):
             success=True,
             links={
                 "internal": [
-                    {"href": "/en/about-us"},
-                    {"href": "https://www.example.se/en/about-us#team"},
+                    {"href": "/en/about-us", "text": "  About us  "},
+                    {"href": "https://www.example.se/en/about-us#team", "text": "Team"},
                     {"href": "mailto:info@example.se"},
                     {"href": ""},
                 ],
@@ -238,10 +240,17 @@ class BasePageLinkHarvestTest(unittest.TestCase):
 
         links = _internal_links(result, base_url="https://www.example.se/en/")
 
-        self.assertEqual(links, ["https://www.example.se/en/about-us"])
+        self.assertEqual(links, [("https://www.example.se/en/about-us", "About us")])
+        self.assertEqual(
+            _internal_link_urls(result, base_url="https://www.example.se/en/"),
+            ["https://www.example.se/en/about-us"],
+        )
 
     def test_returns_nothing_for_a_missing_result(self) -> None:
         self.assertEqual(_internal_links(None, base_url="https://www.example.se/"), [])
+        self.assertEqual(
+            _internal_link_urls(None, base_url="https://www.example.se/"), []
+        )
 
 
 class TwoWaveSelectionTest(unittest.IsolatedAsyncioTestCase):
@@ -423,6 +432,80 @@ class LlmSelectorCrawlTest(unittest.IsolatedAsyncioTestCase):
             self.fail("Selected result is missing metadata")
         self.assertEqual(metadata["selection"], "selected")
         self.assertEqual(metadata["selection_reason"], "jobs")
+
+    async def test_shows_base_page_anchor_text_and_records_the_whole_inventory(
+        self,
+    ) -> None:
+        base_url = "https://www.example.se/en/"
+        base_result = _crawl_result(
+            base_url,
+            success=True,
+            links=[{"href": "/en/about-us", "text": "About us"}],
+        )
+        crawler = _FakeCrawler([_crawl_result(base_url, success=True)])
+        prompts: list[str] = []
+
+        async def fake_seed(*args, **kwargs) -> SeedingOutcome:
+            return SeedingOutcome(
+                urls=[
+                    base_url,
+                    "https://www.example.se/en/about-us",
+                    "https://www.example.se/en/careers",
+                    "https://www.example.se/en/contact",
+                    "https://www.example.se/en/reports/annual.pdf",
+                ]
+            )
+
+        async def fake_heads(urls, **kwargs) -> dict[str, HeadMetadata]:
+            return {}
+
+        async def fake_turn(**kwargs):
+            prompts.append(kwargs["prompt"])
+            return StructuredTurnOutcome(
+                value=PageSelectionResponse(
+                    pages=[
+                        PageSelectionDecision(
+                            url=base_url, reason="homepage", expected_fields=[]
+                        )
+                    ]
+                ),
+                token_usage=None,
+                error=None,
+            )
+
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            markdown_dir = Path(temporary_directory)
+            with (
+                patch("ex3.crawler.seed_sitemap_urls", new=fake_seed),
+                patch("ex3.crawler.fetch_head_metadata", new=fake_heads),
+                patch("ex3.llm_selection.run_structured_turn", new=fake_turn),
+            ):
+                seeding, _ = await _select_and_crawl(
+                    cast(AsyncWebCrawler, crawler),
+                    settings=_crawl_settings(
+                        max_pages=1, selector="llm", llm_candidates=2
+                    ),
+                    base_url=base_url,
+                    base_result=base_result,
+                    markdown_dir=markdown_dir,
+                )
+            inventory = json.loads(
+                (markdown_dir / "url-inventory.json").read_text(encoding="utf-8")
+            )
+
+        prompt_data = json.loads(prompts[0].split("INPUT DATA:\n", 1)[1])
+        about = next(
+            item
+            for item in prompt_data["candidates"]
+            if item["url"].endswith("about-us")
+        )
+        self.assertEqual(about["anchor_text"], ["About us"])
+        self.assertEqual(len(prompt_data["candidates"]), 2)
+        self.assertEqual(seeding.candidate_count, 2)
+        self.assertEqual(len(inventory["eligible"]), 4)
+        self.assertEqual(len(inventory["excluded"]), 1)
+        self.assertEqual(seeding.eligible_urls, 4)
+        self.assertEqual(seeding.excluded_urls, 1)
 
     async def test_falls_back_to_deterministic_selection_when_the_llm_fails(
         self,
@@ -723,6 +806,7 @@ def _crawl_settings(
     max_pages: int = 5,
     seed_share: float = 0.6,
     selector: str = "deterministic",
+    llm_candidates: int = 200,
 ) -> CrawlSettings:
     return CrawlSettings(
         start_url="https://example.com/",
@@ -743,6 +827,7 @@ def _crawl_settings(
         discovery_strategy="best_first",
         accept_language="en-US,en;q=0.9",
         selector=cast(Selector, selector),
+        llm_candidates=llm_candidates,
     )
 
 
