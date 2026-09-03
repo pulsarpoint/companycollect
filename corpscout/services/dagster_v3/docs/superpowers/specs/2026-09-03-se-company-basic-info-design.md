@@ -195,6 +195,29 @@ Rollback before step 6 is doing nothing. After step 6 it is switching the view a
 One plan each, executed in order with subagent-driven development:
 
 0. Source tables: `se_scb_companies` and `se_bolagsverket_companies` with their export assets, the domain-suggestions dbt model moved to their union, the registry observation tables retired (gated drop migrations after the new tables are filled on prod).
+   Done 2026-09-03: migrations 000373/000374 applied, both assets materialized on prod
+   (1,818,909 SCB and 2,855,218 Bolagsverket companies, equal to the retired projection),
+   the domain-suggestions model rebuilt on their union, and the registry pair dropped by
+   000375. Slice 1's `se_basic_info_suggestions_scb` reads
+   `corpscout.se_scb_companies` and `se_basic_info_suggestions_bolagsverket` reads
+   `corpscout.se_bolagsverket_companies`, both one row per company, both
+   `ReplacingMergeTree(observed_at) ORDER BY company_id` — read them with `FINAL` or
+   `argMax(..., observed_at)`, and only rows `WHERE has_company = 1`: the publisher
+   appends a `has_company = 0` tombstone when a source stops delivering a company and
+   inserts the company again when it returns. A date Date32 cannot hold (before 1900)
+   is NULL in the typed column and verbatim in its `*_raw` twin (`registration_date_raw`,
+   `deregistration_date_raw`; 631 Bolagsverket companies, oldest 1826-01-01). Neither
+   carries a `source_record_uid`: the extractor computes the suggestion's
+   `source_record_uid` itself, from `source_record_id` and `source_payload_hash`, the way
+   migration 000257's DEFAULT expression did
+   (`lower(hex(SHA256(concat('company-source-record-v1\nstructured\n', <'sweden_scb'|'sweden_bolagsverket'>, '\nregistry_company\n', source_record_id, '\n', lowerUTF8(source_payload_hash)))))`).
+   The extractors do the interpreting: SCB's `source_status_code` (`FtgStat`) becomes
+   `status`, Bolagsverket's `deregistration_date` implies its own, and
+   `registration_date` becomes `incorporation_date`. Neither source table has, or will
+   get, a `derived_status`. Parked for slice 1: a partial non-empty delivery would
+   tombstone every missing company (only the empty-stage refusal guards the publisher);
+   add a `max_removed_fraction` config to the export assets before the fold depends on
+   `has_company`.
 1. Tables, precedence, fold function, the two fold assets, the precedence export.
 2. The six extractors, reading the source layer of section 3.1.
 3. The backoffice page, actions, Fold now, pipeline sheet.
