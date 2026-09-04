@@ -1,4 +1,10 @@
 import { chInsertSeBasicInfoSuggestions, chQuery } from "~/lib/clickhouse.server";
+import {
+  ASSET_JOB_NAME,
+  dagsterRunUrl,
+  launchRun,
+  SE_BASIC_INFO_FOLD_COMPANIES_ASSET,
+} from "~/lib/dagster.server";
 import type { SeBasicInfoDecision } from "~/lib/se-basic-info-decision-form";
 import {
   basicInfoFieldLabel,
@@ -284,4 +290,21 @@ export async function appendSeBasicInfoReviewerDecision(
     },
   ]);
   return { suggestedAt: stamp };
+}
+
+export const FOLD_NOW_TAG = { "backoffice/basic-info": "fold-now" } as const;
+
+/** Fold now (spec 7): one run of the targeted fold for this company alone. */
+export async function launchSeBasicInfoFold(
+  companyId: string,
+): Promise<{ runId: string; url: string | null }> {
+  const run = await launchRun({
+    job: ASSET_JOB_NAME,
+    assetSelection: [SE_BASIC_INFO_FOLD_COMPANIES_ASSET],
+    runConfig: {
+      ops: { [SE_BASIC_INFO_FOLD_COMPANIES_ASSET]: { config: { company_ids: [companyId] } } },
+    },
+    tags: { ...FOLD_NOW_TAG },
+  });
+  return { runId: run.runId, url: dagsterRunUrl(run.runId) };
 }

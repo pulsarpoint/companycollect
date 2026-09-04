@@ -5,9 +5,10 @@ vi.mock("~/lib/clickhouse.server", () => ({
   chQuery: clickhouse.query,
   chInsertSeBasicInfoSuggestions: clickhouse.insert,
 }));
-const dagster = vi.hoisted(() => ({ launchRun: vi.fn() }));
+const dagster = vi.hoisted(() => ({ launchRun: vi.fn(), dagsterRunUrl: vi.fn(() => null) }));
 vi.mock("~/lib/dagster.server", () => ({
   launchRun: dagster.launchRun,
+  dagsterRunUrl: dagster.dagsterRunUrl,
   ASSET_JOB_NAME: "__ASSET_JOB",
   SE_BASIC_INFO_FOLD_COMPANIES_ASSET: "se_company_basic_info_fold_companies",
 }));
@@ -19,6 +20,7 @@ import {
   BASIC_INFO_PRECEDENCE_SQL,
   BASIC_INFO_SQL,
   BASIC_INFO_SUGGESTIONS_SQL,
+  launchSeBasicInfoFold,
   loadSeBasicInfoDetail,
   SeBasicInfoDecisionError,
   type SeBasicInfoRow,
@@ -213,5 +215,17 @@ describe("se-basic-info.server", () => {
     await expect(
       appendSeBasicInfoReviewerDecision(COMPANY, { intent: "use-this", field: "status", source: "scb", note: "" }, NOW),
     ).rejects.toThrow("SCB has no status for this company.");
+  });
+
+  it("fold-now launches the per-company fold asset for exactly this company", async () => {
+    dagster.launchRun.mockResolvedValue({ runId: "run-9", status: "QUEUED" });
+    const launched = await launchSeBasicInfoFold(COMPANY);
+    expect(launched.runId).toBe("run-9");
+    expect(dagster.launchRun).toHaveBeenCalledWith({
+      job: "__ASSET_JOB",
+      assetSelection: ["se_company_basic_info_fold_companies"],
+      runConfig: { ops: { se_company_basic_info_fold_companies: { config: { company_ids: [COMPANY] } } } },
+      tags: { "backoffice/basic-info": "fold-now" },
+    });
   });
 });
