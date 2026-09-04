@@ -81,6 +81,7 @@ def test_wikidata_select_links_entities_through_orgnr_or_lei() -> None:
     assert "replaceRegexpAll(identifiers.identifier_value, '[^0-9]', '')" in links
     assert "issuer_scheme = 'lei' AND identifiers.is_current = 1" in links
     assert "identifiers.identifier_type = 'lei'" in links
+    assert "%(company_ids)s" not in links
     sql = wikidata.wikidata_select_sql()
     assert _aliases(sql) == list(SUGGESTION_SELECT_COLUMNS)
     assert "'wikidata' AS source" in sql
@@ -92,6 +93,9 @@ def test_wikidata_select_links_entities_through_orgnr_or_lei() -> None:
     assert "if(entity.company_description IS NULL OR trim(entity.company_description) = '', NULL, 'en') AS description_language" in sql
     assert sql.rstrip().endswith("ORDER BY entity.resolved_at DESC, entity.wikidata_id ASC\nLIMIT 1 BY links.company_id")
     assert "links.company_id IN %(company_ids)s" in sql
+    assert "FROM corpscout.se_scb_companies FINAL WHERE has_company = 1 AND company_id IN %(company_ids)s" in sql
+    assert "FROM corpscout.se_bolagsverket_companies FINAL WHERE has_company = 1 AND company_id IN %(company_ids)s" in sql
+    assert "%(company_ids)s" not in wikidata.wikidata_current_sql()
 
 
 def test_ratsit_select_takes_the_newest_report_and_maps_status_text() -> None:

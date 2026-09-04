@@ -7,16 +7,21 @@ from dagster_v3.defs.se_company.basic_info.extract import define_suggestion_asse
 WIKIDATA_EXTRACTOR_VERSION = "wikidata-v1"
 
 
-def wikidata_links_cte_sql() -> str:
+def wikidata_links_cte_sql(*, scoped: bool = False) -> str:
     """CTEs `swedish`, `company_leis`, `links` (company_id, wikidata_id): every Swedish
     register company linked to a Wikidata entity directly (identifier_type se_orgnr) or
     through a current LEI. The universe is the union of the two register source tables,
-    not the retiring se_companies spine."""
+    not the retiring se_companies spine.
+
+    `scoped=True` narrows the `swedish` CTE to `%(company_ids)s` up front, so a page's
+    SELECT never rebuilds the whole multi-million-row register universe -- `select_sql`
+    uses this; `current_sql`'s per-source scan stays unscoped."""
+    company_ids_filter = " AND company_id IN %(company_ids)s" if scoped else ""
     return (
         "WITH swedish AS (\n"
-        "    SELECT company_id FROM corpscout.se_scb_companies FINAL WHERE has_company = 1\n"
+        f"    SELECT company_id FROM corpscout.se_scb_companies FINAL WHERE has_company = 1{company_ids_filter}\n"
         "    UNION DISTINCT\n"
-        "    SELECT company_id FROM corpscout.se_bolagsverket_companies FINAL WHERE has_company = 1\n"
+        f"    SELECT company_id FROM corpscout.se_bolagsverket_companies FINAL WHERE has_company = 1{company_ids_filter}\n"
         "),\n"
         "company_leis AS (\n"
         "    SELECT identifiers.company_id AS company_id, upperUTF8(identifiers.issuer_id) AS lei\n"
@@ -55,7 +60,7 @@ def wikidata_current_sql() -> str:
 
 def wikidata_select_sql() -> str:
     return (
-        f"{wikidata_links_cte_sql()}\n"
+        f"{wikidata_links_cte_sql(scoped=True)}\n"
         "SELECT\n"
         "    links.company_id AS company_id,\n"
         "    'wikidata' AS source,\n"
