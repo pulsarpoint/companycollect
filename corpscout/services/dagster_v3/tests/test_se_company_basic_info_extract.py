@@ -52,6 +52,7 @@ def test_select_columns_are_the_insert_columns_minus_the_publisher_stamps() -> N
 def test_changed_scope_unions_the_never_suggested_and_the_newer_than_suggested() -> None:
     sql = changed_scope_sql(current_sql=CURRENT)
     assert sql.count(CURRENT) == 2
+    assert "UNION ALL" in sql
     assert "LEFT ANTI JOIN" in sql and "WHERE source = %(source)s" in sql
     assert "argMax(observed_at, suggested_at) AS observed_at" in sql
     assert "WHERE candidate.observed_at > current.observed_at" in sql
@@ -105,6 +106,9 @@ def test_execute_inserts_each_page_after_counting_it() -> None:
     assert params["company_ids"] == ["5560000000"]
     assert params["source_run_id"] == "run-1" and params["extractor_version"] == "scb-v1"
     assert settings == ID_BOUND_QUERY_SETTINGS
+    count_index = next(i for i, (s, _, _) in enumerate(client.statements) if "AS candidates" in s)
+    insert_index = next(i for i, (s, _, _) in enumerate(client.statements) if s.startswith("INSERT INTO"))
+    assert count_index < insert_index
 
 
 def test_explicit_company_ids_skip_the_scan_and_are_normalized() -> None:
