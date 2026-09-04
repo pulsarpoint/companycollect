@@ -183,7 +183,7 @@ Rollback before step 6 is doing nothing. After step 6 it is switching the view a
 ## 9. Testing
 
 - The fold is table-driven pure-function tests: one case per field for precedence, ties, NULL-as-no-opinion, the publish rule, `description_language`, `fold_version`.
-- The batch layer against the scripted fake client: changed-only selection, diff-only writes, history rows and `changed_fields`.
+- The batch layer against the scripted fake client: changed-only selection, the rewrite of every folded main row, change-only history rows and `changed_fields`.
 - One clickhouse-local harness (both `join_use_nulls`) runs extract, fold and history end to end with a hand-written expected main row.
 - Extractor SQL pinned as text and executed in the harness; the LLM extractor's preview counts pinned.
 - Backoffice: the page, the three actions, the validator and Fold now under vitest with one shared fixture; a live test under `VITEST_LIVE=1` after cutover step 1.
