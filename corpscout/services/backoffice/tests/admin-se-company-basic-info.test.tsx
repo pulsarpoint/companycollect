@@ -1,6 +1,16 @@
 import { renderToStaticMarkup } from "react-dom/server";
 import { createMemoryRouter, RouterProvider } from "react-router";
-import { describe, expect, it } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
+
+const server = vi.hoisted(() => ({
+  loadSeBasicInfoDetail: vi.fn(),
+  appendSeBasicInfoReviewerDecision: vi.fn(),
+  launchSeBasicInfoFold: vi.fn(),
+  SeBasicInfoDecisionError: class SeBasicInfoDecisionError extends Error {},
+}));
+vi.mock("~/lib/se-basic-info.server", () => server);
+
+import { action, loader } from "~/routes/admin-se-company-info";
 import {
   SeBasicInfoNotFolded,
   SeBasicInfoWorkspace,
@@ -131,5 +141,78 @@ describe("SeBasicInfoWorkspace", () => {
   it("renders an error result and the not-folded state", () => {
     expect(render(<SeBasicInfoWorkspace detail={detail} selectedField="lei" result={{ ok: false, error: "Unknown source." }} />)).toContain("Unknown source.");
     expect(renderToStaticMarkup(<SeBasicInfoNotFolded companyId={COMPANY} />)).toContain("not in se_company_basic_info yet");
+  });
+
+  it("offers Use this when the company has no main row", () => {
+    const html = render(
+      <SeBasicInfoWorkspace detail={{ ...detail, info: null, foldPending: true }} selectedField="status" result={null} />,
+      "?field=status",
+    );
+    expect(html).toContain("Not folded yet");
+    const bolagsverketAt = html.indexOf('data-source="bolagsverket"');
+    const ratsitAt = html.indexOf('data-source="ratsit"');
+    const bolagsverketRow = html.slice(bolagsverketAt, ratsitAt);
+    expect(bolagsverketRow).not.toContain("Active");
+    expect(bolagsverketRow).toContain("Use this");
+  });
+
+  it("a reviewer row that lost to the pending fold offers Release, not Use this", () => {
+    const reviewerRow: SeBasicInfoSuggestionRow = {
+      ...bolagsverket,
+      source: "reviewer",
+      status: "inactive",
+      decided_by: "backoffice",
+      note: "keep it",
+      suggested_at: "2026-09-04 18:00:00.000",
+    };
+    const withReviewer: SeBasicInfoDetail = {
+      ...detail,
+      suggestions: [...detail.suggestions, reviewerRow],
+    };
+    const html = render(<SeBasicInfoWorkspace detail={withReviewer} selectedField="status" result={null} />, "?field=status");
+    const reviewerAt = html.indexOf('data-source="reviewer"');
+    const scbAt = html.indexOf('data-source="scb"');
+    const reviewerRowHtml = html.slice(reviewerAt, scbAt);
+    expect(reviewerRowHtml).toContain("Release");
+    expect(reviewerRowHtml).toContain("keep it");
+    expect(reviewerRowHtml).not.toContain("Use this");
+    expect(reviewerRowHtml).not.toContain("Active");
+  });
+});
+
+describe("admin-se-company-info route", () => {
+  beforeEach(() => {
+    server.loadSeBasicInfoDetail.mockReset().mockResolvedValue(detail);
+    server.appendSeBasicInfoReviewerDecision.mockReset().mockResolvedValue({ suggestedAt: "2026-09-04 19:30:00.123" });
+    server.launchSeBasicInfoFold.mockReset().mockResolvedValue({ runId: "run-9", url: null });
+  });
+
+  it("loads the detail and the selected field from the URL", async () => {
+    const response = await loader({
+      request: new Request(`http://x/admin/se/company/${COMPANY}/info?field=status`),
+      params: { companyId: COMPANY },
+    } as never);
+    expect(response.data).toEqual({ detail, selectedField: "status" });
+    expect(response.init?.status).toBeUndefined();
+    server.loadSeBasicInfoDetail.mockResolvedValueOnce(null);
+    const missing = await loader({ request: new Request("http://x/info"), params: { companyId: COMPANY } } as never);
+    expect(missing.data).toEqual({ detail: null, selectedField: "legal_name" });
+    expect(missing.init?.status).toBe(404);
+  });
+
+  it("writes a reviewer decision, launches a fold, and reports refusals", async () => {
+    const post = (entries: Record<string, string>) => {
+      const body = new FormData();
+      for (const [key, value] of Object.entries(entries)) body.set(key, value);
+      return action({ request: new Request("http://x/info", { method: "POST", body }), params: { companyId: COMPANY } } as never);
+    };
+    expect(await post({ intent: "use-this", field: "status", source: "bolagsverket" })).toEqual({ ok: true, suggestedAt: "2026-09-04 19:30:00.123" });
+    expect(server.appendSeBasicInfoReviewerDecision).toHaveBeenCalledWith(COMPANY, { intent: "use-this", field: "status", source: "bolagsverket", note: "" });
+    expect(await post({ intent: "fold-now" })).toEqual({ ok: true, launched: { runId: "run-9", url: null } });
+    expect(await post({ intent: "use-this", field: "status", source: "reviewer" })).toEqual({ ok: false, error: "Use this needs a source other than the reviewer." });
+    server.appendSeBasicInfoReviewerDecision.mockRejectedValueOnce(new server.SeBasicInfoDecisionError("SCB has no LEI for this company."));
+    expect(await post({ intent: "use-this", field: "lei", source: "scb" })).toEqual({ ok: false, error: "SCB has no LEI for this company." });
+    server.appendSeBasicInfoReviewerDecision.mockRejectedValueOnce(new Error("clickhouse down"));
+    await expect(post({ intent: "release", field: "lei" })).rejects.toThrow("clickhouse down");
   });
 });
