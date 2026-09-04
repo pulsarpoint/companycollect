@@ -164,7 +164,7 @@ Deleted at cutover: `info.py`'s publisher with its jobs, weekly and field-value 
 
 Admin info page reads: the main row with its sources, every current suggestion row (reviewer first), the history as a timeline, and the precedence table for "why this value".
 
-Reviewer actions: Use this, Edit, Release. Each reads the current reviewer row, changes one field, inserts a new version with `decided_by = 'backoffice'` and `note`. Release sets the field to NULL. The validator takes fields and sources from the exported precedence table (plus `reviewer`).
+Reviewer actions: Use this, Edit, Release. Each reads the current reviewer row, changes one field, inserts a new version with `decided_by = 'backoffice'` and `note`. Release sets the field to NULL. The validator takes fields and sources from the backoffice's client-safe catalogue (`se-basic-info-fields.ts`, the eight decidable fields and the seven sources of section 11), not from the exported precedence table (amended 2026-09-04, slice 3: the parser must run without a server import, and the two are equivalent because the reviewer outranks every source for every field); the precedence table still orders the panel and says "why this value".
 
 After a decision the page shows the reviewer row and a "fold pending" marker when the reviewer row is newer than `folded_at`. A Fold now button launches `se_company_basic_info_fold_companies` for the company through the existing Dagster launch helper; the page reloads when the run finishes.
 

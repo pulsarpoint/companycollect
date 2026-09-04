@@ -1875,6 +1875,10 @@ Not a subagent task: the controller runs it with the owner. No code changes.
 - [ ] Click "Use this" on the Bolagsverket status with a note. Expect "Decision saved"; `SELECT * FROM corpscout.se_company_basic_info_suggestion FINAL WHERE company_id = … AND source = 'reviewer' FORMAT Vertical` shows the new row with `status` set, everything else NULL, `decided_by = 'backoffice'`, the note. The panel shows the reviewer row with "Release" and "Fold pending".
 - [ ] Click "Fold now". Expect the run alert, then the page reloading with the status row's badge reading "Reviewer" and the history card gaining a row with `status` in `changed_fields`. Check Dagster: run tagged `backoffice/basic-info = fold-now` succeeded (`companies 1, changed 1`).
 - [ ] Click "Release" on the reviewer row, then "Fold now" again. Expect the badge back to "SCB" and a second history row.
+- [ ] Open a company with suggestions but no main row (`SELECT company_id FROM corpscout.se_company_basic_info_suggestion FINAL WHERE company_id NOT IN (SELECT company_id FROM corpscout.se_company_basic_info) LIMIT 1`; if none exists, skip): expect the "Not folded yet" alert on the card, the panel still offering Use this, and Fold now working.
+- [ ] Open `/admin/se/company/0000000000/info` (an id no table knows): expect the layout's not-found page, or the "Not folded yet" empty state under a 404, never an error boundary.
+- [ ] Note that the header strip above the tabs still shows the old `se_company_info` values (legal form as a `-ORGFO` token, the pre-decision status) by design until slice 4 switches the shell; the Basic info card's caption says so.
+- [ ] Fold now while Dagster is unreachable (or with a run that stays QUEUED): expect the "Folding" alert to keep polling, never an error page; after ten minutes it reads "Still running".
 - [ ] Record the smoke's company id and run ids in the ledger and the spec's section 10 slice-3 line; merge to main from the owner's checkout; deploy the backoffice by its own recipe (its `ansible/` directory; the controller reads `corpscout/services/backoffice/README.md` for the deploy command before running it).
 
 ---
