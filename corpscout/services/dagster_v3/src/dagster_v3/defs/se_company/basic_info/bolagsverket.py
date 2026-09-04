@@ -34,7 +34,7 @@ def bolagsverket_select_sql() -> str:
         "    FROM corpscout.text_translations\n"
         "    WHERE source_table = 'corpscout.se_companies' AND source_column = 'activity_description'\n"
         "      AND source_lang = 'sv' AND target_lang = 'en'\n"
-        "      AND source_text_hash IN (SELECT cityHash64(ifNull(activity_sv, '')) FROM register)\n"
+        "      AND source_text_hash IN (SELECT cityHash64(ifNull(activity_sv, '')) FROM register WHERE activity_sv IS NOT NULL)\n"
         "    GROUP BY source_text_hash\n"
         ")\n"
         "SELECT\n"

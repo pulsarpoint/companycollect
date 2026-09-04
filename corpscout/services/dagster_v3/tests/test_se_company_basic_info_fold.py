@@ -76,7 +76,8 @@ def test_reviewer_beats_everything_and_llm_beats_esef_on_description() -> None:
         "5560000000",
         [
             suggestion("scb", legal_name="SCB AB"),
-            suggestion("bolagsverket", description="scb text", description_language="sv"),
+            suggestion("bolagsverket", description="register text", description_language="sv"),
+            suggestion("esef", description="esef text", description_language="en"),
             suggestion("llm", description="llm text", description_language="en", description_sv="llm sv"),
             suggestion("reviewer", legal_name="Reviewed AB"),
         ],
@@ -176,10 +177,14 @@ def test_as_tuple_follows_main_columns_and_changed_fields_diff_values_and_source
 def test_description_language_only_change_still_marks_description_changed() -> None:
     with_description = fold_basic_info(
         "5560000000",
-        [suggestion("scb", legal_name="SCB AB", description="x", description_language="sv")],
+        [
+            suggestion("scb", legal_name="SCB AB"),
+            suggestion("bolagsverket", description="x", description_language="sv"),
+        ],
         source_run_id="r",
     )
     assert with_description is not None
+    assert (with_description.description, with_description.description_language) == ("x", "sv")
     only_language_differs = replace(with_description, description_language="en")
     assert with_description.changed_fields_against(only_language_differs) == ["description"]
 

@@ -46,6 +46,9 @@ def test_bolagsverket_select_matches_the_contract() -> None:
     assert "source_column = 'activity_description'" in sql
     assert "source_lang = 'sv' AND target_lang = 'en'" in sql
     assert "cityHash64(ifNull(register.activity_sv, ''))" in sql
+    # The empty-string hash never enters the translation set, so a company without Swedish
+    # text cannot join a translation of some other company's empty description.
+    assert "FROM register WHERE activity_sv IS NOT NULL)" in sql
     assert "argMax(translated_text, version) AS translated_text" in sql
     assert "if(ifNull(translation.translated_text, '') != '', translation.translated_text, register.activity_sv) AS description" in sql
     assert "if(ifNull(translation.translated_text, '') != '', 'en', if(register.activity_sv IS NULL, NULL, 'sv')) AS description_language" in sql
