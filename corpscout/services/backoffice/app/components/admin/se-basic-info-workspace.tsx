@@ -320,7 +320,7 @@ function SuggestionsPanel({
                     <input type="hidden" name="source" value={source} />
                     <input type="hidden" name="note" value={note} />
                     <Button type="submit" size="sm" variant="outline" disabled={busy}>
-                      <span>Use this</span>
+                      Use this
                     </Button>
                   </Form>
                 ) : null}
@@ -330,7 +330,7 @@ function SuggestionsPanel({
                     <input type="hidden" name="field" value={selectedField} />
                     <input type="hidden" name="note" value={note} />
                     <Button type="submit" size="sm" variant="outline" disabled={busy}>
-                      <span>Release</span>
+                      Release
                     </Button>
                   </Form>
                 ) : null}

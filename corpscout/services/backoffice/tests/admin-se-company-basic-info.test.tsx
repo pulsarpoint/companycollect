@@ -104,11 +104,16 @@ describe("SeBasicInfoWorkspace", () => {
     expect(reviewerAt).toBeLessThan(scbAt);
     expect(scbAt).toBeLessThan(bolagsverketAt);
     expect(bolagsverketAt).toBeLessThan(ratsitAt);
-    expect(html).toMatch(/data-source="scb"[^]*?Active/);
     expect(html).toMatch(/data-source="ratsit"[^]*?no opinion/);
     // Bolagsverket has a different status, so it offers Use this; SCB is active and does not.
-    expect(html).toMatch(/data-source="bolagsverket"[^]*?Use this/);
-    expect(html).not.toMatch(/data-source="scb"[^]*?<button[^>]*>Use this/);
+    // Slice each row out of the document so these checks read only that row's
+    // own markup -- toMatch/toContain over the whole string would happily
+    // find another row's later button and pass for the wrong reason.
+    const scbRow = html.slice(scbAt, bolagsverketAt);
+    expect(scbRow).toContain("Active");
+    expect(scbRow).not.toContain("Use this");
+    const bolagsverketRow = html.slice(bolagsverketAt, ratsitAt);
+    expect(bolagsverketRow).toContain("Use this");
   });
 
   it("shows the fold-pending alert with Fold now, and the poller after a launch", () => {
