@@ -1,4 +1,6 @@
-"""Read current suggestion rows, fold in memory, write only what changed (spec section 5).
+"""Read current suggestion rows, fold in memory, rewrite every folded company so
+`folded_at` advances and `changed_only` converges; write a history row only when a value
+or source changed (spec section 5).
 
 Every SELECT is a function returning its exact text so the clickhouse-local harness runs
 the same SQL. Parameters bind client-side through clickhouse-driver's %(name)s syntax,
@@ -160,8 +162,11 @@ def fold_companies(
     page_size: int = PAGE_SIZE,
     log: Callable[..., object] | None = None,
 ) -> FoldCounts:
-    """Fold the given companies in pages; write only rows that differ from the current
-    main row, one history row per changed company."""
+    """Fold the given companies in pages. Every folded company gets a new main row, so
+    `folded_at` advances and the `changed_only` selection converges (owner decision
+    2026-09-04); a history row is added only when a value or source changed against the
+    current main row. A full re-fold with `changed_only=False` rewrites every published
+    row, which is fine for a manual backfill."""
     # Sorted, de-duplicated, validated: the helper raises "Sweden company ids must be 10
     # or 12 digits" on a bad id, before any query.
     ids = list(normalized_se_company_ids(company_ids))
@@ -195,20 +200,27 @@ def fold_companies(
                 unpublished += 1
                 continue
             folded += 1
-            changed_fields = folded_row.changed_fields_against(current.get(company_id))
-            if not changed_fields:
-                unchanged += 1
-                continue
-            changed += 1
             values = folded_row.as_tuple(folded_at)
             main_rows.append(values)
-            history_rows.append((*values, changed_fields))
-        if main_rows:
+            changed_fields = folded_row.changed_fields_against(current.get(company_id))
+            if changed_fields:
+                changed += 1
+                history_rows.append((*values, changed_fields))
+            else:
+                unchanged += 1
+        if history_rows:
             # History first: the two statements are not one transaction, so a failure
             # between them costs a duplicate history row on the retry (a distinct
             # folded_at, visible in the timeline) rather than a published main row whose
             # first-publish history is never written because the retry sees no change.
             client.execute(history_insert_sql(), history_rows)
+        if main_rows:
+            # Every folded company lands here, changed or not: folded_at must advance on
+            # every fold for changed_only's `max(suggested_at) > max(folded_at)` selection
+            # to converge (owner decision 2026-09-04) instead of re-selecting an unchanged
+            # company forever. history_rows holds only the rows whose value or source
+            # changed against the current main row, so a page can have main rows with no
+            # history rows -- hence the separate guards.
             client.execute(main_insert_sql(), main_rows)
         if log is not None:
             log(
@@ -216,7 +228,7 @@ def fold_companies(
                 "unchanged=%d unpublished=%d",
                 len(page),
                 len(scope),
-                len(main_rows),
+                len(history_rows),
                 unchanged - page_unchanged,
                 unpublished - page_unpublished,
             )

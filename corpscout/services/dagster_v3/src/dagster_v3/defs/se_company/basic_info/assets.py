@@ -75,9 +75,9 @@ _FOLD_TABLES = (tables.SUGGESTION_TABLE, tables.MAIN_TABLE, tables.HISTORY_TABLE
               "history_table": tables.QUALIFIED_HISTORY_TABLE},
     description=(
         "Folds every current suggestion row of the companies in one of 64 hash buckets "
-        "into se_company_basic_info by the per-field precedence, writing only rows that "
-        "differ and one history row per change. Manual: launch a partition or a backfill "
-        "from the UI."
+        "into se_company_basic_info by the per-field precedence, rewriting every folded "
+        "company's main row and adding a history row only when a value or source "
+        "changed. Manual: launch a partition or a backfill from the UI."
     ),
 )
 def se_company_basic_info_fold(
@@ -106,7 +106,9 @@ def se_company_basic_info_fold(
               "history_table": tables.QUALIFIED_HISTORY_TABLE},
     description=(
         "The targeted fold: the companies named in config.company_ids, whatever their "
-        "bucket. The backoffice's Fold now button launches this asset for one company."
+        "bucket, rewriting every folded company's main row and adding a history row "
+        "only when a value or source changed. The backoffice's Fold now button "
+        "launches this asset for one company."
     ),
 )
 def se_company_basic_info_fold_companies(

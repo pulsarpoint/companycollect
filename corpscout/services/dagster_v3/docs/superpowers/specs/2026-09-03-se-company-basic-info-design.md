@@ -141,7 +141,7 @@ Batch layer, `fold_companies(client, company_ids, *, changed_only)`:
 1. Read the current suggestion rows for the set (`argMax` per company and source over `suggested_at`), grouped by company.
 2. With `changed_only`, keep the companies whose newest `suggested_at` is later than their main row's `folded_at`, or that have no main row.
 3. Fold in memory, read the current main rows for the set, compare values and sources.
-4. Insert only the rows that differ; append one history row per changed company. Unchanged companies write nothing.
+4. Insert a new main row for every folded company (so `folded_at` advances and the changed-only selection converges); append one history row per company whose values or sources changed (owner decision 2026-09-04).
 
 Pages of 20,000 companies keep memory bounded; the 3.5M backfill is 64 partition runs of a few minutes each.
 
@@ -225,14 +225,10 @@ One plan each, executed in order with subagent-driven development:
    record has a newer `observed_at` than the current suggestion row (`FINAL`) or none
    exists; `observed_at` must be the source's own, monotonic per record, since ties break
    on it. The fold assets exist but the suggestion table is empty until slice 2 runs.
-   Known limitation, owner decision needed before slice 2: `changed_only` selects on
-   `max(suggested_at) > max(folded_at)`, and `folded_at` advances only when a row is
-   written, so a company whose re-suggestion folds unchanged (or stays unpublished) is
-   re-selected on every later run; the recommended fix is a small fold-watermark table
-   (`company_id`, `considered_at`) written for every considered company and used in the
-   selection. Memory per page is bounded only by `page_size` (default 20,000 companies, up
-   to seven suggestion rows each, descriptions included); lower `page_size` in the asset
-   config if a run presses the host.
+   Resolved 2026-09-04: every folded company is rewritten, so `changed_only` converges
+   without a watermark table. Memory per page is bounded only by `page_size` (default
+   20,000 companies, up to seven suggestion rows each, descriptions included); lower
+   `page_size` in the asset config if a run presses the host.
 2. The six extractors, reading the source layer of section 3.1.
 3. The backoffice page, actions, Fold now, pipeline sheet.
 4. Cutover (owner-gated prod steps) and retirement of the old publisher, the field-registry code and the three `se_company_info_*` artifacts.

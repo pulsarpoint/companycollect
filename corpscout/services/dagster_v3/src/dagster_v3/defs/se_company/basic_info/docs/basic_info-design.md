@@ -8,7 +8,7 @@ The basic-info entity of the 2026-09-03 SE basic-info design
 | `tables.py` | Table names and column tuples, pinned against migrations 000376-000379 |
 | `precedence.py` | `BASIC_INFO_PRECEDENCE`: numbers per field per source; the reviewer is a source ranked 10000 |
 | `fold.py` | `fold_basic_info`: pure, one company, highest precedence wins, ties to newest `observed_at` then smaller uid; no row without a register legal name |
-| `batch.py` | Reads current suggestion rows (`FINAL`), folds in pages of 20,000, writes only rows that differ plus one history row per change |
+| `batch.py` | Reads current suggestion rows (`FINAL`), folds in pages of 20,000, rewrites every folded company's main row plus one history row per change |
 | `assets.py` | `se_company_basic_info_fold` (64 hash buckets, `multi_run(1)`, pool `se_company_basic_info_fold`), `se_company_basic_info_fold_companies` (targeted), `se_company_basic_info_precedence_clickhouse` |
 
 `batch.py` writes the history row before the main row: the two statements are not one
@@ -27,8 +27,7 @@ writes nothing when the folded values did not change.
 Operating the fold: materialize one `bucket_NN` partition or launch a backfill of all 64
 from the UI; `changed_only` (default true) skips companies folded after their newest
 suggestion. `se_company_basic_info_fold_companies` takes `company_ids` and re-folds them
-whatever their bucket. Nothing is scheduled. Known limitation, awaiting an owner decision
-before slice 2: `folded_at` only advances when a row is written, so a company whose
-re-suggestion folds unchanged — or that stays unpublished — is re-selected by `changed_only`
-on every later run rather than converging; `page_size` (default 20,000) is the knob to lower
-if a run's per-page memory presses the host.
+whatever their bucket. Nothing is scheduled. Resolved 2026-09-04: every folded company is
+rewritten with a new main row, so `folded_at` advances on every fold and `changed_only`
+converges instead of re-selecting an unchanged company forever; `page_size` (default
+20,000) is the knob to lower if a run's per-page memory presses the host.
