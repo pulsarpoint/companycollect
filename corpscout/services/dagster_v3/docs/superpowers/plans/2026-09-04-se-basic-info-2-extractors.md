@@ -151,7 +151,8 @@ def test_preview_scans_pages_counts_and_writes_nothing() -> None:
     )
     assert counts == ExtractCounts(companies=3, pages=2, candidates=4, inserted=0, execute=False, stopped_at_cap=False)
     scans = [(s, p) for s, p, _ in client.statements if "LIMIT %(page_size)s" in s]
-    assert [p["after_company_id"] for _, p in scans] == ["", "5561111111", "5562222222"]
+    # A page shorter than page_size ends the scan, so the third (empty) query never runs.
+    assert [p["after_company_id"] for _, p in scans] == ["", "5561111111"]
     assert all(p["source"] == "scb" and p["page_size"] == 2 for _, p in scans)
     assert not any(s.startswith("INSERT INTO") for s, _, _ in client.statements)
     page_reads = [(p, st) for s, p, st in client.statements if "AS candidates" in s]
