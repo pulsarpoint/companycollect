@@ -12,7 +12,7 @@
 
 ## Global Constraints
 
-- Names (spec 11): assets `se_basic_info_suggestions_scb`, `se_basic_info_suggestions_bolagsverket`, `se_basic_info_suggestions_esef`, `se_basic_info_suggestions_wikidata`, `se_basic_info_suggestions_ratsit`, `se_basic_info_suggestions_llm`; job `se_company_basic_info_extract_job`; schedule `se_company_basic_info_weekly` (cron `35 6 * * 1`, `default_status=dg.DefaultScheduleStatus.STOPPED`); group `se_company_basic_info`; sources exactly `scb`, `bolagsverket`, `esef`, `wikidata`, `ratsit`, `llm`.
+- Names (spec 11): assets `se_basic_info_suggestions_scb`, `se_basic_info_suggestions_bolagsverket`, `se_basic_info_suggestions_esef`, `se_basic_info_suggestions_wikidata`, `se_basic_info_suggestions_ratsit`, `se_basic_info_suggestions_llm`; job `se_company_basic_info_extract_job`; schedule `se_company_basic_info_weekly` (cron `40 6 * * 1`, `default_status=dg.DefaultScheduleStatus.STOPPED`); group `se_company_basic_info`; sources exactly `scb`, `bolagsverket`, `esef`, `wikidata`, `ratsit`, `llm`.
 - Suggestion write rule (spec 3.2 amended): a source writes a new row for a company only when the source's current record has a newer `observed_at` than the current suggestion row of that source, or no suggestion row exists. Each extractor's `observed_at` is the source's own timestamp, monotonic per record: `se_scb_companies.observed_at`, `se_bolagsverket_companies.observed_at`, ESEF `resolved_at`, Wikidata entity `resolved_at`, Ratsit `normalized_at`, LLM observation `created_at`.
 - Register readers take `FINAL ... WHERE has_company = 1` (slice-0 tombstones). NULL in a value column means "no opinion"; an extractor never writes `''` (every text goes through `nullIf(trim(...), '')`).
 - Every id-bound query binds at most `page_size` (default 5,000) ids and passes `settings=ID_BOUND_QUERY_SETTINGS` (`max_query_size` 1 MiB) from `basic_info/batch.py`; scans page by keyset (`company_id > %(after_company_id)s ... LIMIT %(page_size)s`), never by `OFFSET`.
@@ -1071,7 +1071,7 @@ se_basic_info_suggestions_ratsit = define_suggestion_asset(
     current_sql=ratsit_current_sql(),
     select_sql=ratsit_select_sql(),
     select_params=RATSIT_SELECT_PARAMS,
-    deps=[dg.AssetKey("se_ratsit_company_clickhouse")],
+    deps=[dg.AssetKey("se_ratsit_normalized")],
     description=(
         "One ratsit suggestion row per company from the newest normalized Ratsit report: "
         "name, active/inactive from the status text, the Swedish business description as "
@@ -1080,7 +1080,7 @@ se_basic_info_suggestions_ratsit = define_suggestion_asset(
 )
 ```
 
-Verify the dep key with `rg -n 'name="se_ratsit_company' src/dagster_v3/defs/sweden_ratsit` and use the real asset name that writes `se_ratsit_company`; report the substitution. `RATSIT_SELECT_PARAMS` flows through `run_extractor`'s `select_params` into every page's bind and into the scan.
+The dep key `se_ratsit_normalized` is the sweden_ratsit asset that writes `se_ratsit_company` (pre-flight, 2026-09-04). `RATSIT_SELECT_PARAMS` flows through `run_extractor`'s `select_params` into every page's bind and into the scan.
 
 - [ ] **Step 4: Run to verify pass, ruff, definitions, commit**
 
@@ -1993,7 +1993,7 @@ def test_extract_job_and_stopped_weekly_are_registered() -> None:
         "se_basic_info_suggestions_wikidata", "se_basic_info_suggestions_ratsit", "se_basic_info_suggestions_llm",
     }
     schedule = repo.get_schedule_def("se_company_basic_info_weekly")
-    assert schedule.cron_schedule == "35 6 * * 1"
+    assert schedule.cron_schedule == "40 6 * * 1"
     assert schedule.job.name == "se_company_basic_info_extract_job"
     assert schedule.default_status == dg.DefaultScheduleStatus.STOPPED
     # Every extractor in the scheduled run executes for real, with the pinned model profile.
@@ -2057,7 +2057,7 @@ se_company_basic_info_extract_job = dg.define_asset_job(
 se_company_basic_info_weekly = dg.ScheduleDefinition(
     name="se_company_basic_info_weekly",
     job=se_company_basic_info_extract_job,
-    cron_schedule="35 6 * * 1",
+    cron_schedule="40 6 * * 1",
     run_config=WEEKLY_RUN_CONFIG,
     default_status=dg.DefaultScheduleStatus.STOPPED,
 )
