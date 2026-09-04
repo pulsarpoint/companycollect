@@ -115,11 +115,49 @@ at sign-up, which were not retrievable without registering. This must be
 read before the flags ship in a sold product (the register is public
 statutory data, so a permissive outcome is likely, but it is unverified).
 
+## Eligibility — no EU/Swedish requirement
+
+The free access rests on the EU Open Data Directive's **high-value datasets**
+(Regulation 2023/138) and Sweden's amended register ordinance. The
+government's press release names the beneficiaries as *företag,
+privatpersoner* and *statliga och kommunala myndigheter*, with no
+nationality or residence condition; SCB's request instructions make the
+organisation number *optional*. High-value datasets must by EU law be
+available free of charge in machine-readable form to anyone. So neither EU
+citizenship nor an EU company is required — a non-EU legal entity or
+individual can request the certificate. Only the acceptance of SCB's user
+terms is required.
+
+## Already in hand: the derived "verksam" flag (2026-09-04 finding)
+
+The SCB bulk file we already ingest from
+`vardefulla-datamangder.bolagsverket.se/scb/scb_bulkfil.zip` carries
+`FtgStat` → `se_scb_companies.source_status_code`. That column **is** SCB's
+`Företagsstatus` variable, defined in the variable description as:
+
+> *"Anger om ett företag är verksamt. I SCB:s företagsregister betraktas ett
+> företag som verksamt om det är registrerat för moms eller gruppmoms
+> och/eller F-skatt och/eller som arbetsgivare."*
+> 0 = har aldrig varit verksam · 1 = är verksam · 9 = ej verksam
+
+Live distribution (2026-09-04): `1` → 1.37M companies (verksam), `0` →
+327k (never active), `9` → 126k (deregistered). So the **economically-active
+derivation is available today, weekly, with no API request**, for the whole
+register. It has simply never been interpreted as such in our pipeline.
+
+What the bulk file does **not** carry is the three *individual* flags
+(`Fskattstatus`, `Momsstatus`, `Arbetsgivarstatus`) and their transition
+semantics (e.g. "lost F-tax approval", "registered as employer for the first
+time"). Those still require the API's Företag layout with the
+`TG15Stat_*` add-on groups.
+
 ## What this means for the pipeline
 
-- The SCB bulk file already ingested (`se_scb_companies`) does **not** carry
-  the flags — only `source_status_code` / `source_secondary_status_code`.
-  The flags require the API.
+- **Step 0 (no request needed):** expose `source_status_code` as
+  `is_economically_active` (`= 1`) with its `0`/`9` distinction, and start
+  recording it as a weekly observation so transitions become events. This
+  alone fixes the alive-vs-dormant problem across the register.
+- The individual flags and their transitions still require the API.
 - With 3.4M companies and a 2,000-row/request cap at 1 request/second,
   a full sweep is ~1,700 requests ≈ 30 minutes of wall time — trivial. A
   weekly full sweep of the whole register is feasible on the free tier even
