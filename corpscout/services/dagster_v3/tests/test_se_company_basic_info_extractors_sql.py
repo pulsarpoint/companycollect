@@ -41,6 +41,13 @@ def test_bolagsverket_select_matches_the_contract() -> None:
     assert "'bolagsverket' AS source" in sql
     assert REGISTER_UID in sql and "'sweden_bolagsverket'" in sql
     assert "if(register.deregistration_date IS NULL, 'active', 'inactive') AS status" in sql
+    # The organisationsform token becomes SCB's juridisk form code, so the entity has one
+    # legal-form vocabulary whichever source wins; an unknown token passes through.
+    assert (
+        "nullIf(transform(trim(ifNull(register.legal_form_code, '')), ['AB-ORGFO', " in sql
+        and "trim(ifNull(register.legal_form_code, ''))), '') AS legal_form_code" in sql
+    )
+    assert bolagsverket.BOLAGSVERKET_EXTRACTOR_VERSION == "bolagsverket-v2"
     # The English description is the translation pipeline's, keyed the way it keys itself.
     assert "source_table = 'corpscout.se_companies'" in sql
     assert "source_column = 'activity_description'" in sql
