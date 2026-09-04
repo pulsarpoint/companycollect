@@ -1,5 +1,11 @@
-import { chQuery } from "~/lib/clickhouse.server";
-import { foldPending } from "~/lib/se-basic-info-fields";
+import { chInsertSeBasicInfoSuggestions, chQuery } from "~/lib/clickhouse.server";
+import type { SeBasicInfoDecision } from "~/lib/se-basic-info-decision-form";
+import {
+  basicInfoFieldLabel,
+  basicInfoSourceLabel,
+  foldPending,
+  type SeBasicInfoField,
+} from "~/lib/se-basic-info-fields";
 
 /**
  * The Info tab's reads over the basic-info entity (spec 2026-09-03, sections
@@ -198,4 +204,84 @@ export async function loadSeBasicInfoDetail(
       suggestions.map((row) => row.suggested_at),
     ),
   };
+}
+
+export class SeBasicInfoDecisionError extends Error {}
+
+/** ClickHouse's own DateTime64(3) text form, UTC. */
+export function clickhouseStamp(date: Date): string {
+  return date.toISOString().replace("T", " ").replace("Z", "");
+}
+
+const VALUE_FIELDS = [
+  "legal_name",
+  "legal_form_code",
+  "status",
+  "incorporation_date",
+  "lei",
+  "wikidata_id",
+  "description",
+  "description_language",
+  "description_sv",
+] as const;
+
+type ReviewerRowValues = Record<(typeof VALUE_FIELDS)[number], string | null>;
+
+/** The row as inserted: '' from the reads becomes NULL ("no opinion") here. */
+function reviewerValues(row: SeBasicInfoSuggestionRow | undefined): ReviewerRowValues {
+  const values = {} as ReviewerRowValues;
+  for (const field of VALUE_FIELDS) {
+    const value = row?.[field] ?? "";
+    values[field] = value === "" ? null : value;
+  }
+  return values;
+}
+
+/**
+ * One reviewer decision = one new version of this company's reviewer row
+ * (spec 3.2, 7): the current reviewer row's values, one field changed,
+ * `observed_at`/`suggested_at` = the decision instant. Use this copies the
+ * chosen source's value (and the language with a description); Release sets
+ * the field (and that language) back to NULL.
+ */
+export async function appendSeBasicInfoReviewerDecision(
+  companyId: string,
+  decision: Exclude<SeBasicInfoDecision, { intent: "fold-now" }>,
+  now: Date = new Date(),
+): Promise<{ suggestedAt: string }> {
+  const suggestions = await chQuery<SeBasicInfoSuggestionRow>(BASIC_INFO_SUGGESTIONS_SQL, { companyId });
+  const values = reviewerValues(suggestions.find((row) => row.source === "reviewer"));
+  const field: SeBasicInfoField = decision.field;
+  if (decision.intent === "use-this") {
+    const chosen = suggestions.find((row) => row.source === decision.source);
+    const value = chosen?.[field] ?? "";
+    if (value === "") {
+      throw new SeBasicInfoDecisionError(
+        `${basicInfoSourceLabel(decision.source)} has no ${basicInfoFieldLabel(field).toLowerCase()} for this company.`,
+      );
+    }
+    values[field] = value;
+    if (field === "description") {
+      values.description_language = chosen?.description_language === "" ? null : (chosen?.description_language ?? null);
+    }
+  } else {
+    values[field] = null;
+    if (field === "description") values.description_language = null;
+  }
+  const stamp = clickhouseStamp(now);
+  await chInsertSeBasicInfoSuggestions([
+    {
+      company_id: companyId,
+      source: "reviewer",
+      source_record_uid: "",
+      observed_at: stamp,
+      ...values,
+      decided_by: "backoffice",
+      note: decision.note === "" ? null : decision.note,
+      suggested_at: stamp,
+      source_run_id: "backoffice",
+      extractor_version: "backoffice-v1",
+    },
+  ]);
+  return { suggestedAt: stamp };
 }

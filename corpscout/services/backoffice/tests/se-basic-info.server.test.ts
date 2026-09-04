@@ -13,12 +13,14 @@ vi.mock("~/lib/dagster.server", () => ({
 }));
 
 import {
+  appendSeBasicInfoReviewerDecision,
   BASIC_INFO_HISTORY_SQL,
   BASIC_INFO_LEGAL_FORM_LABELS_SQL,
   BASIC_INFO_PRECEDENCE_SQL,
   BASIC_INFO_SQL,
   BASIC_INFO_SUGGESTIONS_SQL,
   loadSeBasicInfoDetail,
+  SeBasicInfoDecisionError,
   type SeBasicInfoRow,
   type SeBasicInfoSuggestionRow,
 } from "~/lib/se-basic-info.server";
@@ -152,5 +154,64 @@ describe("se-basic-info.server", () => {
     const detail = await loadSeBasicInfoDetail(COMPANY);
     expect(detail?.legalFormLabels).toEqual({});
     expect(clickhouse.query.mock.calls.some(([sql]) => sql === BASIC_INFO_LEGAL_FORM_LABELS_SQL)).toBe(false);
+  });
+
+  const NOW = new Date("2026-09-04T19:30:00.123Z");
+
+  it("use-this copies the chosen source's value into a new reviewer-row version", async () => {
+    clickhouse.insert.mockReset();
+    const result = await appendSeBasicInfoReviewerDecision(
+      COMPANY,
+      { intent: "use-this", field: "legal_form_code", source: "bolagsverket", note: "register is right" },
+      NOW,
+    );
+    expect(result).toEqual({ suggestedAt: "2026-09-04 19:30:00.123" });
+    expect(clickhouse.insert).toHaveBeenCalledTimes(1);
+    const [rows] = clickhouse.insert.mock.calls[0] as [Record<string, unknown>[]];
+    expect(rows).toHaveLength(1);
+    expect(rows[0]).toMatchObject({
+      company_id: COMPANY,
+      source: "reviewer",
+      source_record_uid: "",
+      observed_at: "2026-09-04 19:30:00.123",
+      suggested_at: "2026-09-04 19:30:00.123",
+      legal_form_code: "51",
+      // Fields the reviewer never decided stay NULL: no opinion.
+      legal_name: null,
+      status: null,
+      incorporation_date: null,
+      description: null,
+      description_language: null,
+      decided_by: "backoffice",
+      note: "register is right",
+      source_run_id: "backoffice",
+      extractor_version: "backoffice-v1",
+    });
+  });
+
+  it("use-this on description carries the language; release clears both", async () => {
+    clickhouse.insert.mockReset();
+    await appendSeBasicInfoReviewerDecision(COMPANY, { intent: "use-this", field: "description", source: "bolagsverket", note: "" }, NOW);
+    const [[[first]]] = clickhouse.insert.mock.calls as [Record<string, unknown>[]][];
+    expect(first).toMatchObject({ description: BOLAGSVERKET_ROW.description, description_language: "sv" });
+    // The next version starts from the current reviewer row.
+    clickhouse.query.mockImplementation(async (sql: string) =>
+      sql === BASIC_INFO_SUGGESTIONS_SQL
+        ? [BOLAGSVERKET_ROW, { ...BOLAGSVERKET_ROW, source: "reviewer", legal_name: "", legal_form_code: "", status: "", incorporation_date: "", description: "Kept text", description_language: "sv", description_sv: "", decided_by: "backoffice" }]
+        : answer(sql),
+    );
+    clickhouse.insert.mockReset();
+    await appendSeBasicInfoReviewerDecision(COMPANY, { intent: "release", field: "description", note: "" }, NOW);
+    const [[[second]]] = clickhouse.insert.mock.calls as [Record<string, unknown>[]][];
+    expect(second).toMatchObject({ description: null, description_language: null, note: null });
+  });
+
+  it("refuses a source with no opinion on the field", async () => {
+    await expect(
+      appendSeBasicInfoReviewerDecision(COMPANY, { intent: "use-this", field: "lei", source: "bolagsverket", note: "" }, NOW),
+    ).rejects.toBeInstanceOf(SeBasicInfoDecisionError);
+    await expect(
+      appendSeBasicInfoReviewerDecision(COMPANY, { intent: "use-this", field: "status", source: "scb", note: "" }, NOW),
+    ).rejects.toThrow("SCB has no status for this company.");
   });
 });
