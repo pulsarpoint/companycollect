@@ -264,7 +264,10 @@ function SuggestionsPanel({
           </Alert>
         ) : null}
         {result && result.ok && "launched" in result ? (
+          // Keyed by run: a relaunch after the ten-minute cap must start a fresh
+          // poller (new start instant, timed-out flag cleared), not reuse the old one.
           <FoldRunPoller
+            key={result.launched.runId}
             companyId={companyId}
             runId={result.launched.runId}
             url={result.launched.url}
