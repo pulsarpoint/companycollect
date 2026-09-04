@@ -33,3 +33,61 @@ whatever their bucket. Nothing is scheduled. Resolved 2026-09-04: every folded c
 rewritten with a new main row, so `folded_at` advances on every fold and `changed_only`
 converges instead of re-selecting an unchanged company forever; `page_size` (default
 20,000) is the knob to lower if a run's per-page memory presses the host.
+
+## Extractors (slice 2)
+
+Each source extractor (`se_basic_info_suggestions_<source>`) writes one wide suggestion row
+per company, reading its own register table and stamping `observed_at` from the record that
+grounds the row:
+
+- `scb` reads `se_scb_companies` FINAL: `legal_name`, `legal_form_code`, `status` (from
+  `source_status_code`), `incorporation_date` (`registration_date`); `observed_at` is the
+  register row's own `observed_at`.
+- `bolagsverket` reads `se_bolagsverket_companies` FINAL joined to `text_translations`:
+  `legal_name`, `legal_form_code`, `status` (active iff `deregistration_date` is NULL),
+  `incorporation_date`, `description`/`description_language`/`description_sv` (the Swedish
+  activity text, translated to English when `text_translations` has a match); `observed_at`
+  is the register row's own `observed_at`.
+- `esef` reads `esef_document_company_information` (SE filings only, newest per company by
+  `resolved_at`/`fiscal_year`): `lei`, `description`, `description_language`; `observed_at`
+  is the filing's `resolved_at`.
+- `wikidata` reads `wikidata_companies` joined to the register spine by orgnr or a current
+  LEI (newest linked entity per company): `legal_name` (`official_name`),
+  `incorporation_date`, `wikidata_id`, `description`/`description_language` (`en`);
+  `observed_at` is the entity's `resolved_at`.
+- `ratsit` reads `se_ratsit_company` FINAL (newest normalized report per company, pinned
+  normalizer version): `legal_name`, `status` (from the Swedish status text),
+  `description`/`description_language` (`sv`)/`description_sv`; `observed_at` is the
+  report's `normalized_at`.
+- `llm` merges the other five sources' description text into one English/Swedish pair (see
+  below); `observed_at` is the cached observation's own `created_at` when an answer is
+  reused, or this run's write time when freshly answered.
+
+Change rule: every SQL extractor visits a company only when its source table's record is
+newer than the company's current suggestion row from that same source, or the company has
+never been suggested by that source -- `changed_scope_sql` compares `current_sql`'s
+`observed_at` per company against the suggestion table. `execute=false` (default) previews
+the count without writing; `execute=true` inserts the page.
+
+LLM gate and cache: `llm_scope_sql` selects a company only when it has two or more
+non-reviewer, non-llm sources with a description, and either has no `llm` suggestion row
+yet or the newest of those sources' `observed_at` is newer than the llm row's
+`suggested_at` -- not `observed_at`, because a cached answer's `observed_at` is its own
+`created_at` and can predate the texts it merged, so comparing against it would never
+converge. Reviewer rows are excluded from both sides of the gate: a human decision is not
+source text to merge, and it must not count toward the two-source threshold or look like
+new evidence the model hasn't seen. Each request is content-addressed by its inputs and
+`prompt_version`; a repeat request (same source texts, same `SUGGESTION_PROMPT_VERSION` =
+`"se-company-basic-info-description-v1"`) is answered from the observation cache instead of
+calling the model, so bumping `SUGGESTION_PROMPT_VERSION` is how a prompt change forces
+every affected company to be re-answered.
+
+How to run: preview first with `execute: false` to see the count of companies that would be
+visited; set `execute: true` to write. The `llm` extractor additionally requires an `llm:`
+profile (`provider`, `model`, `base_url`, `temperature`, `max_tokens`, `prompt_version`,
+`concurrency`) -- there is no default, so a bare Materialize fails config validation rather
+than silently spending on a default or a preview model. `se_company_basic_info_extract_job`
+(`jobs.py`) selects all six extractors; `se_company_basic_info_weekly` schedules it Mondays
+06:40 UTC (`40 6 * * 1`) with every source's `execute: true` and the pinned
+`deepseek`/`deepseek-v4-flash` profile, registered STOPPED -- turn it on only when ready to
+run automated weekly extraction.

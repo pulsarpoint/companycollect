@@ -77,9 +77,13 @@ def test_assets_are_registered_with_pool_partitions_and_backfill_policy() -> Non
     assert fold.pools == {FOLD_POOL}
     assert targeted.pools == {FOLD_POOL}
     assert export.pools == set()
-    # No automation in this slice: nothing schedules or senses these assets.
+    # No automation on the fold assets: nothing schedules or senses them. Slice 2 added a
+    # schedule over the extractor assets (a disjoint set), so the check is asset-scoped
+    # rather than a blanket substring match on "basic_info" in every schedule/sensor name.
+    fold_keys = {fold.key, targeted.key, export.key}
     for schedule in repo.schedule_defs:
-        assert "basic_info" not in schedule.name
+        scheduled_keys = set(repo.get_job(schedule.job_name).asset_layer.executable_asset_keys)
+        assert not fold_keys & scheduled_keys
     for sensor in repo.sensor_defs:
         assert "basic_info" not in sensor.name
 

@@ -232,6 +232,15 @@ One plan each, executed in order with subagent-driven development:
    20,000 companies, up to seven suggestion rows each, descriptions included); lower
    `page_size` in the asset config if a run presses the host.
 2. The six extractors, reading the source layer of section 3.1.
+   Built 2026-09-04: `basic_info/extract.py` (change scan on the source `observed_at`,
+   keyset paging, `INSERT ... SELECT`), the five SQL extractors and the LLM extractor (new
+   prompt version `se-company-basic-info-description-v1`, observation cache reused from the
+   first run on), job `se_company_basic_info_extract_job`, schedule
+   `se_company_basic_info_weekly` STOPPED. Slice 3 reads suggestion rows through `FINAL`;
+   the reviewer row is written by the backoffice with `source = 'reviewer'`, `observed_at`
+   = the decision instant, `source_record_uid = ''`. The LLM gate compares the newest
+   non-llm, non-reviewer text against the llm row's `suggested_at`, so a reused answer
+   clears the scope; reviewer rows never trigger it.
 3. The backoffice page, actions, Fold now, pipeline sheet.
 4. Cutover (owner-gated prod steps) and retirement of the old publisher, the field-registry code and the three `se_company_info_*` artifacts.
 5. The spine switch: every `se_companies` reader to `se_company_basic_info`, then the `se_companies` builder and table go.
