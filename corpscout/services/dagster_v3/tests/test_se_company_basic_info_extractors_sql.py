@@ -3,8 +3,9 @@ order, binds %(company_ids)s, reads FINAL rows, and maps codes the way the spec 
 
 import re
 
-from dagster_v3.defs.se_company.basic_info import bolagsverket, esef, scb, wikidata
+from dagster_v3.defs.se_company.basic_info import bolagsverket, esef, ratsit, scb, wikidata
 from dagster_v3.defs.se_company.basic_info.extract import SUGGESTION_SELECT_COLUMNS
+from dagster_v3.defs.sweden_ratsit.normalization import RATSIT_NORMALIZER_VERSION
 
 REGISTER_UID = "lower(hex(SHA256(concat('company-source-record-v1\\nstructured\\n', "
 
@@ -88,3 +89,23 @@ def test_wikidata_select_links_entities_through_orgnr_or_lei() -> None:
     assert "if(entity.company_description IS NULL OR trim(entity.company_description) = '', NULL, 'en') AS description_language" in sql
     assert sql.rstrip().endswith("ORDER BY entity.resolved_at DESC, entity.wikidata_id ASC\nLIMIT 1 BY links.company_id")
     assert "links.company_id IN %(company_ids)s" in sql
+
+
+def test_ratsit_select_takes_the_newest_report_and_maps_status_text() -> None:
+    sql = ratsit.ratsit_select_sql()
+    assert _aliases(sql) == list(SUGGESTION_SELECT_COLUMNS)
+    assert "FROM corpscout.se_ratsit_company FINAL" in sql
+    assert "normalizer_version = %(normalizer_version)s" in sql and "company_id IN %(company_ids)s" in sql
+    assert "concat('ratsit:', toString(result_sha256)) AS source_record_uid" in sql
+    assert "toDateTime64(normalized_at, 3, 'UTC') AS observed_at" in sql
+    assert "nullIf(trim(name), '') AS legal_name" in sql
+    assert "multiIf(status IS NULL, NULL, startsWith(status, 'Aktiv'), 'active', 'inactive') AS status" in sql
+    assert "nullIf(trim(ifNull(business_description, '')), '') AS description" in sql
+    assert "if(nullIf(trim(ifNull(business_description, '')), '') IS NULL, NULL, 'sv') AS description_language" in sql
+    assert "nullIf(trim(ifNull(business_description, '')), '') AS description_sv" in sql
+    assert "CAST(NULL AS Nullable(String)) AS legal_form_code" in sql
+    assert sql.rstrip().endswith("ORDER BY normalized_at DESC, result_sha256 DESC\nLIMIT 1 BY company_id")
+    assert ratsit.RATSIT_SELECT_PARAMS == {"normalizer_version": RATSIT_NORMALIZER_VERSION}
+    current = ratsit.ratsit_current_sql()
+    assert "toDateTime64(max(normalized_at), 3, 'UTC') AS observed_at" in current
+    assert "normalizer_version = %(normalizer_version)s" in current and "GROUP BY company_id" in current
