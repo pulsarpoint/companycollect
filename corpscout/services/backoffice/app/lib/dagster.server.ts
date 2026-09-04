@@ -48,6 +48,12 @@ export const REPOSITORY_NAME = "__repository__";
 export const SE_COMPANY_INFO_JOB = "se_company_info_job";
 export const SE_COMPANY_INFO_REVIEW_JOB = "se_company_info_review_job";
 export const SE_COMPANY_INFO_ASSET = "se_company_info_clickhouse";
+/** Dagster's implicit job for materializing assets by selection; what the
+ * GraphQL launcher wants when no named job wraps the asset. */
+export const ASSET_JOB_NAME = "__ASSET_JOB";
+/** The targeted basic-info fold (spec 5): re-folds the companies named in its
+ * config whatever their bucket. Launched by the Info tab's Fold now. */
+export const SE_BASIC_INFO_FOLD_COMPANIES_ASSET = "se_company_basic_info_fold_companies";
 
 /** The two instigators that drive THIS pipeline. The repository has 52 schedules
  * and 15 sensors; a page that renders all of them tells its reader nothing. */

@@ -164,11 +164,13 @@ Deleted at cutover: `info.py`'s publisher with its jobs, weekly and field-value 
 
 Admin info page reads: the main row with its sources, every current suggestion row (reviewer first), the history as a timeline, and the precedence table for "why this value".
 
-Reviewer actions: Use this, Edit, Release. Each reads the current reviewer row, changes one field, inserts a new version with `decided_by = 'backoffice'` and `note`. Release sets the field to NULL. The validator takes fields and sources from the exported precedence table (plus `reviewer`).
+Reviewer actions: Use this, Edit, Release. Each reads the current reviewer row, changes one field, inserts a new version with `decided_by = 'backoffice'` and `note`. Release sets the field to NULL. The validator takes fields and sources from the backoffice's client-safe catalogue (`se-basic-info-fields.ts`, the eight decidable fields and the seven sources of section 11), not from the exported precedence table (amended 2026-09-04, slice 3: the parser must run without a server import, and the two are equivalent because the reviewer outranks every source for every field); the precedence table still orders the panel and says "why this value".
 
 After a decision the page shows the reviewer row and a "fold pending" marker when the reviewer row is newer than `folded_at`. A Fold now button launches `se_company_basic_info_fold_companies` for the company through the existing Dagster launch helper; the page reloads when the run finishes.
 
 Pipeline sheet: extract job, fold partitions, suggestions per source, pending folds, LLM preview counts. Every reader of `se_companies` moves to `se_company_basic_info` in the spine slice.
+
+Amended 2026-09-04 (owner decision, slice 3 scope and layout): the admin company page's first tab (Info, `/admin/se/company/:companyId/info`) is replaced by a two-column page, two thirds and one third. Left: one card with the nine basic-info fields as rows (`legal_name`, `legal_form_code` with its `se_code_labels` label, `status`, `incorporation_date`, `lei`, `wikidata_id`, `description` with `description_language`, `description_sv`), each row showing the value and the source that won it, a footer with `folded_at`, `fold_version` and `source_run_id`, and a collapsed history card beneath. Right: a sticky panel for the selected field (URL search parameter `field`, default `legal_name`) listing that field's current suggestion rows ordered by precedence, each with value, source and `observed_at`, the winning source marked active, sources without an opinion greyed at the bottom. Actions in this slice: Use this and Release (each inserts a new reviewer row version), the "fold pending" marker, and Fold now (launches `se_company_basic_info_fold_companies` for the company). Edit (free text) and the basic-info pipeline sheet are later follow-ups. The old review workspace component and its route test are deleted with the switch; the old `se_company_info` server module stays for the companies list and pipeline sheet until slice 4.
 
 ## 8. Cutover
 
@@ -248,6 +250,16 @@ One plan each, executed in order with subagent-driven development:
    row's stamp and its translation's (`text_translations.version`), so a company whose
    Swedish text is translated after its last extraction is visited again instead of keeping
    the Swedish text on the English-facing `description`.
+   Run on prod 2026-09-04: the five SQL extractors executed and converged (second preview
+   0): suggestion rows bolagsverket 2,855,218, scb 1,818,909, ratsit 83,696, wikidata
+   3,104, esef 393 (Bolagsverket text translated to English for 92.1% of 2,855,016 rows).
+   The 64-bucket fold published 3,523,558 companies (1 unpublished: no register legal
+   name), history 3,523,558 first-publish rows; a power cut during the backfill cost one
+   bucket its merged parts, repaired by deleting the 20,000 orphan history rows and
+   re-folding bucket_16 with `changed_only = false`. The LLM extractor's preview reported
+   78,579 eligible companies (all paid calls under the new prompt version), the spend
+   decision is the owner's and was still open when this was written. The legal-form
+   follow-up (section 3.1 amendment) re-extracts Bolagsverket after this record.
 3. The backoffice page, actions, Fold now, pipeline sheet.
 4. Cutover (owner-gated prod steps) and retirement of the old publisher, the field-registry code and the three `se_company_info_*` artifacts.
 5. The spine switch: every `se_companies` reader to `se_company_basic_info`, then the `se_companies` builder and table go.

@@ -127,6 +127,8 @@ export default [
     route("se/company/:companyId", "routes/admin-se-company-layout.tsx", [
       index("routes/admin-se-company-index.tsx"),
       route("info", "routes/admin-se-company-info.tsx"),
+      // Resource route behind the Info tab's Fold now: the run poller.
+      route("info/run/:runId", "routes/admin-se-company-info-run.ts"),
       route("address", "routes/admin-se-company-address.tsx"),
       route("financial", "routes/admin-se-company-financial.tsx"),
       // ESEF is an area: Info (aggregated extraction) as index, then one
