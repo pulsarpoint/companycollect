@@ -1,5 +1,5 @@
 /**
- * The basic-info entity as the Info tab reads it: the nine decidable fields in
+ * The basic-info entity as the Info tab reads it: the eight decidable fields (description_language rides with description) in
  * display order and the seven sources in the order the suggestions panel lists
  * them when the precedence table does not rank a source for a field.
  *

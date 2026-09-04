@@ -12,7 +12,7 @@ import {
 } from "~/lib/se-basic-info-fields";
 
 describe("basic-info field catalogue", () => {
-  it("lists the nine entity fields in display order", () => {
+  it("lists the eight decidable fields in display order", () => {
     expect(BASIC_INFO_FIELDS.map((field) => field.name)).toEqual([
       "legal_name",
       "legal_form_code",
