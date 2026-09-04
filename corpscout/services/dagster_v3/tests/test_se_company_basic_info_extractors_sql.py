@@ -53,8 +53,27 @@ def test_bolagsverket_select_matches_the_contract() -> None:
     assert "if(ifNull(translation.translated_text, '') != '', translation.translated_text, register.activity_sv) AS description" in sql
     assert "if(ifNull(translation.translated_text, '') != '', 'en', if(register.activity_sv IS NULL, NULL, 'sv')) AS description_language" in sql
     assert "register.activity_sv AS description_sv" in sql
-    assert bolagsverket.bolagsverket_current_sql() == (
-        "SELECT company_id, observed_at FROM corpscout.se_bolagsverket_companies FINAL WHERE has_company = 1"
+    # The translation is a second input: observed_at is the later of the register row's own
+    # stamp and the translation's (text_translations.version, unix seconds), so a company
+    # whose text is translated after its last extraction is visited again instead of
+    # keeping the Swedish text on an English-facing field forever.
+    observed_at = "greatest(register.observed_at, ifNull(translation.translated_at, register.observed_at))"
+    assert "toDateTime64(max(version), 3, 'UTC') AS translated_at" in sql
+    assert f"    {observed_at} AS observed_at,\n" in sql
+    current = bolagsverket.bolagsverket_current_sql()
+    # current_sql carries the same CTEs and join, unscoped, so the change scan and the
+    # SELECT compute the same observed_at and the scan converges.
+    assert current.startswith("WITH register AS (\n")
+    assert "FROM corpscout.se_bolagsverket_companies FINAL\n    WHERE has_company = 1\n" in current
+    assert "%(company_ids)s" not in current
+    assert "toDateTime64(max(version), 3, 'UTC') AS translated_at" in current
+    assert current.endswith(
+        "SELECT\n"
+        "    register.company_id AS company_id,\n"
+        f"    {observed_at} AS observed_at\n"
+        "FROM register\n"
+        "LEFT JOIN translations AS translation\n"
+        "    ON translation.source_text_hash = cityHash64(ifNull(register.activity_sv, ''))"
     )
 
 
@@ -67,7 +86,13 @@ def test_esef_select_takes_the_newest_filing_per_company() -> None:
     assert "toDateTime64(resolved_at, 3, 'UTC') AS observed_at" in sql
     assert "nullIf(upperUTF8(trim(lei)), '') AS lei" in sql
     assert "if(toString(description_language) = '', 'en', toString(description_language)) AS description_language" in sql
-    assert sql.rstrip().endswith("ORDER BY resolved_at DESC, fiscal_year DESC, source_record_uid DESC\nLIMIT 1 BY company_id")
+    # source_record_uid is a hash over package_sha256, so it cannot separate two
+    # extractions of the same package: prompt_version and model_name make the winner
+    # deterministic, the way the old publisher ordered.
+    assert sql.rstrip().endswith(
+        "ORDER BY resolved_at DESC, fiscal_year DESC, prompt_version DESC, model_name DESC, source_record_uid DESC\n"
+        "LIMIT 1 BY company_id"
+    )
     current = esef.esef_current_sql()
     assert "max(toDateTime64(resolved_at, 3, 'UTC')) AS observed_at" in current and "GROUP BY company_id" in current
 

@@ -9,7 +9,7 @@ import pytest
 
 from dagster_v3.defs.se_company.basic_info import bolagsverket, esef, ratsit, scb, wikidata
 from dagster_v3.defs.se_company.basic_info import tables
-from dagster_v3.defs.se_company.basic_info.extract import changed_scope_sql, insert_page_sql
+from dagster_v3.defs.se_company.basic_info.extract import changed_scope_sql, insert_page_sql, since_scope_sql
 from dagster_v3.defs.se_company.basic_info.llm import llm_scope_sql
 from dagster_v3.defs.sweden_ratsit.normalization import RATSIT_NORMALIZER_VERSION
 from tests.test_se_company_basic_info_clickhouse_local import _bind
@@ -55,6 +55,11 @@ def _scope(current_sql: str, source: str, **extra) -> str:
 
 def _insert(select_sql: str, ids: list[str], **extra) -> str:
     return _bind(insert_page_sql(select_sql=select_sql), company_ids=ids, source_run_id="run-1", extractor_version="x-v1", **extra)
+
+
+def _labelled(sql: str, label: str) -> str:
+    """Tag a scope query's rows so several scopes in one script stay tellable apart."""
+    return f"SELECT '{label}', company_id FROM ({sql}) ORDER BY company_id"
 
 
 SCB_ROW = (
@@ -106,6 +111,59 @@ def test_bolagsverket_without_translation_keeps_the_swedish_text_as_description(
     script = _schema() + [BV_ROW, _insert(bolagsverket.bolagsverket_select_sql(), ["5560000000"]),
                           f"SELECT description, description_language, description_sv FROM {tables.QUALIFIED_SUGGESTION_TABLE} FINAL"]
     assert _run(script, join_use_nulls=join_use_nulls) == ["Handel med kaffe\tsv\tHandel med kaffe"]
+
+
+def test_a_later_translation_re_selects_bolagsverket_and_flips_the_language() -> None:
+    """I2: the register row is not the only input.
+
+    The Swedish text is translated asynchronously by the translation pipeline. With
+    observed_at taken from the register alone, a company translated after its last
+    extraction kept description_language = 'sv' -- and the Swedish text on an
+    English-facing field -- until its register record next changed. observed_at is the
+    later of the two stamps, so the change scan visits it again.
+    """
+    late_translation = (
+        "INSERT INTO corpscout.text_translations (source_table, source_column, source_text_hash, source_lang, target_lang, translated_text, provider, model, version) VALUES "
+        "('corpscout.se_companies', 'activity_description', cityHash64('Handel med kaffe'), 'sv', 'en', 'Coffee trading', 'p', 'm', "
+        "toUnixTimestamp(toDateTime('2026-09-10 00:00:00', 'UTC')))"
+    )
+    script = _schema() + [
+        BV_ROW,
+        _insert(bolagsverket.bolagsverket_select_sql(), ["5560000000"]),
+        _labelled(_bind(changed_scope_sql(current_sql=bolagsverket.bolagsverket_current_sql()), source="bolagsverket"), "converged"),
+        late_translation,
+        _labelled(_bind(changed_scope_sql(current_sql=bolagsverket.bolagsverket_current_sql()), source="bolagsverket"), "translated"),
+        _insert(bolagsverket.bolagsverket_select_sql(), ["5560000000"]),
+        # Two rows now differ only in observed_at; read the newer one without FINAL, whose
+        # ReplacingMergeTree version (suggested_at) can tie inside one clickhouse-local run.
+        f"SELECT description, description_language, toString(observed_at) FROM {tables.QUALIFIED_SUGGESTION_TABLE} ORDER BY observed_at DESC LIMIT 1",
+    ]
+    lines = _run(script, join_use_nulls=0)
+    # The first scope prints nothing (converged on the register alone); the second selects
+    # the company because only its translation is new.
+    assert lines == ["translated\t5560000000", "Coffee trading\ten\t2026-09-10 00:00:00.000"]
+
+
+def test_since_scope_reselects_a_company_newer_than_the_instant() -> None:
+    """M7: `since` is the escape hatch out of a converged scan, so it is executed, not
+    only pinned as text. The scope SQL is rendered alone -- in the extractor it lives
+    inside `scope_pages`' scratch INSERT."""
+    register = (
+        "INSERT INTO corpscout.se_scb_companies (company_id, company_id_raw, legal_name, legal_form_code, "
+        "source_status_code, source_run_id, source_record_id, source_payload_hash, observed_at) VALUES "
+        "('5560000000', '5560000000', 'SCB AB', '49', '1', 'r', 'rec-1', 'h1', toDateTime64('2026-09-05 00:00:00', 3, 'UTC'))"
+    )
+    since_sql = since_scope_sql(current_sql=scb.scb_current_sql())
+    script = _schema() + [
+        register,
+        _insert(scb.scb_select_sql(), ["5560000000"]),
+        _labelled(_bind(changed_scope_sql(current_sql=scb.scb_current_sql()), source="scb"), "changed"),
+        _labelled(_bind(since_sql, since="2026-09-01T00:00:00Z"), "since-before"),
+        _labelled(_bind(since_sql, since="2026-09-06T00:00:00Z"), "since-after"),
+    ]
+    # The change scan has converged and `since-after` is past the register stamp: only the
+    # instant before it re-selects the company.
+    assert _run(script, join_use_nulls=0) == ["since-before\t5560000000"]
 
 
 def test_bolagsverket_without_deregistration_date_is_active() -> None:
@@ -187,6 +245,10 @@ def test_llm_scope_selects_two_text_sources_newer_than_the_llm_row() -> None:
         suggestion("5563333333", "esef", "'a'", "2026-09-03 00:00:00"),
         suggestion("5563333333", "ratsit", "'b'", "2026-09-01 00:00:00"),
         suggestion("5563333333", "llm", "'stale'", "2026-09-02 00:00:00"),
+        # One source text plus a reviewer decision: the reviewer is not source text to
+        # merge, so this company stays below the two-source gate.
+        suggestion("5564444444", "esef", "'only'", "2026-09-01 00:00:00"),
+        suggestion("5564444444", "reviewer", "'a human wrote this'", "2026-09-03 00:00:00"),
         _bind(llm_scope_sql()) + "\nORDER BY company_id",
     ]
     assert _run(script, join_use_nulls=0) == ["5560000000", "5563333333"]

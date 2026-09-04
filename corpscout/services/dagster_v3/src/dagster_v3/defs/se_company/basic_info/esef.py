@@ -43,7 +43,10 @@ def esef_select_sql() -> str:
         "FROM corpscout.esef_document_company_information\n"
         f"{_FILTER}\n"
         "  AND company_id IN %(company_ids)s\n"
-        "ORDER BY resolved_at DESC, fiscal_year DESC, source_record_uid DESC\n"
+        # source_record_uid DEFAULTs to a hash over package_sha256, so two extractions of
+        # the same package tie on it as well as on resolved_at and fiscal_year: without
+        # prompt_version and model_name the winning company_description would be arbitrary.
+        "ORDER BY resolved_at DESC, fiscal_year DESC, prompt_version DESC, model_name DESC, source_record_uid DESC\n"
         "LIMIT 1 BY company_id"
     )
 
