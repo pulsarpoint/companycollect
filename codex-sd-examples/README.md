@@ -314,3 +314,7 @@ Results are cached per prompt text, candidate list and limit under
 Codex for missing or failed cells (`--retry-failed`). Scores rank prompts by
 mean gold coverage, then junk rate, then tokens; `--repeats 2` adds a
 run-to-run stability column.
+
+## Status
+
+Current state of ex3/ex4, live results and the backlog: [docs/STATUS.md](docs/STATUS.md).
