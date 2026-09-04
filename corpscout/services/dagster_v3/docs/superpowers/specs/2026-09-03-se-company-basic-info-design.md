@@ -261,6 +261,18 @@ One plan each, executed in order with subagent-driven development:
    decision is the owner's and was still open when this was written. The legal-form
    follow-up (section 3.1 amendment) re-extracts Bolagsverket after this record.
 3. The backoffice page, actions, Fold now, pipeline sheet.
+   Built 2026-09-04 (plan `2026-09-04-se-basic-info-3-backoffice.md`, merged as 061af158):
+   `app/lib/se-basic-info-fields.ts` (catalogue), `se-basic-info.server.ts` (reads, the
+   reviewer-row write, the fold launch), `se-basic-info-decision-form.ts`,
+   `components/admin/se-basic-info-workspace.tsx`, `routes/admin-se-company-info-run.ts`
+   (poll resource route); the old review workspace and `se-info-field-value-form.ts` are
+   gone. Smoke on the owner's dev server: Use this + Fold now published a reviewer status
+   in 22 s and the page reloaded itself; Release + Fold now returned it to SCB; history
+   grew a row per fold. Deferred: Edit (free text), the basic-info pipeline sheet, the
+   orphaned `company-description-card.tsx` (slice 4), and the header shell, which still
+   reads `se_company_info` (slice 4/5) -- the card says so. A company neither
+   `se_companies` nor `se_company_info` knows (an ESEF-only suggestion) is still the
+   layout's 404 until the shell reads the new tables.
 4. Cutover (owner-gated prod steps) and retirement of the old publisher, the field-registry code and the three `se_company_info_*` artifacts.
 5. The spine switch: every `se_companies` reader to `se_company_basic_info`, then the `se_companies` builder and table go.
 6. The sensor, as its own later spec.
