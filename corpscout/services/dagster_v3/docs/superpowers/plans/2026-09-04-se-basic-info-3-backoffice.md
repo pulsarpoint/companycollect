@@ -1376,41 +1376,43 @@ function FieldsCard({
             </AlertDescription>
           </Alert>
         )}
-        <dl className="grid grid-cols-1 gap-y-1 text-sm">
+        {/* A list of links, not a <dl>: an anchor may not wrap dt/dd pairs. */}
+        <ul className="grid grid-cols-1 gap-y-1 text-sm">
           {BASIC_INFO_FIELDS.map((field) => {
             const selected = field.name === selectedField;
             const source = sourceOf(info, field.name);
             return (
-              <Link
-                key={field.name}
-                to={{ search: `?field=${field.name}` }}
-                preventScrollReset
-                aria-current={selected ? "true" : undefined}
-                className={cn(
-                  "grid grid-cols-1 gap-x-6 rounded-md px-2 py-2 hover:bg-muted/60 sm:grid-cols-[minmax(11rem,auto)_1fr_auto]",
-                  selected && "bg-muted",
-                )}
-              >
-                <dt className="text-muted-foreground text-xs uppercase tracking-wide sm:pt-0.5">
-                  {field.label}
-                </dt>
-                <dd>
-                  <FieldValue
-                    field={field.name}
-                    value={valueOf(info, field.name)}
-                    language={field.name === "description" ? (info?.description_language ?? "") : ""}
-                    labels={detail.legalFormLabels}
-                  />
-                </dd>
-                <dd className="sm:text-right">
-                  {source === "" ? null : (
-                    <Badge variant="secondary">{basicInfoSourceLabel(source)}</Badge>
+              <li key={field.name}>
+                <Link
+                  to={{ search: `?field=${field.name}` }}
+                  preventScrollReset
+                  aria-current={selected ? "true" : undefined}
+                  className={cn(
+                    "grid grid-cols-1 gap-x-6 rounded-md px-2 py-2 hover:bg-muted/60 sm:grid-cols-[minmax(11rem,auto)_1fr_auto]",
+                    selected && "bg-muted",
                   )}
-                </dd>
-              </Link>
+                >
+                  <span className="text-muted-foreground text-xs uppercase tracking-wide sm:pt-0.5">
+                    {field.label}
+                  </span>
+                  <span>
+                    <FieldValue
+                      field={field.name}
+                      value={valueOf(info, field.name)}
+                      language={field.name === "description" ? (info?.description_language ?? "") : ""}
+                      labels={detail.legalFormLabels}
+                    />
+                  </span>
+                  <span className="sm:text-right">
+                    {source === "" ? null : (
+                      <Badge variant="secondary">{basicInfoSourceLabel(source)}</Badge>
+                    )}
+                  </span>
+                </Link>
+              </li>
             );
           })}
-        </dl>
+        </ul>
         {info ? (
           <p className="text-muted-foreground mt-4 text-xs">
             Folded {info.folded_at} · {info.fold_version} · run{" "}
@@ -1628,13 +1630,11 @@ function HistoryCard({ detail }: { detail: SeBasicInfoDetail }) {
                     <li key={`${row.folded_at}-${row.source_run_id}`} className="grid gap-x-4 sm:grid-cols-[auto_1fr_auto]">
                       <span className="font-mono text-xs">{row.folded_at}</span>
                       <span>
-                        {row.changed_fields.length === 0
-                          ? "first publish"
-                          : row.changed_fields.map((field) => (
-                              <Badge key={field} variant="outline" className="mr-1">
-                                {field}
-                              </Badge>
-                            ))}
+                        {row.changed_fields.map((field) => (
+                          <Badge key={field} variant="outline" className="mr-1">
+                            {field}
+                          </Badge>
+                        ))}
                       </span>
                       <span className="text-muted-foreground text-xs">{row.fold_version}</span>
                     </li>
@@ -1672,7 +1672,7 @@ export function SeBasicInfoWorkspace({
 }
 ```
 
-Note on `changed_fields`: the fold writes `[]` on the first publish (spec 5: "history written only on change with `changed_fields`"; the first row lists no changed field). If the fold writes every field name on first publish instead, the "first publish" wording is wrong -- check `batch.py` (`changed_fields` on the first row) and adapt the label; the test does not pin it.
+Note on `changed_fields`: a first-publish history row lists every non-NULL field (`fold.py`, `changed_fields_against(None)`), so the card simply lists the badges; no row ever carries an empty array.
 
 - [ ] **Step 4: Run test to verify it passes**
 
