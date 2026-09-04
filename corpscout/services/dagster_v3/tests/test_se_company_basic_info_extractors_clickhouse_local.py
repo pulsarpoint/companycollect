@@ -97,7 +97,8 @@ def test_scb_and_bolagsverket_extract_map_and_converge(join_use_nulls: int) -> N
     lines = _run(script, join_use_nulls=join_use_nulls)
     assert lines[0] == "5560000000"
     assert lines[1] == "5560000000"
-    assert lines[2] == "bolagsverket\tBolag AB\tAB-ORGFO\tinactive\t1990-01-02\tCoffee trading\ten\tHandel med kaffe\tx-v1"
+    # AB-ORGFO lands as SCB code 49, the same vocabulary as the scb row below.
+    assert lines[2] == "bolagsverket\tBolag AB\t49\tinactive\t1990-01-02\tCoffee trading\ten\tHandel med kaffe\tx-v1"
     assert lines[3] == "scb\tSCB AB\t49\tactive\t1990-01-02\t\\N\t\\N\t\\N\tx-v1"
     assert lines[4] == "5560000000"
     # lines[0] is the first scb scope, lines[1] is the bolagsverket scope (the second scb
@@ -175,6 +176,28 @@ def test_bolagsverket_without_deregistration_date_is_active() -> None:
     script = _schema() + [row, _insert(bolagsverket.bolagsverket_select_sql(), ["5561111111"]),
                           f"SELECT status, description_language FROM {tables.QUALIFIED_SUGGESTION_TABLE} FINAL"]
     assert _run(script, join_use_nulls=0) == ["active\tsv"]
+
+
+def test_bolagsverket_legal_form_maps_trims_and_passes_unknown_tokens_through() -> None:
+    rows = (
+        "INSERT INTO corpscout.se_bolagsverket_companies (company_id, company_id_raw, legal_name, legal_form_code, "
+        "source_run_id, source_record_id, source_payload_hash, observed_at) VALUES "
+        "('5560000001', '5560000001$X', 'Trimmed HB', ' HB-ORGFO ', 'r', 'rec-1', 'h1', toDateTime64('2026-09-01 00:00:00', 3, 'UTC')), "
+        "('5560000002', '5560000002$X', 'Novel form', 'ZZ-ORGFO', 'r', 'rec-2', 'h2', toDateTime64('2026-09-01 00:00:00', 3, 'UTC')), "
+        "('5560000003', '5560000003$X', 'Formless', '', 'r', 'rec-3', 'h3', toDateTime64('2026-09-01 00:00:00', 3, 'UTC')), "
+        "('5560000004', '5560000004$X', 'Foundation', 'S-ORGFO', 'r', 'rec-4', 'h4', toDateTime64('2026-09-01 00:00:00', 3, 'UTC'))"
+    )
+    script = _schema() + [
+        rows,
+        _insert(bolagsverket.bolagsverket_select_sql(), ["5560000001", "5560000002", "5560000003", "5560000004"]),
+        f"SELECT company_id, legal_form_code FROM {tables.QUALIFIED_SUGGESTION_TABLE} FINAL ORDER BY company_id",
+    ]
+    assert _run(script, join_use_nulls=0) == [
+        "5560000001\t31",
+        "5560000002\tZZ-ORGFO",
+        "5560000003\t\\N",
+        "5560000004\t72",
+    ]
 
 
 def test_esef_takes_the_newest_filing_and_upper_cases_the_lei() -> None:

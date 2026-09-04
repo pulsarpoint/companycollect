@@ -44,7 +44,9 @@ grounds the row:
   `source_status_code`), `incorporation_date` (`registration_date`); `observed_at` is the
   register row's own `observed_at`.
 - `bolagsverket` reads `se_bolagsverket_companies` FINAL joined to `text_translations`:
-  `legal_name`, `legal_form_code`, `status` (active iff `deregistration_date` is NULL),
+  `legal_name`, `legal_form_code` (the organisationsform token mapped to SCB's juridisk
+  form code by `legal_form.py`, so the entity carries one vocabulary whichever source
+  wins; an unknown token passes through as a visible gap), `status` (active iff `deregistration_date` is NULL),
   `incorporation_date`, `description`/`description_language`/`description_sv` (the Swedish
   activity text, translated to English when `text_translations` has a match); `observed_at`
   is the **later** of the register row's own `observed_at` and the translation's stamp

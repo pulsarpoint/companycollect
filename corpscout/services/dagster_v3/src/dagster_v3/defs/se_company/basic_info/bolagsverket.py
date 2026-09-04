@@ -1,11 +1,14 @@
 """Bolagsverket register record -> basic-info suggestion, with the register's Swedish
-activity description and its English translation from the translation pipeline."""
+activity description and its English translation from the translation pipeline, and the
+organisationsform token mapped to SCB's juridisk form code (legal_form.py)."""
 
 import dagster as dg
 
 from dagster_v3.defs.se_company.basic_info.extract import define_suggestion_asset
+from dagster_v3.defs.se_company.basic_info.legal_form import bolagsverket_legal_form_sql
 
-BOLAGSVERKET_EXTRACTOR_VERSION = "bolagsverket-v1"
+# v2 (2026-09-04): legal_form_code is the SCB code, not the raw -ORGFO token.
+BOLAGSVERKET_EXTRACTOR_VERSION = "bolagsverket-v2"
 
 BOLAGSVERKET_RECORD_UID_SQL = (
     "lower(hex(SHA256(concat('company-source-record-v1\\nstructured\\n', 'sweden_bolagsverket', "
@@ -77,7 +80,7 @@ def bolagsverket_select_sql() -> str:
         f"    {BOLAGSVERKET_RECORD_UID_SQL} AS source_record_uid,\n"
         f"    {_OBSERVED_AT_SQL} AS observed_at,\n"
         "    nullIf(trim(ifNull(register.legal_name, '')), '') AS legal_name,\n"
-        "    nullIf(trim(ifNull(register.legal_form_code, '')), '') AS legal_form_code,\n"
+        f"    {bolagsverket_legal_form_sql('register.legal_form_code')} AS legal_form_code,\n"
         "    if(register.deregistration_date IS NULL, 'active', 'inactive') AS status,\n"
         "    register.registration_date AS incorporation_date,\n"
         "    CAST(NULL AS Nullable(String)) AS lei,\n"
@@ -97,7 +100,8 @@ se_basic_info_suggestions_bolagsverket = define_suggestion_asset(
     deps=[dg.AssetKey("sweden_company_bolagsverket_companies_clickhouse")],
     description=(
         "One bolagsverket suggestion row per company from se_bolagsverket_companies: legal "
-        "name, organisationsform token, active/inactive from the deregistration date, "
+        "name, the organisationsform token mapped to SCB's juridisk form code (an unknown "
+        "token passes through), active/inactive from the deregistration date, "
         "registration date, the Swedish activity description and its English translation "
         "when text_translations has one. observed_at is the later of the register row's "
         "stamp and the translation's, so a newly translated text re-selects the company. "
