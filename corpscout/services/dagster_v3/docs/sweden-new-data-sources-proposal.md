@@ -39,9 +39,16 @@ Bolagsverket status, which stays "active" for years after activity stops.
 Employer registration also gives a rough "has staff" signal for companies
 that have not filed a report yet.
 
-- Access: Skatteverket public company lookup / open API; per-company queries
-  are permitted, bulk terms to be confirmed. Low volume: three flags per org
-  number, refreshed monthly.
+- Access: **not via Skatteverket** — its only API is purpose-locked to
+  bookkeeping for the company's own agent, and its e-service is manual,
+  one company at a time (see
+  `sweden-tax-registration-flags-access-analysis.md`). The route is
+  **SCB's Företagsregistret free API**, which carries `F-skattstatus`,
+  `Momsstatus` and `Arbetsgivarstatus` as explicit weekly-updated
+  variables and is free by ordinance since 26 June 2025 (certificate on
+  request from scbforetag@scb.se; 2,000 rows/request, 10 req/10 s — a full
+  weekly sweep of the register is ~30 minutes). The same API delivers the
+  establishments of item 3.
 - Value: fixes the "alive vs dormant" problem for the *entire* register,
   which improves every downstream count, adoption statistic, and priority
   score. Directly feeds the company-priority tiering.
