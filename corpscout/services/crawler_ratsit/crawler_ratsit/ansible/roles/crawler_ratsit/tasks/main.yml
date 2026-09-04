@@ -56,11 +56,13 @@
     that:
       - crawler_ratsit_local_environment.stat.isreg | default(false)
       - crawler_ratsit_local_process_config.stat.isreg | default(false)
+      - crawler_ratsit_local_environment.stat.mode | default('') == '0600'
+      - crawler_ratsit_local_process_config.stat.mode | default('') == '0600'
     fail_msg: >-
       Copy worker-environment.example to worker-environment, configure its
       Temporal, S3, ClickHouse, and CloakBrowser values; copy
-      process-config.toml.example to process-config.toml, chmod it 0600,
-      configure browsers and proxies, and retry the deployment.
+      process-config.toml.example to process-config.toml, chmod both files
+      0600, configure browsers and proxies, and retry the deployment.
   delegate_to: localhost
   become: false
   run_once: true
@@ -92,7 +94,7 @@
   check_mode: false
   changed_when: false
 
-- name: Validate the Ratsit process configuration on the control machine
+- name: Validate the headed Ratsit process configuration on the control machine
   ansible.builtin.command:
     argv:
       - uv
@@ -106,7 +108,11 @@
         import os; from pathlib import Path;
         from crawler_ratsit.config import ProcessSettings, WorkerSettings;
         WorkerSettings.from_environment(os.environ);
-        ProcessSettings.from_file(Path("{{ crawler_ratsit_process_config_source }}"))
+        process_settings = ProcessSettings.from_file(
+          Path("{{ crawler_ratsit_process_config_source }}")
+        );
+        assert not process_settings.headless,
+        "the deployed Ratsit process requires process.headless=false"
     chdir: "{{ crawler_ratsit_source_dir }}"
   delegate_to: localhost
   become: false
@@ -552,6 +558,51 @@
   retries: 10
   delay: 2
   changed_when: false
+  when:
+    - not ansible_check_mode
+    - not (crawler_ratsit_maintenance_mode | bool)
+
+- name: Allow the Ratsit process startup checks to settle
+  ansible.builtin.pause:
+    seconds: 10
+  when:
+    - not ansible_check_mode
+    - not (crawler_ratsit_maintenance_mode | bool)
+
+- name: Inspect the settled Ratsit process state
+  ansible.builtin.command:
+    argv:
+      - systemctl
+      - --user
+      - show
+      - "{{ crawler_ratsit_service_name }}"
+      - --property=ActiveState
+      - --property=SubState
+      - --property=Result
+      - --property=ExecMainStatus
+  become: true
+  become_user: "{{ crawler_ratsit_service_user }}"
+  environment:
+    XDG_RUNTIME_DIR: "{{ crawler_ratsit_runtime_dir }}"
+    DBUS_SESSION_BUS_ADDRESS: >-
+      unix:path={{ crawler_ratsit_runtime_dir }}/bus
+  register: crawler_ratsit_settled_service_state
+  changed_when: false
+  when:
+    - not ansible_check_mode
+    - not (crawler_ratsit_maintenance_mode | bool)
+
+- name: Require a healthy settled Ratsit process
+  ansible.builtin.assert:
+    that:
+      - "'ActiveState=active' in crawler_ratsit_settled_service_state.stdout_lines"
+      - "'SubState=running' in crawler_ratsit_settled_service_state.stdout_lines"
+      - "'Result=success' in crawler_ratsit_settled_service_state.stdout_lines"
+      - "'ExecMainStatus=0' in crawler_ratsit_settled_service_state.stdout_lines"
+    fail_msg: >-
+      ratsit-process did not remain healthy after startup. Inspect it with
+      systemctl --user status ratsit-process and journalctl --user -u
+      ratsit-process before retrying the deployment.
   when:
     - not ansible_check_mode
     - not (crawler_ratsit_maintenance_mode | bool)

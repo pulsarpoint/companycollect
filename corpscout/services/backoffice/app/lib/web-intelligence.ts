@@ -31,6 +31,15 @@ export interface WebContactObservation {
   observedAt: string;
 }
 
+export interface WebAddressObservation {
+  value: string;
+  sourceUrl: string;
+  firstObservedCrawl: string;
+  lastObservedCrawl: string;
+  observedCrawls: number;
+  observedAt: string;
+}
+
 export interface WebIdentifierObservation {
   type: string;
   value: string;
@@ -96,6 +105,7 @@ export interface CompanyWebIntelligence {
   domain: string;
   crawlCoverage: WebIntelligenceCrawlCoverage[];
   organizationClaims: WebOrganizationClaim[];
+  addresses: WebAddressObservation[];
   contacts: WebContactObservation[];
   identifiers: WebIdentifierObservation[];
   industrySnapshots: WebIndustrySnapshot[];
@@ -104,6 +114,7 @@ export interface CompanyWebIntelligence {
   authoritySnapshots: WebAuthoritySnapshot[];
   truncated: {
     organizationClaims: boolean;
+    addresses: boolean;
     contacts: boolean;
     identifiers: boolean;
   };

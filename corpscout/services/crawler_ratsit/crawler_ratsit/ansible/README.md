@@ -26,7 +26,7 @@ cd crawler_ratsit/ansible
 cp inventory.example.ini inventory.ini
 cp worker-environment.example worker-environment
 cp process-config.toml.example process-config.toml
-chmod 0600 process-config.toml
+chmod 0600 worker-environment process-config.toml
 $EDITOR inventory.ini worker-environment process-config.toml
 ```
 
@@ -34,6 +34,11 @@ $EDITOR inventory.ini worker-environment process-config.toml
 `process-config.toml` contains browser contexts, optional fixed proxy URLs, and
 both Temporal activity rates. Both installed files use mode `0600`; the TOML
 source must also be private or validation fails.
+
+This deployment always uses the active X session. Validation rejects
+`process.headless = true`; keep it set to `false` so every CloakBrowser context
+runs headed, matching the unit's `graphical-session.target`, `DISPLAY`, and
+`XAUTHORITY` requirements.
 
 Omit `proxy_url` for a direct browser. Add one `[[browsers]]` entry per proxy.
 Every entry receives a unique persistent profile beneath

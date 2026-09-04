@@ -99,6 +99,11 @@ export default [
   route("admin", "routes/admin-layout.tsx", [
     index("routes/admin-index.tsx"),
     route("esef", "routes/admin-esef.tsx"),
+    route("common-crawl", "routes/admin-common-crawl.tsx"),
+    route(
+      "common-crawl/:domain",
+      "routes/admin-common-crawl-domain.tsx",
+    ),
     // The technology catalog browser and its per-technology detail page.
     // Country-agnostic (the catalog is global), so they sit beside the other
     // workspace pages, not under a country prefix.

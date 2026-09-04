@@ -6,6 +6,7 @@ import {
   Fingerprint,
   Globe2,
   Info,
+  MapPin,
   SearchCheck,
   ShieldCheck,
 } from "lucide-react";
@@ -178,6 +179,7 @@ function SummaryCard({
       label: "Organization claims",
       value: intelligence.organizationClaims.length,
     },
+    { label: "Observed addresses", value: intelligence.addresses.length },
     { label: "Observed contacts", value: intelligence.contacts.length },
     { label: "Identifiers", value: intelligence.identifiers.length },
   ];
@@ -201,7 +203,7 @@ function SummaryCard({
         </div>
       </CardHeader>
       <CardContent>
-        <dl className="grid gap-3 sm:grid-cols-2 lg:grid-cols-5">
+        <dl className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-6">
           {facts.map((fact) => (
             <div key={fact.label} className="rounded-lg border bg-muted/20 p-3">
               <dt className="text-muted-foreground text-xs">{fact.label}</dt>
@@ -434,6 +436,78 @@ function ContactsCard({
             description="No website contact observations are available for this domain."
           />
         )}
+      </CardContent>
+    </Card>
+  );
+}
+
+function AddressesCard({
+  intelligence,
+}: {
+  intelligence: CompanyWebIntelligence;
+}) {
+  return (
+    <Card>
+      <CardHeader>
+        <div className="flex items-start gap-3">
+          <MapPin className="mt-0.5 size-4 text-muted-foreground" />
+          <div>
+            <CardTitle>Observed addresses</CardTitle>
+            <CardDescription className="mt-1">
+              Postal addresses extracted from organization JSON-LD, retained
+              with their crawl window and source page.
+            </CardDescription>
+          </div>
+        </div>
+      </CardHeader>
+      <CardContent>
+        {intelligence.addresses.length ? (
+          <Table>
+            <TableHeader>
+              <TableRow>
+                <TableHead>Extracted address</TableHead>
+                <TableHead>Observation window</TableHead>
+                <TableHead>Crawls</TableHead>
+                <TableHead>Evidence</TableHead>
+              </TableRow>
+            </TableHeader>
+            <TableBody>
+              {intelligence.addresses.map((address) => (
+                <TableRow key={address.value}>
+                  <TableCell className="max-w-xl whitespace-normal font-medium">
+                    {address.value}
+                  </TableCell>
+                  <TableCell className="text-xs tabular-nums text-muted-foreground whitespace-normal">
+                    <span className="font-mono">
+                      {address.firstObservedCrawl}
+                    </span>{" "}
+                    →<br />
+                    <span className="font-mono">
+                      {address.lastObservedCrawl}
+                    </span>
+                  </TableCell>
+                  <TableCell className="tabular-nums">
+                    {numberFormat.format(address.observedCrawls)}
+                  </TableCell>
+                  <TableCell className="text-xs">
+                    <SourceLink url={address.sourceUrl} />
+                  </TableCell>
+                </TableRow>
+              ))}
+            </TableBody>
+          </Table>
+        ) : (
+          <EmptyEvidence
+            title="No addresses extracted"
+            description="No organization postal addresses were found in the indexed JSON-LD evidence."
+          />
+        )}
+        {intelligence.truncated.addresses ? (
+          <p className="mt-3 text-xs text-muted-foreground">
+            Showing the first {numberFormat.format(intelligence.addresses.length)}{" "}
+            bounded address observations.
+          </p>
+        ) : null}
       </CardContent>
     </Card>
   );
@@ -993,6 +1067,7 @@ export function WebIntelligenceSection({
         </AlertDescription>
       </Alert>
       <OrganizationClaims intelligence={intelligence} />
+      <AddressesCard intelligence={intelligence} />
       <ContactsCard intelligence={intelligence} />
       <IdentifiersCard intelligence={intelligence} />
       <IndustriesCard snapshots={intelligence.industrySnapshots} />
