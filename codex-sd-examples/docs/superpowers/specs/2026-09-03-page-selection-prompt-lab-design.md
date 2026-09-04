@@ -229,3 +229,42 @@ resume (existing result file not re-run), gold matching by `url_key`
 junk/other-language rates, ranking order and tie-breaks, report tables,
 `select_pages_with_llm(prompt=...)` override, `gold draft` on a fixed
 candidate list, `--dry-run` counts. One live smoke run before the matrix.
+
+## Revision 2026-09-04: language-agnostic candidates (approved)
+
+Decision (user): do not rely on slug vocabularies. Describe the intent, give the
+model the URL list, and let it return the useful URLs. Companies publish in
+their local language and not every page has an English twin.
+
+Changes to the design above:
+
+- **Structural filter replaces vocabulary ranking.** From the sitemap
+  inventory keep same-site HTTP(S) URLs without query strings, without file
+  extensions, with path depth ≤ 3 and without numeric or date-like segments;
+  dedupe by `url_key`; the base URL always stays. No slug vocabulary is used
+  on the selection path.
+- **Map-reduce above 200 URLs.** If the filtered list holds at most 200 URLs,
+  all of them are candidates. Otherwise the URLs are sorted by path, split
+  into chunks of about 400, and one triage call per chunk (URLs only, shared
+  intent prompt) returns every URL that plausibly holds any requirement with
+  the requirement keys it likely serves. The union is deduped; while it still
+  exceeds 200 another round runs (at most three rounds; afterwards the URLs
+  with the most requirement votes are kept). Heads (title, language) are
+  fetched for the resulting pool only. Every triage pick is validated against
+  its chunk.
+- **The prompt variants under test apply to the final selection call only.**
+  The triage prompt is one shared prompt, so all variants see the same pool.
+- **Gold drafts come from the model.** Per site, the triage output (URL →
+  requirement keys) plus one labelling call over the pool propose up to three
+  URLs per gold field; the user reviews the proposal. The vocabulary drafter
+  stays as `--deterministic` fallback.
+- **Fallbacks.** If Codex is unavailable during triage, the vocabulary ranking
+  caps the pool and the candidate set records the fallback.
+- **Artifacts.** `candidates/<domain>.json` gains a `funnel` block (input,
+  filtered, rounds with per-chunk token usage, pool size, fallback flag).
+- **Cost.** Triage costs about 26k tokens per 400-URL chunk and only triggers
+  on large sites (here tobii.com and vaisala.com, roughly 8–12 calls each);
+  gold drafting adds one call per site. The matrix budget is unchanged.
+- **Follow-ups outside this lab:** apply the same filter + map-reduce to the
+  `ex3` production shortlist, and replace the regex gap check in pass two
+  with an intent-based LLM judgement.
