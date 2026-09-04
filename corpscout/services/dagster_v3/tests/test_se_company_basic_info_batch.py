@@ -122,14 +122,21 @@ def test_first_publish_writes_main_and_history_with_every_non_null_field() -> No
     assert history["legal_name"] == "SCB AB"
 
 
-def test_an_unchanged_company_writes_nothing() -> None:
+def test_an_unchanged_company_rewrites_its_main_row_without_history() -> None:
     client = FakeClient(
         suggestions=[suggestion_row("5560000000", "scb", legal_name="SCB AB", status="active")],
         mains=[main_row("5560000000", legal_name="SCB AB", legal_name_source="scb", status="active", status_source="scb")],
     )
     counts = fold_companies(client, ["5560000000"], changed_only=False, source_run_id="r", folded_at=FOLDED_AT)
-    assert counts.unchanged == 1 and counts.changed == 0
-    assert client.inserts == []
+    assert counts.unchanged == 1 and counts.changed == 0 and counts.folded == 1
+    # folded_at still advances for an unchanged company (owner decision 2026-09-04), so
+    # changed_only converges instead of re-selecting it forever; only the main row is
+    # rewritten -- no history row, since nothing changed.
+    assert len(client.inserts) == 1
+    (sql, rows) = client.inserts[0]
+    assert sql == main_insert_sql()
+    assert len(rows) == 1
+    assert rows[0][tables.MAIN_COLUMNS.index("folded_at")] == FOLDED_AT
 
 
 def test_a_changed_source_alone_is_a_change_and_names_the_field() -> None:

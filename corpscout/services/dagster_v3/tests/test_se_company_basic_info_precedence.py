@@ -34,10 +34,10 @@ def test_the_numbers_of_the_spec() -> None:
     assert BASIC_INFO_PRECEDENCE["lei"] == {"reviewer": 10000, "esef": 1000}
     assert BASIC_INFO_PRECEDENCE["wikidata_id"] == {"reviewer": 10000, "wikidata": 1000}
     assert BASIC_INFO_PRECEDENCE["description"] == {
-        "reviewer": 10000, "llm": 2000, "esef": 800, "wikidata": 600, "scb": 400, "ratsit": 300,
+        "reviewer": 10000, "llm": 2000, "esef": 800, "wikidata": 600, "bolagsverket": 400, "ratsit": 300,
     }
     assert BASIC_INFO_PRECEDENCE["description_sv"] == {
-        "reviewer": 10000, "llm": 2000, "scb": 400, "ratsit": 300,
+        "reviewer": 10000, "llm": 2000, "bolagsverket": 400, "ratsit": 300,
     }
 
 

@@ -120,12 +120,14 @@ BASIC_INFO_PRECEDENCE: dict[str, dict[str, int]] = {
     "incorporation_date": {"reviewer": 10000, "scb": 1000, "bolagsverket": 900, "wikidata": 200},
     "lei":                {"reviewer": 10000, "esef": 1000},
     "wikidata_id":        {"reviewer": 10000, "wikidata": 1000},
-    "description":        {"reviewer": 10000, "llm": 2000, "esef": 800, "wikidata": 600, "scb": 400, "ratsit": 300},
-    "description_sv":     {"reviewer": 10000, "llm": 2000, "scb": 400, "ratsit": 300},
+    "description":        {"reviewer": 10000, "llm": 2000, "esef": 800, "wikidata": 600, "bolagsverket": 400, "ratsit": 300},
+    "description_sv":     {"reviewer": 10000, "llm": 2000, "bolagsverket": 400, "ratsit": 300},
 }
 ```
 
 The numbers are the owner's to adjust in review; gaps leave room for new sources. A source absent from a field's map cannot supply that field. `description_language` is not in the map: it follows the winning `description` row.
+
+Amended 2026-09-04 (slice 2): the register text comes from Bolagsverket's `activity_description`, so the `description` and `description_sv` maps name `bolagsverket` where they named `scb`.
 
 ## 5. The fold
 
@@ -141,7 +143,7 @@ Batch layer, `fold_companies(client, company_ids, *, changed_only)`:
 1. Read the current suggestion rows for the set (`argMax` per company and source over `suggested_at`), grouped by company.
 2. With `changed_only`, keep the companies whose newest `suggested_at` is later than their main row's `folded_at`, or that have no main row.
 3. Fold in memory, read the current main rows for the set, compare values and sources.
-4. Insert only the rows that differ; append one history row per changed company. Unchanged companies write nothing.
+4. Insert a new main row for every folded company (so `folded_at` advances and the changed-only selection converges); append one history row per company whose values or sources changed (owner decision 2026-09-04).
 
 Pages of 20,000 companies keep memory bounded; the 3.5M backfill is 64 partition runs of a few minutes each.
 
@@ -183,7 +185,7 @@ Rollback before step 6 is doing nothing. After step 6 it is switching the view a
 ## 9. Testing
 
 - The fold is table-driven pure-function tests: one case per field for precedence, ties, NULL-as-no-opinion, the publish rule, `description_language`, `fold_version`.
-- The batch layer against the scripted fake client: changed-only selection, diff-only writes, history rows and `changed_fields`.
+- The batch layer against the scripted fake client: changed-only selection, the rewrite of every folded main row, change-only history rows and `changed_fields`.
 - One clickhouse-local harness (both `join_use_nulls`) runs extract, fold and history end to end with a hand-written expected main row.
 - Extractor SQL pinned as text and executed in the harness; the LLM extractor's preview counts pinned.
 - Backoffice: the page, the three actions, the validator and Fold now under vitest with one shared fixture; a live test under `VITEST_LIVE=1` after cutover step 1.
@@ -225,15 +227,27 @@ One plan each, executed in order with subagent-driven development:
    record has a newer `observed_at` than the current suggestion row (`FINAL`) or none
    exists; `observed_at` must be the source's own, monotonic per record, since ties break
    on it. The fold assets exist but the suggestion table is empty until slice 2 runs.
-   Known limitation, owner decision needed before slice 2: `changed_only` selects on
-   `max(suggested_at) > max(folded_at)`, and `folded_at` advances only when a row is
-   written, so a company whose re-suggestion folds unchanged (or stays unpublished) is
-   re-selected on every later run; the recommended fix is a small fold-watermark table
-   (`company_id`, `considered_at`) written for every considered company and used in the
-   selection. Memory per page is bounded only by `page_size` (default 20,000 companies, up
-   to seven suggestion rows each, descriptions included); lower `page_size` in the asset
-   config if a run presses the host.
+   Resolved 2026-09-04: every folded company is rewritten, so `changed_only` converges
+   without a watermark table. Memory per page is bounded only by `page_size` (default
+   20,000 companies, up to seven suggestion rows each, descriptions included); lower
+   `page_size` in the asset config if a run presses the host.
 2. The six extractors, reading the source layer of section 3.1.
+   Built 2026-09-04: `basic_info/extract.py` (change scan on the source `observed_at`,
+   keyset paging, `INSERT ... SELECT`), the five SQL extractors and the LLM extractor (new
+   prompt version `se-company-basic-info-description-v1`, observation cache reused from the
+   first run on), job `se_company_basic_info_extract_job`, schedule
+   `se_company_basic_info_weekly` STOPPED. Slice 3 reads suggestion rows through `FINAL`;
+   the reviewer row is written by the backoffice with `source = 'reviewer'`, `observed_at`
+   = the decision instant, `source_record_uid = ''`. The LLM gate compares the newest
+   non-llm, non-reviewer text against the llm row's `suggested_at`, so a reused answer
+   clears the scope; reviewer rows never trigger it.
+   Amended 2026-09-04 (review fixes): the scope query is unpaged and `scope_pages` runs it
+   once into a scratch table (`corpscout._tmp_basic_info_scope_<uuid>`) that the scan
+   keyset-pages and drops, so each register and the suggestion table are read once per run
+   instead of once per page. Bolagsverket's `observed_at` is the later of the register
+   row's stamp and its translation's (`text_translations.version`), so a company whose
+   Swedish text is translated after its last extraction is visited again instead of keeping
+   the Swedish text on the English-facing `description`.
 3. The backoffice page, actions, Fold now, pipeline sheet.
 4. Cutover (owner-gated prod steps) and retirement of the old publisher, the field-registry code and the three `se_company_info_*` artifacts.
 5. The spine switch: every `se_companies` reader to `se_company_basic_info`, then the `se_companies` builder and table go.
