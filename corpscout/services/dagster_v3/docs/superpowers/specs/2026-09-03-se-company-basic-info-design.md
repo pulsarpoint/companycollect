@@ -248,6 +248,16 @@ One plan each, executed in order with subagent-driven development:
    row's stamp and its translation's (`text_translations.version`), so a company whose
    Swedish text is translated after its last extraction is visited again instead of keeping
    the Swedish text on the English-facing `description`.
+   Run on prod 2026-09-04: the five SQL extractors executed and converged (second preview
+   0): suggestion rows bolagsverket 2,855,218, scb 1,818,909, ratsit 83,696, wikidata
+   3,104, esef 393 (Bolagsverket text translated to English for 92.1% of 2,855,016 rows).
+   The 64-bucket fold published 3,523,558 companies (1 unpublished: no register legal
+   name), history 3,523,558 first-publish rows; a power cut during the backfill cost one
+   bucket its merged parts, repaired by deleting the 20,000 orphan history rows and
+   re-folding bucket_16 with `changed_only = false`. The LLM extractor's preview reported
+   78,579 eligible companies (all paid calls under the new prompt version), the spend
+   decision is the owner's and was still open when this was written. The legal-form
+   follow-up (section 3.1 amendment) re-extracts Bolagsverket after this record.
 3. The backoffice page, actions, Fold now, pipeline sheet.
 4. Cutover (owner-gated prod steps) and retirement of the old publisher, the field-registry code and the three `se_company_info_*` artifacts.
 5. The spine switch: every `se_companies` reader to `se_company_basic_info`, then the `se_companies` builder and table go.
