@@ -241,6 +241,13 @@ One plan each, executed in order with subagent-driven development:
    = the decision instant, `source_record_uid = ''`. The LLM gate compares the newest
    non-llm, non-reviewer text against the llm row's `suggested_at`, so a reused answer
    clears the scope; reviewer rows never trigger it.
+   Amended 2026-09-04 (review fixes): the scope query is unpaged and `scope_pages` runs it
+   once into a scratch table (`corpscout._tmp_basic_info_scope_<uuid>`) that the scan
+   keyset-pages and drops, so each register and the suggestion table are read once per run
+   instead of once per page. Bolagsverket's `observed_at` is the later of the register
+   row's stamp and its translation's (`text_translations.version`), so a company whose
+   Swedish text is translated after its last extraction is visited again instead of keeping
+   the Swedish text on the English-facing `description`.
 3. The backoffice page, actions, Fold now, pipeline sheet.
 4. Cutover (owner-gated prod steps) and retirement of the old publisher, the field-registry code and the three `se_company_info_*` artifacts.
 5. The spine switch: every `se_companies` reader to `se_company_basic_info`, then the `se_companies` builder and table go.
