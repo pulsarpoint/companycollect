@@ -4,14 +4,21 @@ import dagster as dg
 
 from dagster_v3.defs.se_company.basic_info.llm import SUGGESTION_PROMPT_VERSION
 
-EXTRACTOR_ASSETS = (
+SQL_EXTRACTOR_ASSETS = (
     "se_basic_info_suggestions_scb",
     "se_basic_info_suggestions_bolagsverket",
     "se_basic_info_suggestions_esef",
     "se_basic_info_suggestions_wikidata",
     "se_basic_info_suggestions_ratsit",
-    "se_basic_info_suggestions_llm",
 )
+LLM_EXTRACTOR_ASSET = "se_basic_info_suggestions_llm"
+EXTRACTOR_ASSETS = (*SQL_EXTRACTOR_ASSETS, LLM_EXTRACTOR_ASSET)
+# The two register scans are the expensive ones: 20,000 ids per page is 4x fewer pages than
+# the default and still renders well inside ID_BOUND_QUERY_SETTINGS' raised max_query_size.
+WEEKLY_SQL_PAGE_SIZE = 20_000
+# A ceiling on the scheduled LLM spend: an automated weekly must never be the thing that
+# discovers how many companies pass the two-source gate.
+WEEKLY_LLM_MAX_COMPANIES = 5_000
 
 # Production's pinned model, spelled out because an automated run must never depend on a
 # field default and must never be silently downgraded to a preview.
@@ -26,8 +33,17 @@ WEEKLY_LLM_PROFILE = {
 }
 WEEKLY_RUN_CONFIG = {
     "ops": {
-        **{name: {"config": {"execute": True}} for name in EXTRACTOR_ASSETS[:-1]},
-        "se_basic_info_suggestions_llm": {"config": {"execute": True, "llm": WEEKLY_LLM_PROFILE}},
+        **{
+            name: {"config": {"execute": True, "page_size": WEEKLY_SQL_PAGE_SIZE}}
+            for name in SQL_EXTRACTOR_ASSETS
+        },
+        LLM_EXTRACTOR_ASSET: {
+            "config": {
+                "execute": True,
+                "max_companies": WEEKLY_LLM_MAX_COMPANIES,
+                "llm": WEEKLY_LLM_PROFILE,
+            }
+        },
     }
 }
 

@@ -9,7 +9,11 @@ from pydantic import ValidationError
 
 from dagster_v3.defs.se_company.basic_info import llm as llm_module
 from dagster_v3.defs.se_company.basic_info import tables
-from dagster_v3.defs.se_company.basic_info.extract import SCAN_QUERY_SETTINGS, SCRATCH_SCOPE_PREFIX
+from dagster_v3.defs.se_company.basic_info.extract import (
+    SCAN_QUERY_SETTINGS,
+    SCRATCH_SCOPE_PREFIX,
+    ExtractConfig,
+)
 from dagster_v3.defs.se_company.basic_info.llm import (
     LLM_EXTRACTOR_VERSION,
     SUGGESTION_PROMPT_VERSION,
@@ -69,7 +73,14 @@ def test_contexts_pick_the_legal_name_by_precedence_and_order_texts() -> None:
     context = contexts["5560000000"]
     assert context.legal_name == "SCB AB" and context.sni_code == "62010"
     assert [t.source for t in context.texts] == ["esef", "wikidata", "bolagsverket"]
-    assert context.texts[2] == TextCandidate(source="bolagsverket", text="Bolag text en", text_sv="Bolag text sv")
+    assert context.texts[2] == TextCandidate(source="bolagsverket", text="Bolag text en", text_sv="Bolag text sv", language="en")
+    # The suggestion row's description_language travels with the text; a source that did
+    # not say gets "und" rather than letting the model assume English.
+    assert [t.language for t in context.texts] == ["en", "en", "en"]
+    unlabelled = contexts_from_rows(
+        [row("5565555555", "esef", description="t"), row("5565555555", "ratsit", description="svensk text", language="sv")], []
+    )["5565555555"]
+    assert [(t.source, t.language) for t in unlabelled.texts] == [("esef", "und"), ("ratsit", "sv")]
     assert contexts["5561111111"].texts == () and contexts["5561111111"].sni_code is None
     assert TEXT_SOURCE_ORDER == ("esef", "wikidata", "bolagsverket", "ratsit")
     # esef has no legal_name precedence: the fold would never publish that name, so the
@@ -81,15 +92,29 @@ def test_contexts_pick_the_legal_name_by_precedence_and_order_texts() -> None:
 def test_request_is_stable_json_and_only_model_and_messages_hash() -> None:
     context = CompanyContext(
         company_id="5560000000", legal_name="SCB AB", sni_code="62010",
-        texts=(TextCandidate("esef", "esef text", None), TextCandidate("bolagsverket", "Bolag en", "Bolag sv")),
+        texts=(
+            TextCandidate("esef", "esef text", None, "en"),
+            TextCandidate("bolagsverket", "Bolag en", "Bolag sv", "en"),
+            TextCandidate("ratsit", "Svensk text", None, "sv"),
+        ),
     )
     request = build_suggestion_request(context, PROFILE)
     assert request["model"] == "deepseek-v4-flash" and request["response_format"] == {"type": "json_object"}
     payload = json.loads(request["messages"][1]["content"])
+    # Every source entry is language-labelled: ratsit's text is Swedish but has no
+    # text_sv, so without the label the model has to guess which entries are English.
     assert payload == {
         "company_id": "5560000000", "legal_name": "SCB AB", "sni_code": "62010",
-        "sources": [{"source": "esef", "text": "esef text"}, {"source": "bolagsverket", "text": "Bolag en", "text_sv": "Bolag sv"}],
+        "sources": [
+            {"source": "esef", "text": "esef text", "language": "en"},
+            {"source": "bolagsverket", "text": "Bolag en", "text_sv": "Bolag sv", "language": "en"},
+            {"source": "ratsit", "text": "Svensk text", "language": "sv"},
+        ],
     }
+    assert "Each source entry says which language its text is in." in request["messages"][0]["content"]
+    # No paid run has happened at this prompt version, so labelling the sources does not
+    # need a bump: the cache it invalidates is empty.
+    assert SUGGESTION_PROMPT_VERSION == "se-company-basic-info-description-v1"
     assert request["messages"][1]["content"] == json.dumps(payload, ensure_ascii=False, separators=(",", ":"), sort_keys=True)
     assert "exactly one JSON object" in request["messages"][0]["content"]
     hash_a = input_hash_for(request, SUGGESTION_PROMPT_VERSION)
@@ -105,6 +130,13 @@ def test_config_requires_an_explicit_profile_and_rejects_since() -> None:
     with pytest.raises(ValidationError):
         LlmExtractConfig(llm=PROFILE, since="2026-09-01T00:00:00Z")
     assert LlmExtractConfig(llm=PROFILE).llm.prompt_version == SUGGESTION_PROMPT_VERSION
+    # The LLM's own ceiling is far below the SQL extractors' 5,000,000: every eligible
+    # company that is not already cached is a paid call, so a bare execute cannot run away.
+    assert LlmExtractConfig(llm=PROFILE).max_companies == 5_000
+    assert ExtractConfig().max_companies == 5_000_000
+    assert LlmExtractConfig(llm=PROFILE, max_companies=1_000_000).max_companies == 1_000_000
+    with pytest.raises(ValidationError):
+        LlmExtractConfig(llm=PROFILE, max_companies=1_000_001)
 
 
 class FakeClient:
@@ -216,8 +248,12 @@ def test_execute_reuses_then_calls_and_writes_observations_before_suggestions() 
                         observations=[_stored("5560000000", known)], events=events)
     calls: list[str] = []
 
+    called_at: datetime | None = None
+
     def fake_call(request, *, provider, prompt_version):
+        nonlocal called_at
         calls.append(json.loads(request["messages"][1]["content"])["company_id"])
+        called_at = datetime.now(UTC)
         return ObservationResult(
             suggestion={"description": "fresh", "description_sv": "färsk", "language": "en", "rationale": ""},
             raw_response="{}", model_provider=provider, model_name=request["model"], prompt_version=prompt_version,
@@ -254,6 +290,14 @@ def test_execute_reuses_then_calls_and_writes_observations_before_suggestions() 
     assert fresh["source_record_uid"] == str(published[0][0]) and fresh["source_run_id"] == "run-1"
     for column in ("legal_name", "legal_form_code", "status", "incorporation_date", "lei", "wikidata_id", "decided_by", "note"):
         assert fresh[column] is None, column
+    # M3: suggested_at is taken after the model calls, not at the top of the page -- a page
+    # can run for hours, and the fold's changed_only would skip a page-start stamp it
+    # already folded past. The observation's created_at is that same instant.
+    assert called_at is not None
+    stamps = {r[tables.SUGGESTION_INSERT_COLUMNS.index("suggested_at")] for r in rows}
+    assert len(stamps) == 1
+    assert stamps.pop() >= called_at
+    assert published[0][-1] == fresh["suggested_at"] == fresh["observed_at"]
 
 
 def test_observations_flush_mid_page_at_the_threshold(monkeypatch) -> None:
@@ -281,6 +325,14 @@ def test_observations_flush_mid_page_at_the_threshold(monkeypatch) -> None:
     assert [kind for kind, _ in events] == ["observations", "observations", "insert"]
     assert [len(rows) for kind, rows in events if kind == "observations"] == [1, 1]
     assert len(client.inserts) == 1
+    # A row flushed mid-page carries the instant it was written at, not the page's
+    # suggested_at: at threshold 1 both paid calls flush before the page ends, so both
+    # created_at stamps precede the suggestion rows' single suggested_at.
+    flushes = [rows[0][-1] for kind, rows in events if kind == "observations"]
+    suggested = {r[tables.SUGGESTION_INSERT_COLUMNS.index("suggested_at")] for r in client.inserts[0][1]}
+    assert len(suggested) == 1
+    stamp = suggested.pop()
+    assert flushes[0] <= flushes[1] < stamp
 
 
 def test_a_failed_model_call_is_counted_and_skipped() -> None:

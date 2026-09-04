@@ -2,6 +2,12 @@ from datetime import UTC, datetime
 
 import dagster as dg
 
+from dagster_v3.defs.se_company.basic_info.jobs import (
+    EXTRACTOR_ASSETS,
+    LLM_EXTRACTOR_ASSET,
+    SQL_EXTRACTOR_ASSETS,
+)
+
 
 def test_extract_job_and_stopped_weekly_are_registered() -> None:
     from dagster_v3.definitions import defs as load_defs
@@ -25,12 +31,22 @@ def test_extract_job_and_stopped_weekly_are_registered() -> None:
     assert run_requests is not None
     run_config = run_requests[0].run_config
     for source in ("scb", "bolagsverket", "esef", "wikidata", "ratsit"):
-        assert run_config["ops"][f"se_basic_info_suggestions_{source}"]["config"] == {"execute": True}
+        # page_size 20,000 is 4x fewer scan pages than the default on the two big registers.
+        assert run_config["ops"][f"se_basic_info_suggestions_{source}"]["config"] == {
+            "execute": True, "page_size": 20_000,
+        }
     llm = run_config["ops"]["se_basic_info_suggestions_llm"]["config"]
     assert llm["execute"] is True and llm["llm"]["provider"] == "deepseek" and llm["llm"]["model"] == "deepseek-v4-flash"
+    # The scheduled LLM run is capped: if the schedule is ever started before the manual
+    # backfill has converged, it must not be the thing that discovers the gate's size.
+    assert llm["max_companies"] == 5_000
     graph = repo.asset_graph
     llm_node = graph.get(dg.AssetKey("se_basic_info_suggestions_llm"))
     assert {k.path[-1] for k in llm_node.parent_keys} == keys - {"se_basic_info_suggestions_llm"}
     for source in ("scb", "bolagsverket", "esef", "wikidata", "ratsit", "llm"):
         assert graph.get(dg.AssetKey(f"se_basic_info_suggestions_{source}")).group_name == "se_company_basic_info"
     assert not any("basic_info" in s.name for s in repo.sensor_defs)
+    # The SQL extractors are named, not sliced off the end of EXTRACTOR_ASSETS: adding a
+    # seventh extractor must not silently hand it the llm's run config, or vice versa.
+    assert LLM_EXTRACTOR_ASSET not in SQL_EXTRACTOR_ASSETS
+    assert EXTRACTOR_ASSETS == (*SQL_EXTRACTOR_ASSETS, LLM_EXTRACTOR_ASSET)
