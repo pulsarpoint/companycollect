@@ -86,18 +86,28 @@ _SCOPE_TAIL = "WHERE company_id > %(after_company_id)s\nORDER BY company_id\nLIM
 
 
 def llm_scope_sql() -> str:
-    """Companies with two or more distinct non-llm description sources whose newest text
-    is newer than the company's llm suggestion row, or that have no llm row."""
+    """Companies with two or more distinct automated description sources whose newest text
+    is newer than the company's llm suggestion row, or that have no llm row.
+
+    The llm side of the comparison is `suggested_at`, not `observed_at`: a reused answer
+    carries the observation's own `created_at` as its `observed_at`, which can predate the
+    source texts it merged, so comparing against it would re-select the company on every
+    scan. `suggested_at` is when this pipeline wrote the row, so the scan converges.
+
+    Reviewer rows are out of both aggregates: a human decision is not a source text to
+    merge, and it must not push a company past the two-source gate or make its own edit
+    look like new evidence the model has not seen.
+    """
     return (
         "SELECT company_id FROM (\n"
         "    SELECT company_id,\n"
-        "        uniqExactIf(source, source != 'llm' AND description IS NOT NULL) AS text_sources,\n"
-        "        maxIf(observed_at, source != 'llm' AND description IS NOT NULL) AS newest_text,\n"
-        "        maxIf(observed_at, source = 'llm') AS llm_observed,\n"
+        "        uniqExactIf(source, source NOT IN ('llm', 'reviewer') AND description IS NOT NULL) AS text_sources,\n"
+        "        maxIf(observed_at, source NOT IN ('llm', 'reviewer') AND description IS NOT NULL) AS newest_text,\n"
+        "        maxIf(suggested_at, source = 'llm') AS llm_suggested,\n"
         "        countIf(source = 'llm') AS llm_rows\n"
         f"    FROM {tables.QUALIFIED_SUGGESTION_TABLE} FINAL\n"
         "    GROUP BY company_id\n"
-        "    HAVING text_sources >= 2 AND (llm_rows = 0 OR newest_text > llm_observed)\n"
+        "    HAVING text_sources >= 2 AND (llm_rows = 0 OR newest_text > llm_suggested)\n"
         ")\n"
         f"{_SCOPE_TAIL}"
     )
@@ -143,7 +153,14 @@ def contexts_from_rows(rows: Sequence[Sequence[Any]], sni_rows: Sequence[Sequenc
     sni = {str(r[0]): (str(r[1]) if r[1] else None) for r in sni_rows}
     contexts: dict[str, CompanyContext] = {}
     for company_id, company_rows in by_company.items():
-        names = [(precedence_for("legal_name", str(r[1])) or -1, str(r[2])) for r in company_rows if r[2]]
+        # A source with no legal_name precedence (esef today) cannot name the company in
+        # the prompt either: the fold would never publish that name, so the model must not
+        # be told it.
+        names = [
+            (precedence, str(r[2]))
+            for r in company_rows
+            if r[2] and (precedence := precedence_for("legal_name", str(r[1]))) is not None
+        ]
         legal_name = max(names)[1] if names else None
         texts = []
         for source in TEXT_SOURCE_ORDER:
@@ -311,6 +328,10 @@ def run_llm_extractor(
             if not config.execute:
                 counts["would_reuse" if matching else "would_call_model"] += 1
         if not config.execute:
+            # The cap bounds the preview scan as well: without this the loop would page on
+            # past max_companies and report a count no execute run would ever produce.
+            if stopped:
+                break
             continue
         suggested_at = datetime.now(UTC)
         observation_rows: list[tuple[Any, ...]] = []
