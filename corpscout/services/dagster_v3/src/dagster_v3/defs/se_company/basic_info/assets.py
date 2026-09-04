@@ -40,8 +40,8 @@ def basic_info_bucket_index(partition_key: str) -> int:
 
 class BasicInfoFoldConfig(dg.Config):
     # True: only companies whose newest suggestion is later than their main row's
-    # folded_at (or that have no main row). False re-folds the whole bucket, which still
-    # writes only rows that differ.
+    # folded_at (or that have no main row). False re-folds the whole bucket and rewrites
+    # every published row (history only where a value or source changed).
     changed_only: bool = True
     # Companies per page. A page holds every current suggestion row of its companies,
     # descriptions included, so lower this if a run presses the host's memory; it is also

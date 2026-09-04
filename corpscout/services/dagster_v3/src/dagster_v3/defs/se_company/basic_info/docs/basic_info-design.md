@@ -22,7 +22,9 @@ Suggestion rows come from the slice-2 extractors (`se_basic_info_suggestions_<so
 for the `reviewer` source, from the backoffice (slice 3). NULL in a value column is "no
 opinion". There is no content hash: an extractor writes a new row when the source's
 current record has a newer `observed_at` than the current suggestion row, and the fold
-writes nothing when the folded values did not change.
+rewrites the main row of every company it folds (so `folded_at` advances and the
+changed-only selection converges) while adding a history row only where a value or
+source changed.
 
 Operating the fold: materialize one `bucket_NN` partition or launch a backfill of all 64
 from the UI; `changed_only` (default true) skips companies folded after their newest
