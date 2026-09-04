@@ -14,4 +14,10 @@ describe("info run resource route", () => {
     const done = await loader({ params: { companyId: "0113004022", runId: "run-9" } } as never);
     expect(done).toEqual({ runId: "run-9", status: "SUCCESS", finished: true });
   });
+
+  it("resolves to an UNKNOWN, not-finished status when Dagster fails transiently", async () => {
+    dagster.runStatus.mockRejectedValueOnce(new Error("gql down"));
+    const result = await loader({ params: { companyId: "0113004022", runId: "run-9" } } as never);
+    expect(result).toEqual({ runId: "run-9", status: "UNKNOWN", finished: false });
+  });
 });

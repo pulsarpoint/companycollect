@@ -95,7 +95,7 @@ function render(element: React.ReactElement, search = ""): string {
 
 describe("SeBasicInfoWorkspace", () => {
   it("lists every field with its winning source and marks the selected row", () => {
-    const html = render(<SeBasicInfoWorkspace detail={detail} selectedField="status" result={null} />, "?field=status");
+    const html = render(<SeBasicInfoWorkspace companyId={COMPANY} detail={detail} selectedField="status" result={null} />, "?field=status");
     for (const label of ["Legal name", "Legal form", "Status", "Incorporated", "LEI", "Wikidata", "Description", "Description (Swedish)"]) {
       expect(html).toContain(label);
     }
@@ -106,7 +106,7 @@ describe("SeBasicInfoWorkspace", () => {
   });
 
   it("orders the panel by precedence, marks the winner active and greys silent sources", () => {
-    const html = render(<SeBasicInfoWorkspace detail={detail} selectedField="status" result={null} />, "?field=status");
+    const html = render(<SeBasicInfoWorkspace companyId={COMPANY} detail={detail} selectedField="status" result={null} />, "?field=status");
     const scbAt = html.indexOf('data-source="scb"');
     const bolagsverketAt = html.indexOf('data-source="bolagsverket"');
     const ratsitAt = html.indexOf('data-source="ratsit"');
@@ -114,11 +114,13 @@ describe("SeBasicInfoWorkspace", () => {
     expect(reviewerAt).toBeLessThan(scbAt);
     expect(scbAt).toBeLessThan(bolagsverketAt);
     expect(bolagsverketAt).toBeLessThan(ratsitAt);
-    expect(html).toMatch(/data-source="ratsit"[^]*?no opinion/);
-    // Bolagsverket has a different status, so it offers Use this; SCB is active and does not.
     // Slice each row out of the document so these checks read only that row's
     // own markup -- toMatch/toContain over the whole string would happily
     // find another row's later button and pass for the wrong reason.
+    const nextRowAt = html.indexOf('data-source=', ratsitAt + 1);
+    const ratsitRow = html.slice(ratsitAt, nextRowAt === -1 ? undefined : nextRowAt);
+    expect(ratsitRow).toContain("no opinion");
+    // Bolagsverket has a different status, so it offers Use this; SCB is active and does not.
     const scbRow = html.slice(scbAt, bolagsverketAt);
     expect(scbRow).toContain("Active");
     expect(scbRow).not.toContain("Use this");
@@ -126,26 +128,44 @@ describe("SeBasicInfoWorkspace", () => {
     expect(bolagsverketRow).toContain("Use this");
   });
 
+  it("marks a source with a value the precedence table does not rank as not ranked", () => {
+    const wikidata: SeBasicInfoSuggestionRow = { ...bolagsverket, source: "wikidata", status: "active" };
+    const withWikidata: SeBasicInfoDetail = { ...detail, suggestions: [...detail.suggestions, wikidata] };
+    const html = render(
+      <SeBasicInfoWorkspace companyId={COMPANY} detail={withWikidata} selectedField="status" result={null} />,
+      "?field=status",
+    );
+    const wikidataAt = html.indexOf('data-source="wikidata"');
+    const nextRowAt = html.indexOf('data-source=', wikidataAt + 1);
+    const wikidataRow = html.slice(wikidataAt, nextRowAt === -1 ? undefined : nextRowAt);
+    expect(wikidataRow).toContain("not ranked");
+    expect(wikidataRow).toContain("Use this");
+    const scbAt = html.indexOf('data-source="scb"');
+    const bolagsverketAt = html.indexOf('data-source="bolagsverket"');
+    const scbRow = html.slice(scbAt, bolagsverketAt);
+    expect(scbRow).not.toContain("not ranked");
+  });
+
   it("shows the fold-pending alert with Fold now, and the poller after a launch", () => {
-    const html = render(<SeBasicInfoWorkspace detail={detail} selectedField="legal_name" result={null} />);
+    const html = render(<SeBasicInfoWorkspace companyId={COMPANY} detail={detail} selectedField="legal_name" result={null} />);
     expect(html).toContain("Fold pending");
     expect(html).toContain('value="fold-now"');
     const launched = render(
-      <SeBasicInfoWorkspace detail={detail} selectedField="legal_name" result={{ ok: true, launched: { runId: "run-9", url: null } }} />,
+      <SeBasicInfoWorkspace companyId={COMPANY} detail={detail} selectedField="legal_name" result={{ ok: true, launched: { runId: "run-9", url: null } }} />,
     );
     expect(launched).toContain("run-9");
-    const settled = render(<SeBasicInfoWorkspace detail={{ ...detail, foldPending: false }} selectedField="legal_name" result={null} />);
+    const settled = render(<SeBasicInfoWorkspace companyId={COMPANY} detail={{ ...detail, foldPending: false }} selectedField="legal_name" result={null} />);
     expect(settled).not.toContain("Fold pending");
   });
 
   it("renders an error result and the not-folded state", () => {
-    expect(render(<SeBasicInfoWorkspace detail={detail} selectedField="lei" result={{ ok: false, error: "Unknown source." }} />)).toContain("Unknown source.");
+    expect(render(<SeBasicInfoWorkspace companyId={COMPANY} detail={detail} selectedField="lei" result={{ ok: false, error: "Unknown source." }} />)).toContain("Unknown source.");
     expect(renderToStaticMarkup(<SeBasicInfoNotFolded companyId={COMPANY} />)).toContain("not in se_company_basic_info yet");
   });
 
   it("offers Use this when the company has no main row", () => {
     const html = render(
-      <SeBasicInfoWorkspace detail={{ ...detail, info: null, foldPending: true }} selectedField="status" result={null} />,
+      <SeBasicInfoWorkspace companyId={COMPANY} detail={{ ...detail, info: null, foldPending: true }} selectedField="status" result={null} />,
       "?field=status",
     );
     expect(html).toContain("Not folded yet");
@@ -169,7 +189,7 @@ describe("SeBasicInfoWorkspace", () => {
       ...detail,
       suggestions: [...detail.suggestions, reviewerRow],
     };
-    const html = render(<SeBasicInfoWorkspace detail={withReviewer} selectedField="status" result={null} />, "?field=status");
+    const html = render(<SeBasicInfoWorkspace companyId={COMPANY} detail={withReviewer} selectedField="status" result={null} />, "?field=status");
     const reviewerAt = html.indexOf('data-source="reviewer"');
     const scbAt = html.indexOf('data-source="scb"');
     const reviewerRowHtml = html.slice(reviewerAt, scbAt);
@@ -214,5 +234,18 @@ describe("admin-se-company-info route", () => {
     expect(await post({ intent: "use-this", field: "lei", source: "scb" })).toEqual({ ok: false, error: "SCB has no LEI for this company." });
     server.appendSeBasicInfoReviewerDecision.mockRejectedValueOnce(new Error("clickhouse down"));
     await expect(post({ intent: "release", field: "lei" })).rejects.toThrow("clickhouse down");
+  });
+
+  it("refuses to act on a malformed company id before any write or launch", async () => {
+    const body = new FormData();
+    body.set("intent", "release");
+    body.set("field", "lei");
+    const result = await action({
+      request: new Request("http://x/info", { method: "POST", body }),
+      params: { companyId: "abc" },
+    } as never);
+    expect(result).toEqual({ ok: false, error: "Company id must be 10 or 12 digits." });
+    expect(server.appendSeBasicInfoReviewerDecision).not.toHaveBeenCalled();
+    expect(server.launchSeBasicInfoFold).not.toHaveBeenCalled();
   });
 });

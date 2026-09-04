@@ -13,6 +13,9 @@ import {
 import { parseSeBasicInfoDecision } from "~/lib/se-basic-info-decision-form";
 import { selectedFieldFromSearch } from "~/lib/se-basic-info-fields";
 
+/** Swedish org numbers are 10 digits, or 12 with the century prefix. */
+const COMPANY_ID_PATTERN = /^([0-9]{10}|[0-9]{12})$/;
+
 // Only `loader`, `action`, `meta` and the component live here. Any other
 // export that touched `~/lib/*.server` would keep that module in the client
 // bundle and break the production build.
@@ -31,6 +34,9 @@ export async function loader({ request, params }: Route.LoaderArgs) {
  * failure and must not be dressed up as a form error.
  */
 export async function action({ request, params }: Route.ActionArgs) {
+  if (!COMPANY_ID_PATTERN.test(params.companyId)) {
+    return { ok: false as const, error: "Company id must be 10 or 12 digits." };
+  }
   const parsed = parseSeBasicInfoDecision(await request.formData());
   if (!parsed.ok) return { ok: false as const, error: parsed.error };
   if (parsed.decision.intent === "fold-now") {
@@ -66,6 +72,7 @@ export default function AdminSwedenCompanyInfo({
   }
   return (
     <SeBasicInfoWorkspace
+      companyId={params.companyId}
       detail={loaderData.detail}
       selectedField={loaderData.selectedField}
       result={actionData ?? null}

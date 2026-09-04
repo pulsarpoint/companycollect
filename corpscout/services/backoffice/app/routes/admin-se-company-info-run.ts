@@ -10,6 +10,12 @@ const FINISHED = new Set(["SUCCESS", "FAILURE", "CANCELED"]);
  * the freshly folded row appears. Only `loader` lives here.
  */
 export async function loader({ params }: Route.LoaderArgs) {
-  const run = await runStatus(params.runId);
-  return { runId: run.runId, status: run.status, finished: FINISHED.has(run.status) };
+  try {
+    const run = await runStatus(params.runId);
+    return { runId: run.runId, status: run.status, finished: FINISHED.has(run.status) };
+  } catch {
+    // A transient Dagster GraphQL failure should keep the poller showing "Folding"
+    // rather than routing to the root error boundary.
+    return { runId: params.runId, status: "UNKNOWN", finished: false };
+  }
 }

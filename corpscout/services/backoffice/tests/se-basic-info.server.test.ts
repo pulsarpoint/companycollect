@@ -78,7 +78,14 @@ function answer(sql: string): unknown[] {
   if (sql === BASIC_INFO_SQL) return [MAIN_ROW];
   if (sql === BASIC_INFO_SUGGESTIONS_SQL) return [BOLAGSVERKET_ROW];
   if (sql === BASIC_INFO_HISTORY_SQL) {
-    return [{ ...MAIN_ROW, changed_fields: ["legal_form_code"] }];
+    return [
+      {
+        folded_at: MAIN_ROW.folded_at,
+        fold_version: MAIN_ROW.fold_version,
+        source_run_id: MAIN_ROW.source_run_id,
+        changed_fields: ["legal_form_code"],
+      },
+    ];
   }
   if (sql === BASIC_INFO_PRECEDENCE_SQL) {
     return [
@@ -106,6 +113,16 @@ describe("se-basic-info.server", () => {
     expect(BASIC_INFO_SUGGESTIONS_SQL).toContain("WHERE s.company_id = {companyId:String}");
     expect(BASIC_INFO_HISTORY_SQL).toContain("FROM corpscout.se_company_basic_info_history AS h");
     expect(BASIC_INFO_HISTORY_SQL).toContain("ORDER BY h.folded_at DESC");
+    // The history row is narrowed to the four fields HistoryCard renders.
+    expect(BASIC_INFO_HISTORY_SQL).toContain("toString(h.folded_at) AS folded_at");
+    expect(BASIC_INFO_HISTORY_SQL).toContain("toString(h.fold_version) AS fold_version");
+    expect(BASIC_INFO_HISTORY_SQL).toContain("h.source_run_id AS source_run_id");
+    expect(BASIC_INFO_HISTORY_SQL).toContain("h.changed_fields AS changed_fields");
+    expect(BASIC_INFO_HISTORY_SQL).not.toContain("legal_name");
+    // The suggestion row keeps the Nullable-column adjustments, not the raw
+    // shared-column text those replacements start from.
+    expect(BASIC_INFO_SUGGESTIONS_SQL).not.toContain("  s.legal_name AS legal_name");
+    expect(BASIC_INFO_SUGGESTIONS_SQL).not.toContain("toString(s.status) AS status");
     expect(BASIC_INFO_PRECEDENCE_SQL).toContain("FROM corpscout.se_company_basic_info_precedence AS p FINAL");
     expect(BASIC_INFO_LEGAL_FORM_LABELS_SQL).toContain("l.code IN {codes:Array(String)}");
     expect(BASIC_INFO_LEGAL_FORM_LABELS_SQL).toContain("code_type = 'legal_form'");

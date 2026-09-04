@@ -70,7 +70,10 @@ export interface SeBasicInfoSuggestionRow {
   extractor_version: string;
 }
 
-export interface SeBasicInfoHistoryRow extends SeBasicInfoRow {
+export interface SeBasicInfoHistoryRow {
+  folded_at: string;
+  fold_version: string;
+  source_run_id: string;
   changed_fields: string[];
 }
 
@@ -143,9 +146,9 @@ WHERE s.company_id = {companyId:String}
 ORDER BY s.source`;
 
 export const BASIC_INFO_HISTORY_SQL = `SELECT
-  h.company_id AS company_id,
-${VALUE_COLUMNS_SQL("h")},
-${SOURCE_COLUMNS_SQL("h")},
+  toString(h.folded_at) AS folded_at,
+  toString(h.fold_version) AS fold_version,
+  h.source_run_id AS source_run_id,
   h.changed_fields AS changed_fields
 FROM corpscout.se_company_basic_info_history AS h
 WHERE h.company_id = {companyId:String}

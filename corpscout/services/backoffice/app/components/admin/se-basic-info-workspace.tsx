@@ -1,5 +1,5 @@
 import { CheckCircle2Icon, FileSearchIcon, TriangleAlertIcon } from "lucide-react";
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { Form, Link, useFetcher, useNavigation, useRevalidator } from "react-router";
 import {
   Accordion,
@@ -136,7 +136,8 @@ function FieldsCard({
         <CardTitle>Basic info</CardTitle>
         <CardDescription>
           The folded row: every value with the source that won it. Click a row to
-          see what each source suggests for it.
+          see what each source suggests for it. The header above still reads the
+          old se_company_info row until slice 4 switches it.
         </CardDescription>
       </CardHeader>
       <CardContent>
@@ -210,18 +211,29 @@ function panelSources(detail: SeBasicInfoDetail, field: SeBasicInfoField): strin
 }
 
 function SuggestionsPanel({
+  companyId,
   detail,
   selectedField,
   result,
 }: {
+  companyId: string;
   detail: SeBasicInfoDetail;
   selectedField: SeBasicInfoField;
   result: SeBasicInfoResult;
 }) {
   const navigation = useNavigation();
-  const busy = navigation.state !== "idle";
+  // React Router's navigation.formMethod is lower- or upper-cased depending on
+  // version, so compare case-insensitively; a GET revalidation must not read
+  // as busy.
+  const busy = navigation.state !== "idle" && (navigation.formMethod ?? "").toUpperCase() === "POST";
   const [note, setNote] = useState("");
+  useEffect(() => {
+    if (result && result.ok) setNote("");
+  }, [result]);
   const winner = sourceOf(detail.info, selectedField);
+  const rankedSources = new Set(
+    detail.precedence.filter((row) => row.field === selectedField).map((row) => row.source),
+  );
   const rows = panelSources(detail, selectedField).map((source) => ({
     source,
     row: detail.suggestions.find((row) => row.source === source) ?? null,
@@ -252,7 +264,12 @@ function SuggestionsPanel({
           </Alert>
         ) : null}
         {result && result.ok && "launched" in result ? (
-          <FoldRunPoller companyId={detail.suggestions[0]?.company_id ?? detail.info?.company_id ?? ""} runId={result.launched.runId} url={result.launched.url} />
+          <FoldRunPoller
+            companyId={companyId}
+            runId={result.launched.runId}
+            url={result.launched.url}
+            foldPending={detail.foldPending}
+          />
         ) : null}
         {result && !result.ok ? (
           <Alert variant="destructive">
@@ -283,6 +300,9 @@ function SuggestionsPanel({
             const value = valueOf(row, selectedField);
             const active = source !== "" && source === winner;
             const hasValue = value !== "";
+            // A source with a value but no precedence rank for this field can
+            // only win through Use this -- the fold will never pick it on its own.
+            const notRanked = hasValue && source !== "reviewer" && !rankedSources.has(source);
             return (
               <li
                 key={source}
@@ -295,6 +315,9 @@ function SuggestionsPanel({
               >
                 <div className="flex items-center gap-2">
                   <span className="font-medium">{basicInfoSourceLabel(source)}</span>
+                  {notRanked ? (
+                    <span className="text-muted-foreground text-xs">not ranked</span>
+                  ) : null}
                   {active ? <Badge>Active</Badge> : null}
                   {row ? (
                     <span className="text-muted-foreground ml-auto text-xs">{row.observed_at}</span>
@@ -343,35 +366,86 @@ function SuggestionsPanel({
   );
 }
 
-/** Polls the run resource route until the fold finishes, then reloads the page. */
-function FoldRunPoller({ companyId, runId, url }: { companyId: string; runId: string; url: string | null }) {
+/** Stop polling and tell the reviewer to check Dagster directly after this long. */
+const POLL_TIMEOUT_MS = 600_000;
+const POLL_INTERVAL_MS = 3000;
+
+/** True only when it is safe to assume the tab is in front of someone --
+ * skips polling a backgrounded tab. `document` guard first: this runs from an
+ * effect, so it is always browser-side, but the check stays defensive. */
+function tabIsVisible(): boolean {
+  return typeof document !== "undefined" && document.visibilityState === "visible";
+}
+
+/** Polls the run resource route until the fold finishes, then reloads the page.
+ * Stops (and tells the reviewer to check Dagster) after ten minutes, and never
+ * polls a backgrounded tab. Disappears once the fold has finished and nothing
+ * is pending; a failed or canceled run keeps the alert up with its status. */
+function FoldRunPoller({
+  companyId,
+  runId,
+  url,
+  foldPending,
+}: {
+  companyId: string;
+  runId: string;
+  url: string | null;
+  foldPending: boolean;
+}) {
   const fetcher = useFetcher<{ status: string; finished: boolean }>();
   const revalidator = useRevalidator();
   const finished = fetcher.data?.finished ?? false;
+  const startedAtRef = useRef(Date.now());
+  const [timedOut, setTimedOut] = useState(false);
   useEffect(() => {
     if (finished) {
       revalidator.revalidate();
       return;
     }
     const path = `/admin/se/company/${encodeURIComponent(companyId)}/info/run/${encodeURIComponent(runId)}`;
-    fetcher.load(path);
-    const timer = setInterval(() => fetcher.load(path), 3000);
+    if (tabIsVisible()) fetcher.load(path);
+    const timer = setInterval(() => {
+      if (Date.now() - startedAtRef.current > POLL_TIMEOUT_MS) {
+        clearInterval(timer);
+        setTimedOut(true);
+        return;
+      }
+      if (tabIsVisible()) fetcher.load(path);
+    }, POLL_INTERVAL_MS);
     return () => clearInterval(timer);
     // fetcher is stable per React Router's contract; re-run only on identity changes.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [companyId, runId, finished]);
+
+  if (finished && !foldPending) return null;
+
+  const dagsterLink = url ? (
+    <>
+      {" "}
+      (<a className="underline" href={url} target="_blank" rel="noreferrer">open in Dagster</a>)
+    </>
+  ) : null;
+
+  if (timedOut) {
+    return (
+      <Alert>
+        <TriangleAlertIcon />
+        <AlertTitle>Still running</AlertTitle>
+        <AlertDescription>
+          Fold not finished after 10 minutes; open it in Dagster.
+          {dagsterLink}
+        </AlertDescription>
+      </Alert>
+    );
+  }
+
   return (
     <Alert>
       <CheckCircle2Icon />
       <AlertTitle>{finished ? `Fold ${fetcher.data?.status?.toLowerCase() ?? "finished"}` : "Folding"}</AlertTitle>
       <AlertDescription>
         Run <span className="font-mono">{runId}</span>
-        {url ? (
-          <>
-            {" "}
-            (<a className="underline" href={url} target="_blank" rel="noreferrer">open in Dagster</a>)
-          </>
-        ) : null}
+        {dagsterLink}
         {finished ? " -- reloading." : " -- the page reloads when it finishes."}
       </AlertDescription>
     </Alert>
@@ -423,10 +497,12 @@ function HistoryCard({ detail }: { detail: SeBasicInfoDetail }) {
 }
 
 export function SeBasicInfoWorkspace({
+  companyId,
   detail,
   selectedField,
   result,
 }: {
+  companyId: string;
   detail: SeBasicInfoDetail;
   selectedField: SeBasicInfoField;
   result: SeBasicInfoResult;
@@ -438,7 +514,7 @@ export function SeBasicInfoWorkspace({
         <HistoryCard detail={detail} />
       </div>
       <aside className="lg:sticky lg:top-4 lg:self-start">
-        <SuggestionsPanel detail={detail} selectedField={selectedField} result={result} />
+        <SuggestionsPanel companyId={companyId} detail={detail} selectedField={selectedField} result={result} />
       </aside>
     </div>
   );
