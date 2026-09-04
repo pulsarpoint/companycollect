@@ -3,7 +3,7 @@ order, binds %(company_ids)s, reads FINAL rows, and maps codes the way the spec 
 
 import re
 
-from dagster_v3.defs.se_company.basic_info import bolagsverket, scb
+from dagster_v3.defs.se_company.basic_info import bolagsverket, esef, scb, wikidata
 from dagster_v3.defs.se_company.basic_info.extract import SUGGESTION_SELECT_COLUMNS
 
 REGISTER_UID = "lower(hex(SHA256(concat('company-source-record-v1\\nstructured\\n', "
@@ -52,3 +52,39 @@ def test_bolagsverket_select_matches_the_contract() -> None:
     assert bolagsverket.bolagsverket_current_sql() == (
         "SELECT company_id, observed_at FROM corpscout.se_bolagsverket_companies FINAL WHERE has_company = 1"
     )
+
+
+def test_esef_select_takes_the_newest_filing_per_company() -> None:
+    sql = esef.esef_select_sql()
+    assert _aliases(sql) == list(SUGGESTION_SELECT_COLUMNS)
+    assert "FROM corpscout.esef_document_company_information" in sql
+    assert "country_iso2 = 'SE'" in sql and "trim(company_description) != ''" in sql
+    assert "company_id IN %(company_ids)s" in sql
+    assert "toDateTime64(resolved_at, 3, 'UTC') AS observed_at" in sql
+    assert "nullIf(upperUTF8(trim(lei)), '') AS lei" in sql
+    assert "if(toString(description_language) = '', 'en', toString(description_language)) AS description_language" in sql
+    assert sql.rstrip().endswith("ORDER BY resolved_at DESC, fiscal_year DESC, source_record_uid DESC\nLIMIT 1 BY company_id")
+    current = esef.esef_current_sql()
+    assert "max(toDateTime64(resolved_at, 3, 'UTC')) AS observed_at" in current and "GROUP BY company_id" in current
+
+
+def test_wikidata_select_links_entities_through_orgnr_or_lei() -> None:
+    links = wikidata.wikidata_links_cte_sql()
+    assert "FROM corpscout.se_scb_companies FINAL WHERE has_company = 1" in links
+    assert "FROM corpscout.se_bolagsverket_companies FINAL WHERE has_company = 1" in links
+    assert "UNION DISTINCT" in links
+    assert "identifiers.identifier_type = 'se_orgnr'" in links
+    assert "replaceRegexpAll(identifiers.identifier_value, '[^0-9]', '')" in links
+    assert "issuer_scheme = 'lei' AND identifiers.is_current = 1" in links
+    assert "identifiers.identifier_type = 'lei'" in links
+    sql = wikidata.wikidata_select_sql()
+    assert _aliases(sql) == list(SUGGESTION_SELECT_COLUMNS)
+    assert "'wikidata' AS source" in sql
+    assert "concat('wikidata:', entity.wikidata_id) AS source_record_uid" in sql
+    assert "entity.resolved_at AS observed_at" in sql
+    assert "nullIf(trim(ifNull(entity.official_name, '')), '') AS legal_name" in sql
+    assert "if(entity.inception_date > toDate('1970-01-01'), toDate32(entity.inception_date), NULL) AS incorporation_date" in sql
+    assert "entity.wikidata_id AS wikidata_id" in sql
+    assert "if(entity.company_description IS NULL OR trim(entity.company_description) = '', NULL, 'en') AS description_language" in sql
+    assert sql.rstrip().endswith("ORDER BY entity.resolved_at DESC, entity.wikidata_id ASC\nLIMIT 1 BY links.company_id")
+    assert "links.company_id IN %(company_ids)s" in sql
