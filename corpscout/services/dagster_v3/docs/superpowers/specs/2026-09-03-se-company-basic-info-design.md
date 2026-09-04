@@ -120,12 +120,14 @@ BASIC_INFO_PRECEDENCE: dict[str, dict[str, int]] = {
     "incorporation_date": {"reviewer": 10000, "scb": 1000, "bolagsverket": 900, "wikidata": 200},
     "lei":                {"reviewer": 10000, "esef": 1000},
     "wikidata_id":        {"reviewer": 10000, "wikidata": 1000},
-    "description":        {"reviewer": 10000, "llm": 2000, "esef": 800, "wikidata": 600, "scb": 400, "ratsit": 300},
-    "description_sv":     {"reviewer": 10000, "llm": 2000, "scb": 400, "ratsit": 300},
+    "description":        {"reviewer": 10000, "llm": 2000, "esef": 800, "wikidata": 600, "bolagsverket": 400, "ratsit": 300},
+    "description_sv":     {"reviewer": 10000, "llm": 2000, "bolagsverket": 400, "ratsit": 300},
 }
 ```
 
 The numbers are the owner's to adjust in review; gaps leave room for new sources. A source absent from a field's map cannot supply that field. `description_language` is not in the map: it follows the winning `description` row.
+
+Amended 2026-09-04 (slice 2): the register text comes from Bolagsverket's `activity_description`, so the `description` and `description_sv` maps name `bolagsverket` where they named `scb`.
 
 ## 5. The fold
 

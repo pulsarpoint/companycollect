@@ -75,7 +75,8 @@ def test_reviewer_beats_everything_and_llm_beats_esef_on_description() -> None:
     row = fold_basic_info(
         "5560000000",
         [
-            suggestion("scb", legal_name="SCB AB", description="scb text", description_language="sv"),
+            suggestion("scb", legal_name="SCB AB"),
+            suggestion("bolagsverket", description="scb text", description_language="sv"),
             suggestion("llm", description="llm text", description_language="en", description_sv="llm sv"),
             suggestion("reviewer", legal_name="Reviewed AB"),
         ],
@@ -140,7 +141,8 @@ def test_description_language_follows_the_description_winner_only() -> None:
     row = fold_basic_info(
         "5560000000",
         [
-            suggestion("scb", legal_name="SCB AB", description="sv text", description_language="sv"),
+            suggestion("scb", legal_name="SCB AB"),
+            suggestion("bolagsverket", description="sv text", description_language="sv"),
             suggestion("wikidata", description_language="en"),
         ],
         source_run_id="r",

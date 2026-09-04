@@ -3,7 +3,9 @@
 The numbers are the owner's to adjust in review. Gaps leave room for new sources; a
 source absent from a field's map cannot supply that field. description_language has no
 map: it follows the row that won description. The reviewer is a source like the others,
-only ranked above every automated one.
+only ranked above every automated one. The register text (Bolagsverket's
+verksamhetsbeskrivning and its English translation) is a `bolagsverket` suggestion; SCB's
+source table carries no text (slice 2 amendment, 2026-09-04).
 """
 
 from dagster_v3.defs.se_company.basic_info import tables
@@ -17,8 +19,8 @@ BASIC_INFO_PRECEDENCE: dict[str, dict[str, int]] = {
     "incorporation_date": {"reviewer": 10000, "scb": 1000, "bolagsverket": 900, "wikidata": 200},
     "lei": {"reviewer": 10000, "esef": 1000},
     "wikidata_id": {"reviewer": 10000, "wikidata": 1000},
-    "description": {"reviewer": 10000, "llm": 2000, "esef": 800, "wikidata": 600, "scb": 400, "ratsit": 300},
-    "description_sv": {"reviewer": 10000, "llm": 2000, "scb": 400, "ratsit": 300},
+    "description": {"reviewer": 10000, "llm": 2000, "esef": 800, "wikidata": 600, "bolagsverket": 400, "ratsit": 300},
+    "description_sv": {"reviewer": 10000, "llm": 2000, "bolagsverket": 400, "ratsit": 300},
 }
 
 # Not an assert: this runs at import time under load_from_defs_folder, and `python -O`
