@@ -1,0 +1,32 @@
+{
+  "domain": "polarbrod.se",
+  "base_url": "https://www.polarbrod.se/",
+  "must_have": {
+    "home": [
+      "https://www.polarbrod.se/"
+    ],
+    "about": [],
+    "contact": [
+      "https://www.polarbrod.se/om-polarbrod/kontakt/",
+      "https://www.polarbrod.se/om-polarbrod/kontakt/fragor-och-svar/",
+      "https://www.polarbrod.se/om-polarbrod/kontakt/reklamationer/"
+    ],
+    "management": [],
+    "careers": [
+      "https://www.polarbrod.se/om-polarbrod/jobba-hos-oss/",
+      "https://www.polarbrod.se/om-polarbrod/jobba-hos-oss/ett-hallbart-arbete/",
+      "https://www.polarbrod.se/om-polarbrod/jobba-hos-oss/har-finns-polarbrodskoncernen/"
+    ],
+    "products_services": [
+      "https://www.polarbrod.se/foodservice-produkter/alla-produkter/",
+      "https://www.polarbrod.se/foodservice-produkter/brod-24h/",
+      "https://www.polarbrod.se/foodservice-produkter/cafe-deli-brod/",
+      "https://www.polarbrod.se/foodservice-produkter/fastfood-matrattsbrod/",
+      "https://www.polarbrod.se/foodservice-produkter/gene-orginal/"
+    ],
+    "group_structure": [],
+    "legal_identity": []
+  },
+  "junk": [],
+  "notes": "Draft generated from URL slugs and titles; correct by hand."
+}

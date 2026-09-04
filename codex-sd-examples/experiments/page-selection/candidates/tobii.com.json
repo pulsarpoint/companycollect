@@ -1,0 +1,2476 @@
+{
+  "domain": "tobii.com",
+  "base_url": "https://www.tobii.com/",
+  "preferred_languages": [
+    "en"
+  ],
+  "built_at": "2026-09-03T23:18:35+00:00",
+  "inventory_urls": 4930,
+  "eligible_urls": 4930,
+  "excluded_urls": 0,
+  "candidates": [
+    {
+      "url": "https://www.tobii.com/",
+      "score": 60.0,
+      "reasons": [
+        "homepage"
+      ],
+      "title": "Global leader in eye tracking for over 20 years - Tobii",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.tobii.com/contact",
+      "score": 41.0,
+      "reasons": [
+        "contact",
+        "title mentions contact"
+      ],
+      "title": "Our experts are here to help you - Contact us - Tobii",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.tobii.com/events/qualisys-animal-sciences-user-group-event",
+      "score": 38.0,
+      "reasons": [
+        "about",
+        "title mentions careers"
+      ],
+      "title": "Join us at Qualisys’ Animal Sciences User Group Event - Tobii",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.tobii.com/events/tactical-performance-psychology-group-conference-2026",
+      "score": 38.0,
+      "reasons": [
+        "about",
+        "title mentions careers"
+      ],
+      "title": "Join us at the Tactical Performance Psychology Group Conference 2026 - Tobii",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.tobii.com/company",
+      "score": 36.0,
+      "reasons": [
+        "about"
+      ],
+      "title": "About Tobii | Company, Offices, Partners & Resellers  - Tobii",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.tobii.com/resource-center/scientific-publications/eye-contact-shapes-our-social-behavior",
+      "score": 35.0,
+      "reasons": [
+        "contact",
+        "title mentions contact"
+      ],
+      "title": "How eye-to-eye contact shapes our social behavior - Tobii",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.tobii.com/blog/eye-tracking-study-recruitment-managing-participants-with-vision-irregularities",
+      "score": 33.0,
+      "reasons": [
+        "about"
+      ],
+      "title": "Managing participants with vision irregularities - Tobii",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.tobii.com/blog/how-driver-monitoring-systems-will-help-achieve-vision-zero",
+      "score": 33.0,
+      "reasons": [
+        "about"
+      ],
+      "title": "How Tobii DMS will help achieve Vision Zero - Tobii",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.tobii.com/blog/how-to-make-my-organization-understand-the-importance-of-user-testing",
+      "score": 33.0,
+      "reasons": [
+        "about"
+      ],
+      "title": "Learn the value of UX testing and why it is important - Tobii",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.tobii.com/blog/realistic-virtual-vision-with-dynamic-foveated-rendering",
+      "score": 33.0,
+      "reasons": [
+        "about"
+      ],
+      "title": "Realistic virtual vision with dynamic foveated rendering - Tobii",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.tobii.com/blog/the-secret-to-transforming-vision-therapy",
+      "score": 33.0,
+      "reasons": [
+        "about"
+      ],
+      "title": "The secret to transforming vision therapy? Eye tracking in games - Tobii",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.tobii.com/blog/what-eye-tracking-reveals-about-cognition-in-human-factors",
+      "score": 33.0,
+      "reasons": [
+        "about"
+      ],
+      "title": "What eye tracking reveals about cognition in human factors - Tobii",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.tobii.com/blog/what-you-need-to-know-about-spatial-computing-and-eye-tracking",
+      "score": 33.0,
+      "reasons": [
+        "about"
+      ],
+      "title": "Learn about spatial computing and eye tracking - Tobii",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.tobii.com/events/vision-sciences-society-2026",
+      "score": 33.0,
+      "reasons": [
+        "about"
+      ],
+      "title": "Visit Tobii at Vision Sciences Society (VSS) 2026 - Tobii",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.tobii.com/products/integration/screen-based-integrations/vision-health-assessment-and-therapy",
+      "score": 31.0,
+      "reasons": [
+        "about",
+        "offering",
+        "deep path"
+      ],
+      "title": "Transform vision care with screen-based eye tracking - Tobii",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.tobii.com/resource-center/customer-stories/alpine-esports-winning-vision-for-sim-racing",
+      "score": 30.0,
+      "reasons": [
+        "about"
+      ],
+      "title": "Alpine Esports' winning vision for sim racing - Tobii",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.tobii.com/resource-center/customer-stories/eye-tracking-for-vision-research",
+      "score": 30.0,
+      "reasons": [
+        "about"
+      ],
+      "title": "How eye tracking is used for vision research  - Tobii",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.tobii.com/resource-center/customer-stories/vision-care-for-everyone",
+      "score": 30.0,
+      "reasons": [
+        "about"
+      ],
+      "title": "Eye tracking used to provide vision care for everyone - Tobii",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.tobii.com/resource-center/learn-articles/what-eye-tracking-reveals-about-cognitive-processes",
+      "score": 30.0,
+      "reasons": [
+        "about"
+      ],
+      "title": "What can eye tracking reveal about cognitive processes? - Tobii",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.tobii.com/resource-center/webinars/gaze-contingency-in-simulations-of-artificial-vision",
+      "score": 30.0,
+      "reasons": [
+        "about"
+      ],
+      "title": "Gaze contingency in simulations of artificial vision - Tobii",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.tobii.com/resource-center/customer-stories/eye-tracking-gives-a-voice-to-people-with-als",
+      "score": 25.0,
+      "reasons": [
+        "people"
+      ],
+      "title": "Eye tracking gives a voice to people with ALS - Tobii",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.tobii.com/resource-center/customer-stories/training-your-team",
+      "score": 25.0,
+      "reasons": [
+        "people"
+      ],
+      "title": "The benefits of training your team with eye tracking - Tobii",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.tobii.com/resource-center/scientific-publications/do-people-spend-more",
+      "score": 25.0,
+      "reasons": [
+        "people"
+      ],
+      "title": "Do people spend more if they have more to spend?  - Tobii",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.tobii.com/company/this-is-tobii/global-offices",
+      "score": 22.0,
+      "reasons": [
+        "about",
+        "offering"
+      ],
+      "title": "Find our Tobii global offices and hubs around the world - Tobii",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.tobii.com/company/this-is-tobii/our-software-partners",
+      "score": 22.0,
+      "reasons": [
+        "about",
+        "offering"
+      ],
+      "title": "Solutions for all types of research - Tobii partners - Tobii",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.tobii.com/products",
+      "score": 18.0,
+      "reasons": [
+        "offering"
+      ],
+      "title": "Eye tracking solutions | Eye trackers | Eye tracking hardware - Tobii",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.tobii.com/solutions",
+      "score": 18.0,
+      "reasons": [
+        "offering"
+      ],
+      "title": "Tobii Solutions | Eye Tracking Applications - Tobii",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.tobii.com/blog/four-inspiring-healthcare-use-cases",
+      "score": 15.0,
+      "reasons": [
+        "offering"
+      ],
+      "title": "Benefits of eye tracking — 4 inspiring healthcare cases - Tobii",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.tobii.com/blog/how-eye-tracking-transforms-simulation-training-across-industries",
+      "score": 15.0,
+      "reasons": [
+        "offering"
+      ],
+      "title": "How eye tracking transforms simulation training across industries - Tobii",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.tobii.com/blog/tobii-ocumen-transforming-innovation-into-commercial-products",
+      "score": 15.0,
+      "reasons": [
+        "offering"
+      ],
+      "title": "Tobii Ocumen — innovation into commercialization - Tobii",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.tobii.com/products/consulting-services",
+      "score": 15.0,
+      "reasons": [
+        "offering"
+      ],
+      "title": "Eye tracking consulting services and experts - Tobii",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.tobii.com/products/product-finder",
+      "score": 15.0,
+      "reasons": [
+        "offering"
+      ],
+      "title": "Search for our eye tracking or integration products - Tobii",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.tobii.com/resource-center/customer-stories/using-eye-tracking-to-enhance-retail-media-effectiveness",
+      "score": 15.0,
+      "reasons": [
+        "press"
+      ],
+      "title": "Eye Tracking Used to Enhance Retail Media Effectiveness - Tobii",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.tobii.com/company/this-is-tobii",
+      "score": 13.0,
+      "reasons": [
+        "about"
+      ],
+      "title": "About Tobii | Eye Tracking & Attention Computing - Tobii",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.tobii.com/company/tobii-and-artificial-intelligence",
+      "score": 13.0,
+      "reasons": [
+        "about"
+      ],
+      "title": "How Tobii Uses AI & Machine Learning to Unlock Human Attention and Intent - Tobii",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.tobii.com/company/tobii-discover",
+      "score": 13.0,
+      "reasons": [
+        "about"
+      ],
+      "title": "Discover more about eye tracking technology – Tobii - Tobii",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.tobii.com/contact/subscribe",
+      "score": 13.0,
+      "reasons": [
+        "contact"
+      ],
+      "title": "Subscribe - Tobii",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.tobii.com/resource-center/customer-stories/analysis-of-hair-products-using-eye-tracking",
+      "score": 12.0,
+      "reasons": [
+        "offering"
+      ],
+      "title": "Analysis of hair products using eye tracking - Tobii",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.tobii.com/resource-center/customer-stories/analyzing-new-product-packaging-for-unicharm",
+      "score": 12.0,
+      "reasons": [
+        "offering"
+      ],
+      "title": "Analyzing new product packaging for Unicharm - Tobii",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.tobii.com/resource-center/customer-stories/analyzing-visibility-of-products-at-the-shelf",
+      "score": 12.0,
+      "reasons": [
+        "offering"
+      ],
+      "title": "Analyzing visibility of products with eye tracking  - Tobii",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.tobii.com/resource-center/customer-stories/avanza-improves-online-services-with-eye-tracking",
+      "score": 12.0,
+      "reasons": [
+        "offering"
+      ],
+      "title": "How Avanza uses eye tracking for agile usability testing - Tobii",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.tobii.com/resource-center/tech-talks/health-solutions-with-xr-and-eye-tracking-technologies",
+      "score": 12.0,
+      "reasons": [
+        "offering"
+      ],
+      "title": "Health solutions with XR and eye tracking technologies - Tobii",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.tobii.com/resource-center/webinars/eye-tracking-solutions-understanding-chemistry",
+      "score": 12.0,
+      "reasons": [
+        "offering"
+      ],
+      "title": "Eye tracking enhances understanding in chemistry - Tobii",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.tobii.com/events",
+      "score": 11.0,
+      "reasons": [
+        "title mentions careers"
+      ],
+      "title": "Join us at our events about eye tracking technology - Tobii",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.tobii.com/company/this-is-tobii/certifications",
+      "score": 10.0,
+      "reasons": [
+        "about"
+      ],
+      "title": "Tobii Certifications | ISO 9001, ISO 14001 & ISO 27001  - Tobii",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.tobii.com/company/this-is-tobii/open-source-software-for-research",
+      "score": 10.0,
+      "reasons": [
+        "about"
+      ],
+      "title": "Open-source software for research with Tobii eye trackers - Tobii",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.tobii.com/company/this-is-tobii/our-partner-network",
+      "score": 10.0,
+      "reasons": [
+        "about"
+      ],
+      "title": "Introducing our amazing global partner network - Tobii - Tobii",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.tobii.com/company/this-is-tobii/our-resellers",
+      "score": 10.0,
+      "reasons": [
+        "about"
+      ],
+      "title": "Find a product representative near you - Tobii Resellers - Tobii",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.tobii.com/company/this-is-tobii/why-choose-tobii",
+      "score": 10.0,
+      "reasons": [
+        "about"
+      ],
+      "title": "Why Choose Tobii | Eye Tracking Technology & Expertise - Tobii",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.tobii.com/products/eye-trackers/screen-based/clinical-research-use-cases",
+      "score": 9.0,
+      "reasons": [
+        "offering",
+        "deep path"
+      ],
+      "title": "Eye Tracking Use Cases for Clinical Research - Tobii",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.tobii.com/products/eye-trackers/screen-based/developmental-psychology-use-cases",
+      "score": 9.0,
+      "reasons": [
+        "offering",
+        "deep path"
+      ],
+      "title": "Eye tracking Use Cases for Developmental Psychology - Tobii",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.tobii.com/products/eye-trackers/screen-based/psychology-neuroscience-use-cases",
+      "score": 9.0,
+      "reasons": [
+        "offering",
+        "deep path"
+      ],
+      "title": "Eye tracking Use Cases for Psychology & Neuroscience - Tobii",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.tobii.com/products/eye-trackers/screen-based/reading-language-use-cases",
+      "score": 9.0,
+      "reasons": [
+        "offering",
+        "deep path"
+      ],
+      "title": null,
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.tobii.com/de/company",
+      "score": 8.0,
+      "reasons": [
+        "other locale 'de'",
+        "about"
+      ],
+      "title": null,
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.tobii.com/de/contact",
+      "score": 8.0,
+      "reasons": [
+        "other locale 'de'",
+        "contact"
+      ],
+      "title": null,
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.tobii.com/es/company",
+      "score": 8.0,
+      "reasons": [
+        "other locale 'es'",
+        "about"
+      ],
+      "title": null,
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.tobii.com/es/contact",
+      "score": 8.0,
+      "reasons": [
+        "other locale 'es'",
+        "contact"
+      ],
+      "title": null,
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.tobii.com/fr/company",
+      "score": 8.0,
+      "reasons": [
+        "other locale 'fr'",
+        "about"
+      ],
+      "title": null,
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.tobii.com/fr/contact",
+      "score": 8.0,
+      "reasons": [
+        "other locale 'fr'",
+        "contact"
+      ],
+      "title": null,
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.tobii.com/ja/company",
+      "score": 8.0,
+      "reasons": [
+        "other locale 'ja'",
+        "about"
+      ],
+      "title": null,
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.tobii.com/ja/contact",
+      "score": 8.0,
+      "reasons": [
+        "other locale 'ja'",
+        "contact"
+      ],
+      "title": "アイトラッキング製品の問合せ｜無料デモ・見積依頼受付中 - Tobii",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.tobii.com/ko/company",
+      "score": 8.0,
+      "reasons": [
+        "other locale 'ko'",
+        "about"
+      ],
+      "title": "당사에 대해 자세히 알아보고 전 세계에서의 위치 알아보기 - Tobii",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.tobii.com/ko/contact",
+      "score": 8.0,
+      "reasons": [
+        "other locale 'ko'",
+        "contact"
+      ],
+      "title": "전문가가 도와드리겠습니다 - 문의하기 - Tobii",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.tobii.com/products/accessories",
+      "score": 7.0,
+      "reasons": [
+        "offering"
+      ],
+      "title": "Eye tracking accessories for wearable and screen-based eye trackers - Tobii",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.tobii.com/products/discontinued",
+      "score": 7.0,
+      "reasons": [
+        "offering"
+      ],
+      "title": "Tobii's discontinued products and eye trackers - Tobii",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.tobii.com/products/eye-trackers",
+      "score": 7.0,
+      "reasons": [
+        "offering"
+      ],
+      "title": "Eye trackers for Research and Real-world Insights - Tobii",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.tobii.com/products/gaming",
+      "score": 7.0,
+      "reasons": [
+        "offering"
+      ],
+      "title": "Tobii eye tracking products enhance your gaming experience - Tobii",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.tobii.com/products/integration",
+      "score": 7.0,
+      "reasons": [
+        "offering"
+      ],
+      "title": "Tobii Integrations drive innovation & optimize your product - Tobii",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.tobii.com/products/software",
+      "score": 7.0,
+      "reasons": [
+        "offering"
+      ],
+      "title": "Eye Tracking Software | Advanced Eye Tracking Analysis Software - Tobii",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.tobii.com/solutions/automotive",
+      "score": 7.0,
+      "reasons": [
+        "offering"
+      ],
+      "title": "Tobii Automotive — Solutions for the vehicle lifecycle - Tobii",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.tobii.com/solutions/cognitive-and-psychological-research",
+      "score": 7.0,
+      "reasons": [
+        "offering"
+      ],
+      "title": "Eye Tracking Decodes Behavior and Cognitive Load - Tobii",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.tobii.com/solutions/consumer-research-and-user-experience",
+      "score": 7.0,
+      "reasons": [
+        "offering"
+      ],
+      "title": "Eye Tracking Uncovers Insights in Consumer and UX Research - Tobii",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.tobii.com/solutions/education-research",
+      "score": 7.0,
+      "reasons": [
+        "offering"
+      ],
+      "title": "Education Research — Teaching Using Eye Tracking - Tobii",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.tobii.com/solutions/extended-reality",
+      "score": 7.0,
+      "reasons": [
+        "offering"
+      ],
+      "title": "Elevate your XR products with Tobii eye tracking - Tobii",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.tobii.com/solutions/human-factors",
+      "score": 7.0,
+      "reasons": [
+        "offering"
+      ],
+      "title": "Enhancing human factors research with eye tracking - Tobii",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.tobii.com/solutions/medical-research",
+      "score": 7.0,
+      "reasons": [
+        "offering"
+      ],
+      "title": "Medical research — Eye Tracking Used to Explore Biomarkers - Tobii",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.tobii.com/solutions/personal-computing",
+      "score": 7.0,
+      "reasons": [
+        "offering"
+      ],
+      "title": "Humanizing Devices with Eye Tracking Technology - Tobii",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.tobii.com/solutions/research-and-insights",
+      "score": 7.0,
+      "reasons": [
+        "offering"
+      ],
+      "title": "Research & insights - Tobii",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.tobii.com/solutions/simulation-training",
+      "score": 7.0,
+      "reasons": [
+        "offering"
+      ],
+      "title": "Simulation Training with Eye Tracking for Better Performance - Tobii",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.tobii.com/solutions/training-and-skills-assessment",
+      "score": 7.0,
+      "reasons": [
+        "offering"
+      ],
+      "title": "Assess Training and Skills with Eye Tracking - Tobii",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.tobii.com/blog",
+      "score": 6.0,
+      "reasons": [],
+      "title": "Tobii Blog | Eye Tracking, Research & Innovation - Tobii",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.tobii.com/learn-and-support",
+      "score": 6.0,
+      "reasons": [],
+      "title": "Eye Tracking Learning Resources & Support - Tobii",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.tobii.com/products/eye-trackers/wearables/tobii-pro-glasses-3/consumer-ux-use-cases",
+      "score": 6.0,
+      "reasons": [
+        "offering",
+        "deep path"
+      ],
+      "title": "Tobii Pro Glasses 3: Consumer Research & UX - Tobii",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.tobii.com/products/eye-trackers/wearables/tobii-pro-glasses-3/human-factors-use-cases",
+      "score": 6.0,
+      "reasons": [
+        "offering",
+        "deep path"
+      ],
+      "title": "Tobii Pro Glasses 3: Human Factors - Tobii",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.tobii.com/products/eye-trackers/wearables/tobii-pro-glasses-3/scientific-use-cases",
+      "score": 6.0,
+      "reasons": [
+        "offering",
+        "deep path"
+      ],
+      "title": "Tobii Pro Glasses 3: Cognitive & Psychological Research - Tobii",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.tobii.com/products/eye-trackers/wearables/tobii-pro-glasses-3/training-skills-use-cases",
+      "score": 6.0,
+      "reasons": [
+        "offering",
+        "deep path"
+      ],
+      "title": "Tobii Pro Glasses 3: Training & Skills Assessment - Tobii",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.tobii.com/products/software/behavior-research-software/tobii-pro-lab/multimodal-research-solutions",
+      "score": 6.0,
+      "reasons": [
+        "offering",
+        "deep path"
+      ],
+      "title": "Multimodal research solutions - EEG and Biometrics - Tobii",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.tobii.com/resource-center",
+      "score": 6.0,
+      "reasons": [],
+      "title": "Explore our learning material - Tobii Resource Center - Tobii",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.tobii.com/de/blog/eye-tracking-study-recruitment-managing-participants-with-vision-irregularities",
+      "score": 5.0,
+      "reasons": [
+        "other locale 'de'",
+        "about"
+      ],
+      "title": "Umgang mit Teilnehmern mit Sehbehinderungen - Tobii",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.tobii.com/de/blog/how-driver-monitoring-systems-will-help-achieve-vision-zero",
+      "score": 5.0,
+      "reasons": [
+        "other locale 'de'",
+        "about"
+      ],
+      "title": "Wie Tobii DMS zur Verwirklichung der Vision Zero beitragen wird - Tobii",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.tobii.com/de/blog/how-to-make-my-organization-understand-the-importance-of-user-testing",
+      "score": 5.0,
+      "reasons": [
+        "other locale 'de'",
+        "about"
+      ],
+      "title": "Lernen Sie den Wert von UX-Tests und warum sie wichtig sind - Tobii",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.tobii.com/de/blog/realistic-virtual-vision-with-dynamic-foveated-rendering",
+      "score": 5.0,
+      "reasons": [
+        "other locale 'de'",
+        "about"
+      ],
+      "title": "Realistisches virtuelles Sehen mit dynamischem Foveated Rendering - Tobii",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.tobii.com/de/blog/the-secret-to-transforming-vision-therapy",
+      "score": 5.0,
+      "reasons": [
+        "other locale 'de'",
+        "about"
+      ],
+      "title": "Das Geheimnis der Veränderung der Sehtherapie? Eye Tracking in Spielen - Tobii",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.tobii.com/de/blog/what-eye-tracking-reveals-about-cognition-in-human-factors",
+      "score": 5.0,
+      "reasons": [
+        "other locale 'de'",
+        "about"
+      ],
+      "title": "Was Eye Tracking über Kognition in Human Factors verrät - Tobii",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.tobii.com/de/blog/what-you-need-to-know-about-spatial-computing-and-eye-tracking",
+      "score": 5.0,
+      "reasons": [
+        "other locale 'de'",
+        "about"
+      ],
+      "title": "Erfahren Sie mehr über Spatial Computing und Eye Tracking - Tobii",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.tobii.com/de/events/qualisys-animal-sciences-user-group-event",
+      "score": 5.0,
+      "reasons": [
+        "other locale 'de'",
+        "about"
+      ],
+      "title": "Nehmen Sie an der Veranstaltung der Qualisys Animal Sciences User Group teil - Tobii",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.tobii.com/es/blog/eye-tracking-study-recruitment-managing-participants-with-vision-irregularities",
+      "score": 5.0,
+      "reasons": [
+        "other locale 'es'",
+        "about"
+      ],
+      "title": null,
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.tobii.com/es/blog/how-driver-monitoring-systems-will-help-achieve-vision-zero",
+      "score": 5.0,
+      "reasons": [
+        "other locale 'es'",
+        "about"
+      ],
+      "title": null,
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.tobii.com/es/blog/how-to-make-my-organization-understand-the-importance-of-user-testing",
+      "score": 5.0,
+      "reasons": [
+        "other locale 'es'",
+        "about"
+      ],
+      "title": "Conozca el valor de las pruebas de UX y por qué son importantes - Tobii",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.tobii.com/es/blog/realistic-virtual-vision-with-dynamic-foveated-rendering",
+      "score": 5.0,
+      "reasons": [
+        "other locale 'es'",
+        "about"
+      ],
+      "title": "Visión virtual realista con renderizado dinámico foveated - Tobii",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.tobii.com/es/blog/the-secret-to-transforming-vision-therapy",
+      "score": 5.0,
+      "reasons": [
+        "other locale 'es'",
+        "about"
+      ],
+      "title": null,
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.tobii.com/es/blog/what-eye-tracking-reveals-about-cognition-in-human-factors",
+      "score": 5.0,
+      "reasons": [
+        "other locale 'es'",
+        "about"
+      ],
+      "title": null,
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.tobii.com/es/blog/what-you-need-to-know-about-spatial-computing-and-eye-tracking",
+      "score": 5.0,
+      "reasons": [
+        "other locale 'es'",
+        "about"
+      ],
+      "title": null,
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.tobii.com/es/events/qualisys-animal-sciences-user-group-event",
+      "score": 5.0,
+      "reasons": [
+        "other locale 'es'",
+        "about"
+      ],
+      "title": null,
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.tobii.com/fr/blog/eye-tracking-study-recruitment-managing-participants-with-vision-irregularities",
+      "score": 5.0,
+      "reasons": [
+        "other locale 'fr'",
+        "about"
+      ],
+      "title": null,
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.tobii.com/fr/blog/how-driver-monitoring-systems-will-help-achieve-vision-zero",
+      "score": 5.0,
+      "reasons": [
+        "other locale 'fr'",
+        "about"
+      ],
+      "title": null,
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.tobii.com/fr/blog/how-to-make-my-organization-understand-the-importance-of-user-testing",
+      "score": 5.0,
+      "reasons": [
+        "other locale 'fr'",
+        "about"
+      ],
+      "title": "Apprendre la valeur des tests UX et pourquoi ils sont importants - Tobii",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.tobii.com/fr/blog/realistic-virtual-vision-with-dynamic-foveated-rendering",
+      "score": 5.0,
+      "reasons": [
+        "other locale 'fr'",
+        "about"
+      ],
+      "title": "Vision virtuelle réaliste avec rendu dynamique par fovéation - Tobii",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.tobii.com/fr/blog/the-secret-to-transforming-vision-therapy",
+      "score": 5.0,
+      "reasons": [
+        "other locale 'fr'",
+        "about"
+      ],
+      "title": "Le secret de la transformation de la thérapie visuelle ? Eye tracking dans les jeux - Tobii",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.tobii.com/fr/blog/what-eye-tracking-reveals-about-cognition-in-human-factors",
+      "score": 5.0,
+      "reasons": [
+        "other locale 'fr'",
+        "about"
+      ],
+      "title": "Ce que l'eye tracking révèle sur la cognition dans les facteurs humains - Tobii",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.tobii.com/fr/blog/what-you-need-to-know-about-spatial-computing-and-eye-tracking",
+      "score": 5.0,
+      "reasons": [
+        "other locale 'fr'",
+        "about"
+      ],
+      "title": "En savoir plus sur l'informatique spatiale et l'Eye tracking - Tobii",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.tobii.com/fr/events/qualisys-animal-sciences-user-group-event",
+      "score": 5.0,
+      "reasons": [
+        "other locale 'fr'",
+        "about"
+      ],
+      "title": "Rejoignez-nous à l'Événement du groupe d'utilisateurs de Qualisys pour les sciences animales - Tobii",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.tobii.com/ja/blog/eye-tracking-study-recruitment-managing-participants-with-vision-irregularities",
+      "score": 5.0,
+      "reasons": [
+        "other locale 'ja'",
+        "about"
+      ],
+      "title": "視力に異常のある参加者の管理 - Tobii",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.tobii.com/ja/blog/how-driver-monitoring-systems-will-help-achieve-vision-zero",
+      "score": 5.0,
+      "reasons": [
+        "other locale 'ja'",
+        "about"
+      ],
+      "title": "トビーDMSはどのようにビジョン・ゼロを達成するか - Tobii",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.tobii.com/ja/blog/how-to-make-my-organization-understand-the-importance-of-user-testing",
+      "score": 5.0,
+      "reasons": [
+        "other locale 'ja'",
+        "about"
+      ],
+      "title": "ユーザーテストの価値とその重要性を解説 - Tobii",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.tobii.com/ja/blog/realistic-virtual-vision-with-dynamic-foveated-rendering",
+      "score": 5.0,
+      "reasons": [
+        "other locale 'ja'",
+        "about"
+      ],
+      "title": "ダイナミックフォベーテッドレンダリングによるリアルなバーチャルビジョン - Tobii",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.tobii.com/ja/blog/the-secret-to-transforming-vision-therapy",
+      "score": 5.0,
+      "reasons": [
+        "other locale 'ja'",
+        "about"
+      ],
+      "title": "視覚療法を変える秘密？ゲームにおけるアイトラッキング - Tobii",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.tobii.com/ja/blog/what-eye-tracking-reveals-about-cognition-in-human-factors",
+      "score": 5.0,
+      "reasons": [
+        "other locale 'ja'",
+        "about"
+      ],
+      "title": "ヒューマン・ファクターにおける認知についてアイトラッキングが明らかにすること - Tobii",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.tobii.com/ja/blog/what-you-need-to-know-about-spatial-computing-and-eye-tracking",
+      "score": 5.0,
+      "reasons": [
+        "other locale 'ja'",
+        "about"
+      ],
+      "title": "空間コンピューティングとアイトラッキングについて学ぶ - Tobii",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.tobii.com/ja/company/company-info",
+      "score": 5.0,
+      "reasons": [
+        "other locale 'ja'",
+        "about"
+      ],
+      "title": "会社情報 - トビー・テクノロジー株式会社  - Tobii",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.tobii.com/ja/events/vision-society-of-japan-2025",
+      "score": 5.0,
+      "reasons": [
+        "other locale 'ja'",
+        "about"
+      ],
+      "title": "日本視覚学会2025年冬季大会に出展します - Tobii",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.tobii.com/ja/events/vision-society-of-japan-2026",
+      "score": 5.0,
+      "reasons": [
+        "other locale 'ja'",
+        "about"
+      ],
+      "title": "日本視覚学会2026年冬季大会に出展します - Tobii",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.tobii.com/ko/blog/eye-tracking-study-recruitment-managing-participants-with-vision-irregularities",
+      "score": 5.0,
+      "reasons": [
+        "other locale 'ko'",
+        "about"
+      ],
+      "title": "시력에 이상이 있는 참가자 관리 - Tobii",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.tobii.com/ko/blog/how-driver-monitoring-systems-will-help-achieve-vision-zero",
+      "score": 5.0,
+      "reasons": [
+        "other locale 'ko'",
+        "about"
+      ],
+      "title": "Tobii DMS가 비전 제로 달성을 지원하는 방법 - Tobii",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.tobii.com/ko/blog/how-to-make-my-organization-understand-the-importance-of-user-testing",
+      "score": 5.0,
+      "reasons": [
+        "other locale 'ko'",
+        "about"
+      ],
+      "title": "UX 테스트의 가치와 중요한 이유 알아보기 - Tobii",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.tobii.com/ko/blog/realistic-virtual-vision-with-dynamic-foveated-rendering",
+      "score": 5.0,
+      "reasons": [
+        "other locale 'ko'",
+        "about"
+      ],
+      "title": "다이내믹 포비티드 렌더링으로 사실적인 가상 비전 구현 - Tobii",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.tobii.com/ko/blog/the-secret-to-transforming-vision-therapy",
+      "score": 5.0,
+      "reasons": [
+        "other locale 'ko'",
+        "about"
+      ],
+      "title": "비전 치료를 혁신하는 비결은 무엇일까요? 게임에서의 시선추적 - Tobii",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.tobii.com/ko/blog/what-eye-tracking-reveals-about-cognition-in-human-factors",
+      "score": 5.0,
+      "reasons": [
+        "other locale 'ko'",
+        "about"
+      ],
+      "title": "시선추적을 통해 인간공학에서 인지에 대해 알 수 있는 것들 - Tobii",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.tobii.com/ko/blog/what-you-need-to-know-about-spatial-computing-and-eye-tracking",
+      "score": 5.0,
+      "reasons": [
+        "other locale 'ko'",
+        "about"
+      ],
+      "title": "공간 컴퓨팅과 시선추적에 대해 알아보기 - Tobii",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.tobii.com/ko/events/qualisys-animal-sciences-user-group-event",
+      "score": 5.0,
+      "reasons": [
+        "other locale 'ko'",
+        "about"
+      ],
+      "title": "퀄리시스 동물 과학 사용자 그룹 이벤트에 참여하세요. - Tobii",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.tobii.com/resource-center/reports-and-papers/all-in-one-guide",
+      "score": 5.0,
+      "reasons": [
+        "press"
+      ],
+      "title": "A free guide to choosing the right eye tracker - Tobii - Tobii",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.tobii.com/resource-center/reports-and-papers/annual-research-report",
+      "score": 5.0,
+      "reasons": [
+        "press"
+      ],
+      "title": "Annual Research Report 2022 — Scientific publications - Tobii",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.tobii.com/resource-center/reports-and-papers/annual-research-report-2023",
+      "score": 5.0,
+      "reasons": [
+        "press"
+      ],
+      "title": "Annual Research Report for Scientific Publications 2023 - Tobii",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.tobii.com/resource-center/reports-and-papers/annual-research-report-2024",
+      "score": 5.0,
+      "reasons": [
+        "press"
+      ],
+      "title": "Discover the 2024 Annual Research Report - Tobii",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.tobii.com/resource-center/reports-and-papers/annual-research-report-2025",
+      "score": 5.0,
+      "reasons": [
+        "press"
+      ],
+      "title": "Explore Tobii's 2025 Annual Research Report - Tobii",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.tobii.com/resource-center/reports-and-papers/dynamic-distortion-compensation",
+      "score": 5.0,
+      "reasons": [
+        "press"
+      ],
+      "title": "Dynamic distortion compensation — Download for free - Tobii",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.tobii.com/resource-center/reports-and-papers/earning-attention",
+      "score": 5.0,
+      "reasons": [
+        "press"
+      ],
+      "title": "How to optimize attention to your TV ads - Tobii",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.tobii.com/resource-center/reports-and-papers/empowering-UX-design-with-attention-data",
+      "score": 5.0,
+      "reasons": [
+        "press"
+      ],
+      "title": "Free report: Empowering UX design with attention data - Tobii",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.tobii.com/resource-center/reports-and-papers/evaluating-and-building-trust-in-ai-experiences-with-eye-tracking",
+      "score": 5.0,
+      "reasons": [
+        "press"
+      ],
+      "title": "Evaluating and building trust in AI experiences with eye tracking - Tobii",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.tobii.com/resource-center/reports-and-papers/evaluating-package-design-options",
+      "score": 5.0,
+      "reasons": [
+        "press"
+      ],
+      "title": "Evaluating package design options - Free sample study - Tobii",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.tobii.com/resource-center/reports-and-papers/expanding-healthcare-with-eye-tracking",
+      "score": 5.0,
+      "reasons": [
+        "press"
+      ],
+      "title": "Linking eye movement and performance — RightEye - Tobii",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.tobii.com/resource-center/reports-and-papers/eye-openness-report",
+      "score": 5.0,
+      "reasons": [
+        "press"
+      ],
+      "title": "Receive a free copy of our Eye Openness Reports - Tobii",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.tobii.com/resource-center/reports-and-papers/eye-tracking-a-window-to-cognitive-processes",
+      "score": 5.0,
+      "reasons": [
+        "press"
+      ],
+      "title": "Eye tracking – a window to cognitive processes - Tobii",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.tobii.com/resource-center/reports-and-papers/eye-tracking-and-dynamic-foveated-rendering",
+      "score": 5.0,
+      "reasons": [
+        "press"
+      ],
+      "title": "Eye tracking and dynamic foveated rendering - Tobii - Tobii",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.tobii.com/resource-center/reports-and-papers/eye-tracking-for-pupillometry-insights",
+      "score": 5.0,
+      "reasons": [
+        "press"
+      ],
+      "title": "Eye tracking for pupillometry insights - Tobii",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.tobii.com/resource-center/reports-and-papers/eye-tracking-in-human-factors",
+      "score": 5.0,
+      "reasons": [
+        "press"
+      ],
+      "title": "Eye tracking in human factors research - Tobii",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.tobii.com/resource-center/reports-and-papers/eye-tracking-neurology-and-psychiatry-research",
+      "score": 5.0,
+      "reasons": [
+        "press"
+      ],
+      "title": "Eye tracking in neurology and psychiatry research - Tobii",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.tobii.com/resource-center/reports-and-papers/eye-tracking-performance-assessment",
+      "score": 5.0,
+      "reasons": [
+        "press"
+      ],
+      "title": "Eye tracking performance assessment for VR/AR headsets - Tobii",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.tobii.com/resource-center/reports-and-papers/eye-tracking-tech-manufacturing-training",
+      "score": 5.0,
+      "reasons": [
+        "press"
+      ],
+      "title": "Eye tracking makes manufacturing training easier - Tobii",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.tobii.com/resource-center/reports-and-papers/fueling-equity-in-education-with-edtech",
+      "score": 5.0,
+      "reasons": [
+        "press"
+      ],
+      "title": "Fueling equity in education with EdTech- Brainleap - Tobii",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.tobii.com/resource-center/reports-and-papers/fundamentals-of-eye-tracking",
+      "score": 5.0,
+      "reasons": [
+        "press"
+      ],
+      "title": "The Fundamentals of Eye Tracking: Free Guide to Technology, Metrics, and Applications - Tobii",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.tobii.com/resource-center/reports-and-papers/insight-economy-report",
+      "score": 5.0,
+      "reasons": [
+        "press"
+      ],
+      "title": "Get your free copy of the Insight Economy report - Tobii - Tobii",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.tobii.com/resource-center/reports-and-papers/lightweight-foveation-codec-for-vr",
+      "score": 5.0,
+      "reasons": [
+        "press"
+      ],
+      "title": "A lightweight foveation codec for VR - Tobii",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.tobii.com/resource-center/reports-and-papers/make-human-attention-measurable-in-aviation-operations",
+      "score": 5.0,
+      "reasons": [
+        "press"
+      ],
+      "title": "Free guide: Make human attention measurable in aviation operations - Tobii",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.tobii.com/resource-center/reports-and-papers/next-generation-surgical-systems",
+      "score": 5.0,
+      "reasons": [
+        "press"
+      ],
+      "title": "Next-generation surgical systems include eye tracking - Tobii",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.tobii.com/resource-center/reports-and-papers/seeing-risk-before-it-happens-in-medical-device-development",
+      "score": 5.0,
+      "reasons": [
+        "press"
+      ],
+      "title": null,
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.tobii.com/resource-center/reports-and-papers/surgical-robotics-leverage-attention-to-enhance-care",
+      "score": 5.0,
+      "reasons": [
+        "press"
+      ],
+      "title": null,
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.tobii.com/resource-center/reports-and-papers/the-importance-of-eye-tracking-in-AR-VR",
+      "score": 5.0,
+      "reasons": [
+        "press"
+      ],
+      "title": null,
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.tobii.com/resource-center/reports-and-papers/tobii-insight-review",
+      "score": 5.0,
+      "reasons": [
+        "press"
+      ],
+      "title": null,
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.tobii.com/resource-center/reports-and-papers/tobii-nexus-for-education",
+      "score": 5.0,
+      "reasons": [
+        "press"
+      ],
+      "title": null,
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.tobii.com/resource-center/reports-and-papers/tobii-nexus-for-healthcare",
+      "score": 5.0,
+      "reasons": [
+        "press"
+      ],
+      "title": null,
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.tobii.com/resource-center/reports-and-papers/top-5-ways-to-improve-training-with-eye-tracking",
+      "score": 5.0,
+      "reasons": [
+        "press"
+      ],
+      "title": null,
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.tobii.com/resource-center/reports-and-papers/understanding-and-measuring-cognitive-load-through-eye-tracking",
+      "score": 5.0,
+      "reasons": [
+        "press"
+      ],
+      "title": null,
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.tobii.com/resource-center/reports-and-papers/unlock-the-full-potential-of-simulation-training-with-eye-tracking",
+      "score": 5.0,
+      "reasons": [
+        "press"
+      ],
+      "title": "Unlock the full potential of simulation training with eye tracking - Tobii",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.tobii.com/resource-center/reports-and-papers/unlocking-the-hidden-skills-of-your-employees-through-attention-data",
+      "score": 5.0,
+      "reasons": [
+        "press"
+      ],
+      "title": "Unlocking the hidden skills of your employees - Tobii",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.tobii.com/resource-center/reports-and-papers/using-ai-to-close-the-literacy-gap",
+      "score": 5.0,
+      "reasons": [
+        "press"
+      ],
+      "title": "Automating reading assessment — by Tobii and Lexplore - Tobii",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.tobii.com/resource-center/reports-and-papers/validating-tobii-spotlight-technology",
+      "score": 5.0,
+      "reasons": [
+        "press"
+      ],
+      "title": "Benchmark validation of Tobii Spotlight Technology  - Tobii",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.tobii.com/products/accessories/chin-rest",
+      "score": 4.0,
+      "reasons": [
+        "offering"
+      ],
+      "title": "Head movement stability tool for eye tracking studies - Tobii",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.tobii.com/products/accessories/mobile-testing-accessory",
+      "score": 4.0,
+      "reasons": [
+        "offering"
+      ],
+      "title": "Perfect for usability tests - Mobile Testing Accessory - Tobii",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.tobii.com/products/accessories/motion-capture",
+      "score": 4.0,
+      "reasons": [
+        "offering"
+      ],
+      "title": "Motion Capture | Study eye and body movement - Tobii  - Tobii",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.tobii.com/products/accessories/shimmer3r",
+      "score": 4.0,
+      "reasons": [
+        "offering"
+      ],
+      "title": "Combine GSR and eye tracking to enhance your research - Tobii",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.tobii.com/products/accessories/stimtracker",
+      "score": 4.0,
+      "reasons": [
+        "offering"
+      ],
+      "title": "StimTracker synchronizes stimuli with eye tracking data - Tobii",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.tobii.com/products/accessories/tobii-corrective-lenses",
+      "score": 4.0,
+      "reasons": [
+        "offering"
+      ],
+      "title": "Snap on corrective lenses for Tobii Pro Glasses 3 - Tobii",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.tobii.com/products/accessories/tobii-glasses-X-sunglass-clip-on",
+      "score": 4.0,
+      "reasons": [
+        "offering"
+      ],
+      "title": "Sunglass Clip-on for Tobii Glasses X  - Tobii",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.tobii.com/products/accessories/tobii-glasses-x-corrective-lens-kit",
+      "score": 4.0,
+      "reasons": [
+        "offering"
+      ],
+      "title": "Slide-on corrective lenses for Tobii Glasses X - Tobii",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.tobii.com/products/accessories/tobii-protective-lenses",
+      "score": 4.0,
+      "reasons": [
+        "offering"
+      ],
+      "title": "Protective Lenses for Tobii Pro Glasses 3 - Tobii",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.tobii.com/products/accessories/tripod-stand",
+      "score": 4.0,
+      "reasons": [
+        "offering"
+      ],
+      "title": "Stabilize your eye tracking research - Tripod Stand  - Tobii",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.tobii.com/products/automotive/tobii-autosense",
+      "score": 4.0,
+      "reasons": [
+        "offering"
+      ],
+      "title": "Tobii Autosense — a unique interior sensing solution - Tobii",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.tobii.com/products/automotive/tobii-dms",
+      "score": 4.0,
+      "reasons": [
+        "offering"
+      ],
+      "title": "Driver Monitoring System - improving road safety - Tobii",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.tobii.com/products/consulting-services/customer-integration",
+      "score": 4.0,
+      "reasons": [
+        "offering"
+      ],
+      "title": "Introducing eye tracking to your new products - Tobii  - Tobii",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.tobii.com/products/consulting-services/tobii-insight",
+      "score": 4.0,
+      "reasons": [
+        "offering"
+      ],
+      "title": "Eye tracking research consultancy - Tobii Insight Services - Tobii",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.tobii.com/products/consulting-services/training-and-education",
+      "score": 4.0,
+      "reasons": [
+        "offering"
+      ],
+      "title": "Tobii Training and Education - Book a course today! - Tobii",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.tobii.com/products/discontinued/e-prime-extensions",
+      "score": 4.0,
+      "reasons": [
+        "offering"
+      ],
+      "title": "E-Prime Extensions for Tobii is now discontinued - Tobii",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.tobii.com/products/discontinued/tobii-aware",
+      "score": 4.0,
+      "reasons": [
+        "offering"
+      ],
+      "title": "Digital Wellbeing, Security & Smart Streaming - Tobii",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.tobii.com/products/discontinued/tobii-horizon",
+      "score": 4.0,
+      "reasons": [
+        "offering"
+      ],
+      "title": "Empowering a unique playing experience - Tobii Horizon - Tobii",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.tobii.com/products/discontinued/tobii-is5xt-integration-platform",
+      "score": 4.0,
+      "reasons": [
+        "offering"
+      ],
+      "title": "Eye tracking integration platform - Tobii IS5XT - Tobii",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.tobii.com/products/discontinued/tobii-pro-glasses-2",
+      "score": 4.0,
+      "reasons": [
+        "offering"
+      ],
+      "title": "Tobii Pro Glasses 2 wearable eye tracker - Discontinued - Tobii",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.tobii.com/products/discontinued/tobii-pro-nano",
+      "score": 4.0,
+      "reasons": [
+        "offering"
+      ],
+      "title": "Tobii Pro Nano screen-based eye tracker - Discontinued - Tobii",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.tobii.com/products/discontinued/tobii-pro-x2-30",
+      "score": 4.0,
+      "reasons": [
+        "offering"
+      ],
+      "title": "Tobii Pro X2-30 screen-based eye tracker - Discontinued - Tobii",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.tobii.com/products/discontinued/tobii-pro-x3-120",
+      "score": 4.0,
+      "reasons": [
+        "offering"
+      ],
+      "title": "Tobii Pro X3-120 screen-based eye tracker - Discontinued - Tobii",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.tobii.com/products/discontinued/tobii-ux-explore",
+      "score": 4.0,
+      "reasons": [
+        "offering"
+      ],
+      "title": "Tobii UX Explore is now discontinued - Tobii",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.tobii.com/products/discontinued/tobii-ux-reveal",
+      "score": 4.0,
+      "reasons": [
+        "offering"
+      ],
+      "title": "Tobii UX Reveal is now discontinued - Tobii",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.tobii.com/products/eye-trackers/screen-based",
+      "score": 4.0,
+      "reasons": [
+        "offering"
+      ],
+      "title": "Screen-based Eye Trackers for Behavioral Research - Tobii",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.tobii.com/products/eye-trackers/wearables",
+      "score": 4.0,
+      "reasons": [
+        "offering"
+      ],
+      "title": "Wearable eye trackers and eye tracking glasses - Tobii",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.tobii.com/products/integration/ip-licensing",
+      "score": 4.0,
+      "reasons": [
+        "offering"
+      ],
+      "title": "World's largest eye tracking patent portfolio - Tobii",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.tobii.com/products/integration/screen-based-integrations",
+      "score": 4.0,
+      "reasons": [
+        "offering"
+      ],
+      "title": "Eye tracking solutions for screen-based integrations - Tobii",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.tobii.com/products/integration/tobii-lens-technology",
+      "score": 4.0,
+      "reasons": [
+        "offering"
+      ],
+      "title": "Tobii Lens Technology | Lens-casting manufacturing - Tobii",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.tobii.com/products/integration/tobii-sdk-license",
+      "score": 4.0,
+      "reasons": [
+        "offering"
+      ],
+      "title": "Tobii Software Development License Agreement​ - Tobii",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.tobii.com/products/integration/tobii-streams-sdk",
+      "score": 4.0,
+      "reasons": [
+        "offering"
+      ],
+      "title": "Tobii Streams SDK — Power screen-based applications - Tobii",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.tobii.com/products/integration/xr-headsets",
+      "score": 4.0,
+      "reasons": [
+        "offering"
+      ],
+      "title": "Eye tracking — a catalyst for innovation in AR, VR, and MR  - Tobii",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    }
+  ]
+}

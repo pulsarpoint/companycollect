@@ -1,6 +1,6 @@
 # Company website crawler examples
 
-The repository contains three approaches:
+The repository contains three approaches and one experiment harness:
 
 - `ex1`: the application manages the crawl frontier and the LLM ranks links.
 - `ex2`: Crawl4AI manages the complete breadth-first crawl and the LLM only
@@ -13,6 +13,8 @@ The repository contains three approaches:
   repeatedly without crawling again; `research` runs both once, then asks the
   LLM what is still missing and crawls and analyzes up to `--max-passes`
   rounds to fill it in.
+- `ex4`: a prompt lab that compares page-selection prompts for `ex3` against
+  real sitemaps and a gold set, without crawling.
 
 ## Example 1: LLM-assisted frontier
 
@@ -284,6 +286,31 @@ The top-level `analysis_stats.token_totals` sums usage once per analysis call.
 
 ```bash
 uv run python -m unittest discover -v
-uvx ruff check main.py ex1 ex2 ex3 tests
-uvx ty check main.py ex1 ex2 ex3 tests
+uvx ruff check main.py ex1 ex2 ex3 ex4 tests
+uvx ty check main.py ex1 ex2 ex3 ex4 tests
 ```
+
+## Example 4: page-selection prompt lab
+
+`ex4` compares page-selection prompts in isolation: no crawling, no
+extraction. It reads each test site's sitemap, builds the same candidate list
+the `ex3` selector sends to the model (URL, title, language, anchor text; capped
+at 200), runs every prompt file under `experiments/page-selection/prompts/`
+through Codex, and scores the picks against a hand-corrected gold set of
+must-have pages per site.
+
+```bash
+uv run python -m ex4.main sites verify
+uv run python -m ex4.main candidates build
+uv run python -m ex4.main gold draft            # then edit experiments/page-selection/gold/*.json
+uv run python -m ex4.main run --dry-run         # how many Codex calls
+uv run python -m ex4.main run --run-id 20260903-1
+uv run python -m ex4.main score --run-id 20260903-1
+uv run python -m ex4.main report --run-id 20260903-1
+```
+
+Results are cached per prompt text, candidate list and limit under
+`experiments/page-selection/runs/<run-id>/`; re-running a run id only calls
+Codex for missing or failed cells (`--retry-failed`). Scores rank prompts by
+mean gold coverage, then junk rate, then tokens; `--repeats 2` adds a
+run-to-run stability column.

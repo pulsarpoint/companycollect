@@ -1,0 +1,100 @@
+{
+  "sites": [
+    {
+      "domain": "handelsbanken.se",
+      "start_url": "https://www.handelsbanken.se/en/",
+      "country": "SE",
+      "size": "large",
+      "note": "ex3 baseline",
+      "sitemap_found": true,
+      "inventory_urls": 1098,
+      "base_language": null,
+      "verified_at": "2026-09-03T23:13:03+00:00",
+      "error": null
+    },
+    {
+      "domain": "tobii.com",
+      "start_url": "https://www.tobii.com/",
+      "country": "SE",
+      "size": "mid",
+      "note": "tech, English-first",
+      "sitemap_found": true,
+      "inventory_urls": 4930,
+      "base_language": null,
+      "verified_at": "2026-09-03T23:13:20+00:00",
+      "error": null
+    },
+    {
+      "domain": "pricer.com",
+      "start_url": "https://www.pricer.com/",
+      "country": "SE",
+      "size": "mid",
+      "note": "industrial",
+      "sitemap_found": true,
+      "inventory_urls": 2134,
+      "base_language": null,
+      "verified_at": "2026-09-03T23:13:25+00:00",
+      "error": null
+    },
+    {
+      "domain": "polarbrod.se",
+      "start_url": "https://www.polarbrod.se/",
+      "country": "SE",
+      "size": "small",
+      "note": "Swedish-first; fallbacks lofbergs.se, kavli.se",
+      "sitemap_found": true,
+      "inventory_urls": 629,
+      "base_language": null,
+      "verified_at": "2026-09-03T23:13:30+00:00",
+      "error": null
+    },
+    {
+      "domain": "kongsberg.com",
+      "start_url": "https://www.kongsberg.com/",
+      "country": "NO",
+      "size": "large",
+      "note": "industrial group",
+      "sitemap_found": true,
+      "inventory_urls": 2878,
+      "base_language": null,
+      "verified_at": "2026-09-03T23:13:36+00:00",
+      "error": null
+    },
+    {
+      "domain": "vestas.com",
+      "start_url": "https://www.vestas.com/en",
+      "country": "DK",
+      "size": "large",
+      "note": "replaces novozymes.com: no sitemap",
+      "sitemap_found": true,
+      "inventory_urls": 1864,
+      "base_language": null,
+      "verified_at": "2026-09-03T23:15:49+00:00",
+      "error": null
+    },
+    {
+      "domain": "vaisala.com",
+      "start_url": "https://www.vaisala.com/en",
+      "country": "FI",
+      "size": "mid",
+      "note": "instruments",
+      "sitemap_found": true,
+      "inventory_urls": 5000,
+      "base_language": null,
+      "verified_at": "2026-09-03T23:13:46+00:00",
+      "error": null
+    },
+    {
+      "domain": "trumpf.com",
+      "start_url": "https://www.trumpf.com/en_INT/",
+      "country": "DE",
+      "size": "large",
+      "note": "Mittelstand, German-first",
+      "sitemap_found": true,
+      "inventory_urls": 1222,
+      "base_language": null,
+      "verified_at": "2026-09-03T23:13:58+00:00",
+      "error": null
+    }
+  ]
+}

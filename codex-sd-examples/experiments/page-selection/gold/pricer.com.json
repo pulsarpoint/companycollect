@@ -1,0 +1,55 @@
+{
+  "domain": "pricer.com",
+  "base_url": "https://www.pricer.com/",
+  "must_have": {
+    "home": [
+      "https://www.pricer.com/"
+    ],
+    "about": [
+      "https://www.pricer.com/press-release/company-shop-deploys-pricer-s-in-store-solution-to-deliver-dynamic-real-time-pricing-enhancing-its-v",
+      "https://www.pricer.com/news/pricer-and-re-vision-partner-to-enhance-shopper-experience-with-automated-product-position-and-product-flash",
+      "https://www.pricer.com/news/planet-retail-news-delhaize-group-implements-pricer-esl-in-belgian-stores",
+      "https://www.pricer.com/about/corporate-governance/risk-management",
+      "https://www.pricer.com/about/sustainability/people-society"
+    ],
+    "contact": [
+      "https://www.pricer.com/contact",
+      "https://www.pricer.com/legal-notice",
+      "https://www.pricer.com/esl-journey/contact-a-pricer-partner",
+      "https://www.pricer.com/fr/actualite/contact-presse",
+      "https://www.pricer.com/de/nachrichten/presse-kontakt"
+    ],
+    "management": [
+      "https://www.pricer.com/news/thought-leadership-omni-channel-retail-offering-a-seamless-shopping-experience-to-customers",
+      "https://www.pricer.com/about/corporate-governance/risk-management",
+      "https://www.pricer.com/about/sustainability/people-society",
+      "https://www.pricer.com/news/pricer-strengthens-its-management-team",
+      "https://www.pricer.com/press-release/pricer-extends-esl-leadership-with-next-generation-graphic-esl-deployment"
+    ],
+    "careers": [
+      "https://www.pricer.com/about/careers"
+    ],
+    "products_services": [
+      "https://www.pricer.com/press-release/company-shop-deploys-pricer-s-in-store-solution-to-deliver-dynamic-real-time-pricing-enhancing-its-v",
+      "https://www.pricer.com/news/pricer-and-re-vision-partner-to-enhance-shopper-experience-with-automated-product-position-and-product-flash",
+      "https://www.pricer.com/news/thought-leadership-omni-channel-retail-offering-a-seamless-shopping-experience-to-customers",
+      "https://www.pricer.com/news/media-markt-saturn-regained-market-shares-thanks-to-its-omnichannel-pricing-strategy-enabled-by-pricer",
+      "https://www.pricer.com/use-cases/store-operations/waste-management"
+    ],
+    "group_structure": [
+      "https://www.pricer.com/news/planet-retail-news-delhaize-group-implements-pricer-esl-in-belgian-stores",
+      "https://www.pricer.com/news/nationwide-marketing-group-recommends-pricers-electronic-shelf-labels-to-its-members",
+      "https://www.pricer.com/press-release/a-new-group-of-e-leclerc-supermarkets-selects-pricer-esl",
+      "https://www.pricer.com/press-release/finnish-co-operative-retailer-s-group-chooses-pricer-as-the-supplier-of-electronic-shelf-labels",
+      "https://www.pricer.com/press-release/finnish-co-operative-retailer-s-group-installs-pricer-s-digital-in-store-solution-in-over-100-additi"
+    ],
+    "legal_identity": [
+      "https://www.pricer.com/legal-notice",
+      "https://www.pricer.com/fr/mentions-legales"
+    ]
+  },
+  "junk": [
+    "https://www.pricer.com/investors/rights-issue-2023"
+  ],
+  "notes": "Draft generated from URL slugs and titles; correct by hand."
+}

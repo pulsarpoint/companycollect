@@ -1,0 +1,47 @@
+{
+  "domain": "vaisala.com",
+  "base_url": "https://www.vaisala.com/en",
+  "must_have": {
+    "home": [
+      "https://www.vaisala.com/en"
+    ],
+    "about": [
+      "https://www.vaisala.com/en/press-releases/2021-08/most-people-worry-about-indoor-air-quality-amidst-covid-19-pandemic",
+      "https://www.vaisala.com/en/vaisala-company/organization-and-management",
+      "https://www.vaisala.com/en/stock-exchange-releases/2021-05/change-vaisala-management-group",
+      "https://www.vaisala.com/en/press-releases/2019-11/leosphere-vaisala-company-enhances-offshore-offerings-windcube-suitable-buoys",
+      "https://www.vaisala.com/en/press-releases/2020-03/leosphere-vaisala-company-launches-windcube-insights-empowering-windcube-nacelle-customers-accurate-data-and-analytics"
+    ],
+    "contact": [],
+    "management": [
+      "https://www.vaisala.com/en/press-releases/2021-08/most-people-worry-about-indoor-air-quality-amidst-covid-19-pandemic",
+      "https://www.vaisala.com/en/vaisala-company/organization-and-management",
+      "https://www.vaisala.com/en/stock-exchange-releases/2021-05/change-vaisala-management-group",
+      "https://www.vaisala.com/en/investors/corporate-governance/board-directors",
+      "https://www.vaisala.com/en/investors/corporate-governance/leadership-team"
+    ],
+    "careers": [
+      "https://www.vaisala.com/en/careers",
+      "https://www.vaisala.com/en/events/events/lp/calling-university-students-join-vaisalas-career-night",
+      "https://www.vaisala.com/en/careers/students-and-graduates",
+      "https://www.vaisala.com/en/careers/well-being"
+    ],
+    "products_services": [
+      "https://www.vaisala.com/en/press-releases/2019-11/leosphere-vaisala-company-enhances-offshore-offerings-windcube-suitable-buoys",
+      "https://www.vaisala.com/en/press-releases/2020-03/leosphere-vaisala-company-launches-windcube-insights-empowering-windcube-nacelle-customers-accurate-data-and-analytics",
+      "https://www.vaisala.com/en/press-releases/2022-03/vaisala-provides-volkswagen-group-global-infotainment-weather-service-enhance-driver-safety-and-experience-worldwide",
+      "https://www.vaisala.com/en/events/events/lp/quality-assurance-and-technical-services-group-qats-annual-symposium",
+      "https://www.vaisala.com/en/events/events/lp/quality-assurance-and-technical-services-group-qats-annual-symposium-2024"
+    ],
+    "group_structure": [
+      "https://www.vaisala.com/en/stock-exchange-releases/2021-05/change-vaisala-management-group",
+      "https://www.vaisala.com/en/press-releases/2022-03/vaisala-provides-volkswagen-group-global-infotainment-weather-service-enhance-driver-safety-and-experience-worldwide",
+      "https://www.vaisala.com/en/events/events/lp/quality-assurance-and-technical-services-group-qats-annual-symposium",
+      "https://www.vaisala.com/en/events/events/lp/quality-assurance-and-technical-services-group-qats-annual-symposium-2024",
+      "https://www.vaisala.com/en/events/events/lp/quality-assurance-and-technical-services-group-qats-annual-symposium-2025"
+    ],
+    "legal_identity": []
+  },
+  "junk": [],
+  "notes": "Draft generated from URL slugs and titles; correct by hand."
+}
