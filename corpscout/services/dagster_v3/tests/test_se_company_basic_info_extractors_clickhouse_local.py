@@ -48,7 +48,9 @@ def _run(statements: list[str], *, join_use_nulls: int) -> list[str]:
 
 
 def _scope(current_sql: str, source: str, **extra) -> str:
-    return _bind(changed_scope_sql(current_sql=current_sql), source=source, after_company_id="", page_size=100, **extra)
+    # The scope SQL is unpaged now (`scope_pages` runs it into a scratch table and pages
+    # that), so the harness renders it alone and sorts for a stable printed order.
+    return _bind(changed_scope_sql(current_sql=current_sql), source=source, **extra) + "\nORDER BY company_id"
 
 
 def _insert(select_sql: str, ids: list[str], **extra) -> str:
@@ -185,6 +187,6 @@ def test_llm_scope_selects_two_text_sources_newer_than_the_llm_row() -> None:
         suggestion("5563333333", "esef", "'a'", "2026-09-03 00:00:00"),
         suggestion("5563333333", "ratsit", "'b'", "2026-09-01 00:00:00"),
         suggestion("5563333333", "llm", "'stale'", "2026-09-02 00:00:00"),
-        _bind(llm_scope_sql(), after_company_id="", page_size=100),
+        _bind(llm_scope_sql()) + "\nORDER BY company_id",
     ]
     assert _run(script, join_use_nulls=0) == ["5560000000", "5563333333"]

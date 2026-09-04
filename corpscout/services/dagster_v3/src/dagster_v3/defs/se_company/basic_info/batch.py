@@ -29,7 +29,12 @@ PAGE_SIZE = 20_000
 # set for the same failure in se_company/address.py (SCAN_MAX_QUERY_SIZE); PAGE_SIZE stays
 # 20,000 and every SELECT that binds company_ids passes these settings to client.execute.
 # See tests/test_se_company_basic_info_batch.py for the measured render size.
-ID_BOUND_QUERY_SETTINGS = {"max_query_size": 1_048_576}  # 1 MiB: >3x the measured worst case
+# max_execution_time bounds the other failure mode: a pathological page must fail visibly
+# rather than hold the run (and its pool slot) forever.
+ID_BOUND_QUERY_SETTINGS = {
+    "max_query_size": 1_048_576,  # 1 MiB: >3x the measured worst case
+    "max_execution_time": 1800,
+}
 
 _SUGGESTION_SELECT_COLUMNS = (
     "company_id",

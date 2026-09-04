@@ -9,6 +9,7 @@ from pydantic import ValidationError
 
 from dagster_v3.defs.se_company.basic_info import llm as llm_module
 from dagster_v3.defs.se_company.basic_info import tables
+from dagster_v3.defs.se_company.basic_info.extract import SCAN_QUERY_SETTINGS, SCRATCH_SCOPE_PREFIX
 from dagster_v3.defs.se_company.basic_info.llm import (
     LLM_EXTRACTOR_VERSION,
     SUGGESTION_PROMPT_VERSION,
@@ -46,7 +47,10 @@ def test_scope_sql_gates_on_two_text_sources_newer_than_the_llm_row() -> None:
     # its observed_at, so only suggested_at makes the scan converge.
     assert "maxIf(suggested_at, source = 'llm') AS llm_suggested" in sql
     assert "HAVING text_sources >= 2 AND (llm_rows = 0 OR newest_text > llm_suggested)" in sql
-    assert sql.rstrip().endswith("WHERE company_id > %(after_company_id)s\nORDER BY company_id\nLIMIT %(page_size)s")
+    # No keyset tail: the gate is run once into a scratch table that the scan then pages,
+    # so the FINAL read of the suggestion table happens once per run, not once per page.
+    assert sql.rstrip().endswith(")")
+    assert "%(after_company_id)s" not in sql and "LIMIT" not in sql
     assert "source != 'llm'" in llm_context_sql() and "company_id IN %(company_ids)s" in llm_context_sql()
     assert "FROM corpscout.se_scb_companies FINAL WHERE has_company = 1 AND company_id IN %(company_ids)s" in llm_sni_sql()
 
@@ -116,16 +120,25 @@ class FakeClient:
         self.events = events
 
     def scope_calls(self) -> int:
-        return len([sql for sql, _ in self.statements if "AS text_sources" in sql])
+        """Scratch-table page reads: the scan's paging, one per page."""
+        return len([sql for sql, _ in self.statements if sql.startswith(f"SELECT company_id FROM {SCRATCH_SCOPE_PREFIX}")])
+
+    def statements_starting(self, prefix: str) -> list[str]:
+        return [sql for sql, _ in self.statements if sql.startswith(prefix)]
 
     def execute(self, sql, params=None, settings=None):
         self.statements.append((sql, params))
+        if sql.startswith(("CREATE TABLE", "DROP TABLE")):
+            return []
+        if sql.startswith(f"INSERT INTO {SCRATCH_SCOPE_PREFIX}"):
+            assert settings == SCAN_QUERY_SETTINGS
+            return []
         if sql.startswith("INSERT INTO"):
             self.inserts.append((sql, list(params)))
             if self.events is not None:
                 self.events.append(("insert", list(params)))
             return []
-        if "AS text_sources" in sql:
+        if sql.startswith(f"SELECT company_id FROM {SCRATCH_SCOPE_PREFIX}"):
             return [(i,) for i in (self.scope_pages.pop(0) if self.scope_pages else [])]
         ids = set(params["company_ids"])
         if "suggestion_id, company_id, toString(input_hash)" in sql:
@@ -164,7 +177,7 @@ def _stored(company_id, input_hash, created_at=T1):
 def test_preview_counts_reuse_against_stored_hashes_and_writes_nothing() -> None:
     context = contexts_from_rows(CONTEXT_ROWS, [])["5560000000"]
     known = input_hash_for(build_suggestion_request(context, PROFILE), SUGGESTION_PROMPT_VERSION)
-    client = FakeClient(scope_pages=[["5560000000", "5561111111"], []], context_rows=CONTEXT_ROWS + [row("5561111111", "scb", legal_name="Solo", description="only one", language="sv")],
+    client = FakeClient(scope_pages=[["5560000000", "5561111111"]], context_rows=CONTEXT_ROWS + [row("5561111111", "scb", legal_name="Solo", description="only one", language="sv")],
                         observations=[_stored("5560000000", known)])
     published: list = []
     counts = run_llm_extractor(
@@ -189,13 +202,17 @@ def test_preview_stops_at_the_cap_without_paging_further() -> None:
     )
     assert counts.stopped_at_cap is True and counts.companies == 1 and counts.eligible == 1
     assert client.scope_calls() == 1
+    # The gate ran once into the scratch table, and breaking out at the cap still drops it.
+    assert len(client.statements_starting(f"INSERT INTO {SCRATCH_SCOPE_PREFIX}")) == 1
+    assert len(client.statements_starting("CREATE TABLE")) == 1
+    assert len(client.statements_starting("DROP TABLE")) == 1
 
 
 def test_execute_reuses_then_calls_and_writes_observations_before_suggestions() -> None:
     context = contexts_from_rows(CONTEXT_ROWS, [])["5560000000"]
     known = input_hash_for(build_suggestion_request(context, PROFILE), SUGGESTION_PROMPT_VERSION)
     events: list[tuple[str, list]] = []
-    client = FakeClient(scope_pages=[["5560000000", "5562222222"], []], context_rows=CONTEXT_ROWS + OTHER_ROWS,
+    client = FakeClient(scope_pages=[["5560000000", "5562222222"]], context_rows=CONTEXT_ROWS + OTHER_ROWS,
                         observations=[_stored("5560000000", known)], events=events)
     calls: list[str] = []
 
@@ -244,7 +261,7 @@ def test_observations_flush_mid_page_at_the_threshold(monkeypatch) -> None:
     # mid-page loses at most one flush -- and every flush still precedes the insert.
     monkeypatch.setattr(llm_module, "OBSERVATION_FLUSH_ROWS", 1)
     events: list[tuple[str, list]] = []
-    client = FakeClient(scope_pages=[["5560000000", "5562222222"], []],
+    client = FakeClient(scope_pages=[["5560000000", "5562222222"]],
                         context_rows=CONTEXT_ROWS + OTHER_ROWS, events=events)
 
     def fake_call(request, *, provider, prompt_version):
@@ -267,7 +284,7 @@ def test_observations_flush_mid_page_at_the_threshold(monkeypatch) -> None:
 
 
 def test_a_failed_model_call_is_counted_and_skipped() -> None:
-    client = FakeClient(scope_pages=[["5560000000"], []], context_rows=CONTEXT_ROWS)
+    client = FakeClient(scope_pages=[["5560000000"]], context_rows=CONTEXT_ROWS)
 
     def failing(request, *, provider, prompt_version):
         raise ValueError("truncated")

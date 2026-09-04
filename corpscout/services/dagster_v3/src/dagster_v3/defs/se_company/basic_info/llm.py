@@ -6,7 +6,8 @@ suggestion rows that cite them."""
 import json
 import uuid
 from collections import defaultdict
-from collections.abc import Callable, Mapping, Sequence
+from collections.abc import Callable, Iterator, Mapping, Sequence
+from contextlib import closing
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from functools import partial
@@ -21,7 +22,7 @@ from dagster_v3.defs.clickhouse.resolved import assert_clickhouse_tables_exist
 from dagster_v3.defs.se_company.basic_info import tables
 from dagster_v3.defs.se_company.basic_info.assets import GROUP_NAME
 from dagster_v3.defs.se_company.basic_info.batch import ID_BOUND_QUERY_SETTINGS
-from dagster_v3.defs.se_company.basic_info.extract import ExtractConfig
+from dagster_v3.defs.se_company.basic_info.extract import SCAN_QUERY_SETTINGS, ExtractConfig, scope_pages
 from dagster_v3.defs.se_company.basic_info.precedence import precedence_for
 from dagster_v3.defs.se_company.common import (
     ObservationResult,
@@ -82,9 +83,6 @@ class LlmExtractConfig(ExtractConfig):
         return value
 
 
-_SCOPE_TAIL = "WHERE company_id > %(after_company_id)s\nORDER BY company_id\nLIMIT %(page_size)s"
-
-
 def llm_scope_sql() -> str:
     """Companies with two or more distinct automated description sources whose newest text
     is newer than the company's llm suggestion row, or that have no llm row.
@@ -97,6 +95,9 @@ def llm_scope_sql() -> str:
     Reviewer rows are out of both aggregates: a human decision is not a source text to
     merge, and it must not push a company past the two-source gate or make its own edit
     look like new evidence the model has not seen.
+
+    The whole id set, unpaged: `scope_pages` runs this once into a scratch table and
+    keyset-pages that, so the FINAL read of the suggestion table happens once per run.
     """
     return (
         "SELECT company_id FROM (\n"
@@ -108,8 +109,7 @@ def llm_scope_sql() -> str:
         f"    FROM {tables.QUALIFIED_SUGGESTION_TABLE} FINAL\n"
         "    GROUP BY company_id\n"
         "    HAVING text_sources >= 2 AND (llm_rows = 0 OR newest_text > llm_suggested)\n"
-        ")\n"
-        f"{_SCOPE_TAIL}"
+        ")"
     )
 
 
@@ -251,16 +251,10 @@ def publish_observations(clickhouse: ClickhouseResource, rows: list[tuple[Any, .
         )
 
 
-def _scan_pages(client: Any, *, config: ExtractConfig):
-    after = ""
-    while True:
-        page = [row[0] for row in client.execute(llm_scope_sql(), {"after_company_id": after, "page_size": config.page_size})]
-        if not page:
-            return
-        yield page
-        if len(page) < config.page_size:
-            return
-        after = page[-1]
+def _scan_pages(client: Any, *, config: ExtractConfig) -> Iterator[list[str]]:
+    return scope_pages(
+        client, scope_sql=llm_scope_sql(), params={}, page_size=config.page_size, settings=SCAN_QUERY_SETTINGS
+    )
 
 
 def _suggestion_row(company_id: str, result: ObservationResult, observed_at: datetime, *, source_run_id: str, suggested_at: datetime) -> tuple[Any, ...]:
@@ -291,97 +285,99 @@ def run_llm_extractor(
     """Preview: count reuse vs. calls, write nothing. Execute: reuse stored answers, call
     the model for the rest (persisting every OBSERVATION_FLUSH_ROWS), then insert one llm
     suggestion row per company."""
-    pages = (
+    pages: Iterator[list[str]] = (
         (config.company_ids[i : i + config.page_size] for i in range(0, len(config.company_ids), config.page_size))
         if config.company_ids else _scan_pages(client, config=config)
     )
     caller = call_model if call_model is not None else partial(_default_call_model, client=llm_client)
     counts = defaultdict(int)
     stopped = False
-    for page in pages:
-        remaining = config.max_companies - counts["companies"]
-        if remaining <= 0:
-            stopped = True
-            break
-        if len(page) > remaining:
-            page, stopped = page[:remaining], True
-        counts["pages"] += 1
-        counts["companies"] += len(page)
-        params = {"company_ids": page}
-        contexts = contexts_from_rows(
-            client.execute(llm_context_sql(), params, settings=ID_BOUND_QUERY_SETTINGS),
-            client.execute(llm_sni_sql(), params, settings=ID_BOUND_QUERY_SETTINGS),
-        )
-        stored: dict[str, list[StoredObservation]] = defaultdict(list)
-        for r in client.execute(build_observations_sql(SE_COMPANY_INFO_OBSERVATION), params, settings=ID_BOUND_QUERY_SETTINGS):
-            observation = observation_from_row(r)
-            stored[observation.company_id].append(observation)
-        eligible = [c for c in contexts.values() if len(c.texts) >= 2]
-        counts["skipped_single_source"] += len(contexts) - len(eligible)
-        counts["eligible"] += len(eligible)
-        prepared = []
-        for context in eligible:
-            request = build_suggestion_request(context, profile)
-            input_hash = input_hash_for(request, profile.prompt_version)
-            matching = [o for o in stored[context.company_id] if o.input_hash == input_hash]
-            prepared.append((context, request, input_hash, matching))
+    # closing(): breaking out at the cap must still drop the scan's scratch table.
+    with closing(pages) as scope:
+        for page in scope:
+            remaining = config.max_companies - counts["companies"]
+            if remaining <= 0:
+                stopped = True
+                break
+            if len(page) > remaining:
+                page, stopped = page[:remaining], True
+            counts["pages"] += 1
+            counts["companies"] += len(page)
+            params = {"company_ids": page}
+            contexts = contexts_from_rows(
+                client.execute(llm_context_sql(), params, settings=ID_BOUND_QUERY_SETTINGS),
+                client.execute(llm_sni_sql(), params, settings=ID_BOUND_QUERY_SETTINGS),
+            )
+            stored: dict[str, list[StoredObservation]] = defaultdict(list)
+            for r in client.execute(build_observations_sql(SE_COMPANY_INFO_OBSERVATION), params, settings=ID_BOUND_QUERY_SETTINGS):
+                observation = observation_from_row(r)
+                stored[observation.company_id].append(observation)
+            eligible = [c for c in contexts.values() if len(c.texts) >= 2]
+            counts["skipped_single_source"] += len(contexts) - len(eligible)
+            counts["eligible"] += len(eligible)
+            prepared = []
+            for context in eligible:
+                request = build_suggestion_request(context, profile)
+                input_hash = input_hash_for(request, profile.prompt_version)
+                matching = [o for o in stored[context.company_id] if o.input_hash == input_hash]
+                prepared.append((context, request, input_hash, matching))
+                if not config.execute:
+                    counts["would_reuse" if matching else "would_call_model"] += 1
             if not config.execute:
-                counts["would_reuse" if matching else "would_call_model"] += 1
-        if not config.execute:
-            # The cap bounds the preview scan as well: without this the loop would page on
-            # past max_companies and report a count no execute run would ever produce.
+                # The cap bounds the preview scan as well: without this the loop would page on
+                # past max_companies and report a count no execute run would ever produce.
+                if stopped:
+                    break
+                continue
+            suggested_at = datetime.now(UTC)
+            observation_rows: list[tuple[Any, ...]] = []
+            suggestion_rows: list[tuple[Any, ...]] = []
+
+            def _resolve(item):
+                context, request, input_hash, matching = item
+                try:
+                    result, reused = reuse_or_call(
+                        input_hash=input_hash, stored=matching,
+                        call=lambda: caller(request, provider=profile.provider, prompt_version=profile.prompt_version),
+                    )
+                except Exception as exc:  # noqa: BLE001 -- one failed call must not lose the page
+                    if log is not None:
+                        log("LLM call failed for %s: %s", context.company_id, exc)
+                    return context, None, False, input_hash, matching
+                return context, result, reused, input_hash, matching
+
+            for context, result, reused, input_hash, matching in map_ordered(_resolve, prepared, concurrency=profile.concurrency):
+                if result is None:
+                    counts["failed"] += 1
+                    continue
+                if reused:
+                    counts["reused"] += 1
+                    newest = max(matching, key=lambda o: (o.created_at, str(o.suggestion_id)))
+                    observed_at = newest.created_at
+                else:
+                    counts["called"] += 1
+                    observed_at = suggested_at
+                    observation_rows.append((
+                        result.suggestion_id, context.company_id, input_hash,
+                        json.dumps(result.suggestion, ensure_ascii=False, sort_keys=True), result.raw_response,
+                        result.model_provider, result.model_name, result.prompt_version,
+                        result.prompt_tokens, result.completion_tokens, source_run_id, suggested_at,
+                    ))
+                    if len(observation_rows) >= OBSERVATION_FLUSH_ROWS:
+                        publish_observations(clickhouse, observation_rows)
+                        counts["observations_inserted"] += len(observation_rows)
+                        observation_rows = []
+                suggestion_rows.append(_suggestion_row(context.company_id, result, observed_at, source_run_id=source_run_id, suggested_at=suggested_at))
+            if observation_rows:
+                publish_observations(clickhouse, observation_rows)
+                counts["observations_inserted"] += len(observation_rows)
+            if suggestion_rows:
+                client.execute(f"INSERT INTO {tables.QUALIFIED_SUGGESTION_TABLE} ({', '.join(tables.SUGGESTION_INSERT_COLUMNS)}) VALUES", suggestion_rows)
+                counts["inserted"] += len(suggestion_rows)
+            if log is not None:
+                log("LLM suggestion page: companies=%d eligible=%d reused=%d called=%d failed=%d", len(page), len(eligible), counts["reused"], counts["called"], counts["failed"])
             if stopped:
                 break
-            continue
-        suggested_at = datetime.now(UTC)
-        observation_rows: list[tuple[Any, ...]] = []
-        suggestion_rows: list[tuple[Any, ...]] = []
-
-        def _resolve(item):
-            context, request, input_hash, matching = item
-            try:
-                result, reused = reuse_or_call(
-                    input_hash=input_hash, stored=matching,
-                    call=lambda: caller(request, provider=profile.provider, prompt_version=profile.prompt_version),
-                )
-            except Exception as exc:  # noqa: BLE001 -- one failed call must not lose the page
-                if log is not None:
-                    log("LLM call failed for %s: %s", context.company_id, exc)
-                return context, None, False, input_hash, matching
-            return context, result, reused, input_hash, matching
-
-        for context, result, reused, input_hash, matching in map_ordered(_resolve, prepared, concurrency=profile.concurrency):
-            if result is None:
-                counts["failed"] += 1
-                continue
-            if reused:
-                counts["reused"] += 1
-                newest = max(matching, key=lambda o: (o.created_at, str(o.suggestion_id)))
-                observed_at = newest.created_at
-            else:
-                counts["called"] += 1
-                observed_at = suggested_at
-                observation_rows.append((
-                    result.suggestion_id, context.company_id, input_hash,
-                    json.dumps(result.suggestion, ensure_ascii=False, sort_keys=True), result.raw_response,
-                    result.model_provider, result.model_name, result.prompt_version,
-                    result.prompt_tokens, result.completion_tokens, source_run_id, suggested_at,
-                ))
-                if len(observation_rows) >= OBSERVATION_FLUSH_ROWS:
-                    publish_observations(clickhouse, observation_rows)
-                    counts["observations_inserted"] += len(observation_rows)
-                    observation_rows = []
-            suggestion_rows.append(_suggestion_row(context.company_id, result, observed_at, source_run_id=source_run_id, suggested_at=suggested_at))
-        if observation_rows:
-            publish_observations(clickhouse, observation_rows)
-            counts["observations_inserted"] += len(observation_rows)
-        if suggestion_rows:
-            client.execute(f"INSERT INTO {tables.QUALIFIED_SUGGESTION_TABLE} ({', '.join(tables.SUGGESTION_INSERT_COLUMNS)}) VALUES", suggestion_rows)
-            counts["inserted"] += len(suggestion_rows)
-        if log is not None:
-            log("LLM suggestion page: companies=%d eligible=%d reused=%d called=%d failed=%d", len(page), len(eligible), counts["reused"], counts["called"], counts["failed"])
-        if stopped:
-            break
     return LlmCounts(
         companies=counts["companies"], pages=counts["pages"], eligible=counts["eligible"],
         skipped_single_source=counts["skipped_single_source"], would_reuse=counts["would_reuse"],
