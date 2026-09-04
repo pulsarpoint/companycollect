@@ -106,6 +106,17 @@ def test_bolagsverket_without_translation_keeps_the_swedish_text_as_description(
     assert _run(script, join_use_nulls=join_use_nulls) == ["Handel med kaffe\tsv\tHandel med kaffe"]
 
 
+def test_bolagsverket_without_deregistration_date_is_active() -> None:
+    row = (
+        "INSERT INTO corpscout.se_bolagsverket_companies (company_id, company_id_raw, legal_name, legal_form_code, "
+        "registration_date, activity_description, source_run_id, source_record_id, source_payload_hash, observed_at) VALUES "
+        "('5561111111', '5561111111$X', 'Open AB', 'AB-ORGFO', toDate32('1990-01-02'), 'Bakning', 'r', 'rec-b2', 'hb2', toDateTime64('2026-09-01 00:00:00', 3, 'UTC'))"
+    )
+    script = _schema() + [row, _insert(bolagsverket.bolagsverket_select_sql(), ["5561111111"]),
+                          f"SELECT status, description_language FROM {tables.QUALIFIED_SUGGESTION_TABLE} FINAL"]
+    assert _run(script, join_use_nulls=0) == ["active\tsv"]
+
+
 def test_esef_takes_the_newest_filing_and_upper_cases_the_lei() -> None:
     esef_rows = (
         "INSERT INTO corpscout.esef_document_company_information (source_document_id, package_sha256, lei, country_iso2, company_id, period_end, fiscal_year, extraction_status, company_description, description_language, model_provider, model_name, prompt_version, source_run_id, extracted_at, resolved_at) VALUES "
