@@ -388,6 +388,10 @@ EXPECTED_MIGRATIONS = (
     "000373_corpscout_se_scb_companies",
     "000374_corpscout_se_bolagsverket_companies",
     "000375_corpscout_retire_se_company_registry",
+    "000376_corpscout_se_company_basic_info_suggestion",
+    "000377_corpscout_se_company_basic_info",
+    "000378_corpscout_se_company_basic_info_history",
+    "000379_corpscout_se_company_basic_info_precedence",
 )
 
 NOOP_MIGRATIONS = {"000276_noop"}

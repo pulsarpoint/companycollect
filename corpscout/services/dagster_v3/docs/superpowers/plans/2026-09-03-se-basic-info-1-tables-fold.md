@@ -1846,7 +1846,7 @@ Run by the coordinator after the branch is merged to main, each step confirmed w
 - [ ] **Step 2: Apply 000376, 000377, 000378, 000379** one at a time with `make -C <checkout>/corpscout clickhouse-migrate-up-one` (needs `corpscout/.env` in that checkout), reading the version after each (`376`, `377`, `378`, `379`, all clean).
 - [ ] **Step 3: Confirm** the four tables exist and are empty: `SELECT name, engine, total_rows FROM system.tables WHERE database = 'corpscout' AND name LIKE 'se_company_basic_info%' ORDER BY name`.
 - [ ] **Step 4: Deploy** from a pristine worktree of the merged commit (the light_sync recipe: `.env` copied, `uv sync --frozen`, the two `dbt parse` calls, `dg utils refresh-defs-state`, `dg check defs`, then `ANSIBLE_BECOME_TIMEOUT=60 ansible-playbook -i inventory.ini light_sync.yml` with the RC captured; `failed=0` in the recap).
-- [ ] **Step 5: Materialize `se_company_basic_info_precedence_clickhouse`** from the UI or GraphQL; expected metadata `pairs` = 33 (the sum of the eight maps), `stale_pairs` = 0. Confirm: `SELECT count() FROM corpscout.se_company_basic_info_precedence FINAL` = 33.
+- [ ] **Step 5: Materialize `se_company_basic_info_precedence_clickhouse`** from the UI or GraphQL; expected metadata `pairs` = 30 (the sum of the eight maps: 5+3+4+4+2+2+6+4), `stale_pairs` = 0. Confirm: `SELECT count() FROM corpscout.se_company_basic_info_precedence FINAL` = 30.
 - [ ] **Step 6: Smoke the targeted fold on an empty table:** launch `se_company_basic_info_fold_companies` with `company_ids: ["5560000000"]`; expected metadata `companies` 1, `unpublished` 1, no rows written.
 
 ---
@@ -1857,6 +1857,6 @@ Run by the coordinator after the branch is merged to main, each step confirmed w
 
 **Deliberately not in this slice:** the `max_removed_fraction` guard parked in the slice-0 handoff belongs to the source-table publisher, not the fold; reviewer-row semantics beyond the table shape (slice 3); the extract job and weekly schedule (slice 2).
 
-**Placeholder scan.** No TBD/TODO. Task 8 Step 5's `33` is computed from the section-4 maps (5+3+4+4+2+2+6+4). Task 7 Step 3's `<YYYY-MM-DD>` is the day Task 6 is committed, filled at execution.
+**Placeholder scan.** No TBD/TODO. Task 8 Step 5's `30` is computed from the section-4 maps (5+3+4+4+2+2+6+4; an earlier draft said 33, corrected during execution). Task 7 Step 3's `<YYYY-MM-DD>` is the day Task 6 is committed, filled at execution.
 
 **Type consistency.** `Suggestion`'s fields = `_SUGGESTION_SELECT_COLUMNS` order (`company_id, source, source_record_uid, observed_at, *VALUE_COLUMNS`) — `suggestion_from_row` zips them by name so order matters only in the SELECT. `BasicInfoRow.as_tuple` follows `tables.MAIN_COLUMNS`; `main_row_from_row` zips `_MAIN_COMPARE_COLUMNS` (MAIN_COLUMNS minus the three run columns) and fills `fold_version`/`source_run_id` with `''`, which `changed_fields_against` never compares. `history_rows` = `(*main_tuple, changed_fields)` = `HISTORY_COLUMNS` order. `FoldCounts` fields are used identically in Tasks 4 and 6 (`as_metadata`). `BUCKET_COUNT` is defined once in `batch.py` and imported by `assets.py`; the SQL uses `modulo(cityHash64(company_id), 64)` with the literal from the same constant. `precedence_rows()` returns `(field, source, precedence)` and Task 6 appends `exported_at` in `PRECEDENCE_COLUMNS` order.
