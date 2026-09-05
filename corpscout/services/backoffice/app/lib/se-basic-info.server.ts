@@ -1,4 +1,4 @@
-import { chInsertSeBasicInfoSuggestions, chQuery } from "~/lib/clickhouse.server";
+import { chInsertSeBasicInfoPrecedence, chQuery } from "~/lib/clickhouse.server";
 import {
   ASSET_JOB_NAME,
   dagsterRunUrl,
@@ -6,12 +6,7 @@ import {
   SE_BASIC_INFO_FOLD_COMPANIES_ASSET,
 } from "~/lib/dagster.server";
 import type { SeBasicInfoDecision } from "~/lib/se-basic-info-decision-form";
-import {
-  basicInfoFieldLabel,
-  basicInfoSourceLabel,
-  foldPending,
-  type SeBasicInfoField,
-} from "~/lib/se-basic-info-fields";
+import { basicInfoFieldLabel, basicInfoSourceLabel, foldPending } from "~/lib/se-basic-info-fields";
 
 /**
  * The Info tab's reads over the basic-info entity (spec 2026-09-03, sections
@@ -78,9 +73,17 @@ export interface SeBasicInfoHistoryRow {
 }
 
 export interface SeBasicInfoPrecedenceRow {
+  company_id: string;
   field: string;
   source: string;
   precedence: number;
+  /** 1 when this rule has been withdrawn (a Release); the row still exists so
+   * a re-fold can see it was newer than the last publish. */
+  removed: number;
+  decided_by: string;
+  note: string;
+  /** `YYYY-MM-DD HH:MM:SS.mmm` UTC. */
+  decided_at: string;
 }
 
 export interface SeBasicInfoLegalFormLabel {
@@ -94,7 +97,12 @@ export interface SeBasicInfoDetail {
   info: SeBasicInfoRow | null;
   suggestions: SeBasicInfoSuggestionRow[];
   history: SeBasicInfoHistoryRow[];
+  /** The 30 global rows the code exports (`company_id = ''`). */
   precedence: SeBasicInfoPrecedenceRow[];
+  /** This company's own rules that are still in force (`removed = 0`); each
+   * overrides (or, for a source the global map does not rank, adds) the
+   * global row for the same (field, source). */
+  rules: SeBasicInfoPrecedenceRow[];
   /** Keyed by legal-form code: every code on the main row or any suggestion. */
   legalFormLabels: Record<string, SeBasicInfoLegalFormLabel>;
   foldPending: boolean;
@@ -156,10 +164,16 @@ ORDER BY h.folded_at DESC
 LIMIT 200`;
 
 export const BASIC_INFO_PRECEDENCE_SQL = `SELECT
+  p.company_id AS company_id,
   toString(p.field) AS field,
   toString(p.source) AS source,
-  toUInt32(p.precedence) AS precedence
+  toUInt32(p.precedence) AS precedence,
+  toUInt8(p.removed) AS removed,
+  toString(p.decided_by) AS decided_by,
+  p.note AS note,
+  toString(p.decided_at) AS decided_at
 FROM corpscout.se_company_basic_info_precedence AS p FINAL
+WHERE p.company_id IN ('', {companyId:String})
 ORDER BY p.field, p.precedence DESC`;
 
 /** The curated dictionary for every code on the page at once; argMax over
@@ -179,14 +193,17 @@ interface LegalFormLabelQueryRow extends SeBasicInfoLegalFormLabel {
 export async function loadSeBasicInfoDetail(
   companyId: string,
 ): Promise<SeBasicInfoDetail | null> {
-  const [infoRows, suggestions, history, precedence] = await Promise.all([
+  const [infoRows, suggestions, history, precedenceRows] = await Promise.all([
     chQuery<SeBasicInfoRow>(BASIC_INFO_SQL, { companyId }),
     chQuery<SeBasicInfoSuggestionRow>(BASIC_INFO_SUGGESTIONS_SQL, { companyId }),
     chQuery<SeBasicInfoHistoryRow>(BASIC_INFO_HISTORY_SQL, { companyId }),
-    chQuery<SeBasicInfoPrecedenceRow>(BASIC_INFO_PRECEDENCE_SQL),
+    chQuery<SeBasicInfoPrecedenceRow>(BASIC_INFO_PRECEDENCE_SQL, { companyId }),
   ]);
   const info = infoRows[0] ?? null;
   if (!info && suggestions.length === 0) return null;
+  const precedence = precedenceRows.filter((row) => row.company_id === "");
+  const companyRows = precedenceRows.filter((row) => row.company_id !== "");
+  const rules = companyRows.filter((row) => row.removed === 0);
   const codes = [
     ...new Set(
       [info?.legal_form_code ?? "", ...suggestions.map((row) => row.legal_form_code)].filter(
@@ -207,11 +224,14 @@ export async function loadSeBasicInfoDetail(
     suggestions,
     history,
     precedence,
+    rules,
     legalFormLabels,
-    foldPending: foldPending(
-      info?.folded_at ?? null,
-      suggestions.map((row) => row.suggested_at),
-    ),
+    // A release must also read as pending until folded, so every one of this
+    // company's rows counts here -- not just the active (removed = 0) ones.
+    foldPending: foldPending(info?.folded_at ?? null, [
+      ...suggestions.map((row) => row.suggested_at),
+      ...companyRows.map((row) => row.decided_at),
+    ]),
   };
 }
 
@@ -222,77 +242,44 @@ export function clickhouseStamp(date: Date): string {
   return date.toISOString().replace("T", " ").replace("Z", "");
 }
 
-const VALUE_FIELDS = [
-  "legal_name",
-  "legal_form_code",
-  "status",
-  "incorporation_date",
-  "lei",
-  "wikidata_id",
-  "description",
-  "description_language",
-  "description_sv",
-] as const;
-
-type ReviewerRowValues = Record<(typeof VALUE_FIELDS)[number], string | null>;
-
-/** The row as inserted: '' from the reads becomes NULL ("no opinion") here. */
-function reviewerValues(row: SeBasicInfoSuggestionRow | undefined): ReviewerRowValues {
-  const values = {} as ReviewerRowValues;
-  for (const field of VALUE_FIELDS) {
-    const value = row?.[field] ?? "";
-    values[field] = value === "" ? null : value;
-  }
-  return values;
-}
-
 /**
- * One reviewer decision = one new version of this company's reviewer row
- * (spec 3.2, 7): the current reviewer row's values, one field changed,
- * `observed_at`/`suggested_at` = the decision instant. Use this copies the
- * chosen source's value (and the language with a description); Release sets
- * the field (and that language) back to NULL.
+ * One reviewer decision = one new version of this company's precedence rule
+ * for the field (slice 3b: a decision is a rule, not a copied value). Use
+ * this refuses when the chosen source currently has no opinion on the field,
+ * then writes the rule at precedence 10000 (spec 4's reviewer rank) with
+ * `removed = 0`; Release writes the same key with `removed = 1`. Neither
+ * touches the folded row or any suggestion -- the next fold applies it.
  */
-export async function appendSeBasicInfoReviewerDecision(
+export async function appendSeBasicInfoRule(
   companyId: string,
   decision: Exclude<SeBasicInfoDecision, { intent: "fold-now" }>,
   now: Date = new Date(),
-): Promise<{ suggestedAt: string }> {
-  const suggestions = await chQuery<SeBasicInfoSuggestionRow>(BASIC_INFO_SUGGESTIONS_SQL, { companyId });
-  const values = reviewerValues(suggestions.find((row) => row.source === "reviewer"));
-  const field: SeBasicInfoField = decision.field;
+): Promise<{ decidedAt: string }> {
+  const { field, source, note } = decision;
   if (decision.intent === "use-this") {
-    const chosen = suggestions.find((row) => row.source === decision.source);
+    const suggestions = await chQuery<SeBasicInfoSuggestionRow>(BASIC_INFO_SUGGESTIONS_SQL, { companyId });
+    const chosen = suggestions.find((row) => row.source === source);
     const value = chosen?.[field] ?? "";
     if (value === "") {
       throw new SeBasicInfoDecisionError(
-        `${basicInfoSourceLabel(decision.source)} has no ${basicInfoFieldLabel(field).toLowerCase()} for this company.`,
+        `${basicInfoSourceLabel(source)} has no ${basicInfoFieldLabel(field).toLowerCase()} for this company.`,
       );
     }
-    values[field] = value;
-    if (field === "description") {
-      values.description_language = chosen?.description_language === "" ? null : (chosen?.description_language ?? null);
-    }
-  } else {
-    values[field] = null;
-    if (field === "description") values.description_language = null;
   }
   const stamp = clickhouseStamp(now);
-  await chInsertSeBasicInfoSuggestions([
+  await chInsertSeBasicInfoPrecedence([
     {
       company_id: companyId,
-      source: "reviewer",
-      source_record_uid: "",
-      observed_at: stamp,
-      ...values,
+      field,
+      source,
+      precedence: 10000,
+      removed: decision.intent === "release" ? 1 : 0,
       decided_by: "backoffice",
-      note: decision.note === "" ? null : decision.note,
-      suggested_at: stamp,
-      source_run_id: "backoffice",
-      extractor_version: "backoffice-v1",
+      note,
+      decided_at: stamp,
     },
   ]);
-  return { suggestedAt: stamp };
+  return { decidedAt: stamp };
 }
 
 export const FOLD_NOW_TAG = { "backoffice/basic-info": "fold-now" } as const;

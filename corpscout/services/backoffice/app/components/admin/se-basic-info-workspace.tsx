@@ -45,7 +45,7 @@ import type {
 import { cn } from "~/lib/utils";
 
 export type SeBasicInfoResult =
-  | { ok: true; suggestedAt: string }
+  | { ok: true; decidedAt: string }
   | { ok: true; launched: { runId: string; url: string | null } }
   | { ok: false; error: string }
   | null;
@@ -199,10 +199,26 @@ function FieldsCard({
   );
 }
 
-/** The panel's rows for one field: precedence order first, then any suggesting
- * source the table does not rank, then the rest of the catalogue. */
+/** Effective precedence per source for one field: the company's active rule
+ * when present, else the global row -- a rule may also rank a source the
+ * global map does not. */
+function effectivePrecedence(detail: SeBasicInfoDetail, field: SeBasicInfoField): Map<string, number> {
+  const effective = new Map<string, number>();
+  for (const row of detail.precedence) {
+    if (row.field === field) effective.set(row.source, row.precedence);
+  }
+  for (const row of detail.rules) {
+    if (row.field === field) effective.set(row.source, row.precedence);
+  }
+  return effective;
+}
+
+/** The panel's rows for one field: effective precedence order first, then any
+ * suggesting source neither table ranks, then the rest of the catalogue. */
 function panelSources(detail: SeBasicInfoDetail, field: SeBasicInfoField): string[] {
-  const ranked = detail.precedence.filter((row) => row.field === field).map((row) => row.source);
+  const ranked = [...effectivePrecedence(detail, field).entries()]
+    .sort((a, b) => b[1] - a[1])
+    .map(([source]) => source);
   const suggesting = detail.suggestions.map((row) => row.source);
   const ordered: string[] = [];
   for (const source of [...ranked, ...suggesting, ...BASIC_INFO_SOURCES]) {
@@ -235,9 +251,11 @@ function SuggestionsPanel({
     if (result) setPending(null);
   }, [result]);
   const winner = sourceOf(detail.info, selectedField);
-  const rankedSources = new Set(
-    detail.precedence.filter((row) => row.field === selectedField).map((row) => row.source),
-  );
+  const effective = effectivePrecedence(detail, selectedField);
+  const rankedSources = new Set(effective.keys());
+  // The rule in force for this field, if any: its source is the one the
+  // reviewer prefers, whether or not the last fold already agrees.
+  const ruledSource = detail.rules.find((row) => row.field === selectedField) ?? null;
   const rows = panelSources(detail, selectedField).map((source) => ({
     source,
     row: detail.suggestions.find((row) => row.source === source) ?? null,
@@ -285,28 +303,33 @@ function SuggestionsPanel({
             <AlertDescription>{result.error}</AlertDescription>
           </Alert>
         ) : null}
-        {result && result.ok && "suggestedAt" in result ? (
+        {result && result.ok && "decidedAt" in result ? (
           <Alert>
             <CheckCircle2Icon />
             <AlertTitle>Decision saved</AlertTitle>
-            <AlertDescription>Reviewer row written at {result.suggestedAt}. Fold now to publish it.</AlertDescription>
+            <AlertDescription>Rule written at {result.decidedAt}. Fold now to publish it.</AlertDescription>
           </Alert>
         ) : null}
         <ul className="flex flex-col gap-2">
           {rows.map(({ source, row }) => {
             const value = valueOf(row, selectedField);
-            const active = source !== "" && source === winner;
+            // The fold's current, published winner for this field -- distinct
+            // from `ruled` below, which is about the pending rule.
+            const foldedActive = source !== "" && source === winner;
             const hasValue = value !== "";
+            // This source holds the field's active rule: it is what the next
+            // fold will publish regardless of the global precedence map.
+            const ruled = ruledSource !== null && source === ruledSource.source;
             // A source with a value but no precedence rank for this field can
             // only win through Use this -- the fold will never pick it on its own.
-            const notRanked = hasValue && source !== "reviewer" && !rankedSources.has(source);
+            const notRanked = hasValue && !rankedSources.has(source);
             return (
               <li
                 key={source}
                 data-source={source}
                 className={cn(
                   "rounded-md border p-3 text-sm",
-                  active && "border-primary bg-primary/5",
+                  foldedActive && "border-primary bg-primary/5",
                   !hasValue && "text-muted-foreground opacity-70",
                 )}
               >
@@ -315,7 +338,8 @@ function SuggestionsPanel({
                   {notRanked ? (
                     <span className="text-muted-foreground text-xs">not ranked</span>
                   ) : null}
-                  {active ? <Badge>Active</Badge> : null}
+                  {foldedActive ? <Badge>Active</Badge> : null}
+                  {ruled ? <Badge variant="outline">preferred by reviewer</Badge> : null}
                   {row ? (
                     <span className="text-muted-foreground ml-auto text-xs">{row.observed_at}</span>
                   ) : null}
@@ -333,7 +357,10 @@ function SuggestionsPanel({
                   )}
                 </div>
                 {row?.note ? <p className="text-muted-foreground mt-1 text-xs">{row.note}</p> : null}
-                {hasValue && !active && source !== "reviewer" ? (
+                {ruled && ruledSource?.note ? (
+                  <p className="text-muted-foreground mt-1 text-xs">{ruledSource.note}</p>
+                ) : null}
+                {hasValue && !ruled ? (
                   <Button
                     type="button"
                     size="sm"
@@ -353,7 +380,7 @@ function SuggestionsPanel({
                     Use this
                   </Button>
                 ) : null}
-                {hasValue && source === "reviewer" ? (
+                {ruled ? (
                   <Button
                     type="button"
                     size="sm"
@@ -392,7 +419,7 @@ function SuggestionsPanel({
 export interface PendingDecision {
   intent: "use-this" | "release";
   field: SeBasicInfoField;
-  /** The suggesting source for Use this; `reviewer` for Release. */
+  /** The suggesting source for Use this; the ruled source for Release. */
   source: string;
   value: string;
   language: string;
@@ -427,8 +454,8 @@ export function DecisionDialogBody({
         </h2>
         <p className="text-muted-foreground text-sm">
           {release
-            ? "The reviewer's value is withdrawn and the next fold publishes the best source again."
-            : `The next fold publishes ${basicInfoSourceLabel(pending.source)}'s value as the reviewer's decision.`}
+            ? `The rule preferring ${basicInfoSourceLabel(pending.source)} for this field is withdrawn and the next fold applies the normal precedence.`
+            : `The next fold prefers ${basicInfoSourceLabel(pending.source)}'s value for this field once the rule is applied.`}
         </p>
       </DialogHeader>
       <div className="rounded-md border p-3 text-sm" data-testid="decision-value">
@@ -439,7 +466,7 @@ export function DecisionDialogBody({
       </div>
       <input type="hidden" name="intent" value={pending.intent} />
       <input type="hidden" name="field" value={pending.field} />
-      {release ? null : <input type="hidden" name="source" value={pending.source} />}
+      <input type="hidden" name="source" value={pending.source} />
       <label className="flex flex-col gap-1 text-sm" htmlFor="basic-info-note">
         <span className="text-muted-foreground text-xs">Why this value (optional)</span>
         <Input id="basic-info-note" name="note" maxLength={500} placeholder="Note saved with the decision" />

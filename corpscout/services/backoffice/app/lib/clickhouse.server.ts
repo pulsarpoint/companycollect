@@ -141,14 +141,15 @@ export async function chInsertSeCompanyInfoFieldValues<T extends object>(
   });
 }
 
-/** Append a reviewer-row version to the SE basic-info suggestion table; the
- * fold reads the newest version per (company_id, source) through FINAL. */
-export async function chInsertSeBasicInfoSuggestions<T extends object>(
+/** Append a precedence rule (or its release) to the SE basic-info precedence
+ * table; the fold reads the newest version per (company_id, field, source)
+ * through FINAL. */
+export async function chInsertSeBasicInfoPrecedence<T extends object>(
   values: T[],
 ): Promise<void> {
   if (values.length === 0) return;
   await getWriteClient().insert({
-    table: "se_company_basic_info_suggestion",
+    table: "se_company_basic_info_precedence",
     values,
     format: "JSONEachRow",
   });

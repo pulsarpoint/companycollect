@@ -3,7 +3,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 const clickhouse = vi.hoisted(() => ({ query: vi.fn(), insert: vi.fn() }));
 vi.mock("~/lib/clickhouse.server", () => ({
   chQuery: clickhouse.query,
-  chInsertSeBasicInfoSuggestions: clickhouse.insert,
+  chInsertSeBasicInfoPrecedence: clickhouse.insert,
 }));
 const dagster = vi.hoisted(() => ({ launchRun: vi.fn(), dagsterRunUrl: vi.fn(() => null) }));
 vi.mock("~/lib/dagster.server", () => ({
@@ -14,7 +14,7 @@ vi.mock("~/lib/dagster.server", () => ({
 }));
 
 import {
-  appendSeBasicInfoReviewerDecision,
+  appendSeBasicInfoRule,
   BASIC_INFO_HISTORY_SQL,
   BASIC_INFO_LEGAL_FORM_LABELS_SQL,
   BASIC_INFO_PRECEDENCE_SQL,
@@ -23,6 +23,7 @@ import {
   launchSeBasicInfoFold,
   loadSeBasicInfoDetail,
   SeBasicInfoDecisionError,
+  type SeBasicInfoPrecedenceRow,
   type SeBasicInfoRow,
   type SeBasicInfoSuggestionRow,
 } from "~/lib/se-basic-info.server";
@@ -74,6 +75,23 @@ export const BOLAGSVERKET_ROW: SeBasicInfoSuggestionRow = {
   extractor_version: "bolagsverket-v2",
 };
 
+const GLOBAL_PRECEDENCE_ROWS: SeBasicInfoPrecedenceRow[] = [
+  { company_id: "", field: "legal_name", source: "reviewer", precedence: 10000, removed: 0, decided_by: "", note: "", decided_at: "2026-01-01 00:00:00.000" },
+  { company_id: "", field: "legal_name", source: "scb", precedence: 1000, removed: 0, decided_by: "", note: "", decided_at: "2026-01-01 00:00:00.000" },
+  { company_id: "", field: "legal_name", source: "bolagsverket", precedence: 900, removed: 0, decided_by: "", note: "", decided_at: "2026-01-01 00:00:00.000" },
+];
+
+const COMPANY_RULE_ROW: SeBasicInfoPrecedenceRow = {
+  company_id: COMPANY,
+  field: "legal_form_code",
+  source: "scb",
+  precedence: 10000,
+  removed: 0,
+  decided_by: "backoffice",
+  note: "matches register",
+  decided_at: "2026-09-05 08:00:00.000",
+};
+
 function answer(sql: string): unknown[] {
   if (sql === BASIC_INFO_SQL) return [MAIN_ROW];
   if (sql === BASIC_INFO_SUGGESTIONS_SQL) return [BOLAGSVERKET_ROW];
@@ -87,13 +105,7 @@ function answer(sql: string): unknown[] {
       },
     ];
   }
-  if (sql === BASIC_INFO_PRECEDENCE_SQL) {
-    return [
-      { field: "legal_name", source: "reviewer", precedence: 10000 },
-      { field: "legal_name", source: "scb", precedence: 1000 },
-      { field: "legal_name", source: "bolagsverket", precedence: 900 },
-    ];
-  }
+  if (sql === BASIC_INFO_PRECEDENCE_SQL) return [...GLOBAL_PRECEDENCE_ROWS, COMPANY_RULE_ROW];
   if (sql === BASIC_INFO_LEGAL_FORM_LABELS_SQL) {
     return [{ code: "51", label_en: "Economic association (ekonomisk förening)", label_sv: "Ekonomisk förening" }];
   }
@@ -123,7 +135,16 @@ describe("se-basic-info.server", () => {
     // shared-column text those replacements start from.
     expect(BASIC_INFO_SUGGESTIONS_SQL).not.toContain("  s.legal_name AS legal_name");
     expect(BASIC_INFO_SUGGESTIONS_SQL).not.toContain("toString(s.status) AS status");
+    // The precedence table is scoped to the global rows and this company's own,
+    // FINAL so a released rule's newest version wins, bound by name.
     expect(BASIC_INFO_PRECEDENCE_SQL).toContain("FROM corpscout.se_company_basic_info_precedence AS p FINAL");
+    expect(BASIC_INFO_PRECEDENCE_SQL).toContain("WHERE p.company_id IN ('', {companyId:String})");
+    expect(BASIC_INFO_PRECEDENCE_SQL).toContain("toString(p.field) AS field");
+    expect(BASIC_INFO_PRECEDENCE_SQL).toContain("toString(p.source) AS source");
+    expect(BASIC_INFO_PRECEDENCE_SQL).toContain("toUInt32(p.precedence) AS precedence");
+    expect(BASIC_INFO_PRECEDENCE_SQL).toContain("toUInt8(p.removed) AS removed");
+    expect(BASIC_INFO_PRECEDENCE_SQL).toContain("toString(p.decided_by) AS decided_by");
+    expect(BASIC_INFO_PRECEDENCE_SQL).toContain("toString(p.decided_at) AS decided_at");
     expect(BASIC_INFO_LEGAL_FORM_LABELS_SQL).toContain("l.code IN {codes:Array(String)}");
     expect(BASIC_INFO_LEGAL_FORM_LABELS_SQL).toContain("code_type = 'legal_form'");
     // Every nullable value column reaches the page as '' (never null).
@@ -138,17 +159,39 @@ describe("se-basic-info.server", () => {
     expect(BASIC_INFO_SUGGESTIONS_SQL).toContain("ifNull(s.status, '') AS status");
   });
 
-  it("loads the detail and labels every legal-form code it saw", async () => {
+  it("loads the detail, splits global precedence from this company's rules, and labels every legal-form code it saw", async () => {
     const detail = await loadSeBasicInfoDetail(COMPANY);
     expect(detail).not.toBeNull();
     expect(detail?.info?.legal_form_code).toBe("51");
     expect(detail?.suggestions).toEqual([BOLAGSVERKET_ROW]);
     expect(detail?.history[0]?.changed_fields).toEqual(["legal_form_code"]);
-    expect(detail?.precedence).toHaveLength(3);
+    expect(detail?.precedence).toEqual(GLOBAL_PRECEDENCE_ROWS);
+    expect(detail?.rules).toEqual([COMPANY_RULE_ROW]);
     expect(detail?.legalFormLabels["51"]?.label_sv).toBe("Ekonomisk förening");
     expect(detail?.foldPending).toBe(true);
     const labelCall = clickhouse.query.mock.calls.find(([sql]) => sql === BASIC_INFO_LEGAL_FORM_LABELS_SQL);
     expect(labelCall?.[1]).toEqual({ codes: ["51"] });
+    const precedenceCall = clickhouse.query.mock.calls.find(([sql]) => sql === BASIC_INFO_PRECEDENCE_SQL);
+    expect(precedenceCall?.[1]).toEqual({ companyId: COMPANY });
+  });
+
+  it("computes foldPending from a company rule newer than the fold, even a released one", async () => {
+    clickhouse.query.mockImplementation(async (sql: string) => {
+      if (sql === BASIC_INFO_SUGGESTIONS_SQL) return [{ ...BOLAGSVERKET_ROW, suggested_at: "2026-09-01 00:00:00.000" }];
+      if (sql === BASIC_INFO_PRECEDENCE_SQL) {
+        return [
+          { company_id: "", field: "status", source: "scb", precedence: 1000, removed: 0, decided_by: "", note: "", decided_at: "2026-01-01 00:00:00.000" },
+          { company_id: COMPANY, field: "status", source: "bolagsverket", precedence: 10000, removed: 1, decided_by: "backoffice", note: "", decided_at: "2026-09-05 09:00:00.000" },
+        ];
+      }
+      return answer(sql);
+    });
+    const detail = await loadSeBasicInfoDetail(COMPANY);
+    // Released (removed = 1), so it is not an active rule...
+    expect(detail?.rules).toEqual([]);
+    // ...but it still counts toward fold-pending: a release must also read as
+    // pending until the next fold applies it.
+    expect(detail?.foldPending).toBe(true);
   });
 
   it("is null only when neither the main row nor a suggestion exists", async () => {
@@ -177,60 +220,62 @@ describe("se-basic-info.server", () => {
 
   const NOW = new Date("2026-09-04T19:30:00.123Z");
 
-  it("use-this copies the chosen source's value into a new reviewer-row version", async () => {
+  it("use-this inserts a precedence rule at 10000 after checking the source has a value", async () => {
     clickhouse.insert.mockReset();
-    const result = await appendSeBasicInfoReviewerDecision(
+    const result = await appendSeBasicInfoRule(
       COMPANY,
       { intent: "use-this", field: "legal_form_code", source: "bolagsverket", note: "register is right" },
       NOW,
     );
-    expect(result).toEqual({ suggestedAt: "2026-09-04 19:30:00.123" });
+    expect(result).toEqual({ decidedAt: "2026-09-04 19:30:00.123" });
     expect(clickhouse.insert).toHaveBeenCalledTimes(1);
     const [rows] = clickhouse.insert.mock.calls[0] as [Record<string, unknown>[]];
-    expect(rows).toHaveLength(1);
-    expect(rows[0]).toMatchObject({
-      company_id: COMPANY,
-      source: "reviewer",
-      source_record_uid: "",
-      observed_at: "2026-09-04 19:30:00.123",
-      suggested_at: "2026-09-04 19:30:00.123",
-      legal_form_code: "51",
-      // Fields the reviewer never decided stay NULL: no opinion.
-      legal_name: null,
-      status: null,
-      incorporation_date: null,
-      description: null,
-      description_language: null,
-      decided_by: "backoffice",
-      note: "register is right",
-      source_run_id: "backoffice",
-      extractor_version: "backoffice-v1",
-    });
+    expect(rows).toEqual([
+      {
+        company_id: COMPANY,
+        field: "legal_form_code",
+        source: "bolagsverket",
+        precedence: 10000,
+        removed: 0,
+        decided_by: "backoffice",
+        note: "register is right",
+        decided_at: "2026-09-04 19:30:00.123",
+      },
+    ]);
   });
 
-  it("use-this on description carries the language; release clears both", async () => {
+  it("release inserts the same shape with removed set, without reading suggestions", async () => {
     clickhouse.insert.mockReset();
-    await appendSeBasicInfoReviewerDecision(COMPANY, { intent: "use-this", field: "description", source: "bolagsverket", note: "" }, NOW);
-    const [[[first]]] = clickhouse.insert.mock.calls as [Record<string, unknown>[]][];
-    expect(first).toMatchObject({ description: BOLAGSVERKET_ROW.description, description_language: "sv" });
-    // The next version starts from the current reviewer row.
-    clickhouse.query.mockImplementation(async (sql: string) =>
-      sql === BASIC_INFO_SUGGESTIONS_SQL
-        ? [BOLAGSVERKET_ROW, { ...BOLAGSVERKET_ROW, source: "reviewer", legal_name: "", legal_form_code: "", status: "", incorporation_date: "", description: "Kept text", description_language: "sv", description_sv: "", decided_by: "backoffice" }]
-        : answer(sql),
+    clickhouse.query.mockReset();
+    clickhouse.query.mockImplementation(async (sql: string) => answer(sql));
+    const result = await appendSeBasicInfoRule(
+      COMPANY,
+      { intent: "release", field: "status", source: "bolagsverket", note: "" },
+      NOW,
     );
-    clickhouse.insert.mockReset();
-    await appendSeBasicInfoReviewerDecision(COMPANY, { intent: "release", field: "description", note: "" }, NOW);
-    const [[[second]]] = clickhouse.insert.mock.calls as [Record<string, unknown>[]][];
-    expect(second).toMatchObject({ description: null, description_language: null, note: null });
+    expect(result).toEqual({ decidedAt: "2026-09-04 19:30:00.123" });
+    const [rows] = clickhouse.insert.mock.calls[0] as [Record<string, unknown>[]];
+    expect(rows).toEqual([
+      {
+        company_id: COMPANY,
+        field: "status",
+        source: "bolagsverket",
+        precedence: 10000,
+        removed: 1,
+        decided_by: "backoffice",
+        note: "",
+        decided_at: "2026-09-04 19:30:00.123",
+      },
+    ]);
+    expect(clickhouse.query).not.toHaveBeenCalled();
   });
 
   it("refuses a source with no opinion on the field", async () => {
     await expect(
-      appendSeBasicInfoReviewerDecision(COMPANY, { intent: "use-this", field: "lei", source: "bolagsverket", note: "" }, NOW),
+      appendSeBasicInfoRule(COMPANY, { intent: "use-this", field: "lei", source: "bolagsverket", note: "" }, NOW),
     ).rejects.toBeInstanceOf(SeBasicInfoDecisionError);
     await expect(
-      appendSeBasicInfoReviewerDecision(COMPANY, { intent: "use-this", field: "status", source: "scb", note: "" }, NOW),
+      appendSeBasicInfoRule(COMPANY, { intent: "use-this", field: "status", source: "scb", note: "" }, NOW),
     ).rejects.toThrow("SCB has no status for this company.");
   });
 
