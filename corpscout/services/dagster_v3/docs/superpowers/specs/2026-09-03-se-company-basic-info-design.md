@@ -293,6 +293,15 @@ One plan each, executed in order with subagent-driven development:
    reads `se_company_info` (slice 4/5) -- the card says so. A company neither
    `se_companies` nor `se_company_info` knows (an ESEF-only suggestion) is still the
    layout's 404 until the shell reads the new tables.
+   Slice 3b, 2026-09-05 (plan `2026-09-05-se-basic-info-3b-company-rules.md`, merged as
+   61d55ef3): reviewer decisions are per-company precedence rules. Migration 000381
+   recreated the precedence table with the company scope (ledger 381; 000380 was taken by
+   the Wikipedia-articles migration), the export wrote the 30 global rows, the one value
+   decision (Handelsbanken 5020077862, description from bolagsverket) was converted into a
+   rule and re-folded. Smoke on the dev server: Use this wrote a rule and the fold
+   published Bolagsverket's status through it; a second Use this on SCB retired the first
+   rule in the same write; Release plus a fold returned the field to global precedence.
+   Open: the reviewer-vs-rule tie at 10000 is settled when Edit ships (section 4 note).
 4. Cutover (owner-gated prod steps) and retirement of the old publisher, the field-registry code and the three `se_company_info_*` artifacts.
 5. The spine switch: every `se_companies` reader to `se_company_basic_info`, then the `se_companies` builder and table go.
 6. The sensor, as its own later spec.
