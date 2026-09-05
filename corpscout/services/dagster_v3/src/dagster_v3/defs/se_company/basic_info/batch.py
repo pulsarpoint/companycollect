@@ -95,6 +95,26 @@ def main_watermarks_sql() -> str:
     )
 
 
+def rule_watermarks_sql() -> str:
+    return (
+        "SELECT company_id, max(decided_at) AS decided_at\n"
+        f"FROM {tables.QUALIFIED_PRECEDENCE_TABLE}\n"
+        "WHERE company_id IN %(company_ids)s\n"
+        "GROUP BY company_id"
+    )
+
+
+def company_rules_sql() -> str:
+    """The page's active (non-removed) rules, newest version per (company_id, field,
+    source) via FINAL. A company's rules replace the global precedence number for that
+    (field, source) pair in fold_basic_info (spec section 4, amended 2026-09-05)."""
+    return (
+        "SELECT company_id, field, source, precedence\n"
+        f"FROM {tables.QUALIFIED_PRECEDENCE_TABLE} FINAL\n"
+        "WHERE company_id IN %(company_ids)s AND removed = 0"
+    )
+
+
 def current_suggestions_sql() -> str:
     return (
         f"SELECT {', '.join(_SUGGESTION_SELECT_COLUMNS)}\n"
@@ -127,6 +147,16 @@ def suggestion_from_row(row: Sequence[Any]) -> Suggestion:
     return Suggestion(**dict(zip(_SUGGESTION_SELECT_COLUMNS, row)))
 
 
+def rules_by_company(rows: Sequence[Sequence[Any]]) -> dict[str, dict[str, dict[str, int]]]:
+    """(company_id, field, source, precedence) rows, as read by company_rules_sql, ->
+    company -> field -> source -> precedence, ready to pass as fold_basic_info's `rules`
+    kwarg for that company."""
+    out: dict[str, dict[str, dict[str, int]]] = defaultdict(lambda: defaultdict(dict))
+    for company_id, field, source, precedence in rows:
+        out[company_id][field][source] = int(precedence)
+    return {company: dict(fields) for company, fields in out.items()}
+
+
 # Comparison only: the row is read from _MAIN_COMPARE_COLUMNS, which excludes folded_at,
 # fold_version and source_run_id, so those two are filled with "" purely to satisfy the
 # dataclass. Never pass the result to as_tuple -- writing it would put an empty
@@ -142,6 +172,10 @@ def _pages(items: Sequence[str], size: int) -> list[list[str]]:
 
 
 def _changed_company_ids(client: Any, company_ids: list[str]) -> list[str]:
+    """The companies to re-fold: those with a main row older than their newest suggestion
+    or their newest active rule, and those with no main row yet. A company with an active
+    rule but no suggestion stays out -- there is nothing for the rule to decide (spec
+    section 4, amended 2026-09-05)."""
     params = {"company_ids": company_ids}
     suggested = dict(
         client.execute(suggestion_watermarks_sql(), params, settings=ID_BOUND_QUERY_SETTINGS)
@@ -149,12 +183,20 @@ def _changed_company_ids(client: Any, company_ids: list[str]) -> list[str]:
     folded = dict(
         client.execute(main_watermarks_sql(), params, settings=ID_BOUND_QUERY_SETTINGS)
     )
-    return [
-        company_id
-        for company_id in company_ids
-        if company_id in suggested
-        and (company_id not in folded or suggested[company_id] > folded[company_id])
-    ]
+    ruled = dict(
+        client.execute(rule_watermarks_sql(), params, settings=ID_BOUND_QUERY_SETTINGS)
+    )
+    changed: list[str] = []
+    for company_id in company_ids:
+        if company_id not in suggested:
+            continue
+        newest = suggested[company_id]
+        rule_mark = ruled.get(company_id)
+        if rule_mark is not None and rule_mark > newest:
+            newest = rule_mark
+        if company_id not in folded or newest > folded[company_id]:
+            changed.append(company_id)
+    return changed
 
 
 def fold_companies(
@@ -171,7 +213,10 @@ def fold_companies(
     `folded_at` advances and the `changed_only` selection converges (owner decision
     2026-09-04); a history row is added only when a value or source changed against the
     current main row. A full re-fold with `changed_only=False` rewrites every published
-    row, which is fine for a manual backfill."""
+    row, which is fine for a manual backfill. Each page also reads its companies' active
+    precedence rules and passes them to fold_basic_info, so a reviewer's per-company
+    decision (spec section 4, amended 2026-09-05) applies on the next fold, not just the
+    export."""
     # Sorted, de-duplicated, validated: the helper raises "Sweden company ids must be 10
     # or 12 digits" on a bad id, before any query.
     ids = list(normalized_se_company_ids(company_ids))
@@ -195,11 +240,17 @@ def fold_companies(
                 current_main_rows_sql(), params, settings=ID_BOUND_QUERY_SETTINGS
             )
         }
+        rules = rules_by_company(
+            client.execute(company_rules_sql(), params, settings=ID_BOUND_QUERY_SETTINGS)
+        )
         main_rows: list[tuple[Any, ...]] = []
         history_rows: list[tuple[Any, ...]] = []
         for company_id in scope:
             folded_row = fold_basic_info(
-                company_id, by_company.get(company_id, []), source_run_id=source_run_id
+                company_id,
+                by_company.get(company_id, []),
+                source_run_id=source_run_id,
+                rules=rules.get(company_id),
             )
             if folded_row is None:
                 unpublished += 1
