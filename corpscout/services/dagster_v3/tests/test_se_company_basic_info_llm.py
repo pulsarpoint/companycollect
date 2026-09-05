@@ -43,10 +43,17 @@ def row(company_id, source, *, legal_name=None, description=None, language=None,
 def test_scope_sql_gates_on_two_text_sources_newer_than_the_llm_row() -> None:
     sql = llm_scope_sql()
     assert f"FROM {tables.QUALIFIED_SUGGESTION_TABLE} FINAL" in sql
-    # The reviewer is not a source text to merge: it neither pushes a company past the
-    # two-source gate nor counts as new evidence the model has not seen.
-    assert "uniqExactIf(source, source NOT IN ('llm', 'reviewer') AND description IS NOT NULL) AS text_sources" in sql
-    assert "maxIf(observed_at, source NOT IN ('llm', 'reviewer') AND description IS NOT NULL) AS newest_text" in sql
+    # Neither the reviewer nor an unactivated draft is a source text to merge: they
+    # neither push a company past the two-source gate nor count as new evidence the
+    # model has not seen.
+    assert (
+        "uniqExactIf(source, source NOT IN ('llm', 'reviewer', 'reviewer_draft') "
+        "AND description IS NOT NULL) AS text_sources" in sql
+    )
+    assert (
+        "maxIf(observed_at, source NOT IN ('llm', 'reviewer', 'reviewer_draft') "
+        "AND description IS NOT NULL) AS newest_text" in sql
+    )
     # suggested_at, not observed_at: a reused answer keeps the observation's created_at as
     # its observed_at, so only suggested_at makes the scan converge.
     assert "maxIf(suggested_at, source = 'llm') AS llm_suggested" in sql

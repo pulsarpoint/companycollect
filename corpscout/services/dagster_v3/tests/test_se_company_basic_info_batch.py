@@ -106,6 +106,8 @@ def test_sql_texts_bind_company_ids_and_read_final_rows() -> None:
     assert "ORDER BY company_id, source" in current_suggestions_sql()
     assert f"FROM {tables.QUALIFIED_MAIN_TABLE} FINAL" in current_main_rows_sql()
     assert "max(suggested_at)" in suggestion_watermarks_sql()
+    # A draft never counts as a change: saving one must not wake the company's watermark.
+    assert "WHERE company_id IN %(company_ids)s AND source != 'reviewer_draft'" in suggestion_watermarks_sql()
     assert "max(folded_at)" in main_watermarks_sql()
     assert "modulo(cityHash64(company_id), 64) = %(bucket)s" in bucket_company_ids_sql()
     assert "%" not in bucket_company_ids_sql().replace("%(bucket)s", "")

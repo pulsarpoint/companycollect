@@ -98,9 +98,9 @@ def llm_scope_sql() -> str:
     source texts it merged, so comparing against it would re-select the company on every
     scan. `suggested_at` is when this pipeline wrote the row, so the scan converges.
 
-    Reviewer rows are out of both aggregates: a human decision is not a source text to
-    merge, and it must not push a company past the two-source gate or make its own edit
-    look like new evidence the model has not seen.
+    Reviewer rows -- activated or an unactivated draft -- are out of both aggregates: a
+    human decision is not a source text to merge, and it must not push a company past the
+    two-source gate or make its own edit look like new evidence the model has not seen.
 
     The whole id set, unpaged: `scope_pages` runs this once into a scratch table and
     keyset-pages that, so the FINAL read of the suggestion table happens once per run.
@@ -108,8 +108,8 @@ def llm_scope_sql() -> str:
     return (
         "SELECT company_id FROM (\n"
         "    SELECT company_id,\n"
-        "        uniqExactIf(source, source NOT IN ('llm', 'reviewer') AND description IS NOT NULL) AS text_sources,\n"
-        "        maxIf(observed_at, source NOT IN ('llm', 'reviewer') AND description IS NOT NULL) AS newest_text,\n"
+        "        uniqExactIf(source, source NOT IN ('llm', 'reviewer', 'reviewer_draft') AND description IS NOT NULL) AS text_sources,\n"
+        "        maxIf(observed_at, source NOT IN ('llm', 'reviewer', 'reviewer_draft') AND description IS NOT NULL) AS newest_text,\n"
         "        maxIf(suggested_at, source = 'llm') AS llm_suggested,\n"
         "        countIf(source = 'llm') AS llm_rows\n"
         f"    FROM {tables.QUALIFIED_SUGGESTION_TABLE} FINAL\n"

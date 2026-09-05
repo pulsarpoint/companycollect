@@ -36,7 +36,11 @@ converges instead of re-selecting an unchanged company forever; `page_size` (def
 2026-09-05: `changed_only` also wakes a company whose newest rule version (released ones
 included: `max(decided_at)` over every version) is newer than its `folded_at`, so a reviewer decision re-folds the
 company on the next run even when no suggestion changed; a rule on a company with no
-suggestion row stays out, since there is nothing to fold.
+suggestion row stays out, since there is nothing to fold. Amended 2026-09-05 (slice 3c):
+the reviewer is 20000 in every field's map, above the highest company rule (10000), so an
+activated reviewer value always wins; `reviewer_draft` (a reviewer's typed-but-not-yet-
+activated value) has no precedence entry at all, so the fold never picks it and the
+suggestion watermark excludes it, so saving a draft does not wake `changed_only`.
 
 ## Extractors (slice 2)
 
