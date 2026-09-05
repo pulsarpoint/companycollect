@@ -71,4 +71,8 @@ MAIN_COLUMNS: tuple[str, ...] = (
 
 HISTORY_COLUMNS: tuple[str, ...] = (*MAIN_COLUMNS, "changed_fields")
 
-PRECEDENCE_COLUMNS: tuple[str, ...] = ("field", "source", "precedence", "exported_at")
+# The precedence table with its company scope (spec 3.5, amended 2026-09-05): '' is a
+# global rule exported from code; a company id is a reviewer rule for that company only.
+PRECEDENCE_COLUMNS: tuple[str, ...] = (
+    "company_id", "field", "source", "precedence", "removed", "decided_by", "note", "decided_at",
+)

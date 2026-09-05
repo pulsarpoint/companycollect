@@ -15,6 +15,7 @@ import pytest
 from dagster_v3.defs.se_company.basic_info import tables
 from dagster_v3.defs.se_company.basic_info.batch import (
     bucket_company_ids_sql,
+    company_rules_sql,
     current_main_rows_sql,
     current_suggestions_sql,
     history_insert_sql,
@@ -31,7 +32,7 @@ MIGRATIONS = (
     "000376_corpscout_se_company_basic_info_suggestion.up.sql",
     "000377_corpscout_se_company_basic_info.up.sql",
     "000378_corpscout_se_company_basic_info_history.up.sql",
-    "000379_corpscout_se_company_basic_info_precedence.up.sql",
+    "000381_corpscout_se_company_basic_info_precedence_rules.up.sql",
 )
 
 
@@ -80,6 +81,17 @@ def _suggestion(company_id: str, source: str, suggested_at: str, *, legal_name: 
         "(company_id, source, source_record_uid, observed_at, legal_name, status, suggested_at, source_run_id, extractor_version) VALUES "
         f"('{company_id}', '{source}', '{source}-uid', toDateTime64('{suggested_at}', 3, 'UTC'), "
         f"{lit(legal_name)}, {lit(status)}, toDateTime64('{suggested_at}', 3, 'UTC'), 'run-1', 'x-v1')"
+    )
+
+
+def _rule(
+    company_id: str, field: str, source: str, precedence: int, decided_at: str, *, removed: int = 0
+) -> str:
+    return (
+        f"INSERT INTO {tables.QUALIFIED_PRECEDENCE_TABLE} "
+        "(company_id, field, source, precedence, removed, decided_by, note, decided_at) VALUES "
+        f"('{company_id}', '{field}', '{source}', {precedence}, {removed}, 'reviewer', '', "
+        f"toDateTime64('{decided_at}', 3, 'UTC'))"
     )
 
 
@@ -151,3 +163,30 @@ def test_main_and_history_inserts_accept_the_batch_row_shape(join_use_nulls: int
     assert lines[0].startswith("5560000000\tX AB\tscb\t\\N\t\tactive\tscb\t1990-01-02\tscb")
     assert lines[1] == "5560000000\t2026-09-03 12:00:00.000"
     assert lines[2] == "5560000000\t['legal_name','status','incorporation_date']"
+
+
+def test_company_rules_sql_reads_only_that_companys_active_rule() -> None:
+    """A global rule (company_id '') never answers a company-scoped read; a company rule
+    for a different company is likewise excluded -- only the exact company's own row
+    comes back."""
+    script = _schema_statements() + [
+        _rule("", "status", "scb", 1000, "2026-09-01 00:00:00"),
+        _rule("5561111111", "status", "bolagsverket", 10000, "2026-09-01 00:00:00"),
+        _rule("5560000000", "status", "bolagsverket", 10000, "2026-09-02 00:00:00"),
+        _bind(company_rules_sql(), company_ids=["5560000000"]),
+    ]
+    lines = _run(script, join_use_nulls=0)
+    assert lines == ["5560000000\tstatus\tbolagsverket\t10000"]
+
+
+def test_a_later_removed_version_of_the_same_rule_key_disappears() -> None:
+    """ReplacingMergeTree keeps only the newest decided_at per (company_id, field,
+    source); marking that newest version removed makes company_rules_sql (removed = 0)
+    return nothing for the key, even though FINAL still holds a row for it."""
+    script = _schema_statements() + [
+        _rule("5560000000", "status", "bolagsverket", 10000, "2026-09-02 00:00:00"),
+        _rule("5560000000", "status", "bolagsverket", 10000, "2026-09-03 00:00:00", removed=1),
+        _bind(company_rules_sql(), company_ids=["5560000000"]),
+    ]
+    lines = _run(script, join_use_nulls=0)
+    assert lines == []

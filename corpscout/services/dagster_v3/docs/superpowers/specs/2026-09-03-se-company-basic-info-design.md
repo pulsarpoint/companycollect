@@ -108,6 +108,22 @@ Written by the fold when the folded row differs from the current main row, inclu
 
 The precedence table as exported from code: `field, source, precedence UInt32, exported_at` (ReplacingMergeTree(exported_at) ORDER BY (field, source)). Read by the backoffice for display and validation. Never edited in ClickHouse.
 
+Amended 2026-09-05 (owner decision, slice 3b): the table gains a company scope so a reviewer decision is a precedence rule for one company, not a copied value.
+
+```
+company_id String            -- '' for the global rules exported from code
+field LowCardinality(String)
+source LowCardinality(String)
+precedence UInt32
+removed UInt8 DEFAULT 0      -- 1 = a released company rule (the newest version wins)
+decided_by LowCardinality(String) DEFAULT ''   -- 'code' for exports, 'backoffice' for decisions
+note String DEFAULT ''
+decided_at DateTime64(3, 'UTC')   -- the export or decision instant, the version
+ENGINE = ReplacingMergeTree(decided_at) ORDER BY (company_id, field, source)
+```
+
+The export writes only `company_id = ''` rows and can never touch a decision; the backoffice writes only company rows, one version per decision, and Release is a new version with `removed = 1`, never a delete. Migration 000381 recreates the table (its content is regenerable: 30 exported rows) and retires 000379's shape.
+
 ## 4. Precedence
 
 In Python, `dagster_v3.defs.se_company.basic_info.precedence`:
@@ -127,13 +143,15 @@ BASIC_INFO_PRECEDENCE: dict[str, dict[str, int]] = {
 
 The numbers are the owner's to adjust in review; gaps leave room for new sources. A source absent from a field's map cannot supply that field. `description_language` is not in the map: it follows the winning `description` row.
 
+Amended 2026-09-05 (slice 3b): a company may carry its own rules, `(company_id, field, source, precedence)`, written by the backoffice. The effective precedence of a source for a field is the company's active rule when one exists, otherwise the global number; a company rule may also rank a source the global map does not name, which makes that source able to supply the field for that company only. "Use this" writes a rule at 10000; a low number demotes a source for one company. The reviewer stays a source in the suggestion table only for values no source has (Edit, deferred). Note for Edit: the reviewer's own value and a company rule both sit at 10000, so a reviewer value for a field ties with a rule and the fold breaks the tie on `observed_at`; when Edit ships, decide the order explicitly (a typed value should probably outrank a preference) and pin it with a test. Until then no reviewer value rows exist (the 2026-09-05 conversion nulled the one there was).
+
 Amended 2026-09-04 (slice 2): the register text comes from Bolagsverket's `activity_description`, so the `description` and `description_sv` maps name `bolagsverket` where they named `scb`.
 
 ## 5. The fold
 
 `fold_basic_info(company_id, suggestions) -> BasicInfoRow | None`, a pure function:
 
-1. Per field: among the suggestion rows whose value is not NULL and whose source has a precedence for the field, the highest precedence wins; ties go to the newest `observed_at`, then the smaller `source_record_uid`.
+1. Per field: among the suggestion rows whose value is not NULL and whose source has a precedence for the field, the highest precedence wins; ties go to the newest `observed_at`, then the smaller `source_record_uid`. Amended 2026-09-05: the fold takes the company's active rules (`rules[field][source] = precedence`) and they replace the global number per source and field; the batch layer reads them per page from the precedence table (`company_id IN page AND removed = 0`, FINAL) and the changed-only selection also wakes a company whose newest rule is later than its `folded_at`.
 2. `description_language` is copied from the row that won `description`.
 3. If no SCB or Bolagsverket row supplies `legal_name`, return None.
 4. The row carries `fold_version` (a module constant, bumped when the logic changes) and the run id.
@@ -169,6 +187,8 @@ Reviewer actions: Use this, Edit, Release. Each reads the current reviewer row, 
 After a decision the page shows the reviewer row and a "fold pending" marker when the reviewer row is newer than `folded_at`. A Fold now button launches `se_company_basic_info_fold_companies` for the company through the existing Dagster launch helper; the page reloads when the run finishes.
 
 Pipeline sheet: extract job, fold partitions, suggestions per source, pending folds, LLM preview counts. Every reader of `se_companies` moves to `se_company_basic_info` in the spine slice.
+
+Amended 2026-09-05 (owner decision, slice 3b): "Use this" no longer copies a value into the reviewer row; it inserts a company rule `(company_id, field, source, 10000, decided_by 'backoffice', note)` into the precedence table, so the chosen source's *current* value flows through every later fold exactly as an automatic pick does, and a change in that source is a history row like any other. "Release" inserts the rule's `removed = 1` version. The panel orders sources by effective precedence, marks the ruled source "preferred by reviewer" with its note, and "fold pending" also considers a rule newer than the fold. The reviewer row's value columns are reserved for Edit.
 
 Amended 2026-09-04 (owner decision, slice 3 scope and layout): the admin company page's first tab (Info, `/admin/se/company/:companyId/info`) is replaced by a two-column page, two thirds and one third. Left: one card with the nine basic-info fields as rows (`legal_name`, `legal_form_code` with its `se_code_labels` label, `status`, `incorporation_date`, `lei`, `wikidata_id`, `description` with `description_language`, `description_sv`), each row showing the value and the source that won it, a footer with `folded_at`, `fold_version` and `source_run_id`, and a collapsed history card beneath. Right: a sticky panel for the selected field (URL search parameter `field`, default `legal_name`) listing that field's current suggestion rows ordered by precedence, each with value, source and `observed_at`, the winning source marked active, sources without an opinion greyed at the bottom. Actions in this slice: Use this and Release (each inserts a new reviewer row version), the "fold pending" marker, and Fold now (launches `se_company_basic_info_fold_companies` for the company). Edit (free text) and the basic-info pipeline sheet are later follow-ups. The old review workspace component and its route test are deleted with the switch; the old `se_company_info` server module stays for the companies list and pipeline sheet until slice 4.
 

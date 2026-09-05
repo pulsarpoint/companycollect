@@ -5,10 +5,10 @@ The basic-info entity of the 2026-09-03 SE basic-info design
 
 | Module | Responsibility |
 | --- | --- |
-| `tables.py` | Table names and column tuples, pinned against migrations 000376-000379 |
-| `precedence.py` | `BASIC_INFO_PRECEDENCE`: numbers per field per source; the reviewer is a source ranked 10000 |
+| `tables.py` | Table names and column tuples, pinned against migrations 000376-000378 and 000381 (the precedence table with its company scope) |
+| `precedence.py` | `BASIC_INFO_PRECEDENCE`: the global numbers per field per source, exported as `company_id = ''` rows; a company's own rows (written by the backoffice) override them per field and source |
 | `fold.py` | `fold_basic_info`: pure, one company, highest precedence wins, ties to newest `observed_at` then smaller uid; no row without a register legal name |
-| `batch.py` | Reads current suggestion rows (`FINAL`), folds in pages of 20,000, rewrites every folded company's main row plus one history row per change |
+| `batch.py` | Reads current suggestion rows (`FINAL`) and each page's active company rules (`FINAL`, `removed = 0`), folds in pages of 20,000, rewrites every folded company's main row plus one history row per change |
 | `assets.py` | `se_company_basic_info_fold` (64 hash buckets, `multi_run(1)`, pool `se_company_basic_info_fold`), `se_company_basic_info_fold_companies` (targeted), `se_company_basic_info_precedence_clickhouse` |
 
 `batch.py` writes the history row before the main row: the two statements are not one
@@ -32,7 +32,11 @@ suggestion. `se_company_basic_info_fold_companies` takes `company_ids` and re-fo
 whatever their bucket. Nothing is scheduled. Resolved 2026-09-04: every folded company is
 rewritten with a new main row, so `folded_at` advances on every fold and `changed_only`
 converges instead of re-selecting an unchanged company forever; `page_size` (default
-20,000) is the knob to lower if a run's per-page memory presses the host.
+20,000) is the knob to lower if a run's per-page memory presses the host. Amended
+2026-09-05: `changed_only` also wakes a company whose newest rule version (released ones
+included: `max(decided_at)` over every version) is newer than its `folded_at`, so a reviewer decision re-folds the
+company on the next run even when no suggestion changed; a rule on a company with no
+suggestion row stays out, since there is nothing to fold.
 
 ## Extractors (slice 2)
 

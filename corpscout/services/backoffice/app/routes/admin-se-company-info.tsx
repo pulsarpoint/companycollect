@@ -5,7 +5,7 @@ import {
   SeBasicInfoWorkspace,
 } from "~/components/admin/se-basic-info-workspace";
 import {
-  appendSeBasicInfoReviewerDecision,
+  appendSeBasicInfoRule,
   launchSeBasicInfoFold,
   loadSeBasicInfoDetail,
   SeBasicInfoDecisionError,
@@ -29,8 +29,8 @@ export async function loader({ request, params }: Route.LoaderArgs) {
 }
 
 /**
- * One reviewer decision (a new reviewer-row version) or one Fold now launch.
- * The store's refusals are the reviewer's to read; anything else is a real
+ * One precedence rule (Use this / Release) or one Fold now launch. The
+ * store's refusals are the reviewer's to read; anything else is a real
  * failure and must not be dressed up as a form error.
  */
 export async function action({ request, params }: Route.ActionArgs) {
@@ -44,8 +44,8 @@ export async function action({ request, params }: Route.ActionArgs) {
     return { ok: true as const, launched };
   }
   try {
-    const { suggestedAt } = await appendSeBasicInfoReviewerDecision(params.companyId, parsed.decision);
-    return { ok: true as const, suggestedAt };
+    const { decidedAt } = await appendSeBasicInfoRule(params.companyId, parsed.decision);
+    return { ok: true as const, decidedAt };
   } catch (error) {
     if (error instanceof SeBasicInfoDecisionError) {
       return { ok: false as const, error: error.message };

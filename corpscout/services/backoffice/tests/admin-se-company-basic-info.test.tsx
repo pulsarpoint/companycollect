@@ -4,7 +4,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 
 const server = vi.hoisted(() => ({
   loadSeBasicInfoDetail: vi.fn(),
-  appendSeBasicInfoReviewerDecision: vi.fn(),
+  appendSeBasicInfoRule: vi.fn(),
   launchSeBasicInfoFold: vi.fn(),
   SeBasicInfoDecisionError: class SeBasicInfoDecisionError extends Error {},
 }));
@@ -78,10 +78,13 @@ const detail: SeBasicInfoDetail = {
   suggestions: [bolagsverket, scb],
   history: [],
   precedence: [
-    { field: "status", source: "reviewer", precedence: 10000 },
-    { field: "status", source: "scb", precedence: 1000 },
-    { field: "status", source: "bolagsverket", precedence: 900 },
-    { field: "status", source: "ratsit", precedence: 300 },
+    { company_id: "", field: "status", source: "reviewer", precedence: 10000, removed: 0, decided_by: "", note: "", decided_at: "2026-01-01 00:00:00.000" },
+    { company_id: "", field: "status", source: "scb", precedence: 1000, removed: 0, decided_by: "", note: "", decided_at: "2026-01-01 00:00:00.000" },
+    { company_id: "", field: "status", source: "bolagsverket", precedence: 900, removed: 0, decided_by: "", note: "", decided_at: "2026-01-01 00:00:00.000" },
+    { company_id: "", field: "status", source: "ratsit", precedence: 300, removed: 0, decided_by: "", note: "", decided_at: "2026-01-01 00:00:00.000" },
+  ],
+  rules: [
+    { company_id: COMPANY, field: "status", source: "bolagsverket", precedence: 10000, removed: 0, decided_by: "backoffice", note: "register is right", decided_at: "2026-09-05 08:00:00.000" },
   ],
   legalFormLabels: { "51": { label_en: "Economic association (ekonomisk förening)", label_sv: "Ekonomisk förening" } },
   foldPending: true,
@@ -106,27 +109,39 @@ describe("SeBasicInfoWorkspace", () => {
     expect(html).toContain("2026-09-04 17:04:01.293");
   });
 
-  it("orders the panel by precedence, marks the winner active and greys silent sources", () => {
+  it("orders the panel by effective precedence, letting the company rule outrank the global map", () => {
     const html = render(<SeBasicInfoWorkspace companyId={COMPANY} detail={detail} selectedField="status" result={null} />, "?field=status");
-    const scbAt = html.indexOf('data-source="scb"');
-    const bolagsverketAt = html.indexOf('data-source="bolagsverket"');
-    const ratsitAt = html.indexOf('data-source="ratsit"');
     const reviewerAt = html.indexOf('data-source="reviewer"');
-    expect(reviewerAt).toBeLessThan(scbAt);
-    expect(scbAt).toBeLessThan(bolagsverketAt);
-    expect(bolagsverketAt).toBeLessThan(ratsitAt);
+    const bolagsverketAt = html.indexOf('data-source="bolagsverket"');
+    const scbAt = html.indexOf('data-source="scb"');
+    const ratsitAt = html.indexOf('data-source="ratsit"');
+    // The company rule lifts bolagsverket to 10000, ahead of scb's global 1000,
+    // even though the global map alone ranks scb above bolagsverket. The
+    // reviewer, ranked 10000 globally but without a value here, sinks below
+    // every source with an opinion instead of leading the list greyed out.
+    expect(bolagsverketAt).toBeLessThan(scbAt);
+    expect(scbAt).toBeLessThan(ratsitAt);
+    expect(reviewerAt).toBeGreaterThan(ratsitAt);
     // Slice each row out of the document so these checks read only that row's
     // own markup -- toMatch/toContain over the whole string would happily
     // find another row's later button and pass for the wrong reason.
     const nextRowAt = html.indexOf('data-source=', ratsitAt + 1);
     const ratsitRow = html.slice(ratsitAt, nextRowAt === -1 ? undefined : nextRowAt);
     expect(ratsitRow).toContain("no opinion");
-    // Bolagsverket has a different status, so it offers Use this; SCB is active and does not.
-    const scbRow = html.slice(scbAt, bolagsverketAt);
+    // Bolagsverket holds the active rule: it is preferred, carries the rule's
+    // note, and offers Release instead of Use this.
+    const bolagsverketRow = html.slice(bolagsverketAt, scbAt);
+    expect(bolagsverketRow).toContain("preferred by reviewer");
+    expect(bolagsverketRow).toContain("register is right");
+    expect(bolagsverketRow).toContain("Release");
+    expect(bolagsverketRow).not.toContain("Use this");
+    // SCB is still the fold's published winner (Active), but since it does not
+    // hold the rule it still offers Use this -- a reviewer can prefer the
+    // currently-active source explicitly too.
+    const scbRow = html.slice(scbAt, ratsitAt);
     expect(scbRow).toContain("Active");
-    expect(scbRow).not.toContain("Use this");
-    const bolagsverketRow = html.slice(bolagsverketAt, ratsitAt);
-    expect(bolagsverketRow).toContain("Use this");
+    expect(scbRow).toContain("Use this");
+    expect(scbRow).not.toContain("preferred by reviewer");
   });
 
   it("marks a source with a value the precedence table does not rank as not ranked", () => {
@@ -142,9 +157,25 @@ describe("SeBasicInfoWorkspace", () => {
     expect(wikidataRow).toContain("not ranked");
     expect(wikidataRow).toContain("Use this");
     const scbAt = html.indexOf('data-source="scb"');
-    const bolagsverketAt = html.indexOf('data-source="bolagsverket"');
-    const scbRow = html.slice(scbAt, bolagsverketAt);
+    const ratsitAt = html.indexOf('data-source="ratsit"');
+    const scbRow = html.slice(scbAt, ratsitAt);
     expect(scbRow).not.toContain("not ranked");
+  });
+
+  it("shows only the reviewer row's value -- never Use this, Release, or not ranked", () => {
+    const reviewerRow: SeBasicInfoSuggestionRow = { ...bolagsverket, source: "reviewer", status: "inactive" };
+    const withReviewer: SeBasicInfoDetail = { ...detail, suggestions: [...detail.suggestions, reviewerRow] };
+    const html = render(
+      <SeBasicInfoWorkspace companyId={COMPANY} detail={withReviewer} selectedField="status" result={null} />,
+      "?field=status",
+    );
+    const reviewerAt = html.indexOf('data-source="reviewer"');
+    const nextRowAt = html.indexOf('data-source=', reviewerAt + 1);
+    const reviewerRowHtml = html.slice(reviewerAt, nextRowAt === -1 ? undefined : nextRowAt);
+    expect(reviewerRowHtml).toContain("inactive");
+    expect(reviewerRowHtml).not.toContain("Use this");
+    expect(reviewerRowHtml).not.toContain("Release");
+    expect(reviewerRowHtml).not.toContain("not ranked");
   });
 
   it("shows the fold-pending alert with Fold now, and the poller after a launch", () => {
@@ -170,34 +201,11 @@ describe("SeBasicInfoWorkspace", () => {
       "?field=status",
     );
     expect(html).toContain("Not folded yet");
-    const bolagsverketAt = html.indexOf('data-source="bolagsverket"');
-    const ratsitAt = html.indexOf('data-source="ratsit"');
-    const bolagsverketRow = html.slice(bolagsverketAt, ratsitAt);
-    expect(bolagsverketRow).not.toContain("Active");
-    expect(bolagsverketRow).toContain("Use this");
-  });
-
-  it("a reviewer row that lost to the pending fold offers Release, not Use this", () => {
-    const reviewerRow: SeBasicInfoSuggestionRow = {
-      ...bolagsverket,
-      source: "reviewer",
-      status: "inactive",
-      decided_by: "backoffice",
-      note: "keep it",
-      suggested_at: "2026-09-04 18:00:00.000",
-    };
-    const withReviewer: SeBasicInfoDetail = {
-      ...detail,
-      suggestions: [...detail.suggestions, reviewerRow],
-    };
-    const html = render(<SeBasicInfoWorkspace companyId={COMPANY} detail={withReviewer} selectedField="status" result={null} />, "?field=status");
-    const reviewerAt = html.indexOf('data-source="reviewer"');
     const scbAt = html.indexOf('data-source="scb"');
-    const reviewerRowHtml = html.slice(reviewerAt, scbAt);
-    expect(reviewerRowHtml).toContain("Release");
-    expect(reviewerRowHtml).toContain("keep it");
-    expect(reviewerRowHtml).not.toContain("Use this");
-    expect(reviewerRowHtml).not.toContain("Active");
+    const ratsitAt = html.indexOf('data-source="ratsit"');
+    const scbRow = html.slice(scbAt, ratsitAt);
+    expect(scbRow).not.toContain("Active");
+    expect(scbRow).toContain("Use this");
   });
 
   it("keeps the note out of the panel until a decision is being confirmed", () => {
@@ -228,27 +236,31 @@ describe("SeBasicInfoWorkspace", () => {
     expect(html).toContain("Cancel");
   });
 
-  it("confirms a Release without a source field", () => {
+  it("confirms a Release with the ruled source and the withdrawal copy", () => {
     const html = render(
       <DecisionDialogBody
-        pending={{ intent: "release", field: "description", source: "reviewer", value: "Kept text", language: "sv" }}
+        pending={{ intent: "release", field: "description", source: "bolagsverket", value: "Kept text", language: "sv" }}
         labels={detail.legalFormLabels}
         busy={false}
         onClose={() => {}}
       />,
     );
     expect(html).toContain("Release description");
+    expect(html).toContain("Bolagsverket");
     expect(html).toContain("Kept text");
     expect(html).toContain('value="release"');
-    expect(html).not.toContain('name="source"');
-    expect(html).toContain("withdrawn");
+    expect(html).toContain('name="source"');
+    expect(html).toContain('value="bolagsverket"');
+    expect(html).toContain(
+      "The rule preferring Bolagsverket for this field is withdrawn and the next fold applies the normal precedence.",
+    );
   });
 });
 
 describe("admin-se-company-info route", () => {
   beforeEach(() => {
     server.loadSeBasicInfoDetail.mockReset().mockResolvedValue(detail);
-    server.appendSeBasicInfoReviewerDecision.mockReset().mockResolvedValue({ suggestedAt: "2026-09-04 19:30:00.123" });
+    server.appendSeBasicInfoRule.mockReset().mockResolvedValue({ decidedAt: "2026-09-04 19:30:00.123" });
     server.launchSeBasicInfoFold.mockReset().mockResolvedValue({ runId: "run-9", url: null });
   });
 
@@ -265,32 +277,33 @@ describe("admin-se-company-info route", () => {
     expect(missing.init?.status).toBe(404);
   });
 
-  it("writes a reviewer decision, launches a fold, and reports refusals", async () => {
+  it("writes a precedence rule, launches a fold, and reports refusals", async () => {
     const post = (entries: Record<string, string>) => {
       const body = new FormData();
       for (const [key, value] of Object.entries(entries)) body.set(key, value);
       return action({ request: new Request("http://x/info", { method: "POST", body }), params: { companyId: COMPANY } } as never);
     };
-    expect(await post({ intent: "use-this", field: "status", source: "bolagsverket" })).toEqual({ ok: true, suggestedAt: "2026-09-04 19:30:00.123" });
-    expect(server.appendSeBasicInfoReviewerDecision).toHaveBeenCalledWith(COMPANY, { intent: "use-this", field: "status", source: "bolagsverket", note: "" });
+    expect(await post({ intent: "use-this", field: "status", source: "bolagsverket" })).toEqual({ ok: true, decidedAt: "2026-09-04 19:30:00.123" });
+    expect(server.appendSeBasicInfoRule).toHaveBeenCalledWith(COMPANY, { intent: "use-this", field: "status", source: "bolagsverket", note: "" });
     expect(await post({ intent: "fold-now" })).toEqual({ ok: true, launched: { runId: "run-9", url: null } });
     expect(await post({ intent: "use-this", field: "status", source: "reviewer" })).toEqual({ ok: false, error: "Use this needs a source other than the reviewer." });
-    server.appendSeBasicInfoReviewerDecision.mockRejectedValueOnce(new server.SeBasicInfoDecisionError("SCB has no LEI for this company."));
+    server.appendSeBasicInfoRule.mockRejectedValueOnce(new server.SeBasicInfoDecisionError("SCB has no LEI for this company."));
     expect(await post({ intent: "use-this", field: "lei", source: "scb" })).toEqual({ ok: false, error: "SCB has no LEI for this company." });
-    server.appendSeBasicInfoReviewerDecision.mockRejectedValueOnce(new Error("clickhouse down"));
-    await expect(post({ intent: "release", field: "lei" })).rejects.toThrow("clickhouse down");
+    server.appendSeBasicInfoRule.mockRejectedValueOnce(new Error("clickhouse down"));
+    await expect(post({ intent: "release", field: "lei", source: "scb" })).rejects.toThrow("clickhouse down");
   });
 
   it("refuses to act on a malformed company id before any write or launch", async () => {
     const body = new FormData();
     body.set("intent", "release");
     body.set("field", "lei");
+    body.set("source", "scb");
     const result = await action({
       request: new Request("http://x/info", { method: "POST", body }),
       params: { companyId: "abc" },
     } as never);
     expect(result).toEqual({ ok: false, error: "Company id must be 10 or 12 digits." });
-    expect(server.appendSeBasicInfoReviewerDecision).not.toHaveBeenCalled();
+    expect(server.appendSeBasicInfoRule).not.toHaveBeenCalled();
     expect(server.launchSeBasicInfoFold).not.toHaveBeenCalled();
   });
 });

@@ -393,6 +393,7 @@ EXPECTED_MIGRATIONS = (
     "000378_corpscout_se_company_basic_info_history",
     "000379_corpscout_se_company_basic_info_precedence",
     "000380_corpscout_wikidata_company_wikipedia_articles",
+    "000381_corpscout_se_company_basic_info_precedence_rules",
 )
 
 NOOP_MIGRATIONS = {"000276_noop"}
@@ -406,6 +407,7 @@ EMPTIED_MIGRATIONS = {
     "000111_corpscout_dns_axfr_observations",
     "000121_corpscout_commoncrawl_domain_hostname_axfr_sync",
     "000218_corpscout_no_contract_awards",
+    "000379_corpscout_se_company_basic_info_precedence",
 }
 
 EXPECTED_ACCESS_MIGRATIONS = (
@@ -793,7 +795,16 @@ def test_clickhouse_migrations_have_down_files() -> None:
             continue
 
         if migration_file in EMPTIED_MIGRATIONS:
-            assert _statement_lines(sql) == ["CREATE DATABASE IF NOT EXISTS corpscout;"]
+            if migration_file == "000379_corpscout_se_company_basic_info_precedence":
+                # Only its up file was emptied: 000381 recreates the same table with a
+                # company scope (the DDL contract allows only one migration to create a
+                # given table), but a rollback still walks 000381's down first, which
+                # restores this table to its pre-381 shape -- so 000379's down file still
+                # performs the original DROP that undoes it, unlike the other three
+                # entries here whose objects are gone for good.
+                assert "DROP TABLE IF EXISTS" in sql
+            else:
+                assert _statement_lines(sql) == ["CREATE DATABASE IF NOT EXISTS corpscout;"]
             continue
 
         # Down migrations undo the up migration: DROP-up → CREATE-down and vice versa.

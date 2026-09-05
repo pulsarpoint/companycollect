@@ -10,6 +10,7 @@ from dagster_v3.defs.se_company.basic_info.batch import (
     PAGE_SIZE,
     FoldCounts,
     bucket_company_ids_sql,
+    company_rules_sql,
     current_main_rows_sql,
     current_suggestions_sql,
     fold_bucket,
@@ -17,6 +18,8 @@ from dagster_v3.defs.se_company.basic_info.batch import (
     history_insert_sql,
     main_insert_sql,
     main_watermarks_sql,
+    rule_watermarks_sql,
+    rules_by_company,
     suggestion_watermarks_sql,
 )
 from dagster_v3.defs.se_company.basic_info.fold import FOLD_VERSION
@@ -50,12 +53,24 @@ def main_row(company_id: str, **overrides) -> tuple:
 class FakeClient:
     """Answers the batch layer's SELECTs from scripted rows and records every INSERT."""
 
-    def __init__(self, *, suggestions, mains=(), suggestion_marks=(), main_marks=(), bucket_ids=()):
+    def __init__(
+        self,
+        *,
+        suggestions,
+        mains=(),
+        suggestion_marks=(),
+        main_marks=(),
+        bucket_ids=(),
+        rules=(),
+        rule_marks=(),
+    ):
         self.suggestions = list(suggestions)
         self.mains = list(mains)
         self.suggestion_marks = list(suggestion_marks)
         self.main_marks = list(main_marks)
         self.bucket_ids = list(bucket_ids)
+        self.rules = list(rules)
+        self.rule_marks = list(rule_marks)
         self.statements: list[tuple[str, object]] = []
         self.inserts: list[tuple[str, list[tuple]]] = []
         # Parallel to self.statements: the settings kwarg each execute carried, or None.
@@ -72,10 +87,14 @@ class FakeClient:
             return [r for r in self.suggestion_marks if r[0] in ids]
         if "max(folded_at)" in sql:
             return [r for r in self.main_marks if r[0] in ids]
+        if "max(decided_at)" in sql:
+            return [r for r in self.rule_marks if r[0] in ids]
         if f"FROM {tables.QUALIFIED_SUGGESTION_TABLE} FINAL" in sql:
             return [r for r in self.suggestions if r[0] in ids]
         if f"FROM {tables.QUALIFIED_MAIN_TABLE} FINAL" in sql:
             return [r for r in self.mains if r[0] in ids]
+        if f"FROM {tables.QUALIFIED_PRECEDENCE_TABLE} FINAL" in sql:
+            return [r for r in self.rules if r[0] in ids]
         if "modulo(cityHash64(company_id), 64)" in sql:
             return [(i,) for i in self.bucket_ids]
         raise AssertionError(sql)
@@ -96,6 +115,24 @@ def test_sql_texts_bind_company_ids_and_read_final_rows() -> None:
     assert history_insert_sql() == (
         f"INSERT INTO {tables.QUALIFIED_HISTORY_TABLE} ({', '.join(tables.HISTORY_COLUMNS)}) VALUES"
     )
+
+
+def test_company_rules_sql_reads_active_rules_for_the_page_with_final() -> None:
+    sql = company_rules_sql()
+    assert sql == (
+        "SELECT company_id, field, source, precedence\n"
+        f"FROM {tables.QUALIFIED_PRECEDENCE_TABLE} FINAL\n"
+        "WHERE company_id IN %(company_ids)s AND removed = 0"
+    )
+    assert rule_watermarks_sql() == (
+        "SELECT company_id, max(decided_at) AS decided_at\n"
+        f"FROM {tables.QUALIFIED_PRECEDENCE_TABLE}\n"
+        "WHERE company_id IN %(company_ids)s\n"
+        "GROUP BY company_id"
+    )
+    assert rules_by_company(
+        [("5560000000", "status", "bolagsverket", 10000), ("5560000000", "status", "scb", 1)]
+    ) == {"5560000000": {"status": {"bolagsverket": 10000, "scb": 1}}}
 
 
 def test_first_publish_writes_main_and_history_with_every_non_null_field() -> None:
@@ -154,6 +191,43 @@ def test_a_changed_source_alone_is_a_change_and_names_the_field() -> None:
     assert history["status_source"] == "bolagsverket"
 
 
+def test_a_company_rule_decides_the_page_fold() -> None:
+    # scb (status active) outranks bolagsverket (status inactive) on the global map, but
+    # a company rule can still make bolagsverket win for this company only.
+    client = FakeClient(
+        suggestions=[
+            suggestion_row("5560000000", "scb", legal_name="Scb AB", status="active"),
+            suggestion_row("5560000000", "bolagsverket", status="inactive"),
+        ],
+        rules=[("5560000000", "status", "bolagsverket", 10000)],
+    )
+    counts = fold_companies(client, ["5560000000"], changed_only=False, source_run_id="r", folded_at=FOLDED_AT)
+    assert counts.folded == 1
+    main_rows = next(rows for sql, rows in client.inserts if sql == main_insert_sql())
+    row = dict(zip(tables.MAIN_COLUMNS, main_rows[0]))
+    assert row["status"] == "inactive" and row["status_source"] == "bolagsverket"
+
+
+def test_changed_only_wakes_a_company_whose_newest_rule_is_newer_than_its_fold() -> None:
+    client = FakeClient(
+        suggestions=[suggestion_row("5560000000", "scb", legal_name="Scb AB", status="active")],
+        suggestion_marks=[("5560000000", T0)],
+        main_marks=[("5560000000", T1)],
+        rule_marks=[("5560000000", FOLDED_AT)],
+    )
+    counts = fold_companies(client, ["5560000000"], changed_only=True, source_run_id="r", folded_at=FOLDED_AT)
+    assert counts.considered == 1
+
+
+def test_changed_only_leaves_out_a_company_whose_only_rule_has_no_suggestion() -> None:
+    client = FakeClient(
+        suggestions=[],
+        rule_marks=[("5560000000", FOLDED_AT)],
+    )
+    counts = fold_companies(client, ["5560000000"], changed_only=True, source_run_id="r", folded_at=FOLDED_AT)
+    assert counts.considered == 0
+
+
 def test_changed_only_keeps_new_companies_and_those_with_newer_suggestions() -> None:
     client = FakeClient(
         suggestions=[
@@ -178,13 +252,14 @@ def test_changed_only_keeps_new_companies_and_those_with_newer_suggestions() -> 
     # Every SELECT that binds company_ids raises max_query_size: at PAGE_SIZE the driver's
     # client-side substitution renders past ClickHouse's 262,144-byte default (Code: 62),
     # measured in test_a_full_page_renders_under_the_query_size_setting below. This run
-    # exercises all four of them -- the two watermark reads and the two FINAL reads.
+    # exercises all six of them -- the three watermark reads (suggestion, main, rule) and
+    # the three FINAL reads (suggestions, main rows, rules).
     id_bound = [
         settings
         for (sql, params), settings in zip(client.statements, client.settings_calls)
         if not sql.startswith("INSERT INTO") and "%(company_ids)s" in sql
     ]
-    assert len(id_bound) == 4
+    assert len(id_bound) == 6
     assert all(settings == ID_BOUND_QUERY_SETTINGS for settings in id_bound)
     # The INSERTs bind no ids and must not carry it, or this test would pass for the
     # wrong statements.

@@ -21,12 +21,18 @@ describe("parseSeBasicInfoDecision", () => {
     expect(parseSeBasicInfoDecision(form({ intent: "use-this", field: "description_language", source: "scb" }))).toEqual({ ok: false, error: "Unknown field." });
   });
 
-  it("accepts release with a field, fold-now with nothing else", () => {
-    expect(parseSeBasicInfoDecision(form({ intent: "release", field: "description" }))).toEqual({
+  it("accepts release with a field, a preferred source and an optional note; fold-now with nothing else", () => {
+    expect(parseSeBasicInfoDecision(form({ intent: "release", field: "description", source: "scb", note: " keep " }))).toEqual({
       ok: true,
-      decision: { intent: "release", field: "description", note: "" },
+      decision: { intent: "release", field: "description", source: "scb", note: "keep" },
     });
     expect(parseSeBasicInfoDecision(form({ intent: "fold-now" }))).toEqual({ ok: true, decision: { intent: "fold-now" } });
+  });
+
+  it("refuses release without a real preferred source: the reviewer, an unknown token, or none at all", () => {
+    expect(parseSeBasicInfoDecision(form({ intent: "release", field: "status", source: "reviewer" }))).toEqual({ ok: false, error: "Release needs the preferred source." });
+    expect(parseSeBasicInfoDecision(form({ intent: "release", field: "status", source: "elsewhere" }))).toEqual({ ok: false, error: "Unknown source." });
+    expect(parseSeBasicInfoDecision(form({ intent: "release", field: "status" }))).toEqual({ ok: false, error: "Unknown source." });
   });
 
   it("refuses an unknown intent and an over-long note", () => {

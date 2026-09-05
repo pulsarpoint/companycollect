@@ -212,3 +212,45 @@ def test_empty_string_is_not_a_supply() -> None:
 def test_company_id_mismatch_is_refused() -> None:
     with pytest.raises(ValueError, match="company_id"):
         fold_basic_info("5561111111", [suggestion("scb", legal_name="X")], source_run_id="r")
+
+
+def test_a_company_rule_replaces_the_global_number_for_that_source() -> None:
+    scb = suggestion("scb", legal_name="X AB", status="active")
+    bolagsverket = suggestion("bolagsverket", status="inactive")
+    row = fold_basic_info(
+        "5560000000", [scb, bolagsverket], source_run_id="r", rules={"status": {"bolagsverket": 10000}}
+    )
+    assert row is not None
+    assert (row.status, row.status_source) == ("inactive", "bolagsverket")
+    # Without the rule the global map (scb 1000 > bolagsverket 900) decides.
+    plain = fold_basic_info("5560000000", [scb, bolagsverket], source_run_id="r")
+    assert plain is not None and plain.status_source == "scb"
+
+
+def test_a_company_rule_lets_an_unranked_source_supply_a_field() -> None:
+    scb = suggestion("scb", legal_name="X AB", status="active")
+    wikidata = suggestion("wikidata", status="dormant")
+    ruled = fold_basic_info(
+        "5560000000", [scb, wikidata], source_run_id="r", rules={"status": {"wikidata": 10000}}
+    )
+    assert ruled is not None and (ruled.status, ruled.status_source) == ("dormant", "wikidata")
+    plain = fold_basic_info("5560000000", [scb, wikidata], source_run_id="r")
+    assert plain is not None and plain.status_source == "scb"
+
+
+def test_a_rule_for_a_source_without_a_value_changes_nothing() -> None:
+    scb = suggestion("scb", legal_name="X AB", status="active")
+    bolagsverket = suggestion("bolagsverket", status=None)
+    row = fold_basic_info(
+        "5560000000", [scb, bolagsverket], source_run_id="r", rules={"status": {"bolagsverket": 10000}}
+    )
+    assert row is not None and row.status_source == "scb"
+
+
+def test_a_low_rule_demotes_a_source_for_one_company() -> None:
+    scb = suggestion("scb", legal_name="X AB", status="active")
+    bolagsverket = suggestion("bolagsverket", status="inactive")
+    row = fold_basic_info(
+        "5560000000", [scb, bolagsverket], source_run_id="r", rules={"status": {"scb": 1}}
+    )
+    assert row is not None and row.status_source == "bolagsverket"

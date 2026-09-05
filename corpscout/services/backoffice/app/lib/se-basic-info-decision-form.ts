@@ -12,7 +12,7 @@ import {
 
 export type SeBasicInfoDecision =
   | { intent: "use-this"; field: SeBasicInfoField; source: Exclude<SeBasicInfoSource, "reviewer">; note: string }
-  | { intent: "release"; field: SeBasicInfoField; note: string }
+  | { intent: "release"; field: SeBasicInfoField; source: Exclude<SeBasicInfoSource, "reviewer">; note: string }
   | { intent: "fold-now" };
 
 export type SeBasicInfoDecisionRequest =
@@ -38,9 +38,10 @@ export function parseSeBasicInfoDecision(form: FormData): SeBasicInfoDecisionReq
   if (!isBasicInfoField(field)) return refuse("Unknown field.");
   const note = text(form, "note").trim();
   if (note.length > MAX_NOTE_LENGTH) return refuse(`Note is longer than ${MAX_NOTE_LENGTH} characters.`);
-  if (intent === "release") return { ok: true, decision: { intent, field, note } };
   const source = text(form, "source");
   if (!isBasicInfoSource(source)) return refuse("Unknown source.");
-  if (source === "reviewer") return refuse("Use this needs a source other than the reviewer.");
+  if (source === "reviewer") {
+    return refuse(intent === "release" ? "Release needs the preferred source." : "Use this needs a source other than the reviewer.");
+  }
   return { ok: true, decision: { intent, field, source, note } };
 }
