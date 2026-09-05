@@ -25,6 +25,7 @@ import {
   EmptyMedia,
   EmptyTitle,
 } from "~/components/ui/empty";
+import { Dialog, DialogContent, DialogFooter, DialogHeader } from "~/components/ui/dialog";
 import { Input } from "~/components/ui/input";
 import { EMPTY_VALUE, text } from "~/components/admin/definition-list";
 import { LegalForm } from "~/components/admin/legal-form";
@@ -226,9 +227,12 @@ function SuggestionsPanel({
   // version, so compare case-insensitively; a GET revalidation must not read
   // as busy.
   const busy = navigation.state !== "idle" && (navigation.formMethod ?? "").toUpperCase() === "POST";
-  const [note, setNote] = useState("");
+  // The decision being confirmed: Use this / Release open a dialog that shows
+  // the value about to be written and takes the optional note; nothing posts
+  // until the reviewer confirms there. A result from the action closes it.
+  const [pending, setPending] = useState<PendingDecision | null>(null);
   useEffect(() => {
-    if (result && result.ok) setNote("");
+    if (result) setPending(null);
   }, [result]);
   const winner = sourceOf(detail.info, selectedField);
   const rankedSources = new Set(
@@ -288,16 +292,6 @@ function SuggestionsPanel({
             <AlertDescription>Reviewer row written at {result.suggestedAt}. Fold now to publish it.</AlertDescription>
           </Alert>
         ) : null}
-        <label className="text-muted-foreground text-xs" htmlFor="basic-info-note">
-          Note (saved with the next decision)
-        </label>
-        <Input
-          id="basic-info-note"
-          value={note}
-          maxLength={500}
-          onChange={(event) => setNote(event.target.value)}
-          placeholder="Why this value"
-        />
         <ul className="flex flex-col gap-2">
           {rows.map(({ source, row }) => {
             const value = valueOf(row, selectedField);
@@ -340,32 +334,147 @@ function SuggestionsPanel({
                 </div>
                 {row?.note ? <p className="text-muted-foreground mt-1 text-xs">{row.note}</p> : null}
                 {hasValue && !active && source !== "reviewer" ? (
-                  <Form method="post" className="mt-2">
-                    <input type="hidden" name="intent" value="use-this" />
-                    <input type="hidden" name="field" value={selectedField} />
-                    <input type="hidden" name="source" value={source} />
-                    <input type="hidden" name="note" value={note} />
-                    <Button type="submit" size="sm" variant="outline" disabled={busy}>
-                      Use this
-                    </Button>
-                  </Form>
+                  <Button
+                    type="button"
+                    size="sm"
+                    variant="outline"
+                    className="mt-2"
+                    disabled={busy}
+                    onClick={() =>
+                      setPending({
+                        intent: "use-this",
+                        field: selectedField,
+                        source,
+                        value,
+                        language: selectedField === "description" ? (row?.description_language ?? "") : "",
+                      })
+                    }
+                  >
+                    Use this
+                  </Button>
                 ) : null}
                 {hasValue && source === "reviewer" ? (
-                  <Form method="post" className="mt-2">
-                    <input type="hidden" name="intent" value="release" />
-                    <input type="hidden" name="field" value={selectedField} />
-                    <input type="hidden" name="note" value={note} />
-                    <Button type="submit" size="sm" variant="outline" disabled={busy}>
-                      Release
-                    </Button>
-                  </Form>
+                  <Button
+                    type="button"
+                    size="sm"
+                    variant="outline"
+                    className="mt-2"
+                    disabled={busy}
+                    onClick={() =>
+                      setPending({
+                        intent: "release",
+                        field: selectedField,
+                        source,
+                        value,
+                        language: selectedField === "description" ? (row?.description_language ?? "") : "",
+                      })
+                    }
+                  >
+                    Release
+                  </Button>
                 ) : null}
               </li>
             );
           })}
         </ul>
+        <DecisionDialog
+          pending={pending}
+          labels={detail.legalFormLabels}
+          busy={busy}
+          onClose={() => setPending(null)}
+        />
       </CardContent>
     </Card>
+  );
+}
+
+/** What a Use this / Release click proposes, shown for confirmation before it posts. */
+export interface PendingDecision {
+  intent: "use-this" | "release";
+  field: SeBasicInfoField;
+  /** The suggesting source for Use this; `reviewer` for Release. */
+  source: string;
+  value: string;
+  language: string;
+}
+
+/**
+ * The confirmation's form: what will be written, for which field, from which
+ * source, plus the optional note. Portal-free so tests can render it statically;
+ * `DecisionDialog` wraps it in the dialog chrome.
+ */
+export function DecisionDialogBody({
+  pending,
+  labels,
+  busy,
+  onClose,
+}: {
+  pending: PendingDecision;
+  labels: SeBasicInfoDetail["legalFormLabels"];
+  busy: boolean;
+  onClose: () => void;
+}) {
+  const release = pending.intent === "release";
+  return (
+    <Form method="post" onSubmit={onClose} className="flex flex-col gap-4">
+      {/* Plain heading and paragraph, not DialogTitle/DialogDescription: those
+          need the dialog root's context, and this body also renders on its own
+          in tests. */}
+      <DialogHeader>
+        <h2 className="text-base font-semibold leading-none">
+          {release ? "Release " : "Use this "}
+          {basicInfoFieldLabel(pending.field).toLowerCase()}
+        </h2>
+        <p className="text-muted-foreground text-sm">
+          {release
+            ? "The reviewer's value is withdrawn and the next fold publishes the best source again."
+            : `The next fold publishes ${basicInfoSourceLabel(pending.source)}'s value as the reviewer's decision.`}
+        </p>
+      </DialogHeader>
+      <div className="rounded-md border p-3 text-sm" data-testid="decision-value">
+        <div className="text-muted-foreground mb-1 text-xs">
+          {basicInfoSourceLabel(pending.source)}
+        </div>
+        <FieldValue field={pending.field} value={pending.value} language={pending.language} labels={labels} />
+      </div>
+      <input type="hidden" name="intent" value={pending.intent} />
+      <input type="hidden" name="field" value={pending.field} />
+      {release ? null : <input type="hidden" name="source" value={pending.source} />}
+      <label className="flex flex-col gap-1 text-sm" htmlFor="basic-info-note">
+        <span className="text-muted-foreground text-xs">Why this value (optional)</span>
+        <Input id="basic-info-note" name="note" maxLength={500} placeholder="Note saved with the decision" />
+      </label>
+      <DialogFooter>
+        <Button type="button" variant="outline" onClick={onClose} disabled={busy}>
+          Cancel
+        </Button>
+        <Button type="submit" disabled={busy}>
+          {release ? "Release" : "Use this"}
+        </Button>
+      </DialogFooter>
+    </Form>
+  );
+}
+
+function DecisionDialog({
+  pending,
+  labels,
+  busy,
+  onClose,
+}: {
+  pending: PendingDecision | null;
+  labels: SeBasicInfoDetail["legalFormLabels"];
+  busy: boolean;
+  onClose: () => void;
+}) {
+  return (
+    <Dialog open={pending !== null} onOpenChange={(open) => (open ? undefined : onClose())}>
+      <DialogContent>
+        {pending ? (
+          <DecisionDialogBody pending={pending} labels={labels} busy={busy} onClose={onClose} />
+        ) : null}
+      </DialogContent>
+    </Dialog>
   );
 }
 

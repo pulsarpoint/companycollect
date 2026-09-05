@@ -12,6 +12,7 @@ vi.mock("~/lib/se-basic-info.server", () => server);
 
 import { action, loader } from "~/routes/admin-se-company-info";
 import {
+  DecisionDialogBody,
   SeBasicInfoNotFolded,
   SeBasicInfoWorkspace,
 } from "~/components/admin/se-basic-info-workspace";
@@ -197,6 +198,50 @@ describe("SeBasicInfoWorkspace", () => {
     expect(reviewerRowHtml).toContain("keep it");
     expect(reviewerRowHtml).not.toContain("Use this");
     expect(reviewerRowHtml).not.toContain("Active");
+  });
+
+  it("keeps the note out of the panel until a decision is being confirmed", () => {
+    const html = render(<SeBasicInfoWorkspace companyId={COMPANY} detail={detail} selectedField="status" result={null} />, "?field=status");
+    expect(html).not.toContain('name="note"');
+    expect(html).not.toContain("Why this value");
+  });
+
+  it("confirms a Use this with the value, the source, the hidden intent fields and the note", () => {
+    const html = render(
+      <DecisionDialogBody
+        pending={{ intent: "use-this", field: "status", source: "bolagsverket", value: "inactive", language: "" }}
+        labels={detail.legalFormLabels}
+        busy={false}
+        onClose={() => {}}
+      />,
+    );
+    expect(html).toContain("Use this status");
+    expect(html).toContain("Bolagsverket");
+    expect(html).toContain("inactive");
+    expect(html).toContain('name="intent"');
+    expect(html).toContain('value="use-this"');
+    expect(html).toContain('value="status"');
+    expect(html).toContain('name="source"');
+    expect(html).toContain('value="bolagsverket"');
+    expect(html).toContain('name="note"');
+    expect(html).toContain("Why this value");
+    expect(html).toContain("Cancel");
+  });
+
+  it("confirms a Release without a source field", () => {
+    const html = render(
+      <DecisionDialogBody
+        pending={{ intent: "release", field: "description", source: "reviewer", value: "Kept text", language: "sv" }}
+        labels={detail.legalFormLabels}
+        busy={false}
+        onClose={() => {}}
+      />,
+    );
+    expect(html).toContain("Release description");
+    expect(html).toContain("Kept text");
+    expect(html).toContain('value="release"');
+    expect(html).not.toContain('name="source"');
+    expect(html).toContain("withdrawn");
   });
 });
 
