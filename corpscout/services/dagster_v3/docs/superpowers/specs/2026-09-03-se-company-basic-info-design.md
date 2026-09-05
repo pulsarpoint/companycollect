@@ -302,6 +302,19 @@ One plan each, executed in order with subagent-driven development:
    published Bolagsverket's status through it; a second Use this on SCB retired the first
    rule in the same write; Release plus a fold returned the field to global precedence.
    Open: the reviewer-vs-rule tie at 10000 is settled when Edit ships (section 4 note).
+   Slice 3c (Edit with drafts) shipped 2026-09-05 (plan `2026-09-05-se-basic-info-3c-edit-drafts.md`,
+   merged as main 7ffe8545): the reviewer ranks 20000 in every field's map and
+   `reviewer_draft` has no rank; the LLM gate and the change watermark ignore drafts;
+   the backoffice edit sheet (native selects, 1900-01-01 date floor) writes
+   `reviewer_draft` versions, Activate copies the field into the `reviewer` row and
+   clears the draft in one insert, Discard clears it, Reset to default also clears the
+   active reviewer value and is offered whether a rule or a typed value holds the field.
+   Cutover: Dagster hot-synced, precedence re-exported (30 global rows, reviewer 20000 x 8).
+   Smoke on 5561552760: draft -> badge and Draft row without Fold pending, Discard,
+   Activate -> fold published the typed legal name from `reviewer` with a history row,
+   Reset to default -> fold returned it to SCB, a Swedish description draft, and the
+   uncapped LLM preview still at 78,579 eligible. The whole-branch review's finding that
+   the Reset button was gated on a rule alone was fixed before merge.
 4. Cutover (owner-gated prod steps) and retirement of the old publisher, the field-registry code and the three `se_company_info_*` artifacts.
 5. The spine switch: every `se_companies` reader to `se_company_basic_info`, then the `se_companies` builder and table go.
 6. The sensor, as its own later spec.
