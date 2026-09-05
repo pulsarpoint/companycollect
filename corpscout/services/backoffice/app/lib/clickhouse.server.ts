@@ -155,6 +155,19 @@ export async function chInsertSeBasicInfoPrecedence<T extends object>(
   });
 }
 
+/** Append a reviewer-row version to the SE basic-info suggestion table; the
+ * fold reads the newest version per (company_id, source) through FINAL. */
+export async function chInsertSeBasicInfoSuggestions<T extends object>(
+  values: T[],
+): Promise<void> {
+  if (values.length === 0) return;
+  await getWriteClient().insert({
+    table: "se_company_basic_info_suggestion",
+    values,
+    format: "JSONEachRow",
+  });
+}
+
 /** Append reviewer decisions to the Sweden company-address correction ledger;
  * Dagster's sensor picks them up. */
 export async function chInsertSeCompanyAddressCorrections<T extends object>(

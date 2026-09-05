@@ -87,6 +87,7 @@ const detail: SeBasicInfoDetail = {
     { company_id: COMPANY, field: "status", source: "bolagsverket", precedence: 10000, removed: 0, decided_by: "backoffice", note: "register is right", decided_at: "2026-09-05 08:00:00.000" },
   ],
   legalFormLabels: { "51": { label_en: "Economic association (ekonomisk förening)", label_sv: "Ekonomisk förening" } },
+  legalFormOptions: [],
   foldPending: true,
 };
 
