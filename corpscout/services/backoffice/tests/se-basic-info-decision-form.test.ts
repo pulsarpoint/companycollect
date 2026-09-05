@@ -21,22 +21,27 @@ describe("parseSeBasicInfoDecision", () => {
     expect(parseSeBasicInfoDecision(form({ intent: "use-this", field: "description_language", source: "scb" }))).toEqual({ ok: false, error: "Unknown field." });
   });
 
-  it("accepts release with a field, a preferred source and an optional note; fold-now with nothing else", () => {
-    expect(parseSeBasicInfoDecision(form({ intent: "release", field: "description", source: "scb", note: " keep " }))).toEqual({
+  it("accepts reset with a field and an optional note, ignoring any source; fold-now with nothing else", () => {
+    expect(parseSeBasicInfoDecision(form({ intent: "reset", field: "description", note: " back to default " }))).toEqual({
       ok: true,
-      decision: { intent: "release", field: "description", source: "scb", note: "keep" },
+      decision: { intent: "reset", field: "description", note: "back to default" },
+    });
+    // A stray source on a reset is not an error: the reset covers every rule of the field.
+    expect(parseSeBasicInfoDecision(form({ intent: "reset", field: "status", source: "scb" }))).toEqual({
+      ok: true,
+      decision: { intent: "reset", field: "status", note: "" },
     });
     expect(parseSeBasicInfoDecision(form({ intent: "fold-now" }))).toEqual({ ok: true, decision: { intent: "fold-now" } });
   });
 
-  it("refuses release without a real preferred source: the reviewer, an unknown token, or none at all", () => {
-    expect(parseSeBasicInfoDecision(form({ intent: "release", field: "status", source: "reviewer" }))).toEqual({ ok: false, error: "Release needs the preferred source." });
-    expect(parseSeBasicInfoDecision(form({ intent: "release", field: "status", source: "elsewhere" }))).toEqual({ ok: false, error: "Unknown source." });
-    expect(parseSeBasicInfoDecision(form({ intent: "release", field: "status" }))).toEqual({ ok: false, error: "Unknown source." });
+  it("refuses reset without a known field", () => {
+    expect(parseSeBasicInfoDecision(form({ intent: "reset", field: "description_language" }))).toEqual({ ok: false, error: "Unknown field." });
+    expect(parseSeBasicInfoDecision(form({ intent: "reset" }))).toEqual({ ok: false, error: "Unknown field." });
   });
 
-  it("refuses an unknown intent and an over-long note", () => {
+  it("refuses an unknown intent (release is gone) and an over-long note", () => {
     expect(parseSeBasicInfoDecision(form({ intent: "edit", field: "status" }))).toEqual({ ok: false, error: "Unknown intent." });
-    expect(parseSeBasicInfoDecision(form({ intent: "release", field: "status", note: "x".repeat(501) }))).toEqual({ ok: false, error: "Note is longer than 500 characters." });
+    expect(parseSeBasicInfoDecision(form({ intent: "release", field: "status", source: "scb" }))).toEqual({ ok: false, error: "Unknown intent." });
+    expect(parseSeBasicInfoDecision(form({ intent: "reset", field: "status", note: "x".repeat(501) }))).toEqual({ ok: false, error: "Note is longer than 500 characters." });
   });
 });

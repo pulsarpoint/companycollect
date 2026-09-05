@@ -188,7 +188,7 @@ After a decision the page shows the reviewer row and a "fold pending" marker whe
 
 Pipeline sheet: extract job, fold partitions, suggestions per source, pending folds, LLM preview counts. Every reader of `se_companies` moves to `se_company_basic_info` in the spine slice.
 
-Amended 2026-09-05 (owner decision, slice 3b): "Use this" no longer copies a value into the reviewer row; it inserts a company rule `(company_id, field, source, 10000, decided_by 'backoffice', note)` into the precedence table, so the chosen source's *current* value flows through every later fold exactly as an automatic pick does, and a change in that source is a history row like any other. "Release" inserts the rule's `removed = 1` version. The panel orders sources by effective precedence, marks the ruled source "preferred by reviewer" with its note, and "fold pending" also considers a rule newer than the fold. The reviewer row's value columns are reserved for Edit.
+Amended 2026-09-05 (owner decision, slice 3b): "Use this" no longer copies a value into the reviewer row; it inserts a company rule `(company_id, field, source, 10000, decided_by 'backoffice', note)` into the precedence table, so the chosen source's *current* value flows through every later fold exactly as an automatic pick does, and a change in that source is a history row like any other. The panel orders sources by effective precedence, marks the ruled source "preferred by reviewer" with its note, and "fold pending" also considers a rule newer than the fold. Amended later the same day (owner request): the per-row "Release" is replaced by a field-level "Reset to default" button in the panel header, shown when the company has any active rule for the selected field; confirming it inserts a `removed = 1` version for every active rule of that field in one write (note "reset to default", plus the reviewer's), so the global precedence decides again at the next fold. The left card flags such fields with a "custom order" badge. The reviewer row's value columns are reserved for Edit.
 
 Amended 2026-09-04 (owner decision, slice 3 scope and layout): the admin company page's first tab (Info, `/admin/se/company/:companyId/info`) is replaced by a two-column page, two thirds and one third. Left: one card with the nine basic-info fields as rows (`legal_name`, `legal_form_code` with its `se_code_labels` label, `status`, `incorporation_date`, `lei`, `wikidata_id`, `description` with `description_language`, `description_sv`), each row showing the value and the source that won it, a footer with `folded_at`, `fold_version` and `source_run_id`, and a collapsed history card beneath. Right: a sticky panel for the selected field (URL search parameter `field`, default `legal_name`) listing that field's current suggestion rows ordered by precedence, each with value, source and `observed_at`, the winning source marked active, sources without an opinion greyed at the bottom. Actions in this slice: Use this and Release (each inserts a new reviewer row version), the "fold pending" marker, and Fold now (launches `se_company_basic_info_fold_companies` for the company). Edit (free text) and the basic-info pipeline sheet are later follow-ups. The old review workspace component and its route test are deleted with the switch; the old `se_company_info` server module stays for the companies list and pipeline sheet until slice 4.
 
@@ -293,6 +293,15 @@ One plan each, executed in order with subagent-driven development:
    reads `se_company_info` (slice 4/5) -- the card says so. A company neither
    `se_companies` nor `se_company_info` knows (an ESEF-only suggestion) is still the
    layout's 404 until the shell reads the new tables.
+   Slice 3b, 2026-09-05 (plan `2026-09-05-se-basic-info-3b-company-rules.md`, merged as
+   61d55ef3): reviewer decisions are per-company precedence rules. Migration 000381
+   recreated the precedence table with the company scope (ledger 381; 000380 was taken by
+   the Wikipedia-articles migration), the export wrote the 30 global rows, the one value
+   decision (Handelsbanken 5020077862, description from bolagsverket) was converted into a
+   rule and re-folded. Smoke on the dev server: Use this wrote a rule and the fold
+   published Bolagsverket's status through it; a second Use this on SCB retired the first
+   rule in the same write; Release plus a fold returned the field to global precedence.
+   Open: the reviewer-vs-rule tie at 10000 is settled when Edit ships (section 4 note).
 4. Cutover (owner-gated prod steps) and retirement of the old publisher, the field-registry code and the three `se_company_info_*` artifacts.
 5. The spine switch: every `se_companies` reader to `se_company_basic_info`, then the `se_companies` builder and table go.
 6. The sensor, as its own later spec.

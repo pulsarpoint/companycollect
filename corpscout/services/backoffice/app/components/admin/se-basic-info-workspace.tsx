@@ -178,7 +178,12 @@ function FieldsCard({
                       labels={detail.legalFormLabels}
                     />
                   </span>
-                  <span className="sm:text-right">
+                  <span className="flex flex-wrap justify-end gap-1 sm:text-right">
+                    {detail.rules.some((rule) => rule.field === field.name) ? (
+                      // A company rule adjusts this field's order; the panel
+                      // shows which source and offers Reset to default.
+                      <Badge variant="outline">custom order</Badge>
+                    ) : null}
                     {source === "" ? null : (
                       <Badge variant="secondary">{basicInfoSourceLabel(source)}</Badge>
                     )}
@@ -267,6 +272,9 @@ function SuggestionsPanel({
     source,
     row: detail.suggestions.find((row) => row.source === source) ?? null,
   }));
+  const ruledRow = ruledSource
+    ? (detail.suggestions.find((row) => row.source === ruledSource.source) ?? null)
+    : null;
   return (
     <Card>
       <CardHeader>
@@ -275,6 +283,28 @@ function SuggestionsPanel({
           What each source suggests, highest precedence first. The active one is
           what the fold published.
         </CardDescription>
+        {ruledSource ? (
+          // A field with a company rule can go back to the global order in one
+          // step: every rule for the field is withdrawn, whatever it ranked.
+          <Button
+            type="button"
+            size="sm"
+            variant="outline"
+            className="mt-2 w-fit"
+            disabled={busy}
+            onClick={() =>
+              setPending({
+                intent: "reset",
+                field: selectedField,
+                source: ruledSource.source,
+                value: valueOf(ruledRow, selectedField),
+                language: selectedField === "description" ? (ruledRow?.description_language ?? "") : "",
+              })
+            }
+          >
+            Reset to default
+          </Button>
+        ) : null}
       </CardHeader>
       <CardContent className="flex flex-col gap-3">
         {detail.foldPending ? (
@@ -387,26 +417,6 @@ function SuggestionsPanel({
                     Use this
                   </Button>
                 ) : null}
-                {ruled ? (
-                  <Button
-                    type="button"
-                    size="sm"
-                    variant="outline"
-                    className="mt-2"
-                    disabled={busy}
-                    onClick={() =>
-                      setPending({
-                        intent: "release",
-                        field: selectedField,
-                        source,
-                        value,
-                        language: selectedField === "description" ? (row?.description_language ?? "") : "",
-                      })
-                    }
-                  >
-                    Release
-                  </Button>
-                ) : null}
               </li>
             );
           })}
@@ -422,11 +432,11 @@ function SuggestionsPanel({
   );
 }
 
-/** What a Use this / Release click proposes, shown for confirmation before it posts. */
+/** What a Use this / Reset to default click proposes, shown for confirmation before it posts. */
 export interface PendingDecision {
-  intent: "use-this" | "release";
+  intent: "use-this" | "reset";
   field: SeBasicInfoField;
-  /** The suggesting source for Use this; the ruled source for Release. */
+  /** The suggesting source for Use this; the currently ruled source for Reset (display only). */
   source: string;
   value: string;
   language: string;
@@ -448,7 +458,7 @@ export function DecisionDialogBody({
   busy: boolean;
   onClose: () => void;
 }) {
-  const release = pending.intent === "release";
+  const reset = pending.intent === "reset";
   return (
     <Form method="post" onSubmit={onClose} className="flex flex-col gap-4">
       {/* Plain heading and paragraph, not DialogTitle/DialogDescription: those
@@ -456,12 +466,13 @@ export function DecisionDialogBody({
           in tests. */}
       <DialogHeader>
         <h2 className="text-base font-semibold leading-none">
-          {release ? "Release " : "Use this "}
+          {reset ? "Reset " : "Use this "}
           {basicInfoFieldLabel(pending.field).toLowerCase()}
+          {reset ? " to default" : ""}
         </h2>
         <p className="text-muted-foreground text-sm">
-          {release
-            ? `The rule preferring ${basicInfoSourceLabel(pending.source)} for this field is withdrawn and the next fold applies the normal precedence.`
+          {reset
+            ? `Every company rule for this field is withdrawn (today: ${basicInfoSourceLabel(pending.source)} preferred) and the next fold applies the global precedence.`
             : `The next fold prefers ${basicInfoSourceLabel(pending.source)}'s value for this field once the rule is applied.`}
         </p>
       </DialogHeader>
@@ -473,9 +484,11 @@ export function DecisionDialogBody({
       </div>
       <input type="hidden" name="intent" value={pending.intent} />
       <input type="hidden" name="field" value={pending.field} />
-      <input type="hidden" name="source" value={pending.source} />
+      {reset ? null : <input type="hidden" name="source" value={pending.source} />}
       <label className="flex flex-col gap-1 text-sm" htmlFor="basic-info-note">
-        <span className="text-muted-foreground text-xs">Why this value (optional)</span>
+        <span className="text-muted-foreground text-xs">
+          {reset ? "Why reset (optional)" : "Why this value (optional)"}
+        </span>
         <Input id="basic-info-note" name="note" maxLength={500} placeholder="Note saved with the decision" />
       </label>
       <DialogFooter>
@@ -483,7 +496,7 @@ export function DecisionDialogBody({
           Cancel
         </Button>
         <Button type="submit" disabled={busy}>
-          {release ? "Release" : "Use this"}
+          {reset ? "Reset to default" : "Use this"}
         </Button>
       </DialogFooter>
     </Form>

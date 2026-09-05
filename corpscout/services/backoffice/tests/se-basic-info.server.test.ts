@@ -297,16 +297,19 @@ describe("se-basic-info.server", () => {
     expect(activeRulesCall?.[1]).toEqual({ companyId: COMPANY, field: "status" });
   });
 
-  it("release inserts the same shape with removed set, without reading suggestions", async () => {
+  it("reset retires every active rule of the field in one write, without reading suggestions", async () => {
     clickhouse.insert.mockReset();
     clickhouse.query.mockReset();
-    clickhouse.query.mockImplementation(async (sql: string) => answer(sql));
+    clickhouse.query.mockImplementation(async (sql: string) =>
+      sql === BASIC_INFO_ACTIVE_RULES_SQL ? [{ source: "bolagsverket" }, { source: "ratsit" }] : answer(sql),
+    );
     const result = await appendSeBasicInfoRule(
       COMPANY,
-      { intent: "release", field: "status", source: "bolagsverket", note: "" },
+      { intent: "reset", field: "status", note: "back to default" },
       NOW,
     );
     expect(result).toEqual({ decidedAt: "2026-09-04 19:30:00.123" });
+    expect(clickhouse.insert).toHaveBeenCalledTimes(1);
     const [rows] = clickhouse.insert.mock.calls[0] as [Record<string, unknown>[]];
     expect(rows).toEqual([
       {
@@ -316,11 +319,33 @@ describe("se-basic-info.server", () => {
         precedence: 10000,
         removed: 1,
         decided_by: "backoffice",
-        note: "",
+        note: "reset to default: back to default",
+        decided_at: "2026-09-04 19:30:00.123",
+      },
+      {
+        company_id: COMPANY,
+        field: "status",
+        source: "ratsit",
+        precedence: 10000,
+        removed: 1,
+        decided_by: "backoffice",
+        note: "reset to default: back to default",
         decided_at: "2026-09-04 19:30:00.123",
       },
     ]);
-    expect(clickhouse.query).not.toHaveBeenCalled();
+    expect(clickhouse.query.mock.calls.some(([sql]) => sql === BASIC_INFO_SUGGESTIONS_SQL)).toBe(false);
+  });
+
+  it("reset refuses a field that has no company rule", async () => {
+    clickhouse.insert.mockReset();
+    clickhouse.query.mockReset();
+    clickhouse.query.mockImplementation(async (sql: string) =>
+      sql === BASIC_INFO_ACTIVE_RULES_SQL ? [] : answer(sql),
+    );
+    await expect(
+      appendSeBasicInfoRule(COMPANY, { intent: "reset", field: "status", note: "" }, NOW),
+    ).rejects.toThrow("No company rule to reset for status.");
+    expect(clickhouse.insert).not.toHaveBeenCalled();
   });
 
   it("refuses a source with no opinion on the field", async () => {
