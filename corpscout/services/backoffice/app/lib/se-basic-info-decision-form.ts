@@ -2,6 +2,10 @@
  * Turns the Info tab's form posts into one decision. Client-safe (no `.server`
  * import): the route's own module must not drag the server module into the
  * client bundle, and the refusals are unit-testable without ClickHouse.
+ *
+ * Three intents: `use-this` prefers one source for one field (a company rule),
+ * `reset` withdraws every company rule for one field so the global precedence
+ * applies again, `fold-now` launches the targeted fold.
  */
 import {
   isBasicInfoField,
@@ -12,7 +16,7 @@ import {
 
 export type SeBasicInfoDecision =
   | { intent: "use-this"; field: SeBasicInfoField; source: Exclude<SeBasicInfoSource, "reviewer">; note: string }
-  | { intent: "release"; field: SeBasicInfoField; source: Exclude<SeBasicInfoSource, "reviewer">; note: string }
+  | { intent: "reset"; field: SeBasicInfoField; note: string }
   | { intent: "fold-now" };
 
 export type SeBasicInfoDecisionRequest =
@@ -33,15 +37,14 @@ function refuse(error: string): SeBasicInfoDecisionRequest {
 export function parseSeBasicInfoDecision(form: FormData): SeBasicInfoDecisionRequest {
   const intent = text(form, "intent");
   if (intent === "fold-now") return { ok: true, decision: { intent: "fold-now" } };
-  if (intent !== "use-this" && intent !== "release") return refuse("Unknown intent.");
+  if (intent !== "use-this" && intent !== "reset") return refuse("Unknown intent.");
   const field = text(form, "field");
   if (!isBasicInfoField(field)) return refuse("Unknown field.");
   const note = text(form, "note").trim();
   if (note.length > MAX_NOTE_LENGTH) return refuse(`Note is longer than ${MAX_NOTE_LENGTH} characters.`);
+  if (intent === "reset") return { ok: true, decision: { intent, field, note } };
   const source = text(form, "source");
   if (!isBasicInfoSource(source)) return refuse("Unknown source.");
-  if (source === "reviewer") {
-    return refuse(intent === "release" ? "Release needs the preferred source." : "Use this needs a source other than the reviewer.");
-  }
+  if (source === "reviewer") return refuse("Use this needs a source other than the reviewer.");
   return { ok: true, decision: { intent, field, source, note } };
 }

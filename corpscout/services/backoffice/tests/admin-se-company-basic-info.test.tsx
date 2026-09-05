@@ -129,12 +129,20 @@ describe("SeBasicInfoWorkspace", () => {
     const ratsitRow = html.slice(ratsitAt, nextRowAt === -1 ? undefined : nextRowAt);
     expect(ratsitRow).toContain("no opinion");
     // Bolagsverket holds the active rule: it is preferred, carries the rule's
-    // note, and offers Release instead of Use this.
+    // note, and offers no Use this; the field-level Reset to default sits in
+    // the panel header and the left card flags the field's custom order.
     const bolagsverketRow = html.slice(bolagsverketAt, scbAt);
     expect(bolagsverketRow).toContain("preferred by reviewer");
     expect(bolagsverketRow).toContain("register is right");
-    expect(bolagsverketRow).toContain("Release");
     expect(bolagsverketRow).not.toContain("Use this");
+    expect(html).toContain("Reset to default");
+    expect(html).toContain("custom order");
+    const withoutRules = render(
+      <SeBasicInfoWorkspace companyId={COMPANY} detail={{ ...detail, rules: [] }} selectedField="status" result={null} />,
+      "?field=status",
+    );
+    expect(withoutRules).not.toContain("Reset to default");
+    expect(withoutRules).not.toContain("custom order");
     // SCB is still the fold's published winner (Active), but since it does not
     // hold the rule it still offers Use this -- a reviewer can prefer the
     // currently-active source explicitly too.
@@ -236,24 +244,22 @@ describe("SeBasicInfoWorkspace", () => {
     expect(html).toContain("Cancel");
   });
 
-  it("confirms a Release with the ruled source and the withdrawal copy", () => {
+  it("confirms a Reset to default with the ruled source shown and no source field posted", () => {
     const html = render(
       <DecisionDialogBody
-        pending={{ intent: "release", field: "description", source: "bolagsverket", value: "Kept text", language: "sv" }}
+        pending={{ intent: "reset", field: "description", source: "bolagsverket", value: "Kept text", language: "sv" }}
         labels={detail.legalFormLabels}
         busy={false}
         onClose={() => {}}
       />,
     );
-    expect(html).toContain("Release description");
+    expect(html).toContain("Reset description to default");
     expect(html).toContain("Bolagsverket");
     expect(html).toContain("Kept text");
-    expect(html).toContain('value="release"');
-    expect(html).toContain('name="source"');
-    expect(html).toContain('value="bolagsverket"');
-    expect(html).toContain(
-      "The rule preferring Bolagsverket for this field is withdrawn and the next fold applies the normal precedence.",
-    );
+    expect(html).toContain('value="reset"');
+    expect(html).not.toContain('name="source"');
+    expect(html).toContain("Every company rule for this field is withdrawn");
+    expect(html).toContain("Why reset (optional)");
   });
 });
 
@@ -290,14 +296,14 @@ describe("admin-se-company-info route", () => {
     server.appendSeBasicInfoRule.mockRejectedValueOnce(new server.SeBasicInfoDecisionError("SCB has no LEI for this company."));
     expect(await post({ intent: "use-this", field: "lei", source: "scb" })).toEqual({ ok: false, error: "SCB has no LEI for this company." });
     server.appendSeBasicInfoRule.mockRejectedValueOnce(new Error("clickhouse down"));
-    await expect(post({ intent: "release", field: "lei", source: "scb" })).rejects.toThrow("clickhouse down");
+    await expect(post({ intent: "reset", field: "lei" })).rejects.toThrow("clickhouse down");
+    expect(server.appendSeBasicInfoRule).toHaveBeenLastCalledWith(COMPANY, { intent: "reset", field: "lei", note: "" });
   });
 
   it("refuses to act on a malformed company id before any write or launch", async () => {
     const body = new FormData();
-    body.set("intent", "release");
+    body.set("intent", "reset");
     body.set("field", "lei");
-    body.set("source", "scb");
     const result = await action({
       request: new Request("http://x/info", { method: "POST", body }),
       params: { companyId: "abc" },

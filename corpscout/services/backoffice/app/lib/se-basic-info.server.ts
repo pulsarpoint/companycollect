@@ -264,7 +264,7 @@ export async function appendSeBasicInfoRule(
   decision: Exclude<SeBasicInfoDecision, { intent: "fold-now" }>,
   now: Date = new Date(),
 ): Promise<{ decidedAt: string }> {
-  const { field, source, note } = decision;
+  const { field, note } = decision;
   const stamp = clickhouseStamp(now);
   const rows: {
     company_id: string;
@@ -276,36 +276,52 @@ export async function appendSeBasicInfoRule(
     note: string;
     decided_at: string;
   }[] = [];
-  if (decision.intent === "use-this") {
-    const suggestions = await chQuery<SeBasicInfoSuggestionRow>(BASIC_INFO_SUGGESTIONS_SQL, { companyId });
-    const chosen = suggestions.find((row) => row.source === source);
-    const value = chosen?.[field] ?? "";
-    if (value === "") {
+  const retire = (source: string, why: string) =>
+    rows.push({
+      company_id: companyId,
+      field,
+      source,
+      precedence: 10000,
+      removed: 1,
+      decided_by: "backoffice",
+      note: why,
+      decided_at: stamp,
+    });
+  const activeRules = await chQuery<{ source: string }>(BASIC_INFO_ACTIVE_RULES_SQL, { companyId, field });
+  if (decision.intent === "reset") {
+    // Reset to default: every company rule for the field goes, whatever it
+    // ranked, so the global precedence decides again at the next fold.
+    if (activeRules.length === 0) {
       throw new SeBasicInfoDecisionError(
-        `${basicInfoSourceLabel(source)} has no ${basicInfoFieldLabel(field).toLowerCase()} for this company.`,
+        `No company rule to reset for ${basicInfoFieldLabel(field).toLowerCase()}.`,
       );
     }
-    const otherRules = await chQuery<{ source: string }>(BASIC_INFO_ACTIVE_RULES_SQL, { companyId, field });
-    for (const other of otherRules) {
-      if (other.source === source) continue;
-      rows.push({
-        company_id: companyId,
-        field,
-        source: other.source,
-        precedence: 10000,
-        removed: 1,
-        decided_by: "backoffice",
-        note: `superseded by ${basicInfoSourceLabel(source)}`,
-        decided_at: stamp,
-      });
+    for (const rule of activeRules) {
+      retire(rule.source, note === "" ? "reset to default" : `reset to default: ${note}`);
     }
+    await chInsertSeBasicInfoPrecedence(rows);
+    return { decidedAt: stamp };
+  }
+  const { source } = decision;
+  const suggestions = await chQuery<SeBasicInfoSuggestionRow>(BASIC_INFO_SUGGESTIONS_SQL, { companyId });
+  const chosen = suggestions.find((row) => row.source === source);
+  const value = chosen?.[field] ?? "";
+  if (value === "") {
+    throw new SeBasicInfoDecisionError(
+      `${basicInfoSourceLabel(source)} has no ${basicInfoFieldLabel(field).toLowerCase()} for this company.`,
+    );
+  }
+  // One preferred source per field: the others' active rules retire in the same write.
+  for (const other of activeRules) {
+    if (other.source === source) continue;
+    retire(other.source, `superseded by ${basicInfoSourceLabel(source)}`);
   }
   rows.push({
     company_id: companyId,
     field,
     source,
     precedence: 10000,
-    removed: decision.intent === "release" ? 1 : 0,
+    removed: 0,
     decided_by: "backoffice",
     note,
     decided_at: stamp,
