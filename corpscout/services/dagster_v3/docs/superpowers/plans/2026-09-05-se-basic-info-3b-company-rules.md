@@ -152,6 +152,8 @@ PRECEDENCE_COLUMNS: tuple[str, ...] = (
 
 Update the docstring: the export never touches company rows. Append `"000380_corpscout_se_company_basic_info_precedence_rules"` to `EXPECTED_MIGRATIONS`.
 
+The DDL contract helper (`tests/se_company_ddl.py::_migration_for`) requires exactly ONE migration to create a table, so 000380 cannot coexist with 000379's CREATE. Under the ledger policy (edit history, files stay), replace 000379's up file body with only the header comment, a comment line `-- Superseded by 000380, which recreates this table with a company scope (slice 3b, 2026-09-05)`, and `CREATE DATABASE IF NOT EXISTS corpscout;` as its last statement (no `;` inside comments); leave 000379's down file as it is. If `tests/test_clickhouse_migrations.py` has an `EMPTIED_MIGRATIONS` carve-out for files that only create the database, add `000379_corpscout_se_company_basic_info_precedence` to it. Rename `test_precedence_table_is_exported_never_edited` to `test_precedence_table_carries_global_and_company_rules` and make it assert the eight columns, `ReplacingMergeTree(decided_at)` and `ORDER BY (company_id, field, source)` from `table_block("se_company_basic_info_precedence")`; the separate new test from Step 1 can be folded into it.
+
 - [ ] **Step 4: Run tests to verify they pass**
 
 Same command as Step 2. Expected: PASS. Then `uv run --frozen --no-sync dg check defs`: definitions load.
