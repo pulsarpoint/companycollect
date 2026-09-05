@@ -1,0 +1,173 @@
+---
+- name: Configure recursive caching DNS on the Webtech host
+  hosts: webtech_hosts
+  become: true
+  gather_facts: true
+
+  tasks:
+    - name: Require a Debian-family systemd host
+      ansible.builtin.assert:
+        that:
+          - ansible_facts.os_family == 'Debian'
+          - ansible_facts.service_mgr == 'systemd'
+
+    - name: Verify that applications already use the systemd DNS stub
+      ansible.builtin.command:
+        argv: [readlink, -f, /etc/resolv.conf]
+      register: webtech_resolv_conf
+      check_mode: false
+      changed_when: false
+      failed_when: webtech_resolv_conf.stdout != '/run/systemd/resolve/stub-resolv.conf'
+
+    - name: Install the recursive resolver and maintained DNS root data
+      ansible.builtin.apt:
+        name: [unbound, dns-root-data, bind9-dnsutils]
+        state: present
+        update_cache: false
+        policy_rc_d: 101
+      environment:
+        NEEDRESTART_MODE: l
+
+    - name: Inspect the installed Unbound configuration validator
+      ansible.builtin.stat:
+        path: /usr/sbin/unbound-checkconf
+      register: webtech_unbound_validator
+
+    - name: Initialize the DNSSEC trust anchor without replacing an updated key
+      ansible.builtin.copy:
+        src: /usr/share/dns/root.key
+        dest: /var/lib/unbound/root.key
+        remote_src: true
+        force: false
+        owner: unbound
+        group: unbound
+        mode: "0644"
+      when: not ansible_check_mode
+
+    - name: Install the loopback-only recursive Unbound configuration
+      ansible.builtin.copy:
+        src: files/unbound.conf
+        dest: /etc/unbound/unbound.conf
+        owner: root
+        group: root
+        mode: "0644"
+        backup: true
+        validate: /usr/sbin/unbound-checkconf %s
+      notify: Restart the Webtech recursive resolver
+      when: not ansible_check_mode or webtech_unbound_validator.stat.exists
+
+    - name: Enable and start the recursive resolver
+      ansible.builtin.systemd_service:
+        name: unbound.service
+        enabled: true
+        state: started
+      when: not ansible_check_mode
+
+    - name: Apply Unbound changes before switching application DNS
+      ansible.builtin.meta: flush_handlers
+
+    - name: Verify direct recursion before changing the system resolver
+      ansible.builtin.command:
+        argv: [dig, '@127.0.0.1', cloudflare.com, A, +dnssec, +time=5, +tries=1]
+      register: webtech_recursive_answer
+      changed_when: false
+      retries: 3
+      delay: 1
+      until:
+        - webtech_recursive_answer.rc == 0
+        - "'status: NOERROR' in webtech_recursive_answer.stdout"
+        - "'ANSWER: 0' not in webtech_recursive_answer.stdout"
+        - "' ad;' in webtech_recursive_answer.stdout"
+      when: not ansible_check_mode
+
+    - name: Verify that Unbound has no forwarding zones
+      ansible.builtin.command:
+        argv: [unbound-control, list_forwards]
+      register: webtech_dns_forwarders
+      changed_when: false
+      failed_when: webtech_dns_forwarders.rc != 0 or webtech_dns_forwarders.stdout | trim != ''
+      when: not ansible_check_mode
+
+    - name: Create the system resolver drop-in directory
+      ansible.builtin.file:
+        path: /etc/systemd/resolved.conf.d
+        state: directory
+        owner: root
+        group: root
+        mode: "0755"
+
+    - name: Inspect the system resolver drop-in directory
+      ansible.builtin.stat:
+        path: /etc/systemd/resolved.conf.d
+      register: webtech_resolved_directory
+
+    - name: Route public names through Unbound and verify the switch
+      when: not ansible_check_mode or webtech_resolved_directory.stat.exists
+      block:
+        - name: Prefer recursive DNS while preserving Tailscale split DNS
+          ansible.builtin.copy:
+            src: files/webtech-recursive-dns.conf
+            dest: /etc/systemd/resolved.conf.d/90-webtech-recursive-dns.conf
+            owner: root
+            group: root
+            mode: "0644"
+            backup: true
+          register: webtech_dns_routing
+
+        - name: Reload DNS routing without restarting Webtech
+          ansible.builtin.systemd_service:
+            name: systemd-resolved.service
+            state: reloaded
+          when: webtech_dns_routing.changed and not ansible_check_mode
+
+        - name: Verify public resolution through the application DNS stub
+          ansible.builtin.command:
+            argv: [dig, '@127.0.0.53', example.com, A, +time=5, +tries=1]
+          register: webtech_stub_answer
+          changed_when: false
+          failed_when: >-
+            webtech_stub_answer.rc != 0 or
+            'status: NOERROR' not in webtech_stub_answer.stdout or
+            'ANSWER: 0' in webtech_stub_answer.stdout
+          when: not ansible_check_mode
+
+        - name: Verify that the internal Dagster hostname still resolves
+          ansible.builtin.command:
+            argv: [getent, ahostsv4, dagster]
+          changed_when: false
+          when: not ansible_check_mode
+
+      rescue:
+        - name: Restore the previous resolver drop-in when one existed
+          ansible.builtin.copy:
+            src: "{{ webtech_dns_routing.backup_file }}"
+            dest: /etc/systemd/resolved.conf.d/90-webtech-recursive-dns.conf
+            remote_src: true
+            owner: root
+            group: root
+            mode: "0644"
+          when: webtech_dns_routing.backup_file is defined
+
+        - name: Remove only the newly created routing drop-in on verification failure
+          ansible.builtin.file:
+            path: /etc/systemd/resolved.conf.d/90-webtech-recursive-dns.conf
+            state: absent
+          when:
+            - webtech_dns_routing.changed | default(false)
+            - webtech_dns_routing.backup_file is not defined
+
+        - name: Reload the restored DNS routing
+          ansible.builtin.systemd_service:
+            name: systemd-resolved.service
+            state: reloaded
+
+        - name: Report unsuccessful recursive DNS activation
+          ansible.builtin.fail:
+            msg: Recursive DNS verification failed; previous system DNS routing was restored.
+
+  handlers:
+    - name: Restart the Webtech recursive resolver
+      ansible.builtin.systemd_service:
+        name: unbound.service
+        state: restarted
+      when: not ansible_check_mode

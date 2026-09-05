@@ -1,4 +1,7 @@
 ---
+- name: Configure the Webtech host's recursive DNS cache
+  ansible.builtin.import_playbook: dns.yml
+
 - name: Deploy the Corpscout Webtech scanner
   hosts: webtech_hosts
   gather_facts: true
