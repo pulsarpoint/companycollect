@@ -136,14 +136,22 @@ def _precedence_export_timestamp(exported_at: datetime) -> str:
 
 
 def export_precedence(client: Any, exported_at: datetime) -> tuple[int, int]:
-    """Insert every (field, source, precedence) pair from ``precedence_rows()`` and count
-    pairs already in the table that were exported before this run but that the current
-    dictionary no longer names. Returns ``(pairs inserted, stale pairs remaining)``.
+    """Insert every (field, source, precedence) pair from ``precedence_rows()`` as a
+    global rule (company_id '', decided_by 'code') and count global rules already in the
+    table that were exported before this run but that the current dictionary no longer
+    names. Returns ``(pairs inserted, stale pairs remaining)``.
+
+    The export never touches a company row: a reviewer's per-company precedence
+    decision lives at its own company_id and is untouched by this insert and unseen by
+    the stale count, which is scoped to ``company_id = ''``.
 
     Factored out of the asset body so it can be exercised directly against a fake
     ClickHouse client in tests, without needing a Dagster asset execution context.
     """
-    rows = [(field, source, precedence, exported_at) for field, source, precedence in precedence_rows()]
+    rows = [
+        ("", field, source, precedence, 0, "code", "", exported_at)
+        for field, source, precedence in precedence_rows()
+    ]
     client.execute(
         f"INSERT INTO {tables.QUALIFIED_PRECEDENCE_TABLE} ({', '.join(tables.PRECEDENCE_COLUMNS)}) VALUES",
         rows,
@@ -151,7 +159,7 @@ def export_precedence(client: Any, exported_at: datetime) -> tuple[int, int]:
     stale = int(
         client.execute(
             f"SELECT count() FROM {tables.QUALIFIED_PRECEDENCE_TABLE} FINAL "
-            "WHERE exported_at < toDateTime64(%(exported_at)s, 3, 'UTC')",
+            "WHERE company_id = '' AND decided_at < toDateTime64(%(exported_at)s, 3, 'UTC')",
             {"exported_at": _precedence_export_timestamp(exported_at)},
         )[0][0]
     )
@@ -164,9 +172,10 @@ def export_precedence(client: Any, exported_at: datetime) -> tuple[int, int]:
     kinds={"clickhouse", "python"},
     metadata={"table": tables.QUALIFIED_PRECEDENCE_TABLE},
     description=(
-        "Exports BASIC_INFO_PRECEDENCE to se_company_basic_info_precedence for the "
-        "backoffice to display and validate against. The Python dictionary is the only "
-        "source; re-run after changing it."
+        "Exports BASIC_INFO_PRECEDENCE to se_company_basic_info_precedence as global rules "
+        "(company_id '') for the backoffice to display and validate against. The Python "
+        "dictionary is the only source for these rows; re-run after changing it. Never "
+        "touches a reviewer's per-company rule rows."
     ),
 )
 def se_company_basic_info_precedence_clickhouse(

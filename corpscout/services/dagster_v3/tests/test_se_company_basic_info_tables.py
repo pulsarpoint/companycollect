@@ -56,11 +56,16 @@ def test_history_table_is_the_main_row_plus_changed_fields() -> None:
     assert "MATERIALIZED" not in block
 
 
-def test_precedence_table_is_exported_never_edited() -> None:
+def test_precedence_table_carries_global_and_company_rules() -> None:
+    # Slice 3b (2026-09-05): '' is a global rule exported from code; a company id is a
+    # reviewer rule scoped to that company only.
+    assert tables.PRECEDENCE_COLUMNS == (
+        "company_id", "field", "source", "precedence", "removed", "decided_by", "note", "decided_at",
+    )
     block = table_block("se_company_basic_info_precedence")
     assert declared_columns("se_company_basic_info_precedence") == list(tables.PRECEDENCE_COLUMNS)
-    assert "ENGINE = ReplacingMergeTree(exported_at)" in block
-    assert "ORDER BY (field, source)" in block
+    assert "ENGINE = ReplacingMergeTree(decided_at)" in block
+    assert "ORDER BY (company_id, field, source)" in block
     assert "precedence UInt32" in block
 
 

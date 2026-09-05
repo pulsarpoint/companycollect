@@ -127,11 +127,16 @@ def test_export_precedence_inserts_every_pair_and_binds_a_utc_millisecond_string
     )
     assert insert_sql == (
         "INSERT INTO corpscout.se_company_basic_info_precedence "
-        "(field, source, precedence, exported_at) VALUES"
+        "(company_id, field, source, precedence, removed, decided_by, note, decided_at) VALUES"
     )
-    assert len(insert_rows) == len(expected_rows)
+    # Every exported row is a global rule ('' company_id, decided_by 'code'): the code
+    # export never touches a reviewer's company-scoped row.
+    assert insert_rows == [
+        ("", field, source, precedence, 0, "code", "", exported_at)
+        for field, source, precedence in expected_rows
+    ]
 
     stale_sql, stale_params = client.calls[1]
-    assert "toDateTime64(%(exported_at)s, 3, 'UTC')" in stale_sql
+    assert "WHERE company_id = '' AND decided_at < toDateTime64(%(exported_at)s, 3, 'UTC')" in stale_sql
     assert re.fullmatch(r"\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}\.\d{3}", stale_params["exported_at"])
     assert stale_params["exported_at"] == "2026-09-03 12:34:56.789"
