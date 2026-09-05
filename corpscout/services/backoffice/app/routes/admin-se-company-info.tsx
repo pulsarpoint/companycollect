@@ -43,6 +43,10 @@ export async function action({ request, params }: Route.ActionArgs) {
     const launched = await launchSeBasicInfoFold(params.companyId);
     return { ok: true as const, launched };
   }
+  if (parsed.decision.intent !== "use-this" && parsed.decision.intent !== "reset") {
+    // Slice 3c Task 3 wires the draft writes; until then the parser accepts more than the store handles.
+    return { ok: false as const, error: "Not available yet." };
+  }
   try {
     const { decidedAt } = await appendSeBasicInfoRule(params.companyId, parsed.decision);
     return { ok: true as const, decidedAt };

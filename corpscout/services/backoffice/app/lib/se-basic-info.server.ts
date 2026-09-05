@@ -261,7 +261,7 @@ export function clickhouseStamp(date: Date): string {
  */
 export async function appendSeBasicInfoRule(
   companyId: string,
-  decision: Exclude<SeBasicInfoDecision, { intent: "fold-now" }>,
+  decision: Extract<SeBasicInfoDecision, { intent: "use-this" | "reset" }>,
   now: Date = new Date(),
 ): Promise<{ decidedAt: string }> {
   const { field, note } = decision;
