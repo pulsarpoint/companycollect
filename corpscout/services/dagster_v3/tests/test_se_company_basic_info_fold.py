@@ -254,3 +254,31 @@ def test_a_low_rule_demotes_a_source_for_one_company() -> None:
         "5560000000", [scb, bolagsverket], source_run_id="r", rules={"status": {"scb": 1}}
     )
     assert row is not None and row.status_source == "bolagsverket"
+
+
+def test_a_draft_row_never_supplies_a_field() -> None:
+    # reviewer_draft holds a reviewer's typed-but-not-activated value: it has no
+    # precedence map entry, so _winner skips it like any other unranked source.
+    row = fold_basic_info(
+        "5560000000",
+        [suggestion("scb", legal_name="SCB AB"), suggestion("reviewer_draft", legal_name="Draft AB")],
+        source_run_id="r",
+    )
+    assert row is not None
+    assert (row.legal_name, row.legal_name_source) == ("SCB AB", "scb")
+
+
+def test_an_activated_reviewer_value_beats_a_company_rule() -> None:
+    # The reviewer sits at 20000, above the highest company rule (10000, spec 4), so an
+    # activated reviewer value always wins even when a rule promotes another source.
+    scb = suggestion("scb", legal_name="X AB")
+    bolagsverket = suggestion("bolagsverket", status="inactive")
+    reviewer = suggestion("reviewer", status="dormant")
+    row = fold_basic_info(
+        "5560000000",
+        [scb, bolagsverket, reviewer],
+        source_run_id="r",
+        rules={"status": {"bolagsverket": 10000}},
+    )
+    assert row is not None
+    assert (row.status, row.status_source) == ("dormant", "reviewer")

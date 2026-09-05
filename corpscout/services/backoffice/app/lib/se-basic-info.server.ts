@@ -1,4 +1,4 @@
-import { chInsertSeBasicInfoPrecedence, chQuery } from "~/lib/clickhouse.server";
+import { chInsertSeBasicInfoPrecedence, chInsertSeBasicInfoSuggestions, chQuery } from "~/lib/clickhouse.server";
 import {
   ASSET_JOB_NAME,
   dagsterRunUrl,
@@ -91,6 +91,13 @@ export interface SeBasicInfoLegalFormLabel {
   label_sv: string;
 }
 
+/** One row of the edit sheet's legal-form select. */
+export interface SeBasicInfoLegalFormOption {
+  code: string;
+  label_sv: string;
+  label_en: string;
+}
+
 export interface SeBasicInfoDetail {
   /** Null when the company has suggestions but has never been folded (or
    * has no register legal name, spec 5's publish rule). */
@@ -105,6 +112,8 @@ export interface SeBasicInfoDetail {
   rules: SeBasicInfoPrecedenceRow[];
   /** Keyed by legal-form code: every code on the main row or any suggestion. */
   legalFormLabels: Record<string, SeBasicInfoLegalFormLabel>;
+  /** Every numeric legal-form code, for the edit sheet's select. */
+  legalFormOptions: SeBasicInfoLegalFormOption[];
   foldPending: boolean;
 }
 
@@ -197,14 +206,26 @@ interface LegalFormLabelQueryRow extends SeBasicInfoLegalFormLabel {
   code: string;
 }
 
+/** Every numeric legal-form code for the edit sheet's select, unbound (no
+ * company parameter) since the options are the same for every company. */
+export const BASIC_INFO_LEGAL_FORM_OPTIONS_SQL = `SELECT
+  l.code AS code,
+  argMax(l.label_sv, l.version) AS label_sv,
+  argMax(l.label_en, l.version) AS label_en
+FROM corpscout.se_code_labels AS l
+WHERE l.code_type = 'legal_form' AND match(l.code, '^[0-9]{2}$')
+GROUP BY l.code
+ORDER BY l.code`;
+
 export async function loadSeBasicInfoDetail(
   companyId: string,
 ): Promise<SeBasicInfoDetail | null> {
-  const [infoRows, suggestions, history, precedenceRows] = await Promise.all([
+  const [infoRows, suggestions, history, precedenceRows, legalFormOptions] = await Promise.all([
     chQuery<SeBasicInfoRow>(BASIC_INFO_SQL, { companyId }),
     chQuery<SeBasicInfoSuggestionRow>(BASIC_INFO_SUGGESTIONS_SQL, { companyId }),
     chQuery<SeBasicInfoHistoryRow>(BASIC_INFO_HISTORY_SQL, { companyId }),
     chQuery<SeBasicInfoPrecedenceRow>(BASIC_INFO_PRECEDENCE_SQL, { companyId }),
+    chQuery<SeBasicInfoLegalFormOption>(BASIC_INFO_LEGAL_FORM_OPTIONS_SQL),
   ]);
   const info = infoRows[0] ?? null;
   if (!info && suggestions.length === 0) return null;
@@ -233,10 +254,14 @@ export async function loadSeBasicInfoDetail(
     precedence,
     rules,
     legalFormLabels,
+    legalFormOptions,
     // A release must also read as pending until folded, so every one of this
     // company's rows counts here -- not just the active (removed = 0) ones.
+    // A `reviewer_draft` row is excluded: it is not yet activated, so it must
+    // never raise "Fold pending" on its own (mirrors Dagster's
+    // `suggestion_watermarks_sql` exclusion).
     foldPending: foldPending(info?.folded_at ?? null, [
-      ...suggestions.map((row) => row.suggested_at),
+      ...suggestions.filter((row) => row.source !== "reviewer_draft").map((row) => row.suggested_at),
       ...companyRows.map((row) => row.decided_at),
     ]),
   };
@@ -247,6 +272,167 @@ export class SeBasicInfoDecisionError extends Error {}
 /** ClickHouse's own DateTime64(3) text form, UTC. */
 export function clickhouseStamp(date: Date): string {
   return date.toISOString().replace("T", " ").replace("Z", "");
+}
+
+/** The suggestion table's nine value columns, in insert-column order. */
+const SUGGESTION_VALUE_FIELDS = [
+  "legal_name",
+  "legal_form_code",
+  "status",
+  "incorporation_date",
+  "lei",
+  "wikidata_id",
+  "description",
+  "description_language",
+  "description_sv",
+] as const;
+
+export type SeBasicInfoValueField = (typeof SUGGESTION_VALUE_FIELDS)[number];
+
+/** One row for `chInsertSeBasicInfoSuggestions`: the nine value columns are
+ * `Nullable` on the table, so every one of them is `string | null` here --
+ * never `''` (spec 3.2's suggestion-row contract). */
+export interface SeBasicInfoSuggestionInsertRow {
+  company_id: string;
+  source: string;
+  source_record_uid: string;
+  observed_at: string;
+  legal_name: string | null;
+  legal_form_code: string | null;
+  status: string | null;
+  incorporation_date: string | null;
+  lei: string | null;
+  wikidata_id: string | null;
+  description: string | null;
+  description_language: string | null;
+  description_sv: string | null;
+  decided_by: string;
+  note: string | null;
+  suggested_at: string;
+  source_run_id: string;
+  extractor_version: string;
+}
+
+function valueOrNull(value: string | undefined): string | null {
+  return value === undefined || value === "" ? null : value;
+}
+
+/**
+ * One version of a suggestion row (slice 3c): `edit`, `activate`, `discard`
+ * and `reset` all write a version that starts from the current row of the
+ * same source -- `current` (`undefined` when that source has no row yet) --
+ * and changes exactly one field (`description` carries `description_language`
+ * along). `''` on `current`'s value columns reads as NULL, same as a
+ * missing `current`; `changes` applies directly (a change of `null` clears
+ * the field, unconditionally -- it is never itself nullified). The fixed
+ * backoffice columns (`decided_by`, `source_run_id`, `extractor_version`,
+ * `source_record_uid = ''`) and both stamps (`observed_at = suggested_at`)
+ * are the same for every version the backoffice writes.
+ */
+export function suggestionRowVersion(
+  companyId: string,
+  current: SeBasicInfoSuggestionRow | undefined,
+  source: string,
+  changes: Partial<Record<SeBasicInfoValueField, string | null>>,
+  note: string,
+  stamp: string,
+): SeBasicInfoSuggestionInsertRow {
+  const base = Object.fromEntries(
+    SUGGESTION_VALUE_FIELDS.map((field) => [field, valueOrNull(current?.[field])]),
+  ) as Record<SeBasicInfoValueField, string | null>;
+  const values = { ...base, ...changes };
+  const trimmedNote = note.trim();
+  return {
+    company_id: companyId,
+    source,
+    source_record_uid: "",
+    observed_at: stamp,
+    ...values,
+    decided_by: "backoffice",
+    note: trimmedNote === "" ? null : trimmedNote,
+    suggested_at: stamp,
+    source_run_id: "backoffice",
+    extractor_version: "backoffice-v1",
+  };
+}
+
+/**
+ * Slice 3c's `edit`: writes a new `reviewer_draft` version with one field set
+ * (description's language rides with it), starting from the company's
+ * current draft row so every other field's draft value carries forward.
+ * Never refuses -- a draft can hold any validated value.
+ */
+export async function appendSeBasicInfoDraft(
+  companyId: string,
+  decision: Extract<SeBasicInfoDecision, { intent: "edit" }>,
+  now: Date = new Date(),
+): Promise<{ decidedAt: string }> {
+  const { field, value, language, note } = decision;
+  const stamp = clickhouseStamp(now);
+  const suggestions = await chQuery<SeBasicInfoSuggestionRow>(BASIC_INFO_SUGGESTIONS_SQL, { companyId });
+  const draft = suggestions.find((row) => row.source === "reviewer_draft");
+  const changes: Partial<Record<SeBasicInfoValueField, string | null>> =
+    field === "description" ? { description: value, description_language: language } : { [field]: value };
+  const version = suggestionRowVersion(companyId, draft, "reviewer_draft", changes, note, stamp);
+  await chInsertSeBasicInfoSuggestions([version]);
+  return { decidedAt: stamp };
+}
+
+/**
+ * Slice 3c's `activate`: promotes the field's draft value into the active
+ * `reviewer` row. Refuses when the draft has no value for the field.
+ * Otherwise writes, in one insert, the `reviewer` version with the field (and
+ * `description_language` for `description`) copied from the draft, then the
+ * `reviewer_draft` version with it cleared (note "activated").
+ */
+export async function activateSeBasicInfoDraft(
+  companyId: string,
+  decision: Extract<SeBasicInfoDecision, { intent: "activate" }>,
+  now: Date = new Date(),
+): Promise<{ decidedAt: string }> {
+  const { field, note } = decision;
+  const stamp = clickhouseStamp(now);
+  const suggestions = await chQuery<SeBasicInfoSuggestionRow>(BASIC_INFO_SUGGESTIONS_SQL, { companyId });
+  const draft = suggestions.find((row) => row.source === "reviewer_draft");
+  if (!draft || draft[field] === "") {
+    throw new SeBasicInfoDecisionError(`No draft value for ${basicInfoFieldLabel(field)} to activate.`);
+  }
+  const reviewer = suggestions.find((row) => row.source === "reviewer");
+  const draftValue = draft[field];
+  const activateChanges: Partial<Record<SeBasicInfoValueField, string | null>> =
+    field === "description"
+      ? { description: draftValue, description_language: valueOrNull(draft.description_language) }
+      : { [field]: draftValue };
+  const reviewerVersion = suggestionRowVersion(companyId, reviewer, "reviewer", activateChanges, note, stamp);
+  const clearChanges: Partial<Record<SeBasicInfoValueField, string | null>> =
+    field === "description" ? { description: null, description_language: null } : { [field]: null };
+  const draftVersion = suggestionRowVersion(companyId, draft, "reviewer_draft", clearChanges, "activated", stamp);
+  await chInsertSeBasicInfoSuggestions([reviewerVersion, draftVersion]);
+  return { decidedAt: stamp };
+}
+
+/**
+ * Slice 3c's `discard`: drops the field's draft value. Refuses when the draft
+ * has none; otherwise writes a `reviewer_draft` version with it (and
+ * `description_language` for `description`) cleared, note "discarded".
+ */
+export async function discardSeBasicInfoDraft(
+  companyId: string,
+  decision: Extract<SeBasicInfoDecision, { intent: "discard" }>,
+  now: Date = new Date(),
+): Promise<{ decidedAt: string }> {
+  const { field } = decision;
+  const stamp = clickhouseStamp(now);
+  const suggestions = await chQuery<SeBasicInfoSuggestionRow>(BASIC_INFO_SUGGESTIONS_SQL, { companyId });
+  const draft = suggestions.find((row) => row.source === "reviewer_draft");
+  if (!draft || draft[field] === "") {
+    throw new SeBasicInfoDecisionError(`No draft value for ${basicInfoFieldLabel(field)} to discard.`);
+  }
+  const changes: Partial<Record<SeBasicInfoValueField, string | null>> =
+    field === "description" ? { description: null, description_language: null } : { [field]: null };
+  const version = suggestionRowVersion(companyId, draft, "reviewer_draft", changes, "discarded", stamp);
+  await chInsertSeBasicInfoSuggestions([version]);
+  return { decidedAt: stamp };
 }
 
 /**
@@ -261,7 +447,7 @@ export function clickhouseStamp(date: Date): string {
  */
 export async function appendSeBasicInfoRule(
   companyId: string,
-  decision: Exclude<SeBasicInfoDecision, { intent: "fold-now" }>,
+  decision: Extract<SeBasicInfoDecision, { intent: "use-this" | "reset" }>,
   now: Date = new Date(),
 ): Promise<{ decidedAt: string }> {
   const { field, note } = decision;
@@ -289,17 +475,32 @@ export async function appendSeBasicInfoRule(
     });
   const activeRules = await chQuery<{ source: string }>(BASIC_INFO_ACTIVE_RULES_SQL, { companyId, field });
   if (decision.intent === "reset") {
-    // Reset to default: every company rule for the field goes, whatever it
-    // ranked, so the global precedence decides again at the next fold.
-    if (activeRules.length === 0) {
+    // Reset to default touches two things: every company rule for the field
+    // (whatever it ranked, so the global precedence decides again at the next
+    // fold) and, when the reviewer typed a value for the field, that value
+    // too (slice 3c: a typed value must not survive its own reset). One read
+    // of the suggestions serves both the value check and the version base.
+    const suggestions = await chQuery<SeBasicInfoSuggestionRow>(BASIC_INFO_SUGGESTIONS_SQL, { companyId });
+    const reviewer = suggestions.find((row) => row.source === "reviewer");
+    const reviewerValue = reviewer?.[field] ?? "";
+    if (activeRules.length === 0 && reviewerValue === "") {
       throw new SeBasicInfoDecisionError(
-        `No company rule to reset for ${basicInfoFieldLabel(field).toLowerCase()}.`,
+        `No company rule or reviewer value to reset for ${basicInfoFieldLabel(field)}.`,
       );
     }
-    for (const rule of activeRules) {
-      retire(rule.source, note === "" ? "reset to default" : `reset to default: ${note}`);
+    const resetNote = note === "" ? "reset to default" : `reset to default: ${note}`;
+    if (activeRules.length > 0) {
+      for (const rule of activeRules) {
+        retire(rule.source, resetNote);
+      }
+      await chInsertSeBasicInfoPrecedence(rows);
     }
-    await chInsertSeBasicInfoPrecedence(rows);
+    if (reviewerValue !== "") {
+      const changes: Partial<Record<SeBasicInfoValueField, string | null>> =
+        field === "description" ? { description: null, description_language: null } : { [field]: null };
+      const version = suggestionRowVersion(companyId, reviewer, "reviewer", changes, resetNote, stamp);
+      await chInsertSeBasicInfoSuggestions([version]);
+    }
     return { decidedAt: stamp };
   }
   const { source } = decision;

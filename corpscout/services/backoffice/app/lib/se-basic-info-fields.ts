@@ -37,7 +37,11 @@ export function basicInfoFieldKind(field: SeBasicInfoField): SeBasicInfoFieldKin
   return FIELD_BY_NAME.get(field)?.kind ?? "text";
 }
 
-/** Spec section 11's source names; the reviewer first because it outranks all. */
+/**
+ * Spec section 11's source names; the reviewer first because it outranks all,
+ * the reviewer's own draft last (slice 3c) since a draft is never active and
+ * the suggestions panel never offers "Use this" on it.
+ */
 export const BASIC_INFO_SOURCES = [
   "reviewer",
   "llm",
@@ -46,6 +50,7 @@ export const BASIC_INFO_SOURCES = [
   "esef",
   "wikidata",
   "ratsit",
+  "reviewer_draft",
 ] as const;
 
 export type SeBasicInfoSource = (typeof BASIC_INFO_SOURCES)[number];
@@ -58,6 +63,7 @@ const SOURCE_LABELS: Record<SeBasicInfoSource, string> = {
   esef: "ESEF",
   wikidata: "Wikidata",
   ratsit: "Ratsit",
+  reviewer_draft: "Draft",
 };
 
 export function isBasicInfoSource(value: string): value is SeBasicInfoSource {
@@ -91,4 +97,135 @@ export function foldPending(
   if (suggestedAts.length === 0) return false;
   if (foldedAt === null) return true;
   return suggestedAts.some((suggestedAt) => suggestedAt > foldedAt);
+}
+
+/** The `status` field's only two legal values. */
+export const BASIC_INFO_STATUSES = ["active", "inactive"] as const;
+
+/** The `description` field's only two legal languages. */
+export const BASIC_INFO_LANGUAGES = ["en", "sv"] as const;
+
+export const MAX_LEGAL_NAME_LENGTH = 500;
+export const MAX_DESCRIPTION_LENGTH = 8000;
+
+// Storage floor, not a historical judgment: `Nullable(Date32)` saturates any
+// date before 1900-01-01 to 1900-01-01 silently, so a value older than that
+// could never round-trip -- the validator's floor has to match the column's.
+const INCORPORATION_DATE_MIN = "1900-01-01";
+const LEI_PATTERN = /^[A-Z0-9]{20}$/;
+const LEGAL_FORM_CODE_PATTERN = /^[0-9]{2}$/;
+const INCORPORATION_DATE_PATTERN = /^([0-9]{4})-([0-9]{2})-([0-9]{2})$/;
+const WIKIDATA_ID_PATTERN = /^Q[0-9]+$/;
+
+export interface SeBasicInfoValueOptions {
+  /** The SCB legal-form codes the loader offered; an empty list refuses every code. */
+  legalFormCodes: readonly string[];
+  /** Today's date, `YYYY-MM-DD`, UTC; the upper bound of `incorporation_date`. */
+  today: string;
+}
+
+export type SeBasicInfoValueResult =
+  | { ok: true; value: string; language: string }
+  | { ok: false; error: string };
+
+function ok(value: string, language = ""): SeBasicInfoValueResult {
+  return { ok: true, value, language };
+}
+
+function fail(error: string): SeBasicInfoValueResult {
+  return { ok: false, error };
+}
+
+function validateText(trimmed: string, maxLength: number): SeBasicInfoValueResult {
+  if (trimmed.length > maxLength) return fail(`Value is longer than ${maxLength} characters.`);
+  return ok(trimmed);
+}
+
+function validateLegalFormCode(trimmed: string, legalFormCodes: readonly string[]): SeBasicInfoValueResult {
+  if (!LEGAL_FORM_CODE_PATTERN.test(trimmed) || !legalFormCodes.includes(trimmed)) {
+    return fail("Legal form must be one of the SCB codes.");
+  }
+  return ok(trimmed);
+}
+
+function validateStatus(trimmed: string): SeBasicInfoValueResult {
+  if (trimmed !== "active" && trimmed !== "inactive") {
+    return fail("Status must be active or inactive.");
+  }
+  return ok(trimmed);
+}
+
+function isRealCalendarDate(year: number, month: number, day: number): boolean {
+  const date = new Date(Date.UTC(year, month - 1, day));
+  return (
+    date.getUTCFullYear() === year &&
+    date.getUTCMonth() === month - 1 &&
+    date.getUTCDate() === day
+  );
+}
+
+function validateIncorporationDate(trimmed: string, today: string): SeBasicInfoValueResult {
+  const match = INCORPORATION_DATE_PATTERN.exec(trimmed);
+  if (!match) return fail("Date must be YYYY-MM-DD.");
+  const [, yearText, monthText, dayText] = match;
+  if (!isRealCalendarDate(Number(yearText), Number(monthText), Number(dayText))) {
+    return fail("Date must be YYYY-MM-DD.");
+  }
+  if (trimmed < INCORPORATION_DATE_MIN || trimmed > today) {
+    return fail("Date must be between 1900-01-01 and today.");
+  }
+  return ok(trimmed);
+}
+
+function validateLei(trimmed: string): SeBasicInfoValueResult {
+  const upper = trimmed.toUpperCase();
+  if (!LEI_PATTERN.test(upper)) return fail("LEI must be 20 letters or digits.");
+  return ok(upper);
+}
+
+function validateWikidataId(trimmed: string): SeBasicInfoValueResult {
+  if (!WIKIDATA_ID_PATTERN.test(trimmed)) return fail("Wikidata id must be Q followed by digits.");
+  return ok(trimmed);
+}
+
+function validateDescription(trimmed: string, language: string): SeBasicInfoValueResult {
+  if (trimmed.length > MAX_DESCRIPTION_LENGTH) return fail(`Value is longer than ${MAX_DESCRIPTION_LENGTH} characters.`);
+  if (language !== "en" && language !== "sv") return fail("Language must be en or sv.");
+  return ok(trimmed, language);
+}
+
+/**
+ * Validates one field's edited value, dispatching by field NAME rather than
+ * kind: `status` and `legal_name` share kind `text` but validate differently.
+ * Check order is always trim -> empty -> the field's own rule. `language` is
+ * only meaningful (and only echoed back) for `description`; every other field
+ * returns `''` regardless of what was sent.
+ */
+export function validateSeBasicInfoValue(
+  field: SeBasicInfoField,
+  value: string,
+  language: string,
+  options: SeBasicInfoValueOptions,
+): SeBasicInfoValueResult {
+  const trimmed = value.trim();
+  if (trimmed.length === 0) return fail("Value cannot be empty.");
+
+  switch (field) {
+    case "legal_name":
+      return validateText(trimmed, MAX_LEGAL_NAME_LENGTH);
+    case "legal_form_code":
+      return validateLegalFormCode(trimmed, options.legalFormCodes);
+    case "status":
+      return validateStatus(trimmed);
+    case "incorporation_date":
+      return validateIncorporationDate(trimmed, options.today);
+    case "lei":
+      return validateLei(trimmed);
+    case "wikidata_id":
+      return validateWikidataId(trimmed);
+    case "description":
+      return validateDescription(trimmed, language);
+    case "description_sv":
+      return validateText(trimmed, MAX_DESCRIPTION_LENGTH);
+  }
 }

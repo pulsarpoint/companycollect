@@ -5,6 +5,9 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 const server = vi.hoisted(() => ({
   loadSeBasicInfoDetail: vi.fn(),
   appendSeBasicInfoRule: vi.fn(),
+  appendSeBasicInfoDraft: vi.fn(),
+  activateSeBasicInfoDraft: vi.fn(),
+  discardSeBasicInfoDraft: vi.fn(),
   launchSeBasicInfoFold: vi.fn(),
   SeBasicInfoDecisionError: class SeBasicInfoDecisionError extends Error {},
 }));
@@ -50,6 +53,29 @@ const scb: SeBasicInfoSuggestionRow = {
   description_sv: "",
   suggested_at: "2026-09-04 11:20:00.000",
 };
+/** An empty-valued draft, as a real `reviewer_draft` row reads before the
+ * reviewer has typed anything: every value column is `''`, not carried over
+ * from another source's row. */
+const emptyDraft: SeBasicInfoSuggestionRow = {
+  company_id: COMPANY,
+  source: "reviewer_draft",
+  source_record_uid: "",
+  observed_at: "2026-09-05 09:00:00.000",
+  suggested_at: "2026-09-05 09:00:00.000",
+  legal_name: "",
+  legal_form_code: "",
+  status: "",
+  incorporation_date: "",
+  lei: "",
+  wikidata_id: "",
+  description: "",
+  description_language: "",
+  description_sv: "",
+  decided_by: "backoffice",
+  note: "",
+  source_run_id: "backoffice",
+  extractor_version: "backoffice-v1",
+};
 
 const detail: SeBasicInfoDetail = {
   info: {
@@ -87,6 +113,7 @@ const detail: SeBasicInfoDetail = {
     { company_id: COMPANY, field: "status", source: "bolagsverket", precedence: 10000, removed: 0, decided_by: "backoffice", note: "register is right", decided_at: "2026-09-05 08:00:00.000" },
   ],
   legalFormLabels: { "51": { label_en: "Economic association (ekonomisk förening)", label_sv: "Ekonomisk förening" } },
+  legalFormOptions: [],
   foldPending: true,
 };
 
@@ -152,6 +179,39 @@ describe("SeBasicInfoWorkspace", () => {
     expect(scbRow).not.toContain("preferred by reviewer");
   });
 
+  it("offers Reset to default for a typed reviewer value even with no company rule, and hides it when neither exists", () => {
+    const reviewerRow: SeBasicInfoSuggestionRow = { ...bolagsverket, source: "reviewer", status: "inactive" };
+    const typedNoRule: SeBasicInfoDetail = { ...detail, rules: [], suggestions: [...detail.suggestions, reviewerRow] };
+    const html = render(
+      <SeBasicInfoWorkspace companyId={COMPANY} detail={typedNoRule} selectedField="status" result={null} />,
+      "?field=status",
+    );
+    expect(html).toContain("Reset to default");
+
+    const neither: SeBasicInfoDetail = { ...detail, rules: [] };
+    const withoutEither = render(
+      <SeBasicInfoWorkspace companyId={COMPANY} detail={neither} selectedField="status" result={null} />,
+      "?field=status",
+    );
+    expect(withoutEither).not.toContain("Reset to default");
+  });
+
+  it("confirms a reviewer-sourced Reset to default with the typed-value copy, not the company-rule copy", () => {
+    const html = render(
+      <DecisionDialogBody
+        pending={{ intent: "reset", field: "status", source: "reviewer", value: "inactive", language: "" }}
+        labels={detail.legalFormLabels}
+        busy={false}
+        onClose={() => {}}
+      />,
+    );
+    expect(html).toContain("Reset status to default");
+    // renderToStaticMarkup escapes the apostrophe as an HTML entity.
+    expect(html).toContain("Reset to default clears the reviewer");
+    expect(html).toContain("typed value for this field; the global order applies again at the next fold.");
+    expect(html).not.toContain("Every company rule for this field is withdrawn");
+  });
+
   it("marks a source with a value the precedence table does not rank as not ranked", () => {
     const wikidata: SeBasicInfoSuggestionRow = { ...bolagsverket, source: "wikidata", status: "active" };
     const withWikidata: SeBasicInfoDetail = { ...detail, suggestions: [...detail.suggestions, wikidata] };
@@ -191,15 +251,54 @@ describe("SeBasicInfoWorkspace", () => {
     expect(html).toContain("Fold pending");
     expect(html).toContain('value="fold-now"');
     const launched = render(
-      <SeBasicInfoWorkspace companyId={COMPANY} detail={detail} selectedField="legal_name" result={{ ok: true, launched: { runId: "run-9", url: null } }} />,
+      <SeBasicInfoWorkspace companyId={COMPANY} detail={detail} selectedField="legal_name" result={{ ok: true, intent: "fold-now", launched: { runId: "run-9", url: null } }} />,
     );
     expect(launched).toContain("run-9");
     const settled = render(<SeBasicInfoWorkspace companyId={COMPANY} detail={{ ...detail, foldPending: false }} selectedField="legal_name" result={null} />);
     expect(settled).not.toContain("Fold pending");
   });
 
+  it("picks the success copy from the result's intent", () => {
+    const at = (intent: string, decidedAt: string) =>
+      render(
+        <SeBasicInfoWorkspace
+          companyId={COMPANY}
+          detail={detail}
+          selectedField="lei"
+          result={{ ok: true, intent, decidedAt }}
+        />,
+      );
+    expect(at("edit", "2026-09-05 09:00:00.000")).toContain("Draft saved at 2026-09-05 09:00:00.000.");
+    expect(at("discard", "2026-09-05 09:02:00.000")).toContain("Draft discarded at 2026-09-05 09:02:00.000.");
+    expect(at("activate", "2026-09-05 09:01:00.000")).toContain(
+      "Reviewer value activated at 2026-09-05 09:01:00.000. Fold now to publish it.",
+    );
+    expect(at("reset", "2026-09-05 09:03:00.000")).toContain("Reset at 2026-09-05 09:03:00.000. Fold now to publish it.");
+    expect(at("use-this", "2026-09-04 19:30:00.123")).toContain(
+      "Rule written at 2026-09-04 19:30:00.123. Fold now to publish it.",
+    );
+  });
+
+  it("shows a use-this refusal in the panel's own alert, not inside the edit sheet's form", () => {
+    const html = render(
+      <SeBasicInfoWorkspace
+        companyId={COMPANY}
+        detail={{ ...detail, foldPending: false }}
+        selectedField="lei"
+        result={{ ok: false, intent: "use-this", error: "SCB has no LEI for this company." }}
+      />,
+    );
+    expect(html).toContain("Not saved");
+    expect(html).toContain("SCB has no LEI for this company.");
+    // The sheet's own footer paragraph (SeBasicInfoEditForm's error line) also
+    // renders role="alert", so a second occurrence here would mean the
+    // refusal reached the sheet too; a use-this refusal must produce exactly
+    // the panel's own "Not saved" alert and nothing else.
+    expect((html.match(/role="alert"/g) ?? []).length).toBe(1);
+  });
+
   it("renders an error result and the not-folded state", () => {
-    expect(render(<SeBasicInfoWorkspace companyId={COMPANY} detail={detail} selectedField="lei" result={{ ok: false, error: "Unknown source." }} />)).toContain("Unknown source.");
+    expect(render(<SeBasicInfoWorkspace companyId={COMPANY} detail={detail} selectedField="lei" result={{ ok: false, intent: "use-this", error: "Unknown source." }} />)).toContain("Unknown source.");
     expect(renderToStaticMarkup(<SeBasicInfoNotFolded companyId={COMPANY} />)).toContain("not in se_company_basic_info yet");
   });
 
@@ -261,12 +360,103 @@ describe("SeBasicInfoWorkspace", () => {
     expect(html).toContain("Every company rule for this field is withdrawn");
     expect(html).toContain("Why reset (optional)");
   });
+
+  it("confirms an Activate with the draft's copy, a note input and no source field", () => {
+    const html = render(
+      <DecisionDialogBody
+        pending={{ intent: "activate", field: "status", source: "reviewer_draft", value: "inactive", language: "" }}
+        labels={detail.legalFormLabels}
+        busy={false}
+        onClose={() => {}}
+      />,
+    );
+    // renderToStaticMarkup escapes the apostrophe as an HTML entity.
+    expect(html).toContain("Activate the draft for this field: the reviewer");
+    expect(html).toContain("outranks every source and rule at the next fold.");
+    expect(html).toContain('value="activate"');
+    expect(html).toContain('value="status"');
+    expect(html).not.toContain('name="source"');
+    expect(html).toContain('name="note"');
+    expect(html).toContain(">Activate<");
+  });
+
+  it("confirms a Discard with the draft's copy, no note input and no source field", () => {
+    const html = render(
+      <DecisionDialogBody
+        pending={{ intent: "discard", field: "status", source: "reviewer_draft", value: "inactive", language: "" }}
+        labels={detail.legalFormLabels}
+        busy={false}
+        onClose={() => {}}
+      />,
+    );
+    expect(html).toContain("Discard the draft value for this field.");
+    expect(html).toContain('value="discard"');
+    expect(html).toContain('value="status"');
+    expect(html).not.toContain('name="source"');
+    expect(html).not.toContain('name="note"');
+    expect(html).toContain(">Discard<");
+  });
+
+  it("gives every left-card row an Edit button and marks a field with a draft value", () => {
+    const draftRow: SeBasicInfoSuggestionRow = { ...emptyDraft, status: "inactive" };
+    const withDraft: SeBasicInfoDetail = { ...detail, suggestions: [...detail.suggestions, draftRow] };
+    const html = render(<SeBasicInfoWorkspace companyId={COMPANY} detail={withDraft} selectedField="status" result={null} />, "?field=status");
+    expect((html.match(/>Edit</g) ?? []).length).toBe(8);
+    const statusRowAt = html.indexOf(">Status<");
+    const nextFieldAt = html.indexOf("</li>", statusRowAt);
+    const statusRow = html.slice(statusRowAt, nextFieldAt);
+    expect(statusRow).toContain(">draft<");
+    // A field the draft has no opinion on gets no draft badge.
+    const nameRowAt = html.indexOf(">Legal name<");
+    const nameRowEnd = html.indexOf("</li>", nameRowAt);
+    expect(html.slice(nameRowAt, nameRowEnd)).not.toContain(">draft<");
+  });
+
+  it("lists a Draft row with Activate and Discard only when the draft has a value for the field, and never marks it active", () => {
+    const draftRow: SeBasicInfoSuggestionRow = { ...emptyDraft, status: "inactive" };
+    const withDraft: SeBasicInfoDetail = { ...detail, suggestions: [...detail.suggestions, draftRow] };
+    const html = render(<SeBasicInfoWorkspace companyId={COMPANY} detail={withDraft} selectedField="status" result={null} />, "?field=status");
+    const draftAt = html.indexOf('data-source="reviewer_draft"');
+    expect(draftAt).toBeGreaterThan(-1);
+    const draftRowHtml = html.slice(draftAt, html.indexOf("</li>", draftAt));
+    expect(draftRowHtml).toContain("Draft");
+    expect(draftRowHtml).toContain("inactive");
+    expect(draftRowHtml).toContain("Activate");
+    expect(draftRowHtml).toContain("Discard");
+    expect(draftRowHtml).not.toContain("Active<");
+    expect(draftRowHtml).not.toContain("Use this");
+    // Every row after the ranked sources is the Draft row -- it always sits last.
+    expect(html.lastIndexOf("data-source=")).toBe(draftAt);
+
+    const withoutDraftValue = render(
+      <SeBasicInfoWorkspace companyId={COMPANY} detail={detail} selectedField="status" result={null} />,
+      "?field=status",
+    );
+    expect(withoutDraftValue).not.toContain('data-source="reviewer_draft"');
+  });
+
+  it("labels an active reviewer value 'typed by reviewer' instead of a rank caption", () => {
+    const reviewerRow: SeBasicInfoSuggestionRow = { ...bolagsverket, source: "reviewer", status: "inactive" };
+    const withReviewer: SeBasicInfoDetail = { ...detail, suggestions: [...detail.suggestions, reviewerRow] };
+    const html = render(
+      <SeBasicInfoWorkspace companyId={COMPANY} detail={withReviewer} selectedField="status" result={null} />,
+      "?field=status",
+    );
+    const reviewerAt = html.indexOf('data-source="reviewer"');
+    const nextRowAt = html.indexOf('data-source=', reviewerAt + 1);
+    const reviewerRowHtml = html.slice(reviewerAt, nextRowAt === -1 ? undefined : nextRowAt);
+    expect(reviewerRowHtml).toContain("typed by reviewer");
+    expect(reviewerRowHtml).not.toContain("not ranked");
+  });
 });
 
 describe("admin-se-company-info route", () => {
   beforeEach(() => {
     server.loadSeBasicInfoDetail.mockReset().mockResolvedValue(detail);
     server.appendSeBasicInfoRule.mockReset().mockResolvedValue({ decidedAt: "2026-09-04 19:30:00.123" });
+    server.appendSeBasicInfoDraft.mockReset().mockResolvedValue({ decidedAt: "2026-09-05 09:00:00.000" });
+    server.activateSeBasicInfoDraft.mockReset().mockResolvedValue({ decidedAt: "2026-09-05 09:01:00.000" });
+    server.discardSeBasicInfoDraft.mockReset().mockResolvedValue({ decidedAt: "2026-09-05 09:02:00.000" });
     server.launchSeBasicInfoFold.mockReset().mockResolvedValue({ runId: "run-9", url: null });
   });
 
@@ -289,15 +479,46 @@ describe("admin-se-company-info route", () => {
       for (const [key, value] of Object.entries(entries)) body.set(key, value);
       return action({ request: new Request("http://x/info", { method: "POST", body }), params: { companyId: COMPANY } } as never);
     };
-    expect(await post({ intent: "use-this", field: "status", source: "bolagsverket" })).toEqual({ ok: true, decidedAt: "2026-09-04 19:30:00.123" });
+    expect(await post({ intent: "use-this", field: "status", source: "bolagsverket" })).toEqual({ ok: true, intent: "use-this", decidedAt: "2026-09-04 19:30:00.123" });
     expect(server.appendSeBasicInfoRule).toHaveBeenCalledWith(COMPANY, { intent: "use-this", field: "status", source: "bolagsverket", note: "" });
-    expect(await post({ intent: "fold-now" })).toEqual({ ok: true, launched: { runId: "run-9", url: null } });
-    expect(await post({ intent: "use-this", field: "status", source: "reviewer" })).toEqual({ ok: false, error: "Use this needs a source other than the reviewer." });
+    expect(await post({ intent: "fold-now" })).toEqual({ ok: true, intent: "fold-now", launched: { runId: "run-9", url: null } });
+    expect(await post({ intent: "use-this", field: "status", source: "reviewer" })).toEqual({ ok: false, intent: "use-this", error: "Use this needs a source other than the reviewer." });
+    expect(await post({ intent: "use-this", field: "status", source: "reviewer_draft" })).toEqual({ ok: false, intent: "use-this", error: "Use this needs a source other than the reviewer." });
     server.appendSeBasicInfoRule.mockRejectedValueOnce(new server.SeBasicInfoDecisionError("SCB has no LEI for this company."));
-    expect(await post({ intent: "use-this", field: "lei", source: "scb" })).toEqual({ ok: false, error: "SCB has no LEI for this company." });
+    expect(await post({ intent: "use-this", field: "lei", source: "scb" })).toEqual({ ok: false, intent: "use-this", error: "SCB has no LEI for this company." });
     server.appendSeBasicInfoRule.mockRejectedValueOnce(new Error("clickhouse down"));
     await expect(post({ intent: "reset", field: "lei" })).rejects.toThrow("clickhouse down");
     expect(server.appendSeBasicInfoRule).toHaveBeenLastCalledWith(COMPANY, { intent: "reset", field: "lei", note: "" });
+  });
+
+  it("maps edit, activate and discard to their own store writes, and surfaces their refusals", async () => {
+    const post = (entries: Record<string, string>) => {
+      const body = new FormData();
+      for (const [key, value] of Object.entries(entries)) body.set(key, value);
+      return action({ request: new Request("http://x/info", { method: "POST", body }), params: { companyId: COMPANY } } as never);
+    };
+    expect(
+      await post({ intent: "edit", field: "lei", value: "5493001KJTIIGC8Y1R12", language: "", note: "typed from the register" }),
+    ).toEqual({ ok: true, intent: "edit", decidedAt: "2026-09-05 09:00:00.000" });
+    expect(server.appendSeBasicInfoDraft).toHaveBeenCalledWith(COMPANY, {
+      intent: "edit",
+      field: "lei",
+      value: "5493001KJTIIGC8Y1R12",
+      language: "",
+      note: "typed from the register",
+    });
+
+    expect(await post({ intent: "activate", field: "lei", note: "" })).toEqual({ ok: true, intent: "activate", decidedAt: "2026-09-05 09:01:00.000" });
+    expect(server.activateSeBasicInfoDraft).toHaveBeenCalledWith(COMPANY, { intent: "activate", field: "lei", note: "" });
+
+    expect(await post({ intent: "discard", field: "lei" })).toEqual({ ok: true, intent: "discard", decidedAt: "2026-09-05 09:02:00.000" });
+    expect(server.discardSeBasicInfoDraft).toHaveBeenCalledWith(COMPANY, { intent: "discard", field: "lei" });
+
+    server.activateSeBasicInfoDraft.mockRejectedValueOnce(new server.SeBasicInfoDecisionError("No draft value for LEI to activate."));
+    expect(await post({ intent: "activate", field: "lei", note: "" })).toEqual({ ok: false, intent: "activate", error: "No draft value for LEI to activate." });
+
+    server.discardSeBasicInfoDraft.mockRejectedValueOnce(new server.SeBasicInfoDecisionError("No draft value for LEI to discard."));
+    expect(await post({ intent: "discard", field: "lei" })).toEqual({ ok: false, intent: "discard", error: "No draft value for LEI to discard." });
   });
 
   it("refuses to act on a malformed company id before any write or launch", async () => {
@@ -308,7 +529,7 @@ describe("admin-se-company-info route", () => {
       request: new Request("http://x/info", { method: "POST", body }),
       params: { companyId: "abc" },
     } as never);
-    expect(result).toEqual({ ok: false, error: "Company id must be 10 or 12 digits." });
+    expect(result).toEqual({ ok: false, intent: "", error: "Company id must be 10 or 12 digits." });
     expect(server.appendSeBasicInfoRule).not.toHaveBeenCalled();
     expect(server.launchSeBasicInfoFold).not.toHaveBeenCalled();
   });

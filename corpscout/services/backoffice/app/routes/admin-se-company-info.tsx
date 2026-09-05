@@ -5,7 +5,10 @@ import {
   SeBasicInfoWorkspace,
 } from "~/components/admin/se-basic-info-workspace";
 import {
+  activateSeBasicInfoDraft,
+  appendSeBasicInfoDraft,
   appendSeBasicInfoRule,
+  discardSeBasicInfoDraft,
   launchSeBasicInfoFold,
   loadSeBasicInfoDetail,
   SeBasicInfoDecisionError,
@@ -35,20 +38,38 @@ export async function loader({ request, params }: Route.LoaderArgs) {
  */
 export async function action({ request, params }: Route.ActionArgs) {
   if (!COMPANY_ID_PATTERN.test(params.companyId)) {
-    return { ok: false as const, error: "Company id must be 10 or 12 digits." };
+    return { ok: false as const, intent: "", error: "Company id must be 10 or 12 digits." };
   }
-  const parsed = parseSeBasicInfoDecision(await request.formData());
-  if (!parsed.ok) return { ok: false as const, error: parsed.error };
+  const form = await request.formData();
+  // Read once, before parsing: every returned result carries the posted
+  // intent so the component can route its success copy and its error (the
+  // sheet's, in particular) by what was actually attempted.
+  const intent = String(form.get("intent") ?? "");
+  const parsed = parseSeBasicInfoDecision(form);
+  if (!parsed.ok) return { ok: false as const, intent, error: parsed.error };
   if (parsed.decision.intent === "fold-now") {
     const launched = await launchSeBasicInfoFold(params.companyId);
-    return { ok: true as const, launched };
+    return { ok: true as const, intent, launched };
   }
   try {
-    const { decidedAt } = await appendSeBasicInfoRule(params.companyId, parsed.decision);
-    return { ok: true as const, decidedAt };
+    const { decision } = parsed;
+    if (decision.intent === "edit") {
+      const { decidedAt } = await appendSeBasicInfoDraft(params.companyId, decision);
+      return { ok: true as const, intent, decidedAt };
+    }
+    if (decision.intent === "activate") {
+      const { decidedAt } = await activateSeBasicInfoDraft(params.companyId, decision);
+      return { ok: true as const, intent, decidedAt };
+    }
+    if (decision.intent === "discard") {
+      const { decidedAt } = await discardSeBasicInfoDraft(params.companyId, decision);
+      return { ok: true as const, intent, decidedAt };
+    }
+    const { decidedAt } = await appendSeBasicInfoRule(params.companyId, decision);
+    return { ok: true as const, intent, decidedAt };
   } catch (error) {
     if (error instanceof SeBasicInfoDecisionError) {
-      return { ok: false as const, error: error.message };
+      return { ok: false as const, intent, error: error.message };
     }
     throw error;
   }

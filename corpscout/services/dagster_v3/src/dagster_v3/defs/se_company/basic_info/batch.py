@@ -78,10 +78,12 @@ def bucket_company_ids_sql() -> str:
 
 
 def suggestion_watermarks_sql() -> str:
+    """Excludes `reviewer_draft`: saving an unactivated draft must not make the company
+    look changed and wake up its batch (spec section 4, slice 3c)."""
     return (
         "SELECT company_id, max(suggested_at) AS suggested_at\n"
         f"FROM {tables.QUALIFIED_SUGGESTION_TABLE}\n"
-        "WHERE company_id IN %(company_ids)s\n"
+        "WHERE company_id IN %(company_ids)s AND source != 'reviewer_draft'\n"
         "GROUP BY company_id"
     )
 

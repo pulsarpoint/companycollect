@@ -29,6 +29,7 @@ import { Dialog, DialogContent, DialogFooter, DialogHeader } from "~/components/
 import { Input } from "~/components/ui/input";
 import { EMPTY_VALUE, text } from "~/components/admin/definition-list";
 import { LegalForm } from "~/components/admin/legal-form";
+import { SeBasicInfoEditSheet } from "~/components/admin/se-basic-info-edit-sheet";
 import {
   BASIC_INFO_FIELDS,
   BASIC_INFO_SOURCES,
@@ -45,9 +46,9 @@ import type {
 import { cn } from "~/lib/utils";
 
 export type SeBasicInfoResult =
-  | { ok: true; decidedAt: string }
-  | { ok: true; launched: { runId: string; url: string | null } }
-  | { ok: false; error: string }
+  | { ok: true; intent: string; decidedAt: string }
+  | { ok: true; intent: string; launched: { runId: string; url: string | null } }
+  | { ok: false; intent: string; error: string }
   | null;
 
 /** Shown when the company has neither a folded row nor a suggestion. */
@@ -126,11 +127,16 @@ function FieldValue({
 function FieldsCard({
   detail,
   selectedField,
+  busy,
+  onEdit,
 }: {
   detail: SeBasicInfoDetail;
   selectedField: SeBasicInfoField;
+  busy: boolean;
+  onEdit: (field: SeBasicInfoField) => void;
 }) {
   const { info } = detail;
+  const draftRow = detail.suggestions.find((row) => row.source === "reviewer_draft") ?? null;
   return (
     <Card>
       <CardHeader>
@@ -156,14 +162,15 @@ function FieldsCard({
           {BASIC_INFO_FIELDS.map((field) => {
             const selected = field.name === selectedField;
             const source = sourceOf(info, field.name);
+            const draftValue = valueOf(draftRow, field.name);
             return (
-              <li key={field.name}>
+              <li key={field.name} className="flex items-center gap-1">
                 <Link
                   to={{ search: `?field=${field.name}` }}
                   preventScrollReset
                   aria-current={selected ? "true" : undefined}
                   className={cn(
-                    "grid grid-cols-1 gap-x-6 rounded-md px-2 py-2 hover:bg-muted/60 sm:grid-cols-[minmax(11rem,auto)_1fr_auto]",
+                    "grid flex-1 grid-cols-1 gap-x-6 rounded-md px-2 py-2 hover:bg-muted/60 sm:grid-cols-[minmax(11rem,auto)_1fr_auto]",
                     selected && "bg-muted",
                   )}
                 >
@@ -184,11 +191,21 @@ function FieldsCard({
                       // shows which source and offers Reset to default.
                       <Badge variant="outline">custom order</Badge>
                     ) : null}
+                    {draftValue === "" ? null : <Badge variant="outline">draft</Badge>}
                     {source === "" ? null : (
                       <Badge variant="secondary">{basicInfoSourceLabel(source)}</Badge>
                     )}
                   </span>
                 </Link>
+                <Button
+                  type="button"
+                  size="sm"
+                  variant="ghost"
+                  disabled={busy}
+                  onClick={() => onEdit(field.name)}
+                >
+                  Edit
+                </Button>
               </li>
             );
           })}
@@ -219,7 +236,9 @@ function effectivePrecedence(detail: SeBasicInfoDetail, field: SeBasicInfoField)
 }
 
 /** The panel's rows for one field: effective precedence order first, then any
- * suggesting source neither table ranks, then the rest of the catalogue. */
+ * suggesting source neither table ranks, then the rest of the catalogue.
+ * `reviewer_draft` never appears here -- it gets its own row, appended
+ * separately, only when it has a value for the field (slice 3c). */
 function panelSources(detail: SeBasicInfoDetail, field: SeBasicInfoField): string[] {
   const ranked = [...effectivePrecedence(detail, field).entries()]
     .sort((a, b) => b[1] - a[1])
@@ -227,11 +246,14 @@ function panelSources(detail: SeBasicInfoDetail, field: SeBasicInfoField): strin
   const suggesting = detail.suggestions.map((row) => row.source);
   const ordered: string[] = [];
   for (const source of [...ranked, ...suggesting, ...BASIC_INFO_SOURCES]) {
+    if (source === "reviewer_draft") continue;
     if (!ordered.includes(source)) ordered.push(source);
   }
-  // The global map ranks the reviewer at 10000 for every field (reserved for
-  // Edit), which would put a greyed "no opinion" reviewer row above the source
-  // the reviewer actually preferred. A valueless reviewer row sinks to the end.
+  // The global map ranks the reviewer at 20000 for every field, above every
+  // company rule (a rule tops out at 10000, spec 4); `reviewer_draft` has no
+  // rank at all. Ranked that high, a greyed "no opinion" reviewer row would
+  // sit above the source the reviewer actually preferred, so a valueless
+  // reviewer row sinks to the end instead.
   const reviewerValue = detail.suggestions.find((row) => row.source === "reviewer")?.[field] ?? "";
   if (reviewerValue === "" && ordered.includes("reviewer")) {
     return [...ordered.filter((source) => source !== "reviewer"), "reviewer"];
@@ -244,17 +266,14 @@ function SuggestionsPanel({
   detail,
   selectedField,
   result,
+  busy,
 }: {
   companyId: string;
   detail: SeBasicInfoDetail;
   selectedField: SeBasicInfoField;
   result: SeBasicInfoResult;
+  busy: boolean;
 }) {
-  const navigation = useNavigation();
-  // React Router's navigation.formMethod is lower- or upper-cased depending on
-  // version, so compare case-insensitively; a GET revalidation must not read
-  // as busy.
-  const busy = navigation.state !== "idle" && (navigation.formMethod ?? "").toUpperCase() === "POST";
   // The decision being confirmed: Use this / Release open a dialog that shows
   // the value about to be written and takes the optional note; nothing posts
   // until the reviewer confirms there. A result from the action closes it.
@@ -275,6 +294,13 @@ function SuggestionsPanel({
   const ruledRow = ruledSource
     ? (detail.suggestions.find((row) => row.source === ruledSource.source) ?? null)
     : null;
+  // The reviewer's own typed value for this field, whether or not a company
+  // rule is also in force: Reset to default must clear it even when there is
+  // no rule at all (the server's reset branch already does both).
+  const reviewerRow = detail.suggestions.find((row) => row.source === "reviewer") ?? null;
+  const reviewerValueForField = valueOf(reviewerRow, selectedField);
+  const draftRow = detail.suggestions.find((row) => row.source === "reviewer_draft") ?? null;
+  const draftValueForField = valueOf(draftRow, selectedField);
   return (
     <Card>
       <CardHeader>
@@ -283,9 +309,12 @@ function SuggestionsPanel({
           What each source suggests, highest precedence first. The active one is
           what the fold published.
         </CardDescription>
-        {ruledSource ? (
-          // A field with a company rule can go back to the global order in one
-          // step: every rule for the field is withdrawn, whatever it ranked.
+        {ruledSource !== null || reviewerValueForField !== "" ? (
+          // A field with a company rule, or a reviewer-typed value with no
+          // rule at all (slice 3c), can go back to the global order in one
+          // step: every rule for the field is withdrawn and, when there is no
+          // rule, the reviewer's own typed value is cleared instead -- the
+          // server's reset branch already does both.
           <Button
             type="button"
             size="sm"
@@ -296,9 +325,14 @@ function SuggestionsPanel({
               setPending({
                 intent: "reset",
                 field: selectedField,
-                source: ruledSource.source,
-                value: valueOf(ruledRow, selectedField),
-                language: selectedField === "description" ? (ruledRow?.description_language ?? "") : "",
+                source: ruledSource ? ruledSource.source : "reviewer",
+                value: ruledSource ? valueOf(ruledRow, selectedField) : reviewerValueForField,
+                language:
+                  selectedField === "description"
+                    ? ruledSource
+                      ? (ruledRow?.description_language ?? "")
+                      : (reviewerRow?.description_language ?? "")
+                    : "",
               })
             }
           >
@@ -344,7 +378,17 @@ function SuggestionsPanel({
           <Alert>
             <CheckCircle2Icon />
             <AlertTitle>Decision saved</AlertTitle>
-            <AlertDescription>Rule written at {result.decidedAt}. Fold now to publish it.</AlertDescription>
+            <AlertDescription>
+              {result.intent === "edit"
+                ? `Draft saved at ${result.decidedAt}.`
+                : result.intent === "discard"
+                  ? `Draft discarded at ${result.decidedAt}.`
+                  : result.intent === "activate"
+                    ? `Reviewer value activated at ${result.decidedAt}. Fold now to publish it.`
+                    : result.intent === "reset"
+                      ? `Reset at ${result.decidedAt}. Fold now to publish it.`
+                      : `Rule written at ${result.decidedAt}. Fold now to publish it.`}
+            </AlertDescription>
           </Alert>
         ) : null}
         <ul className="flex flex-col gap-2">
@@ -360,6 +404,10 @@ function SuggestionsPanel({
             // A source with a value but no precedence rank for this field can
             // only win through Use this -- the fold will never pick it on its own.
             const notRanked = hasValue && source !== "reviewer" && !rankedSources.has(source);
+            // The reviewer ranks 20000 in every field's map, above any company
+            // rule, so a typed value is captioned as what it is instead of a
+            // rank caption.
+            const typedByReviewer = source === "reviewer" && hasValue;
             return (
               <li
                 key={source}
@@ -372,7 +420,9 @@ function SuggestionsPanel({
               >
                 <div className="flex items-center gap-2">
                   <span className="font-medium">{basicInfoSourceLabel(source)}</span>
-                  {notRanked ? (
+                  {typedByReviewer ? (
+                    <span className="text-muted-foreground text-xs">typed by reviewer</span>
+                  ) : notRanked ? (
                     <span className="text-muted-foreground text-xs">not ranked</span>
                   ) : null}
                   {foldedActive ? <Badge>Active</Badge> : null}
@@ -420,6 +470,60 @@ function SuggestionsPanel({
               </li>
             );
           })}
+          {draftValueForField === "" ? null : (
+            // The reviewer's own typed value, not yet activated: never the
+            // fold's active winner, never offered Use this -- Activate is
+            // what makes it that; Discard drops it instead.
+            <li data-source="reviewer_draft" className="rounded-md border p-3 text-sm">
+              <div className="flex items-center gap-2">
+                <span className="font-medium">{basicInfoSourceLabel("reviewer_draft")}</span>
+              </div>
+              <div className="mt-1">
+                <FieldValue
+                  field={selectedField}
+                  value={draftValueForField}
+                  language={selectedField === "description" ? (draftRow?.description_language ?? "") : ""}
+                  labels={detail.legalFormLabels}
+                />
+              </div>
+              <div className="mt-2 flex gap-2">
+                <Button
+                  type="button"
+                  size="sm"
+                  variant="outline"
+                  disabled={busy}
+                  onClick={() =>
+                    setPending({
+                      intent: "activate",
+                      field: selectedField,
+                      source: "reviewer_draft",
+                      value: draftValueForField,
+                      language: selectedField === "description" ? (draftRow?.description_language ?? "") : "",
+                    })
+                  }
+                >
+                  Activate
+                </Button>
+                <Button
+                  type="button"
+                  size="sm"
+                  variant="outline"
+                  disabled={busy}
+                  onClick={() =>
+                    setPending({
+                      intent: "discard",
+                      field: selectedField,
+                      source: "reviewer_draft",
+                      value: draftValueForField,
+                      language: selectedField === "description" ? (draftRow?.description_language ?? "") : "",
+                    })
+                  }
+                >
+                  Discard
+                </Button>
+              </div>
+            </li>
+          )}
         </ul>
         <DecisionDialog
           pending={pending}
@@ -432,11 +536,12 @@ function SuggestionsPanel({
   );
 }
 
-/** What a Use this / Reset to default click proposes, shown for confirmation before it posts. */
+/** What a Use this / Reset to default / Activate / Discard click proposes, shown for confirmation before it posts. */
 export interface PendingDecision {
-  intent: "use-this" | "reset";
+  intent: "use-this" | "reset" | "activate" | "discard";
   field: SeBasicInfoField;
-  /** The suggesting source for Use this; the currently ruled source for Reset (display only). */
+  /** The suggesting source for Use this; the currently ruled source for Reset;
+   * always `reviewer_draft` for Activate/Discard (display only). */
   source: string;
   value: string;
   language: string;
@@ -458,23 +563,51 @@ export function DecisionDialogBody({
   busy: boolean;
   onClose: () => void;
 }) {
-  const reset = pending.intent === "reset";
+  const { intent } = pending;
+  const fieldLabel = basicInfoFieldLabel(pending.field).toLowerCase();
+  // Every intent takes an optional note except discard: its decision carries
+  // none at all (spec 3c's `{ intent: "discard"; field }`, nothing else).
+  const showNote = intent !== "discard";
+  const heading =
+    intent === "reset"
+      ? `Reset ${fieldLabel} to default`
+      : intent === "activate"
+        ? `Activate ${fieldLabel}`
+        : intent === "discard"
+          ? `Discard ${fieldLabel}`
+          : `Use this ${fieldLabel}`;
+  const description =
+    intent === "reset"
+      ? pending.source === "reviewer"
+        ? "Reset to default clears the reviewer's typed value for this field; the global order applies again at the next fold."
+        : `Every company rule for this field is withdrawn (today: ${basicInfoSourceLabel(pending.source)} preferred) and the next fold applies the global precedence.`
+      : intent === "activate"
+        ? "Activate the draft for this field: the reviewer's value then outranks every source and rule at the next fold."
+        : intent === "discard"
+          ? "Discard the draft value for this field."
+          : `The next fold prefers ${basicInfoSourceLabel(pending.source)}'s value for this field once the rule is applied.`;
+  const confirmLabel =
+    intent === "reset"
+      ? "Reset to default"
+      : intent === "activate"
+        ? "Activate"
+        : intent === "discard"
+          ? "Discard"
+          : "Use this";
+  const noteLabel =
+    intent === "reset"
+      ? "Why reset (optional)"
+      : intent === "activate"
+        ? "Why activate (optional)"
+        : "Why this value (optional)";
   return (
     <Form method="post" onSubmit={onClose} className="flex flex-col gap-4">
       {/* Plain heading and paragraph, not DialogTitle/DialogDescription: those
           need the dialog root's context, and this body also renders on its own
           in tests. */}
       <DialogHeader>
-        <h2 className="text-base font-semibold leading-none">
-          {reset ? "Reset " : "Use this "}
-          {basicInfoFieldLabel(pending.field).toLowerCase()}
-          {reset ? " to default" : ""}
-        </h2>
-        <p className="text-muted-foreground text-sm">
-          {reset
-            ? `Every company rule for this field is withdrawn (today: ${basicInfoSourceLabel(pending.source)} preferred) and the next fold applies the global precedence.`
-            : `The next fold prefers ${basicInfoSourceLabel(pending.source)}'s value for this field once the rule is applied.`}
-        </p>
+        <h2 className="text-base font-semibold leading-none">{heading}</h2>
+        <p className="text-muted-foreground text-sm">{description}</p>
       </DialogHeader>
       <div className="rounded-md border p-3 text-sm" data-testid="decision-value">
         <div className="text-muted-foreground mb-1 text-xs">
@@ -484,19 +617,22 @@ export function DecisionDialogBody({
       </div>
       <input type="hidden" name="intent" value={pending.intent} />
       <input type="hidden" name="field" value={pending.field} />
-      {reset ? null : <input type="hidden" name="source" value={pending.source} />}
-      <label className="flex flex-col gap-1 text-sm" htmlFor="basic-info-note">
-        <span className="text-muted-foreground text-xs">
-          {reset ? "Why reset (optional)" : "Why this value (optional)"}
-        </span>
-        <Input id="basic-info-note" name="note" maxLength={500} placeholder="Note saved with the decision" />
-      </label>
+      {/* Use this is the only intent that posts a source: reset withdraws
+          every rule at once, and activate/discard always act on the one
+          reviewer_draft row -- the store looks that row up itself. */}
+      {intent === "use-this" ? <input type="hidden" name="source" value={pending.source} /> : null}
+      {showNote ? (
+        <label className="flex flex-col gap-1 text-sm" htmlFor="basic-info-note">
+          <span className="text-muted-foreground text-xs">{noteLabel}</span>
+          <Input id="basic-info-note" name="note" maxLength={500} placeholder="Note saved with the decision" />
+        </label>
+      ) : null}
       <DialogFooter>
         <Button type="button" variant="outline" onClick={onClose} disabled={busy}>
           Cancel
         </Button>
         <Button type="submit" disabled={busy}>
-          {reset ? "Reset to default" : "Use this"}
+          {confirmLabel}
         </Button>
       </DialogFooter>
     </Form>
@@ -666,15 +802,50 @@ export function SeBasicInfoWorkspace({
   selectedField: SeBasicInfoField;
   result: SeBasicInfoResult;
 }) {
+  const navigation = useNavigation();
+  // React Router's navigation.formMethod is lower- or upper-cased depending on
+  // version, so compare case-insensitively; a GET revalidation must not read
+  // as busy.
+  const busy = navigation.state !== "idle" && (navigation.formMethod ?? "").toUpperCase() === "POST";
+  // The edit sheet is controlled here, not by the sheet itself: which field it
+  // shows is a workspace-level choice (a left-card row's Edit button), and it
+  // must survive whatever else the panel's own dialog is doing.
+  const [editing, setEditing] = useState<SeBasicInfoField | null>(null);
+  useEffect(() => {
+    // Closes only on success -- a refusal keeps the sheet open (with its typed
+    // value and note still in the form) so the reviewer can fix and resubmit.
+    if (result?.ok) setEditing(null);
+  }, [result]);
+  // Only an edit refusal belongs inside the sheet's own form: a use-this,
+  // reset, activate or discard refusal is shown by the panel's "Not saved"
+  // alert instead, and must not also bleed into the sheet.
+  const editError = result && !result.ok && result.intent === "edit" ? result.error : undefined;
   return (
     <div className="grid gap-6 lg:grid-cols-[minmax(0,2fr)_minmax(20rem,1fr)]">
       <div className="flex flex-col gap-6">
-        <FieldsCard detail={detail} selectedField={selectedField} />
+        <FieldsCard detail={detail} selectedField={selectedField} busy={busy} onEdit={setEditing} />
         <HistoryCard detail={detail} />
       </div>
       <aside className="lg:sticky lg:top-4 lg:self-start">
-        <SuggestionsPanel companyId={companyId} detail={detail} selectedField={selectedField} result={result} />
+        <SuggestionsPanel
+          companyId={companyId}
+          detail={detail}
+          selectedField={selectedField}
+          result={result}
+          busy={busy}
+        />
       </aside>
+      <SeBasicInfoEditSheet
+        companyId={companyId}
+        field={editing}
+        detail={detail}
+        open={editing !== null}
+        onOpenChange={(open) => {
+          if (!open) setEditing(null);
+        }}
+        busy={busy}
+        error={editError}
+      />
     </div>
   );
 }
