@@ -203,15 +203,16 @@ def merge_predictions(
     for key, items in grouped.items():
         variants: dict[str, list[tuple[str, Job]]] = defaultdict(list)
         for window_id, job in items:
-            signature = json.dumps(
-                {
-                    field: normalize_text(getattr(job, field))
-                    if getattr(job, field) is not None
-                    else None
-                    for field in COMPARISON_FIELDS
-                },
-                sort_keys=True,
-            )
+            fields = {}
+            for field in COMPARISON_FIELDS:
+                value = getattr(job, field)
+                if value is None:
+                    fields[field] = None
+                elif field == "job_url":
+                    fields[field] = normalize_job_url(value, source_url)
+                else:
+                    fields[field] = normalize_text(value)
+            signature = json.dumps(fields, sort_keys=True)
             variants[signature].append((window_id, job))
         # Each window has at most one vote for a variant; duplicated model records add no votes.
         ranked = sorted(
@@ -259,6 +260,7 @@ def merge_windows(window_dir: Path, run_id: str, baseline_run: str) -> dict[str,
         ):
             raise ValueError(f"Source snapshot changed: {parent_id}")
         predictions = []
+        rejected_predictions = []
         failures = []
         totals: Counter[str] = Counter()
         elapsed = 0.0
@@ -281,9 +283,25 @@ def merge_windows(window_dir: Path, run_id: str, baseline_run: str) -> dict[str,
             if not record.succeeded:
                 failures.append({"window": window["id"], "error": record.error})
             elif record.extraction is not None:
-                predictions.extend(
-                    (window["id"], job) for job in record.extraction.jobs
-                )
+                known_urls = {
+                    normalize_job_url(url, parent.final_url)
+                    for url in inputs[window["id"]].job_links
+                }
+                for job in record.extraction.jobs:
+                    if (
+                        job.job_url is None
+                        or normalize_job_url(job.job_url, parent.final_url)
+                        not in known_urls
+                    ):
+                        rejected_predictions.append(
+                            {
+                                "window": window["id"],
+                                "reason": "This linked-job corpus requires a job URL observed in the same input window; filter links and missing URLs are retained here for review.",
+                                "job": job.model_dump(),
+                            }
+                        )
+                    else:
+                        predictions.append((window["id"], job))
             usage = record.usage or {}
             for key in ("prompt_tokens", "completion_tokens"):
                 totals[key] += usage.get(key, 0) or 0
@@ -292,6 +310,29 @@ def merge_windows(window_dir: Path, run_id: str, baseline_run: str) -> dict[str,
             ).get("reasoning_tokens", 0) or 0
             elapsed += record.elapsed_seconds
         jobs, conflicts = merge_predictions(predictions, parent.final_url)
+        expected_windows: dict[str, set[str]] = defaultdict(set)
+        returned_windows: dict[str, set[str]] = defaultdict(set)
+        for window in windows:
+            for url in window["job_links"]:
+                expected_windows[normalize_job_url(url, parent.final_url)].add(
+                    window["id"]
+                )
+        for window_id, job in predictions:
+            assert job.job_url is not None
+            returned_windows[normalize_job_url(job.job_url, parent.final_url)].add(
+                window_id
+            )
+        recovered_by_overlap = [
+            {
+                "job_url": url,
+                "expected_windows": sorted(expected),
+                "returned_windows": sorted(returned_windows[url]),
+            }
+            for url, expected in expected_windows.items()
+            if len(expected) > 1
+            and returned_windows[url]
+            and returned_windows[url] != expected
+        ]
         extraction = JobExtraction(jobs=jobs)
         source_flags = validate_evidence(extraction, markdown, parent)
         row: dict[str, Any] = {
@@ -304,7 +345,14 @@ def merge_windows(window_dir: Path, run_id: str, baseline_run: str) -> dict[str,
             "jobs": extraction.model_dump()["jobs"],
             "job_count": len(jobs),
             "conflicts": conflicts,
-            "requires_review": bool(conflicts or failures or source_flags),
+            "rejected_predictions": rejected_predictions,
+            "recovered_by_overlap": recovered_by_overlap,
+            "unreturned_job_links": sorted(
+                url for url in expected_windows if not returned_windows[url]
+            ),
+            "requires_review": bool(
+                conflicts or failures or source_flags or rejected_predictions
+            ),
             "source_flags": source_flags,
             "usage": dict(totals),
             "summed_call_seconds": elapsed,
@@ -320,6 +368,44 @@ def merge_windows(window_dir: Path, run_id: str, baseline_run: str) -> dict[str,
             row["baseline_comparison"] = compare_jobs(
                 baseline.extraction.jobs, jobs, parent.final_url
             )
+            whole_page_path = (
+                source_dir / "runs" / baseline_run / "openrouter" / f"{parent_id}.json"
+            )
+            if whole_page_path.is_file():
+                whole = ExtractionRun.model_validate_json(
+                    whole_page_path.read_text(encoding="utf-8")
+                )
+                if whole.markdown_sha256 != parent.markdown_sha256:
+                    raise ValueError(
+                        f"Whole-page comparison uses a different snapshot: {parent_id}"
+                    )
+                if whole.succeeded and whole.extraction is not None:
+                    whole_urls = {
+                        normalize_job_url(job.job_url, parent.final_url)
+                        for job in whole.extraction.jobs
+                        if job.job_url
+                    }
+                    merged_urls = {
+                        normalize_job_url(job.job_url, parent.final_url)
+                        for job in jobs
+                        if job.job_url
+                    }
+                    shared = [
+                        job
+                        for job in baseline.extraction.jobs
+                        if job.job_url
+                        and normalize_job_url(job.job_url, parent.final_url)
+                        in whole_urls & merged_urls
+                    ]
+                    row["shared_reference_comparison"] = {
+                        "shared_jobs": len(shared),
+                        "whole_page_exact_fields": compare_jobs(
+                            shared, whole.extraction.jobs, parent.final_url
+                        )["exact_field_matches"],
+                        "segmented_exact_fields": compare_jobs(
+                            shared, jobs, parent.final_url
+                        )["exact_field_matches"],
+                    }
         rows.append(row)
         write_json(run_dir / "merged" / f"{parent_id}.json", row)
     comparison_keys = (
@@ -338,16 +424,70 @@ def merge_windows(window_dir: Path, run_id: str, baseline_run: str) -> dict[str,
         ),
         "returned_unique_jobs": sum(row["job_count"] for row in rows),
         "conflicting_jobs": sum(len(row["conflicts"]) for row in rows),
+        "rejected_predictions": sum(len(row["rejected_predictions"]) for row in rows),
         "source_flags": sum(len(row["source_flags"]) for row in rows),
+        "jobs_recovered_by_overlap": sum(
+            len(row["recovered_by_overlap"]) for row in rows
+        ),
+        "usage": {
+            key: sum(row["usage"].get(key, 0) for row in rows)
+            for key in ("prompt_tokens", "completion_tokens", "reasoning_tokens")
+        },
+        "summed_call_seconds": sum(row["summed_call_seconds"] for row in rows),
         "baseline_run": baseline_run,
         "baseline_comparison": {
             key: sum(row.get("baseline_comparison", {}).get(key, 0) for row in rows)
             for key in comparison_keys
         },
+        "shared_reference_comparison": {
+            key: sum(
+                row.get("shared_reference_comparison", {}).get(key, 0) for row in rows
+            )
+            for key in (
+                "shared_jobs",
+                "whole_page_exact_fields",
+                "segmented_exact_fields",
+            )
+        },
         "interpretation": "Merged outputs include provisional conflict selections and successful windows from partial pages. Source flags and overlap conflicts require review. Agreement with Codex is not independently verified accuracy.",
         "results": rows,
     }
     write_json(run_dir / "segmented-comparison.json", summary)
+    comparison = summary["baseline_comparison"]
+    shared = summary["shared_reference_comparison"]
+    lines = [
+        "# Segmented Liquid extraction",
+        "",
+        summary["interpretation"],
+        "",
+        f"Pages: **{summary['pages']}**. Completed windows: **{summary['successful_windows']}/{summary['windows']}**. Pages with every window completed: **{summary['pages_all_windows_succeeded']}**.",
+        "",
+        f"Merged job records: **{summary['returned_unique_jobs']}**. Conflicting jobs: **{summary['conflicting_jobs']}**. Predictions rejected for missing/unrecognized job URLs: **{summary['rejected_predictions']}**.",
+        "",
+        f"Overlap recovered **{summary['jobs_recovered_by_overlap']}** job URLs that at least one containing window failed to return. This establishes recovery relative to another window, not independently verified correctness.",
+        "",
+        f"On pages with a successful Codex reference: {comparison['matched_jobs']} openings match; {comparison['exact_field_matches']} agree on all six fields. The reference contains {comparison['baseline_jobs']} records on these pages.",
+        "",
+        f"Among {shared['shared_jobs']} reference openings found by both the first whole-page run and segmentation, the whole-page run matched all six fields on {shared['whole_page_exact_fields']} records and segmentation matched on {shared['segmented_exact_fields']}. This holds the compared openings constant.",
+        "",
+        "| Page | Completed windows | Merged jobs | Unreturned links | Conflicting jobs | Rejected predictions | Matched Codex jobs | Equal on six fields |",
+        "|---|---:|---:|---:|---:|---:|---:|---:|",
+    ]
+    for row in rows:
+        baseline = row.get("baseline_comparison", {})
+        lines.append(
+            f"| [{row['page_id']}]({row['source_url']}) | {row['successful_windows']}/{row['windows']} | {row['job_count']} | {len(row['unreturned_job_links'])} | {len(row['conflicts'])} | {len(row['rejected_predictions'])} | {baseline.get('matched_jobs', '—')} | {baseline.get('exact_field_matches', '—')} |"
+        )
+    lines.extend(
+        [
+            "",
+            "Unreturned links can include general applications deliberately excluded by the prompt. Valid JSON, known URLs, majority votes, and source-presence checks do not establish field correctness.",
+            "",
+            "Original window responses are in `openrouter/`; provisional page results and all conflicting alternatives are in `merged/`. [Full comparison data](segmented-comparison.json).",
+            "",
+        ]
+    )
+    (run_dir / "segmented-comparison.md").write_text("\n".join(lines), encoding="utf-8")
     return summary
 
 

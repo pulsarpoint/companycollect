@@ -1,7 +1,0 @@
----
-- name: Deploy the Ratsit crawler process
-  hosts: ratsit_processes
-  become: true
-  gather_facts: true
-  roles:
-    - crawler_ratsit

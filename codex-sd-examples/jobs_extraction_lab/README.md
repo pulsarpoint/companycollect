@@ -159,6 +159,75 @@ Tests exercise strict output validation, source grounding, exact OpenRouter requ
 parameters, credential redaction, bounded retries, changed-input detection, and
 comparison coverage when a backend fails.
 
+## Extract overlapping windows with the small model
+
+The segmented experiment is a small Python workflow: prepare windows, call the
+existing direct OpenRouter extractor for every window, then merge the results.
+It uses the same Liquid model, prompt, schema, temperature, and output limit as the
+whole-page experiment. No agent SDK or larger-model fallback is involved in these
+window requests.
+
+```bash
+.venv/bin/python -m jobs_extraction_lab.segment prepare \
+  --window-dir jobs_extraction_lab/data/segmented-v1 \
+  --max-jobs 4 --overlap-jobs 1 --max-chars 3000
+
+.venv/bin/python -m jobs_extraction_lab.main run \
+  --backend openrouter \
+  --data-dir jobs_extraction_lab/data/segmented-v1 \
+  --run-id liquid-windows-v1 --concurrency 3 \
+  --env-file jobs_extraction_lab/.env
+
+.venv/bin/python -m jobs_extraction_lab.segment merge \
+  --window-dir jobs_extraction_lab/data/segmented-v1 \
+  --run-id liquid-windows-v1 --baseline-run jobs-v2
+```
+
+Preparation refuses to overwrite an existing window manifest. To replay the saved
+windows, omit `prepare` and choose a fresh extraction run ID. The extraction command
+resumes existing outcomes when the same ID is used. Merge requires an outcome for
+each window and can be rerun without making API calls.
+
+The current 40-page corpus produces 228 windows. The segmenter preserves all source
+lines and all recognized Markdown job links. It adds separating whitespace between
+concatenated job headings, keeps each listing line intact, and repeats preceding
+heading/plain-section context. Adjacent windows share one complete listing where
+the character budget allows; a single oversized atomic line is rejected explicitly
+instead of being silently truncated.
+
+This boundary detection is designed for the downloaded Ashby, Greenhouse, and Lever
+job lists, where each listing is represented by one Markdown link line. Arbitrary
+documents or job descriptions spanning multiple paragraphs need different atomic
+blocks. The code does not claim to be a universal Markdown parser.
+
+The merger:
+
+- Accepts only job URLs recognized in the same window. Missing URLs and filter
+  links are retained as rejected predictions for inspection; this rule is specific
+  to this corpus of linked job lists.
+- Deduplicates by normalized job URL and preserves separate openings with identical
+  titles and different URLs.
+- Votes on complete field sets, counting distinct windows. It keeps a provisional
+  representative for each job, with every conflicting alternative and its window
+  IDs. Ties keep the earliest window; a majority is not proof of correctness.
+- Flags conflicts, failed windows, rejected predictions, and source-check issues
+  for review. Successful windows from partial pages remain available. A false
+  `requires_review` flag means no automated issue was detected; it does not certify
+  that the field values are correct.
+- Measures overlap recovery: a job returned by one window but omitted by another
+  window that contained the same job. Unreturned links can be intentional exclusions
+  such as general applications, so link coverage is not itself accuracy.
+
+Window inputs and provenance are in `data/segmented-v1/manifest.json` and
+`windows.json`. Line ranges refer to the prepared text after separating concatenated
+headings; parent hashes identify the unchanged original snapshots. Original responses are under
+`data/segmented-v1/runs/liquid-windows-v1/openrouter/`; merged records, alternatives,
+and comparisons are alongside them under `merged/`, `segmented-comparison.json`,
+and `segmented-comparison.md`.
+
+[SEGMENTED_RESULTS.md](SEGMENTED_RESULTS.md) summarizes completion, overlap recovery,
+conflicts, and the remaining field-quality problems from the full run.
+
 ## Crawler review
 
 [DESIGN_NOTES.md](DESIGN_NOTES.md) covers the existing sitemap-selection and crawl

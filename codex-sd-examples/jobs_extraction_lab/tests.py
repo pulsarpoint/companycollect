@@ -22,6 +22,8 @@ from jobs_extraction_lab.segment import (
     make_windows,
     markdown_job_links,
     merge_predictions,
+    merge_windows,
+    prepare_windows,
 )
 
 
@@ -244,6 +246,80 @@ class RepeatComparisonTests(unittest.TestCase):
 
 
 class SegmentTests(unittest.TestCase):
+    def test_merge_rejects_filter_links_and_measures_overlap_recovery(self):
+        with TemporaryDirectory() as directory:
+            source_dir = Path(directory) / "source"
+            window_dir = Path(directory) / "windows"
+            jobs = [
+                sample_job(
+                    title=f"Engineer {index}",
+                    job_url=f"https://example.com/jobs/{index}",
+                    evidence=f"Engineer {index}",
+                )
+                for index in range(1, 4)
+            ]
+            markdown = "# Careers in London\n" + "\n".join(
+                f"### [{job.title}]({job.job_url})" for job in jobs
+            )
+            page = sample_page().model_copy(
+                update={
+                    "markdown_sha256": content_hash(markdown),
+                    "markdown_chars": len(markdown),
+                    "job_links": [job.job_url for job in jobs],
+                }
+            )
+            write_json(source_dir / "manifest.json", {"pages": [page.model_dump()]})
+            (source_dir / "markdown").mkdir()
+            (source_dir / page.markdown_file).write_text(markdown, encoding="utf-8")
+            metadata = prepare_windows(
+                source_dir, window_dir, max_jobs=2, overlap_jobs=1, max_chars=1000
+            )
+            baseline = ExtractionRun(
+                page_id=page.id,
+                backend="codex",
+                requested_model="test",
+                input_hash="test",
+                markdown_sha256=page.markdown_sha256,
+                started_at=page.fetched_at,
+                elapsed_seconds=1,
+                succeeded=True,
+                extraction=JobExtraction(jobs=jobs),
+            )
+            write_json(
+                source_dir / "runs/baseline/codex/sample.json", baseline.model_dump()
+            )
+            manifest = json.loads((window_dir / "manifest.json").read_text())
+            for index, window in enumerate(manifest["pages"]):
+                predictions = (
+                    [
+                        jobs[0],
+                        sample_job(
+                            title="Filter",
+                            job_url="https://example.com/jobs?team=engineering",
+                        ),
+                    ]
+                    if index == 0
+                    else jobs[1:]
+                )
+                record = baseline.model_copy(
+                    update={
+                        "page_id": window["id"],
+                        "backend": "openrouter",
+                        "markdown_sha256": window["markdown_sha256"],
+                        "extraction": JobExtraction(jobs=predictions),
+                    }
+                )
+                write_json(
+                    window_dir / "runs/test/openrouter" / f"{window['id']}.json",
+                    record.model_dump(),
+                )
+            result = merge_windows(window_dir, "test", "baseline")
+            self.assertEqual(len(metadata["windows"]), 2)
+            self.assertEqual(result["returned_unique_jobs"], 3)
+            self.assertEqual(result["rejected_predictions"], 1)
+            self.assertEqual(result["jobs_recovered_by_overlap"], 1)
+            self.assertEqual(result["results"][0]["unreturned_job_links"], [])
+
     def test_complete_jobs_overlap_and_headings_survive(self):
         markdown = (
             "# Careers\n## Engineering\n"
