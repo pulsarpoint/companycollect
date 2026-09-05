@@ -122,9 +122,13 @@ ENGINE = ReplacingMergeTree(normalized_at) ORDER BY (company_id, source, slot)
 Drafts are normalized too, so the panel can show how a typed address parses; the fold
 ignores them by source.
 
-### 3.3 `se_company_address` (main)
+### 3.3 `se_company_address_v2` (main, renamed to `se_company_address` at cutover)
 
-One row per company and published address.
+One row per company and published address. The name `se_company_address` belongs to the old
+final table until the cutover; the new table is built as `se_company_address_v2`, and the
+cutover renames the old one to `se_company_address_legacy` and the new one to
+`se_company_address` in one `RENAME TABLE` statement before readers switch, so the final
+name matches the basic-info convention.
 
 ```
 company_id            String
@@ -408,7 +412,7 @@ superset (Ratsit or a completeness merge added an address), or different, with a
 review of the different ones; plus adopted versus freshly matched geocode counts. Every
 difference must trace to a rule in this document.
 
-**Reader switch**: `sweden_company/companies_current.py` (the served company view), the
+**Reader switch** (after the rename of section 3.3): `sweden_company/companies_current.py` (the served company view), the
 backoffice address and geocoding list pages, and anything else the parity step finds.
 
 **Retirement**, owner-gated, hand-run drops per the ledger policy: `se_company_address_scb`,
@@ -423,7 +427,7 @@ and its scripts, `se_postcode_centroids`, `se_city_centroids`, `se_address_geoco
 ## 10. Names
 
 Tables `se_company_address_suggestion`, `se_company_address_normalized`,
-`se_company_address`, `se_company_address_history`, `se_company_address_rule`,
+`se_company_address_v2` (renamed `se_company_address` at cutover), `se_company_address_history`, `se_company_address_rule`,
 `se_company_address_precedence`. Package `dagster_v3.defs.se_company.address` (`tables`,
 `normalize_se`, `normalize`, `extract` shared from basic info, `scb`, `bolagsverket`,
 `ratsit`, `precedence`, `fold`, `geocode`, `batch`, `assets`, `jobs`). Assets
