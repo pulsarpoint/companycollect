@@ -179,6 +179,39 @@ describe("SeBasicInfoWorkspace", () => {
     expect(scbRow).not.toContain("preferred by reviewer");
   });
 
+  it("offers Reset to default for a typed reviewer value even with no company rule, and hides it when neither exists", () => {
+    const reviewerRow: SeBasicInfoSuggestionRow = { ...bolagsverket, source: "reviewer", status: "inactive" };
+    const typedNoRule: SeBasicInfoDetail = { ...detail, rules: [], suggestions: [...detail.suggestions, reviewerRow] };
+    const html = render(
+      <SeBasicInfoWorkspace companyId={COMPANY} detail={typedNoRule} selectedField="status" result={null} />,
+      "?field=status",
+    );
+    expect(html).toContain("Reset to default");
+
+    const neither: SeBasicInfoDetail = { ...detail, rules: [] };
+    const withoutEither = render(
+      <SeBasicInfoWorkspace companyId={COMPANY} detail={neither} selectedField="status" result={null} />,
+      "?field=status",
+    );
+    expect(withoutEither).not.toContain("Reset to default");
+  });
+
+  it("confirms a reviewer-sourced Reset to default with the typed-value copy, not the company-rule copy", () => {
+    const html = render(
+      <DecisionDialogBody
+        pending={{ intent: "reset", field: "status", source: "reviewer", value: "inactive", language: "" }}
+        labels={detail.legalFormLabels}
+        busy={false}
+        onClose={() => {}}
+      />,
+    );
+    expect(html).toContain("Reset status to default");
+    // renderToStaticMarkup escapes the apostrophe as an HTML entity.
+    expect(html).toContain("Reset to default clears the reviewer");
+    expect(html).toContain("typed value for this field; the global order applies again at the next fold.");
+    expect(html).not.toContain("Every company rule for this field is withdrawn");
+  });
+
   it("marks a source with a value the precedence table does not rank as not ranked", () => {
     const wikidata: SeBasicInfoSuggestionRow = { ...bolagsverket, source: "wikidata", status: "active" };
     const withWikidata: SeBasicInfoDetail = { ...detail, suggestions: [...detail.suggestions, wikidata] };
@@ -218,15 +251,54 @@ describe("SeBasicInfoWorkspace", () => {
     expect(html).toContain("Fold pending");
     expect(html).toContain('value="fold-now"');
     const launched = render(
-      <SeBasicInfoWorkspace companyId={COMPANY} detail={detail} selectedField="legal_name" result={{ ok: true, launched: { runId: "run-9", url: null } }} />,
+      <SeBasicInfoWorkspace companyId={COMPANY} detail={detail} selectedField="legal_name" result={{ ok: true, intent: "fold-now", launched: { runId: "run-9", url: null } }} />,
     );
     expect(launched).toContain("run-9");
     const settled = render(<SeBasicInfoWorkspace companyId={COMPANY} detail={{ ...detail, foldPending: false }} selectedField="legal_name" result={null} />);
     expect(settled).not.toContain("Fold pending");
   });
 
+  it("picks the success copy from the result's intent", () => {
+    const at = (intent: string, decidedAt: string) =>
+      render(
+        <SeBasicInfoWorkspace
+          companyId={COMPANY}
+          detail={detail}
+          selectedField="lei"
+          result={{ ok: true, intent, decidedAt }}
+        />,
+      );
+    expect(at("edit", "2026-09-05 09:00:00.000")).toContain("Draft saved at 2026-09-05 09:00:00.000.");
+    expect(at("discard", "2026-09-05 09:02:00.000")).toContain("Draft discarded at 2026-09-05 09:02:00.000.");
+    expect(at("activate", "2026-09-05 09:01:00.000")).toContain(
+      "Reviewer value activated at 2026-09-05 09:01:00.000. Fold now to publish it.",
+    );
+    expect(at("reset", "2026-09-05 09:03:00.000")).toContain("Reset at 2026-09-05 09:03:00.000. Fold now to publish it.");
+    expect(at("use-this", "2026-09-04 19:30:00.123")).toContain(
+      "Rule written at 2026-09-04 19:30:00.123. Fold now to publish it.",
+    );
+  });
+
+  it("shows a use-this refusal in the panel's own alert, not inside the edit sheet's form", () => {
+    const html = render(
+      <SeBasicInfoWorkspace
+        companyId={COMPANY}
+        detail={{ ...detail, foldPending: false }}
+        selectedField="lei"
+        result={{ ok: false, intent: "use-this", error: "SCB has no LEI for this company." }}
+      />,
+    );
+    expect(html).toContain("Not saved");
+    expect(html).toContain("SCB has no LEI for this company.");
+    // The sheet's own footer paragraph (SeBasicInfoEditForm's error line) also
+    // renders role="alert", so a second occurrence here would mean the
+    // refusal reached the sheet too; a use-this refusal must produce exactly
+    // the panel's own "Not saved" alert and nothing else.
+    expect((html.match(/role="alert"/g) ?? []).length).toBe(1);
+  });
+
   it("renders an error result and the not-folded state", () => {
-    expect(render(<SeBasicInfoWorkspace companyId={COMPANY} detail={detail} selectedField="lei" result={{ ok: false, error: "Unknown source." }} />)).toContain("Unknown source.");
+    expect(render(<SeBasicInfoWorkspace companyId={COMPANY} detail={detail} selectedField="lei" result={{ ok: false, intent: "use-this", error: "Unknown source." }} />)).toContain("Unknown source.");
     expect(renderToStaticMarkup(<SeBasicInfoNotFolded companyId={COMPANY} />)).toContain("not in se_company_basic_info yet");
   });
 
@@ -407,12 +479,13 @@ describe("admin-se-company-info route", () => {
       for (const [key, value] of Object.entries(entries)) body.set(key, value);
       return action({ request: new Request("http://x/info", { method: "POST", body }), params: { companyId: COMPANY } } as never);
     };
-    expect(await post({ intent: "use-this", field: "status", source: "bolagsverket" })).toEqual({ ok: true, decidedAt: "2026-09-04 19:30:00.123" });
+    expect(await post({ intent: "use-this", field: "status", source: "bolagsverket" })).toEqual({ ok: true, intent: "use-this", decidedAt: "2026-09-04 19:30:00.123" });
     expect(server.appendSeBasicInfoRule).toHaveBeenCalledWith(COMPANY, { intent: "use-this", field: "status", source: "bolagsverket", note: "" });
-    expect(await post({ intent: "fold-now" })).toEqual({ ok: true, launched: { runId: "run-9", url: null } });
-    expect(await post({ intent: "use-this", field: "status", source: "reviewer" })).toEqual({ ok: false, error: "Use this needs a source other than the reviewer." });
+    expect(await post({ intent: "fold-now" })).toEqual({ ok: true, intent: "fold-now", launched: { runId: "run-9", url: null } });
+    expect(await post({ intent: "use-this", field: "status", source: "reviewer" })).toEqual({ ok: false, intent: "use-this", error: "Use this needs a source other than the reviewer." });
+    expect(await post({ intent: "use-this", field: "status", source: "reviewer_draft" })).toEqual({ ok: false, intent: "use-this", error: "Use this needs a source other than the reviewer." });
     server.appendSeBasicInfoRule.mockRejectedValueOnce(new server.SeBasicInfoDecisionError("SCB has no LEI for this company."));
-    expect(await post({ intent: "use-this", field: "lei", source: "scb" })).toEqual({ ok: false, error: "SCB has no LEI for this company." });
+    expect(await post({ intent: "use-this", field: "lei", source: "scb" })).toEqual({ ok: false, intent: "use-this", error: "SCB has no LEI for this company." });
     server.appendSeBasicInfoRule.mockRejectedValueOnce(new Error("clickhouse down"));
     await expect(post({ intent: "reset", field: "lei" })).rejects.toThrow("clickhouse down");
     expect(server.appendSeBasicInfoRule).toHaveBeenLastCalledWith(COMPANY, { intent: "reset", field: "lei", note: "" });
@@ -426,7 +499,7 @@ describe("admin-se-company-info route", () => {
     };
     expect(
       await post({ intent: "edit", field: "lei", value: "5493001KJTIIGC8Y1R12", language: "", note: "typed from the register" }),
-    ).toEqual({ ok: true, decidedAt: "2026-09-05 09:00:00.000" });
+    ).toEqual({ ok: true, intent: "edit", decidedAt: "2026-09-05 09:00:00.000" });
     expect(server.appendSeBasicInfoDraft).toHaveBeenCalledWith(COMPANY, {
       intent: "edit",
       field: "lei",
@@ -435,17 +508,17 @@ describe("admin-se-company-info route", () => {
       note: "typed from the register",
     });
 
-    expect(await post({ intent: "activate", field: "lei", note: "" })).toEqual({ ok: true, decidedAt: "2026-09-05 09:01:00.000" });
+    expect(await post({ intent: "activate", field: "lei", note: "" })).toEqual({ ok: true, intent: "activate", decidedAt: "2026-09-05 09:01:00.000" });
     expect(server.activateSeBasicInfoDraft).toHaveBeenCalledWith(COMPANY, { intent: "activate", field: "lei", note: "" });
 
-    expect(await post({ intent: "discard", field: "lei" })).toEqual({ ok: true, decidedAt: "2026-09-05 09:02:00.000" });
+    expect(await post({ intent: "discard", field: "lei" })).toEqual({ ok: true, intent: "discard", decidedAt: "2026-09-05 09:02:00.000" });
     expect(server.discardSeBasicInfoDraft).toHaveBeenCalledWith(COMPANY, { intent: "discard", field: "lei" });
 
     server.activateSeBasicInfoDraft.mockRejectedValueOnce(new server.SeBasicInfoDecisionError("No draft value for LEI to activate."));
-    expect(await post({ intent: "activate", field: "lei", note: "" })).toEqual({ ok: false, error: "No draft value for LEI to activate." });
+    expect(await post({ intent: "activate", field: "lei", note: "" })).toEqual({ ok: false, intent: "activate", error: "No draft value for LEI to activate." });
 
     server.discardSeBasicInfoDraft.mockRejectedValueOnce(new server.SeBasicInfoDecisionError("No draft value for LEI to discard."));
-    expect(await post({ intent: "discard", field: "lei" })).toEqual({ ok: false, error: "No draft value for LEI to discard." });
+    expect(await post({ intent: "discard", field: "lei" })).toEqual({ ok: false, intent: "discard", error: "No draft value for LEI to discard." });
   });
 
   it("refuses to act on a malformed company id before any write or launch", async () => {
@@ -456,7 +529,7 @@ describe("admin-se-company-info route", () => {
       request: new Request("http://x/info", { method: "POST", body }),
       params: { companyId: "abc" },
     } as never);
-    expect(result).toEqual({ ok: false, error: "Company id must be 10 or 12 digits." });
+    expect(result).toEqual({ ok: false, intent: "", error: "Company id must be 10 or 12 digits." });
     expect(server.appendSeBasicInfoRule).not.toHaveBeenCalled();
     expect(server.launchSeBasicInfoFold).not.toHaveBeenCalled();
   });

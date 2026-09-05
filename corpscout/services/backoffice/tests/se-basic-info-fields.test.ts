@@ -132,9 +132,9 @@ describe("validateSeBasicInfoValue", () => {
     expect(validateSeBasicInfoValue("status", "closed", "", options())).toEqual({ ok: false, error: "Status must be active or inactive." });
   });
 
-  it("accepts a YYYY-MM-DD incorporation date within the 1800-01-01..today range, boundaries included", () => {
+  it("accepts a YYYY-MM-DD incorporation date within the 1900-01-01..today range, boundaries included", () => {
     expect(validateSeBasicInfoValue("incorporation_date", "1999-12-31", "", options())).toEqual({ ok: true, value: "1999-12-31", language: "" });
-    expect(validateSeBasicInfoValue("incorporation_date", "1800-01-01", "", options())).toEqual({ ok: true, value: "1800-01-01", language: "" });
+    expect(validateSeBasicInfoValue("incorporation_date", "1900-01-01", "", options())).toEqual({ ok: true, value: "1900-01-01", language: "" });
     expect(validateSeBasicInfoValue("incorporation_date", TODAY, "", options())).toEqual({ ok: true, value: TODAY, language: "" });
   });
 
@@ -145,9 +145,11 @@ describe("validateSeBasicInfoValue", () => {
     expect(validateSeBasicInfoValue("incorporation_date", "2024-02-30", "", options())).toEqual({ ok: false, error: "Date must be YYYY-MM-DD." });
   });
 
-  it("refuses an incorporation date outside 1800-01-01..today", () => {
-    expect(validateSeBasicInfoValue("incorporation_date", "1799-12-31", "", options())).toEqual({ ok: false, error: "Date must be between 1800-01-01 and today." });
-    expect(validateSeBasicInfoValue("incorporation_date", "2026-09-06", "", options())).toEqual({ ok: false, error: "Date must be between 1800-01-01 and today." });
+  it("refuses an incorporation date outside 1900-01-01..today", () => {
+    // 1900-01-01 is the storage floor, not a historical judgment: ClickHouse's
+    // Nullable(Date32) saturates any earlier date to 1900-01-01 silently.
+    expect(validateSeBasicInfoValue("incorporation_date", "1899-12-31", "", options())).toEqual({ ok: false, error: "Date must be between 1900-01-01 and today." });
+    expect(validateSeBasicInfoValue("incorporation_date", "2026-09-06", "", options())).toEqual({ ok: false, error: "Date must be between 1900-01-01 and today." });
   });
 
   it("upper-cases and accepts a 20-character LEI", () => {

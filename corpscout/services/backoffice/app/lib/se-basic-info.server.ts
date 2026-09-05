@@ -213,7 +213,7 @@ export const BASIC_INFO_LEGAL_FORM_OPTIONS_SQL = `SELECT
   argMax(l.label_sv, l.version) AS label_sv,
   argMax(l.label_en, l.version) AS label_en
 FROM corpscout.se_code_labels AS l
-WHERE l.code_type = 'legal_form' AND match(l.code, '^[0-9]+$')
+WHERE l.code_type = 'legal_form' AND match(l.code, '^[0-9]{2}$')
 GROUP BY l.code
 ORDER BY l.code`;
 
@@ -257,8 +257,11 @@ export async function loadSeBasicInfoDetail(
     legalFormOptions,
     // A release must also read as pending until folded, so every one of this
     // company's rows counts here -- not just the active (removed = 0) ones.
+    // A `reviewer_draft` row is excluded: it is not yet activated, so it must
+    // never raise "Fold pending" on its own (mirrors Dagster's
+    // `suggestion_watermarks_sql` exclusion).
     foldPending: foldPending(info?.folded_at ?? null, [
-      ...suggestions.map((row) => row.suggested_at),
+      ...suggestions.filter((row) => row.source !== "reviewer_draft").map((row) => row.suggested_at),
       ...companyRows.map((row) => row.decided_at),
     ]),
   };

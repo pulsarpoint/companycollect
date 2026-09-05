@@ -108,7 +108,10 @@ export const BASIC_INFO_LANGUAGES = ["en", "sv"] as const;
 export const MAX_LEGAL_NAME_LENGTH = 500;
 export const MAX_DESCRIPTION_LENGTH = 8000;
 
-const INCORPORATION_DATE_MIN = "1800-01-01";
+// Storage floor, not a historical judgment: `Nullable(Date32)` saturates any
+// date before 1900-01-01 to 1900-01-01 silently, so a value older than that
+// could never round-trip -- the validator's floor has to match the column's.
+const INCORPORATION_DATE_MIN = "1900-01-01";
 const LEI_PATTERN = /^[A-Z0-9]{20}$/;
 const LEGAL_FORM_CODE_PATTERN = /^[0-9]{2}$/;
 const INCORPORATION_DATE_PATTERN = /^([0-9]{4})-([0-9]{2})-([0-9]{2})$/;
@@ -169,7 +172,7 @@ function validateIncorporationDate(trimmed: string, today: string): SeBasicInfoV
     return fail("Date must be YYYY-MM-DD.");
   }
   if (trimmed < INCORPORATION_DATE_MIN || trimmed > today) {
-    return fail("Date must be between 1800-01-01 and today.");
+    return fail("Date must be between 1900-01-01 and today.");
   }
   return ok(trimmed);
 }

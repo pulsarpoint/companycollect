@@ -221,7 +221,7 @@ describe("se-basic-info.server", () => {
     // Swedish first.
     expect(BASIC_INFO_LEGAL_FORM_OPTIONS_SQL).toContain("FROM corpscout.se_code_labels AS l");
     expect(BASIC_INFO_LEGAL_FORM_OPTIONS_SQL).toContain(
-      "WHERE l.code_type = 'legal_form' AND match(l.code, '^[0-9]+$')",
+      "WHERE l.code_type = 'legal_form' AND match(l.code, '^[0-9]{2}$')",
     );
     expect(BASIC_INFO_LEGAL_FORM_OPTIONS_SQL).toContain("argMax(l.label_sv, l.version) AS label_sv");
     expect(BASIC_INFO_LEGAL_FORM_OPTIONS_SQL).toContain("argMax(l.label_en, l.version) AS label_en");
@@ -276,6 +276,24 @@ describe("se-basic-info.server", () => {
     // ...but it still counts toward fold-pending: a release must also read as
     // pending until the next fold applies it.
     expect(detail?.foldPending).toBe(true);
+  });
+
+  it("excludes a reviewer_draft row from fold-pending but counts a reviewer row", async () => {
+    // Mirrors Dagster's suggestion_watermarks_sql exclusion: a draft is not yet
+    // activated, so it must never raise "Fold pending" on its own -- but once
+    // the same value lands on the active `reviewer` row, it must.
+    const withSuggestion = (source: string) =>
+      clickhouse.query.mockImplementation(async (sql: string) => {
+        if (sql === BASIC_INFO_SUGGESTIONS_SQL) {
+          return [{ ...BOLAGSVERKET_ROW, source, suggested_at: "2026-09-05 09:00:00.000" }];
+        }
+        if (sql === BASIC_INFO_PRECEDENCE_SQL) return GLOBAL_PRECEDENCE_ROWS; // no company rule in play
+        return answer(sql);
+      });
+    withSuggestion("reviewer_draft");
+    expect((await loadSeBasicInfoDetail(COMPANY))?.foldPending).toBe(false);
+    withSuggestion("reviewer");
+    expect((await loadSeBasicInfoDetail(COMPANY))?.foldPending).toBe(true);
   });
 
   it("is null only when neither the main row nor a suggestion exists", async () => {

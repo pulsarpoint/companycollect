@@ -46,9 +46,9 @@ import type {
 import { cn } from "~/lib/utils";
 
 export type SeBasicInfoResult =
-  | { ok: true; decidedAt: string }
-  | { ok: true; launched: { runId: string; url: string | null } }
-  | { ok: false; error: string }
+  | { ok: true; intent: string; decidedAt: string }
+  | { ok: true; intent: string; launched: { runId: string; url: string | null } }
+  | { ok: false; intent: string; error: string }
   | null;
 
 /** Shown when the company has neither a folded row nor a suggestion. */
@@ -249,9 +249,11 @@ function panelSources(detail: SeBasicInfoDetail, field: SeBasicInfoField): strin
     if (source === "reviewer_draft") continue;
     if (!ordered.includes(source)) ordered.push(source);
   }
-  // The global map ranks the reviewer at 10000 for every field (reserved for
-  // Edit), which would put a greyed "no opinion" reviewer row above the source
-  // the reviewer actually preferred. A valueless reviewer row sinks to the end.
+  // The global map ranks the reviewer at 20000 for every field, above every
+  // company rule (a rule tops out at 10000, spec 4); `reviewer_draft` has no
+  // rank at all. Ranked that high, a greyed "no opinion" reviewer row would
+  // sit above the source the reviewer actually preferred, so a valueless
+  // reviewer row sinks to the end instead.
   const reviewerValue = detail.suggestions.find((row) => row.source === "reviewer")?.[field] ?? "";
   if (reviewerValue === "" && ordered.includes("reviewer")) {
     return [...ordered.filter((source) => source !== "reviewer"), "reviewer"];
@@ -292,6 +294,11 @@ function SuggestionsPanel({
   const ruledRow = ruledSource
     ? (detail.suggestions.find((row) => row.source === ruledSource.source) ?? null)
     : null;
+  // The reviewer's own typed value for this field, whether or not a company
+  // rule is also in force: Reset to default must clear it even when there is
+  // no rule at all (the server's reset branch already does both).
+  const reviewerRow = detail.suggestions.find((row) => row.source === "reviewer") ?? null;
+  const reviewerValueForField = valueOf(reviewerRow, selectedField);
   const draftRow = detail.suggestions.find((row) => row.source === "reviewer_draft") ?? null;
   const draftValueForField = valueOf(draftRow, selectedField);
   return (
@@ -302,9 +309,12 @@ function SuggestionsPanel({
           What each source suggests, highest precedence first. The active one is
           what the fold published.
         </CardDescription>
-        {ruledSource ? (
-          // A field with a company rule can go back to the global order in one
-          // step: every rule for the field is withdrawn, whatever it ranked.
+        {ruledSource !== null || reviewerValueForField !== "" ? (
+          // A field with a company rule, or a reviewer-typed value with no
+          // rule at all (slice 3c), can go back to the global order in one
+          // step: every rule for the field is withdrawn and, when there is no
+          // rule, the reviewer's own typed value is cleared instead -- the
+          // server's reset branch already does both.
           <Button
             type="button"
             size="sm"
@@ -315,9 +325,14 @@ function SuggestionsPanel({
               setPending({
                 intent: "reset",
                 field: selectedField,
-                source: ruledSource.source,
-                value: valueOf(ruledRow, selectedField),
-                language: selectedField === "description" ? (ruledRow?.description_language ?? "") : "",
+                source: ruledSource ? ruledSource.source : "reviewer",
+                value: ruledSource ? valueOf(ruledRow, selectedField) : reviewerValueForField,
+                language:
+                  selectedField === "description"
+                    ? ruledSource
+                      ? (ruledRow?.description_language ?? "")
+                      : (reviewerRow?.description_language ?? "")
+                    : "",
               })
             }
           >
@@ -363,7 +378,17 @@ function SuggestionsPanel({
           <Alert>
             <CheckCircle2Icon />
             <AlertTitle>Decision saved</AlertTitle>
-            <AlertDescription>Rule written at {result.decidedAt}. Fold now to publish it.</AlertDescription>
+            <AlertDescription>
+              {result.intent === "edit"
+                ? `Draft saved at ${result.decidedAt}.`
+                : result.intent === "discard"
+                  ? `Draft discarded at ${result.decidedAt}.`
+                  : result.intent === "activate"
+                    ? `Reviewer value activated at ${result.decidedAt}. Fold now to publish it.`
+                    : result.intent === "reset"
+                      ? `Reset at ${result.decidedAt}. Fold now to publish it.`
+                      : `Rule written at ${result.decidedAt}. Fold now to publish it.`}
+            </AlertDescription>
           </Alert>
         ) : null}
         <ul className="flex flex-col gap-2">
@@ -553,7 +578,9 @@ export function DecisionDialogBody({
           : `Use this ${fieldLabel}`;
   const description =
     intent === "reset"
-      ? `Every company rule for this field is withdrawn (today: ${basicInfoSourceLabel(pending.source)} preferred) and the next fold applies the global precedence.`
+      ? pending.source === "reviewer"
+        ? "Reset to default clears the reviewer's typed value for this field; the global order applies again at the next fold."
+        : `Every company rule for this field is withdrawn (today: ${basicInfoSourceLabel(pending.source)} preferred) and the next fold applies the global precedence.`
       : intent === "activate"
         ? "Activate the draft for this field: the reviewer's value then outranks every source and rule at the next fold."
         : intent === "discard"
@@ -789,7 +816,10 @@ export function SeBasicInfoWorkspace({
     // value and note still in the form) so the reviewer can fix and resubmit.
     if (result?.ok) setEditing(null);
   }, [result]);
-  const editError = result && !result.ok ? result.error : undefined;
+  // Only an edit refusal belongs inside the sheet's own form: a use-this,
+  // reset, activate or discard refusal is shown by the panel's "Not saved"
+  // alert instead, and must not also bleed into the sheet.
+  const editError = result && !result.ok && result.intent === "edit" ? result.error : undefined;
   return (
     <div className="grid gap-6 lg:grid-cols-[minmax(0,2fr)_minmax(20rem,1fr)]">
       <div className="flex flex-col gap-6">
