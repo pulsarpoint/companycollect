@@ -5,6 +5,9 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 const server = vi.hoisted(() => ({
   loadSeBasicInfoDetail: vi.fn(),
   appendSeBasicInfoRule: vi.fn(),
+  appendSeBasicInfoDraft: vi.fn(),
+  activateSeBasicInfoDraft: vi.fn(),
+  discardSeBasicInfoDraft: vi.fn(),
   launchSeBasicInfoFold: vi.fn(),
   SeBasicInfoDecisionError: class SeBasicInfoDecisionError extends Error {},
 }));
@@ -49,6 +52,29 @@ const scb: SeBasicInfoSuggestionRow = {
   description_language: "",
   description_sv: "",
   suggested_at: "2026-09-04 11:20:00.000",
+};
+/** An empty-valued draft, as a real `reviewer_draft` row reads before the
+ * reviewer has typed anything: every value column is `''`, not carried over
+ * from another source's row. */
+const emptyDraft: SeBasicInfoSuggestionRow = {
+  company_id: COMPANY,
+  source: "reviewer_draft",
+  source_record_uid: "",
+  observed_at: "2026-09-05 09:00:00.000",
+  suggested_at: "2026-09-05 09:00:00.000",
+  legal_name: "",
+  legal_form_code: "",
+  status: "",
+  incorporation_date: "",
+  lei: "",
+  wikidata_id: "",
+  description: "",
+  description_language: "",
+  description_sv: "",
+  decided_by: "backoffice",
+  note: "",
+  source_run_id: "backoffice",
+  extractor_version: "backoffice-v1",
 };
 
 const detail: SeBasicInfoDetail = {
@@ -262,12 +288,103 @@ describe("SeBasicInfoWorkspace", () => {
     expect(html).toContain("Every company rule for this field is withdrawn");
     expect(html).toContain("Why reset (optional)");
   });
+
+  it("confirms an Activate with the draft's copy, a note input and no source field", () => {
+    const html = render(
+      <DecisionDialogBody
+        pending={{ intent: "activate", field: "status", source: "reviewer_draft", value: "inactive", language: "" }}
+        labels={detail.legalFormLabels}
+        busy={false}
+        onClose={() => {}}
+      />,
+    );
+    // renderToStaticMarkup escapes the apostrophe as an HTML entity.
+    expect(html).toContain("Activate the draft for this field: the reviewer");
+    expect(html).toContain("outranks every source and rule at the next fold.");
+    expect(html).toContain('value="activate"');
+    expect(html).toContain('value="status"');
+    expect(html).not.toContain('name="source"');
+    expect(html).toContain('name="note"');
+    expect(html).toContain(">Activate<");
+  });
+
+  it("confirms a Discard with the draft's copy, no note input and no source field", () => {
+    const html = render(
+      <DecisionDialogBody
+        pending={{ intent: "discard", field: "status", source: "reviewer_draft", value: "inactive", language: "" }}
+        labels={detail.legalFormLabels}
+        busy={false}
+        onClose={() => {}}
+      />,
+    );
+    expect(html).toContain("Discard the draft value for this field.");
+    expect(html).toContain('value="discard"');
+    expect(html).toContain('value="status"');
+    expect(html).not.toContain('name="source"');
+    expect(html).not.toContain('name="note"');
+    expect(html).toContain(">Discard<");
+  });
+
+  it("gives every left-card row an Edit button and marks a field with a draft value", () => {
+    const draftRow: SeBasicInfoSuggestionRow = { ...emptyDraft, status: "inactive" };
+    const withDraft: SeBasicInfoDetail = { ...detail, suggestions: [...detail.suggestions, draftRow] };
+    const html = render(<SeBasicInfoWorkspace companyId={COMPANY} detail={withDraft} selectedField="status" result={null} />, "?field=status");
+    expect((html.match(/>Edit</g) ?? []).length).toBe(8);
+    const statusRowAt = html.indexOf(">Status<");
+    const nextFieldAt = html.indexOf("</li>", statusRowAt);
+    const statusRow = html.slice(statusRowAt, nextFieldAt);
+    expect(statusRow).toContain(">draft<");
+    // A field the draft has no opinion on gets no draft badge.
+    const nameRowAt = html.indexOf(">Legal name<");
+    const nameRowEnd = html.indexOf("</li>", nameRowAt);
+    expect(html.slice(nameRowAt, nameRowEnd)).not.toContain(">draft<");
+  });
+
+  it("lists a Draft row with Activate and Discard only when the draft has a value for the field, and never marks it active", () => {
+    const draftRow: SeBasicInfoSuggestionRow = { ...emptyDraft, status: "inactive" };
+    const withDraft: SeBasicInfoDetail = { ...detail, suggestions: [...detail.suggestions, draftRow] };
+    const html = render(<SeBasicInfoWorkspace companyId={COMPANY} detail={withDraft} selectedField="status" result={null} />, "?field=status");
+    const draftAt = html.indexOf('data-source="reviewer_draft"');
+    expect(draftAt).toBeGreaterThan(-1);
+    const draftRowHtml = html.slice(draftAt, html.indexOf("</li>", draftAt));
+    expect(draftRowHtml).toContain("Draft");
+    expect(draftRowHtml).toContain("inactive");
+    expect(draftRowHtml).toContain("Activate");
+    expect(draftRowHtml).toContain("Discard");
+    expect(draftRowHtml).not.toContain("Active<");
+    expect(draftRowHtml).not.toContain("Use this");
+    // Every row after the ranked sources is the Draft row -- it always sits last.
+    expect(html.lastIndexOf("data-source=")).toBe(draftAt);
+
+    const withoutDraftValue = render(
+      <SeBasicInfoWorkspace companyId={COMPANY} detail={detail} selectedField="status" result={null} />,
+      "?field=status",
+    );
+    expect(withoutDraftValue).not.toContain('data-source="reviewer_draft"');
+  });
+
+  it("labels an active reviewer value 'typed by reviewer' instead of a rank caption", () => {
+    const reviewerRow: SeBasicInfoSuggestionRow = { ...bolagsverket, source: "reviewer", status: "inactive" };
+    const withReviewer: SeBasicInfoDetail = { ...detail, suggestions: [...detail.suggestions, reviewerRow] };
+    const html = render(
+      <SeBasicInfoWorkspace companyId={COMPANY} detail={withReviewer} selectedField="status" result={null} />,
+      "?field=status",
+    );
+    const reviewerAt = html.indexOf('data-source="reviewer"');
+    const nextRowAt = html.indexOf('data-source=', reviewerAt + 1);
+    const reviewerRowHtml = html.slice(reviewerAt, nextRowAt === -1 ? undefined : nextRowAt);
+    expect(reviewerRowHtml).toContain("typed by reviewer");
+    expect(reviewerRowHtml).not.toContain("not ranked");
+  });
 });
 
 describe("admin-se-company-info route", () => {
   beforeEach(() => {
     server.loadSeBasicInfoDetail.mockReset().mockResolvedValue(detail);
     server.appendSeBasicInfoRule.mockReset().mockResolvedValue({ decidedAt: "2026-09-04 19:30:00.123" });
+    server.appendSeBasicInfoDraft.mockReset().mockResolvedValue({ decidedAt: "2026-09-05 09:00:00.000" });
+    server.activateSeBasicInfoDraft.mockReset().mockResolvedValue({ decidedAt: "2026-09-05 09:01:00.000" });
+    server.discardSeBasicInfoDraft.mockReset().mockResolvedValue({ decidedAt: "2026-09-05 09:02:00.000" });
     server.launchSeBasicInfoFold.mockReset().mockResolvedValue({ runId: "run-9", url: null });
   });
 
@@ -299,6 +416,36 @@ describe("admin-se-company-info route", () => {
     server.appendSeBasicInfoRule.mockRejectedValueOnce(new Error("clickhouse down"));
     await expect(post({ intent: "reset", field: "lei" })).rejects.toThrow("clickhouse down");
     expect(server.appendSeBasicInfoRule).toHaveBeenLastCalledWith(COMPANY, { intent: "reset", field: "lei", note: "" });
+  });
+
+  it("maps edit, activate and discard to their own store writes, and surfaces their refusals", async () => {
+    const post = (entries: Record<string, string>) => {
+      const body = new FormData();
+      for (const [key, value] of Object.entries(entries)) body.set(key, value);
+      return action({ request: new Request("http://x/info", { method: "POST", body }), params: { companyId: COMPANY } } as never);
+    };
+    expect(
+      await post({ intent: "edit", field: "lei", value: "5493001KJTIIGC8Y1R12", language: "", note: "typed from the register" }),
+    ).toEqual({ ok: true, decidedAt: "2026-09-05 09:00:00.000" });
+    expect(server.appendSeBasicInfoDraft).toHaveBeenCalledWith(COMPANY, {
+      intent: "edit",
+      field: "lei",
+      value: "5493001KJTIIGC8Y1R12",
+      language: "",
+      note: "typed from the register",
+    });
+
+    expect(await post({ intent: "activate", field: "lei", note: "" })).toEqual({ ok: true, decidedAt: "2026-09-05 09:01:00.000" });
+    expect(server.activateSeBasicInfoDraft).toHaveBeenCalledWith(COMPANY, { intent: "activate", field: "lei", note: "" });
+
+    expect(await post({ intent: "discard", field: "lei" })).toEqual({ ok: true, decidedAt: "2026-09-05 09:02:00.000" });
+    expect(server.discardSeBasicInfoDraft).toHaveBeenCalledWith(COMPANY, { intent: "discard", field: "lei" });
+
+    server.activateSeBasicInfoDraft.mockRejectedValueOnce(new server.SeBasicInfoDecisionError("No draft value for LEI to activate."));
+    expect(await post({ intent: "activate", field: "lei", note: "" })).toEqual({ ok: false, error: "No draft value for LEI to activate." });
+
+    server.discardSeBasicInfoDraft.mockRejectedValueOnce(new server.SeBasicInfoDecisionError("No draft value for LEI to discard."));
+    expect(await post({ intent: "discard", field: "lei" })).toEqual({ ok: false, error: "No draft value for LEI to discard." });
   });
 
   it("refuses to act on a malformed company id before any write or launch", async () => {

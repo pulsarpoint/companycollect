@@ -5,7 +5,10 @@ import {
   SeBasicInfoWorkspace,
 } from "~/components/admin/se-basic-info-workspace";
 import {
+  activateSeBasicInfoDraft,
+  appendSeBasicInfoDraft,
   appendSeBasicInfoRule,
+  discardSeBasicInfoDraft,
   launchSeBasicInfoFold,
   loadSeBasicInfoDetail,
   SeBasicInfoDecisionError,
@@ -43,12 +46,21 @@ export async function action({ request, params }: Route.ActionArgs) {
     const launched = await launchSeBasicInfoFold(params.companyId);
     return { ok: true as const, launched };
   }
-  if (parsed.decision.intent !== "use-this" && parsed.decision.intent !== "reset") {
-    // Slice 3c Task 3 wires the draft writes; until then the parser accepts more than the store handles.
-    return { ok: false as const, error: "Not available yet." };
-  }
   try {
-    const { decidedAt } = await appendSeBasicInfoRule(params.companyId, parsed.decision);
+    const { decision } = parsed;
+    if (decision.intent === "edit") {
+      const { decidedAt } = await appendSeBasicInfoDraft(params.companyId, decision);
+      return { ok: true as const, decidedAt };
+    }
+    if (decision.intent === "activate") {
+      const { decidedAt } = await activateSeBasicInfoDraft(params.companyId, decision);
+      return { ok: true as const, decidedAt };
+    }
+    if (decision.intent === "discard") {
+      const { decidedAt } = await discardSeBasicInfoDraft(params.companyId, decision);
+      return { ok: true as const, decidedAt };
+    }
+    const { decidedAt } = await appendSeBasicInfoRule(params.companyId, decision);
     return { ok: true as const, decidedAt };
   } catch (error) {
     if (error instanceof SeBasicInfoDecisionError) {
