@@ -130,14 +130,14 @@ In Python, `dagster_v3.defs.se_company.basic_info.precedence`:
 
 ```python
 BASIC_INFO_PRECEDENCE: dict[str, dict[str, int]] = {
-    "legal_name":         {"reviewer": 10000, "scb": 1000, "bolagsverket": 900, "ratsit": 300, "wikidata": 200},
-    "legal_form_code":    {"reviewer": 10000, "scb": 1000, "bolagsverket": 900},
-    "status":             {"reviewer": 10000, "scb": 1000, "bolagsverket": 900, "ratsit": 300},
-    "incorporation_date": {"reviewer": 10000, "scb": 1000, "bolagsverket": 900, "wikidata": 200},
-    "lei":                {"reviewer": 10000, "esef": 1000},
-    "wikidata_id":        {"reviewer": 10000, "wikidata": 1000},
-    "description":        {"reviewer": 10000, "llm": 2000, "esef": 800, "wikidata": 600, "bolagsverket": 400, "ratsit": 300},
-    "description_sv":     {"reviewer": 10000, "llm": 2000, "bolagsverket": 400, "ratsit": 300},
+    "legal_name":         {"reviewer": 20000, "scb": 1000, "bolagsverket": 900, "ratsit": 300, "wikidata": 200},
+    "legal_form_code":    {"reviewer": 20000, "scb": 1000, "bolagsverket": 900},
+    "status":             {"reviewer": 20000, "scb": 1000, "bolagsverket": 900, "ratsit": 300},
+    "incorporation_date": {"reviewer": 20000, "scb": 1000, "bolagsverket": 900, "wikidata": 200},
+    "lei":                {"reviewer": 20000, "esef": 1000},
+    "wikidata_id":        {"reviewer": 20000, "wikidata": 1000},
+    "description":        {"reviewer": 20000, "llm": 2000, "esef": 800, "wikidata": 600, "bolagsverket": 400, "ratsit": 300},
+    "description_sv":     {"reviewer": 20000, "llm": 2000, "bolagsverket": 400, "ratsit": 300},
 }
 ```
 
