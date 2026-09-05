@@ -122,7 +122,7 @@ decided_at DateTime64(3, 'UTC')   -- the export or decision instant, the version
 ENGINE = ReplacingMergeTree(decided_at) ORDER BY (company_id, field, source)
 ```
 
-The export writes only `company_id = ''` rows and can never touch a decision; the backoffice writes only company rows, one version per decision, and Release is a new version with `removed = 1`, never a delete. Migration 000380 recreates the table (its content is regenerable: 30 exported rows) and retires 000379's shape.
+The export writes only `company_id = ''` rows and can never touch a decision; the backoffice writes only company rows, one version per decision, and Release is a new version with `removed = 1`, never a delete. Migration 000381 recreates the table (its content is regenerable: 30 exported rows) and retires 000379's shape.
 
 ## 4. Precedence
 
@@ -143,7 +143,7 @@ BASIC_INFO_PRECEDENCE: dict[str, dict[str, int]] = {
 
 The numbers are the owner's to adjust in review; gaps leave room for new sources. A source absent from a field's map cannot supply that field. `description_language` is not in the map: it follows the winning `description` row.
 
-Amended 2026-09-05 (slice 3b): a company may carry its own rules, `(company_id, field, source, precedence)`, written by the backoffice. The effective precedence of a source for a field is the company's active rule when one exists, otherwise the global number; a company rule may also rank a source the global map does not name, which makes that source able to supply the field for that company only. "Use this" writes a rule at 10000; a low number demotes a source for one company. The reviewer stays a source in the suggestion table only for values no source has (Edit, deferred).
+Amended 2026-09-05 (slice 3b): a company may carry its own rules, `(company_id, field, source, precedence)`, written by the backoffice. The effective precedence of a source for a field is the company's active rule when one exists, otherwise the global number; a company rule may also rank a source the global map does not name, which makes that source able to supply the field for that company only. "Use this" writes a rule at 10000; a low number demotes a source for one company. The reviewer stays a source in the suggestion table only for values no source has (Edit, deferred). Note for Edit: the reviewer's own value and a company rule both sit at 10000, so a reviewer value for a field ties with a rule and the fold breaks the tie on `observed_at`; when Edit ships, decide the order explicitly (a typed value should probably outrank a preference) and pin it with a test. Until then no reviewer value rows exist (the 2026-09-05 conversion nulled the one there was).
 
 Amended 2026-09-04 (slice 2): the register text comes from Bolagsverket's `activity_description`, so the `description` and `description_sv` maps name `bolagsverket` where they named `scb`.
 

@@ -224,6 +224,13 @@ function panelSources(detail: SeBasicInfoDetail, field: SeBasicInfoField): strin
   for (const source of [...ranked, ...suggesting, ...BASIC_INFO_SOURCES]) {
     if (!ordered.includes(source)) ordered.push(source);
   }
+  // The global map ranks the reviewer at 10000 for every field (reserved for
+  // Edit), which would put a greyed "no opinion" reviewer row above the source
+  // the reviewer actually preferred. A valueless reviewer row sinks to the end.
+  const reviewerValue = detail.suggestions.find((row) => row.source === "reviewer")?.[field] ?? "";
+  if (reviewerValue === "" && ordered.includes("reviewer")) {
+    return [...ordered.filter((source) => source !== "reviewer"), "reviewer"];
+  }
   return ordered;
 }
 

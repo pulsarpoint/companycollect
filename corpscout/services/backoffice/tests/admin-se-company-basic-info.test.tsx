@@ -116,10 +116,12 @@ describe("SeBasicInfoWorkspace", () => {
     const scbAt = html.indexOf('data-source="scb"');
     const ratsitAt = html.indexOf('data-source="ratsit"');
     // The company rule lifts bolagsverket to 10000, ahead of scb's global 1000,
-    // even though the global map alone ranks scb above bolagsverket.
-    expect(reviewerAt).toBeLessThan(bolagsverketAt);
+    // even though the global map alone ranks scb above bolagsverket. The
+    // reviewer, ranked 10000 globally but without a value here, sinks below
+    // every source with an opinion instead of leading the list greyed out.
     expect(bolagsverketAt).toBeLessThan(scbAt);
     expect(scbAt).toBeLessThan(ratsitAt);
+    expect(reviewerAt).toBeGreaterThan(ratsitAt);
     // Slice each row out of the document so these checks read only that row's
     // own markup -- toMatch/toContain over the whole string would happily
     // find another row's later button and pass for the wrong reason.

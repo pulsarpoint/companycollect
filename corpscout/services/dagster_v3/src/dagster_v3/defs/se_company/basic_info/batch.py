@@ -173,7 +173,7 @@ def _pages(items: Sequence[str], size: int) -> list[list[str]]:
 
 def _changed_company_ids(client: Any, company_ids: list[str]) -> list[str]:
     """The companies to re-fold: those with a main row older than their newest suggestion
-    or their newest active rule, and those with no main row yet. A company with an active
+    or their newest rule version (released ones included), and those with no main row yet. A company with an active
     rule but no suggestion stays out -- there is nothing for the rule to decide (spec
     section 4, amended 2026-09-05)."""
     params = {"company_ids": company_ids}

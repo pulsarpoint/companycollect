@@ -392,7 +392,7 @@ EXPECTED_MIGRATIONS = (
     "000377_corpscout_se_company_basic_info",
     "000378_corpscout_se_company_basic_info_history",
     "000379_corpscout_se_company_basic_info_precedence",
-    "000380_corpscout_se_company_basic_info_precedence_rules",
+    "000381_corpscout_se_company_basic_info_precedence_rules",
 )
 
 NOOP_MIGRATIONS = {"000276_noop"}
@@ -795,10 +795,10 @@ def test_clickhouse_migrations_have_down_files() -> None:
 
         if migration_file in EMPTIED_MIGRATIONS:
             if migration_file == "000379_corpscout_se_company_basic_info_precedence":
-                # Only its up file was emptied: 000380 recreates the same table with a
+                # Only its up file was emptied: 000381 recreates the same table with a
                 # company scope (the DDL contract allows only one migration to create a
-                # given table), but a rollback still walks 000380's down first, which
-                # restores this table to its pre-380 shape -- so 000379's down file still
+                # given table), but a rollback still walks 000381's down first, which
+                # restores this table to its pre-381 shape -- so 000379's down file still
                 # performs the original DROP that undoes it, unlike the other three
                 # entries here whose objects are gone for good.
                 assert "DROP TABLE IF EXISTS" in sql

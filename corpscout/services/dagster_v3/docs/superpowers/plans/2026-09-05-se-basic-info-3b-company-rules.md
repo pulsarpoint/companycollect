@@ -4,7 +4,7 @@
 
 **Goal:** A reviewer's "Use this" becomes a per-company precedence rule (`company_id, field, source, precedence`) instead of a copied value, so the chosen source's current value flows through every later fold like an automatic pick; "Release" retires the rule.
 
-**Architecture:** The precedence table gains a company scope (migration 000380 recreates it; `''` = global rules from code). The pure fold takes the company's active rules and lets them replace the global number per source and field. The batch layer reads rules per page and counts a new rule as a change. The backoffice writes rules (never values) for Use this and Release, orders the panel by effective precedence and marks the ruled source.
+**Architecture:** The precedence table gains a company scope (migration 000381 recreates it; `''` = global rules from code). The pure fold takes the company's active rules and lets them replace the global number per source and field. The batch layer reads rules per page and counts a new rule as a change. The backoffice writes rules (never values) for Use this and Release, orders the panel by effective precedence and marks the ruled source.
 
 **Tech Stack:** ClickHouse migrations (golang-migrate ledger), Python 3.14 / Dagster 1.13.9 (`uv run --frozen --no-sync`, tests need `WEBTECH_API_URL=http://localhost:1 WEBTECH_S3_PATH=s3://bucket/prefix`), React Router 8 backoffice (`npx vitest run`, `npm run typecheck`).
 
@@ -13,7 +13,7 @@
 ## Global Constraints
 
 - Dagster work happens in `corpscout/services/dagster_v3` (tests: `WEBTECH_API_URL=http://localhost:1 WEBTECH_S3_PATH=s3://bucket/prefix uv run --frozen --no-sync pytest <files> -q`; definitions: `uv run --frozen --no-sync dg check defs`). Backoffice work in `corpscout/services/backoffice` (`npx vitest run <files>`, `npm run typecheck`).
-- Migration ledger rules: first line `CREATE DATABASE IF NOT EXISTS corpscout;`, last line a statement, no `;` inside comments, name added to `EXPECTED_MIGRATIONS` in `tests/test_clickhouse_migrations.py`; the DDL contract tests read column lists from the migration files through `tests/se_company_ddl.py::declared_columns`. Migration 000380 is a DROP + CREATE of a regenerable 30-row table (the only company decision so far is converted by hand in Task 5); the drop is stated in the file's comment.
+- Migration ledger rules: first line `CREATE DATABASE IF NOT EXISTS corpscout;`, last line a statement, no `;` inside comments, name added to `EXPECTED_MIGRATIONS` in `tests/test_clickhouse_migrations.py`; the DDL contract tests read column lists from the migration files through `tests/se_company_ddl.py::declared_columns`. Migration 000381 is a DROP + CREATE of a regenerable 30-row table (the only company decision so far is converted by hand in Task 5); the drop is stated in the file's comment.
 - New table shape, exactly: `company_id String, field LowCardinality(String), source LowCardinality(String), precedence UInt32, removed UInt8 DEFAULT 0, decided_by LowCardinality(String) DEFAULT '', note String DEFAULT '', decided_at DateTime64(3, 'UTC')`, `ENGINE = ReplacingMergeTree(decided_at) ORDER BY (company_id, field, source)`, `CONSTRAINT valid_company_id CHECK company_id = '' OR match(company_id, '^([0-9]{10}|[0-9]{12})$')`.
 - `tables.PRECEDENCE_COLUMNS = ("company_id", "field", "source", "precedence", "removed", "decided_by", "note", "decided_at")`. The export writes `company_id = ''`, `removed = 0`, `decided_by = 'code'`, `note = ''`, `decided_at = exported_at`; the stale count covers only `company_id = ''` rows.
 - Effective precedence: `rules[field][source]` when present (active company rule), else `precedence_for(field, source)`; a rule may name a source the global map does not, and that source can then supply the field. Rules are `Mapping[str, Mapping[str, int]]` built only from `removed = 0` rows.
@@ -27,7 +27,7 @@
 
 | File | Responsibility |
 | --- | --- |
-| `corpscout/clickhouse/migrations/000380_corpscout_se_company_basic_info_precedence_rules.{up,down}.sql` (new) | recreate the precedence table with the company scope |
+| `corpscout/clickhouse/migrations/000381_corpscout_se_company_basic_info_precedence_rules.{up,down}.sql` (new) | recreate the precedence table with the company scope |
 | `dagster_v3/src/dagster_v3/defs/se_company/basic_info/tables.py` (modify) | `PRECEDENCE_COLUMNS` |
 | `dagster_v3/src/dagster_v3/defs/se_company/basic_info/assets.py` (modify) | export writes the new columns; stale count scoped to `''` |
 | `dagster_v3/src/dagster_v3/defs/se_company/basic_info/fold.py` (modify) | `rules` parameter, effective precedence |
@@ -42,10 +42,10 @@
 
 ---
 
-### Task 1: Migration 000380 and the export
+### Task 1: Migration 000381 and the export
 
 **Files:**
-- Create: `corpscout/clickhouse/migrations/000380_corpscout_se_company_basic_info_precedence_rules.up.sql`, `.down.sql`
+- Create: `corpscout/clickhouse/migrations/000381_corpscout_se_company_basic_info_precedence_rules.up.sql`, `.down.sql`
 - Modify: `corpscout/services/dagster_v3/tests/test_clickhouse_migrations.py` (append the name to `EXPECTED_MIGRATIONS`), `src/dagster_v3/defs/se_company/basic_info/tables.py`, `src/dagster_v3/defs/se_company/basic_info/assets.py`
 - Test: `tests/test_se_company_basic_info_tables.py` (DDL pin), `tests/test_se_company_basic_info_assets.py`
 
@@ -54,14 +54,14 @@
 
 - [ ] **Step 1: Write the failing tests**
 
-In `tests/test_se_company_basic_info_tables.py` find the existing pin of the precedence columns against the DDL (it reads `000379_...up.sql` through `declared_columns`) and point it at `000380_corpscout_se_company_basic_info_precedence_rules.up.sql`; add:
+In `tests/test_se_company_basic_info_tables.py` find the existing pin of the precedence columns against the DDL (it reads `000379_...up.sql` through `declared_columns`) and point it at `000381_corpscout_se_company_basic_info_precedence_rules.up.sql`; add:
 
 ```python
 def test_precedence_rules_table_carries_the_company_scope() -> None:
     assert tables.PRECEDENCE_COLUMNS == (
         "company_id", "field", "source", "precedence", "removed", "decided_by", "note", "decided_at",
     )
-    assert declared_columns("000380_corpscout_se_company_basic_info_precedence_rules.up.sql") == list(tables.PRECEDENCE_COLUMNS)
+    assert declared_columns("000381_corpscout_se_company_basic_info_precedence_rules.up.sql") == list(tables.PRECEDENCE_COLUMNS)
 ```
 
 In `tests/test_se_company_basic_info_assets.py` change `test_export_precedence_inserts_every_pair_and_binds_a_utc_millisecond_string`: the insert SQL pins `(company_id, field, source, precedence, removed, decided_by, note, decided_at) VALUES`; every inserted row is `("", field, source, precedence, 0, "code", "", exported_at)`; the stale SQL contains `WHERE company_id = '' AND decided_at < toDateTime64(%(exported_at)s, 3, 'UTC')`.
@@ -73,7 +73,7 @@ Expected: FAIL (missing migration file, old column tuple, old SQL).
 
 - [ ] **Step 3: Write the migration and the code**
 
-`000380_corpscout_se_company_basic_info_precedence_rules.up.sql`:
+`000381_corpscout_se_company_basic_info_precedence_rules.up.sql`:
 
 ```sql
 CREATE DATABASE IF NOT EXISTS corpscout;
@@ -150,9 +150,9 @@ PRECEDENCE_COLUMNS: tuple[str, ...] = (
     return len(rows), stale
 ```
 
-Update the docstring: the export never touches company rows. Append `"000380_corpscout_se_company_basic_info_precedence_rules"` to `EXPECTED_MIGRATIONS`.
+Update the docstring: the export never touches company rows. Append `"000381_corpscout_se_company_basic_info_precedence_rules"` to `EXPECTED_MIGRATIONS`.
 
-The DDL contract helper (`tests/se_company_ddl.py::_migration_for`) requires exactly ONE migration to create a table, so 000380 cannot coexist with 000379's CREATE. Under the ledger policy (edit history, files stay), replace 000379's up file body with only the header comment, a comment line `-- Superseded by 000380, which recreates this table with a company scope (slice 3b, 2026-09-05)`, and `CREATE DATABASE IF NOT EXISTS corpscout;` as its last statement (no `;` inside comments); leave 000379's down file as it is. If `tests/test_clickhouse_migrations.py` has an `EMPTIED_MIGRATIONS` carve-out for files that only create the database, add `000379_corpscout_se_company_basic_info_precedence` to it. Rename `test_precedence_table_is_exported_never_edited` to `test_precedence_table_carries_global_and_company_rules` and make it assert the eight columns, `ReplacingMergeTree(decided_at)` and `ORDER BY (company_id, field, source)` from `table_block("se_company_basic_info_precedence")`; the separate new test from Step 1 can be folded into it.
+The DDL contract helper (`tests/se_company_ddl.py::_migration_for`) requires exactly ONE migration to create a table, so 000381 cannot coexist with 000379's CREATE. Under the ledger policy (edit history, files stay), replace 000379's up file body with only the header comment, a comment line `-- Superseded by 000381, which recreates this table with a company scope (slice 3b, 2026-09-05)`, and `CREATE DATABASE IF NOT EXISTS corpscout;` as its last statement (no `;` inside comments); leave 000379's down file as it is. If `tests/test_clickhouse_migrations.py` has an `EMPTIED_MIGRATIONS` carve-out for files that only create the database, add `000379_corpscout_se_company_basic_info_precedence` to it. Rename `test_precedence_table_is_exported_never_edited` to `test_precedence_table_carries_global_and_company_rules` and make it assert the eight columns, `ReplacingMergeTree(decided_at)` and `ORDER BY (company_id, field, source)` from `table_block("se_company_basic_info_precedence")`; the separate new test from Step 1 can be folded into it.
 
 - [ ] **Step 4: Run tests to verify they pass**
 
@@ -161,7 +161,7 @@ Same command as Step 2. Expected: PASS. Then `uv run --frozen --no-sync dg check
 - [ ] **Step 5: Commit**
 
 ```bash
-git add corpscout/clickhouse/migrations/000380_corpscout_se_company_basic_info_precedence_rules.up.sql corpscout/clickhouse/migrations/000380_corpscout_se_company_basic_info_precedence_rules.down.sql corpscout/services/dagster_v3/tests/test_clickhouse_migrations.py corpscout/services/dagster_v3/src/dagster_v3/defs/se_company/basic_info/tables.py corpscout/services/dagster_v3/src/dagster_v3/defs/se_company/basic_info/assets.py corpscout/services/dagster_v3/tests/test_se_company_basic_info_tables.py corpscout/services/dagster_v3/tests/test_se_company_basic_info_assets.py
+git add corpscout/clickhouse/migrations/000381_corpscout_se_company_basic_info_precedence_rules.up.sql corpscout/clickhouse/migrations/000381_corpscout_se_company_basic_info_precedence_rules.down.sql corpscout/services/dagster_v3/tests/test_clickhouse_migrations.py corpscout/services/dagster_v3/src/dagster_v3/defs/se_company/basic_info/tables.py corpscout/services/dagster_v3/src/dagster_v3/defs/se_company/basic_info/assets.py corpscout/services/dagster_v3/tests/test_se_company_basic_info_tables.py corpscout/services/dagster_v3/tests/test_se_company_basic_info_assets.py
 git commit -m "feat(dagster): SE basic-info precedence table gains a company scope"
 ```
 
@@ -333,7 +333,7 @@ def test_changed_only_wakes_a_company_whose_newest_rule_is_newer_than_its_fold()
 
 (Adapt `FakeClient`, `scb_row`, `bolagsverket_row`, `OLD < MID < NEW` to the file's existing helpers; keep their names if they already exist.)
 
-In `tests/test_se_company_basic_info_clickhouse_local.py` extend the schema list with `000380_...up.sql` (replacing `000379` if listed) and add a test that inserts one global row and one company rule row, runs `company_rules_sql()` bound to that company, and gets exactly the company row; a second insert of the same key with `removed = 1` and a later `decided_at` makes the query return nothing.
+In `tests/test_se_company_basic_info_clickhouse_local.py` extend the schema list with `000381_...up.sql` (replacing `000379` if listed) and add a test that inserts one global row and one company rule row, runs `company_rules_sql()` bound to that company, and gets exactly the company row; a second insert of the same key with `removed = 1` and a later `decided_at` makes the query return nothing.
 
 - [ ] **Step 2: Run tests to verify they fail** — expected: FAIL (missing functions).
 
@@ -412,11 +412,17 @@ git commit -m "feat(backoffice): Use this and Release write per-company preceden
 
 ### Task 5: Production cutover (controller, owner-gated)
 
-- [ ] Merge to main (owner). Apply 000380 on prod (`make -C <deploy checkout>/corpscout clickhouse-migrate-up-one`), verify the ledger reads 380 and `DESCRIBE corpscout.se_company_basic_info_precedence` shows the eight columns.
-- [ ] Hot-sync dagster from main; materialize `se_company_basic_info_precedence_clickhouse` (expect 30 pairs, 0 stale); `SELECT count() FROM corpscout.se_company_basic_info_precedence FINAL WHERE company_id = ''` = 30.
-- [ ] Convert today's one decision (Handelsbanken 5020077862, description from bolagsverket): insert a reviewer-row version with `description`, `description_language` NULL (copy the current reviewer row's other columns) and a rule `('5020077862', 'description', 'bolagsverket', 10000, 0, 'backoffice', 'converted from the 2026-09-05 value decision', now)`; then `se_company_basic_info_fold_companies` for that id; expect `description_source = 'bolagsverket'` and one history row with `description` changed.
-- [ ] Smoke on localhost:5183 after the owner merges: on Atlas Copco 5561552760 status, Use this on Bolagsverket opens the dialog, confirm writes a rule (check the table), Fold now publishes `status = inactive, status_source = bolagsverket`, the row reads "preferred by reviewer"; Release writes the `removed = 1` version and Fold now returns to SCB.
-- [ ] Record counts in the ledger and the spec's section 10; archive the ledger.
+Ordered; each step's check gates the next.
+
+1. [ ] Verify prod's ledger head: `SELECT version, dirty FROM corpscout.schema_migrations ORDER BY sequence DESC LIMIT 1` must read 380 clean (main's Wikipedia-articles migration); this slice's migration is 000381 for that reason.
+2. [ ] Owner merges `se-basic-info` into main. The backoffice dev server on localhost:5183 serves main, so from this moment the Info tab reads the eight-column precedence SQL and will fail until step 3 lands: do steps 3 and 4 immediately after the merge.
+3. [ ] Apply 000381 on prod (`make -C <deploy checkout>/corpscout clickhouse-migrate-up-one` from a checkout at main); verify `version = 381, dirty = 0` and `DESCRIBE corpscout.se_company_basic_info_precedence` shows the eight columns. The table is empty now: the panel shows every source "not ranked" until step 5.
+4. [ ] Hot-sync dagster from main (deploy worktree at the merge commit, `light_sync`, failed = 0); the code server must serve the new fold and export.
+5. [ ] Materialize `se_company_basic_info_precedence_clickhouse` (expect `pairs 30, stale_pairs 0`); `SELECT count() FROM corpscout.se_company_basic_info_precedence FINAL WHERE company_id = ''` = 30.
+6. [ ] Inventory reviewer suggestion rows that still carry a value: `SELECT company_id, count() FROM corpscout.se_company_basic_info_suggestion FINAL WHERE source = 'reviewer' AND (legal_name IS NOT NULL OR legal_form_code IS NOT NULL OR status IS NOT NULL OR incorporation_date IS NOT NULL OR lei IS NOT NULL OR wikidata_id IS NOT NULL OR description IS NOT NULL OR description_sv IS NOT NULL) GROUP BY company_id`. A reviewer value ties with a rule at 10000, so every such row must be converted: insert a reviewer-row version with the field(s) NULL and a rule for the source the value came from. Known today: Handelsbanken 5020077862 (description from bolagsverket): `scratchpad/basic-info-0/convert_handelsbanken.sql` (session scratchpad, two INSERTs), pre-check `SELECT description_source FROM corpscout.se_company_basic_info FINAL WHERE company_id = '5020077862'` = `reviewer` before, `bolagsverket` after the fold. Atlas Copco's reviewer row was released (all NULL) and needs nothing.
+7. [ ] `se_company_basic_info_fold_companies` for every converted id; expect the field's source to be the ruled source and one history row per company naming the field.
+8. [ ] Smoke on localhost:5183: Atlas Copco 5561552760, field status: Use this on Bolagsverket opens the dialog, confirming writes a rule (`SELECT * FROM corpscout.se_company_basic_info_precedence FINAL WHERE company_id = '5561552760'`), Fold now publishes `status = inactive, status_source = bolagsverket`, the Bolagsverket row reads "preferred by reviewer"; Release writes the `removed = 1` version and Fold now returns to SCB; a second Use this on SCB while Bolagsverket is ruled retires the Bolagsverket rule in the same write.
+9. [ ] Record counts in the ledger and the spec's section 10; archive the ledger.
 
 ## Self-review
 

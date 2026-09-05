@@ -32,7 +32,7 @@ MIGRATIONS = (
     "000376_corpscout_se_company_basic_info_suggestion.up.sql",
     "000377_corpscout_se_company_basic_info.up.sql",
     "000378_corpscout_se_company_basic_info_history.up.sql",
-    "000380_corpscout_se_company_basic_info_precedence_rules.up.sql",
+    "000381_corpscout_se_company_basic_info_precedence_rules.up.sql",
 )
 
 

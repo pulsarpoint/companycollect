@@ -5,5 +5,5 @@
 -- the Python dictionary is the only source. A re-export writes every pair the dictionary
 -- names. A pair the dictionary no longer names stays in this table until it is removed by
 -- hand, and the export reports it as stale_pairs.
--- Superseded by 000380, which recreates this table with a company scope (slice 3b, 2026-09-05)
+-- Superseded by 000381, which recreates this table with a company scope (slice 3b, 2026-09-05)
 CREATE DATABASE IF NOT EXISTS corpscout;
