@@ -97,7 +97,7 @@ export interface SeBasicInfoDetail {
   info: SeBasicInfoRow | null;
   suggestions: SeBasicInfoSuggestionRow[];
   history: SeBasicInfoHistoryRow[];
-  /** The 30 global rows the code exports (`company_id = ''`). */
+  /** The global rows the code exports (`company_id = ''`). */
   precedence: SeBasicInfoPrecedenceRow[];
   /** This company's own rules that are still in force (`removed = 0`); each
    * overrides (or, for a source the global map does not rank, adds) the
@@ -176,6 +176,13 @@ FROM corpscout.se_company_basic_info_precedence AS p FINAL
 WHERE p.company_id IN ('', {companyId:String})
 ORDER BY p.field, p.precedence DESC`;
 
+/** This company's other active rules for one field -- read before a use-this
+ * write so every other source's rule can be retired in the same insert. */
+export const BASIC_INFO_ACTIVE_RULES_SQL = `SELECT
+  toString(p.source) AS source
+FROM corpscout.se_company_basic_info_precedence AS p FINAL
+WHERE p.company_id = {companyId:String} AND p.field = {field:String} AND p.removed = 0`;
+
 /** The curated dictionary for every code on the page at once; argMax over
  * `version` for the same reason as SHELL_LEGAL_FORM_LABEL_SQL. */
 export const BASIC_INFO_LEGAL_FORM_LABELS_SQL = `SELECT
@@ -247,7 +254,9 @@ export function clickhouseStamp(date: Date): string {
  * for the field (slice 3b: a decision is a rule, not a copied value). Use
  * this refuses when the chosen source currently has no opinion on the field,
  * then writes the rule at precedence 10000 (spec 4's reviewer rank) with
- * `removed = 0`; Release writes the same key with `removed = 1`. Neither
+ * `removed = 0` -- retiring, in the same insert, every other source's active
+ * rule for the field, so at most one rule is ever in force per field. Release
+ * writes the same key with `removed = 1` and reads nothing else. Neither
  * touches the folded row or any suggestion -- the next fold applies it.
  */
 export async function appendSeBasicInfoRule(
@@ -256,6 +265,17 @@ export async function appendSeBasicInfoRule(
   now: Date = new Date(),
 ): Promise<{ decidedAt: string }> {
   const { field, source, note } = decision;
+  const stamp = clickhouseStamp(now);
+  const rows: {
+    company_id: string;
+    field: string;
+    source: string;
+    precedence: number;
+    removed: number;
+    decided_by: string;
+    note: string;
+    decided_at: string;
+  }[] = [];
   if (decision.intent === "use-this") {
     const suggestions = await chQuery<SeBasicInfoSuggestionRow>(BASIC_INFO_SUGGESTIONS_SQL, { companyId });
     const chosen = suggestions.find((row) => row.source === source);
@@ -265,20 +285,32 @@ export async function appendSeBasicInfoRule(
         `${basicInfoSourceLabel(source)} has no ${basicInfoFieldLabel(field).toLowerCase()} for this company.`,
       );
     }
+    const otherRules = await chQuery<{ source: string }>(BASIC_INFO_ACTIVE_RULES_SQL, { companyId, field });
+    for (const other of otherRules) {
+      if (other.source === source) continue;
+      rows.push({
+        company_id: companyId,
+        field,
+        source: other.source,
+        precedence: 10000,
+        removed: 1,
+        decided_by: "backoffice",
+        note: `superseded by ${basicInfoSourceLabel(source)}`,
+        decided_at: stamp,
+      });
+    }
   }
-  const stamp = clickhouseStamp(now);
-  await chInsertSeBasicInfoPrecedence([
-    {
-      company_id: companyId,
-      field,
-      source,
-      precedence: 10000,
-      removed: decision.intent === "release" ? 1 : 0,
-      decided_by: "backoffice",
-      note,
-      decided_at: stamp,
-    },
-  ]);
+  rows.push({
+    company_id: companyId,
+    field,
+    source,
+    precedence: 10000,
+    removed: decision.intent === "release" ? 1 : 0,
+    decided_by: "backoffice",
+    note,
+    decided_at: stamp,
+  });
+  await chInsertSeBasicInfoPrecedence(rows);
   return { decidedAt: stamp };
 }
 

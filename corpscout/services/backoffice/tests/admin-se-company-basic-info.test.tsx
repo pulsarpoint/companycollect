@@ -160,6 +160,22 @@ describe("SeBasicInfoWorkspace", () => {
     expect(scbRow).not.toContain("not ranked");
   });
 
+  it("shows only the reviewer row's value -- never Use this, Release, or not ranked", () => {
+    const reviewerRow: SeBasicInfoSuggestionRow = { ...bolagsverket, source: "reviewer", status: "inactive" };
+    const withReviewer: SeBasicInfoDetail = { ...detail, suggestions: [...detail.suggestions, reviewerRow] };
+    const html = render(
+      <SeBasicInfoWorkspace companyId={COMPANY} detail={withReviewer} selectedField="status" result={null} />,
+      "?field=status",
+    );
+    const reviewerAt = html.indexOf('data-source="reviewer"');
+    const nextRowAt = html.indexOf('data-source=', reviewerAt + 1);
+    const reviewerRowHtml = html.slice(reviewerAt, nextRowAt === -1 ? undefined : nextRowAt);
+    expect(reviewerRowHtml).toContain("inactive");
+    expect(reviewerRowHtml).not.toContain("Use this");
+    expect(reviewerRowHtml).not.toContain("Release");
+    expect(reviewerRowHtml).not.toContain("not ranked");
+  });
+
   it("shows the fold-pending alert with Fold now, and the poller after a launch", () => {
     const html = render(<SeBasicInfoWorkspace companyId={COMPANY} detail={detail} selectedField="legal_name" result={null} />);
     expect(html).toContain("Fold pending");

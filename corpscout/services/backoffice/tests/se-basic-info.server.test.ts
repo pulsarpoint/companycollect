@@ -15,6 +15,7 @@ vi.mock("~/lib/dagster.server", () => ({
 
 import {
   appendSeBasicInfoRule,
+  BASIC_INFO_ACTIVE_RULES_SQL,
   BASIC_INFO_HISTORY_SQL,
   BASIC_INFO_LEGAL_FORM_LABELS_SQL,
   BASIC_INFO_PRECEDENCE_SQL,
@@ -106,6 +107,9 @@ function answer(sql: string): unknown[] {
     ];
   }
   if (sql === BASIC_INFO_PRECEDENCE_SQL) return [...GLOBAL_PRECEDENCE_ROWS, COMPANY_RULE_ROW];
+  // No other active rule by default; the "one other active rule" test below
+  // overrides this to exercise the retirement path.
+  if (sql === BASIC_INFO_ACTIVE_RULES_SQL) return [];
   if (sql === BASIC_INFO_LEGAL_FORM_LABELS_SQL) {
     return [{ code: "51", label_en: "Economic association (ekonomisk förening)", label_sv: "Ekonomisk förening" }];
   }
@@ -145,6 +149,13 @@ describe("se-basic-info.server", () => {
     expect(BASIC_INFO_PRECEDENCE_SQL).toContain("toUInt8(p.removed) AS removed");
     expect(BASIC_INFO_PRECEDENCE_SQL).toContain("toString(p.decided_by) AS decided_by");
     expect(BASIC_INFO_PRECEDENCE_SQL).toContain("toString(p.decided_at) AS decided_at");
+    // The other-active-rules read (bound by field too) that lets a use-this
+    // retire every other source's rule for the field in the same insert.
+    expect(BASIC_INFO_ACTIVE_RULES_SQL).toContain("FROM corpscout.se_company_basic_info_precedence AS p FINAL");
+    expect(BASIC_INFO_ACTIVE_RULES_SQL).toContain(
+      "WHERE p.company_id = {companyId:String} AND p.field = {field:String} AND p.removed = 0",
+    );
+    expect(BASIC_INFO_ACTIVE_RULES_SQL).toContain("toString(p.source) AS source");
     expect(BASIC_INFO_LEGAL_FORM_LABELS_SQL).toContain("l.code IN {codes:Array(String)}");
     expect(BASIC_INFO_LEGAL_FORM_LABELS_SQL).toContain("code_type = 'legal_form'");
     // Every nullable value column reaches the page as '' (never null).
@@ -220,7 +231,7 @@ describe("se-basic-info.server", () => {
 
   const NOW = new Date("2026-09-04T19:30:00.123Z");
 
-  it("use-this inserts a precedence rule at 10000 after checking the source has a value", async () => {
+  it("use-this with no other active rule inserts one row", async () => {
     clickhouse.insert.mockReset();
     const result = await appendSeBasicInfoRule(
       COMPANY,
@@ -242,6 +253,48 @@ describe("se-basic-info.server", () => {
         decided_at: "2026-09-04 19:30:00.123",
       },
     ]);
+    const activeRulesCall = clickhouse.query.mock.calls.find(([sql]) => sql === BASIC_INFO_ACTIVE_RULES_SQL);
+    expect(activeRulesCall?.[1]).toEqual({ companyId: COMPANY, field: "legal_form_code" });
+  });
+
+  it("use-this with one other active rule retires it and writes the new rule last", async () => {
+    clickhouse.insert.mockReset();
+    clickhouse.query.mockReset();
+    clickhouse.query.mockImplementation(async (sql: string) =>
+      sql === BASIC_INFO_ACTIVE_RULES_SQL ? [{ source: "scb" }] : answer(sql),
+    );
+    const result = await appendSeBasicInfoRule(
+      COMPANY,
+      { intent: "use-this", field: "status", source: "bolagsverket", note: "register is right" },
+      NOW,
+    );
+    expect(result).toEqual({ decidedAt: "2026-09-04 19:30:00.123" });
+    expect(clickhouse.insert).toHaveBeenCalledTimes(1);
+    const [rows] = clickhouse.insert.mock.calls[0] as [Record<string, unknown>[]];
+    expect(rows).toEqual([
+      {
+        company_id: COMPANY,
+        field: "status",
+        source: "scb",
+        precedence: 10000,
+        removed: 1,
+        decided_by: "backoffice",
+        note: "superseded by Bolagsverket",
+        decided_at: "2026-09-04 19:30:00.123",
+      },
+      {
+        company_id: COMPANY,
+        field: "status",
+        source: "bolagsverket",
+        precedence: 10000,
+        removed: 0,
+        decided_by: "backoffice",
+        note: "register is right",
+        decided_at: "2026-09-04 19:30:00.123",
+      },
+    ]);
+    const activeRulesCall = clickhouse.query.mock.calls.find(([sql]) => sql === BASIC_INFO_ACTIVE_RULES_SQL);
+    expect(activeRulesCall?.[1]).toEqual({ companyId: COMPANY, field: "status" });
   });
 
   it("release inserts the same shape with removed set, without reading suggestions", async () => {

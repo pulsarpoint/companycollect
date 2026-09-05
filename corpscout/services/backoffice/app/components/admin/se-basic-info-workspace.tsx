@@ -322,7 +322,7 @@ function SuggestionsPanel({
             const ruled = ruledSource !== null && source === ruledSource.source;
             // A source with a value but no precedence rank for this field can
             // only win through Use this -- the fold will never pick it on its own.
-            const notRanked = hasValue && !rankedSources.has(source);
+            const notRanked = hasValue && source !== "reviewer" && !rankedSources.has(source);
             return (
               <li
                 key={source}
@@ -360,7 +360,7 @@ function SuggestionsPanel({
                 {ruled && ruledSource?.note ? (
                   <p className="text-muted-foreground mt-1 text-xs">{ruledSource.note}</p>
                 ) : null}
-                {hasValue && !ruled ? (
+                {hasValue && !ruled && source !== "reviewer" ? (
                   <Button
                     type="button"
                     size="sm"
