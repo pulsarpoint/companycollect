@@ -232,7 +232,7 @@ export function SeBasicInfoEditSheet({
   if (field === null) return null;
   return (
     <Sheet open={open} onOpenChange={onOpenChange}>
-      <SheetContent side="right" className="flex w-full flex-col sm:max-w-sm">
+      <SheetContent side="right" className="flex w-full flex-col data-[side=right]:sm:max-w-3xl">
         <SheetHeader>
           <SheetTitle>Edit {basicInfoFieldLabel(field)}</SheetTitle>
         </SheetHeader>
