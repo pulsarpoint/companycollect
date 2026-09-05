@@ -404,9 +404,9 @@ function SuggestionsPanel({
             // A source with a value but no precedence rank for this field can
             // only win through Use this -- the fold will never pick it on its own.
             const notRanked = hasValue && source !== "reviewer" && !rankedSources.has(source);
-            // The reviewer's own precedence rank (10000, every field) is
-            // reserved for Edit rather than a real competing rank, so a typed
-            // value is captioned as what it is instead of a rank caption.
+            // The reviewer ranks 20000 in every field's map, above any company
+            // rule, so a typed value is captioned as what it is instead of a
+            // rank caption.
             const typedByReviewer = source === "reviewer" && hasValue;
             return (
               <li
