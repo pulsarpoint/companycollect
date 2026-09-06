@@ -201,6 +201,8 @@ def _statements() -> list[str]:
         IDENTITY_CHECK_SQL,
         "SELECT '@@reconverged'",
         reconverged,
+        # Force the gap past now64(3)'s millisecond resolution so this suggested_at cannot tie the earlier SCB insert's (same hazard test_se_company_basic_info_extractors_clickhouse_local.py notes).
+        "SELECT sleep(0.01) FORMAT Null",
         scb_tombstone,
         "SELECT '@@scb_scope_3'",
         _scope(scb.scb_current_sql(), "scb"),
