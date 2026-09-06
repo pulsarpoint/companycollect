@@ -451,7 +451,9 @@ Tables `se_company_address_suggestion`, `se_company_address_normalized`,
 `se_company_address_v2` (renamed `se_company_address` at cutover), `se_company_address_history`, `se_company_address_rule`,
 `se_company_address_precedence`. Package `dagster_v3.defs.se_company.address` (`tables`,
 `normalize_se`, `normalize`, `extract` shared from basic info, `scb`, `bolagsverket`,
-`ratsit`, `precedence`, `fold`, `geocode`, `batch`, `assets`, `jobs`). Assets
+`ratsit`, `precedence`, `fold`, `geocode`, `batch`, `assets`, `jobs`); the old model's module
+`se_company/address.py` was renamed `address_legacy.py` on 2026-09-06 so the package can take
+the name, its definitions unchanged until the cutover retires them. Assets
 `se_company_address_suggestions_<source>`, `se_company_address_normalize`,
 `se_company_address_fold`, `se_company_address_fold_companies`,
 `se_company_address_precedence_clickhouse`, `se_address_geocodes_adopt_keys`. Backoffice
