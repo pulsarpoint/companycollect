@@ -15,7 +15,7 @@ from datetime import UTC, datetime
 import dagster as dg
 import pytest
 
-from dagster_v3.defs.se_company.address import (
+from dagster_v3.defs.se_company.address_legacy import (
     ARTIFACT_COLUMNS,
     GEOCODE_ADDRESS_FILTER_SQL,
     GEOCODE_COLUMNS,
@@ -574,7 +574,7 @@ def test_the_scan_query_needs_max_query_size_raised_at_company_batch_sizes_cap()
 
     from clickhouse_driver.client import Client
 
-    from dagster_v3.defs.se_company.address import SCAN_MAX_QUERY_SIZE
+    from dagster_v3.defs.se_company.address_legacy import SCAN_MAX_QUERY_SIZE
 
     DEFAULT_MAX_QUERY_SIZE = 262_144
     context = SimpleNamespace(
@@ -606,7 +606,7 @@ def test_the_scan_page_passes_the_raised_max_query_size_to_client_execute() -> N
     the artifact/geocode/published reads in _resolve_page do not need it (they embed
     company_ids at most twice, well under the default even at the cap) and must not carry
     it either, or a change there would mask this test passing for the wrong query."""
-    from dagster_v3.defs.se_company.address import SCAN_MAX_QUERY_SIZE
+    from dagster_v3.defs.se_company.address_legacy import SCAN_MAX_QUERY_SIZE
     from tests.test_se_company_common import FakeClickhouse, FakeClient
 
     client = FakeClient(answers=[EXISTING_TABLES, []])
@@ -645,7 +645,7 @@ def test_the_config_gates_the_run_and_bounds_the_weekly_population() -> None:
     config that number in advance. The bound therefore has to admit an effectively uncapped
     weekly run.
     """
-    from dagster_v3.defs.se_company.address import SECompanyAddressConfig
+    from dagster_v3.defs.se_company.address_legacy import SECompanyAddressConfig
 
     # Preview by default: an empty config (a UI "Materialize" click) resolves nothing.
     assert SECompanyAddressConfig().execute is False
@@ -737,7 +737,7 @@ def test_the_correction_sensor_launches_a_real_run_not_a_preview(monkeypatch) ->
 
     from dagster_clickhouse import ClickhouseResource
 
-    from dagster_v3.defs.se_company.address import se_company_address_correction_sensor
+    from dagster_v3.defs.se_company.address_legacy import se_company_address_correction_sensor
     from tests.test_se_company_common import _FakeLedgerClient
 
     ledger = _FakeLedgerClient()
@@ -765,7 +765,7 @@ def test_the_module_documents_the_stale_address_property_and_its_mitigation() ->
     """Ruling A12: a source-vanished address appends no artifact row, so nothing re-triggers
     the change scan for it and the published row stays current until a resolve_all pass.
     That is a known property, and the module has to say so where a reader will find it."""
-    from dagster_v3.defs.se_company import address
+    from dagster_v3.defs.se_company import address_legacy as address
 
     assert "resolve_all" in address.__doc__
     assert re.search(r"vanish|disappear|stops? carrying", address.__doc__, re.IGNORECASE)

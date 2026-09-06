@@ -56,7 +56,7 @@ from pathlib import Path
 
 import pytest
 
-from dagster_v3.defs.se_company.address import (
+from dagster_v3.defs.se_company.address_legacy import (
     INSERT_COLUMNS,
     build_artifact_rows_sql,
     build_changed_companies_sql,

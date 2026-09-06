@@ -1,4 +1,7 @@
-"""Final Swedish company addresses: several rows per company, merged from the per-source
+"""Renamed from address.py on 2026-09-06 so the address entity package (spec 2026-09-06) can
+take the name; retired at that spec's cutover.
+
+Final Swedish company addresses: several rows per company, merged from the per-source
 artifacts and augmented with the geocode the shared-identity chain already computed.
 
 Inputs: se_company_address_bolagsverket (the registered postal address -- authoritative
