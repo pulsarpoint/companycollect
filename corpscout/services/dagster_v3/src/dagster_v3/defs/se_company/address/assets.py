@@ -34,6 +34,7 @@ class AddressNormalizeConfig(dg.Config):
     name="se_company_address_normalize",
     group_name=GROUP_NAME,
     pool=NORMALIZE_POOL,
+    deps=[dg.AssetKey(name) for name in EXTRACTOR_ASSET_NAMES],
     kinds={"clickhouse", "python"},
     metadata={"table": tables.QUALIFIED_NORMALIZED_TABLE, "reads": tables.QUALIFIED_SUGGESTION_TABLE},
     description=(

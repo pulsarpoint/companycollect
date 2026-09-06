@@ -41,4 +41,33 @@ to `''`; the country token is upper-cased and truncated to two characters. Examp
 `se_company_address_normalize` (`AddressNormalizeConfig`): `changed_only` (default `true`)
 selects only rows that need (re)normalizing; `company_ids` (default empty, meaning every
 company) targets specific companies and pages them in memory instead of scanning; `page_size`
-(default 20,000, max 50,000) bounds a page's row count. Nothing is scheduled in this slice.
+(default 20,000, max 50,000) bounds a page's row count.
+
+## Extractors (slice 1)
+
+`se_company_address_suggestions_<source>` (`scb`, `bolagsverket`, `ratsit`), on the same
+basic-info extract helper (`suggestions.py::define_address_suggestion_asset`), each write
+one raw suggestion row per company per source:
+
+- `scb` reads `se_scb_companies` FINAL: `care_of`, `street_address`, `postal_code`,
+  `post_town` as delivered, kind `visiting_or_postal`, slot `''`.
+- `bolagsverket` reads `se_bolagsverket_companies` FINAL: the packed `postal_address`
+  string into `raw_address`, kind `postal`, slot `''` -- the normalizer parses it.
+- `ratsit` reads `se_ratsit_company` FINAL, newest normalized report per company:
+  `address_street`, `address_postal_code`, `address_locality`, `address_county`, kind
+  `postal`, slot `company`.
+
+A company a source stops delivering writes a tombstone: a NULL row, not a deleted one.
+`suggestion_id` is stamped from the INSERT's own `now64()` (one evaluation per query), not
+from `suggested_at` read back, so the id always matches the row it names.
+
+Change rule: the shared helper's -- a company is visited when its source table's record is
+newer than the company's current suggestion row from that source, or it has never been
+suggested by that source; `execute: false` (default) previews the count without writing.
+
+`se_company_address_extract_job` (`jobs.py`) selects the three extractors and
+`se_company_address_normalize` (which now `deps` on them); `se_company_address_v2_weekly`
+schedules it Mondays 06:50 UTC (`50 6 * * 1`) with `execute: true`, `page_size: 20000` per
+extractor and `changed_only: true` on the normalize asset, registered STOPPED. The `v2`
+interim name avoids colliding with `address_legacy.py`'s own `se_company_address_weekly`
+until the cutover retires that schedule and this one takes the canonical name.
