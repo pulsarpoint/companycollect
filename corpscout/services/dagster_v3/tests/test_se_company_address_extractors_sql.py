@@ -72,14 +72,18 @@ def test_the_target_writes_the_raw_table_with_every_column_once() -> None:
 
 def test_the_insert_stamps_suggestion_id_from_the_same_now64_as_suggested_at() -> None:
     sql = insert_page_sql(select_sql="SELECT 1", target=ADDRESS_TARGET)
-    assert sql.startswith(f"INSERT INTO {tables.QUALIFIED_SUGGESTION_TABLE} ({', '.join(ADDRESS_TARGET.insert_columns)})\n")
+    assert sql.startswith(
+        f"INSERT INTO {tables.QUALIFIED_SUGGESTION_TABLE} ({', '.join(ADDRESS_TARGET.insert_columns)})\n"
+        "WITH (SELECT now64(3, 'UTC')) AS stamp\n"
+    )
     assert (
         "lower(hex(SHA256(concat(candidate.company_id, '\\n', toString(candidate.source), '\\n', candidate.slot, '\\n', "
-        "toString(now64(3, 'UTC')))))) AS suggestion_id"
+        "toString(stamp))))) AS suggestion_id"
     ) in sql
     assert "CAST(NULL AS Nullable(FixedString(64))) AS replaces_key" in sql
-    assert "now64(3, 'UTC') AS suggested_at, %(source_run_id)s AS source_run_id, %(extractor_version)s AS extractor_version" in sql
+    assert "stamp AS suggested_at, %(source_run_id)s AS source_run_id, %(extractor_version)s AS extractor_version" in sql
     assert ADDRESS_TRAILING_SELECT_SQL in sql
+    assert sql.count("now64(") == 1
 
 
 def test_every_select_yields_the_thirteen_columns_in_order_and_binds_the_page() -> None:

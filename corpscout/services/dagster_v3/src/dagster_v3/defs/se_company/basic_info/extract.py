@@ -104,6 +104,8 @@ class SuggestionTarget:
     asset_prefix: str
     group_name: str
     scratch_prefix: str
+    # A WITH clause emitted before the INSERT's SELECT, '' for none.
+    with_sql: str = ""
 
     @property
     def qualified_table(self) -> str:
@@ -172,7 +174,7 @@ def insert_page_sql(*, select_sql: str, target: SuggestionTarget = BASIC_INFO_TA
     selected = ", ".join(f"candidate.{column}" for column in target.select_columns)
     return (
         f"INSERT INTO {target.qualified_table} ({', '.join(target.insert_columns)})\n"
-        f"SELECT {selected}, {target.trailing_select_sql}\n"
+        f"{target.with_sql}SELECT {selected}, {target.trailing_select_sql}\n"
         f"FROM ({select_sql}) AS candidate"
     )
 

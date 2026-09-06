@@ -237,6 +237,7 @@ def test_the_default_target_is_basic_info_and_its_texts_are_unchanged() -> None:
     assert BASIC_INFO_TARGET.select_columns == SUGGESTION_SELECT_COLUMNS
     assert BASIC_INFO_TARGET.asset_prefix == "se_basic_info_suggestions_"
     assert BASIC_INFO_TARGET.scratch_prefix == SCRATCH_SCOPE_PREFIX
+    assert BASIC_INFO_TARGET.with_sql == ""
     # The explicit default renders exactly what the implicit default rendered before targets existed.
     assert insert_page_sql(select_sql="SELECT 1") == insert_page_sql(select_sql="SELECT 1", target=BASIC_INFO_TARGET)
     assert insert_page_sql(select_sql="SELECT 1").endswith(

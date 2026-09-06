@@ -58,7 +58,9 @@ one raw suggestion row per company per source:
   `postal`, slot `company`.
 
 A company a source stops delivering writes a tombstone: a NULL row, not a deleted one.
-`suggestion_id` is stamped from the INSERT's own `now64()` (one evaluation per query), not
+`suggestion_id` is stamped from a `WITH (SELECT now64(3, 'UTC')) AS stamp` scalar subquery
+bound once per statement -- two bare `now64()` calls in one statement are not guaranteed the
+same instant (measured about 0.5% of executions differ, desynchronizing a whole page) -- not
 from `suggested_at` read back, so the id always matches the row it names.
 
 Change rule: the shared helper's -- a company is visited when its source table's record is

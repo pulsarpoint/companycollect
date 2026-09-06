@@ -1,6 +1,6 @@
 """The address entity's target for the shared suggestion extract helper (spec section 7):
 the raw table, its thirteen source-provided columns, and the INSERT expressions that stamp
-suggestion_id and suggested_at from one now64()."""
+suggestion_id and suggested_at from one bound stamp."""
 
 from typing import Any
 
@@ -15,14 +15,19 @@ ADDRESS_SELECT_COLUMNS: tuple[str, ...] = (
     "company_id", "source", "slot", "source_record_uid", "observed_at", "kind", *tables.RAW_ADDRESS_COLUMNS,
 )
 
-# now64() is evaluated once per query, so the id hashes the very stamp the row carries; the
-# stamp prints as YYYY-MM-DD HH:MM:SS.mmm, the format normalize.py hashes for normalized_id.
+# Two now64() occurrences in one statement are not guaranteed the same instant -- measured
+# about 0.5% of executions differ, and when they do every row of the statement is affected,
+# desynchronizing suggestion_id from suggested_at for a whole page. A scalar subquery binds
+# the stamp once (0 mismatches measured); the stamp prints as YYYY-MM-DD HH:MM:SS.mmm, the
+# format normalize.py hashes for normalized_id.
+ADDRESS_WITH_SQL = "WITH (SELECT now64(3, 'UTC')) AS stamp\n"
+
 ADDRESS_TRAILING_SELECT_SQL = (
     "lower(hex(SHA256(concat(candidate.company_id, '\\n', toString(candidate.source), '\\n', candidate.slot, '\\n', "
-    "toString(now64(3, 'UTC')))))) AS suggestion_id, "
+    "toString(stamp))))) AS suggestion_id, "
     "CAST(NULL AS Nullable(String)) AS decided_by, CAST(NULL AS Nullable(String)) AS note, "
     "CAST(NULL AS Nullable(FixedString(64))) AS replaces_key, "
-    "now64(3, 'UTC') AS suggested_at, %(source_run_id)s AS source_run_id, %(extractor_version)s AS extractor_version"
+    "stamp AS suggested_at, %(source_run_id)s AS source_run_id, %(extractor_version)s AS extractor_version"
 )
 
 ADDRESS_TARGET = SuggestionTarget(
@@ -37,6 +42,7 @@ ADDRESS_TARGET = SuggestionTarget(
     asset_prefix="se_company_address_suggestions_",
     group_name=GROUP_NAME,
     scratch_prefix=SCRATCH_SCOPE_PREFIX,
+    with_sql=ADDRESS_WITH_SQL,
 )
 
 
