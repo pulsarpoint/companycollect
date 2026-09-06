@@ -1,5 +1,6 @@
 """Spec 3.2 change rule and the shared page loop, against a scripted fake client."""
 
+import dagster as dg
 import pytest
 
 from dagster_v3.defs.se_company.basic_info import tables
@@ -12,10 +13,12 @@ from dagster_v3.defs.se_company.basic_info.extract import (
     ExtractCounts,
     changed_scope_sql,
     count_page_sql,
+    define_suggestion_asset,
     insert_page_sql,
     run_extractor,
     since_scope_sql,
 )
+from dagster_v3.defs.se_company.basic_info.extract import BASIC_INFO_TARGET, SuggestionTarget
 
 CURRENT = "SELECT company_id, observed_at FROM corpscout.se_scb_companies FINAL WHERE has_company = 1"
 SELECT = "SELECT company_id, 'scb' AS source FROM corpscout.se_scb_companies WHERE company_id IN %(company_ids)s"
@@ -39,7 +42,7 @@ class FakeClient:
             return []
         if "AS candidates" in sql:
             return [(self.candidates,)]
-        if sql.startswith(f"SELECT company_id FROM {SCRATCH_SCOPE_PREFIX}"):
+        if sql.startswith("SELECT company_id FROM corpscout._tmp_"):
             return [(i,) for i in (self.scope_pages.pop(0) if self.scope_pages else [])]
         raise AssertionError(sql)
 
@@ -226,3 +229,45 @@ def test_config_defaults_and_invalid_config_is_refused() -> None:
         ExtractConfig(since="yesterday")
     with pytest.raises(ValueError):
         ExtractConfig(page_size=20_001)
+
+
+def test_the_default_target_is_basic_info_and_its_texts_are_unchanged() -> None:
+    assert BASIC_INFO_TARGET.qualified_table == tables.QUALIFIED_SUGGESTION_TABLE
+    assert BASIC_INFO_TARGET.insert_columns == tables.SUGGESTION_INSERT_COLUMNS
+    assert BASIC_INFO_TARGET.select_columns == SUGGESTION_SELECT_COLUMNS
+    assert BASIC_INFO_TARGET.asset_prefix == "se_basic_info_suggestions_"
+    assert BASIC_INFO_TARGET.scratch_prefix == SCRATCH_SCOPE_PREFIX
+    # The explicit default renders exactly what the implicit default rendered before targets existed.
+    assert insert_page_sql(select_sql="SELECT 1") == insert_page_sql(select_sql="SELECT 1", target=BASIC_INFO_TARGET)
+    assert insert_page_sql(select_sql="SELECT 1").endswith(
+        "now64(3, 'UTC') AS suggested_at, %(source_run_id)s AS source_run_id, "
+        "%(extractor_version)s AS extractor_version\nFROM (SELECT 1) AS candidate"
+    )
+    assert changed_scope_sql(current_sql="SELECT 1") == changed_scope_sql(current_sql="SELECT 1", target=BASIC_INFO_TARGET)
+
+
+def test_another_target_renames_the_table_the_columns_the_asset_and_the_scratch_prefix() -> None:
+    other = SuggestionTarget(
+        database="corpscout", table="other_suggestion", insert_columns=("company_id", "source", "x", "stamp"),
+        select_columns=("company_id", "source", "x"), trailing_select_sql="now64(3, 'UTC') AS stamp",
+        asset_prefix="other_suggestions_", group_name="other", scratch_prefix="corpscout._tmp_other_scope_",
+    )
+    assert other.qualified_table == "corpscout.other_suggestion"
+    assert insert_page_sql(select_sql="SELECT 1", target=other) == (
+        "INSERT INTO corpscout.other_suggestion (company_id, source, x, stamp)\n"
+        "SELECT candidate.company_id, candidate.source, candidate.x, now64(3, 'UTC') AS stamp\n"
+        "FROM (SELECT 1) AS candidate"
+    )
+    assert "FROM corpscout.other_suggestion WHERE source = %(source)s" in changed_scope_sql(current_sql="SELECT 1", target=other)
+    asset = define_suggestion_asset(
+        source="scb", extractor_version="v", current_sql="SELECT 1", select_sql="SELECT 1", description="d", target=other,
+    )
+    assert asset.key == dg.AssetKey("other_suggestions_scb")
+    assert asset.group_names_by_key[asset.key] == "other"
+    client = FakeClient(candidates=0, scope_pages=[["5560125220"]])
+    run_extractor(
+        client, source="scb", extractor_version="v", current_sql="SELECT 1", select_sql="SELECT 1",
+        select_params=None, source_run_id="r", config=ExtractConfig(), target=other,
+    )
+    created = next(s for s, _, _ in client.statements if s.startswith("CREATE TABLE"))
+    assert created.split()[2].startswith("corpscout._tmp_other_scope_")

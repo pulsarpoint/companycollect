@@ -84,7 +84,47 @@ class ExtractCounts:
         }
 
 
-def changed_scope_sql(*, current_sql: str) -> str:
+SCRATCH_SCOPE_PREFIX = "corpscout._tmp_basic_info_scope_"
+
+
+@dataclass(frozen=True, slots=True)
+class SuggestionTarget:
+    """Where an extractor writes and how its assets are named. Basic info is the default;
+    the address entity supplies its own (spec 2026-09-06 section 7)."""
+
+    database: str
+    table: str
+    insert_columns: tuple[str, ...]
+    select_columns: tuple[str, ...]
+    # The expressions the INSERT ... SELECT appends after the candidate columns, in the order
+    # insert_columns continues after select_columns; may bind %(source_run_id)s and
+    # %(extractor_version)s.
+    trailing_select_sql: str
+    asset_prefix: str
+    group_name: str
+    scratch_prefix: str
+
+    @property
+    def qualified_table(self) -> str:
+        return f"{self.database}.{self.table}"
+
+
+BASIC_INFO_TARGET = SuggestionTarget(
+    database=tables.DATABASE,
+    table=tables.SUGGESTION_TABLE,
+    insert_columns=tables.SUGGESTION_INSERT_COLUMNS,
+    select_columns=SUGGESTION_SELECT_COLUMNS,
+    trailing_select_sql=(
+        "CAST(NULL AS Nullable(String)) AS decided_by, CAST(NULL AS Nullable(String)) AS note, "
+        "now64(3, 'UTC') AS suggested_at, %(source_run_id)s AS source_run_id, %(extractor_version)s AS extractor_version"
+    ),
+    asset_prefix="se_basic_info_suggestions_",
+    group_name=GROUP_NAME,
+    scratch_prefix=SCRATCH_SCOPE_PREFIX,
+)
+
+
+def changed_scope_sql(*, current_sql: str, target: SuggestionTarget = BASIC_INFO_TARGET) -> str:
     """Companies the source has never suggested, plus those whose current source record is
     newer than the current suggestion row. Two branches rather than one LEFT JOIN so the
     text means the same under join_use_nulls 0 and 1.
@@ -98,14 +138,14 @@ def changed_scope_sql(*, current_sql: str) -> str:
         "    SELECT candidate.company_id AS company_id\n"
         f"    FROM ({current_sql}) AS candidate\n"
         "    LEFT ANTI JOIN (\n"
-        f"        SELECT company_id FROM {tables.QUALIFIED_SUGGESTION_TABLE} WHERE source = %(source)s\n"
+        f"        SELECT company_id FROM {target.qualified_table} WHERE source = %(source)s\n"
         "    ) AS existing ON existing.company_id = candidate.company_id\n"
         "    UNION ALL\n"
         "    SELECT candidate.company_id AS company_id\n"
         f"    FROM ({current_sql}) AS candidate\n"
         "    INNER JOIN (\n"
         "        SELECT company_id, argMax(observed_at, suggested_at) AS observed_at\n"
-        f"        FROM {tables.QUALIFIED_SUGGESTION_TABLE} WHERE source = %(source)s\n"
+        f"        FROM {target.qualified_table} WHERE source = %(source)s\n"
         "        GROUP BY company_id\n"
         "    ) AS current ON current.company_id = candidate.company_id\n"
         "    WHERE candidate.observed_at > current.observed_at\n"
@@ -127,18 +167,13 @@ def count_page_sql(*, select_sql: str) -> str:
     return f"SELECT count() AS candidates FROM ({select_sql}) AS candidate"
 
 
-def insert_page_sql(*, select_sql: str) -> str:
-    selected = ", ".join(f"candidate.{column}" for column in SUGGESTION_SELECT_COLUMNS)
+def insert_page_sql(*, select_sql: str, target: SuggestionTarget = BASIC_INFO_TARGET) -> str:
+    selected = ", ".join(f"candidate.{column}" for column in target.select_columns)
     return (
-        f"INSERT INTO {tables.QUALIFIED_SUGGESTION_TABLE} ({', '.join(tables.SUGGESTION_INSERT_COLUMNS)})\n"
-        f"SELECT {selected}, CAST(NULL AS Nullable(String)) AS decided_by, "
-        "CAST(NULL AS Nullable(String)) AS note, now64(3, 'UTC') AS suggested_at, "
-        "%(source_run_id)s AS source_run_id, %(extractor_version)s AS extractor_version\n"
+        f"INSERT INTO {target.qualified_table} ({', '.join(target.insert_columns)})\n"
+        f"SELECT {selected}, {target.trailing_select_sql}\n"
         f"FROM ({select_sql}) AS candidate"
     )
-
-
-SCRATCH_SCOPE_PREFIX = "corpscout._tmp_basic_info_scope_"
 
 
 def scope_pages(
@@ -188,14 +223,20 @@ def scope_pages(
 
 
 def _scan_pages(
-    client: Any, *, source: str, current_sql: str, config: ExtractConfig, select_params: dict[str, Any]
+    client: Any, *, source: str, current_sql: str, config: ExtractConfig, select_params: dict[str, Any],
+    target: SuggestionTarget,
 ) -> Iterator[list[str]]:
-    scope_sql = since_scope_sql(current_sql=current_sql) if config.since else changed_scope_sql(current_sql=current_sql)
+    scope_sql = (
+        since_scope_sql(current_sql=current_sql)
+        if config.since
+        else changed_scope_sql(current_sql=current_sql, target=target)
+    )
     params = {**select_params, "source": source}
     if config.since:
         params["since"] = config.since
     return scope_pages(
-        client, scope_sql=scope_sql, params=params, page_size=config.page_size, settings=SCAN_QUERY_SETTINGS
+        client, scope_sql=scope_sql, params=params, page_size=config.page_size, settings=SCAN_QUERY_SETTINGS,
+        prefix=target.scratch_prefix,
     )
 
 
@@ -210,6 +251,7 @@ def run_extractor(
     source_run_id: str,
     config: ExtractConfig,
     log: Callable[..., object] | None = None,
+    target: SuggestionTarget = BASIC_INFO_TARGET,
 ) -> ExtractCounts:
     """Visit the companies in scope page by page; count the rows the source would write
     and, in execute mode, insert them with this run's stamps."""
@@ -219,7 +261,9 @@ def run_extractor(
             config.company_ids[i : i + config.page_size] for i in range(0, len(config.company_ids), config.page_size)
         )
     else:
-        pages = _scan_pages(client, source=source, current_sql=current_sql, config=config, select_params=extra)
+        pages = _scan_pages(
+            client, source=source, current_sql=current_sql, config=config, select_params=extra, target=target
+        )
     companies = page_count = candidates = inserted = 0
     stopped = False
     # closing(): breaking out at the cap must still drop the scan's scratch table.
@@ -238,7 +282,7 @@ def run_extractor(
             page_candidates = int(client.execute(count_page_sql(select_sql=select_sql), params, settings=ID_BOUND_QUERY_SETTINGS)[0][0])
             candidates += page_candidates
             if config.execute and page_candidates:
-                client.execute(insert_page_sql(select_sql=select_sql), params, settings=ID_BOUND_QUERY_SETTINGS)
+                client.execute(insert_page_sql(select_sql=select_sql, target=target), params, settings=ID_BOUND_QUERY_SETTINGS)
                 inserted += page_candidates
             if log is not None:
                 log("Suggestion page: source=%s companies=%d candidates=%d execute=%s", source, len(page), page_candidates, config.execute)
@@ -259,35 +303,37 @@ def define_suggestion_asset(
     select_params: dict[str, Any] | None = None,
     deps: Sequence[dg.AssetKey] = (),
     description: str,
+    target: SuggestionTarget = BASIC_INFO_TARGET,
 ) -> dg.AssetsDefinition:
     """One asset per SQL source, all writing the suggestion table; `source` in the metadata
     tells them apart."""
 
     @dg.asset(
-        name=f"se_basic_info_suggestions_{source}",
-        group_name=GROUP_NAME,
+        name=f"{target.asset_prefix}{source}",
+        group_name=target.group_name,
         deps=list(deps),
         kinds={"clickhouse", "sql"},
-        metadata={"table": tables.QUALIFIED_SUGGESTION_TABLE, "source": source},
+        metadata={"table": target.qualified_table, "source": source},
         description=description,
     )
     def _suggestions(context: dg.AssetExecutionContext, config: ExtractConfig, clickhouse: ClickhouseResource) -> dg.MaterializeResult:
-        assert_clickhouse_tables_exist(clickhouse, database=tables.DATABASE, tables=(tables.SUGGESTION_TABLE,))
+        assert_clickhouse_tables_exist(clickhouse, database=target.database, tables=(target.table,))
         with clickhouse.get_connection() as client:
             counts = run_extractor(
                 client, source=source, extractor_version=extractor_version, current_sql=current_sql,
                 select_sql=select_sql, select_params=select_params, source_run_id=context.run_id,
-                config=config, log=context.log.info,
+                config=config, log=context.log.info, target=target,
             )
         return dg.MaterializeResult(
-            metadata={**counts.as_metadata(), "source": source, "table": tables.QUALIFIED_SUGGESTION_TABLE}
+            metadata={**counts.as_metadata(), "source": source, "table": target.qualified_table}
         )
 
     return _suggestions
 
 
 __all__ = [
-    "SCAN_QUERY_SETTINGS", "SCRATCH_SCOPE_PREFIX", "SUGGESTION_SELECT_COLUMNS", "ExtractConfig", "ExtractCounts",
+    "SCAN_QUERY_SETTINGS", "SCRATCH_SCOPE_PREFIX", "SUGGESTION_SELECT_COLUMNS", "BASIC_INFO_TARGET",
+    "ExtractConfig", "ExtractCounts", "SuggestionTarget",
     "changed_scope_sql", "since_scope_sql", "count_page_sql", "insert_page_sql", "scope_pages", "run_extractor",
     "define_suggestion_asset",
 ]
