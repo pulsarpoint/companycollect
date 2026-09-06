@@ -466,6 +466,38 @@ The corrections queue page keeps reading the old ledger until the cutover retire
 2. Fold and geocoding: compatibility, rules, set replacement, history, the geocode function,
    the adoption asset, the precedence export, both fold assets; adoption first, then all 64
    buckets.
+   Half 2a shipped 2026-09-06 (plan `2026-09-06-se-company-address-2a-geocode-function.md`,
+   main e35d6ab3): normalizer v2 (`se-address-normalizer-v2`: a box after a reference or name
+   becomes the box with the prefix as care-of, spaced box digits, `plan N`, roman floors,
+   four-digit apartment numbers, `n b`, `kv`; 61-case corpus); the OSM reference-documents
+   builder shared with the shadow (`ensure_reference_documents`, manifest
+   `se_address_resolution_reference_manifest`); `geocode.geocode_addresses` (a cache hit only
+   on the current policy/reference pair or the imported `legacy_adopted_v1` family; misses run
+   the matcher through five per-run tables in `sweden_company_enrichment`; store rows carry
+   the extract's provenance; `GEOCODE_QUERY_SETTINGS` 1 MiB because ClickHouse's default
+   `max_query_size` is 262,144 bytes); `se_address_geocodes_adopt_keys`. Prod: the
+   re-normalize wrote 4,757,823 rows for 3,523,558 companies in 177 pages with the same
+   status distribution as v1 (98.31% `ok`, 1,991 `partial`, 36,158 `no_address`, 42,126
+   `foreign`); 12,194 rows carry a `box after` note (the slice-1 estimate of 2,100 counted
+   only the NABO pattern; a street before a box, "Prästängsgatan 14 Box 61", is the rest).
+   Adoption (preview, then execute): 2,090,981 identities, 2,045,148 normalized to a
+   location key, 26,028 collapsed onto an earlier identity's key, 2,019,120 adopted, 0 stale
+   (every current outcome is on policy v7 with reference 50f478ad8b563c98394c4efa410801c2),
+   0 existing; 1,123,773 adopted rows are geocoded (matched_exact 383,687, matched_street
+   449,058, matched_corrected 270,316, matched_site 12,392, matched_area 1,315,
+   legacy_adopted_v1 7,005) and 895,347 are decided non-matches (unmatched 482,153,
+   ambiguous 292,013, postal_box 116,963, property_identifier 2,891, invalid_address 1,327);
+   2,019,072 adopted keys join a current normalized row's location key. The hourly
+   `se_address_geocodes_current` refresh took 222 s before adoption (6,471,107 store rows)
+   and 411 s on the refresh that overlapped the inserts (8,490,227 store rows after it); the
+   first full post-adoption refresh is still to be measured. Normalizer v3 candidates from
+   the v2 readout: a street with a house number before a box ("Gustavslundsvägen 159 Box
+   137") should keep the street beside the box instead of demoting it to care-of; a
+   delivered Bolagsverket care-of that repeats the street line ("c/o Win Win Ekonomi AB box
+   92138") should lose the box text; parenthesised floors ("Karlavägen 104 (Plan 4)"),
+   `P:203` and bare three-digit trailing numbers ("Georg Lückligs väg 10 B 303") are units,
+   today dropped with a `dropped trailing text` note (65,958 rows, 61,073 of them street
+   lines).
 3. Backoffice: the Address tab on the new tables.
 4. Cutover: parity, reader switch, retirement.
 
