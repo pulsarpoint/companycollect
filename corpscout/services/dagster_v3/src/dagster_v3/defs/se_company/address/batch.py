@@ -61,9 +61,12 @@ class FoldCounts:
     changed: int       # history rows
     unchanged: int
     unpublished: int   # considered companies with no candidate and no main row
-    geocoded: int      # distinct location keys handed to geocode_addresses
+    # geocoded/cache_hits/matched all accumulate per page: a location key shared by
+    # companies in different pages counts once per page, so these are not distinct-key
+    # counts across the whole run.
+    geocoded: int      # distinct location keys handed to geocode_addresses, per page
     cache_hits: int
-    matched: int       # keys the matcher resolved this run (misses)
+    matched: int       # keys the matcher resolved this run (misses), per page
 
     def as_metadata(self) -> dict[str, int]:
         return {
@@ -305,8 +308,11 @@ def fold_companies(
             else:
                 unchanged += 1
         if history_rows:
-            # History first: a failure between the two statements costs a duplicate history
-            # row on retry, never a published row whose first history is missing.
+            # History first: a crash between the two statements costs up to a page's worth
+            # of duplicate history rows on retry -- one per changed key in the page, each
+            # attempt's own `folded_at` so the plain MergeTree never collapses them -- which
+            # is cheaper than the alternative order's failure mode, a published row whose
+            # first history row is missing.
             client.execute(history_insert_sql(), history_rows)
         if main_rows:
             client.execute(main_insert_sql(), main_rows)
@@ -339,7 +345,10 @@ def fold_bucket(
     """Fold every company whose id hashes into `bucket` (0..63)."""
     if not 0 <= bucket < BUCKET_COUNT:
         raise ValueError(f"bucket out of range: {bucket}")
-    company_ids = [row[0] for row in client.execute(bucket_company_ids_sql(), {"bucket": bucket})]
+    company_ids = [
+        row[0]
+        for row in client.execute(bucket_company_ids_sql(), {"bucket": bucket}, settings=FOLD_ID_BOUND_QUERY_SETTINGS)
+    ]
     return fold_companies(
         client, duckdb, company_ids, changed_only=changed_only, source_run_id=source_run_id,
         folded_at=folded_at, page_size=page_size, log=log,

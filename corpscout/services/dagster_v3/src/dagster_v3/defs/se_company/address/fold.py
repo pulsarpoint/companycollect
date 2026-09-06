@@ -22,7 +22,7 @@ from dagster_v3.defs.se_company.address.normalize_se import (
     location_key,
 )
 from dagster_v3.defs.se_company.address.precedence import precedence_for
-from dagster_v3.defs.sweden_company.geocode_serving_overlay import GEOCODE_FALLBACK_STATUS
+from dagster_v3.defs.sweden_company.geocode_serving_overlay import GEOCODE_FALLBACK_PROVIDER
 
 FOLD_VERSION = "address-fold-v1"
 PUBLISHABLE_STATUSES: tuple[str, ...] = ("ok", "partial", "foreign")
@@ -129,9 +129,14 @@ class PublishedAddress:
         return self.inactive_reason != WITHDRAWN and self.geocode_status == ""
 
     def with_geocode(self, outcome: GeocodeOutcome) -> "PublishedAddress":
+        """Gates on `geocode_provider`, not `match_status`: the resolver itself can emit
+        `matched_area` for a multi-candidate area match, and that outcome's `match_method`
+        still names its own strategy. Only an outcome the serving overlay's centroid
+        fallback produced (`geocode_provider == GEOCODE_FALLBACK_PROVIDER`) should publish
+        its `coordinate_method` instead."""
         if outcome.location_key != self.location_key():
             raise ValueError(f"outcome for {outcome.location_key} handed to {self.location_key()}")
-        method = outcome.coordinate_method if outcome.match_status == GEOCODE_FALLBACK_STATUS else outcome.match_method
+        method = outcome.coordinate_method if outcome.geocode_provider == GEOCODE_FALLBACK_PROVIDER else outcome.match_method
         return replace(
             self,
             latitude=outcome.latitude, longitude=outcome.longitude, geocode_status=outcome.match_status,

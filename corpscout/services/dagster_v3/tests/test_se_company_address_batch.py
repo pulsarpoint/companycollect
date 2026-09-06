@@ -268,6 +268,7 @@ def test_fold_bucket_reads_the_bucket_ids_then_folds_them(monkeypatch) -> None:
     counts = batch.fold_bucket(client, object(), 7, changed_only=True, source_run_id="run-1", folded_at=FOLDED_AT)
     assert counts.companies == 1
     assert client.calls[0][1] == {"bucket": 7}
+    assert client.calls[0][2] == batch.FOLD_ID_BOUND_QUERY_SETTINGS
     with pytest.raises(ValueError):
         batch.fold_bucket(client, object(), 64, changed_only=True, source_run_id="run-1", folded_at=FOLDED_AT)
 

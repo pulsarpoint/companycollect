@@ -207,8 +207,20 @@ def test_with_geocode_maps_the_outcome_and_the_fallback_names_its_coordinate_met
     exact = base.with_geocode(outcome(base.location_key()))
     assert (exact.geocode_status, exact.geocode_method, exact.geocode_confidence) == ("matched_exact", "raw_full_exact", 0.98)
     assert (exact.geocode_policy, exact.geocode_reference, exact.geocoded_at) == ("se-address-resolution-policy-v7", "ref", T2)
-    area = base.with_geocode(outcome(base.location_key(), "matched_area", coordinate_method="centroid_median", geocode_precision="postcode"))
+    area = base.with_geocode(
+        outcome(
+            base.location_key(), "matched_area", geocode_provider="centroid_fallback",
+            coordinate_method="centroid_median", geocode_precision="postcode",
+        )
+    )
     assert (area.geocode_status, area.geocode_method, area.geocode_precision) == ("matched_area", "centroid_median", "postcode")
+    resolver_area = base.with_geocode(
+        outcome(
+            base.location_key(), "matched_area", geocode_provider="osm",
+            match_method="street_area", coordinate_method="resolver",
+        )
+    )
+    assert resolver_area.geocode_method == "street_area"
 
 
 def test_with_geocode_refuses_another_keys_outcome() -> None:
