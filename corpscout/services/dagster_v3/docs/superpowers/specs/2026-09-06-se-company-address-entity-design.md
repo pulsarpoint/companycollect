@@ -25,7 +25,9 @@ Owner decisions, 2026-09-05 and 2026-09-06:
 - The same shape as basic info: per-source tables, one suggestion table per entity, one main
   table written by a Python fold, one history table, the reviewer a source like any other.
 - A company has several active addresses. Every address that survives the fold is published
-  and active; there is no single winner per company.
+  and active; there is no single winner per company. The extractor list is the trusted-source
+  list: an address delivered by any source with an extractor is published, whether or not
+  another source delivers it. Precedence never filters addresses (decision 2026-09-06).
 - Two sources that deliver the same normalized address contribute to one published address.
   "Same" is compatibility, not text equality: a suggestion missing a part (house number,
   care-of, unit) merges into the more complete one, and the complete text is published.
@@ -188,8 +190,10 @@ ENGINE = ReplacingMergeTree(decided_at) ORDER BY (company_id, address_key, actio
 The basic-info precedence shape (`company_id`, `field`, `source`, `precedence`, `removed`,
 `decided_by`, `note`, `decided_at`), exported from code with `company_id = ''` and
 `field = 'text'`. Company-scoped rows are allowed by the table but nothing writes them yet.
-Global order: reviewer 20000, bolagsverket 1000, scb 900, ratsit 300. Precedence only breaks
-ties between equally complete texts (section 5.2).
+Global order: reviewer 20000, bolagsverket 1000, scb 900, ratsit 300. Precedence is a
+spelling tie-break only: it picks whose text is published when two members of one merged
+address are equally complete (section 5.2). It never decides whether an address is
+published; every trusted source's address is.
 
 ### 3.7 Geocode cache
 
@@ -255,7 +259,8 @@ Input: the company's normalized rows FINAL with `source != 'reviewer_draft'` and
 `parse_status IN ('ok', 'partial')`; `foreign` rows are published as their own addresses with
 `geocode_status = 'foreign'` and no coordinates.
 
-Two suggestions are compatible when they share `country_code`, `postal_code`, `city` and
+Every suggestion becomes or joins a published address; nothing below filters. Two
+suggestions are compatible when they share `country_code`, `postal_code`, `city` and
 `street_name` (or both carry a box and the boxes are equal), and each of `house_number`,
 `unit`, `care_of` is equal or NULL on at least one side. Rows are sorted by completeness (the
 count of non-NULL components) descending, then by precedence descending, then by
