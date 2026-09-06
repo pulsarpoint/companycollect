@@ -7,11 +7,14 @@ from pathlib import Path
 import pytest
 
 from dagster_v3.defs.se_company.address.normalize_se import (
+    LOCATION_FIELDS,
     NORMALIZER_VERSION,
     NormalizedAddress,
     RawAddress,
     address_key,
     identity_components,
+    location_components,
+    location_key,
     normalize_se_address,
 )
 
@@ -92,5 +95,43 @@ def test_a_malformed_packed_string_notes_the_part_count() -> None:
 
 
 def test_version_constant() -> None:
-    assert NORMALIZER_VERSION == "se-address-normalizer-v1"
+    assert NORMALIZER_VERSION == "se-address-normalizer-v2"
     assert NormalizedAddress.__slots__  # frozen dataclass with slots, hashable inputs to the fold
+
+
+def test_location_key_ignores_care_of_and_is_the_seven_components() -> None:
+    assert LOCATION_FIELDS == ("country_code", "postal_code", "city", "street_name", "box", "house_number", "unit")
+    with_care_of = normalize_se_address(RawAddress(care_of="c/o Anna Svensson", street_address="Kungsgatan 4 A, 3 tr",
+                                                   postal_code="11143", post_town="Stockholm"))
+    without = normalize_se_address(RawAddress(street_address="Kungsgatan 4 A, 3 tr", postal_code="11143", post_town="Stockholm"))
+    assert location_components(with_care_of) == ("SE", "11143", "stockholm", "kungsgatan", "", "4A", "3 tr")
+    assert location_key(with_care_of) == location_key(without)
+    assert address_key(with_care_of) != address_key(without)
+    assert len(location_key(with_care_of)) == 64
+
+
+def test_v2_rules_box_with_space_box_after_reference_and_new_units() -> None:
+    spaced = normalize_se_address(RawAddress(raw_address="Box 531 65$$GÖTEBORG$40015$SE-LAND"))
+    assert (spaced.box, spaced.parse_status) == ("53165", "ok")
+    referenced = normalize_se_address(RawAddress(street_address="NABO 118849  BOX 843", postal_code="85123", post_town="SUNDSVALL"))
+    assert (referenced.care_of, referenced.box, referenced.street_name) == ("nabo 118849", "843", None)
+    assert "box after 'nabo 118849'" in referenced.parse_notes
+    glued = normalize_se_address(RawAddress(street_address="C/O NABO 233769  BOX 843 851 23 SUND NYÄNGSVÄGEN 1", postal_code="85123", post_town="SUNDSVALL"))
+    assert (glued.care_of, glued.box) == ("nabo 233769", "843")
+    assert "dropped trailing text '851 23 sund nyängsvägen 1'" in glued.parse_notes
+    for line, unit in (("Varengatan 35, 1302", "1302"), ("Storgatan 12 plan 5", "plan 5"), ("Kungsgatan 8 II", "ii"),
+                       ("Splintvägen 14 n b", "nb"), ("Prostgatan 10, kv", "kv")):
+        n = normalize_se_address(RawAddress(street_address=line, postal_code="11122", post_town="Stockholm"))
+        assert n.unit == unit, line
+        assert n.house_number in ("35", "12", "8", "14", "10"), line
+
+
+def test_box_after_care_of_prefix_takes_the_box_branch_not_care_of_street() -> None:
+    """The by-hand rule in _split_care_of_street: a c/o line that resolves to a box (directly,
+    or after a reference) is not tokenized as a care-of/street pair -- the box rules in
+    _split_street take over, and no 'care-of split' note is added."""
+    n = normalize_se_address(RawAddress(street_address="c/o Bolagspartner avveckling Box 1067",
+                                        postal_code="22104", post_town="Lund"))
+    assert n.care_of == "bolagspartner avveckling"
+    assert n.box == "1067"
+    assert "care-of split" not in n.parse_notes

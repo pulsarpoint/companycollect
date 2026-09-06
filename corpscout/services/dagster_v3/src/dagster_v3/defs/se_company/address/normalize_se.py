@@ -13,20 +13,30 @@ import re
 import unicodedata
 from dataclasses import dataclass
 
-NORMALIZER_VERSION = "se-address-normalizer-v1"
+NORMALIZER_VERSION = "se-address-normalizer-v2"
 
 _UNKNOWN_TOWNS = {"okänd", "okand", "adress saknas"}
 _FOREIGN_TOWNS = {"utlandet"}
 _UNKNOWN_STREETS = {"okänd adress", "adress okänd", "okand adress", "adress saknas"}
 _INVALID_POSTCODES = {"00000", "99999"}
 _CARE_OF_PREFIX = re.compile(r"^(?:c/o|c\.o\.|co|att|attn|att:)\s+", re.IGNORECASE)
-_BOX = re.compile(r"^(?:box|postbox|p\.?\s?o\.?\s?box)\s+(?P<box>[0-9]+[a-zåäö]?)$", re.IGNORECASE)
+_BOX = re.compile(
+    r"^(?:box|postbox|p\.?\s?o\.?\s?box)\s+(?P<box>[0-9]+(?:\s[0-9]{2,3}(?![\s,]*[0-9]))?[a-zåäö]?)(?:[\s,]+(?P<rest>\S.*))?$",
+    re.IGNORECASE,
+)
+# A box after a reference or name ("nabo 118849 box 843", "c/o firm box 12"): the box is the
+# address, the prefix is the care-of when none was delivered.
+_BOX_AFTER_PREFIX = re.compile(
+    r"^(?P<prefix>.+?)[\s,]+(?:box|postbox)\s+(?P<box>[0-9]+(?:\s[0-9]{2,3}(?![\s,]*[0-9]))?[a-zåäö]?)(?:[\s,]+(?P<rest>\S.*))?$",
+    re.IGNORECASE,
+)
 _NUMBER = re.compile(
     r"^(?P<name>.*?\S)\s+(?P<number>[0-9]+(?:\s?-\s?[0-9]+)?(?:\s?[a-zåäö])?)(?:[\s,.]+(?P<rest>\S.*))?$",
     re.IGNORECASE,
 )
 _UNIT = re.compile(
-    r"^(?:lgh\s*[0-9]+|[0-9]+\s*tr\.?|tr\s*[0-9]+|bv|nb|t[0-9]+|[0-9]+\s*(?:vån|van)\.?|vån\s*[0-9]+|uppg\.?\s*[a-z0-9]+|ing\.?\s*[a-z0-9]+)$",
+    r"^(?:lgh\s*[0-9]+|[0-9]+\s*tr\.?|tr\s*[0-9]+|bv|nb|n\s?b|kv|t[0-9]+|[0-9]+\s*(?:vån|van)\.?|vån\s*[0-9]+"
+    r"|uppg\.?\s*[a-z0-9]+|ing\.?\s*[a-z0-9]+|plan\s*[0-9]+|ii|iii|iv|[0-9]{4})$",
     re.IGNORECASE,
 )
 _GLUED_NUMBER = re.compile(r"^(?P<word>[a-zåäöé]+)(?P<number>[0-9]+[a-zåäö]?)$")
@@ -107,9 +117,18 @@ def _split_packed(raw: str, notes: list[str]) -> RawAddress:
 
 def _split_street(line: str, notes: list[str]) -> tuple[str | None, str | None, str | None, str | None]:
     """-> (box, street_name, house_number, unit) from a folded street line."""
+    line = re.sub(r"\bn\s+b$", "nb", line)  # "nedre botten" written as two letters
     box = _BOX.match(line)
     if box:
-        return box.group("box"), None, None, None
+        if box.group("rest"):
+            notes.append(f"dropped trailing text '{box.group('rest').strip(' .,')}'")
+        return re.sub(r"\s+", "", box.group("box")), None, None, None
+    prefixed = _BOX_AFTER_PREFIX.match(line)
+    if prefixed:
+        notes.append(f"box after '{prefixed.group('prefix')}'")
+        if prefixed.group("rest"):
+            notes.append(f"dropped trailing text '{prefixed.group('rest').strip(' .,')}'")
+        return re.sub(r"\s+", "", prefixed.group("box")), None, None, None
     line = re.sub(r"\s*,\s*", " ", line)
     m = _NUMBER.match(line)
     if not m:
@@ -132,6 +151,10 @@ def _split_street(line: str, notes: list[str]) -> tuple[str | None, str | None, 
 def _split_care_of_street(line: str, notes: list[str]) -> tuple[str | None, str]:
     """Ratsit packs 'c/o <name> <street> <number>' into one string: split at the street."""
     stripped = re.sub(r"\s*,\s*", " ", _CARE_OF_PREFIX.sub("", line))
+    if _BOX_AFTER_PREFIX.match(stripped) or _BOX.match(stripped):
+        # A c/o line that resolves to a box (directly, or after a reference/name) is not a
+        # care-of/street pair -- the box rules in _split_street take over from here.
+        return None, stripped
     tokens = stripped.split(" ")
     number_at = None
     for i, tok in enumerate(tokens):
@@ -182,6 +205,10 @@ def normalize_se_address(raw: RawAddress) -> NormalizedAddress:
         care_of_display = _display(care_of or "")
         street_display_source = ""
     box, street_name, house_number, unit = _split_street(street_line, notes) if street_line else (None, None, None, None)
+    prefix_note = next((n for n in notes if n.startswith("box after '")), None)
+    if prefix_note and not care_of:
+        care_of = _CARE_OF_PREFIX.sub("", prefix_note[len("box after '"):-1]).strip()
+        care_of_display = _display(care_of)
 
     if code and (len(code) != 5 or code in _INVALID_POSTCODES):
         notes.append(f"postcode '{raw.postal_code}' is not a valid five-digit code")
@@ -254,4 +281,17 @@ def identity_components(normalized: NormalizedAddress) -> tuple[str, ...]:
 
 def address_key(normalized: NormalizedAddress) -> str:
     return hashlib.sha256("\n".join(identity_components(normalized)).encode("utf-8")).hexdigest()
+
+
+LOCATION_FIELDS: tuple[str, ...] = ("country_code", "postal_code", "city", "street_name", "box", "house_number", "unit")
+
+
+def location_components(normalized: NormalizedAddress) -> tuple[str, ...]:
+    """The identity without care-of: what the geocoder sees. One physical address is
+    matched once whoever receives mail there (spec 3.7 as amended for slice 2a)."""
+    return tuple(getattr(normalized, field_name) or "" for field_name in LOCATION_FIELDS)
+
+
+def location_key(normalized: NormalizedAddress) -> str:
+    return hashlib.sha256("\n".join(location_components(normalized)).encode("utf-8")).hexdigest()
 

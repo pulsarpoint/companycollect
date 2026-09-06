@@ -28,6 +28,20 @@ re-normalizes every raw row regardless of any of this.
 - `no_address` -- nothing usable was delivered, or the source marks the address unknown.
 - `foreign` -- the post town says `utlandet`, or the source's own `country_code` isn't `SE`.
 
+## Parse rules (v2)
+
+`NORMALIZER_VERSION` is `se-address-normalizer-v2`, adding four rules seen in the prod
+`parse_notes` readout on top of the v1 rules above: a box number may be written with a space
+(`Box 531 65` parses to box `53165`); a box found after a customer reference or a name
+(`NABO 118849 BOX 843`) is parsed as that box, with the prefix taken as `care_of` when none
+was delivered directly; `plan N`, the roman numerals `ii`/`iii`/`iv`, a bare four-digit
+apartment number, and `n b`/`nb`/`kv` are all recognized as `unit`; and text left over after a
+box is dropped with a `parse_notes` entry rather than silently discarded. `location_key`
+(`location_components`/`location_key` in `normalize_se.py`) is the sha256 of
+`country_code, postal_code, city, street_name, box, house_number, unit` joined with `\n`
+(NULL as `''`) -- the identity without `care_of`, so the same physical address is matched once
+regardless of who receives mail there; `identity_components`/`address_key` are unchanged.
+
 ## The packed Bolagsverket format
 
 Bolagsverket delivers one string in `raw_address`: five `$`-separated parts, in order --
