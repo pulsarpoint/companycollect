@@ -206,7 +206,43 @@ from dagster_v3.defs.se_company.address.suggestions import (
 )
 from dagster_v3.defs.se_company.basic_info.extract import changed_scope_sql, insert_page_sql
 from dagster_v3.defs.sweden_ratsit.normalization import RATSIT_NORMALIZER_VERSION
-from tests.se_company_ddl import projection_aliases
+
+
+def _aliases(sql: str) -> list[str]:
+    """Column names of the top-level projection: the token after the last ' AS ' of each
+    top-level comma-separated expression, or the bare column when there is no alias.
+    Depth-aware, so commas and FROM inside function calls and subqueries do not count.
+    (tests/se_company_ddl.py::projection_aliases expects CTE-shaped SQL and raises here.)"""
+    after_select = sql.split("SELECT", 1)[1]
+    depth = 0
+    end = len(after_select)
+    for index, char in enumerate(after_select):
+        if char == "(":
+            depth += 1
+        elif char == ")":
+            depth -= 1
+        elif depth == 0 and after_select.startswith("FROM ", index) and after_select[index - 1] in " \n":
+            end = index
+            break
+    expressions: list[str] = []
+    current: list[str] = []
+    depth = 0
+    for char in after_select[:end]:
+        if char == "(":
+            depth += 1
+        elif char == ")":
+            depth -= 1
+        if char == "," and depth == 0:
+            expressions.append("".join(current))
+            current = []
+        else:
+            current.append(char)
+    expressions.append("".join(current))
+    names = []
+    for expression in expressions:
+        text = expression.strip()
+        names.append(text.rsplit(" AS ", 1)[1].strip() if " AS " in text else text.rsplit(".", 1)[-1].strip())
+    return names
 
 EXTRACTORS = {
     "scb": (scb.scb_current_sql(), scb.scb_select_sql(), scb.se_company_address_suggestions_scb),
@@ -241,11 +277,11 @@ def test_the_insert_stamps_suggestion_id_from_the_same_now64_as_suggested_at() -
 
 def test_every_select_yields_the_thirteen_columns_in_order_and_binds_the_page() -> None:
     for source, (current_sql, select_sql, _) in EXTRACTORS.items():
-        assert projection_aliases(select_sql) == list(ADDRESS_SELECT_COLUMNS), source
+        assert _aliases(select_sql) == list(ADDRESS_SELECT_COLUMNS), source
         assert "%(company_ids)s" in select_sql, source
         assert " FINAL" in select_sql, source
         assert f"'{source}' AS source" in select_sql, source
-        assert projection_aliases(current_sql) == ["company_id", "observed_at"], source
+        assert _aliases(current_sql) == ["company_id", "observed_at"], source
         assert "%(company_ids)s" not in current_sql, source
 
 
