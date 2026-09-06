@@ -374,7 +374,9 @@ paging, `execute: false` preview, `max_companies` cap.
 - Reviewer rows come only from the backoffice (section 8).
 
 `se_company_address_extract_job` selects the three extractors and the normalize asset;
-`se_company_address_weekly` is registered stopped.
+`se_company_address_v2_weekly` is registered stopped (an interim name: the old model's
+`address_legacy.py` registers `se_company_address_weekly` until the cutover, which renames
+the new one).
 
 ## 8. Backoffice
 
@@ -451,7 +453,8 @@ with its sensor and weekly, `se_company_addresses` and `se_company_addresses_cur
 register-load steps that fill them, `se_company_addresses_canonical_current`,
 `se_company_address_members_current`, `se_addresses_current`,
 `se_company_address_links_current`, the `se_address_geocodes_current` view, the demand scan
-assets and `geocode_legacy_adoption`. Kept: the matcher, the policy constant, the workbench
+assets and `geocode_legacy_adoption`. The cutover also renames `se_company_address_v2_weekly`
+to `se_company_address_weekly` once the old schedule is gone. Kept: the matcher, the policy constant, the workbench
 and its scripts, `se_postcode_centroids`, `se_city_centroids`, `se_address_geocodes`.
 
 ## 10. Names
