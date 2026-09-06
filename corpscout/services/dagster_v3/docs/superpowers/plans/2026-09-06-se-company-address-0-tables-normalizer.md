@@ -877,7 +877,7 @@ git commit -m "feat(dagster): Swedish address normalizer with a golden corpus"
 
 **Interfaces:**
 - Consumes: Task 1's `tables`; Task 2's `RawAddress`, `NormalizedAddress`, `normalize_se_address`, `address_key`, `NORMALIZER_VERSION`; `dagster_v3.defs.se_company.basic_info.extract.scope_pages` and `SCAN_QUERY_SETTINGS`; `dagster_v3.defs.se_company.basic_info.batch.ID_BOUND_QUERY_SETTINGS`; `dagster_v3.defs.se_company.common.normalized_se_company_ids`; `dagster_v3.defs.clickhouse.resolved.assert_clickhouse_tables_exist`; `dagster_clickhouse.ClickhouseResource`.
-- Produces: `normalize_address(raw: RawAddress) -> NormalizedAddress` (the country dispatcher); `changed_scope_sql()`, `all_scope_sql()`, `changed_rows_sql()`, `all_rows_sql()`, `normalized_insert_sql()`; `normalized_row(raw_row: tuple, normalized_at: datetime) -> tuple` (the 22-value insert tuple in `tables.NORMALIZED_COLUMNS` order); `NormalizeCounts` with `companies, pages, rows, ok, partial, no_address, foreign` and `as_metadata()`; `normalize_companies(client, company_ids, *, changed_only, normalized_at, page_size, log=None) -> NormalizeCounts`; `normalize_all(client, *, changed_only, normalized_at, page_size, log=None) -> NormalizeCounts`; asset `se_company_address_normalize` with config `AddressNormalizeConfig(changed_only: bool = True, company_ids: list[str] = [], page_size: int = 20_000)`.
+- Produces: `normalize_address(raw: RawAddress) -> NormalizedAddress` (the country dispatcher); `changed_scope_sql()`, `all_scope_sql()`, `changed_rows_sql()`, `all_rows_sql()`, `normalized_insert_sql()`; `normalized_row(raw_row: tuple, normalized_at: datetime) -> tuple` (the 21-value insert tuple in `tables.NORMALIZED_COLUMNS` order); `NormalizeCounts` with `companies, pages, rows, ok, partial, no_address, foreign` and `as_metadata()`; `normalize_companies(client, company_ids, *, changed_only, normalized_at, page_size, log=None) -> NormalizeCounts`; `normalize_all(client, *, changed_only, normalized_at, page_size, log=None) -> NormalizeCounts`; asset `se_company_address_normalize` with config `AddressNormalizeConfig(changed_only: bool = True, company_ids: list[str] = [], page_size: int = 20_000)`.
 
 - [ ] **Step 1: Write the failing tests**
 
@@ -939,9 +939,9 @@ class FakeClient:
         return [(s, list(p)) for s, p, _ in self.statements if s.startswith(f"INSERT INTO {tables.QUALIFIED_NORMALIZED_TABLE}")]
 
 
-def test_normalized_row_has_the_22_values_in_column_order() -> None:
+def test_normalized_row_has_the_21_values_in_column_order() -> None:
     row = normalized_row(RAW_SCB, STAMP)
-    assert len(row) == len(tables.NORMALIZED_COLUMNS) == 22
+    assert len(row) == len(tables.NORMALIZED_COLUMNS) == 21
     by_name = dict(zip(tables.NORMALIZED_COLUMNS, row, strict=True))
     assert by_name["company_id"] == "5561552760" and by_name["source"] == "scb" and by_name["slot"] == ""
     assert by_name["suggestion_id"] == "a" * 64
@@ -1384,4 +1384,4 @@ git commit -m "test(dagster): address normalize SQL against clickhouse-local; mo
 
 - Spec coverage: section 3 (six tables, lineage ids) Task 1; section 4 (normalizer, statuses, versioning, packed format, the normalize asset and its change rule) Tasks 2 and 3; section 10 names Tasks 1 to 3; the clickhouse-local proof and docs Task 4; nothing of sections 5 to 9 belongs to slice 0.
 - Placeholders: the normalizer code and the corpus in Task 2 were generated from the draft that was validated against 260 sampled register rows and inserted verbatim; Task 1's history migration uses an explicit "copy the 30 columns" instruction with the exact source; Task 4 step 1 is a numbered procedure over the SQL texts Task 3 defines.
-- Type consistency: `RAW_ROW_COLUMNS` (13 values) matches the `RAW_*` tuples in the tests; `normalized_row` yields 22 values = `len(tables.NORMALIZED_COLUMNS)`; `NormalizeCounts` positional order is `companies, pages, rows, ok, partial, no_address, foreign` everywhere; `scope_pages` is called with `params={"normalizer_version": ...}` because `changed_scope_sql()` binds that name and `all_scope_sql()` binds nothing (an unused bound parameter is fine for the driver).
+- Type consistency: `RAW_ROW_COLUMNS` (13 values) matches the `RAW_*` tuples in the tests; `normalized_row` yields 21 values = `len(tables.NORMALIZED_COLUMNS)`; `NormalizeCounts` positional order is `companies, pages, rows, ok, partial, no_address, foreign` everywhere; `scope_pages` is called with `params={"normalizer_version": ...}` because `changed_scope_sql()` binds that name and `all_scope_sql()` binds nothing (an unused bound parameter is fine for the driver).
