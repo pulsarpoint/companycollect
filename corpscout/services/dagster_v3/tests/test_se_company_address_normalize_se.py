@@ -28,6 +28,10 @@ def corpus() -> list[dict]:
 CASES = corpus()
 
 
+def _golden_cases() -> list[dict]:
+    return CASES
+
+
 @pytest.mark.parametrize("case", CASES, ids=[f"{c['source']}:{json.dumps(c['raw'], ensure_ascii=False)[:60]}" for c in CASES])
 def test_golden_corpus(case: dict) -> None:
     result = normalize_se_address(RawAddress(**case["raw"]))
@@ -135,3 +139,48 @@ def test_box_after_care_of_prefix_takes_the_box_branch_not_care_of_street() -> N
     assert n.care_of == "bolagspartner avveckling"
     assert n.box == "1067"
     assert "care-of split" not in n.parse_notes
+
+
+def test_display_line_reproduces_every_corpus_line_from_components() -> None:
+    """The fold composes a merged address's text from the union of its members'
+    components. For every corpus case whose street is not delivered in mixed case,
+    display_line over the stored components must equal the normalizer's own line;
+    mixed-case streets keep their delivered casing only inside normalize_se_address."""
+    from dagster_v3.defs.se_company.address.normalize_se import display_line
+
+    checked = 0
+    for case in _golden_cases():
+        expected = case["expected"]
+        if expected["parse_status"] not in ("ok", "partial"):
+            continue
+        raw = case["raw"]
+        street_source = raw.get("street_address") or ""
+        if raw.get("raw_address"):
+            street_source = raw["raw_address"].split("$")[0]
+        if street_source not in ("", street_source.upper(), street_source.lower()):
+            continue
+        composed = display_line(
+            care_of=expected["care_of"], box=expected["box"], street_name=expected["street_name"],
+            house_number=expected["house_number"], unit=expected["unit"],
+            postal_code=expected["postal_code"], city=expected["city"],
+        )
+        assert composed == expected["normalized_address"], raw
+        checked += 1
+    # Deviation from the task-2 brief: the brief's own snippet asserts `checked >= 20`.
+    # Against the real 61-case corpus, only the `scb` source (all-caps deliveries) plus a
+    # handful of incidental all-caps/no-letter street lines from the other sources satisfy
+    # this filter -- 15, not 20 (see task-2-report.md). The corpus is frozen (never
+    # edited), so the floor is lowered to match the actual, verified count rather than
+    # weakening the filter itself.
+    assert checked >= 15
+
+
+def test_display_line_orders_care_of_box_street_and_postal_parts() -> None:
+    from dagster_v3.defs.se_company.address.normalize_se import display_line
+
+    assert display_line(care_of="anna svensson", box="123", street_name=None, house_number=None,
+                        unit=None, postal_code="11122", city="stockholm") == "c/o Anna Svensson, Box 123, 111 22 Stockholm"
+    assert display_line(care_of=None, box=None, street_name="storgatan", house_number="5b",
+                        unit="lgh 1201", postal_code=None, city="lund") == "Storgatan 5B lgh 1201, Lund"
+    assert display_line(care_of=None, box=None, street_name="storgatan", house_number="5",
+                        unit=None, postal_code="11122", city="stockholm", street_display="StorGatan") == "StorGatan 5, 111 22 Stockholm"

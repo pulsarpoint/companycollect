@@ -100,6 +100,51 @@ def _display(value: str) -> str:
     return " ".join(words)
 
 
+def display_line(
+    *,
+    care_of: str | None,
+    box: str | None,
+    street_name: str | None,
+    house_number: str | None,
+    unit: str | None,
+    postal_code: str | None,
+    city: str | None,
+    street_display: str | None = None,
+    care_of_display: str | None = None,
+    city_display: str | None = None,
+) -> str:
+    """The one display line of an address from its stored components: `c/o Name`, then
+    `Box N` or `Street 5B unit`, then `111 22 City`, comma-joined. `street_display`,
+    `care_of_display` and `city_display` supply the delivered casing for those three parts
+    when the caller has it (normalize_se_address computes all three before casefolding);
+    otherwise each part is title-cased from the stored (already-folded) component, like
+    every other part. The fold composes a merged address this way when the union of its
+    members' components differs from the published member's own."""
+    parts: list[str] = []
+    if care_of:
+        parts.append(f"c/o {care_of_display or _display(care_of)}")
+    if box:
+        parts.append(f"Box {box.upper()}")
+    elif street_name:
+        street = street_display or _display(street_name)
+        if house_number:
+            street += f" {house_number.upper()}"
+        if unit:
+            street += f" {unit}"
+        parts.append(street)
+    postal = " ".join(
+        p
+        for p in (
+            f"{postal_code[:3]} {postal_code[3:]}" if postal_code else "",
+            (city_display or _display(city)) if city else "",
+        )
+        if p
+    )
+    if postal:
+        parts.append(postal)
+    return ", ".join(parts)
+
+
 def _split_packed(raw: str, notes: list[str]) -> RawAddress:
     parts = [p.strip() for p in raw.split("$")]
     if len(parts) != 5:
@@ -182,6 +227,14 @@ def normalize_se_address(raw: RawAddress) -> NormalizedAddress:
     notes: list[str] = []
     if raw.raw_address:
         raw = _split_packed(raw.raw_address, notes)
+    # `care_of_display`/`town_display` hold the delivered casing (computed once, from the
+    # raw, unfolded fields) for `display_line`'s `care_of_display`/`city_display`
+    # arguments. They are only ever RIGHT for `care_of` when the value came straight off
+    # `raw.care_of`: the two branches below that instead extract `care_of` out of the
+    # street text derive it from the already-folded `street_line`, so `care_of_display`
+    # stays "" (falsy) for them and `display_line` falls back to title-casing the
+    # extracted (folded) text on its own -- exactly what the pre-refactor code did too,
+    # since it had no truer casing to offer in that case either.
     care_of_display = _display(_CARE_OF_PREFIX.sub("", _clean(raw.care_of)))
     care_of = care_of_display.casefold()
     street_line = _fold(raw.street_address)
@@ -202,13 +255,11 @@ def normalize_se_address(raw: RawAddress) -> NormalizedAddress:
 
     if _CARE_OF_PREFIX.match(street_line) and not care_of:
         care_of, street_line = _split_care_of_street(street_line, notes)
-        care_of_display = _display(care_of or "")
         street_display_source = ""
     box, street_name, house_number, unit = _split_street(street_line, notes) if street_line else (None, None, None, None)
     prefix_note = next((n for n in notes if n.startswith("box after '")), None)
     if prefix_note and not care_of:
         care_of = _CARE_OF_PREFIX.sub("", prefix_note[len("box after '"):-1]).strip()
-        care_of_display = _display(care_of)
 
     if code and (len(code) != 5 or code in _INVALID_POSTCODES):
         notes.append(f"postcode '{raw.postal_code}' is not a valid five-digit code")
@@ -228,23 +279,17 @@ def normalize_se_address(raw: RawAddress) -> NormalizedAddress:
         if not town:
             notes.append("missing city")
 
-    line_parts = []
-    if care_of:
-        line_parts.append(f"c/o {care_of_display}")
-    if box:
-        line_parts.append(f"Box {box.upper()}")
-    elif street_name:
+    if street_name and not box:
         mixed_case = street_display_source not in ("", street_display_source.upper(), street_display_source.lower())
-        street = _display_kept(street_display_source, street_name) if mixed_case else _display(street_name)
-        if house_number:
-            street += f" {house_number.upper()}"
-        if unit:
-            street += f" {unit}"
-        line_parts.append(street)
-    postal = " ".join(p for p in (f"{code[:3]} {code[3:]}" if code else "", town_display if town else "") if p)
-    if postal:
-        line_parts.append(postal)
-    display = ", ".join(line_parts) if has_location else ""
+        street_display = _display_kept(street_display_source, street_name) if mixed_case else _display(street_name)
+    else:
+        street_display = None
+    display = display_line(
+        care_of=care_of or None, box=box or None, street_name=street_name or None,
+        house_number=house_number or None, unit=unit or None, postal_code=code or None,
+        city=town or None, street_display=street_display,
+        care_of_display=care_of_display or None, city_display=town_display or None,
+    )
 
     return NormalizedAddress(
         care_of=care_of or None,

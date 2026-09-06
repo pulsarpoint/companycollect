@@ -60,6 +60,10 @@ STALE_POLICY = "se-address-resolution-policy-v6"
 REFERENCE = "ref-1"
 RUN_ID = "0f3d9c1a-2b4e-4f6a-8c0d-1e2f3a4b5c6d"
 STAMP = datetime(2026, 9, 6, 12, 0, tzinfo=UTC)
+# The stamp a cached row already carries -- distinct from STAMP (this run's own matched_at)
+# so a hit's matched_at and a miss's are never accidentally equal in the test that checks
+# which one a served outcome carries.
+CACHED_AT = datetime(2026, 8, 20, 9, 0, tzinfo=UTC)
 
 # The OSM extract's provenance, carried on every `address_points` row (000275) and copied
 # onto every store row this module writes -- the live store check `missing_provenance`
@@ -127,6 +131,7 @@ def _cache_row(key: str, **overrides: Any) -> tuple[Any, ...]:
         "coordinate_locality": "Stockholm",
         "coordinate_supporting_point_count": 1,
         "coordinate_spread_meters": 0.0,
+        "matched_at": CACHED_AT,
     }
     values.update(overrides)
     return tuple(values[column] for column in geocode.CACHE_COLUMNS)
@@ -341,6 +346,21 @@ def test_an_adopted_row_is_a_hit_whatever_its_versions(
 
     assert outcomes[CACHED_KEY].from_cache is True
     assert client.inserted == []
+
+
+def test_a_cache_hit_carries_the_stores_matched_at_and_a_fresh_outcome_the_runs(
+    workbench: duckdb.DuckDBPyConnection,
+) -> None:
+    """geocoded_at on the published row must say when the outcome was computed: the
+    cached row's matched_at for a hit, this run's matched_at for a miss."""
+    client = FakeClient(cache_rows=[_cache_row(CACHED_KEY)])
+
+    outcomes = _run(workbench, client, {CACHED_KEY: CACHED, STREET_KEY: STREET})
+
+    assert outcomes[CACHED_KEY].from_cache is True
+    assert outcomes[CACHED_KEY].matched_at == CACHED_AT
+    assert outcomes[STREET_KEY].from_cache is False
+    assert outcomes[STREET_KEY].matched_at == STAMP
 
 
 def test_a_miss_is_matched_and_cached(workbench: duckdb.DuckDBPyConnection) -> None:

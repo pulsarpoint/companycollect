@@ -129,6 +129,7 @@ CACHE_COLUMNS: tuple[str, ...] = (
     "coordinate_locality",
     "coordinate_supporting_point_count",
     "coordinate_spread_meters",
+    "matched_at",
 )
 
 # What this module reads back out of the engine's result table.
@@ -169,7 +170,11 @@ _PROPERTY_DESIGNATION = re.compile(r"(^|\s)[0-9]+:[0-9]+($|[\s,])")
 
 @dataclass(frozen=True, slots=True)
 class GeocodeOutcome:
-    """One SERVED outcome for a location key: the matcher's row, or a centroid over it."""
+    """One SERVED outcome for a location key: the matcher's row, or a centroid over it.
+
+    `matched_at`: when the outcome was computed -- the cached row's stamp for a hit, this
+    run's for a miss; the fold publishes it as `geocoded_at`.
+    """
 
     location_key: str
     match_status: str
@@ -186,6 +191,7 @@ class GeocodeOutcome:
     policy_version: str
     reference_md5: str
     from_cache: bool
+    matched_at: datetime
 
 
 @dataclass(frozen=True, slots=True)
@@ -464,6 +470,7 @@ def geocode_addresses(
                 result,
                 policy_version=policy_version,
                 reference_md5=reference_md5,
+                matched_at=matched_at,
             )
         geocoded = sum(
             1
@@ -541,6 +548,7 @@ def _read_cache(
                 policy_version=row["policy_version"],
                 reference_md5=row["reference_md5"],
                 from_cache=True,
+                matched_at=row["matched_at"],
             )
     return hits
 
@@ -700,6 +708,7 @@ def _outcome_from_result(
     *,
     policy_version: str,
     reference_md5: str,
+    matched_at: datetime,
 ) -> GeocodeOutcome:
     has_coordinate = result["latitude"] is not None and result["longitude"] is not None
     return GeocodeOutcome(
@@ -718,6 +727,7 @@ def _outcome_from_result(
         policy_version=policy_version,
         reference_md5=reference_md5,
         from_cache=False,
+        matched_at=matched_at,
     )
 
 
