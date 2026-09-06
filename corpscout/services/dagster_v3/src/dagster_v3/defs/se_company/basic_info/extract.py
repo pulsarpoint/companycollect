@@ -2,11 +2,12 @@
 
 A source contributes two SQL texts: `current_sql` returns `(company_id, observed_at)` for
 its current record per company, `select_sql` returns one wide suggestion row per company
-for the ids bound as `%(company_ids)s`, in SUGGESTION_SELECT_COLUMNS order. This module
+for the ids bound as `%(company_ids)s`, in the target's `select_columns` order
+(`SUGGESTION_SELECT_COLUMNS`, from `BASIC_INFO_TARGET`, by default). This module
 decides which companies to visit (never suggested by this source, or whose source record is
 newer than the current suggestion row), materialises that id set once into a scratch table,
 pages it by keyset, counts, and in execute mode inserts each page straight into the
-suggestion table with the publisher's stamps.
+target's table with the publisher's stamps.
 """
 
 import re

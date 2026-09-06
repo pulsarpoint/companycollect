@@ -207,6 +207,8 @@ def _statements() -> list[str]:
         "SELECT '@@scb_scope_3'",
         _scope(scb.scb_current_sql(), "scb"),
         _insert(scb.scb_select_sql(), [COMPANY_SCB_BV], extractor_version=scb.SCB_ADDRESS_EXTRACTOR_VERSION),
+        "SELECT '@@scb_scope_after_tombstone'",
+        _scope(scb.scb_current_sql(), "scb"),
         "SELECT '@@scb_after_tombstone'",
         SCB_AFTER_TOMBSTONE_SQL,
         "SELECT '@@changed_rows'",
@@ -287,6 +289,10 @@ def test_scb_tombstone_reselects_and_writes_a_null_raw_row(sections: dict[str, l
     )
     assert after["street_address"] == after["postal_code"] == after["post_town"] == after["care_of"] == "\\N"
     assert after["suggested_at"] > first["suggested_at"]
+
+
+def test_scb_scope_reconverges_after_the_tombstone_reselect(sections: dict[str, list[list[str]]]) -> None:
+    assert sections["scb_scope_after_tombstone"] == []
 
 
 def test_normalize_hand_off_gives_the_expected_parse_statuses(sections: dict[str, list[list[str]]]) -> None:

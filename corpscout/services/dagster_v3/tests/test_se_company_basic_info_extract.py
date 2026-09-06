@@ -259,6 +259,7 @@ def test_another_target_renames_the_table_the_columns_the_asset_and_the_scratch_
         "FROM (SELECT 1) AS candidate"
     )
     assert "FROM corpscout.other_suggestion WHERE source = %(source)s" in changed_scope_sql(current_sql="SELECT 1", target=other)
+    assert changed_scope_sql(current_sql="SELECT 1", target=other).count("corpscout.other_suggestion") == 2
     asset = define_suggestion_asset(
         source="scb", extractor_version="v", current_sql="SELECT 1", select_sql="SELECT 1", description="d", target=other,
     )

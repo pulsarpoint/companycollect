@@ -67,7 +67,7 @@ suggested by that source; `execute: false` (default) previews the count without 
 
 `se_company_address_extract_job` (`jobs.py`) selects the three extractors and
 `se_company_address_normalize` (which now `deps` on them); `se_company_address_v2_weekly`
-schedules it Mondays 06:50 UTC (`50 6 * * 1`) with `execute: true`, `page_size: 20000` per
+schedules it Mondays 07:05 UTC (`5 7 * * 1`) with `execute: true`, `page_size: 20000` per
 extractor and `changed_only: true` on the normalize asset, registered STOPPED. The `v2`
 interim name avoids colliding with `address_legacy.py`'s own `se_company_address_weekly`
 until the cutover retires that schedule and this one takes the canonical name.

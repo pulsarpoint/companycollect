@@ -363,11 +363,11 @@ reports adopted, skipped and ambiguous counts; it runs once before the first ful
 comparing the source row's `observed_at` with the current raw suggestion's, scratch-table
 paging, `execute: false` preview, `max_companies` cap.
 
-- `scb`: `se_scb_companies` FINAL `WHERE has_company = 1`: `care_of`, `street_address`,
+- `scb`: `se_scb_companies` FINAL: `care_of`, `street_address`,
   `postal_code`, `post_town`; kind `visiting_or_postal`, slot `''`; `observed_at` the
   register row's. A tombstoned company writes the NULL row.
-- `bolagsverket`: `se_bolagsverket_companies` FINAL `WHERE has_company = 1`: `postal_address`
-  into `raw_address`; kind `postal`, slot `''`.
+- `bolagsverket`: `se_bolagsverket_companies` FINAL: `postal_address`
+  into `raw_address`; kind `postal`, slot `''`. A tombstoned company (`has_company = 0`) writes the NULL row.
 - `ratsit`: `se_ratsit_company` FINAL, newest normalized report per company:
   `address_street`, `address_postal_code`, `address_locality`, `address_county`; kind
   `postal`, slot `company`; `observed_at` the report's `normalized_at`.
@@ -462,7 +462,7 @@ and its scripts, `se_postcode_centroids`, `se_city_centroids`, `se_address_geoco
 Tables `se_company_address_suggestion`, `se_company_address_normalized`,
 `se_company_address_v2` (renamed `se_company_address` at cutover), `se_company_address_history`, `se_company_address_rule`,
 `se_company_address_precedence`. Package `dagster_v3.defs.se_company.address` (`tables`,
-`normalize_se`, `normalize`, `extract` shared from basic info, `scb`, `bolagsverket`,
+`normalize_se`, `normalize`, `suggestions`, `extract` shared from basic info, `scb`, `bolagsverket`,
 `ratsit`, `precedence`, `fold`, `geocode`, `batch`, `assets`, `jobs`); the old model's module
 `se_company/address.py` was renamed `address_legacy.py` on 2026-09-06 so the package can take
 the name, its definitions unchanged until the cutover retires them. Assets

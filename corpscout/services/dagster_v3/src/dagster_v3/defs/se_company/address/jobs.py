@@ -20,10 +20,10 @@ se_company_address_extract_job = dg.define_asset_job(
     "se_company_address_extract_job",
     selection=dg.AssetSelection.assets(*EXTRACTOR_ASSET_NAMES, NORMALIZE_ASSET),
 )
-se_company_address_weekly = dg.ScheduleDefinition(
+se_company_address_v2_weekly = dg.ScheduleDefinition(
     name="se_company_address_v2_weekly",
     job=se_company_address_extract_job,
-    cron_schedule="50 6 * * 1",
+    cron_schedule="5 7 * * 1",
     run_config=WEEKLY_RUN_CONFIG,
     default_status=dg.DefaultScheduleStatus.STOPPED,
 )

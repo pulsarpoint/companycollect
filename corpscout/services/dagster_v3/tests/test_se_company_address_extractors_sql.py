@@ -10,6 +10,7 @@ from dagster_v3.defs.se_company.address.suggestions import (
     ADDRESS_TARGET,
     ADDRESS_TRAILING_SELECT_SQL,
 )
+from dagster_v3.defs.se_company.basic_info import bolagsverket as basic_info_bolagsverket
 from dagster_v3.defs.se_company.basic_info.extract import changed_scope_sql, insert_page_sql
 from dagster_v3.defs.sweden_ratsit.normalization import RATSIT_NORMALIZER_VERSION
 
@@ -113,6 +114,10 @@ def test_bolagsverket_keeps_the_packed_string_raw_and_tombstones() -> None:
         assert f"CAST(NULL AS Nullable(String)) AS {column}" in sql, column
     assert "text_translations" not in sql and "text_translations" not in bolagsverket.bolagsverket_current_sql()
     assert bolagsverket.BOLAGSVERKET_ADDRESS_EXTRACTOR_VERSION == "bolagsverket-address-v1"
+
+
+def test_bolagsverket_record_uid_formula_matches_basic_info() -> None:
+    assert bolagsverket.BOLAGSVERKET_ADDRESS_RECORD_UID_SQL == basic_info_bolagsverket.BOLAGSVERKET_RECORD_UID_SQL.replace("register.", "")
 
 
 def test_ratsit_takes_the_newest_report_into_the_company_slot() -> None:

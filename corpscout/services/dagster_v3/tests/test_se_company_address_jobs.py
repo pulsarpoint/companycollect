@@ -20,7 +20,7 @@ def test_the_job_selects_the_three_extractors_and_the_normalize_asset() -> None:
 
 def test_the_weekly_is_registered_stopped_with_execute_and_the_page_size() -> None:
     schedule = _repo().get_schedule_def("se_company_address_v2_weekly")
-    assert schedule.cron_schedule == "50 6 * * 1"
+    assert schedule.cron_schedule == "5 7 * * 1"
     assert schedule.default_status == dg.DefaultScheduleStatus.STOPPED
     assert schedule.job_name == "se_company_address_extract_job"
     ops = jobs.WEEKLY_RUN_CONFIG["ops"]
