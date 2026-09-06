@@ -13,11 +13,17 @@ THE COPY, NOT A RECOMPUTATION. For each old identity this asset normalizes it wi
 normalizer the address entity uses (`normalize_se_address`), computes its location key,
 and -- when the identity's CURRENT outcome is worth keeping -- copies that outcome into a
 NEW row under the location key, stamping `address_identity_run_id =
-"adopted:<old address_id>"` (recognized by `geocode._is_hit` alongside
-`LEGACY_ADOPTED_POLICY_VERSION`, so the address entity never re-matches it) and
-`geocode_run_id` = this run's id. Every other column -- `policy_version`, `reference_md5`
-and `matched_at` included -- is copied UNCHANGED: this asset makes no matching decision of
-its own, it only relabels an existing one.
+"adopted:<old address_id>"` (provenance for a human reading the store: WHICH old identity
+this answer came from) and `geocode_run_id` = this run's id. Every other column --
+`policy_version`, `reference_md5` and `matched_at` included -- is copied UNCHANGED: this
+asset makes no matching decision of its own, it only relabels an existing one.
+
+THE PREFIX IS NOT A CACHE PIN (2026-09-06 review). Because the copied row keeps the
+original's versions, `geocode._is_hit` treats it like any other row: a hit while its
+`(policy_version, reference_md5)` is the run's current pair, a miss after the next policy
+bump or OSM extract, when it is re-matched. Only the imported `legacy_adopted_v1` family --
+which is on no resolver version at all -- is an unconditional hit, and adopting one copies
+that policy version across, so it stays one.
 
 WHICH OUTCOMES ARE WORTH KEEPING (the 2026-09-06 sizing ruling). Of 2,090,981 old
 identities only 1,138,307 carry a GEOCODED current outcome -- adopting only those would
@@ -58,6 +64,7 @@ from dagster_v3.defs.se_company.address.assets import GROUP_NAME
 from dagster_v3.defs.se_company.address.geocode import (
     ADOPTED_RUN_ID_PREFIX,
     CACHE_LOOKUP_CHUNK,
+    GEOCODE_QUERY_SETTINGS,
     QUALIFIED_STORE_TABLE,
     cache_insert_sql,
 )
@@ -94,6 +101,12 @@ IDENTITY_COLUMNS: tuple[str, ...] = (
 
 # The normalizer statuses that carry a usable location. `no_address`/`foreign` identities
 # have no key to adopt onto (normalize_se.py).
+#
+# `partial` (a street or box, but no postcode or no city) is adopted ON PURPOSE: the fold
+# computes the SAME location key for such an address -- `location_key` hashes whatever
+# components are present -- so the outcome copied here is the outcome the fold would look
+# up for it, a real hit and not a near miss. The alternative, skipping them, would send a
+# population the store has already decided back through the resolver for nothing.
 NORMALIZED_KEY_STATUSES = ("ok", "partial")
 
 
@@ -168,7 +181,10 @@ class AdoptCounts:
     identities: int
     normalized: int
     collapsed: int
-    geocoded: int
+    # How many representatives passed `is_adoptable` -- NOT how many carry a geocoded
+    # outcome: the rule admits any status on this run's own (policy_version, reference_md5)
+    # pair as well.
+    adoptable: int
     skipped_stale: int
     existing: int
     adopted: int
@@ -179,7 +195,7 @@ class AdoptCounts:
             "identities": self.identities,
             "normalized": self.normalized,
             "collapsed": self.collapsed,
-            "geocoded": self.geocoded,
+            "adoptable": self.adoptable,
             "skipped_stale": self.skipped_stale,
             "existing": self.existing,
             "adopted": self.adopted,
@@ -231,7 +247,11 @@ def _identity_pages(
 def _current_outcomes(client: Any, old_ids: Sequence[str]) -> dict[str, dict[str, Any]]:
     outcomes: dict[str, dict[str, Any]] = {}
     for chunk in _chunks(old_ids, CACHE_LOOKUP_CHUNK):
-        for raw in client.execute(current_outcomes_sql(), {"ids": list(chunk)}):
+        for raw in client.execute(
+            current_outcomes_sql(),
+            {"ids": list(chunk)},
+            settings=GEOCODE_QUERY_SETTINGS,
+        ):
             row = dict(zip(STORE_COLUMNS, raw, strict=True))
             outcomes[str(row["address_id"])] = row
     return outcomes
@@ -240,7 +260,9 @@ def _current_outcomes(client: Any, old_ids: Sequence[str]) -> dict[str, dict[str
 def _existing_keys(client: Any, keys: Sequence[str]) -> set[str]:
     existing: set[str] = set()
     for chunk in _chunks(keys, CACHE_LOOKUP_CHUNK):
-        for (key,) in client.execute(existing_keys_sql(), {"keys": list(chunk)}):
+        for (key,) in client.execute(
+            existing_keys_sql(), {"keys": list(chunk)}, settings=GEOCODE_QUERY_SETTINGS
+        ):
             existing.add(str(key))
     return existing
 
@@ -257,14 +279,21 @@ def adopt_geocode_keys(
 ) -> AdoptCounts:
     """Walk every old address identity once, adopt its current outcome onto its location
     key. `execute=False` (the default) counts what a real run would do and writes nothing."""
-    identities = normalized = collapsed = geocoded = 0
+    identities = normalized = collapsed = adoptable = 0
     skipped_stale = existing = adopted = 0
-    seen_keys: dict[str, str] = {}  # location_key -> the representative's old address_id
+    # Every location key seen so far, so the FIRST identity in `address_id` order wins and
+    # the rest are `collapsed`. Run-scoped by design: the walk visits the whole register
+    # once and a key seen on page 1 must still collapse a twin on page 900. A set of 2.09M
+    # 64-character keys is about 300 MB -- the old dict, which also held each key's
+    # representative id, was roughly twice that for a value only ever read within the page
+    # that inserted it, which is where `old_id_by_key` keeps it now.
+    seen_keys: set[str] = set()
 
     for page in _identity_pages(client, page_size=page_size):
         identities += len(page)
         page_representatives: list[str] = []
         new_key_by_old_id: dict[str, str] = {}
+        old_id_by_key: dict[str, str] = {}
         for old_id, street_address, postal_code, post_town, country_code in page:
             old_id = str(old_id)
             normalized_address = normalize_se_address(
@@ -282,8 +311,9 @@ def adopt_geocode_keys(
             if key in seen_keys:
                 collapsed += 1
                 continue
-            seen_keys[key] = old_id
+            seen_keys.add(key)
             new_key_by_old_id[old_id] = key
+            old_id_by_key[key] = old_id
             page_representatives.append(old_id)
 
         if page_representatives:
@@ -297,7 +327,7 @@ def adopt_geocode_keys(
                 if is_adoptable(
                     outcome, policy_version=policy_version, reference_md5=reference_md5
                 ):
-                    geocoded += 1
+                    adoptable += 1
                     new_key = new_key_by_old_id[old_id]
                     adoptable_keys.append(new_key)
                     rows_by_key[new_key] = outcome
@@ -311,7 +341,7 @@ def adopt_geocode_keys(
                     adopted_row(
                         rows_by_key[key],
                         new_key=key,
-                        old_id=seen_keys[key],
+                        old_id=old_id_by_key[key],
                         run_id=run_id,
                     )
                     for key in adoptable_keys
@@ -324,12 +354,12 @@ def adopt_geocode_keys(
         if log is not None:
             log(
                 "adopt: page rows=%d totals identities=%d normalized=%d collapsed=%d "
-                "geocoded=%d skipped_stale=%d existing=%d adopted=%d",
+                "adoptable=%d skipped_stale=%d existing=%d adopted=%d",
                 len(page),
                 identities,
                 normalized,
                 collapsed,
-                geocoded,
+                adoptable,
                 skipped_stale,
                 existing,
                 adopted,
@@ -339,7 +369,7 @@ def adopt_geocode_keys(
         identities=identities,
         normalized=normalized,
         collapsed=collapsed,
-        geocoded=geocoded,
+        adoptable=adoptable,
         skipped_stale=skipped_stale,
         existing=existing,
         adopted=adopted,

@@ -11,8 +11,13 @@ Slice 2a, spec sections 3.7 (as amended for the location key) and 6. What this f
    SERVED as `matched_area`/`centroid_fallback` while the row the store keeps still says
    `postal_box`/`unmatched`. That asymmetry is the whole point of the cache design, so it is
    asserted on both sides of the same call.
-4. A row on another policy version is a miss and is re-matched.
+4. A row on another policy version is a miss and is re-matched -- an `adopted:` row
+   included: only the imported `legacy_adopted_v1` family is an unconditional hit.
 5. The per-run tables are dropped even when the engine raises.
+6. Every written row carries the OSM extract's five provenance columns (the live store
+   check `missing_provenance` gates on them) and a `candidate_count` clamped to `UInt16`.
+7. Both id-bound reads render past ClickHouse's default `max_query_size` at a full chunk,
+   and both pass the raised `GEOCODE_QUERY_SETTINGS`.
 
 The ClickHouse side is a `FakeClient` scripted per key: the three SQL texts it answers are
 pinned separately here (shape) and against a real ClickHouse in
@@ -56,6 +61,14 @@ REFERENCE = "ref-1"
 RUN_ID = "0f3d9c1a-2b4e-4f6a-8c0d-1e2f3a4b5c6d"
 STAMP = datetime(2026, 9, 6, 12, 0, tzinfo=UTC)
 
+# The OSM extract's provenance, carried on every `address_points` row (000275) and copied
+# onto every store row this module writes -- the live store check `missing_provenance`
+# (sweden_company/address_geocoding_assets.py) gates on all five being non-NULL.
+SOURCE_URL = "https://download.geofabrik.de/europe/sweden-latest.osm.pbf"
+SOURCE_OBJECT_KEY = "raw/sweden-test.osm.pbf"
+SNAPSHOT_AT = datetime(2026, 8, 16, tzinfo=UTC)
+RETRIEVED_AT = datetime(2026, 8, 16, 1, 0, tzinfo=UTC)
+
 
 def _normalized(**fields: str) -> NormalizedAddress:
     return normalize_se_address(RawAddress(**fields))
@@ -87,6 +100,14 @@ BOX_KEY = location_key(BOX)
 MISSING_KEY = location_key(MISSING)
 DESIGNATION_KEY = location_key(DESIGNATION)
 
+PROVENANCE = geocode.ExtractProvenance(
+    source_url=SOURCE_URL,
+    source_object_key=SOURCE_OBJECT_KEY,
+    source_md5=REFERENCE,
+    source_snapshot_at=SNAPSHOT_AT,
+    source_retrieved_at=RETRIEVED_AT,
+)
+
 
 def _cache_row(key: str, **overrides: Any) -> tuple[Any, ...]:
     """One scripted current-outcome row in geocode.CACHE_COLUMNS order."""
@@ -111,6 +132,28 @@ def _cache_row(key: str, **overrides: Any) -> tuple[Any, ...]:
     return tuple(values[column] for column in geocode.CACHE_COLUMNS)
 
 
+def _result_row(**overrides: Any) -> dict[str, Any]:
+    """One engine result row, in geocode.RESULT_COLUMNS shape, for the `store_row` unit
+    tests that drive the writer directly rather than through the matcher."""
+    values: dict[str, Any] = {
+        "query_document_id": STREET_KEY,
+        "resolution_status": "matched_exact",
+        "geocode_precision": "building",
+        "match_confidence": 0.97,
+        "match_strategy": "street_house_postcode",
+        "latitude": 59.33,
+        "longitude": 18.06,
+        "coordinate_spread_meters": 0.0,
+        "supporting_record_count": 1,
+        "matched_locality": "Stockholm",
+        "candidate_record_ids": ["osm/1"],
+        "candidate_record_urls": ["https://www.openstreetmap.org/node/5"],
+        "candidate_record_count": 1,
+    }
+    values.update(overrides)
+    return values
+
+
 class FakeClient:
     """Answers the three statements geocode.py sends, and records what it was sent."""
 
@@ -123,12 +166,17 @@ class FakeClient:
         self.cache_rows = list(cache_rows)
         self.fallback_rows = list(fallback_rows)
         self.calls: list[tuple[str, Any]] = []
+        # Parallel to `calls`: what each statement was sent as `settings`. The two id-bound
+        # reads must raise `max_query_size` (C1), and a fake that swallowed the keyword
+        # could not tell a passed setting from a forgotten one.
+        self.settings_calls: list[Any] = []
         self.inserted: list[tuple[Any, ...]] = []
 
     def execute(
         self, sql: str, params: Any = None, settings: Any = None
     ) -> list[tuple[Any, ...]]:
         self.calls.append((sql, params))
+        self.settings_calls.append(settings)
         if sql.startswith("INSERT"):
             self.inserted.extend(params or [])
             return []
@@ -159,15 +207,28 @@ def workbench() -> Iterator[duckdb.DuckDBPyConnection]:
     shadow and the geocode function share. The manifest row plus the one `address_points`
     row make `ensure_reference_documents` a no-op, so what the matcher sees is exactly these
     two building points.
+
+    `address_points` carries the extract's five provenance columns as the real table does
+    (tests/test_sweden_address_reference_documents.py has the full shape): they are what
+    `extract_provenance` reads and `store_row` stamps onto every row it writes.
     """
     connection = duckdb.connect()
     connection.execute("create schema sweden_address_osm")
     connection.execute(
-        "create table sweden_address_osm.address_points"
-        " (source_record_id varchar, source_md5 varchar)"
+        """
+        create table sweden_address_osm.address_points (
+            source_record_id varchar,
+            source_url varchar,
+            source_object_key varchar,
+            source_md5 varchar,
+            source_snapshot_at timestamptz,
+            source_retrieved_at timestamptz
+        )
+        """
     )
     connection.execute(
-        f"insert into sweden_address_osm.address_points values ('osm/1', '{REFERENCE}')"
+        "insert into sweden_address_osm.address_points values (?, ?, ?, ?, ?, ?)",
+        ["osm/1", SOURCE_URL, SOURCE_OBJECT_KEY, REFERENCE, SNAPSHOT_AT, RETRIEVED_AT],
     )
     connection.execute(f"create schema if not exists {geocode.ENRICHMENT_SCHEMA}")
     replace_address_search_document_input_table(connection, table_name="reference_input")
@@ -440,8 +501,10 @@ def test_the_search_text_is_composed_from_the_components() -> None:
     # ... and the display line it is NOT carved out of still carries the whole care-of.
     assert "Dept 4" in comma_care_of.normalized_address
 
-    assert geocode.search_text(STREET) == "storgatan 5, 111 22 stockholm"
-    assert geocode.search_text(BOX) == "Box 5305, 102 46 stockholm"
+    # The postcode is UNSPACED: the shadow's query documents carry the register's own
+    # unspaced postcode, and `raw_full_exact` compares normalized full text.
+    assert geocode.search_text(STREET) == "storgatan 5, 11122 stockholm"
+    assert geocode.search_text(BOX) == "Box 5305, 10246 stockholm"
     assert geocode.search_text(_normalized(street_address="Storgatan 5")) == "storgatan 5"
 
 
@@ -471,27 +534,57 @@ def test_a_property_designation_is_not_fallback_eligible(
     assert _inserted(client, DESIGNATION_KEY)["match_status"] == "property_identifier"
 
 
-def test_an_adopted_run_id_alone_is_a_hit(
-    workbench: duckdb.DuckDBPyConnection,
+@pytest.mark.parametrize(
+    ("policy_version", "reference_md5"),
+    [
+        (STALE_POLICY, REFERENCE),  # an old policy
+        (POLICY, "an-older-extract"),  # an old reference extract
+        (STALE_POLICY, "an-older-extract"),  # both
+    ],
+    ids=("old_policy", "old_reference", "both_old"),
+)
+def test_an_adopted_row_on_an_old_pair_is_a_miss(
+    workbench: duckdb.DuckDBPyConnection, policy_version: str, reference_md5: str
 ) -> None:
-    """Either half identifies the imported family. This row is on an older policy AND an
-    older extract and carries no `legacy_adopted_v1`: only the run-id prefix says what it
-    is, and re-matching it would throw the import away."""
+    """An `adopted:` run id must not pin a cache hit forever (the 2026-09-06 review).
+
+    The adoption step copies an old identity's outcome with its ORIGINAL versions, so an
+    adopted row is exactly as stale as the outcome it copied. Only the imported
+    `legacy_adopted_v1` family -- which is on no resolver version at all -- is an
+    unconditional hit; an adopted row that names a real policy and a real extract is
+    re-matched after the next extract like any other row.
+    """
     client = FakeClient(
         cache_rows=[
             _cache_row(
-                CACHED_KEY,
-                policy_version=STALE_POLICY,
-                reference_md5="an-older-extract",
+                STREET_KEY,
+                policy_version=policy_version,
+                reference_md5=reference_md5,
                 address_identity_run_id="adopted:abc",
             )
         ]
     )
 
+    outcome = _run(workbench, client, {STREET_KEY: STREET})[STREET_KEY]
+
+    assert outcome.from_cache is False
+    assert (outcome.policy_version, outcome.reference_md5) == (POLICY, REFERENCE)
+    assert _inserted(client, STREET_KEY)["policy_version"] == POLICY
+
+
+def test_an_adopted_row_on_the_current_pair_is_a_hit(
+    workbench: duckdb.DuckDBPyConnection,
+) -> None:
+    """The other side of the same rule: an adopted row whose copied versions ARE this run's
+    pair is a hit, on the pair and not on the run-id prefix."""
+    client = FakeClient(
+        cache_rows=[_cache_row(CACHED_KEY, address_identity_run_id="adopted:abc")]
+    )
+
     outcome = _run(workbench, client, {CACHED_KEY: CACHED})[CACHED_KEY]
 
     assert outcome.from_cache is True
-    assert outcome.policy_version == STALE_POLICY
+    assert (outcome.policy_version, outcome.reference_md5) == (POLICY, REFERENCE)
     assert client.inserted == []
 
 
@@ -535,7 +628,8 @@ def test_the_cache_lookup_and_fallback_are_chunked(
 
 def test_the_care_of_is_not_matched(workbench: duckdb.DuckDBPyConnection) -> None:
     """The location key ignores care-of, and so must the text handed to the matcher:
-    `search_text` is the display line without its `c/o ...` part."""
+    `search_text` is COMPOSED from the location components, so the care-of never reaches
+    it -- it is not the display line with a part carved off."""
     key = location_key(WITH_CARE_OF)
     assert key == STREET_KEY
     client = FakeClient()
@@ -599,6 +693,187 @@ def test_no_addresses_touches_nothing(workbench: duckdb.DuckDBPyConnection) -> N
 
     assert client.calls == []
     assert _fold_tables(workbench) == []
+
+
+def test_a_foreign_or_unusable_address_never_reaches_the_matcher(
+    workbench: duckdb.DuckDBPyConnection,
+) -> None:
+    """Spec section 6 step 3: the fold filters `foreign` and `no_address` rows out (slice
+    2b) and this function refuses one if it is ever handed it -- the key is named so the
+    caller can find the row, rather than a silent `unmatched` written into the cache."""
+    foreign = _normalized(street_address="Hauptstrasse 1", post_town="Utlandet")
+    assert foreign.parse_status == "foreign"
+    empty = _normalized()
+    assert empty.parse_status == "no_address"
+    client = FakeClient()
+
+    for address in (foreign, empty):
+        key = location_key(address)
+        with pytest.raises(ValueError, match=key):
+            _run(workbench, client, {key: address})
+
+    assert client.calls == []
+    assert _fold_tables(workbench) == []
+
+
+def test_the_id_bound_reads_render_under_the_raised_query_size_setting() -> None:
+    """C1: clickhouse-driver substitutes `%(keys)s`/`%(rows)s` CLIENT-side, so a full
+    CACHE_LOOKUP_CHUNK of 64-hex location keys lands in the statement TEXT the server has to
+    parse -- past ClickHouse's 262,144-byte default `max_query_size` (Code: 62, "Max query
+    size exceeded"), which is why GEOCODE_QUERY_SETTINGS raises it.
+
+    Rendered exactly as the driver renders it, the technique
+    tests/test_se_company_address_normalize.py::
+    test_a_full_page_renders_under_the_query_size_setting uses. No server needed.
+    """
+    from types import SimpleNamespace
+
+    from clickhouse_driver.util.escape import escape_params
+
+    DEFAULT_MAX_QUERY_SIZE = 262_144
+    context = SimpleNamespace(
+        server_info=SimpleNamespace(get_timezone=lambda: "UTC"),
+        client_settings={"server_side_params": False},
+    )
+    keys = [f"{index:064x}" for index in range(geocode.CACHE_LOOKUP_CHUNK)]
+    rows = [(key, "11122", "stockholm") for key in keys]
+    rendered = {
+        "cache_lookup": geocode.cache_lookup_sql()
+        % escape_params({"keys": keys}, context),
+        "fallback": geocode.fallback_sql() % escape_params({"rows": rows}, context),
+    }
+
+    for name, statement in rendered.items():
+        size = len(statement.encode("utf-8"))
+        # Half one: the default really would reject this render, so the setting is not
+        # decoration -- the comment this replaces claimed a 1 MiB default and no need.
+        assert size > DEFAULT_MAX_QUERY_SIZE, name
+        # Half two: the raised setting covers the worst case with real margin.
+        assert size < geocode.GEOCODE_QUERY_SETTINGS["max_query_size"], name
+
+
+def test_the_id_bound_reads_pass_the_raised_query_size_setting(
+    workbench: duckdb.DuckDBPyConnection,
+) -> None:
+    """Both id-bound reads -- the cache lookup and the centroid fallback -- carry
+    GEOCODE_QUERY_SETTINGS. The INSERT does not: its values go over the wire as a block,
+    not in the statement text."""
+    client = FakeClient(
+        fallback_rows=[(BOX_KEY, "city", 59.32, 18.07, "STOCKHOLM", 4211, 9100.0)]
+    )
+
+    _run(workbench, client, {BOX_KEY: BOX})
+
+    kinds = [
+        "insert"
+        if sql.startswith("INSERT")
+        else "fallback"
+        if "se_postcode_centroids" in sql
+        else "lookup"
+        for sql, _ in client.calls
+    ]
+    assert sorted(kinds) == ["fallback", "insert", "lookup"]
+    assert dict(zip(kinds, client.settings_calls, strict=True)) == {
+        "lookup": geocode.GEOCODE_QUERY_SETTINGS,
+        "insert": None,
+        "fallback": geocode.GEOCODE_QUERY_SETTINGS,
+    }
+    assert geocode.GEOCODE_QUERY_SETTINGS == {
+        "max_query_size": 1_048_576,
+        "max_execution_time": 1800,
+    }
+
+
+def test_the_extract_provenance_is_stamped_on_every_written_row(
+    workbench: duckdb.DuckDBPyConnection,
+) -> None:
+    """I3: the live store check `missing_provenance`
+    (sweden_company/address_geocoding_assets.py::STORE_INVARIANTS_SQL) fails any store row
+    with a NULL in one of these five, so the entity's own rows carry the OSM extract's
+    provenance -- read from the workbench exactly as
+    address_resolution_promotion.py reads it. `source_record_id`/`source_record_url` stay
+    NULL: the check does not count them."""
+    client = FakeClient()
+
+    _run(workbench, client, {STREET_KEY: STREET})
+
+    row = _inserted(client, STREET_KEY)
+    assert (
+        row["source_url"],
+        row["source_object_key"],
+        row["source_md5"],
+        row["source_snapshot_at"],
+        row["source_retrieved_at"],
+    ) == (SOURCE_URL, SOURCE_OBJECT_KEY, REFERENCE, SNAPSHOT_AT, RETRIEVED_AT)
+    # The extract identity is the reference identity: both are
+    # `first(source_md5 order by source_record_id)` off the same table.
+    assert row["source_md5"] == row["reference_md5"]
+    assert row["source_record_id"] is None
+    assert row["source_record_url"] is None
+
+
+def test_the_provenance_read_is_the_promotions_own(
+    workbench: duckdb.DuckDBPyConnection,
+) -> None:
+    provenance = geocode.extract_provenance(workbench)
+
+    assert provenance == geocode.ExtractProvenance(
+        source_url=SOURCE_URL,
+        source_object_key=SOURCE_OBJECT_KEY,
+        source_md5=REFERENCE,
+        source_snapshot_at=SNAPSHOT_AT,
+        source_retrieved_at=RETRIEVED_AT,
+    )
+
+
+def test_an_empty_workbench_has_no_provenance_to_stamp(
+    workbench: duckdb.DuckDBPyConnection,
+) -> None:
+    workbench.execute("delete from sweden_address_osm.address_points")
+
+    with pytest.raises(ValueError, match="address_points"):
+        geocode.extract_provenance(workbench)
+
+
+def test_a_store_row_refuses_a_provenance_from_another_extract() -> None:
+    """`source_md5` and `reference_md5` are the same value off the same table. A row that
+    stamped one extract's md5 as its provenance and another's as its cache key would be
+    indistinguishable from a correct one on read."""
+    with pytest.raises(ValueError, match="reference_md5"):
+        geocode.store_row(
+            STREET,
+            _result_row(),
+            address_id=STREET_KEY,
+            policy_version=POLICY,
+            reference_md5="a-different-extract",
+            run_id=RUN_ID,
+            matched_at=STAMP,
+            provenance=PROVENANCE,
+        )
+
+
+def test_the_candidate_count_is_clamped_to_the_uint16_column() -> None:
+    """`candidate_count` is `UInt16` (migration 000317). A common street in a big city can
+    return more candidates than 65,535, and clickhouse-driver would reject the whole block.
+    Clamped, exactly as address_resolution_promotion.py's `least(65535, ...)` does it."""
+    row = dict(
+        zip(
+            STORE_COLUMNS,
+            geocode.store_row(
+                STREET,
+                _result_row(candidate_record_count=70_000),
+                address_id=STREET_KEY,
+                policy_version=POLICY,
+                reference_md5=REFERENCE,
+                run_id=RUN_ID,
+                matched_at=STAMP,
+                provenance=PROVENANCE,
+            ),
+            strict=True,
+        )
+    )
+
+    assert row["candidate_count"] == 65_535
 
 
 def test_sql_texts() -> None:

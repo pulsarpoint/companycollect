@@ -30,7 +30,11 @@ from typing import Any
 import pytest
 
 from dagster_v3.defs.se_company.address import adoption
-from dagster_v3.defs.se_company.address.geocode import ADOPTED_RUN_ID_PREFIX, CACHE_LOOKUP_CHUNK
+from dagster_v3.defs.se_company.address.geocode import (
+    ADOPTED_RUN_ID_PREFIX,
+    CACHE_LOOKUP_CHUNK,
+    GEOCODE_QUERY_SETTINGS,
+)
 from dagster_v3.defs.se_company.address.normalize_se import (
     RawAddress,
     location_key,
@@ -183,10 +187,14 @@ class FakeClient:
         self.existing_keys = set(existing_keys)
         self.reference_md5_rows = list(reference_md5_rows)
         self.calls: list[tuple[str, Any]] = []
+        # Parallel to `calls`: what each statement was sent as `settings`. The two id-bound
+        # reads must raise `max_query_size` (geocode.GEOCODE_QUERY_SETTINGS).
+        self.settings_calls: list[Any] = []
         self.inserted: list[tuple[Any, ...]] = []
 
     def execute(self, sql: str, params: Any = None, settings: Any = None) -> list[tuple[Any, ...]]:
         self.calls.append((sql, params))
+        self.settings_calls.append(settings)
         if sql.startswith("INSERT INTO"):
             self.inserted.extend(params or [])
             return []
@@ -243,7 +251,7 @@ def test_the_full_scenario_counts_every_branch(monkeypatch: pytest.MonkeyPatch) 
         identities=7,
         normalized=6,  # everyone but B
         collapsed=1,  # A2, onto A1's key
-        geocoded=4,  # A1, C, D, F pass the adopt rule
+        adoptable=4,  # A1, C, D, F pass the adopt rule
         skipped_stale=1,  # E
         existing=1,  # F's key already has a store row
         adopted=3,  # A1, C, D actually inserted
@@ -253,7 +261,7 @@ def test_the_full_scenario_counts_every_branch(monkeypatch: pytest.MonkeyPatch) 
         "identities": 7,
         "normalized": 6,
         "collapsed": 1,
-        "geocoded": 4,
+        "adoptable": 4,
         "skipped_stale": 1,
         "existing": 1,
         "adopted": 3,
@@ -363,7 +371,7 @@ def test_no_representatives_on_a_page_still_pages_on() -> None:
 
     assert counts.identities == 2
     assert counts.normalized == 1
-    assert counts.geocoded == 1
+    assert counts.adoptable == 1
 
 
 def test_current_reference_md5_is_derived_when_not_configured() -> None:
@@ -432,8 +440,39 @@ def test_the_lookup_and_existing_checks_are_chunked_at_the_geocode_module_consta
 
     assert counts.identities == CACHE_LOOKUP_CHUNK + 1
     assert counts.collapsed == 0
-    assert counts.geocoded == CACHE_LOOKUP_CHUNK + 1
+    assert counts.adoptable == CACHE_LOOKUP_CHUNK + 1
     lookups = client.statements("%(ids)s")
     assert sorted(len(params["ids"]) for _, params in lookups) == [1, CACHE_LOOKUP_CHUNK]
     existing_checks = client.statements("SELECT DISTINCT address_id")
     assert sorted(len(params["keys"]) for _, params in existing_checks) == [1, CACHE_LOOKUP_CHUNK]
+
+
+def test_the_id_bound_reads_pass_the_geocode_modules_query_size_setting() -> None:
+    """Both id-bound reads this asset sends -- the outcome lookup and the existing-key
+    check -- bind up to CACHE_LOOKUP_CHUNK 64-hex ids into the statement TEXT, past
+    ClickHouse's 262,144-byte default `max_query_size`. Both carry geocode.py's own
+    GEOCODE_QUERY_SETTINGS, imported rather than restated so the two modules cannot drift.
+    The identity page read binds no ids and the INSERT sends its values as a block, so
+    neither needs it."""
+    assert adoption.GEOCODE_QUERY_SETTINGS is GEOCODE_QUERY_SETTINGS
+
+    client, _ = _run([list(PAGE_1), list(PAGE_2)], outcomes=ALL_OUTCOMES, execute=True)
+
+    settings_by_kind: dict[str, set[Any]] = {}
+    for (sql, _params), settings in zip(client.calls, client.settings_calls, strict=True):
+        if sql.startswith("INSERT INTO"):
+            kind = "insert"
+        elif "%(ids)s" in sql:
+            kind = "outcomes"
+        elif sql.startswith("SELECT DISTINCT address_id"):
+            kind = "existing"
+        else:
+            kind = "page"
+        settings_by_kind.setdefault(kind, set()).add(
+            None if settings is None else id(settings)
+        )
+
+    assert settings_by_kind["outcomes"] == {id(GEOCODE_QUERY_SETTINGS)}
+    assert settings_by_kind["existing"] == {id(GEOCODE_QUERY_SETTINGS)}
+    assert settings_by_kind["page"] == {None}
+    assert settings_by_kind["insert"] == {None}

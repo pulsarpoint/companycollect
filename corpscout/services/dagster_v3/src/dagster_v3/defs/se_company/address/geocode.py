@@ -11,9 +11,12 @@ THE THREE THINGS THIS MODULE IS.
    care-of -- one physical address is matched once whoever receives mail there). The current
    outcome per key comes from `geocode_store.build_current_geocodes_sql`, the one read rule;
    a row is a HIT when its `(policy_version, reference_md5)` is the pair this run computes
-   with, or when it is an ADOPTED row (the imported family, which is on no resolver version
-   at all and must not be re-matched merely for that -- mirrors `is_adopted` in the store's
-   stage-2 rank). Everything else is a miss.
+   with, or when it is a `legacy_adopted_v1` row (the imported family, which is on no
+   resolver version at all and must not be re-matched merely for that -- mirrors
+   `is_adopted` in the store's stage-2 rank). Everything else is a miss, an `adopted:` row
+   from the adoption step included: it carries the ORIGINAL outcome's versions, so it is
+   exactly as stale as what it copied and is re-matched after the next extract like any
+   other row.
 
 2. An ENGINE CALL for the misses. The same resolver the Sweden shadow evaluation runs
    (`address_resolution_shadow.replace_sweden_address_resolution_shadow`), on the same
@@ -52,6 +55,7 @@ from dagster_v3.defs.address_resolution.search_documents import (
     replace_address_street_variants,
 )
 from dagster_v3.defs.se_company.address.normalize_se import NormalizedAddress
+from dagster_v3.defs.sweden_address_osm import tables as osm_tables
 from dagster_v3.defs.sweden_company import geocode_serving_overlay, geocode_store
 from dagster_v3.defs.sweden_company.address_resolution_policy import (
     SWEDEN_ADDRESS_RESOLUTION_POLICY,
@@ -71,15 +75,41 @@ ENRICHMENT_SCHEMA = geocode_store.ENRICHMENT_SCHEMA
 QUALIFIED_STORE_TABLE = geocode_store.QUALIFIED_CLICKHOUSE_GEOCODE_STORE_TABLE
 
 # `address_identity_run_id` for a row this entity matches. The adoption step (Task 4) writes
-# `adopted:<old address_id>` instead, which is how an adopted row is recognized on read
-# alongside its `legacy_adopted_v1` policy version.
+# `adopted:<old address_id>` instead, which says WHERE a row came from -- provenance for a
+# human reading the store. It is deliberately NOT part of the hit/miss decision (`_is_hit`):
+# an adopted row keeps the versions of the outcome it copied and ages out with them.
 ADDRESS_ENTITY_RUN_ID = "address-entity"
 ADOPTED_RUN_ID_PREFIX = "adopted:"
 
-# Keys per cache-lookup statement. 5,000 * (64 hex + quotes + comma) renders ~350 KB, inside
-# ClickHouse's 1 MiB default `max_query_size`, so no widened setting is needed. The fallback
-# binds its (key, postcode, city) triples in the same chunks for the same reason.
+# `parse_status` values the fold filters out before this function is called (spec section 6
+# step 3): they have no location to match and no coordinate to serve.
+UNMATCHABLE_PARSE_STATUSES = ("foreign", "no_address")
+
+# Keys per id-bound statement, for both the cache lookup and the fallback's (key, postcode,
+# city) triples. clickhouse-driver substitutes them CLIENT-side, so they land in the
+# statement TEXT: 5,000 64-hex keys render the lookup to 341,333 bytes and the fallback to
+# 461,740 bytes -- both past ClickHouse's 262,144-byte DEFAULT `max_query_size` (Code: 62,
+# "Max query size exceeded"), which is why every id-bound read below passes
+# GEOCODE_QUERY_SETTINGS. See tests/test_se_company_address_geocode.py for the measurement.
 CACHE_LOOKUP_CHUNK = 5_000
+
+# The raised setting, on the same 1 MiB precedent as basic_info/batch.py's
+# ID_BOUND_QUERY_SETTINGS: >2x the measured worst case above. max_execution_time bounds the
+# other failure mode -- a pathological read must fail visibly rather than hold the fold's
+# pool slot forever.
+GEOCODE_QUERY_SETTINGS = {"max_query_size": 1_048_576, "max_execution_time": 1800}
+
+# The extract's provenance, read exactly as address_resolution_promotion.py reads it
+# (`_replace_promotion_stage`'s `_sweden_address_resolution_osm_provenance`): one row,
+# `first(... order by source_record_id)` per column, off the same workbench table
+# `geocode_demand.fresh_reference_md5` takes the reference md5 from.
+EXTRACT_PROVENANCE_SQL = f"""select
+    first(source_url order by source_record_id),
+    first(source_object_key order by source_record_id),
+    first(source_md5 order by source_record_id),
+    first(source_snapshot_at order by source_record_id),
+    first(source_retrieved_at order by source_record_id)
+from {osm_tables.QUALIFIED_ADDRESS_TABLE}"""
 
 # What a served outcome needs off a cached row, plus the two version columns and the run id
 # the hit/miss decision reads. A subset of geocode_store.STORE_COLUMNS.
@@ -156,6 +186,42 @@ class GeocodeOutcome:
     policy_version: str
     reference_md5: str
     from_cache: bool
+
+
+@dataclass(frozen=True, slots=True)
+class ExtractProvenance:
+    """The OSM extract every row this run writes was matched against.
+
+    The live store check `missing_provenance`
+    (`sweden_company/address_geocoding_assets.py::STORE_INVARIANTS_SQL`) fails the store if
+    ANY row has a NULL in one of these five, so the entity's rows carry them exactly as the
+    promotion's imported rows do. The two per-RECORD columns (`source_record_id`,
+    `source_record_url`) are a different thing and stay NULL: they name one imported source
+    record, which a resolver answer over several candidates does not have, and the check
+    does not count them.
+    """
+
+    source_url: str
+    source_object_key: str
+    source_md5: str
+    source_snapshot_at: datetime
+    source_retrieved_at: datetime
+
+
+def extract_provenance(duckdb: Any) -> ExtractProvenance:
+    """The one provenance row of the workbench's current extract.
+
+    `first(...)` over an empty table returns a row of NULLs rather than no row, so an empty
+    workbench is caught here instead of writing five NULLs into the store and failing the
+    check on the next run.
+    """
+    [row] = duckdb.execute(EXTRACT_PROVENANCE_SQL).fetchall()
+    if any(value is None for value in row):
+        raise ValueError(
+            f"{osm_tables.QUALIFIED_ADDRESS_TABLE} carries no extract provenance"
+            " -- refusing to write geocode rows the store check would reject"
+        )
+    return ExtractProvenance(*row)
 
 
 def cache_lookup_sql() -> str:
@@ -264,15 +330,15 @@ def search_text(address: NormalizedAddress) -> str:
     then leave `Dept 4` in the matched text and score two identical locations differently.
     The components are exactly what `location_key` hashes, so equal keys now imply equal
     search text by construction rather than by the shape of the rendered line.
+
+    The postcode is emitted UNSPACED (`11122`, not `111 22`): the shadow evaluation's query
+    documents carry the register's own unspaced `postal_code`, and the engine's
+    `raw_full_exact` strategy compares normalized FULL text, so a spaced twin here would
+    score the same address differently in the entity than in the shadow.
     """
     postal = " ".join(
         part
-        for part in (
-            f"{address.postal_code[:3]} {address.postal_code[3:]}"
-            if address.postal_code
-            else "",
-            address.city or "",
-        )
+        for part in (address.postal_code or "", address.city or "")
         if part
     )
     return ", ".join(part for part in (street_line(address), postal) if part)
@@ -287,14 +353,24 @@ def store_row(
     reference_md5: str,
     run_id: str,
     matched_at: datetime,
+    provenance: ExtractProvenance,
 ) -> tuple[Any, ...]:
     """One geocode_store.STORE_COLUMNS-ordered insert tuple from one engine result row.
 
     The matcher's RAW outcome: no centroid, no relabelling. Non-nullable String columns get
     `''` and never `None` (migration 000317); `coordinate_method` is Nullable and carries
-    `NULL` when there is no coordinate to have a method for. The seven `source_*` columns
-    describe an IMPORTED row's provenance and stay NULL for a row this resolver computed.
+    `NULL` when there is no coordinate to have a method for. The two per-RECORD `source_*`
+    columns describe an IMPORTED row's one source record and stay NULL here; the five
+    per-EXTRACT ones carry `provenance`, because the live store check `missing_provenance`
+    gates on them (see ExtractProvenance).
     """
+    if provenance.source_md5 != reference_md5:
+        raise ValueError(
+            f"the extract provenance names snapshot {provenance.source_md5!r} but the row"
+            f" would be keyed on reference_md5 {reference_md5!r} -- both are"
+            " `first(source_md5 order by source_record_id)` off the same table and must"
+            " agree"
+        )
     has_coordinate = result["latitude"] is not None and result["longitude"] is not None
     values: dict[str, Any] = {
         "address_id": address_id,
@@ -303,7 +379,10 @@ def store_row(
         "address_identity_run_id": ADDRESS_ENTITY_RUN_ID,
         "normalized_match_key": address.normalized_address,
         "match_status": result["resolution_status"],
-        "candidate_count": int(result["candidate_record_count"]),
+        # UInt16 (migration 000317): a common street in a big city can return more than
+        # 65,535 candidates, and clickhouse-driver would reject the whole block. Clamped
+        # exactly as address_resolution_promotion.py's `least(65535, ...)` clamps it.
+        "candidate_count": min(65535, int(result["candidate_record_count"])),
         "candidate_record_ids": list(result["candidate_record_ids"]),
         "candidate_record_urls": list(result["candidate_record_urls"]),
         "match_method": result["match_strategy"],
@@ -318,11 +397,11 @@ def store_row(
         "coordinate_spread_meters": result["coordinate_spread_meters"],
         "source_record_id": None,
         "source_record_url": None,
-        "source_url": None,
-        "source_object_key": None,
-        "source_md5": None,
-        "source_snapshot_at": None,
-        "source_retrieved_at": None,
+        "source_url": provenance.source_url,
+        "source_object_key": provenance.source_object_key,
+        "source_md5": provenance.source_md5,
+        "source_snapshot_at": provenance.source_snapshot_at,
+        "source_retrieved_at": provenance.source_retrieved_at,
         "geocode_run_id": run_id,
         "matched_at": matched_at,
     }
@@ -342,6 +421,7 @@ def geocode_addresses(
     if not addresses:
         _log(log, "geocode: no addresses")
         return {}
+    _reject_unmatchable(addresses)
     reference_md5 = ensure_reference_documents(duckdb, log=log)
     policy_version = SWEDEN_ADDRESS_RESOLUTION_POLICY.version
 
@@ -363,6 +443,7 @@ def geocode_addresses(
 
     if misses:
         results = _match(duckdb, misses, run_id=run_id, log=log)
+        provenance = extract_provenance(duckdb)
         rows = [
             store_row(
                 misses[key],
@@ -372,6 +453,7 @@ def geocode_addresses(
                 reference_md5=reference_md5,
                 run_id=run_id,
                 matched_at=matched_at,
+                provenance=provenance,
             )
             for key, result in results.items()
         ]
@@ -406,6 +488,23 @@ def geocode_addresses(
     return outcomes
 
 
+def _reject_unmatchable(addresses: Mapping[str, NormalizedAddress]) -> None:
+    """`foreign` and `no_address` rows never reach this function (spec section 6 step 3).
+
+    The fold filters them out (slice 2b): they carry their status and no coordinates, and
+    there is nothing for the matcher to look for. Refused loudly rather than matched,
+    because the resolver would happily write an `unmatched` row into the cache for one and
+    the mistake would then look like an ordinary miss forever.
+    """
+    for key in sorted(addresses):
+        status = addresses[key].parse_status
+        if status in UNMATCHABLE_PARSE_STATUSES:
+            raise ValueError(
+                f"geocode_addresses was handed a {status!r} address (location key {key})"
+                " -- the fold filters these out before the geocode step"
+            )
+
+
 def _read_cache(
     clickhouse: Any,
     keys: Sequence[str],
@@ -416,7 +515,9 @@ def _read_cache(
     sql = cache_lookup_sql()
     hits: dict[str, GeocodeOutcome] = {}
     for chunk in _chunks(keys, CACHE_LOOKUP_CHUNK):
-        for raw in clickhouse.execute(sql, {"keys": list(chunk)}):
+        for raw in clickhouse.execute(
+            sql, {"keys": list(chunk)}, settings=GEOCODE_QUERY_SETTINGS
+        ):
             row = dict(zip(CACHE_COLUMNS, raw, strict=True))
             if not _is_hit(
                 row, policy_version=policy_version, reference_md5=reference_md5
@@ -447,17 +548,20 @@ def _read_cache(
 def _is_hit(
     row: Mapping[str, Any], *, policy_version: str, reference_md5: str
 ) -> bool:
-    """An adopted row, or a resolver row computed with exactly this run's two versions.
+    """An imported row, or a row computed with exactly this run's two versions.
 
-    The adopted family is the one-time import of the retired per-company matcher's
+    `legacy_adopted_v1` is the one-time import of the retired per-company matcher's
     decisions: it is on no resolver policy and no OSM extract of its own, so re-matching it
     for that reason alone would throw the import away on the first run. Recognized the way
-    the store's rank does (`policy_version = 'legacy_adopted_v1'`), plus the run-id prefix
-    the adoption step stamps, so either half alone still identifies the row.
+    the store's rank does (`policy_version = 'legacy_adopted_v1'`) and nothing else.
+
+    The `adopted:` run-id prefix the adoption step stamps is NOT a second hit condition
+    (2026-09-06 review). Adoption copies an old identity's outcome with its ORIGINAL
+    `policy_version` and `reference_md5`, so an adopted row is exactly as stale as what it
+    copied; treating the prefix as a hit would pin every adopted key to its imported answer
+    forever, through every future policy bump and every future OSM extract.
     """
     if row["policy_version"] == geocode_store.LEGACY_ADOPTED_POLICY_VERSION:
-        return True
-    if str(row["address_identity_run_id"]).startswith(ADOPTED_RUN_ID_PREFIX):
         return True
     return (
         row["policy_version"] == policy_version
@@ -646,7 +750,7 @@ def _apply_fallback(
             for key in chunk
         ]
         for key, tier, latitude, longitude, locality, point_count, spread in (
-            clickhouse.execute(sql, {"rows": rows})
+            clickhouse.execute(sql, {"rows": rows}, settings=GEOCODE_QUERY_SETTINGS)
         ):
             if tier not in (
                 geocode_serving_overlay.POSTCODE_PRECISION,

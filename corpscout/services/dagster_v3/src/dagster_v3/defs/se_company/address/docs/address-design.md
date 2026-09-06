@@ -1,8 +1,8 @@
-# se_company.address (slice 0)
+# se_company.address (slices 0-2a)
 
-Slice 0 of the 2026-09-06 SE company address entity design
+The shipped part of the 2026-09-06 SE company address entity design
 (`docs/superpowers/specs/2026-09-06-se-company-address-entity-design.md`); read that for
-everything past the four modules below -- compatibility grouping, geocoding, the precedence
+everything past the modules below -- the fold itself, compatibility grouping, the precedence
 export, the backoffice Address tab, parity and the cutover.
 
 | Module | Responsibility |
@@ -11,6 +11,8 @@ export, the backoffice Address tab, parity and the cutover.
 | `normalize_se.py` | `normalize_se_address`: pure Swedish parser -- splits, folds and classifies; never expands abbreviations, corrects spelling or guesses a house number (that is the geocoder's job) |
 | `normalize.py` | The normalize step's SQL (`changed_scope_sql`, `changed_rows_sql`, `all_scope_sql`, `all_rows_sql`, `normalized_insert_sql`) and the paging/write loop (`normalize_all`, `normalize_companies`) |
 | `assets.py` | `se_company_address_normalize`, the one asset this slice ships |
+| `geocode.py` | `geocode_addresses`: one served outcome per location key -- the store as cache, the OSM workbench as matcher, the centroid overlay on read (slice 2a) |
+| `adoption.py` | `se_address_geocodes_adopt_keys`, the one-off that copies old identities' outcomes onto location keys (slice 2a) |
 
 ## Change rule
 
@@ -87,3 +89,58 @@ schedules it Mondays 07:05 UTC (`5 7 * * 1`) with `execute: true`, `page_size: 2
 extractor and `changed_only: true` on the normalize asset, registered STOPPED. The `v2`
 interim name avoids colliding with `address_legacy.py`'s own `se_company_address_weekly`
 until the cutover retires that schedule and this one takes the canonical name.
+
+## Geocoding (slice 2a)
+
+`geocode_addresses(addresses, *, clickhouse, duckdb, run_id, matched_at)` in `geocode.py`
+returns one `GeocodeOutcome` per LOCATION key. Pure orchestration -- no Dagster, no
+resources -- so the fold, a backfill script and the tests drive the same code. Three steps:
+a cache read over `corpscout.se_address_geocodes` (through the store's own
+`build_current_geocodes_sql` read rule), the shadow's resolver on the misses over per-run
+tables in `sweden_company_enrichment` dropped in a `finally`, and the
+postcode-then-city centroid overlay applied ON READ and never written, so an address the
+matcher could not place is served a coarse coordinate today and a precise one the moment a
+later extract matches it.
+
+`foreign` and `no_address` addresses never reach it: the fold filters them out and the
+function raises `ValueError` naming the location key if handed one.
+
+**The hit rule.** A cached row is a hit when its `(policy_version, reference_md5)` is the
+pair this run computes with, or when its `policy_version` is `legacy_adopted_v1` -- the
+one-time import, which is on no resolver version at all and would be thrown away on the
+first run if a version mismatch re-matched it. Nothing else is a hit. In particular the
+`adopted:<old address_id>` run-id prefix the adoption asset stamps is provenance, not a
+cache pin: an adopted row keeps the versions of the outcome it copied and is re-matched
+after the next policy bump or OSM extract like any other row.
+
+**Provenance.** Every row written carries the extract's five `source_*` columns --
+`source_url`, `source_object_key`, `source_md5`, `source_snapshot_at`,
+`source_retrieved_at` -- read once per call by `extract_provenance` off
+`sweden_address_osm.address_points` with the same `first(... order by source_record_id)`
+projection `address_resolution_promotion.py` uses. The live store check
+`missing_provenance` (`sweden_company/address_geocoding_assets.py`) fails the store if any
+row has a NULL in one of them. `source_md5` is the row's own `reference_md5` (both are the
+same read) and `store_row` refuses any other pairing. The two per-RECORD columns,
+`source_record_id` and `source_record_url`, stay NULL and the check does not count them.
+`candidate_count` is clamped to 65,535, the `UInt16` column's ceiling, exactly as the
+promotion's `least(65535, ...)` clamps it.
+
+**Query settings.** Both id-bound reads -- the cache lookup and the centroid fallback --
+bind up to `CACHE_LOOKUP_CHUNK` (5,000) values that clickhouse-driver substitutes CLIENT
+side, so they land in the statement text: 341,333 and 461,740 bytes, past ClickHouse's
+262,144-byte default `max_query_size`. Both pass `GEOCODE_QUERY_SETTINGS`
+(`max_query_size` 1 MiB, `max_execution_time` 1800), and so do `adoption.py`'s two
+id-bound reads, which import the same constant.
+
+## Adoption (slice 2a, one-off)
+
+`se_address_geocodes_adopt_keys` walks `se_addresses_current` in keyset pages, normalizes
+each old identity with the same normalizer, computes its `location_key` and copies that
+identity's current store outcome onto the key -- `address_id`, `address_identity_run_id`
+(`adopted:<old id>`) and `geocode_run_id` overridden, every other column, `policy_version`
+/`reference_md5`/`matched_at` included, copied unchanged. An outcome is adopted when it is
+geocoded on any version, or on this run's current pair whatever its status; the rest are
+`skipped_stale`. Several identities on one key keep the first in `address_id` order
+(`collapsed`); a key the store already holds is `existing` and never re-inserted.
+`execute` defaults false and only counts. Metadata:
+`identities/normalized/collapsed/adoptable/existing/adopted/skipped_stale`.

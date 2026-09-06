@@ -238,7 +238,7 @@ The normalizer never expands abbreviations, corrects spelling or guesses a house
 is the matcher's work, with its own versioned variants and its zero-regression bar. A golden
 corpus (`tests/fixtures/se_addresses/*.jsonl`) drawn from real SCB, Bolagsverket and Ratsit
 rows covers boxes, care-of, floors, entrance letters, ranges, `utlandet`, empty and packed
-cases; `normalizer_version` (`se-address-normalizer-v1`) is bumped with every behaviour
+cases; `normalizer_version` (`se-address-normalizer-v2`) is bumped with every behaviour
 change, and the bump is what re-normalizes stored rows.
 
 The normalize asset `se_company_address_normalize` reads the raw table FINAL, selects rows
@@ -334,14 +334,21 @@ fold page over the page's distinct keys.
 1. Cache lookup in `se_address_geocodes` by `(location_key, policy_version, reference_md5)`
    (the key without care-of, section 3.7).
 2. Misses are written as query documents into the OSM workbench DuckDB
-   (`data/sweden_address_osm_source.duckdb`, resource `sweden_address_osm_duckdb`, opened
-   read-only for the reference tables, a per-run temporary schema for the query and result
-   tables) and matched by the existing engine, `replace_address_resolution_candidates` then
-   `replace_address_resolution_results`, under `SWEDEN_ADDRESS_RESOLUTION_POLICY`.
+   (`data/sweden_address_osm_source.duckdb`, resource `sweden_address_osm_duckdb`) and
+   matched by the existing engine, `replace_address_resolution_candidates` then
+   `replace_address_resolution_results`, under `SWEDEN_ADDRESS_RESOLUTION_POLICY`. The
+   workbench is opened READ-WRITE: the shared reference documents are built once per OSM
+   extract (`ensure_reference_documents`, keyed on the extract's md5) and the five per-run
+   tables -- input, query, street variants, candidates, results -- are created and dropped
+   in a `finally` under the run id. All of them, the shared reference table included, live
+   in the `sweden_company_enrichment` schema the shadow evaluation already uses.
 3. Outcomes `unmatched`, `ambiguous` and `postal_box` go through the centroid fallback with
    the same postcode-then-city rule and spread cap as `geocode_serving_overlay`, labelled
    `centroid_fallback` and `matched_area`. Box addresses therefore get their town centroid.
-   `foreign` and `invalid` rows get their status and no coordinates and skip the matcher.
+   `foreign` and `no_address` rows never reach the function at all: the fold filters them
+   out (slice 2b) and `geocode_addresses` raises `ValueError` naming the location key if it
+   is ever handed one, rather than letting the resolver write an `unmatched` row into the
+   cache for an address that has nothing to match.
 4. New outcomes are inserted into the cache before the page's main rows are written, so a
    crash between the two costs nothing on retry.
 
@@ -353,13 +360,20 @@ measurement, and the selection rule of section 5.5 propagates it.
 A workbench that cannot be opened fails the run. The fold never publishes rows without a
 geocode block.
 
-**Adoption.** `se_address_geocodes_adopt_keys`, a one-off asset, computes the new
-`address_key` for every identity in `se_addresses_current` from its normalized fields through
-the section-4 normalizer, and inserts a copy of that identity's current outcome (the same
-two-stage rank as `se_address_geocodes_current`) under the new key with its original
-`policy_version` and `reference_md5`. Identities whose normalized text does not reproduce
-under the new normalizer are not adopted and are matched on their first fold. The asset
-reports adopted, skipped and ambiguous counts; it runs once before the first full fold.
+**Adoption.** `se_address_geocodes_adopt_keys`, a one-off asset, computes the
+`location_key` for every identity in `se_addresses_current` from its normalized fields
+through the section-4 normalizer, and inserts a copy of that identity's current outcome (the
+same two-stage rank as `se_address_geocodes_current`) under the new key with its original
+`policy_version`, `reference_md5` and `matched_at`. An outcome is adopted when it is
+GEOCODED on any version, or when it is on this run's current `(policy_version,
+reference_md5)` pair whatever its status; everything else -- a non-geocoded outcome on a
+stale policy or extract -- is skipped as stale and matched on its first fold. Several old
+identities collapsing onto one key keep the first in `address_id` order. The copied row
+carries the original's versions, so `geocode._is_hit` reads it like any other row: adopted
+rows are re-matched after the next policy bump or OSM extract exactly as unadopted ones
+are, and only the imported `legacy_adopted_v1` family stays an unconditional hit. The asset
+reports `identities/normalized/collapsed/adoptable/existing/adopted/skipped_stale`;
+`execute` defaults false and only counts; it runs once before the first full fold.
 
 ## 7. Extractors
 
@@ -480,7 +494,7 @@ Tables `se_company_address_suggestion`, `se_company_address_normalized`,
 `se_company_address_v2` (renamed `se_company_address` at cutover), `se_company_address_history`, `se_company_address_rule`,
 `se_company_address_precedence`. Package `dagster_v3.defs.se_company.address` (`tables`,
 `normalize_se`, `normalize`, `suggestions`, `extract` shared from basic info, `scb`, `bolagsverket`,
-`ratsit`, `precedence`, `fold`, `geocode`, `batch`, `assets`, `jobs`); the old model's module
+`ratsit`, `precedence`, `fold`, `geocode`, `adoption`, `batch`, `assets`, `jobs`); the old model's module
 `se_company/address.py` was renamed `address_legacy.py` on 2026-09-06 so the package can take
 the name, its definitions unchanged until the cutover retires them. Assets
 `se_company_address_suggestions_<source>`, `se_company_address_normalize`,

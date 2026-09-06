@@ -21,6 +21,7 @@ gates the tier with `ifNull`, and this is what proves it.
 """
 
 import subprocess
+from dataclasses import replace as dataclass_replace
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
@@ -71,6 +72,18 @@ NEWER = datetime(2026, 9, 6, 12, 0, tzinfo=UTC)
 
 ADDRESS = normalize_se_address(
     RawAddress(street_address="Storgatan 5", postal_code="11122", post_town="Stockholm")
+)
+
+# The OSM extract's provenance, as `extract_provenance` reads it off the workbench. Its
+# `source_md5` IS the reference md5 -- both are `first(source_md5 order by
+# source_record_id)` over `sweden_address_osm.address_points` -- so `store_row` refuses any
+# other pairing.
+PROVENANCE = geocode.ExtractProvenance(
+    source_url="https://download.geofabrik.de/europe/sweden-latest.osm.pbf",
+    source_object_key="raw/sweden-test.osm.pbf",
+    source_md5=REFERENCE,
+    source_snapshot_at=datetime(2026, 8, 16, tzinfo=UTC),
+    source_retrieved_at=datetime(2026, 8, 16, 1, 0, tzinfo=UTC),
 )
 
 
@@ -159,6 +172,11 @@ def _resolver_insert(
             reference_md5=reference_md5,
             run_id=RUN_ID,
             matched_at=matched_at,
+            provenance=(
+                PROVENANCE
+                if reference_md5 == PROVENANCE.source_md5
+                else dataclass_replace(PROVENANCE, source_md5=reference_md5)
+            ),
         )
     )
 
@@ -212,7 +230,12 @@ READ_BACK_COLUMNS = (
     "coordinate_method",
     "coordinate_supporting_point_count",
     "source_record_id",
+    "source_record_url",
+    "source_url",
+    "source_object_key",
+    "source_md5",
     "source_snapshot_at",
+    "source_retrieved_at",
     "geocode_run_id",
     "matched_at",
 )
@@ -346,11 +369,31 @@ def test_the_insert_tuple_round_trips(sections: dict[str, list[list[str]]]) -> N
         "geocode_precision": "building",
         "coordinate_method": "resolver",
         "coordinate_supporting_point_count": "1",
+        # The two per-RECORD columns stay NULL: the resolver's answer names candidates, not
+        # one imported source record, and `missing_provenance` does not count them.
         "source_record_id": "\\N",
-        "source_snapshot_at": "\\N",
+        "source_record_url": "\\N",
+        # The five per-EXTRACT columns the live store check `missing_provenance` gates on
+        # (sweden_company/address_geocoding_assets.py) come back non-NULL, and `source_md5`
+        # is the row's own `reference_md5`.
+        "source_url": PROVENANCE.source_url,
+        "source_object_key": PROVENANCE.source_object_key,
+        "source_md5": REFERENCE,
+        "source_snapshot_at": "2026-08-16 00:00:00.000",
+        "source_retrieved_at": "2026-08-16 01:00:00.000",
         "geocode_run_id": RUN_ID,
         "matched_at": "2026-09-06 12:00:00.000",
     }
+    assert "\\N" not in [
+        row[READ_BACK_COLUMNS.index(column)]
+        for column in (
+            "source_url",
+            "source_object_key",
+            "source_md5",
+            "source_snapshot_at",
+            "source_retrieved_at",
+        )
+    ]
 
 
 def test_the_fallback_walks_the_ladder(sections: dict[str, list[list[str]]]) -> None:
