@@ -115,6 +115,31 @@ def test_a_partial_row_with_two_matching_candidates_publishes_alone() -> None:
     assert own.postal_code is None
 
 
+def test_two_identical_partials_over_two_candidates_publish_one_row() -> None:
+    partial = dict(postal_code=None, house_number=None, parse_status="partial", normalized_address="Storgatan, Stockholm")
+    result = fold([
+        row("scb"),
+        row("bolagsverket", house_number="7", normalized_address="Storgatan 7, 111 22 Stockholm"),
+        row("reviewer", **partial),
+        row("ratsit", **partial),
+    ])
+    assert result.published == 3
+    keys = [r.address_key for r in result.rows]
+    assert len(set(keys)) == len(keys)
+    own = [r for r in result.rows if r.house_number is None][0]
+    assert own.sources == ("reviewer", "ratsit")
+    assert own.text_source == "reviewer"
+
+
+def test_a_partial_with_a_postcode_but_no_city_joins_the_matching_candidate() -> None:
+    partial = row("ratsit", city=None, postal_code="11122", parse_status="partial",
+                  normalized_address="Storgatan 5, 111 22")
+    result = fold([row("scb"), partial])
+    assert result.published == 1
+    assert result.rows[0].city == "stockholm"
+    assert result.rows[0].sources == ("scb", "ratsit")
+
+
 def test_a_foreign_row_publishes_alone_with_a_foreign_geocode_status_and_no_geocode_need() -> None:
     foreign = row("scb", street_name=None, house_number=None, postal_code=None, city=None, country_code="",
                   parse_status="foreign", normalized_address="")
@@ -218,6 +243,12 @@ def test_ties_break_on_precedence_then_recency_then_source_and_slot() -> None:
     assert fold([older, newer]).rows[0].text_source == "scb"           # 900 beats 300
     assert fold([older, newer], precedence={"ratsit": 5000}).rows[0].text_source == "ratsit"
     assert fold([row("workplace_a", suggested_at=T1), row("workplace_b", suggested_at=T2)]).rows[0].text_source == "workplace_b"
+    # Equal on completeness, precedence (both unranked) and stamp: the source name decides.
+    tied = fold([row("workplace_b", "x", suggested_at=T1), row("workplace_a", "y", suggested_at=T1)])
+    assert tied.rows[0].text_source == "workplace_a"
+    # Equal on all four: the slot decides.
+    slotted = fold([row("workplace_c", "b", suggested_at=T1), row("workplace_c", "a", suggested_at=T1)])
+    assert slotted.rows[0].slots[0] == "a"
 
 
 def test_bad_input_is_refused() -> None:
@@ -227,3 +258,6 @@ def test_bad_input_is_refused() -> None:
         fold([row("reviewer_draft")])
     with pytest.raises(ValueError):
         fold([dataclasses.replace(row("scb"), company_id="5560000002")])
+    previous = fold([row("scb")]).rows[0]
+    with pytest.raises(ValueError):
+        fold([], published=[dataclasses.replace(previous, company_id="5560000002")])

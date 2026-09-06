@@ -122,9 +122,11 @@ class PublishedAddress:
         return location_key(self.as_normalized_address())
 
     def needs_geocode(self) -> bool:
-        """Candidates (active or hidden) that are not foreign. Withdrawn rows keep the
-        block they had."""
-        return self.inactive_reason != WITHDRAWN and self.geocode_status != FOREIGN_GEOCODE_STATUS and self.geocode_policy == ""
+        """Candidates (active or hidden) whose geocode block is still empty. An empty
+        `geocode_status` is the sentinel: a foreign candidate already carries
+        `'foreign'` and a geocoded one the matcher's status, so neither needs a check of
+        its own. Withdrawn rows keep the block they had."""
+        return self.inactive_reason != WITHDRAWN and self.geocode_status == ""
 
     def with_geocode(self, outcome: GeocodeOutcome) -> "PublishedAddress":
         if outcome.location_key != self.location_key():
@@ -173,10 +175,14 @@ def _sort_key(row: NormalizedRow, company_precedence: Mapping[str, int] | None) 
     )
 
 
-def _location_equal(a: Mapping[str, str | None], b: Mapping[str, str | None]) -> bool:
-    if a["box"] is not None or b["box"] is not None:
-        return a["box"] == b["box"]
-    return a["street_name"] == b["street_name"]
+def _location_equal(a: Mapping[str, str | None], b: Mapping[str, str | None], *, require_present: bool = False) -> bool:
+    """The location line agrees: two equal boxes when either side has one, else two equal
+    street names. `require_present` also demands the compared field is set on both sides,
+    which is what a partial needs -- a row with no street line is nobody's neighbour."""
+    field = "box" if (a["box"] is not None or b["box"] is not None) else "street_name"
+    if require_present and (a[field] is None or b[field] is None):
+        return False
+    return a[field] == b[field]
 
 
 def _one_sided_ok(a: Mapping[str, str | None], b: Mapping[str, str | None]) -> bool:
@@ -203,11 +209,16 @@ class _Candidate:
         )
 
     def partial_compatible(self, row: NormalizedRow) -> bool:
+        """A `partial` row is missing its postcode OR its city (the normalizer marks both
+        cases), so it can only be placed by the location line plus whichever of the two it
+        does carry -- it must carry at least one, or it would match half the town."""
         c = row.components()
         return (
             row.country_code == self.country_code
-            and c["city"] is not None and c["street_name"] is not None
-            and c["city"] == self.union["city"] and c["street_name"] == self.union["street_name"]
+            and _location_equal(c, self.union, require_present=True)
+            and (c["postal_code"] is None or c["postal_code"] == self.union["postal_code"])
+            and (c["city"] is None or c["city"] == self.union["city"])
+            and (c["postal_code"] is not None or c["city"] is not None)
             and _one_sided_ok(c, self.union)
         )
 
@@ -230,6 +241,9 @@ def _published_from(candidate: _Candidate, company_id: str, hidden_keys: Set[str
     text = first.normalized_address if union == first.components() else display_line(**union)
     key = address_key(identity)
     hidden = key in hidden_keys
+    # `kinds` is the DISTINCT member kinds in member order (spec 3.3), so unlike `sources`,
+    # `slots` and `normalized_ids` it is not index-parallel to the members: two members that
+    # are both `postal` contribute one entry. Read it as a set, never zipped with the rest.
     kinds: list[str] = []
     for member in candidate.members:
         if member.kind not in kinds:
@@ -258,7 +272,8 @@ def fold_company_addresses(
 ) -> FoldResult:
     """The company's new published set: every candidate (active, or hidden by a rule) and
     every previously published key without a candidate as withdrawn. Candidates carry no
-    geocode block yet except the foreign ones (spec 5.2 to 5.3)."""
+    geocode block yet except the foreign ones (spec 5.2 to 5.3), and a published set never
+    carries one key twice."""
     for row in rows:
         if row.company_id != company_id:
             raise ValueError(f"row company_id {row.company_id!r} is not {company_id!r}")
@@ -266,6 +281,9 @@ def fold_company_addresses(
             raise ValueError(f"{row.source}/{row.slot}: parse_status {row.parse_status!r} is not publishable")
         if row.source in EXCLUDED_SOURCES:
             raise ValueError(f"{row.source}/{row.slot}: source never folds")
+    for previous in published:
+        if previous.company_id != company_id:
+            raise ValueError(f"published company_id {previous.company_id!r} is not {company_id!r}")
     ordered = sorted(rows, key=lambda r: _sort_key(r, company_precedence))
     candidates: list[_Candidate] = []
     for row in (r for r in ordered if r.parse_status != "partial"):
@@ -278,8 +296,21 @@ def fold_company_addresses(
         matching = [c for c in candidates if c.partial_compatible(row)]
         if len(matching) == 1:
             matching[0].add(row)
-        else:
+            continue
+        # No home, or too many to choose between: the row publishes on its own -- unless an
+        # earlier row already started a candidate with exactly its components, which would
+        # hash to the same address_key. The main table is
+        # `ReplacingMergeTree(folded_at) ORDER BY (company_id, address_key)`, so two rows
+        # sharing a key and a folded_at collapse to an arbitrary one of the pair; a
+        # published set never carries one key twice.
+        twin = next(
+            (c for c in candidates if c.country_code == row.country_code and c.union == row.components()),
+            None,
+        )
+        if twin is None:
             candidates.append(_Candidate(row))
+        else:
+            twin.add(row)
 
     out = [_published_from(c, company_id, hidden_keys, source_run_id) for c in candidates]
     live_keys = {row.address_key for row in out}
