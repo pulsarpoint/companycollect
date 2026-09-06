@@ -15,6 +15,9 @@ from dagster_v3.defs.se_company.common import normalized_se_company_ids
 GROUP_NAME = "se_company_address"
 NORMALIZE_POOL = "se_company_address_normalize"
 
+EXTRACTOR_SOURCES: tuple[str, ...] = ("scb", "bolagsverket", "ratsit")
+EXTRACTOR_ASSET_NAMES: tuple[str, ...] = tuple(f"se_company_address_suggestions_{source}" for source in EXTRACTOR_SOURCES)
+
 
 class AddressNormalizeConfig(dg.Config):
     changed_only: bool = True
