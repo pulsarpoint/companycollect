@@ -71,7 +71,8 @@ One current row per company, source and slot: what the source delivered, never n
 company_id            String
 source                LowCardinality(String)   -- scb, bolagsverket, ratsit, reviewer, reviewer_draft
 slot                  String                   -- '' for scb/bolagsverket, 'company' for ratsit, a uuid for reviewer rows
-source_record_uid     String                   -- '' for reviewer rows
+suggestion_id         FixedString(64)          -- sha256(company_id, source, slot, suggested_at): this version's id
+source_record_uid     String                   -- the source row this came from; '' for reviewer rows
 observed_at           DateTime64(3, 'UTC')
 kind                  LowCardinality(String)   -- postal, visiting, visiting_or_postal, registered, workplace, unknown
 raw_address           Nullable(String)         -- the packed string when the source delivers one (Bolagsverket)
@@ -102,7 +103,9 @@ Same key and row count as 3.1, written only by the normalize asset.
 company_id            String
 source                LowCardinality(String)
 slot                  String
-suggested_at          DateTime64(3, 'UTC')     -- the raw row this was computed from
+normalized_id         FixedString(64)          -- sha256(company_id, source, slot, normalized_at): this version's id
+suggestion_id         FixedString(64)          -- the raw version this was computed from
+suggested_at          DateTime64(3, 'UTC')     -- that raw version's stamp
 kind                  LowCardinality(String)   -- carried through
 care_of               Nullable(String)
 box                   Nullable(String)         -- box number, digits and letters
@@ -139,8 +142,9 @@ care_of, box, street_name, house_number, unit, postal_code, city   -- as in 3.2,
 country_code          LowCardinality(String)
 normalized_address    String
 kinds                 Array(LowCardinality(String))   -- from every contributing suggestion, distinct
-sources               Array(LowCardinality(String))   -- contributing sources, parallel to slots
+sources               Array(LowCardinality(String))   -- contributing sources, parallel to slots and normalized_ids
 slots                 Array(String)
+normalized_ids        Array(FixedString(64))   -- the exact normalized versions the fold merged into this row
 text_source           LowCardinality(String)   -- whose components were published
 active                UInt8
 inactive_reason       LowCardinality(String)   -- '', withdrawn, hidden
@@ -165,7 +169,8 @@ the reviewer never influences.
 
 ### 3.4 `se_company_address_history`
 
-The columns of 3.3, `ENGINE = MergeTree ORDER BY (company_id, address_key, folded_at)`. One
+The columns of 3.3 (`normalized_ids` included, so every historical row names the exact
+normalized versions it came from), `ENGINE = MergeTree ORDER BY (company_id, address_key, folded_at)`. One
 row is appended whenever a published row differs from its previous version in anything but
 the geocode block, `geocoded_at`, `folded_at` and `source_run_id`: a new address, a changed
 component, a changed provenance, activation, `withdrawn`, `hidden`.
@@ -293,6 +298,15 @@ components, `normalized_address`, `kinds`, `sources`, `slots`, `text_source`, `a
 geocode block never triggers history. `batch.py` writes history before main, as basic info
 does.
 
+**Lineage.** Every layer points upstream by a stored id: a published row's `normalized_ids`
+name the normalized versions it merged, each normalized row's `suggestion_id` names the raw
+version it parsed, and each raw row's `source_record_uid` names the source record. Source
+tables are not touched: a source row can feed many versions over time and its loader does
+not know normalization exists. The suggestion and normalized tables keep only the current
+version per key, so an id in an old history row may name a version that has been merged
+away; the current version is one key lookup away, and a published row whose
+`normalized_ids` differ from the current normalized rows is shown as re-fold pending.
+
 ### 5.5 Selection
 
 `changed_only` (default true) selects a company when any of:
@@ -373,9 +387,11 @@ badges; withdrawn and hidden rows under a collapsed group. A row links to
 `?address=<key>`; Edit-style buttons sit outside the link. Below: History (newest first) and
 the fold poller.
 
-Right panel for the selected address: one entry per contributing source with the raw text
-beside its parsed components and `parse_status`, the published `text_source` and why (most
-complete, or tie-break), the geocode block with its versions, and the rule in force.
+Right panel for the selected address: one entry per contributing source, resolved through
+the row's `normalized_ids`, with the raw text beside its parsed components and
+`parse_status`, a "re-fold pending" mark when the current normalized version differs from
+the one the row was folded from, the published `text_source` and why (most complete, or
+tie-break), the geocode block with its versions, and the rule in force.
 
 Actions, each through the confirmation dialog, all in one action round-trip:
 
