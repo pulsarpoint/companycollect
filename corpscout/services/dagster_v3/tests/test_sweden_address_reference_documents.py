@@ -1,0 +1,125 @@
+"""The reference documents (OSM buildings + streets) built once per OSM extract.
+
+The shadow evaluation used to rebuild these on every run. Task 2 turns that build into a
+named, idempotent step keyed on the OSM snapshot's md5 (`geocode_demand.fresh_reference_md5`):
+the address entity's geocode function (a later task) and the shadow evaluation both read the
+result, and neither should pay to rebuild it when the snapshot has not moved.
+"""
+
+from collections.abc import Iterator
+
+import duckdb
+import pytest
+
+from dagster_v3.defs.sweden_company.address_resolution_shadow import (
+    QUALIFIED_REFERENCE_MANIFEST_TABLE,
+    QUALIFIED_SHADOW_REFERENCE_DOCUMENTS_TABLE,
+    ensure_reference_documents,
+    reference_documents_md5,
+)
+
+
+@pytest.fixture()
+def connection() -> Iterator[duckdb.DuckDBPyConnection]:
+    """The two OSM workbench tables the reference-document builders read.
+
+    Mirrors the shapes `tests/test_address_resolution.py`'s `_create_sweden_shadow_fixture`
+    uses for `sweden_address_osm.address_points`/`street_segments`, trimmed to three address
+    points on one street in one postcode -- enough for `_replace_building_reference_documents`
+    and `_replace_street_reference_documents` to produce rows, nothing more.
+    """
+    connection = duckdb.connect()
+    connection.execute("create schema sweden_address_osm")
+    connection.execute(
+        """
+        create table sweden_address_osm.address_points (
+            source_record_id varchar,
+            country_code varchar,
+            full_address varchar,
+            street varchar,
+            place varchar,
+            house_number varchar,
+            unit varchar,
+            postcode varchar,
+            city varchar,
+            latitude double,
+            longitude double,
+            source_record_url varchar,
+            source_url varchar default
+                'https://download.geofabrik.de/europe/sweden-latest.osm.pbf',
+            source_object_key varchar default 'raw/sweden-test.osm.pbf',
+            source_md5 varchar,
+            source_snapshot_at timestamptz default '2026-08-16 00:00:00+00',
+            source_retrieved_at timestamptz default '2026-08-16 01:00:00+00'
+        )
+        """
+    )
+    connection.execute(
+        """
+        insert into sweden_address_osm.address_points (
+            source_record_id, country_code, full_address, street, place,
+            house_number, unit, postcode, city, latitude, longitude,
+            source_record_url, source_md5
+        ) values
+            (
+                'osm/1', 'SE', 'Storgatan 1, 11122 Stockholm', 'Storgatan', '',
+                '1', '', '11122', 'Stockholm', 59.331, 18.061,
+                'https://www.openstreetmap.org/node/1', 'md5-a'
+            ),
+            (
+                'osm/2', 'SE', 'Storgatan 2, 11122 Stockholm', 'Storgatan', '',
+                '2', '', '11122', 'Stockholm', 59.3311, 18.0611,
+                'https://www.openstreetmap.org/node/2', 'md5-a'
+            ),
+            (
+                'osm/3', 'SE', 'Storgatan 3, 11122 Stockholm', 'Storgatan', '',
+                '3', '', '11122', 'Stockholm', 59.3312, 18.0612,
+                'https://www.openstreetmap.org/node/3', 'md5-a'
+            )
+        """
+    )
+    connection.execute(
+        """
+        create table sweden_address_osm.street_segments (
+            source_record_id varchar,
+            street varchar,
+            latitude double,
+            longitude double,
+            source_record_url varchar
+        )
+        """
+    )
+    yield connection
+    connection.close()
+
+
+def test_reference_documents_are_built_once_per_extract(
+    connection: duckdb.DuckDBPyConnection,
+) -> None:
+    assert reference_documents_md5(connection) == ""
+    first = ensure_reference_documents(connection)
+    assert first == "md5-a"
+    rows = connection.execute(
+        f"select count(*) from {QUALIFIED_SHADOW_REFERENCE_DOCUMENTS_TABLE}"
+    ).fetchone()[0]
+    assert rows > 0
+    built_at = connection.execute(
+        f"select built_at from {QUALIFIED_REFERENCE_MANIFEST_TABLE}"
+    ).fetchone()[0]
+    assert ensure_reference_documents(connection) == "md5-a"
+    assert (
+        connection.execute(
+            f"select built_at from {QUALIFIED_REFERENCE_MANIFEST_TABLE}"
+        ).fetchone()[0]
+        == built_at
+    )  # no rebuild
+    connection.execute(
+        "update sweden_address_osm.address_points set source_md5 = 'md5-b'"
+    )
+    assert ensure_reference_documents(connection) == "md5-b"
+    assert (
+        connection.execute(
+            f"select count(*) from {QUALIFIED_REFERENCE_MANIFEST_TABLE}"
+        ).fetchone()[0]
+        == 1
+    )

@@ -38,6 +38,7 @@ SHADOW_CANDIDATES_TABLE = "se_address_resolution_candidates_shadow"
 SHADOW_RESULTS_TABLE = "se_address_resolution_results_shadow"
 SHADOW_COMPARISON_TABLE = "se_address_resolution_comparison_shadow"
 UNMATCHED_DIAGNOSTICS_TABLE = "se_address_resolution_unmatched_diagnostics"
+REFERENCE_MANIFEST_TABLE = "se_address_resolution_reference_manifest"
 
 QUALIFIED_SHADOW_QUERY_DOCUMENTS_TABLE = (
     f"{address_canonicalization.ENRICHMENT_SCHEMA}.{SHADOW_QUERY_DOCUMENTS_TABLE}"
@@ -59,6 +60,9 @@ QUALIFIED_SHADOW_COMPARISON_TABLE = (
 )
 QUALIFIED_UNMATCHED_DIAGNOSTICS_TABLE = (
     f"{address_canonicalization.ENRICHMENT_SCHEMA}.{UNMATCHED_DIAGNOSTICS_TABLE}"
+)
+QUALIFIED_REFERENCE_MANIFEST_TABLE = (
+    f"{address_canonicalization.ENRICHMENT_SCHEMA}.{REFERENCE_MANIFEST_TABLE}"
 )
 
 INDEX_SCOPE = "SE-address-resolution-shadow-v2"
@@ -105,18 +109,8 @@ def replace_sweden_address_resolution_shadow(
         exact_suffix_expansions_by_country=SWEDEN_STREET_SUFFIX_EXACT_EXPANSIONS,
         separate_definite_by_country=SWEDEN_SEPARATE_DEFINITE_EXPANSIONS,
     )
-    _log(log, "Building Sweden OSM building search documents")
-    _replace_building_reference_documents(connection)
-    _log(log, "Building Sweden OSM contextual street search documents")
-    _replace_street_reference_documents(connection)
-    connection.execute(
-        f"""
-        create or replace table {QUALIFIED_SHADOW_REFERENCE_DOCUMENTS_TABLE} as
-        select * from _sweden_shadow_building_reference_documents
-        union all
-        select * from _sweden_shadow_street_reference_documents
-        """
-    )
+    _log(log, "Building Sweden OSM building and street reference documents")
+    replace_reference_documents(connection, log=log)
 
     _log(log, "Generating Sweden address-resolution shadow candidates")
     replace_address_resolution_candidates(
@@ -170,6 +164,81 @@ def replace_sweden_address_resolution_unmatched_diagnostics(
         policy=SWEDEN_ADDRESS_RESOLUTION_POLICY,
         diagnosed_at=diagnosed_at,
     )
+
+
+def replace_reference_documents(
+    connection: Any, *, log: Callable[..., object] | None = None
+) -> str:
+    """Build the building and street reference documents from the current OSM workbench
+    tables and record the extract they came from. The shadow evaluation and the address
+    entity's geocode function both read the result.
+
+    An OSM workbench with no identifiable snapshot (no row's ``source_md5``) still gets its
+    documents built -- that mirrors the shadow evaluation's pre-existing behaviour, which
+    never depended on ``source_md5`` to run matching. The manifest then honestly records ``''``
+    rather than raising, matching this codebase's convention for "no identifiable value" (see
+    `_replace_comparison`'s `coalesce(current.match_status, '')`); a missing reference identity
+    is instead where the promotion step already refuses to publish (see
+    `address_resolution_promotion.py`), same as it did before this manifest existed.
+    """
+    connection.execute(
+        f"create schema if not exists {address_canonicalization.ENRICHMENT_SCHEMA}"
+    )
+    try:
+        reference_md5 = geocode_demand.fresh_reference_md5(connection)
+    except ValueError:
+        reference_md5 = ""
+    _replace_building_reference_documents(connection)
+    _replace_street_reference_documents(connection)
+    connection.execute(
+        f"""
+        create or replace table {QUALIFIED_SHADOW_REFERENCE_DOCUMENTS_TABLE} as
+        select * from _sweden_shadow_building_reference_documents
+        union all
+        select * from _sweden_shadow_street_reference_documents
+        """
+    )
+    connection.execute(
+        f"""
+        create or replace table {QUALIFIED_REFERENCE_MANIFEST_TABLE} as
+        select
+            ?::varchar as reference_md5,
+            ?::varchar as policy_version,
+            now()::timestamp as built_at
+        """,
+        [reference_md5, SWEDEN_ADDRESS_RESOLUTION_POLICY.version],
+    )
+    if log is not None:
+        log("reference documents rebuilt for extract %s", reference_md5)
+    return reference_md5
+
+
+def reference_documents_md5(connection: Any) -> str:
+    """The manifest's recorded reference md5, or ``''`` when no manifest exists yet."""
+    [(exists,)] = connection.execute(
+        "select count(*) from information_schema.tables"
+        " where table_schema = ? and table_name = ?",
+        [address_canonicalization.ENRICHMENT_SCHEMA, REFERENCE_MANIFEST_TABLE],
+    ).fetchall()
+    if not exists:
+        return ""
+    row = connection.execute(
+        f"select reference_md5 from {QUALIFIED_REFERENCE_MANIFEST_TABLE}"
+    ).fetchone()
+    return row[0] if row else ""
+
+
+def ensure_reference_documents(
+    connection: Any, *, log: Callable[..., object] | None = None
+) -> str:
+    """Rebuild the reference documents when the OSM extract moved, else no-op.
+
+    Returns the current reference md5 either way.
+    """
+    current = geocode_demand.fresh_reference_md5(connection)
+    if reference_documents_md5(connection) == current:
+        return current
+    return replace_reference_documents(connection, log=log)
 
 
 def _replace_query_documents(connection: Any) -> None:
