@@ -432,6 +432,19 @@ The corrections queue page keeps reading the old ledger until the cutover retire
    `address_legacy.py`.
 1. Extractors: SCB, Bolagsverket, Ratsit; run on prod; read the `parse_status` distribution
    and spot-check packed Bolagsverket parses against the old chain's `normalized_address`.
+   Shipped 2026-09-06 (plan `2026-09-06-se-company-address-1-extractors.md`, main f432245d):
+   the shared extract helper takes a `SuggestionTarget` (basic info byte-identical by
+   default); the three extractors write tombstone rows on `has_company = 0` and stamp
+   `suggestion_id`/`suggested_at` from one WITH-bound `now64()` (two occurrences in one
+   statement were measured to differ in about 0.5% of executions); job and the interim
+   `se_company_address_v2_weekly` (07:05 Monday, stopped). Prod run: 1,818,909 SCB,
+   2,855,218 Bolagsverket and 83,696 Ratsit raw rows (4,757,823), zero id mismatches; the
+   normalizer wrote 4,757,823 rows for 3,523,558 companies: 98.3% `ok`, 1,991 `partial`,
+   36,158 `no_address`, 42,126 `foreign` (SCB's UTLANDET). Twenty Bolagsverket rows agree
+   with the old chain. Normalizer v2 candidates seen in `parse_notes`: a `box N` after a
+   customer reference ("NABO 118849 BOX 843", about 2,100 rows) should become the box with
+   the reference as care-of; `plan N`, roman numerals and bare four-digit apartment numbers
+   should become units.
 2. Fold and geocoding: compatibility, rules, set replacement, history, the geocode function,
    the adoption asset, the precedence export, both fold assets; adoption first, then all 64
    buckets.
