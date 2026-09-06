@@ -203,7 +203,10 @@ published; every trusted source's address is.
 ### 3.7 Geocode cache
 
 `se_address_geocodes` (migration 000317) is kept as the geocode function's cache. Its
-`address_id FixedString(64)` now holds the published `address_key`; every other column keeps
+`address_id FixedString(64)` now holds the address's `location_key` (amended 2026-09-06,
+slice 2a: the identity without care-of, `country_code, postal_code, city, street_name,
+box, house_number, unit`, so one physical address is matched once whoever receives mail
+there, and the old identities, which carry no care-of, adopt cleanly); every other column keeps
 its meaning, including `policy_version` and `reference_md5`, which together with the key form
 the lookup. The cache is an implementation detail of the function: no reader outside the
 function uses it, and it can be truncated and rebuilt.
@@ -328,7 +331,8 @@ with no manual step.
 Mapping[address_key, GeocodeOutcome]` in `se_company/address/geocode.py`, called once per
 fold page over the page's distinct keys.
 
-1. Cache lookup in `se_address_geocodes` by `(address_key, policy_version, reference_md5)`.
+1. Cache lookup in `se_address_geocodes` by `(location_key, policy_version, reference_md5)`
+   (the key without care-of, section 3.7).
 2. Misses are written as query documents into the OSM workbench DuckDB
    (`data/sweden_address_osm_source.duckdb`, resource `sweden_address_osm_duckdb`, opened
    read-only for the reference tables, a per-run temporary schema for the query and result
