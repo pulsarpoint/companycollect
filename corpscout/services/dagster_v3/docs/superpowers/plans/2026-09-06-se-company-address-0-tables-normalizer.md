@@ -1338,14 +1338,14 @@ git commit -m "feat(dagster): se_company_address_normalize asset"
 ### Task 4: The clickhouse-local integration test and the module docs
 
 **Files:**
-- Create: `tests/test_se_company_address_clickhouse_local.py`, `src/dagster_v3/defs/se_company/address/docs/address-design.md`
+- Create: `tests/test_se_company_address_normalize_clickhouse_local.py` (the old model already owns `test_se_company_address_clickhouse_local.py`), `src/dagster_v3/defs/se_company/address/docs/address-design.md`
 
 **Interfaces:**
 - Consumes: Tasks 1 to 3. Uses `_clickhouse_local_command()` from `tests/test_se_company_person_clickhouse_local.py` and the migration files directly, the way `tests/test_se_company_basic_info_clickhouse_local.py` does (read that file first and copy its DDL-loading and settings-loop helpers rather than inventing new ones).
 
 - [ ] **Step 1: Write the test**
 
-`tests/test_se_company_address_clickhouse_local.py` (marked `pytest.mark.integration`, skipped when no `clickhouse-local` or docker is available):
+`tests/test_se_company_address_normalize_clickhouse_local.py` (marked `pytest.mark.integration`, skipped when no `clickhouse-local` or docker is available):
 
 1. Load the six migrations' `.up.sql` into a `clickhouse-local` session (same helper as the basic-info local test).
 2. Insert three raw rows (the `RAW_SCB`, `RAW_BV`, `RAW_EMPTY` shapes of Task 3 as SQL VALUES with `suggested_at` `2026-09-01`, `2026-09-02`, `2026-09-03`, `observed_at` equal to `suggested_at`, `source_record_uid ''`, `source_run_id 'test'`, `extractor_version 'test-v1'`).
@@ -1365,7 +1365,7 @@ Expected: PASS (or SKIP with the same reason the basic-info local test skips on 
 - [ ] **Step 4: Commit**
 
 ```bash
-git add corpscout/services/dagster_v3/tests/test_se_company_address_clickhouse_local.py \
+git add corpscout/services/dagster_v3/tests/test_se_company_address_normalize_clickhouse_local.py \
   corpscout/services/dagster_v3/src/dagster_v3/defs/se_company/address/docs/address-design.md
 git commit -m "test(dagster): address normalize SQL against clickhouse-local; module docs"
 ```
