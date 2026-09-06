@@ -298,7 +298,7 @@ CREATE TABLE IF NOT EXISTS corpscout.se_company_address_history
 (
     company_id String,
     address_key FixedString(64),
-    ... the 30 columns of 000384 after address_key, verbatim, ending with
+    ... the 29 columns of 000384 after address_key, verbatim, ending with
     source_run_id String
 )
 ENGINE = MergeTree
