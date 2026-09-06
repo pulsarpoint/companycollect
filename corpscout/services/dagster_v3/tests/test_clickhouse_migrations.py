@@ -394,6 +394,12 @@ EXPECTED_MIGRATIONS = (
     "000379_corpscout_se_company_basic_info_precedence",
     "000380_corpscout_wikidata_company_wikipedia_articles",
     "000381_corpscout_se_company_basic_info_precedence_rules",
+    "000382_corpscout_se_company_address_suggestion",
+    "000383_corpscout_se_company_address_normalized",
+    "000384_corpscout_se_company_address_v2",
+    "000385_corpscout_se_company_address_history",
+    "000386_corpscout_se_company_address_rule",
+    "000387_corpscout_se_company_address_precedence",
 )
 
 NOOP_MIGRATIONS = {"000276_noop"}
