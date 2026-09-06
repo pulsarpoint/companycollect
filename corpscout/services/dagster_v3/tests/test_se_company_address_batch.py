@@ -244,15 +244,22 @@ def test_a_full_page_renders_under_the_query_size_setting() -> None:
 
     from clickhouse_driver.util.escape import escape_params
 
+    DEFAULT_MAX_QUERY_SIZE = 262_144
     context = SimpleNamespace(
         server_info=SimpleNamespace(get_timezone=lambda: "UTC"),
         client_settings={"server_side_params": False},
     )
     ids = [str(556000000000 + i) for i in range(batch.PAGE_SIZE)]
+    sizes = []
     for text in (batch.current_normalized_sql(), batch.current_main_rows_sql(), batch.normalized_watermarks_sql(), batch.stale_companies_sql()):
         params = {"company_ids": ids, "policy": POLICY, "reference": "0" * 32, "normalizer": NORMALIZER_VERSION}
         rendered = text % escape_params(params, context)
-        assert len(rendered.encode()) < batch.FOLD_ID_BOUND_QUERY_SETTINGS["max_query_size"]
+        rendered_size = len(rendered.encode())
+        sizes.append(rendered_size)
+        assert rendered_size < batch.FOLD_ID_BOUND_QUERY_SETTINGS["max_query_size"]
+    # Half one: the default really would reject the largest of these renders (Code: 62,
+    # "Max query size exceeded"), so the raised setting is not decoration.
+    assert max(sizes) > DEFAULT_MAX_QUERY_SIZE
 
 
 def test_fold_bucket_reads_the_bucket_ids_then_folds_them(monkeypatch) -> None:

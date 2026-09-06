@@ -1,18 +1,48 @@
-# se_company.address (slices 0-2a)
+# se_company.address (slices 0-2b)
 
 The shipped part of the 2026-09-06 SE company address entity design
 (`docs/superpowers/specs/2026-09-06-se-company-address-entity-design.md`); read that for
-everything past the modules below -- the fold itself, compatibility grouping, the precedence
-export, the backoffice Address tab, parity and the cutover.
+everything past the modules below -- the backoffice Address tab, parity and the cutover.
 
 | Module | Responsibility |
 | --- | --- |
 | `tables.py` | Table names and column tuples, pinned against migrations 000382-000387 |
 | `normalize_se.py` | `normalize_se_address`: pure Swedish parser -- splits, folds and classifies; never expands abbreviations, corrects spelling or guesses a house number (that is the geocoder's job) |
 | `normalize.py` | The normalize step's SQL (`changed_scope_sql`, `changed_rows_sql`, `all_scope_sql`, `all_rows_sql`, `normalized_insert_sql`) and the paging/write loop (`normalize_all`, `normalize_companies`) |
-| `assets.py` | `se_company_address_normalize`, the one asset this slice ships |
+| `assets.py` | The Dagster assets: `se_company_address_normalize`, `se_company_address_precedence_clickhouse`, `se_company_address_fold`, `se_company_address_fold_companies` |
 | `geocode.py` | `geocode_addresses`: one served outcome per location key -- the store as cache, the OSM workbench as matcher, the centroid overlay on read (slice 2a) |
 | `adoption.py` | `se_address_geocodes_adopt_keys`, the one-off that copies old identities' outcomes onto location keys (slice 2a) |
+| `precedence.py` | `ADDRESS_PRECEDENCE`/`precedence_rows`/`precedence_for` (`FIELD = 'text'`): the source order the fold's sort key uses to break a completeness tie, and per-company overrides read out of `se_company_address_precedence` |
+| `fold.py` | The pure per-company fold, `fold_company_addresses` (spec section 5): compatibility grouping into `_Candidate`s, hide/withdraw against a previous published set, `NormalizedRow`/`PublishedAddress`. No I/O, no clock -- the geocode block is attached afterwards by `PublishedAddress.with_geocode` |
+| `batch.py` | The fold's SQL (`normalized_watermarks_sql`, `stale_companies_sql`, `current_normalized_sql`, `current_main_rows_sql`, `hidden_keys_sql`, `company_precedence_sql`, `main_insert_sql`, `history_insert_sql`) and the paging/write loop (`fold_bucket`, `fold_companies`): selection, in-page geocoding of the page's distinct location keys, history-then-main write |
+| `se_company_address_fold` (asset) | The 64 hash-bucket partitioned fold (`BackfillPolicy.multi_run(max_partitions_per_run=1)`); pool `sweden_address_osm_duckdb` (`osm_tables.DUCKDB_POOL`, shared with the OSM workbench so an extract swap never races a fold); config `AddressFoldConfig` (`changed_only`, `page_size`) |
+| `se_company_address_fold_companies` (asset) | The targeted fold over `config.company_ids`, whatever their bucket -- the backoffice's Fold now button; same pool; config `AddressFoldCompaniesConfig` (`company_ids`, `changed_only` defaulting `false`, `page_size`) |
+| `se_company_address_precedence_clickhouse` (asset) | Exports `ADDRESS_PRECEDENCE` to `se_company_address_precedence` as global rules (`company_id ''`); no pool; no config -- re-run after changing the dictionary |
+
+## Selection (fold)
+
+`changed_only=true` (the default on `AddressFoldConfig`, and explicitly `false` by default on
+`AddressFoldCompaniesConfig`) folds a company only when one of four conditions holds: it has
+no main row yet and at least one publishable normalized row; its newest normalized row is
+newer than its fold; its newest rule (`se_company_address_rule`) is newer than its fold; or
+`stale_companies_sql` names it -- its active row's `geocode_policy`, `geocode_reference` or
+`normalizer_version` no longer matches the run's current ones. `changed_only=false` re-folds
+the whole bucket or company list regardless, writing history only where a compared field
+actually changed.
+
+`stale_companies_sql` carries two exclusions on top of that OR: a row with `inactive_reason
+= 'withdrawn'` or `geocode_status = 'foreign'` never re-triggers a fold on policy drift alone
+(a foreign row has no coordinate to refresh, and a withdrawn one converges the moment its
+company is next folded for any other reason). `legacy_adopted_v1` is excluded too, but for a
+different reason -- it names the one-time import, which sits on no resolver version at all,
+so it is defined as never stale rather than merely skipped.
+
+After a `NORMALIZER_VERSION` bump, run `se_company_address_normalize` before any fold: until
+a company has been (re)normalized, its main row's `normalizer_version` still does not match
+the new constant, so `stale_companies_sql` keeps marking it stale and every fold pass
+rewrites it -- still with the old normalizer's output, because the normalized row itself has
+not been recomputed yet. The weekly job already normalizes before anything folds; the fold
+itself stays manual, so this ordering is on whoever launches a bucket or backfill by hand.
 
 ## Change rule
 

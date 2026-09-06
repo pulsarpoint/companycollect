@@ -55,6 +55,8 @@ class FoldCounts:
     folded: int        # companies with at least one candidate
     published: int     # active rows written
     hidden: int
+    # withdrawn rows written this run (every previously published key without a candidate,
+    # already-withdrawn ones included); the newly withdrawn ones are inside `changed`
     withdrawn: int
     changed: int       # history rows
     unchanged: int
@@ -258,6 +260,9 @@ def fold_companies(
             precedence[company_id][source] = int(number)
 
         pending: list[tuple[str, PublishedAddress]] = []
+        # Snapshot the running totals so the page's own log line can report page-local
+        # deltas below, rather than the totals accumulated since fold_companies started.
+        page_published_start, page_hidden_start, page_withdrawn_start = published, hidden, withdrawn
         for company_id in scope:
             rows = by_company.get(company_id, [])
             previous = current.get(company_id, [])
@@ -309,7 +314,8 @@ def fold_companies(
             log(
                 "Folded address page: companies=%d considered=%d published=%d hidden=%d withdrawn=%d "
                 "history=%d geocoded=%d hits=%d matched=%d",
-                len(page), len(scope), published, hidden, withdrawn, len(history_rows), len(to_geocode),
+                len(page), len(scope), published - page_published_start, hidden - page_hidden_start,
+                withdrawn - page_withdrawn_start, len(history_rows), len(to_geocode),
                 sum(1 for o in outcomes.values() if o.from_cache), sum(1 for o in outcomes.values() if not o.from_cache),
             )
     return FoldCounts(
