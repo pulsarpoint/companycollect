@@ -419,6 +419,15 @@ The corrections queue page keeps reading the old ledger until the cutover retire
 
 0. Tables and normalizer: migrations, the `se_company/address` package skeleton, the
    Swedish normalizer with its golden corpus, the normalize asset.
+   Shipped 2026-09-06 (plan `2026-09-06-se-company-address-0-tables-normalizer.md`, merged
+   fast-forward as main 0c058dba): migrations 000382-000387 applied on prod (ledger 387), the
+   package with `tables.py`, `normalize_se.py` (48-case golden corpus, `se-address-normalizer-v1`),
+   `normalize.py` and the `se_company_address_normalize` asset, proven on clickhouse-local under
+   both `join_use_nulls` settings; dagster hot-synced; the first normalize run succeeded with
+   zero rows (no extractor yet). The whole-branch review caught that the per-page read binds the
+   id list four times and would have exceeded a 1 MiB `max_query_size` at 20,000 ids; the
+   module owns a 4 MiB budget with a render-size guard test. The old model's module became
+   `address_legacy.py`.
 1. Extractors: SCB, Bolagsverket, Ratsit; run on prod; read the `parse_status` distribution
    and spot-check packed Bolagsverket parses against the old chain's `normalized_address`.
 2. Fold and geocoding: compatibility, rules, set replacement, history, the geocode function,
