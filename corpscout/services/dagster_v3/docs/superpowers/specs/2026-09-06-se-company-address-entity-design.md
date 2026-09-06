@@ -253,6 +253,20 @@ geocodes) -> FoldResult` is pure, in `se_company/address/fold.py`; `batch.py` re
 writes around it; `assets.py` exposes `se_company_address_fold` (64 hash buckets, pool
 `se_company_address_fold`, `multi_run(1)`) and `se_company_address_fold_companies`.
 
+Amended 2026-09-06 (slice 2b plan): the fold is two-phase.
+`fold_company_addresses(company_id, normalized_rows, published_rows, hidden_keys,
+company_precedence, *, source_run_id) -> FoldResult` is pure and returns the candidates
+without a geocode block, because a merged address's location key is only known once the
+union of its members' components is; `batch.py` hands the page's distinct location keys to
+`geocode_addresses` and attaches each outcome with `PublishedAddress.with_geocode`. The
+recency tie-break is the normalized row's `suggested_at` (the raw version's stamp, already
+on the row) rather than `observed_at`, which would cost a second read per page for a tie
+that distinct precedence numbers make nearly unreachable. The fold assets take the OSM
+workbench pool (`sweden_address_osm_duckdb`, section 6), not a pool of their own.
+`geocoded_at` is the outcome's `matched_at` (the cached row's stamp for a hit, the run's
+for a miss); `geocode_method` is the matcher strategy, or the centroid method for
+`matched_area`. Withdrawn rows keep the geocode block they had and are never re-geocoded.
+
 ### 5.1 Identity
 
 A suggestion's identity is `(country_code, postal_code, city, street_name, box, house_number,
@@ -324,6 +338,14 @@ away; the current version is one key lookup away, and a published row whose
 Every folded company is rewritten with a new `folded_at`, so selection converges. A matcher
 bump, an OSM refresh or a normalizer bump therefore re-folds the population on the next run
 with no manual step.
+
+Amended 2026-09-06 (slice 2b plan): the version condition applies to rows that are neither
+withdrawn nor foreign and whose `geocode_policy` is not `legacy_adopted_v1` (an
+unconditional cache hit, section 6), so those rows never keep a company perpetually
+selected; a company with no main row is selected only when at least one current normalized
+row is publishable (`ok`, `partial`, `foreign`), so a company whose rows are all
+`no_address` is never selected. The normalized watermark reads FINAL so a key whose current
+version is `no_address` does not count as publishable through an older version.
 
 ## 6. Geocoding
 
