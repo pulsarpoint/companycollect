@@ -62,10 +62,12 @@ class NormalizedAddress:
 
 
 def _clean(value: str | None) -> str:
-    """NFKC, whitespace collapse, trailing punctuation dropped; case kept."""
+    """NFKC, Unicode format characters (category Cf: zero-width space and friends)
+    stripped, whitespace collapse, trailing punctuation dropped; case kept."""
     if value is None:
         return ""
     text = unicodedata.normalize("NFKC", value)
+    text = "".join(ch for ch in text if unicodedata.category(ch) != "Cf")
     text = re.sub(r"[\s ]+", " ", text).strip(" .,;:-/")
     return text
 
@@ -88,8 +90,10 @@ def _display(value: str) -> str:
     return " ".join(words)
 
 
-def _split_packed(raw: str) -> RawAddress:
+def _split_packed(raw: str, notes: list[str]) -> RawAddress:
     parts = [p.strip() for p in raw.split("$")]
+    if len(parts) != 5:
+        notes.append(f"packed address has {len(parts)} parts, expected 5")
     parts += [""] * (5 - len(parts))
     line1, line2, town, code, country = parts[:5]
     return RawAddress(
@@ -147,13 +151,14 @@ def _split_care_of_street(line: str, notes: list[str]) -> tuple[str | None, str]
             start -= 1
     care_of = " ".join(tokens[:start]).strip() or None
     street = " ".join(tokens[start:])
+    notes.append(f"care-of split before '{street}'")
     return care_of, street
 
 
 def normalize_se_address(raw: RawAddress) -> NormalizedAddress:
     notes: list[str] = []
     if raw.raw_address:
-        raw = _split_packed(raw.raw_address)
+        raw = _split_packed(raw.raw_address, notes)
     care_of_display = _display(_CARE_OF_PREFIX.sub("", _clean(raw.care_of)))
     care_of = care_of_display.casefold()
     street_line = _fold(raw.street_address)
@@ -172,7 +177,7 @@ def normalize_se_address(raw: RawAddress) -> NormalizedAddress:
     if not street_line and not care_of:
         return NormalizedAddress(None, None, None, None, None, None, None, "SE", "", "no_address", "")
 
-    if street_line.startswith(("c/o ", "co ", "att ", "att: ")) and not care_of:
+    if _CARE_OF_PREFIX.match(street_line) and not care_of:
         care_of, street_line = _split_care_of_street(street_line, notes)
         care_of_display = _display(care_of or "")
         street_display_source = ""
@@ -186,12 +191,15 @@ def normalize_se_address(raw: RawAddress) -> NormalizedAddress:
 
     has_location = bool(box or street_name)
     if not has_location:
-        status = "no_address"
-    elif code and town:
+        return NormalizedAddress(None, None, None, None, None, None, None, "SE", "", "no_address", "; ".join(notes))
+    if code and town:
         status = "ok"
     else:
         status = "partial"
-        notes.append("missing postcode" if not code else "missing city")
+        if not code:
+            notes.append("missing postcode")
+        if not town:
+            notes.append("missing city")
 
     line_parts = []
     if care_of:

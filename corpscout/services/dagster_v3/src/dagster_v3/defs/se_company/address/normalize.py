@@ -16,10 +16,21 @@ from dagster_v3.defs.se_company.address.normalize_se import (
     address_key,
     normalize_se_address,
 )
-from dagster_v3.defs.se_company.basic_info.batch import ID_BOUND_QUERY_SETTINGS
 from dagster_v3.defs.se_company.basic_info.extract import SCAN_QUERY_SETTINGS, scope_pages
 
 PAGE_SIZE = 20_000
+
+# changed_rows_sql() binds %(company_ids)s four times (two UNION ALL branches, each with the
+# outer WHERE plus the nested _normalized_keys_sql()), so a full PAGE_SIZE page of 12-digit
+# ids renders far larger than basic-info's per-page queries -- past even basic-info's raised
+# ID_BOUND_QUERY_SETTINGS (1,048,576 bytes: ~1.28 MB at PAGE_SIZE=20,000), which is why this
+# module has its own, wider setting instead of importing that one. See
+# tests/test_se_company_address_normalize.py for the measured render size.
+NORMALIZE_ID_BOUND_QUERY_SETTINGS = {"max_query_size": 4_194_304, "max_execution_time": 1800}
+
+# This module's own scratch-table prefix (see basic_info/extract.py:scope_pages), so an
+# address scan's scratch table can never collide with a basic-info one.
+SCRATCH_SCOPE_PREFIX = "corpscout._tmp_address_scope_"
 
 RAW_ROW_COLUMNS: tuple[str, ...] = (
     "company_id", "source", "slot", "suggestion_id", "suggested_at", "kind", *tables.RAW_ADDRESS_COLUMNS,
@@ -163,7 +174,9 @@ class NormalizeCounts:
 
 def _normalize_page(client: Any, company_ids: Sequence[str], *, changed_only: bool, normalized_at: datetime) -> dict[str, int]:
     params = {"company_ids": sorted(company_ids), "normalizer_version": NORMALIZER_VERSION}
-    raw_rows = client.execute(changed_rows_sql() if changed_only else all_rows_sql(), params, settings=ID_BOUND_QUERY_SETTINGS)
+    raw_rows = client.execute(
+        changed_rows_sql() if changed_only else all_rows_sql(), params, settings=NORMALIZE_ID_BOUND_QUERY_SETTINGS
+    )
     rows = [normalized_row(raw_row, normalized_at) for raw_row in raw_rows]
     status_index = tables.NORMALIZED_COLUMNS.index("parse_status")
     counts = {status: 0 for status in tables.PARSE_STATUSES}
@@ -206,7 +219,7 @@ def normalize_all(
     pages = []
     companies = 0
     for page in scope_pages(client, scope_sql=scope_sql, params={"normalizer_version": NORMALIZER_VERSION},
-                            page_size=page_size, settings=SCAN_QUERY_SETTINGS):
+                            page_size=page_size, settings=SCAN_QUERY_SETTINGS, prefix=SCRATCH_SCOPE_PREFIX):
         companies += len(page)
         pages.append(_normalize_page(client, page, changed_only=changed_only, normalized_at=normalized_at))
         if log is not None:

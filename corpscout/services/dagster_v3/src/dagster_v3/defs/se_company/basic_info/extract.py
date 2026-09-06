@@ -142,7 +142,8 @@ SCRATCH_SCOPE_PREFIX = "corpscout._tmp_basic_info_scope_"
 
 
 def scope_pages(
-    client: Any, *, scope_sql: str, params: dict[str, Any], page_size: int, settings: dict[str, Any]
+    client: Any, *, scope_sql: str, params: dict[str, Any], page_size: int, settings: dict[str, Any],
+    prefix: str = SCRATCH_SCOPE_PREFIX,
 ) -> Iterator[list[str]]:
     """Run the scope query once into a scratch table, then keyset-page that table.
 
@@ -152,8 +153,11 @@ def scope_pages(
     remaining id set. One INSERT into a `MergeTree ORDER BY company_id` scratch table reads
     the heavy tables exactly once per run; the pages then walk a sorted id column. The
     scratch table is dropped in a `finally`, so a failed page read does not leave it behind.
+
+    `prefix` names the scratch table (default: this module's own); pass a caller-specific
+    prefix (e.g. the address entity's) so two unrelated scans can never collide on it.
     """
-    scratch = f"{SCRATCH_SCOPE_PREFIX}{uuid.uuid4().hex}"
+    scratch = f"{prefix}{uuid.uuid4().hex}"
     client.execute(f"CREATE TABLE {scratch} (company_id String) ENGINE = MergeTree ORDER BY company_id")
     try:
         client.execute(

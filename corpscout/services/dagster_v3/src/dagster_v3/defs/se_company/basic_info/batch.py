@@ -26,7 +26,7 @@ PAGE_SIZE = 20_000
 # bytes with 12-digit ids (280,286 with 10-digit ones) -- past ClickHouse's 262,144-byte
 # default max_query_size, which rejects the query with Code: 62 "Max query size exceeded"
 # before reading anything. Raising the setting per query is the precedent this repo already
-# set for the same failure in se_company/address.py (SCAN_MAX_QUERY_SIZE); PAGE_SIZE stays
+# set for the same failure in se_company/address_legacy.py (SCAN_MAX_QUERY_SIZE); PAGE_SIZE stays
 # 20,000 and every SELECT that binds company_ids passes these settings to client.execute.
 # See tests/test_se_company_basic_info_batch.py for the measured render size.
 # max_execution_time bounds the other failure mode: a pathological page must fail visibly

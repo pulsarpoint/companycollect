@@ -80,6 +80,11 @@ def _run(statements: list[str], *, join_use_nulls: int) -> list[str]:
 
 
 def _literal(value: Any) -> str:
+    """A parameter value rendered as ClickHouse SQL text. clickhouse-driver itself renders a
+    Python `list` as an array literal (`['a', 'b']`) and a `tuple` as a parenthesized literal
+    (`('a', 'b')`); this harness renders both the same way (parenthesized), which is fine
+    because `IN` accepts either form -- the difference does not change what a statement
+    matches."""
     if value is None:
         return "NULL"
     if isinstance(value, datetime):

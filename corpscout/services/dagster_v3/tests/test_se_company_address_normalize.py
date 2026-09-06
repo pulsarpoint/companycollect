@@ -1,11 +1,14 @@
 """The normalize asset's scan, row shaping and writes (spec section 4), against a scripted
-ClickHouse client. The SQL texts run for real in test_se_company_address_clickhouse_local.py."""
+ClickHouse client. The SQL texts run for real in test_se_company_address_normalize_clickhouse_local.py."""
 
 from datetime import UTC, datetime
 
 from dagster_v3.defs.se_company.address import tables
 from dagster_v3.defs.se_company.address.normalize import (
+    NORMALIZE_ID_BOUND_QUERY_SETTINGS,
     NormalizeCounts,
+    PAGE_SIZE,
+    SCRATCH_SCOPE_PREFIX,
     all_rows_sql,
     all_scope_sql,
     changed_rows_sql,
@@ -16,7 +19,6 @@ from dagster_v3.defs.se_company.address.normalize import (
     normalized_row,
 )
 from dagster_v3.defs.se_company.address.normalize_se import NORMALIZER_VERSION
-from dagster_v3.defs.se_company.basic_info.extract import SCRATCH_SCOPE_PREFIX
 
 STAMP = datetime(2026, 9, 6, 12, 0, 0, 123000, tzinfo=UTC)
 
@@ -138,3 +140,40 @@ def test_counts_metadata_keys() -> None:
     assert set(NormalizeCounts(1, 1, 1, 1, 0, 0, 0).as_metadata()) == {
         "companies", "pages", "rows", "ok", "partial", "no_address", "foreign", "normalizer_version",
     }
+
+
+def test_a_full_page_renders_under_the_query_size_setting() -> None:
+    """C1: changed_rows_sql() binds %(company_ids)s FOUR times (two UNION ALL branches, each
+    with the outer WHERE plus the nested _normalized_keys_sql()), unlike basic-info's
+    single-bind per-page queries. At a full PAGE_SIZE page of 12-digit ids that overflows even
+    basic-info's raised ID_BOUND_QUERY_SETTINGS (1,048,576 bytes) -- Code: 62 "Max query size
+    exceeded" -- which is why this module has its own, wider NORMALIZE_ID_BOUND_QUERY_SETTINGS.
+    Modelled on tests/test_se_company_basic_info_batch.py::
+    test_a_full_page_renders_under_the_query_size_setting. No server needed.
+    """
+    from types import SimpleNamespace
+
+    from clickhouse_driver.util.escape import escape_params
+
+    from dagster_v3.defs.se_company.basic_info.batch import ID_BOUND_QUERY_SETTINGS
+
+    context = SimpleNamespace(
+        server_info=SimpleNamespace(get_timezone=lambda: "UTC"),
+        client_settings={"server_side_params": False},
+    )
+    for count in (PAGE_SIZE, 50_000):  # PAGE_SIZE (the default) and 50,000 (the config maximum)
+        ids = [str(556_000_000_000 + index) for index in range(count)]
+        assert len(ids) == count
+        assert all(len(company_id) == 12 for company_id in ids)
+        rendered = changed_rows_sql() % escape_params(
+            {"company_ids": ids, "normalizer_version": NORMALIZER_VERSION}, context
+        )
+        rendered_size = len(rendered.encode("utf-8"))
+
+        # Half one: the failure was real -- basic-info's own raised setting still rejects a
+        # full PAGE_SIZE page of this query's four-times-bound ids.
+        if count == PAGE_SIZE:
+            assert rendered_size > ID_BOUND_QUERY_SETTINGS["max_query_size"]
+        # Half two: NORMALIZE_ID_BOUND_QUERY_SETTINGS covers the worst case, including the
+        # config's own page_size maximum of 50,000.
+        assert rendered_size < NORMALIZE_ID_BOUND_QUERY_SETTINGS["max_query_size"]
