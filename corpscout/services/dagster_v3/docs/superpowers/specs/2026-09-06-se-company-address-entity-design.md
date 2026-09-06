@@ -511,8 +511,9 @@ The corrections queue page keeps reading the old ledger until the cutover retire
    ambiguous 292,013, postal_box 116,963, property_identifier 2,891, invalid_address 1,327);
    2,019,072 adopted keys join a current normalized row's location key. The hourly
    `se_address_geocodes_current` refresh took 222 s before adoption (6,471,107 store rows)
-   and 411 s on the refresh that overlapped the inserts (8,490,227 store rows after it); the
-   first full post-adoption refresh is still to be measured. Normalizer v3 candidates from
+   and 411 s on the refresh that overlapped the inserts; the first full post-adoption refresh
+   (21:00 UTC) took 463 s over 8,490,227 store rows, the served view growing from 2,090,981
+   to 4,110,101 rows, far below the 3 h check. Normalizer v3 candidates from
    the v2 readout: a street with a house number before a box ("Gustavslundsvägen 159 Box
    137") should keep the street beside the box instead of demoting it to care-of; a
    delivered Bolagsverket care-of that repeats the street line ("c/o Win Win Ekonomi AB box
