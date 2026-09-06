@@ -18,7 +18,7 @@
 - Raw rows (spec 3.1): SCB writes kind `visiting_or_postal`, slot `''`, columns `care_of`, `street_address`, `postal_code`, `post_town` as delivered (trimmed, empty to NULL); Bolagsverket writes kind `postal`, slot `''`, the packed `postal_address` into `raw_address`; Ratsit writes kind `postal`, slot `company`, `address_street` to `street_address`, `address_postal_code` to `postal_code`, `address_locality` to `post_town`, `address_county` to `county`; every other address column NULL. A register row with `has_company = 0` (a tombstone) writes a row with every address column NULL, so the fold withdraws the address. `country_code` is NULL for all three (Sweden by default; the normalizer decides `foreign` from the text).
 - In the INSERT, `suggested_at = now64(3, 'UTC')` and `suggestion_id = lower(hex(SHA256(concat(company_id, '\n', toString(source), '\n', slot, '\n', toString(now64(3, 'UTC'))))))`: `now64()` is one constant per query, so the id and the stamp agree, and `toString(DateTime64(3, 'UTC'))` prints `YYYY-MM-DD HH:MM:SS.mmm`, the format `normalize.py`'s `clickhouse_stamp` uses for `normalized_id`. `decided_by`, `note`, `replaces_key` are NULL; `source_run_id` and `extractor_version` are the run's.
 - The change scan is the helper's: a company is visited when the source has never suggested it or its source row's `observed_at` is newer than the current suggestion row's for that source (one slot per source in this slice, so the (company, source) scope is exact).
-- Job `se_company_address_extract_job` selects the three extractors and `se_company_address_normalize`; schedule `se_company_address_weekly`, cron `50 6 * * 1`, `DefaultScheduleStatus.STOPPED`, run config `execute: true`, `page_size: 20000` per extractor and `changed_only: true` for the normalize asset.
+- Job `se_company_address_extract_job` selects the three extractors and `se_company_address_normalize`; schedule `se_company_address_v2_weekly` (interim name: the old model's `address_legacy.py` still registers `se_company_address_weekly` until the cutover, which renames this one), cron `50 6 * * 1`, `DefaultScheduleStatus.STOPPED`, run config `execute: true`, `page_size: 20000` per extractor and `changed_only: true` for the normalize asset.
 - No `from __future__ import annotations` in any module that defines a `@dg.asset`.
 - Commit by explicit path after every task; never `git add -A`. Trailers, contiguous at the end of every commit message: `Co-Authored-By: Claude Fable 5.1 <noreply@anthropic.com>` then `Claude-Session: https://claude.ai/code/session_01RY2W9FTCX9YxUcXtSBaEJ5`.
 
@@ -599,7 +599,7 @@ git commit -m "feat(dagster): SCB, Bolagsverket and Ratsit raw address extractor
 
 **Interfaces:**
 - Consumes: `assets.EXTRACTOR_ASSET_NAMES`.
-- Produces: `WEEKLY_PAGE_SIZE = 20_000`, `WEEKLY_RUN_CONFIG`, `se_company_address_extract_job`, `se_company_address_weekly`.
+- Produces: `WEEKLY_PAGE_SIZE = 20_000`, `WEEKLY_RUN_CONFIG`, `se_company_address_extract_job`, `se_company_address_v2_weekly`.
 
 - [ ] **Step 1: Write the failing test**
 
@@ -627,7 +627,7 @@ def test_the_job_selects_the_three_extractors_and_the_normalize_asset() -> None:
 
 
 def test_the_weekly_is_registered_stopped_with_execute_and_the_page_size() -> None:
-    schedule = _repo().get_schedule_def("se_company_address_weekly")
+    schedule = _repo().get_schedule_def("se_company_address_v2_weekly")
     assert schedule.cron_schedule == "50 6 * * 1"
     assert schedule.default_status == dg.DefaultScheduleStatus.STOPPED
     assert schedule.job_name == "se_company_address_extract_job"
@@ -681,8 +681,8 @@ se_company_address_extract_job = dg.define_asset_job(
     "se_company_address_extract_job",
     selection=dg.AssetSelection.assets(*EXTRACTOR_ASSET_NAMES, NORMALIZE_ASSET),
 )
-se_company_address_weekly = dg.ScheduleDefinition(
-    name="se_company_address_weekly",
+se_company_address_v2_weekly = dg.ScheduleDefinition(
+    name="se_company_address_v2_weekly",
     job=se_company_address_extract_job,
     cron_schedule="50 6 * * 1",
     run_config=WEEKLY_RUN_CONFIG,
