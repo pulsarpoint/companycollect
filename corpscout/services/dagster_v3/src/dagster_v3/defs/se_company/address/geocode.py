@@ -35,6 +35,7 @@ this module's own invention would make every candidate join miss and report ever
 therefore reused from the shadow, not re-spelled.
 """
 
+import re
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass, replace as dataclass_replace
 from datetime import datetime
@@ -128,6 +129,12 @@ RUN_TABLE_STEPS: tuple[str, ...] = (
 
 GEOCODE_PROVIDER = "osm"
 COORDINATE_METHOD = "resolver"
+
+# A Swedish property designation (`Bergshamra 2:14`): a cadastral unit, not a street
+# address. The Python twin of the shadow query projection's `regexp_matches(street_address,
+# '(?i)(^|[[:space:]])[0-9]+:[0-9]+($|[[:space:],])')` -- same pattern, POSIX classes spelled
+# as their `re` equivalents, matched against the same street text the shadow matches.
+_PROPERTY_DESIGNATION = re.compile(r"(^|\s)[0-9]+:[0-9]+($|[\s,])")
 
 
 @dataclass(frozen=True, slots=True)
@@ -234,23 +241,41 @@ def query_documents_sql(table: str) -> str:
     return f"select\n    {projection}\nfrom {table}"
 
 
+def street_line(address: NormalizedAddress) -> str:
+    """The location half of the search text: the box, or street/number/unit."""
+    if address.box:
+        return f"Box {address.box}"
+    return " ".join(
+        part
+        for part in (address.street_name, address.house_number, address.unit)
+        if part
+    )
+
+
 def search_text(address: NormalizedAddress) -> str:
-    """The display line without its care-of part -- the text the matcher scores.
+    """The text the matcher scores, COMPOSED from the components -- never carved out of the
+    display line.
 
     The location key ignores care-of, so the matched text must too: `c/o Anna Svensson,
     Storgatan 5, 111 22 Stockholm` and `Storgatan 5, 111 22 Stockholm` are the same place
-    and must produce the same candidates. The care-of is always the FIRST comma-separated
-    part of the display line when there is one (normalize_se builds the line that way), so
-    dropping it is a prefix removal, not a re-render -- the delivered casing of the rest is
-    preserved exactly.
+    and must produce the same candidates. Composing from the seven location components is
+    the only way to guarantee that, because a care-of may itself contain a comma
+    (`c/o Firm AB, Dept 4`) -- dropping the display line's first comma-separated part would
+    then leave `Dept 4` in the matched text and score two identical locations differently.
+    The components are exactly what `location_key` hashes, so equal keys now imply equal
+    search text by construction rather than by the shape of the rendered line.
     """
-    line = address.normalized_address
-    if not address.care_of:
-        return line
-    head, separator, rest = line.partition(", ")
-    if separator and head.casefold().startswith("c/o "):
-        return rest
-    return line
+    postal = " ".join(
+        part
+        for part in (
+            f"{address.postal_code[:3]} {address.postal_code[3:]}"
+            if address.postal_code
+            else "",
+            address.city or "",
+        )
+        if part
+    )
+    return ", ".join(part for part in (street_line(address), postal) if part)
 
 
 def store_row(
@@ -523,9 +548,26 @@ def run_tables(run_id: str) -> dict[str, str]:
     }
 
 
+def address_kind(address: NormalizedAddress) -> str:
+    """What the engine keys its non-matching statuses off.
+
+    A box is a mail drop: `postal_box` is what stops the resolver inventing a pin for one.
+    A PROPERTY DESIGNATION (`Bergshamra 2:14` -- a cadastral unit, not a street address) is
+    `property_identifier`, mirroring the refinement `address_resolution_shadow`'s query
+    projection applies, so the address entity and the shadow evaluation classify the same
+    text the same way. It matters twice: the engine reports the status instead of hunting
+    for a street that does not exist, and `property_identifier` is deliberately NOT
+    fallback-eligible, so a designation is never dressed up with a centroid.
+    """
+    if address.box:
+        return "postal_box"
+    if _PROPERTY_DESIGNATION.search(street_line(address)):
+        return "property_identifier"
+    return "physical"
+
+
 def _input_row(key: str, address: NormalizedAddress) -> tuple[Any, ...]:
-    """One engine input row. A box carries `address_kind = 'postal_box'`, which is what
-    makes the resolver report `postal_box` for it without inventing a pin for a mail drop."""
+    """One engine input row, in SEARCH_DOCUMENT_INPUT_COLUMNS order."""
     return (
         INDEX_SCOPE,
         key,
@@ -537,7 +579,7 @@ def _input_row(key: str, address: NormalizedAddress) -> tuple[Any, ...]:
         address.unit or "",
         address.postal_code or "",
         address.city or "",
-        "postal_box" if address.box else "physical",
+        address_kind(address),
         "",
         None,
         None,

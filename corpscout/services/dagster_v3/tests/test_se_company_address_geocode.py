@@ -71,6 +71,9 @@ BOX = _normalized(street_address="Box 5305", postal_code="10246", post_town="Sto
 MISSING = _normalized(
     street_address="Björkstigen 12", postal_code="11144", post_town="Stockholm"
 )
+DESIGNATION = _normalized(
+    street_address="Bergshamra 2:14", postal_code="11122", post_town="Stockholm"
+)
 WITH_CARE_OF = _normalized(
     care_of="Anna Svensson",
     street_address="Storgatan 5",
@@ -82,6 +85,7 @@ CACHED_KEY = location_key(CACHED)
 STREET_KEY = location_key(STREET)
 BOX_KEY = location_key(BOX)
 MISSING_KEY = location_key(MISSING)
+DESIGNATION_KEY = location_key(DESIGNATION)
 
 
 def _cache_row(key: str, **overrides: Any) -> tuple[Any, ...]:
@@ -417,6 +421,116 @@ def test_another_reference_extract_is_a_miss(
 
     assert outcome.from_cache is False
     assert _inserted(client, STREET_KEY)["reference_md5"] == REFERENCE
+
+
+def test_the_search_text_is_composed_from_the_components() -> None:
+    """A care-of may itself contain a comma. Carving the display line's first
+    comma-separated part off would leave `Dept 4` in the matched text, so two identities
+    that hash to the SAME location key would be scored against different text."""
+    comma_care_of = _normalized(
+        care_of="Firm AB, Dept 4",
+        street_address="Storgatan 5",
+        postal_code="11122",
+        post_town="Stockholm",
+    )
+    assert location_key(comma_care_of) == STREET_KEY
+    assert geocode.search_text(comma_care_of) == geocode.search_text(STREET)
+    assert "Dept" not in geocode.search_text(comma_care_of)
+    assert "Dept" not in geocode.search_text(STREET)
+    # ... and the display line it is NOT carved out of still carries the whole care-of.
+    assert "Dept 4" in comma_care_of.normalized_address
+
+    assert geocode.search_text(STREET) == "storgatan 5, 111 22 stockholm"
+    assert geocode.search_text(BOX) == "Box 5305, 102 46 stockholm"
+    assert geocode.search_text(_normalized(street_address="Storgatan 5")) == "storgatan 5"
+
+
+def test_a_property_designation_is_not_fallback_eligible(
+    workbench: duckdb.DuckDBPyConnection,
+) -> None:
+    """`Bergshamra 2:14` is a cadastral unit, not a street address. The shadow's query
+    projection refines it to `property_identifier`; so does this module, which keeps it out
+    of FALLBACK_ELIGIBLE_STATUSES -- a designation is never dressed up with a centroid."""
+    kind = SEARCH_DOCUMENT_INPUT_COLUMNS.index("address_kind")
+    assert geocode.address_kind(DESIGNATION) == "property_identifier"
+    assert geocode._input_row(DESIGNATION_KEY, DESIGNATION)[kind] == "property_identifier"
+    assert geocode.address_kind(STREET) == "physical"
+    assert geocode.address_kind(BOX) == "postal_box"
+
+    # A centroid IS scripted for it: the assertion is that it is never asked for.
+    client = FakeClient(
+        fallback_rows=[(DESIGNATION_KEY, "city", 59.32, 18.07, "STOCKHOLM", 4211, 9100.0)]
+    )
+
+    outcome = _run(workbench, client, {DESIGNATION_KEY: DESIGNATION})[DESIGNATION_KEY]
+
+    assert outcome.match_status == "property_identifier"
+    assert (outcome.latitude, outcome.longitude) == (None, None)
+    assert outcome.geocode_provider == ""
+    assert client.statements("se_postcode_centroids") == []
+    assert _inserted(client, DESIGNATION_KEY)["match_status"] == "property_identifier"
+
+
+def test_an_adopted_run_id_alone_is_a_hit(
+    workbench: duckdb.DuckDBPyConnection,
+) -> None:
+    """Either half identifies the imported family. This row is on an older policy AND an
+    older extract and carries no `legacy_adopted_v1`: only the run-id prefix says what it
+    is, and re-matching it would throw the import away."""
+    client = FakeClient(
+        cache_rows=[
+            _cache_row(
+                CACHED_KEY,
+                policy_version=STALE_POLICY,
+                reference_md5="an-older-extract",
+                address_identity_run_id="adopted:abc",
+            )
+        ]
+    )
+
+    outcome = _run(workbench, client, {CACHED_KEY: CACHED})[CACHED_KEY]
+
+    assert outcome.from_cache is True
+    assert outcome.policy_version == STALE_POLICY
+    assert client.inserted == []
+
+
+def test_the_cache_lookup_and_fallback_are_chunked(
+    workbench: duckdb.DuckDBPyConnection,
+) -> None:
+    """Both bindings are chunked at CACHE_LOOKUP_CHUNK: one more key than the chunk means
+    two statements each, never one oversized one (ClickHouse's `max_query_size`)."""
+    keys = [f"{index:064x}" for index in range(geocode.CACHE_LOOKUP_CHUNK + 1)]
+    client = FakeClient(
+        cache_rows=[
+            _cache_row(
+                key,
+                match_status="unmatched",
+                latitude=None,
+                longitude=None,
+                geocode_provider="",
+                geocode_precision="",
+                coordinate_method=None,
+            )
+            for key in keys
+        ]
+    )
+
+    outcomes = _run(workbench, client, dict.fromkeys(keys, MISSING))
+
+    assert len(outcomes) == len(keys)
+    assert all(outcome.from_cache for outcome in outcomes.values())
+    assert client.inserted == []
+    lookups = client.statements(geocode.geocode_store.GEOCODE_STORE_TABLE)
+    assert [len(params["keys"]) for _, params in lookups] == [
+        geocode.CACHE_LOOKUP_CHUNK,
+        1,
+    ]
+    fallbacks = client.statements("se_postcode_centroids")
+    assert [len(params["rows"]) for _, params in fallbacks] == [
+        geocode.CACHE_LOOKUP_CHUNK,
+        1,
+    ]
 
 
 def test_the_care_of_is_not_matched(workbench: duckdb.DuckDBPyConnection) -> None:
